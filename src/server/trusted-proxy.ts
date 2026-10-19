@@ -35,6 +35,10 @@ function normalizedOrigin(value: string): string | null {
  * - wildcard origins are never accepted.
  */
 export function isAllowedWebSocketOrigin(originHeader: string | null): boolean {
+  // Native (non-browser) agents legitimately omit Origin; such connections are
+  // still authenticated via the agent bearer secret in the upgrade handler, so
+  // missing Origin alone never grants access. Browser-origin handshakes with an
+  // Origin must match the configured allowlist.
   if (!originHeader) return true;
   const supplied = normalizedOrigin(originHeader.trim());
   if (!supplied) return false;
