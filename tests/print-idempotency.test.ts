@@ -13,6 +13,7 @@ import {
   sha256,
 } from "./helpers/pg";
 import { POST as printJobsPOST, GET as printJobsGET } from "../src/app/api/print/jobs/route";
+import { POST as printJobsV2POST } from "../src/app/api/print/jobs/v2/route";
 import { createPrintJobForPrinter } from "../src/lib/print-job-service";
 
 const suite = describe.skipIf(!hasTestDatabase);
@@ -159,6 +160,89 @@ suite("print idempotency (Odoo → Gateway)", () => {
     const body = await res.json();
     expect(body.jobId).toMatch(/^job_/);
     expect(await jobCount()).toBe(1);
+  });
+
+  it("v1 and v2 share one tenant-scoped operation identity", async () => {
+    const v1 = await create(jobBody("op-v1-v2-shared"));
+    expect(v1.status).toBe(201);
+    const created = await v1.json();
+
+    // The same logical operation submitted through the v2 contract must
+    // resolve to the same durable job, not a second physical print.
+    const v2 = await printJobsV2POST(new Request("http://gateway.test/api/print/jobs/v2", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${f.odooKey}`, "content-type": "application/json" },
+      body: JSON.stringify(jobBody("op-v1-v2-shared")),
+    }));
+    expect(v2.status).toBe(200);
+    expect(await v2.json()).toMatchObject({ jobId: created.jobId });
+    expect(await jobCount()).toBe(1);
+  });
+
+  it("v2 rejects a submission without an idempotency key", async () => {
+    const body = jobBody("unused");
+    delete (body as Record<string, unknown>).idempotencyKey;
+    const res = await printJobsV2POST(new Request("http://gateway.test/api/print/jobs/v2", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${f.odooKey}`, "content-type": "application/json" },
+      body: JSON.stringify(body),
+    }));
+    expect(res.status).toBe(400);
+    expect(await jobCount()).toBe(0);
+  });
+
+  it("v2 rejects conflicting reuse of a key with a different payload", async () => {
+    const first = await printJobsV2POST(new Request("http://gateway.test/api/print/jobs/v2", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${f.odooKey}`, "content-type": "application/json" },
+      body: JSON.stringify(jobBody("op-v2-conflict")),
+    }));
+    expect(first.status).toBe(201);
+
+    const conflicting = await printJobsV2POST(new Request("http://gateway.test/api/print/jobs/v2", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${f.odooKey}`, "content-type": "application/json" },
+      body: JSON.stringify(jobBody("op-v2-conflict", { payload: { type: "pdf", encoding: "base64", data: pdfBase64("v2-different") } })),
+    }));
+    expect(conflicting.status).toBe(409);
+    expect(await conflicting.json()).toMatchObject({ code: "IDEMPOTENCY_CONFLICT" });
+    expect(await jobCount()).toBe(1);
+  });
+
+  it("v2 concurrent duplicates create exactly one job", async () => {
+    const post = () => printJobsV2POST(new Request("http://gateway.test/api/print/jobs/v2", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${f.odooKey}`, "content-type": "application/json" },
+      body: JSON.stringify(jobBody("op-v2-concurrent")),
+    }));
+    const [a, b] = await Promise.all([post(), post()]);
+    expect([a.status, b.status].sort()).toEqual([200, 201]);
+    expect(await jobCount()).toBe(1);
+  });
+
+  it("v2 preserves intentional reprints under distinct operation keys", async () => {
+    const first = await printJobsV2POST(new Request("http://gateway.test/api/print/jobs/v2", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${f.odooKey}`, "content-type": "application/json" },
+      body: JSON.stringify(jobBody("op-v2-reprint-1")),
+    }));
+    const second = await printJobsV2POST(new Request("http://gateway.test/api/print/jobs/v2", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${f.odooKey}`, "content-type": "application/json" },
+      body: JSON.stringify(jobBody("op-v2-reprint-2")),
+    }));
+    expect(first.status).toBe(201);
+    expect(second.status).toBe(201);
+    expect((await first.json()).jobId).not.toBe((await second.json()).jobId);
+    expect(await jobCount()).toBe(2);
+  });
+
+  it("v1 still accepts a submission without a key and reports the deduplication gap", async () => {
+    const body = jobBody("unused");
+    delete (body as Record<string, unknown>).idempotencyKey;
+    const res = await create(body);
+    expect(res.status).toBe(201);
+    expect(res.headers.get("X-Idempotency-Warning")).toContain("missing-key");
   });
 
   it("concurrent duplicate submissions with the same key create one job", async () => {
