@@ -162,7 +162,12 @@ suite("agent health (database-backed)", () => {
       ["fleet_health_pending", f.tenantId, f.agentId, f.printerId, JSON.stringify({ type: "raw", protocol: "raw", encoding: "base64", data: "aGVsbG8=" })],
     );
     const fleet = await getAllAgentsHealth(f.tenantId, 50, 0);
-    expect(fleet.map((agent) => agent.agentId)).toEqual([f.agentId, secondAgentId].sort());
+    // getAllAgentsHealth orders by the database's agent-id ordering (Postgres
+    // collation), which is not guaranteed to match JavaScript's code-unit
+    // String.prototype.sort. Assert membership + tenant scoping here instead of
+    // a JS-sorted sequence; pagination below uses the database's own order.
+    expect(fleet.map((agent) => agent.agentId)).toEqual(expect.arrayContaining([f.agentId, secondAgentId]));
+    expect(fleet.map((agent) => agent.agentId)).toHaveLength(2);
     expect(fleet.every((agent) => agent.tenantId === f.tenantId)).toBe(true);
     expect(fleet.some((agent) => agent.agentId === otherTenant.agentId)).toBe(false);
     for (const summary of fleet) {
@@ -182,10 +187,17 @@ suite("agent health (database-backed)", () => {
     expect(fleet.find((agent) => agent.agentId === f.agentId)).toMatchObject({
       printerCount: 1, onlinePrinterCount: 1, queueDepth: 1,
     });
-    // The fixture's first Agent ID is random. SQL orders by agent ID, so
-    // either Agent may occupy page two. Assert stable pagination against the
-    // actual ordering contract instead of a particular fixture identity.
-    const orderedIds = [f.agentId, secondAgentId].sort();
+    // Pagination must follow the database's own ORDER BY (asc agent id). Do not
+    // derive the expected sequence from the application result under test.
+    // Instead, obtain an independent ordering oracle directly from PostgreSQL
+    // and assert that pagination partitions the fleet exactly in that order.
+    const oracle = await pool().query<{ id: string }>(
+      "SELECT id FROM agents WHERE tenant_id = $1 ORDER BY id ASC",
+      [f.tenantId],
+    );
+    const orderedIds = oracle.rows.map((r) => r.id);
+    expect(orderedIds).toEqual(expect.arrayContaining([f.agentId, secondAgentId]));
+    expect(orderedIds).toHaveLength(2);
     const firstPage = await getAllAgentsHealth(f.tenantId, 1, 0);
     const secondPage = await getAllAgentsHealth(f.tenantId, 1, 1);
     expect(firstPage.map((agent) => agent.agentId)).toEqual(orderedIds.slice(0, 1));
