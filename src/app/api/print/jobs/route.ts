@@ -6,7 +6,7 @@ import { validatePrintJobPayload, type PrintJobPayload } from "../../../../lib/p
 import { createPrintJobForPrinter, AgentQueueFullError, AgentQueuedJobsFullError, PrintJobCapabilityError, PrintJobInputError } from "../../../../lib/print-job-service";
 import { TenantEntitlementError, TenantPrintQuotaExceededError, isTenantBillingError } from "../../../../lib/entitlements";
 import { hasBodyOverLimit } from "../../../../lib/request-limits";
-import { logError, requestIdFrom } from "../../../../lib/log";
+import { logError, logWarn, requestIdFrom } from "../../../../lib/log";
 import { databaseNowMs } from "../../../../lib/database-clock";
 import { and, eq, isNotNull } from "drizzle-orm";
 import { z } from "zod";
@@ -71,6 +71,17 @@ export async function POST(req: Request) {
   const parsed = bodySchema.safeParse(raw);
   if (!parsed.success) return NextResponse.json({ error: parsed.error.issues[0]?.message ?? "Invalid request" }, { status: 400 });
 
+  if (!parsed.data.idempotencyKey) {
+    // Backward-compatible: legacy callers without a stable operation id are
+    // accepted, but retries cannot be deduplicated and may produce duplicate
+    // physical prints. New callers must supply an idempotencyKey. A future
+    // API version will require it (see ADR/migration notes).
+    logWarn("print.job.missing_idempotency_key", {
+      tenantId: odoo?.tenantId ?? null,
+      message: "Print job submitted without idempotencyKey; retry deduplication is disabled for this request.",
+    });
+  }
+
   let payload: PrintJobPayload;
   try { payload = validatePrintJobPayload(parsed.data.payload); }
   catch (error) { return NextResponse.json({ error: error instanceof Error ? error.message : "Invalid payload" }, { status: 400 }); }
@@ -111,6 +122,10 @@ export async function POST(req: Request) {
       // 201 describing a job that no longer exists.
       return NextResponse.json({ error: "IDEMPOTENCY_CONFLICT", code: "IDEMPOTENCY_CONFLICT", retryable: false }, { status: 409 });
     }
+    const responseHeaders: Record<string, string> = {};
+    if (!parsed.data.idempotencyKey) {
+      responseHeaders["X-Idempotency-Warning"] = "missing-key; retry deduplication disabled";
+    }
     return NextResponse.json({
       jobId: result.id,
       status: result.status,
@@ -118,7 +133,7 @@ export async function POST(req: Request) {
       agentId: result.agentId,
       destination: parsed.data.destination ?? null,
       documentType: parsed.data.documentType,
-    }, { status: 201 });
+    }, { status: 201, headers: responseHeaders });
   } catch (error) {
     if (error instanceof TenantPrintQuotaExceededError) {
       const response: Record<string, unknown> = {
