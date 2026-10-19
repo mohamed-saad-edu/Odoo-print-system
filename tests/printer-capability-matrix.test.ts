@@ -1,0 +1,209 @@
+import { describe, it, expect } from "vitest";
+import { getSupportedDocumentTypes, isIppTransport, isSpoolerTransport, isRawTransport, validatePayloadForPrinter, hasDeclaredProtocol } from "../src/lib/printer-capability";
+import { buildTestPrintPayloadForPrinter } from "../src/lib/payload";
+import { buildPrinterCapabilityMatrix, normalizePrinterStatus } from "../src/lib/printer-health";
+import * as fs from "fs";
+
+describe("printer-capability-matrix", () => {
+  it("IPP transport supports only PDF", () => {
+    expect(getSupportedDocumentTypes("ipp", "ipp")).toEqual(["pdf"]);
+    expect(getSupportedDocumentTypes("ipps", "ipps")).toEqual(["pdf"]);
+    expect(isIppTransport("ipp", "ipp")).toBe(true);
+    expect(isIppTransport("network", "ipp")).toBe(true);
+  });
+
+  it("Spooler transport supports pdf/image by default (raw passthrough needs explicit declaration)", () => {
+    expect(getSupportedDocumentTypes("spooler", "spooler")).toContain("pdf");
+    expect(getSupportedDocumentTypes("spooler", "spooler")).toContain("image");
+    expect(getSupportedDocumentTypes("spooler", "spooler")).not.toContain("raw");
+    expect(getSupportedDocumentTypes("windows_spooler", "spooler")).not.toContain("escpos");
+    expect(isSpoolerTransport("spooler", "spooler")).toBe(true);
+    expect(isSpoolerTransport("spooler", "windows_spooler")).toBe(true);
+    expect(isSpoolerTransport("network", "windows_spooler")).toBe(false);
+  });
+
+  it("keeps legacy windows_spooler protocol scoped to a spooler transport", () => {
+    expect(getSupportedDocumentTypes("windows_spooler", "spooler")).toEqual(["pdf", "image"]);
+    expect(getSupportedDocumentTypes("windows_spooler", "network")).toEqual([]);
+    expect(getSupportedDocumentTypes("ipps", "network")).toEqual(["pdf"]);
+  });
+
+  it("RAW transport supports raw only", () => {
+    expect(getSupportedDocumentTypes("raw", "network")).toEqual(["raw"]);
+    expect(getSupportedDocumentTypes("escpos", "network")).toContain("escpos");
+    expect(isRawTransport("escpos")).toBe(true);
+    expect(isRawTransport("zpl")).toBe(true); // zpl is considered raw transport per isRawTransport definition
+    expect(isRawTransport("ipp")).toBe(false);
+  });
+
+  it("evidence-based: ONLINE not mapped to IDLE unless explicit idle", () => {
+    const now = new Date();
+    const freshLastSeen = new Date(now.getTime() - 10_000);
+    // Since 68b609fd a printer needs FRESH PARENT-AGENT evidence too: a
+    // printer row alone (stale/missing agent) must not render ONLINE.
+    const evidence = { lastSeenAt: freshLastSeen, agentLastSeenAt: freshLastSeen, agentStatus: "online", now };
+    const online = normalizePrinterStatus("online", evidence);
+    expect(online.status).toBe("ONLINE"); // NOT IDLE
+    expect(online.evidence).toContain("ONLINE");
+    expect(online.freshness.fresh).toBe(true);
+
+    const idle = normalizePrinterStatus("idle", { ...evidence });
+    expect(idle.status).toBe("IDLE");
+    expect(idle.evidence).toContain("IDLE");
+
+    // Printer-fresh but agent evidence missing: must stay UNKNOWN.
+    const orphan = normalizePrinterStatus("online", { lastSeenAt: freshLastSeen, now });
+    expect(orphan.status).toBe("UNKNOWN");
+    expect(orphan.freshness.fresh).toBe(false);
+  });
+
+  it("stale data returns UNKNOWN, not ONLINE", () => {
+    const now = new Date();
+    const staleLastSeen = new Date(now.getTime() - 200_000); // >90s
+    const result = normalizePrinterStatus("online", { lastSeenAt: staleLastSeen, now });
+    expect(result.status).toBe("UNKNOWN");
+    expect(result.evidence).toContain("Stale evidence");
+    expect(result.freshness.fresh).toBe(false);
+  });
+
+  it("future-dated observations are not fresh or ONLINE", () => {
+    const now = new Date("2026-09-24T00:00:00.000Z");
+    const futureLastSeen = new Date(now.getTime() + 30_000);
+    const evidence = { lastSeenAt: futureLastSeen, agentLastSeenAt: futureLastSeen, agentStatus: "online", now };
+    const result = normalizePrinterStatus("online", evidence);
+    expect(result.status).toBe("UNKNOWN");
+    expect(result.freshness.fresh).toBe(false);
+    expect(result.freshness.ageMs).toBe(-30_000);
+  });
+
+  it("no lastSeen returns UNKNOWN", () => {
+    const result = normalizePrinterStatus("online", { lastSeenAt: null });
+    expect(result.status).toBe("UNKNOWN");
+  });
+
+  it("normalizes error with evidence separation", () => {
+    const now = new Date();
+    const fresh = new Date(now.getTime() - 5_000);
+    const base = { lastSeenAt: fresh, agentLastSeenAt: fresh, agentStatus: "online", now };
+    const errorPaper = normalizePrinterStatus("error", { ...base, error: "paper out" });
+    expect(errorPaper.status).toBe("PAPER_OUT");
+    expect(errorPaper.evidence).toContain("paper");
+
+    const errorDriver = normalizePrinterStatus("error", { ...base, error: "driver error" });
+    expect(errorDriver.status).toBe("DRIVER_ERROR");
+
+    const errorSpooler = normalizePrinterStatus("error", { ...base, error: "spooler error" });
+    expect(errorSpooler.status).toBe("SPOOLER_ERROR");
+
+    const unknown = normalizePrinterStatus(null, base);
+    expect(unknown.status).toBe("UNKNOWN");
+  });
+
+  it("does not turn fresh driver identity metadata into a healthy-driver verdict", () => {
+    const now = new Date("2026-10-07T00:00:00.000Z");
+    const observedAt = new Date(now.getTime() - 5_000);
+    const printer = {
+      id: "printer-driver-evidence",
+      tenantId: "tenant-driver-evidence",
+      agentId: "agent-driver-evidence",
+      name: "Queue A",
+      deviceClass: "laser",
+      connectionType: "spooler",
+      protocol: "spooler",
+      status: "online",
+      lifecycle: "active",
+      config: { spooler_name: "Queue A" },
+      capabilities: { driver_name: "Example Driver" },
+      lastSeenAt: observedAt,
+    } as unknown as Parameters<typeof buildPrinterCapabilityMatrix>[0];
+    const agent = {
+      id: "agent-driver-evidence",
+      tenantId: "tenant-driver-evidence",
+      status: "online",
+      lifecycle: "active",
+      lastSeenAt: observedAt,
+    } as unknown as Parameters<typeof buildPrinterCapabilityMatrix>[1];
+
+    const matrix = buildPrinterCapabilityMatrix(printer, agent, now);
+
+    expect(matrix.status).toBe("ONLINE");
+    expect(matrix.driver.name).toBe("Example Driver");
+    expect(matrix.driver.health).toBe("unknown");
+    expect(matrix.driver.evidence).toContain("identity evidence only");
+    expect(matrix.driver.evidence).toContain("no ACTUAL DRIVER STATUS");
+  });
+
+  it("driver and spooler health are evidence-based, not from DB status alone", () => {
+    const source = fs.readFileSync("src/lib/printer-health.ts", "utf8");
+    // Must check for actual spooler_status evidence, not just DB status
+    expect(source).toContain("capabilities.spooler_status");
+    expect(source).toContain("ACTUAL SPOOLER STATUS");
+    expect(source).toContain("DATABASE STATUS only");
+    expect(source).toContain("ACTUAL DRIVER STATUS");
+    expect(source).toContain("fresh");
+    // Must NOT report SPOOLER OK from only DB state — should report UNKNOWN when no explicit probe
+    expect(source).toContain("no explicit spooler health probe");
+  });
+
+  it("capability matrix includes required fields with evidence separation", () => {
+    const source = fs.readFileSync("src/lib/printer-health.ts", "utf8");
+    expect(source).toContain("statusEvidence");
+    expect(source).toContain("statusFreshness");
+    expect(source).toContain("driver");
+    expect(source).toContain("spooler");
+    expect(source).toContain("transport");
+    expect(source).toContain("protocol");
+    expect(source).toContain("documentTypes");
+  });
+});
+
+
+  it("health matrix uses the canonical capability mapping", () => {
+    const source = fs.readFileSync("src/lib/printer-health.ts", "utf8");
+    expect(source).toContain("getSupportedDocumentTypes");
+    expect(source).toContain("type ProtocolType");
+    expect(source).toContain("type TransportType");
+    expect(source).not.toContain("switch (p.protocol)");
+  });
+
+  it("keeps document-transport baseline while explicit byte capabilities stay additive", () => {
+    expect(getSupportedDocumentTypes("spooler", "spooler", { supported_protocols: [] })).toEqual(["pdf", "image"]);
+    expect(getSupportedDocumentTypes("spooler", "spooler", { supported_protocols: ["escpos"] })).toEqual(["pdf", "image", "raw", "escpos"]);
+    expect(getSupportedDocumentTypes("spooler", "spooler", { supported_protocols: ["raw"] })).toEqual(["pdf", "image", "raw"]);
+    expect(getSupportedDocumentTypes("escpos", "usb", { supported_protocols: ["image", "escpos"] })).not.toContain("image");
+    expect(getSupportedDocumentTypes("raw", "network", { supported_protocols: ["pdf"] })).toEqual([]);
+    expect(getSupportedDocumentTypes("ipp", "ipp", { supported_protocols: ["image"] })).toEqual(["pdf"]);
+  });
+
+describe("physical IPP transport must not be inferred from a bare protocol label", () => {
+  it("rejects USB or unknown IPP labels while keeping network IPP", () => {
+    expect(isIppTransport("usb", "ipp")).toBe(false);
+    expect(isIppTransport("network", "ipps")).toBe(true);
+    expect(isSpoolerTransport("usb", "spooler")).toBe(true);
+  });
+});
+
+it("uses the same declared capability tokens for binding, matrix and admission", () => {
+  const capabilities = { supported_protocols: [" ESCPOS "] };
+  expect(validatePayloadForPrinter({ type: "escpos", protocol: "escpos" }, { connectionType: "network", protocol: "escpos", capabilities }).ok).toBe(true);
+  expect(getSupportedDocumentTypes("escpos", "network", capabilities)).toEqual(["escpos", "raw", "image"]);
+  expect(getSupportedDocumentTypes("spooler", "spooler", capabilities)).toEqual(["pdf", "image", "raw", "escpos"]);
+  expect(validatePayloadForPrinter({ type: "escpos", protocol: "escpos" }, { connectionType: "network", protocol: "raw", capabilities }).ok).toBe(false);
+});
+
+it("does not create a byte transport from a language label alone", () => {
+  for (const connectionType of ["", "unknown", "ipp", "ipps", "lpr", "serial", "bluetooth"]) {
+    for (const protocol of ["raw", "escpos", "zpl", "tspl"]) {
+      expect(validatePayloadForPrinter({ type: "raw", protocol }, { connectionType, protocol }).ok).toBe(false);
+    }
+  }
+});
+
+it("never coerces malformed capability values into printer language permissions", () => {
+  const capabilities = { supported_protocols: [["escpos"], { protocol: "escpos" }] } as unknown as { supported_protocols: string[] };
+  expect(hasDeclaredProtocol(capabilities, "escpos")).toBe(false);
+  expect(validatePayloadForPrinter({ type: "escpos", protocol: "escpos" }, { connectionType: "network", protocol: "escpos", capabilities }).ok).toBe(false);
+  expect(getSupportedDocumentTypes("escpos", "network", capabilities)).toEqual([]);
+  expect(() => buildTestPrintPayloadForPrinter("Receipt", "Agent", { connectionType: "network", protocol: "escpos", capabilities })).toThrow(/no supported test ticket/);
+  expect(getSupportedDocumentTypes("spooler", "spooler", capabilities)).toEqual(["pdf", "image"]);
+});

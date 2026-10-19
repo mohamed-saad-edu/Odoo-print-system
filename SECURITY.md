@@ -1,0 +1,141 @@
+# Security Architecture
+
+> See also: [ARCHITECTURE.md](./ARCHITECTURE.md) § 5
+
+## Authentication
+
+### Agent Authentication
+- Format: `Bearer {agentId}:{secret}`
+- Secret stored as SHA-256 hash
+- Comparison: SHA-256 of provided secret vs stored hash using `timingSafeEqual` on both digests
+- Lifecycle check: agent must be `active`, tenant must be `active`
+
+### API Key Authentication (Odoo → Gateway)
+- Format: `Bearer {api_key}`
+- Key stored as a SHA-256 hash of the full credential
+- Scoped to tenant via `api_keys.tenant_id`
+
+### Customer Authentication
+- Email/password with Argon2id hash (legacy scrypt hashes auto-upgraded on login)
+- Email verification required before full access
+- Password reset with time-limited, single-use tokens (SHA-256 hashed)
+- Rate limiting on authentication-adjacent attempts uses the existing PostgreSQL dual-key reservation design (`auth_rate_limits`): account key always, trusted-proxy IP key when available.
+- Rate-limit responses after reservation expose `X-RateLimit-Limit`, `X-RateLimit-Remaining`, and epoch-second `X-RateLimit-Reset`, with `Retry-After` on throttled responses.
+- Account-scoped failures keep the existing 5/10/15/20 progressive curve.
+- Trusted-proxy IP failures use a separate NAT-tolerant 20/30/40/50 progressive curve, so a shared source address can absorb normal multi-user bursts without triggering the account-style lock too early.
+
+### Manager Sessions
+- v2 access sessions use versioned HS256 JWTs with a 15-minute lifetime and explicit session kind, JTI, SID, and refresh-family identifiers. Access tokens are stateless and are not stored in the refresh-token ledger.
+- v2 refresh sessions are opaque random secrets; PostgreSQL stores only SHA-256 token hashes. Each family has a 30-day absolute lifetime with a 5-second rotation grace window.
+- A refresh token presented after the grace window is treated as reuse/replay: the entire family is revoked, `auth.refresh.reuse_detected` is audited, and a notification email is attempted when an account email is available.
+- Refresh rotation revalidates the live security principal (tenant lifecycle, tenant membership/role, verified customer email, or Platform Owner status) before minting a new access token.
+- Password reset revokes every refresh family for the affected user.
+- Browser access cookies are HttpOnly + SameSite=Lax; browser refresh credentials are separate HttpOnly + SameSite=Strict cookies (`mgr_refresh`, `cust_refresh`, `plt_refresh`) and are path-scoped to their auth namespaces (`/api/auth/manager`, `/api/auth`, `/api/platform/auth`) so logout can revoke a family even after the 15-minute access token expires. The packaged desktop manager keeps the refresh credential only in Rust process memory; the Tauri renderer cannot supply its own refresh header to the native transport, and desktop token responses require the fixed Tauri local origin injected by Rust.
+- Existing pre-v2 manager/customer/platform sessions remain on the legacy `manager_sessions`/`platform_sessions` validation path until their original 8-hour expiry; no blanket forced logout is introduced.
+- Session kinds are explicit: Platform APIs accept only v2 `kind=platform`; tenant-scoped Workspace APIs explicitly accept v2 `kind=manager` or `kind=customer` because both represent authenticated workspace principals with the same tenant/role authorization model. Customer authentication endpoints generate `kind=customer`, while manager login generates `kind=manager`. A v2 token never falls through into legacy validation as a different session kind.
+- Legacy `manager_sessions`/`platform_sessions` rows remain only for compatibility and legacy-session revocation/validation during the migration window.
+- New session issuance has no write path into `manager_sessions` or `platform_sessions`; those tables are compatibility-only for pre-v2 validation/revocation/GC. The unused `manager-session-tx` adapter was removed after a repository-wide caller scan found no external callers.
+- Refresh-family rotation and family revocation use a PostgreSQL transaction-scoped advisory lock keyed by `family_id`, preventing concurrent rotation/replay/logout operations from bypassing family-wide revocation.
+- Tenant suspension/deletion revokes all v2 refresh families for that tenant; password reset revokes all refresh families for the affected user. Request-admission classification recognizes all three v2 access-cookie names (`mgr_session`, `cust_session`, `plt_session`).
+- Gateway housekeeping runs on the existing 5-minute in-process maintenance loop; expired refresh-token cleanup was added to that existing loop rather than introducing a new scheduler.
+- SameSite browser semantics could not be exercised with a real browser in this repository because no Playwright/Cypress/Puppeteer harness is present. Route-level checks confirm refresh/reset/verification flows do not require cross-site refresh-cookie delivery. This browser-level proof remains a BLOCKED verification item.
+
+### Rate-limit failure mode
+Authentication-adjacent routes keep PostgreSQL-backed rate limiting fail-closed. If `reserveAuthAttempt` cannot obtain a decision because the limiter store is unavailable, the route returns HTTP 503 and does not attempt authentication without rate-limit protection. This prevents an attacker from deliberately disrupting the limiter store to manufacture a fail-open bypass.
+
+The availability tradeoff is intentional: legitimate login, registration, password-reset, and verification-resend requests can be temporarily blocked during a rate-limiter-specific PostgreSQL failure. PostgreSQL is already a hard dependency for Gateway authentication and most other Gateway operations, so a limiter-store outage is expected to correlate with a broader database availability problem in which authentication would not be reliably completable anyway. No narrowly-scoped fail-open exception is currently justified.
+
+### Reverse Proxy Trust
+- `TRUST_PROXY_SECRET` header validated on every request EXCEPT the two
+  unauthenticated liveness probes `GET /api/health` and `GET /api/live`
+  (server.ts proxy bypass — intentional so load balancers can probe without the
+  secret; neither probe returns sensitive data)
+- Minimum 32 characters, reject known placeholder values
+- Required for production mode (`NODE_ENV=production`)
+
+## Rate Limiting
+
+| Scope | Mechanism | Parameters |
+|-------|-----------|------------|
+| Auth-adjacent endpoints | PostgreSQL dual-key reservation | Account key always; trusted-proxy IP key when available; 15-minute window |
+| Auth response metadata | Compatibility response headers | `X-RateLimit-Limit`, `X-RateLimit-Remaining`, epoch-second `X-RateLimit-Reset`, plus `Retry-After` when throttled |
+| Rate-limit storage failure | Fail closed | Authentication-adjacent requests return HTTP 503 rather than bypassing the limiter; no fail-open exception |
+| WebSocket upgrade | Per-IP rate check | At upgrade time |
+| WebSocket messages | Per-agent token bucket | 20 capacity, 5 refill/s |
+| Print job admission | Atomic tenant plan entitlements | `max_jobs_per_minute` and `max_concurrent_jobs` are enforced inside the PostgreSQL transaction that creates/claims work; billing-period print credits are reserved atomically |
+| Heartbeat payload | Schema/size validation | Gateway rejects oversized or malformed control-plane payloads before applying state |
+
+## Input Validation
+
+- **API input validation**: Zod schemas are used for structured request bodies/parameters; endpoints with only simple probes, fixed identifiers, or security-sensitive primitive checks use explicit type/length validation.
+- **Print payloads**: Database CHECK constraint (`payloadContractCheck`)
+- **Protocol enforcement**: Printer capability gating prevents incompatible routing
+- **ZPL/TSPL/ESC/POS**: Character sanitization prevents command injection
+- **SQL**: Value inputs remain parameterized; dynamic SQL identifiers are composed with `psycopg2.sql.Identifier()` and `SQL(...).format()`, never interpolated as raw identifiers.
+- **Report IDs**: Odoo-side report interception validates selected record IDs before routing; the native `/report/download` controller remains untouched
+
+## Tenant Isolation
+
+- Application-level: All queries include `tenant_id` filter
+- Database: Composite FK constraints prevent cross-tenant references
+- Auth: Tenant context derived server-side, never from client-supplied values
+- Session: Tenant bound at authentication, not per-request
+
+## Audit Trail
+
+The `audit_events` table records:
+- Actor type (user, agent, system, platform)
+- Actor ID
+- Action (e.g., `agent.registered`, `billing.checkout.session.completed`)
+- Resource type and ID
+- Metadata (JSON)
+
+## Secrets Management
+
+- Never log raw API keys, agent secrets, passwords, or pairing values
+- Pairing codes are single-use with expiry
+- Agent secrets are hashed at creation, raw value shown once
+- Environment secrets validated on startup (reject placeholders)
+
+### Agent credential at-rest threat model
+
+- Windows: `agent-secrets.dat` is DPAPI-sealed (`LOCAL_MACHINE` scope, so the
+  LocalSystem service and the user-context desktop manager share it) and the
+  file/directory carry restrictive Windows DACLs (`EnsureSecureFileACL`).
+  Residual risk: any local principal that can read the file can DPAPI-decrypt
+  it under machine scope. Mitigation is host access control; a local
+  administrator is already outside the threat boundary.
+- POSIX (Linux/arm64): no sealed storage exists; the file is base64-framed
+  with `0600` permissions only. `SaveSecret` logs an explicit warning.
+  Deployments must use full-disk encryption and restrict host access.
+- Egress: the Gateway control-plane HTTP/WebSocket clients never inherit
+  `HTTP(S)_PROXY` unless `YASEIR_AGENT_ALLOW_PROXY=1` is set, so Bearer
+  credentials and print payloads are not routed to a proxy by default.
+
+
+## Pairing and Job Delivery
+
+Agent pairing codes are short-lived, hashed, and single-use. Successful pairing mints the long-lived Agent credential; the pairing value is not the Agent identity.
+
+Gateway print delivery retains claim-token fencing, stale-claim recovery, and PostgreSQL `SKIP LOCKED` coordination. Jobs with uncertain physical outcomes remain unknown until a later reconciliation establishes the result; they are not blindly retried.
+
+## Odoo Gateway Credential Protection
+
+The Odoo-to-Gateway installation credential is stored as authenticated ciphertext using AES-256-GCM. The encryption root is deployment-managed and must not be stored in PostgreSQL, source control, the addon, or the same backup set as the database.
+
+Configure the deployment-managed credential key versions before installing or upgrading the addon:
+
+- `ODOO_PRINT_GATEWAY_CREDENTIAL_ACTIVE_VERSION`
+- `ODOO_PRINT_GATEWAY_CREDENTIAL_KEY_V1_B64` (base64-encoded 32-byte key)
+- Additional versions follow the same naming pattern.
+
+Generate key material outside the repository and inject it through the deployment secret store. Never place actual key material in committed `.env` files, documentation, database backups, or logs.
+
+Missing or invalid key material must fail closed during credential migration or use; there is no plaintext fallback. Credential rotation is performed by provisioning the new key version, switching the active version, completing re-encryption, and only then retiring the old version.
+
+
+### Alerting boundary
+The `audit_events` table is a durable audit trail, not an alerting system. The current repository exposes the audit feed to Platform Owners, but does not include a configured real-time alert sink/provider. Operational alerting for high-severity security events remains an explicit deployment/infrastructure responsibility; it must not be inferred from audit writes alone.
+
+### Rate-limit storage failure policy
+The Gateway deliberately keeps authentication rate limiting fail-closed. If the PostgreSQL reservation operation fails, the affected authentication-adjacent request returns HTTP 503 rather than proceeding without an authoritative limiter decision. This prevents an attacker from attempting to bypass brute-force protection by disrupting the limiter store. The tradeoff is that legitimate authentication traffic can be temporarily blocked during a limiter-specific PostgreSQL failure. PostgreSQL is already a hard dependency for Gateway authentication and most other control-plane operations, so a limiter-storage outage is expected to correlate with a broader database availability problem where authentication cannot be completed reliably anyway. No narrowly-scoped fail-open exception is justified by the current architecture.

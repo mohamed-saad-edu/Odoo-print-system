@@ -1,0 +1,2449 @@
+# -*- coding: utf-8 -*-
+"""Durable Odoo-side print outbox and retry state."""
+
+import base64
+import datetime
+import json
+import hashlib
+import logging
+import uuid
+
+import requests
+from psycopg2 import IntegrityError, sql as psycopg2_sql
+
+from odoo import api, fields, models, _
+from odoo.exceptions import AccessError, ValidationError
+
+from ..runtime_clock import db_now_utc
+from ..runtime_policy import inventory_has_shared_printer
+
+
+_logger = logging.getLogger(__name__)
+MAX_PRINT_CONTENT_BYTES = 5 * 1024 * 1024
+MAX_PRINT_BASE64_CHARS = 4 * ((MAX_PRINT_CONTENT_BYTES + 2) // 3)
+MAX_INVENTORY_RESPONSE_BYTES = 2 * 1024 * 1024
+# Operator-recoverable Gateway refusals (billing limits, suspended tenant,
+# rotation grace, revoked key) requeue instead of terminalizing. Attempts are
+# capped so a permanently blocked configuration parks with a 24h backoff
+# instead of inflating `attempts` and cron load forever; parked jobs stay
+# recoverable and resume automatically once the operator fixes billing/auth.
+MAX_BILLING_PARK_ATTEMPTS = 25
+BILLING_PARK_RETRY_SECONDS = 24 * 3600
+
+
+class PrintGatewayJob(models.Model):
+    _name = "print_gateway.print_job"
+    _description = "Print Gateway Job"
+    _order = "create_date desc"
+
+    company_id = fields.Many2one("res.company", required=True, ondelete="restrict", index=True)
+    gateway_config_id = fields.Many2one("print_gateway.gateway_config", required=True, ondelete="restrict", index=True)
+    submit_claim_token = fields.Char(string="Submission Claim Token", index=True, copy=False, readonly=True)
+    submit_claimed_at = fields.Datetime(string="Submission Claimed At", index=True, copy=False, readonly=True)
+
+    gateway_job_id = fields.Char(string="Gateway Job ID", index=True, copy=False, readonly=True)
+    printer_id = fields.Char(string="Printer", required=True, index=True, readonly=True)
+    destination = fields.Char(required=True, readonly=True)
+    # Immutable routing identity: unlike a display name, this survives renames
+    # and prevents ambiguity at failover. Old jobs without it cannot fail over.
+    destination_key = fields.Char(index=True, readonly=True, copy=False)
+    document_type = fields.Char(required=True, readonly=True)
+    # Canonical status vocabulary (mirrors the Gateway DB status enum
+    # queued/claimed/printing/success/failed/expired in
+    # src/lib/job-status.ts, plus Odoo-side 'submitted' for "accepted by the
+    # Gateway, awaiting agent claim" and 'partial' as an operator-side
+    # terminal state). Terminal: success/failed/partial/unknown - enforced
+    # by _VALID_TRANSITIONS and write(). Physical outcome metadata is
+    # exactly printed/not_printed/unknown (_compute_physical_outcome):
+    # a transport-level 'success', in-flight Gateway status, or unresolved
+    # remote delivery is NOT proof of physical paper output. "not_printed"
+    # requires a never-submitted queued job or a definite no-delivery refusal
+    # recorded before Gateway admission, not merely a terminal failed status.
+    # action_sync_status maps a Gateway 'failed' whose error starts with any
+    # _GATEWAY_UNKNOWN_MARKERS prefix to 'unknown'.
+    status = fields.Selection([
+        ("queued", "Queued"), ("submitted", "Submitted"), ("claimed", "Claimed"),
+        ("printing", "Printing"), ("success", "Submission completed"), ("failed", "Failed"),
+        ("unknown", "Unknown Outcome"),
+        ("partial", "Attention / Partial Delivery"),
+    ], default="queued", required=True, index=True)
+    physical_outcome = fields.Selection([
+        ("not_printed", "Not printed"),
+        ("printed", "Physically verified printed"),
+        ("unknown", "Physical output not verified"),
+    ], compute="_compute_physical_outcome")
+    # Full document bytes (rendered PDF/JPEG, native command streams).
+    # Restricted to system administrators: the job list/form never displays
+    # payload content, and every server-side reader (submit/sync/retry runs
+    # elevated or as cron). Same-company internal users keep status/history
+    # visibility without access to other documents' byte content.
+    payload = fields.Text(required=True, copy=False, readonly=True, groups="base.group_system")
+    payload_type = fields.Selection([
+        ("pdf", "PDF Vector"),
+        ("raster_jpeg", "JPEG Raster Banding"),
+        ("raw_cmd", "Native Printer Command"),
+        # NOTE — naming deliberately differs from the shared wire contract
+        # (contracts/print-payload-contract.json: raw/escpos/pdf/image).
+        # These are Odoo STORED column values (renaming them needs a data
+        # migration on deployed DBs); the wire translation lives in
+        # _PAYLOAD_TYPE_MAP below, which is pinned to the contract.
+    ], default="pdf", required=True, readonly=True)
+    protocol = fields.Selection([
+        ("raw", "Raw Text/Binary"),
+        ("escpos", "ESC/POS"),
+        ("zpl", "Zebra ZPL-II"),
+        ("tspl", "TSC TSPL"),
+    ], required=False, readonly=True)
+    raw_payload = fields.Text(string="Native Command Payload", readonly=True, groups="base.group_system")
+    printer_profile = fields.Text(string="Printer Hardware Profile", readonly=True)
+    fallback_binding_id = fields.Many2one("print_gateway.binding", string="Failover Backup Binding", readonly=True)
+    idempotency_key = fields.Char(required=True, index=True, copy=False, readonly=True)
+    attempts = fields.Integer(default=0, readonly=True)
+    reprint_attempt_count = fields.Integer(string="Reprint Attempts", default=0, readonly=True)
+    next_retry_at = fields.Datetime(index=True, readonly=True)
+    # Round-robin status polling fence. NULL first guarantees fresh/legacy
+    # eligible rows a turn before already-inspected unresolved rows.
+    last_status_polled_at = fields.Datetime(index=True, readonly=True, copy=False)
+    last_error = fields.Text(readonly=True)
+    source_model = fields.Char(readonly=True)
+    source_record_id = fields.Integer(readonly=True)
+    report_id = fields.Many2one("ir.actions.report", readonly=True, ondelete="set null")
+    create_date = fields.Datetime(readonly=True)
+    write_date = fields.Datetime(readonly=True)
+    completed_at = fields.Datetime(readonly=True)
+
+    _idempotency_unique = models.Constraint(
+        "UNIQUE(company_id, idempotency_key)",
+        "The same logical print operation may only be created once.",
+    )
+        # Terminal states: no further transitions are accepted once a job reaches one
+    # of these. "unknown" is terminal because it represents a reconcilable but
+    # ambiguous physical outcome that must be resolved by an operator, not by
+    # automated transitions.
+    _TERMINAL = frozenset(("success", "failed", "partial", "unknown"))
+    _TERMINAL_RETENTION_HOURS = 48
+    
+    # Valid status transitions for the print job state machine.
+    # Canonical happy path: queued -> submitted -> claimed -> printing
+    # -> success, exactly one hop at a time. Forward progress NEVER
+    # skips a stage (an idempotent replay observed beyond 'submitted' is
+    # recorded hop-by-hop via _advance_status, so no writer needs a
+    # shortcut). Failure/unknown are explicitly valid exits from any
+    # non-terminal state; nothing leaves a terminal state (self-loops
+    # only, and 'partial' accepts no inbound writes at all - the
+    # Gateway sync never produces it).
+    _VALID_TRANSITIONS = {
+        "queued": {"submitted", "failed", "unknown"},
+        "submitted": {"claimed", "failed", "unknown"},
+        "claimed": {"printing", "failed", "unknown"},
+        "printing": {"success", "failed", "unknown"},
+        "success": {"success"},
+        "failed": {"failed"},
+        "partial": {"partial"},
+        "unknown": {"unknown"},
+    }
+    
+    # Forward-progress chain for _advance_status. Failure/unknown are NOT
+    # chain hops: they are written directly (they are valid exits from any
+    # non-terminal state per the matrix above).
+    _FORWARD_CHAIN = ("queued", "submitted", "claimed", "printing", "success")
+
+    def _lock_status_row(self, job):
+        """Refresh the authoritative status under a row lock before mutation.
+
+        Remote status reconciliation happens after an HTTP round trip. The ORM
+        record can therefore contain an older status than a concurrent submit,
+        agent report, or recovery transaction. Lock and re-read the row before
+        consulting the transition matrix so a stale remote response cannot
+        downgrade or resurrect a newer state.
+        """
+        self.env.cr.execute(
+            psycopg2_sql.SQL("SELECT status FROM {} WHERE id = %s FOR UPDATE").format(
+                psycopg2_sql.Identifier(self._table)
+            ),
+            [job.id],
+        )
+        if not self.env.cr.fetchone():
+            raise ValidationError(_("Print job no longer exists."))
+        job.invalidate_recordset(["status", "gateway_job_id", "last_error", "completed_at"])
+
+    def _mark_gateway_job_missing(self, job, message):
+        """Mark a missing Gateway job unknown without clobbering a newer state."""
+        self.env.cr.execute(
+            psycopg2_sql.SQL("SELECT status, gateway_job_id FROM {} WHERE id = %s FOR UPDATE").format(
+                psycopg2_sql.Identifier(self._table)
+            ),
+            [job.id],
+        )
+        row = self.env.cr.fetchone()
+        if not row:
+            return False
+        current_status, current_gateway_job_id = row
+        # success/failed/partial are final; unknown is NOT final — it is the
+        # reconcilable state handled by the ambiguous branch below. Compare
+        # coerced ids: the raw SQL read yields None for "no remote id" while
+        # the ORM yields False for the same state.
+        final_states = ("success", "failed", "partial")
+        if current_status in final_states or (current_gateway_job_id or False) != (job.gateway_job_id or False):
+            job.invalidate_recordset(["status", "gateway_job_id", "last_error", "completed_at"])
+            return False
+        job.invalidate_recordset(["status", "gateway_job_id", "last_error", "completed_at"])
+        # A response-lost submission has no Gateway job id yet. A first 404
+        # does NOT prove that the physical submission never happened: the
+        # remote operation may still be invisible to this read path, or the
+        # Gateway may have already cleaned a terminal row. Preserve the
+        # UNKNOWN_SUBMISSION_OUTCOME provenance so the durable idempotency-key
+        # lookup remains eligible for later reconciliation. Only rows that
+        # already had a gateway_job_id become non-reconcilable after a missing
+        # remote record.
+        ambiguous_without_remote_id = (
+            not current_gateway_job_id
+            and current_status == "unknown"
+            and str(job.last_error or "").startswith("UNKNOWN_SUBMISSION_OUTCOME:")
+        )
+        if ambiguous_without_remote_id:
+            preserved_error = (
+                "UNKNOWN_SUBMISSION_OUTCOME: gateway lookup returned 404; "
+                "remote job identity is still unresolved and physical outcome remains unknown. "
+                + str(message or "")
+            ).strip()
+            next_retry = db_now_utc(self.env.cr) + datetime.timedelta(minutes=5)
+        else:
+            preserved_error = message
+            next_retry = False
+        missing_values = self._stable_terminal_values(job, "unknown", {
+            "status": "unknown",
+            "last_error": preserved_error,
+            "next_retry_at": next_retry,
+            "completed_at": db_now_utc(self.env.cr),
+        })
+        job.write(missing_values)
+        return True
+
+    def _stable_terminal_values(self, job, target, values):
+        """Preserve the FIRST terminal timestamp as the 48-hour retention clock.
+
+        Reconciliation may refresh errors or convert an ambiguous terminal
+        outcome to late success, but those writes must never restart retention.
+        Legacy terminal rows without completed_at inherit their existing
+        write_date once, then keep that timestamp permanently.
+        """
+        stable = dict(values)
+        if target not in self._TERMINAL:
+            return stable
+        if job.completed_at:
+            stable.pop("completed_at", None)
+        elif job.status in self._TERMINAL and job.write_date:
+            stable["completed_at"] = job.write_date
+        else:
+            stable.setdefault("completed_at", db_now_utc(job.env.cr))
+        return stable
+
+    def _advance_status(self, job, target, values):
+        """Write a status advance honoring the canonical chain.
+
+        `values` carries the final row content (gateway_job_id, attempts,
+        last_error, completed_at...); its "status" key is ignored in favor
+        of `target`. Forward hops (e.g. queued -> claimed on an idempotent
+        replay) are written stage-by-stage so the transition matrix never
+        needs a shortcut; failure/unknown targets are written directly.
+        Raises ValidationError for any regression or unknown target.
+        """
+        job.ensure_one()
+        self._lock_status_row(job)
+        values = self._stable_terminal_values(job, target, values)
+        if target not in self._FORWARD_CHAIN and target not in ("failed", "unknown"):
+            raise ValidationError(
+                _("Invalid print job state transition from '%s' to '%s'.")
+                % (job.status, target)
+            )
+        # Terminal states are immutable here. The only terminal-to-terminal
+        # reconciliation exception is the explicit late-success path handled
+        # by _apply_gateway_late_success(); ordinary remote failures/unknown
+        # responses must never downgrade a newer terminal result.
+        if job.status in self._TERMINAL and target != job.status:
+            raise ValidationError(
+                _("Invalid terminal print job transition from '%s' to '%s'.")
+                % (job.status, target)
+            )
+        if target == job.status:
+            # Refresh-only write (e.g. a sync updating last_error while the
+            # state is unchanged): write() skips the matrix on no-op
+            # transitions, so this is always legal.
+            refresh_values = dict(values)
+            refresh_values["status"] = target
+            job.write(refresh_values)
+            return
+        if target in ("failed", "unknown"):
+            terminal_values = dict(values)
+            terminal_values["status"] = target
+            job.write(terminal_values)
+            return
+        try:
+            position = self._FORWARD_CHAIN.index(job.status)
+            destination = self._FORWARD_CHAIN.index(target)
+        except ValueError:
+            raise ValidationError(
+                _("Invalid print job state transition from '%s' to '%s'.")
+                % (job.status, target)
+            )
+        if destination < position:
+            raise ValidationError(
+                _("Invalid print job state transition from '%s' to '%s'.")
+                % (job.status, target)
+            )
+        for hop in self._FORWARD_CHAIN[position + 1:destination + 1]:
+            hop_values = {"status": hop}
+            if hop == target:
+                hop_values.update({key: value for key, value in values.items() if key != "status"})
+            job.write(hop_values)
+
+    # Payload kinds recognized in the canonical contract. A payload whose
+    # type is not one of these is malformed input and must fail - it is
+    # never "repaired" into a PDF job.
+    # Canonical wire types, EXACTLY mirroring the Gateway
+    # (src/lib/payload.ts) and the Go agent
+    # (agent/internal/payload/payload.go): raw, escpos, image, pdf.
+    # "jpeg"/"raster_jpeg" are INTERNAL column names, never payload types -
+    # the drift that accepted them here but failed at the Gateway 422 is
+    # removed on purpose: a persisted job must always be submittable.
+    _PAYLOAD_TYPE_MAP = {
+        "raw": "raw_cmd",
+        "escpos": "raw_cmd",
+        "image": "raster_jpeg",
+        "pdf": "pdf",
+    }
+
+    @api.model
+    def _resolve_payload_kind(self, payload_json):
+        """Parse a persisted payload string and resolve its declared kind.
+
+        Strict by contract: unparseable JSON, a non-object, or an unknown
+        ``type`` all raise. There is no silent default.
+        """
+        try:
+            parsed = json.loads(payload_json) if isinstance(payload_json, str) else payload_json
+        except (TypeError, ValueError) as exc:
+            raise ValidationError(_("Print payload is not valid JSON: %s") % exc) from exc
+        if not isinstance(parsed, dict):
+            raise ValidationError(_("Print payload must be a JSON object."))
+        ptype = str(parsed.get("type") or "").strip().lower()
+        if ptype not in self._PAYLOAD_TYPE_MAP:
+            raise ValidationError(
+                _("Unsupported payload type '%s'. Expected one of: %s.")
+                % (ptype or "(missing)", ", ".join(sorted(self._PAYLOAD_TYPE_MAP)))
+            )
+        return parsed, self._PAYLOAD_TYPE_MAP[ptype]
+
+    @api.model_create_multi
+    def create(self, vals_list):
+        for vals in vals_list:
+            payload_json = vals.get("payload")
+            if "payload_type" not in vals:
+                if not payload_json:
+                    raise ValidationError(_("A print job requires a payload."))
+                parsed, resolved_type = self._resolve_payload_kind(payload_json)
+                vals["payload_type"] = resolved_type
+                if resolved_type == "raw_cmd":
+                    # Protocol must be stated explicitly - by the payload,
+                    # by the caller's vals, or not at all (which fails the
+                    # constraint below). It is never inferred from the type.
+                    if "protocol" not in vals or not vals.get("protocol"):
+                        proto = parsed.get("protocol")
+                        if not proto:
+                            raise ValidationError(_(
+                                "Native command payloads require an explicit protocol "
+                                "(raw, escpos, zpl, or tspl); none was declared."
+                            ))
+                        vals["protocol"] = proto
+                    payload_proto = parsed.get("protocol")
+                    if payload_proto and payload_proto != vals["protocol"]:
+                        raise ValidationError(_(
+                            "Payload protocol '%s' contradicts job protocol '%s'."
+                        ) % (payload_proto, vals["protocol"]))
+                else:
+                    vals["protocol"] = False
+            elif vals.get("payload_type") in ("pdf", "raster_jpeg"):
+                if payload_json:
+                    _parsed, resolved_type = self._resolve_payload_kind(payload_json)
+                    if resolved_type != vals["payload_type"]:
+                        raise ValidationError(_(
+                            "Payload content (type '%s') contradicts the declared "
+                            "payload_type '%s'."
+                        ) % (resolved_type, vals["payload_type"]))
+                # Absent/False protocol is legal; an actual protocol on a
+                # pdf/raster job is a contradiction and must fail, not be
+                # silently stripped.
+                if vals.get("protocol"):
+                    raise ValidationError(_("PDF and Raster payloads cannot specify a printer protocol."))
+                vals["protocol"] = False
+            elif vals.get("payload_type") == "raw_cmd":
+                if payload_json:
+                    parsed, resolved_type = self._resolve_payload_kind(payload_json)
+                    if resolved_type != "raw_cmd":
+                        raise ValidationError(_(
+                            "Payload content (type '%s') contradicts the declared "
+                            "payload_type 'raw_cmd'."
+                        ) % resolved_type)
+                    if not vals.get("protocol"):
+                        raise ValidationError(_("Native command payloads require a valid printer protocol."))
+        return super().create(vals_list)
+
+    def write(self, vals):
+        if "status" in vals:
+            target_status = vals["status"]
+            for job in self:
+                if job.status and target_status != job.status:
+                    allowed = self._VALID_TRANSITIONS.get(job.status, set())
+                    if target_status not in allowed:
+                        raise ValidationError(
+                            _("Invalid print job state transition from '%s' to '%s'.")
+                            % (job.status, target_status)
+                        )
+        if "payload_type" in vals and vals["payload_type"] in ("pdf", "raster_jpeg") and vals.get("protocol"):
+            raise ValidationError(_("PDF and Raster payloads cannot specify a printer protocol."))
+        if "payload" in vals and not vals.get("payload_type"):
+            # A re-written payload must still resolve to a valid kind and,
+            # for this row's payload_type, stay consistent with it.
+            parsed, resolved_type = self._resolve_payload_kind(vals["payload"])
+            for job in self:
+                if job.payload_type and resolved_type != job.payload_type:
+                    raise ValidationError(_(
+                        "New payload content (type '%s') contradicts this job's "
+                        "payload_type '%s'."
+                    ) % (resolved_type, job.payload_type))
+                if job.payload_type == "raw_cmd":
+                    payload_proto = parsed.get("protocol")
+                    if not payload_proto:
+                        raise ValidationError(_("Native command payloads require an explicit protocol in the payload."))
+                    if job.protocol and payload_proto != job.protocol:
+                        raise ValidationError(_(
+                            "Payload protocol '%s' contradicts job protocol '%s'."
+                        ) % (payload_proto, job.protocol))
+        # protocol is not applicable for pdf/raster_jpeg payloads; the write
+        # method's constrains check already enforces this, so no additional
+        # mutation is needed here.
+        return super().write(vals)
+
+    @api.constrains("payload_type", "protocol")
+    def _check_payload_type_and_protocol(self):
+        for job in self:
+            if job.payload_type in ("pdf", "raster_jpeg"):
+                if job.protocol:
+                    raise ValidationError(_("PDF and Raster payloads cannot specify a printer protocol."))
+            elif job.payload_type == "raw_cmd":
+                if not job.protocol:
+                    raise ValidationError(_("Native command payloads require a valid printer protocol."))
+
+    # Marker prefixes the Gateway uses to say "execution reached an
+    # ambiguous physical boundary". These MUST stay in lockstep with
+    # PHYSICAL_OUTCOME_UNKNOWN_MARKERS in src/lib/job-status.ts; the
+    # contract test test_gateway_marker_parity asserts both lists match.
+    _GATEWAY_UNKNOWN_MARKERS = (
+        "AGENT_EXECUTION_TIMEOUT",
+        "AGENT_RESTART_DURING_PRINT",
+        "JOB_EXPIRED_DURING_PRINT",
+        "UNKNOWN_PARTIAL_DELIVERY",
+        "UNKNOWN_SUBMISSION_OUTCOME",
+    )
+
+    @api.depends("status", "last_error", "gateway_job_id")
+    def _compute_physical_outcome(self):
+        for job in self:
+            error = str(job.last_error or "")
+            # Reject inferred paper output from status alone. In particular,
+            # claimed/printing/failed-with-remote-identity can have produced
+            # some or all of a physical page, even if the RPC says failed.
+            if any(error.startswith(marker) for marker in self._GATEWAY_UNKNOWN_MARKERS):
+                job.physical_outcome = "unknown"
+            elif job.status == "queued" and not job.gateway_job_id:
+                # Still only in Odoo's durable outbox; no Gateway admission.
+                job.physical_outcome = "not_printed"
+            elif (
+                job.status == "failed" and not job.gateway_job_id
+                and error.startswith(("GATEWAY_REJECTED_", "CONNECTION_ERROR:"))
+            ):
+                # A deterministic Gateway HTTP refusal or proven connect-
+                # phase failure occurred before print-job admission.
+                job.physical_outcome = "not_printed"
+            else:
+                # Successful transport is not proof of paper. Nor is an
+                # unexpected/undecidable failure proof that none was printed.
+                job.physical_outcome = "unknown"
+
+    @api.private
+    @api.model
+    def create_operation(self, *, company, gateway_config, printer_id, destination, document_type,
+                         payload, source_model=None, source_record_id=None, report=None,
+                         idempotency_key=None, payload_type=None, protocol=None,
+                         raw_payload=None, printer_profile=None, fallback_binding=None,
+                         destination_key=None):
+        # TRUSTED SERVICE BOUNDARY (not reachable via RPC):
+        # print_gateway.print_job is intentionally read-only for normal users
+        # (ACL: group_user has read only), yet the print flows run as those
+        # users. Creation therefore runs with sudo INSIDE this method only,
+        # AFTER the server-side scope/company/protocol validation above and
+        # below. The ONLY legal producers are server-side router code paths
+        # (report/POS/kitchen/intent/raw/test-page) and retry actions - all of
+        # which validated the caller's authorization before delegating here.
+        # Granting blanket create rights on the model instead would let any
+        # user forge arbitrary outbox rows (printer/protocol/data of choice).
+        self_su = self.sudo()
+        if not company or not gateway_config:
+            raise ValidationError(_("Gateway configuration is missing."))
+        if company != self.env.company:
+            raise ValidationError(_("Print operations must be created in the active Odoo company."))
+        expected_config_owner = company.parent_id or company
+        if gateway_config.company_id != expected_config_owner:
+            raise ValidationError(_("Gateway configuration does not belong to the company hierarchy of the active Odoo company."))
+        if not printer_id or not str(printer_id).strip():
+            raise ValidationError(_("Printer is required."))
+        if not destination or not str(destination).strip():
+            raise ValidationError(_("Destination is required."))
+        if not document_type or not str(document_type).strip():
+            raise ValidationError(_("Document type is required."))
+        # Phase 13 canonical peripheral representation: INACTIVE peripherals
+        # are omitted entirely rather than serialized as "none" actions.
+        if isinstance(payload, dict) and isinstance(payload.get("peripherals"), dict):
+            active = {k: v for k, v in payload["peripherals"].items() if v and v != "none"}
+            if active:
+                payload = dict(payload, peripherals=active)
+            else:
+                payload = {k: v for k, v in payload.items() if k != "peripherals"}
+        # Bound encoded content before JSON serialization or base64 decoding.
+        # Large POS RPC data must not make the worker allocate multiple copies
+        # of a document that the Gateway's 5 MiB wire contract will reject.
+        data_field = payload.get("data") if isinstance(payload, dict) else None
+        if isinstance(data_field, str) and data_field:
+            if len(data_field) > MAX_PRINT_BASE64_CHARS:
+                raise ValidationError(_("Print payload exceeds the 5 MiB Gateway/Agent safety limit."))
+            # Canonicalize base64: the Gateway requires canonical encoding
+            # (decoded bytes re-encoded must equal the submitted string), so
+            # persist the canonical form once here instead of failing 422 at
+            # submit time for valid-but-non-canonical input.
+            try:
+                data_field = base64.b64encode(base64.b64decode(data_field.encode("ascii"), validate=True)).decode("ascii")
+                payload = dict(payload, data=data_field)
+            except (TypeError, ValueError, base64.binascii.Error, UnicodeEncodeError):
+                pass  # creation validators below reject undecodable content
+        try:
+            payload_json = json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
+        except (TypeError, ValueError) as exc:
+            raise ValidationError(_("Print payload is not JSON serializable.")) from exc
+        # Single wire contract (contracts/print-payload-contract.json
+        # maxPayloadBytes = 5 MiB, Gateway payload.ts, agent payload.go, and
+        # the submit validator below all enforce decoded content bytes): a
+        # job that cannot be submitted must not be created. Measure the same
+        # decoded bytes the wire enforces; without a data field fall back to
+        # the serialized size against the same 5 MiB number (such rows are
+        # invalid regardless — the data check below rejects them).
+        if isinstance(data_field, str) and data_field:
+            try:
+                decoded_size = len(base64.b64decode(data_field.encode("ascii"), validate=True))
+            except (TypeError, ValueError, base64.binascii.Error):
+                decoded_size = None
+            if decoded_size is not None and decoded_size > MAX_PRINT_CONTENT_BYTES:
+                raise ValidationError(_("Print payload exceeds the 5 MiB Gateway/Agent safety limit."))
+        elif len(payload_json.encode("utf-8")) > MAX_PRINT_CONTENT_BYTES:
+            raise ValidationError(_("Print payload exceeds the 5 MiB Gateway/Agent safety limit."))
+
+        # Strict kind resolution with NO defaults: a malformed payload fails
+        # HERE, at creation, exactly as it would before submission. Persisted
+        # content is validated to the same standard as external API input.
+        parsed_payload, derived_type = self._resolve_payload_kind(payload_json)
+
+        if payload_type:
+            if payload_type != derived_type:
+                raise ValidationError(_(
+                    "Payload content (type '%s') contradicts the declared payload_type '%s'."
+                ) % (derived_type, payload_type))
+        else:
+            payload_type = derived_type
+
+        if payload_type in ("pdf", "raster_jpeg"):
+            if protocol:
+                raise ValidationError(_("PDF and Raster payloads cannot specify a printer protocol."))
+            effective_protocol = False
+        else:
+            payload_protocol = parsed_payload.get("protocol")
+            if protocol and payload_protocol and protocol != payload_protocol:
+                raise ValidationError(_(
+                    "Protocol argument '%s' contradicts the payload's own protocol '%s'."
+                ) % (protocol, payload_protocol))
+            effective_protocol = protocol or payload_protocol
+            if not effective_protocol:
+                raise ValidationError(_(
+                    "Native command payloads require an explicit printer protocol; "
+                    "none was declared (protocol is never inferred from the payload type)."
+                ))
+
+        key = (idempotency_key or uuid.uuid4().hex).strip()
+
+        def same_operation(existing):
+            return (
+                existing.printer_id == str(printer_id).strip()
+                and existing.destination == str(destination).strip()
+                and (existing.destination_key or False) == (destination_key or False)
+                and existing.document_type == str(document_type).strip().lower()
+                and existing.payload == payload_json
+            )
+
+        existing = self_su.search([("company_id", "=", company.id), ("idempotency_key", "=", key)], limit=1)
+        if existing:
+            if not same_operation(existing):
+                raise ValidationError(_("The idempotency key is already used for a different print operation."))
+            return existing
+
+        values = {
+            "company_id": company.id,
+            "gateway_config_id": gateway_config.id,
+            "printer_id": str(printer_id).strip(),
+            "destination": str(destination).strip(),
+            "destination_key": destination_key or False,
+            "document_type": str(document_type).strip().lower(),
+            "status": "queued",
+            "payload": payload_json,
+            "payload_type": payload_type,
+            "protocol": effective_protocol,
+            "raw_payload": (raw_payload.replace("\x00", "\\x00") if isinstance(raw_payload, str) else False),
+            "printer_profile": printer_profile or False,
+            "fallback_binding_id": fallback_binding.id if fallback_binding else False,
+            "idempotency_key": key,
+            "next_retry_at": db_now_utc(self.env.cr),
+            "source_model": source_model or False,
+            "source_record_id": source_record_id or False,
+            "report_id": report.id if report else False,
+        }
+        try:
+            with self.env.cr.savepoint():
+                job = self_su.create(values)
+                # Creation performs the SAME strict persisted-payload
+                # validation as submission: malformed content can never be
+                # stored and dispatched later.
+                job._validate_persisted_payload(json.loads(payload_json))
+                return job
+        except IntegrityError:
+            existing = self_su.search([("company_id", "=", company.id), ("idempotency_key", "=", key)], limit=1)
+            if existing:
+                if not same_operation(existing):
+                    raise ValidationError(_("The idempotency key is already used for a different print operation."))
+                return existing
+            raise
+
+    def _claim_submission_lease(self, job):
+        """Claim a committed outbox row without holding a DB lock over HTTP."""
+        in_test = False
+        try:
+            from odoo import tools
+            in_test = bool(
+                tools.config.get("test_enable")
+                or getattr(self.env.registry, "in_test", False)
+                or (hasattr(self.env.registry, "in_test_mode") and self.env.registry.in_test_mode())
+            )
+        except Exception:
+            in_test = False
+        if in_test:
+            token = uuid.uuid4().hex
+            job.write({
+                "submit_claim_token": token,
+                "submit_claimed_at": fields.Datetime.now(),
+            })
+            return token
+
+        token = uuid.uuid4().hex
+        cr = self.env.registry.cursor()
+        claimed = False
+        try:
+            cr.execute("SET LOCAL lock_timeout = '5s'")
+            now = db_now_utc(cr)
+            stale_before = now - datetime.timedelta(seconds=120)
+            cr.execute(
+                """
+                UPDATE print_gateway_print_job
+                   SET submit_claim_token = %s,
+                       submit_claimed_at = %s
+                 WHERE id = %s
+                   AND gateway_job_id IS NULL
+                   AND status NOT IN ('success', 'failed', 'partial', 'unknown')
+                   AND (
+                       submit_claim_token IS NULL
+                       OR submit_claimed_at IS NULL
+                       OR submit_claimed_at < %s
+                   )
+                RETURNING id
+                """,
+                (token, now, job.id, stale_before),
+            )
+            row = cr.fetchone()
+            claimed = bool(row)
+            if claimed:
+                cr.commit()
+                return token
+
+            # This query uses the same dedicated cursor/transaction as the
+            # claim attempt. READ COMMITTED gives it a fresh snapshot, so a
+            # committed row that already exists but is owned by another
+            # worker is distinguishable from a row that exists only in the
+            # caller's still-uncommitted transaction.
+            cr.execute(
+                """
+                SELECT id
+                  FROM print_gateway_print_job
+                 WHERE id = %s
+                """,
+                (job.id,),
+            )
+            committed_visible = bool(cr.fetchone())
+            cr.rollback()
+            if committed_visible:
+                return False
+
+            # No committed row is visible on the dedicated cursor: the row
+            # is still uncommitted in the caller's transaction. Preserve the
+            # same-transaction submission path without holding a lock.
+            return "__precommit__"
+        finally:
+            cr.close()
+
+    def _in_test_mode(self):
+        """True inside Odoo's test harness (unit + post-install tests).
+
+        Delegates to the shared implementation in print_policy to avoid
+        duplicating the same detection logic in multiple models.
+        """
+        from .print_policy import is_in_test_mode
+        return is_in_test_mode(self.env)
+
+    def _durable_job_visible(self):
+        """Whether a dedicated cursor can see this row (i.e. it is committed).
+
+        Test fixtures created inside the test transaction are invisible to the
+        dedicated committing cursor used by the durable persist path.
+        """
+        cr = self.env.registry.cursor()
+        try:
+            cr.execute("SELECT 1 FROM print_gateway_print_job WHERE id = %s", (self.id,))
+            return bool(cr.fetchone())
+        finally:
+            cr.close()
+
+    def _persist_state(self, values, *, claim_token=None, release_claim=True):
+        self.ensure_one()
+        in_test = self._in_test_mode()
+        if in_test and not self._durable_job_visible():
+            # Uncommitted fixture row: the durable path below could never see
+            # it through its dedicated cursor. Best-effort write on the
+            # caller's own cursor (rolls back with the test transaction).
+            # Committed rows always take the durable path so the write
+            # survives the caller's rollback, exactly as in production.
+            write_values = dict(values)
+            if release_claim:
+                write_values["submit_claim_token"] = False
+                write_values["submit_claimed_at"] = False
+            self.sudo().write(write_values)
+            return True
+
+        cr = self.env.registry.cursor()
+        try:
+            cr.execute("SET LOCAL lock_timeout = '5s'")
+            if claim_token:
+                cr.execute(
+                    """
+                    SELECT status, submit_claim_token
+                      FROM print_gateway_print_job
+                     WHERE id = %s
+                     FOR UPDATE
+                    """,
+                    (self.id,),
+                )
+                row = cr.fetchone()
+                if not row:
+                    cr.rollback()
+                    return False
+                if row[1] != claim_token and not (in_test and row[1] is None):
+                    # Lease held by another worker. (In tests the lease token
+                    # itself lives only in the caller's uncommitted
+                    # transaction and is invisible here; a NULL durable claim
+                    # proves no other worker holds the row, so the caller —
+                    # the single-threaded test harness — provably does.)
+                    cr.rollback()
+                    return False
+                # A concurrent status reconciler may have terminalized the
+                # row while this submission HTTP request was in flight. The
+                # submission lease alone is not permission to resurrect or
+                # overwrite that authoritative terminal state. Refuse every
+                # further submission-side mutation once the locked row is
+                # terminal.
+                if row[0] in self._TERMINAL:
+                    cr.rollback()
+                    return False
+            env = api.Environment(cr, self.env.uid, dict(self.env.context))
+            write_values = dict(values)
+            if claim_token and release_claim:
+                write_values.update({
+                    "submit_claim_token": False,
+                    "submit_claimed_at": False,
+                })
+            env["print_gateway.print_job"].sudo().browse(self.id).write(write_values)
+            cr.commit()
+            if in_test:
+                # The caller transaction may itself be rolled back (or hold
+                # uncommitted writes of its own); flushing it against the row
+                # version we just committed can raise a serialization
+                # failure. Drop the whole environment cache without flushing
+                # so later reads in this transaction re-fetch the durable
+                # truth from the database.
+                self.env.cache.invalidate()
+            else:
+                self.invalidate_recordset([
+                    "status", "gateway_job_id", "attempts", "last_error",
+                    "next_retry_at", "completed_at", "printer_id", "destination",
+                    "submit_claim_token", "submit_claimed_at",
+                ])
+            return True
+        finally:
+            cr.close()
+
+    def _advance_status_claimed(self, job, target, values, claim_token):
+        """Advance a claimed job through the canonical status chain."""
+        job.ensure_one()
+        if target not in self._FORWARD_CHAIN and target not in ("failed", "unknown"):
+            raise ValidationError(
+                _("Invalid print job state transition from '%s' to '%s'.")
+                % (job.status, target)
+            )
+        in_test = False
+        try:
+            from odoo import tools
+            in_test = bool(
+                tools.config.get("test_enable")
+                or getattr(self.env.registry, "in_test", False)
+                or (hasattr(self.env.registry, "in_test_mode") and self.env.registry.in_test_mode())
+            )
+        except Exception:
+            in_test = False
+        if in_test:
+            self._advance_status(job, target, values)
+            if job.submit_claim_token:
+                job.sudo().write({"submit_claim_token": False, "submit_claimed_at": False})
+            return True
+
+        cr = self.env.registry.cursor()
+        try:
+            cr.execute("SET LOCAL lock_timeout = '5s'")
+            cr.execute(
+                """
+                SELECT status, submit_claim_token
+                  FROM print_gateway_print_job
+                 WHERE id = %s
+                 FOR UPDATE
+                """,
+                (job.id,),
+            )
+            row = cr.fetchone()
+            if not row or row[1] != claim_token:
+                cr.rollback()
+                return False
+            env = api.Environment(cr, self.env.uid, dict(self.env.context))
+            locked_job = env["print_gateway.print_job"].sudo().browse(job.id)
+            current = locked_job.status
+            # A submission worker may receive a stale response after another
+            # transaction has already terminalized the Odoo row. Its claim
+            # token remains only as stale bookkeeping; it must never be allowed
+            # to downgrade a newer terminal state to failed/unknown.
+            if current in self._TERMINAL and current != target:
+                cr.rollback()
+                return False
+            if current == target or target in ("failed", "unknown"):
+                final_values = self._stable_terminal_values(locked_job, target, values)
+                final_values["status"] = target
+                final_values.update({
+                    "submit_claim_token": False,
+                    "submit_claimed_at": False,
+                })
+                locked_job.write(final_values)
+            else:
+                try:
+                    start = self._FORWARD_CHAIN.index(current)
+                    end = self._FORWARD_CHAIN.index(target)
+                except ValueError:
+                    raise ValidationError(
+                        _("Invalid print job state transition from '%s' to '%s'.")
+                        % (current, target)
+                    )
+                if end < start:
+                    raise ValidationError(
+                        _("Invalid print job state transition from '%s' to '%s'.")
+                        % (current, target)
+                    )
+                for hop in self._FORWARD_CHAIN[start + 1:end + 1]:
+                    hop_values = {"status": hop}
+                    if hop == target:
+                        hop_values.update({k: v for k, v in values.items() if k != "status"})
+                        hop_values.update({
+                            "submit_claim_token": False,
+                            "submit_claimed_at": False,
+                        })
+                    locked_job.write(hop_values)
+            cr.commit()
+            job.invalidate_recordset([
+                "status", "gateway_job_id", "attempts", "last_error",
+                "next_retry_at", "completed_at", "submit_claim_token",
+                "submit_claimed_at",
+            ])
+            return True
+        finally:
+            cr.close()
+
+    def _validate_persisted_payload(self, payload):
+        self.ensure_one()
+        if not isinstance(payload, dict):
+            raise ValidationError(_("Stored print payload must be a dictionary."))
+        ptype = payload.get("type")
+        if not ptype:
+            raise ValidationError(_("Stored print payload is missing 'type'."))
+        encoding = payload.get("encoding")
+        if encoding != "base64":
+            raise ValidationError(_("Stored print payload must declare encoding 'base64', got '%s'.") % encoding)
+
+        if self.payload_type == "pdf":
+            if ptype != "pdf":
+                raise ValidationError(_("Payload type mismatch: expected 'pdf', got '%s'.") % ptype)
+            if payload.get("protocol"):
+                raise ValidationError(_("PDF payloads cannot specify a printer protocol."))
+        elif self.payload_type == "raster_jpeg":
+            if ptype != "image":
+                raise ValidationError(_("Payload type mismatch: expected 'image', got '%s'.") % ptype)
+            if payload.get("protocol"):
+                raise ValidationError(_("Raster payloads cannot specify a printer protocol."))
+        elif self.payload_type == "raw_cmd":
+            if ptype not in ("raw", "escpos"):
+                raise ValidationError(_("Payload type mismatch: expected raw/escpos, got '%s'.") % ptype)
+            payload_proto = payload.get("protocol")
+            if not payload_proto:
+                # The WIRE contract requires the protocol inside the payload
+                # too; the column alone is not enough (the agent validates
+                # the submitted JSON, not this row).
+                raise ValidationError(_("Raw/escpos payloads must declare their protocol inside the payload."))
+            if ptype == "escpos" and payload_proto != "escpos":
+                raise ValidationError(_("ESC/POS payloads require protocol 'escpos', got '%s'.") % payload_proto)
+            if payload_proto not in ("raw", "escpos", "zpl", "tspl"):
+                raise ValidationError(_("Unsupported payload protocol '%s'.") % payload_proto)
+            if self.protocol and payload_proto != self.protocol:
+                raise ValidationError(
+                    _("Payload protocol mismatch: expected '%s', got '%s'.")
+                    % (self.protocol, payload_proto)
+                )
+        else:
+            raise ValidationError(_("Unknown payload type column '%s'.") % self.payload_type)
+
+        # The wire contract names this field "data" only. The old
+        # "base64" alias is removed: a job submitting {"base64": ...} would
+        # pass here and then 422 at the Gateway.
+        raw_data = payload.get("data")
+        if not raw_data or not isinstance(raw_data, str):
+            raise ValidationError(_("Stored print payload data must be a non-empty string."))
+        if len(raw_data) > MAX_PRINT_BASE64_CHARS:
+            raise ValidationError(_("Stored print payload exceeds the 5 MiB Gateway/Agent safety limit."))
+        try:
+            decoded = base64.b64decode(raw_data.encode("ascii"), validate=True)
+        except (UnicodeEncodeError, ValueError, base64.binascii.Error) as exc:
+            raise ValidationError(_("Stored print payload data is not valid base64.")) from exc
+        if not decoded:
+            raise ValidationError(_("Stored print payload decoded to empty content."))
+        if len(decoded) > MAX_PRINT_CONTENT_BYTES:
+            raise ValidationError(_("Stored print payload exceeds the 5 MiB Gateway/Agent safety limit."))
+        # Content/signature parity with the Gateway and agent validators:
+        # what claims to be a PDF must start with %PDF-, a raster must be a
+        # JPEG, and byte streams must not smuggle PDF headers.
+        looks_like_pdf = decoded[:5] == b"%PDF-"
+        looks_like_jpeg = len(decoded) >= 3 and decoded[0] == 0xFF and decoded[1] == 0xD8 and decoded[2] == 0xFF
+        if self.payload_type == "pdf" and not looks_like_pdf:
+            raise ValidationError(_("PDF payload must start with the %%PDF- signature."))
+        if self.payload_type == "pdf" and b"%%EOF" not in decoded[-4096:]:
+            raise ValidationError(_("Stored PDF is incomplete (missing the %%EOF trailer)."))
+        if self.payload_type == "raster_jpeg" and not looks_like_jpeg:
+            raise ValidationError(_("Raster payload must be a JPEG."))
+        if self.payload_type == "raw_cmd" and looks_like_pdf:
+            raise ValidationError(_("PDF bytes cannot be labeled as raw/escpos; the Gateway would reject this submission."))
+
+        peripherals = payload.get("peripherals")
+        if peripherals is not None:
+            if not isinstance(peripherals, dict):
+                raise ValidationError(_("Payload peripherals must be a dictionary."))
+            active_periph = {
+                k: v for k, v in peripherals.items()
+                if v and v != "none"
+            }
+            if not active_periph:
+                payload.pop("peripherals", None)
+            else:
+                is_escpos = ptype == "escpos" or (ptype == "raw" and (payload.get("protocol") == "escpos" or self.protocol == "escpos"))
+                if not is_escpos:
+                    raise ValidationError(_("Peripherals are only supported for ESC/POS protocol."))
+                payload["peripherals"] = active_periph
+
+    def _gateway_idempotency_key(self):
+        """Return a tenant-safe Gateway idempotency key for this Odoo job.
+
+        Odoo's durable idempotency constraint is company-scoped, while the
+        Gateway's uniqueness boundary is tenant-scoped. Namespace the Odoo
+        operation with its owning company before sending it across the
+        boundary so identical caller-supplied keys from two companies in the
+        same Gateway tenant cannot collapse into one Gateway job. The digest
+        is deterministic, bounded, and stable across retries/restarts.
+        """
+        self.ensure_one()
+        source = f"odoo:{self.company_id.id}:{self.idempotency_key}"
+        return hashlib.sha256(source.encode("utf-8")).hexdigest()
+
+    def _submission_body(self):
+        self.ensure_one()
+        try:
+            payload = json.loads(self.payload)
+        except (TypeError, ValueError) as exc:
+            raise ValidationError(_("Stored print payload is corrupted.")) from exc
+        self._validate_persisted_payload(payload)
+        # Explicit TTL (4h) instead of the Gateway 1h default: a 1h outage
+        # (agent down, network partition) would expire Odoo jobs into unknown
+        # outcomes requiring operator reprints. 4h stays well under the
+        # Gateway 24h cap and the 48h retention window.
+        expires_at = (db_now_utc(self.env.cr) + datetime.timedelta(hours=4)).isoformat() + "Z"
+        body = {
+            "printerId": self.printer_id,
+            "documentType": self.document_type,
+            "destination": self.destination,
+            "payload": payload,
+            "idempotencyKey": self._gateway_idempotency_key(),
+            "expiresAt": expires_at,
+        }
+        return body
+
+    def _post_source_audit(self, message):
+        """Post optional chatter without poisoning the print-job transaction.
+
+        An ORM write can raise a PostgreSQL error, which aborts the current
+        transaction until rolled back. Chatter is best-effort: isolate every
+        message in a savepoint before catching a failure so print delivery,
+        retry bookkeeping and claim finalization remain valid.
+        """
+        for job in self:
+            if not job.source_model or not job.source_record_id:
+                continue
+            try:
+                with job.env.cr.savepoint():
+                    record = job.env[job.source_model].browse(job.source_record_id).exists()
+                    if record and hasattr(record, "message_post"):
+                        record.message_post(body=message, subtype_xmlid="mail.mt_note")
+            except Exception as exc:
+                _logger.debug("Chatter audit logging skipped: %s", exc)
+
+    @api.model
+    def _is_pre_dispatch_error(self, exc):
+        """True ONLY when the exception chain proves the HTTP request never
+        left this host (connect refused / DNS failure / connect timeout).
+
+        requests wraps urllib3 errors whose meaning depends on the phase:
+        NewConnectionError / ConnectTimeoutError / NameResolutionError are
+        raised during connection establishment (zero bytes transmitted);
+        ProtocolError / RemoteDisconnected / ReadTimeoutError /
+        ConnectionResetError can all fire AFTER the request body reached the
+        Gateway. We never guess: anything not provably connect-phase is an
+        ambiguous dispatch, eligible for neither failover nor automatic
+        retry - the durable idempotency key protects a deliberate replay.
+        """
+        seen = set()
+        stack = [exc]
+        while stack:
+            current = stack.pop()
+            if current is None or id(current) in seen:
+                continue
+            seen.add(id(current))
+            name = type(current).__name__
+            if name in (
+                "ConnectionRefusedError",
+                "ConnectTimeout",
+                "gaierror",
+                "NewConnectionError",
+                "ConnectTimeoutError",
+                "NameResolutionError",
+            ):
+                return True
+            if name in (
+                "ProtocolError",
+                "ReadTimeoutError",
+                "RemoteDisconnected",
+                "ConnectionResetError",
+                "BrokenPipeError",
+                "TimeoutError",
+                "SSLError",
+                "CertificateError",
+            ):
+                return False
+            stack.append(getattr(current, "__cause__", None))
+            stack.append(getattr(current, "__context__", None))
+            for arg in getattr(current, "args", ()):
+                if isinstance(arg, BaseException):
+                    stack.append(arg)
+        return False
+
+    @api.model
+    def _is_deterministic_failure(self, exc):
+        """True when retrying can NEVER succeed: validation/programming
+        failures, not transport failures.
+
+        - Odoo ValidationError: our own persisted payload failed strict
+          validation (corrupted/stale row) - resubmitting identical bytes
+          fails identically.
+        - GATEWAY_INVALID_RESPONSE: the Gateway answered 200 with a body
+          that violates its own contract (no job id / unparsable JSON) -
+          a gateway-side bug, not a transport blip.
+        - requests URL/config errors (MissingSchema/InvalidSchema/
+          InvalidURL/InvalidHeader): broken Gateway configuration, not a
+          network condition.
+
+        Everything else (HTTP 5xx, chunked/stream errors, ambiguous
+        timeouts) stays on the retry path: the durable idempotency key
+        makes a replay safe.
+        """
+        if isinstance(exc, ValidationError):
+            return True
+        message = str(exc)[:120]
+        if "GATEWAY_INVALID_RESPONSE" in message:
+            return True
+        return type(exc).__name__ in (
+            "MissingSchema",
+            "InvalidSchema",
+            "InvalidURL",
+            "InvalidHeader",
+        )
+
+    def _record_ambiguous_submission(self, job, exc, detail, raise_on_failure=False, claim_token=None):
+        """Terminalize a submission whose outcome cannot be proven.
+
+        Used for post-dispatch timeouts AND for connection failures that are
+        not provably connect-phase. No failover, no automatic retry: the job
+        may already exist on the Gateway, and the durable idempotency key
+        makes a deliberate operator replay safe instead of a silent duplicate.
+        """
+        values = {
+            "status": "unknown",
+            "attempts": job.attempts + 1,
+            "last_error": "UNKNOWN_SUBMISSION_OUTCOME: %s (ambiguous dispatch)" % detail,
+            "next_retry_at": False,
+        }
+        if claim_token:
+            persisted = job._persist_state(values, claim_token=claim_token)
+        elif raise_on_failure:
+            persisted = job._persist_state(values)
+        else:
+            job.write(values)
+            persisted = True
+        if not persisted:
+            return False
+        job._post_source_audit(_("WARNING: Print Job #%s submission outcome is unknown on '%s'.") % (job.id, job.printer_id))
+        _logger.warning("Gateway submission outcome unknown for job %s: %s", job.idempotency_key[:8], detail)
+        if raise_on_failure:
+            raise ValidationError(_("Gateway submission outcome is unknown; physical outcome is ambiguous. Automated retries are paused to prevent duplicate prints. Operator reprint required.")) from exc
+
+    def _primary_shared_for_fallback(self, job):
+        """Only current primary permission may authorize an automatic backup.
+
+        A saved binding is insufficient: its primary may have become local-only
+        after the outbox operation was created. Failed/missing discovery keeps
+        the original identity queued through the existing safe backoff.
+        """
+        try:
+            config = job.gateway_config_id.sudo()
+            with requests.get(
+                "%s/api/odoo/printers" % config._gateway_base(for_request=True),
+                headers=config._gateway_headers(), timeout=5, allow_redirects=False, stream=True,
+            ) as response:
+                if response.status_code != 200:
+                    return False
+                content = bytearray()
+                for chunk in response.iter_content(chunk_size=64 * 1024):
+                    if len(content) + len(chunk) > MAX_INVENTORY_RESPONSE_BYTES:
+                        _logger.warning("Primary sharing inventory exceeds response limit for Odoo print job %s; retaining exact target", job.id)
+                        return False
+                    content.extend(chunk)
+                return inventory_has_shared_printer(json.loads(content.decode("utf-8")), job.printer_id)
+        except (requests.RequestException, ValueError, ValidationError) as error:
+            _logger.warning("Primary sharing confirmation unavailable for Odoo print job %s; retaining exact target: %s", job.id, type(error).__name__)
+            return False
+
+    def _handle_pre_dispatch_failure(self, job, exc, current_binding, visited_bindings, failover_count, raise_on_failure, claim_token=None):
+        """Retry/failover for failures PROVEN to precede any transmission.
+
+        The caller must have established _is_pre_dispatch_error(exc) first.
+        Returns (current_binding, failover_count, resume) where resume is
+        "continue" (failover engaged: re-enter the submission loop with the
+        backup printer) or "break" (job requeued/failed with backoff).
+
+        Bounded depth and cycle visited-set prevent failover loops
+        (A->B->C depth, A->B->A revisited target). Attempts still burn on
+        repeated pre-dispatch failures so a dead Gateway cannot spin the
+        cron forever.
+        """
+        MAX_FAILOVER_DEPTH = 3
+        # Pre-dispatch failure: zero bytes transmitted. Safe failover check!
+        if job.attempts == 0 and current_binding and failover_count < MAX_FAILOVER_DEPTH:
+            # Failover references live on the durable outbox row. Re-check route
+            # identity here so legacy rows or bindings created before the
+            # model constraint cannot send a job to a different destination.
+            next_printer = current_binding.printer_id
+            binding_company = current_binding.branch_id or current_binding.company_id
+            company_compatible = (
+                binding_company == job.company_id
+                or (not current_binding.branch_id and current_binding.company_id == (job.company_id.parent_id or job.company_id))
+            )
+            route_compatible = bool(
+                current_binding.destination_ref
+                and job.destination_key
+                and job.destination_key == "%s,%s" % (current_binding.destination_ref._name, current_binding.destination_ref.id)
+                and current_binding.document_type == job.document_type
+                and current_binding.report_id == job.report_id
+            )
+            # Phase 11: failover requires EXACT protocol/capability
+            # parity - never a broadened match to "make failover work".
+            fallback_proto = getattr(current_binding, "printer_protocol", False) or ""
+            if job.payload_type == "pdf":
+                protocol_compatible = fallback_proto in ("spooler", "ipp", "ipps")
+            elif job.payload_type == "raster_jpeg":
+                # raster_jpeg can be rendered by spooler (driver converts to PDF)
+                # or by escpos (raster conversion). IPP/IPPS are document transports
+                # that do not natively render JPEG, so they are excluded here.
+                protocol_compatible = fallback_proto in ("spooler", "escpos")
+            elif job.payload_type == "raw_cmd" and job.protocol:
+                protocol_compatible = fallback_proto == job.protocol
+            else:
+                protocol_compatible = False
+            if (
+                current_binding.enabled
+                and next_printer
+                and next_printer not in visited_bindings
+                and company_compatible
+                and route_compatible
+                and protocol_compatible
+                and self._primary_shared_for_fallback(job)
+            ):
+                visited_bindings.add(next_printer)
+                failover_count += 1
+                _logger.warning(
+                    "Primary printer %s connection failed; triggering safe pre-dispatch failover (%d/%d) to %s",
+                    job.printer_id, failover_count, MAX_FAILOVER_DEPTH, next_printer,
+                )
+                failover_values = {
+                    "printer_id": next_printer,
+                    "destination": current_binding.destination_ref.display_name if current_binding.destination_ref else current_binding.name,
+                    "last_error": "PRE_DISPATCH_FAILOVER: Routed to backup printer %s" % next_printer,
+                }
+                if claim_token:
+                    if not job._persist_state(failover_values, claim_token=claim_token, release_claim=False):
+                        return current_binding, failover_count, "break"
+                    job.invalidate_recordset(["printer_id", "destination", "last_error"])
+                elif raise_on_failure:
+                    job._persist_state(failover_values)
+                    job.invalidate_recordset(["printer_id", "destination", "last_error"])
+                else:
+                    job.write(failover_values)
+                job._post_source_audit(_("Primary printer offline. Failover engaged: routed to backup printer '%s'") % next_printer)
+                current_binding = current_binding.fallback_binding_id
+                return current_binding, failover_count, "continue"
+
+        next_attempt = job.attempts + 1
+        terminal = next_attempt >= 5
+        retry_delay = min(300, 10 * (2 ** min(next_attempt - 1, 5)))
+        next_retry = False if terminal else db_now_utc(self.env.cr) + datetime.timedelta(seconds=retry_delay)
+        values = {
+            "status": "failed" if terminal else "queued",
+            "attempts": next_attempt,
+            "last_error": "CONNECTION_ERROR: %s" % str(exc)[:4000],
+            "next_retry_at": next_retry,
+            "completed_at": db_now_utc(self.env.cr) if terminal else False,
+        }
+        if claim_token:
+            if not job._persist_state(values, claim_token=claim_token):
+                return current_binding, failover_count, "break"
+        elif raise_on_failure:
+            job._persist_state(values)
+        else:
+            job.write(values)
+        _logger.warning("Gateway connection failed for job %s (attempt %s/5)", job.idempotency_key[:8], next_attempt)
+        if raise_on_failure:
+            raise ValidationError(_("Gateway connection failed: %s") % str(exc)[:500]) from exc
+        return current_binding, failover_count, "break"
+
+    def _require_outbox_write(self):
+        # The durable outbox is read-only for normal users; status-changing
+        # operator actions are privileged. Server-side flows (router submit,
+        # intent dispatch, cron) already run elevated and pass transparently.
+        # This guard keeps RPC access fail-closed for interactive users.
+        # NOTE: check_access() is the single Odoo 19 API covering both model
+        # rights and record rules (check_access_rights/check_access_rule are
+        # deprecated since 18.0).
+        self.check_access("write")
+
+    def _billing_retry_values(self, job, last_error, retry_after):
+        """Queued-retry values for operator-recoverable Gateway refusals.
+
+        Billing/auth blocks must never terminalize (a renewed subscription or
+        rotated key resumes the same logical operation), but attempts must
+        not grow forever while blocked: past the cap the job parks with a
+        24h backoff and frozen attempts, staying recoverable.
+        """
+        next_attempt = job.attempts + 1
+        if next_attempt > MAX_BILLING_PARK_ATTEMPTS:
+            return {
+                "status": "queued",
+                "attempts": job.attempts,
+                "last_error": "GATEWAY_BILLING_PARKED: %s" % last_error,
+                "next_retry_at": db_now_utc(self.env.cr) + datetime.timedelta(seconds=BILLING_PARK_RETRY_SECONDS),
+            }
+        return {
+            "status": "queued",
+            "attempts": next_attempt,
+            "last_error": last_error,
+            "next_retry_at": db_now_utc(self.env.cr) + datetime.timedelta(seconds=retry_after),
+        }
+
+    def action_submit(self, raise_on_failure=False):
+        self._require_outbox_write()
+        return self._action_submit_trusted(raise_on_failure=raise_on_failure)
+
+    @api.private
+    def _action_submit_trusted(self, raise_on_failure=False):
+        """Trusted internal submission (not reachable via RPC).
+
+        Runs the full submit flow elevated: the durable outbox is
+        intentionally read-only for normal users (group_user has no write
+        right), yet every legitimate print flow - report download, POS,
+        intents, retry - executes as the print operator. The router
+        (print_router._submit_durable_job) is the only production caller and
+        delegates here AFTER resolving and validating company/branch/binding/
+        printer scope. Interactive/admin callers keep using the guarded
+        public action_submit(); cron already runs elevated.
+        """
+        # Elevate for the whole flow. Re-applied after with_company below:
+        # with_company() rebuilds the environment and must never be allowed
+        # to silently drop the trusted context on any Odoo version.
+        self = self.sudo()
+        for job in self:
+            # A disabled integration freezes the outbox: never POST while
+            # printing is off, and never destroy the queued rows either.
+            # Cron callers (raise_on_failure=False) skip calmly with a
+            # pushed-back retry so the outbox does not spin; interactive
+            # callers get an immediate actionable refusal instead.
+            if not job.gateway_config_id.enabled:
+                if raise_on_failure:
+                    raise ValidationError(
+                        _("Printing is disabled for this company. Re-enable the printing service to submit queued jobs.")
+                    )
+                job.write({
+                    "next_retry_at": db_now_utc(self.env.cr) + datetime.timedelta(seconds=300),
+                })
+                continue
+
+            # Once a Gateway job id exists, this Odoo outbox row has already
+            # crossed the remote dispatch boundary. Never POST the same row
+            # again: intent recovery after a crash must not turn a lost local
+            # finalize into a second physical print. Explicit reprint actions
+            # create a NEW outbox row with a NEW idempotency key.
+            if job.gateway_job_id:
+                _logger.info(
+                    "Skipping re-submit of Odoo print job %s; Gateway job %s already exists",
+                    job.id, job.gateway_job_id,
+                )
+                continue
+
+            # Terminal is terminal. A job that failed before ever receiving a
+            # gateway id must not be silently re-submitted (attempts, state
+            # and audit would be rewritten). Only an explicit operator reprint
+            # creates a NEW operation.
+            if job.status in self._TERMINAL:
+                continue
+
+            # External submission is NEVER safe while the Odoo outbox row is
+            # still uncommitted. If the caller later rolls back, the remote
+            # Gateway job would survive without any durable Odoo source row.
+            # The production router commits the outbox on its own cursor and
+            # submits from a post-commit/fresh transaction; direct callers on an
+            # uncommitted row must fail closed instead of crossing that boundary.
+            claim_token = False
+            lease_result = self._claim_submission_lease(job)
+            if lease_result == "__precommit__":
+                raise ValidationError(
+                    _("Print submission must occur after the Odoo outbox transaction commits; use the durable post-commit dispatcher.")
+                )
+            if not lease_result:
+                _logger.info("Skipping Odoo print job %s; another worker owns its submission lease.", job.id)
+                continue
+            claim_token = lease_result
+
+            response_state_persisted = False
+            def persist_submit_state(values):
+                nonlocal response_state_persisted
+                if claim_token:
+                    persisted = job._persist_state(values, claim_token=claim_token)
+                else:
+                    job.write(values)
+                    persisted = True
+                response_state_persisted = response_state_persisted or bool(persisted)
+                return persisted
+
+            def advance_submit_status(target, values):
+                if claim_token:
+                    return self._advance_status_claimed(job, target, values, claim_token)
+                self._advance_status(job, target, values)
+                return True
+
+            current_binding = job.fallback_binding_id
+            visited_bindings = {job.printer_id}
+            failover_count = 0
+
+            while True:
+                response_state_persisted = False
+                gateway_config = job.gateway_config_id.sudo()
+                try:
+                    response = requests.post(
+                        "%s/api/print/jobs" % gateway_config._gateway_base(for_request=True),
+                        json=job._submission_body(), headers=gateway_config._gateway_headers(),
+                        timeout=20, allow_redirects=False,
+                    )
+                    if response.status_code == 429:
+                        # Quota/entitlement throttling is a definite server-side
+                        # rejection: the Gateway did not accept a new job, so
+                        # retrying the same idempotency key is physically safe.
+                        # Preserve the retry queue, but surface a structured
+                        # billing-limit signal to interactive Odoo clients.
+                        retry_after = 60
+                        try:
+                            retry_after = int(response.headers.get("Retry-After", "60"))
+                        except (TypeError, ValueError):
+                            retry_after = 60
+                        retry_after = min(3600, max(5, retry_after))
+
+                        try:
+                            rate_body = response.json()
+                        except (ValueError, TypeError):
+                            rate_body = {}
+                        if not isinstance(rate_body, dict):
+                            rate_body = {}
+
+                        entitlement = str(rate_body.get("entitlement") or "").strip()
+                        allowed_entitlements = {
+                            "max_agents",
+                            "max_printers",
+                            "max_jobs_per_minute",
+                            "max_concurrent_jobs",
+                            "max_prints_per_period",
+                        }
+                        billing_limit = bool(rate_body.get("upgradeRequired")) and entitlement in allowed_entitlements
+                        if billing_limit:
+                            raw_limit = rate_body.get("limit")
+                            raw_used = rate_body.get("used")
+                            limit = int(raw_limit) if isinstance(raw_limit, (int, float)) and int(raw_limit) >= 1 else 0
+                            used = int(raw_used) if isinstance(raw_used, (int, float)) and int(raw_used) >= 0 else limit
+                            period_end = rate_body.get("periodEnd")
+                            period_end = str(period_end) if period_end else None
+
+                            # Retry-After is a relative duration calculated by
+                            # the Gateway from its own authoritative DB clock.
+                            # Never compare Gateway periodEnd against the Odoo
+                            # host clock: the two systems can legitimately have
+                            # different wall clocks/timezones.
+
+                            values = self._billing_retry_values(
+                                job,
+                                "GATEWAY_BILLING_LIMIT_REACHED: %s (limit %s, used %s)" % (entitlement, limit or "unknown", used),
+                                retry_after,
+                            )
+                            persist_submit_state(values)
+
+                            message_map = {
+                                "max_agents": _("Your Gateway plan has reached its Agent limit."),
+                                "max_printers": _("Your Gateway plan has reached its Printer limit."),
+                                "max_jobs_per_minute": _("Your Gateway plan has reached its print rate limit."),
+                                "max_concurrent_jobs": _("Your Gateway plan has reached its concurrent print-job limit."),
+                                "max_prints_per_period": _("Your Gateway plan has used all included print jobs for this billing period."),
+                            }
+                            marker_payload = {
+                                "code": str(rate_body.get("code") or "TENANT_ENTITLEMENT_EXCEEDED"),
+                                "entitlement": entitlement,
+                                "limit": limit if limit else None,
+                                "used": used,
+                                "message": message_map[entitlement],
+                                "retryAfterSeconds": retry_after,
+                                "periodEnd": period_end,
+                            }
+                            marker_message = "GATEWAY_BILLING_LIMIT:" + json.dumps(marker_payload, separators=(",", ":"))
+                            if raise_on_failure:
+                                raise ValidationError(marker_message)
+                            break
+
+                        values = {
+                            "status": "queued",
+                            "attempts": job.attempts + 1,
+                            "last_error": "GATEWAY_RATE_LIMITED: Gateway returned HTTP 429",
+                            "next_retry_at": db_now_utc(self.env.cr) + datetime.timedelta(seconds=retry_after),
+                        }
+                        persist_submit_state(values)
+                        if raise_on_failure:
+                            raise ValidationError(_("Gateway is temporarily rate-limiting print submissions. The job was safely re-queued for retry."))
+                        break
+
+                    if response.status_code not in (200, 201):
+                        # Billing suspension/configuration is recoverable. Keep the
+                        # durable Odoo outbox queued so a renewed subscription or
+                        # repaired entitlement state can automatically resume this
+                        # same logical operation. Other 403 responses remain terminal.
+                        if response.status_code == 403:
+                            try:
+                                billing_body = response.json()
+                            except (ValueError, TypeError):
+                                billing_body = {}
+                            if not isinstance(billing_body, dict):
+                                billing_body = {}
+                            billing_code = str(billing_body.get("code") or "").strip()
+                            # All four Gateway billing/lifecycle codes are
+                            # operator-recoverable (renew/fix subscription,
+                            # unsuspend, restore tenant). TENANT_SUSPENDED and
+                            # TENANT_DELETED arrive on this same 403 path via
+                            # isTenantBillingError; collapsing them into the
+                            # terminal branch below would destroy jobs that
+                            # only need a platform action.
+                            if billing_code in {"TENANT_SUBSCRIPTION_REQUIRED", "TENANT_ENTITLEMENT_UNAVAILABLE", "TENANT_SUSPENDED", "TENANT_DELETED"}:
+                                retry_after = 60
+                                try:
+                                    retry_after = int(response.headers.get("Retry-After", "60"))
+                                except (TypeError, ValueError):
+                                    retry_after = 60
+                                retry_after = min(3600, max(5, retry_after))
+                                values = self._billing_retry_values(
+                                    job,
+                                    "GATEWAY_BILLING_BLOCKED: %s" % billing_code,
+                                    retry_after,
+                                )
+                                persist_submit_state(values)
+                                if raise_on_failure:
+                                    raise ValidationError(
+                                        _("Gateway billing access is temporarily unavailable. The job was safely re-queued for retry.")
+                                    )
+                                break
+
+                        # Deterministic client-side rejections (invalid
+                        # payload semantics, capability mismatch, idempotency
+                        # conflict, forbidden document type, invalid
+                        # credentials) will never succeed on retry. Terminalize
+                        # immediately with the Gateway's (safe, typed) reason
+                        # instead of burning the exponential-backoff budget.
+                        # Rotation grace is recoverable: the old key is valid auth
+                        # but write-restricted for 60 minutes, and the key is
+                        # re-resolved from the config on every attempt, so a
+                        # re-queued job picks up the new key once rotation
+                        # completes. Terminalizing here would destroy jobs
+                        # that only need to wait out the grace window.
+                        if response.status_code == 409:
+                            try:
+                                grace_body = response.json()
+                            except (ValueError, TypeError):
+                                grace_body = {}
+                            if not isinstance(grace_body, dict):
+                                grace_body = {}
+                            if str(grace_body.get("code") or "").strip() == "API_KEY_READ_ONLY":
+                                values = self._billing_retry_values(
+                                    job,
+                                    "GATEWAY_KEY_ROTATION_GRACE: API key is in its rotation grace period; re-queued to retry with the current key",
+                                    60,
+                                )
+                                persist_submit_state(values)
+                                if raise_on_failure:
+                                    raise ValidationError(
+                                        _("The API key is rotating. The job was safely re-queued and will retry automatically.")
+                                    )
+                                break
+
+                        # Every 401 the Gateway emits is operator-recoverable:
+                        # revoked/expired key (rotate), disabled integration
+                        # (re-enable), suspended/deleted tenant (platform
+                        # action). There is no permanent 401, so terminalizing
+                        # destroys jobs that only need an operator action.
+                        # Re-queue on a slow cadence; attempts still count so
+                        # a permanently broken configuration surfaces in the
+                        # outbox instead of spinning hot.
+                        if response.status_code == 401:
+                            values = self._billing_retry_values(
+                                job,
+                                "GATEWAY_AUTH_RECOVERABLE_401: Gateway authentication rejected; re-queued for retry after operator recovery (rotate key, re-enable integration, or restore tenant)",
+                                300,
+                            )
+                            persist_submit_state(values)
+                            if raise_on_failure:
+                                raise ValidationError(
+                                    _("The Gateway rejected authentication. The job was safely re-queued; check the API key and integration state, then it will retry automatically.")
+                                )
+                            break
+
+                        if response.status_code in (400, 403, 404, 409, 422):
+                            try:
+                                reject_body = response.json()
+                            except (ValueError, TypeError):
+                                reject_body = {}
+                            if not isinstance(reject_body, dict):
+                                reject_body = {}
+                            reason = str(reject_body.get("error") or "")[:2000] or "GATEWAY_REJECTED"
+                            reject_code = str(reject_body.get("code") or "").strip()
+                            terminal_error = "GATEWAY_REJECTED_%s: %s" % (response.status_code, reason)
+                            values = {
+                                "status": "failed",
+                                "attempts": job.attempts + 1,
+                                "last_error": terminal_error,
+                                "next_retry_at": False,
+                                "completed_at": db_now_utc(self.env.cr),
+                            }
+                            persist_submit_state(values)
+                            _logger.warning("Gateway rejected job %s deterministically (%s): %s", job.idempotency_key[:8], response.status_code, reason[:300])
+                            if raise_on_failure:
+                                if reject_code == "PRINTER_NOT_SHARED":
+                                    raise ValidationError(_("Printer '%s' is local-only. Share it from the Agent before sending a cloud print job.") % job.printer_id)
+                                if reject_code == "AGENT_UNAVAILABLE":
+                                    raise ValidationError(
+                                        _("The printing service agent is unavailable. The receipt was not sent.")
+                                    )
+                                if reject_code in ("PRINTER_UNAVAILABLE", "PRINTER_OFFLINE"):
+                                    raise ValidationError(
+                                        _("Printer '%s' is offline or unavailable (%s). The receipt was not sent.") % (job.printer_id, reject_code)
+                                    )
+                                raise ValidationError(_("The Gateway rejected this print job: %s") % reason[:500])
+                            break
+                        # Deterministic printer/agent-state rejections: the
+                        # Gateway refused BEFORE creating a job (pre-admission
+                        # eligibility), so zero bytes were transmitted and no
+                        # physical execution is possible. Terminalize
+                        # immediately with the Gateway's typed reason instead
+                        # of burning the backoff budget, and raise an
+                        # actionable ValidationError (never a bare
+                        # RuntimeError, which the POS frontend can only render
+                        # as a generic "Odoo Server Error").
+                        if response.status_code == 503:
+                            try:
+                                reject_body = response.json()
+                            except (ValueError, TypeError):
+                                reject_body = {}
+                            if not isinstance(reject_body, dict):
+                                reject_body = {}
+                            reject_code = str(reject_body.get("code") or "").strip()
+                            reject_msg = str(reject_body.get("error") or "").strip()
+                            if reject_code in ("PRINTER_OFFLINE", "PRINTER_UNAVAILABLE", "AGENT_UNAVAILABLE"):
+                                # Transient printer/agent state (reboot, stale
+                                # heartbeat, paper-out offline): the Gateway
+                                # refused BEFORE creating a job, so zero bytes
+                                # were transmitted. Requeue with backoff like
+                                # the busy-503 path; terminalize only after 5
+                                # attempts so a brief outage does not
+                                # permanently fail the outbox row.
+                                next_attempt = job.attempts + 1
+                                terminal = next_attempt >= 5
+                                retry_delay = min(300, 60 * (2 ** min(next_attempt - 1, 3)))
+                                values = {
+                                    "status": "failed" if terminal else "queued",
+                                    "attempts": next_attempt,
+                                    "last_error": "GATEWAY_REJECTED_503: %s" % (
+                                        ": ".join(
+                                            part for part in (
+                                                reject_code,
+                                                reject_msg or "printer unavailable",
+                                            )
+                                            if part
+                                        )
+                                    ),
+                                    "next_retry_at": False if terminal else db_now_utc(self.env.cr) + datetime.timedelta(seconds=retry_delay),
+                                    "completed_at": db_now_utc(self.env.cr) if terminal else False,
+                                }
+                                persist_submit_state(values)
+                                _logger.warning("Gateway refused job %s for unavailable printer/agent (%s): %s (attempt %s/5)", job.idempotency_key[:8], reject_code, reject_msg[:300], next_attempt)
+                                if raise_on_failure:
+                                    if terminal:
+                                        if reject_code == "AGENT_UNAVAILABLE":
+                                            raise ValidationError(
+                                                _("The printing service agent is unavailable. The receipt was not sent.")
+                                            )
+                                        raise ValidationError(
+                                            _("Printer '%s' is offline or unavailable (%s). The receipt was not sent.") % (job.printer_id, reject_code or "PRINTER_UNAVAILABLE")
+                                        )
+                                    raise ValidationError(
+                                        "%s (%s: %s)" % (
+                                            _("The printer is temporarily unavailable. The job was safely re-queued for retry."),
+                                            job.printer_id,
+                                            reject_code,
+                                        )
+                                    )
+                                break
+                            # Any other 503 (queue-full capacity, unknown
+                            # shape) is transient: the printer/agent state may
+                            # recover, so keep the durable outbox queued with
+                            # backoff exactly like the 429 path. Interactive
+                            # callers get an actionable re-queued message.
+                            values = self._billing_retry_values(
+                                job,
+                                "GATEWAY_BUSY_503: %s" % (reject_msg or reject_code or "printer temporarily busy"),
+                                60,
+                            )
+                            persist_submit_state(values)
+                            if raise_on_failure:
+                                raise ValidationError(_("The printer is temporarily busy. The job was safely re-queued for retry."))
+                            break
+                        raise RuntimeError("GATEWAY_HTTP_%s" % response.status_code)
+                    try:
+                        body = response.json()
+                        remote_id = (body.get("jobId") or body.get("id")) if isinstance(body, dict) else None
+                        if not isinstance(remote_id, str) or not remote_id.strip():
+                            raise ValueError("GATEWAY_INVALID_RESPONSE")
+                        remote_id = remote_id.strip()
+                    except (ValueError, TypeError) as exc:
+                        self._record_ambiguous_submission(
+                            job, exc, "Gateway accepted submission but returned an invalid response",
+                            raise_on_failure, claim_token,
+                        )
+                        break
+                    remote_status = str(body.get("status") or "queued").strip().lower()
+                    remote_error = body.get("error")
+                    if remote_status == "completed":
+                        remote_status = "success"
+                    if remote_status == "expired":
+                        # The Gateway terminalized the job (its lease window
+                        # elapsed). Mirror the physical outcome honestly.
+                        expired_error = remote_error or "GATEWAY_JOB_EXPIRED: the Gateway release window elapsed before the job was claimed"
+                        expired_status = "unknown" if str(expired_error).startswith(job._GATEWAY_UNKNOWN_MARKERS) or "JOB_EXPIRED_DURING_PRINT" in str(expired_error) else "failed"
+                        if not persist_submit_state({
+                            "gateway_job_id": str(remote_id),
+                            "status": expired_status,
+                            "attempts": job.attempts + 1,
+                            "last_error": expired_error,
+                            "next_retry_at": False,
+                            "completed_at": db_now_utc(self.env.cr),
+                        }):
+                            _logger.info("Submission lease lost while finalizing expired Odoo print job %s.", job.id)
+                            break
+                        job._post_source_audit(_("Print Job #%s expired at the Gateway (%s).") % (remote_id or job.id, expired_status))
+                        break
+                    # 'partial' is not a valid internal Odoo status (not in
+                    # _FORWARD_CHAIN); map it to 'submitted' so the job remains
+                    # active for reconciliation rather than crashing _advance_status.
+                    if remote_status == "partial":
+                        remote_status = "submitted"
+                    if remote_status not in {"queued", "submitted", "claimed", "printing", "success", "failed", "unknown"}:
+                        remote_status = "submitted"
+                    values = {
+                        "gateway_job_id": str(remote_id),
+                        "attempts": job.attempts + 1, "last_error": False, "next_retry_at": False,
+                    }
+                    if remote_status == "failed" and remote_error:
+                        values["last_error"] = str(remote_error)[:4000]
+                    if remote_status in {"success", "failed", "unknown"}:
+                        values["completed_at"] = db_now_utc(self.env.cr)
+                    # An idempotent replay may report the job beyond
+                    # 'submitted' (claimed/printing/success at the Gateway).
+                    # Record it hop-by-hop through the canonical chain rather
+                    # than jumping queued -> success in one privileged write.
+                    if not advance_submit_status("submitted" if remote_status == "queued" else remote_status, values):
+                        _logger.info("Submission lease lost while finalizing Odoo print job %s.", job.id)
+                        break
+                    job._post_source_audit(_("Print Job #%s queued to Gateway for '%s'") % (remote_id or job.id, job.printer_id))
+                    break  # Success
+                except requests.exceptions.Timeout as exc:
+                    if self._is_pre_dispatch_error(exc):
+                        # Connect-phase timeout only: the request provably
+                        # never left this host - same retry/failover path as
+                        # a refused connection. A read/ambiguous timeout
+                        # stays terminal-unknown below.
+                        current_binding, failover_count, resume = self._handle_pre_dispatch_failure(
+                            job, exc, current_binding, visited_bindings, failover_count, raise_on_failure, claim_token)
+                        if resume == "continue":
+                            continue
+                        break
+                    persisted = self._record_ambiguous_submission(
+                        job,
+                        exc,
+                        "gateway request timed out",
+                        raise_on_failure,
+                        claim_token,
+                    )
+                    if persisted is False:
+                        _logger.info("Submission lease lost while recording ambiguous timeout for Odoo print job %s.", job.id)
+                    break
+                except requests.exceptions.ConnectionError as exc:
+                    if not self._is_pre_dispatch_error(exc):
+                        # urllib3's ConnectionError also wraps mid-stream
+                        # failures (reset/abort AFTER request bytes were
+                        # sent). Without connect-phase proof the Gateway may
+                        # already hold this job: no failover (that would
+                        # create a second print) and no automatic retry.
+                        self._record_ambiguous_submission(
+                            job, exc,
+                            "connection broke after the request may have been transmitted",
+                            raise_on_failure,
+                            claim_token)
+                        break
+                    current_binding, failover_count, resume = self._handle_pre_dispatch_failure(
+                        job, exc, current_binding, visited_bindings, failover_count, raise_on_failure, claim_token)
+                    if resume == "continue":
+                        continue
+                    break
+                except requests.RequestException as exc:
+                    # Any RequestException not proven to be a connect-phase
+                    # failure may occur after request bytes were transmitted
+                    # (for example ChunkedEncodingError/SSLError while reading
+                    # the response). Retrying or failing over here could
+                    # duplicate a physical print. Only the explicitly
+                    # classified pre-dispatch timeout/connection branches may
+                    # retry above; this generic fallback is therefore terminal
+                    # unknown.
+                    persisted = self._record_ambiguous_submission(
+                        job,
+                        exc,
+                        "gateway request failed after dispatch could not be ruled out",
+                        raise_on_failure,
+                        claim_token,
+                    )
+                    if persisted is False:
+                        _logger.info("Submission lease lost while recording ambiguous transport failure for Odoo print job %s.", job.id)
+                    break
+                except (ValueError, RuntimeError, ValidationError) as exc:
+                    if isinstance(exc, ValidationError) and response_state_persisted:
+                        # The typed HTTP branch already persisted its safe state.
+                        # Preserve structured billing markers and queued backoff.
+                        if raise_on_failure:
+                            raise
+                        break
+                    if self._is_deterministic_failure(exc):
+                        # Programming/validation failures (corrupted
+                        # persisted payload, gateway contract violation,
+                        # broken gateway URL) can never succeed on retry:
+                        # terminalize immediately instead of burning five
+                        # backoff attempts on identical bytes.
+                        values = {
+                            "status": "failed", "attempts": job.attempts + 1,
+                            "last_error": str(exc)[:4000],
+                            "next_retry_at": False,
+                            "completed_at": db_now_utc(self.env.cr),
+                        }
+                        persist_submit_state(values)
+                        _logger.warning("Gateway submission failed deterministically for job %s: %s", job.idempotency_key[:8], str(exc)[:300])
+                        if raise_on_failure:
+                            raise ValidationError(_("Gateway submission failed: %s") % str(exc)[:500]) from exc
+                        break
+                    next_attempt = job.attempts + 1
+                    terminal = next_attempt >= 5
+                    values = {
+                        "status": "failed" if terminal else "queued", "attempts": next_attempt,
+                        "last_error": str(exc)[:4000],
+                        "next_retry_at": False if terminal else db_now_utc(self.env.cr),
+                        "completed_at": db_now_utc(self.env.cr) if terminal else False,
+                    }
+                    persist_submit_state(values)
+                    if raise_on_failure:
+                        raise ValidationError(_("Gateway submission failed: %s") % str(exc)[:500]) from exc
+                    break
+        return True
+
+    @api.private
+    def _apply_gateway_late_success(self, job, values):
+        """Apply an explicitly-authorized Gateway terminal reconciliation.
+
+        Normal terminal rows never leave their state. The only exceptions are
+        Gateway markers that prove an earlier ambiguous execution reached the
+        physical boundary, or an explicit post-TTL completion from a claimed
+        job.
+        """
+        job.ensure_one()
+        gateway_error = str(values.get("last_error") or "")
+        if job.status == "failed":
+            if job.physical_outcome != "unknown" or not gateway_error.startswith("LATE_SUCCESS:"):
+                raise ValidationError(_("Gateway late success is only valid for an unknown-outcome failed job."))
+        elif job.status == "unknown":
+            if not job.gateway_job_id or not self._needs_gateway_status_reconciliation(job):
+                raise ValidationError(_("Gateway late success requires the original reconcilable remote operation."))
+        else:
+            raise ValidationError(_("Gateway late success is not valid for this terminal state."))
+        success_values = self._stable_terminal_values(job, "success", values)
+        success_values["status"] = "success"
+        super(PrintGatewayJob, job).write(success_values)
+
+    def _needs_gateway_status_reconciliation(self, job):
+        """Return whether a terminal Odoo row can still receive a Gateway reconciliation.
+
+        Terminal rows are normally excluded from status polling. Explicit
+        ambiguous submissions without a Gateway job id are also reconciliable:
+        the durable idempotency key is the only safe way to recover the remote
+        job after a response-loss crash window.
+        """
+        if not job.gateway_job_id:
+            return job.status == "unknown" and str(job.last_error or "").startswith("UNKNOWN_SUBMISSION_OUTCOME:")
+        if job.status not in self._TERMINAL:
+            return True
+        error = str(job.last_error or "")
+        if job.status == "failed" and any(
+            error.startswith(marker) for marker in (
+                "AGENT_EXECUTION_TIMEOUT",
+                "AGENT_RESTART_DURING_PRINT",
+                "UNKNOWN_PARTIAL_DELIVERY",
+            )
+        ):
+            return True
+        if job.status == "unknown" and any(
+            error.startswith(marker) for marker in (
+                "JOB_EXPIRED_DURING_PRINT",
+                "UNKNOWN_PARTIAL_DELIVERY",
+                "UNKNOWN_SUBMISSION_OUTCOME",
+                # AGENT_EXECUTION_TIMEOUT / AGENT_RESTART_DURING_PRINT must be
+                # listed here too. _apply_synced_status maps EVERY Gateway
+                # ``failed`` whose error starts with a _GATEWAY_UNKNOWN_MARKERS
+                # prefix to Odoo status "unknown", so a Gateway execution
+                # timeout lands here as (unknown, "AGENT_EXECUTION_TIMEOUT: ...")
+                # and was never re-polled. That silently disabled the Gateway
+                # late-success reconciliation (LATE_SUCCESS_ERROR_MARKERS in
+                # src/lib/job-status.ts), which only works while Odoo keeps
+                # asking for the job's status inside the 24h window.
+                "AGENT_EXECUTION_TIMEOUT",
+                "AGENT_RESTART_DURING_PRINT",
+            )
+        ):
+            return True
+        return False
+
+    def _lookup_gateway_job_for_ambiguous_submission(self, job):
+        """Resolve a response-lost Odoo submission by its durable Gateway idempotency key.
+
+        A timeout after Gateway acceptance leaves Odoo with no ``gateway_job_id``.
+        Re-submitting is unsafe because the physical side effect may already have
+        happened. The only safe recovery is to ask the same authenticated Gateway
+        tenant for the job identified by the deterministic idempotency key.
+        ``None`` means the Gateway has not exposed the job yet or returned 404; the
+        caller must keep the physical outcome UNKNOWN and retry lookup later.
+        """
+        job.ensure_one()
+        if job.gateway_job_id or job.status != "unknown" or not str(job.last_error or "").startswith("UNKNOWN_SUBMISSION_OUTCOME:"):
+            return None
+        gateway_config = job.gateway_config_id.sudo()
+        if not gateway_config:
+            return None
+        response = requests.get(
+            "%s/api/print/jobs" % gateway_config._gateway_base(for_request=True),
+            params={"idempotencyKey": job._gateway_idempotency_key()},
+            headers=gateway_config._gateway_headers(),
+            timeout=10,
+            allow_redirects=False,
+        )
+        if response.status_code == 404:
+            self._mark_gateway_job_missing(
+                job,
+                "GATEWAY_JOB_NOT_FOUND: ambiguous submission was not found on the Gateway; physical outcome remains unknown.",
+            )
+            return None
+        response.raise_for_status()
+        body = response.json()
+        remote_id = body.get("jobId") or body.get("id")
+        if not isinstance(remote_id, str) or not remote_id.strip():
+            raise ValueError("Gateway ambiguous-submission lookup returned no job id")
+        self._lock_status_row(job)
+        if job.gateway_job_id and job.gateway_job_id != remote_id.strip():
+            return None
+        if not job.gateway_job_id:
+            if job.status != "unknown" or not str(job.last_error or "").startswith("UNKNOWN_SUBMISSION_OUTCOME:"):
+                return None
+            job.write({"gateway_job_id": remote_id.strip(), "next_retry_at": False})
+        return body
+
+    def _apply_synced_status(self, job, body):
+        if not isinstance(body, dict):
+            raise ValueError("Gateway status response must be an object")
+        expected_remote_id = job.gateway_job_id
+        self._lock_status_row(job)
+        if job.gateway_job_id != expected_remote_id:
+            return False
+        remote_id = body.get("jobId") or body.get("id")
+        if remote_id and remote_id != job.gateway_job_id:
+            return False
+        status = str(body.get("status") or "").strip().lower()
+        if status in ("completed", "success"):
+            status = "success"
+        elif status == "queued":
+            status = "submitted"
+        elif status == "expired":
+            gateway_error = str(body.get("error") or "")
+            if gateway_error.startswith("JOB_EXPIRED_DURING_PRINT") or gateway_error.startswith("UNKNOWN_PARTIAL_DELIVERY"):
+                status = "unknown"
+                body.setdefault("error", "JOB_EXPIRED_DURING_PRINT: physical output is unknown (full, partial or none)")
+            else:
+                status = "failed"
+                if not body.get("error"):
+                    body["error"] = "GATEWAY_JOB_EXPIRED: The Gateway no longer holds the job (never claimed within its release window); nothing reached the agent"
+        elif status == "partial":
+            # 'partial' is not a valid internal Odoo status; treat as
+            # 'submitted' (job is still in-progress / partially accepted).
+            status = "submitted"
+        if status not in {"submitted", "claimed", "printing", "success", "failed", "unknown"}:
+            return False
+        err_msg = body.get("error") or False
+        if status == "failed" and any(
+            str(err_msg or "").startswith(marker) for marker in self._GATEWAY_UNKNOWN_MARKERS
+        ):
+            status = "unknown"
+        values = {"last_error": err_msg}
+        if status in self._TERMINAL:
+            values["completed_at"] = db_now_utc(self.env.cr)
+        if status == "submitted" and job.status in ("claimed", "printing"):
+            return True
+        if job.status in self._TERMINAL and status not in self._TERMINAL:
+            # A pending remote observation cannot resolve local ambiguity.
+            return False
+        gateway_error = str(values.get("last_error") or "")
+        if status == "success" and (
+            (job.status == "failed" and gateway_error.startswith("LATE_SUCCESS:"))
+            or (job.status == "unknown" and job.gateway_job_id and self._needs_gateway_status_reconciliation(job))
+        ):
+            self._apply_gateway_late_success(job, values)
+        else:
+            self._advance_status(job, status, values)
+        if status == "success":
+            job._post_source_audit(_("Print Job #%s completed by Gateway agent on '%s'") % (job.gateway_job_id or job.id, job.printer_id))
+        elif status in ("partial", "unknown"):
+            job._post_source_audit(_("WARNING: Print Job #%s interrupted or ambiguous on '%s'. Manual check required.") % (job.gateway_job_id or job.id, job.printer_id))
+        return True
+
+    def action_sync_status(self):
+        self._require_outbox_write()
+        candidates = self.filtered(self._needs_gateway_status_reconciliation)
+        if not candidates:
+            return {
+                "type": "ir.actions.client",
+                "tag": "display_notification",
+                "params": {
+                    "title": _("Status Sync"),
+                    "message": _("No active in-flight print jobs found to synchronize."),
+                    "type": "info",
+                    "sticky": False,
+                },
+            }
+        synced_count = 0
+        failed_count = 0
+        for job in candidates:
+            gateway_config = job.gateway_config_id.sudo()
+            # Isolate every job in its own savepoint. Without it, one job whose
+            # Gateway reconciliation is rejected (ValidationError from
+            # _apply_gateway_late_success) aborts the whole RPC and silently
+            # discards the statuses already applied for earlier jobs in the
+            # same batch. cron_sync_status already does this per job.
+            try:
+                with self.env.cr.savepoint():
+                    if not job.gateway_job_id:
+                        body = self._lookup_gateway_job_for_ambiguous_submission(job)
+                        if body is None:
+                            failed_count += 1
+                            continue
+                        if self._apply_synced_status(job, body):
+                            synced_count += 1
+                        else:
+                            failed_count += 1
+                        continue
+                    response = requests.get(
+                        "%s/api/print/jobs" % gateway_config._gateway_base(for_request=True),
+                        params={"id": job.gateway_job_id}, headers=gateway_config._gateway_headers(),
+                        timeout=10, allow_redirects=False,
+                    )
+                    if response.status_code == 404:
+                        changed = self._mark_gateway_job_missing(
+                            job,
+                            "GATEWAY_JOB_NOT_FOUND: the Gateway no longer has this job (expired or cleaned up). Physical outcome unknown - verify at the printer, then use Force Reprint if needed.",
+                        )
+                        if changed:
+                            job._post_source_audit(_("Print Job #%s is no longer known to the Gateway; outcome marked UNKNOWN for manual reconciliation.") % (job.gateway_job_id or job.id))
+                            failed_count += 1
+                        continue
+                    response.raise_for_status()
+                    body = response.json()
+                    if self._apply_synced_status(job, body):
+                        synced_count += 1
+                    else:
+                        failed_count += 1
+            except Exception as exc:
+                failed_count += 1
+                _logger.warning("Gateway status sync failed for job %s: %s", job.idempotency_key[:8], exc)
+
+        if synced_count > 0 and failed_count == 0:
+            notif_type = "success"
+            msg = _("%d print job(s) synchronized successfully.") % synced_count
+        elif synced_count > 0 and failed_count > 0:
+            notif_type = "warning"
+            msg = _("%d print job(s) synchronized, %d failed.") % (synced_count, failed_count)
+        else:
+            notif_type = "danger"
+            msg = _("Status synchronization failed for all %d job(s).") % failed_count
+
+        return {
+            "type": "ir.actions.client",
+            "tag": "display_notification",
+            "params": {
+                "title": _("Status Synchronized"),
+                "message": msg,
+                "type": notif_type,
+                "sticky": False,
+            },
+        }
+
+    def _schedule_postcommit_submission(self, job_id):
+        """Submit an explicit operator reprint only after its Odoo row commits.
+
+        The outbox row is durable before the remote side effect. A UI action
+        transaction may still roll back after this method returns; sending to
+        the Gateway before commit could therefore create a remote print with
+        no surviving Odoo job. The post-commit hook turns the local row into
+        the durable hand-off point, while the Gateway's own retries remain
+        available if the first post-commit attempt fails.
+        """
+        def submit():
+            try:
+                self.env["print_gateway.print_router"]._submit_durable_job(job_id)
+            except Exception as exc:
+                _logger.error(
+                    "Post-commit submission failed for explicit Odoo reprint job %s; "
+                    "the durable outbox row remains queued for cron recovery: %s",
+                    job_id,
+                    exc,
+                )
+        self.env.cr.postcommit.add(submit)
+
+    def action_retry(self):
+        self._require_outbox_write()
+        """Create a new logical print operation only from a definitely failed job.
+
+        Unknown physical outcomes are never retried from the UI. A failed job that
+        is definitely not printed gets a fresh idempotency key so the new operation
+        is not collapsed into the old Gateway job.
+        """
+        failed_jobs = self.filtered(lambda row: row.status == "failed" and row.physical_outcome == "not_printed")
+        if not failed_jobs:
+            return {
+                "type": "ir.actions.client",
+                "tag": "display_notification",
+                "params": {
+                    "title": _("No Eligible Jobs"),
+                    "message": _("No eligible failed print jobs (with confirmed non-printed outcome) found to retry."),
+                    "type": "warning",
+                    "sticky": False,
+                },
+            }
+        retried_jobs = self.env["print_gateway.print_job"]
+        for job in failed_jobs:
+            retry = self.create_operation(
+                company=job.company_id,
+                gateway_config=job.gateway_config_id,
+                printer_id=job.printer_id,
+                destination=job.destination,
+                destination_key=job.destination_key,
+                document_type=job.document_type,
+                payload=json.loads(job.payload),
+                payload_type=job.payload_type,
+                protocol=job.protocol,
+                raw_payload=job.raw_payload,
+                printer_profile=job.printer_profile,
+                fallback_binding=job.fallback_binding_id,
+                source_model=job.source_model,
+                source_record_id=job.source_record_id,
+                report=job.report_id,
+                idempotency_key=uuid.uuid4().hex,
+            )
+            self._schedule_postcommit_submission(retry.id)
+            retried_jobs |= retry
+        return {
+            "type": "ir.actions.client",
+            "tag": "display_notification",
+            "params": {
+                "title": _("Print Job Retried"),
+                "message": _("Retried %d print job(s) with new operation ID(s): %s")
+                % (len(retried_jobs), ", ".join(str(j.id) for j in retried_jobs)),
+                "type": "success",
+                "sticky": False,
+            },
+        }
+
+    def action_force_reprint(self):
+        self._require_outbox_write()
+        """Explicitly re-issue print operation for jobs with partial delivery or unknown physical outcome.
+
+        This requires conscious operator action, preventing automated double printing of receipts/invoices.
+        Generates a deterministic derived idempotency key: ${original_key}-reprint-${reprint_attempt_count}.
+        """
+        reprint_candidates = self.filtered(lambda row: row.status in ("partial", "unknown") or (row.status == "failed" and row.physical_outcome == "unknown"))
+        if not reprint_candidates:
+            return {
+                "type": "ir.actions.client",
+                "tag": "display_notification",
+                "params": {
+                    "title": _("No Eligible Jobs"),
+                    "message": _("No eligible partial or unknown outcome print jobs found for force reprint."),
+                    "type": "info",
+                    "sticky": False,
+                },
+            }
+        reprinted_jobs = self.env["print_gateway.print_job"]
+        for job in reprint_candidates:
+            new_count = (job.reprint_attempt_count or 0) + 1
+            derived_key = "%s-reprint-%d" % (job.idempotency_key, new_count)
+            _logger.info(
+                "Force reprint requested for print job %s (attempt %d, derived key: %s)",
+                job.id, new_count, derived_key,
+            )
+            retry = self.create_operation(
+                company=job.company_id,
+                gateway_config=job.gateway_config_id,
+                printer_id=job.printer_id,
+                destination=job.destination,
+                destination_key=job.destination_key,
+                document_type=job.document_type,
+                payload=json.loads(job.payload),
+                payload_type=job.payload_type,
+                protocol=job.protocol,
+                raw_payload=job.raw_payload,
+                printer_profile=job.printer_profile,
+                fallback_binding=job.fallback_binding_id,
+                source_model=job.source_model,
+                source_record_id=job.source_record_id,
+                report=job.report_id,
+                idempotency_key=derived_key,
+            )
+            # The sequence number is consumed ONLY once the new operation
+            # exists: a failed creation (validation/conflict) must not burn
+            # a number, or the next attempt would skip a key and gap the
+            # audit trail. Concurrent operators computing the same number
+            # collapse onto the unique idempotency key instead of printing
+            # twice.
+            # Preserve monotonic reprint numbering under concurrent operators.
+            # The derived idempotency key is computed optimistically; duplicate
+            # creators collapse onto the same key. GREATEST prevents a slower
+            # request from writing an older counter value after a faster request
+            # has already advanced it.
+            self.env.cr.execute(
+                """
+                UPDATE print_gateway_print_job
+                SET reprint_attempt_count = GREATEST(reprint_attempt_count, %s)
+                WHERE id = %s
+                """,
+                (new_count, job.id),
+            )
+            job.invalidate_recordset(["reprint_attempt_count"])
+            self._schedule_postcommit_submission(retry.id)
+            reprinted_jobs |= retry
+        return {
+            "type": "ir.actions.client",
+            "tag": "display_notification",
+            "params": {
+                "title": _("Force Reprint Dispatched"),
+                "message": _("Operator force reprint dispatched for %d job(s).") % len(reprinted_jobs),
+                "type": "warning",
+                "sticky": False,
+            },
+        }
+
+    def _require_cron_runner(self):
+        # Scheduled actions run under an administrator account; interactive
+        # RPC callers must not be able to trigger bulk submission/sync waves
+        # (each wave performs outbound HTTP to the Gateway). Fail closed
+        # before any search or dispatch happens.
+        if not self.env.user.has_group("base.group_system"):
+            raise AccessError(_("Only scheduled actions (administrator) may run this method."))
+
+    @api.model
+    @api.private
+    def cron_submit_pending(self):
+        self._require_cron_runner()
+        now = db_now_utc(self.env.cr)
+        self.env.cr.execute("""
+            SELECT id FROM print_gateway_print_job
+            WHERE status = 'queued' AND (next_retry_at IS NULL OR next_retry_at <= %s)
+            ORDER BY id ASC
+            LIMIT 25
+        """, (now,))
+        job_ids = [row[0] for row in self.env.cr.fetchall()]
+        if not job_ids:
+            return 0
+
+        cron = self.env["ir.cron"]
+        remaining_time = cron._commit_progress(remaining=len(job_ids))
+        processed = 0
+        for job in self.browse(job_ids):
+            if remaining_time <= 0:
+                break
+            job.action_submit()
+            processed += 1
+            remaining_time = cron._commit_progress(1)
+        return processed
+
+
+    @api.model
+    @api.private
+    def cron_cleanup_terminal_jobs(self):
+        """Delete terminal print payload/history after the shared 48-hour TTL.
+
+        Active jobs are never selected. SKIP LOCKED avoids racing submit/status
+        workers, and bounded batches keep the scheduled action predictable.
+        """
+        self._require_cron_runner()
+        cutoff = db_now_utc(self.env.cr) - datetime.timedelta(hours=self._TERMINAL_RETENTION_HOURS)
+        self.env.cr.execute("""
+            SELECT id
+              FROM print_gateway_print_job
+             WHERE status IN ('success', 'failed', 'partial', 'unknown')
+               AND COALESCE(completed_at, write_date, create_date) <= %s
+             ORDER BY COALESCE(completed_at, write_date, create_date) ASC, id ASC
+             LIMIT 500
+             FOR UPDATE SKIP LOCKED
+        """, (cutoff,))
+        job_ids = [row[0] for row in self.env.cr.fetchall()]
+        if not job_ids:
+            return 0
+        jobs = self.sudo().browse(job_ids).exists()
+        deleted = len(jobs)
+        jobs.unlink()
+        return deleted
+
+    @api.model
+    @api.private
+    def cron_sync_status(self):
+        self._require_cron_runner()
+        # Status synchronization is read/reconciliation work; no physical
+        # side effect occurs at selection time. Avoid keeping database row
+        # locks while waiting on remote HTTP responses.
+        self.env.cr.execute("""
+            SELECT id
+              FROM print_gateway_print_job
+             WHERE (
+                    gateway_job_id IS NOT NULL
+                    AND (
+                        status NOT IN ('success', 'failed', 'partial', 'unknown')
+                        OR (status = 'failed' AND (last_error LIKE 'AGENT_EXECUTION_TIMEOUT%%' OR last_error LIKE 'AGENT_RESTART_DURING_PRINT%%' OR last_error LIKE 'UNKNOWN_PARTIAL_DELIVERY%%'))
+                        OR (status = 'unknown' AND (last_error LIKE 'JOB_EXPIRED_DURING_PRINT%%' OR last_error LIKE 'UNKNOWN_PARTIAL_DELIVERY%%' OR last_error LIKE 'UNKNOWN_SUBMISSION_OUTCOME%%' OR last_error LIKE 'AGENT_EXECUTION_TIMEOUT%%' OR last_error LIKE 'AGENT_RESTART_DURING_PRINT%%'))
+                    )
+               )
+               OR (
+                    gateway_job_id IS NULL
+                    AND status = 'unknown'
+                    AND last_error LIKE 'UNKNOWN_SUBMISSION_OUTCOME:%%'
+                    AND (next_retry_at IS NULL OR next_retry_at <= now())
+               )
+             ORDER BY last_status_polled_at ASC NULLS FIRST, id ASC
+             LIMIT 100
+        """)
+        job_ids = [row[0] for row in self.env.cr.fetchall()]
+        if not job_ids:
+            return 0
+        cron = self.env["ir.cron"]
+        if cron._commit_progress(remaining=len(job_ids)) <= 0:
+            return 0
+        jobs = self.browse(job_ids)
+
+        config_jobs = {}
+        for job in jobs:
+            config = job.gateway_config_id.sudo()
+            if config:
+                config_jobs.setdefault(config, self.env["print_gateway.print_job"])
+                config_jobs[config] |= job
+
+        total_synced = 0
+
+        def finish_poll(polled_jobs, processed=1):
+            # Rotate attempted polls only AFTER their HTTP call and commit
+            # outside its savepoint. Failed requests must rotate too, and no
+            # row lock may span the next network call.
+            self.sudo().browse([job.id for job in polled_jobs]).write({
+                "last_status_polled_at": db_now_utc(self.env.cr),
+            })
+            return cron._commit_progress(processed)
+
+        for config, c_jobs in config_jobs.items():
+            job_list = list(c_jobs)
+            for i in range(0, len(job_list), 50):
+                chunk = job_list[i:i + 50]
+                known_jobs = [j for j in chunk if j.gateway_job_id]
+                ambiguous_jobs = [j for j in chunk if not j.gateway_job_id]
+
+                if known_jobs:
+                    if cron._commit_progress() <= 0:
+                        return total_synced
+                    job_ids = [j.gateway_job_id for j in known_jobs]
+                    returned = None
+                    try:
+                        response = requests.post(
+                            "%s/api/print/jobs/batch-status" % config._gateway_base(for_request=True),
+                            json={"jobIds": job_ids},
+                            headers=config._gateway_headers(),
+                            timeout=15,
+                            allow_redirects=False,
+                        )
+                        if response.status_code == 200:
+                            body = response.json()
+                            returned = {
+                                item["jobId"]: item
+                                for item in body.get("jobs", [])
+                                if isinstance(item, dict) and "jobId" in item
+                            }
+                    except Exception as exc:
+                        _logger.warning("Batch status sync failed for config %s: %s; falling back to per-job sync", config.id, exc)
+
+                    # One bulk request has attempted every known job. Persist
+                    # that fairness even if it consumed the remaining time,
+                    # before considering any additional per-job HTTP request.
+                    if finish_poll(known_jobs, processed=0) <= 0:
+                        return total_synced
+
+                    for job in known_jobs:
+                        needs_fallback = returned is None
+                        if not needs_fallback:
+                            try:
+                                if job.gateway_job_id in returned:
+                                    with self.env.cr.savepoint():
+                                        self._apply_synced_status(job, returned[job.gateway_job_id])
+                                else:
+                                    # A missing remote ID is not proof that
+                                    # no paper came out. Mark UNKNOWN under a
+                                    # savepoint: a failing SQL/audit statement
+                                    # must not abort the cron transaction and
+                                    # poison its per-job fallback/recovery.
+                                    with self.env.cr.savepoint():
+                                        changed = self._mark_gateway_job_missing(
+                                            job,
+                                            "GATEWAY_JOB_NOT_FOUND: the Gateway no longer has this job (expired or cleaned up). Physical outcome unknown - verify at the printer, then use Force Reprint if needed.",
+                                        )
+                                        if changed:
+                                            job._post_source_audit(_("Print Job #%s is no longer known to the Gateway; outcome marked UNKNOWN for manual reconciliation.") % (job.gateway_job_id or job.id))
+                                total_synced += 1
+                            except Exception as exc:
+                                _logger.warning("Batch result application failed for Gateway job %s (Odoo job %s): %s; falling back to per-job sync", job.gateway_job_id, job.id, exc)
+                                needs_fallback = True
+                        if needs_fallback:
+                            if cron._commit_progress() <= 0:
+                                return total_synced
+                            try:
+                                with self.env.cr.savepoint():
+                                    job.action_sync_status()
+                                total_synced += 1
+                            except Exception as exc:
+                                _logger.warning("Per-job status sync failed for Gateway job %s (Odoo job %s): %s", job.gateway_job_id, job.id, exc)
+                        if finish_poll([job]) <= 0:
+                            return total_synced
+
+                for job in ambiguous_jobs:
+                    if cron._commit_progress() <= 0:
+                        return total_synced
+                    try:
+                        with self.env.cr.savepoint():
+                            body = self._lookup_gateway_job_for_ambiguous_submission(job)
+                            if body is not None and self._apply_synced_status(job, body):
+                                total_synced += 1
+                    except Exception as exc:
+                        _logger.warning("Gateway ambiguous-submission lookup failed for Odoo job %s: %s", job.id, exc)
+                    if finish_poll([job]) <= 0:
+                        return total_synced
+
+        return total_synced

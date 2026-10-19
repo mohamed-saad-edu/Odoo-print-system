@@ -1,0 +1,61 @@
+import { NextResponse } from "next/server";
+import { requirePlatformOwner, PlatformUnauthorizedError, PlatformMutationAuthorityChangedError } from "../../../../../../lib/platform-auth";
+import { hasBodyOverLimit } from "../../../../../../lib/request-limits";
+import { transitionTenantLifecycle, TenantLifecycleError } from "../../../../../../lib/tenant-lifecycle";
+import { runtimeSecret } from "../../../../../../lib/runtime-secret";
+
+export async function POST(req: Request, context: { params: Promise<{ id: string }> }) {
+  let claims;
+  try {
+    claims = await requirePlatformOwner(req);
+  } catch (error) {
+    if (error instanceof PlatformUnauthorizedError) {
+      return NextResponse.json({ error: "Platform Owner authentication required" }, { status: 401 });
+    }
+    return NextResponse.json({ error: "Platform authentication temporarily unavailable" }, { status: 503 });
+  }
+
+  const { id } = await context.params;
+  if (!id || typeof id !== "string") {
+    return NextResponse.json({ error: "Tenant ID is required" }, { status: 400 });
+  }
+  // PLATFORM_TENANT_ID guards the platform tenant itself. When it is not
+  // configured we fail open for ordinary tenants (matching
+  // transitionTenantLifecycle) so operators are not blocked by a 503, while
+  // still refusing to guess which tenant is the platform one.
+  const platformTenantId = runtimeSecret("PLATFORM_TENANT_ID")?.trim() ?? "";
+  if (platformTenantId && id === platformTenantId) {
+    return NextResponse.json({ error: "The platform tenant cannot be suspended.", code: "PLATFORM_TENANT_PROTECTED" }, { status: 409 });
+  }
+
+  if (hasBodyOverLimit(req, 16 * 1024)) {
+    return NextResponse.json({ error: "Request body too large" }, { status: 413 });
+  }
+
+  let body: { reason?: unknown };
+  try {
+    const parsedBody = await req.json(); if (!parsedBody || typeof parsedBody !== "object" || Array.isArray(parsedBody)) throw new Error("JSON object required"); body = parsedBody;
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+  }
+
+  const reason = typeof body.reason === "string" ? body.reason.trim() : "";
+  if (!reason || reason.length > 500) {
+    return NextResponse.json({ error: "A valid suspension reason (1-500 characters) is required" }, { status: 400 });
+  }
+
+  try {
+    await transitionTenantLifecycle(id, "suspended", reason, {
+      type: "platform",
+      id: claims.userId,
+      claims,
+    });
+    return NextResponse.json({ ok: true, tenantId: id, lifecycle: "suspended", reason });
+  } catch (err) {
+    if (err instanceof PlatformMutationAuthorityChangedError) return NextResponse.json({ error: err.message }, { status: 403 });
+    if (err instanceof TenantLifecycleError) {
+      return NextResponse.json({ error: err.message, code: err.code }, { status: err.status });
+    }
+    return NextResponse.json({ error: "Failed to suspend tenant" }, { status: 500 });
+  }
+}

@@ -1,0 +1,195 @@
+"""Activation-sync robustness contract: the "Syncing" state must be bounded.
+
+Root cause this locks in place: a pending activation sync used to be able to
+persist forever as "Syncing" when every transport attempt died without
+recording an outcome (unexpected post-commit crash, cron not running, or an
+unhandled exception class). The contract now requires, at the source level:
+
+1. A revision-bound staleness fence: pending_sync_started_at is stamped when a
+   revision starts awaiting the Gateway and cleared when an outcome lands; the
+   stored gateway_sync_state escalates to "attention" once
+   now() - pending_sync_started_at exceeds _SYNC_PENDING_STALE_AFTER_SECONDS.
+   The fence must NOT depend on write_date: any unrelated write moves it and
+   would postpone stale detection while the same revision stays unconfirmed.
+2. No silent death: the post-commit runner and both cron reconciliation legs
+   catch unexpected exceptions, log the traceback via _logger.exception, and
+   persist a POSTCOMMIT_ERROR / CRON_ERROR sync result through a fresh cursor.
+3. Automatic credential health monitoring: the cron probes the current Gateway
+   health endpoint independently of the activation revision, so a key revoked
+   or deleted remotely becomes visible in Odoo without a manual action.
+"""
+
+import io
+import tokenize
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+ADDON = ROOT / "odoo_addons" / "print_gateway"
+
+
+def read(rel):
+    return (ADDON / rel).read_text(encoding="utf-8")
+
+
+def strip_python_comments(source):
+    """Remove Python comment tokens while preserving string literals."""
+    tokens = tokenize.generate_tokens(io.StringIO(source).readline)
+    return tokenize.untokenize(token for token in tokens if token.type != tokenize.COMMENT)
+
+
+def test_syncing_state_is_time_bounded_by_a_revision_bound_timestamp():
+    source = read("models/gateway_config.py")
+    assert "_SYNC_PENDING_STALE_AFTER_SECONDS = 300" in source
+    # Explicit pending bookkeeping fields exist and are the fence inputs.
+    assert "pending_sync_revision = fields.Integer(" in source
+    assert "pending_sync_started_at = fields.Datetime(" in source
+    # The compute must NOT depend on write_date: record activity would
+    # postpone stale detection. It must read the pending start timestamp.
+    depends_idx = source.index('"last_enabled_sync_revision",')
+    depends_tail = source[depends_idx:source.index("def _compute_gateway_sync_state")]
+    assert '"write_date",' not in depends_tail
+    assert '"pending_sync_started_at",' in depends_tail
+    compute_idx = source.index("def _compute_gateway_sync_state")
+    compute_end = source.index("@api.constrains", compute_idx)
+    compute_body = source[compute_idx:compute_end]
+    assert "pending_sync_started_at" in compute_body
+    assert "self._SYNC_PENDING_STALE_AFTER_SECONDS" in compute_body
+    assert "self._pending_stale_message()" in compute_body
+    helper_idx = source.index("def _pending_stale_message")
+    helper = source[helper_idx:helper_idx + 400]
+    assert "next automatic check" in helper
+
+
+def test_pending_bookkeeping_is_stamped_on_every_revision_bump_and_cleared_on_success():
+    source = read("models/gateway_config.py")
+    # Enable/URL bumps stamp both fields in the technical write.
+    assert '"pending_sync_revision": new_revision,' in source
+    assert '"pending_sync_started_at": db_now_utc(self.env.cr),' in source
+    # Credential rotation/restore bumps stamp as well.
+    assert '"pending_sync_revision": next_revision,' in source
+    # Creation stamps the initial pending revision.
+    assert 'vals["pending_sync_revision"] = int(vals.get("enabled_sync_revision") or 0)' in source
+    # Recording a successful outcome ends the staleness window.
+    assert '"pending_sync_revision": -1,' in source
+    assert '"pending_sync_started_at": False,' in source
+
+
+def test_migration_backfills_rows_pending_before_the_fence_existed():
+    migration = read("migrations/19.0.2.6.0/post-migrate.py")
+    assert "pending_sync_started_at = write_date" in migration
+    assert "enabled_sync_revision != COALESCE(last_enabled_sync_revision, -1)" in migration
+    assert "pending_sync_started_at IS NULL" in migration
+
+
+def test_postcommit_runner_cannot_die_silently():
+    source = read("models/gateway_config.py")
+    runner_idx = source.index("def _run_postcommit_enabled_sync")
+    runner_end = source.index("def _reconcile_remote_enabled_revision", runner_idx)
+    runner = source[runner_idx:runner_end]
+    assert "except Exception" in runner
+    assert "POSTCOMMIT_ERROR" in runner
+    # Diagnostic context: the traceback itself must reach the Odoo log.
+    assert "_logger.exception(" in runner
+    assert "_persist_enabled_sync_result" in runner
+
+
+def test_cron_legs_cannot_die_silently():
+    source = read("models/gateway_config.py")
+    cron_idx = source.index("def cron_sync_enabled_state(self):")
+    cron_body = source[cron_idx:]
+    assert cron_body.count("except Exception") >= 2
+    assert "CRON_ERROR: unexpected shutdown reconciliation failure" in cron_body
+    assert "CRON_ERROR: unexpected activation reconciliation failure" in cron_body
+    assert cron_body.count("_logger.exception(") >= 2
+
+
+def test_pending_disable_credentials_is_the_single_source_for_pending_state():
+    source = read("models/gateway_config.py")
+    assert "def _pending_disable_credentials" in source
+    # Both the queue and the cron must resolve pending state through the
+    # shared helper instead of duplicating the incomplete-state guard.
+    assert source.count('"Gateway endpoint shutdown/migration state is incomplete') == 1
+
+
+def test_automatic_gateway_health_probe_detects_revoked_keys_and_network_failures():
+    source = read("models/gateway_config.py")
+    probe_idx = source.index("def _probe_gateway_connection")
+    probe_end = source.index("def _persist_gateway_migration_result", probe_idx)
+    probe = source[probe_idx:probe_end]
+    assert '"%s/api/odoo/health" % gateway_url' in probe
+    assert 'response.status_code == 401' in probe
+    assert '"last_test_status": "revoked"' in probe
+    assert '"last_test_status": "failed"' in probe
+    assert "_friendly_gateway_request_error" in probe
+    assert "def cron_sync_enabled_state(self):" in source
+    cron_idx = source.index("def cron_sync_enabled_state(self):")
+    cron_end = source.index("def action_retry_enabled_sync", cron_idx)
+    cron = source[cron_idx:cron_end]
+    assert "_probe_gateway_connection()" in cron
+    assert "if not config._probe_gateway_connection()" in cron
+    assert "pending old-endpoint" in cron or "old-endpoint" in cron
+
+
+def test_queue_invalid_credentials_does_not_open_a_second_cursor_while_write_lock_is_held():
+    source = strip_python_comments(read("models/gateway_config.py"))
+    queue_idx = source.index("def _queue_enabled_state_sync")
+    queue_end = source.index("def _check_admin", queue_idx)
+    queue = source[queue_idx:queue_end]
+
+    # _queue_enabled_state_sync() is invoked from write() while the current
+    # transaction still owns the configuration row lock. Its malformed
+    # credential/URL path must therefore update the current transaction rather
+    # than calling _persist_enabled_sync_result(), which opens a fresh cursor
+    # and executes SELECT ... FOR UPDATE on the same row.
+    error_idx = queue.index("except (ValidationError, ValueError) as exc:")
+    error_end = queue.index("record_id = record.id", error_idx)
+    error_path = queue[error_idx:error_end]
+
+    assert "_persist_enabled_sync_result" not in error_path
+    assert 'with_context(skip_enabled_sync=True).sudo().write({' in error_path
+    assert '"last_enabled_sync_error": str(exc)[:4000]' in error_path
+    assert "record.invalidate_recordset(" in error_path
+
+
+def test_key_removal_shutdown_never_stores_plaintext():
+    source = (ADDON / "models/gateway_config.py").read_text(encoding="utf-8")
+    # The pending-disable reader requires authenticated ciphertext; storing
+    # the plaintext shutdown credential both exposes the old installation key
+    # in PostgreSQL/backups and makes the reader reject its own stored state.
+    assert "key_removal_shutdowns[record.id] = (\n" in source or "key_removal_shutdowns[record.id] = (" in source
+    assert "self._protected_gateway_api_key(credentials[1])" in source
+    assert "key_removal_shutdowns[record.id] = credentials\n" not in source
+
+
+def test_pending_disable_reader_heals_legacy_plaintext_once():
+    source = (ADDON / "models/gateway_config.py").read_text(encoding="utf-8")
+    heal = source[source.index("def _pending_disable_credentials"):]
+    heal = heal[:heal.index("def _run_postcommit_enabled_sync")]
+    assert "is_encrypted_gateway_api_key(stored_key)" in heal
+    assert '"pending_disable_gateway_api_key": stored_key' in heal
+
+
+def test_broken_pending_shutdown_blocks_new_endpoint_sync():
+    source = (ADDON / "models/gateway_config.py").read_text(encoding="utf-8")
+    # A malformed/incomplete pending shutdown credential must never be
+    # silently replaced with None: enabling the new endpoint without
+    # confirming old-endpoint shutdown bypasses the durable migration fence.
+    assert "pending_disable_error" in source
+    assert source.count("pending_disable_error=pending_disable_error") >= 2
+    runner = source[source.index("def _run_postcommit_enabled_sync"):]
+    runner = runner[:runner.index("def _sync_enabled_state_to_gateway")]
+    assert "if pending_disable_error:" in runner
+    assert "_persist_gateway_migration_result(success=False, error=pending_disable_error)" in runner
+
+
+def test_same_endpoint_shutdown_binds_credential_identity():
+    source = (ADDON / "models/gateway_config.py").read_text(encoding="utf-8")
+    # Gateway activation is scoped to each API-key row: skipping the old-key
+    # shutdown on same-origin URLs regardless of credential identity leaves
+    # a rotated key enabled forever. The skip requires identical credentials;
+    # otherwise shutdown runs with the OLD key, and a revoked old key
+    # converges instead of blocking.
+    assert "def _same_credential(" in source
+    assert "class _OldEndpointUnauthorized(ValidationError)" in source
+    assert source.count("_same_credential(old_api_key") >= 2
+    assert "shutdown_api_key = api_key" not in source

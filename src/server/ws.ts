@@ -1,0 +1,1265 @@
+import { WebSocketServer, WebSocket, type RawData } from "ws";
+import type { IncomingMessage, Server as HttpServer } from "http";
+import type { Duplex } from "node:stream";
+import type { PoolClient } from "pg";
+import { isIP } from "node:net";
+import { performance } from "node:perf_hooks";
+import { pool } from "../db";
+import { validateAgent } from "../lib/agent-auth";
+import { recordWsUpgradeSuccess, reserveWsUpgradeAttempt } from "../lib/ws-rate-limit";
+import { isAllowedWebSocketOrigin, isTrustedProxyUpgrade, trustProxyEnabled } from "./trusted-proxy";
+import { incrementMetric } from "../lib/metrics";
+import {
+  claimJobForDelivery,
+  markJobDelivered,
+  markJobDeliveryUnknown,
+  recordJobAck,
+  releaseUndeliveredClaim,
+  type ClaimedJobRow,
+} from "../lib/job-delivery";
+import { logDebug, logError, logInfo, logWarn } from "../lib/log";
+
+type AgentSocket = WebSocket & {
+  agentId?: string;
+  tenantId?: string;
+  lifecycleRevision?: number;
+  isAlive?: boolean;
+  socketCounted?: boolean;
+};
+
+type WritableSocket = Pick<Duplex, "end" | "destroy">;
+
+const agentSockets = new Map<string, Set<AgentSocket>>();
+let totalAgentSockets = 0;
+const wsMessageInFlightByAgentId = new Map<string, number>();
+// A rogue or wedged agent must not grow one entry without bound: sockets are
+// cheap, but each holds buffers and timers. Agents normally hold exactly one;
+// 8 leaves ample headroom for rolling reconnect overlap.
+const MAX_AGENT_SOCKETS = 8;
+const MAX_TOTAL_AGENT_SOCKETS = 4096;
+let pendingAgentSocketReservations = 0;
+type AgentSocketRegistrationWaiter = {
+  resolve: (ready: boolean) => void;
+  timer: ReturnType<typeof setTimeout>;
+};
+const pendingAgentSocketRegistrations = new Map<string, number>();
+const agentSocketRegistrationWaiters = new Map<string, Set<AgentSocketRegistrationWaiter>>();
+const MAX_AGENT_SOCKET_READY_WAIT_MS = 1_000;
+const MAX_WS_MESSAGE_BYTES = 64 * 1024;
+const MAX_WS_INFLIGHT_MESSAGES_PER_AGENT = 16;
+const MAX_WS_BUFFERED_BYTES = 1 * 1024 * 1024;
+const PG_NOTIFY_CHANNEL = "print_gateway_agent_jobs";
+const PG_SESSIONS_CHANNEL = "print_gateway_agent_sessions";
+const PG_DISCOVERY_CHANNEL = "print_gateway_discovery";
+let notificationListenerPid: number | null = null;
+const PG_NOTIFY_RECONNECT_MIN_MS = 1_000;
+const PG_NOTIFY_RECONNECT_MAX_MS = 30_000;
+const WS_MESSAGE_BUCKET_CAPACITY = 20;
+const WS_MESSAGE_REFILL_PER_SECOND = 5;
+
+class TokenBucket {
+  private tokens = WS_MESSAGE_BUCKET_CAPACITY;
+  private lastRefillMs = performance.now();
+
+  consume(cost = 1): boolean {
+    const now = performance.now();
+    const elapsed = Math.max(0, now - this.lastRefillMs) / 1000;
+    this.tokens = Math.min(
+      WS_MESSAGE_BUCKET_CAPACITY,
+      this.tokens + elapsed * WS_MESSAGE_REFILL_PER_SECOND,
+    );
+    this.lastRefillMs = now;
+    if (this.tokens < cost) return false;
+    this.tokens -= cost;
+    return true;
+  }
+}
+
+/**
+ * Persistent per-agent message rate limiters, keyed by agentId and
+ * independent of individual socket lifetimes. Reconnecting must NOT reset
+ * the bucket: token state is retained across reconnects and refreshed
+ * strictly from elapsed time inside TokenBucket.consume().
+ */
+type WsBucketEntry = { bucket: TokenBucket; lastSeenMs: number };
+const wsMessageBucketsByAgentId = new Map<string, WsBucketEntry>();
+const WS_BUCKET_IDLE_TTL_MS = 60 * 60 * 1000; // prune limiters idle > 1 hour
+const WS_BUCKET_GC_INTERVAL_MS = 10 * 60 * 1000; // GC runs every 10 minutes
+
+function getBucketForAgent(agentId: string): TokenBucket {
+  const now = performance.now();
+  const existing = wsMessageBucketsByAgentId.get(agentId);
+  if (existing) {
+    existing.lastSeenMs = now;
+    return existing.bucket;
+  }
+  const bucket = new TokenBucket();
+  wsMessageBucketsByAgentId.set(agentId, { bucket, lastSeenMs: now });
+  return bucket;
+}
+
+function pruneIdleWsBuckets(nowMs = performance.now()): number {
+  let pruned = 0;
+  for (const [agentId, entry] of wsMessageBucketsByAgentId) {
+    if (nowMs - entry.lastSeenMs > WS_BUCKET_IDLE_TTL_MS) {
+      wsMessageBucketsByAgentId.delete(agentId);
+      pruned += 1;
+    }
+  }
+  return pruned;
+}
+
+// Background GC: every 10 minutes prune agent limiters idle for > 1 hour
+// so the global Map cannot grow without bound from churned agentIds.
+const wsBucketGcTimer =
+  typeof setInterval === "function"
+    ? setInterval(() => {
+        try {
+          pruneIdleWsBuckets();
+        } catch (error) {
+          logWarn("[ws] bucket GC failed:", { error: error });
+        }
+      }, WS_BUCKET_GC_INTERVAL_MS)
+    : null;
+if (wsBucketGcTimer && typeof (wsBucketGcTimer as { unref?: () => void }).unref === "function") {
+  (wsBucketGcTimer as { unref: () => void }).unref();
+}
+
+export function __pruneIdleWsBucketsForTests(nowMs?: number): number {
+  return pruneIdleWsBuckets(nowMs);
+}
+
+export function __clearWsBucketsForTests(): void {
+  wsMessageBucketsByAgentId.clear();
+  wsMessageInFlightByAgentId.clear();
+}
+
+export function __getNotificationListenerPidForTests(): number | null {
+  return notificationListenerPid;
+}
+
+export function shouldCloseTenantSocketsForNotification(
+  lifecycle: unknown,
+): boolean {
+  // NOTIFY payloads are unauthenticated transport: only a durable
+  // suspended/deleted lifecycle observed in PostgreSQL may disconnect a
+  // tenant's agents. Anything else (active, missing, unexpected) is ignored
+  // so a spoofed pg_notify cannot mass-disconnect a live tenant.
+  return lifecycle === "suspended" || lifecycle === "deleted";
+}
+
+export function jobNoticeTenantAllowed(
+  noticeTenant: unknown,
+  socketTenant: string | undefined,
+): boolean {
+  // Job notifications must be explicitly tenant-scoped and match the connected socket tenant.
+  if (typeof noticeTenant !== "string" || !noticeTenant) return false;
+  if (!socketTenant) return false;
+  return noticeTenant === socketTenant;
+}
+
+export function shouldCloseAgentSocketForLifecycleRevision(
+  socketRevision: number | undefined,
+  invalidatingRevision: number,
+): boolean {
+  // An authenticated socket without a revision can only be from a process
+  // started before this fence was deployed; close it rather than letting a
+  // legacy session survive a lifecycle transition.
+  if (socketRevision === undefined) return true;
+  return socketRevision < invalidatingRevision;
+}
+
+export function shouldAcceptAgentSocketForLifecycleState(
+  authenticatedRevision: number | undefined,
+  currentRevision: number | undefined,
+  currentLifecycle: string | undefined,
+): boolean {
+  // Authentication and socket registration are separate async steps. The
+  // agent can be deactivated in that gap, so the durable lifecycle snapshot
+  // must still be active at exactly the revision that authenticated the socket.
+  return (
+    currentLifecycle === "active" &&
+    typeof authenticatedRevision === "number" &&
+    Number.isSafeInteger(authenticatedRevision) &&
+    authenticatedRevision >= 0 &&
+    typeof currentRevision === "number" &&
+    Number.isSafeInteger(currentRevision) &&
+    currentRevision >= 0 &&
+    authenticatedRevision === currentRevision
+  );
+}
+
+type AgentLifecycleSnapshot = {
+  lifecycle: string;
+  lifecycleRevision: number;
+};
+
+async function currentAgentLifecycleState(agentId: string): Promise<AgentLifecycleSnapshot | null> {
+  const result = await pool.query<{ lifecycle: string; lifecycle_revision: number | string }>(
+    "SELECT lifecycle, lifecycle_revision FROM agents WHERE id = $1",
+    [agentId],
+  );
+  if (result.rows.length !== 1) return null;
+  const revision = Number(result.rows[0].lifecycle_revision);
+  if (!Number.isSafeInteger(revision) || revision < 0) return null;
+  return {
+    lifecycle: result.rows[0].lifecycle,
+    lifecycleRevision: revision,
+  };
+}
+
+/**
+ * Establish the in-memory delivery registration while holding a shared lock
+ * on the durable Agent lifecycle row.  This closes the upgrade/lifecycle
+ * race: a disable transaction cannot commit between the verification and
+ * `trackAgentSocket`, and a socket cannot be selected by `sendToAgent` before
+ * its lifecycle fence has been verified.
+ *
+ * The lifecycle transition takes `FOR UPDATE` on this same row and publishes
+ * its close notification in that transaction.  Therefore either (a) the
+ * transition commits first and this function rejects the socket, or (b) this
+ * function registers an active socket first and the later transition fences
+ * it through the session-close notification.
+ */
+async function verifyAndTrackAgentSocket(
+  agentId: string,
+  authenticatedRevision: number | undefined,
+  ws: AgentSocket,
+): Promise<boolean> {
+  const client = await pool.connect();
+  let transactionOpen = false;
+  let tracked = false;
+  try {
+    await client.query("BEGIN");
+    transactionOpen = true;
+    const tenant = await client.query<{ lifecycle: string }>(
+      "SELECT lifecycle FROM tenants WHERE id = $1 FOR SHARE",
+      [ws.tenantId],
+    );
+    if (tenant.rows[0]?.lifecycle !== "active") {
+      await client.query("ROLLBACK");
+      transactionOpen = false;
+      return false;
+    }
+    const result = await client.query<{ lifecycle: string; lifecycle_revision: number | string }>(
+      "SELECT lifecycle, lifecycle_revision FROM agents WHERE id = $1 AND tenant_id = $2 FOR SHARE",
+      [agentId, ws.tenantId],
+    );
+    const row = result.rows[0];
+    const revision = row ? Number(row.lifecycle_revision) : undefined;
+    if (!shouldAcceptAgentSocketForLifecycleState(authenticatedRevision, revision, row?.lifecycle)) {
+      await client.query("ROLLBACK");
+      transactionOpen = false;
+      return false;
+    }
+    if (ws.readyState !== WebSocket.OPEN) {
+      await client.query("ROLLBACK");
+      transactionOpen = false;
+      return false;
+    }
+
+    trackAgentSocket(agentId, ws);
+    tracked = true;
+    await client.query("COMMIT");
+    transactionOpen = false;
+    return true;
+  } catch (error) {
+    if (transactionOpen) {
+      try { await client.query("ROLLBACK"); } catch (error) { logDebug("[ws] rollback cleanup failed", { error: error instanceof Error ? error.message : String(error) }); }
+    }
+    // The close listener removes the map entry and corrects the global count.
+    // Do not leave a registration behind if the transaction could not commit.
+    if (tracked) {
+      try { ws.terminate(); } catch (error) { logDebug("[ws] socket terminate cleanup failed", { error: error instanceof Error ? error.message : String(error) }); }
+    }
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export function closeAgentSockets(agentId: string, lifecycleRevision: number | null): void {
+  const set = agentSockets.get(agentId);
+  if (!set || set.size === 0) return;
+  for (const ws of set) {
+    // A lifecycle notification invalidates sessions authenticated BEFORE the
+    // transition that produced this revision. A newer session must survive,
+    // even if the notification itself was delayed in the PG LISTEN queue.
+    if (lifecycleRevision !== null && !shouldCloseAgentSocketForLifecycleRevision(ws.lifecycleRevision, lifecycleRevision)) {
+      continue;
+    }
+    try {
+      ws.close(4001, "agent deactivated");
+    } catch (error) {
+      logDebug("[ws] deactivated-agent close failed", { error: error instanceof Error ? error.message : String(error) });
+      try { ws.terminate(); } catch (terminateError) { logDebug("[ws] deactivated-agent terminate cleanup failed", { error: terminateError instanceof Error ? terminateError.message : String(terminateError) }); }
+    }
+  }
+}
+
+export function closeTenantSockets(tenantId: string): void {
+  for (const [, set] of agentSockets) {
+    for (const ws of set) {
+      if (ws.tenantId === tenantId) {
+        try { ws.close(4001, "tenant suspended"); } catch (error) { logDebug("[ws] tenant-suspend close failed", { error: error instanceof Error ? error.message : String(error) }); try { ws.terminate(); } catch (terminateError) { logDebug("[ws] tenant-suspend terminate cleanup failed", { error: terminateError instanceof Error ? terminateError.message : String(terminateError) }); } }
+      }
+    }
+  }
+}
+
+function websocketClientKey(req: IncomingMessage): string {
+  // Trust-boundary note: X-Forwarded-For / X-Real-IP are only consulted when
+  // TRUST_PROXY=1, whose token is verified by the caller (upgrade path)
+  // before this function is reached. Do not reuse this helper on an
+  // unauthenticated path without verifying the proxy token first.
+  // AUDIT_LOG.md [src/server/ws.ts]: use shared trustProxyEnabled() helper
+  if (trustProxyEnabled()) {
+    const forwarded = req.headers["x-forwarded-for"];
+    const candidates = typeof forwarded === "string" ? forwarded.split(",") : [];
+    // Last valid entry wins: the edge overwrites X-Forwarded-For with the
+    // real client address, so attacker-supplied leftmost values are ignored.
+    for (let i = candidates.length - 1; i >= 0; i--) {
+      const ip = candidates[i]!.trim();
+      if (ip && isIP(ip) !== 0) return ip.slice(0, 128);
+    }
+    const real = typeof req.headers["x-real-ip"] === "string" ? req.headers["x-real-ip"].trim() : "";
+    if (real && isIP(real) !== 0) return real.slice(0, 128);
+  }
+  return (req.socket.remoteAddress ?? "unknown").replace(/^::ffff:/, "").slice(0, 128) || "unknown";
+}
+
+function writeWsHttpError(socket: WritableSocket, status: number, body: string, retryAfterSec?: number) {
+  const retry = retryAfterSec !== undefined ? `Retry-After: ${retryAfterSec}\r\n` : "";
+  const statusText = status === 429 ? "Too Many Requests" : status === 503 ? "Service Unavailable" : status === 404 ? "Not Found" : status === 401 ? "Unauthorized" : "Bad Request";
+  const payload = JSON.stringify({ error: body });
+  const response =
+    `HTTP/1.1 ${status} ${statusText}\r\n` +
+    `Content-Type: application/json; charset=utf-8\r\n` +
+    `Content-Length: ${Buffer.byteLength(payload)}\r\n` +
+    retry +
+    `Connection: close\r\n\r\n` +
+    payload;
+
+  try {
+    socket.end(response);
+  } catch (error) {
+    // Best-effort teardown of a rejected upgrade: the caller already knows the
+    // outcome (the HTTP error response it just wrote), so this stays swallowed,
+    // but both halves are now visible at debug level.
+    logDebug("[ws] HTTP socket end failed during rejected upgrade", { error: error instanceof Error ? error.message : String(error) });
+    try { socket.destroy(); } catch (destroyError) { logDebug("[ws] HTTP socket destroy cleanup failed", { error: destroyError instanceof Error ? destroyError.message : String(destroyError) }); }
+  }
+}
+
+function logUpgradeError(error: unknown): void {
+  const message = error instanceof Error ? error.message : String(error);
+  logError("ws.upgrade_failed", { error: message.slice(0, 500) });
+}
+
+function canReserveAgentSocketSlot(activeCount: number, pendingCount: number, max = MAX_TOTAL_AGENT_SOCKETS): boolean {
+  return (
+    Number.isSafeInteger(activeCount) &&
+    Number.isSafeInteger(pendingCount) &&
+    Number.isSafeInteger(max) &&
+    activeCount >= 0 &&
+    pendingCount >= 0 &&
+    max > 0 &&
+    activeCount + pendingCount < max
+  );
+}
+
+function reserveAgentSocketSlot(): boolean {
+  if (!canReserveAgentSocketSlot(totalAgentSockets, pendingAgentSocketReservations)) return false;
+  pendingAgentSocketReservations += 1;
+  return true;
+}
+
+function releaseAgentSocketSlot(): void {
+  pendingAgentSocketReservations = Math.max(0, pendingAgentSocketReservations - 1);
+}
+
+function markAgentSocketRegistrationPending(agentId: string): void {
+  pendingAgentSocketRegistrations.set(
+    agentId,
+    (pendingAgentSocketRegistrations.get(agentId) ?? 0) + 1,
+  );
+}
+
+function finishAgentSocketRegistrationPending(agentId: string, ready: boolean): void {
+  const pending = pendingAgentSocketRegistrations.get(agentId) ?? 0;
+  if (pending <= 1) pendingAgentSocketRegistrations.delete(agentId);
+  else pendingAgentSocketRegistrations.set(agentId, pending - 1);
+
+  if (!ready && pending > 1) return;
+
+  const waiters = agentSocketRegistrationWaiters.get(agentId);
+  if (!waiters) return;
+  agentSocketRegistrationWaiters.delete(agentId);
+  for (const waiter of waiters) {
+    clearTimeout(waiter.timer);
+    waiter.resolve(ready);
+  }
+}
+
+function waitForAgentSocketReady(agentId: string): Promise<boolean> {
+  if (hasOpenAgentSocket(agentId)) return Promise.resolve(true);
+  if ((pendingAgentSocketRegistrations.get(agentId) ?? 0) === 0) return Promise.resolve(false);
+
+  return new Promise<boolean>((resolve) => {
+    const timer = setTimeout(() => {
+      const waiters = agentSocketRegistrationWaiters.get(agentId);
+      if (waiters) {
+        waiters.delete(waiter);
+        if (waiters.size === 0) agentSocketRegistrationWaiters.delete(agentId);
+      }
+      resolve(hasOpenAgentSocket(agentId));
+    }, MAX_AGENT_SOCKET_READY_WAIT_MS);
+    const waiter: AgentSocketRegistrationWaiter = { resolve, timer };
+    let waiters = agentSocketRegistrationWaiters.get(agentId);
+    if (!waiters) {
+      waiters = new Set();
+      agentSocketRegistrationWaiters.set(agentId, waiters);
+    }
+    waiters.add(waiter);
+  });
+}
+
+export function __canReserveAgentSocketSlotForTests(
+  activeCount: number,
+  pendingCount: number,
+  max = MAX_TOTAL_AGENT_SOCKETS,
+): boolean {
+  return canReserveAgentSocketSlot(activeCount, pendingCount, max);
+}
+
+function uncountAgentSocket(ws: AgentSocket): void {
+  if (ws.socketCounted !== true) return;
+  ws.socketCounted = false;
+  totalAgentSockets = Math.max(0, totalAgentSockets - 1);
+}
+
+function trackAgentSocket(agentId: string, ws: AgentSocket) {
+  ws.agentId = agentId;
+  ws.socketCounted = false;
+  let set = agentSockets.get(agentId);
+  if (!set) {
+    set = new Set();
+    agentSockets.set(agentId, set);
+  }
+  // Cap enforced BEFORE adding: when the set is already full, the oldest
+  // socket is evicted first so the set never transiently holds
+  // MAX_AGENT_SOCKETS + 1 entries under rapid-reconnect churn. The newest
+  // connection is the live one (reconnect overlap), so the eviction victim
+  // is always the oldest socket — never the incoming one.
+  while (set.size >= MAX_AGENT_SOCKETS) {
+    const oldest = set.values().next().value as AgentSocket | undefined;
+    if (!oldest) break;
+    uncountAgentSocket(oldest);
+    try { oldest.terminate(); } catch (error) { logDebug("[ws] oldest socket terminate cleanup failed", { error: error instanceof Error ? error.message : String(error) }); }
+    set.delete(oldest);
+  }
+  set.add(ws);
+  ws.socketCounted = true;
+  totalAgentSockets += 1;
+  void incrementMetric("websocket_connections_opened_total");
+  ws.on("close", () => {
+    set!.delete(ws);
+    uncountAgentSocket(ws);
+    void incrementMetric("websocket_connections_closed_total");
+    // Identity guard: a terminated-but-late-closing evicted socket must
+    // never delete a replacement Set that a newer connection created after
+    // this socket's set was emptied and removed from the map.
+    if (set!.size === 0 && agentSockets.get(agentId) === set) {
+      agentSockets.delete(agentId);
+    }
+  });
+}
+
+export function getAgentWsCount(agentId: string): number {
+  return agentSockets.get(agentId)?.size ?? 0;
+}
+
+export function hasOpenAgentSocket(agentId: string): boolean {
+  const set = agentSockets.get(agentId);
+  if (!set) return false;
+  for (const ws of set) if (ws.readyState === WebSocket.OPEN) return true;
+  return false;
+}
+
+type JobSendOutcome = "sent" | "not_sent" | "ambiguous";
+
+function sendJobToAgent(agentId: string, message: unknown, serializedPayload?: string): JobSendOutcome {
+  const set = agentSockets.get(agentId);
+  if (!set || set.size === 0) return "not_sent";
+  const open = [...set]
+    .filter((ws) => ws.readyState === WebSocket.OPEN)
+    .reverse();
+  if (open.length === 0) return "not_sent";
+
+  // Large PDF jobs contain ~7 MiB base64 frames. Reuse the serialized
+  // admission-checked frame rather than encoding the same job twice.
+  const payload = serializedPayload ?? JSON.stringify(message);
+  for (const target of open) {
+    if (target.bufferedAmount > MAX_WS_BUFFERED_BYTES) continue;
+    try {
+      target.send(payload);
+      return "sent";
+    } catch (e) {
+      logWarn("ws.job_send_ambiguous", { agentId, error: e });
+      set.delete(target);
+      uncountAgentSocket(target);
+      try { target.terminate(); } catch (error) { logDebug("[ws] failed-send socket terminate cleanup failed", { error: error instanceof Error ? error.message : String(error) }); }
+      // The source cannot prove that target.send() transmitted zero bytes once
+      // the send call itself has been entered. Never try another socket and
+      // never requeue the job: a second hand-off could duplicate physical
+      // printing.
+      if (set.size === 0) agentSockets.delete(agentId);
+      return "ambiguous";
+    }
+  }
+  if (set.size === 0) agentSockets.delete(agentId);
+  return "not_sent";
+}
+
+export function sendToAgent(agentId: string, message: unknown): boolean {
+  return sendJobToAgent(agentId, message) === "sent";
+}
+
+export type JobDeliveryEnvelope = {
+  type: "print_job";
+  job: {
+    id: string;
+    agentId: string;
+    printerId: string;
+    documentType: string | null;
+    status: string;
+    payload: unknown;
+    expiresAt: string;
+    retries: number;
+    claimToken: string | null;
+    requestId: string | null;
+  };
+  // Flat aliases for legacy parsers that read the envelope without the
+  // nested job object. The document payload travels ONLY inside job
+  // (single canonical representation): duplicating a 5 MiB base64 document
+  // at the top level doubles the frame past the agent's 8 MiB read limit,
+  // silently stranding jobs the gateway recorded as delivered.
+  id: string;
+  printerId: string;
+  expiresAt: string;
+  requestId: string | null;
+};
+
+// MAX_WS_JOB_ENVELOPE_BYTES caps one serialized server->agent frame below
+// the agent's inbound read limit (agent/internal/agent/agent.go
+// maxWSFrameBytes = 8 MiB). A 5 MiB document base64-encodes to ~6.9 MiB of
+// JSON; anything larger is hostile or corrupt and must never be pushed.
+export const MAX_WS_JOB_ENVELOPE_BYTES = (8 << 20) - (512 << 10);
+
+export function buildJobEnvelope(job: ClaimedJobRow): JobDeliveryEnvelope {
+  // CLAIM_RETURNING rows carry naive UTC timestamp strings; parse with an
+  // explicit UTC guard so the agent receives a true RFC3339 instant even when
+  // the gateway host TZ is not UTC.
+  let expiresAtDate: Date;
+  if (job.expiresAt instanceof Date) {
+    expiresAtDate = job.expiresAt;
+  } else {
+    let iso = String(job.expiresAt).replace(" ", "T");
+    if (!/[zZ]$|[+-]\d{2}:?\d{2}$/.test(iso)) {
+      iso += /[+-]\d{2}$/.test(iso) ? ":00" : "Z";
+    }
+    expiresAtDate = new Date(iso);
+  }
+  const expiresAt = expiresAtDate.toISOString();
+  return {
+    type: "print_job",
+    job: {
+      id: job.id,
+      agentId: job.agentId,
+      printerId: job.printerId,
+      documentType: job.documentType ?? null,
+      status: job.status,
+      payload: job.payload,
+      expiresAt,
+      retries: job.retries,
+      claimToken: job.claimToken ?? null,
+      requestId: job.requestId ?? null,
+    },
+    id: job.id,
+    printerId: job.printerId,
+    expiresAt,
+    requestId: job.requestId ?? null,
+  };
+}
+
+/** Serialize once: the size gate and the eventual socket write must inspect
+ * identical bytes, while avoiding a second multi-megabyte JSON allocation.
+ * This helper performs no I/O and does not weaken delivery evidence fencing. */
+export function serializeJobEnvelope(envelope: JobDeliveryEnvelope): { payload: string; wireBytes: number } {
+  const payload = JSON.stringify(envelope);
+  return { payload, wireBytes: Buffer.byteLength(payload, "utf8") };
+}
+
+export type PushOutcome = "delivered" | "no_socket" | "not_claimable" | "requeued" | "failed" | "delivery_unknown";
+
+export async function claimAndPushJobToAgent(job: { id: string; agentId: string }): Promise<PushOutcome> {
+  const startedAt = Date.now();
+  if (!hasOpenAgentSocket(job.agentId)) {
+    // The WebSocket client receives its "open" event immediately after the HTTP
+    // upgrade, while durable lifecycle verification and in-memory registration
+    // complete asynchronously. A job notification can therefore race the
+    // registration window. Wait only when an authenticated socket is currently
+    // being registered; a genuinely disconnected agent remains a fast no-op.
+    const ready = await waitForAgentSocketReady(job.agentId);
+    if (!ready && !hasOpenAgentSocket(job.agentId)) return "no_socket";
+  }
+  const claimStartedAt = Date.now();
+  const claimed = await claimJobForDelivery(job.id, job.agentId, { markDeliveryEvidencePending: true });
+  const claimLatencyMs = Date.now() - claimStartedAt;
+  if (!claimed || !claimed.claimToken) {
+    logInfo("print.trace.gateway_claim", { jobId: job.id, agentId: job.agentId, claimLatencyMs, outcome: "not_claimable" });
+    return "not_claimable";
+  }
+  const claimToken = claimed.claimToken;
+  const envelope = buildJobEnvelope(claimed);
+  // Wire-budget gate: measure the actual serialized frame, not the raw
+  // document bytes. An over-budget frame would die in the agent's read
+  // limit AFTER the gateway recorded delivery, stranding the job. Nothing
+  // has been transmitted yet here, so release the claim for redelivery
+  // instead of sending a frame the receiver cannot accept.
+  let wireBytes = 0;
+  let serializedPayload: string | null = null;
+  try {
+    const frame = serializeJobEnvelope(envelope);
+    serializedPayload = frame.payload;
+    wireBytes = frame.wireBytes;
+  } catch {
+    // Serialization failed before any bytes were sent: release the claim
+    // using the existing safe pre-dispatch path below.
+    wireBytes = MAX_WS_JOB_ENVELOPE_BYTES + 1;
+  }
+  const sendStartedAt = Date.now();
+  const sendOutcome = serializedPayload === null || wireBytes > MAX_WS_JOB_ENVELOPE_BYTES
+    ? "not_sent" as const
+    : sendJobToAgent(job.agentId, envelope, serializedPayload);
+  const sendLatencyMs = Date.now() - sendStartedAt;
+  if (sendOutcome === "not_sent") {
+    const outcome = await releaseUndeliveredClaim(job.id, claimed.tenantId, job.agentId, claimToken, "websocket delivery failed before send; job requeued for redelivery");
+    logWarn("print.trace.gateway_send", { jobId: job.id, agentId: job.agentId, claimLatencyMs, sendLatencyMs, totalLatencyMs: Date.now() - startedAt, wireBytes, overBudget: wireBytes > MAX_WS_JOB_ENVELOPE_BYTES, outcome: outcome === "failed" ? "failed" : "requeued" });
+    return outcome === "failed" ? "failed" : "requeued";
+  }
+  if (sendOutcome === "ambiguous") {
+    const markedUnknown = await markJobDeliveryUnknown(
+      job.id,
+      claimed.tenantId,
+      job.agentId,
+      claimToken,
+    );
+    logWarn("print.trace.gateway_send", {
+      jobId: job.id,
+      agentId: job.agentId,
+      claimLatencyMs,
+      sendLatencyMs,
+      totalLatencyMs: Date.now() - startedAt,
+      outcome: markedUnknown ? "delivery_unknown" : "not_claimable",
+    });
+    return markedUnknown ? "delivery_unknown" : "not_claimable";
+  }
+  // "Delivered" is a DATABASE fact, not a socket fact: only when the
+  // delivered_at evidence write lands for THIS claim token does the gateway
+  // consider the job handed over. A socket success whose evidence write
+  // misses (row expired, terminal, or reclaimed mid-send) falls back to the
+  // undelivered-release path instead of stranding a phantom delivery.
+  const evidenceStartedAt = Date.now();
+  const evidenced = await markJobDelivered(job.id, claimed.tenantId, job.agentId, claimToken);
+  const evidenceLatencyMs = Date.now() - evidenceStartedAt;
+  if (!evidenced) {
+    // The socket accepted the frame, so a failed evidence write is ambiguous:
+    // the Agent may already have admitted/printed the job. NEVER release this
+    // claim back to 'queued' here — doing so can produce a duplicate physical
+    // print. Record an explicit unknown physical outcome when the row is still
+    // fenced in 'claimed'; if a concurrent actor already advanced it, leave
+    // that authoritative state untouched.
+    const markedUnknown = await markJobDeliveryUnknown(
+      job.id,
+      claimed.tenantId,
+      job.agentId,
+      claimToken,
+    );
+    logWarn("print.trace.gateway_delivery", {
+      jobId: job.id,
+      agentId: job.agentId,
+      claimLatencyMs,
+      sendLatencyMs,
+      evidenceLatencyMs,
+      totalLatencyMs: Date.now() - startedAt,
+      outcome: markedUnknown ? "delivery_unknown" : "not_claimable",
+    });
+    return markedUnknown ? "delivery_unknown" : "not_claimable";
+  }
+  logInfo("print.trace.gateway_delivery", { jobId: job.id, agentId: job.agentId, printerId: claimed.printerId, requestId: claimed.requestId, claimLatencyMs, sendLatencyMs, evidenceLatencyMs, totalLatencyMs: Date.now() - startedAt, outcome: "delivered" });
+  return "delivered";
+}
+
+export async function handleAgentMessage(agentId: string, tenantId: string, raw: string): Promise<void> {
+  let msg: unknown;
+  try {
+    msg = JSON.parse(raw);
+  } catch (error) {
+    // A malformed frame here drops an inbound agent message (e.g. a job_ack)
+    // with no trace at all. Nothing can be recovered from unparseable JSON, so
+    // this stays a return, but it is no longer silent: a debugging session can
+    // see the agent id and the parse failure at debug level.
+    logDebug("[ws] discarded unparseable agent message", {
+      agentId,
+      tenantId,
+      bytes: raw.length,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return;
+  }
+  if (!msg || typeof msg !== "object") return;
+  const { type, jobId, claimToken } = msg as { type?: unknown; jobId?: unknown; claimToken?: unknown };
+  if (type !== "job_ack") return;
+  if (typeof jobId !== "string" || !jobId) return;
+  const token = typeof claimToken === "string" && claimToken ? claimToken : null;
+  const known = await recordJobAck(jobId, tenantId, agentId, token);
+  if (!known) logWarn("ws.job_ack_no_live_claim", { agentId, jobId });
+}
+
+async function startJobNotificationListener(): Promise<() => Promise<void>> {
+  let stopped = false;
+  let activeClient: PoolClient | null = null;
+  let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  let reconnectAttempt = 0;
+  // SKIP LOCKED is a safe, non-blocking claim fence, but a short-lived lock on
+  // an Agent/printer/tenant row can make a newly committed job miss the only
+  // NOTIFY. Agents poll as the durable backstop; these small, bounded retries
+  // avoid needless POS receipt latency while that poll interval elapses.
+  const notificationRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  const MAX_NOTIFICATION_RETRY_TIMERS = 128;
+  const NOTIFICATION_RETRY_DELAYS_MS = [125, 375, 1_000] as const;
+  type JobNotice = { jobId: string; agentId: string; requestId: string | null };
+
+  const pushNotifiedJob = (notice: JobNotice, retryCount = 0): void => {
+    if (stopped || (!hasOpenAgentSocket(notice.agentId)
+        && (pendingAgentSocketRegistrations.get(notice.agentId) ?? 0) === 0)) return;
+    void claimAndPushJobToAgent({ id: notice.jobId, agentId: notice.agentId }).then((outcome) => {
+      logInfo("print.job.dispatch_boundary", {
+        requestId: notice.requestId,
+        jobId: notice.jobId,
+        agentId: notice.agentId,
+        dispatchOutcome: outcome,
+        notificationRetry: retryCount,
+      });
+      if (outcome !== "not_claimable" || stopped || retryCount >= NOTIFICATION_RETRY_DELAYS_MS.length
+          || !hasOpenAgentSocket(notice.agentId)) return;
+      const key = `${notice.agentId}:${notice.jobId}`;
+      // A later notification should not multiply retry timers for this job.
+      // After the bounded budget, polling is authoritative recovery.
+      if (notificationRetryTimers.has(key) || notificationRetryTimers.size >= MAX_NOTIFICATION_RETRY_TIMERS) return;
+      const timer = setTimeout(() => {
+        notificationRetryTimers.delete(key);
+        pushNotifiedJob(notice, retryCount + 1);
+      }, NOTIFICATION_RETRY_DELAYS_MS[retryCount]);
+      timer.unref?.();
+      notificationRetryTimers.set(key, timer);
+    }).catch((error) => {
+      logWarn("ws.job_cross_instance_delivery_failed", { jobId: notice.jobId, error });
+      logWarn("print.job.ws_push_deferred", {
+        requestId: notice.requestId,
+        jobId: notice.jobId,
+        agentId: notice.agentId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+  };
+
+  const handleNotification = (notification: { channel?: string; payload?: string }) => {
+    if (!notification.payload) return;
+    if (notification.channel === PG_SESSIONS_CHANNEL) {
+      try {
+        const message = JSON.parse(notification.payload) as {
+          agentId?: unknown;
+          tenantId?: unknown;
+          lifecycleRevision?: unknown;
+        };
+        if (typeof message.agentId === "string" && message.agentId) {
+          const revision =
+            typeof message.lifecycleRevision === "number" &&
+            Number.isSafeInteger(message.lifecycleRevision) &&
+            message.lifecycleRevision >= 0
+              ? message.lifecycleRevision
+              : undefined;
+
+          // Older gateway instances may emit only {agentId}. Resolve that
+          // legacy notification against the durable current revision instead
+          // of closing every socket blindly. This keeps rolling deployments
+          // safe against the same stale-notification race.
+          void (async () => {
+            const current = await currentAgentLifecycleState(message.agentId as string);
+            // A missing identity is durably deleted. A supplied revision must
+            // never manufacture a newer lifecycle than PostgreSQL records.
+            if (!current) {
+              closeAgentSockets(message.agentId as string, null);
+              return;
+            }
+            if (revision !== undefined && revision > current.lifecycleRevision) {
+              logWarn("[ws] ignored agent-session notification ahead of durable revision");
+              return;
+            }
+            closeAgentSockets(message.agentId as string, revision ?? current.lifecycleRevision);
+          })().catch((error) => {
+            logWarn("[ws] failed to fence agent sockets from lifecycle notification:", { error: error });
+          });
+        }
+        if (typeof message.tenantId === "string" && message.tenantId) {
+          const tenantId = message.tenantId;
+          // Verify against the durable lifecycle before disconnecting: the
+          // NOTIFY channel is unauthenticated transport and must never close
+          // live tenants' sockets on a spoofed payload.
+          void (async () => {
+            try {
+              const current = await pool.query<{ lifecycle: string }>(
+                "SELECT lifecycle FROM tenants WHERE id = $1",
+                [tenantId],
+              );
+              if (shouldCloseTenantSocketsForNotification(current.rows[0]?.lifecycle)) {
+                closeTenantSockets(tenantId);
+              } else {
+                logWarn("[ws] ignored tenant-session notification without suspended/deleted lifecycle", { tenantId });
+              }
+            } catch (error) {
+              logWarn("[ws] failed to verify tenant lifecycle for session notification:", { error: error });
+            }
+          })().catch((error) => {
+            logWarn("[ws] failed to fence tenant sockets from lifecycle notification:", { error: error });
+          });
+        }
+      } catch {
+        logWarn("[ws] ignored malformed agent/tenant-session notification");
+      }
+      return;
+    }
+    if (notification.channel === PG_DISCOVERY_CHANNEL) {
+      try {
+        const message = JSON.parse(notification.payload) as { agentId?: unknown; discoveryId?: unknown };
+        if (typeof message.agentId !== "string" || typeof message.discoveryId !== "string") return;
+        if (!hasOpenAgentSocket(message.agentId)) return;
+        // Push discovery trigger instantly via WebSocket (10-50ms latency per 2025 docs)
+        // instead of waiting for agent's 10s discovery poll.
+        const delivered = sendToAgent(message.agentId, { type: "discovery", discoveryId: message.discoveryId });
+        logInfo("print.discovery.ws_push", { agentId: message.agentId, discoveryId: message.discoveryId, delivered });
+      } catch {
+        logWarn("[ws] ignored malformed discovery notification");
+      }
+      return;
+    }
+    if (notification.channel !== PG_NOTIFY_CHANNEL) return;
+    try {
+      const message = JSON.parse(notification.payload) as { jobId?: unknown; agentId?: unknown; tenantId?: unknown; requestId?: unknown };
+      if (typeof message.jobId !== "string" || typeof message.agentId !== "string") return;
+      // Fence cross-instance pushes on the socket's tenant: a spoofed notice
+      // for another tenant's job/agent pair is ignored before claiming.
+      // Both DB triggers and callers must send the tenantId. Legacy notices
+      // without it are rejected; HTTP polling remains the durable backstop.
+      // PostgreSQL may notify us after the WebSocket HTTP upgrade but
+      // before asynchronous Agent lifecycle verification finishes. Dropping
+      // that notification here strands a queued job even though the client
+      // already observed "open". claimAndPushJobToAgent has a bounded
+      // readiness wait for exactly this pending-registration window.
+      if (!hasOpenAgentSocket(message.agentId)
+          && (pendingAgentSocketRegistrations.get(message.agentId) ?? 0) === 0) return;
+      const agentId = message.agentId;
+      const jobId = message.jobId;
+      void (async () => {
+        if (!hasOpenAgentSocket(agentId)) await waitForAgentSocketReady(agentId);
+        const socketTenant = agentSockets.get(agentId)?.values().next().value?.tenantId;
+        if (!jobNoticeTenantAllowed(message.tenantId, socketTenant)) {
+          logWarn("[ws] ignored job notification with mismatched tenant", { agentId });
+          return;
+        }
+        pushNotifiedJob({
+          jobId,
+          agentId,
+          requestId: typeof message.requestId === "string" ? message.requestId : null,
+        });
+      })().catch((error) => logWarn("[ws] job notification admission failed", { agentId, error }));
+    } catch {
+      logWarn("[ws] ignored malformed PostgreSQL job notification");
+    }
+  };
+
+  const scheduleReconnect = () => {
+    if (stopped || reconnectTimer) return;
+    const capped = Math.min(PG_NOTIFY_RECONNECT_MIN_MS * (2 ** reconnectAttempt), PG_NOTIFY_RECONNECT_MAX_MS);
+    // Full jitter: without it every gateway instance retries a Postgres
+    // bounce in lockstep, re-hammering the database on each backoff rung.
+    const delay = Math.floor(capped / 2 + Math.random() * (capped / 2));
+    reconnectAttempt = Math.min(reconnectAttempt + 1, 10);
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null;
+      void connect();
+    }, delay);
+    void incrementMetric("postgres_notification_reconnects_total");
+    logWarn(`[ws] PostgreSQL notification listener reconnecting in ${delay}ms`);
+  };
+
+  const disconnect = (client: PoolClient) => {
+    if (activeClient !== client) return;
+    activeClient = null;
+    notificationListenerPid = null;
+    try { client.release(true); } catch (error) { logDebug("[ws] listener client release failed", { error: error instanceof Error ? error.message : String(error) }); }
+    if (!stopped) scheduleReconnect();
+  };
+
+  const connect = async (): Promise<void> => {
+    if (stopped || activeClient) return;
+    try {
+      const client = await pool.connect();
+      if (stopped) {
+        client.release();
+        return;
+      }
+      client.on("notification", handleNotification);
+      client.on("error", (error) => {
+        void incrementMetric("postgres_notification_errors_total");
+        logWarn("[ws] PostgreSQL notification listener error:", { error: error });
+        disconnect(client);
+      });
+      client.on("end", () => disconnect(client));
+      try {
+        await client.query(`LISTEN ${PG_NOTIFY_CHANNEL}`);
+        await client.query(`LISTEN ${PG_SESSIONS_CHANNEL}`);
+        await client.query(`LISTEN ${PG_DISCOVERY_CHANNEL}`);
+      } catch (listenError) {
+        // Setup failed BEFORE adoption: the client must be released here
+        // (disconnect() deliberately only touches the adopted client, and
+        // the mid-setup 'error' handler above no-ops for the same reason).
+        // Without this release the pool slot leaks; without the rethrow
+        // below no reconnect is scheduled and push delivery dies silently.
+        try { client.release(true); } catch (error) { logDebug("[ws] listener client release failed", { error: error instanceof Error ? error.message : String(error) }); }
+        throw listenError;
+      }
+      if (stopped) {
+        // Startup raced shutdown between LISTEN and adoption: release
+        // cleanly instead of leaking a live listener nobody owns.
+        try { await client.query(`UNLISTEN ${PG_NOTIFY_CHANNEL}`); } catch (error) { logDebug("[ws] UNLISTEN jobs cleanup failed", { error: error instanceof Error ? error.message : String(error) }); }
+        try { await client.query(`UNLISTEN ${PG_SESSIONS_CHANNEL}`); } catch (error) { logDebug("[ws] UNLISTEN sessions cleanup failed", { error: error instanceof Error ? error.message : String(error) }); }
+        try { await client.query(`UNLISTEN ${PG_DISCOVERY_CHANNEL}`); } catch (error) { logDebug("[ws] UNLISTEN discovery cleanup failed", { error: error instanceof Error ? error.message : String(error) }); }
+        client.release();
+        return;
+      }
+      activeClient = client;
+      // Publish the live LISTEN backend PID. This is the observable the CI
+      // failure-injection gate and the setup-race test poll to prove the
+      // listener actually reconnected (as opposed to having silently wedged).
+      // node-postgres populates Client.processID from BackendKeyData during
+      // connection startup; @types/pg does not declare it, so read it through
+      // a local typed lens. When unknown, the gate keeps waiting (fail-closed)
+      // rather than accepting a false-positive PID.
+      notificationListenerPid = (client as PoolClient & { readonly processID?: number | null }).processID ?? null;
+      reconnectAttempt = 0;
+    } catch (error) {
+      void incrementMetric("postgres_notification_failures_total");
+      logWarn("[ws] PostgreSQL notification listener unavailable; polling remains the recovery path:", { error: error });
+      scheduleReconnect();
+    }
+  };
+
+  await connect();
+
+  return async () => {
+    if (stopped) return;
+    stopped = true;
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
+    // Listener teardown must cancel every delayed claim; never let a retry
+    // outlive its owning HTTP/WS server or keep re-dispatching after shutdown.
+    for (const timer of notificationRetryTimers.values()) clearTimeout(timer);
+    notificationRetryTimers.clear();
+    const client = activeClient;
+    activeClient = null;
+    notificationListenerPid = null;
+    if (!client) return;
+    try { await client.query(`UNLISTEN ${PG_NOTIFY_CHANNEL}`); } catch (error) { logDebug("[ws] UNLISTEN jobs cleanup failed", { error: error instanceof Error ? error.message : String(error) }); }
+    try { await client.query(`UNLISTEN ${PG_SESSIONS_CHANNEL}`); } catch (error) { logDebug("[ws] UNLISTEN sessions cleanup failed", { error: error instanceof Error ? error.message : String(error) }); }
+    try { await client.query(`UNLISTEN ${PG_DISCOVERY_CHANNEL}`); } catch (error) { logDebug("[ws] UNLISTEN discovery cleanup failed", { error: error instanceof Error ? error.message : String(error) }); }
+    try { client.release(); } catch (error) { logDebug("[ws] pool client release failed", { error: error instanceof Error ? error.message : String(error) }); }
+  };
+}
+
+export type AgentWSSOptions = {
+  enableJobNotifications?: boolean;
+};
+
+export function attachAgentWSS(server: HttpServer, options: AgentWSSOptions = {}) {
+  const { enableJobNotifications = true } = options;
+  const wss = new WebSocketServer({ noServer: true, path: "/api/agent/ws", maxPayload: MAX_WS_MESSAGE_BYTES });
+
+  const interval = setInterval(() => {
+    wss.clients.forEach((ws: WebSocket) => {
+      const a = ws as AgentSocket;
+      if (a.isAlive === false) { a.terminate(); return; }
+      a.isAlive = false;
+      try { a.ping(); } catch (error) { logDebug("[ws] ping failed during heartbeat", { error: error instanceof Error ? error.message : String(error) }); }
+    });
+  }, 30_000);
+  wss.on("close", () => clearInterval(interval));
+
+  let stopped = false;
+  let stopNotificationListener: (() => Promise<void>) | null = null;
+  if (enableJobNotifications) {
+    void startJobNotificationListener().then((stop) => {
+      if (stopped) {
+        void stop();
+      } else {
+        stopNotificationListener = stop;
+      }
+    }).catch((error) => {
+      logWarn("[ws] failed to initialize PostgreSQL notification listener:", { error: error });
+    });
+    wss.on("close", () => {
+      stopped = true;
+      void stopNotificationListener?.();
+    });
+  }
+
+  // The WebSocket server is attached to the HTTP server but is not owned by
+  // server.close(). Explicitly tear it down with the HTTP lifecycle so tests
+  // and graceful application shutdown cannot leave the PostgreSQL listener,
+  // reconnect timers, or heartbeat interval alive after the server closes.
+  server.once("close", () => {
+    stopped = true;
+    for (const ws of wss.clients) {
+      try { ws.terminate(); } catch (error) { logDebug("[ws] socket terminate cleanup failed", { error: error instanceof Error ? error.message : String(error) }); }
+    }
+    try { wss.close(); } catch (error) { logDebug("[ws] WSS close cleanup failed", { error: error instanceof Error ? error.message : String(error) }); }
+    void stopNotificationListener?.();
+  });
+
+  server.on("upgrade", async (req: IncomingMessage, socket, head) => {
+    let reservationActive = false;
+    let completeRegistration: (ready: boolean) => void = () => {};
+    const releaseReservation = () => {
+      if (!reservationActive) return;
+      reservationActive = false;
+      releaseAgentSocketSlot();
+    };
+
+    try {
+      const url = req.url ?? "";
+      if (!url.startsWith("/api/agent/ws")) {
+        writeWsHttpError(socket, 404, "Not Found");
+        return;
+      }
+
+      if (trustProxyEnabled() && !isTrustedProxyUpgrade(req.headers)) {
+        writeWsHttpError(socket, 400, "TRUSTED_PROXY_REQUIRED");
+        return;
+      }
+
+      const origin = typeof req.headers.origin === "string" ? req.headers.origin : null;
+      if (!isAllowedWebSocketOrigin(origin)) {
+        writeWsHttpError(socket, 403, "WEBSOCKET_ORIGIN_FORBIDDEN");
+        return;
+      }
+
+      const clientKey = websocketClientKey(req);
+      let decision: Awaited<ReturnType<typeof reserveWsUpgradeAttempt>>;
+      try {
+        decision = await reserveWsUpgradeAttempt(clientKey);
+        if (!decision.allowed) {
+          writeWsHttpError(socket, 429, "Too many failed WebSocket authentication attempts", decision.retryAfterSec);
+          return;
+        }
+      } catch (error) {
+        logUpgradeError(error);
+        writeWsHttpError(socket, 503, "WebSocket authentication temporarily unavailable", 5);
+        return;
+      }
+
+      const auth = req.headers["authorization"] ?? req.headers["Authorization"];
+      const header = Array.isArray(auth) ? auth[0] : (auth as string | undefined) ?? null;
+      let agent: Awaited<ReturnType<typeof validateAgent>> = null;
+      try {
+        agent = await validateAgent(header ?? null);
+      } catch (error) {
+        logUpgradeError(error);
+        agent = null;
+      }
+      if (!agent) {
+        if (decision.retryAfterSec) {
+          writeWsHttpError(socket, 429, "Too many failed WebSocket authentication attempts", decision.retryAfterSec);
+          return;
+        }
+        writeWsHttpError(socket, 401, "Unauthorized");
+        return;
+      }
+
+      // Authentication succeeded: this upgrade must not consume the failure budget.
+      // Clearing the shared bucket also prevents a legitimate reconnect storm from
+      // eventually locking a healthy agent out of its own WebSocket.
+      try {
+        await recordWsUpgradeSuccess(clientKey);
+      } catch (error) {
+        logUpgradeError(error);
+        writeWsHttpError(socket, 503, "WebSocket authentication temporarily unavailable", 5);
+        return;
+      }
+
+      if (!reserveAgentSocketSlot()) {
+        writeWsHttpError(socket, 503, "WebSocket connection capacity reached", 1);
+        return;
+      }
+
+      reservationActive = true;
+      markAgentSocketRegistrationPending(agent!.id);
+      let registrationPending = true;
+      completeRegistration = (ready: boolean) => {
+        if (!registrationPending) return;
+        registrationPending = false;
+        finishAgentSocketRegistrationPending(agent!.id, ready);
+      };
+
+      // A raw client disconnect or synchronous handshake failure must release
+      // the global reservation. Otherwise repeated failed upgrades can exhaust
+      // MAX_TOTAL_AGENT_SOCKETS even though no WebSocket was registered.
+      socket.once("close", () => {
+        releaseReservation();
+        completeRegistration(false);
+      });
+      wss.handleUpgrade(req, socket, head, (ws: WebSocket) => {
+          const aws = ws as AgentSocket;
+          aws.isAlive = true;
+          aws.tenantId = agent!.tenantId;
+          aws.on("pong", () => { aws.isAlive = true; });
+          aws.lifecycleRevision = agent!.lifecycleRevision;
+          // Handshake completion precedes asynchronous lifecycle admission.
+          // Capture bounded frames/errors immediately so early ACKs are retained.
+          const earlyMessages: RawData[] = [];
+          let earlyBytes = 0;
+          const captureEarlyMessage = (data: RawData) => {
+            const size = Buffer.byteLength(data.toString(), "utf8");
+            if (size > MAX_WS_MESSAGE_BYTES || earlyBytes + size > MAX_WS_MESSAGE_BYTES || earlyMessages.length >= MAX_WS_INFLIGHT_MESSAGES_PER_AGENT) {
+              earlyMessages.length = 0;
+              ws.close(1009, "too much data before lifecycle admission");
+              return;
+            }
+            earlyBytes += size;
+            earlyMessages.push(data);
+          };
+          const handleEarlyError = (error: Error) => {
+            logUpgradeError(error);
+            earlyMessages.length = 0;
+            ws.terminate();
+          };
+          ws.on("message", captureEarlyMessage);
+          ws.on("error", handleEarlyError);
+
+
+          // Lifecycle changes can race the async authentication/upgrade path.
+          // Register only under a shared lifecycle lock: tracking first would
+          // expose an unverified socket to sendToAgent(), while checking first
+          // without a lock lets a disable commit between check and registration.
+          void (async () => {
+            try {
+              const accepted = await verifyAndTrackAgentSocket(
+                agent!.id,
+                agent!.lifecycleRevision,
+                aws,
+              );
+              releaseReservation();
+              completeRegistration(accepted);
+              if (!accepted) {
+                try {
+                  ws.close(4001, "agent lifecycle changed during WebSocket upgrade");
+                } catch (error) {
+                  logDebug("[ws] lifecycle-change close failed", { error: error instanceof Error ? error.message : String(error) });
+                  try { ws.terminate(); } catch (terminateError) { logDebug("[ws] lifecycle-change terminate cleanup failed", { error: terminateError instanceof Error ? terminateError.message : String(terminateError) }); }
+                }
+                return;
+              }
+
+              // No per-connection bucket init here: getBucketForAgent(agentId)
+              // lazily creates or reuses the persistent agent-level limiter, so
+              // reconnects retain token state instead of resetting evasion budget.
+              wss.emit("connection", ws, req);
+              ws.removeListener("message", captureEarlyMessage);
+              ws.removeListener("error", handleEarlyError);
+              for (const data of earlyMessages.splice(0)) ws.emit("message", data, false);
+            } catch (error) {
+              releaseReservation();
+              completeRegistration(false);
+              logUpgradeError(error);
+              try {
+                ws.close(1011, "agent lifecycle verification failed");
+              } catch (closeError) {
+                logDebug("[ws] lifecycle-verification close failed", { error: closeError instanceof Error ? closeError.message : String(closeError) });
+                try { ws.terminate(); } catch (terminateError) { logDebug("[ws] lifecycle-verification terminate cleanup failed", { error: terminateError instanceof Error ? terminateError.message : String(terminateError) }); }
+              }
+            }
+          })();
+
+          // A client can disconnect while lifecycle verification waits on PostgreSQL.
+          // Release only the reservation; readyState is checked before registration.
+          aws.once("close", () => {
+            releaseReservation();
+            completeRegistration(false);
+            earlyMessages.length = 0;
+          });
+        });
+    } catch (error) {
+      releaseReservation();
+      completeRegistration(false);
+      logUpgradeError(error);
+      if (!socket.destroyed && !socket.writableEnded) {
+          writeWsHttpError(socket, 500, "WebSocket upgrade failed");
+        } else {
+          try { socket.destroy(); } catch (error) { logDebug("[ws] HTTP socket destroy cleanup failed", { error: error instanceof Error ? error.message : String(error) }); }
+        }
+      }
+  });
+
+  wss.on("connection", (ws: AgentSocket) => {
+    ws.on("message", (data) => {
+      ws.isAlive = true;
+      const agentId = ws.agentId;
+      if (!agentId) return;
+      const raw = typeof data === "string" ? data : data.toString();
+      const bucket = getBucketForAgent(agentId);
+      if (!bucket.consume()) {
+        void incrementMetric("websocket_messages_rate_limited_total");
+        try { ws.close(4429, "message rate limit exceeded"); } catch (error) { logDebug("[ws] rate-limit close failed", { error: error instanceof Error ? error.message : String(error) }); }
+        return;
+      }
+      const inFlight = wsMessageInFlightByAgentId.get(agentId) ?? 0;
+      if (inFlight >= MAX_WS_INFLIGHT_MESSAGES_PER_AGENT) {
+        void incrementMetric("websocket_messages_inflight_limited_total");
+        try { ws.close(4429, "too many messages in flight"); } catch (error) { logDebug("[ws] inflight-limit close failed", { error: error instanceof Error ? error.message : String(error) }); }
+        return;
+      }
+      wsMessageInFlightByAgentId.set(agentId, inFlight + 1);
+      const tenantId = ws.tenantId;
+      if (!tenantId) {
+        try { ws.close(4401, "missing agent identity"); } catch (error) { logDebug("[ws] identity-missing close failed", { error: error instanceof Error ? error.message : String(error) }); }
+        const remaining = (wsMessageInFlightByAgentId.get(agentId) ?? 1) - 1;
+        if (remaining <= 0) wsMessageInFlightByAgentId.delete(agentId);
+        else wsMessageInFlightByAgentId.set(agentId, remaining);
+        return;
+      }
+      void handleAgentMessage(agentId, tenantId, raw)
+        .catch((e) => logWarn(`[ws] failed to handle message from agent ${agentId}:`, { error: e }))
+        .finally(() => {
+          const remaining = (wsMessageInFlightByAgentId.get(agentId) ?? 1) - 1;
+          if (remaining <= 0) wsMessageInFlightByAgentId.delete(agentId);
+          else wsMessageInFlightByAgentId.set(agentId, remaining);
+        });
+    });
+    ws.on("error", () => { try { ws.close(); } catch (error) { logDebug("[ws] error-handler close cleanup failed", { error: error instanceof Error ? error.message : String(error) }); } });
+  });
+
+  return wss;
+}

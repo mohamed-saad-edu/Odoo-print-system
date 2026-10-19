@@ -1,0 +1,54 @@
+node_modules/
+.next/
+dist/
+dist-desktop/
+src-tauri/target/
+src-tauri/gen/
+
+agent/YasserAgent.exe
+agent/YaseirAgent.exe
+agent/yasser-agent-cli.exe
+agent/yaseir-agent-cli.exe
+agent/OdooPrintAgent.exe
+agent/odoo-agent-cli.exe
+
+*.tsbuildinfo
+
+.env
+.env.*
+!.env.example
+
+*.log
+
+# Local agent runtime state
+agent/agent.db
+agent/agent.db-*
+agent/queue.db
+agent/queue.db-*
+agent/config.yaml
+agent/config.yaml.*
+agent/e2e-captures
+agent/sudo
+
+# Go build artifacts
+agent/*.exe
+
+# Python / Odoo
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.odoo/
+*.egg-info/
+odoo_addons/**/__pycache__/
+odoo_addons/**/*.pyc
+
+# Local engineering audit records (mission work-state, coverage ledger,
+# findings, architecture map). Local-only by design: never shipped, never
+# committed — the corrected source tree is the deliverable.
+.engineering/
+
+# Local verification logs, screenshots, binaries and generated graph cache
+.audit/
+graphify-out/*
+!graphify-out/FINAL_AUDIT.md

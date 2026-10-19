@@ -1,0 +1,348 @@
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
+import {
+  hasTestDatabase,
+  applyMigrations,
+  truncateAll,
+  seedFixture,
+  closePool,
+  pool,
+  type Fixture,
+} from "./helpers/pg";
+import { isPrinterStatusExecutable, validatePayloadForPrinter } from "../src/lib/routing";
+import { db } from "../src/db";
+import { createPrintJobForPrinter } from "../src/lib/print-job-service";
+import { POST as printJobsPOST, GET as printJobsGET } from "../src/app/api/print/jobs/route";
+import { vi } from "vitest";
+
+const suite = describe.skipIf(!hasTestDatabase);
+
+function rawBase64(value = "hello") {
+  return Buffer.from(value, "utf8").toString("base64");
+}
+
+suite("gateway runtime printer availability + payload capability contract", () => {
+  let f: Fixture;
+
+  beforeAll(async () => {
+    await applyMigrations();
+  });
+
+  afterAll(async () => {
+    await closePool();
+  });
+
+  beforeEach(async () => {
+    await truncateAll();
+    f = await seedFixture();
+  });
+
+  function create(body: unknown) {
+    return printJobsPOST(new Request("http://gateway.test/api/print/jobs", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${f.odooKey}`, "content-type": "application/json" },
+      body: JSON.stringify(body),
+    }));
+  }
+
+  it("treats an explicit empty supported_protocols list as no capability", () => {
+    const result = validatePayloadForPrinter({ type: "raw", protocol: "raw" }, {
+      protocol: "raw",
+      connectionType: "network",
+      capabilities: { supported_protocols: [] },
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      throw new Error("expected explicit empty supported_protocols to fail closed");
+    }
+    expect(result.reason).toMatch(/does not explicitly support RAW/i);
+  });
+
+  it("preserves an explicit empty supported_protocols list instead of falling back to transport capability", () => {
+    const source = require("node:fs").readFileSync(
+      require("node:path").resolve(process.cwd(), "src/app/api/agent/heartbeat/route.ts"),
+      "utf8",
+    );
+    expect(source).toContain('if (Array.isArray(capabilities.supported_protocols))');
+    expect(source).toContain("capabilities.supported_protocols = (capabilities.supported_protocols as unknown[])");
+    expect(source).not.toContain("delete capabilities.supported_protocols");
+  });
+
+  it("allows spooler pdf/image by default but requires explicit declaration for spooler raw passthrough", () => {
+    // Document printers render through the driver: pdf/image pass without an
+    // explicit list. Raw byte passthrough bypasses rendering and is only for
+    // passthrough-mode queues whose operator explicitly declared support —
+    // otherwise a Brother MFC would receive raw ESC/POS garbage.
+    expect(validatePayloadForPrinter({ type: "pdf" }, {
+      protocol: "spooler", connectionType: "spooler", capabilities: null,
+    }).ok).toBe(true);
+    expect(validatePayloadForPrinter({ type: "image" }, {
+      protocol: "spooler", connectionType: "spooler", capabilities: null,
+    }).ok).toBe(true);
+    expect(validatePayloadForPrinter({ type: "raw", protocol: "raw" }, {
+      protocol: "spooler", connectionType: "spooler", capabilities: null,
+    }).ok).toBe(false);
+    expect(validatePayloadForPrinter({ type: "escpos", protocol: "escpos" }, {
+      protocol: "spooler", connectionType: "spooler", capabilities: null,
+    }).ok).toBe(false);
+    expect(validatePayloadForPrinter({ type: "raw", protocol: "raw" }, {
+      protocol: "spooler", connectionType: "spooler", capabilities: { supported_protocols: ["raw", "pdf", "image"] },
+    }).ok).toBe(true);
+    expect(validatePayloadForPrinter({ type: "raw", protocol: "zpl" }, {
+      protocol: "spooler", connectionType: "spooler", capabilities: null,
+    }).ok).toBe(false);
+  });
+
+  it("accepts raw/escpos/pdf only when the printer capability boundary allows it", () => {
+    expect(validatePayloadForPrinter({ type: "raw", protocol: "raw" }, {
+      protocol: "raw",
+      connectionType: "network",
+      capabilities: { supported_protocols: ["raw"] },
+    })).toEqual({ ok: true });
+
+    expect(validatePayloadForPrinter({ type: "pdf" }, {
+      protocol: "raw",
+      connectionType: "network",
+      capabilities: { supported_protocols: ["raw"] },
+    }).ok).toBe(false);
+
+    expect(validatePayloadForPrinter({ type: "pdf" }, {
+      protocol: "spooler",
+      connectionType: "spooler",
+      capabilities: { supported_protocols: ["raw", "escpos", "pdf"] },
+    })).toEqual({ ok: true });
+  });
+
+  it("keeps the legacy Windows spooler protocol executable only on a spooler transport", () => {
+    expect(isPrinterStatusExecutable({
+      status: "unknown",
+      connectionType: "spooler",
+      protocol: "windows_spooler",
+    })).toBe(true);
+    expect(validatePayloadForPrinter({ type: "pdf" }, {
+      protocol: "windows_spooler",
+      connectionType: "spooler",
+    }).ok).toBe(true);
+
+    expect(isPrinterStatusExecutable({
+      status: "unknown",
+      connectionType: "network",
+      protocol: "windows_spooler",
+    })).toBe(false);
+    expect(validatePayloadForPrinter({ type: "pdf" }, {
+      protocol: "windows_spooler",
+      connectionType: "network",
+    }).ok).toBe(false);
+
+    expect(validatePayloadForPrinter({ type: "pdf" }, {
+      protocol: "ipps",
+      connectionType: "network",
+    }).ok).toBe(true);
+  });
+
+  it("does not enable Windows driver rendering from a spoofed spooler protocol on TCP", () => {
+    const tcpSpooler = { protocol: "spooler", connectionType: "network" };
+    expect(validatePayloadForPrinter({ type: "pdf" }, tcpSpooler).ok).toBe(false);
+    expect(validatePayloadForPrinter({ type: "image" }, tcpSpooler).ok).toBe(false);
+    expect(validatePayloadForPrinter({ type: "raw", protocol: "raw" }, {
+      ...tcpSpooler, capabilities: { supported_protocols: ["raw", "pdf", "image"] },
+    }).ok).toBe(false);
+  });
+
+  it("does not treat an IPP protocol token as executable on the wrong transport", () => {
+    expect(isPrinterStatusExecutable({
+      status: "unknown",
+      connectionType: "usb",
+      protocol: "ipp",
+    })).toBe(false);
+    expect(isPrinterStatusExecutable({
+      status: "unknown",
+      connectionType: "network",
+      protocol: "ipp",
+    })).toBe(true);
+    expect(validatePayloadForPrinter({ type: "pdf" }, {
+      protocol: "ipp",
+      connectionType: "usb",
+    }).ok).toBe(false);
+  });
+
+  it("treats USB printers backed by the Windows spooler as spooler document transports", () => {
+    expect(validatePayloadForPrinter({ type: "pdf" }, {
+      protocol: "spooler",
+      connectionType: "usb",
+    }).ok).toBe(true);
+    expect(validatePayloadForPrinter({ type: "image" }, {
+      protocol: "spooler",
+      connectionType: "usb",
+    }).ok).toBe(true);
+    // Raw passthrough on a spooler-backed USB queue requires explicit support.
+    expect(validatePayloadForPrinter({ type: "escpos", protocol: "escpos" }, {
+      protocol: "spooler",
+      connectionType: "usb",
+    }).ok).toBe(false);
+    expect(validatePayloadForPrinter({ type: "escpos", protocol: "escpos" }, {
+      protocol: "spooler",
+      connectionType: "usb",
+      capabilities: { supported_protocols: ["escpos", "pdf", "image"] },
+    }).ok).toBe(true);
+  });
+
+  it("creates a job for an active online physical printer using the new contract", async () => {
+    const res = await create({
+      printerId: f.printerId,
+      destination: "POS",
+      documentType: "receipt",
+      payload: { type: "raw", protocol: "raw", encoding: "base64", data: rawBase64() },
+      idempotencyKey: "runtime-create-1",
+    });
+    expect(res.status).toBe(201);
+    const body = await res.json();
+    expect(body).toMatchObject({ printerId: f.printerId, documentType: "receipt", destination: "POS" });
+    expect(body.jobId).toMatch(/^job_/);
+  });
+
+  it("rejects an unknown printer with 404", async () => {
+    const res = await create({
+      printerId: "printer-does-not-exist",
+      destination: "POS",
+      documentType: "receipt",
+      payload: { type: "raw", protocol: "raw", encoding: "base64", data: rawBase64() },
+    });
+    expect(res.status).toBe(404);
+  });
+
+  it("rejects a disabled printer and does not persist a job", async () => {
+    await pool().query(`UPDATE printers SET lifecycle = 'disabled' WHERE id = $1`, [f.printerId]);
+    const res = await create({
+      printerId: f.printerId,
+      destination: "POS",
+      documentType: "receipt",
+      payload: { type: "raw", protocol: "raw", encoding: "base64", data: rawBase64() },
+    });
+    expect(res.status).toBe(409);
+    expect((await pool().query(`SELECT count(*)::int AS n FROM print_jobs`)).rows[0].n).toBe(0);
+  });
+
+  it("rechecks a runtime owner inside the enqueue transaction when the precheck is stale", async () => {
+    // Simulate the TOCTOU boundary directly: the initial ORM reads return a
+    // fresh online snapshot, but the authoritative transaction sees that the
+    // printer became offline before INSERT. The enqueue must reject instead
+    // of persisting a job that can never reach a live runtime owner.
+    const snapshot = (await pool().query(
+      `SELECT p.id, p.agent_id, p.protocol, p.connection_type, p.status, p.lifecycle, p.capabilities, a.lifecycle AS agent_lifecycle, a.status AS agent_status, a.last_seen_at
+       FROM printers p JOIN agents a ON a.id = p.agent_id
+       WHERE p.id = $1 AND p.tenant_id = $2`,
+      [f.printerId, f.tenantId],
+    )).rows[0];
+
+    await pool().query(`UPDATE printers SET status = 'offline' WHERE id = $1`, [f.printerId]);
+
+    const printerFindFirst = vi.spyOn(db.query.printers, "findFirst").mockResolvedValue({
+      id: snapshot.id,
+      tenantId: f.tenantId,
+      agentId: snapshot.agent_id,
+      protocol: snapshot.protocol,
+      connectionType: snapshot.connection_type,
+      status: "online",
+      lifecycle: "active",
+      capabilities: snapshot.capabilities,
+    } as never);
+    const agentFindFirst = vi.spyOn(db.query.agents, "findFirst").mockResolvedValue({
+      id: f.agentId,
+      tenantId: f.tenantId,
+      lifecycle: snapshot.agent_lifecycle,
+      status: snapshot.agent_status,
+      lastSeenAt: snapshot.last_seen_at,
+    } as never);
+
+    try {
+      await expect(createPrintJobForPrinter(
+        f.printerId,
+        { type: "raw", protocol: "raw", encoding: "base64", data: rawBase64() },
+        {
+          requestedBy: "odoo",
+          tenantId: f.tenantId,
+          destination: "POS",
+          documentType: "receipt",
+          idempotencyKey: "enqueue-toctou-1",
+        },
+      )).rejects.toMatchObject({ code: "PRINTER_OFFLINE" });
+    } finally {
+      printerFindFirst.mockRestore();
+      agentFindFirst.mockRestore();
+    }
+
+    expect((await pool().query(`SELECT count(*)::int AS n FROM print_jobs WHERE idempotency_key = $1`, ["enqueue-toctou-1"])).rows[0].n).toBe(0);
+  });
+
+  it("rejects an offline printer and does not persist a job", async () => {
+    await pool().query(`UPDATE printers SET status = 'offline' WHERE id = $1`, [f.printerId]);
+    const res = await create({
+      printerId: f.printerId,
+      destination: "POS",
+      documentType: "receipt",
+      payload: { type: "raw", protocol: "raw", encoding: "base64", data: rawBase64() },
+    });
+    expect(res.status).toBe(503);
+    expect((await pool().query(`SELECT count(*)::int AS n FROM print_jobs`)).rows[0].n).toBe(0);
+  });
+
+  it("rejects enqueue for a printer confirmed absent from the Agent inventory", async () => {
+    await pool().query(
+      `UPDATE printers SET inventory_present = false, status = 'unknown', last_seen_at = now() WHERE id = $1 AND tenant_id = $2`,
+      [f.printerId, f.tenantId],
+    );
+
+    const res = await create({
+      printerId: f.printerId,
+      destination: "POS",
+      documentType: "receipt",
+      payload: { type: "raw", protocol: "raw", encoding: "base64", data: rawBase64() },
+    });
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ code: "PRINTER_UNAVAILABLE" });
+    expect((await pool().query(`SELECT count(*)::int AS n FROM print_jobs`)).rows[0].n).toBe(0);
+  });
+
+  it("rejects an incompatible payload with 422", async () => {
+    await pool().query(
+      `UPDATE printers SET protocol = 'raw', connection_type = 'network', capabilities = $1::jsonb WHERE id = $2`,
+      [JSON.stringify({ supported_protocols: ["raw"] }), f.printerId],
+    );
+    const res = await create({
+      printerId: f.printerId,
+      destination: "POS",
+      documentType: "invoice",
+      // Valid complete PDF (with %%EOF trailer): it must pass admission
+      // validation so the routing layer — not the payload gate — rejects it
+      // with 422 CAPABILITY_MISMATCH for the raw byte-stream printer.
+      payload: { type: "pdf", encoding: "base64", data: Buffer.from("%PDF-1.4\n1 0 obj<</Type/Catalog>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF\n").toString("base64") },
+    });
+    expect(res.status).toBe(422);
+    expect((await pool().query(`SELECT count(*)::int AS n FROM print_jobs`)).rows[0].n).toBe(0);
+  });
+
+  it("returns the persisted runtime status by job id", async () => {
+    const created = await create({
+      printerId: f.printerId,
+      destination: "POS",
+      documentType: "receipt",
+      payload: { type: "raw", protocol: "raw", encoding: "base64", data: rawBase64() },
+      idempotencyKey: "runtime-status-1",
+    });
+    expect(created.status).toBe(201);
+    const jobId = (await created.json()).jobId;
+
+    const status = await printJobsGET(new Request(`http://gateway.test/api/print/jobs?id=${encodeURIComponent(jobId)}`, {
+      headers: { Authorization: `Bearer ${f.odooKey}` },
+    }));
+    expect(status.status).toBe(200);
+    expect(await status.json()).toMatchObject({ jobId, printerId: f.printerId, status: "queued" });
+  });
+
+  it("requires a job id for status lookup", async () => {
+    const res = await printJobsGET(new Request("http://gateway.test/api/print/jobs", {
+      headers: { Authorization: `Bearer ${f.odooKey}` },
+    }));
+    expect(res.status).toBe(400);
+  });
+});

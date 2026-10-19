@@ -1,0 +1,140 @@
+# Migration Guide
+
+> See also: [OPERATIONS.md](./OPERATIONS.md)
+
+## Overview
+
+The Gateway uses **Drizzle ORM** for database migrations. All migrations are SQL files in `drizzle/` with metadata in `drizzle/meta/_journal.json`.
+
+## Running Migrations
+
+```bash
+DATABASE_URL="postgresql://..." npm run db:migrate
+```
+
+This runs `scripts/db-migrate.ts` which applies all pending migrations from `drizzle/` in journal order.
+
+## Migration History
+
+| Range | Count | Description |
+|-------|-------|-------------|
+| 0000–0027 | 28 | Initial schema through single-tenant features |
+| 0028 | 1 | Multi-tenancy migration (composite keys, tenant_id columns) |
+| 0029–0039 | 11 | Post-tenancy features (billing, audit, lifecycle, rate limits) |
+| 0040 | 1 | Tenant lifecycle (suspend/delete) |
+| 0041 | 1 | Composite FK prerequisite fix (idempotent) |
+| 0042 | 1 | Denial-of-service protection indexes |
+| 0043 | 1 | Platform owner account |
+| 0044 | 1 | Single platform owner uniqueness |
+| 0045 | 1 | Audit events platform scope |
+| 0046 | 1 | Internal print-job idempotency scope |
+| 0047 | 1 | Desired printer state reconciliation |
+| 0048 | 1 | Running discovery session per-agent uniqueness |
+| 0049 | 1 | Tenant-scoped idempotency and owner uniqueness |
+| 0050 | 1 | Billing single-flight operation state |
+| 0051 | 1 | Agent lifecycle revision |
+| 0052 | 1 | Plan catalog management |
+| 0053 | 1 | Discovery spooler name |
+| 0054 | 1 | Odoo Gateway activation state |
+| 0055 | 1 | Job events and spooler job id |
+| 0056 | 1 | Discovered device class NOT NULL |
+| 0057 | 1 | API key composite index |
+| 0058 | 1 | Scope Odoo activation to the installation API key |
+| 0059 | 1 | Remove API key scope and document-type restrictions |
+| 0060–0069 | 10 | Billing, usage, time authority, key rotation, job-event hardening, and claim-id redaction |
+| 0070 | 1 | Durable discovered-device identity for per-Agent sync convergence |
+| 0071 | 1 | Remove obsolete print-job rate-limit table |
+| 0072 | 1 | Tenant-scoped printer identity and discovered devices |
+| 0073 | 1 | Refresh tokens table for auth session management |
+| 0074 | 1 | Token-table delete cascades and drop of the dead applications table |
+| 0075 | 1 | Discovery state-machine CHECKs and drop of the redundant device-identity index |
+| 0076 | 1 | Candidate provisioning discovery CHECK |
+| 0077 | 1 | Durable per-Agent inventory snapshots and ordering state |
+| 0078 | 1 | Hot-path query indexes for jobs, audit events, Agents, and printers |
+| 0079 | 1 | Stable bounded Team member/invitation pagination indexes |
+| 0080 | 1 | Inventory snapshot version tracking |
+| 0081 | 1 | Physical-only printer admission; transactional removal of legacy virtual/redirected destinations and associated history |
+| 0082 | 1 | Forward tracking for audit repairs, maintenance sweep index, foreign key cascade indexes, and tenant-scoped notification trigger |
+| 0083 | 1 | Standalone tenant-scoped E2E capture queue for simulated PDF rendering, without physical print-job accounting |
+| 0084 | 1 | Agent-owned printer cloud sharing and retained version fence, preserving canonical identities/health/lifecycle/history |
+
+**Total**: 85 forward-only SQL migrations (0000–0084), plus retained hash-versioned forward repairs in `scripts/db-migrate.ts`.
+
+Apply `0084` before deploying the matching Gateway and Agent/Desktop sharing feature. Existing rows default to shared; the owning Agent's newer explicit permission decides subsequent publication. Same-version denial is retained across pages/replays. Private printer/job identities are preserved, and no backfill deletes or disables Windows queues. Keep the protected local sharing file and a compatible Agent/CLI bundle during rollback; see `docs/RELEASE_GATES.md`.
+
+**Deployment warning for 0081:** Back up PostgreSQL and drain active print jobs before running this migration. Migration 0081 removes virtual/redirected printer records and their associated historical jobs/receipts; it refuses to proceed while any affected job is claimed or printing. This is a permanent data-removal migration already present in the source, **not** introduced by the CI documentation update.
+
+The production migrator applies every unapplied hash under one advisory lock, regardless of regressing historical timestamps. Forward repairs add retained terminal receipts, Stripe revision/checkout intent fields and price history, terminal claim hashes, and the payload null-check repair; existing SQL and repair hashes must never be rewritten.
+
+## Migration Policy
+
+### Never Rewrite History
+
+- **Never delete** existing migration files
+- **Never rename** migration files
+- **Never reorder** migrations
+- **Never modify** migration content after deployment
+
+### Forward Migrations Only
+
+All fixes must use **new forward migrations** with idempotent guards:
+
+```sql
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE connamespace = (SELECT oid FROM pg_namespace WHERE nspname = 'public')
+      AND conname = 'my_constraint'
+  ) THEN
+    ALTER TABLE my_table ADD CONSTRAINT my_constraint ...;
+  END IF;
+END $$;
+```
+
+Constraint names can repeat in different schemas. New guards must check the target namespace as well as the name. The production migrator pins the canonical public search path and scopes known legacy name-only guards at execution while retaining their original content hashes.
+
+### Statement Breakpoints
+
+Drizzle splits SQL files on `--> statement-breakpoint` markers. Each segment is executed as a separate statement. **Missing breakpoints cause silent failures** when consecutive `DO $$ ... END $$;` blocks are concatenated into a single query.
+
+Always add breakpoints between independent SQL statements:
+
+```sql
+DO $$ BEGIN ... END $$;
+--> statement-breakpoint
+DO $$ BEGIN ... END $$;
+```
+
+### Fresh Replay Requirement
+
+Every migration must be valid when replayed from an empty database. CI verifies this on every push:
+
+```bash
+# CI step: create empty DB, replay all migrations
+createdb test_db
+DATABASE_URL="..." npm run db:migrate
+```
+
+## Troubleshooting
+
+### Migration 0029: Ambiguous Legacy Ownership
+
+This migration intentionally stops if it detects ambiguous legacy ownership (multiple agents claiming the same printer). Resolve the ownership manually, then re-run.
+
+### Migration 0032: Duplicate Pairing Codes
+
+This migration stops if two pending pairing codes share one hash. Disable and re-enable the affected agents to regenerate codes, then re-run.
+
+### CI Failure: Missing Composite FK Prerequisites
+
+**Symptom**: `ERROR 42830: there is no unique constraint matching given keys for referenced table`
+
+**Root cause**: Missing `--> statement-breakpoint` separators between DO blocks in earlier migrations. Fixed in migration 0041 (idempotent forward migration).
+
+## Schema Verification
+
+CI runs a schema tripwire test that verifies the migrated database matches the Drizzle schema definition:
+
+```bash
+npm run test:integration  # includes ci-tripwire.check.ts
+```

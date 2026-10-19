@@ -1,0 +1,455 @@
+import { existsSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { describe, expect, it } from "vitest";
+
+const read = (file: string) => readFileSync(resolve(process.cwd(), file), "utf8");
+
+describe("production fixes contracts (2026-09)", () => {
+  it("keeps the removed Odoo branch/business-sync surface absent while retaining runtime-agent discovery", () => {
+    expect(existsSync(resolve(process.cwd(), "src/app/api/odoo/sync/route.ts"))).toBe(false);
+    expect(existsSync(resolve(process.cwd(), "src/app/api/odoo/agents/route.ts"))).toBe(true);
+    expect(read("src/app/api/odoo/agents/route.ts")).toContain("validateOdooKey");
+    expect(read("src/app/api/odoo/printers/route.ts")).toContain("validateOdooKey");
+    expect(read("src/app/api/print/jobs/route.ts")).toContain("printerId");
+    expect(read("src/app/api/print/jobs/route.ts")).not.toContain("branchId");
+  });
+
+  it("terminal claim credentials are cleared except for bounded late-success reconciliation attempts", () => {
+    const maintenance = read("src/lib/job-maintenance.ts");
+    const delivery = read("src/lib/job-delivery.ts");
+    const normalizedMaintenance = maintenance.replace(/\r\n/g, "\n");
+    const terminalFailureUpdates = [...maintenance.matchAll(/UPDATE print_jobs SET status='failed',[\s\S]*?FROM candidates\s+WHERE print_jobs\.id = candidates\.id\s+RETURNING print_jobs\.id/g)];
+    expect(terminalFailureUpdates.length).toBeGreaterThanOrEqual(2);
+    expect(normalizedMaintenance).toContain("claim_token = NULL, claimed_at = NULL");
+    expect(normalizedMaintenance).not.toContain("claim_token = NULL, claimed_at = NULL, updated_at = now()");
+    expect(normalizedMaintenance).toContain("status = 'failed'");
+    expect(normalizedMaintenance).toContain("error LIKE 'UNKNOWN_PARTIAL_DELIVERY:%'");
+    expect(normalizedMaintenance).toContain("updated_at <= now() - interval '24 hours'");
+    const normalizedDelivery = delivery.replace(/\r\n/g, "\n");
+    const unknownStart = normalizedDelivery.indexOf("export async function markJobDeliveryUnknown");
+    const unknownBlock = normalizedDelivery.slice(unknownStart, normalizedDelivery.indexOf("export async function recordJobAck", unknownStart));
+    expect(unknownBlock).toContain("deliveredAt: sql`COALESCE");
+    expect(unknownBlock).toContain("claimedAt: sql`COALESCE");
+    expect(unknownBlock).not.toContain("claimToken: sql`NULL`");
+    // Failed unknown deliveries retain their fence only so the exact agent
+    // attempt can reconcile a late success; the cleanup above bounds retention.
+    const agentJobs = read("src/app/api/agent/jobs/route.ts");
+    expect(agentJobs).toContain('if (currentStatus === "expired" && requestedStatus === "success")');
+    expect(agentJobs).toContain('job.error?.startsWith("UNKNOWN_PARTIAL_DELIVERY")');
+    expect(agentJobs).toContain('deliveryUnknownLateSuccess && (!job.claimedAt || !job.claimToken');
+  });
+
+  it("keeps the print-job GET status response metadata-only", () => {
+    const route = read("src/app/api/print/jobs/route.ts");
+    const getSection = route.slice(route.indexOf("export async function GET"));
+    expect(getSection).toContain("validateOdooKey");
+    expect(getSection).toContain('params.get("id")');
+    expect(getSection).toContain("responseForRow(row ?? receipt!)");
+    expect(getSection).not.toContain("row.payload");
+    expect(getSection).not.toContain('json({ payload');
+  });
+
+  it("heartbeat print-lease keep-alive: bounded (jobId, claimToken) pairs, fenced to the live claim", () => {
+    const hb = read("src/app/api/agent/heartbeat/route.ts");
+    const normalized = hb.replace(/\s+/g, " ");
+    expect(normalized).toContain("const MAX_KEEP_ALIVE_JOB_IDS = 64;");
+    expect(normalized).toContain("claimToken");
+    // The refresh predicate must bind the lease to the exact live claim…
+    expect(normalized).toContain("(id, claim_token) IN");
+    // …and legacy tokenless ids are dropped before the refresh (they carry
+    // no proof of current-attempt ownership, so they must remain recoverable
+    // by the stale-claim sweeper instead of extending any claim).
+    expect(normalized).toContain("Tokenless legacy keep-alives are not");
+    expect(normalized).toContain("p.claimToken !== null");
+    // The bulk refresh is raw SQL (tuple-IN predicate Drizzle cannot
+    // express): agent fence and claimed/printing scope in raw form.
+    expect(normalized).toContain("AND agent_id = ${agent.id}");
+    expect(normalized).toContain("AND status IN ('claimed', 'printing')");
+    // Lease refresh mutates updatedAt only - never status, never ownership.
+    expect(normalized).toContain("UPDATE print_jobs SET updated_at = now()");
+    expect(normalized).not.toContain("db.update(printJobs) .set({ status");
+  });
+
+  it("agent rejection gate: claimed->queued only via the fenced pre-execution reasons", () => {
+    const jobs = read("src/app/api/agent/jobs/route.ts");
+    expect(jobs).toContain("AGENT_REQUEUE_REASONS");
+    expect(jobs).toContain("pre-execution rejection reason");
+    // The claim token gate makes the rejection unforgeable by a superseded attempt.
+    // The stale-claim lease follows agentStaleThresholdSeconds() (shared with
+    // the presence/claim gates); STALE_CLAIM_SECONDS remains only as the
+    // default in job-maintenance.ts.
+    expect(jobs).toMatch(/STALE_CLAIM|agentStaleThresholdSeconds/);
+    const status = read("src/lib/job-status.ts");
+    expect(status).toMatch(/AGENT_REQUEUE_REASONS\s*=\s*\[\s*"pending_full",\s*"printer_pending_full",\s*"printer_not_at_desired_state",\s*"printer_not_shared",\s*"agent_shutting_down",\s*"ledger_unavailable",\s*\]\s*as const/);
+    const normalizedJobs = jobs.replace(/\s+/g, " ");
+    expect(normalizedJobs).toContain("COALESCE(p.error, '') <> ${DELIVERY_EVIDENCE_PENDING}");
+    expect(normalizedJobs).toContain("error = ${DELIVERY_EVIDENCE_PENDING}");
+  });
+
+  it("Go agent: size-aware print budget with fenced pre-execution rejection", () => {
+    const agent = read("agent/internal/agent/agent.go");
+    expect(agent).toContain("printCtx, cancel := context.WithTimeout(ctx, printDocumentTimeout(len(pl.Data)))");
+    expect(agent).toContain("func printDocumentTimeout(payloadBytes int) time.Duration {");
+    // the document layer must not clamp a size-scaled budget down to a
+    // constant (that produced mid-partial-write garbage on slow thermals)
+    const doc = read("agent/internal/printer/document.go");
+    expect(doc).toContain("if _, hasDeadline := parent.Deadline(); hasDeadline {");
+    // executor saturation / shutdown reject the job FENCED with the claim
+    // token instead of silently dropping delivered work.
+    expect(agent).toContain('a.enqueueReject(sessionCtx, jobID, fields.ClaimToken, "pending_full")');
+    expect(agent).toContain('a.enqueueReject(sessionCtx, jobID, fields.ClaimToken, "agent_shutting_down")');
+    expect(agent).toContain("func (a *Agent) runRejectWorker(ctx context.Context)");
+    expect(agent).toMatch(/maxRejectQueue\s*=\s*32/);
+    expect(agent).toContain("func (a *Agent) rejectJobExact(ctx context.Context, jobID, token, reason string) error");
+    expect(agent).toMatch(/discoverySem:\s*make\(chan struct\{\}, 1\)/);
+    const net = read("agent/internal/printer/network.go");
+    // 2025-09-21: reduced from 10s to 5s for faster offline feedback (POS best practice)
+    expect(net).toMatch(/dialTimeout\s*=\s*5\s*\*\s*time\.Second/);
+    expect(net).toMatch(/writeStallTimeout\s*=\s*60\s*\*\s*time\.Second/);
+    // Write-deadline failures used to be discarded (`_ = conn.SetWriteDeadline`).
+    // They must now surface as an error so a stalled printer is reported.
+    expect(net).toContain("if err := conn.SetWriteDeadline(deadline); err != nil {");
+    expect(net).toContain('fmt.Errorf("set printer write deadline: %w", err)');
+  });
+
+  it("print quota applies at logical job admission and does not make Agent discovery the enforcement point", () => {
+    const service = read("src/lib/print-job-service.ts");
+    const agentJobs = read("src/app/api/agent/jobs/route.ts");
+    expect(service.indexOf("reserveTenantPrintCredit(tx, tenantId)")).toBeGreaterThan(service.indexOf("if (effectiveIdempotencyKey)"));
+    expect(service.indexOf("await tx.insert(printJobs).values")).toBeGreaterThan(service.indexOf("reserveTenantPrintCredit(tx, tenantId)"));
+    expect(agentJobs).not.toContain("max_prints_per_period");
+    expect(service).toContain("MAX_AGENT_IN_FLIGHT_JOBS");
+    expect(service).toContain("MAX_AGENT_QUEUED_JOBS");
+  });
+
+  it("quota UX remains machine-readable and upgradeable across dashboard surfaces", () => {
+    const dialog = read("src/components/UpgradeLimitDialog.tsx");
+    const dashboard = read("src/app/dashboard/dashboard-client.tsx");
+    const agentRoute = read("src/app/api/agents/route.ts");
+    expect(dialog).toContain('href="/billing"');
+    expect(dialog).toContain('t("limit.upgradePlan")');
+    expect(dialog).toContain('t("limit.note.prints")');
+    expect(dashboard).toContain('case "max_agents": return "agents"');
+    expect(dashboard).toContain('case "max_prints_per_period": return "prints"');
+    expect(dashboard).toContain("<UpgradeLimitDialog");
+    expect(agentRoute).toContain("ActionError");
+    expect(agentRoute).toContain("error.details");
+  });
+
+  it("print quota is a billing-period entitlement and is charged once per logical job", () => {
+    const entitlements = read("src/lib/entitlements.ts");
+    const service = read("src/lib/print-job-service.ts");
+    const route = read("src/app/api/print/jobs/route.ts");
+    const testPrint = read("src/app/api/printers/[id]/test-print/route.ts");
+    const schema = read("src/db/schema.ts");
+    const migration = read("drizzle/0061_print_usage_quota.sql");
+    expect(entitlements).toContain('"max_prints_per_period"');
+    expect(entitlements).toContain("reserveTenantPrintCredit");
+    expect(service).toContain("reserveTenantPrintCredit(tx, tenantId)");
+    expect(route).toContain("TenantPrintQuotaExceededError");
+    expect(testPrint).toContain("TenantPrintQuotaExceededError");
+    expect(testPrint).toContain("upgradeRequired: true");
+    expect(schema).toContain('printUsagePeriods = pgTable("print_usage_periods"');
+    expect(migration).toContain("print_usage_periods");
+    expect(migration).toContain("current_period_start");
+  });
+
+  it("printer provisioning serializes max_printers with the direct printer admission path", () => {
+    const source = read("src/app/api/agents/[id]/discovered-printers/[deviceId]/provision/route.ts");
+    expect(source).toContain("pg_advisory_xact_lock(hashtext('printers:' ||");
+    expect(source).toContain('enforceTenantResourceEntitlement');
+    expect(source).toContain('"max_printers"');
+  });
+
+  it("Go agent: interrupted jobs are reprinted, not skipped as processed", () => {
+    const agent = read("agent/internal/agent/agent.go");
+    expect(agent).toContain("recoverInterruptedJobs");
+    expect(agent).toContain("WasInterrupted");
+  });
+
+  it("job-maintenance: stale PRINTING jobs fail with an unknown physical outcome and are never requeued", () => {
+    const jm = read("src/lib/job-maintenance.ts");
+    expect(jm).toContain("AGENT_EXECUTION_TIMEOUT");
+    expect(jm).toContain("physical output is unknown");
+    expect(jm).toContain("MAX_RETRIES");
+    expect(jm).not.toContain("requeuedPrinting");
+  });
+
+  it("Odoo cron reconciliation is bounded and uses the current runtime job API", () => {
+    const jobs = read("odoo_addons/print_gateway/models/print_job.py");
+    // The implementation uses SQL LIMIT clauses rather than the old ORM
+    // domain/limit spelling. The contract is the bounded batch size itself.
+    expect(jobs).toContain("LIMIT 25"); // pending submission batch
+    expect(jobs).toContain("LIMIT 100"); // status reconciliation batch
+    expect(jobs).toContain("/api/print/jobs");
+    expect(jobs).toContain("job.gateway_job_id");
+    expect(jobs).not.toContain("/api/odoo/sync");
+    expect(jobs).not.toContain("max_branches");
+    expect(jobs).not.toContain("pending.action_sync_status()");
+  });
+
+  it("password reset requires the target user update to affect exactly one row", () => {
+    const route = read("src/app/api/auth/reset-password/route.ts");
+    expect(route).toContain(".returning({ id: users.id })");
+    expect(route).toContain('if (updatedUser.length !== 1) throw new Error("Reset user missing");');
+  });
+
+  it("startup refuses plaintext manager passwords outside development/test", () => {
+    const server = read("server.ts");
+    expect(server).toContain('const plaintextManagerPasswordAllowedEnvironment = process.env.NODE_ENV === "development" || process.env.NODE_ENV === "test";');
+    expect(server).toContain('!plaintextManagerPasswordAllowedEnvironment && process.env.ALLOW_PLAINTEXT_MANAGER_PASSWORD === "1"');
+    expect(server).toContain("outside development/test");
+    expect(server).not.toContain('process.env.NODE_ENV === "production" && process.env.ALLOW_PLAINTEXT_MANAGER_PASSWORD === "1"');
+  });
+
+  it("active local execution never adopts a newer Gateway claim token", () => {
+    const agent = read("agent/internal/agent/agent.go");
+    const duplicateBlock = agent.slice(
+      agent.indexOf("if _, dup := a.inFlight[jobID]; dup {"),
+      agent.indexOf("pendingPrinter := \"\",", agent.indexOf("if _, dup := a.inFlight[jobID]; dup {")),
+    );
+    expect(duplicateBlock).toContain("duplicate delivery ignored without changing the active claim token");
+    expect(duplicateBlock).not.toContain("a.inFlightTokens[jobID] = tok");
+  });
+
+  it("Tauri background stop uses exact recorded PID and re-verifies process identity", () => {
+    const agent = read("src-tauri/src/agent.rs");
+    expect(agent).toContain('const BACKGROUND_PID_FILE: &str = "agent.pid";');
+    expect(agent).toContain("fn taskkill_pid(pid: u32, force: bool)");
+    expect(agent).toContain('cmd.args(["/PID", &pid_arg, "/T"]);');
+    expect(agent).toContain('cmd.args(["/PID", &pid_arg, "/T", "/F"]);');
+    expect(agent).toContain("background_record_matches(app, &record)");
+    expect(agent).toContain("terminate_owned_background_process(app, &record)");
+    expect(agent).not.toContain('.args(["/IM", "OdooPrintAgent.exe"])');
+    expect(agent).not.toContain('.args(["/F", "/IM", "OdooPrintAgent.exe"])');
+  });
+});
+
+
+describe("production fixes — presence sweep and Gateway test-page HTTP path", () => {
+  it("persists stale online agents as offline without touching print history", () => {
+    const source = read("src/lib/agent-presence-maintenance.ts");
+    expect(source).toContain("status = 'offline'");
+    expect(source).toContain("last_seen_at < now() - make_interval");
+    expect(source).toContain("RETURNING agents.id");
+    expect(source).not.toContain("UPDATE print_jobs");
+  });
+
+  it("dashboard Send Test Page uses the authenticated HTTP endpoint for stable error contracts", () => {
+    const source = read("src/app/dashboard/dashboard-client.tsx");
+    expect(source).toContain("/api/printers/${encodeURIComponent(printerId)}/test-print");
+    expect(source).toContain("response.ok");
+    expect(source).toContain('credentials: "same-origin"');
+    expect(source).toContain("new DiagnosticOperations(generateIdempotencyKey)");
+    expect(source).toContain("diagnosticOps.current.begin(scope)");
+    expect(source).toContain('"Idempotency-Key": operationKey');
+    expect(source).toContain('testingPrinterId === printer.id');
+    expect(source).toContain('testingPrinterId === printer.id ? t("printer.sending") : t("printer.sendTestPage")');
+    expect(source).not.toContain("createTestPrintJob(printer.id)");
+  });
+
+  it("Gateway test page enforces Manager RBAC or paired own-Agent identity and bounded idempotency", () => {
+    const route = read("src/app/api/printers/[id]/test-print/route.ts");
+    expect(route).toContain("const claims = await validateWorkspaceManager(req)");
+    expect(route).toContain('requireManagerPermission(claims, "printers.test")');
+    expect(route).toContain('const pairedAgent = claims ? null : await validateAgent(req.headers.get("Authorization"))');
+    expect(route).toContain('const tenantId = claims ? claims.tenantId : pairedAgent!.tenantId');
+    expect(route).toContain('eq(printers.agentId, pairedAgent.id)');
+    expect(route).toContain('agentDiagnosticAuthority: { agentId: pairedAgent.id, tenantId: pairedAgent.tenantId }');
+    expect(route).not.toContain("validateConsoleAuth");
+    expect(route).toContain("eq(printers.tenantId, tenantId)");
+    expect(route).toContain("eq(agents.tenantId, tenantId)");
+    expect(route).toContain('documentType: "test_page"');
+    expect(route).toContain("idempotencyKey");
+    expect(route).toContain("result.isReused ? 200 : 201");
+    expect(route).toContain("Test print was not queued");
+    expect(route).not.toContain("test print will be queued until the agent reconnects");
+  });
+
+  it("printer and agent APIs expose effective availability instead of stale raw online state", () => {
+    const printers = read("src/app/api/printers/route.ts");
+    const agent = read("src/app/api/agents/[id]/route.ts");
+    expect(printers).toContain("getEffectivePrinterStatus");
+    expect(agent).toContain("getEffectiveAgentStatus");
+    expect(agent).toContain("getAgentHeartbeatFreshness");
+    expect(agent).toContain("getEffectivePrinterStatus");
+  });
+
+  it("printer connection diagnostics keeps Agent availability independent from printer lifecycle/config state", () => {
+    const source = read("src/app/api/printers/[id]/test-connection/route.ts");
+    const agentLookup = source.indexOf("const agent = await db.query.agents.findFirst");
+    const lifecycleCheck = source.indexOf('if (printer.lifecycle !== "active")');
+    const configCheck = source.indexOf('if (printer.connectionType === "network"');
+    expect(agentLookup).toBeGreaterThanOrEqual(0);
+    expect(lifecycleCheck).toBeGreaterThan(agentLookup);
+    expect(source).toContain("lastHeartbeatAt: agent.lastSeenAt");
+    expect(source).toContain("agentOnline: availability.available");
+    expect(source.slice(lifecycleCheck, configCheck)).toContain("...agentState");
+    expect(source.slice(configCheck, source.indexOf("if (!availability.available)", configCheck))).toContain("...agentState");
+    expect(source).not.toContain("const lastHeartbeatAt = printer.lastSeenAt;");
+  });
+
+  it("Odoo document Test Print validates and submits using the selected binding document type", () => {
+    const source = read("odoo_addons/print_gateway/models/print_router.py");
+    const spooler = source.slice(source.indexOf("def _route_spooler_test_page"), source.indexOf("def _route_ipp_test_page"));
+    const ipp = source.slice(source.indexOf("def _route_ipp_test_page"), source.indexOf("def _generate_test_pdf"));
+    for (const block of [spooler, ipp]) {
+      expect(block).toContain("document_type=binding.document_type");
+      expect(block).toContain("document_type=binding.document_type");
+      expect(block).not.toContain('job_document_type="test_page"');
+    }
+    expect(source).toContain('"document_type": route["document_type"]');
+  });
+});
+
+
+describe("2026-09-24 remediation contracts", () => {
+  it("keeps dashboard job filters tenant-fenced and printer lifecycle on DB time", () => {
+    const source = read("src/app/actions.ts");
+    expect(source).toContain("tenant_id = ${printJobs.tenantId} AND lifecycle = 'active'");
+    expect(source).not.toContain("SELECT id FROM printers WHERE lifecycle = 'active'");
+    expect(source).not.toContain("SELECT id FROM agents WHERE lifecycle = 'active'");
+    expect(source).not.toContain("updatedAt: new Date()");
+  });
+
+  it("protects the explicit dashboard reprint with the shared busy guard", () => {
+    const source = read("src/app/dashboard/dashboard-client.tsx");
+    const from = source.indexOf("const confirmReprint = async () => {");
+    const to = source.indexOf("const confirmAgentAction = async () => {", from);
+    const block = source.slice(from, to);
+    expect(from).toBeGreaterThanOrEqual(0);
+    expect(to).toBeGreaterThan(from);
+    expect(block).toContain("if (!job || busy || !canMutate.jobsRetry) return;");
+    expect(block).toContain("setBusy(true);");
+    expect(block).toContain("finally");
+    expect(block).toContain("setBusy(false);");
+  });
+
+  it("uses the canonical live-subscription predicate for runtime claims", () => {
+    expect(read("src/lib/entitlements.ts")).toContain("export function liveTenantSubscriptionPredicate");
+    expect(read("src/lib/job-delivery.ts")).not.toContain("FROM tenant_subscriptions ts");
+    expect(read("src/app/api/agent/jobs/route.ts")).not.toContain("FROM tenant_subscriptions ts");
+    expect(read("src/app/api/agent/register/route.ts")).not.toContain("FROM tenant_subscriptions\n");
+  });
+
+  it("keeps workspace timestamps on the database clock", () => {
+    expect(read("src/app/api/settings/route.ts")).toContain("updatedAt: sql");
+    const onboarding = read("src/app/api/onboarding/route.ts");
+    expect(onboarding).toContain("clock_timestamp()");
+    expect(onboarding).not.toContain("Date.now()");
+    expect(onboarding).not.toContain("updatedAt: new Date()");
+  });
+
+  it("removes the dead rate-limit table without removing migration history", () => {
+    expect(read("src/db/schema.ts")).not.toContain("printJobRateLimits");
+    expect(read("tests/helpers/pg.ts")).not.toContain("print_job_rate_limits");
+    expect(read("drizzle/meta/_journal.json")).toContain("0071_remove_print_job_rate_limits");
+    expect(read("drizzle/0071_remove_print_job_rate_limits.sql")).toContain("DROP TABLE IF EXISTS print_job_rate_limits;");
+  });
+
+  it("removes the empty Security placeholder and stale patch artifacts", () => {
+    const settings = read("src/app/settings/page.tsx");
+    expect(settings).not.toContain("id: \"security\"");
+    expect(settings).not.toContain("activeTab === \"security\"");
+    expect(existsSync(resolve(process.cwd(), "fix.patch"))).toBe(false);
+    expect(existsSync(resolve(process.cwd(), "final-fix.patch"))).toBe(false);
+  });
+
+  it("fails closed when db:generate has no current snapshot", () => {
+    expect(read("package.json")).toContain("db:generate\": \"tsx scripts/db-generate.ts");
+    expect(read("scripts/db-generate.ts")).toContain("Refusing to run drizzle-kit generate");
+  });
+});
+
+describe("production fixes — authentication and observability", () => {
+  it("does not silently truncate workspace memberships in tenant selection", () => {
+    const source = read("src/lib/customer-auth.ts");
+    expect(source).not.toContain(".limit(50)");
+    expect(source).toContain("Do not silently truncate workspace memberships");
+  });
+
+  it("does not claim unmeasured Windows service diagnostics as observed", () => {
+    const source = read("src/app/api/agents/service-status/route.ts");
+    expect(source).toContain("failureCount: null");
+    expect(source).toContain("exitCode: null");
+  });
+});
+
+describe("onboarding session contract", () => {
+  it("accepts the normal workspace session after email proof and owner password setup", () => {
+    const source = read("src/app/api/onboarding/route.ts");
+    expect(source).toContain("const claims = await validateWorkspaceManager(req);");
+    expect(source).not.toContain("const claims = await validateManager(req);");
+  });
+});
+
+describe("legacy session fixture contract", () => {
+  it("uses one exact expiry source for JWT and durable session state", () => {
+    const source = read("tests/session-legacy-fallback.integration.test.ts");
+    expect(source).toContain("to_timestamp($5)");
+    expect(source).toContain("nowSec + LEGACY_SESSION_MAX_AGE_SECONDS");
+    expect(source).not.toContain("clock_timestamp() + interval '8 hours'");
+  });
+
+  it("uses one claim-token redaction format across logging and timeline surfaces", async () => {
+    const { redactClaimToken } = await import("../src/lib/log");
+    const raw = "raw-claim-token-value";
+    const redacted = String(redactClaimToken(raw));
+
+    expect(redacted).toMatch(/^claim_[0-9a-f]{12}$/);
+    expect(redactClaimToken(redacted)).toBe(redacted);
+
+    const timeline = read("src/lib/job-timeline.ts");
+    const route = read("src/app/api/jobs/[id]/timeline/route.ts");
+    expect(timeline).toContain("redactClaimToken");
+    expect(route).toContain("redactClaimToken");
+    expect(timeline).not.toContain("createHash");
+    expect(route).not.toContain("createHash");
+  });
+
+  });
+
+describe("job claim predicate contracts", () => {
+  it("keeps printer eligibility centralized across claim candidates and re-check", () => {
+    const source = read("src/app/api/agent/jobs/route.ts");
+    expect((source.match(/\$\{printerEligibilityPredicate(?:\([^}]+\))?\}/g) ?? []).length).toBe(4);
+    // Count the eligibility clauses themselves, not harmless SELECT projections
+    // of the same columns used for admission diagnostics/re-checks.
+    expect((source.match(/pr\.management_source\s*=\s*['"]agent['"]/g) ?? []).length).toBe(1);
+    expect((source.match(/pr\.last_seen_at\s*<=\s*now\(\)/g) ?? []).length).toBe(1);
+  });
+});
+
+describe("structured logging contracts", () => {
+  it("serializes Error values with their message instead of {}", async () => {
+    const { logError } = await import("../src/lib/log");
+    const originalError = console.error;
+    const lines: string[] = [];
+    console.error = (...args: unknown[]) => {
+      lines.push(args.map((arg) => String(arg)).join(" "));
+    };
+    try {
+      const cause = new Error("root cause");
+      logError("test.error.serialization", {
+        error: new Error("primary failure"),
+        context: {
+          error: cause,
+        },
+      });
+    } finally {
+      console.error = originalError;
+    }
+
+    expect(lines).toHaveLength(1);
+    const payload = JSON.parse(lines[0]);
+    expect(payload.error).toMatchObject({
+      name: "Error",
+      message: "primary failure",
+    });
+    expect(payload.context.error).toMatchObject({
+      name: "Error",
+      message: "root cause",
+    });
+    expect(lines[0]).not.toContain('"error":{}');
+  });
+});

@@ -1,0 +1,473 @@
+package agent
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"log"
+	"net/http"
+	"net/http/httptest"
+	"path/filepath"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/yaseir-agent/agent/internal/config"
+	"github.com/yaseir-agent/agent/internal/printer"
+)
+
+type boundedStatusPrinter struct {
+	fakePrinter
+	active    int32
+	maxActive int32
+	started   chan struct{}
+	release   chan struct{}
+}
+
+func (p *boundedStatusPrinter) Status() string {
+	active := atomic.AddInt32(&p.active, 1)
+	defer atomic.AddInt32(&p.active, -1)
+
+	for {
+		previous := atomic.LoadInt32(&p.maxActive)
+		if active <= previous || atomic.CompareAndSwapInt32(&p.maxActive, previous, active) {
+			break
+		}
+	}
+
+	select {
+	case p.started <- struct{}{}:
+	default:
+	}
+	<-p.release
+	return "online"
+}
+
+func TestHeartbeatStatusProbesUseBoundedConcurrency(t *testing.T) {
+	const printerCount = maxHeartbeatProbeConcurrency * 2
+	ag := newTestAgent(t, "seed", &fakePrinter{})
+	release := make(chan struct{})
+	started := make(chan struct{}, printerCount)
+
+	ag.printers = make(map[string]printer.Printer, printerCount)
+	ag.printerConfigs = make(map[string]config.PrinterConfig, printerCount)
+	probes := make([]*boundedStatusPrinter, 0, printerCount)
+	for i := 0; i < printerCount; i++ {
+		p := &boundedStatusPrinter{started: started, release: release}
+		id := "probe-" + formatTestIndex(i)
+		ag.printers[id] = p
+		ag.printerConfigs[id] = config.PrinterConfig{
+			ID:       id,
+			Name:     id,
+			Type:     "network",
+			Endpoint: "127.0.0.1:9100",
+			Protocol: "raw",
+		}
+		probes = append(probes, p)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		_ = ag.printerStatusPayload()
+		close(done)
+	}()
+
+	for i := 0; i < maxHeartbeatProbeConcurrency; i++ {
+		select {
+		case <-started:
+		case <-time.After(5 * time.Second):
+			close(release)
+			t.Fatal("bounded heartbeat probe pool did not start the expected worker count")
+		}
+	}
+
+	select {
+	case <-started:
+		close(release)
+		t.Fatal("heartbeat started more probes than the configured concurrency ceiling")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	close(release)
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("heartbeat status payload did not drain after probe release")
+	}
+
+	maxObserved := int32(0)
+	for _, p := range probes {
+		if got := atomic.LoadInt32(&p.maxActive); got > maxObserved {
+			maxObserved = got
+		}
+	}
+	if maxObserved > maxHeartbeatProbeConcurrency {
+		t.Fatalf("heartbeat probe concurrency exceeded ceiling: got %d, want <= %d", maxObserved, maxHeartbeatProbeConcurrency)
+	}
+}
+
+func TestHeartbeatPaginationPreservesFullInventoryAndOwnershipFence(t *testing.T) {
+	var received []map[string]interface{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/agent/heartbeat" || r.Method != http.MethodPost {
+			http.NotFound(w, r)
+			return
+		}
+		var body map[string]interface{}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		received = append(received, body)
+		page, _ := body["heartbeatPage"].(float64)
+		pageCount, _ := body["heartbeatPageCount"].(float64)
+		if page == pageCount {
+			_, _ = w.Write([]byte(`{"success":true,"desiredState":[]}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"success":true}`))
+	}))
+	defer server.Close()
+
+	cfg := &config.Config{}
+	cfg.Agent.ID = "agt_heartbeat_pages"
+	cfg.Agent.Secret = "secret"
+	cfg.Server.URL = server.URL
+	ag, err := New(cfg, filepath.Join(t.TempDir(), "config.yaml"))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer func() { _ = ag.Close() }()
+
+	const printerCount = 1001
+	ag.printers = make(map[string]printer.Printer, printerCount)
+	ag.printerConfigs = make(map[string]config.PrinterConfig, printerCount)
+	for i := 0; i < printerCount; i++ {
+		id := "printer-" + formatTestIndex(i)
+		ag.printers[id] = &fakePrinter{}
+		ag.printerConfigs[id] = config.PrinterConfig{
+			ID:       id,
+			Name:     id,
+			Type:     "network",
+			Endpoint: "127.0.0.1:9100",
+			Protocol: "raw",
+		}
+	}
+	// A Gateway-owned stale local entry must remain fenced even when its
+	// heartbeat page is not the first page of the inventory.
+	gatewayOwnedID := "printer-" + formatTestIndex(printerCount-1)
+	ag.gatewayOwned[gatewayOwnedID] = struct{}{}
+
+	payload := ag.printerStatusPayload()
+	if got := len(payload); got != printerCount {
+		t.Fatalf("printerStatusPayload truncated the inventory: got %d, want %d", got, printerCount)
+	}
+
+	ag.sendHeartbeatContext(context.Background())
+
+	if got, want := len(received), 3; got != want {
+		t.Fatalf("heartbeat should paginate %d printers into %d pages, got %d", printerCount, want, got)
+	}
+
+	seenPrinters := make(map[string]struct{}, printerCount)
+	snapshotID := ""
+	for i, page := range received {
+		pageNo, ok := page["heartbeatPage"].(float64)
+		if !ok || int(pageNo) != i+1 {
+			t.Fatalf("page %d has invalid heartbeatPage: %#v", i+1, page["heartbeatPage"])
+		}
+		pageCount, ok := page["heartbeatPageCount"].(float64)
+		if !ok || int(pageCount) != len(received) {
+			t.Fatalf("page %d has invalid heartbeatPageCount: %#v", i+1, page["heartbeatPageCount"])
+		}
+		pageSnapshotID, ok := page["inventorySnapshotId"].(string)
+		if !ok || pageSnapshotID == "" {
+			t.Fatalf("page %d has invalid inventorySnapshotId: %#v", i+1, page["inventorySnapshotId"])
+		}
+		if snapshotID == "" {
+			snapshotID = pageSnapshotID
+		} else if pageSnapshotID != snapshotID {
+			t.Fatalf("page %d changed inventorySnapshotId: got %q want %q", i+1, pageSnapshotID, snapshotID)
+		}
+		complete, ok := page["inventoryComplete"].(bool)
+		if !ok || !complete {
+			t.Fatalf("page %d should report a complete registry snapshot, got %#v", i+1, page["inventoryComplete"])
+		}
+
+		entries, ok := page["printers"].([]interface{})
+		if !ok {
+			t.Fatalf("page %d has invalid printers payload: %#v", i+1, page["printers"])
+		}
+		if len(entries) > maxHeartbeatPrintersPerPage {
+			t.Fatalf("page %d exceeds the Gateway per-page printer ceiling: %d", i+1, len(entries))
+		}
+		for _, raw := range entries {
+			entry, ok := raw.(map[string]interface{})
+			if !ok {
+				t.Fatalf("page %d contains malformed printer entry %#v", i+1, raw)
+			}
+			id, _ := entry["id"].(string)
+			if id == "" {
+				t.Fatalf("page %d contains printer without id", i+1)
+			}
+			if _, duplicate := seenPrinters[id]; duplicate {
+				t.Fatalf("printer %s was sent on more than one heartbeat page", id)
+			}
+			seenPrinters[id] = struct{}{}
+		}
+
+		owned, ok := page["gatewayOwnedPrinterIds"].([]interface{})
+		if !ok {
+			t.Fatalf("page %d has invalid gatewayOwnedPrinterIds: %#v", i+1, page["gatewayOwnedPrinterIds"])
+		}
+		for _, raw := range owned {
+			id, _ := raw.(string)
+			if id != gatewayOwnedID {
+				t.Fatalf("unexpected Gateway-owned ID on page %d: %q", i+1, id)
+			}
+			foundOnPage := false
+			for _, rawPrinter := range entries {
+				entry := rawPrinter.(map[string]interface{})
+				if entry["id"] == id {
+					foundOnPage = true
+				}
+			}
+			if !foundOnPage {
+				t.Fatalf("Gateway-owned fence ID %q was sent on a page without that printer", id)
+			}
+		}
+	}
+
+	if got := len(seenPrinters); got != printerCount {
+		t.Fatalf("heartbeat lost printers during pagination: saw %d, want %d", got, printerCount)
+	}
+}
+
+func TestHeartbeatInvalidFinalSnapshotFailsClosed(t *testing.T) {
+	a := newDesiredStateTestAgent(t)
+	a.cfg.Agent.ID = "agt_heartbeat_invalid_snapshot"
+	a.cfg.Agent.Secret = "secret"
+	a.cfg.Server.URL = "http://gateway.invalid"
+	a.desiredStateMu.Lock()
+	a.desiredStateSynced = true
+	a.desiredStateMu.Unlock()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/agent/heartbeat" || r.Method != http.MethodPost {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"success":true,"desiredState":[`))
+	}))
+	defer server.Close()
+	a.cfg.Server.URL = server.URL
+	a.client = server.Client()
+
+	a.sendHeartbeatContext(context.Background())
+
+	a.desiredStateMu.Lock()
+	synced := a.desiredStateSynced
+	a.desiredStateMu.Unlock()
+	if synced {
+		t.Fatal("invalid final desired-state snapshot must fail closed and clear desiredStateSynced")
+	}
+}
+
+func TestHeartbeatPaginationSplitsLargeAuxiliaryState(t *testing.T) {
+	printers := make([]map[string]interface{}, 0, maxHeartbeatPrintersPerPage+1)
+	for i := 0; i < maxHeartbeatPrintersPerPage+1; i++ {
+		printers = append(printers, map[string]interface{}{"id": "printer-" + formatTestIndex(i), "status": "online"})
+	}
+
+	acks := make([]map[string]interface{}, 0, maxHeartbeatAuxItemsPerPage*2+1)
+	for i := 0; i < maxHeartbeatAuxItemsPerPage*2+1; i++ {
+		acks = append(acks, map[string]interface{}{"printerId": "manager-" + formatTestIndex(i), "appliedDesiredRevision": 1, "observedDesiredRevision": 1})
+	}
+
+	pages := buildHeartbeatPayloadPages(printers, acks, nil, nil, nil, true)
+	if got, want := len(pages), 3; got != want {
+		t.Fatalf("expected auxiliary heartbeat state to expand pages to %d, got %d", want, got)
+	}
+
+	ackCount := 0
+	auxSnapshotID := ""
+	for i, page := range pages {
+		pageNo := int(page["heartbeatPage"].(int))
+		pageCount := int(page["heartbeatPageCount"].(int))
+		if pageNo != i+1 || pageCount != len(pages) {
+			t.Fatalf("invalid page metadata: page=%d count=%d", pageNo, pageCount)
+		}
+		pageSnapshotID, ok := page["inventorySnapshotId"].(string)
+		if !ok || pageSnapshotID == "" {
+			t.Fatalf("page %d missing inventory snapshot identity: %#v", i+1, page["inventorySnapshotId"])
+		}
+		if auxSnapshotID == "" {
+			auxSnapshotID = pageSnapshotID
+		} else if pageSnapshotID != auxSnapshotID {
+			t.Fatalf("auxiliary page %d changed inventory snapshot identity", i+1)
+		}
+		if complete, ok := page["inventoryComplete"].(bool); !ok || !complete {
+			t.Fatalf("auxiliary page %d lost inventoryComplete=true: %#v", i+1, page["inventoryComplete"])
+		}
+		ackPage := page["desiredStateAcks"].([]map[string]interface{})
+		if len(ackPage) > maxHeartbeatAuxItemsPerPage {
+			t.Fatalf("page %d exceeds auxiliary page ceiling: %d", i+1, len(ackPage))
+		}
+		ackCount += len(ackPage)
+	}
+	if ackCount != len(acks) {
+		t.Fatalf("lost desired-state ACKs during pagination: got %d, want %d", ackCount, len(acks))
+	}
+
+	incompletePages := buildHeartbeatPayloadPages(printers[:1], nil, nil, nil, nil, false)
+	if got := incompletePages[0]["inventoryComplete"]; got != false {
+		t.Fatalf("incomplete registry snapshot must propagate inventoryComplete=false, got %#v", got)
+	}
+	if id, ok := incompletePages[0]["inventorySnapshotId"].(string); !ok || id == "" {
+		t.Fatalf("incomplete registry snapshot still requires a stable snapshot ID, got %#v", incompletePages[0]["inventorySnapshotId"])
+	}
+}
+
+// formatTestIndex is intentionally local to this file so the inventory tests
+// do not depend on UUID generation or random ordering.
+func formatTestIndex(i int) string {
+	return fmt.Sprintf("%04d", i)
+}
+
+// TestHeartbeatResponseBodyIsReadBeforeContextCancel is the regression test for
+// the bug found in the real Gateway<->Agent end-to-end run: sendHeartbeatContext
+// called cancel() immediately after doAuthorizedRequest returned and only then
+// read the response body, so the read was aborted by the canceled context. The
+// observed symptom was a repeating
+//
+//	"Heartbeat page 1/1 response read failed: context canceled"
+//
+// and an early return that skipped desired-state reconciliation and the
+// SkippedPrinters feedback.
+//
+// The handler writes the status line, flushes, then delays before writing the
+// JSON body. That gap is irrelevant with the fix (the read is bounded by the
+// remaining 15s budget) and fatal with the bug (the read is canceled at once),
+// so this test fails deterministically on the old code.
+func TestHeartbeatResponseBodyIsReadBeforeContextCancel(t *testing.T) {
+	var (
+		mu       sync.Mutex
+		requests int
+	)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/agent/heartbeat" || r.Method != http.MethodPost {
+			http.NotFound(w, r)
+			return
+		}
+		mu.Lock()
+		requests++
+		mu.Unlock()
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush() // headers + status reach the client before the body does
+		}
+		time.Sleep(150 * time.Millisecond)
+		_, _ = w.Write([]byte(`{"success":true,"desiredState":[],"skippedPrinters":[{"id":"printer-late","reason":"late body reached the agent"}]}`))
+	}))
+	defer server.Close()
+
+	var buf bytes.Buffer
+	oldWriter := log.Writer()
+	log.SetOutput(&buf)
+	defer log.SetOutput(oldWriter)
+
+	cfg := &config.Config{}
+	cfg.Agent.ID = "agt_heartbeat_body"
+	cfg.Agent.Secret = "secret"
+	cfg.Server.URL = server.URL
+	ag, err := New(cfg, filepath.Join(t.TempDir(), "config.yaml"))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer func() { _ = ag.Close() }()
+
+	ag.printers = map[string]printer.Printer{"printer-1": &fakePrinter{}}
+	ag.printerConfigs = map[string]config.PrinterConfig{
+		"printer-1": {
+			ID:       "printer-1",
+			Name:     "printer-1",
+			Type:     "network",
+			Endpoint: "127.0.0.1:9100",
+			Protocol: "raw",
+		},
+	}
+	ag.sendHeartbeatContext(context.Background())
+
+	mu.Lock()
+	got := requests
+	mu.Unlock()
+	if got != 1 {
+		t.Fatalf("expected exactly one heartbeat request, got %d", got)
+	}
+	logged := buf.String()
+	if strings.Contains(logged, "response read failed") {
+		t.Fatalf("heartbeat body read was aborted (the pre-fix bug): %s", logged)
+	}
+	// The body must actually have been parsed and acted upon.
+	if !strings.Contains(logged, "printer \"printer-late\" rejected by gateway: late body reached the agent") {
+		t.Fatalf("heartbeat response body was not processed; logs: %s", logged)
+	}
+}
+
+// Every intermediate page must be acknowledged before the Agent advances.
+// A 2xx status alone is insufficient: a proxy or an incompatible Gateway can
+// return malformed JSON or an explicit negative application-level response.
+func TestHeartbeatRejectsUnacknowledgedIntermediatePage(t *testing.T) {
+	for name, response := range map[string]string{
+		"negative_ack":  `{"success":false}`,
+		"malformed_ack": `{"success":true`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			var received atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodPost || r.URL.Path != "/api/agent/heartbeat" {
+					http.NotFound(w, r)
+					return
+				}
+				received.Add(1)
+				w.Header().Set("Content-Type", "application/json")
+				if received.Load() == 1 {
+					_, _ = io.WriteString(w, response)
+					return
+				}
+				_, _ = io.WriteString(w, `{"success":true,"desiredState":[]}`)
+			}))
+			defer server.Close()
+
+			cfg := &config.Config{}
+			cfg.Agent.ID = "agt_reject_intermediate"
+			cfg.Agent.Secret = "secret"
+			cfg.Server.URL = server.URL
+			ag, err := New(cfg, filepath.Join(t.TempDir(), "config.yaml"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = ag.Close() }()
+
+			// More than 500 printers forces a multi-page inventory cycle.
+			for i := 0; i <= maxHeartbeatPrintersPerPage; i++ {
+				id := "printer-" + formatTestIndex(i)
+				ag.printers[id] = &fakePrinter{}
+				ag.printerConfigs[id] = config.PrinterConfig{
+					ID: id, Name: id, Type: "network", Endpoint: "127.0.0.1:9100", Protocol: "raw",
+				}
+			}
+			ag.sendHeartbeatContext(context.Background())
+			if got := received.Load(); got != 1 {
+				t.Fatalf("unacknowledged page caused final heartbeat transmission: got %d requests, want 1", got)
+			}
+		})
+	}
+}

@@ -1,0 +1,467 @@
+"use server";
+import { logError } from "../lib/log";
+
+import { db } from "../db";
+import { agents, printers, printJobs, printJobReceipts, discoverySessions, discoveredDevices } from "../db/schema";
+import { eq, or, and, inArray, sql, desc } from "drizzle-orm";
+import { revalidatePath } from "next/cache";
+import { lifecycleLabel } from "../lib/lifecycle-labels";
+import { cookies } from "next/headers";
+import { generatePairingCode } from "../lib/agent-auth";
+import { getManagerCookieName, verifyWorkspaceTokenFromCookieValues } from "../lib/manager-auth";
+import { createHash } from "node:crypto";
+import { idempotencyDigest, createPrintJobForPrinter } from "../lib/print-job-service";
+import {
+  isTerminal,
+  isJobFilterStatus,
+  derivePhysicalOutcome,
+  PHYSICAL_OUTCOME_UNKNOWN_MARKERS,
+  type JobStatus,
+} from "../lib/job-status";
+import { canTransitionLifecycle } from "../lib/lifecycle";
+import { RECEIPT_MATERIALIZE_BATCH_ROWS } from "../shared/job-retention";
+import { transitionAgentLifecycle, LifecycleConflict } from "../lib/agent-lifecycle";
+import { ActionError } from "../lib/action-error";
+import { getServerLocale, makeT } from "../i18n/server";
+import { writeAuditEvent } from "../lib/audit";
+import { requireManagerPermission } from "../lib/authorization";
+import { requireManagerActorInTransaction } from "../lib/manager-mutation-authorization";
+import { entitlementLimitSignal, isTenantBillingError } from "../lib/entitlements";
+import { requireActiveTenantInTransaction } from "../lib/tenant-guard";
+import type { LimitSignalResult } from "../lib/limit-signal";
+import { createAgentForManager } from "../lib/agent-control";
+import {
+  DASHBOARD_FLEET_SEARCH_MAX_LENGTH,
+  DASHBOARD_PRINTER_FILTER_STATUSES,
+  loadDashboardStateForTenant,
+  type DashboardFleetOptions,
+} from "../lib/dashboard-state";
+
+async function requireManager() {
+  const t = makeT(await getServerLocale());
+  const cookieStore = await cookies();
+  const claims = await verifyWorkspaceTokenFromCookieValues(
+    cookieStore.get("cust_session")?.value ?? null,
+    cookieStore.get(getManagerCookieName())?.value ?? null,
+  );
+  if (!claims) throw new ActionError(t("errors.sessionExpired"), 401);
+  return claims;
+}
+
+export async function createAgent(name: string) {
+  const manager = await requireManager();
+  const result = await createAgentForManager(name, manager);
+  revalidatePath("/dashboard");
+  return result;
+}
+
+export async function deleteAgent(id: string) {
+  const t = makeT(await getServerLocale());
+  const manager = await requireManager();
+  requireManagerPermission(manager, "agents.retire");
+  if (typeof id !== "string" || !id.trim()) throw new ActionError(t("errors.agentIdRequired"), 400);
+  const agentId = id.trim();
+
+  await db.transaction(async (tx) => {
+    await requireActiveTenantInTransaction(tx, manager.tenantId);
+    // Same admission lock order as enqueue: tenant, Agent, then resource rows.
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`print_jobs:tenant:${manager.tenantId}`}))`);
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`print_jobs:agent:${agentId}`}))`);
+    const locked = await tx.execute(sql`SELECT id FROM agents WHERE id = ${agentId} AND tenant_id = ${manager.tenantId} FOR UPDATE`);
+    if (!locked.rows[0]) throw new ActionError(t("errors.agentNotFound"), 404);
+    await requireManagerActorInTransaction(tx, manager, "agents.retire");
+    const agentPrinters = await tx.select({ id: printers.id }).from(printers)
+      .where(and(eq(printers.agentId, agentId), eq(printers.tenantId, manager.tenantId))).for("update");
+    const printerIds = agentPrinters.map((p) => p.id);
+    const ownedJobs = and(eq(printJobs.tenantId, manager.tenantId), or(eq(printJobs.agentId, agentId),
+      ...(printerIds.length ? [inArray(printJobs.printerId, printerIds)] : [])));
+    let archivedJobs = 0;
+    // Preserve accepted operation keys/outcomes before deleting FK-bound runtime rows.
+    // Full rows carry payloads up to 5 MiB: fetch IDs per outer batch, then
+    // materialize at most RECEIPT_MATERIALIZE_BATCH_ROWS full rows at a time
+    // so peak memory stays bounded no matter how many jobs the agent owns.
+    // No job can be newly admitted while locks are held.
+    while (true) {
+      const idRows = await tx.select({ id: printJobs.id }).from(printJobs).where(ownedJobs).limit(100).for("update");
+      if (!idRows.length) break;
+      for (let offset = 0; offset < idRows.length; offset += RECEIPT_MATERIALIZE_BATCH_ROWS) {
+        const batchIds = idRows.slice(offset, offset + RECEIPT_MATERIALIZE_BATCH_ROWS).map((row) => row.id);
+        const jobs = await tx.select().from(printJobs).where(and(eq(printJobs.tenantId, manager.tenantId), inArray(printJobs.id, batchIds))).for("update");
+        for (const row of jobs) {
+          const terminal = isTerminal(row.status as JobStatus);
+          const uncertain = row.status === "printing" || row.error === "DELIVERY_EVIDENCE_PENDING" || !!row.deliveredAt || !!row.ackedAt || !!row.spoolerJobId || !!row.attemptId;
+          await tx.insert(printJobReceipts).values({
+            id: row.id, tenantId: row.tenantId, idempotencyKey: row.idempotencyKey,
+            fingerprint: idempotencyDigest({ printerId: row.printerId, documentType: row.documentType, destination: row.destination, payload: row.payload }),
+            printerId: row.printerId, agentId: row.agentId, apiKeyId: row.apiKeyId,
+            destination: row.destination, documentType: row.documentType, requestedBy: row.requestedBy,
+            status: terminal ? row.status : "failed",
+            error: terminal ? row.error : uncertain ? "UNKNOWN_PARTIAL_DELIVERY: Agent deleted during an accepted execution; inspect the physical printer before reprinting." : "AGENT_DELETED: Cancelled before delivery by workspace administrator.",
+            closedClaimTokenHash: row.closedClaimTokenHash ?? (row.claimToken ? createHash("sha256").update(row.claimToken).digest("hex") : null),
+            deliveredAt: row.deliveredAt, ackedAt: row.ackedAt, createdAt: row.createdAt,
+            updatedAt: terminal ? row.updatedAt : sql`clock_timestamp()`,
+          });
+        }
+        if (!jobs.length) continue;
+        await tx.delete(printJobs).where(and(eq(printJobs.tenantId, manager.tenantId), inArray(printJobs.id, jobs.map(row => row.id))));
+        archivedJobs += jobs.length;
+      }
+    }
+    await tx.delete(discoveredDevices).where(and(eq(discoveredDevices.agentId, agentId), eq(discoveredDevices.tenantId, manager.tenantId)));
+    await tx.delete(discoverySessions).where(and(eq(discoverySessions.agentId, agentId), eq(discoverySessions.tenantId, manager.tenantId)));
+    await tx.delete(printers).where(and(eq(printers.agentId, agentId), eq(printers.tenantId, manager.tenantId)));
+    await tx.delete(agents).where(and(eq(agents.id, agentId), eq(agents.tenantId, manager.tenantId)));
+    await writeAuditEvent({ tenantId: manager.tenantId, actorType: manager.userId ? "user" : "system", actorId: manager.userId ?? "legacy-manager",
+      action: "agent.deleted", resourceType: "agent", resourceId: agentId, metadata: { printerIds, archivedJobs } }, tx);
+    await tx.execute(sql`SELECT pg_notify('print_gateway_agent_sessions', ${JSON.stringify({ agentId })}::text)`);
+  });
+
+  revalidatePath("/dashboard");
+  return { ok: true };
+}
+
+export async function createPrintJob(printerId: string, payload: unknown) {
+  const t = makeT(await getServerLocale());
+  const manager = await requireManager();
+  requireManagerPermission(manager, "jobs.create");
+  try {
+    const result = await createPrintJobForPrinter(printerId, payload, { requestedBy: "manager", tenantId: manager.tenantId, managerAuthority: { claims: manager, permission: "jobs.create" } });
+    revalidatePath("/dashboard");
+    return { ok: true as const, id: result.id, reused: result.isReused === true };
+  } catch (error) {
+    // A limit trip is RETURNED, not thrown: Next.js only serializes a sanitized
+    // message for errors thrown from a server action in a production build, so
+    // a thrown ActionError would lose the entitlement details the upgrade
+    // dialog needs. HTTP routes keep using ActionError, which they translate to
+    // a 429/403 body server-side.
+    const limit = entitlementLimitSignal(error);
+    if (limit) return { ok: false as const, limit } satisfies LimitSignalResult;
+    if (isTenantBillingError(error)) throw new ActionError(t("errors.billingBlocked"), 403, error.code);
+    throw error;
+  }
+}
+
+/**
+ * Deliberate operator reprint of an ORIGINAL document after a terminal,
+ * possibly-printed outcome. This re-queues the job's stored payload — it is
+ * NOT a test page. Concurrent requests for the same original job converge
+ * on one active reprint inside the Gateway enqueue transaction; once that
+ * reprint reaches a terminal state, a later explicit request creates a new
+ * reprint sequence. Like Odoo's action_force_reprint, physical reprints of
+ * unknown outcomes are always an explicit operator action.
+ */
+export async function reprintJob(jobId: string) {
+  const t = makeT(await getServerLocale());
+  const manager = await requireManager();
+  requireManagerPermission(manager, "jobs.retry");
+  if (typeof jobId !== "string" || !jobId.trim()) throw new ActionError(t("errors.jobIdRequired"), 400);
+  const job = await db.query.printJobs.findFirst({ where: and(eq(printJobs.id, jobId.trim()), eq(printJobs.tenantId, manager.tenantId)) });
+  if (!job) throw new ActionError(t("errors.jobNotFound"), 404);
+  if (!isTerminal(job.status as JobStatus)) {
+    throw new ActionError(t("errors.jobStillInProgress"), 409);
+  }
+  if (job.status === "success") {
+    throw new ActionError(t("errors.jobNotEligibleForReprint"), 409);
+  }
+  try {
+    // Reprint sequence allocation happens inside createPrintJobForPrinter's
+    // tenant enqueue transaction, so concurrent double-clicks cannot derive
+    // different keys from a stale COUNT(*).
+    const result = await createPrintJobForPrinter(job.printerId, job.payload, {
+      requestedBy: "manager-reprint",
+      managerAuthority: { claims: manager, permission: "jobs.retry" },
+      reprintOfJobId: job.id,
+      destination: job.destination,
+      documentType: job.documentType ?? undefined,
+      tenantId: manager.tenantId,
+    });
+    revalidatePath("/dashboard");
+    return { ok: true as const, id: result.id, reused: result.isReused === true };
+  } catch (error) {
+    // Same contract as createPrintJob: the quota signal must survive the
+    // server-action boundary, so it is returned instead of thrown.
+    const limit = entitlementLimitSignal(error);
+    if (limit) return { ok: false as const, limit } satisfies LimitSignalResult;
+    if (isTenantBillingError(error)) throw new ActionError(t("errors.billingBlocked"), 403, error.code);
+    throw error;
+  }
+}
+
+export async function setPrinterLifecycle(id: string, lifecycle: "active" | "disabled" | "retired") {
+  const t = makeT(await getServerLocale());
+  const manager = await requireManager();
+  requireManagerPermission(manager, "printers.manage");
+
+  await db.transaction(async (tx) => {
+    await requireActiveTenantInTransaction(tx, manager.tenantId);
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('printer:' || ${manager.tenantId} || ':' || ${id}))`);
+
+    // Use the same lock ordering as agent heartbeats: agent row first,
+    // then printer row. The preliminary lookup does not lock either row;
+    // the authoritative printer row is locked only after the owner agent
+    // lock is acquired. This prevents an agent heartbeat from deadlocking
+    // with a concurrent lifecycle transition.
+    const owner = await tx.execute(sql`
+      SELECT agent_id
+      FROM printers
+      WHERE id = ${id} AND tenant_id = ${manager.tenantId}
+    `);
+    const ownerAgentId = (owner.rows[0] as { agent_id?: string } | undefined)?.agent_id;
+    if (!ownerAgentId) throw new ActionError(t("errors.printerNotFound"), 404);
+
+    {
+      const agent = await tx.execute(sql`
+        SELECT lifecycle
+        FROM agents
+        WHERE id = ${ownerAgentId} AND tenant_id = ${manager.tenantId}
+        FOR UPDATE
+      `);
+      const agentLifecycle = (agent.rows[0] as { lifecycle?: string } | undefined)?.lifecycle;
+      if (!agentLifecycle) throw new ActionError(t("errors.printerOwnerMissing"), 404);
+      if (lifecycle === "active" && agentLifecycle !== "active") {
+                // Translate the stored enum: it is a database identifier, not copy.
+        throw new ActionError(t("errors.printerOwnerLifecycle", { state: lifecycleLabel(t, agentLifecycle) }), 409);
+      }
+    }
+
+    await requireManagerActorInTransaction(tx, manager, "printers.manage");
+
+    const locked = await tx.execute(sql`
+      SELECT id, agent_id, lifecycle
+      FROM printers
+      WHERE id = ${id} AND tenant_id = ${manager.tenantId}
+      FOR UPDATE
+    `);
+    const printer = locked.rows[0] as { id?: string; agent_id?: string; lifecycle?: unknown } | undefined;
+    if (!printer?.id) throw new ActionError(t("errors.printerNotFound"), 404);
+    if (typeof printer.lifecycle !== "string") throw new ActionError(t("errors.printerInvalidLifecycle"), 500);
+
+    const current = printer.lifecycle as "active" | "disabled" | "retired";
+    if (current === lifecycle) return;
+
+    if (!canTransitionLifecycle(current, lifecycle)) {
+      throw new ActionError(t("errors.printerTransitionBlocked", { current, next: lifecycle }), 409);
+    }
+
+    const [updated] = await tx.update(printers)
+      .set({
+        lifecycle,
+        managementSource: "manager",
+        desiredRevision: sql<number>`${printers.desiredRevision} + 1`,
+        updatedAt: sql`now()`,
+      })
+      .where(and(eq(printers.id, id), eq(printers.tenantId, manager.tenantId), eq(printers.lifecycle, current)))
+      .returning({ id: printers.id, lifecycle: printers.lifecycle, desiredRevision: printers.desiredRevision });
+
+    if (!updated) throw new ActionError(t("errors.printerLifecycleConcurrent"), 409);
+
+    await writeAuditEvent({
+      tenantId: manager.tenantId,
+      actorType: manager.userId ? "user" : "system",
+      actorId: manager.userId ?? "legacy-manager",
+      action: `printer.lifecycle.${lifecycle}`,
+      resourceType: "printer",
+      resourceId: id,
+      metadata: { from: current, to: lifecycle, desiredRevision: updated.desiredRevision },
+    }, tx);
+    });
+  revalidatePath("/dashboard");
+}
+
+export async function setAgentLifecycle(id: string, lifecycle: "active" | "disabled" | "retired") {
+  const t = makeT(await getServerLocale());
+  const manager = await requireManager();
+  // Keep the Server Action authorization contract identical to the HTTP API:
+  // retirement is the destructive/history-gating transition and requires the
+  // dedicated retire permission; disable/re-enable uses agents.disable.
+  requireManagerPermission(manager, lifecycle === "retired" ? "agents.retire" : "agents.disable");
+  try {
+    const result = await transitionAgentLifecycle(id, lifecycle, manager.tenantId, {
+      type: manager.userId ? "user" : "system",
+      id: manager.userId ?? "legacy-manager",
+    }, manager);
+    if (!result) throw new ActionError(t("errors.agentNotFound"), 404);
+    // transitionAgentLifecycle persists the single authoritative lifecycle
+    // audit event inside the same transaction as the state change.
+    revalidatePath("/dashboard");
+    return { lifecycle: result.lifecycle, pairingCode: result.pairingCode, pairingCodeExpiresAt: result.pairingCodeExpiresAt };
+  } catch (error) {
+    if (error instanceof LifecycleConflict) throw new ActionError(t("errors.lifecycleConflict"), 409);
+    throw error;
+  }
+}
+
+export async function getDashboardState(options: DashboardFleetOptions = {}) {
+  const t = makeT(await getServerLocale());
+  const manager = await requireManager();
+  requireManagerPermission(manager, "agents.read");
+  requireManagerPermission(manager, "printers.read");
+  requireManagerPermission(manager, "jobs.read");
+
+  if (!options || typeof options !== "object" || Array.isArray(options)
+      || (options.printerSearch !== undefined && typeof options.printerSearch !== "string")
+      || (options.printerStatus !== undefined && typeof options.printerStatus !== "string")) {
+    throw new ActionError(t("errors.requestRejected"), 400, "INVALID_REQUEST");
+  }
+
+  for (const offset of [options.agentOffset, options.printerOffset]) {
+    if (offset !== undefined && (!Number.isSafeInteger(offset) || offset < 0)) {
+      throw new ActionError(t("errors.invalidPaginationOffset"), 400);
+    }
+  }
+  const search = options.printerSearch?.trim() ?? "";
+  if (search && (search.length < 2 || search.length > DASHBOARD_FLEET_SEARCH_MAX_LENGTH)) {
+    throw new ActionError(t("errors.invalidPrinterSearchLength"), 400);
+  }
+  const status = options.printerStatus?.trim().toLowerCase();
+  if (status && !(DASHBOARD_PRINTER_FILTER_STATUSES as readonly string[]).includes(status)) {
+    throw new ActionError(t("errors.invalidStatusFilter"), 400);
+  }
+
+  return loadDashboardStateForTenant(manager.tenantId, {
+    agentOffset: options.agentOffset,
+    printerOffset: options.printerOffset,
+    printerSearch: search,
+    printerStatus: status,
+  });
+}
+
+const DASHBOARD_JOBS_MAX_OFFSET = 10_000;
+const DASHBOARD_JOBS_MAX_SEARCH_LENGTH = 64;
+
+export async function getDashboardJobs(options?: {
+  status?: string;
+  search?: string;
+  limit?: number;
+  offset?: number;
+}) {
+  const t = makeT(await getServerLocale());
+  const manager = await requireManager();
+  requireManagerPermission(manager, "jobs.read");
+  if (options !== undefined && (!options || typeof options !== "object" || Array.isArray(options)
+      || (options.status !== undefined && typeof options.status !== "string")
+      || (options.search !== undefined && typeof options.search !== "string"))) {
+    throw new ActionError(t("errors.requestRejected"), 400, "INVALID_REQUEST");
+  }
+  const statusParam = options?.status?.trim().toLowerCase();
+  const searchParam = options?.search?.trim();
+  const requestedLimit = options?.limit ?? 50;
+  const requestedOffset = options?.offset ?? 0;
+  const limit = Number.isSafeInteger(requestedLimit)
+    ? Math.min(Math.max(requestedLimit, 1), 200)
+    : 50;
+  if (!Number.isSafeInteger(requestedOffset) || requestedOffset < 0 || requestedOffset > DASHBOARD_JOBS_MAX_OFFSET) {
+    throw new ActionError(t("errors.invalidPaginationOffset"), 400);
+  }
+  const offset = requestedOffset;
+  if (searchParam && (searchParam.length < 2 || searchParam.length > DASHBOARD_JOBS_MAX_SEARCH_LENGTH)) {
+    throw new ActionError(t("errors.invalidJobSearchLength"), 400);
+  }
+
+  if (statusParam && !isJobFilterStatus(statusParam)) {
+    throw new ActionError(t("errors.invalidStatusFilter"), 400);
+  }
+
+  const conditions = [eq(printJobs.tenantId, manager.tenantId)];
+
+  if (statusParam && statusParam !== "all") {
+    if (statusParam === "active" || statusParam === "in_flight") {
+      conditions.push(inArray(printJobs.status, ["queued", "claimed", "printing"]));
+    } else if (statusParam === "queued" || statusParam === "claimed" || statusParam === "printing" || statusParam === "expired") {
+      conditions.push(eq(printJobs.status, statusParam));
+    } else if (statusParam === "success" || statusParam === "printed") {
+      conditions.push(eq(printJobs.status, "success"));
+    } else if (statusParam === "unknown" || statusParam === "attention") {
+      conditions.push(
+        // Non-null: PHYSICAL_OUTCOME_UNKNOWN_MARKERS is a non-empty tuple, so or() always receives >= 1 clause.
+        or(...PHYSICAL_OUTCOME_UNKNOWN_MARKERS.map((m) => sql`${printJobs.error} LIKE ${m + "%"}`))!
+      );
+    } else if (statusParam === "failed") {
+      conditions.push(
+        // Non-null: and() always receives the fixed eq() clause plus the marker clauses.
+        and(
+          eq(printJobs.status, "failed"),
+          ...PHYSICAL_OUTCOME_UNKNOWN_MARKERS.map((m) => sql`COALESCE(${printJobs.error}, '') NOT LIKE ${m + "%"}`)
+        )!
+      );
+    } else if (statusParam === "unassigned") {
+      conditions.push(
+        or(eq(printJobs.destination, "unassigned"), eq(printJobs.printerId, "unassigned"), sql`${printJobs.printerId} NOT IN (SELECT id FROM printers WHERE tenant_id = ${printJobs.tenantId} AND lifecycle = 'active')`, sql`${printJobs.agentId} NOT IN (SELECT id FROM agents WHERE tenant_id = ${printJobs.tenantId} AND lifecycle = 'active')`)!
+      );
+    }
+  }
+
+  if (searchParam) {
+    // Escape LIKE wildcards: `%`/`_` in user input must match literally and
+    // `\` is the ESCAPE character (same policy as the reprint LIKE in
+    // print-job-service.ts). Without this, a job-search term containing `_`
+    // matches far more rows than the operator typed.
+    const escaped = searchParam.toLowerCase().replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_");
+    const term = `%${escaped}%`;
+    conditions.push(
+      // Non-null: or() always receives six fixed LIKE clauses.
+      // ESCAPE is literal SQL text (NOT an interpolated binding —
+      // Drizzle would send that as a parameter and Postgres would
+      // reject `LIKE $1 $2`).
+      or(
+        sql`LOWER(${printJobs.id}) LIKE ${term} ESCAPE '\\'`,
+        sql`LOWER(COALESCE(${printJobs.destination}, '')) LIKE ${term} ESCAPE '\\'`,
+        sql`LOWER(COALESCE(${printJobs.documentType}, '')) LIKE ${term} ESCAPE '\\'`,
+        sql`LOWER(${printJobs.printerId}) LIKE ${term} ESCAPE '\\'`,
+        sql`LOWER(${printJobs.agentId}) LIKE ${term} ESCAPE '\\'`,
+        sql`LOWER(COALESCE(${printJobs.error}, '')) LIKE ${term} ESCAPE '\\'`
+      )!
+    );
+  }
+
+  const rows = await db
+    .select({
+      id: printJobs.id,
+      destination: printJobs.destination,
+      documentType: printJobs.documentType,
+      agentId: printJobs.agentId,
+      agentName: agents.name,
+      printerId: printJobs.printerId,
+      printerName: printers.name,
+      status: printJobs.status,
+      error: printJobs.error,
+      requestedBy: printJobs.requestedBy,
+      retries: printJobs.retries,
+      deliveryAttempts: printJobs.deliveryAttempts,
+      claimedAt: printJobs.claimedAt,
+      deliveredAt: printJobs.deliveredAt,
+      ackedAt: printJobs.ackedAt,
+      expiresAt: printJobs.expiresAt,
+      createdAt: printJobs.createdAt,
+      updatedAt: printJobs.updatedAt,
+    })
+    .from(printJobs)
+    .leftJoin(agents, and(eq(agents.id, printJobs.agentId), eq(agents.tenantId, manager.tenantId)))
+    .leftJoin(printers, and(eq(printers.id, printJobs.printerId), eq(printers.tenantId, manager.tenantId)))
+    .where(conditions.length ? and(...conditions)! : undefined)
+    .orderBy(desc(printJobs.createdAt))
+    .limit(limit)
+    .offset(offset);
+
+  return rows.map((row) => ({
+    ...row,
+    physicalOutcome: derivePhysicalOutcome(row.status, row.error),
+  }));
+}
+
+
+
+async function dashboardResult<T>(operation: () => Promise<T>) {
+  try { return { ok: true as const, data: await operation() }; }
+  catch (error) {
+    const status = typeof (error as { status?: unknown })?.status === "number" ? (error as { status: number }).status : 500;
+    const code = typeof (error as { code?: unknown })?.code === "string" ? (error as { code: string }).code : status === 401 ? "UNAUTHORIZED" : status === 403 ? "FORBIDDEN" : "INTERNAL_ERROR";
+    if (status >= 500) logError("dashboard.action_failed", { error: error instanceof Error ? error.message : String(error) });
+    return { ok: false as const, error: status < 500 && error instanceof ActionError ? error.message : null, status, code };
+  }
+}
+export async function getDashboardStateResult(options?: Parameters<typeof getDashboardState>[0]) { return dashboardResult(() => getDashboardState(options)); }
+export async function getDashboardJobsResult(options?: Parameters<typeof getDashboardJobs>[0]) { return dashboardResult(() => getDashboardJobs(options)); }
+export async function deleteAgentResult(id: string) { return dashboardResult(() => deleteAgent(id)); }
+export async function setPrinterLifecycleResult(id: string, lifecycle: "active" | "disabled" | "retired") { return dashboardResult(() => setPrinterLifecycle(id, lifecycle)); }
+export async function setAgentLifecycleResult(id: string, lifecycle: "active" | "disabled" | "retired") { return dashboardResult(() => setAgentLifecycle(id, lifecycle)); }

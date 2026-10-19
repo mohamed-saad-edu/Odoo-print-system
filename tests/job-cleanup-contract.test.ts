@@ -1,0 +1,143 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { describe, expect, it } from "vitest";
+
+const read = (file: string) => readFileSync(resolve(process.cwd(), file), "utf8");
+
+describe("print-job cleanup contract", () => {
+  it("protects active Gateway jobs and requires manager authentication", () => {
+    const src = read("src/app/api/jobs/route.ts");
+    expect(src).toContain("export async function DELETE(req: Request)");
+    expect(src).toContain("const claims = await validateWorkspaceManager(req)");
+    expect(src).toContain('["success", "failed", "expired"]');
+    expect(src).toContain("inArray(printJobs.status");
+    expect(src).toContain("PHYSICAL_OUTCOME_UNKNOWN_MARKERS.map");
+    expect(src).toContain("isNull(printJobs.claimToken)");
+    expect(src).toContain("lt(printJobs.updatedAt, before)");
+    expect(src).toContain("orderBy(printJobs.updatedAt)");
+    expect(src).not.toContain(".delete(printJobs)\n    .where(inArray(printJobs.status");
+    expect(src).toContain("confirm=1");
+    expect(src).toContain("MAX_CLEANUP_ROWS = 5000");
+    expect(src).toContain("before=<ISO-8601 timestamp>");
+  });
+
+  it("keeps operational job timelines subordinate to bounded job retention", () => {
+    const schema = read("src/db/schema.ts");
+    expect(schema).toContain('job_events_tenant_id_job_id_print_jobs_fk');
+    expect(schema).toContain('onDelete: "cascade"');
+    const migration = read("drizzle/0066_job_events_cascade.sql");
+    expect(migration).toContain('ON DELETE CASCADE');
+  });
+
+  it("surfaces a confirmed bounded retention action in the Gateway dashboard", () => {
+    const page = read("src/app/dashboard/page.tsx");
+    const button = read("src/components/JobCleanupButton.tsx");
+    expect(page).toContain("<JobCleanupButton />");
+    expect(button).toContain('t("jobs.cleanup.action")');
+    expect(button).toContain('method: "DELETE"');
+    expect(button).toContain("PRINT_JOB_RETENTION_HOURS");
+    expect(button).toContain("PRINT_JOB_RETENTION_MS");
+    expect(button).not.toContain("RETENTION_DAYS = 30");
+    expect(button).toContain("limit=5000&confirm=1");
+  });
+
+  it("automatically expires full Gateway and Odoo job history after 48 hours", () => {
+    const maintenance = read("src/lib/job-maintenance.ts");
+    const shared = read("src/shared/job-retention.ts");
+    const server = read("server.ts");
+    const odoo = read("odoo_addons/print_gateway/models/print_job.py");
+    const cron = read("odoo_addons/print_gateway/data/cron.xml");
+    expect(shared).toContain("PRINT_JOB_RETENTION_HOURS = 48");
+    expect(maintenance).toContain("cleanupTerminalPrintJobs");
+    expect(maintenance).toContain("printJobReceipts");
+    expect(maintenance).toContain("claim_token IS NULL");
+    expect(server).toContain("JOB_RETENTION_SWEEP_INTERVAL_MS");
+    expect(odoo).toContain("_TERMINAL_RETENTION_HOURS = 48");
+    expect(odoo).toContain("def cron_cleanup_terminal_jobs");
+    expect(odoo).toContain("COALESCE(completed_at, write_date, create_date)");
+    expect(odoo).toContain("def _stable_terminal_values");
+    expect(cron).toContain("model.cron_cleanup_terminal_jobs()");
+  });
+
+  it("exposes local cleanup through the typed Desktop IPC boundary", () => {
+    const ipc = read("src/desktop/lib/ipc.ts");
+    const rust = read("src-tauri/src/main.rs");
+    const command = read("src-tauri/src/cleanup.rs");
+    expect(ipc).toContain('invoke<number>("cleanup_local_jobs")');
+    expect(rust).toContain("cleanup::cleanup_local_jobs");
+    expect(command).toContain('arg("jobs")');
+    expect(command).toContain('arg("cleanup")');
+  });
+
+  it("only deletes PROVABLY terminal records from the Agent local queue", () => {
+    const queue = read("agent/internal/queue/cleanup.go");
+    const agent = read("agent/internal/agent/agent.go");
+    expect(agent).toContain("localTerminalJobRetentionHours = 48");
+    expect(agent).toContain("CleanupTerminalOlderThan(localTerminalJobRetentionHours)");
+    expect(queue).toContain("CleanupTerminalOlderThan");
+    // Unknown-outcome evidence survives cleanup: deleting a row whose last
+    // error carries ANY unknown-outcome marker would erase the local
+    // duplicate-print protection and the operator's reconciliation record.
+    // The SQL is derived from the CANONICAL marker list (queue.UnknownOutcomeMarkers)
+    // so cleanup can never drift behind the marker vocabulary again — the
+    // old implementation preserved only 2 of the 5 markers.
+    expect(queue).toContain("status = 'success'");
+    expect(queue).toContain("unknownMarkerSQL(\"last_error\")");
+    expect(queue).toContain("UnknownOutcomeMarkers");
+    // The canonical marker vocabulary is declared once (queue.go) and is
+    // separately locked by queue_test.go / outcome_test.go.
+    const markers = read("agent/internal/queue/queue.go");
+    for (const marker of [
+      "AGENT_EXECUTION_TIMEOUT",
+      "AGENT_RESTART_DURING_PRINT",
+      "JOB_EXPIRED_DURING_PRINT",
+      "UNKNOWN_PARTIAL_DELIVERY",
+      "UNKNOWN_SUBMISSION_OUTCOME",
+    ]) {
+      expect(markers).toContain(marker);
+    }
+    const purge = read("agent/cmd/cli/cleanup.go");
+    // purging unknown-outcome evidence is a separate deliberate operation.
+    expect(purge).toContain("--include-unknown");
+  });
+});
+
+  it("keeps print-job TTL validation on the database clock", async () => {
+    const src = await import("node:fs").then(fs => fs.readFileSync("src/lib/print-job-service.ts", "utf8"));
+    expect(src).toContain("SELECT clock_timestamp() AS now");
+    expect(src).toContain("const effectiveExpiresAt = expiresAt ?? new Date(dbNow.getTime() + 60 * 60 * 1000);");
+  });
+
+describe("print-job bulk memory bound", () => {
+  it("materializes full payload rows only in small inner batches on every archive path", () => {
+    const shared = read("src/shared/job-retention.ts");
+    expect(shared).toContain("RECEIPT_MATERIALIZE_BATCH_ROWS = 20");
+    for (const file of ["src/lib/job-maintenance.ts", "src/app/actions.ts", "src/app/api/jobs/route.ts"]) {
+      expect(read(file), file).toContain("RECEIPT_MATERIALIZE_BATCH_ROWS");
+    }
+    // The retention sweeper must page IDs first: no full-row select may span
+    // the whole outer limit in one statement.
+    const maintenance = read("src/lib/job-maintenance.ts");
+    expect(maintenance).toContain("SELECT id\n      FROM print_jobs");
+  });
+
+  it("materializes cleanup receipts with one multi-row INSERT per batch (F005)", () => {
+    const src = read("src/app/api/jobs/route.ts");
+    // A per-row INSERT inside the candidate loop costs one round-trip per
+    // terminal job (up to MAX_CLEANUP_ROWS statements); the batched form
+    // matches the automatic retention sweep.
+    expect(src).toContain("await tx.insert(printJobReceipts).values(candidates.map((row) => ({");
+    expect(src).not.toContain("for (const row of candidates) {\n        await tx.insert(printJobReceipts)");
+  });
+
+  it("escapes LIKE wildcards on the jobs list search in parity with the dashboard action (F006)", () => {
+    const src = read("src/app/api/jobs/route.ts");
+    const actions = read("src/app/actions.ts");
+    // Both search paths must treat `%`/`_` literally: an unescaped `_`
+    // matches every job id containing any single character there.
+    for (const file of [src, actions]) {
+      expect(file).toContain('.replace(/%/g, "\\\\%").replace(/_/g, "\\\\_")');
+      expect(file).toContain("ESCAPE '\\\\'");
+    }
+  });
+});

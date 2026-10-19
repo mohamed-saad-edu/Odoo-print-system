@@ -1,0 +1,263 @@
+import { requireManagerActorInTransaction, ManagerMutationAuthorityChangedError } from "../../../../../../../lib/manager-mutation-authorization";
+import { NextResponse } from "next/server";
+import { db } from "../../../../../../../db";
+import { agents, discoveredDevices, printers } from "../../../../../../../db/schema";
+import { validateWorkspaceManager } from "../../../../../../../lib/manager-auth";
+import { requireManagerPermission } from "../../../../../../../lib/authorization";
+import { and, eq, sql } from "drizzle-orm";
+import { nanoid } from "../../../../../../../lib/nanoid";
+import { canonicalize } from "../../../../../../../lib/canonicalize";
+import { discoveryIppUriMatchesEndpoint, validateConnectionConfig } from "../../../../../../../lib/printer-model";
+import { enforceTenantResourceEntitlement, TenantEntitlementError, isTenantBillingError } from "../../../../../../../lib/entitlements";
+import { requireActiveTenantInTransaction, TenantSuspendedError, TenantDeletedError } from "../../../../../../../lib/tenant-guard";
+import { logError } from "../../../../../../../lib/log";
+
+import { isVirtualPrinterRecord } from "../../../../../../../lib/printer-virtual";
+
+export const dynamic = "force-dynamic";
+
+type ProvisionResult =
+  | { kind: "agent_not_found" }
+  | { kind: "agent_not_active" }
+  | { kind: "not_found" }
+  | { kind: "not_approved" }
+  | { kind: "unsupported_transport"; protocol: string }
+  | { kind: "missing_endpoint" }
+  | { kind: "invalid_endpoint"; error: string }
+  | { kind: "already"; printerId: string }
+  | { kind: "created"; printerId: string };
+
+export async function POST(req: Request, { params }: { params: Promise<{ id: string; deviceId: string }> }) {
+  const claims = await validateWorkspaceManager(req);
+  if (!claims) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  try { requireManagerPermission(claims, "printers.manage"); } catch { return NextResponse.json({ error: "Forbidden" }, { status: 403 }); }
+  const { id: agentId, deviceId } = await params;
+
+  const agent = await db.query.agents.findFirst({ where: and(eq(agents.id, agentId), eq(agents.tenantId, claims.tenantId)) });
+  if (!agent) return NextResponse.json({ error: "Agent not found" }, { status: 404 });
+  if (agent.lifecycle !== "active") return NextResponse.json({ error: `Agent is ${agent.lifecycle}` }, { status: 409 });
+
+  let result: ProvisionResult;
+  try {
+    result = await db.transaction(async (tx): Promise<ProvisionResult> => {
+    await requireActiveTenantInTransaction(tx, claims.tenantId);
+    // Tenant resource admission must serialize with direct printer creation;
+    // otherwise two different Agents could both observe capacity and insert
+    // simultaneously past max_printers.
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('printers:' || ${claims.tenantId}))`);
+
+    // Lifecycle changes serialize on the same Agent row. Lock it before
+    // reading the discovery candidate so an Agent cannot be retired/disabled
+    // between the outer pre-check and printer creation.
+    const lockedAgent = await tx.execute(sql`
+      SELECT id, lifecycle
+      FROM agents
+      WHERE id = ${agentId} AND tenant_id = ${claims.tenantId}
+      FOR UPDATE
+    `);
+    const agentRow = lockedAgent.rows[0] as { id?: string; lifecycle?: string } | undefined;
+    if (!agentRow?.id) return { kind: "agent_not_found" as const };
+    if (agentRow.lifecycle !== "active") return { kind: "agent_not_active" as const };
+
+    const locked = await tx.execute(sql`
+      SELECT id, candidate_status, verification, provisioned_printer_id
+      FROM discovered_devices
+      WHERE id = ${deviceId} AND agent_id = ${agentId} AND tenant_id = ${claims.tenantId}
+      FOR UPDATE
+    `);
+    const rows = locked.rows as Array<{ id: string; candidate_status: string; verification: string; provisioned_printer_id: string | null }>;
+    const row = rows[0];
+    if (!row) return { kind: "not_found" as const };
+
+    await requireManagerActorInTransaction(tx, claims, "printers.manage");
+
+    if (row.candidate_status === "provisioned" && row.provisioned_printer_id) {
+      return { kind: "already" as const, printerId: row.provisioned_printer_id };
+    }
+    if (row.verification !== "verified" || row.candidate_status !== "verified") {
+      return { kind: "not_approved" as const };
+    }
+
+    const device = await tx.query.discoveredDevices.findFirst({
+      where: and(eq(discoveredDevices.id, deviceId), eq(discoveredDevices.agentId, agentId), eq(discoveredDevices.tenantId, claims.tenantId)),
+    });
+    if (!device || isVirtualPrinterRecord({ name: device.deviceName, spoolerName: device.spoolerName,
+      protocol: device.protocol, connectionType: device.transport,
+      capabilities: device.capabilities ?? device.rawMetadata, config: device.rawMetadata })) {
+      return { kind: "not_found" as const };
+    }
+
+    const protocolMap: Record<string, { protocol: string; connectionType: string }> = {
+      ipp: { protocol: "ipp", connectionType: "ipp" },
+      ipps: { protocol: "ipps", connectionType: "ipps" },
+      raw: { protocol: "raw", connectionType: "network" },
+      zpl: { protocol: "zpl", connectionType: "network" },
+      tspl: { protocol: "tspl", connectionType: "network" },
+      escpos: { protocol: "escpos", connectionType: "network" },
+      spooler: { protocol: "spooler", connectionType: "spooler" },
+      windows_spooler: { protocol: "spooler", connectionType: "spooler" },
+      // "lpr" is deliberately NOT mapped. An LPR discovery probe only proves
+      // TCP 515 accepts connections; the LPD daemon there does NOT consume a
+      // raw byte stream, so provisioning lpr -> raw would write raw job bytes
+      // to port 515 - the exact heuristic protocol inference the agent's own
+      // NormalizedProtocol refuses. LPR-only devices must be registered
+      // explicitly by an operator (Add Printer dialog) with a proven
+      // transport, never silently re-labelled.
+    };
+    const rawProtocol = (device.protocol ?? "").toLowerCase();
+    const transport = protocolMap[rawProtocol];
+    if (!transport) return { kind: "unsupported_transport" as const, protocol: device.protocol ?? "unknown" };
+    // An Agent's discovery report contains both the language and the observed
+    // physical connection. Do not manufacture a Windows queue from a network
+    // device just because legacy discovery called its protocol "spooler".
+    // Existing Agent versions may omit transport; preserve their explicit
+    // operator approval, and accept USB-backed queues only with a real name.
+    const observedTransport = (device.transport ?? "").trim().toLowerCase();
+    if (transport.connectionType === "spooler" && observedTransport
+      && observedTransport !== "spooler"
+      && !(observedTransport === "usb" && Boolean(device.spoolerName?.trim()))) {
+      return { kind: "unsupported_transport" as const, protocol: `${rawProtocol}/${observedTransport}` };
+    }
+    if (["ipp", "ipps", "raw", "escpos", "zpl", "tspl"].includes(transport.protocol) && (!device.ipAddress || !device.port)) {
+      return { kind: "missing_endpoint" as const };
+    }
+    if ((transport.protocol === "ipp" || transport.protocol === "ipps") && device.uri
+      && !discoveryIppUriMatchesEndpoint(device.uri, device.ipAddress!, device.port!, transport.protocol)) {
+      // Operator verified the candidate with this observed IP/port. A
+      // different URI target is not the approved destination, even when it
+      // is another RFC1918 printer on the same LAN.
+      return { kind: "invalid_endpoint" as const, error: "Discovery IPP URI does not match observed printer IP, port, or transport security" };
+    }
+
+    if (device.ipAddress && device.port) {
+      // Compute the canonical IPP URL before dedup: IPP printers persist
+      // { address: "ipp://ip:port/ipp/print" } with no ip/port fields, so an
+      // ip/port-only comparison never converges for IPP and re-provisioning
+      // duplicates the row.
+      const expectedIppAddress = device.uri
+        ?? (transport.protocol + "://" + (device.ipAddress.includes(":") ? `[${device.ipAddress}]` : device.ipAddress) + ":" + String(device.port) + "/ipp/print");
+      const all = await tx.query.printers.findMany({ where: and(eq(printers.agentId, agentId), eq(printers.tenantId, claims.tenantId)) });
+      for (const p of all) {
+        const cfg = p.config as { ip?: string; address?: string; port?: number } | null;
+        const ip = cfg?.ip ?? cfg?.address;
+        // An endpoint may support multiple declared printer languages, but
+        // an existing *different* language is not the approved destination.
+        // Never bind a ZPL candidate to an ESC/POS queue merely because both
+        // describe the same host:port.
+        if (p.connectionType === transport.connectionType && p.protocol === transport.protocol
+          && ip === device.ipAddress && cfg?.port === device.port) {
+          await tx.update(discoveredDevices)
+            .set({ candidateStatus: "provisioned", provisionedPrinterId: p.id, updatedAt: sql`now()` })
+            .where(and(eq(discoveredDevices.id, deviceId), eq(discoveredDevices.tenantId, claims.tenantId), eq(discoveredDevices.candidateStatus, "verified")));
+          return { kind: "already" as const, printerId: p.id };
+        }
+        // IPP/IPPS convergence: match the persisted address URL (or the
+        // reported discovery URI) since those rows carry no ip/port fields.
+        if (p.connectionType === transport.connectionType && p.protocol === transport.protocol
+          && (transport.connectionType === "ipp" || transport.connectionType === "ipps")
+          && typeof cfg?.address === "string"
+          && (cfg.address === expectedIppAddress || (device.uri != null && cfg.address === device.uri))) {
+          await tx.update(discoveredDevices)
+            .set({ candidateStatus: "provisioned", provisionedPrinterId: p.id, updatedAt: sql`now()` })
+            .where(and(eq(discoveredDevices.id, deviceId), eq(discoveredDevices.tenantId, claims.tenantId), eq(discoveredDevices.candidateStatus, "verified")));
+          return { kind: "already" as const, printerId: p.id };
+        }
+      }
+    }
+
+    const ippAddress = device.uri
+      ?? (device.ipAddress && device.port
+        ? transport.protocol + "://" + (device.ipAddress.includes(":") ? `[${device.ipAddress}]` : device.ipAddress) + ":" + String(device.port) + "/ipp/print"
+        : undefined);
+    const printerConfig = transport.connectionType === "spooler"
+      ? { spooler_name: device.spoolerName ?? device.deviceName ?? undefined, address: device.spoolerName ?? device.deviceName ?? undefined }
+      : transport.connectionType === "ipp" || transport.connectionType === "ipps"
+        ? { address: ippAddress }
+        : { ip: device.ipAddress ?? undefined, port: device.port ?? undefined };
+    const configError = validateConnectionConfig(transport.connectionType, printerConfig, transport.protocol);
+    if (configError) return { kind: "invalid_endpoint" as const, error: configError };
+
+    // Spooler queues and stable Agent identities need convergence as well as
+    // network endpoint dedupe; never create a second runtime target for one queue.
+    const existingPrinters = await tx.query.printers.findMany({ where: and(eq(printers.agentId, agentId), eq(printers.tenantId, claims.tenantId)) });
+    const existing = existingPrinters.find(p => p.connectionType === transport.connectionType && p.protocol === transport.protocol && (
+      (transport.connectionType === "spooler" && (p.config as { spooler_name?: string; address?: string } | null)?.spooler_name === (printerConfig as { spooler_name?: string }).spooler_name)
+      || ((p.id === device.identityKey || p.id === device.id) && JSON.stringify(canonicalize(p.config)) === JSON.stringify(canonicalize(printerConfig)))
+    ));
+    if (existing) {
+      await tx.update(discoveredDevices).set({ candidateStatus: "provisioned", provisionedPrinterId: existing.id, updatedAt: sql`now()` })
+        .where(and(eq(discoveredDevices.id, deviceId), eq(discoveredDevices.tenantId, claims.tenantId), eq(discoveredDevices.agentId, agentId), eq(discoveredDevices.candidateStatus, "verified")));
+      return { kind: "already" as const, printerId: existing.id };
+    }
+
+    // Existing reviewed targets consume no new resource. Resolve every
+    // transport's dedupe before admitting only a genuinely new printer.
+    await enforceTenantResourceEntitlement(
+      tx,
+      claims.tenantId,
+      "max_printers",
+      sql`SELECT COUNT(*)::int AS count FROM printers WHERE tenant_id = ${claims.tenantId} AND shared_with_gateway = true AND lifecycle <> 'retired' AND (management_source <> 'agent' OR inventory_present = true)`,
+    );
+
+    const printerId = `printer_${nanoid(10)}`;
+    await tx.insert(printers).values({
+      id: printerId,
+      tenantId: claims.tenantId,
+      agentId,
+      name: device.deviceName ?? device.model ?? `Printer ${device.ipAddress ?? deviceId}`,
+      printerType: "physical",
+      deviceClass: device.deviceClass ?? "unknown",
+      connectionType: transport.connectionType,
+      protocol: transport.protocol,
+      status: "unknown",
+      lifecycle: "active",
+      managementSource: "manager",
+      desiredRevision: 1,
+      config: printerConfig,
+      capabilities: {
+        ...(device.capabilities as Record<string, unknown> | null ?? {}),
+      },
+    });
+    await tx.update(discoveredDevices)
+      .set({ candidateStatus: "provisioned", provisionedPrinterId: printerId, updatedAt: sql`now()` })
+      .where(and(eq(discoveredDevices.id, deviceId), eq(discoveredDevices.tenantId, claims.tenantId), eq(discoveredDevices.candidateStatus, "verified")));
+
+    return { kind: "created" as const, printerId };
+    });
+  } catch (error) {
+    if (error instanceof ManagerMutationAuthorityChangedError || error instanceof TenantSuspendedError || error instanceof TenantDeletedError) return NextResponse.json({ error: error.message }, { status: 403 });
+    if (error instanceof TenantEntitlementError) {
+      const headers = new Headers({ "Retry-After": "60", "Cache-Control": "no-store" });
+      return NextResponse.json({
+        error: `Tenant entitlement ${error.entitlement} exceeded (limit ${error.limit})`,
+        code: "MAX_PRINTERS_EXCEEDED",
+        entitlement: error.entitlement,
+        limit: error.limit,
+        upgradeRequired: true,
+      }, { status: 429, headers });
+    }
+    if (isTenantBillingError(error)) {
+      return NextResponse.json({ error: error.message, code: error.code }, { status: 403 });
+    }
+    logError("agent.provision.failed", { deviceId, error: error instanceof Error ? error.message : String(error) });
+    throw error;
+  }
+
+  if (result.kind === "agent_not_found") return NextResponse.json({ error: "Agent not found" }, { status: 404 });
+  if (result.kind === "agent_not_active") return NextResponse.json({ error: "Agent is no longer active" }, { status: 409 });
+  if (result.kind === "not_found") return NextResponse.json({ error: "Device not found" }, { status: 404 });
+  if (result.kind === "not_approved") {
+    return NextResponse.json({ error: "DEVICE_NOT_APPROVED: a discovery candidate must be explicitly approved before provisioning", code: "DEVICE_NOT_APPROVED" }, { status: 409 });
+  }
+  if (result.kind === "unsupported_transport") {
+    return NextResponse.json({ error: `UNSUPPORTED_DISCOVERY_TRANSPORT: ${result.protocol}. The candidate must report an explicit executable print transport before provisioning.`, code: "UNSUPPORTED_DISCOVERY_TRANSPORT" }, { status: 422 });
+  }
+  if (result.kind === "missing_endpoint") {
+    return NextResponse.json({ error: "MISSING_PRINTER_ENDPOINT: network printer requires ipAddress and port", code: "MISSING_PRINTER_ENDPOINT" }, { status: 422 });
+  }
+  if (result.kind === "invalid_endpoint") {
+    return NextResponse.json({ error: `INVALID_PRINTER_ENDPOINT: ${result.error}`, code: "INVALID_PRINTER_ENDPOINT" }, { status: 422 });
+  }
+  if (result.kind === "already") return NextResponse.json({ printerId: result.printerId, already: true });
+  return NextResponse.json({ printerId: result.printerId, already: false }, { status: 201 });
+}

@@ -1,0 +1,67 @@
+import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
+const root = process.cwd();
+const read = (file: string) => readFileSync(join(root, file), "utf8");
+
+describe("desktop Agent Gateway response contract", () => {
+  it("preserves the real HTTP status from the CLI/Rust bridge", () => {
+    const rust = read("src-tauri/src/commands.rs");
+    const ipc = read("src/desktop/lib/ipc.ts");
+    const cli = read("agent/cmd/cli/gateway.go");
+
+    expect(cli).toMatch(/Status\s+uint16\s+`json:"status"`/);
+    expect(cli).toMatch(/Body\s+string\s+`json:"body"`/);
+    expect(cli).toMatch(/Headers\s+map\[string\]string\s+`json:"headers,omitempty"`/);
+    expect(rust).toContain("let mut response: GatewayResponse = serde_json::from_str");
+    expect(rust).toContain("response.headers.retain");
+    expect(ipc).toContain('"x-next-before-id-encoded"');
+    expect(ipc).toContain("response.status");
+    expect(ipc).not.toContain("return { status: 200, body: responseBody }");
+  });
+
+  it("routes diagnostic Test Print via the paired Agent CLI without Manager credentials", () => {
+    const main = read("src/desktop/main.tsx");
+    const ipc = read("src/desktop/lib/ipc.ts");
+    const rust = read("src-tauri/src/commands.rs");
+    const cli = read("agent/cmd/cli/gateway.go");
+    expect(main).toContain("testGatewayPrinter(savedGatewayUrl, id, key)");
+    expect(main).not.toContain("testPrinter(id)");
+    expect(ipc).toContain('"/api/printers/" + encodeURIComponent(printerId) + "/test-print"');
+    const testPrintBlock = ipc.slice(ipc.indexOf("export async function testGatewayPrinter"), ipc.indexOf("export function cleanupLocalJobs"));
+    expect(testPrintBlock).toContain("await gatewayConsoleRequest(");
+    expect(testPrintBlock).not.toContain("await gatewayRequest(");
+    expect(rust).toContain('gateway_printer_action_path(path, "test-print")');
+    expect(cli).toContain("gatewayTestPrintPathRe");
+    expect(cli).toContain('req.Header.Set("Authorization", "Bearer "+cfg.Agent.ID+":"+cfg.Agent.Secret)');
+  });
+
+  it("normalizes Gateway printer config metadata for the desktop model", () => {
+    const ipc = read("src/desktop/lib/ipc.ts");
+    expect(ipc).toContain("config.address");
+    expect(ipc).toContain("config.spooler_name");
+    expect(ipc).toContain("config.vid");
+    expect(ipc).toContain("config.pid");
+  });
+
+  it("allows the bare jobs endpoint while rejecting malformed query pairs", () => {
+    const source = read("agent/cmd/cli/gateway.go");
+    expect(source).toContain('if parsed.RawQuery == "" {');
+    expect(source).toContain('pair == "" || !strings.Contains(pair, "=")');
+  });
+});
+
+  it("keeps printer control-plane mutations manager-only", () => {
+    const route = read("src/app/api/printers/[id]/route.ts");
+    const rust = read("src-tauri/src/commands.rs");
+    const cli = read("agent/cmd/cli/gateway.go");
+    const printersRoute = read("src/app/api/printers/route.ts");
+
+    expect(route).toContain('if (auth.kind !== "manager")');
+    expect(rust).not.toContain('"PATCH" => {');
+    expect(cli).not.toContain('case "PATCH":');
+    expect(printersRoute).toContain('auth.kind === "manager" ? "manager" : "agent"');
+    expect(printersRoute).toContain('data.agentId !== auth.agent.id');
+    expect(printersRoute).toContain("isVirtualPrinterRecord");
+  });
