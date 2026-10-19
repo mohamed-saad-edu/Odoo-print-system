@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
-import { act, createElement as h, Fragment } from "react";
+import { act, createElement as h } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import * as Dialog from "@radix-ui/react-dialog";
+import { stylesheetSingleton } from "react-style-singleton";
 import { getNonce, setNonce } from "get-nonce";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CspStyleNonce } from "../src/components/CspStyleNonce";
@@ -47,25 +47,23 @@ describe("CSP runtime style nonce", () => {
     expect(getNonce()).toBe("server-nonce");
   });
 
-  it("gives Radix's dynamically injected modal style tags the active document nonce", () => {
+  it("gives react-remove-scroll's stylesheet injector the active document nonce", () => {
     initialScript = document.createElement("script");
     initialScript.nonce = "modal-csp-nonce";
     document.head.appendChild(initialScript);
+    act(() => root!.render(h(CspStyleNonce, { nonce: "later-request-nonce" })));
 
-    act(() => root!.render(h(Fragment, null,
-      h(CspStyleNonce, { nonce: "modal-csp-nonce" }),
-      h(Dialog.Root, { open: true, children:
-        h(Dialog.Portal, { children:
-          h(Dialog.Content, { "aria-describedby": undefined, children:
-            h(Dialog.Title, { children: "Navigation" }),
-          }),
-        }),
-      }),
-    )));
-
-    const injected = [...document.head.querySelectorAll<HTMLStyleElement>("style")]
-      .filter((tag) => tag.textContent?.includes("react-remove-scroll") || tag.textContent?.includes("overflow"));
-    expect(injected.length).toBeGreaterThan(0);
-    expect(injected.every((tag) => tag.nonce === "modal-csp-nonce")).toBe(true);
+    // react-remove-scroll (used by Radix Dialog) uses this exact package's
+    // stylesheetSingleton.add() to dynamically insert its scroll-lock CSS.
+    const injectedStyle = stylesheetSingleton();
+    try {
+      injectedStyle.add("body[data-csp-test] { overflow: hidden; }");
+      const matching = [...document.head.querySelectorAll<HTMLStyleElement>("style")]
+        .filter((style) => style.textContent?.includes("body[data-csp-test]"));
+      expect(matching).toHaveLength(1);
+      expect(matching[0]?.nonce).toBe("modal-csp-nonce");
+    } finally {
+      injectedStyle.remove();
+    }
   });
 });
