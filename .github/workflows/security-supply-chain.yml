@@ -3,6 +3,7 @@ name: Security and Resilience Gates
 on:
   pull_request:
     branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
   merge_group:
   push:
     branches: [main]
@@ -41,7 +42,7 @@ jobs:
         run: bash scripts/ci-change-scopes.sh
   supply-chain:
     needs: changes
-    if: needs.changes.outputs.supply == 'true'
+    if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && needs.changes.outputs.supply == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -132,7 +133,7 @@ jobs:
           fi
           cargo audit --target-os windows --target-arch x86_64
       - name: Save vulnerability scanner cache
-        if: steps.security-tools-cache.outputs.cache-hit != 'true'
+        if: github.event_name != 'pull_request' && steps.security-tools-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
@@ -206,7 +207,7 @@ jobs:
 
   postgres-failure-injection:
     needs: changes
-    if: needs.changes.outputs.postgres == 'true'
+    if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && needs.changes.outputs.postgres == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:

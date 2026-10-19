@@ -3,6 +3,7 @@ name: Docker
 on:
   pull_request:
     branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
   merge_group:
   push:
     branches: [main]
@@ -53,7 +54,7 @@ jobs:
         run: bash scripts/ci-change-scopes.sh
   docker-image-scan:
     needs: changes
-    if: needs.changes.outputs.docker_scan == 'true'
+    if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && needs.changes.outputs.docker_scan == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -98,7 +99,7 @@ jobs:
 
   docker-build-runtime:
     needs: changes
-    if: needs.changes.outputs.docker == 'true'
+    if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && needs.changes.outputs.docker == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
