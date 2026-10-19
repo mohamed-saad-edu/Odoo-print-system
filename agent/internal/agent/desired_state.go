@@ -471,13 +471,18 @@ func desiredPrinterConfig(row desiredPrinterRecord) config.PrinterConfig {
 	// Conversely, a nominal 80mm roll does not establish 576 printable dots:
 	// 180dpi devices can have 512. Apply only explicitly configured hardware
 	// dot width/DPI, independent of discovered or inferred protocols.
-	if dots := desiredNumberValue(p.Config, "max_paper_width"); dots >= 288 && dots <= 576 {
+	transport := (config.PrinterConfig{Type: p.ConnectionType, SpoolerName: desiredStringValue(p.Config, "spooler_name")}).NormalizedType()
+	maxDots := 576
+	if transport == "spooler" {
+		maxDots = printer.MaxJPEGDimension
+	}
+	if dots := desiredNumberValue(p.Config, "max_paper_width"); dots >= 288 && dots <= maxDots {
 		if capabilities == nil {
 			capabilities = make(map[string]interface{})
 		}
 		capabilities["max_paper_width"] = dots
 	}
-	if dpi := desiredNumberValue(p.Config, "print_dpi"); dpi == 180 || dpi == 203 {
+	if dpi := desiredNumberValue(p.Config, "print_dpi"); dpi > 0 && (transport == "spooler" || dpi == 180 || dpi == 203) {
 		if capabilities == nil {
 			capabilities = make(map[string]interface{})
 		}

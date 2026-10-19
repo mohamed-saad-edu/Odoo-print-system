@@ -113,7 +113,9 @@ maps configuration to a backend is `agent/internal/printer/factory.go`.
 
 ### 5.2 JPEG raster limits and paper width
 
-JPEG dimensions are inspected with `jpeg.DecodeConfig` before full decode. Either source dimension above 16,384 pixels, a source image above 40,000,000 pixels, or a projected ESC/POS raster above 32 MiB is rejected. Raster width defaults conservatively to 384 dots. A single explicit desired-state `config.paper_widths` value is carried separately as millimetres (`paper_width_mm`) and mapped to the supported raster width (for example, 80 mm → 576 dots); ambiguous multi-width configuration does not widen the default.
+JPEG dimensions are inspected with `jpeg.DecodeConfig` before full decode. Either source dimension above 16,384 pixels, a source image above 40,000,000 pixels, or a projected ESC/POS raster above 32 MiB is rejected. Direct ESC/POS raster width defaults to 384 dots. A single explicit desired-state `config.paper_widths` value is carried separately as millimetres (`paper_width_mm`). An 80mm roll without explicit dots/DPI uses the legacy 512-dot estimate; an explicit 203-DPI profile uses 576, while an explicit supported dot width takes precedence. These are compatibility estimates, not verified head measurements. Ambiguous multi-width configuration does not widen the default.
+
+Windows JPEG document printing uses a separate geometry path. Unconfigured queues with a selected narrow form (40–120mm) retain the exact `PHYSICALWIDTH / LOGPIXELSX` form width, `HORZRES` printable width, and positive driver DPI, including 70mm forms and 200/204/300/600 DPI devices. The detector rejects impossible horizontal bounds, and the PDF/GDI path validates both axes before submission. The direct ESC/POS software limit of 576 dots does not constrain Windows driver documents. Existing explicit 58/80mm profiles and unknown-DPI estimates remain compatible; A4/Letter images retain ordinary image sizing. See [receipt geometry evidence and rollout](docs/RECEIPT_GEOMETRY_RELIABILITY.md). Driver values still require comparison with the installed hardware.
 
 ### 5.3 Windows print spooler — `SpoolerPrinter` (`spooler_windows.go`)
 

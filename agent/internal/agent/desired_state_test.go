@@ -86,6 +86,37 @@ func TestDesiredStatePassesExplicit80mmPaperWidthSeparatelyFromObservedCapabilit
 	}
 }
 
+func TestDesiredStatePreservesDriverGeometryWithoutWideningNativeRaster(t *testing.T) {
+	for _, tc := range []struct {
+		name, transport, spooler string
+		dots, dpi                int
+		want                     bool
+	}{
+		{"spooler200", "spooler", "Test Queue", 512, 200, true},
+		{"spooler300", "spooler", "Test Queue", 850, 300, true},
+		{"spooler600", "spooler", "Test Queue", 1700, 600, true},
+		{"usbWindowsQueue", "usb", "Test Queue", 850, 300, true},
+		{"nativeTCP", "network", "", 850, 300, false},
+		{"nativeUSB", "usb", "", 850, 300, false},
+		{"invalid", "spooler", "Test Queue", 0, 0, false},
+		{"unbounded", "spooler", "Test Queue", printer.MaxJPEGDimension + 1, -1, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			row := desiredPrinterRecord{Desired: testDesiredPrinter("geometry", 1, "active")}
+			row.Desired.ConnectionType = tc.transport
+			row.Desired.Config = map[string]interface{}{"spooler_name": tc.spooler, "paper_widths": []interface{}{80}, "max_paper_width": tc.dots, "print_dpi": tc.dpi}
+			cfg := desiredPrinterConfig(row)
+			if tc.want {
+				if cfg.Capabilities["max_paper_width"] != tc.dots || cfg.Capabilities["print_dpi"] != tc.dpi {
+					t.Fatalf("driver geometry was lost: %#v", cfg.Capabilities)
+				}
+			} else if cfg.Capabilities["max_paper_width"] != nil || cfg.Capabilities["print_dpi"] != nil {
+				t.Fatalf("unsupported geometry reached native transport: %#v", cfg.Capabilities)
+			}
+		})
+	}
+}
+
 func TestDesiredStateRejectsConflictingAndPublicNetworkDestinations(t *testing.T) {
 	for name, cfg := range map[string]map[string]interface{}{
 		"conflicting address": {"ip": "192.168.2.10", "port": 9100, "address": "8.8.8.8:9100"},

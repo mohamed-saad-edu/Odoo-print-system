@@ -2,6 +2,9 @@ package printer
 
 import (
 	"bytes"
+	"encoding/binary"
+	"math"
+	"os"
 	"testing"
 )
 
@@ -104,5 +107,43 @@ func TestJPEGToESCPOSWithMaxWidthHonors80mmCapability(t *testing.T) {
 	}
 	if got := rasterWidthFromESCPOS(out); got != 72 { // 576 dots => 72 bytes per row
 		t.Fatalf("first raster row is %d bytes wide; want 72", got)
+	}
+}
+
+func TestReceiptRasterRetainsBothBoundaryMarksAcrossBands(t *testing.T) {
+	source, err := os.ReadFile("testdata/receipt-geometry.jpg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, width := range []int{288, 360, 384, 420, 512, 552, 560, 576} {
+		data, err := JPEGToESCPOSWithMaxWidth(source, 128, width)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rowBytes, rows := (min(width, 512)+7)/8, []byte{}
+		for offset := 2; offset < len(data); {
+			if offset+8 > len(data) || !bytes.Equal(data[offset:offset+4], []byte{0x1d, 0x76, 0x30, 0}) {
+				t.Fatal("invalid raster band header")
+			}
+			w, h := int(binary.LittleEndian.Uint16(data[offset+4:])), int(binary.LittleEndian.Uint16(data[offset+6:]))
+			if w != rowBytes || h < 1 || h > 128 || offset+8+w*h > len(data) {
+				t.Fatal("invalid raster band dimensions")
+			}
+			rows = append(rows, data[offset+8:offset+8+w*h]...)
+			offset += 8 + w*h
+		}
+		height := len(rows) / rowBytes
+		if height != int(math.Round(2852*float64(min(width, 512))/512)) {
+			t.Fatal("receipt height changed during banding")
+		}
+		for _, start := range []int{0, height - 32} {
+			found := false
+			for y := start; y < start+32; y++ {
+				found = found || (rows[y*rowBytes+1] != 0 && rows[(y+1)*rowBytes-2] != 0)
+			}
+			if !found {
+				t.Fatalf("%d-dot target lost a left/right registration mark near row %d", width, start)
+			}
+		}
 	}
 }

@@ -206,10 +206,15 @@ func JPEGToPDFReceipt(data []byte, paperWidthMM, printableDots, dpi int) ([]byte
 			printableDots = 512 // conservative 80mm/180dpi baseline
 		}
 	}
-	if printableDots < 288 || printableDots > 576 {
+	// Windows document rendering has its own bounded bitmap path; the direct
+	// ESC/POS 576-dot software ceiling is not a printer-driver capability.
+	if printableDots < 288 || printableDots > MaxJPEGDimension {
 		return nil, fmt.Errorf("invalid thermal printable width %d dots", printableDots)
 	}
-	if dpi != 180 && dpi != 203 {
+	if dpi <= 0 {
+		if printableDots > maxRasterWidth {
+			return nil, fmt.Errorf("receipt widths above legacy profiles require explicit printer DPI")
+		}
 		switch printableDots {
 		case 360, 512:
 			dpi = 180
@@ -217,10 +222,10 @@ func JPEGToPDFReceipt(data []byte, paperWidthMM, printableDots, dpi int) ([]byte
 			dpi = 203
 		}
 	}
-	return jpegToPDFWithReceiptPaper(data, paperWidthMM, printableDots, dpi)
+	return jpegToPDFWithReceiptPaper(data, float64(paperWidthMM), printableDots, dpi)
 }
 
-func jpegToPDFWithReceiptPaper(data []byte, paperWidthMM, printableDots, dpi int) ([]byte, error) {
+func jpegToPDFWithReceiptPaper(data []byte, paperWidthMM float64, printableDots, dpi int) ([]byte, error) {
 	cfg, err := decodeJPEGConfig(data)
 	if err != nil {
 		return nil, err
@@ -255,10 +260,13 @@ func jpegToPDFWithReceiptPaper(data []byte, paperWidthMM, printableDots, dpi int
 	imageW, imageH := pageW, pageH
 	imageX, imageY := 0.0, 0.0
 	if paperWidthMM != 0 {
-		pageW = float64(paperWidthMM) * 72.0 / 25.4
+		if math.IsNaN(paperWidthMM) || math.IsInf(paperWidthMM, 0) || paperWidthMM <= 4 || printableDots <= 0 || dpi <= 0 {
+			return nil, fmt.Errorf("invalid receipt media geometry")
+		}
+		pageW = paperWidthMM * 72.0 / 25.4
 		// A roll is wider than its *printable* image. Use the smaller of
 		// actual configured dots / real device DPI and paper minus margins.
-		contentMM := math.Min(float64(printableDots)*25.4/float64(dpi), float64(paperWidthMM)-4)
+		contentMM := math.Min(float64(printableDots)*25.4/float64(dpi), paperWidthMM-4)
 		if contentMM < 30 {
 			return nil, fmt.Errorf("thermal printer has insufficient printable area %.2fmm", contentMM)
 		}

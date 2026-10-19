@@ -1101,19 +1101,15 @@ func (p *SpoolerPrinter) PrintDocument(ctx context.Context, doc Document) error 
 		if err := runDispatchAdmission(ctx); err != nil {
 			return fmt.Errorf("image spooler admission refused: %w", err)
 		}
-		roll, dots, dpi := p.ReceiptPaperMM, p.ReceiptRasterDots, p.ReceiptDPI
-		if roll == 0 {
-			// Read the actual Windows driver paper form. Never infer 80mm
-			// from product names: the same queue can be configured for A4.
-			roll, dots, dpi = spoolerDetectedReceiptPaper(ctx, p.SpoolerName)
-		}
 		var pdf []byte
 		var err error
-		if roll == 58 || roll == 80 {
-			pdf, err = JPEGToPDFReceipt(doc.Data, roll, dots, dpi)
+		if p.ReceiptPaperMM == 58 || p.ReceiptPaperMM == 80 {
+			pdf, err = JPEGToPDFReceipt(doc.Data, p.ReceiptPaperMM, p.ReceiptRasterDots, p.ReceiptDPI)
 		} else {
-			// A4/Letter and unknown paper keep generic image behavior.
-			pdf, err = JPEGToPDF(doc.Data)
+			// Preserve the selected narrow form and DPI exactly. A4/Letter
+			// and unknown media return zero and keep generic image sizing.
+			paperMM, dots, dpi := spoolerDetectedReceiptPaper(ctx, p.SpoolerName)
+			pdf, err = jpegToPDFWithReceiptPaper(doc.Data, paperMM, dots, dpi)
 		}
 		if err != nil {
 			return fmt.Errorf("render image for Windows spooler: %w", err)
