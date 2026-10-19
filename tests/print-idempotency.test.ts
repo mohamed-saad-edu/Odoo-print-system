@@ -161,6 +161,16 @@ suite("print idempotency (Odoo → Gateway)", () => {
     expect(await jobCount()).toBe(1);
   });
 
+  it("concurrent duplicate submissions with the same key create one job", async () => {
+    const [a, b] = await Promise.all([
+      create(jobBody("op-concurrent")),
+      create(jobBody("op-concurrent")),
+    ]);
+    const statuses = [a.status, b.status].sort();
+    expect(statuses).toEqual([200, 201]);
+    expect(await jobCount()).toBe(1);
+  });
+
   it("retry returns the existing job", async () => {
     const first = await create(jobBody("op-retry"));
     expect(first.status).toBe(201);
