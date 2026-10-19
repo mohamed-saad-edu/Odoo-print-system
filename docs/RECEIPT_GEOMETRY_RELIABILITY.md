@@ -6,6 +6,7 @@
 results belong to the change's PR checks. **HARDWARE VALIDATION NOT VERIFIED.**
 No deployment, physical submission, driver preference change, registry edit,
 firmware change, or customer queue access was performed.
+Investigation began on 2026-10-19; final local software checks completed on 2026-10-20.
 
 Baseline: `11bb3edd6a037bc0f49094a4bb1befe07396dd35`, repository
 `mohamed-saad-edu/Odoo-print-system`. The working tree was clean. The open
@@ -27,7 +28,7 @@ first clipping stage of that particular customer's receipt.
    software limit. A valid 70mm Windows form therefore selected generic
    96-DPI image geometry. The first incorrect geometry is at the driver-cap
    interpretation / JPEG-to-PDF boundary, before transport.
-2. `receiptPaperProfile` and `JPEGToPDFReceipt` accepted only 180/203 DPI.
+2. `desiredPrinterConfig`, `receiptPaperProfile` and `JPEGToPDFReceipt` accepted only 180/203 DPI.
    Reported 200/204/300 DPI was dropped or replaced with a guess. A 512-dot,
    300-DPI image became 204.80pt wide instead of 122.88pt (66.7% too wide).
 3. Receipt detection did not check whether printable width plus horizontal
@@ -85,6 +86,7 @@ printer database model, protocol, retry strategy, or alternative renderer.
 
 | File | Before → after; verification |
 |---|---|
+| `agent/internal/agent/desired_state.go`, `desired_state_test.go` | Windows desired-state profiles lost positive DPI and widths above 576 dots before reaching the factory → preserve bounded driver geometry for normalized Windows queues, including USB queues. Eight cases retain native TCP/USB limits and reject invalid metadata. No wire fields or Gateway schema changed. |
 | `agent/internal/printer/spooler_receipt.go` (new) | Testable detector policy preserves measured mm/dots/DPI and checks horizontal bounds. Automatic narrow-form policy is 40–120mm; this is a classification range, not a firmware limit. |
 | `spooler_receipt_windows.go` | Nominal 58/80mm classification and 576-dot filter → exact driver geometry including offset, within the existing bounded preflight. |
 | `spooler_windows.go` | Unrecognized 70mm forms used 96-DPI wrapping → detected forms use receipt wrapping. Existing explicit 58/80mm profiles retain their path; office/unknown media keep generic sizing. |
@@ -97,7 +99,7 @@ printer database model, protocol, retry strategy, or alternative renderer.
 | `tests/fixtures/receipt-geometry.html`, `testdata/receipt-geometry.jpg`, `testdata/receipt-geometry.md` | Synthetic bilingual receipt and reproducible capture provenance; no customer data. |
 | `PRINTERS.md`, this document | Correct backend-specific geometry/default documentation, evidence, limitations and rollout. |
 
-Paths without a prefix in this table are under `agent/internal/printer/`.
+Paths without a prefix in this table are under `agent/internal/printer/`, except `desired_state_test.go`, which is beside `desired_state.go`.
 
 58mm/80mm driver documents benefit from preserved measurements. A4, Letter,
 landscape, multipage PDFs, ordinary PDF input, IPP/IPPS, RAW TCP, direct USB,
@@ -136,8 +138,11 @@ there is no claim of one source pixel per final physical dot.
 
 Browser captures at 288/360/384/420/512/552/560/576px were respectively
 6635/4529/4066/3532/2852/2603/2532/2425px high. Complete Arabic/English text,
-12 items, totals and both registration marks were visible digitally. QR
-presence is verified; scanner readability after physical printing is not.
+12 items, totals and both registration marks were visible digitally. An additional
+digital check matched all 1,089 module/quiet-zone centers against the generated QR
+symbol in the source JPEG, eight decoded ESC/POS rasters, and the 70mm PDF preview,
+with zero mismatches. This is symbol preservation evidence; independent scanner
+readability after physical printing is not verified.
 
 ## Verification and remaining gates
 
@@ -148,6 +153,7 @@ Executed locally with Go 1.26.9 / Node 24.21.0:
 cd agent
 go test -mod=readonly ./internal/printer -run 'TestReceiptPaper|TestThermalReceiptPDFPreservesReportedDPI' -count=1
 go test -mod=readonly -race -vet=all ./internal/printer -run 'TestReceipt|TestThermalReceipt|TestSpoolerProfile|TestPDFFit' -count=1
+go test -mod=readonly -race -vet=all ./internal/agent -run 'TestDesiredStatePreservesDriverGeometry|TestDesiredStatePassesExplicit80mm' -count=1
 go test -mod=readonly -race -vet=all ./...
 CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -mod=readonly ./...
 CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go test -mod=readonly -c ./internal/printer -o /tmp/printer-windows.test.exe
@@ -157,8 +163,8 @@ npm test -- tests/receipt-width.test.ts tests/pos-receipt-font.test.ts tests/e2e
 python3 -m pytest -q tests/test_odoo19_printing_static.py tests/test_pos_receipt_font_rendering.py tests/test_agent_print_diagnostic_media.py
 ```
 
-Full Go suite: **1,446 passed, 2 skipped**, ten packages; focused final receipt
-suite: **38 passed**. Gateway/POS: **37 passed**. Odoo static: **140 passed**
+Full Go suite: **1,455 passed, 2 skipped**, ten packages; focused final receipt
+suite: **38 passed**, desired-state handoff: **10 passed**. Gateway/POS: **37 passed**. Odoo static: **140 passed**
 (existing Python deprecation warnings). Windows build, printer-test binary
 compilation and vet passed. Browser capture and payload hash checks passed.
 An isolated artifact capture generated PDFs and ESC/POS streams without
