@@ -176,7 +176,7 @@ async function httpFixture({ reused, revokedAfterAuthentication = false, conflic
     },
     '../../../../lib/entitlements': { TenantEntitlementError: class extends Error {}, TenantPrintQuotaExceededError: class extends Error {}, isTenantBillingError: () => false },
     '../../../../lib/request-limits': { hasBodyOverLimit: () => false },
-    '../../../../lib/log': { logError: noop, requestIdFrom: () => 'req' },
+    '../../../../lib/log': { logError: noop, logWarn: noop, requestIdFrom: () => 'req' },
     '../../../../lib/database-clock': { databaseNowMs: () => Date.now() },
     'drizzle-orm': { and: (...v) => v, eq: (a,b) => `${a}=${b}`, isNotNull: (x) => x },
     'zod': { z: { ZodError: class extends Error {}, object: () => ({ strict: () => ({ safeParse: (value) => ({ success: true, data: value }) }) }), string: () => ({ trim() { return this; }, min() {return this;}, max() {return this;}, optional() {return this;} }), unknown: () => ({}) } },
