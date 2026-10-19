@@ -6,14 +6,14 @@ toolchain go1.26.9
 
 require (
 	github.com/gorilla/websocket v1.5.3
-	github.com/gosnmp/gosnmp v1.44.0
+	github.com/gosnmp/gosnmp v1.45.0
 	github.com/grandcat/zeroconf v1.0.0
 	github.com/kardianos/service v1.3.0
-	github.com/klippa-app/go-pdfium v1.21.1
-	github.com/mattn/go-sqlite3 v1.14.50
+	github.com/klippa-app/go-pdfium v1.21.3
+	github.com/mattn/go-sqlite3 v1.14.52
 	github.com/tetratelabs/wazero v1.12.0
-	golang.org/x/sys v0.48.0
-	golang.org/x/text v0.42.0
+	golang.org/x/sys v0.49.0
+	golang.org/x/text v0.43.0
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 	gopkg.in/yaml.v3 v3.0.1
 )

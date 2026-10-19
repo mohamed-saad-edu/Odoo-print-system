@@ -161,7 +161,7 @@ suite("production server HTTP acceptance (real Next.js + guard)", () => {
           );
         });
         const data: Buffer[] = [];
-        socket.on("data", (chunk) => data.push(chunk));
+        socket.on("data", (chunk) => data.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk));
         socket.on("end", () => {
           const raw = Buffer.concat(data).toString("utf8");
           const st = parseInt(raw.split(" ", 2)[1] ?? "0", 10) || 0;

@@ -80,7 +80,7 @@ describe("production hardening contracts", () => {
   it("does not log Odoo print-intent claim tokens", () => {
     const intent = read("odoo_addons/print_gateway/models/print_intent.py");
     expect(intent).not.toContain('token %s: %s", intent_id, claim_token, exc');
-    expect(intent).not.toContain('claim_token, exc)');
+    expect(intent).not.toMatch(/_logger\.\w+\([^)]*\bclaim_token\b/s);
   });
 
   it("keeps the API body guard stream-safe without request cloning", () => {
