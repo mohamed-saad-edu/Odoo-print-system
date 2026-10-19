@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, test/http-server-ready]
   pull_request:
-    branches: [main]
+    branches: [main, test/http-server-ready]
   merge_group:
   workflow_dispatch:
 

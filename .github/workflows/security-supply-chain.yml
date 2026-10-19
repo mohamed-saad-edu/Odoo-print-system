@@ -2,10 +2,10 @@ name: Security and Resilience Gates
 
 on:
   pull_request:
-    branches: [main]
+    branches: [main, test/http-server-ready]
   merge_group:
   push:
-    branches: [main]
+    branches: [main, test/http-server-ready]
   workflow_dispatch:
   schedule:
     - cron: '41 3 * * 0'  # Re-evaluate dependency advisories weekly
