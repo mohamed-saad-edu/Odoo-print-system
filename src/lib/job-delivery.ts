@@ -309,6 +309,7 @@ export async function releaseUndeliveredClaim(jobId: string, tenantId: string, a
       AND delivered_at IS NULL
       AND acked_at IS NULL
       AND delivery_attempts < ${MAX_DELIVERY_ATTEMPTS}
+      AND retries < ${MAX_RETRIES}
       AND expires_at > now()
     RETURNING id
   `);
@@ -328,7 +329,7 @@ export async function releaseUndeliveredClaim(jobId: string, tenantId: string, a
       AND claim_token IS NOT DISTINCT FROM ${claimToken}
       AND delivered_at IS NULL
       AND acked_at IS NULL
-      AND delivery_attempts >= ${MAX_DELIVERY_ATTEMPTS}
+      AND (delivery_attempts >= ${MAX_DELIVERY_ATTEMPTS} OR retries >= ${MAX_RETRIES})
     RETURNING id
   `);
   if (failed.rows.length > 0) return "failed";
