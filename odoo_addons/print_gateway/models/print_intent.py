@@ -175,7 +175,7 @@ class PrintGatewayIntent(models.Model):
                 _logger.warning("Cannot record failure for intent %s: claim was superseded.", intent_id)
                 return False
             attempts, max_attempts = attempt_row
-            next_retry = False
+            next_retry = None
             if attempts < max_attempts:
                 delay_sec = min(300, 15 * (2 ** max(0, attempts - 1)))
                 next_retry = db_now_utc(failure_cr) + datetime.timedelta(seconds=delay_sec)

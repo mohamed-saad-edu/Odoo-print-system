@@ -120,7 +120,7 @@ describe("request guard (real HTTP)", () => {
     return new Promise((resolve, reject) => {
       const socket = connect(port, "127.0.0.1", () => socket.write(request));
       const data: Buffer[] = [];
-      socket.on("data", (chunk) => data.push(chunk));
+      socket.on("data", (chunk) => data.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk));
       socket.on("end", () => {
         const raw = Buffer.concat(data).toString("utf8");
         const status = parseInt(raw.split(" ", 2)[1] ?? "0", 10) || 0;
@@ -192,7 +192,7 @@ describe("request guard (real HTTP)", () => {
         });
         let uploadError: string | undefined;
         const data: Buffer[] = [];
-        socket.on("data", (chunk) => data.push(chunk));
+        socket.on("data", (chunk) => data.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk));
         socket.on("error", (err) => { uploadError = err.message; });
         socket.on("connect", () => {
           // Flood 2 MiB right after the headers; the guard rejects from the

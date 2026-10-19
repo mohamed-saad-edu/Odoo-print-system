@@ -115,13 +115,13 @@ jobs:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 1
       - name: Setup Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: .nvmrc
           cache: npm
           cache-dependency-path: package-lock.json
       - name: Setup Go
-        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: agent/go.mod
           cache: true
@@ -478,7 +478,7 @@ jobs:
             ~/AppData/Local/tauri
           key: ${{ runner.os }}-rust-v2-${{ hashFiles('src-tauri/Cargo.lock') }}
       - name: Upload Windows NSIS installer
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: Yaseir-Manager-Windows-NSIS
           path: src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/Yaseir Print Manager_*-setup.exe
@@ -489,7 +489,7 @@ jobs:
       # distinct name so nothing can mistake it for an acceptance-verified build.
       - name: Upload unverified Windows installer for diagnostics
         if: failure()
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: Yaseir-Manager-Windows-NSIS-UNVERIFIED-DIAGNOSTIC
           path: src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/Yaseir Print Manager_*-setup.exe
