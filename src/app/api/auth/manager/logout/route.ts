@@ -35,7 +35,7 @@ export async function POST(req: Request) {
     } else if (refreshToken) {
       await revokeRefreshTokenFamily("manager", refreshToken, "logout");
     } else if (claims) {
-      await revokeManagerSession(claims.jti);
+      await revokeManagerSession(claims.jti, claims?.tenantId);
     }
   } catch (error) {
     revokeFailed = true;

@@ -342,8 +342,11 @@ export async function revokeLegacyManagerSessionsForTenantInTransaction(
     .where(eq(managerSessions.tenantId, tenantId));
 }
 
-export async function revokeManagerSession(jti: string) {
-  await db.update(managerSessions).set({ revokedAt: sql`clock_timestamp()` }).where(eq(managerSessions.jti, jti));
+export async function revokeManagerSession(jti: string, tenantId?: string) {
+  const predicate = tenantId
+    ? and(eq(managerSessions.jti, jti), eq(managerSessions.tenantId, tenantId))
+    : eq(managerSessions.jti, jti);
+  await db.update(managerSessions).set({ revokedAt: sql`clock_timestamp()` }).where(predicate);
 }
 
 export async function cleanupExpiredManagerSessions(): Promise<number> {
