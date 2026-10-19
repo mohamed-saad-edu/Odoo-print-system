@@ -69,6 +69,9 @@ func TestPDFFitKeepsWholePageProportionalInsidePrintableBounds(t *testing.T) {
 		{"Letter to A4", 612, 792, 2480, 3508, 2330, 3328, 300, 300, 75, 90},
 		{"landscape to portrait", 792, 612, 2550, 3300, 2400, 3120, 300, 300, 75, 90},
 		{"unequal axis DPI", 612, 792, 5100, 3300, 4800, 3120, 600, 300, 150, 90},
+		{"80mm roll70mm form", 80 * 72 / 25.4, 450 * 72 / 25.4, 560, 4000, 552, 3976, 203, 203, 4, 12},
+		{"80mm roll70mm printable", 80 * 72 / 25.4, 450 * 72 / 25.4, 640, 4000, 560, 3976, 203, 203, 40, 12},
+		{"custom narrow form300dpi", 75 * 72 / 25.4, 600 * 72 / 25.4, 886, 7500, 832, 7460, 300, 300, 27, 20},
 		{"small page remains small", 144, 216, 2550, 3300, 2400, 3120, 300, 300, 75, 90},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

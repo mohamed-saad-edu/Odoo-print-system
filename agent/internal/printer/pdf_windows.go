@@ -565,7 +565,9 @@ func renderAndPrintPDFWithPDFiumResultObserved(ctx context.Context, printerName 
 	if err := pageBounds(0); err != nil {
 		return err
 	}
-	log.Printf("Embedded PDF print on %q: physical=%dx%d offset=%d,%d fitted=%d,%d %dx%d render-cap=%dx%d pages=%d", printerName, pageWidth, pageHeight, offsetX, offsetY, destinationX, destinationY, destinationW, destinationH, maxW, maxH, pages.PageCount)
+	log.Printf("Embedded PDF print on %q: source=%.2fx%.2fpt physical=%dx%d printable=%dx%d dpi=%dx%d offset=%d,%d fitted=%d,%d %dx%d render-cap=%dx%d pages=%d", printerName,
+		plans[0].width, plans[0].height, pageWidth, pageHeight, deviceCaps(hdc, capHorzRes), deviceCaps(hdc, capVertRes), deviceCaps(hdc, capLogPixelsX), deviceCaps(hdc, capLogPixelsY),
+		offsetX, offsetY, destinationX, destinationY, destinationW, destinationH, maxW, maxH, pages.PageCount)
 
 	// Render the first page before StartDocW. A renderer failure here is a
 	// deterministic pre-dispatch error, not an unknown physical outcome.

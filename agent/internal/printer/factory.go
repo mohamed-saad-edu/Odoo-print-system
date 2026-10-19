@@ -135,7 +135,8 @@ func newConfiguredIPPPrinter(cfg config.PrinterConfig) (*IPPPrinter, error) {
 	return p, nil
 }
 
-// receiptPaperProfile returns a verified operator-defined 58/80mm roll.
+// receiptPaperProfile returns an operator-selected 58/80mm roll and its
+// configured dimensions; missing dimensions retain legacy estimates.
 // Unconfigured Windows queues are inspected from the driver's default form
 // immediately before a receipt image is dispatched.
 func receiptPaperProfile(cfg config.PrinterConfig) (paperMM, dots, dpi int) {
@@ -148,12 +149,12 @@ func receiptPaperProfile(cfg config.PrinterConfig) (paperMM, dots, dpi int) {
 	if paperMM != 58 && paperMM != 80 {
 		return 0, 0, 0
 	}
-	if v, ok := capabilityInt(cfg.Capabilities["print_dpi"]); ok && (v == 180 || v == 203) {
+	if v, ok := capabilityInt(cfg.Capabilities["print_dpi"]); ok && v > 0 {
 		dpi = v
-	} else if v, ok := capabilityInt(cfg.Capabilities["dpi"]); ok && (v == 180 || v == 203) {
+	} else if v, ok := capabilityInt(cfg.Capabilities["dpi"]); ok && v > 0 {
 		dpi = v
 	}
-	if v, ok := capabilityInt(cfg.Capabilities["max_paper_width"]); ok && v >= 288 && v <= 576 {
+	if v, ok := capabilityInt(cfg.Capabilities["max_paper_width"]); ok && v >= 288 && v <= MaxJPEGDimension {
 		dots = v
 	} else if paperMM == 58 {
 		if dpi == 180 {
