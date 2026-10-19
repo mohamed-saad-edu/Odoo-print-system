@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import localFont from "next/font/local";
 import { headers } from "next/headers";
 import { AppShell } from "../components/AppShell";
+import { CspStyleNonce } from "../components/CspStyleNonce";
 import { I18nProvider } from "../i18n/react";
 import { getServerLocale, makeT } from "../i18n/server";
 import { dirFor } from "../i18n/config";
@@ -72,6 +73,7 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
       <body className="antialiased bg-app text-ink min-h-screen">
         <script nonce={nonce} dangerouslySetInnerHTML={{ __html: LOCALE_INIT }} />
         <script nonce={nonce} dangerouslySetInnerHTML={{ __html: THEME_INIT }} />
+        <CspStyleNonce nonce={nonce} />
         <I18nProvider initialLocale={locale}>
           <AppShell>{children}</AppShell>
         </I18nProvider>
