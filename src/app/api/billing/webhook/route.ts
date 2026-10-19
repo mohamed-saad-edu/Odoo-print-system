@@ -431,6 +431,12 @@ async function handleWebhook(req: Request, snapshotRetry = 0): Promise<NextRespo
           // ambiguous.
           const terminalDelete =
             eventType === "customer.subscription.deleted";
+          // A deletion event is terminal, but a strictly older deletion event
+          // must not cancel a newer active state (replay/out-of-order guard).
+          const terminalDeleteCanUpdate =
+            terminalDelete &&
+            (storedStripeEventCreatedAtMs === null ||
+              eventCreatedAt.getTime() >= storedStripeEventCreatedAtMs);
           const adoptableCheckoutBinding =
             tenantRow.status === "cancelled" &&
             tenantRow.stripeSubscriptionId === subId &&
@@ -443,7 +449,7 @@ async function handleWebhook(req: Request, snapshotRetry = 0): Promise<NextRespo
             (storedStripeEventCreatedAtMs === null || eventCreatedAt.getTime() >= storedStripeEventCreatedAtMs);
           const sameSubscriptionCanUpdate =
             sameOrUnboundSubscription &&
-            (currentSnapshotAuthoritative || terminalDelete || isNewerThanStoredEvent)
+            (currentSnapshotAuthoritative || terminalDeleteCanUpdate || isNewerThanStoredEvent)
             && !(tenantRow.status === "cancelled" && tenantRow.stripeSubscriptionId === subId && !terminalDelete && !adoptableCheckoutBinding);
           if (sameSubscriptionCanUpdate || newerReplacementSubscription) {
             const nextStatus = typeof stateObj.status === "string" ? statusOf(stateObj.status) : tenantRow.status;
