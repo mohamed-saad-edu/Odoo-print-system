@@ -658,6 +658,48 @@ suite("Billing Webhook Route (POST /api/billing/webhook)", () => {
     expect(sub?.billingOperationIdempotencyKey).toBeNull();
   });
 
+  it("5f. an out-of-order subscription deletion does not cancel a newer active state (BILL-02)", async () => {
+    const tenantId = `tenant_${nanoid(8)}`;
+    const planId = `plan_${nanoid(8)}`;
+    const stripePriceId = `price_${nanoid(8)}`;
+    const customerId = `cus_${nanoid(8)}`;
+    const subscriptionId = `sub_${nanoid(8)}`;
+
+    await createTenant(tenantId);
+    await createPlan(planId, "Starter Plan", stripePriceId);
+
+    // Stored state: an ACTIVE subscription whose newest known lifecycle event
+    // is at T = 2026-06-15T12:00:00Z.
+    const newerTs = Math.floor(new Date("2026-06-15T12:00:00Z").getTime() / 1000);
+    await createSubscription(tenantId, planId, customerId, subscriptionId, "active", new Date(newerTs * 1000));
+
+    // A STRICTLY OLDER deletion event arrives (replay / out-of-order delivery).
+    const olderTs = Math.floor(new Date("2026-06-10T12:00:00Z").getTime() / 1000);
+    const payload = JSON.stringify({
+      id: `evt_older_delete_${nanoid(8)}`,
+      type: "customer.subscription.deleted",
+      created: olderTs,
+      data: { object: {
+        id: subscriptionId,
+        customer: customerId,
+        status: "canceled",
+        items: { data: [{ price: { id: stripePriceId } }] },
+        metadata: { tenant_id: tenantId },
+      } },
+    });
+
+    const res = await POST(createWebhookRequest(payload, signPayload(payload)));
+    expect(res.status).toBe(200);
+
+    const sub = await db.query.tenantSubscriptions.findFirst({
+      where: eq(tenantSubscriptions.tenantId, tenantId),
+    });
+    // The newer active state must survive the older terminal event.
+    expect(sub?.status).toBe("active");
+    expect(sub?.stripeLastEventCreatedAt?.getTime()).toBe(newerTs * 1000);
+    expect(sub?.stripeSubscriptionId).toBe(subscriptionId);
+  });
+
   it("5e. ignores trial_will_end instead of changing subscription lifecycle state", async () => {
     const tenantId = `tenant_${nanoid(8)}`;
     const planId = `plan_${nanoid(8)}`;
