@@ -275,10 +275,6 @@ func jpegToPDFWithReceiptPaper(data []byte, paperWidthMM float64, printableDots,
 		imageX = (pageW - imageW) / 2.0
 		imageY = 2.0 * 72.0 / 25.4 // paper-feed margin at bottom
 		pageH = imageH + 2.0*imageY
-		// Win32 DEVMODE uses signed 0.1mm paper dimensions.
-		if pageH*25.4/72 >= 3276.7 {
-			return nil, fmt.Errorf("receipt height exceeds maximum Windows custom paper form")
-		}
 	}
 
 	var b bytes.Buffer

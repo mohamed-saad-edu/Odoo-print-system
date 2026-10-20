@@ -2,9 +2,60 @@ package printer
 
 import (
 	"errors"
+	"fmt"
 	"strings"
+	"syscall"
 	"testing"
 )
+
+func TestGDIBitmapCapabilities(t *testing.T) {
+	for _, tc := range []struct {
+		name                    string
+		caps                    int
+		resize, compatible, dib bool
+	}{
+		{"no raster operations", 0, false, false, false},
+		{"direct DIB", 0x0200, false, false, true},
+		{"direct DIB cannot resize", 0x0200, true, false, false},
+		{"stretch DIB at equal size", 0x2000, false, false, true},
+		{"stretch DIB", 0x2000, true, false, true},
+		{"native bitmap", 0x0081, false, true, false},
+		{"native bitmap cannot resize", 0x0081, true, false, false},
+		{"native stretch bitmap", 0x0880, true, true, false},
+		{"native stretch at equal size", 0x0880, false, true, false},
+		{"native needs DIB conversion", 0x0801, true, false, false},
+		{"native and DIB", 0x2a81, true, true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			compatible, dib := gdiBitmapCapabilities(tc.caps, tc.resize)
+			if compatible != tc.compatible || dib != tc.dib {
+				t.Fatalf("caps=%#x resize=%t: compatible=%t dib=%t", tc.caps, tc.resize, compatible, dib)
+			}
+		})
+	}
+}
+
+func TestGDIBitmapTransferPreservesNativeDiagnostic(t *testing.T) {
+	for _, code := range []syscall.Errno{0, 6, 87} {
+		for _, resize := range []bool{false, true} {
+			calls := 0
+			transfer := func() (int32, error) { calls++; return 0, code }
+			err := transferGDIBitmap(resize, true, transfer, transfer)
+			want := fmt.Sprintf("win32_last_error=%d", code)
+			if err == nil || calls != 1 || !strings.Contains(err.Error(), "returned 0") || !strings.Contains(err.Error(), want) {
+				t.Fatalf("native diagnostic lost: code=%d resize=%t calls=%d err=%v", code, resize, calls, err)
+			}
+		}
+	}
+
+	// LazyProc.Call always returns an Errno, even when the primary result succeeds.
+	for _, code := range []syscall.Errno{0, 87} {
+		transfer := func() (int32, error) { return 42, code }
+		if err := transferGDIBitmap(false, true, transfer, transfer); err != nil {
+			t.Fatalf("successful drawing rejected by last-error diagnostic: %v", err)
+		}
+	}
+}
 
 func TestGDIBitmapTransferChoosesOneSubmission(t *testing.T) {
 	for _, test := range []struct {

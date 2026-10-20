@@ -73,6 +73,9 @@ func TestPDFFitKeepsWholePageProportionalInsidePrintableBounds(t *testing.T) {
 		{"80mm roll70mm printable", 80 * 72 / 25.4, 450 * 72 / 25.4, 640, 4000, 560, 3976, 203, 203, 40, 12},
 		{"custom narrow form300dpi", 75 * 72 / 25.4, 600 * 72 / 25.4, 886, 7500, 832, 7460, 300, 300, 27, 20},
 		{"small page remains small", 144, 216, 2550, 3300, 2400, 3120, 300, 300, 75, 90},
+		{"long page exceeds Windows form limit", 80 * 72 / 25.4, 4000 * 72 / 25.4, 640, 4000, 560, 3976, 203, 203, 40, 12},
+		{"large page exceeds Windows form limit", 12000, 10000, 2550, 3300, 2400, 3120, 300, 300, 75, 90},
+		{"page smaller than Windows form resolution", 0.01, 0.02, 2550, 3300, 2400, 3120, 300, 300, 75, 90},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			x, y, w, h, err := pdfPrintableDestination(tc.pointsW, tc.pointsH, tc.physicalW, tc.physicalH, tc.printableW, tc.printableH, tc.dpiX, tc.dpiY, tc.offsetX, tc.offsetY)
@@ -90,7 +93,25 @@ func TestPDFFitKeepsWholePageProportionalInsidePrintableBounds(t *testing.T) {
 			if x != (tc.printableW-w)/2 || y != (tc.printableH-h)/2 {
 				t.Fatal("remaining printable space not centered")
 			}
+			t.Logf("fixture source=%.4gx%.4gpt physical=%dx%d printable=%dx%d dpi=%dx%d offset=%d,%d destination=%d,%d %dx%d",
+				tc.pointsW, tc.pointsH, tc.physicalW, tc.physicalH, tc.printableW, tc.printableH, tc.dpiX, tc.dpiY, tc.offsetX, tc.offsetY, x, y, w, h)
 		})
+	}
+}
+
+func TestPDFFitBoundsExtremeFiniteSourceWithoutOverflow(t *testing.T) {
+	for _, points := range [][2]float64{
+		{math.MaxFloat64, math.MaxFloat64},
+		{math.MaxFloat64, math.MaxFloat64 / 2},
+		{math.SmallestNonzeroFloat64, math.SmallestNonzeroFloat64},
+	} {
+		x, y, w, h, err := pdfPrintableDestination(points[0], points[1], 2550, 3300, 2400, 3120, 300, 300, 75, 90)
+		if err != nil || x < 0 || y < 0 || w < 1 || h < 1 || x+w > 2400 || y+h > 3120 {
+			t.Fatalf("finite page not safely bounded: %g x %g -> %d,%d %dx%d %v", points[0], points[1], x, y, w, h, err)
+		}
+		if points[0] == math.MaxFloat64 && (w != 2400 || h != int(2400*(points[1]/points[0]))) {
+			t.Fatalf("overflow changed source proportions: %dx%d", w, h)
+		}
 	}
 }
 
@@ -103,7 +124,11 @@ func TestPDFFitStillRejectsInvalidPrinterAndDocumentGeometry(t *testing.T) {
 			t.Fatalf("invalid native geometry admitted: %+v", tc)
 		}
 	}
-	if _, _, _, _, err := pdfPrintableDestination(math.NaN(), 792, 576, 800, 552, 776, 203, 203, 12, 12); err == nil {
-		t.Fatal("malformed document dimensions accepted")
+	for _, value := range []float64{0, -1, math.NaN(), math.Inf(1), math.Inf(-1)} {
+		for _, points := range [][2]float64{{value, 792}, {612, value}} {
+			if _, _, _, _, err := pdfPrintableDestination(points[0], points[1], 576, 800, 552, 776, 203, 203, 12, 12); err == nil {
+				t.Fatalf("malformed document dimensions accepted: %v", points)
+			}
+		}
 	}
 }
