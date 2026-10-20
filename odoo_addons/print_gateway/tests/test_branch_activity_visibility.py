@@ -12,7 +12,6 @@ children, and that they never expose another Company's rows.
 import json
 from unittest.mock import patch
 
-from odoo import api
 from odoo.tests.common import TransactionCase
 from odoo.addons.print_gateway.models.gateway_config import PrintGatewayConfig
 
