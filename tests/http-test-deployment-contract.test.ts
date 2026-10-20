@@ -82,10 +82,33 @@ describe("staging fixtures and HTTPS security contracts", () => {
   });
   it("checks secure Agent transport and domain deployment in staging CI", () => {
     const workflow = read(".github/workflows/http-staging-transport.yml");
-    expect(workflow).toContain("test/http-server-ready");
+    expect(workflow).toContain("pull_request:\n    branches: [main]");
+    expect(workflow).not.toMatch(/^\s+push:/m);
     expect(workflow).toContain("HTTPS Gateway + Agent security contracts");
     expect(workflow).toContain("go test -mod=readonly ./internal/config");
     expect(workflow).not.toContain("bash deploy/http-test/setup-http-test.sh");
+  });
+
+  it("runs main and PR workflows without redundant staging branch push runs", () => {
+    const workflows = [
+      "ci.yml",
+      "docker.yml",
+      "build-windows.yml",
+      "static-security.yml",
+      "security-supply-chain.yml",
+    ];
+    for (const file of workflows) {
+      const source = read(`.github/workflows/${file}`);
+      expect(source).toContain("push:\n    branches: [main]");
+      expect(source).toContain("pull_request:\n    branches: [main]");
+      expect(source).not.toContain("branches: [main, test/http-server-ready]");
+      expect(source).toContain("types: [opened, synchronize, reopened, ready_for_review]");
+    }
+
+    const staging = read(".github/workflows/http-staging-transport.yml");
+    expect(staging).toContain("pull_request:\n    branches: [main]");
+    expect(staging).not.toMatch(/^\s+push:/m);
+    expect(staging).not.toContain("workflow_dispatch:");
   });
 
   it("uses workspace authentication for post-verification onboarding", () => {

@@ -2,11 +2,11 @@ name: Docker
 
 on:
   pull_request:
-    branches: [main, test/http-server-ready]
+    branches: [main]
     types: [opened, synchronize, reopened, ready_for_review]
   merge_group:
   push:
-    branches: [main, test/http-server-ready]
+    branches: [main]
   workflow_dispatch:
   schedule:
     - cron: '23 3 * * 0'  # Weekly pinned-image vulnerability scan

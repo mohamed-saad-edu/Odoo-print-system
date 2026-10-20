@@ -1,11 +1,9 @@
 name: HTTPS Staging Security
 
 on:
-  push:
-    branches: [test/http-server-ready]
   pull_request:
-    branches: [test/http-server-ready]
-  workflow_dispatch:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
 
 permissions:
   contents: read

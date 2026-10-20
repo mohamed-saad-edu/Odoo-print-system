@@ -2,10 +2,10 @@ name: Static Security Gates
 
 on:
   pull_request:
-    branches: [main, test/http-server-ready]
+    branches: [main]
     types: [opened, synchronize, reopened, ready_for_review]
   push:
-    branches: [main, test/http-server-ready]
+    branches: [main]
   merge_group:
   workflow_dispatch:
   schedule:
