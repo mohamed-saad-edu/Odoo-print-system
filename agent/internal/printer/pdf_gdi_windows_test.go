@@ -66,19 +66,33 @@ func TestGDIBitmapNativeTransfer(t *testing.T) {
 					src[i], src[i+1], src[i+2] = 32, byte(64+128*(y/(tc.height/2+1))), byte(64+128*(x/(tc.width/2+1)))
 				}
 			}
-			if err := drawBitmapToPrinter(hdc, src, tc.width, tc.height, tc.destW, tc.destH, 0, tc.y); err != nil {
-				t.Fatal(err)
-			}
-			if ok, _, err := flush.Call(); ok == 0 {
-				t.Fatalf("GdiFlush: %v", err)
-			}
 			out := unsafe.Slice((*byte)(bits), tc.destW*(tc.y+tc.destH)*4)
-			for _, point := range [][2]int{{tc.destW / 4, tc.destH / 4}, {tc.destW * 3 / 4, tc.destH * 3 / 4}} {
-				x, y := point[0], point[1]
-				i := ((y+tc.y)*tc.destW + x) * 4
-				wantG, wantR := byte(64+128*(y/(tc.destH/2+1))), byte(64+128*(x/(tc.destW/2+1)))
-				if out[i] != 32 || out[i+1] != wantG || out[i+2] != wantR {
-					t.Fatalf("pixel %d,%d = %v, want BGR %v", x, y, out[i:i+3], []byte{32, wantG, wantR})
+			for _, automatic := range []bool{false, true} {
+				clear(out)
+				if automatic {
+					draw, release, err := prepareGDIBitmap(hdc, src, tc.width, tc.height, tc.destW, tc.destH, 0, tc.y)
+					if err != nil {
+						t.Fatal(err)
+					}
+					defer release()
+					// A compatible bitmap must already own the complete converted pixels.
+					clear(src)
+					if err := draw(); err != nil {
+						t.Fatal(err)
+					}
+				} else if err := drawBitmapToPrinter(hdc, src, tc.width, tc.height, tc.destW, tc.destH, 0, tc.y); err != nil {
+					t.Fatal(err)
+				}
+				if ok, _, err := flush.Call(); ok == 0 {
+					t.Fatalf("GdiFlush: %v", err)
+				}
+				for _, point := range [][2]int{{tc.destW / 4, tc.destH / 4}, {tc.destW * 3 / 4, tc.destH * 3 / 4}} {
+					x, y := point[0], point[1]
+					i := ((y+tc.y)*tc.destW + x) * 4
+					wantG, wantR := byte(64+128*(y/(tc.destH/2+1))), byte(64+128*(x/(tc.destW/2+1)))
+					if out[i] != 32 || out[i+1] != wantG || out[i+2] != wantR {
+						t.Fatalf("automatic=%t pixel %d,%d = %v, want BGR %v", automatic, x, y, out[i:i+3], []byte{32, wantG, wantR})
+					}
 				}
 			}
 		})
@@ -105,6 +119,65 @@ func TestGDIBitmapMetafileTransfer(t *testing.T) {
 			if err := drawBitmapToPrinter(hdc, make([]byte, 17*11*4), 17, 11, destWidth, 11, 0, 0); err != nil {
 				t.Errorf("metafile destination width %d: %v", destWidth, err)
 			}
+			draw, release, err := prepareGDIBitmap(hdc, make([]byte, 17*11*4), 17, 11, destWidth, 11, 0, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer release()
+			if err := draw(); err != nil {
+				t.Errorf("automatic metafile destination width %d: %v", destWidth, err)
+			}
 		}()
+	}
+}
+
+func TestGDIBitmapPreparationRejectsInvalidDeviceOrGeometry(t *testing.T) {
+	for _, width := range []int{1, maxPDFRenderPixels + 1} {
+		draw, release, err := prepareGDIBitmap(0, make([]byte, 4), width, 1, 1, 1, 0, 0)
+		if err == nil || draw != nil || release != nil {
+			t.Fatalf("invalid preparation admitted: width=%d err=%v", width, err)
+		}
+	}
+}
+
+func TestGDIBitmapMonochromeConversion(t *testing.T) {
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	hdc, _, err := procCreateCompatibleDC.Call(0)
+	if hdc == 0 {
+		t.Fatal(err)
+	}
+	defer procDeleteDC.Call(hdc)
+	bmp, _, err := modGDI32.NewProc("CreateBitmap").Call(8, 8, 1, 1, 0)
+	if bmp == 0 {
+		t.Fatal(err)
+	}
+	defer procDeleteObject.Call(bmp)
+	old, _, err := procSelectObject.Call(hdc, bmp)
+	if old == 0 || int32(old) == -1 {
+		t.Fatal(err)
+	}
+	defer procSelectObject.Call(hdc, old)
+	src := make([]byte, 8*8*4)
+	for i := 8 * 4 * 4; i < len(src); i += 4 {
+		src[i], src[i+1], src[i+2] = 255, 255, 255
+	}
+	draw, release, err := prepareGDIBitmap(hdc, src, 8, 8, 8, 8, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	clear(src)
+	if err := draw(); err != nil {
+		t.Fatal(err)
+	}
+	for _, point := range []struct {
+		y     int
+		color uintptr
+	}{{2, 0}, {6, 0xffffff}} {
+		color, _, err := modGDI32.NewProc("GetPixel").Call(hdc, 2, uintptr(point.y))
+		if color != point.color {
+			t.Fatalf("row %d color=%#x want=%#x: %v", point.y, color, point.color, err)
+		}
 	}
 }

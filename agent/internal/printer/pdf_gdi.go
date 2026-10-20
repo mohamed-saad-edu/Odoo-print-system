@@ -5,6 +5,20 @@ import (
 	"syscall"
 )
 
+const (
+	rcBitBlt      = 0x0001
+	rcDIBitmap    = 0x0080
+	rcDIBToDevice = 0x0200
+	rcStretchBlt  = 0x0800
+	rcStretchDIB  = 0x2000
+)
+
+func gdiBitmapCapabilities(caps int, resize bool) (compatible, dib bool) {
+	compatible = caps&rcDIBitmap != 0 && (caps&rcStretchBlt != 0 || (!resize && caps&rcBitBlt != 0))
+	dib = caps&rcStretchDIB != 0 || (!resize && caps&rcDIBToDevice != 0)
+	return
+}
+
 // Each page uses one drawing API; a failed submission must never be replayed.
 func transferGDIBitmap(resize, directSupported bool, direct, stretch func() (int32, error)) error {
 	api, transfer := "SetDIBitsToDevice", direct

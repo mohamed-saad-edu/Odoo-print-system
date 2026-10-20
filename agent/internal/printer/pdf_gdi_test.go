@@ -8,6 +8,33 @@ import (
 	"testing"
 )
 
+func TestGDIBitmapCapabilities(t *testing.T) {
+	for _, tc := range []struct {
+		name                    string
+		caps                    int
+		resize, compatible, dib bool
+	}{
+		{"no raster operations", 0, false, false, false},
+		{"direct DIB", 0x0200, false, false, true},
+		{"direct DIB cannot resize", 0x0200, true, false, false},
+		{"stretch DIB at equal size", 0x2000, false, false, true},
+		{"stretch DIB", 0x2000, true, false, true},
+		{"native bitmap", 0x0081, false, true, false},
+		{"native bitmap cannot resize", 0x0081, true, false, false},
+		{"native stretch bitmap", 0x0880, true, true, false},
+		{"native stretch at equal size", 0x0880, false, true, false},
+		{"native needs DIB conversion", 0x0801, true, false, false},
+		{"native and DIB", 0x2a81, true, true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			compatible, dib := gdiBitmapCapabilities(tc.caps, tc.resize)
+			if compatible != tc.compatible || dib != tc.dib {
+				t.Fatalf("caps=%#x resize=%t: compatible=%t dib=%t", tc.caps, tc.resize, compatible, dib)
+			}
+		})
+	}
+}
+
 func TestGDIBitmapTransferPreservesNativeDiagnostic(t *testing.T) {
 	for _, code := range []syscall.Errno{0, 6, 87} {
 		for _, resize := range []bool{false, true} {

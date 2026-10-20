@@ -1,21 +1,23 @@
-# Windows GDI transfer investigation — 20 October 2026
+# Windows GDI capability and transfer correction — 20 October 2026
 
-## Status
+## Status and scope
 
-**IMPLEMENTED / TESTED:** preserve native bitmap-transfer diagnostics and add real
-Windows GDI regression coverage. **NOT VERIFIED:** the reason the customer's
-installed drivers return zero. **HARDWARE VALIDATION NOT VERIFIED.** This change
-is not a demonstrated repair of the customer's no-output failure.
+**IMPLEMENTED:** automatic raster-operation selection from the active Windows
+printer DC, device-compatible bitmap preparation, and native failure diagnostics.
+**TESTED:** focused capability/diagnostic tests and the full local Go suite.
+Native Windows results are recorded in PR #30 checks and local verification logs.
+**HARDWARE VALIDATION NOT VERIFIED:** the exact reason the customer's installed
+drivers returned zero has not been independently established.
 
-Baseline: `b0a4d8b395dc421971e9c2361ea939c5507bda2f`. The earlier geometry PR #29
-is already merged. This follow-up is PR #30; it does not change media selection,
-DPI, raster format, fitting, transport, bindings, or reconciliation.
+Base: `b0a4d8b395dc421971e9c2361ea939c5507bda2f`. Earlier geometry PR #29 is
+merged. This follow-up, PR #30, uses those actual media/DPI/offset measurements;
+it adds no printer-model rule, manual width choice, new dependency, configuration
+field, global Windows preference change, or transport substitution.
 
-## Evidence and failing boundary
+## Incident evidence and verified defects
 
-The supplied screenshots show successful progression through PDFium rendering,
-printer-DC creation, `StartDocW`, and `StartPage`. The failure occurs in
-`drawBitmapToPrinter` in `agent/internal/printer/pdf_windows.go`:
+The screenshots reach `StartDocW` and `StartPage`, then fail in the bitmap drawing
+stage of `agent/internal/printer/pdf_windows.go`:
 
 | Queue type | Rendered bitmap px | Destination origin px | Destination size px | API result |
 | --- | --- | --- | --- | --- |
@@ -23,115 +25,140 @@ printer-DC creation, `StartDocW`, and `StartPage`. The failure occurs in
 | POS80 | 576 × 853 | 0, 0 | 576 × 853 | SetDIBitsToDevice = 0 |
 | Canon office queue | 3516 × 4550 | 0, 100 | 4800 × 6211 | StretchDIBits = 0 |
 
-The operator reports that none of these attempts produced paper. This observation
-is evidence about these attempts; it does not justify changing the general
-UNKNOWN policy after submission begins.
+The operator reports no paper emerged. The screenshots do not contain paper
+form, nominal/printable widths in mm, DPI, physical bounds/offsets, raster flags,
+driver versions, or installed executable identity. Those values remain unknown;
+a bitmap width is not itself a paper or print-head measurement. The large first
+Y origin warrants checking the selected long form; it cannot explain both other
+failures by itself. Missing-printer, invalid-PDF and pre-StartDoc refusal do not
+match the observed boundary. Driver format rejection remains a hypothesis.
 
-The screenshots do not supply selected paper forms, physical/printable page
-bounds, DPI, hardware offsets, raster capability flags, driver versions, or the
-running Agent executable identity. Those measurements remain **unknown**. A
-bitmap width is not itself a paper-width or print-head measurement. The unusually
-large first Y origin warrants checking the selected form and actual clip region;
-it does not explain the other two failures by itself.
+Two source defects were verified:
 
-A missing printer, invalid PDF, or refusal before StartDoc does not match this
-reported boundary. Driver format incompatibility, invalid actual clipping bounds,
-per-job media substitution, and driver/resource failures remain hypotheses.
-Neither successful virtual printing nor these screenshots distinguish them.
+1. Raster selection queried only RC_DIBTODEV. Resizing, or absence of that flag,
+   unconditionally selected StretchDIBits without checking RC_STRETCHDIB. Devices
+   advertising memory-bitmap transfers had no corresponding supported path.
+2. Both DIB drawing callbacks discarded the native last-error result, preventing
+   failures from retaining useful Windows diagnostics.
 
-## Verified software defect and correction
+The original rendering implementation passed real Windows memory-surface pixel
+checks at all three reported sizes in commit `93d04bd`, run
+[39395957881](https://github.com/mohamed-saad-edu/Odoo-print-system/actions/runs/39395957881).
+That rules out a universal failure of those dimensions/Win32 struct layouts;
+it does not reproduce or explain an installed printer driver's rejection.
 
-Both native drawing callbacks discarded LazyProc.Call's last-error result. As a
-result, the helper could report only an unconfirmed transfer with a zero return;
-useful driver diagnostics were lost. This is a verified diagnostic defect, not a
-verified cause of the physical printing failure.
+## Automatic behavior
 
-- `pdf_windows.go` now forwards the native result and, only on failure, captures
-  `GetClipBox` and the already queried `RASTERCAPS`. It makes no second drawing
-  call and records no receipt pixels, document content, or credentials.
-- `pdf_gdi.go` preserves native last-error numbers on unsuccessful transfers.
-  It keeps the primary scan-line result authoritative: LazyProc.Call returns an
-  Errno even on success. Zero diagnostic codes do not imply success, and nonzero
-  diagnostic codes do not overturn a successful primary result. Preparation
-  errors retain their existing identity.
-- `pdf_gdi_test.go` covers native codes 0, 6, and 87, primary-result precedence,
-  and one submission per call. Existing direct/stretched failure and preparation
-  tests remain in place.
-- `pdf_gdi_windows_test.go` calls actual GDI APIs with the three screenshot
-  geometries and smaller direct/stretched examples, then checks memory-surface
-  pixels. Additional cases exercise enhanced-metafile recording and invalid-DC
-  diagnostics without opening a printer or submitting a job.
+The existing flow negotiates per-job DEVMODE, queries the actual printer DC for
+physical bounds, printable bounds, X/Y DPI and offsets, then proportionally fits
+the full document and bounds rendering to 16 million pixels. The correction adds
+operation negotiation at that same Windows backend boundary:
 
-The diagnostic regression failed before the change (`native diagnostic lost`)
-and passed afterward. The unchanged production drawing path passed the new
-native memory-surface geometry tests on Windows in commit `93d04bd` (run
-[39395957881](https://github.com/mohamed-saad-edu/Odoo-print-system/actions/runs/39395957881)).
-This rules out a universal failure of those dimensions or Win32 struct layouts;
-it does not rule out an installed printer-driver incompatibility.
-
-## Research and selection
-
-- [Microsoft SetDIBitsToDevice](https://learn.microsoft.com/en-us/windows/win32/api/wingdi/nf-wingdi-setdibitstodevice)
-  and [StretchDIBits](https://learn.microsoft.com/en-us/windows/win32/api/wingdi/nf-wingdi-stretchdibits)
-  document zero as failure or no transferred scan lines. Suppressing zero or
-  replaying another drawing API after submission would lose outcome safety.
-- [BITMAPINFO](https://learn.microsoft.com/en-us/windows/win32/api/wingdi/ns-wingdi-bitmapinfo)
-  documents the DIB representation. Negative height and uncompressed RGB are
-  supported; the screenshots do not establish that 32-bit top-down data is the
-  cause. A speculative conversion to 24-bit bottom-up data was not selected.
-- [GetClipBox](https://learn.microsoft.com/en-us/windows/win32/api/wingdi/nf-wingdi-getclipbox)
-  reports actual visible bounds in logical coordinates. Clip kind 0 means the
-  query failed; kind 1 is empty; kind 2 is a rectangle; kind 3 is complex. A
-  complex region's bounding rectangle alone does not prove full visibility.
-- [GetDeviceCaps](https://learn.microsoft.com/en-us/windows/win32/api/wingdi/nf-wingdi-getdevicecaps)
-  distinguishes printable bounds, physical bounds, offsets and raster operations.
-  RC_DIBTODEV and RC_STRETCHDIB advertise different operations, not proof of
-  output. Existing API selection is preserved pending actual driver evidence.
-- [GetLastError](https://learn.microsoft.com/en-us/windows/win32/api/errhandlingapi/nf-errhandlingapi-getlasterror)
-  warns that last-error information is not always specified by an API. The new
-  number is explicitly diagnostic, never used to infer physical success or retry.
-  [Go LazyProc.Call](https://pkg.go.dev/golang.org/x/sys/windows#LazyProc.Call)
-  requires inspecting the primary return before its always non-nil error.
-- [PDFium's Windows GDI source](https://pdfium.googlesource.com/pdfium/+/refs/heads/main/core/fxge/win32/cgdi_device_driver.cpp)
-  uses top-down BI_RGB DIBs and the same drawing APIs. This supports testing the
-  current representation before replacing it; its return-handling policy is not
-  copied into a receipt pipeline that must preserve unknown physical outcomes.
-
-No third-party code or new dependency was copied or installed.
-
-## Compatibility and next required evidence
-
-The change affects diagnostic reporting for Windows document/image printing,
-including Windows-queue-backed USB and network printers, thermal 58/80mm, office
-A4/Letter, POS, kitchen and ordinary PDFs. It does not change their layout or
-submission policy. Direct ESC/POS, RAW TCP, native USB bytes, IPP/IPPS and label
-languages do not use this GDI path and are unchanged. Job identities, ambiguity,
-cancellation, tenant isolation and duplicate protections remain intact.
-
-Before choosing a rendering change, obtain the exact service executable path and
-version, queue driver/version, and one controlled attempt's `Embedded PDF print`
-line plus its new error containing `win32_last_error`, `raster_caps`, `clip_kind`
-and `clip`. Review physical output and the original queue job before any operator
-resubmission. Do not replay old UNKNOWN jobs automatically or change global
-printer preferences to gather this evidence.
-
-Deploying the diagnostic change requires a new Windows Agent binary; no Gateway
-or Odoo update and no driver configuration change is required. Use the supported
-installer/upgrade flow for an isolated pilot, identify the service's actual
-executable, and retain the previous installer for rollback. This PR is not a
-claim of a production printing fix and has not been deployed to the customer.
-
-## Verification evidence
-
-| Check | Result |
+| Advertised operations | Selected rendering |
 | --- | --- |
-| Diagnostic regression on original helper | FAIL: native code/API context lost, saved in `red-native-diagnostic.log` |
-| Focused GDI regressions after correction | PASS |
-| `cd agent && go test -mod=readonly -race -vet=all -json ./...` | PASS: 1,464 test events passed, 2 skipped, 0 failed |
-| Native Windows original renderer with exact reported bitmap sizes | PASS: run 39395957881, commit 93d04bd |
-| Corrected native Windows suite, including metafile/failure cases | See PR #30 checks and local follow-up evidence; requires native execution |
-| Customer drivers and physical paper output | NOT VERIFIED |
+| DIB-to-memory plus BitBlt/StretchBlt suitable for the destination | Create a bitmap compatible with the actual printer DC, populate all scan lines using SetDIBits, then submit once using BitBlt or StretchBlt |
+| DIB-to-device, same-size destination | Existing SetDIBitsToDevice path |
+| StretchDIBits, including a same-size destination when direct copy is absent | Existing StretchDIBits path |
+| Compatible bitmap preparation fails, but the required DIB operation is advertised | Release the memory-only preparation and select DIB before any printer drawing |
+| No suitable advertised operation | Clear preparation error before StartDoc for the first page |
 
-Local follow-up logs are in `.audit/gdi-transfer-20261020/` (ignored). They include
-baseline native CI output, before/after diagnostic regression output and the full
-Go JSON test stream. No customer receipt payload was saved for this follow-up.
+CreateCompatibleBitmap uses the printer DC, not a default screen/monochrome DC,
+so Windows supplies the device's color representation. SetDIBits is called before
+selecting the new bitmap into its memory DC and must populate the complete height.
+It does not draw onto the printer. The first page is fully prepared before
+admission/StartDoc; later pages prepare after any ResetDC and before StartPage.
+Only one physical drawing call is made per page. A failed drawing is never
+replayed through another API. Errors after StartDoc remain UNKNOWN, including
+later-page preparation failures. Existing job identity, cancellation, ownership,
+queue durability and reconciliation remain in force.
+
+Source aspect and destination geometry are preserved. This does not force 58mm,
+80mm, 512/576 dots, a particular printer DPI, a new paper form or a printer-native
+protocol. Conversion does not crop or reflow the existing raster. Native memory
+is held for one page and released on preparation failure, admission refusal,
+StartDoc failure, page failure and successful completion. Native preparation adds
+one bounded bitmap copy (standard GDI bitmap storage is at most 32 bits/pixel)
+and no Gateway round trip. It never creates a full-document raster cache.
+
+## Changed files and checks
+
+| File | Previous behavior / correction | Verification |
+| --- | --- | --- |
+| `agent/internal/printer/pdf_gdi.go` | One direct-DIB flag; now resolves compatible/DIB operations separately and preserves native failure codes | Capability matrix, success-result precedence, signed scan lines, no retry |
+| `agent/internal/printer/pdf_bitmap_windows.go` | New Windows-only preparation using existing GDI/cleanup conventions; compatible memory conversion, safe preparation fallback, one drawing call | Native color/monochrome pixel tests, source-buffer ownership, invalid-device/size rejection |
+| `agent/internal/printer/pdf_windows.go` | Drew a DIB after StartPage; now prepares the page first and releases its native resources on every normal/error branch | Full native Windows suite; existing job-ID/cancellation/outcome regressions; cross-compilation/vet |
+| `agent/internal/printer/pdf_gdi_test.go` | Extends existing regression tests with supported/unsupported raster combinations and diagnostic codes 0/6/87 | Local focused Go tests |
+| `agent/internal/printer/pdf_gdi_windows_test.go` | Previously no actual GDI pixel checks; adds both legacy and automatic paths at reported sizes, monochrome conversion, metafile recording and invalid input | Native Windows CI, no printer job submitted |
+| This report | Records evidence, boundaries, references and rollout impact | Diff reviewed; no customer screenshot or job identity committed |
+
+The diagnostic regression failed before correction (`native diagnostic lost`) and
+passes afterward. Capability tests cover direct-only, stretch-only, native-only,
+mixed and missing operations, including stretch-only at equal size. Native tests
+clear the source buffer after compatible preparation and verify transferred
+pixels: successful preparation must own the converted image independently.
+
+Commands: `cd agent && go test -mod=readonly -race -vet=all -json ./...`, focused
+`go test -mod=readonly ./internal/printer -run '^TestGDIBitmap' -count=1`, Windows
+printer-package cross-compilation and Windows-targeted `go vet`. Final results and
+native run identities are retained in `.audit/gdi-transfer-20261020/` (ignored)
+and the PR checks. Unrelated Gateway/Odoo source is unchanged.
+
+## Research and trade-offs
+
+- [Microsoft GetDeviceCaps](https://learn.microsoft.com/en-us/windows/win32/api/wingdi/nf-wingdi-getdevicecaps)
+  distinguishes physical/printable dimensions, offsets and raster operations.
+  Its flags are operation capabilities, not proof of physical output. Driver
+  reports can be wrong; actual preparation errors and outcome uncertainty remain
+  authoritative. No guessed width is promoted to a verified capability.
+- [CreateCompatibleDC](https://learn.microsoft.com/en-us/windows/win32/api/wingdi/nf-wingdi-createcompatibledc)
+  and [CreateCompatibleBitmap](https://learn.microsoft.com/en-us/windows/win32/api/wingdi/nf-wingdi-createcompatiblebitmap)
+  provide a device-compatible memory surface. This trades one bitmap copy for
+  Windows-managed color-format conversion instead of a guessed printer format.
+  The production path uses the printer HDC and needs no interactive display DC.
+- [SetDIBits](https://learn.microsoft.com/en-us/windows/win32/api/wingdi/nf-wingdi-setdibits)
+  initializes a compatible bitmap; its target must not yet be selected into a DC.
+  Complete scan-line preparation is checked before any printer drawing.
+- [BitBlt](https://learn.microsoft.com/en-us/windows/win32/api/wingdi/nf-wingdi-bitblt)
+  and [StretchBlt](https://learn.microsoft.com/en-us/windows/win32/api/wingdi/nf-wingdi-stretchblt)
+  require operation support and compatible device contexts. Both source memory DC
+  and bitmap derive from the destination printer DC. Existing proportional
+  destination bounds and HALFTONE scaling remain in use.
+- [SetDIBitsToDevice](https://learn.microsoft.com/en-us/windows/win32/api/wingdi/nf-wingdi-setdibitstodevice)
+  and [StretchDIBits](https://learn.microsoft.com/en-us/windows/win32/api/wingdi/nf-wingdi-stretchdibits)
+  return zero for failure or no transferred scan lines. These supported paths
+  remain available, but a zero physical drawing result is never suppressed.
+- [StartPage](https://learn.microsoft.com/en-us/windows/win32/api/wingdi/nf-wingdi-startpage)
+  preserves DC attributes; ResetDC resets them and is used only at page boundaries.
+- [GetClipBox](https://learn.microsoft.com/en-us/windows/win32/api/wingdi/nf-wingdi-getclipbox)
+  supplies actual visible logical bounds on failure. Kind 0 means query failure,
+  1 empty, 2 a rectangle, 3 complex. A complex bounding box is not proof of full
+  content visibility.
+- [GetLastError](https://learn.microsoft.com/en-us/windows/win32/api/errhandlingapi/nf-errhandlingapi-getlasterror)
+  explains why extended errors are diagnostics, not physical-output evidence.
+  Successful primary results are not overturned by a non-nil native Errno.
+- [PDFium's GDI implementation](https://pdfium.googlesource.com/pdfium/+/refs/heads/main/core/fxge/win32/cgdi_device_driver.cpp)
+  uses top-down BI_RGB DIBs. Those are not universally invalid. We retain that
+  supported route and do not copy its return-ignoring policy into this pipeline.
+
+The earlier [geometry report](RECEIPT_GEOMETRY_RELIABILITY.md) covers Microsoft,
+Epson, Star, Odoo and other printing approaches across all backends. No vendor SDK,
+third-party source or new dependency was copied or installed for this correction.
+
+## Compatibility, rollout and remaining verification
+
+Windows-queue-backed USB/network printers, thermal 58/80mm and unusual narrow
+forms, office A4/Letter, POS, kitchen, images and ordinary/multipage PDFs share
+this automatic driver-based selection. Physical forms, DPI and offsets remain
+separate. Direct ESC/POS, RAW TCP, native USB bytes, IPP/IPPS and ZPL/TSPL byte
+protocols are unchanged; they retain their own negotiated capabilities.
+
+Deployment requires a new Windows Agent binary only. Gateway/Odoo upgrades and
+manual paper-width/DPI changes are not required by this change. Use the supported
+installer/upgrade flow for a controlled pilot; retain the previous installer for
+rollback and verify the service's actual executable/hash against the build.
+Neither installation nor customer settings were changed automatically.
+
+**NOT VERIFIED:** affected installed drivers, physical clipping/no-output repair,
+printed Arabic/English readability, QR scanning, cut length and actual throughput.
+The exact physical incident remains open until controlled hardware evidence is
+available. Do not replay old UNKNOWN jobs automatically, including after rollback.
