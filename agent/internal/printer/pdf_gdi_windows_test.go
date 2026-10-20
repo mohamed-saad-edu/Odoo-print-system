@@ -93,7 +93,11 @@ func TestGDIBitmapNativeTransfer(t *testing.T) {
 				if ok, _, err := flush.Call(); ok == 0 {
 					t.Fatalf("GdiFlush: %v", err)
 				}
-				for _, point := range [][2]int{{tc.destW / 4, tc.destH / 4}, {tc.destW * 3 / 4, tc.destH * 3 / 4}} {
+				for _, point := range [][2]int{
+					{0, 0}, {tc.destW - 1, 0},
+					{0, tc.destH - 1}, {tc.destW - 1, tc.destH - 1},
+					{tc.destW / 4, tc.destH / 4}, {tc.destW * 3 / 4, tc.destH * 3 / 4},
+				} {
 					x, y := point[0], point[1]
 					i := ((y+tc.y)*tc.destW + x) * 4
 					wantG, wantR := byte(64+128*(y/(tc.destH/2+1))), byte(64+128*(x/(tc.destW/2+1)))

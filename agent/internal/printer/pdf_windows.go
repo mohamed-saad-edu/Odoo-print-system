@@ -81,6 +81,8 @@ type winDOCINFOW struct {
 	FwType         uint32
 }
 
+type generatedReceiptPDFKey struct{}
+
 var (
 	pdfiumOnce sync.Once
 	pdfiumPool pdfium.Pool
@@ -455,13 +457,11 @@ func renderAndPrintPDFWithPDFiumResultObserved(ctx context.Context, printerName 
 	if pages.PageCount > maxPDFPages {
 		return fmt.Errorf("PDF page count %d exceeds embedded renderer limit %d", pages.PageCount, maxPDFPages)
 	}
-
-	type pagePlan struct {
-		width, height float64
-		paper         pdfPaper
-		mode          []byte
+	receipt, _ := ctx.Value(generatedReceiptPDFKey{}).(bool)
+	if receipt && pages.PageCount != 1 {
+		return fmt.Errorf("generated receipt PDF must contain exactly one page")
 	}
-	plans := make([]pagePlan, pages.PageCount)
+	plans := make([]pdfPagePlan, pages.PageCount)
 	modes := make(map[pdfPaper][]byte)
 	var currentMode []byte
 	currentModeCounted := false
@@ -510,7 +510,14 @@ func renderAndPrintPDFWithPDFiumResultObserved(ctx context.Context, printerName 
 			}
 			modes[paper] = mode
 		}
-		plans[pageIndex] = pagePlan{size.Width, size.Height, paper, mode}
+		plan := pdfPagePlan{width: size.Width, height: size.Height, paper: paper, mode: mode}
+		if receipt {
+			plan.crop, err = receiptPDFCrop(instance, requests.Page{ByIndex: &requests.PageByIndex{Document: doc.Document, Index: pageIndex}}, size.Width, size.Height)
+			if err != nil {
+				return fmt.Errorf("prepare generated receipt page %d before submission: %w", pageIndex+1, err)
+			}
+		}
+		plans[pageIndex] = plan
 	}
 	hdc, err := openPrinterDC(printerName, plans[0].mode)
 	if err != nil {
@@ -537,7 +544,7 @@ func renderAndPrintPDFWithPDFiumResultObserved(ctx context.Context, printerName 
 		}
 		physicalW, physicalH := deviceCaps(checkDC, capPhysicalWidth), deviceCaps(checkDC, capPhysicalHeight)
 		dpiX, dpiY := deviceCaps(checkDC, capLogPixelsX), deviceCaps(checkDC, capLogPixelsY)
-		_, _, _, _, validationErr := pdfPrintableDestination(plan.width, plan.height, physicalW, physicalH,
+		_, _, _, _, validationErr := plan.printableDestination(physicalW, physicalH,
 			deviceCaps(checkDC, capHorzRes), deviceCaps(checkDC, capVertRes), dpiX, dpiY,
 			deviceCaps(checkDC, capPhysicalOffsetX), deviceCaps(checkDC, capPhysicalOffsetY))
 		if validationErr != nil {
@@ -563,7 +570,7 @@ func renderAndPrintPDFWithPDFiumResultObserved(ctx context.Context, printerName 
 		offsetX, offsetY = deviceCaps(hdc, capPhysicalOffsetX), deviceCaps(hdc, capPhysicalOffsetY)
 		dpiX, dpiY := deviceCaps(hdc, capLogPixelsX), deviceCaps(hdc, capLogPixelsY)
 		var err error
-		destinationX, destinationY, destinationW, destinationH, err = pdfPrintableDestination(plans[index].width, plans[index].height,
+		destinationX, destinationY, destinationW, destinationH, err = plans[index].printableDestination(
 			pageWidth, pageHeight, deviceCaps(hdc, capHorzRes), deviceCaps(hdc, capVertRes), dpiX, dpiY, offsetX, offsetY)
 		if err != nil {
 			return pdfSheetDiagnostic(err, index+1, index == 0, plans[index].width, plans[index].height,
@@ -575,8 +582,8 @@ func renderAndPrintPDFWithPDFiumResultObserved(ctx context.Context, printerName 
 	if err := pageBounds(0); err != nil {
 		return err
 	}
-	log.Printf("Embedded PDF print on %q: source=%.2fx%.2fpt physical=%dx%d printable=%dx%d dpi=%dx%d offset=%d,%d fitted=%d,%d %dx%d render-cap=%dx%d pages=%d", printerName,
-		plans[0].width, plans[0].height, pageWidth, pageHeight, deviceCaps(hdc, capHorzRes), deviceCaps(hdc, capVertRes), deviceCaps(hdc, capLogPixelsX), deviceCaps(hdc, capLogPixelsY),
+	log.Printf("Embedded PDF print on %q: source=%.2fx%.2fpt crop=%+v physical=%dx%d printable=%dx%d dpi=%dx%d offset=%d,%d fitted=%d,%d %dx%d render-cap=%dx%d pages=%d", printerName,
+		plans[0].width, plans[0].height, plans[0].crop, pageWidth, pageHeight, deviceCaps(hdc, capHorzRes), deviceCaps(hdc, capVertRes), deviceCaps(hdc, capLogPixelsX), deviceCaps(hdc, capLogPixelsY),
 		offsetX, offsetY, destinationX, destinationY, destinationW, destinationH, maxW, maxH, pages.PageCount)
 
 	// Render the first page before StartDocW. A renderer failure here is a
@@ -586,6 +593,7 @@ func renderAndPrintPDFWithPDFiumResultObserved(ctx context.Context, printerName 
 		Page:   requests.Page{ByIndex: &requests.PageByIndex{Document: doc.Document, Index: 0}},
 		Width:  maxW,
 		Height: maxH,
+		Crop:   plans[0].crop,
 	}, &killed)
 	log.Printf("print.trace pdf_first_page_render latency_ms=%d success=%t", time.Since(firstPageStarted).Milliseconds(), err == nil)
 	if err != nil {
@@ -691,6 +699,7 @@ func renderAndPrintPDFWithPDFiumResultObserved(ctx context.Context, printerName 
 			Page:   requests.Page{ByIndex: &requests.PageByIndex{Document: doc.Document, Index: pageIndex}},
 			Width:  maxW,
 			Height: maxH,
+			Crop:   plans[pageIndex].crop,
 		}, &killed)
 		if err != nil {
 			if ctx.Err() != nil {

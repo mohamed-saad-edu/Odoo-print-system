@@ -4,7 +4,8 @@
 
 **IMPLEMENTED:** automatic raster-operation selection from the active Windows
 printer DC, device-compatible bitmap preparation, native failure diagnostics,
-and current-media fitting for valid PDFs outside Windows form-size limits.
+current-media fitting for valid PDFs and long JPEG receipts outside Windows
+form-size limits, and receipt-only content fitting/top placement.
 **TESTED:** focused capability/diagnostic tests and the full local Go suite.
 Native Windows results are recorded in PR #30 checks and local verification logs.
 **HARDWARE VALIDATION NOT VERIFIED:** the exact reason the customer's installed
@@ -219,3 +220,103 @@ Neither installation nor customer settings were changed automatically.
 printed Arabic/English readability, QR scanning, cut length and actual throughput.
 The exact physical incident remains open until controlled hardware evidence is
 available. Do not replay old UNKNOWN jobs automatically, including after rollback.
+
+## Renewed independent review — 20 October 2026
+
+Three independent reviews rechecked Windows execution, the producer/capability
+pipeline, and geometry/testing against source and primary documentation. The
+shared checkout was externally switched to `main` during review; further work is
+isolated in the managed `printing-reliability-review` worktree based on `24acb50`.
+The original checkout and its work were preserved.
+PR #30 was subsequently merged externally as `e5003f0`; its tree equals `24acb50`.
+The additional changes use `codex/receipt-content-geometry` based on that main
+commit, as a separate follow-up rather than extending a merged PR.
+
+### Additional reproduced software defects
+
+1. `jpegToPDFWithReceiptPaper` still rejected a receipt at 3276.7mm height before
+   PDF generation, even though the PDF backend now supports current-media fitting
+   independently of Windows form encoding. A bounded 288×16384 JPEG, configured
+   80mm / 576 dots / 203 DPI, produces a 4104.035mm source page and failed with
+   `receipt height exceeds maximum Windows custom paper form`. Both configured
+   and fractional detected-media regressions fail before correction. Remove the
+   misplaced form-height guard; preserve all existing JPEG, pixel-budget, source
+   and media validations. The original JPEG bytes remain embedded unchanged.
+2. The receipt converter already limits useful image width to printable dots but
+   embeds it inside a full-width paper page. Fitting that whole page again can
+   shrink the useful image twice: a synthetic 640-dot form / 576-dot printable
+   area yields approximately 518.4 useful dots. Generic PDF vertical centering
+   can also place a short receipt far down a long substituted form. Neither
+   policy alone establishes the cause of a zero-result bitmap drawing call.
+
+Receipt correction requires explicit provenance from successful thermal JPEG
+conversion, not a printer-name or narrow-paper heuristic. Ordinary PDFs on the
+same queue retain their complete page, margins and placement. Receipt-only
+placement uses the sole generated image's validated horizontal bounds, retaining
+all source pixels and the original vertical feed margins. Original page size
+continues to drive per-job media negotiation; useful content drives one fit to
+printable bounds, with receipt content anchored at the printable top. No public
+payload/API/schema, registered printer or global Windows preference is changed.
+
+The screenshot Y=12677 is consistent with centering an 828-dot page in a
+26182-dot printable form: `(26182-828)/2=12677`. These are reconstructed inputs,
+not measurements of the installed printer. At a hypothetical 203 DPI the leading
+gap would be 1586.19mm. This does not explain either other screenshot, and
+repositioning content does not prove that a driver will shorten or cut the form.
+
+### Research refreshed and conclusions
+
+| Primary implementation/reference | Relevant finding | Engineering consequence |
+| --- | --- | --- |
+| [Microsoft DocumentProperties](https://learn.microsoft.com/en-us/windows/win32/printdocs/documentproperties) | Allocate driver-owned public/private DEVMODE, modify supported per-job fields, merge with driver policy | Retain exact per-job validation and re-query actual DC bounds |
+| [Microsoft GetDeviceCaps](https://learn.microsoft.com/en-us/windows/win32/api/wingdi/nf-wingdi-getdevicecaps) | Printable bounds, physical media, offsets, DPI and raster operation support are separate | Keep capability-based sizing and operation selection; do not infer firmware geometry from queue names |
+| [Epson raster reference](https://download4.epson.biz/sec_pubs/pos/reference_en/escpos/gs_lv_0.html) | Raster width uses bytes; excessive horizontal data is not printed; support varies by model | Retain bounded native raster commands and protocol separation |
+| [Star printable area](https://star-m.jp/products/s_print/sdk/starxpand/manual/en/android-kotlin-api-reference/stario10-star-xpand-command/document-builder/setting-printable-area.html) / [image parameters](https://star-m.jp/products/s_print/sdk/starxpand/manual/en/android-kotlin-api-reference/stario10-star-xpand-command/printer/image-parameter/index.html) | Document area uses mm; image width uses dots and has model-dependent limits | A vendor SDK also needs correct device capabilities; no universal dot width |
+| [Odoo 19 renderer](https://github.com/odoo/odoo/blob/19.0/addons/point_of_sale/static/src/app/services/render_service.js) / [Epson backend](https://github.com/odoo/odoo/blob/19.0/addons/point_of_sale/static/src/app/utils/printer/epson_printer.js) | Mounted canvas capture and actual image dimensions; protocol-specific output | Current mounting/reflow pipeline remains appropriate; no speculative Odoo change |
+| [OpenPrinting/CUPS](https://openprinting.github.io/cups/doc/options.html) / [QZ pixel printing](https://qz.io/docs/pixel) | Media selection, content fitting, margins and raw/pixel compatibility remain distinct | Keep fitting separate from source validation, backend execution and physical success |
+
+[Microsoft's Windows support team on Session 0 printing](https://jpwinsup.github.io/blog/2025/04/28/UserInterfaceAndApps/Printing/Printing_Session0/)
+warns that desktop-dependent USER32/GDI32 operations may fail or behave differently
+in services; it does not prohibit every native GDI call. This is a material driver
+compatibility risk, not a verified cause of these screenshots. The compatible
+bitmap path derives its memory surface from the printer DC. Native memory tests
+and installer service smoke cannot establish the affected driver behaves correctly
+in Session 0. A controlled same-driver, same-payload service/interactive comparison
+remains necessary to resolve that uncertainty; no execution-identity or security
+change is made without evidence.
+
+### Verification boundary
+
+Actual embedded PDFium rendering now checks the long JPEG's top, bottom, left
+and right boundary bands plus a white interior, not merely a valid PDF header.
+The source remains 288×16384px; the whole-page regression records PDFium page
+226.77×11633.49pt, a 77×3975px current-media target and a bounded 77×3951px bitmap
+(1,216,908 bytes). These measurements precede receipt-only content placement and
+are synthetic software evidence. Native Windows pixel tests additionally inspect
+all four destination corners while retaining the earlier interior checks.
+
+| Changed file | Result and validation |
+| --- | --- |
+| `image.go` | Removes the misplaced Windows form-height limit from source wrapping; existing input and resource limits remain |
+| `pdf_receipt.go` | Moves the existing private page plan into shared code; validates the sole generated image; fits its horizontal content once and places receipts at the printable top |
+| `spooler_windows.go` | Marks successful explicit/detected receipt-image conversions using a private context key; external PDF uploads are unmarked |
+| `pdf_windows.go` | Negotiates media using original page dimensions; validates, renders and draws the receipt content bounds; logs sanitized geometry; ordinary PDF behavior remains intact |
+| `thermal_receipt_geometry_test.go` | Configured/detected long-image regressions, original JPEG byte/aspect preservation and bounded fitting; efficient shared boundary fixture |
+| `pdfium_pool_test.go` | Actual long-receipt PDFium rendering confirms all four source boundaries and bounded allocation |
+| `pdf_receipt_test.go` | Reproduces 518.4-dot double fit; verifies 575–576-dot useful output, top placement, all image edges/feed margins and refusal of unexpected structure |
+| `spooler_receipt_windows_test.go` | Exercises plain/result/observed callbacks, ordinary PDFs on a receipt queue, deadlines, admission/evidence and invalid-image refusal |
+| `pdf_gdi_windows_test.go` | Adds four destination-corner checks to both existing native rendering paths |
+
+Final local renewed-review suite: **1,486 passing Go test events, two skips,
+ten passing packages**, using `go test -mod=readonly -race -vet=all -json ./...`.
+Windows printer-package cross-compilation and vet passed. The focused Gateway/
+receipt suite passed 33 tests. Native Windows CI and the refreshed installer are
+recorded on the follow-up PR; earlier installer builds predate these changes.
+
+Current-media fallback can still reduce text and QR size if a driver cannot
+accept the required receipt length. Raster buffers remain bounded, and no content
+is deliberately discarded. Physical readability, QR scanning, actual form feed/
+cut behavior and the affected driver's drawing result remain **NOT VERIFIED**.
+An invalid/unavailable driver or an unconfirmed post-submission result cannot be
+safely turned into success. No automatic replay, protocol substitution or customer
+printer settings change is introduced.
