@@ -146,6 +146,8 @@ jobs:
         run: npm run i18n:odoo:check
       - name: DB schema/migration/docs drift check
         run: npm run db:docs:check
+      - name: Shared typography token drift check
+        run: npm run typography:check
       - name: Validate Odoo 19 addon XML conventions
         run: |
           if grep -R -nE '<tree([[:space:]>])|attrs=|states=' odoo_addons/print_gateway/views; then

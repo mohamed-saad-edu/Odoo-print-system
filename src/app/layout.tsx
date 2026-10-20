@@ -12,12 +12,16 @@ import "./globals.css";
 // Bundle the OFL-licensed IBM Plex families with the app. next/font/google
 // downloads CSS during builds; its remote response can fail inside Docker
 // even when our own application code and test suites are healthy.
+//
+// `display: "block"`: the files are served from this origin, so the face is
+// available immediately, and a print-critical page must never be laid out with
+// a fallback face whose line boxes differ from the real one.
 const ibmPlexSans = localFont({
   src: "./fonts/ibm-plex-sans-variable.ttf",
   weight: "100 700",
   style: "normal",
   variable: "--font-ibm-plex-sans",
-  display: "swap",
+  display: "block",
 });
 
 const ibmPlexSansArabic = localFont({
@@ -28,7 +32,7 @@ const ibmPlexSansArabic = localFont({
     { path: "./fonts/ibm-plex-sans-arabic-700.ttf", weight: "700", style: "normal" },
   ],
   variable: "--font-ibm-plex-sans-arabic",
-  display: "swap",
+  display: "block",
   // Avoid preloading four Arabic weights on English pages; RTL still loads
   // its actual fonts automatically when the language-specific CSS applies.
   preload: false,

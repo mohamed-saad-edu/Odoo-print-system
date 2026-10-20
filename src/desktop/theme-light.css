@@ -2,13 +2,75 @@
    Do not duplicate palette values here: globals.css is the single theme source.
    This file keeps only Desktop-specific compatibility helpers. */
 
+/* One typography system across Web, Desktop and the Odoo add-on. The tokens
+   live in typography/tokens.css; the Odoo add-on ships a byte-identical copy
+   that scripts/check-typography-tokens.py keeps in sync. */
+@import "../../typography/tokens.css";
+
+/* The Desktop app is a standalone Tauri bundle: it must not depend on
+   system-installed fonts. The faces are bundled with the app and registered
+   here, so the shared stack resolves to IBM Plex in the installed app.
+   `font-display: block` keeps a print-critical page from being laid out with
+   a fallback face. */
+@font-face {
+  font-family: "IBM Plex Sans";
+  font-style: normal;
+  font-weight: 100 700;
+  font-display: block;
+  src: url("../app/fonts/ibm-plex-sans-variable.ttf") format("truetype");
+}
+
+@font-face {
+  font-family: "IBM Plex Sans Arabic";
+  font-style: normal;
+  font-weight: 400;
+  font-display: block;
+  src: url("../app/fonts/ibm-plex-sans-arabic-400.ttf") format("truetype");
+}
+
+@font-face {
+  font-family: "IBM Plex Sans Arabic";
+  font-style: normal;
+  font-weight: 500;
+  font-display: block;
+  src: url("../app/fonts/ibm-plex-sans-arabic-500.ttf") format("truetype");
+}
+
+@font-face {
+  font-family: "IBM Plex Sans Arabic";
+  font-style: normal;
+  font-weight: 600;
+  font-display: block;
+  src: url("../app/fonts/ibm-plex-sans-arabic-600.ttf") format("truetype");
+}
+
+@font-face {
+  font-family: "IBM Plex Sans Arabic";
+  font-style: normal;
+  font-weight: 700;
+  font-display: block;
+  src: url("../app/fonts/ibm-plex-sans-arabic-700.ttf") format("truetype");
+}
+
+:root {
+  --font-ibm-plex-sans: "IBM Plex Sans";
+  --font-ibm-plex-sans-arabic: "IBM Plex Sans Arabic";
+}
+
 html,
 body {
   background: var(--bg);
   color: var(--text);
-  font-family: var(--font-sans);
+  font-family: var(--typo-font-stack-latin);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
+}
+
+/* The Desktop app switches the document direction with the operator's
+   language, so the family order follows it. */
+html[dir="rtl"],
+html[dir="rtl"] body {
+  font-family: var(--typo-font-stack-arabic);
 }
 
 .card {

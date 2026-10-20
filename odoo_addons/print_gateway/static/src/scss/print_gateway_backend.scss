@@ -71,7 +71,14 @@
     .o_control_panel .breadcrumb-item.active {
         color: var(--pg-text);
     }
-    font-family: "Avenir Next", "Segoe UI", "Helvetica Neue", ui-sans-serif, sans-serif;
+    font-family: var(--typo-font-stack-latin);
+
+    /* The family order follows the document direction: both faces carry Latin
+       glyphs, so the order decides which one renders English text. */
+    [dir="rtl"] &,
+    &:dir(rtl) {
+        font-family: var(--typo-font-stack-arabic);
+    }
 
     .o_field_widget input:not([type="checkbox"]):not([type="radio"]):not(.form-check-input),
     .o_field_widget select,
