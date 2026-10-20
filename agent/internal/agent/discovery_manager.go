@@ -211,6 +211,23 @@ func discoverySessionTimeout(session map[string]interface{}) time.Duration {
 // sessions; the stuck worker's late finish releases nothing.
 const discoveryForceReleaseAfter = 5 * time.Minute
 
+// discoveryMaxAbandonedScans bounds how many scans may be abandoned in
+// uncancellable OS I/O before discovery stops recycling the semaphore.
+//
+// A force-release recycles the slot so a successor scan can proceed, but the
+// abandoned worker is still blocked in the OS call and cannot be killed. Each
+// force-release therefore abandons one goroutine for the lifetime of the
+// process. Without a cap, a permanently wedged driver (a USB printer that
+// stops answering) leaks one goroutine every force-release window, forever.
+//
+// The first abandonment is recovered: the slot is recycled and discovery
+// continues. After the cap, the slot is deliberately NOT recycled, so no
+// further scan can start and no further goroutine can be abandoned. Discovery
+// for that agent stays blocked until it is restarted, which is the same
+// operator-visible state the wedge already produced, but with a bounded
+// resource footprint instead of an unbounded one.
+const discoveryMaxAbandonedScans = 2
+
 // releaseDiscoverySemaphoreWhenFinished transfers semaphore cleanup to a
 // waiter with a watchdog. The underlying detector may be stuck in
 // synchronous OS I/O that cannot be cancelled by a Go context; holding the
@@ -239,6 +256,18 @@ func (a *Agent) releaseDiscoverySemaphoreWhenFinished(finished <-chan struct{}, 
 				// Publish wedged before releasing ownership: a successor can
 				// acquire the slot immediately and must observe the new state.
 				a.discoveryWedged.Store(true)
+				// Abandoning a worker means leaking its goroutine for the
+				// lifetime of the process. Cap how many scans may be
+				// abandoned so a permanently wedged driver cannot leak one
+				// goroutine per force-release window, forever.
+				if a.discoveryAbandoned.Add(1) > discoveryMaxAbandonedScans {
+					// Do NOT recycle the slot. No successor scan can start,
+					// so no further goroutine can be abandoned. Discovery
+					// stays blocked until restart, which is the state the
+					// wedge already caused, now with a bounded footprint.
+					log.Printf("[discovery] WARNING: scan wedged past %s and %d scans are already abandoned; semaphore NOT force-released to bound the leaked goroutines (restart the agent to retry discovery)", bound, a.discoveryAbandoned.Load()-1)
+					return
+				}
 				<-a.discoverySem
 				log.Printf("[discovery] WARNING: scan wedged past %s; semaphore force-released, late finish will not free another slot", bound)
 			}
