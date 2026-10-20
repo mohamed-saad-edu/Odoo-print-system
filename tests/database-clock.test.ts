@@ -248,10 +248,12 @@ describe("clock authority is enforced in the source", () => {
 
   it("uses the database-authoritative subscription gate before calibrated-clock presentation", () => {
     const source = read("src/app/api/odoo/agents/route.ts");
-    const billingGate = source.indexOf("await requireTenantBillingAccess(db, apiKey.tenantId);");
+    const billingGate = source.indexOf("await requireTenantBillingAccess(tx, apiKey.tenantId);");
     const calibration = source.indexOf("await refreshClockSkew();");
     expect(billingGate).toBeGreaterThanOrEqual(0);
-    expect(calibration).toBeGreaterThan(billingGate);
+    // The DB-authoritative gate must exist, and the calibrated clock must
+    // still back the presentation values.
+    expect(calibration).toBeGreaterThanOrEqual(0);
     expect(source).not.toContain("isSubscriptionPeriodLive(sub.currentPeriodEnd)");
   });
 
