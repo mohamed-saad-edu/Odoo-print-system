@@ -474,14 +474,18 @@ func renderAndPrintPDFWithPDFiumResultObserved(ctx context.Context, printerName 
 		if err != nil || size == nil {
 			return fmt.Errorf("read PDF page %d dimensions: %v", pageIndex+1, err)
 		}
-		paper, err := pdfPaperForPoints(size.Width, size.Height)
-		if err != nil {
+		if err := validatePDFPageDimensions(size.Width, size.Height); err != nil {
 			return fmt.Errorf("PDF page %d: %w", pageIndex+1, err)
 		}
+		paper, paperErr := pdfPaperForPoints(size.Width, size.Height)
 		mode, ok := modes[paper]
 		if !ok {
 			var usedCurrent bool
 			mode, usedCurrent, err = selectPDFPaperMode(func() ([]byte, error) {
+				// A valid source need not fit DEVMODE's signed-short form limits.
+				if paperErr != nil {
+					return nil, paperErr
+				}
 				return pdfPrinterDevMode(printerName, paper)
 			}, func() ([]byte, error) {
 				if currentMode == nil {

@@ -3,7 +3,8 @@
 ## Status and scope
 
 **IMPLEMENTED:** automatic raster-operation selection from the active Windows
-printer DC, device-compatible bitmap preparation, and native failure diagnostics.
+printer DC, device-compatible bitmap preparation, native failure diagnostics,
+and current-media fitting for valid PDFs outside Windows form-size limits.
 **TESTED:** focused capability/diagnostic tests and the full local Go suite.
 Native Windows results are recorded in PR #30 checks and local verification logs.
 **HARDWARE VALIDATION NOT VERIFIED:** the exact reason the customer's installed
@@ -154,6 +155,51 @@ the dimensions, colors and output/ownership assertions are unchanged.
 The earlier [geometry report](RECEIPT_GEOMETRY_RELIABILITY.md) covers Microsoft,
 Epson, Star, Odoo and other printing approaches across all backends. No vendor SDK,
 third-party source or new dependency was copied or installed for this correction.
+
+## Follow-up: document size is not a Windows paper-form constraint
+
+Further review found a separate, reproducible source-size rejection:
+`pdfPaperForPoints` correctly rejects dimensions that cannot be encoded as a
+Windows form, but both planning and `pdfPrintableDestination` treated that as an
+invalid PDF. Valid long or large pages were rejected before reaching the existing
+current-media fallback. This is a verified software boundary defect, not an
+established explanation of the customer's post-StartDoc bitmap failures.
+
+[Microsoft DEVMODEW](https://learn.microsoft.com/en-us/windows/win32/api/wingdi/ns-wingdi-devmodew)
+defines paper width/length as signed shorts in tenths of a millimeter. That limits
+the requested form to 3276.7mm per side; it does not impose the same constraint on
+an application's source document. Source dimensions now undergo their own finite,
+positive validation. If form conversion fails, planning uses the same validated
+current-media fallback as a driver-rejected form, before StartDoc. Zero-valued
+`pdfPaper` caches that current mode; no zero form is submitted to Windows.
+
+The shared printable-area calculation accepts valid sources independently of
+form encoding. It normalizes the source before DPI conversion to avoid numeric
+overflow, then applies the existing shrink-only proportional fit. Rendering
+buffers remain limited by the existing pixel budget. Invalid source dimensions,
+impossible driver bounds/offsets, missing DPI, substituted copies/scaling and all
+physical-outcome protections continue to reject unsafe submission.
+
+Changed files: `pdf_geometry.go` separates source validation and form encoding;
+`pdf_windows.go` allows unrepresentable forms to use current media;
+`pdf_fit_test.go` extends proportional-fit regressions and rejects non-finite or
+non-positive dimensions on either axis. Existing standard forms, mixed-page mode
+caching, native protocols and all Gateway/Odoo producers remain unchanged.
+
+Before correction the three added fit fixtures failed with
+`PDF page size exceeds Windows paper dimension limits`. Tests now cover a 4m-long
+receipt, a 12000×10000pt page, a page below form precision, and finite numeric
+extremes. These are synthetic software inputs, not printer measurements. Fitting
+an oversized page onto smaller media can make text/QR symbols too small; retained
+content and proportional bounds do not establish physical legibility. Arbitrary
+printer/driver failures cannot safely be turned into reported success.
+
+Local follow-up validation: full Go `-race -vet=all` suite, 1,480 passing test
+events, two skips and ten passing packages; focused Gateway/receipt tests, 33
+passed; Windows printer-package cross-compilation and vet passed. Red/green
+fixture logs and full-suite output are retained under the existing ignored audit
+directory. Native Windows CI and the updated installer are tracked on PR #30;
+installer 39399253351 predates this source/form follow-up.
 
 ## Compatibility, rollout and remaining verification
 
