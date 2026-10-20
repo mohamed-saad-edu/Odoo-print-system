@@ -1,7 +1,7 @@
 import { DELETE as cleanupJobs } from "../src/app/api/jobs/route";
 import { createManagerSession } from "../src/lib/manager-auth";
 import { gatewayTestSigningKey } from "./helpers/test-secrets";
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vitest";
 import {
   hasTestDatabase,
   applyMigrations,
@@ -243,6 +243,23 @@ suite("print idempotency (Odoo → Gateway)", () => {
     const res = await create(body);
     expect(res.status).toBe(201);
     expect(res.headers.get("X-Idempotency-Warning")).toContain("missing-key");
+  });
+
+  it("v1 rejects a submission without a key when the migration switch is on", async () => {
+    vi.stubEnv("YASEIR_REQUIRE_IDEMPOTENCY_KEY", "1");
+    try {
+      const body = jobBody("unused");
+      delete (body as Record<string, unknown>).idempotencyKey;
+      const res = await create(body);
+      expect(res.status).toBe(400);
+      expect((await res.json()).code).toBe("IDEMPOTENCY_KEY_REQUIRED");
+      // A caller that does supply a key is unaffected by the switch.
+      const ok = await create(jobBody("op-switch-on"));
+      expect(ok.status).toBe(201);
+      expect(await jobCount()).toBe(1);
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it("concurrent duplicate submissions with the same key create one job", async () => {

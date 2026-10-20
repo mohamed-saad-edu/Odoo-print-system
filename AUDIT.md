@@ -24,7 +24,7 @@
 
 | ID | Original severity | Verified severity | Root cause | Changed files | Tests | Status |
 |---|---|---|---|---|---|---|
-| PP-01 | P0 | P0 | `idempotencyKey` was optional on `/api/print/jobs`; a retry without a key created a second queued job and could print twice. | `src/app/api/print/jobs/route.ts`, `src/app/api/print/jobs/v2/route.ts` (new), `API.md` | `tests/print-idempotency.test.ts` (v1/v2 parity, concurrency, conflict, reprint) | **PARTIALLY MITIGATED** — v1 still accepts a missing key (returns `X-Idempotency-Warning`); the additive v2 contract requires it. Mandatory v1 removal needs approval. |
+| PP-01 | P0 | P0 | `idempotencyKey` was optional on `/api/print/jobs`; a retry without a key created a second queued job and could print twice. | `src/app/api/print/jobs/route.ts`, `src/app/api/print/jobs/v2/route.ts` (new), `API.md`, `.env.example`, `docker-compose.yml` | `tests/print-idempotency.test.ts` (v1/v2 parity, concurrency, conflict, reprint, migration switch) | **PARTIALLY MITIGATED** — v1 keeps accepting a missing key by default (returns `X-Idempotency-Warning`); the additive v2 contract requires it, and `YASEIR_REQUIRE_IDEMPOTENCY_KEY=1` makes the missing key a hard `400 IDEMPOTENCY_KEY_REQUIRED` on v1 so a deployment can remove the duplicate risk without a breaking API change. Making v1 reject the key unconditionally still needs approval. |
 | PP-02 | P2 | P2 | — | — | `tests/ambiguous-print-outcome.integration.test.ts` (new), `tests/ws-claim-delivery.test.ts` | **VERIFIED EXISTING PROTECTION** — the invariant is now proven end to end: an ambiguous outcome stays terminal-failed with an unknown marker, is never requeued by the sweeper, keeps its claim fence for reconciliation, and a provably undelivered claim is safely requeued. A real delivery keeps valid `deliveredAt` evidence. |
 | PP-03 | P2 | P3 | — | — | — | **VERIFIED EXISTING PROTECTION** — the poll claim predicate re-evaluates printer eligibility each time, so a recovered printer re-claims its queued jobs. |
 | PP-04 | P2 | P2 | `STALE_PRINTING_SECONDS` was a hard-coded 10-minute execution lease with no override. | `src/lib/stale-threshold.ts`, `src/lib/job-maintenance.ts`, `.env.example` | `tests/client-stale-threshold.contract.test.mjs` | **CONFIRMED — FIXED** — `STALE_PRINTING_SECONDS` env override (clamped 120–3600), default unchanged at 600 s. The Agent's own print budget (2m + 30s/MB, ≤ ~4.5 min) stays well inside the default, and an over-long job keeps its claim fence for late-success reconciliation. |
@@ -96,12 +96,16 @@
 
 ## Explicitly not changed
 
-- **No public API contract changed.** `/api/print/jobs` keeps its v1 behaviour;
-  v2 is additive.
+- **No public API contract changed.** `/api/print/jobs` keeps its v1 behaviour
+  by default; v2 is additive. The `YASEIR_REQUIRE_IDEMPOTENCY_KEY=1` switch is
+  opt-in and off by default, so an unset deployment sees no behaviour change.
 - **No database migration added or modified.** All schema changes in this
   ledger are expressible with existing columns.
 - **No billing grace period, quota policy or commercial behaviour changed.**
-  BILL-01 and BILL-08 are documented rather than enforced.
+  BILL-01 and BILL-08 are documented rather than enforced. BILL-06 only
+  tightened the counting of an *existing* limit (no limit value, grace period
+  or allowance changed), and BILL-04 only moved an existing access decision
+  inside the transaction that reads or writes the data.
 - **No Odoo native-fallback behaviour changed.** A fallback requires durable
   proof that no cloud print was accepted, which the addon does not yet expose
   to the client.

@@ -13,6 +13,19 @@ import { z } from "zod";
 
 export const dynamic = "force-dynamic";
 
+/**
+ * Controlled migration switch for the v1 print-submission contract.
+ *
+ * v1 keeps accepting a submission without an `idempotencyKey` so existing
+ * installations are not broken, but such a submission cannot be deduplicated:
+ * a retry creates a second queued job and can print twice. Operators whose
+ * callers all send a key can set this to "1" to make the missing key a hard
+ * 400, then migrate callers at their own pace. v2 always requires the key.
+ */
+function idempotencyKeyRequired(): boolean {
+  return process.env.YASEIR_REQUIRE_IDEMPOTENCY_KEY === "1";
+}
+
 const MAX_BODY = 8 * 1024 * 1024;
 const bodySchema = z.object({
   printerId: z.string().trim().min(1).max(120),
@@ -72,6 +85,21 @@ export async function POST(req: Request) {
   if (!parsed.success) return NextResponse.json({ error: parsed.error.issues[0]?.message ?? "Invalid request" }, { status: 400 });
 
   if (!parsed.data.idempotencyKey) {
+    // A submission without a stable operation id cannot be deduplicated: a
+    // retry creates a second queued job and can print twice. Callers that
+    // cannot supply a key are rejected outright once the operator opts in
+    // through the migration switch, so the duplicate risk can be removed
+    // without a breaking API change.
+    if (idempotencyKeyRequired()) {
+      logWarn("print.job.idempotency_key_required", {
+        tenantId: odoo?.tenantId ?? null,
+        message: "Print job rejected: idempotencyKey is required for this deployment.",
+      });
+      return NextResponse.json(
+        { error: "idempotencyKey is required for this deployment", code: "IDEMPOTENCY_KEY_REQUIRED", retryable: false },
+        { status: 400, headers: { "Cache-Control": "no-store" } },
+      );
+    }
     // Backward-compatible: legacy callers without a stable operation id are
     // accepted, but retries cannot be deduplicated and may produce duplicate
     // physical prints. New callers must supply an idempotencyKey. A future
