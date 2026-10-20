@@ -1,8 +1,10 @@
 import { db } from "../db";
 import { agents } from "../db/schema";
 import { eq } from "drizzle-orm";
-import { createHash, randomBytes, randomInt, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, hkdfSync, randomBytes, randomInt, timingSafeEqual } from "node:crypto";
 import { requireActiveTenantOrNull } from "./tenant-guard";
+import { runtimeSecret } from "./runtime-secret";
+import { logWarn } from "./log";
 
 /**
  * Public pairing contract shared by Gateway, Go agent and Tauri manager.
@@ -18,12 +20,49 @@ export function isValidAgentId(value: unknown): value is string {
   return typeof value === "string" && AGENT_ID_PATTERN.test(value);
 }
 
+/**
+ * Agent credentials and Odoo API keys are 192/256-bit random values, so a
+ * single-pass fast hash is the correct storage form: there is no dictionary
+ * to attack and no work factor worth paying for. Only the pairing code is
+ * low-entropy (6 characters over a 32-symbol alphabet ≈ 30 bits), and it is
+ * the one credential here that a database leak could be brute-forced
+ * offline. It is therefore stored as a keyed hash so a leaked database row
+ * cannot be reversed without the deployment secret.
+ */
 export function hashSecret(secret: string): string {
   return createHash("sha256").update(secret).digest("hex");
 }
 
+const PAIRING_CODE_PEPPER_INFO = "yaseir/agent-pairing-code/v1";
+const PAIRING_CODE_PEPPER_SALT = "yaseir-gateway";
+
+let pairingCodePepperWarned = false;
+
+function pairingCodePepperKey(): Buffer | null {
+  const secret = runtimeSecret("GATEWAY_JWT_SECRET");
+  // Production startup already refuses to boot without a real
+  // GATEWAY_JWT_SECRET. Outside production the pepper is optional: the
+  // pairing code keeps its previous plain hash so local development and
+  // existing installations are unaffected.
+  if (!secret || secret.length < 32) {
+    if (!pairingCodePepperWarned) {
+      pairingCodePepperWarned = true;
+      logWarn("agent.pairing_code_unpeppered", {
+        message: "GATEWAY_JWT_SECRET is not configured; pairing codes are stored without a server-side pepper. Configure it in production.",
+      });
+    }
+    return null;
+  }
+  return Buffer.from(
+    hkdfSync("sha256", Buffer.from(secret, "utf8"), Buffer.from(PAIRING_CODE_PEPPER_SALT, "utf8"), Buffer.from(PAIRING_CODE_PEPPER_INFO, "utf8"), 32),
+  );
+}
+
 export function hashPairingCode(code: string): string {
-  return createHash("sha256").update(code.trim().toUpperCase()).digest("hex");
+  const normalized = code.trim().toUpperCase();
+  const pepper = pairingCodePepperKey();
+  if (!pepper) return createHash("sha256").update(normalized).digest("hex");
+  return createHmac("sha256", pepper).update(normalized).digest("hex");
 }
 
 export function generateSecret(): string {

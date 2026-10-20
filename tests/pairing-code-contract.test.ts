@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, afterEach } from "vitest";
+import { createHash } from "node:crypto";
 import { AGENT_ID_PATTERN, generatePairingCode, hashPairingCode, isValidAgentId, isValidPairingCode, PAIRING_CODE_PATTERN } from "../src/lib/agent-auth";
 
 describe("pairing code contract", () => {
@@ -27,6 +28,34 @@ describe("pairing code contract", () => {
     expect(h1).toBe(h3);
     expect(h1).toMatch(/^[a-f0-9]{64}$/);
     expect(h1).not.toBe(code);
+  });
+
+  it("peppers the pairing code hash so a leaked database row cannot be reversed", () => {
+    const previous = process.env.GATEWAY_JWT_SECRET;
+    process.env.GATEWAY_JWT_SECRET = "a".repeat(48);
+    try {
+      const peppered = hashPairingCode("AB22CD");
+      const plainSha256 = createHash("sha256").update("AB22CD").digest("hex");
+      // A database leak must not hand the attacker a reversible hash of a
+      // 30-bit credential.
+      expect(peppered).not.toBe(plainSha256);
+      expect(peppered).toMatch(/^[a-f0-9]{64}$/);
+      // Still deterministic, so registration can look the code up by hash.
+      expect(peppered).toBe(hashPairingCode("ab22cd"));
+    } finally {
+      if (previous === undefined) delete process.env.GATEWAY_JWT_SECRET;
+      else process.env.GATEWAY_JWT_SECRET = previous;
+    }
+  });
+
+  it("falls back to the plain hash when no server secret is configured", () => {
+    const previous = process.env.GATEWAY_JWT_SECRET;
+    delete process.env.GATEWAY_JWT_SECRET;
+    try {
+      expect(hashPairingCode("AB22CD")).toBe(createHash("sha256").update("AB22CD").digest("hex"));
+    } finally {
+      if (previous !== undefined) process.env.GATEWAY_JWT_SECRET = previous;
+    }
   });
 });
 
