@@ -1103,16 +1103,21 @@ func (p *SpoolerPrinter) PrintDocument(ctx context.Context, doc Document) error 
 		}
 		var pdf []byte
 		var err error
-		if p.ReceiptPaperMM == 58 || p.ReceiptPaperMM == 80 {
+		receipt := p.ReceiptPaperMM == 58 || p.ReceiptPaperMM == 80
+		if receipt {
 			pdf, err = JPEGToPDFReceipt(doc.Data, p.ReceiptPaperMM, p.ReceiptRasterDots, p.ReceiptDPI)
 		} else {
 			// Preserve the selected narrow form and DPI exactly. A4/Letter
 			// and unknown media return zero and keep generic image sizing.
 			paperMM, dots, dpi := spoolerDetectedReceiptPaper(ctx, p.SpoolerName)
 			pdf, err = jpegToPDFWithReceiptPaper(doc.Data, paperMM, dots, dpi)
+			receipt = paperMM > 0
 		}
 		if err != nil {
 			return fmt.Errorf("render image for Windows spooler: %w", err)
+		}
+		if receipt {
+			ctx = context.WithValue(ctx, generatedReceiptPDFKey{}, true)
 		}
 		return p.printPDFDocument(ctx, Document{Kind: KindPDF, Data: pdf, JobID: doc.JobID})
 	case KindRaw, KindESCPOS:

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -96,6 +97,81 @@ func openAndCountPages(worker pdfium.Pdfium) (int, error) {
 		return 0, fmt.Errorf("PDFium reported no printable pages")
 	}
 	return pages.PageCount, nil
+}
+
+func TestPDFiumLongReceiptRetainsAllImageBoundaries(t *testing.T) {
+	data, err := JPEGToPDFReceipt(longReceiptJPEG(t), 80, 576, 203)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pageW, pageH, imageW, imageH, imageX, imageY := pdfImageGeometry(t, data)
+	_, _, targetW, targetH, err := pdfPrintableDestination(pageW, pageH, 640, 4000, 576, 3976, 203, 203, 32, 12)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool, err := webassembly.Init(newPDFiumPoolConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	worker, err := pool.GetInstanceWithContext(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer worker.Close()
+	doc, err := worker.OpenDocument(&requests.OpenDocument{File: &data})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer worker.FPDF_CloseDocument(&requests.FPDF_CloseDocument{Document: doc.Document})
+	size, err := worker.FPDF_GetPageSizeByIndex(&requests.FPDF_GetPageSizeByIndex{Document: doc.Document, Index: 0})
+	if err != nil || size == nil || math.Abs(size.Width-pageW) > .01 || math.Abs(size.Height-pageH) > .01 {
+		t.Fatalf("PDFium changed receipt dimensions %.2fx%.2fpt: %+v %v", pageW, pageH, size, err)
+	}
+	rendered, err := worker.RenderPageInPixels(&requests.RenderPageInPixels{
+		Page:  requests.Page{ByIndex: &requests.PageByIndex{Document: doc.Document, Index: 0}},
+		Width: targetW, Height: targetH,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rendered.Cleanup()
+	img := rendered.Result.Image
+	if img == nil {
+		t.Fatal("PDFium returned no receipt bitmap")
+	}
+	if img.Rect.Dx() <= 0 || img.Rect.Dy() <= 0 || img.Rect.Dx() > targetW || img.Rect.Dy() > targetH || len(img.Pix) > targetW*targetH*4 {
+		t.Fatalf("PDFium escaped bounded render %dx%d: bounds=%v bytes=%d", targetW, targetH, img.Rect, len(img.Pix))
+	}
+	// Inspect the original image's four border bands after real PDF decoding.
+	for _, mark := range []struct {
+		name string
+		x, y float64
+	}{
+		{"left", imageX + imageW*4/288, imageY + imageH/2},
+		{"right", imageX + imageW*(1-4.0/288), imageY + imageH/2},
+		{"top", imageX + imageW/2, imageY + imageH*(1-4.0/16384)},
+		{"bottom", imageX + imageW/2, imageY + imageH*4/16384},
+	} {
+		x := int(mark.x / pageW * float64(img.Rect.Dx()))
+		y := int((pageH - mark.y) / pageH * float64(img.Rect.Dy()))
+		found := false
+		for sy := max(0, y-1); sy <= min(img.Rect.Dy()-1, y+1); sy++ {
+			for sx := max(0, x-1); sx <= min(img.Rect.Dx()-1, x+1); sx++ {
+				pixel := img.RGBAAt(sx, sy)
+				found = found || (pixel.R < 64 && pixel.G < 64 && pixel.B < 64 && pixel.A == 255)
+			}
+		}
+		if !found {
+			t.Fatalf("receipt %s boundary missing near rendered pixel %d,%d", mark.name, x, y)
+		}
+	}
+	if pixel := img.RGBAAt(img.Rect.Dx()/2, img.Rect.Dy()/2); pixel.R < 240 || pixel.G < 240 || pixel.B < 240 || pixel.A != 255 {
+		t.Fatalf("receipt white interior changed: %v", pixel)
+	}
+	t.Logf("source=288x16384px PDFium=%.2fx%.2fpt target=%dx%d rendered=%dx%d bytes=%d; all four image boundaries retained", size.Width, size.Height, targetW, targetH, img.Rect.Dx(), img.Rect.Dy(), len(img.Pix))
 }
 
 // headlessPDFiumChild reproduces the service's invalid standard handles and

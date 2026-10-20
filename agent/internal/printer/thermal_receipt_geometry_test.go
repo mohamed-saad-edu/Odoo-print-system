@@ -115,6 +115,79 @@ func TestThermalReceiptPDFPreservesReportedDPI(t *testing.T) {
 	}
 }
 
+func longReceiptJPEG(t *testing.T) []byte {
+	t.Helper()
+	const width, height, border = 288, 16384, 8
+	img := image.NewGray(image.Rect(0, 0, width, height))
+	row := bytes.Repeat([]byte{255}, width)
+	clear(row[:border])
+	clear(row[width-border:])
+	for y := 0; y < height; y++ {
+		copy(img.Pix[y*img.Stride:], row)
+	}
+	clear(img.Pix[:border*img.Stride])
+	clear(img.Pix[(height-border)*img.Stride:])
+	var source bytes.Buffer
+	if err := jpeg.Encode(&source, img, &jpeg.Options{Quality: 85}); err != nil {
+		t.Fatal(err)
+	}
+	return source.Bytes()
+}
+
+func TestLongReceiptImageFitsCurrentMediaWithoutWindowsForm(t *testing.T) {
+	const width, height = 288, 16384
+	source := longReceiptJPEG(t)
+	for _, tc := range []struct {
+		name                         string
+		paperMM                      float64
+		dots, physicalWidth, offsetX int
+		configured                   bool
+	}{
+		{"configured80mm", 80, 576, 640, 32, true},
+		{"detected70mm", 560 * 25.4 / 203, 552, 560, 4, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var pdf []byte
+			var err error
+			if tc.configured {
+				pdf, err = JPEGToPDFReceipt(source, int(tc.paperMM), tc.dots, 203)
+			} else {
+				pdf, err = jpegToPDFWithReceiptPaper(source, tc.paperMM, tc.dots, 203)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := ValidatePDF(pdf); err != nil {
+				t.Fatal(err)
+			}
+			if bytes.Count(pdf, source) != 1 {
+				t.Fatal("long receipt JPEG was changed or truncated")
+			}
+			pageW, pageH, imgW, imgH, imgX, imgY := pdfImageGeometry(t, pdf)
+			if math.Abs(pageW-tc.paperMM*72/25.4) > .01 || pageH*25.4/72 <= 3276.7 || pageH >= 14400 {
+				t.Fatalf("unexpected long receipt page %.2fx%.2fpt", pageW, pageH)
+			}
+			if _, err := pdfPaperForPoints(pageW, pageH); err == nil {
+				t.Fatal("fixture must need current media rather than a Windows custom form")
+			}
+			if math.Abs(imgH/imgW-float64(height)/width) > .01 || imgX < 0 || imgY < 0 || imgX+imgW > pageW+.01 || imgY+imgH > pageH+.01 {
+				t.Fatal("long receipt image was distorted or extended beyond its PDF page")
+			}
+			x, y, w, h, err := pdfPrintableDestination(pageW, pageH, tc.physicalWidth, 4000, tc.dots, 3976, 203, 203, tc.offsetX, 12)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if x < 0 || y < 0 || w <= 0 || h <= 0 || x+w > tc.dots || y+h > 3976 {
+				t.Fatalf("long receipt outside current printable bounds: %d,%d %dx%d", x, y, w, h)
+			}
+			wantW, wantH := pageW*203/72, pageH*203/72
+			if math.Abs(float64(w)/wantW-float64(h)/wantH) > 1/wantW+1/wantH {
+				t.Fatal("fitting long receipt changed its physical aspect ratio")
+			}
+		})
+	}
+}
+
 func TestSpoolerProfilePrefersExplicitDotsAndDPI(t *testing.T) {
 	for _, tc := range []struct {
 		caps          map[string]interface{}
