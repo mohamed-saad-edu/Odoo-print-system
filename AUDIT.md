@@ -105,5 +105,6 @@
 - **No Odoo native-fallback behaviour changed.** A fallback requires durable
   proof that no cloud print was accepted, which the addon does not yet expose
   to the client.
-- **No Windows Agent behaviour changed** without Windows validation (AGT-01,
-  AGT-04).
+- **No Windows Agent behaviour changed** without Windows validation. AGT-01
+  (USB write cancellation) and AGT-12 (Windows-only test coverage) stay open;
+  AGT-04 was fixed with platform-independent Go logic and Linux-tested.
