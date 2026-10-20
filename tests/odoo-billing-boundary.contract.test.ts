@@ -24,7 +24,7 @@ describe("Odoo billing control-plane contracts", () => {
 
   it("makes Odoo agent discovery use the canonical database-authoritative billing predicate", () => {
     const source = read("src/app/api/odoo/agents/route.ts");
-    expect(source).toContain("await requireTenantBillingAccess(db, apiKey.tenantId);");
+    expect(source).toContain("await requireTenantBillingAccess(tx, apiKey.tenantId);");
     expect(source).not.toContain("db.query.tenantSubscriptions.findFirst");
     expect(source).not.toContain("isBillingAccessStatus(");
     expect(source).not.toContain("isSubscriptionPeriodLive(");
@@ -32,6 +32,18 @@ describe("Odoo billing control-plane contracts", () => {
 
   it("requires active billing access before exposing Odoo printer inventory", () => {
     const source = read("src/app/api/odoo/printers/route.ts");
-    expect(source).toContain("await requireTenantBillingAccess(db, apiKey.tenantId);");
+    expect(source).toContain("await requireTenantBillingAccess(tx, apiKey.tenantId);");
+  });
+
+  it("decides Odoo runtime access and reads the inventory in one transaction", () => {
+    // A subscription that lapses between the billing decision and the
+    // inventory read must not still expose tenant runtime state. Both
+    // read surfaces therefore take the subscription row lock and read
+    // inside the same transaction.
+    for (const file of ["src/app/api/odoo/agents/route.ts", "src/app/api/odoo/printers/route.ts"]) {
+      const source = read(file);
+      expect(source).toContain("await db.transaction(async (tx) => {");
+      expect(source).toContain("await requireTenantBillingAccess(tx, apiKey.tenantId);");
+    }
   });
 });
