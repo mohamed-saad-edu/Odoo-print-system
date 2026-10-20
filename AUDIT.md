@@ -1,0 +1,109 @@
+# Engineering Audit Ledger — Yaseir Cloud Printing Platform
+
+> **Scope**: the 66-item engineering audit of the Odoo → Gateway → Agent → Printer
+> pipeline, re-verified against the repository at the commit recorded below.
+> **Rule**: a finding is only "FIXED" when a behavioural correction exists and a
+> regression test demonstrates it. Comments, documentation and log changes are
+> never counted as fixes.
+>
+> Dispositions: `CONFIRMED — FIXED` · `CONFIRMED — FIX REQUIRED` ·
+> `PARTIALLY MITIGATED` · `VERIFIED EXISTING PROTECTION` · `INTENDED BEHAVIOR` ·
+> `FALSE POSITIVE` · `BLOCKED — ENVIRONMENT` · `BLOCKED — PRODUCT DECISION`
+
+## Verification environment
+
+| Item | Value |
+|---|---|
+| Audit base commit | `5d015b2` (main) |
+| Local Node | v24.21.0 (must be used; the default `node` on this host is v22 and lacks `crypto.argon2`) |
+| Local PostgreSQL | 17.9 (conda). CI uses the pinned **PostgreSQL 16.15** image — that is the authoritative run. |
+| Local Go | 1.26.9 |
+| Windows / Odoo 19 runtime | not available locally; verified in CI (`odoo19` job) |
+
+## Status matrix
+
+| ID | Original severity | Verified severity | Root cause | Changed files | Tests | Status |
+|---|---|---|---|---|---|---|
+| PP-01 | P0 | P0 | `idempotencyKey` was optional on `/api/print/jobs`; a retry without a key created a second queued job and could print twice. | `src/app/api/print/jobs/route.ts`, `src/app/api/print/jobs/v2/route.ts` (new), `API.md` | `tests/print-idempotency.test.ts` (v1/v2 parity, concurrency, conflict, reprint) | **PARTIALLY MITIGATED** — v1 still accepts a missing key (returns `X-Idempotency-Warning`); v2 requires it. Mandatory v1 removal needs approval. |
+| PP-02 | P2 | P2 | — | — | `tests/ws-claim-delivery.test.ts` | **VERIFIED EXISTING PROTECTION** — an ambiguous outcome is never requeued and keeps its claim fence; `deliveredAt` records a real transport hand-off. |
+| PP-03 | P2 | P3 | — | — | — | **VERIFIED EXISTING PROTECTION** — the poll claim predicate re-evaluates printer eligibility each time, so a recovered printer re-claims its queued jobs. |
+| PP-04 | P2 | P2 | `STALE_PRINTING_SECONDS` was a hard-coded 10-minute execution lease with no override. | `src/lib/stale-threshold.ts`, `src/lib/job-maintenance.ts`, `.env.example` | `tests/client-stale-threshold.contract.test.mjs` | **CONFIRMED — FIXED** — `STALE_PRINTING_SECONDS` env override (clamped 120–3600), default unchanged at 600 s. |
+| PP-05 | P2 | P3 | — | — | — | **VERIFIED EXISTING PROTECTION** — the 90 s claim lease is env-tunable; a failed WS send requeues immediately. |
+| PP-06 | P1 | P1 | `releaseUndeliveredClaim` requeued a claim whose retry budget was already exhausted; the job was then unclaimable and stuck until expiry. | `src/lib/job-delivery.ts` | `tests/job-release-guard.integration.test.ts` | **CONFIRMED — FIXED** — exhausted claims now terminate as failed. |
+| PP-07 | P2 | P3 | — | — | — | **FALSE POSITIVE** — the 64 MiB poll budget is below the Agent's 100 MiB read limit; the WS frame cap (8 MiB) is compared against the Agent's own limit. |
+| PP-08 | P3 | P3 | — | — | — | **FALSE POSITIVE** — the Gateway budget is a strict subset of the Agent's accepted size. |
+| PP-09 | P3 | P3 | — | — | — | **FALSE POSITIVE** — the receipt conflict is unreachable: every materialisation path inserts and deletes in one transaction under row locks. |
+| PP-10 | P3 | P3 | — | — | — | **VERIFIED EXISTING PROTECTION** — the timeline is documented as a diagnostic aid, not a durable guarantee; degraded mode is visible via `evidence.source`. |
+| SEC-01 | P1 | P1 | The 6-character pairing code (~30 bits) was stored as a plain SHA-256 hash, so a leaked database row could be reversed offline. Agent secrets (192-bit) and Odoo API keys (256-bit) are correctly fast-hashed. | `src/lib/agent-auth.ts`, `SECURITY.md` | `tests/pairing-code-contract.test.ts` | **CONFIRMED — FIXED** — the pairing code is now an HMAC over an HKDF-derived server-side pepper; high-entropy secrets keep their fast hash. |
+| SEC-02 | P1 | — | — | `src/server/trusted-proxy.ts` (comment only) | `tests/trusted-proxy.test.ts` | **VERIFIED EXISTING PROTECTION** — missing `Origin` was already accepted for native Agents, with bearer-secret auth still required. |
+| SEC-03 | P1 | — | — | `src/lib/auth-rate-limit.ts` (notice severity only) | — | **VERIFIED EXISTING PROTECTION** — production startup already refuses a non-loopback bind without `TRUST_PROXY=1`. |
+| SEC-04 | P2 | P2 | Security controls live in the custom `server.ts`; `next start` would bypass CSP and proxy enforcement. | — | — | **CONFIRMED — FIX REQUIRED** (documented deployment constraint; `npm start` is the supported entry point) |
+| SEC-05 | P2 | P3 | — | — | — | **PARTIALLY MITIGATED** — file-backed secrets are cached for 30 s, so rotation takes effect within that window. |
+| SEC-06 | P2 | P2 | Pinned base image carries HIGH advisories under a time-bound exception. | — | CI `docker-image-scan` (Trivy) | **BLOCKED — ENVIRONMENT** — the scanner runs in CI; the exception is reviewed against the scan result, not edited to force a pass. |
+| SEC-07 | P3 | P3 | — | — | — | **FALSE POSITIVE** — the advisories are in the ESLint toolchain, not the production runtime. |
+| SEC-08 | P3 | P3 | — | — | — | **INTENDED BEHAVIOR** — `style-src-attr 'unsafe-inline'` is required by the Radix runtime styles; the script policy stays strict with a nonce. |
+| SEC-09 | P3 | P3 | — | — | — | **INTENDED BEHAVIOR** — the access cookie is `SameSite=Lax`; the refresh credential is `Strict` and path-scoped. |
+| SEC-10 | P3 | P3 | — | — | — | **INTENDED BEHAVIOR** — 169.254.0.0/16 is blocked except the two cloud metadata addresses, which are themselves blocked. |
+| SEC-11 | P3 | P3 | — | — | — | **INTENDED BEHAVIOR** — Stripe signature verification plus a 300 s tolerance and event-id replay table. |
+| SEC-12 | P3 | P3 | — | — | — | **INTENDED BEHAVIOR** — the liveness probes are deliberately proxy-exempt and return no sensitive data. |
+| SEC-13 | P3 | P3 | — | — | — | **INTENDED BEHAVIOR** — the 400/409 distinction is an operator-diagnosis aid; both outcomes require a valid one-time code. |
+| SEC-14 | P3 | P3 | — | — | — | **CONFIRMED — FIX REQUIRED** — the PostgreSQL image exception expires 2026-10-26 and needs an explicit re-review. |
+| TEN-01 | P1 | P2 | The initial Agent lookup is by Agent id alone; tenant is derived from the row. | — | `tests/agent-identity-isolation.integration.test.ts` | **VERIFIED EXISTING PROTECTION** — `agents.id` is the table primary key, so the lookup is globally unique; the tenant comes from the authenticated row, never from the client. |
+| TEN-02 | P1 | P2 | The WebSocket registry and rate-limit buckets are keyed by Agent id. | — | `tests/agent-identity-isolation.integration.test.ts` | **VERIFIED EXISTING PROTECTION** — Agent ids are globally unique primary keys, so no two tenants can share one. |
+| TEN-03 | P1 | P1 | Legacy session revocation was not tenant-scoped. | `src/lib/manager-auth.ts`, `src/app/api/auth/logout/route.ts`, `src/app/api/auth/manager/logout/route.ts` | `tests/tenant-scoped-session-revocation.integration.test.ts` | **PARTIALLY MITIGATED** — single-session revocation is tenant-scoped; account-level password/email events intentionally revoke every tenant of that account. |
+| TEN-04 | P2 | P2 | Retention sweep reads/deletes job rows by id without a tenant predicate. | — | — | **VERIFIED EXISTING PROTECTION** — job ids are globally unique primary keys, and the sweep runs under a global advisory lock. |
+| TEN-05 | P2 | P2 | Platform/legacy session revocation by JTI is not tenant-scoped. | — | — | **VERIFIED EXISTING PROTECTION** — JTIs are random primary keys, so a JTI identifies exactly one session. |
+| TEN-06 | P3 | P3 | — | — | — | **INTENDED BEHAVIOR** — fleet metrics are platform-wide aggregates by design. |
+| TEN-07 | P3 | P3 | — | — | — | **INTENDED BEHAVIOR** — the verification-request cache is a client-side de-duplication, keyed by the unguessable token. |
+| TEN-08 | P3 | P3 | — | — | — | **INTENDED BEHAVIOR** — the database-clock offset and platform-stats caches are process-global by design. |
+| TEN-09 | P3 | P3 | — | — | — | **INTENDED BEHAVIOR** — the client verification cache is token-keyed in the browser. |
+| BILL-01 | P1 | — | — | — | `tests/billing-entitlement-access.test.ts` | **INTENDED BEHAVIOR** — `past_due` retains access during Stripe recovery by design (documented in `OPERATIONS.md`, `API.md`, `README.md`). |
+| BILL-02 | P1 | P1 | A terminal deletion event bypassed the event-timestamp gate and could cancel a newer active subscription. | `src/app/api/billing/webhook/route.ts` | `tests/billing-webhook.test.ts` ("5f") | **CONFIRMED — FIXED** |
+| BILL-03 | P1 | P1 | An unrecognized Stripe status was collapsed to `cancelled`, silently revoking access and erasing checkout state. | `src/app/api/billing/webhook/route.ts`, `src/app/api/billing/checkout/route.ts` | `tests/billing-webhook.test.ts` ("6b") | **CONFIRMED — FIXED** |
+| BILL-04 | P1 | P2 | The Odoo read surfaces check billing outside a transaction. | — | — | **PARTIALLY MITIGATED** — reads are tenant-scoped and expose no credentials; the write surface (E2E capture) re-checks tenant and credential inside its transaction but not billing. |
+| BILL-05 | P2 | — | — | — | — | **FALSE POSITIVE** — READ COMMITTED does not block the plan read; the exposure is one in-flight print during a downgrade. |
+| BILL-06 | P2 | P2 | `max_concurrent_jobs` ignores rows whose TTL has passed but which the sweeper has not reclassified yet. | — | — | **PARTIALLY MITIGATED** — over-admission is bounded by the number of expired, unswept in-flight rows. |
+| BILL-07 | P3 | — | — | — | — | **INTENDED BEHAVIOR** — the window is a submission-rate limit, matching "jobs / minute". |
+| BILL-08 | P2 | P2 | A mid-period plan downgrade blocks prints until the period resets, because the usage bucket is never reset. | — | — | **BLOCKED — PRODUCT DECISION** — the fix changes customer-facing quota behaviour. |
+| BILL-09 | P3 | — | — | — | — | **VERIFIED EXISTING PROTECTION** — the app guard mirrors the database `period_end > period_start` invariant. |
+| BILL-10 | P3 | — | — | — | — | **FALSE POSITIVE** — a `hashtext` collision only adds serialization. |
+| BILL-11 | P3 | — | — | — | `tests/billing-webhook.test.ts` ("7", "8") | **INTENDED BEHAVIOR** — invoice events are payment facts; subscription lifecycle events own access state. |
+| ODO-01 | P1 | — | — | — | — | **INTENDED BEHAVIOR** — fail-closed is the documented policy. A durable-state-gated fallback would need a new sudo lookup and is not implemented. |
+| ODO-02 | P1 | P1 | When the Gateway enablement probe itself fails, no receipt is produced at all, although nothing could have been submitted. | — | — | **CONFIRMED — FIX REQUIRED** — a provably safe native fallback is possible for the probe failure only. |
+| ODO-03 | P2 | P2 | Route exceptions collapse to a generic message and leave no durable row when the failure precedes the outbox insert. | — | — | **PARTIALLY MITIGATED** — the original exception is preserved in the server log. |
+| ODO-04 | P2 | — | — | — | `tests/test_control_plane.py` | **VERIFIED EXISTING PROTECTION** — matches Odoo 19 semantics (empty `group_ids` means unrestricted). |
+| ODO-05 | P2 | P2 | `print_job`/`print_intent` record rules are company-scoped only, so a branch job is invisible from root mode. | — | — | **CONFIRMED — FIX REQUIRED** — blocks the operator recovery path for failed branch prints. |
+| ODO-06 | P2 | P2 | The policy fan-out dedup key can collapse two distinct targets when binding resolution fails. | — | — | **VERIFIED EXISTING PROTECTION** — the surviving policy still produces a loud, visible failure. |
+| ODO-07 | P2 | P2 | A branch intent is invisible to a root-mode operator, so it cannot be re-armed. | — | — | **PARTIALLY MITIGATED** — dispatch is not stranded; only the manual re-arm path is. |
+| ODO-08 | P2 | — | — | — | — | **FALSE POSITIVE** — the `1.1.0` pre-migration never runs under Odoo 19 version comparison. |
+| ODO-09 | P3 | — | — | — | — | **INTENDED BEHAVIOR** — only `qweb-pdf` reports are printable. |
+| ODO-10 | P3 | — | — | — | — | **INTENDED BEHAVIOR** — terminal rows are retained for reconciliation, not purged by hand. |
+| ODO-11 | P3 | — | — | — | — | **INTENDED BEHAVIOR** — an unreachable Gateway returns no receipt rather than risking a duplicate. |
+| ODO-12 | P3 | — | — | — | — | **INTENDED BEHAVIOR** — branch-scoped policies deliberately do not match sibling branches. |
+| ODO-13 | P3 | — | — | — | — | **INTENDED BEHAVIOR** — a documented shortcut pending an offline print queue. |
+| AGT-01 | P1 | P1 | A cancelled or timed-out USB write leaves the helper goroutine blocked in an uncancellable Win32 `WriteFile`. | — | — | **PARTIALLY MITIGATED** — bounded to one wedged device per printer by the in-memory latch; requires Windows validation. |
+| AGT-02 | P1 | — | — | — | `SECURITY.md` | **INTENDED BEHAVIOR** — `CRYPTPROTECT_LOCAL_MACHINE` is required so the LocalSystem service and the user-context desktop manager can share one file. The threat model is documented. |
+| AGT-03 | P2 | — | — | — | — | **FALSE POSITIVE** — the printer status probe takes no caller context; each timeout is paired with `defer cancel()`. |
+| AGT-04 | P2 | P2 | The discovery watchdog can abandon a scan goroutine blocked in an uncancellable Win32 call. | — | — | **CONFIRMED — FIX REQUIRED** — bounded to one abandoned goroutine per five-minute window; Windows-only, needs a Windows CI job. |
+| AGT-05 | P2 | — | — | — | — | **INTENDED BEHAVIOR** — the 27 s stop boundary deliberately keeps SQLite open; WAL recovery is crash-safe. |
+| AGT-06 | P2 | — | — | — | `SECURITY.md` | **VERIFIED EXISTING PROTECTION** — the at-rest weakness is documented and warned about at write time. |
+| AGT-07 | P3 | — | — | — | — | **FALSE POSITIVE** — the drain keeps consuming past the cap and the resolver always closes the channel. |
+| AGT-08 | P2 | P2 | The restart loop never closes the previous Agent instance, leaking a SQLite handle per crash. | — | — | **CONFIRMED — FIX REQUIRED** — Linux-testable; the Go fix is isolated. |
+| AGT-09 | P2 | — | — | — | — | **INTENDED BEHAVIOR** — WebSocket jitter uses the auto-seeded global source. |
+| AGT-10 | P3 | — | — | — | — | **INTENDED BEHAVIOR** — the IPP transport is deliberately stricter than the control-plane transport. |
+| AGT-11 | P2 | P3 | The printer registry uses `os.Rename` instead of the atomic replace helper. | — | — | **CONFIRMED — FIX REQUIRED** — low risk; the helper needs exporting from `internal/config`. |
+| AGT-12 | P3 | — | — | — | — | **BLOCKED — ENVIRONMENT** — Windows-only paths cannot be exercised on Linux. |
+
+## Explicitly not changed
+
+- **No public API contract changed.** `/api/print/jobs` keeps its v1 behaviour;
+  v2 is additive.
+- **No database migration added or modified.** All schema changes in this
+  ledger are expressible with existing columns.
+- **No billing grace period, quota policy or commercial behaviour changed.**
+  BILL-01 and BILL-08 are documented rather than enforced.
+- **No Odoo native-fallback behaviour changed.** A fallback requires durable
+  proof that no cloud print was accepted, which the addon does not yet expose
+  to the client.
+- **No Windows Agent behaviour changed** without Windows validation (AGT-01,
+  AGT-04).
