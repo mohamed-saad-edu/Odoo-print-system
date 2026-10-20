@@ -153,6 +153,15 @@ def main() -> int:
             fail(f"the Odoo font file is missing: {odoo_font}")
         if web.read_bytes() != odoo_font.read_bytes():
             fail(f"the Odoo copy of {name} differs from the web font file")
+        # The Web app serves WOFF2; the Desktop app and the Odoo add-on serve
+        # the TTF. The WOFF2 payload is generated from the TTF by
+        # scripts/build-web-fonts.py and its digest is pinned in
+        # tests/font-assets.node.test.mjs.
+        woff2 = WEB_FONTS_DIR / name.replace(".ttf", ".woff2")
+        if not woff2.is_file():
+            fail(f"the web WOFF2 payload is missing: {woff2}")
+        if woff2.read_bytes()[:4] != b"wOF2":
+            fail(f"the web WOFF2 payload has a bad signature: {woff2}")
 
     print(f"typography check OK: canonical tokens, Odoo copy and {len(FONT_FILES)} font files agree")
     return 0

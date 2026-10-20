@@ -20,9 +20,11 @@ describe("customer-facing UX contracts", () => {
     // The same bilingual families are now licensed, local and deterministic
     // during Docker builds; assert their shipped sources, not Google API names.
     expect(layout).toContain('from "next/font/local"');
-    expect(layout).toContain("ibm-plex-sans-variable.ttf");
+    // The Web app serves the WOFF2 payloads; the Desktop app and the Odoo
+    // add-on bundle the TTF sources.
+    expect(layout).toContain("ibm-plex-sans-variable.woff2");
     for (const weight of [400, 500, 600, 700]) {
-      expect(layout).toContain(`ibm-plex-sans-arabic-${weight}.ttf`);
+      expect(layout).toContain(`ibm-plex-sans-arabic-${weight}.woff2`);
     }
     expect(layout).toContain('variable: "--font-ibm-plex-sans"');
     expect(layout).toContain('variable: "--font-ibm-plex-sans-arabic"');

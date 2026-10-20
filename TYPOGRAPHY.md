@@ -30,9 +30,14 @@ for contexts that declare no direction.
 
 | Consumer | Files | How they load |
 |---|---|---|
-| Web | `src/app/fonts/*.ttf` | `next/font/local` emits `@font-face` with WOFF2 payloads and `font-display: block` |
+| Web | `src/app/fonts/*.woff2` | `next/font/local` emits `@font-face` with `font-display: block` |
 | Desktop | `src/app/fonts/*.ttf` | `@font-face` in `src/desktop/theme-light.css`; Vite bundles the files into the installer, so the app never depends on system-installed fonts |
 | Odoo | `odoo_addons/print_gateway/static/fonts/*.ttf` | `@font-face` in `static/src/css/typography_fonts.css`, addressed by module URL so the server's PDF engine can fetch them |
+
+The WOFF2 payloads are generated from the pinned TTF sources by
+`scripts/build-web-fonts.py` and are committed; the results are pinned by
+digest in `tests/font-assets.node.test.mjs`. The TTF sources stay in the
+repository because the Desktop app and the Odoo add-on serve them.
 
 Weights: 400, 500, 600, 700 for both families. The Latin file is a variable
 font covering 100–700.

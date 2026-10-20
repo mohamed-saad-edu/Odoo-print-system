@@ -13,11 +13,13 @@ import "./globals.css";
 // downloads CSS during builds; its remote response can fail inside Docker
 // even when our own application code and test suites are healthy.
 //
-// `display: "block"`: the files are served from this origin, so the face is
-// available immediately, and a print-critical page must never be laid out with
-// a fallback face whose line boxes differ from the real one.
+// The web ships WOFF2 (65% smaller than the TTF the Desktop app and the
+// Odoo add-on bundle). `display: "block"`: the files are served from this
+// origin, so the face is available immediately, and a print-critical page
+// must never be laid out with a fallback face whose line boxes differ from
+// the real one.
 const ibmPlexSans = localFont({
-  src: "./fonts/ibm-plex-sans-variable.ttf",
+  src: "./fonts/ibm-plex-sans-variable.woff2",
   weight: "100 700",
   style: "normal",
   variable: "--font-ibm-plex-sans",
@@ -26,10 +28,10 @@ const ibmPlexSans = localFont({
 
 const ibmPlexSansArabic = localFont({
   src: [
-    { path: "./fonts/ibm-plex-sans-arabic-400.ttf", weight: "400", style: "normal" },
-    { path: "./fonts/ibm-plex-sans-arabic-500.ttf", weight: "500", style: "normal" },
-    { path: "./fonts/ibm-plex-sans-arabic-600.ttf", weight: "600", style: "normal" },
-    { path: "./fonts/ibm-plex-sans-arabic-700.ttf", weight: "700", style: "normal" },
+    { path: "./fonts/ibm-plex-sans-arabic-400.woff2", weight: "400", style: "normal" },
+    { path: "./fonts/ibm-plex-sans-arabic-500.woff2", weight: "500", style: "normal" },
+    { path: "./fonts/ibm-plex-sans-arabic-600.woff2", weight: "600", style: "normal" },
+    { path: "./fonts/ibm-plex-sans-arabic-700.woff2", weight: "700", style: "normal" },
   ],
   variable: "--font-ibm-plex-sans-arabic",
   display: "block",
