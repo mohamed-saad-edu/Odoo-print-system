@@ -100,6 +100,7 @@ var (
 	procCreateDCW         = modGDI32.NewProc("CreateDCW")
 	procDeleteDC          = modGDI32.NewProc("DeleteDC")
 	procGetDeviceCaps     = modGDI32.NewProc("GetDeviceCaps")
+	procGetClipBox        = modGDI32.NewProc("GetClipBox")
 	procStartDocW         = modGDI32.NewProc("StartDocW")
 	procEndDoc            = modGDI32.NewProc("EndDoc")
 	procAbortDoc          = modGDI32.NewProc("AbortDoc")
@@ -262,9 +263,10 @@ func drawBitmapToPrinter(hdc uintptr, bitmap []byte, width, height, destinationW
 
 	// Direct copy requires driver support; select the existing stretch path
 	// before submission when that capability is absent. Never replay a page.
-	directSupported := deviceCaps(hdc, capRasterCaps)&rcDIBToDevice != 0
+	rasterCaps := deviceCaps(hdc, capRasterCaps)
+	directSupported := rasterCaps&rcDIBToDevice != 0
 	err := transferGDIBitmap(width != destinationWidth || height != destinationHeight, directSupported, func() (int32, error) {
-		ret, _, _ := procSetDIBitsToDevice.Call(
+		ret, _, callErr := procSetDIBitsToDevice.Call(
 			hdc,
 			uintptr(x), uintptr(y), uintptr(width), uintptr(height),
 			0, 0, 0, uintptr(height),
@@ -272,7 +274,7 @@ func drawBitmapToPrinter(hdc uintptr, bitmap []byte, width, height, destinationW
 			uintptr(unsafe.Pointer(&info)),
 			dibRGBColors,
 		)
-		return int32(ret), nil
+		return int32(ret), callErr
 	}, func() (int32, error) {
 		previousMode, _, modeErr := procSetStretchBltMode.Call(hdc, halftone)
 		if previousMode == 0 {
@@ -282,7 +284,7 @@ func drawBitmapToPrinter(hdc uintptr, bitmap []byte, width, height, destinationW
 		if brushOK == 0 {
 			return 0, fmt.Errorf("SetBrushOrgEx after HALFTONE failed: %w", brushErr)
 		}
-		ret, _, _ := procStretchDIBits.Call(
+		ret, _, callErr := procStretchDIBits.Call(
 			hdc,
 			uintptr(x), uintptr(y), uintptr(destinationWidth), uintptr(destinationHeight),
 			0, 0, uintptr(width), uintptr(height),
@@ -291,10 +293,14 @@ func drawBitmapToPrinter(hdc uintptr, bitmap []byte, width, height, destinationW
 			dibRGBColors,
 			srccopy,
 		)
-		return int32(ret), nil
+		return int32(ret), callErr
 	})
 	if err != nil {
-		return fmt.Errorf("GDI bitmap %dx%d to %d,%d %dx%d (32-bit BI_RGB, top-down) failed: %w", width, height, x, y, destinationWidth, destinationHeight, err)
+		var clip windows.Rect
+		kind, _, _ := procGetClipBox.Call(hdc, uintptr(unsafe.Pointer(&clip)))
+		return fmt.Errorf("GDI bitmap %dx%d to %d,%d %dx%d (32-bit BI_RGB, top-down) failed: %w; raster_caps=%#x clip_kind=%d clip=(%d,%d)-(%d,%d)",
+			width, height, x, y, destinationWidth, destinationHeight, err,
+			rasterCaps, int32(kind), clip.Left, clip.Top, clip.Right, clip.Bottom)
 	}
 	return nil
 }

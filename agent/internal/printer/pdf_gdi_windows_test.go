@@ -4,9 +4,17 @@ package printer
 
 import (
 	"runtime"
+	"strings"
 	"testing"
 	"unsafe"
 )
+
+func TestGDIBitmapNativeFailureDiagnostic(t *testing.T) {
+	err := drawBitmapToPrinter(0, make([]byte, 4), 1, 1, 1, 1, 0, 0)
+	if err == nil || !strings.Contains(err.Error(), "raster_caps=0x0 clip_kind=0") {
+		t.Fatalf("invalid DC failure lacks native geometry context: %v", err)
+	}
+}
 
 // Exercise the real Win32 ABI and pixels without submitting a print job.
 func TestGDIBitmapNativeTransfer(t *testing.T) {
@@ -74,5 +82,29 @@ func TestGDIBitmapNativeTransfer(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestGDIBitmapMetafileTransfer(t *testing.T) {
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	for _, destWidth := range []int{17, 34} {
+		hdc, _, err := modGDI32.NewProc("CreateEnhMetaFileW").Call(0, 0, 0, 0)
+		if hdc == 0 {
+			t.Fatalf("CreateEnhMetaFileW: %v", err)
+		}
+		func() {
+			defer func() {
+				emf, _, err := modGDI32.NewProc("CloseEnhMetaFile").Call(hdc)
+				if emf == 0 {
+					t.Errorf("CloseEnhMetaFile: %v", err)
+					return
+				}
+				modGDI32.NewProc("DeleteEnhMetaFile").Call(emf)
+			}()
+			if err := drawBitmapToPrinter(hdc, make([]byte, 17*11*4), 17, 11, destWidth, 11, 0, 0); err != nil {
+				t.Errorf("metafile destination width %d: %v", destWidth, err)
+			}
+		}()
 	}
 }

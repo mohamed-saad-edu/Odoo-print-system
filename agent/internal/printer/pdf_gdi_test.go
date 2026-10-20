@@ -2,9 +2,33 @@ package printer
 
 import (
 	"errors"
+	"fmt"
 	"strings"
+	"syscall"
 	"testing"
 )
+
+func TestGDIBitmapTransferPreservesNativeDiagnostic(t *testing.T) {
+	for _, code := range []syscall.Errno{0, 6, 87} {
+		for _, resize := range []bool{false, true} {
+			calls := 0
+			transfer := func() (int32, error) { calls++; return 0, code }
+			err := transferGDIBitmap(resize, true, transfer, transfer)
+			want := fmt.Sprintf("win32_last_error=%d", code)
+			if err == nil || calls != 1 || !strings.Contains(err.Error(), "returned 0") || !strings.Contains(err.Error(), want) {
+				t.Fatalf("native diagnostic lost: code=%d resize=%t calls=%d err=%v", code, resize, calls, err)
+			}
+		}
+	}
+
+	// LazyProc.Call always returns an Errno, even when the primary result succeeds.
+	for _, code := range []syscall.Errno{0, 87} {
+		transfer := func() (int32, error) { return 42, code }
+		if err := transferGDIBitmap(false, true, transfer, transfer); err != nil {
+			t.Fatalf("successful drawing rejected by last-error diagnostic: %v", err)
+		}
+	}
+}
 
 func TestGDIBitmapTransferChoosesOneSubmission(t *testing.T) {
 	for _, test := range []struct {
