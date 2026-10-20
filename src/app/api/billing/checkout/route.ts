@@ -479,13 +479,29 @@ async function handleCheckout(req: Request, subscriptionVerified = false): Promi
             reason: "Stripe returned more subscriptions than can be reconciled safely in one bounded request.",
           };
         } else {
-          const nonterminal = page.data.filter((subscription) => {
+          const owned = page.data.filter((subscription) => {
             const customerId = typeof subscription.customer === "string" ? subscription.customer : null;
+            return customerId === stale.customerId;
+          });
+          const nonterminal = owned.filter((subscription) => {
             const status = localSubscriptionStatus(subscription.status);
-            return customerId === stale.customerId && !!status && STRIPE_NONTERMINAL_SUBSCRIPTION_STATUSES.has(status);
+            return !!status && STRIPE_NONTERMINAL_SUBSCRIPTION_STATUSES.has(status);
+          });
+          // A subscription whose Stripe lifecycle state this build does not
+          // recognize must never be treated as "no subscription exists": that
+          // would mint a second Stripe subscription for a customer who already
+          // has one. Block recovery instead and let an operator reconcile.
+          const unmappable = owned.filter((subscription) => {
+            const raw = typeof subscription.status === "string" ? subscription.status : "";
+            return raw.length > 0 && localSubscriptionStatus(raw) === null;
           });
 
-          if (nonterminal.length > 1) {
+          if (unmappable.length > 0) {
+            state = {
+              kind: "recovery_blocked",
+              reason: "Stripe reports a subscription whose lifecycle state could not be mapped. Reconcile manually.",
+            };
+          } else if (nonterminal.length > 1) {
             state = {
               kind: "recovery_blocked",
               reason: "Stripe reports multiple non-terminal subscriptions for this workspace customer.",

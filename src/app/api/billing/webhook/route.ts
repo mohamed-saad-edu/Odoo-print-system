@@ -9,7 +9,27 @@ import { stripeRetrieve, stripeSubscriptionPeriod, verifyStripeSignature } from 
 import { writeAuditEvent } from "../../../../lib/audit";
 import { hasBodyOverLimit } from "../../../../lib/request-limits";
 
-function statusOf(status: string): "trialing" | "active" | "past_due" | "incomplete" | "incomplete_expired" | "unpaid" | "paused" | "cancelled" {
+type LocalSubscriptionStatus =
+  | "trialing"
+  | "active"
+  | "past_due"
+  | "incomplete"
+  | "incomplete_expired"
+  | "unpaid"
+  | "paused"
+  | "cancelled";
+
+/**
+ * Map a Stripe subscription status to the local lifecycle value.
+ *
+ * Returns null for a status this build does not recognize. Stripe may add
+ * lifecycle states, and a state this build cannot interpret must never be
+ * silently collapsed into "cancelled": that would revoke a paying tenant's
+ * access and erase its checkout state on a mapping gap alone. Both Stripe
+ * spellings of the terminal state are accepted explicitly because the raw
+ * Stripe value is "canceled" while the local column stores "cancelled".
+ */
+function statusOf(status: string): LocalSubscriptionStatus | null {
   if (status === "trialing") return "trialing";
   if (status === "active") return "active";
   if (status === "past_due") return "past_due";
@@ -17,7 +37,8 @@ function statusOf(status: string): "trialing" | "active" | "past_due" | "incompl
   if (status === "incomplete_expired") return "incomplete_expired";
   if (status === "unpaid") return "unpaid";
   if (status === "paused") return "paused";
-  return "cancelled";
+  if (status === "canceled" || status === "cancelled") return "cancelled";
+  return null;
 }
 
 const INTERNAL_EVENT_KEY = "__yaseir";
@@ -452,7 +473,28 @@ async function handleWebhook(req: Request, snapshotRetry = 0): Promise<NextRespo
             (currentSnapshotAuthoritative || terminalDeleteCanUpdate || isNewerThanStoredEvent)
             && !(tenantRow.status === "cancelled" && tenantRow.stripeSubscriptionId === subId && !terminalDelete && !adoptableCheckoutBinding);
           if (sameSubscriptionCanUpdate || newerReplacementSubscription) {
-            const nextStatus = typeof stateObj.status === "string" ? statusOf(stateObj.status) : tenantRow.status;
+            const rawStatus = typeof stateObj.status === "string" ? stateObj.status : null;
+            const mappedStatus = rawStatus === null ? null : statusOf(rawStatus);
+            // An unrecognized Stripe lifecycle state must never be collapsed
+            // into "cancelled": that silently revokes a paying tenant's
+            // access and erases its checkout state on a mapping gap alone.
+            // Preserve the last known local status and record the unknown
+            // value so operators can act on it. A signed deletion event stays
+            // terminal: the event type itself is the authority there.
+            const nextStatus = terminalDelete
+              ? "cancelled"
+              : (mappedStatus ?? tenantRow.status);
+            if (rawStatus !== null && mappedStatus === null && !terminalDelete) {
+              await writeAuditEvent({
+                tenantId,
+                actorType: "platform",
+                actorId: "stripe",
+                action: "billing.subscription.unknown_status",
+                resourceType: "billing_event",
+                resourceId: eventId,
+                metadata: { stripeStatus: rawStatus, preservedStatus: nextStatus },
+              }, tx);
+            }
             const subscriptionPeriod = stripeSubscriptionPeriod(stateObj);
             const currentPeriodStart = subscriptionPeriod.start ?? parseDbTime(tenantRow.currentPeriodStart);
             if (!currentPeriodStart) throw new Error("subscription current_period_start is missing or invalid");

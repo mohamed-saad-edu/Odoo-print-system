@@ -787,6 +787,61 @@ suite("Billing Webhook Route (POST /api/billing/webhook)", () => {
     }
   });
 
+  it("6b. an unrecognized Stripe status preserves access and is audited (BILL-03)", async () => {
+    const tenantId = `tenant_${nanoid(8)}`;
+    const planId = `plan_${nanoid(8)}`;
+    const stripePriceId = `price_${nanoid(8)}`;
+    const customerId = `cus_${nanoid(8)}`;
+    const subscriptionId = `sub_${nanoid(8)}`;
+
+    await createTenant(tenantId);
+    await createPlan(planId, "Starter Plan", stripePriceId);
+    await createSubscription(tenantId, planId, customerId, subscriptionId, "active");
+
+    // Stripe may introduce a lifecycle state this build does not know yet.
+    // It must not be collapsed into "cancelled", which would silently revoke
+    // a paying tenant's access and erase its checkout state.
+    const unknownStatus = "paused_past_due";
+    const payload = JSON.stringify({
+      id: `evt_unknown_status_${nanoid(8)}`,
+      type: "customer.subscription.updated",
+      created: Math.floor(Date.now() / 1000),
+      data: {
+        object: {
+          id: subscriptionId,
+          customer: customerId,
+          status: unknownStatus,
+          items: { data: [{ price: { id: stripePriceId } }] },
+          metadata: { tenant_id: tenantId },
+        },
+      },
+    });
+    stripeRetrieveMock.mockResolvedValueOnce({
+      id: subscriptionId,
+      object: "subscription",
+      customer: customerId,
+      status: unknownStatus,
+      items: { data: [{ price: { id: stripePriceId } }] },
+      metadata: { tenant_id: tenantId },
+      current_period_end: Math.floor(Date.now() / 1000) + 3600,
+      cancel_at_period_end: false,
+    });
+    const res = await POST(createWebhookRequest(payload, signPayload(payload)));
+    expect(res.status).toBe(200);
+
+    const sub = await db.query.tenantSubscriptions.findFirst({
+      where: eq(tenantSubscriptions.tenantId, tenantId),
+    });
+    expect(sub?.status).toBe("active");
+
+    const audits = await db.query.auditEvents.findMany({
+      where: eq(auditEvents.tenantId, tenantId),
+    });
+    const unknownAudit = audits.find((a) => a.action === "billing.subscription.unknown_status");
+    expect(unknownAudit).toBeDefined();
+    expect((unknownAudit?.metadata as Record<string, unknown> | null)?.stripeStatus).toBe(unknownStatus);
+  });
+
   it("7. invoice paid event: records the payment fact without overriding subscription lifecycle state", async () => {
     const tenantId = `tenant_${nanoid(8)}`;
     const planId = `plan_${nanoid(8)}`;
