@@ -298,7 +298,7 @@ all four destination corners while retaining the earlier interior checks.
 | Changed file | Result and validation |
 | --- | --- |
 | `image.go` | Removes the misplaced Windows form-height limit from source wrapping; existing input and resource limits remain |
-| `pdf_receipt.go` | Moves the existing private page plan into shared code; validates the sole generated image; fits its horizontal content once and places receipts at the printable top |
+| `pdf_receipt.go` | Shares only page content geometry; Windows media settings remain in the Windows file. Validates the sole generated image, fits its horizontal content once and places receipts at the printable top |
 | `spooler_windows.go` | Marks successful explicit/detected receipt-image conversions using a private context key; external PDF uploads are unmarked |
 | `pdf_windows.go` | Negotiates media using original page dimensions; validates, renders and draws the receipt content bounds; logs sanitized geometry; ordinary PDF behavior remains intact |
 | `thermal_receipt_geometry_test.go` | Configured/detected long-image regressions, original JPEG byte/aspect preservation and bounded fitting; efficient shared boundary fixture |

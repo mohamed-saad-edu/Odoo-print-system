@@ -11,8 +11,6 @@ import (
 
 type pdfPagePlan struct {
 	width, height float64
-	paper         pdfPaper
-	mode          []byte
 	crop          *requests.RenderPageCrop
 }
 

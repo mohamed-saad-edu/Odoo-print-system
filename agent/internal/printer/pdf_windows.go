@@ -461,7 +461,12 @@ func renderAndPrintPDFWithPDFiumResultObserved(ctx context.Context, printerName 
 	if receipt && pages.PageCount != 1 {
 		return fmt.Errorf("generated receipt PDF must contain exactly one page")
 	}
-	plans := make([]pdfPagePlan, pages.PageCount)
+	type pagePlan struct {
+		pdfPagePlan
+		paper pdfPaper
+		mode  []byte
+	}
+	plans := make([]pagePlan, pages.PageCount)
 	modes := make(map[pdfPaper][]byte)
 	var currentMode []byte
 	currentModeCounted := false
@@ -510,7 +515,7 @@ func renderAndPrintPDFWithPDFiumResultObserved(ctx context.Context, printerName 
 			}
 			modes[paper] = mode
 		}
-		plan := pdfPagePlan{width: size.Width, height: size.Height, paper: paper, mode: mode}
+		plan := pagePlan{pdfPagePlan: pdfPagePlan{width: size.Width, height: size.Height}, paper: paper, mode: mode}
 		if receipt {
 			plan.crop, err = receiptPDFCrop(instance, requests.Page{ByIndex: &requests.PageByIndex{Document: doc.Document, Index: pageIndex}}, size.Width, size.Height)
 			if err != nil {
