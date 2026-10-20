@@ -771,3 +771,49 @@ def test_print_activity_record_rules_reach_branch_rows_from_the_root_operator():
     config_rule = security[security.index('id="rule_gateway_config_company"'):]
     config_rule = config_rule[:config_rule.index("</record>")]
     assert "company_id.child_ids" in config_rule
+
+
+def test_pos_receipt_never_falls_back_to_native_when_the_enablement_probe_fails():
+    # ODO-02: the enablement probe is a local read that submits nothing, so
+    # its failure PROVES that no receipt reached the Gateway. It does NOT
+    # prove that native printing is the configured policy. Falling back to
+    # native there would print behind the operator's back, so the path must
+    # stay fail-closed with an actionable message instead.
+    source = read("static/src/js/pos_print_router.js")
+    receipt_start = source.index("async printReceipt")
+    receipt_end = source.index("getOrderData", receipt_start)
+    receipt = source[receipt_start:receipt_end]
+
+    # The probe is wrapped in its own try/catch that never reaches
+    # super.printReceipt on failure.
+    probe_index = receipt.index("is_gateway_printing_enabled")
+    probe_block = receipt[probe_index - 400: probe_index + 900]
+    assert "catch (probeError)" in probe_block
+    assert "return false;" in probe_block
+    assert "super.printReceipt" not in probe_block
+
+    # The native path is only reachable when the probe answered definitively.
+    assert receipt.index("if (gatewayEnabled !== true)") > receipt.index("catch (probeError)")
+    assert "return super.printReceipt" in receipt
+
+
+def test_odoo_failure_paths_surface_the_durable_operation_reference():
+    # ODO-01/ODO-02: the operator was told to "check Print Activity" but the
+    # toast never carried the operation reference, so the row could not be
+    # found. The durable reference must be surfaced on the fail-closed paths.
+    interceptor = read("static/src/js/report_interceptor.js")
+    assert "Operation reference: %s" in interceptor
+    assert "operation?.request?.operation_id" in interceptor
+
+    pos = read("static/src/js/pos_print_router.js")
+    assert "operation reference" in pos
+    assert "activePrintClaim?.id" in pos
+
+
+def test_dispatch_exception_keeps_the_original_detail_server_side():
+    # ODO-03: the client-facing message stays generic (it must not leak
+    # internals), but the server log must keep the original exception and
+    # its traceback for diagnosis.
+    binding = read("models/binding.py")
+    assert 'exc_info=True' in binding
+    assert "Failed to execute silent print route" in binding

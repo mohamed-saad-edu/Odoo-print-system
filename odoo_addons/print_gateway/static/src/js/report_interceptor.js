@@ -212,8 +212,14 @@ async function silentPrintReportHandler(action, options, env) {
         }
         // An RPC exception/timeout does NOT prove the Gateway never received
         // the job. Do not suggest a fresh operation ID or automatic reprint.
+        // The durable operation reference is surfaced so the operator can
+        // find this exact row in Print Activity (searched by "Reference")
+        // and reconcile it, instead of guessing which job failed.
+        const reference = operation?.request?.operation_id || null;
         notification.add(
-            _t("Print outcome unconfirmed (%s). Native PDF download cancelled. Check Print Activity and printer before retrying.", gatewayServerMessage(err) || _t("Printing service response unavailable")),
+            reference
+                ? _t("Print outcome unconfirmed (%s). Native PDF download cancelled. Operation reference: %s. Check Print Activity and printer before retrying.", gatewayServerMessage(err) || _t("Printing service response unavailable"), reference)
+                : _t("Print outcome unconfirmed (%s). Native PDF download cancelled. Check Print Activity and printer before retrying.", gatewayServerMessage(err) || _t("Printing service response unavailable")),
             { type: "warning", sticky: true, buttons: [openJobsButton(env)] }
         );
         return true; // FAIL-CLOSED: Dispatch call failed, cancel native PDF dialog

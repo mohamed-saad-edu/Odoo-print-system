@@ -3759,6 +3759,16 @@ msgid "Print outcome unconfirmed (%s). Native PDF download cancelled. Check Prin
 msgstr "نتيجة الطباعة غير مؤكدة (%s). أُلغي تنزيل PDF الأصلي. راجع سجل الطباعة والطابعة قبل إعادة المحاولة."
 
 #. module: print_gateway
+#: code:addons/print_gateway/static/src/js/pos_print_router.js:0
+msgid "The printing service could not be reached, so no receipt was sent. Nothing was printed; retrying is safe."
+msgstr "تعذّر الوصول إلى خدمة الطباعة، لذلك لم يتم إرسال أي إيصال. لم تُطبع أي ورقة؛ إعادة المحاولة آمنة."
+
+#. module: print_gateway
+#: code:addons/print_gateway/static/src/js/report_interceptor.js:0
+msgid "Print outcome unconfirmed (%s). Native PDF download cancelled. Operation reference: %s. Check Print Activity and printer before retrying."
+msgstr "نتيجة الطباعة غير مؤكدة (%s). أُلغي تنزيل PDF الأصلي. مرجع العملية: %s. راجع سجل الطباعة والطابعة قبل إعادة المحاولة."
+
+#. module: print_gateway
 #: code:addons/print_gateway/static/src/js/report_interceptor.js:0
 msgid "Print request returned no reliable status. Native PDF download cancelled. Check Print Activity and the printer before retrying."
 msgstr "لم يُرجع طلب الطباعة حالة موثوقة. أُلغي تنزيل PDF الأصلي. راجع السجل والطابعة قبل إعادة المحاولة."

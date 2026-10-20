@@ -287,9 +287,25 @@ patch(PosStore.prototype, {
         let submissionAttempted = false;
         try {
             const sessionId = this.session?.id;
-            const gatewayEnabled = sessionId
-                ? await gatewayDataCall(this, "pos.session", "is_gateway_printing_enabled", [[sessionId]], {}, true)
-                : false;
+            let gatewayEnabled = false;
+            try {
+                gatewayEnabled = sessionId
+                    ? await gatewayDataCall(this, "pos.session", "is_gateway_printing_enabled", [[sessionId]], {}, true)
+                    : false;
+            } catch (probeError) {
+                // The enablement probe is a local read that submits nothing, so
+                // its failure PROVES that no receipt was sent to the Gateway
+                // and a retry cannot duplicate paper. It does NOT prove that
+                // native printing is the configured policy: the probe could
+                // not read the Gateway configuration at all. Fail closed with
+                // an actionable message instead of printing natively behind
+                // the operator's back.
+                this.notification.add(
+                    _t("The printing service could not be reached, so no receipt was sent. Nothing was printed; retrying is safe."),
+                    { type: "danger", sticky: true }
+                );
+                return false;
+            }
 
             if (gatewayEnabled !== true) {
                 return super.printReceipt({ order: currentOrder, basic, printBillActionTriggered });
@@ -462,6 +478,12 @@ patch(PosStore.prototype, {
                 return false;
             }
             this.notification.add(gatewayServerMessage(error) || _t("Receipt printing failed."), { type: "danger" });
+            // Surface the durable operation reference so the operator can find
+            // this exact row in Print Activity (searched by "Reference") and
+            // reconcile it, instead of guessing which job failed.
+            if (activePrintClaim?.id) {
+                console.warn("Receipt print failed; operation reference:", activePrintClaim.id);
+            }
             return false;
         } finally {
             pendingReceipts.delete(pendingKey);
