@@ -4,13 +4,16 @@ import { printJobs, printJobReceipts } from "../db/schema";
 import { incrementMetric } from "./metrics";
 import { idempotencyDigest } from "./print-job-service";
 import { PRINT_JOB_RETENTION_HOURS, RECEIPT_MATERIALIZE_BATCH_ROWS } from "../shared/job-retention";
-import { agentStaleThresholdSeconds } from "./stale-threshold";
+import { agentStaleThresholdSeconds, stalePrintingSeconds } from "./stale-threshold";
 
 // Claim-lease staleness historically hardcoded at 90s. It now follows the same
 // STALE_AGENT_THRESHOLD_SECONDS env as the presence/claim gates so tuning the
 // env cannot diverge the UI/offline display from sweeper requeue behavior.
 // STALE_CLAIM_SECONDS is kept as the default/fallback value (deprecated alias).
 export const STALE_CLAIM_SECONDS = 90;
+// Execution lease for a job already reported as `printing`. The default stays
+// at the historical 10 minutes; deployments with slower-than-expected
+// printers can raise it with STALE_PRINTING_SECONDS (clamped 120-3600).
 export const STALE_PRINTING_SECONDS = 10 * 60;
 export const MAX_RETRIES = 5;
 export const MAX_DELIVERY_ATTEMPTS = 5;
@@ -203,7 +206,7 @@ export async function sweepPrintJobs(scope: { agentId?: string } = {}): Promise<
   const stalePrinting = await db.execute(sql`
     WITH candidates AS (
       SELECT id FROM print_jobs
-      WHERE status='printing' AND updated_at < now() - make_interval(secs => ${STALE_PRINTING_SECONDS}) ${agentFilter}
+      WHERE status='printing' AND updated_at < now() - make_interval(secs => ${stalePrintingSeconds()}) ${agentFilter}
       ORDER BY updated_at ASC
       LIMIT ${SWEEP_BATCH}
       FOR UPDATE SKIP LOCKED
