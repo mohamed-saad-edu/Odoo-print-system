@@ -64,7 +64,7 @@ export async function POST(req: Request) {
       return managerClaims?.kind === "manager" ? managerClaims : null;
     }
     if (managerClaims) {
-      await revokeManagerSession(managerClaims.jti);
+      await revokeManagerSession(managerClaims.jti, managerClaims.tenantId);
       return managerClaims;
     }
     return null;

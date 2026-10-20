@@ -857,7 +857,13 @@ class PrintGatewayBinding(models.Model):
                         "fail_closed": True,
                     }
 
-            _logger.warning("Failed to execute silent print route: %s", exc)
+            # Keep the original failure detail in the server log (with the
+            # traceback) so an operator can diagnose a routing/dispatch
+            # failure. The client-facing message stays generic: it is a
+            # user-facing statement about an uncertain outcome, and the
+            # exception text can contain internals that must not reach the
+            # browser.
+            _logger.warning("Failed to execute silent print route: %s", exc, exc_info=True)
             return {
                 "dispatched": False,
                 "success": False,

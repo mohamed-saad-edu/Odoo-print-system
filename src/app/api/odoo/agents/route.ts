@@ -17,8 +17,33 @@ export async function GET(req: Request) {
   // exact same database-authoritative billing predicate as pairing, printing,
   // and resource admission. This intentionally keeps past_due tenants usable
   // during Stripe recovery even after the nominal period end.
+  //
+  // The billing decision and the inventory read run in ONE transaction, so a
+  // subscription that lapses between them cannot still expose tenant runtime
+  // inventory. The subscription row lock the check takes is held until the
+  // read completes, and the webhook that revokes access waits for it.
+  let rows: Array<{
+    id: string;
+    name: string;
+    status: string | null;
+    lifecycle: string;
+    lastSeenAt: Date | null;
+  }>;
   try {
-    await requireTenantBillingAccess(db, apiKey.tenantId);
+    rows = await db.transaction(async (tx) => {
+      await requireTenantBillingAccess(tx, apiKey.tenantId);
+      return tx
+        .select({
+          id: agents.id,
+          name: agents.name,
+          status: agents.status,
+          lifecycle: agents.lifecycle,
+          lastSeenAt: agents.lastSeenAt,
+        })
+        .from(agents)
+        .where(and(eq(agents.lifecycle, "active"), eq(agents.tenantId, apiKey.tenantId)))
+        .orderBy(asc(agents.name));
+    });
   } catch (error) {
     if (error instanceof TenantSubscriptionRequiredError) {
       return NextResponse.json(
@@ -32,18 +57,6 @@ export async function GET(req: Request) {
   // Agent heartbeat timestamps are still rendered using the calibrated Gateway
   // clock because availability is a host-side presentation calculation.
   await refreshClockSkew();
-
-  const rows = await db
-    .select({
-      id: agents.id,
-      name: agents.name,
-      status: agents.status,
-      lifecycle: agents.lifecycle,
-      lastSeenAt: agents.lastSeenAt,
-    })
-    .from(agents)
-    .where(and(eq(agents.lifecycle, "active"), eq(agents.tenantId, apiKey.tenantId)))
-    .orderBy(asc(agents.name));
 
   const now = gatewayNow();
   const sanitized = rows.map((agent) => ({

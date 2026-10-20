@@ -62,6 +62,10 @@ services:
       YASEIR_DEPLOYMENT_ID: ${YASEIR_DEPLOYMENT_ID:-}
       # Opt-in only; test queue never creates a physical printer or print job.
       YASEIR_E2E_CAPTURE_ENABLED: ${YASEIR_E2E_CAPTURE_ENABLED:-0}
+      # Set to 1 once every print caller sends a stable operation id; v1 then
+      # rejects a submission without an idempotencyKey instead of accepting an
+      # undeduplicatable print (see API.md).
+      YASEIR_REQUIRE_IDEMPOTENCY_KEY: ${YASEIR_REQUIRE_IDEMPOTENCY_KEY:-0}
       APP_BASE_URL: ${APP_BASE_URL:?APP_BASE_URL must be set to the public Gateway URL}
       # Optional providers stay disabled when unset; their absence must not
       # prevent the core Gateway from starting.
@@ -105,7 +109,7 @@ services:
       - printer_backend
 
   caddy:
-    image: caddy:2.11.4-alpine@sha256:de23def33b17fb5d1290b0f6c2add1d70780e52341896c00a4c8a2a2fe9d355e
+    image: caddy:2.11.7-alpine@sha256:d8542f48d34a9cf4e4c11a478865229840e87e4c96ea3f439101f31a5d35f75f
     restart: unless-stopped
     depends_on:
       gateway:

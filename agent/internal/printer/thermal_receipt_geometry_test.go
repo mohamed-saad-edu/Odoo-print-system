@@ -58,6 +58,8 @@ func TestThermalReceiptPDFUsesActualPhysicalPaper(t *testing.T) {
 		{"58mm_180dpi", 58, 360, 180},
 		{"80mm_203dpi", 80, 576, 203},
 		{"80mm_180dpi", 80, 512, 180},
+		{"80mm_300dpi", 80, 850, 300},
+		{"80mm_600dpi", 80, 1700, 600},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			pdf, err := JPEGToPDFReceipt(jpegBytes, tc.mm, tc.dots, tc.dpi)
@@ -88,11 +90,28 @@ func TestThermalReceiptPDFUsesActualPhysicalPaper(t *testing.T) {
 func TestThermalReceiptRejectsUnknownOrUnsafeProfile(t *testing.T) {
 	pdf := testReceiptJPEG(t, 384, 512)
 	for _, profile := range []struct{ paper, dots, dpi int }{
-		{210, 576, 203}, {80, 90000, 203}, {58, 100, 203},
+		{210, 576, 203}, {80, 90000, 203}, {58, 100, 203}, {80, 1700, 0},
 	} {
 		if _, err := JPEGToPDFReceipt(pdf, profile.paper, profile.dots, profile.dpi); err == nil {
 			t.Fatalf("invalid dimensions accepted: %+v", profile)
 		}
+	}
+}
+
+func TestThermalReceiptPDFPreservesReportedDPI(t *testing.T) {
+	data := testReceiptJPEG(t, 512, 900)
+	for _, dpi := range []int{180, 200, 203, 204, 300} {
+		t.Run(strconv.Itoa(dpi), func(t *testing.T) {
+			pdf, err := JPEGToPDFReceipt(data, 80, 512, dpi)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, _, width, height, _, _ := pdfImageGeometry(t, pdf)
+			want := math.Min(512*72/float64(dpi), 76*72/25.4)
+			if math.Abs(width-want) > .01 || math.Abs(height/width-900.0/512) > .001 {
+				t.Fatalf("reported %d DPI changed: image=%.2fx%.2fpt, want width=%.2fpt", dpi, width, height, want)
+			}
+		})
 	}
 }
 
@@ -105,6 +124,10 @@ func TestSpoolerProfilePrefersExplicitDotsAndDPI(t *testing.T) {
 		{map[string]interface{}{"max_paper_width": 576, "print_dpi": 203}, 80, 576, 203},
 		{map[string]interface{}{"print_dpi": 203}, 58, 384, 203},
 		{map[string]interface{}{"print_dpi": 180}, 58, 360, 180},
+		{map[string]interface{}{"max_paper_width": 512, "print_dpi": 300}, 80, 512, 300},
+		{map[string]interface{}{"max_paper_width": 512, "dpi": 200}, 80, 512, 200},
+		{map[string]interface{}{"max_paper_width": 850, "print_dpi": 300}, 80, 850, 300},
+		{map[string]interface{}{"max_paper_width": 1700, "print_dpi": 600}, 80, 1700, 600},
 	} {
 		pc := config.PrinterConfig{PaperWidthMM: tc.mm, Capabilities: tc.caps}
 		mm, dots, dpi := receiptPaperProfile(pc)

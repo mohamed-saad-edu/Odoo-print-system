@@ -7,7 +7,7 @@ import { runtimeSecret, __clearSecretCacheForTests } from "../src/lib/runtime-se
 describe("runtime secret cache (S-7)", () => {
   afterEach(() => { vi.unstubAllEnvs(); vi.useRealTimers(); __clearSecretCacheForTests(); });
 
-  it("memoizes file reads and picks up rotation after the TTL", () => {
+  it("memoizes file reads while the file is unchanged", () => {
     const dir = mkdtempSync(join(tmpdir(), "yaseir-secret-"));
     const file = join(dir, "token");
     writeFileSync(file, "first-value");
@@ -15,12 +15,24 @@ describe("runtime secret cache (S-7)", () => {
     vi.useFakeTimers();
     vi.setSystemTime(1_000);
     expect(runtimeSecret("TEST_CACHE_SECRET")).toBe("first-value");
-    writeFileSync(file, "second-value");
-    // Within TTL the cached value is served without another read.
+    // An unchanged file keeps serving the memoized value without a re-read.
     vi.setSystemTime(10_000);
     expect(runtimeSecret("TEST_CACHE_SECRET")).toBe("first-value");
-    // After the 30s TTL the rotated file value is picked up.
     vi.setSystemTime(40_000);
+    expect(runtimeSecret("TEST_CACHE_SECRET")).toBe("first-value");
+  });
+
+  it("picks up a rotated secret immediately instead of after the TTL", () => {
+    const dir = mkdtempSync(join(tmpdir(), "yaseir-secret-rotate-"));
+    const file = join(dir, "token");
+    writeFileSync(file, "first-value");
+    vi.stubEnv("TEST_CACHE_SECRET_FILE", file);
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    expect(runtimeSecret("TEST_CACHE_SECRET")).toBe("first-value");
+    // Rotate the file. A revoked credential must stop being accepted on the
+    // next request, not up to 30 seconds later.
+    writeFileSync(file, "second-value");
     expect(runtimeSecret("TEST_CACHE_SECRET")).toBe("second-value");
   });
 

@@ -1,6 +1,6 @@
 # Odoo Integration Guide
 
-> Module: `print_gateway` | Version: 19.0.2.15.0 | Odoo: 19 Community Edition
+> Module: `print_gateway` | Version: 19.0.2.16.0 | Odoo: 19 Community Edition
 
 ## Overview
 
@@ -194,6 +194,22 @@ Status reconciliation and activation synchronization yield when Odoo 19's
 start a long sequence of individual HTTP requests without another budget check.
 Existing retry delays, exact company/binding ownership, and ambiguous physical
 outcomes remain authoritative. See the [official Odoo 19 scheduler implementation](https://github.com/odoo/odoo/blob/19.0/odoo/addons/base/models/ir_cron.py).
+
+### Shared typography system (19.0.2.16.0)
+
+The add-on now ships the shared typography system used by the Web console and
+the Desktop Manager. The module carries a byte-identical copy of
+`typography/tokens.css` (`static/src/css/typography_tokens.css`) and the IBM Plex
+families under `static/fonts/`, declared with `@font-face` and
+`font-display: block` in `static/src/css/typography_fonts.css`. The font URLs
+are module-relative, so the server's PDF engine can fetch them while rendering
+a report. A printable document opts in with the `yaseir-typography` class;
+Odoo's own reports are untouched.
+
+The POS receipt raster is a deliberate exception and renders exactly as
+before: it is a fixed-dot canvas measured against the printer's dot budget,
+its metrics are pinned by the measured geometry fixture, and the capture runs
+with font embedding disabled, so it must never depend on a web font.
 
 Upgrade with `-u print_gateway` and rebuild/reload the normal Odoo asset bundles
 to apply the menu and POS changes. This release changes no schema or dependency;

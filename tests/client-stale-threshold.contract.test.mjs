@@ -37,6 +37,29 @@ test("server environment and propagated client values use the same bounded polic
   assert.equal(mod.resolveAgentStaleThresholdSeconds(3601), 90);
 });
 
+test("the printing execution lease is configurable and bounded", async () => {
+  const mod = await loadStaleThreshold();
+  // Default stays at the historical 10 minutes so an existing deployment
+  // keeps its current recovery behaviour.
+  assert.equal(mod.stalePrintingSeconds(), 600);
+  assert.equal(mod.resolveStalePrintingSeconds(120), 120);
+  assert.equal(mod.resolveStalePrintingSeconds(1800), 1800);
+  // Out-of-range values fall back to the default instead of disabling or
+  // collapsing the execution lease.
+  assert.equal(mod.resolveStalePrintingSeconds(60), 600);
+  assert.equal(mod.resolveStalePrintingSeconds(100000), 600);
+  assert.equal(mod.resolveStalePrintingSeconds("not-a-number"), 600);
+  assert.equal(mod.resolveStalePrintingSeconds(undefined), 600);
+
+  const configured = await loadStaleThreshold({ process: { env: { STALE_PRINTING_SECONDS: "900" } } });
+  assert.equal(configured.stalePrintingSeconds(), 900);
+
+  // The sweeper must consume the resolved lease, not the historical constant.
+  const jobMaintenance = read("src/lib/job-maintenance.ts");
+  assert.match(jobMaintenance, /make_interval\(secs => \$\{stalePrintingSeconds\(\)\}\)/);
+  assert.doesNotMatch(jobMaintenance, /make_interval\(secs => \$\{STALE_PRINTING_SECONDS\}\)/);
+});
+
 test("Gateway response and web/Desktop consumers propagate the configured threshold", () => {
   const agentsRoute = read("src/app/api/agents/route.ts");
   const printersRoute = read("src/app/api/printers/route.ts");

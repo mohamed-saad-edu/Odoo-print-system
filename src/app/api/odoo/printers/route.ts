@@ -40,18 +40,11 @@ export async function GET(req: Request) {
   // Printer inventory is an Odoo runtime-control-plane surface. Do not expose
   // tenant printer identities after subscription access has ended; use the same
   // database-authoritative predicate as print admission and agent discovery.
-  try {
-    await requireTenantBillingAccess(db, apiKey.tenantId);
-  } catch (error) {
-    if (error instanceof TenantSubscriptionRequiredError) {
-      return NextResponse.json(
-        { error: error.message, code: "SUBSCRIPTION_REQUIRED" },
-        { status: 403, headers: { "Cache-Control": "no-store" } },
-      );
-    }
-    throw error;
-  }
-
+  //
+  // The billing decision and the inventory read run in ONE transaction, so a
+  // subscription that lapses between them cannot still expose tenant printer
+  // identities. The subscription row lock the check takes is held until the
+  // read completes.
   const { searchParams } = new URL(req.url);
   const agentId = searchParams.get("agent_id")?.trim();
 
@@ -62,31 +55,64 @@ export async function GET(req: Request) {
 
   await refreshClockSkew();
   const now = gatewayNow();
-  const rows = await db
-    .select({
-      id: printers.id,
-      name: printers.name,
-      status: printers.status,
-      lifecycle: printers.lifecycle,
-      sharedWithGateway: printers.sharedWithGateway,
-      lastSeenAt: printers.lastSeenAt,
-      printerType: printers.printerType,
-      deviceClass: printers.deviceClass,
-      connectionType: printers.connectionType,
-      protocol: printers.protocol,
-      capabilities: printers.capabilities,
-      config: printers.config,
-      managementSource: printers.managementSource,
-      agentId: agents.id,
-      agentName: agents.name,
-      agentStatus: agents.status,
-      agentLifecycle: agents.lifecycle,
-      agentLastSeenAt: agents.lastSeenAt,
-    })
-    .from(printers)
-    .innerJoin(agents, and(eq(printers.agentId, agents.id), eq(printers.tenantId, agents.tenantId)))
-    .where(and(...conditions))
-    .orderBy(printers.name);
+  let rows: Array<{
+    id: string;
+    name: string;
+    status: string | null;
+    lifecycle: string;
+    sharedWithGateway: boolean;
+    lastSeenAt: Date | null;
+    printerType: string | null;
+    deviceClass: string | null;
+    connectionType: string | null;
+    protocol: string | null;
+    capabilities: Record<string, unknown> | null;
+    config: Record<string, unknown> | null;
+    managementSource: string | null;
+    agentId: string;
+    agentName: string;
+    agentStatus: string | null;
+    agentLifecycle: string;
+    agentLastSeenAt: Date | null;
+  }>;
+  try {
+    rows = await db.transaction(async (tx) => {
+      await requireTenantBillingAccess(tx, apiKey.tenantId);
+      return tx
+        .select({
+          id: printers.id,
+          name: printers.name,
+          status: printers.status,
+          lifecycle: printers.lifecycle,
+          sharedWithGateway: printers.sharedWithGateway,
+          lastSeenAt: printers.lastSeenAt,
+          printerType: printers.printerType,
+          deviceClass: printers.deviceClass,
+          connectionType: printers.connectionType,
+          protocol: printers.protocol,
+          capabilities: printers.capabilities,
+          config: printers.config,
+          managementSource: printers.managementSource,
+          agentId: agents.id,
+          agentName: agents.name,
+          agentStatus: agents.status,
+          agentLifecycle: agents.lifecycle,
+          agentLastSeenAt: agents.lastSeenAt,
+        })
+        .from(printers)
+        .innerJoin(agents, and(eq(printers.agentId, agents.id), eq(printers.tenantId, agents.tenantId)))
+        .where(and(...conditions))
+        .orderBy(printers.name);
+    });
+  } catch (error) {
+    if (error instanceof TenantSubscriptionRequiredError) {
+      return NextResponse.json(
+        { error: error.message, code: "SUBSCRIPTION_REQUIRED" },
+        { status: 403, headers: { "Cache-Control": "no-store" } },
+      );
+    }
+    throw error;
+  }
   return NextResponse.json({
     printers: rows.filter((row) => !isVirtualPrinterRecord(row)).map((row) => ({
       id: row.id,
@@ -105,7 +131,7 @@ export async function GET(req: Request) {
       deviceClass: row.deviceClass,
       connectionType: row.connectionType,
       protocol: row.protocol,
-      capabilities: odooPrinterCapabilities(row.capabilities, row.connectionType, row.protocol, row.config),
+      capabilities: odooPrinterCapabilities(row.capabilities, row.connectionType ?? "", row.protocol ?? "", row.config),
       printableWidthDots: receiptRasterWidthDots({
         ...(row.config ?? {}),
         ...(row.capabilities ?? {}),

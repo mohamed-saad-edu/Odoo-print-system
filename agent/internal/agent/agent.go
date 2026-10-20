@@ -268,8 +268,14 @@ type Agent struct {
 	// recycles it, and the late finisher must not release another scan's
 	// slot afterwards. discoveryWedged stays true once set so the wedged
 	// scan is visible in diagnostics until process restart.
-	discoveryGen    atomic.Uint64
-	discoveryWedged atomic.Bool
+	//
+	// discoveryAbandoned counts scans whose worker was left blocked in
+	// uncancellable OS I/O. Each one leaks a goroutine for the lifetime of
+	// the process, so the watchdog stops force-recycling the semaphore once
+	// the cap is reached.
+	discoveryGen       atomic.Uint64
+	discoveryWedged    atomic.Bool
+	discoveryAbandoned atomic.Int32
 
 	// shutdownCh is closed exactly once when Run begins stopping; dispatchJob
 	// refuses new work afterwards so the queue is never closed while jobs are

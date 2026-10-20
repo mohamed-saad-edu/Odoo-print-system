@@ -30,6 +30,21 @@ suite("releaseUndeliveredClaim guards (A-7)", () => {
     expect(row.claim_token).toBeNull();
   });
 
+  it("fails (not requeues) a claim whose retry budget is exhausted", async () => {
+    const f = await seedFixture();
+    const id = `job_a7_${nanoid(6)}`;
+    await insertQueuedJob(f, id);
+    const claim = await claimJobForDelivery(id, f.agentId, { markDeliveryEvidencePending: true });
+    expect(claim?.claimToken).toBeTruthy();
+    // Exhaust the retry budget out-of-band.
+    await db.update(printJobs).set({ retries: 5 }).where(eq(printJobs.id, id));
+    const out = await releaseUndeliveredClaim(id, f.tenantId, f.agentId, claim!.claimToken, "test release");
+    expect(out).toBe("failed");
+    const row = await jobRow(id);
+    expect(row.status).toBe("failed");
+    expect(row.claim_token).toBeNull();
+  });
+
   it("does not requeue an expired claim (leaves it for the sweeper)", async () => {
     const f = await seedFixture();
     const id = `job_a7_${nanoid(6)}`;

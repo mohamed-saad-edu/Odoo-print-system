@@ -3,6 +3,7 @@ name: Static Security Gates
 on:
   pull_request:
     branches: [main, test/http-server-ready]
+    types: [opened, synchronize, reopened, ready_for_review]
   push:
     branches: [main, test/http-server-ready]
   merge_group:
@@ -28,6 +29,7 @@ jobs:
       codeql_js: ${{ steps.scope.outputs.codeql_js }}
       codeql_py: ${{ steps.scope.outputs.codeql_py }}
       codeql_go: ${{ steps.scope.outputs.codeql_go }}
+      language_matrix: ${{ steps.matrix.outputs.languages }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -40,9 +42,24 @@ jobs:
           BEFORE_SHA: ${{ github.event.before }}
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: bash scripts/ci-change-scopes.sh
+      - name: Select only changed CodeQL languages
+        id: matrix
+        shell: bash
+        env:
+          CODEQL_JS: ${{ steps.scope.outputs.codeql_js }}
+          CODEQL_PY: ${{ steps.scope.outputs.codeql_py }}
+          CODEQL_GO: ${{ steps.scope.outputs.codeql_go }}
+        run: |
+          languages=()
+          [[ "$CODEQL_JS" == 'true' ]] && languages+=('{"language":"javascript-typescript","build-mode":"none"}')
+          [[ "$CODEQL_PY" == 'true' ]] && languages+=('{"language":"python","build-mode":"none"}')
+          [[ "$CODEQL_GO" == 'true' ]] && languages+=('{"language":"go","build-mode":"autobuild"}')
+          joined="$(IFS=,; echo "${languages[*]}")"
+          printf 'languages={"include":[%s]}\n' "$joined" >> "$GITHUB_OUTPUT"
   codeql:
     name: CodeQL / ${{ matrix.language }}
     needs: changes
+    if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && (needs.changes.outputs.codeql_js == 'true' || needs.changes.outputs.codeql_py == 'true' || needs.changes.outputs.codeql_go == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -50,14 +67,7 @@ jobs:
       actions: read
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - language: javascript-typescript
-            build-mode: none
-          - language: python
-            build-mode: none
-          - language: go
-            build-mode: autobuild
+      matrix: ${{ fromJSON(needs.changes.outputs.language_matrix) }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -127,7 +137,7 @@ jobs:
   dependency-review:
     name: Dependency Review
     # Enable after Dependency Graph + Review API are available in repository settings.
-    if: github.event_name == 'pull_request' && vars.ENABLE_DEPENDENCY_REVIEW == 'true'
+    if: github.event_name == 'pull_request' && github.event.pull_request.draft == false && vars.ENABLE_DEPENDENCY_REVIEW == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -143,6 +153,7 @@ jobs:
 
   gitleaks:
     name: Secret Scan
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:

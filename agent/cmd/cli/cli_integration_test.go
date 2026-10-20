@@ -56,15 +56,21 @@ func TestCLICommandsAgainstStubGateway(t *testing.T) {
 	env := append([]string{}, os.Environ()...)
 	env = append(env, "YASEIR_AGENT_ALLOW_INSECURE_HTTP=1")
 
+	// The CLI's machine-readable contract is stdout: the JSON envelope must
+	// stay parseable. Diagnostics and warnings (for example the POSIX
+	// at-rest warning) go to stderr, so they are captured separately and
+	// only surfaced when the command fails.
 	run := func(args ...string) string {
 		t.Helper()
 		cmd := exec.Command(binary, args...)
 		cmd.Env = env
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("CLI %v failed: %v\n%s", args, err, out)
+		var stdout, stderr strings.Builder
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+		if err := cmd.Run(); err != nil {
+			t.Fatalf("CLI %v failed: %v\nstdout: %s\nstderr: %s", args, err, stdout.String(), stderr.String())
 		}
-		return string(out)
+		return stdout.String()
 	}
 
 	pairOut := run("-pair", "ABC234", "-server", "  "+server.URL+"/  ", "-config", configPath)

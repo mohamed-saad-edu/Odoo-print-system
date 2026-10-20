@@ -4,6 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CommandPalette, type CommandItem } from "../src/components/CommandPalette";
 import { ThemeToggle } from "../src/components/ThemeToggle";
+import { LanguageSwitcher } from "../src/components/LanguageSwitcher";
 import { Menu, Modal } from "../src/components/ui";
 import { I18nProvider, useI18n, type I18nValue } from "../src/i18n/react";
 
@@ -120,6 +121,40 @@ describe("shared shell interactions", () => {
     expect(document.documentElement.lang).toBe("en");
     expect(document.documentElement.dir).toBe("ltr");
     expect(document.cookie).toContain("yaseir_locale=en");
+  });
+
+  it("switches mobile language inside a dialog without an inaccessible portaled menu", () => {
+    const navigation = vi.fn();
+    window.addEventListener("yaseir:locale-navigation", navigation);
+    try {
+      render(h(I18nProvider, {
+        initialLocale: "en",
+        children: h(Modal, {
+          open: true,
+          title: "Mobile navigation",
+          onClose: vi.fn(),
+          children: h(LanguageSwitcher),
+        }),
+      }));
+      const toggle = document.querySelector<HTMLButtonElement>("[data-mobile-language-toggle]");
+      expect(toggle).not.toBeNull();
+      expect(toggle?.closest('[role="dialog"]')).not.toBeNull();
+      expect(toggle?.getAttribute("aria-label")).toContain("العربية");
+      expect(toggle?.getAttribute("class")).toContain("lg:hidden");
+      act(() => toggle?.click());
+      expect(localStorage.getItem("yaseir:locale")).toBe("ar");
+      expect(document.cookie).toContain("yaseir_locale=ar");
+      expect(document.documentElement.dir).toBe("rtl");
+      expect(toggle?.textContent).toContain("EN");
+      expect(document.querySelector('[role="menu"]')).toBeNull();
+
+      act(() => toggle?.click());
+      expect(localStorage.getItem("yaseir:locale")).toBe("en");
+      expect(document.documentElement.dir).toBe("ltr");
+      expect(navigation).toHaveBeenCalledTimes(2);
+    } finally {
+      window.removeEventListener("yaseir:locale-navigation", navigation);
+    }
   });
 
   it("applies theme changes and clearing from another tab to the DOM and accessible label", () => {

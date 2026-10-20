@@ -97,6 +97,19 @@ The `audit_events` table records:
 - Agent secrets are hashed at creation, raw value shown once
 - Environment secrets validated on startup (reject placeholders)
 
+### Credential hashing and entropy
+
+Hashing strength is chosen per credential, not uniformly:
+
+| Credential | Entropy | Stored form | Rationale |
+|---|---|---|---|
+| Agent bearer secret | 192-bit random | SHA-256 | High-entropy random value: no dictionary to attack, so a slow KDF only adds latency. Compared in constant time. |
+| Odoo API key | 256-bit random | SHA-256 | Same as above. |
+| Customer/manager password | human-chosen | Argon2id | Low-entropy, user-chosen: needs a slow memory-hard KDF plus a per-user salt. |
+| Pairing code | ~30-bit, human-typed | HMAC-SHA256 over a server-side pepper | The only low-entropy machine-issued credential. A database leak must not be enough to reverse it, so the stored hash is keyed with a pepper derived (HKDF) from `GATEWAY_JWT_SECRET`. |
+
+The pairing-code pepper is derived from `GATEWAY_JWT_SECRET`, which production startup already requires to be a real ≥32-character secret. Outside production (no configured secret) the pairing code falls back to its previous plain SHA-256 form and logs `agent.pairing_code_unpeppered` once, so local development and existing installations keep working. Rotating `GATEWAY_JWT_SECRET` invalidates any pairing code issued under the previous key; those codes are short-lived, single-use, and simply need to be re-issued.
+
 ### Agent credential at-rest threat model
 
 - Windows: `agent-secrets.dat` is DPAPI-sealed (`LOCAL_MACHINE` scope, so the

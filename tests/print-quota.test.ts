@@ -2,7 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { db } from "../src/db";
 import { createPrintJobForPrinter } from "../src/lib/print-job-service";
 import { POST as printJobsPOST } from "../src/app/api/print/jobs/route";
-import { TenantPrintQuotaExceededError, getTenantPrintUsage } from "../src/lib/entitlements";
+import { TenantEntitlementError, TenantPrintQuotaExceededError, getTenantPrintUsage } from "../src/lib/entitlements";
 import { applyMigrations, closePool, hasTestDatabase, pool, seedFixture, truncateAll } from "./helpers/pg";
 
 const suite = describe.skipIf(!hasTestDatabase);
@@ -190,6 +190,46 @@ suite("tenant print quota", () => {
       "SELECT count(*)::int AS n FROM print_jobs WHERE tenant_id = $1 AND status IN ('queued','claimed','printing') AND expires_at > now()",
       [f.tenantId],
     )).rows[0].n)).toBe(3);
+  });
+
+  it("counts an expired but unswept in-flight row against the concurrency limit", async () => {
+    // A row that is still 'printing' but whose TTL has passed may still be
+    // physically printing on the Agent. Excluding it from the count let a
+    // tenant exceed max_concurrent_jobs by the number of unswept expired
+    // rows, so the limit must include them until the sweeper terminalizes
+    // them.
+    const f = await seedFixture();
+    await pool().query(
+      `UPDATE plans
+       SET entitlements = jsonb_build_object(
+         'max_agents', 'unlimited',
+         'max_printers', 'unlimited',
+         'max_jobs_per_minute', 'unlimited',
+         'max_concurrent_jobs', 1,
+         'max_prints_per_period', 'unlimited'
+       )
+       WHERE id = (SELECT plan_id FROM tenant_subscriptions WHERE tenant_id = $1)`,
+      [f.tenantId],
+    );
+
+    await createPrintJobForPrinter(f.printerId, payload("expired-inflight"), {
+      tenantId: f.tenantId, requestedBy: "quota-test", documentType: "receipt", destination: f.destination,
+      idempotencyKey: "expired-inflight", expiresAt: new Date(Date.now() + 60_000),
+    });
+    // Age the row past its TTL while it is still in flight and unswept.
+    await pool().query(
+      "UPDATE print_jobs SET expires_at = now() - interval '1 minute', status = 'printing' WHERE tenant_id = $1",
+      [f.tenantId],
+    );
+
+    await expect(createPrintJobForPrinter(f.printerId, payload("blocked-by-expired"), {
+      tenantId: f.tenantId, requestedBy: "quota-test", documentType: "receipt", destination: f.destination,
+      idempotencyKey: "blocked-by-expired", expiresAt: new Date(Date.now() + 60_000),
+    })).rejects.toBeInstanceOf(TenantEntitlementError);
+
+    expect(Number((await pool().query(
+      "SELECT count(*)::int AS n FROM print_jobs WHERE tenant_id = $1", [f.tenantId],
+    )).rows[0].n)).toBe(1);
   });
 
   it("starts a new quota bucket when Stripe advances the subscription period", async () => {

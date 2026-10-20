@@ -65,7 +65,7 @@ Email verification establishes mailbox ownership before password setup. `POST /a
 ## Development
 
 ```bash
-Node.js 24.21.0 is the project runtime baseline.
+Node.js 24.22.0 is the project runtime baseline.
 
 npm ci
 npm run typecheck
@@ -79,4 +79,4 @@ PostgreSQL, Odoo 19, Windows, and physical-printer E2E are release gates and mus
 
 For a production server first deployment and end-to-end smoke test, follow [SERVER_FIRST_RUN.md](SERVER_FIRST_RUN.md).
 
-See [API.md](API.md), [INSTALLATION.md](INSTALLATION.md), [DEPLOYMENT.md](DEPLOYMENT.md), [OPERATIONS.md](OPERATIONS.md), [SECURITY.md](SECURITY.md).
+See [API.md](API.md), [INSTALLATION.md](INSTALLATION.md), [DEPLOYMENT.md](DEPLOYMENT.md), [OPERATIONS.md](OPERATIONS.md), [SECURITY.md](SECURITY.md), [TYPOGRAPHY.md](TYPOGRAPHY.md).

@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "../../typography/tokens.css";
 
 /* ============================================================
    YASEIR / TAILGRIDS-INSPIRED VISUAL SYSTEM 3.0
@@ -360,8 +361,12 @@
   --color-info-bg: var(--info-bg);
   --color-info-edge: var(--info-border);
 
-  --font-sans: var(--font-ibm-plex-sans, "Segoe UI Variable Display"), "SF Pro Text",
-    "Aptos", ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  /* One family system for Web, Desktop and the Odoo add-on. Both faces carry
+     Latin glyphs, so the ORDER decides which one renders English text: the
+     Latin face leads in LTR and the Arabic face leads in RTL. The tokens
+     carry the var() fallbacks, so the stack stays valid where the Next.js
+     font variables are absent (Desktop, Odoo). */
+  --font-sans: var(--typo-font-stack-latin);
   --font-mono: ui-monospace, "SF Mono", SFMono-Regular, "JetBrains Mono", Menlo, Consolas,
     "Liberation Mono", monospace;
 
@@ -413,6 +418,21 @@
   --text-5xl: var(--fs-display-lg);
   --text-5xl--line-height: 1.08;
 
+  /* Print scale — the same six roles as typography/tokens.css, in the screen
+     (px) equivalent. Components reference these instead of a raw size. */
+  --text-print-display: var(--typo-fs-display-px);
+  --text-print-display--line-height: var(--typo-lh-mixed);
+  --text-print-section: var(--typo-fs-section-px);
+  --text-print-section--line-height: var(--typo-lh-mixed);
+  --text-print-body: var(--typo-fs-body-px);
+  --text-print-body--line-height: var(--typo-lh-mixed);
+  --text-print-emphasis: var(--typo-fs-emphasis-px);
+  --text-print-emphasis--line-height: var(--typo-lh-mixed);
+  --text-print-label: var(--typo-fs-label-px);
+  --text-print-label--line-height: var(--typo-lh-mixed);
+  --text-print-footer: var(--typo-fs-footer-px);
+  --text-print-footer--line-height: var(--typo-lh-mixed);
+
   --ease-out: var(--ease-out);
   --ease-spring: var(--ease-spring);
 }
@@ -448,9 +468,8 @@
   }
 
   html[dir="rtl"] {
-    /* Explicit font-sans utilities must inherit the bundled Arabic family too. */
-    --font-sans: var(--font-ibm-plex-sans-arabic, "Noto Sans Arabic"),
-      var(--font-ibm-plex-sans, "Segoe UI Variable Text"), Tahoma, Arial, sans-serif;
+    /* Right-to-left documents lead with the Arabic face. */
+    --font-sans: var(--typo-font-stack-arabic);
   }
 
   html[dir="rtl"] body {
@@ -1793,5 +1812,94 @@
   @media (max-width: 639.98px) {
     .yw-fleet-kpis > .grid > div { min-height: 108px; padding: 15px 13px; }
     .yw-fleet-kpis > .grid > div > :nth-child(2) { font-size: 1.5rem; }
+  }
+}
+
+/* ============================================================
+   PRINT
+   Document output uses the shared print scale: pt on paper,
+   the px equivalents on screen. Every value comes from
+   typography/tokens.css — never a raw size here.
+   ============================================================ */
+
+@media print {
+  html,
+  body {
+    font-family: var(--typo-font-stack-latin);
+    font-size: var(--typo-fs-body);
+    line-height: var(--typo-lh-mixed);
+    color: var(--typo-color-primary);
+    background: #fff;
+  }
+
+  /* Arabic needs more vertical room for diacritics. */
+  html[dir="rtl"],
+  html[dir="rtl"] body {
+    font-family: var(--typo-font-stack-arabic);
+    line-height: var(--typo-lh-arabic);
+  }
+
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    font-family: var(--typo-font-stack);
+    color: var(--typo-color-primary);
+    letter-spacing: 0;
+  }
+
+  h1 {
+    font-size: var(--typo-fs-display);
+    font-weight: var(--typo-weight-bold);
+    line-height: var(--typo-lh-mixed);
+  }
+
+  h2,
+  h3 {
+    font-size: var(--typo-fs-section);
+    font-weight: var(--typo-weight-semibold);
+    line-height: var(--typo-lh-mixed);
+  }
+
+  p,
+  li,
+  dd,
+  dt,
+  td,
+  th,
+  label,
+  .data-table td,
+  .data-table th {
+    font-size: var(--typo-fs-body);
+    line-height: var(--typo-lh-mixed);
+  }
+
+  .data-table tr > td,
+  .data-table tr > th,
+  table tr > td,
+  table tr > th {
+    padding-top: var(--typo-space-table-row);
+    padding-bottom: var(--typo-space-table-row);
+  }
+
+  strong,
+  b,
+  .font-semibold {
+    font-weight: var(--typo-weight-semibold);
+  }
+
+  .print-secondary,
+  .text-secondary {
+    color: var(--typo-color-secondary);
+  }
+
+  /* Numerals, currency and English codes inside an Arabic sentence keep their
+     own direction so they stay readable. */
+  bdi,
+  .font-mono {
+    unicode-bidi: isolate;
+    direction: ltr;
   }
 }

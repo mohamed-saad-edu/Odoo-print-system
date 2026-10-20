@@ -5,7 +5,6 @@ package printer
 import (
 	"context"
 	"fmt"
-	"math"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -16,8 +15,8 @@ import (
 // name. Printers configured for A4/Letter remain ordinary Windows queues.
 // CreateDCW and GetDeviceCaps are bounded by the shared preflight watchdog:
 // a hung driver cannot indefinitely stall the print executor.
-func spoolerDetectedReceiptPaper(ctx context.Context, queue string) (paperMM, dots, dpi int) {
-	var widthMM, printableDots, horizontalDPI int
+func spoolerDetectedReceiptPaper(ctx context.Context, queue string) (paperMM float64, dots, dpi int) {
+	var physicalDots, printableDots, horizontalDPI, offsetX int
 	err := runPreflightBounded(queue, preflightTimeout, ctx, func() error {
 		driver, err := windows.UTF16PtrFromString("WINSPOOL")
 		if err != nil {
@@ -34,30 +33,14 @@ func spoolerDetectedReceiptPaper(ctx context.Context, queue string) (paperMM, do
 			return fmt.Errorf("CreateDCW default printer media failed: %w", callErr)
 		}
 		defer procDeleteDC.Call(hdc)
-		physicalDots := deviceCaps(hdc, capPhysicalWidth)
+		physicalDots = deviceCaps(hdc, capPhysicalWidth)
 		horizontalDPI = deviceCaps(hdc, capLogPixelsX)
-		printableDots = deviceCaps(hdc, 8) // HORZRES: usable pixels, not full roll
-		if physicalDots <= 0 || horizontalDPI <= 0 || printableDots <= 0 {
-			return fmt.Errorf("driver provided no valid paper geometry")
-		}
-		mm := float64(physicalDots) * 25.4 / float64(horizontalDPI)
-		switch {
-		case math.Abs(mm-58) <= 2.0:
-			widthMM = 58
-		case math.Abs(mm-80) <= 2.0:
-			widthMM = 80
-		default:
-			widthMM = 0
-		}
+		printableDots = deviceCaps(hdc, capHorzRes)
+		offsetX = deviceCaps(hdc, capPhysicalOffsetX)
 		return nil
 	})
-	if err != nil || widthMM == 0 || printableDots < 288 || printableDots > 576 {
+	if err != nil {
 		return 0, 0, 0
 	}
-	if horizontalDPI != 180 && horizontalDPI != 203 {
-		// Keep the detected paper, but use explicit, conservative DPI
-		// fallback for unusual device resolutions. Never claim true DPI.
-		return widthMM, printableDots, 0
-	}
-	return widthMM, printableDots, horizontalDPI
+	return receiptPaperFromDeviceCaps(physicalDots, printableDots, horizontalDPI, offsetX)
 }

@@ -5,6 +5,7 @@ on:
     branches: [main, test/http-server-ready]
   pull_request:
     branches: [main, test/http-server-ready]
+    types: [opened, synchronize, reopened, ready_for_review]
   merge_group:
   workflow_dispatch:
 
@@ -41,7 +42,7 @@ jobs:
   agent:
     name: Agent / Go
     needs: changes
-    if: needs.changes.outputs.agent == 'true'
+    if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && needs.changes.outputs.agent == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -82,7 +83,7 @@ jobs:
           fi
           "$staticcheck" -checks=U1000 ./...
       - name: Save staticcheck cache
-        if: steps.staticcheck-cache.outputs.cache-hit != 'true'
+        if: github.event_name != 'pull_request' && steps.staticcheck-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/go/bin/staticcheck
@@ -91,7 +92,7 @@ jobs:
   ci:
     name: App / Gateway
     needs: changes
-    if: needs.changes.outputs.app == 'true'
+    if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && needs.changes.outputs.app == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
@@ -145,6 +146,8 @@ jobs:
         run: npm run i18n:odoo:check
       - name: DB schema/migration/docs drift check
         run: npm run db:docs:check
+      - name: Shared typography token drift check
+        run: npm run typography:check
       - name: Validate Odoo 19 addon XML conventions
         run: |
           if grep -R -nE '<tree([[:space:]>])|attrs=|states=' odoo_addons/print_gateway/views; then
@@ -345,7 +348,7 @@ jobs:
 
   odoo19:
     needs: changes
-    if: needs.changes.outputs.odoo == 'true'
+    if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && needs.changes.outputs.odoo == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:

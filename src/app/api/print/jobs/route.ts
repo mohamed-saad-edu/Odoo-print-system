@@ -6,12 +6,25 @@ import { validatePrintJobPayload, type PrintJobPayload } from "../../../../lib/p
 import { createPrintJobForPrinter, AgentQueueFullError, AgentQueuedJobsFullError, PrintJobCapabilityError, PrintJobInputError } from "../../../../lib/print-job-service";
 import { TenantEntitlementError, TenantPrintQuotaExceededError, isTenantBillingError } from "../../../../lib/entitlements";
 import { hasBodyOverLimit } from "../../../../lib/request-limits";
-import { logError, requestIdFrom } from "../../../../lib/log";
+import { logError, logWarn, requestIdFrom } from "../../../../lib/log";
 import { databaseNowMs } from "../../../../lib/database-clock";
 import { and, eq, isNotNull } from "drizzle-orm";
 import { z } from "zod";
 
 export const dynamic = "force-dynamic";
+
+/**
+ * Controlled migration switch for the v1 print-submission contract.
+ *
+ * v1 keeps accepting a submission without an `idempotencyKey` so existing
+ * installations are not broken, but such a submission cannot be deduplicated:
+ * a retry creates a second queued job and can print twice. Operators whose
+ * callers all send a key can set this to "1" to make the missing key a hard
+ * 400, then migrate callers at their own pace. v2 always requires the key.
+ */
+function idempotencyKeyRequired(): boolean {
+  return process.env.YASEIR_REQUIRE_IDEMPOTENCY_KEY === "1";
+}
 
 const MAX_BODY = 8 * 1024 * 1024;
 const bodySchema = z.object({
@@ -71,6 +84,32 @@ export async function POST(req: Request) {
   const parsed = bodySchema.safeParse(raw);
   if (!parsed.success) return NextResponse.json({ error: parsed.error.issues[0]?.message ?? "Invalid request" }, { status: 400 });
 
+  if (!parsed.data.idempotencyKey) {
+    // A submission without a stable operation id cannot be deduplicated: a
+    // retry creates a second queued job and can print twice. Callers that
+    // cannot supply a key are rejected outright once the operator opts in
+    // through the migration switch, so the duplicate risk can be removed
+    // without a breaking API change.
+    if (idempotencyKeyRequired()) {
+      logWarn("print.job.idempotency_key_required", {
+        tenantId: odoo?.tenantId ?? null,
+        message: "Print job rejected: idempotencyKey is required for this deployment.",
+      });
+      return NextResponse.json(
+        { error: "idempotencyKey is required for this deployment", code: "IDEMPOTENCY_KEY_REQUIRED", retryable: false },
+        { status: 400, headers: { "Cache-Control": "no-store" } },
+      );
+    }
+    // Backward-compatible: legacy callers without a stable operation id are
+    // accepted, but retries cannot be deduplicated and may produce duplicate
+    // physical prints. New callers must supply an idempotencyKey. A future
+    // API version will require it (see ADR/migration notes).
+    logWarn("print.job.missing_idempotency_key", {
+      tenantId: odoo?.tenantId ?? null,
+      message: "Print job submitted without idempotencyKey; retry deduplication is disabled for this request.",
+    });
+  }
+
   let payload: PrintJobPayload;
   try { payload = validatePrintJobPayload(parsed.data.payload); }
   catch (error) { return NextResponse.json({ error: error instanceof Error ? error.message : "Invalid payload" }, { status: 400 }); }
@@ -111,6 +150,10 @@ export async function POST(req: Request) {
       // 201 describing a job that no longer exists.
       return NextResponse.json({ error: "IDEMPOTENCY_CONFLICT", code: "IDEMPOTENCY_CONFLICT", retryable: false }, { status: 409 });
     }
+    const responseHeaders: Record<string, string> = {};
+    if (!parsed.data.idempotencyKey) {
+      responseHeaders["X-Idempotency-Warning"] = "missing-key; retry deduplication disabled";
+    }
     return NextResponse.json({
       jobId: result.id,
       status: result.status,
@@ -118,7 +161,7 @@ export async function POST(req: Request) {
       agentId: result.agentId,
       destination: parsed.data.destination ?? null,
       documentType: parsed.data.documentType,
-    }, { status: 201 });
+    }, { status: 201, headers: responseHeaders });
   } catch (error) {
     if (error instanceof TenantPrintQuotaExceededError) {
       const response: Record<string, unknown> = {

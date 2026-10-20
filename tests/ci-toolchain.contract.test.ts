@@ -15,7 +15,7 @@ function workflows(): string[] {
 describe("CI/runtime alignment", () => {
   it("uses the declared Node version everywhere Node is provisioned", () => {
     expect(packageJson.engines.node).toBe(">=24.15.0");
-    expect(nodeVersion).toBe("24.21.0");
+    expect(nodeVersion).toBe("24.22.0");
     expect(dockerfile).toContain(`node:${nodeVersion}-alpine`);
     for (const workflow of workflows()) {
       if (/\bnpm (ci|install|run|test|audit)\b|\bnpx\b/.test(workflow)) {
@@ -83,9 +83,22 @@ describe("CI/runtime alignment", () => {
     const windows = readFileSync(path.join(root, ".github/workflows/build-windows.yml"), "utf8");
     expect(windows).toContain("name: Windows change filter");
     expect(windows).toContain("needs: changes");
-    expect(windows).toContain("if: needs.changes.outputs.windows == 'true'");
-    expect(windows).toContain("if: needs.changes.outputs.agent == 'true'");
-    expect(windows).toContain("if: needs.changes.outputs.rust == 'true'");
+    // The expensive NSIS packaging must not run for PRs. Those receive only
+    // scoped native Windows smoke tests; release packaging remains on main
+    // and explicit release/merge-queue runs.
+    const fullBuild = windows.split("\n  build-windows:")[1];
+    const prSmoke = windows.split("\n  windows-pr-smoke:")[1]?.split("\n  build-windows:")[0];
+    expect(fullBuild).toBeDefined();
+    expect(prSmoke).toBeDefined();
+    expect(fullBuild).toContain("if: github.event_name != 'pull_request' && needs.changes.outputs.windows == 'true'");
+    expect(fullBuild).toContain("name: Build Tauri Windows NSIS installer");
+    expect(fullBuild).toContain("name: Upload Windows NSIS installer");
+    expect(prSmoke).toContain("if: github.event_name == 'pull_request' && github.event.pull_request.draft == false");
+    expect(prSmoke).toContain("needs.changes.outputs.agent == 'true' || needs.changes.outputs.rust == 'true'");
+    expect(prSmoke).toContain("if: needs.changes.outputs.agent == 'true'");
+    expect(prSmoke).toContain("if: needs.changes.outputs.rust == 'true'");
+    expect(prSmoke).not.toContain("Build Tauri Windows NSIS installer");
+    expect(prSmoke).not.toContain("actions/upload-artifact@");
     expect(windows).not.toMatch(/^[ ]{4}paths:$/m);
     for (const requiredPath of ["agent/*", "src-tauri/*", "src/desktop/*", "src/components/*", "src/i18n/*", "src/lib/*"]) {
       expect(windows).toContain(requiredPath);

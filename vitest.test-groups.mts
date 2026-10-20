@@ -69,6 +69,9 @@ export const integrationVitestTestFiles = [
   "tests/job-cleanup-behavior.integration.test.ts",
   "tests/tenant-isolation-extended.integration.test.ts",
   "tests/tenant-batch-fencing.integration.test.ts",
+  "tests/tenant-scoped-session-revocation.integration.test.ts",
+  "tests/agent-identity-isolation.integration.test.ts",
+  "tests/ambiguous-print-outcome.integration.test.ts",
 ] as const;
 
 export const integrationTestFiles = [

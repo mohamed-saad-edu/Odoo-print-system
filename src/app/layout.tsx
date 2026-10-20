@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import localFont from "next/font/local";
 import { headers } from "next/headers";
 import { AppShell } from "../components/AppShell";
+import { CspStyleNonce } from "../components/CspStyleNonce";
 import { I18nProvider } from "../i18n/react";
 import { getServerLocale, makeT } from "../i18n/server";
 import { dirFor } from "../i18n/config";
@@ -11,23 +12,29 @@ import "./globals.css";
 // Bundle the OFL-licensed IBM Plex families with the app. next/font/google
 // downloads CSS during builds; its remote response can fail inside Docker
 // even when our own application code and test suites are healthy.
+//
+// The web ships WOFF2 (65% smaller than the TTF the Desktop app and the
+// Odoo add-on bundle). `display: "block"`: the files are served from this
+// origin, so the face is available immediately, and a print-critical page
+// must never be laid out with a fallback face whose line boxes differ from
+// the real one.
 const ibmPlexSans = localFont({
-  src: "./fonts/ibm-plex-sans-variable.ttf",
+  src: "./fonts/ibm-plex-sans-variable.woff2",
   weight: "100 700",
   style: "normal",
   variable: "--font-ibm-plex-sans",
-  display: "swap",
+  display: "block",
 });
 
 const ibmPlexSansArabic = localFont({
   src: [
-    { path: "./fonts/ibm-plex-sans-arabic-400.ttf", weight: "400", style: "normal" },
-    { path: "./fonts/ibm-plex-sans-arabic-500.ttf", weight: "500", style: "normal" },
-    { path: "./fonts/ibm-plex-sans-arabic-600.ttf", weight: "600", style: "normal" },
-    { path: "./fonts/ibm-plex-sans-arabic-700.ttf", weight: "700", style: "normal" },
+    { path: "./fonts/ibm-plex-sans-arabic-400.woff2", weight: "400", style: "normal" },
+    { path: "./fonts/ibm-plex-sans-arabic-500.woff2", weight: "500", style: "normal" },
+    { path: "./fonts/ibm-plex-sans-arabic-600.woff2", weight: "600", style: "normal" },
+    { path: "./fonts/ibm-plex-sans-arabic-700.woff2", weight: "700", style: "normal" },
   ],
   variable: "--font-ibm-plex-sans-arabic",
-  display: "swap",
+  display: "block",
   // Avoid preloading four Arabic weights on English pages; RTL still loads
   // its actual fonts automatically when the language-specific CSS applies.
   preload: false,
@@ -72,6 +79,7 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
       <body className="antialiased bg-app text-ink min-h-screen">
         <script nonce={nonce} dangerouslySetInnerHTML={{ __html: LOCALE_INIT }} />
         <script nonce={nonce} dangerouslySetInnerHTML={{ __html: THEME_INIT }} />
+        <CspStyleNonce nonce={nonce} />
         <I18nProvider initialLocale={locale}>
           <AppShell>{children}</AppShell>
         </I18nProvider>

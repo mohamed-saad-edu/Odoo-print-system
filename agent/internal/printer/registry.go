@@ -215,7 +215,7 @@ func saveRegistryLocked(registryPath string, printers []DeviceInfo) error {
 		_ = os.Remove(tmpName)
 		return fmt.Errorf("secure registry temp file: %w", err)
 	}
-	if err := os.Rename(tmpName, registryPath); err != nil {
+	if err := config.ReplaceFile(tmpName, registryPath); err != nil {
 		return err
 	}
 	if err := config.EnsureSecureFileACL(registryPath); err != nil {

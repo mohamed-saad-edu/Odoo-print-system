@@ -397,12 +397,17 @@ export async function enforceTenantJobEntitlements(tx: EntitlementTx, tenantId: 
 
   const concurrentLimit = await getTenantEntitlementLimit(tx, tenantId, "max_concurrent_jobs", true);
   if (concurrentLimit !== null) {
+    // Count every in-flight row, including one whose TTL has passed but the
+    // sweeper has not reclassified yet. Such a row is still 'printing', so the
+    // Agent may still be physically printing it: excluding it would let the
+    // tenant exceed its concurrency entitlement by the number of unswept
+    // expired rows. The sweeper moves expired rows to a terminal status, at
+    // which point they stop counting.
     const current = await tx.execute(sql`
       SELECT COUNT(*)::int AS count
       FROM print_jobs
       WHERE tenant_id = ${tenantId}
         AND status IN ('queued','claimed','printing')
-        AND expires_at > now()
     `);
     const count = Number(current.rows[0]?.count ?? 0);
     if (count >= concurrentLimit) throw new TenantEntitlementError("max_concurrent_jobs", concurrentLimit, count);

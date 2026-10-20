@@ -4,16 +4,30 @@
  * thermal hardware may expose 384/420/512/576 printable dots. Reflow at the
  * selected width BEFORE html-to-image; the Agent can then map that image to
  * the actual printer without arbitrary CSS or page zoom.
+ *
+ * TYPOGRAPHY EXCEPTION — the shared system (typography/tokens.css) governs the
+ * document scale in pt, but this receipt is a fixed-dot canvas, not a
+ * document: its canvas size is chosen by the printer's dot budget, its metrics
+ * are pinned by the measured geometry fixture, and the capture runs with font
+ * embedding DISABLED (skipFonts), so it must never depend on a web font. The
+ * values below are therefore declared once as tokens and referenced, and they
+ * render exactly as before.
  */
+:root {
+    --pg-receipt-font-family: Arial, "Segoe UI", sans-serif;
+    --pg-receipt-font-size: 28px;
+    --pg-receipt-line-height: 1.27;
+}
+
 .yaseir-gateway-receipt.pos-receipt-print {
     box-sizing: border-box !important;
     width: var(--yaseir-print-width, 512px) !important;
     max-width: var(--yaseir-print-width, 512px) !important;
     min-width: 0 !important;
     padding: 12px !important;
-    font-family: Arial, "Segoe UI", sans-serif !important;
-    font-size: 28px !important;
-    line-height: 1.27 !important;
+    font-family: var(--pg-receipt-font-family) !important;
+    font-size: var(--pg-receipt-font-size) !important;
+    line-height: var(--pg-receipt-line-height) !important;
     color: #000 !important;
     background-color: #fff !important;
     overflow: visible !important;
