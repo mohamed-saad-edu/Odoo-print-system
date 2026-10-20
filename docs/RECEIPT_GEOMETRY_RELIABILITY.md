@@ -146,7 +146,7 @@ readability after physical printing is not verified.
 
 ## Verification and remaining gates
 
-Executed locally with Go 1.26.9 / Node 24.21.0:
+Executed locally with Go 1.26.9 / Node 24.22.0:
 
 ```sh
 # Expected red results, then corrected focused regressions:

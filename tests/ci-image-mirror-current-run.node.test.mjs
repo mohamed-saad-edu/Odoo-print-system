@@ -57,8 +57,8 @@ test('CI uses only exact-digest official ECR mirrors of reviewed production imag
 test('Compose CLI selects the CI overlay without changing default production references', () => {
   assert.match(workflow, /COMPOSE_FILE: docker-compose\.yml:docker-compose\.ci\.yml/);
   assert.match(compose, /^\s*image:\s*postgres:16\.15-alpine@sha256:[0-9a-f]{64}$/m);
-  assert.match(compose, /^\s*image:\s*caddy:2\.11\.4-alpine@sha256:[0-9a-f]{64}$/m);
-  assert.match(dockerfile, /^ARG NODE_BASE_IMAGE=node:24\.21\.0-alpine@sha256:[a-f0-9]{64}$/m);
+  assert.match(compose, /^\s*image:\s*caddy:2\.11\.7-alpine@sha256:[0-9a-f]{64}$/m);
+  assert.match(dockerfile, /^ARG NODE_BASE_IMAGE=node:24\.22\.0-alpine@sha256:[a-f0-9]{64}$/m);
 });
 
 test('Odoo Community CI pulls the same immutable digest and uses Docker Hub only after throttling', () => {
