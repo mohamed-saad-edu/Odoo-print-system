@@ -55,6 +55,20 @@ func (p *program) getAgent() *agent.Agent {
 	return p.agent
 }
 
+// closeAgentInstance releases an agent instance's local resources. It is
+// used by the restart loop so a crashed instance does not keep its SQLite
+// handle open while the replacement instance is created. A failure is
+// logged rather than fatal: the next start recovers durable rows, and the
+// service must still be able to come back up.
+func closeAgentInstance(a *agent.Agent) {
+	if a == nil {
+		return
+	}
+	if err := a.Close(); err != nil {
+		log.Printf("WARNING: close local queue of the replaced agent failed: %v", err)
+	}
+}
+
 func (p *program) Start(s service.Service) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	runDone := make(chan struct{})
@@ -151,6 +165,13 @@ func (p *program) Start(s service.Service) error {
 
 			if err := app.Run(ctx); err != nil {
 				log.Printf("Agent error: %v — restarting in %s...", err, restartBackoff)
+				// Release the failed instance's local SQLite handle before a
+				// replacement is created. Every agent.New opens its own
+				// database handle, so without this each restart would leak
+				// one for the lifetime of the process. Agent.Close keeps the
+				// queue open when a job handler is still in flight, which is
+				// the same safety rule the service-stop path uses.
+				closeAgentInstance(app)
 			} else {
 				log.Printf("Agent exited cleanly")
 				return
