@@ -15,9 +15,16 @@ type pdfPaper struct {
 	ID            int16
 }
 
-func pdfPaperForPoints(width, height float64) (pdfPaper, error) {
+func validatePDFPageDimensions(width, height float64) error {
 	if math.IsNaN(width) || math.IsNaN(height) || math.IsInf(width, 0) || math.IsInf(height, 0) || width <= 0 || height <= 0 {
-		return pdfPaper{}, fmt.Errorf("PDF page has invalid physical dimensions %gx%g points", width, height)
+		return fmt.Errorf("PDF page has invalid physical dimensions %gx%g points", width, height)
+	}
+	return nil
+}
+
+func pdfPaperForPoints(width, height float64) (pdfPaper, error) {
+	if err := validatePDFPageDimensions(width, height); err != nil {
+		return pdfPaper{}, err
 	}
 	w, h := math.Round(width*254/72), math.Round(height*254/72)
 	if w < 1 || h < 1 || w > math.MaxInt16 || h > math.MaxInt16 {
@@ -116,7 +123,7 @@ func validatePDFDevModeResult(buf []byte) error {
 // Report exact media matches for diagnostics. A mismatch now uses the separate
 // proportional printable-area policy instead of refusing usable driver media.
 func validatePDFSheet(widthPoints, heightPoints float64, pixelsW, pixelsH, dpiX, dpiY int) error {
-	if _, err := pdfPaperForPoints(widthPoints, heightPoints); err != nil {
+	if err := validatePDFPageDimensions(widthPoints, heightPoints); err != nil {
 		return err
 	}
 	if pixelsW <= 0 || pixelsH <= 0 || dpiX <= 0 || dpiY <= 0 {
@@ -157,7 +164,7 @@ func pdfBitmapDestination(pageWidth, pageHeight, offsetX, offsetY int) (int, int
 }
 
 func pdfPrintableDestination(widthPoints, heightPoints float64, physicalW, physicalH, printableW, printableH, dpiX, dpiY, offsetX, offsetY int) (int, int, int, int, error) {
-	if _, err := pdfPaperForPoints(widthPoints, heightPoints); err != nil {
+	if err := validatePDFPageDimensions(widthPoints, heightPoints); err != nil {
 		return 0, 0, 0, 0, err
 	}
 	if _, _, _, _, err := pdfBitmapDestination(physicalW, physicalH, offsetX, offsetY); err != nil {
@@ -166,8 +173,10 @@ func pdfPrintableDestination(widthPoints, heightPoints float64, physicalW, physi
 	if dpiX <= 0 || dpiY <= 0 || printableW <= 0 || printableH <= 0 || printableW > physicalW-offsetX || printableH > physicalH-offsetY {
 		return 0, 0, 0, 0, fmt.Errorf("printer returned invalid printable page or DPI")
 	}
-	wantW, wantH := widthPoints*float64(dpiX)/72, heightPoints*float64(dpiY)/72
-	scale := math.Min(1, math.Min(float64(printableW)/wantW, float64(printableH)/wantH))
+	// Normalize before DPI conversion so oversized finite pages cannot overflow.
+	longest := math.Max(widthPoints, heightPoints)
+	wantW, wantH := widthPoints/longest*float64(dpiX), heightPoints/longest*float64(dpiY)
+	scale := math.Min(longest/72, math.Min(float64(printableW)/wantW, float64(printableH)/wantH))
 	w := min(printableW, max(1, int(math.Floor(wantW*scale))))
 	h := min(printableH, max(1, int(math.Floor(wantH*scale))))
 	// GDI starts at the printable origin. One proportional, shrink-only fit

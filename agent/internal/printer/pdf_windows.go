@@ -48,11 +48,10 @@ const (
 	capPhysicalOffsetX = 112
 	capPhysicalOffsetY = 113
 
-	biRGB         = 0
-	dibRGBColors  = 0
-	srccopy       = 0x00CC0020
-	halftone      = 4
-	rcDIBToDevice = 0x0200
+	biRGB        = 0
+	dibRGBColors = 0
+	srccopy      = 0x00CC0020
+	halftone     = 4
 )
 
 type winBITMAPINFOHEADER struct {
@@ -100,6 +99,7 @@ var (
 	procCreateDCW         = modGDI32.NewProc("CreateDCW")
 	procDeleteDC          = modGDI32.NewProc("DeleteDC")
 	procGetDeviceCaps     = modGDI32.NewProc("GetDeviceCaps")
+	procGetClipBox        = modGDI32.NewProc("GetClipBox")
 	procStartDocW         = modGDI32.NewProc("StartDocW")
 	procEndDoc            = modGDI32.NewProc("EndDoc")
 	procAbortDoc          = modGDI32.NewProc("AbortDoc")
@@ -262,9 +262,13 @@ func drawBitmapToPrinter(hdc uintptr, bitmap []byte, width, height, destinationW
 
 	// Direct copy requires driver support; select the existing stretch path
 	// before submission when that capability is absent. Never replay a page.
-	directSupported := deviceCaps(hdc, capRasterCaps)&rcDIBToDevice != 0
+	rasterCaps := deviceCaps(hdc, capRasterCaps)
+	if _, supported := gdiBitmapCapabilities(rasterCaps, width != destinationWidth || height != destinationHeight); !supported {
+		return gdiDeviceDiagnostic(hdc, fmt.Errorf("printer no longer advertises the required DIB transfer"))
+	}
+	directSupported := rasterCaps&rcDIBToDevice != 0
 	err := transferGDIBitmap(width != destinationWidth || height != destinationHeight, directSupported, func() (int32, error) {
-		ret, _, _ := procSetDIBitsToDevice.Call(
+		ret, _, callErr := procSetDIBitsToDevice.Call(
 			hdc,
 			uintptr(x), uintptr(y), uintptr(width), uintptr(height),
 			0, 0, 0, uintptr(height),
@@ -272,17 +276,12 @@ func drawBitmapToPrinter(hdc uintptr, bitmap []byte, width, height, destinationW
 			uintptr(unsafe.Pointer(&info)),
 			dibRGBColors,
 		)
-		return int32(ret), nil
+		return int32(ret), callErr
 	}, func() (int32, error) {
-		previousMode, _, modeErr := procSetStretchBltMode.Call(hdc, halftone)
-		if previousMode == 0 {
-			return 0, fmt.Errorf("SetStretchBltMode(HALFTONE) failed: %w", modeErr)
+		if err := setGDIHalftone(hdc); err != nil {
+			return 0, err
 		}
-		brushOK, _, brushErr := procSetBrushOrgEx.Call(hdc, 0, 0, 0)
-		if brushOK == 0 {
-			return 0, fmt.Errorf("SetBrushOrgEx after HALFTONE failed: %w", brushErr)
-		}
-		ret, _, _ := procStretchDIBits.Call(
+		ret, _, callErr := procStretchDIBits.Call(
 			hdc,
 			uintptr(x), uintptr(y), uintptr(destinationWidth), uintptr(destinationHeight),
 			0, 0, uintptr(width), uintptr(height),
@@ -291,12 +290,19 @@ func drawBitmapToPrinter(hdc uintptr, bitmap []byte, width, height, destinationW
 			dibRGBColors,
 			srccopy,
 		)
-		return int32(ret), nil
+		return int32(ret), callErr
 	})
 	if err != nil {
-		return fmt.Errorf("GDI bitmap %dx%d to %d,%d %dx%d (32-bit BI_RGB, top-down) failed: %w", width, height, x, y, destinationWidth, destinationHeight, err)
+		return gdiDeviceDiagnostic(hdc, fmt.Errorf("GDI bitmap %dx%d to %d,%d %dx%d (32-bit BI_RGB, top-down) failed: %w", width, height, x, y, destinationWidth, destinationHeight, err))
 	}
 	return nil
+}
+
+func gdiDeviceDiagnostic(hdc uintptr, err error) error {
+	var clip windows.Rect
+	kind, _, _ := procGetClipBox.Call(hdc, uintptr(unsafe.Pointer(&clip)))
+	return fmt.Errorf("%w; raster_caps=%#x clip_kind=%d clip=(%d,%d)-(%d,%d)", err,
+		deviceCaps(hdc, capRasterCaps), int32(kind), clip.Left, clip.Top, clip.Right, clip.Bottom)
 }
 
 func renderPageWithContext(ctx context.Context, instance pdfium.Pdfium, request *requests.RenderPageInPixels, killed *pdfiumKillTracker) (*image.RGBA, func(), error) {
@@ -468,14 +474,18 @@ func renderAndPrintPDFWithPDFiumResultObserved(ctx context.Context, printerName 
 		if err != nil || size == nil {
 			return fmt.Errorf("read PDF page %d dimensions: %v", pageIndex+1, err)
 		}
-		paper, err := pdfPaperForPoints(size.Width, size.Height)
-		if err != nil {
+		if err := validatePDFPageDimensions(size.Width, size.Height); err != nil {
 			return fmt.Errorf("PDF page %d: %w", pageIndex+1, err)
 		}
+		paper, paperErr := pdfPaperForPoints(size.Width, size.Height)
 		mode, ok := modes[paper]
 		if !ok {
 			var usedCurrent bool
 			mode, usedCurrent, err = selectPDFPaperMode(func() ([]byte, error) {
+				// A valid source need not fit DEVMODE's signed-short form limits.
+				if paperErr != nil {
+					return nil, paperErr
+				}
 				return pdfPrinterDevMode(printerName, paper)
 			}, func() ([]byte, error) {
 				if currentMode == nil {
@@ -591,6 +601,13 @@ func renderAndPrintPDFWithPDFiumResultObserved(ctx context.Context, printerName 
 		cleanup()
 		return fmt.Errorf("prepare PDF page 1/%d bitmap: %w", pages.PageCount, err)
 	}
+	firstDraw, releaseBitmap, err := prepareGDIBitmap(hdc, first.Pix, first.Rect.Dx(), first.Rect.Dy(), destinationW, destinationH, destinationX, destinationY)
+	if err != nil {
+		cleanup()
+		return fmt.Errorf("prepare PDF page 1/%d for printer: %w", pages.PageCount, err)
+	}
+	cleanupRender := cleanup
+	cleanup = func() { releaseBitmap(); cleanupRender() }
 
 	if err := runDispatchAdmission(ctx); err != nil {
 		cleanup()
@@ -626,14 +643,14 @@ func renderAndPrintPDFWithPDFiumResultObserved(ctx context.Context, printerName 
 		}
 	}()
 
-	printPage := func(pageNumber int, img *image.RGBA) error {
+	printPage := func(pageNumber int, draw func() error) error {
 		if err := ctx.Err(); err != nil {
 			return markPDFDispatchUnknown(printerName, "cancelled before page admission", err)
 		}
 		if err := startGDIPage(hdc); err != nil {
 			return markPDFDispatchUnknown(printerName, fmt.Sprintf("could not start page %d", pageNumber), err)
 		}
-		if err := drawBitmapToPrinter(hdc, img.Pix, img.Rect.Dx(), img.Rect.Dy(), destinationW, destinationH, destinationX, destinationY); err != nil {
+		if err := draw(); err != nil {
 			_ = endGDIPage(hdc)
 			return markPDFDispatchUnknown(printerName, fmt.Sprintf("could not render page %d to the printer", pageNumber), err)
 		}
@@ -643,7 +660,7 @@ func renderAndPrintPDFWithPDFiumResultObserved(ctx context.Context, printerName 
 		return nil
 	}
 
-	if err := printPage(1, first); err != nil {
+	if err := printPage(1, firstDraw); err != nil {
 		cleanup()
 		cleanupFirst = false
 		return err
@@ -689,10 +706,17 @@ func renderAndPrintPDFWithPDFiumResultObserved(ctx context.Context, printerName 
 			cleanupPage()
 			return markPDFDispatchUnknown(printerName, fmt.Sprintf("failed while preparing page %d", pageIndex+1), err)
 		}
-		if err := printPage(pageIndex+1, img); err != nil {
+		draw, releaseBitmap, err := prepareGDIBitmap(hdc, img.Pix, img.Rect.Dx(), img.Rect.Dy(), destinationW, destinationH, destinationX, destinationY)
+		if err != nil {
+			cleanupPage()
+			return markPDFDispatchUnknown(printerName, fmt.Sprintf("failed while preparing page %d for printer", pageIndex+1), err)
+		}
+		if err := printPage(pageIndex+1, draw); err != nil {
+			releaseBitmap()
 			cleanupPage()
 			return err
 		}
+		releaseBitmap()
 		cleanupPage()
 	}
 

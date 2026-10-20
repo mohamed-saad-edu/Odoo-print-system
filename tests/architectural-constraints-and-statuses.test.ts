@@ -82,14 +82,21 @@ describe("Architectural Constraints, ACLs, and Runtime Statuses", () => {
 
   it("keeps Windows HALFTONE rendering aligned with SetBrushOrgEx", () => {
     const pdfWindows = read("agent/internal/printer/pdf_windows.go");
-    const mode = pdfWindows.indexOf("procSetStretchBltMode.Call(hdc, halftone)");
-    const brush = pdfWindows.indexOf("procSetBrushOrgEx.Call(hdc, 0, 0, 0)");
+    const bitmapWindows = read("agent/internal/printer/pdf_bitmap_windows.go");
+    const helper = bitmapWindows.slice(bitmapWindows.indexOf("func setGDIHalftone("));
+    const mode = helper.indexOf("procSetStretchBltMode.Call(hdc, halftone)");
+    const brush = helper.indexOf("procSetBrushOrgEx.Call(hdc, 0, 0, 0)");
+    const setup = pdfWindows.indexOf("setGDIHalftone(hdc)");
     const stretch = pdfWindows.indexOf("procStretchDIBits.Call(");
     expect(mode).toBeGreaterThan(-1);
     expect(brush).toBeGreaterThan(mode);
-    expect(stretch).toBeGreaterThan(brush);
-    expect(pdfWindows).toContain("SetStretchBltMode(HALFTONE) failed");
-    expect(pdfWindows).toContain("SetBrushOrgEx after HALFTONE failed");
+    expect(setup).toBeGreaterThan(-1);
+    expect(stretch).toBeGreaterThan(setup);
+    const compatibleSetup = bitmapWindows.indexOf("setGDIHalftone(hdc)");
+    expect(compatibleSetup).toBeGreaterThan(-1);
+    expect(bitmapWindows.indexOf("procStretchBlt.Call(")).toBeGreaterThan(compatibleSetup);
+    expect(helper).toContain("SetStretchBltMode(HALFTONE) failed");
+    expect(helper).toContain("SetBrushOrgEx after HALFTONE failed");
   });
 
   it("does not classify an existing offline printer as an unassigned job", () => {
