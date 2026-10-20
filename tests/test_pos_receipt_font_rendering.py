@@ -21,12 +21,21 @@ substitutes an empty data URL, and continues rendering.
 These tests lock the two structural facts that keep the receipt independent
 of those remote fonts:
 
-1. The addon itself declares no ``@font-face`` / Noto / ``fonts.odoocdn.com``
-   references in its POS assets (so it never contributes a font request).
+1. The addon's POS asset bundle declares no ``@font-face`` / Noto /
+   ``fonts.odoocdn.com`` references, so it never contributes a font request.
 2. The receipt rendering path uses the resilient ``htmlToCanvas`` pipeline and
    keeps fallback paths, so a renderer failure degrades instead of throwing.
+
+Scope note: the addon does ship web fonts for the BACKEND and for printable
+REPORTS (the shared IBM Plex families, see ``static/src/css/typography_fonts.css``).
+Those assets are deliberately absent from the POS bundle. The invariant is
+therefore about what actually reaches the POS document — the manifest's
+``point_of_sale._assets_pos`` bundle — not about every file in the source
+tree. A file outside that bundle is never loaded into the POS document and
+cannot contribute a font request.
 """
 
+import ast
 import re
 from pathlib import Path
 
@@ -44,19 +53,29 @@ def strip_js_comments(source):
     return re.sub(r"(?m)^\s*//.*(?:\n|$)", "", source)
 
 
+def pos_bundle_files():
+    """The files Odoo actually loads into the POS document."""
+    manifest = ast.literal_eval((ADDON / "__manifest__.py").read_text(encoding="utf-8"))
+    bundle = manifest["assets"]["point_of_sale._assets_pos"]
+    files = []
+    for entry in bundle:
+        assert entry.startswith("print_gateway/"), f"unexpected asset path: {entry}"
+        files.append(ADDON / entry[len("print_gateway/"):])
+    return files
+
+
 def test_pos_receipt_rendering_declares_no_web_fonts():
-    """The addon must not declare @font-face / Noto / odoocdn in its POS assets.
+    """The POS asset bundle must not declare @font-face / Noto / odoocdn.
 
     Any such declaration would make the addon itself request a remote font
     during receipt rendering, which is exactly the class of bug that produced
     the Noto 404s.
     """
-    pos_assets = (list((ADDON / "static" / "src" / "js").glob("*.js"))
-                  + list((ADDON / "static" / "src" / "scss").glob("*.scss"))
-                  + list((ADDON / "static" / "src" / "css").glob("*.css")))
-    assert pos_assets, "expected POS JS/SCSS assets to scan"
+    pos_assets = pos_bundle_files()
+    assert pos_assets, "expected POS assets to scan"
     offenders = []
     for path in pos_assets:
+        assert path.is_file(), f"POS bundle references a missing asset: {path}"
         source = strip_js_comments(path.read_text(encoding="utf-8"))
         for token in ("@font-face", "NotoSans", "Noto Sans", "fonts.odoocdn.com"):
             if token in source:
@@ -65,6 +84,31 @@ def test_pos_receipt_rendering_declares_no_web_fonts():
         "POS assets must not declare remote web fonts (this is what caused the "
         f"Noto 404s): {offenders}"
     )
+
+
+def test_web_font_assets_stay_out_of_the_pos_bundle():
+    """The backend/report font assets must never enter the POS document.
+
+    The shared typography system ships @font-face rules for the Odoo backend
+    and for printable reports. They belong to ``web.assets_backend`` only: the
+    POS receipt is rasterized with font embedding disabled and its metrics are
+    pinned, so a web font in the POS document would make the captured receipt
+    depend on a font load.
+    """
+    pos_assets = {path.name for path in pos_bundle_files()}
+    for name in ("typography_fonts.css", "typography_tokens.css"):
+        assert name not in pos_assets, f"{name} must not be loaded into the POS document"
+
+    manifest = ast.literal_eval((ADDON / "__manifest__.py").read_text(encoding="utf-8"))
+    backend = manifest["assets"]["web.assets_backend"]
+    assert "print_gateway/static/src/css/typography_fonts.css" in backend
+    assert "print_gateway/static/src/css/typography_tokens.css" in backend
+
+    # The receipt keeps its own measured, web-font-free canvas scale.
+    receipt_css = read("static/src/css/receipt_raster.css")
+    assert "@font-face" not in receipt_css
+    assert "IBM Plex" not in receipt_css
+    assert "Noto Sans" not in receipt_css
 
 
 def test_render_receipt_image_uses_resilient_html_to_canvas_pipeline():

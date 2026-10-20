@@ -6,6 +6,9 @@ import { resolve } from "node:path";
 
 const layout = readFileSync(resolve("src/app/layout.tsx"), "utf8");
 const css = readFileSync(resolve("src/app/globals.css"), "utf8");
+// The families are declared once in the shared token file; the console
+// stylesheet binds its family to those tokens.
+const tokens = readFileSync(resolve("typography/tokens.css"), "utf8");
 const expected = {
   "ibm-plex-sans-variable.ttf": "30f837e8b02e8ecddce6cbebc425b1f422392515",
   "ibm-plex-sans-arabic-400.ttf": "e779068718b9801b809605b2bf3067121cce524c",
@@ -19,8 +22,12 @@ test("Gateway fonts do not depend on Google Fonts at production build time", () 
   assert.ok(!layout.includes('from "next/font/google"'));
   assert.match(layout, /variable: "--font-ibm-plex-sans"/);
   assert.match(layout, /variable: "--font-ibm-plex-sans-arabic"/);
-  assert.match(css, /--font-ibm-plex-sans/);
-  assert.match(css, /--font-ibm-plex-sans-arabic/);
+  assert.match(tokens, /--font-ibm-plex-sans/);
+  assert.match(tokens, /--font-ibm-plex-sans-arabic/);
+  // The console binds its family to the shared tokens, and the tokens carry
+  // both the Next.js font variables and the literal family names.
+  assert.match(css, /--font-sans: var\(--typo-font-stack-latin\)/);
+  assert.match(css, /--font-sans: var\(--typo-font-stack-arabic\)/);
 });
 
 test("all pinned IBM Plex fonts are local, non-empty and bit-identical to reviewed upstream", () => {

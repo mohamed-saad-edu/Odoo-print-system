@@ -26,8 +26,13 @@ describe("customer-facing UX contracts", () => {
     }
     expect(layout).toContain('variable: "--font-ibm-plex-sans"');
     expect(layout).toContain('variable: "--font-ibm-plex-sans-arabic"');
-    expect(css).toContain("--font-ibm-plex-sans");
-    expect(css).toContain("--font-ibm-plex-sans-arabic");
+    // The families are declared once in the shared typography tokens; the
+    // console binds its family to them, per reading direction.
+    const tokens = read("typography/tokens.css");
+    expect(tokens).toContain("--font-ibm-plex-sans");
+    expect(tokens).toContain("--font-ibm-plex-sans-arabic");
+    expect(css).toContain("--font-sans: var(--typo-font-stack-latin);");
+    expect(css).toContain("--font-sans: var(--typo-font-stack-arabic);");
     expect(css).toContain('html[dir="rtl"] body');
   });
 
