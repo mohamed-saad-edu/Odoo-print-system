@@ -15,6 +15,7 @@
 | Item | Value |
 |---|---|
 | Audit base commit | `5d015b2` (main) |
+| Final verified commit | `349d1a5` (main) — 42 commits on top of the base |
 | Local Node | v24.21.0 (must be used; the default `node` on this host is v22 and lacks `crypto.argon2`) |
 | Local PostgreSQL | 17.9 (conda). CI uses the pinned **PostgreSQL 16.15** image — that is the authoritative run. |
 | Local Go | 1.26.9 |
