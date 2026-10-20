@@ -3760,8 +3760,8 @@ msgstr "نتيجة الطباعة غير مؤكدة (%s). أُلغي تنزيل 
 
 #. module: print_gateway
 #: code:addons/print_gateway/static/src/js/pos_print_router.js:0
-msgid "The printing service could not be reached, so no receipt was sent. Nothing was printed; retrying is safe."
-msgstr "تعذّر الوصول إلى خدمة الطباعة، لذلك لم يتم إرسال أي إيصال. لم تُطبع أي ورقة؛ إعادة المحاولة آمنة."
+msgid "The printing service could not be reached, so no receipt was sent. This attempt printed nothing; you can retry safely."
+msgstr "تعذّر الوصول إلى خدمة الطباعة، لذلك لم يتم إرسال أي إيصال. لم تطبع هذه المحاولة شيئًا؛ يمكنك إعادة المحاولة بأمان."
 
 #. module: print_gateway
 #: code:addons/print_gateway/static/src/js/report_interceptor.js:0

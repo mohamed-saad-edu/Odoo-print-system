@@ -295,13 +295,13 @@ patch(PosStore.prototype, {
             } catch (probeError) {
                 // The enablement probe is a local read that submits nothing, so
                 // its failure PROVES that no receipt was sent to the Gateway
-                // and a retry cannot duplicate paper. It does NOT prove that
+                // and this attempt printed nothing. It does NOT prove that
                 // native printing is the configured policy: the probe could
                 // not read the Gateway configuration at all. Fail closed with
                 // an actionable message instead of printing natively behind
                 // the operator's back.
                 this.notification.add(
-                    _t("The printing service could not be reached, so no receipt was sent. Nothing was printed; retrying is safe."),
+                    _t("The printing service could not be reached, so no receipt was sent. This attempt printed nothing; you can retry safely."),
                     { type: "danger", sticky: true }
                 );
                 return false;
