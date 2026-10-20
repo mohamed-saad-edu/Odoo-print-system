@@ -746,3 +746,28 @@ def test_printer_widget_normalizes_legacy_spooler_alias():
     widget = (ADDON / "static/src/components/runtime_printer_field.js").read_text(encoding="utf-8")
     assert 'connectionType === "windows_spooler"' in widget
     assert 'protocol === "windows_spooler"' in widget
+
+
+def test_print_activity_record_rules_reach_branch_rows_from_the_root_operator():
+    # ODO-05/ODO-07: a print job and a print intent are owned by the company
+    # of the record that produced them. For a Branch-owned print that is the
+    # Branch company, so a root-Company operator must still see it, otherwise
+    # the documented recovery path ("check Print Activity before retrying")
+    # silently shows an empty list for exactly the failed Branch print that
+    # needs reconciliation, and a permanently failed Branch intent cannot be
+    # re-armed from Automation Activity.
+    #
+    # The second clause is restricted to direct children of an activated
+    # company, so it never reaches into another Company's branches.
+    security = read("security/security.xml")
+    assert "('company_id', 'in', company_ids), ('company_id.parent_id', 'in', company_ids)" in security
+    job_rule = security[security.index('id="rule_print_job_company"'):]
+    job_rule = job_rule[:job_rule.index("</record>")]
+    assert "('company_id.parent_id', 'in', company_ids)" in job_rule
+    intent_rule = security[security.index('id="rule_print_intent_company"'):]
+    intent_rule = intent_rule[:intent_rule.index("</record>")]
+    assert "('company_id.parent_id', 'in', company_ids)" in intent_rule
+    # The company-wide rules must keep their existing scope.
+    config_rule = security[security.index('id="rule_gateway_config_company"'):]
+    config_rule = config_rule[:config_rule.index("</record>")]
+    assert "company_id.child_ids" in config_rule
