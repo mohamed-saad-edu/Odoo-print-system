@@ -158,6 +158,13 @@ func (s *Store) SaveSecret(key, secret string) error {
 // configured yet it returns an error that callers can detect with
 // errors.Is(err, ErrNotFound).
 func (s *Store) GetSecret(key string) (string, error) {
+	// Warn on the READ path too. A pre-existing store file written by another
+	// process (or an earlier version) is never warned about by SaveSecret, so
+	// an agent that only ever loads a credential would otherwise treat a
+	// base64-framed file as if it were sealed.
+	if w := platformAtRestWarning(); w != "" {
+		atRestWarningOnce.Do(func() { log.Printf("WARNING: storage at-rest secrecy: %s", w) })
+	}
 	p, err := s.path()
 	if err != nil {
 		return "", err
