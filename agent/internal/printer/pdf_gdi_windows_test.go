@@ -59,12 +59,19 @@ func TestGDIBitmapNativeTransfer(t *testing.T) {
 			}
 			defer selectObject.Call(hdc, previous)
 			src := make([]byte, tc.width*tc.height*4)
+			row := make([]byte, tc.width*4)
+			// Distinct, large quadrants detect reversal and channel errors.
+			for x := 0; x < tc.width; x++ {
+				i := x * 4
+				row[i], row[i+1], row[i+2] = 32, 64, byte(64+128*(x/(tc.width/2+1)))
+			}
 			for y := 0; y < tc.height; y++ {
-				for x := 0; x < tc.width; x++ {
-					i := (y*tc.width + x) * 4
-					// Distinct, large quadrants detect reversal and channel errors.
-					src[i], src[i+1], src[i+2] = 32, byte(64+128*(y/(tc.height/2+1))), byte(64+128*(x/(tc.width/2+1)))
+				if y == tc.height/2+1 {
+					for i := 1; i < len(row); i += 4 {
+						row[i] = 192
+					}
 				}
+				copy(src[y*len(row):], row)
 			}
 			out := unsafe.Slice((*byte)(bits), tc.destW*(tc.y+tc.destH)*4)
 			for _, automatic := range []bool{false, true} {

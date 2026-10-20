@@ -89,6 +89,7 @@ and no Gateway round trip. It never creates a full-document raster cache.
 | `agent/internal/printer/pdf_windows.go` | Drew a DIB after StartPage; now prepares the page first and releases its native resources on every normal/error branch | Full native Windows suite; existing job-ID/cancellation/outcome regressions; cross-compilation/vet |
 | `agent/internal/printer/pdf_gdi_test.go` | Extends existing regression tests with supported/unsupported raster combinations and diagnostic codes 0/6/87 | Local focused Go tests |
 | `agent/internal/printer/pdf_gdi_windows_test.go` | Previously no actual GDI pixel checks; adds both legacy and automatic paths at reported sizes, monochrome conversion, metafile recording and invalid input | Native Windows CI, no printer job submitted |
+| `tests/architectural-constraints-and-statuses.test.ts` | Follow the shared HALFTONE helper after its move, retain brush-origin/error assertions, and require both DIB and compatible stretch callers to use it | Focused Gateway/receipt suite: 33 passed |
 | This report | Records evidence, boundaries, references and rollout impact | Diff reviewed; no customer screenshot or job identity committed |
 
 The diagnostic regression failed before correction (`native diagnostic lost`) and
@@ -102,6 +103,16 @@ Commands: `cd agent && go test -mod=readonly -race -vet=all -json ./...`, focuse
 printer-package cross-compilation and Windows-targeted `go vet`. Final results and
 native run identities are retained in `.audit/gdi-transfer-20261020/` (ignored)
 and the PR checks. Unrelated Gateway/Odoo source is unchanged.
+
+The production correction at `53f7a7f` passed the complete native Windows suite in
+[run 39399209518](https://github.com/mohamed-saad-edu/Odoo-print-system/actions/runs/39399209518),
+and the native `-race -vet=all` stage of installer run 39399253351. Local final
+coverage is 1,476 passed test events, two skipped, across ten passing packages.
+The first broad Gateway CI run found a source-location assumption in the
+HALFTONE contract test; that test now follows the shared helper and verifies both
+callers. The correction retains its assertions. Native test data generation now
+copies repeated rows instead of instrumenting millions of per-pixel assignments;
+the dimensions, colors and output/ownership assertions are unchanged.
 
 ## Research and trade-offs
 
