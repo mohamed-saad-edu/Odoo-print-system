@@ -105,3 +105,37 @@ Service Session 0 behavior must still be checked with the updated Agent.
 
 See Microsoft's GDI geometry definitions:
 https://learn.microsoft.com/en-us/windows/win32/api/wingdi/nf-wingdi-getdevicecaps
+
+
+## 21 October — Agent/Gateway printer-specific diagnostic selection
+
+Previously Gateway sent a Letter PDF whenever no selected 58/80mm roll was
+present in inventory, even for a POS80 spooler with a different current
+native form. The Windows Agent also had local selected-paper test code, but
+Gateway jobs did not request it; furthermore a 10-metre roll could exceed
+the signed DEVMODE paper length when generating the local test PDF.
+
+Gateway now persists `documentType=test_page` for both direct test-print and
+physical certification. The Agent reads this nullable field from its
+claim-fenced WebSocket/poll envelope. Only PDF test pages on an installed
+Windows spooler are regenerated locally using the driver's current native
+PHYSICALWIDTH/HEIGHT and separate X/Y DPI, under a bounded preflight. This
+runs BEFORE StartDocW and uses the same downstream PDF/GDI printer path, job
+identity, atomic session ownership and UNKNOWN/no-auto-retry outcome rules.
+Unknown/bad native media fails without submitting an arbitrary paper size.
+
+Narrow, clearly elongated 40–120mm roll forms are given a **100mm-long test
+page at their actual physical width**. This prevents 10-metre forms from
+causing preflight failure or wasting metres of paper. A4/Letter and short
+forms preserve their active sheet geometry. Ordinary Odoo POS image prints,
+regular PDFs and declared ESC/POS/RAW/ZPL/TSPL byte jobs are NOT modified.
+
+IPP/IPPS keeps the document-protocol PDF route. Gateway honors explicit
+selected A3/A4/A5/Letter/Legal media or a verified 58/80mm roll but does not
+guess from marketing device names or advertised-but-unselected paper lists.
+Without authoritative IPP media selection, the conservative legacy Letter
+source remains and actual IPP printer paper must be verified separately.
+
+This improvement requires a NEW Windows Agent binary: older Agents ignore
+`documentType` and still use the Gateway source document directly. Passing
+CI verifies source and native software behavior, not real physical output.

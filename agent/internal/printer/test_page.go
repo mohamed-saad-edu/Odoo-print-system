@@ -44,6 +44,25 @@ func selectLocalTestTarget(registered, configured []DeviceInfo, requested string
 	return nil, nil
 }
 
+// boundedDiagnosticPaper selects a short diagnostic on a narrow, long roll.
+// Do not interpret the Windows driver's entire 10-metre form as a document:
+// DEVMODE cannot represent that source length, and the printer would waste
+// media. The physical WIDTH remains the real driver selection; office sheets
+// and short narrow forms keep their exact dimensions.
+func boundedDiagnosticPaper(width, height float64) (float64, float64, error) {
+	if err := validatePDFPageDimensions(width, height); err != nil {
+		return 0, 0, err
+	}
+	widthMM, heightMM := width*25.4/72, height*25.4/72
+	if widthMM >= 40 && widthMM <= 120 && heightMM >= 4*widthMM {
+		height = 100 * 72 / 25.4
+	}
+	if _, err := pdfPaperForPoints(width, height); err != nil {
+		return 0, 0, err
+	}
+	return width, height, nil
+}
+
 func diagnosticTestPDF(width, height float64) ([]byte, error) {
 	if _, err := pdfPaperForPoints(width, height); err != nil {
 		return nil, err

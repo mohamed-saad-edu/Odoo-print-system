@@ -107,15 +107,36 @@ function safeTestText(value: string): string {
   return value.replace(/[^\x20-\x7e]/g, "").slice(0, 60);
 }
 
+// Explicit selected paper only, never device names, printer class, or a list
+// of supported (but unselected) forms. Windows Spooler will read actual driver
+// media at Agent dispatch when documentType=test_page is claimed.
+const DIAGNOSTIC_SHEET_POINTS = {
+  a3: [841.89, 1190.55],
+  a4: [595.276, 841.89],
+  a5: [419.53, 595.28],
+  letter: [612, 792],
+  legal: [612, 1008],
+} as const;
+export type DiagnosticSheet = keyof typeof DIAGNOSTIC_SHEET_POINTS;
+
+export function selectedDiagnosticSheet(value: Record<string, unknown> | null | undefined): DiagnosticSheet | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const raw = value.selected_paper ?? value.paper_format;
+  if (typeof raw !== "string") return null;
+  const sheet = raw.trim().toLowerCase();
+  return Object.prototype.hasOwnProperty.call(DIAGNOSTIC_SHEET_POINTS, sheet) ? sheet as DiagnosticSheet : null;
+}
+
 function escapePdfText(value: string): string {
   return value.replace(/\\/g, "\\\\").replace(/\(/g, "\\(").replace(/\)/g, "\\)");
 }
 
-export function buildTestPdfPayload(printerName: string, agentName: string, operationId?: string, paperWidthMM?: 58 | 80): string {
+export function buildTestPdfPayload(printerName: string, agentName: string, operationId?: string, paperWidthMM?: 58 | 80, selectedSheet?: DiagnosticSheet): string {
   const stamp = operationId ? `Operation ${safeTestText(operationId)}` : new Date().toISOString().replace("T", " ").slice(0, 19);
 
-  const width = paperWidthMM ? Number((paperWidthMM * 72 / 25.4).toFixed(3)) : 612;
-  const height = paperWidthMM ? Number((payloadContract.diagnosticPage.rollLengthMM * 72 / 25.4).toFixed(3)) : 792;
+  const sheet = selectedSheet ? DIAGNOSTIC_SHEET_POINTS[selectedSheet] : DIAGNOSTIC_SHEET_POINTS.letter;
+  const width = paperWidthMM ? Number((paperWidthMM * 72 / 25.4).toFixed(3)) : sheet[0];
+  const height = paperWidthMM ? Number((payloadContract.diagnosticPage.rollLengthMM * 72 / 25.4).toFixed(3)) : sheet[1];
   const ticketLines = [
     `Printer: ${safeTestText(printerName)}`, `Agent: ${safeTestText(agentName)}`, `Status: OK | ${stamp}`,
   ].flatMap((line) => line.match(new RegExp(`.{1,${Math.floor((width - (paperWidthMM ? 24 : 100)) / (paperWidthMM ? 8 : 12))}}`, "g")) ?? []);
@@ -125,7 +146,7 @@ export function buildTestPdfPayload(printerName: string, agentName: string, oper
   ] : [
     "BT",
     "/F1 18 Tf",
-    "50 720 Td",
+    `50 ${Number((height - 72).toFixed(3))} Td`,
     "(YASEIR TEST PAGE) Tj",
     "/F1 12 Tf",
     "0 -30 Td",
@@ -247,7 +268,8 @@ export function buildTestPrintPayloadForPrinter(
   // never make an otherwise valid spooler/IPP test page stop being printable.
   if (physicalDocumentTransport && validatePayloadForPrinter({ type: "pdf" }, physicalPrinter).ok) {
     const roll = receiptPaperWidthMM(capabilities) ?? receiptPaperWidthMM(printer.config);
-    const pdf = buildTestPdfPayload(plainName, plainAgent, operationId, roll ?? undefined);
+    const sheet = selectedDiagnosticSheet(capabilities) ?? selectedDiagnosticSheet(printer.config);
+    const pdf = buildTestPdfPayload(plainName, plainAgent, operationId, roll ?? undefined, sheet ?? undefined);
     return {
       type: "pdf",
       encoding: "base64",

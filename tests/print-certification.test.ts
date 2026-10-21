@@ -19,6 +19,14 @@ describe("print-certification", () => {
   });
 
 
+  it("tags true test pages for the Windows Agent native selected-media path", () => {
+    const certify = fs.readFileSync("src/app/api/printers/[id]/certify/route.ts", "utf8");
+    const testPrint = fs.readFileSync("src/app/api/printers/[id]/test-print/route.ts", "utf8");
+    expect(certify).toContain('const documentType = testPage ? "test_page"');
+    expect(certify).toContain("selectedDiagnosticSheet(printer.capabilities)");
+    expect(testPrint).toContain('documentType: "test_page"');
+  });
+
   it("certification payload is deterministic for one idempotency key", () => {
     const source = fs.readFileSync("src/app/api/printers/[id]/certify/route.ts", "utf8");
     expect(source).toContain("The printable payload MUST be deterministic for one idempotency key");

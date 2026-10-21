@@ -80,6 +80,10 @@ func (p *SpoolerPrinter) LastSpoolerJobID() string { return "" }
 func (p *SpoolerPrinter) PrintDocument(ctx context.Context, doc Document) error {
 	switch NormalizeKind(doc.Kind) {
 	case KindPDF:
+		if doc.TestPage {
+			// A Linux stub has no Windows native printer media. Fail closed.
+			return fmt.Errorf("ERR_UNSUPPORTED_TRANSPORT: cannot inspect Windows test-page media on this OS; no bytes submitted")
+		}
 		if !simulatedTransportAllowed() {
 			return fmt.Errorf("ERR_UNSUPPORTED_TRANSPORT: the Windows spooler backend cannot run on this OS; nothing was printed to %q", p.SpoolerName)
 		}
