@@ -1,6 +1,5 @@
 """Release snapshots need their own tests, even after a previous run is cancelled."""
 from pathlib import Path
-import re
 import unittest
 
 
