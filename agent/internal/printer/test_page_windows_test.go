@@ -33,6 +33,59 @@ func TestWindowsLocalPrintSubmitsActualCurrentPaperPDF(t *testing.T) {
 	}
 }
 
+func TestWindowsGatewayPDFTestUsesCurrentNativeRollAndLeavesCustomerPDFUntouched(t *testing.T) {
+	p := NewSpooler("POS80 Printer(4)", "")
+	p.diagnosticPaper = func() (float64, float64, error) {
+		return 640 * 72.0 / 203, 26200 * 72.0 / 203, nil
+	}
+	submitted := 0
+	p.PDFPrint = func(ctx context.Context, queue, path string) error {
+		submitted++
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if queue != p.SpoolerName || !bytes.Contains(data, []byte("/MediaBox [0 0 227.00 283.46]")) ||
+			!bytes.Contains(data, []byte("YASEIR PRINT TEST")) ||
+			bytes.Contains(data, []byte("/MediaBox [0 0 612 792]")) {
+			t.Errorf("wrong current-media diagnostic generated: %q", data)
+		}
+		return ValidatePDF(data)
+	}
+	if err := p.PrintDocument(context.Background(), Document{
+		Kind: KindPDF, Data: validPDF(), JobID: "gateway-unique-job", TestPage: true,
+	}); err != nil || submitted != 1 {
+		t.Fatalf("Gateway native diagnostic not submitted once: calls=%d err=%v", submitted, err)
+	}
+	p.PDFPrint = func(ctx context.Context, queue, path string) error {
+		submitted++
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if !bytes.Equal(data, validPDF()) {
+			t.Errorf("ordinary customer PDF was replaced by a test ticket")
+		}
+		return nil
+	}
+	if err := p.PrintDocument(context.Background(), Document{
+		Kind: KindPDF, Data: validPDF(), JobID: "sale-order",
+	}); err != nil || submitted != 2 {
+		t.Fatalf("ordinary PDF path changed: calls=%d err=%v", submitted, err)
+	}
+}
+
+func TestWindowsGatewayTestRejectsMalformedPreviewBeforeNativeProbe(t *testing.T) {
+	p := NewSpooler("selected", "")
+	probed, submitted := false, false
+	p.diagnosticPaper = func() (float64, float64, error) { probed = true; return 612, 792, nil }
+	p.PDFPrint = func(context.Context, string, string) error { submitted = true; return nil }
+	err := p.PrintDocument(context.Background(), Document{Kind: KindPDF, Data: []byte("not a PDF"), TestPage: true})
+	if err == nil || probed || submitted {
+		t.Fatalf("invalid Gateway PDF triggered printing: probed=%v submitted=%v err=%v", probed, submitted, err)
+	}
+}
+
 func TestWindowsLocalPrintDoesNotSubmitAfterMediaFailure(t *testing.T) {
 	p := NewSpooler("Unavailable Test Queue", "")
 	submitted := false

@@ -19,6 +19,20 @@ func gdiBitmapCapabilities(caps int, resize bool) (compatible, dib bool) {
 	return
 }
 
+// wrapGDIFallbackFailure preserves BOTH phases when device-compatible bitmap
+// preparation failed and a supported DIB path later returned zero. Preparation
+// alone is safe to retry (no printer drawing), but the DIB call happens after
+// StartDocW and its outcome remains UNKNOWN. Never attempt another draw here.
+func wrapGDIFallbackFailure(preparationErr, transferErr error) error {
+	if transferErr == nil {
+		return nil
+	}
+	if preparationErr == nil {
+		return transferErr
+	}
+	return fmt.Errorf("compatible bitmap preparation failed before submission (%v); fallback DIB transfer failed: %w", preparationErr, transferErr)
+}
+
 // Each page uses one drawing API; a failed submission must never be replayed.
 func transferGDIBitmap(resize, directSupported bool, direct, stretch func() (int32, error)) error {
 	api, transfer := "SetDIBitsToDevice", direct

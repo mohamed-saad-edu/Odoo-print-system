@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"image"
 	"log"
-	"math"
 	"os"
+	"runtime"
 	"strconv"
 	"sync"
 	"time"
@@ -34,7 +34,6 @@ import (
 
 const (
 	maxPDFPages        = 500
-	maxPDFRenderPixels = 16_000_000 // <= 64 MiB for one 32-bit bitmap.
 	maxPDFDevModeBytes = 8 * 1024 * 1024
 
 	// GetDeviceCaps indices.
@@ -123,6 +122,15 @@ func getPDFiumPool() (pdfium.Pool, error) {
 	return pdfiumPool, pdfiumErr
 }
 
+// pinGDIPrintThread keeps the printer DC, any child memory DC, drawing and
+// deferred AbortDoc/DeleteDC on one OS thread. The slot serializes PDF jobs,
+// but without this guard Go can migrate the goroutine between native calls.
+// A locked thread is released on every return path, including errors.
+func pinGDIPrintThread() func() {
+	runtime.LockOSThread()
+	return runtime.UnlockOSThread
+}
+
 func openPrinterDC(printerName string, mode []byte) (uintptr, error) {
 	if len(mode) == 0 {
 		return 0, fmt.Errorf("missing validated PDF paper settings")
@@ -202,20 +210,6 @@ func endGDIPage(hdc uintptr) error {
 		return fmt.Errorf("EndPage failed: %w", callErr)
 	}
 	return nil
-}
-
-func renderBounds(printableWidth, printableHeight int) (int, int, error) {
-	if printableWidth <= 0 || printableHeight <= 0 {
-		return 0, 0, fmt.Errorf("printer reported invalid printable area %dx%d", printableWidth, printableHeight)
-	}
-	maxW, maxH := printableWidth, printableHeight
-	area := int64(maxW) * int64(maxH)
-	if area > maxPDFRenderPixels {
-		scale := math.Sqrt(float64(maxPDFRenderPixels) / float64(area))
-		maxW = max(1, int(float64(maxW)*scale))
-		maxH = max(1, int(float64(maxH)*scale))
-	}
-	return maxW, maxH, nil
 }
 
 func rgbaToBGRAInPlace(src *image.RGBA) error {
@@ -303,49 +297,38 @@ func drawBitmapToPrinter(hdc uintptr, bitmap []byte, width, height, destinationW
 func gdiDeviceDiagnostic(hdc uintptr, err error) error {
 	var clip windows.Rect
 	kind, _, _ := procGetClipBox.Call(hdc, uintptr(unsafe.Pointer(&clip)))
-	return fmt.Errorf("%w; raster_caps=%#x clip_kind=%d clip=(%d,%d)-(%d,%d)", err,
-		deviceCaps(hdc, capRasterCaps), int32(kind), clip.Left, clip.Top, clip.Right, clip.Bottom)
+	// Service Session 0 differs from the interactive user's session.
+	// Report only the session number (not the account or credentials) to
+	// distinguish driver/service incompatibility from raster capability bugs.
+	session := "unknown"
+	var sessionID uint32
+	if windows.ProcessIdToSessionId(windows.GetCurrentProcessId(), &sessionID) == nil {
+		session = strconv.FormatUint(uint64(sessionID), 10)
+	}
+	return fmt.Errorf("%w; raster_caps=%#x clip_kind=%d clip=(%d,%d)-(%d,%d) session_id=%s thread_id=%d", err,
+		deviceCaps(hdc, capRasterCaps), int32(kind), clip.Left, clip.Top, clip.Right, clip.Bottom,
+		session, windows.GetCurrentThreadId())
 }
 
 func renderPageWithContext(ctx context.Context, instance pdfium.Pdfium, request *requests.RenderPageInPixels, killed *pdfiumKillTracker) (*image.RGBA, func(), error) {
-	type outcome struct {
-		rendered *responses.RenderPageInPixels
-		err      error
-	}
-	done := make(chan outcome, 1)
-	go func() {
-		rendered, err := instance.RenderPageInPixels(request)
-		done <- outcome{rendered: rendered, err: err}
-	}()
-
-	select {
-	case result := <-done:
-		if result.err != nil {
-			return nil, nil, result.err
-		}
-		if result.rendered == nil {
-			return nil, nil, fmt.Errorf("PDFium returned no render result")
-		}
-		return result.rendered.Result.Image, result.rendered.Cleanup, nil
-	case <-ctx.Done():
-		// Kill is the go-pdfium-supported way to interrupt an in-flight WASM
-		// worker. The caller decides whether the physical outcome is already
-		// ambiguous based on whether StartDocW has occurred. Recording the
-		// kill keeps the deferred Close from misreporting the resulting
-		// "already closed" state as a worker-cleanup failure.
-		killed.kill(instance)
-		// If the render completed in the same instant as the cancellation,
-		// its Cleanup would otherwise be orphaned in the buffered channel:
-		// the bitmap was never handed out, so release it here.
-		select {
-		case result := <-done:
-			if result.rendered != nil {
-				result.rendered.Cleanup()
+	rendered, err := awaitPDFRenderResult(ctx,
+		func() (*responses.RenderPageInPixels, error) { return instance.RenderPageInPixels(request) },
+		func(result *responses.RenderPageInPixels) {
+			if result != nil {
+				result.Cleanup()
 			}
-		default:
-		}
-		return nil, nil, ctx.Err()
+		},
+		func() { killed.kill(instance) },
+	)
+	if err != nil {
+		return nil, nil, err
 	}
+	if rendered == nil {
+		return nil, nil, fmt.Errorf("PDFium returned no render result")
+	}
+	// The caller owns successful results. Cancelled or failed handoffs are
+	// cleaned by awaitPDFRenderResult, including a late renderer completion.
+	return rendered.Result.Image, rendered.Cleanup, nil
 }
 
 // platformPrintPDF reads the generated temporary PDF file and submits it to
@@ -524,6 +507,11 @@ func renderAndPrintPDFWithPDFiumResultObserved(ctx context.Context, printerName 
 		}
 		plans[pageIndex] = plan
 	}
+	// Do not migrate the live Win32 printer DC across OS threads while the
+	// service renders or waits for PDFium. DeleteDC/AbortDoc defers run before
+	// this unlock because Go runs defers in last-in-first-out order.
+	unlockGDIThread := pinGDIPrintThread()
+	defer unlockGDIThread()
 	hdc, err := openPrinterDC(printerName, plans[0].mode)
 	if err != nil {
 		return err

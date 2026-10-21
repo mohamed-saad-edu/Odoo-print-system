@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -57,6 +58,31 @@ func TestLocalPrintSelectionRejectsAmbiguousAliasesAndPreservesUniquePrecedence(
 	}
 	if selected, err := selectLocalTestTarget([]DeviceInfo{{Name: "Pathless"}}, nil, ""); err == nil || selected != nil {
 		t.Fatalf("empty selection chose an unrelated printer: %#v %v", selected, err)
+	}
+}
+
+func TestBoundedDiagnosticMediaLimitsLongRollAndPreservesSheets(t *testing.T) {
+	for _, tc := range []struct {
+		name                          string
+		width, height, expectedHeight float64
+	}{
+		{"POS80 10-metre driver form", 640 * 72.0 / 203, 26200 * 72.0 / 203, 100 * 72 / 25.4},
+		{"72.1mm selected roll", 72.1 * 72 / 25.4, 600 * 72 / 25.4, 100 * 72 / 25.4},
+		{"58mm short stock", 58 * 72 / 25.4, 120 * 72 / 25.4, 120 * 72 / 25.4},
+		{"A4 sheet", 595.28, 841.89, 841.89},
+		{"Letter sheet", 612, 792, 792},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w, h, err := boundedDiagnosticPaper(tc.width, tc.height)
+			if err != nil || math.Abs(w-tc.width) > .01 || math.Abs(h-tc.expectedHeight) > .01 {
+				t.Fatalf("selected driver media: %g x %g, expected %g x %g: %v", w, h, tc.width, tc.expectedHeight, err)
+			}
+		})
+	}
+	for _, bad := range [][2]float64{{0, 792}, {math.NaN(), 792}, {72, math.Inf(1)}, {612, 100000}} {
+		if _, _, err := boundedDiagnosticPaper(bad[0], bad[1]); err == nil {
+			t.Fatalf("invalid native paper admitted: %v", bad)
+		}
 	}
 }
 

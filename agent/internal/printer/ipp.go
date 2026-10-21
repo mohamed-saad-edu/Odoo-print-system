@@ -115,7 +115,7 @@ func normalizeIPPURL(raw string) (*url.URL, error) {
 		if _, _, err := net.SplitHostPort(raw); err == nil {
 			raw = "http://" + raw + "/ipp/print"
 		} else if net.ParseIP(strings.Trim(raw, "[]")) != nil {
-			raw = "http://" + raw + ":631/ipp/print"
+			raw = "http://" + net.JoinHostPort(strings.Trim(raw, "[]"), "631") + "/ipp/print"
 		} else if strings.Contains(raw, ".") && !strings.Contains(raw, "/") {
 			raw = "http://" + raw + ":631/ipp/print"
 		} else if !strings.HasPrefix(strings.ToLower(raw), "http") {
@@ -348,9 +348,8 @@ func (p *IPPPrinter) PrintTestPage(ctx context.Context) error {
 }
 
 // Status differentiates transport failure from unsupported status and from
-// a genuinely responsive device. A timeout/unreachable maps to "offline"
-// (never "online"); an answered query without a usable printer-state maps
-// to "unknown" (never "online").
+// a genuinely responsive device. Probe failures or an answered query without
+// a usable printer-state map to "unknown", not physical offline or online.
 func (p *IPPPrinter) Status() string {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -385,6 +384,21 @@ func interpretIPPPrinterStatus(attrs map[string]string) (status, detail string) 
 	} else {
 		detail = "none"
 	}
+	// RFC 8011 section 5.4.12: explicit report/warning reasons do not
+	// prevent a job completing. A warning on one output device or tray must
+	// not turn an otherwise idle/processing IPP Printer into a failed one.
+	// Retain unqualified legacy fault handling; many devices omit severity.
+	var blockingReasons []string
+	hasExplicitError := false
+	for _, reason := range strings.Split(reasons, ",") {
+		reason = strings.TrimSpace(reason)
+		if strings.HasSuffix(reason, "-warning") || strings.HasSuffix(reason, "-report") {
+			continue
+		}
+		hasExplicitError = hasExplicitError || strings.HasSuffix(reason, "-error")
+		blockingReasons = append(blockingReasons, reason)
+	}
+	reasons = strings.Join(blockingReasons, ",")
 	if reasons != "" && reasons != "none" {
 		for _, marker := range []string{"media-empty", "media-needed", "cover-open", "door-open", "toner-empty", "developer-empty", "marker-supply-empty", "jam", "interlock-open"} {
 			if strings.Contains(reasons, marker) {
@@ -401,6 +415,11 @@ func interpretIPPPrinterStatus(attrs map[string]string) (status, detail string) 
 		}
 	}
 
+	// A vendor-specific explicit error is still a failure even when its
+	// keyword is unknown to us; never turn contradictory evidence into ready.
+	if hasExplicitError {
+		return "error", detail
+	}
 	if state, ok := attrs["printer-state"]; ok {
 		switch state {
 		case "3":

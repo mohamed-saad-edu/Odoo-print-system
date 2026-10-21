@@ -1593,12 +1593,13 @@ func extractJobFromWSMessage(msg map[string]interface{}) (map[string]interface{}
 // Agent reads directly. Payload decoding remains owned by payload.Parse, while
 // these runtime decision fields must never silently collapse to zero values.
 type jobWireFields struct {
-	ID         string
-	AgentID    string
-	PrinterID  string
-	Status     string
-	RequestID  string
-	ClaimToken string
+	ID           string
+	AgentID      string
+	PrinterID    string
+	Status       string
+	RequestID    string
+	ClaimToken   string
+	DocumentType string
 }
 
 func readStringField(m map[string]interface{}, field string, required, nullable bool) (string, error) {
@@ -1656,14 +1657,29 @@ func decodeJobFields(job map[string]interface{}) (jobWireFields, error) {
 	if err != nil {
 		return jobWireFields{}, err
 	}
+	documentType, err := readStringField(job, "documentType", false, true)
+	if err != nil {
+		return jobWireFields{}, err
+	}
 	return jobWireFields{
-		ID:         id,
-		AgentID:    agentID,
-		PrinterID:  printerID,
-		Status:     status,
-		RequestID:  requestID,
-		ClaimToken: claimToken,
+		ID:           id,
+		AgentID:      agentID,
+		PrinterID:    printerID,
+		Status:       status,
+		RequestID:    requestID,
+		ClaimToken:   claimToken,
+		DocumentType: documentType,
 	}, nil
+}
+
+// Do not rewrite a customer PDF merely because its transport is spooler.
+// Only Gateway-durable test_page PDF jobs request selected-driver media.
+// This same decision works for WebSocket and HTTP polling job envelopes.
+func documentForClaimedJob(fields jobWireFields, kind string, data []byte) printer.Document {
+	return printer.Document{
+		Kind: kind, Data: data, JobID: fields.ID,
+		TestPage: fields.DocumentType == "test_page" && kind == printer.KindPDF,
+	}
 }
 
 // enqueueJobAck serializes ACK writes away from the WebSocket reader.
@@ -3403,7 +3419,7 @@ func (a *Agent) processJob(ctx context.Context, job map[string]interface{}) {
 	// allocated) and the terminal ledger write must not lose the only
 	// durable link to the platform job. The observer stops when dispatch
 	// returns; the terminal path remains authoritative.
-	spoolerJobID, printErr := a.dispatchDocumentWithEvidence(printCtx, jobID, p, printer.Document{Kind: kind, Data: printData, JobID: jobID})
+	spoolerJobID, printErr := a.dispatchDocumentWithEvidence(printCtx, jobID, p, documentForClaimedJob(fields, kind, printData))
 	log.Printf("print.trace transport_complete request_id=%s job_id=%s printer_id=%s transport_latency_ms=%d success=%t", requestID, jobID, printerID, time.Since(printStart).Milliseconds(), printErr == nil)
 
 	// Capture platform submission evidence for this attempt regardless of the

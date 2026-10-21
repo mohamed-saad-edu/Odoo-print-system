@@ -25,6 +25,8 @@ func TestGDIBitmapCapabilities(t *testing.T) {
 		{"native stretch at equal size", 0x0880, false, true, false},
 		{"native needs DIB conversion", 0x0801, true, false, false},
 		{"native and DIB", 0x2a81, true, true, true},
+		{"reported POS80 and office capabilities, same size", 0x6e99, false, true, true},
+		{"reported POS80 and office capabilities, resized", 0x6e99, true, true, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			compatible, dib := gdiBitmapCapabilities(tc.caps, tc.resize)
@@ -32,6 +34,21 @@ func TestGDIBitmapCapabilities(t *testing.T) {
 				t.Fatalf("caps=%#x resize=%t: compatible=%t dib=%t", tc.caps, tc.resize, compatible, dib)
 			}
 		})
+	}
+}
+
+func TestGDIFallbackKeepsPreparationAndTransferEvidence(t *testing.T) {
+	prepareErr := errors.New("CreateCompatibleBitmap: driver memory allocation failed")
+	transferErr := errors.New("StretchDIBits returned 0: transfer unconfirmed")
+	got := wrapGDIFallbackFailure(prepareErr, transferErr)
+	if !errors.Is(got, transferErr) || !strings.Contains(got.Error(), "CreateCompatibleBitmap") {
+		t.Fatalf("both failure phases must survive: %v", got)
+	}
+	if got := wrapGDIFallbackFailure(prepareErr, nil); got != nil {
+		t.Fatalf("successful DIB submission must not be downgraded: %v", got)
+	}
+	if got := wrapGDIFallbackFailure(nil, transferErr); !errors.Is(got, transferErr) {
+		t.Fatalf("direct DIB failure changed: %v", got)
 	}
 }
 

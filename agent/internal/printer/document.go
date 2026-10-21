@@ -27,6 +27,9 @@ type Document struct {
 	Kind  string
 	Data  []byte
 	JobID string
+	// TestPage is internal Agent dispatch metadata from an authenticated
+	// Gateway job with documentType=test_page, not user-supplied payload data.
+	TestPage bool
 }
 
 // sanitizeTestText strips C0 controls (incl. ESC) from user-controlled names

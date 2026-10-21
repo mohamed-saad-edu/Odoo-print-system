@@ -116,6 +116,8 @@ type SpoolerPrinter struct {
 	ReceiptRasterDots int
 	ReceiptDPI        int
 	PDFPrint          PDFPrintFunc
+	// Injected only by native-media regression tests; production keeps nil.
+	diagnosticPaper func() (float64, float64, error)
 	// PDFPrintResult is an injectable result-bearing seam used by the Windows
 	// GDI/PDF path to propagate StartDocW job identity. Tests may override it.
 	PDFPrintResult PDFPrintResultFunc
@@ -1096,6 +1098,15 @@ func (p *SpoolerPrinter) printPDFDocument(ctx context.Context, doc Document) err
 func (p *SpoolerPrinter) PrintDocument(ctx context.Context, doc Document) error {
 	switch NormalizeKind(doc.Kind) {
 	case KindPDF:
+		if doc.TestPage {
+			// The Gateway's generic source PDF cannot know a Windows queue's
+			// selected roll or office form. Query active driver media and
+			// generate a bounded test PDF before entering StartDocW.
+			if err := ValidatePDF(doc.Data); err != nil {
+				return err
+			}
+			return p.printNativeTestPage(ctx, doc.JobID)
+		}
 		return p.printPDFDocument(ctx, doc)
 	case KindImage:
 		if err := runDispatchAdmission(ctx); err != nil {

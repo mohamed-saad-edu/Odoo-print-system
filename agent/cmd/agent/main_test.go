@@ -62,7 +62,7 @@ func TestProgramStartStopLifecycle(t *testing.T) {
 
 func TestAgentRuntimeInfoDisclosesHeadlessPDFiumSupport(t *testing.T) {
 	runtimeInfo := agentRuntimeInfo()
-	if !strings.Contains(runtimeInfo, "pdfium-headless-stdio-v1") || !strings.Contains(runtimeInfo, "go=") {
+	if !strings.Contains(runtimeInfo, "pdfium-headless-stdio-v1") || !strings.Contains(runtimeInfo, "gdi-thread-confined-v1") || !strings.Contains(runtimeInfo, "go=") {
 		t.Fatalf("version diagnostic should reveal service-safe PDFium capability: %s", runtimeInfo)
 	}
 }

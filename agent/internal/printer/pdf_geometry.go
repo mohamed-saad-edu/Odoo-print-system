@@ -179,7 +179,28 @@ func pdfPrintableDestination(widthPoints, heightPoints float64, physicalW, physi
 	scale := math.Min(longest/72, math.Min(float64(printableW)/wantW, float64(printableH)/wantH))
 	w := min(printableW, max(1, int(math.Floor(wantW*scale))))
 	h := min(printableH, max(1, int(math.Floor(wantH*scale))))
-	// GDI starts at the printable origin. One proportional, shrink-only fit
-	// keeps all content inside hardware margins without changing physical aspect.
-	return (printableW - w) / 2, (printableH - h) / 2, w, h, nil
+	// GDI coordinates start at the printable origin. A Windows roll driver can
+	// report an enormous fixed page length regardless of this PDF's length.
+	// Vertical centering on that form feeds meters of blank receipt before
+	// the first line. Only the unmistakable narrow/long form is top-aligned;
+	// office sheets and short custom media retain the centered fit.
+	y := (printableH - h) / 2
+	if isClearlyLongRollMedia(physicalW, physicalH, dpiX, dpiY) {
+		y = 0
+	}
+	return (printableW - w) / 2, y, w, h, nil
+}
+
+// Classification uses the driver's PHYSICALWIDTH/HEIGHT and independent X/Y
+// DPI (not the printer's name, printable raster ratio, or a guessed protocol).
+// 40-120mm is the existing narrow-form range; >=4:1 physical aspect selects
+// only clearly elongated media and avoids changing normal office/photo sheets.
+// Drivers that report inconsistent geometry remain a hardware verification gate.
+func isClearlyLongRollMedia(physicalW, physicalH, dpiX, dpiY int) bool {
+	if physicalW <= 0 || physicalH <= 0 || dpiX <= 0 || dpiY <= 0 {
+		return false
+	}
+	widthMM := float64(physicalW) * 25.4 / float64(dpiX)
+	heightMM := float64(physicalH) * 25.4 / float64(dpiY)
+	return widthMM >= 40 && widthMM <= 120 && heightMM >= 4*widthMM
 }

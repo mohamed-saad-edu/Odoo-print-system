@@ -22,6 +22,36 @@ import (
 	"github.com/yaseir-agent/agent/internal/queue"
 )
 
+func TestGatewayTestPageIntentOnlyRewritesPDFDocuments(t *testing.T) {
+	job := map[string]interface{}{
+		"id": "job-test", "agentId": "agent", "printerId": "printer",
+		"status": "claimed", "claimToken": "claim", "documentType": "test_page",
+	}
+	fields, err := decodeJobFields(job)
+	if err != nil || fields.DocumentType != "test_page" {
+		t.Fatalf("Gateway documentType discarded: %+v %v", fields, err)
+	}
+	for _, kind := range []string{printer.KindPDF, printer.KindImage, printer.KindRaw, printer.KindESCPOS} {
+		doc := documentForClaimedJob(fields, kind, []byte("payload"))
+		if doc.TestPage != (kind == printer.KindPDF) || doc.JobID != "job-test" {
+			t.Fatalf("test dispatch altered %s or lost job ID: %+v", kind, doc)
+		}
+	}
+	job["documentType"] = "receipt"
+	fields, err = decodeJobFields(job)
+	if err != nil || documentForClaimedJob(fields, printer.KindPDF, nil).TestPage {
+		t.Fatalf("customer PDF converted to native test: %+v %v", fields, err)
+	}
+	job["documentType"] = 7
+	if _, err := decodeJobFields(job); err == nil {
+		t.Fatal("malformed documentType reached printing")
+	}
+	delete(job, "documentType")
+	if _, err := decodeJobFields(job); err != nil {
+		t.Fatalf("backward-compatible envelope was rejected: %v", err)
+	}
+}
+
 type statusUpdate struct {
 	JobID        string `json:"jobId"`
 	Status       string `json:"status"`

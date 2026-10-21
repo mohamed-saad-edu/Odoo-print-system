@@ -1,4 +1,4 @@
-import { buildTestPdfPayload, buildTestPrintPayloadForPrinter } from "../../../../../lib/payload";
+import { buildTestPdfPayload, buildTestPrintPayloadForPrinter, selectedDiagnosticSheet } from "../../../../../lib/payload";
 import { NextResponse } from "next/server";
 import type { InferSelectModel } from "drizzle-orm";
 import { db } from "../../../../../db";
@@ -60,7 +60,8 @@ type PrinterRow = InferSelectModel<typeof printers>;
 // Stable operation metadata makes retries byte-identical, including configured roll media.
 function buildDeterministicCertificationPdf(printer: PrinterRow, tenantId: string, idempotencyKey: string): string {
   const roll = receiptPaperWidthMM(printer.capabilities) ?? receiptPaperWidthMM(printer.config);
-  return buildTestPdfPayload(printer.name, `Tenant ${tenantId}`, idempotencyKey, roll ?? undefined);
+  const sheet = selectedDiagnosticSheet(printer.capabilities) ?? selectedDiagnosticSheet(printer.config);
+  return buildTestPdfPayload(printer.name, `Tenant ${tenantId}`, idempotencyKey, roll ?? undefined, sheet ?? undefined);
 }
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -129,7 +130,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         return NextResponse.json({ error: "Malformed JSON body", code: "INVALID_REQUEST", steps }, { status: 400, headers: { "x-request-id": requestId } });
       }
       const testPage = body.testPage !== false;
-      const documentType = typeof body.documentType === "string" ? body.documentType : "raw";
+      // Certify's physical test is also a test_page in the authenticated
+      // Gateway envelope, so Windows Agent can use live selected driver paper.
+      const documentType = testPage ? "test_page" : (typeof body.documentType === "string" ? body.documentType : "raw");
       // Idempotency: header preferred, then body, then deterministic fallback per certification session
       const headerKey = req.headers.get("Idempotency-Key")?.trim();
       const bodyKey = typeof body.idempotencyKey === "string" ? body.idempotencyKey.trim() : null;

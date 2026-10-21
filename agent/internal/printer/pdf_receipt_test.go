@@ -32,8 +32,11 @@ func TestReceiptPDFUsesPrintableContentWidthOnce(t *testing.T) {
 	}
 	plan.crop = nil
 	_, genericY, genericW, _, err := plan.printableDestination(640, 28000, 576, 27976, 203, 203, 32, 12)
-	if err != nil || genericY == 0 || math.Abs(float64(genericW)*imageW/pageW-518.4) > 1 {
-		t.Fatalf("ordinary PDF placement changed: %d,%d %v", genericY, genericW, err)
+	// An ordinary PDF on a physically long receipt roll now also begins at
+	// the feed origin. Only the owned receipt crop avoids the second width
+	// reduction; top-alignment must not hide the 518-dot generic scaling.
+	if err != nil || genericY != 0 || math.Abs(float64(genericW)*imageW/pageW-518.4) > 1 {
+		t.Fatalf("ordinary PDF roll alignment or generic scale changed: %d,%d %v", genericY, genericW, err)
 	}
 }
 

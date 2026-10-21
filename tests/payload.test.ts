@@ -101,6 +101,19 @@ describe("payload", () => {
     expect(build({ capabilities: { paper_width_mm: 58 } })).toBe(build({ capabilities: { paper_width_mm: 58 } }));
   });
 
+  it("uses only explicitly selected sheet media for PDF diagnostics", async () => {
+    const { buildTestPrintPayloadForPrinter } = await import("../src/lib/payload");
+    const source = (extra: Parameters<typeof buildTestPrintPayloadForPrinter>[2]) =>
+      Buffer.from(buildTestPrintPayloadForPrinter("Office", "Agent", {
+        connectionType: "ipp", protocol: "ipp", ...extra,
+      }, "stable-operation").data, "base64").toString("utf8");
+    expect(source({ capabilities: { selected_paper: " A4 " } })).toContain("/MediaBox [0 0 595.276 841.89]");
+    expect(source({ config: { paper_format: "Legal" } })).toContain("/MediaBox [0 0 612 1008]");
+    expect(source({ capabilities: { supported_papers: ["A4", "Letter"] } })).toContain("/MediaBox [0 0 612 792]");
+    expect(source({ capabilities: { selected_paper: "../A3" } })).toContain("/MediaBox [0 0 612 792]");
+    expect(source({ capabilities: { selected_paper: "A4", paper_width_mm: 80 } })).toContain("/MediaBox [0 0 226.772 283.465]");
+  });
+
   it("test ticket follows the declared ZPL/TSPL protocol", async () => {
     const { buildTestPrintPayloadForPrinter } = await import("../src/lib/payload");
     const zpl = buildTestPrintPayloadForPrinter("Zebra", "Agent", {

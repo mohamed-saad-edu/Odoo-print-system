@@ -169,8 +169,8 @@ jobs:
           go-version-file: agent/go.mod
           cache: true
           cache-dependency-path: agent/go.sum
+      # A release must test its exact source even if an earlier run was cancelled.
       - name: Verify and test native Windows Go Agent
-        if: needs.changes.outputs.agent == 'true'
         working-directory: agent
         shell: pwsh
         run: |
@@ -351,8 +351,8 @@ jobs:
             Write-Host "OK icon $icon ($len bytes)"
           }
           Write-Host "All $($icons.Count) configured icons are present."
+      # A release must test its exact source even if an earlier run was cancelled.
       - name: Rust unit tests (desktop)
-        if: needs.changes.outputs.rust == 'true'
         shell: pwsh
         run: |
           # Unit tests validate behavior; they do not need LTO/opt-level=3.
