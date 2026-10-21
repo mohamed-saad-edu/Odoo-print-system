@@ -79,3 +79,29 @@ A permanently blocked Windows driver can retain its owned worker; early handle
 release or automatic retry is not a safe cure. A stronger process-isolated
 worker architecture would require a separate design and hardware validation,
 not a speculative change concealed as this incident's proven root cause.
+
+## POS80 extreme page length alignment — 21 October 2026
+
+A real POS80 failure reported a 640x828 bitmap placed at Y=12677 with a
+printable clip height of 26183. This equals `floor((26183-828)/2)`: the
+generic PDF placement policy centered a short document vertically on the
+driver's exceptionally long paper form. Agent-owned receipt-image PDFs
+already forced Y=0 using an internal crop marker; ordinary PDFs did not.
+
+Only an unmistakably elongated narrow form (40-120mm physical width and
+physical length >=4 times that width) is now top-aligned. The detection
+uses `PHYSICALWIDTH/HEIGHT` and independent X/Y DPI. Office A4/Letter,
+landscape, short narrow forms and wide banners retain centered placement.
+PDF source margins remain present: Y=0 means the *printable* origin after
+the physical top offset. Page scaling, rendering bounds, DEVMODE negotiation,
+protocol selection, and UNKNOWN/no-retry semantics were not changed.
+
+A failing regression reproduced Y=12677 using the reported geometry;
+new assertions require (0,0) 640x828 and test anisotropic DPI and normal
+office/specialty media. This corrects a deterministic placement defect,
+but cannot establish why a specific driver returned zero from
+SetDIBitsToDevice or StretchDIBits. Physical paper output and Windows
+Service Session 0 behavior must still be checked with the updated Agent.
+
+See Microsoft's GDI geometry definitions:
+https://learn.microsoft.com/en-us/windows/win32/api/wingdi/nf-wingdi-getdevicecaps
