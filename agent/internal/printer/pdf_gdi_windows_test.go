@@ -7,11 +7,25 @@ import (
 	"strings"
 	"testing"
 	"unsafe"
+
+	"golang.org/x/sys/windows"
 )
+
+func TestGDIPrintThreadRemainsPinnedAcrossSchedulerYields(t *testing.T) {
+	unlock := pinGDIPrintThread()
+	defer unlock()
+	originalThread := windows.GetCurrentThreadId()
+	for i := 0; i < 128; i++ {
+		runtime.Gosched()
+		if got := windows.GetCurrentThreadId(); got != originalThread {
+			t.Fatalf("GDI thread migrated from %d to %d", originalThread, got)
+		}
+	}
+}
 
 func TestGDIBitmapNativeFailureDiagnostic(t *testing.T) {
 	err := drawBitmapToPrinter(0, make([]byte, 4), 1, 1, 1, 1, 0, 0)
-	if err == nil || !strings.Contains(err.Error(), "raster_caps=0x0 clip_kind=0") {
+	if err == nil || !strings.Contains(err.Error(), "raster_caps=0x0 clip_kind=0") || !strings.Contains(err.Error(), "session_id=") || !strings.Contains(err.Error(), "thread_id=") {
 		t.Fatalf("invalid DC failure lacks native geometry context: %v", err)
 	}
 }

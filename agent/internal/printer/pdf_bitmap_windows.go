@@ -27,12 +27,14 @@ func prepareGDIBitmap(hdc uintptr, bitmap []byte, width, height, destW, destH, x
 	resize := width != destW || height != destH
 	caps := deviceCaps(hdc, capRasterCaps)
 	compatible, dib := gdiBitmapCapabilities(caps, resize)
+	var compatiblePreparationErr error
 	if compatible {
 		draw, cleanup, err := prepareCompatibleGDIBitmap(hdc, bitmap, width, height, destW, destH, x, y, resize || caps&rcBitBlt == 0)
 		if err == nil {
 			log.Printf("print.trace gdi_bitmap backend=compatible raster_caps=%#x source=%dx%d target=%dx%d", caps, width, height, destW, destH)
 			return draw, cleanup, nil
 		}
+		compatiblePreparationErr = err
 		if !dib {
 			return nil, nil, err
 		}
@@ -42,7 +44,10 @@ func prepareGDIBitmap(hdc uintptr, bitmap []byte, width, height, destW, destH, x
 		return nil, nil, fmt.Errorf("printer has no supported bitmap transfer for resize=%t (raster_caps=%#x)", resize, caps)
 	}
 	log.Printf("print.trace gdi_bitmap backend=dib raster_caps=%#x source=%dx%d target=%dx%d", caps, width, height, destW, destH)
-	return func() error { return drawBitmapToPrinter(hdc, bitmap, width, height, destW, destH, x, y) }, func() {}, nil
+	return func() error {
+		return wrapGDIFallbackFailure(compatiblePreparationErr,
+			drawBitmapToPrinter(hdc, bitmap, width, height, destW, destH, x, y))
+	}, func() {}, nil
 }
 
 func prepareCompatibleGDIBitmap(hdc uintptr, bitmap []byte, width, height, destW, destH, x, y int, stretch bool) (draw func() error, release func(), retErr error) {

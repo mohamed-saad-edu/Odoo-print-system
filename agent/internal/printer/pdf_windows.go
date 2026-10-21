@@ -9,6 +9,7 @@ import (
 	"log"
 	"math"
 	"os"
+	"runtime"
 	"strconv"
 	"sync"
 	"time"
@@ -121,6 +122,15 @@ func getPDFiumPool() (pdfium.Pool, error) {
 		pdfiumPool, pdfiumErr = webassembly.Init(newPDFiumPoolConfig())
 	})
 	return pdfiumPool, pdfiumErr
+}
+
+// pinGDIPrintThread keeps the printer DC, any child memory DC, drawing and
+// deferred AbortDoc/DeleteDC on one OS thread. The slot serializes PDF jobs,
+// but without this guard Go can migrate the goroutine between native calls.
+// A locked thread is released on every return path, including errors.
+func pinGDIPrintThread() func() {
+	runtime.LockOSThread()
+	return runtime.UnlockOSThread
 }
 
 func openPrinterDC(printerName string, mode []byte) (uintptr, error) {
@@ -303,8 +313,17 @@ func drawBitmapToPrinter(hdc uintptr, bitmap []byte, width, height, destinationW
 func gdiDeviceDiagnostic(hdc uintptr, err error) error {
 	var clip windows.Rect
 	kind, _, _ := procGetClipBox.Call(hdc, uintptr(unsafe.Pointer(&clip)))
-	return fmt.Errorf("%w; raster_caps=%#x clip_kind=%d clip=(%d,%d)-(%d,%d)", err,
-		deviceCaps(hdc, capRasterCaps), int32(kind), clip.Left, clip.Top, clip.Right, clip.Bottom)
+	// Service Session 0 differs from the interactive user's session.
+	// Report only the session number (not the account or credentials) to
+	// distinguish driver/service incompatibility from raster capability bugs.
+	session := "unknown"
+	var sessionID uint32
+	if windows.ProcessIdToSessionId(windows.GetCurrentProcessId(), &sessionID) == nil {
+		session = strconv.FormatUint(uint64(sessionID), 10)
+	}
+	return fmt.Errorf("%w; raster_caps=%#x clip_kind=%d clip=(%d,%d)-(%d,%d) session_id=%s thread_id=%d", err,
+		deviceCaps(hdc, capRasterCaps), int32(kind), clip.Left, clip.Top, clip.Right, clip.Bottom,
+		session, windows.GetCurrentThreadId())
 }
 
 func renderPageWithContext(ctx context.Context, instance pdfium.Pdfium, request *requests.RenderPageInPixels, killed *pdfiumKillTracker) (*image.RGBA, func(), error) {
@@ -524,6 +543,11 @@ func renderAndPrintPDFWithPDFiumResultObserved(ctx context.Context, printerName 
 		}
 		plans[pageIndex] = plan
 	}
+	// Do not migrate the live Win32 printer DC across OS threads while the
+	// service renders or waits for PDFium. DeleteDC/AbortDoc defers run before
+	// this unlock because Go runs defers in last-in-first-out order.
+	unlockGDIThread := pinGDIPrintThread()
+	defer unlockGDIThread()
 	hdc, err := openPrinterDC(printerName, plans[0].mode)
 	if err != nil {
 		return err

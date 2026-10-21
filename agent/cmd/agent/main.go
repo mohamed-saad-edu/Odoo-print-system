@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
@@ -456,7 +457,18 @@ func handleServiceControl(rawAction, configPath string) error {
 // installer and running service point to different paths. The marker is
 // intentionally tied to the verified io.Discard WASM configuration.
 func agentRuntimeInfo() string {
-	return fmt.Sprintf("YaseirAgent go=%s feature=pdfium-headless-stdio-v1", runtime.Version())
+	info := fmt.Sprintf("YaseirAgent go=%s feature=pdfium-headless-stdio-v1 feature=gdi-thread-confined-v1", runtime.Version())
+	// Embed the VCS revision whenever Go's build metadata provides one so
+	// operators can compare the running service binary to the released source.
+	if build, ok := debug.ReadBuildInfo(); ok {
+		for _, setting := range build.Settings {
+			if setting.Key == "vcs.revision" && len(setting.Value) >= 12 {
+				info += " revision=" + setting.Value[:12]
+				break
+			}
+		}
+	}
+	return info
 }
 
 func main() {

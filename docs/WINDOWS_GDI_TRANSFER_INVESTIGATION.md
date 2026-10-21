@@ -320,3 +320,66 @@ cut behavior and the affected driver's drawing result remain **NOT VERIFIED**.
 An invalid/unavailable driver or an unconfirmed post-submission result cannot be
 safely turned into success. No automatic replay, protocol substitution or customer
 printer settings change is introduced.
+
+## Field incident: POS80, Brother and Canon failures — 21 October 2026
+
+Three independent Windows queues reported a successful StartDocW followed by a
+zero-scanline bitmap draw in the same Agent/Gateway deployment:
+
+- POS80: 640x828 at (0,12677), SetDIBitsToDevice=0.
+- Brother MFC-J3940DW: 3516x4550 to (0,21) 4960x6418, StretchDIBits=0.
+- Canon G4070: 3516x4550 to (0,100) 4800x6211, StretchDIBits=0.
+
+All reported raster_caps=0x6e99, clip_kind=2 and win32_last_error=158.
+The 158 extended error is diagnostic only: it does not establish the failed
+drawing's root cause, and the driver-specific rendered positions cannot explain
+all three cases. Microsoft's GDI API contract makes the zero draw authoritative,
+not a guarantee that paper did or did not emerge. UNKNOWN remains terminal and
+must not be automatically retried.
+
+Current main selects a compatible memory bitmap before drawing when 0x6e99 is
+reported. A post-StartDoc failure naming only SetDIBitsToDevice or StretchDIBits
+therefore suggests either an older installed Agent or a compatible-bitmap
+preparation failure followed by the advertised DIB fallback. The latter was
+previously logged locally but omitted from the Gateway-visible error.
+
+This follow-up keeps one OS thread for the lifetime of the live printer and
+memory DC, reports both preparation and fallback failures, appends process
+session and OS thread identifiers to the GDI error for controlled
+service-versus-interactive diagnosis, and adds a runtime feature marker (`gdi-thread-confined-v1`) and an optional VCS revision in
+`YaseirAgent.exe -version`. These are software reliability and observability
+changes, **not proof that an affected physical printer now works**. In
+particular, the user-session versus Windows Service Session 0 driver execution
+difference still needs a controlled comparison.
+
+Read-only operator check on the Windows machine running the Agent (PowerShell):
+
+```powershell
+$svc = Get-CimInstance Win32_Service -Filter "Name='YaseirAgent'"
+$svc | Select-Object State, StartName, ProcessId, PathName
+$proc = Get-CimInstance Win32_Process -Filter "ProcessId=$($svc.ProcessId)"
+if ($proc -and $proc.ExecutablePath) {
+    & $proc.ExecutablePath -version
+    Get-FileHash $proc.ExecutablePath -Algorithm SHA256
+}
+Get-Content "$env:ProgramData\YaseirAgent\logs\agent.log" -Tail 1000 |
+    Select-String "gdi_bitmap|compatible bitmap preparation|Embedded PDF print" |
+    Select-Object -Last 30
+```
+
+If the marker is absent, upgrade the Windows Agent using the approved signed
+installer and verify the running SCM executable and hash; restarting the old
+binary does not install a source fix. If present, inspect the local log's
+`backend=compatible` versus `backend=dib` selection and any preparation error.
+On a known-idle printer inspect the old UNKNOWN job and Windows queue FIRST;
+then a **new unique** controlled test may be performed only after assessing
+duplicate-paper risk. A Windows Test Page from the interactive account and
+the same printer's service-context path can help isolate a Session 0 driver
+limitation. Do not change RAW/ESC-POS/IPP language, global driver settings, or
+authentication context based on a speculative workaround.
+
+Sources:
+- https://learn.microsoft.com/en-us/windows/win32/procthread/multiple-threads-and-gdi-objects
+- https://learn.microsoft.com/en-us/windows/win32/api/wingdi/nf-wingdi-getdevicecaps
+- https://learn.microsoft.com/en-us/windows/win32/api/wingdi/nf-wingdi-setdibitstodevice
+- https://learn.microsoft.com/en-us/windows/win32/api/wingdi/nf-wingdi-stretchdibits
