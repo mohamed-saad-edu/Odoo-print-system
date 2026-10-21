@@ -623,7 +623,7 @@ func TestInterpretIPPPrinterStatusSharesDiscoveryAndRuntimeMapping(t *testing.T)
 		{"processing is busy", map[string]string{"printer-state": "4", "printer-is-accepting-jobs": "true"}, "busy"},
 		{"stopped is error not offline", map[string]string{"printer-state": "5", "printer-state-reasons": "paused"}, "error"},
 		{"paused reason is error", map[string]string{"printer-state": "3", "printer-state-reasons": "paused"}, "error"},
-		{"offline reason is offline", map[string]string{"printer-state": "3", "printer-state-reasons": "offline-report"}, "offline"},
+		{"nonblocking offline report preserves idle state", map[string]string{"printer-state": "3", "printer-state-reasons": "offline-report"}, "online"},
 		{"paper jam is error", map[string]string{"printer-state": "3", "printer-state-reasons": "media-jam"}, "error"},
 		{"missing state is unknown", map[string]string{"printer-is-accepting-jobs": "true"}, "unknown"},
 		{"nil attributes are unknown", nil, "unknown"},

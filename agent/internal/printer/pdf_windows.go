@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"image"
 	"log"
-	"math"
 	"os"
 	"runtime"
 	"strconv"
@@ -35,7 +34,6 @@ import (
 
 const (
 	maxPDFPages        = 500
-	maxPDFRenderPixels = 16_000_000 // <= 64 MiB for one 32-bit bitmap.
 	maxPDFDevModeBytes = 8 * 1024 * 1024
 
 	// GetDeviceCaps indices.
@@ -214,20 +212,6 @@ func endGDIPage(hdc uintptr) error {
 	return nil
 }
 
-func renderBounds(printableWidth, printableHeight int) (int, int, error) {
-	if printableWidth <= 0 || printableHeight <= 0 {
-		return 0, 0, fmt.Errorf("printer reported invalid printable area %dx%d", printableWidth, printableHeight)
-	}
-	maxW, maxH := printableWidth, printableHeight
-	area := int64(maxW) * int64(maxH)
-	if area > maxPDFRenderPixels {
-		scale := math.Sqrt(float64(maxPDFRenderPixels) / float64(area))
-		maxW = max(1, int(float64(maxW)*scale))
-		maxH = max(1, int(float64(maxH)*scale))
-	}
-	return maxW, maxH, nil
-}
-
 func rgbaToBGRAInPlace(src *image.RGBA) error {
 	if src == nil {
 		return fmt.Errorf("PDFium returned a nil bitmap")
@@ -327,44 +311,24 @@ func gdiDeviceDiagnostic(hdc uintptr, err error) error {
 }
 
 func renderPageWithContext(ctx context.Context, instance pdfium.Pdfium, request *requests.RenderPageInPixels, killed *pdfiumKillTracker) (*image.RGBA, func(), error) {
-	type outcome struct {
-		rendered *responses.RenderPageInPixels
-		err      error
-	}
-	done := make(chan outcome, 1)
-	go func() {
-		rendered, err := instance.RenderPageInPixels(request)
-		done <- outcome{rendered: rendered, err: err}
-	}()
-
-	select {
-	case result := <-done:
-		if result.err != nil {
-			return nil, nil, result.err
-		}
-		if result.rendered == nil {
-			return nil, nil, fmt.Errorf("PDFium returned no render result")
-		}
-		return result.rendered.Result.Image, result.rendered.Cleanup, nil
-	case <-ctx.Done():
-		// Kill is the go-pdfium-supported way to interrupt an in-flight WASM
-		// worker. The caller decides whether the physical outcome is already
-		// ambiguous based on whether StartDocW has occurred. Recording the
-		// kill keeps the deferred Close from misreporting the resulting
-		// "already closed" state as a worker-cleanup failure.
-		killed.kill(instance)
-		// If the render completed in the same instant as the cancellation,
-		// its Cleanup would otherwise be orphaned in the buffered channel:
-		// the bitmap was never handed out, so release it here.
-		select {
-		case result := <-done:
-			if result.rendered != nil {
-				result.rendered.Cleanup()
+	rendered, err := awaitPDFRenderResult(ctx,
+		func() (*responses.RenderPageInPixels, error) { return instance.RenderPageInPixels(request) },
+		func(result *responses.RenderPageInPixels) {
+			if result != nil {
+				result.Cleanup()
 			}
-		default:
-		}
-		return nil, nil, ctx.Err()
+		},
+		func() { killed.kill(instance) },
+	)
+	if err != nil {
+		return nil, nil, err
 	}
+	if rendered == nil {
+		return nil, nil, fmt.Errorf("PDFium returned no render result")
+	}
+	// The caller owns successful results. Cancelled or failed handoffs are
+	// cleaned by awaitPDFRenderResult, including a late renderer completion.
+	return rendered.Result.Image, rendered.Cleanup, nil
 }
 
 // platformPrintPDF reads the generated temporary PDF file and submits it to

@@ -78,24 +78,18 @@ func (p *IPPPrinter) printPDFWithFormatNegotiation(ctx context.Context, data []b
 	if containsIPPFormat(formats, ippFormatPDF) {
 		return p.printDocument(ctx, data, ippFormatPDF)
 	}
-	if containsIPPFormat(formats, "image/pwg-raster") {
-		// IPP Everywhere requires PWG Raster even where PDF is not
-		// advertised. Assemble every page locally into one compliant
-		// RaS2 stream before one Print-Job; do not send raw bitmap bytes.
-		pwg, err := renderIPPPDFToPWG(ctx, data, attrs)
+	if containsIPPFormat(formats, "image/pwg-raster") || containsIPPFormat(formats, ippFormatJPEG) {
+		// A renderer can reject an advertised PWG variant before submission.
+		// In that case, an advertised JPEG is still a valid single-page option.
+		// Format fallback is confined to preparation: never retry a Print-Job.
+		prepared, format, err := prepareIPPRasterDocument(ctx, formats,
+			func() ([]byte, error) { return renderIPPPDFToPWG(ctx, data, attrs) },
+			func() ([]byte, error) { return renderIPPPDFToJPEG(ctx, data) },
+		)
 		if err != nil {
-			return fmt.Errorf("IPP printer %s supports image/pwg-raster but conversion failed before submission: %w. Configure the installed Windows spooler driver if this device needs a format variant the Agent cannot encode", p.URL, err)
+			return fmt.Errorf("IPP printer %s rejects application/pdf (supported: %s); conversion failed before submission: %w. Configure the installed Windows spooler driver if no advertised format can be rendered", p.URL, strings.Join(formats, ", "), err)
 		}
-		return p.printDocument(ctx, pwg, "image/pwg-raster")
-	}
-	if containsIPPFormat(formats, ippFormatJPEG) {
-		// Rendering before print submission preserves deterministic
-		// failure semantics: no uncertain partial job after a render error.
-		jpegData, err := renderIPPPDFToJPEG(ctx, data)
-		if err != nil {
-			return fmt.Errorf("IPP printer %s rejects application/pdf (supported: %s); cannot convert document to JPEG: %w. For multi-page/raster-only printers select a Windows spooler queue with an installed print driver", p.URL, strings.Join(formats, ", "), err)
-		}
-		return p.printDocument(ctx, jpegData, ippFormatJPEG)
+		return p.printDocument(ctx, prepared, format)
 	}
 	return fmt.Errorf("IPP printer %s rejects application/pdf (document-format-supported: %s). Configure the printer's installed Windows queue with the spooler transport for document conversion; no unsupported data was submitted", p.URL, strings.Join(formats, ", "))
 }
