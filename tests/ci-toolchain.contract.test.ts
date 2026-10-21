@@ -28,7 +28,17 @@ describe("CI/runtime alignment", () => {
     const ci = readFileSync(path.join(root, ".github/workflows/ci.yml"), "utf8");
     const go = readFileSync(path.join(root, "agent/go.mod"), "utf8");
     expect(go).toMatch(/^go 1\.26(?:\.0)?$/m);
-    expect(go).toMatch(/^toolchain go1\.26\.9$/m);
+    // GO-2026-6809 in crypto/x509 is fixed by Go 1.26.10.
+    expect(go).toMatch(/^toolchain go1\.26\.10$/m);
+    for (const filename of [
+      "ci.yml",
+      "build-windows.yml",
+      "security-supply-chain.yml",
+      "static-security.yml",
+    ]) {
+      const workflow = readFileSync(path.join(root, ".github/workflows", filename), "utf8");
+      expect(workflow).toContain("go-version-file: agent/go.mod");
+    }
     expect(ci).toContain("go-version-file: agent/go.mod");
     expect(ci).not.toMatch(/go-version:\s*['\"]1\.27\.1['\"]/);
   });
