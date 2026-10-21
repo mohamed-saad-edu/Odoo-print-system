@@ -234,13 +234,13 @@ Expected:
 {"ok":true}
 ```
 
-Check TLS:
+Check publicly trusted HTTPS and the Agent's authenticated WebSocket boundary:
 
 ```bash
-curl -I https://gw.example.com/
+node scripts/check-public-gateway.mjs https://gw.example.com
 ```
 
-You should get a normal HTTPS response from Caddy/Gateway.
+Run this from an external operator machine after `npm ci` (not from inside the Gateway container). It rejects redirects, untrusted certificates, an unhealthy DB, and unexpected unauthenticated WebSocket upgrades. A healthy deployment still requires paired-Agent and actual paper-output verification.
 
 ## 7. Provision the plans
 

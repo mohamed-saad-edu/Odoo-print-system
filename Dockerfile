@@ -48,6 +48,12 @@ COPY --from=build /app/tsconfig.json ./tsconfig.json
 COPY --from=build /app/package.json ./package.json
 COPY --from=build /app/package-lock.json ./package-lock.json
 
+# The official Node image bundles npm (and bundled npm dependencies with
+# outstanding upstream advisories). No package installation is needed after
+# image assembly: run the TypeScript entry points via Node's tsx import hook
+# and remove the entire global npm CLI from the FINAL image.
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
+
 USER node
 
 EXPOSE 3000
@@ -58,4 +64,4 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=5 \
 # Migrations are a release/deployment concern and must run in a dedicated,
 # ordered migration job before application rollout. Runtime replicas must not
 # require schema-write privileges or race each other on startup.
-CMD ["npm", "start"]
+CMD ["node", "--import", "tsx", "server.ts"]

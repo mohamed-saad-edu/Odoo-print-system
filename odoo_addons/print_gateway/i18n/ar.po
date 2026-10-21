@@ -922,6 +922,26 @@ msgstr "يجب أن يستخدم عنوان URL للـ Gateway بروتوكول 
 
 #. module: print_gateway
 #: code:addons/print_gateway/models/gateway_config.py:0
+msgid "Gateway URL has an invalid host or port."
+msgstr "اسم مضيف Gateway أو رقم المنفذ غير صالح."
+
+#. module: print_gateway
+#: code:addons/print_gateway/models/gateway_config.py:0
+msgid "Gateway URL has an invalid port."
+msgstr "رقم منفذ Gateway غير صالح."
+
+#. module: print_gateway
+#: code:addons/print_gateway/models/gateway_config.py:0
+msgid "Remote Gateway URLs must use HTTPS. The development HTTP opt-in is restricted to loopback."
+msgstr "يجب استخدام HTTPS لعناوين Gateway البعيدة. السماح بـ HTTP للتطوير مقصور على الاتصال المحلي فقط."
+
+#. module: print_gateway
+#: code:addons/print_gateway/models/gateway_config.py:0
+msgid "Gateway destination was refused: %s"
+msgstr "تم رفض وجهة Gateway: %s"
+
+#. module: print_gateway
+#: code:addons/print_gateway/models/gateway_config.py:0
 msgid "Gateway activation synchronization could not converge after several fenced retries."
 msgstr "تعذّر على مزامنة تفعيل الـ Gateway الاستقرار بعد عدة محاولات مقيدة."
 

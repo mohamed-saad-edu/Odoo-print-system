@@ -129,7 +129,7 @@ describe("architecture hardening", () => {
     // Content-Security-Policy; production must use `npm start`.
     expect(pkg.scripts["start"]).toContain("server.ts");
     expect(pkg.scripts["start:next"]).toBeUndefined();
-    expect(readFileSync("Dockerfile", "utf8")).toContain('CMD ["npm", "start"]');
+    expect(readFileSync("Dockerfile", "utf8")).toContain('CMD ["node", "--import", "tsx", "server.ts"]');
   });
 
   it("uses a request-scoped CSP nonce for the only application inline script", () => {

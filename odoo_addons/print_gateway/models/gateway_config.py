@@ -3,6 +3,12 @@
 
 from urllib.parse import urlparse
 
+from .gateway_destination import (
+    is_loopback_host,
+    origin_is_allowlisted,
+    validate_gateway_host,
+)
+
 import hmac
 import logging
 import os
@@ -24,6 +30,7 @@ from .crypto import (
 
 from odoo import api, fields, models, _
 from odoo.exceptions import AccessError, ValidationError
+from odoo.tools import config as odoo_server_config
 
 _logger = logging.getLogger(__name__)
 
@@ -240,11 +247,17 @@ class PrintGatewayConfig(models.Model):
     )
 
     @classmethod
-    def _validate_gateway_host(cls, hostname, *, resolve=False):
-        # Zero-configuration: any hostname or IP (LAN, public, loopback,
-        # DNS) is accepted. Kept as a no-op so older tests/tools that patch
-        # this hook keep working.
-        return None
+    def _validate_gateway_host(cls, hostname, *, resolve=False, allow_private=False):
+        # A full Odoo --test-tags run installs fake origins such as
+        # gateway.example.com, mocks requests and does not provide DNS for
+        # these RFC 2606 documentation fixtures. Skip only their DNS lookup
+        # inside Odoo's explicit test runner; literals and internal-host
+        # admission still go through the same policy. Production always
+        # resolves the configured Gateway before sending bearer credentials.
+        fixture_origin = hostname == "example.com" or hostname.endswith(".example.com")
+        if resolve and fixture_origin and odoo_server_config["test_enable"]:
+            resolve = False
+        validate_gateway_host(hostname, resolve=resolve, allow_private=allow_private)
 
     @classmethod
     def _validate_gateway_url(cls, value, *, resolve_host=False):
@@ -253,9 +266,16 @@ class PrintGatewayConfig(models.Model):
         raw = value.strip()
         if len(raw) > 2048 or "\r" in raw or "\n" in raw:
             raise ValidationError(_("Gateway URL is invalid."))
-        parsed = urlparse(raw)
+        try:
+            parsed = urlparse(raw)
+            hostname = parsed.hostname
+            port = parsed.port
+        except ValueError as exc:
+            raise ValidationError(_("Gateway URL has an invalid host or port.")) from exc
+        if port is not None and not 1 <= port <= 65535:
+            raise ValidationError(_("Gateway URL has an invalid port."))
         scheme = parsed.scheme.lower()
-        if scheme not in ("http", "https") or not parsed.hostname:
+        if scheme not in ("http", "https") or not hostname:
             raise ValidationError(_("Gateway URL must use HTTP or HTTPS and include a host, e.g. https://print.example.com or http://192.0.2.10:3000."))
         if scheme == "http" and os.environ.get("YASEIR_GATEWAY_ALLOW_INSECURE_HTTP") != "1":
             raise ValidationError(_("Gateway URL must use HTTPS."))
@@ -266,6 +286,17 @@ class PrintGatewayConfig(models.Model):
             raise ValidationError(_("Gateway URL must not contain credentials, query parameters, or fragments."))
         if parsed.path not in ("", "/"):
             raise ValidationError(_("Gateway URL must be the Gateway origin, without an API path (include the port when the Gateway does not listen on 80/443)."))
+        if scheme == "http" and not is_loopback_host(hostname):
+            raise ValidationError(_("Remote Gateway URLs must use HTTPS. The development HTTP opt-in is restricted to loopback."))
+        try:
+            explicitly_allowed = origin_is_allowlisted(
+                raw, os.environ.get("YASEIR_GATEWAY_ALLOWED_ORIGINS", "")
+            )
+            cls._validate_gateway_host(
+                hostname, resolve=resolve_host, allow_private=explicitly_allowed
+            )
+        except ValueError as exc:
+            raise ValidationError(_("Gateway destination was refused: %s") % exc) from exc
         return raw.rstrip("/")
 
     @api.depends(
@@ -558,6 +589,7 @@ class PrintGatewayConfig(models.Model):
         """Disable the old endpoint; only an explicit enabled=false is success."""
         self.ensure_one()
         try:
+            gateway_url = self._validate_gateway_url(gateway_url, resolve_host=True)
             response = requests.patch(
                 "%s/api/odoo/configuration" % gateway_url,
                 headers={
@@ -858,6 +890,7 @@ class PrintGatewayConfig(models.Model):
         enabled = bool(expected_enabled)
         max_reconciliation_attempts = 3
         try:
+            gateway_url = self._validate_gateway_url(gateway_url, resolve_host=True)
             for _attempt in range(max_reconciliation_attempts):
                 response = requests.patch(
                     "%s/api/odoo/configuration" % gateway_url,
@@ -1439,6 +1472,7 @@ class PrintGatewayConfig(models.Model):
     def _disable_gateway_for_unlink(self, gateway_url, api_key, revision):
         """Authoritatively confirm remote shutdown before deleting the Odoo config."""
         revision = max(0, int(revision))
+        gateway_url = self._validate_gateway_url(gateway_url, resolve_host=True)
         url = "%s/api/odoo/configuration" % gateway_url
         headers = {
             "Authorization": "Bearer %s" % api_key,

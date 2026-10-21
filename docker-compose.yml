@@ -38,7 +38,7 @@ services:
       PGPASSWORD_FILE: /run/secrets/postgres_password
     secrets:
       - postgres_password
-    command: ["npm", "run", "db:migrate"]
+    command: ["node", "--import", "tsx", "scripts/db-migrate.ts"]
     networks:
       - printer_backend
 

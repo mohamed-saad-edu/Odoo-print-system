@@ -73,6 +73,18 @@ if (process.env.NODE_ENV === "production") {
   if (!platformTenantId || platformTenantId === "<required-platform-tenant-id>") {
     throw new Error("Refusing production startup: PLATFORM_TENANT_ID must be configured with the real platform workspace ID so the platform tenant cannot be suspended or deleted.");
   }
+  // Do not advertise a production Gateway with a dummy PostgreSQL pool.
+  // A database URL or the complete structured connection identity is
+  // required. Local/test module imports remain free of deployment settings.
+  const configuredDatabaseUrl = runtimeSecret("DATABASE_URL")?.trim();
+  const structuredDatabase = Boolean(
+    process.env.PGHOST?.trim() &&
+    process.env.PGUSER?.trim() &&
+    process.env.PGDATABASE?.trim()
+  );
+  if (!configuredDatabaseUrl && !structuredDatabase) {
+    throw new Error("Refusing production startup: DATABASE_URL or PGHOST, PGUSER and PGDATABASE are required.");
+  }
   assertRealSecret("GATEWAY_JWT_SECRET", runtimeSecret("GATEWAY_JWT_SECRET"), 32);
   if (!trustProxyEnabled() && !isLoopbackBinding(hostname)) {
     throw new Error("Refusing production startup: TRUST_PROXY=1 is required when the Gateway binds a non-loopback interface. Do not expose the Gateway application port directly.");

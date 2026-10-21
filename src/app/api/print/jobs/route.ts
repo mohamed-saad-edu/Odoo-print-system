@@ -223,7 +223,7 @@ export async function POST(req: Request) {
     // Anything else is an internal failure: log the detail, return a generic
     // sanitized error. Database constraint names, driver messages, and
     // stack traces never leave the server.
-    logError("print.job.create_failed", { key: parsed.data.idempotencyKey ?? null, error: error instanceof Error ? error.message : String(error) });
+    logError("print.job.create_failed", { operationIdentityProvided: Boolean(parsed.data.idempotencyKey), error: error instanceof Error ? error.message : String(error) });
     return NextResponse.json({ error: "Internal server error", code: "INTERNAL_ERROR", retryable: true }, { status: 500 });
   }
 }

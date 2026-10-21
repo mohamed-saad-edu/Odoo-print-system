@@ -44,18 +44,30 @@ else
          [[ ! "$head" =~ ^[0-9a-fA-F]{40}$ ]]; then
         full=true
       else
-        if ! git cat-file -e "${base}^{commit}" 2>/dev/null; then
-          git fetch --no-tags --depth=1 origin "$base" >/dev/null 2>&1 || true
-        fi
-        if ! git cat-file -e "${base}^{commit}" 2>/dev/null; then
-          full=true
-        else
-          paths_file="$(mktemp)"
-          trap 'rm -f "$paths_file"' EXIT
-          if git diff --name-only -z "$base" "$head" > "$paths_file"; then
-            mapfile -d '' -t files < "$paths_file"
-          else
+        # Force-with-lease rewrites and multi-commit pushes must validate the
+        # new commit against its actual parent. Comparing two superseded
+        # HEADs can hide runtime changes behind a docs-only diff.
+        # Read the raw commit object: shallow clones retain parent headers.
+        if [[ "${GITHUB_EVENT_NAME:-}" == "push" ]]; then
+          first_parent="$(git cat-file -p "$head" 2>/dev/null | awk '$1 == "parent" && !found { print $2; found = 1 }')" || first_parent=""
+          if [[ "$first_parent" != "$base" ]]; then
             full=true
+          fi
+        fi
+        if [[ "$full" == false ]]; then
+          if ! git cat-file -e "${base}^{commit}" 2>/dev/null; then
+            git fetch --no-tags --depth=1 origin "$base" >/dev/null 2>&1 || true
+          fi
+          if ! git cat-file -e "${base}^{commit}" 2>/dev/null; then
+            full=true
+          else
+            paths_file="$(mktemp)"
+            trap 'rm -f "$paths_file"' EXIT
+            if git diff --name-only -z "$base" "$head" > "$paths_file"; then
+              mapfile -d '' -t files < "$paths_file"
+            else
+              full=true
+            fi
           fi
         fi
       fi

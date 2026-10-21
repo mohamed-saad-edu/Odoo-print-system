@@ -14,7 +14,7 @@ SCOPES = {
 }
 
 
-def classify(*paths, event=None, before=None, head=None):
+def classify(*paths, event=None, before=None, head=None, cwd=None):
     with tempfile.NamedTemporaryFile() as output:
         env = dict(os.environ, GITHUB_OUTPUT=output.name)
         if event:
@@ -24,7 +24,7 @@ def classify(*paths, event=None, before=None, head=None):
         command = ["bash", str(SCRIPT)]
         if not event:
             command += ["--paths", *paths]
-        subprocess.run(command, env=env, check=True, capture_output=True, text=True)
+        subprocess.run(command, env=env, cwd=cwd, check=True, capture_output=True, text=True)
         result = {}
         for entry in Path(output.name).read_text().splitlines():
             key, value = entry.split("=", 1)
@@ -90,6 +90,37 @@ def test_unavailable_push_diff_fails_open():
     flags = classify(event="push", before="0" * 40, head="1" * 40)
     assert all(flags.values())
 
+
+def test_force_amended_main_runs_all_checks_even_if_only_docs_differ(tmp_path):
+    """A rewritten release must validate its full new commit, not only two superseded heads."""
+    def git(*args):
+        return subprocess.run(
+            ["git", *args], cwd=tmp_path, check=True,
+            capture_output=True, text=True,
+        ).stdout.strip()
+
+    git("init", "-q")
+    git("config", "user.email", "ci@example.com")
+    git("config", "user.name", "CI Test")
+    (tmp_path / "README.md").write_text("base\n")
+    git("add", "README.md")
+    git("commit", "-q", "-m", "base")
+    base = git("rev-parse", "HEAD")
+
+    (tmp_path / "Dockerfile").write_text("FROM scratch\n")
+    git("add", "Dockerfile")
+    git("commit", "-q", "-m", "release")
+    superseded_head = git("rev-parse", "HEAD")
+
+    git("reset", "--soft", base)
+    (tmp_path / "README.md").write_text("docs edited during amend\n")
+    git("add", "README.md", "Dockerfile")
+    git("commit", "-q", "-m", "revised release")
+    amended_head = git("rev-parse", "HEAD")
+
+    # git diff superseded_head..amended_head contains README only; the new
+    # commit still introduces Dockerfile relative to its actual parent.
+    assert all(classify(event="push", before=superseded_head, head=amended_head, cwd=tmp_path).values())
 
 def test_manual_or_merge_queue_runs_all_gates():
     for event in ("workflow_dispatch", "merge_group"):
