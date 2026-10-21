@@ -5,12 +5,58 @@ import { WebSocket } from "ws";
 import { hasTestDatabase, applyMigrations, seedFixture, closePool, pool, insertQueuedJob, type Fixture } from "./helpers/pg";
 import { getWorkerSchema } from "../src/lib/worker-schema";
 
+/**
+ * The production Gateway announces its ephemeral listen port through a JSON
+ * startup event. Do not parse the previous human-readable console banner:
+ * structured logging is now the runtime contract, and a stale banner wait
+ * would make this integration suite time out even when both servers are up.
+ */
+function gatewayReadyPort(output: string): number | null {
+  for (const line of output.split(/\r?\n/)) {
+    if (!line.includes('"gateway.startup.ready"')) continue;
+    try {
+      const event = JSON.parse(line) as { event?: unknown; hostname?: unknown; port?: unknown };
+      if (
+        event?.event === "gateway.startup.ready" &&
+        event.hostname === "127.0.0.1" &&
+        typeof event.port === "number" &&
+        Number.isInteger(event.port) &&
+        event.port > 0 &&
+        event.port <= 65535
+      ) {
+        return event.port;
+      }
+    } catch {
+      // stdout can split a JSON record across chunks; retry with the next chunk.
+    }
+  }
+  return null;
+}
+
+describe("Gateway structured readiness marker", () => {
+  it("accepts only complete startup events with valid loopback ports", () => {
+    const ready = JSON.stringify({
+      ts: "2026-10-21T12:00:00Z",
+      level: "info",
+      event: "gateway.startup.ready",
+      hostname: "127.0.0.1",
+      port: 41793,
+      websocketPath: "/api/agent/ws",
+    });
+    expect(gatewayReadyPort(ready.slice(0, -1))).toBeNull();
+    expect(gatewayReadyPort(`Booting Next.js\n${ready}\n`)).toBe(41793);
+    expect(gatewayReadyPort("> Ready on http://127.0.0.1:41793 (old log)")).toBeNull();
+    expect(gatewayReadyPort(JSON.stringify({ event: "gateway.startup.ready", hostname: "0.0.0.0", port: 41793 }))).toBeNull();
+    expect(gatewayReadyPort(JSON.stringify({ event: "gateway.startup.ready", hostname: "127.0.0.1", port: 0 }))).toBeNull();
+  });
+});
+
 const run = describe.skipIf(!hasTestDatabase || process.env.RUN_MULTI_INSTANCE_TEST !== "1");
 type GatewayProcess = { child: ChildProcess; output: () => string; ready: Promise<number> };
 
 function startGateway(workerSchema: string | null): GatewayProcess {
   const env: NodeJS.ProcessEnv = {
-    ...process.env, NODE_ENV: "production", PORT: "0", HOSTNAME: "127.0.0.1", TRUST_PROXY: "0",
+    ...process.env, NODE_ENV: "production", LOG_LEVEL: "info", PORT: "0", HOSTNAME: "127.0.0.1", TRUST_PROXY: "0",
     APP_BASE_URL: "https://127.0.0.1/",
     GATEWAY_JWT_SECRET: gatewayTestSigningKey(),
     PLATFORM_TENANT_ID: "tenant_multi_instance_platform_test",
@@ -24,8 +70,8 @@ function startGateway(workerSchema: string | null): GatewayProcess {
   let settled = false;
   const append = (chunk: Buffer | string) => {
     output += String(chunk); if (output.length > 16384) output = output.slice(-16384);
-    const match = output.match(/> Ready on http:\/\/127\.0\.0\.1:(\d+) /);
-    if (!settled && match) { settled = true; resolveReady(Number(match[1])); }
+    const readyPort = gatewayReadyPort(output);
+    if (!settled && readyPort !== null) { settled = true; resolveReady(readyPort); }
   };
   child.stdout?.on("data", append); child.stderr?.on("data", append);
   child.on("error", (error) => { append(`\n[child error] ${error.message}\n`); if (!settled) { settled = true; rejectReady(error); } });
