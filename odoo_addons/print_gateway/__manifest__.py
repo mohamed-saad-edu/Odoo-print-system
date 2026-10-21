@@ -15,7 +15,7 @@ Gateway printing is silent: when a print rule is active, Odoo sends the document
 to the printing service without opening the browser print dialog.
     """,
     'author': 'Yaseir',
-    'website': 'https://github.com/mo7medSa3d/oddo-print',
+    'website': 'https://github.com/mohamed-saad-edu/Odoo-print-system',
     'category': 'Tools',
     'depends': ['base', 'web', 'sale', 'account', 'stock', 'purchase', 'point_of_sale'],
     'external_dependencies': {'python': ['requests', 'cryptography']},

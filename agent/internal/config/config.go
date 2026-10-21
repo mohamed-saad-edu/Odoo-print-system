@@ -271,6 +271,8 @@ func (c *Config) Save(path string) error {
 		return fmt.Errorf("create temp config for %s: %w", path, err)
 	}
 	tmp := tmpFile.Name()
+	// Remove the temporary file after any failed write, sync, close or replace.
+	defer os.Remove(tmp)
 	// CreateTemp is 0600; re-assert explicitly since this file carries the
 	// (sealed) agent secret material alongside the config body.
 	if err := tmpFile.Chmod(0600); err != nil {

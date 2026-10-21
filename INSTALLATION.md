@@ -11,8 +11,8 @@ The Odoo addon uses HTTPS for Gateway communication by default. The `gateway_api
 ## 1. Gateway
 
 ```bash
-git clone https://github.com/mo7medSa3d/oddo-print.git
-cd oddo-print
+git clone https://github.com/mohamed-saad-edu/Odoo-print-system.git
+cd Odoo-print-system
 npm ci
 cp .env.example .env
 npm run db:migrate

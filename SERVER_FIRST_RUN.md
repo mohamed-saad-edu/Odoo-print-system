@@ -2,7 +2,7 @@
 
 This is the canonical first deployment path for a fresh production server.
 
-**Repository:** https://github.com/mo7medSa3d/oddo-print  
+**Repository:** https://github.com/mohamed-saad-edu/Odoo-print-system  
 **Web app:** Yaseir Gateway  
 **Customer portal:** `/signup` → `/verify-email` → `/onboarding` → `/login` → `/dashboard`  
 **Platform control plane:** `/platform/login`
@@ -47,7 +47,7 @@ cd /opt/yaseir
 Clone the current repository:
 
 ```bash
-git clone https://github.com/mo7medSa3d/oddo-print.git .
+git clone https://github.com/mohamed-saad-edu/Odoo-print-system.git .
 git checkout main
 git pull --ff-only origin main
 ```

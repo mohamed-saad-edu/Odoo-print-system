@@ -62,10 +62,9 @@ services:
       YASEIR_DEPLOYMENT_ID: ${YASEIR_DEPLOYMENT_ID:-}
       # Opt-in only; test queue never creates a physical printer or print job.
       YASEIR_E2E_CAPTURE_ENABLED: ${YASEIR_E2E_CAPTURE_ENABLED:-0}
-      # Set to 1 once every print caller sends a stable operation id; v1 then
-      # rejects a submission without an idempotencyKey instead of accepting an
-      # undeduplicatable print (see API.md).
-      YASEIR_REQUIRE_IDEMPOTENCY_KEY: ${YASEIR_REQUIRE_IDEMPOTENCY_KEY:-0}
+      # Production rejects keyless retries by default to prevent duplicate printing.
+      # Explicit 0 is a temporary legacy opt-out requiring operator acceptance.
+      YASEIR_REQUIRE_IDEMPOTENCY_KEY: ${YASEIR_REQUIRE_IDEMPOTENCY_KEY:-1}
       APP_BASE_URL: ${APP_BASE_URL:?APP_BASE_URL must be set to the public Gateway URL}
       # Optional providers stay disabled when unset; their absence must not
       # prevent the core Gateway from starting.
@@ -100,7 +99,7 @@ services:
     expose:
       - "3000"
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/live').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 30s
       timeout: 5s
       retries: 5

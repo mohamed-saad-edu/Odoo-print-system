@@ -2,21 +2,21 @@
 # automatically; branch protection (if enabled) should require their review.
 
 # Authentication, tenant isolation, billing, real-time delivery, migrations
-/src/lib/*auth* @mo7medSa3d
-/src/lib/*session* @mo7medSa3d
-/src/lib/tenant* @mo7medSa3d
-/src/lib/entitlement* @mo7medSa3d
-/src/lib/stripe* @mo7medSa3d
-/src/app/api/billing/* @mo7medSa3d
-/src/app/api/auth/* @mo7medSa3d
-/src/app/api/platform/* @mo7medSa3d
-/src/server/* @mo7medSa3d
-/src/app/api/agent/* @mo7medSa3d
-/drizzle/* @mo7medSa3d
-/src/db/* @mo7medSa3d
-/agent/internal/agent/* @mo7medSa3d
-/odoo_addons/print_gateway/models/crypto.py @mo7medSa3d
-/odoo_addons/print_gateway/models/gateway_config.py @mo7medSa3d
-Dockerfile @mo7medSa3d
-Caddyfile @mo7medSa3d
-docker-compose.yml @mo7medSa3d
+/src/lib/*auth* @mohamed-saad-edu
+/src/lib/*session* @mohamed-saad-edu
+/src/lib/tenant* @mohamed-saad-edu
+/src/lib/entitlement* @mohamed-saad-edu
+/src/lib/stripe* @mohamed-saad-edu
+/src/app/api/billing/* @mohamed-saad-edu
+/src/app/api/auth/* @mohamed-saad-edu
+/src/app/api/platform/* @mohamed-saad-edu
+/src/server/* @mohamed-saad-edu
+/src/app/api/agent/* @mohamed-saad-edu
+/drizzle/* @mohamed-saad-edu
+/src/db/* @mohamed-saad-edu
+/agent/internal/agent/* @mohamed-saad-edu
+/odoo_addons/print_gateway/models/crypto.py @mohamed-saad-edu
+/odoo_addons/print_gateway/models/gateway_config.py @mohamed-saad-edu
+Dockerfile @mohamed-saad-edu
+Caddyfile @mohamed-saad-edu
+docker-compose.yml @mohamed-saad-edu

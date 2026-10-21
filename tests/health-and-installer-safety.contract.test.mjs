@@ -31,3 +31,23 @@ test("failing Windows acceptance retains a distinctly unverified diagnostic arti
   assert.match(workflow.slice(fallback), /if-no-files-found: ignore/);
   assert.match(workflow.slice(verified, fallback), /if-no-files-found: error/);
 });
+
+test("release installer artifact is gated on independent publisher trust", () => {
+  const verified = workflow.indexOf("- name: Upload Windows NSIS installer");
+  const untrusted = workflow.indexOf("- name: Upload untrusted Windows installer for internal testing");
+  const failed = workflow.indexOf("- name: Upload unverified Windows installer for diagnostics");
+  assert.ok(verified > 0 && verified < untrusted && untrusted < failed);
+  assert.match(workflow.slice(verified, untrusted), /if: env.YASEIR_TRUSTED_RELEASE_SIGNING == 'true'/);
+  assert.match(workflow.slice(untrusted, failed), /if: success\(\) && env.YASEIR_TRUSTED_RELEASE_SIGNING != 'true'/);
+  assert.match(workflow.slice(untrusted, failed), /UNTRUSTED-TEST-ONLY/);
+  assert.match(workflow, /ChainPolicy\.ApplicationPolicy\.Add/);
+  assert.match(workflow, /ChainPolicy\.RevocationMode/);
+  assert.doesNotMatch(workflow, /gh secret set /);
+});
+
+test("Docker checks DB-backed readiness rather than process-only liveness", () => {
+  const compose = readFileSync("docker-compose.yml", "utf8");
+  const dockerfile = readFileSync("Dockerfile", "utf8");
+  assert.match(compose, /\/api\/health'\)\.then/);
+  assert.match(dockerfile, /\/api\/health \|\| exit 1/);
+});

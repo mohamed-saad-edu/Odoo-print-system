@@ -262,6 +262,21 @@ suite("print idempotency (Odoo → Gateway)", () => {
     }
   });
 
+  it("v1 rejects missing operation identity by default in production", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("YASEIR_REQUIRE_IDEMPOTENCY_KEY", "");
+    try {
+      const body = jobBody("unused");
+      delete (body as Record<string, unknown>).idempotencyKey;
+      const res = await create(body);
+      expect(res.status).toBe(400);
+      expect((await res.json()).code).toBe("IDEMPOTENCY_KEY_REQUIRED");
+      expect(await jobCount()).toBe(0);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("concurrent duplicate submissions with the same key create one job", async () => {
     const [a, b] = await Promise.all([
       create(jobBody("op-concurrent")),

@@ -4,7 +4,7 @@ version = "1.0.0"
 description = "Yaseir Print Manager — desktop management for Yaseir Agent"
 authors = ["Yaseir"]
 license = "MIT"
-repository = "https://github.com/mo7medSa3d/oddo-print"
+repository = "https://github.com/mohamed-saad-edu/Odoo-print-system"
 edition = "2024"
 rust-version = "1.90"
 
