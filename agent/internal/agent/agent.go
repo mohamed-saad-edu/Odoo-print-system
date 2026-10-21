@@ -1662,11 +1662,11 @@ func decodeJobFields(job map[string]interface{}) (jobWireFields, error) {
 		return jobWireFields{}, err
 	}
 	return jobWireFields{
-		ID:         id,
-		AgentID:    agentID,
-		PrinterID:  printerID,
-		Status:     status,
-		RequestID:  requestID,
+		ID:           id,
+		AgentID:      agentID,
+		PrinterID:    printerID,
+		Status:       status,
+		RequestID:    requestID,
 		ClaimToken:   claimToken,
 		DocumentType: documentType,
 	}, nil

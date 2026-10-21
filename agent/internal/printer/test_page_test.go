@@ -63,7 +63,7 @@ func TestLocalPrintSelectionRejectsAmbiguousAliasesAndPreservesUniquePrecedence(
 
 func TestBoundedDiagnosticMediaLimitsLongRollAndPreservesSheets(t *testing.T) {
 	for _, tc := range []struct {
-		name string
+		name                          string
 		width, height, expectedHeight float64
 	}{
 		{"POS80 10-metre driver form", 640 * 72.0 / 203, 26200 * 72.0 / 203, 100 * 72 / 25.4},
