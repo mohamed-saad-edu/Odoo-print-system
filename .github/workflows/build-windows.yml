@@ -189,7 +189,6 @@ jobs:
             ${{ runner.os }}-go-compiler-v2-${{ hashFiles('agent/go.mod', 'agent/go.sum') }}-
             ${{ runner.os }}-go-compiler-v1-${{ hashFiles('agent/go.mod', 'agent/go.sum') }}-
       - name: Verify and test native Windows Go Agent
-        if: needs.changes.outputs.agent == 'true'
         working-directory: agent
         shell: pwsh
         run: |
@@ -235,7 +234,6 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-rust-release-v3-1.98.1-
       - name: Restore Windows Rust test artifacts
-        if: needs.changes.outputs.rust == 'true'
         id: rust-tests-cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -402,10 +400,8 @@ jobs:
             Write-Host "OK icon $icon ($len bytes)"
           }
           Write-Host "All $($icons.Count) configured icons are present."
-      # Run native Rust tests when Rust sources or shared contracts change.
-      # workflow_dispatch and merge_group always request the complete validation.
+      # A published installer must always validate the exact desktop source.
       - name: Rust unit tests (desktop)
-        if: needs.changes.outputs.rust == 'true'
         shell: pwsh
         run: |
           # Unit tests validate behavior; they do not need LTO/opt-level=3.
@@ -574,7 +570,7 @@ jobs:
             ~/AppData/Local/tauri
           key: ${{ runner.os }}-rust-release-v3-1.98.1-${{ hashFiles('src-tauri/Cargo.lock', 'src-tauri/Cargo.toml') }}
       - name: Save Windows Rust unit-test cache
-        if: github.ref == 'refs/heads/main' && needs.changes.outputs.rust == 'true' && steps.rust-tests-cache.outputs.cache-hit != 'true'
+        if: github.ref == 'refs/heads/main' && steps.rust-tests-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: src-tauri/target/x86_64-pc-windows-msvc/debug
