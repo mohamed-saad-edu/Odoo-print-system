@@ -92,6 +92,29 @@ def test_pending_retry_does_not_claim_to_be_waiting_for_business_commit():
             assert (not eval(node.attrib['invisible'], {'__builtins__': {}}, context)) == (node is visible)
 
 
+def test_branch_only_context_can_validate_its_binding_without_activating_parent():
+    binding_type = _class_methods('binding.py', 'PrintGatewayBinding', {'_check_runtime_scope'})
+    root = SimpleNamespace(id=1)
+    branch = SimpleNamespace(id=2, parent_id=root)
+    assignment = SimpleNamespace(is_agent_assigned=lambda *args: True)
+    class ScopeEnv(dict):
+        companies = [branch]
+    records = _PolicyRecords([SimpleNamespace(company_id=root, branch_id=branch,
+                                              runtime_agent_id='branch-agent')])
+    records.env = ScopeEnv({'print_gateway.runtime_agent_assignment': assignment})
+    binding_type._check_runtime_scope(records)
+
+
+def test_branch_only_administrator_can_validate_its_runtime_assignment():
+    assignment_type = _class_methods('runtime_assignment.py', 'PrintGatewayRuntimeAgentAssignment', {'_check_assignment'})
+    root = SimpleNamespace(id=1, parent_id=False)
+    branch = SimpleNamespace(id=2, parent_id=root)
+    records = _PolicyRecords([SimpleNamespace(company_id=root, branch_id=branch,
+                                              runtime_agent_id='branch-agent')])
+    records.env = SimpleNamespace(user=SimpleNamespace(company_ids=[branch]))
+    assignment_type._check_assignment(records)
+
+
 def _harness(template):
     functions = ast.parse((BASE / 'print_policy.py').read_text(encoding='utf-8'))
     sanitizer = next(n for n in functions.body if isinstance(n, ast.FunctionDef) and n.name == 'sanitize_raw_value')

@@ -62,6 +62,7 @@ class PrintGatewayBinding(models.Model):
     )
     branch_id = fields.Many2one(
         "res.company", string="Odoo Branch", ondelete="restrict", index=True,
+        default=lambda self: self.env.company if self.env.company.parent_id else False,
         domain="[('parent_id', '=', company_id)]",
     )
     effective_company_id = fields.Many2one(
@@ -298,7 +299,7 @@ class PrintGatewayBinding(models.Model):
     @api.onchange("company_id")
     def _onchange_company_id(self):
         for record in self:
-            record.branch_id = False
+            record.branch_id = self.env.company if self.env.company.parent_id == record.company_id else False
             record.runtime_agent_id = False
             record.printer_id = False
             record.destination_pos_config_id = False
@@ -523,7 +524,7 @@ class PrintGatewayBinding(models.Model):
     def _check_runtime_scope(self):
         assignment_model = self.env["print_gateway.runtime_agent_assignment"]
         for record in self:
-            if record.company_id not in self.env.companies:
+            if not record.branch_id and record.company_id not in self.env.companies:
                 raise ValidationError(_("The selected Odoo Company is not available to the current user."))
             if record.branch_id:
                 if record.branch_id not in self.env.companies:

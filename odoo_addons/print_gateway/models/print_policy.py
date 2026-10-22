@@ -57,6 +57,7 @@ class PrintGatewayPolicy(models.Model):
     )
     branch_id = fields.Many2one(
         "res.company", string="Odoo Branch", ondelete="restrict", index=True,
+        default=lambda self: self.env.company if self.env.company.parent_id else False,
         domain="[('parent_id', '=', company_id)]",
     )
     effective_company_id = fields.Many2one(

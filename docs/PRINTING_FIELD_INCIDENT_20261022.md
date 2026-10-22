@@ -82,7 +82,29 @@ rewrite saved customer rules or rearm old jobs automatically.
 
 ## Verification and rollout
 
-Local Python suite: 730 passed; focused policy tests include the original red
+### Branch-only configuration administrators
+
+The added branch case reproduced a separate authority mix-up: bindings required
+their stored root `company_id` to be active, and runtime assignments required the
+parent in the user's allowed companies, even when the effective target was an
+authorized branch. The runtime picker rejected the same parent-metadata/exact-
+branch combination before checking the branch. Branch defaults were empty.
+
+New rules, assignments and automation policies default to the active branch;
+the binding's company onchange preserves that branch when the parent matches.
+Branch-scoped configuration validates the exact branch instead of requiring
+parent-company activation/access. Company-wide rules still require company
+authority. Parent/child consistency, exact branch Agent assignments, existing
+administrator ACLs, destination scope and sibling/foreign-company rejection stay
+in force. The picker permits an inactive parent only as metadata for the exact
+authorized branch. No root access or new configuration privilege is granted.
+
+Real Odoo regressions use an administrator whose only allowed/active company is
+the branch: create a rule with defaults, create its runtime assignment, resolve
+the picker scope and reject company-wide/sibling/foreign scopes. Two offline
+production-method checks failed before correction and passed afterward.
+
+Local Python suite: 732 passed; focused policy tests include the original red
 case. Arabic catalog: 796 terms consistent. Focused view/addon/contract tests
 and Go testutil race checks are recorded with final CI/build results on the PR.
 
