@@ -1,18 +1,17 @@
-# CI-only registry substitution: upstream Docker Official Images on ECR Public.
-# Production docker-compose.yml and Dockerfile defaults continue to use Docker Hub.
-# Preserve the exact, reviewed manifest digests across registries. If a mirror
-# lacks an identical manifest, the image pull MUST fail instead of falling back
-# to a mutable tag or weaker validation.
+# CI-only pinned Official Image references, matching production Docker Hub.
+# Do not use ECR Public as the primary pull source: its anonymous data quota
+# has caused repeated 429 failures during otherwise healthy CI runs.
+# Versions AND sha256 digests are identical to production. No mutable tags.
 services:
   postgres:
-    image: public.ecr.aws/docker/library/postgres:16.15-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
+    image: postgres:16.15-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
   migrate:
     build:
       args:
-        NODE_BASE_IMAGE: public.ecr.aws/docker/library/node:24.22.0-alpine@sha256:44fce696f38ba8c987c4db89954051000bbd05ffd8d8659ba15ed4a8602e937f
+        NODE_BASE_IMAGE: node:24.22.0-alpine@sha256:44fce696f38ba8c987c4db89954051000bbd05ffd8d8659ba15ed4a8602e937f
   gateway:
     build:
       args:
-        NODE_BASE_IMAGE: public.ecr.aws/docker/library/node:24.22.0-alpine@sha256:44fce696f38ba8c987c4db89954051000bbd05ffd8d8659ba15ed4a8602e937f
+        NODE_BASE_IMAGE: node:24.22.0-alpine@sha256:44fce696f38ba8c987c4db89954051000bbd05ffd8d8659ba15ed4a8602e937f
   caddy:
-    image: public.ecr.aws/docker/library/caddy:2.11.7-alpine@sha256:d8542f48d34a9cf4e4c11a478865229840e87e4c96ea3f439101f31a5d35f75f
+    image: caddy:2.11.7-alpine@sha256:d8542f48d34a9cf4e4c11a478865229840e87e4c96ea3f439101f31a5d35f75f
