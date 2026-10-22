@@ -798,21 +798,26 @@ fn spawn_persist_or_reconcile(
     let mut child = spawn()?;
     let pid = child.id();
 
-    // A duplicate runtime or startup validation failure exits almost
-    // immediately. Give it a short grace window before recording ownership so
-    // a dead process can never be persisted as a healthy background Agent.
-    std::thread::sleep(std::time::Duration::from_millis(250));
-    match child.try_wait() {
-        Ok(Some(status)) => {
-            return Err(format!(
-                "YaseirAgent.exe pid={pid} exited during startup with status {status}"
-            ));
-        }
-        Ok(None) => {}
-        Err(error) => {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(format!("verify Agent startup pid={pid}: {error}"));
+    // A duplicate instance or startup validation failure can exit shortly
+    // after spawn. Poll for a bounded startup grace instead of checking only
+    // once after 250ms: Windows may not schedule a newly created child before
+    // that single probe on an overloaded machine.
+    let startup_deadline = std::time::Instant::now()
+        + std::time::Duration::from_secs(1);
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                return Err(format!(
+                    "YaseirAgent.exe pid={pid} exited during startup with status {status}"
+                ));
+            }
+            Ok(None) if std::time::Instant::now() >= startup_deadline => break,
+            Ok(None) => std::thread::sleep(std::time::Duration::from_millis(25)),
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!("verify Agent startup pid={pid}: {error}"));
+            }
         }
     }
 
@@ -1156,11 +1161,18 @@ mod spawn_tests {
         let persist_called = Cell::new(false);
         let result = spawn_persist_or_reconcile(
             || {
-                Command::new("cmd")
+                // A Windows CI worker can delay cmd.exe scheduling past any
+                // arbitrary sleep (the old 250ms assertion was flaky). Wait
+                // for the child to actually exit before exercising the guard.
+                // This proves the guard never records an already-dead PID.
+                let mut child = Command::new(system32_exe("cmd.exe")?)
                     .args(["/C", "exit 7"])
                     .creation_flags(0x0800_0000)
                     .spawn()
-                    .map_err(|e| e.to_string())
+                    .map_err(|e| e.to_string())?;
+                let status = child.wait().map_err(|e| e.to_string())?;
+                assert_eq!(status.code(), Some(7), "test fixture must exit with code 7");
+                Ok(child)
             },
             |_| {
                 persist_called.set(true);
