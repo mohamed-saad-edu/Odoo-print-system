@@ -22,12 +22,15 @@ reqwest = { version = "0.13.4", default-features = false, features = ["json", "r
 default = [ "custom-protocol" ]
 custom-protocol = [ "tauri/custom-protocol" ]
 
-# Production binary: maximize inlining, strip symbols, single codegen unit.
-# Panics stay as unwind so the panic hook in logging.rs can record them
-# before the process terminates.
+# Keep full runtime optimization but avoid slow whole-program fat LTO
+# during Windows releases. Preserve unwind panics for production logging.
 [profile.release]
-lto = true
-codegen-units = 1
+lto = "thin"
+codegen-units = 4
 strip = true
 opt-level = 3
 debug = false
+
+# Preserve useful source line tables without generating huge full test PDBs.
+[profile.test]
+debug = 1

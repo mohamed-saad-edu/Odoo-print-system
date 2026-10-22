@@ -76,12 +76,12 @@ jobs:
                       ;;
                   esac
                   case "$file" in
-                    agent/*|.github/workflows/build-windows.yml)
+                    agent/*|contracts/*|.github/workflows/build-windows.yml)
                       agent=true
                       ;;
                   esac
                   case "$file" in
-                    src-tauri/*|.github/workflows/build-windows.yml)
+                    src-tauri/*|contracts/*|.github/workflows/build-windows.yml)
                       rust=true
                       ;;
                   esac
@@ -127,8 +127,9 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~\AppData\Local\go-build
-          key: ${{ runner.os }}-go-compiler-v1-${{ hashFiles('agent/go.mod', 'agent/go.sum') }}-${{ github.sha }}
+          key: ${{ runner.os }}-go-compiler-v2-${{ hashFiles('agent/go.mod', 'agent/go.sum') }}-${{ hashFiles('agent/**/*.go', 'agent/**/*.c', 'agent/**/*.h', 'agent/**/*.s', 'agent/**/*.syso') }}
           restore-keys: |
+            ${{ runner.os }}-go-compiler-v2-${{ hashFiles('agent/go.mod', 'agent/go.sum') }}-
             ${{ runner.os }}-go-compiler-v1-${{ hashFiles('agent/go.mod', 'agent/go.sum') }}-
       - name: Test native Windows Agent without expensive installer packaging
         if: needs.changes.outputs.agent == 'true'
@@ -183,10 +184,12 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~\AppData\Local\go-build
-          key: ${{ runner.os }}-go-compiler-v1-${{ hashFiles('agent/go.mod', 'agent/go.sum') }}-${{ github.sha }}
+          key: ${{ runner.os }}-go-compiler-v2-${{ hashFiles('agent/go.mod', 'agent/go.sum') }}-${{ hashFiles('agent/**/*.go', 'agent/**/*.c', 'agent/**/*.h', 'agent/**/*.s', 'agent/**/*.syso') }}
           restore-keys: |
+            ${{ runner.os }}-go-compiler-v2-${{ hashFiles('agent/go.mod', 'agent/go.sum') }}-
             ${{ runner.os }}-go-compiler-v1-${{ hashFiles('agent/go.mod', 'agent/go.sum') }}-
       - name: Verify and test native Windows Go Agent
+        if: needs.changes.outputs.agent == 'true'
         working-directory: agent
         shell: pwsh
         run: |
@@ -217,8 +220,33 @@ jobs:
         with:
           path: ~/.cargo/bin/cargo-tauri.exe
           key: ${{ runner.os }}-tauri-cli-2.11.4
-      - name: Restore Rust build and Tauri tooling cache
-        id: rust-tauri-cache
+      # Restore only production build artifacts for normal builds.
+      # Debug/test objects have their own cache to avoid the huge combined restore.
+      - name: Restore Rust release and Tauri tooling cache
+        id: rust-release-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target/x86_64-pc-windows-msvc/release
+            ~/AppData/Local/tauri
+          key: ${{ runner.os }}-rust-release-v3-1.98.1-${{ hashFiles('src-tauri/Cargo.lock', 'src-tauri/Cargo.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-rust-release-v3-1.98.1-
+      - name: Restore Windows Rust test artifacts
+        if: needs.changes.outputs.rust == 'true'
+        id: rust-tests-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: src-tauri/target/x86_64-pc-windows-msvc/debug
+          key: ${{ runner.os }}-rust-tests-v3-1.98.1-${{ hashFiles('src-tauri/Cargo.lock', 'src-tauri/Cargo.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-rust-tests-v3-1.98.1-
+      # During the first upgraded run, reuse the existing archive instead
+      # of cold-compiling the complete Tauri dependency graph.
+      - name: Restore legacy Rust cache for migration
+        if: steps.rust-release-cache.outputs.cache-hit == '' && steps.rust-tests-cache.outputs.cache-hit == ''
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
@@ -228,7 +256,6 @@ jobs:
             ~/AppData/Local/tauri
           key: ${{ runner.os }}-rust-v2-${{ hashFiles('src-tauri/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-rust-${{ hashFiles('src-tauri/Cargo.lock') }}
             ${{ runner.os }}-rust-
       - name: Install Tauri CLI
         shell: pwsh
@@ -258,6 +285,8 @@ jobs:
           GOARCH: amd64
           CGO_ENABLED: '1'
         run: |
+          go mod verify
+          if ($LASTEXITCODE -ne 0) { throw "Go module verification failed" }
           go build -mod=readonly -trimpath -ldflags="-s -w" -o YaseirAgent.exe ./cmd/agent
           if ($LASTEXITCODE -ne 0) { throw "Windows Agent release build failed" }
           go build -mod=readonly -trimpath -ldflags="-s -w" -o yaseir-agent-cli.exe ./cmd/cli
@@ -269,7 +298,7 @@ jobs:
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~\AppData\Local\go-build
-          key: ${{ runner.os }}-go-compiler-v1-${{ hashFiles('agent/go.mod', 'agent/go.sum') }}-${{ github.sha }}
+          key: ${{ runner.os }}-go-compiler-v2-${{ hashFiles('agent/go.mod', 'agent/go.sum') }}-${{ hashFiles('agent/**/*.go', 'agent/**/*.c', 'agent/**/*.h', 'agent/**/*.s', 'agent/**/*.syso') }}
       - name: Prepare code-signing certificate and sign Go Agent binaries
         shell: pwsh
         env:
@@ -373,8 +402,10 @@ jobs:
             Write-Host "OK icon $icon ($len bytes)"
           }
           Write-Host "All $($icons.Count) configured icons are present."
-      # A release must test its exact source even if an earlier run was cancelled.
+      # Run native Rust tests when Rust sources or shared contracts change.
+      # workflow_dispatch and merge_group always request the complete validation.
       - name: Rust unit tests (desktop)
+        if: needs.changes.outputs.rust == 'true'
         shell: pwsh
         run: |
           # Unit tests validate behavior; they do not need LTO/opt-level=3.
@@ -532,16 +563,22 @@ jobs:
             if (Test-Path $path) { throw "NSIS uninstall left current-user runtime data behind: $path" }
           }
           Write-Host "NSIS uninstall verified: service, install files, ProgramData, and current-user data are removed."
-      - name: Save Rust build and Tauri tooling cache
-        if: github.ref == 'refs/heads/main' && steps.rust-tauri-cache.outputs.cache-hit != 'true'
+      - name: Save Rust release and Tauri tooling cache
+        if: github.ref == 'refs/heads/main' && steps.rust-release-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            src-tauri/target
+            src-tauri/target/x86_64-pc-windows-msvc/release
             ~/AppData/Local/tauri
-          key: ${{ runner.os }}-rust-v2-${{ hashFiles('src-tauri/Cargo.lock') }}
+          key: ${{ runner.os }}-rust-release-v3-1.98.1-${{ hashFiles('src-tauri/Cargo.lock', 'src-tauri/Cargo.toml') }}
+      - name: Save Windows Rust unit-test cache
+        if: github.ref == 'refs/heads/main' && needs.changes.outputs.rust == 'true' && steps.rust-tests-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: src-tauri/target/x86_64-pc-windows-msvc/debug
+          key: ${{ runner.os }}-rust-tests-v3-1.98.1-${{ hashFiles('src-tauri/Cargo.lock', 'src-tauri/Cargo.toml') }}
       - name: Upload Windows NSIS installer
         if: env.YASEIR_TRUSTED_RELEASE_SIGNING == 'true'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
