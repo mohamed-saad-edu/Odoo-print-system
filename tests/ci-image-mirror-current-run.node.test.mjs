@@ -27,14 +27,20 @@ function imageAfter(source, key) {
   return match[1];
 }
 
-const prodPostgres = imageAfter(compose, 'image');
-const prodCaddy = compose.match(/^\s*image:\s*(caddy:[^\s#]+)$/m)?.[1];
+const secure = load('Dockerfile.secure-images');
+const prodPostgres = secure.match(/^ARG POSTGRES_BASE=(postgres:[^\s#]+)$/m)?.[1];
+const prodCaddy = secure.match(/^ARG CADDY_BASE=(caddy:[^\s#]+)$/m)?.[1];
 const prodNode = dockerfile.match(/^ARG NODE_BASE_IMAGE=(node:[^\s#]+)$/m)?.[1];
 assert.ok(prodCaddy && prodNode);
 
 test('Docker CI uses the same sha256-pinned Official Images as production', () => {
-  assert.ok(ciCompose.includes(`image: ${prodPostgres}`));
-  assert.ok(ciCompose.includes(`image: ${prodCaddy}`));
+  assert.ok(compose.includes('target: postgres'));
+  assert.ok(compose.includes('target: caddy'));
+  assert.ok(compose.includes('dockerfile: Dockerfile.secure-images'));
+  assert.ok(secure.includes('FROM ${POSTGRES_BASE} AS postgres'));
+  assert.ok(secure.includes('FROM ${CADDY_BASE} AS caddy'));
+  assert.ok(secure.includes('go1.26.10'));
+  assert.ok(secure.includes('golang.org/x/net@v0.61.0'));
   assert.equal(ciCompose.split(`NODE_BASE_IMAGE: ${prodNode}`).length - 1, 2);
   assert.equal((dockerfile.match(/^FROM \$\{NODE_BASE_IMAGE\} AS /gm) ?? []).length, 3);
   assert.ok(postgresHelper.includes(officialMirrorOf(prodPostgres)));
@@ -56,8 +62,8 @@ test('Docker CI uses the same sha256-pinned Official Images as production', () =
 
 test('Compose CLI selects the CI overlay without changing default production references', () => {
   assert.match(workflow, /COMPOSE_FILE: docker-compose\.yml:docker-compose\.ci\.yml/);
-  assert.match(compose, /^\s*image:\s*postgres:16\.15-alpine@sha256:[0-9a-f]{64}$/m);
-  assert.match(compose, /^\s*image:\s*caddy:2\.11\.7-alpine@sha256:[0-9a-f]{64}$/m);
+  assert.match(secure, /^ARG POSTGRES_BASE=postgres:16\.15-alpine@sha256:[0-9a-f]{64}$/m);
+  assert.match(secure, /^ARG CADDY_BASE=caddy:2\.11\.7-alpine@sha256:[0-9a-f]{64}$/m);
   assert.match(dockerfile, /^ARG NODE_BASE_IMAGE=node:24\.22\.0-alpine@sha256:[a-f0-9]{64}$/m);
 });
 
@@ -75,8 +81,8 @@ test('Odoo Community CI pulls the same immutable digest and uses Docker Hub only
 });
 
 test('Docker CI image references remain immutable and reject mutable tags', () => {
-  const ciRefs = [...ciCompose.matchAll(/^\s*(?:image|NODE_BASE_IMAGE):\s*(\S+)/gm)].map(m => m[1]);
-  assert.equal(ciRefs.length, 4);
-  for (const image of ciRefs) assert.match(image, /^(?:postgres|caddy|node):[a-z0-9.\-]+@sha256:[a-f0-9]{64}$/);
+  const ciRefs = [...ciCompose.matchAll(/^\s*NODE_BASE_IMAGE:\s*(\S+)/gm)].map(m => m[1]);
+  assert.equal(ciRefs.length, 2);
+  for (const image of [prodPostgres, prodCaddy, ...ciRefs]) assert.match(image, /^(?:postgres|caddy|node):[a-z0-9.\-]+@sha256:[a-f0-9]{64}$/);
   assert.throws(() => officialMirrorOf('node:latest'), /sha256/);
 });

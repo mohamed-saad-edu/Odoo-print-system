@@ -118,6 +118,10 @@ if [[ "$(get_env_value STRIPE_PLAN_CATALOG "$ENV_FILE")" == "$LEGACY_STAGING_PRI
 fi
 chmod 600 "$ENV_FILE"
 
+# Build the security-patched local PostgreSQL and Caddy images before
+# launching any dependent service. Reuses the existing external data volume.
+docker compose --env-file "$ENV_FILE" -f "$DEPLOY_DIR/docker-compose.yml" build postgres caddy
+
 # Prepare the schema and persist the domain binding before starting the Gateway.
 # This never resets accounts, changes workspace ownership, or deletes volumes.
 docker compose --env-file "$ENV_FILE" -f "$DEPLOY_DIR/docker-compose.yml" run --rm --build migrate

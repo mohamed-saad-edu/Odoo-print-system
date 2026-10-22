@@ -1,0 +1,44 @@
+# Patch upstream Go binaries without changing PostgreSQL/Caddy entrypoints.
+# Official parent images are SHA-pinned. The Go tarball is verified via go.dev.
+ARG POSTGRES_BASE=postgres:16.15-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
+ARG CADDY_BASE=caddy:2.11.7-alpine@sha256:d8542f48d34a9cf4e4c11a478865229840e87e4c96ea3f439101f31a5d35f75f
+FROM ${POSTGRES_BASE} AS go-toolchain
+ARG TARGETARCH
+RUN apk add --no-cache ca-certificates curl tar
+RUN set -eux; \
+    case "${TARGETARCH:-amd64}" in \
+      amd64) go_arch=amd64; expected=ccfe7ae822d2c2f41f4fe7c956199967a4dac22d0ee0d2b2bfdb440aab3b20c5 ;; \
+      arm64) go_arch=arm64; expected=3f4227ce7b206a513e794f1393adb473a07b46e94d18bd15d1c684bbb7319797 ;; \
+      *) echo "Unsupported architecture: ${TARGETARCH:-unset}" >&2; exit 1 ;; \
+    esac; \
+    curl --fail --location --retry 3 --silent --show-error "https://go.dev/dl/go1.26.10.linux-${go_arch}.tar.gz" -o /tmp/go.tgz; \
+    echo "${expected}  /tmp/go.tgz" | sha256sum -c -; \
+    tar -C /usr/local -xzf /tmp/go.tgz; rm /tmp/go.tgz
+ENV PATH="/usr/local/go/bin:${PATH}" GOPATH=/go GOTOOLCHAIN=local CGO_ENABLED=0
+RUN go version | grep -F 'go1.26.10'
+
+# Official gosu 1.19, rebuilt using a patched Go toolchain.
+FROM go-toolchain AS gosu-build
+RUN go install -trimpath github.com/tianon/gosu@6456aaa0f3c854d199d0f037f068eb97515b7513 \
+    && go version -m /go/bin/gosu | grep -F 'go1.26.10'
+
+FROM ${POSTGRES_BASE} AS postgres
+COPY --from=gosu-build /go/bin/gosu /usr/local/bin/gosu
+RUN gosu --version | grep -F 'go1.26.10' \
+    && gosu postgres id -u | grep -Fx "$(id -u postgres)"
+
+# Caddy release stays fixed; replace the vulnerable binary using Go 1.26.10
+# and the security-fixed golang.org/x/net v0.61.0.
+FROM go-toolchain AS caddy-build
+WORKDIR /tmp/yaseir-caddy
+RUN go mod init example.com/yaseir-caddy-build \
+    && go get github.com/caddyserver/caddy/v2/cmd/caddy@v2.11.7 \
+    && go get golang.org/x/net@v0.61.0 \
+    && go mod verify \
+    && go build -trimpath -o /tmp/caddy-patched github.com/caddyserver/caddy/v2/cmd/caddy \
+    && go version -m /tmp/caddy-patched | grep -F 'go1.26.10' \
+    && go version -m /tmp/caddy-patched | grep -F 'golang.org/x/net' | grep -F 'v0.61.0'
+
+FROM ${CADDY_BASE} AS caddy
+COPY --from=caddy-build /tmp/caddy-patched /usr/bin/caddy
+RUN caddy version

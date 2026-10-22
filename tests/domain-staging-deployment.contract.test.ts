@@ -10,8 +10,12 @@ describe("domain staging deployment contracts", () => {
     const compose = read("docker-compose.yml");
     const domainCompose = read("deploy/domain-test/docker-compose.yml");
     const caddy = read("deploy/domain-test/Caddyfile");
-    expect(domainCompose).toContain("postgres:16.15-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea");
-    expect(domainCompose).toContain("caddy:2.11.7-alpine@sha256:d8542f48d34a9cf4e4c11a478865229840e87e4c96ea3f439101f31a5d35f75f");
+    const secureImages = read("Dockerfile.secure-images");
+    expect(domainCompose).toContain("dockerfile: Dockerfile.secure-images");
+    expect(domainCompose).toContain("target: postgres");
+    expect(domainCompose).toContain("target: caddy");
+    expect(secureImages).toContain("ARG POSTGRES_BASE=postgres:16.15-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea");
+    expect(secureImages).toContain("ARG CADDY_BASE=caddy:2.11.7-alpine@sha256:d8542f48d34a9cf4e4c11a478865229840e87e4c96ea3f439101f31a5d35f75f");
 
     expect(compose).toContain("APP_BASE_URL: ${APP_BASE_URL:?APP_BASE_URL must be set to the public Gateway URL}");
     expect(compose).not.toContain("YASEIR_STAGING_FIXTURES_ENABLED");

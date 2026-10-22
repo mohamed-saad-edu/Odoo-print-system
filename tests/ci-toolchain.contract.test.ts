@@ -86,7 +86,7 @@ describe("CI/runtime alignment", () => {
     expect(workflow).toContain("Enforce reviewed upstream image vulnerability baseline");
     expect(workflow).toContain("Scan pinned base image (Trivy)");
     expect(compose).not.toContain("public.ecr.aws");
-    expect(compose).toContain("sha256:");
+    expect(readFileSync(path.join(root, "Dockerfile.secure-images"), "utf8")).toContain("sha256:");
     const image = readFileSync(path.join(root, "Dockerfile"), "utf8");
     expect(image).toContain("FROM deps AS runtime-deps");
     expect(image).toContain("npm prune --omit=dev");
