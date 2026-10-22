@@ -9,9 +9,6 @@ on:
   merge_group:
   workflow_dispatch:
 
-concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -43,6 +40,10 @@ jobs:
     name: Agent / Go
     needs: changes
     if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && needs.changes.outputs.agent == 'true'
+    # Cancel only an eligible duplicate job, never on an unrelated push.
+    concurrency:
+      group: ci-agent-${{ github.ref }}
+      cancel-in-progress: true
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -93,6 +94,10 @@ jobs:
     name: App / Quality
     needs: changes
     if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && needs.changes.outputs.app == 'true'
+    # Cancel only an eligible duplicate job, never on an unrelated push.
+    concurrency:
+      group: ci-quality-${{ github.ref }}
+      cancel-in-progress: true
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -171,6 +176,10 @@ jobs:
     name: App / Gateway
     needs: changes
     if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && needs.changes.outputs.app == 'true'
+    # Cancel only an eligible duplicate job, never on an unrelated push.
+    concurrency:
+      group: ci-gateway-${{ github.ref }}
+      cancel-in-progress: true
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -369,6 +378,10 @@ jobs:
   odoo19:
     needs: changes
     if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && needs.changes.outputs.odoo == 'true'
+    # Cancel only an eligible duplicate job, never on an unrelated push.
+    concurrency:
+      group: ci-odoo-${{ github.ref }}
+      cancel-in-progress: true
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:

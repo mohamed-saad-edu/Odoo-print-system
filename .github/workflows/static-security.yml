@@ -14,9 +14,6 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: static-security-${{ github.ref }}
-  cancel-in-progress: true
 
 jobs:
   changes:
@@ -60,6 +57,10 @@ jobs:
     name: CodeQL / ${{ matrix.language }}
     needs: changes
     if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && (needs.changes.outputs.codeql_js == 'true' || needs.changes.outputs.codeql_py == 'true' || needs.changes.outputs.codeql_go == 'true')
+    # Cancel only an eligible duplicate job, never on an unrelated push.
+    concurrency:
+      group: static-codeql-${{ matrix.language }}-${{ github.ref }}
+      cancel-in-progress: true
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -138,6 +139,10 @@ jobs:
     name: Dependency Review
     # Enable after Dependency Graph + Review API are available in repository settings.
     if: github.event_name == 'pull_request' && github.event.pull_request.draft == false && vars.ENABLE_DEPENDENCY_REVIEW == 'true'
+    # Cancel only an eligible duplicate job, never on an unrelated push.
+    concurrency:
+      group: static-deps-${{ github.ref }}
+      cancel-in-progress: true
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -154,6 +159,10 @@ jobs:
   gitleaks:
     name: Secret Scan
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    # Cancel only an eligible duplicate job, never on an unrelated push.
+    concurrency:
+      group: static-secrets-${{ github.ref }}
+      cancel-in-progress: true
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
