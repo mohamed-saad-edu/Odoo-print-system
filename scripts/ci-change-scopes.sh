@@ -83,7 +83,19 @@ if [[ "$full" == true ]]; then
 else
   for file in "${files[@]}"; do
     case "$file" in
-      .github/workflows/*|scripts/ci-change-scopes.sh|tests/test_ci_change_scopes.py)
+      # The shared CI dispatcher and classifier must always test every gate.
+      # Other workflow-only changes run the affected safety and runtime gates.
+      .github/workflows/ci.yml|scripts/ci-change-scopes.sh|tests/test_ci_change_scopes.py)
+        mark_all ;;
+      .github/workflows/build-windows.yml)
+        mark app supply ;;
+      .github/workflows/docker.yml)
+        mark app docker docker_scan supply ;;
+      .github/workflows/security-supply-chain.yml)
+        mark app supply postgres ;;
+      .github/workflows/static-security.yml)
+        mark app supply codeql_js codeql_py codeql_go ;;
+      .github/workflows/*)
         mark_all ;;
       *.md|docs/*|LICENSE|LICENSE.*|CHANGELOG*|.github/ISSUE_TEMPLATE/*)
         ;;

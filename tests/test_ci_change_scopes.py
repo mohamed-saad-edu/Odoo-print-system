@@ -81,6 +81,38 @@ def test_workflow_and_classifier_modifications_run_all_gates():
         assert all(classify(name).values())
 
 
+def test_windows_workflow_edit_keeps_release_contract_and_supply_gates_only():
+    flags = classify(".github/workflows/build-windows.yml")
+    assert flags["app"] and flags["supply"]
+    assert not any(flags[name] for name in (
+        "agent", "odoo", "docker", "docker_scan", "postgres",
+        "codeql_js", "codeql_py", "codeql_go",
+    ))
+
+
+def test_docker_workflow_edit_verifies_runtime_and_image_security():
+    flags = classify(".github/workflows/docker.yml")
+    assert flags["app"] and flags["docker"] and flags["docker_scan"] and flags["supply"]
+    assert not flags["agent"] and not flags["odoo"] and not flags["postgres"]
+
+
+def test_static_security_workflow_edit_rechecks_all_codeql_languages():
+    flags = classify(".github/workflows/static-security.yml")
+    assert flags["app"] and flags["supply"]
+    assert flags["codeql_js"] and flags["codeql_py"] and flags["codeql_go"]
+    assert not flags["docker"] and not flags["postgres"]
+
+
+def test_supply_chain_workflow_edit_rechecks_failure_injection_and_supply():
+    flags = classify(".github/workflows/security-supply-chain.yml")
+    assert flags["app"] and flags["supply"] and flags["postgres"]
+    assert not flags["docker"] and not flags["agent"]
+
+
+def test_unknown_workflow_must_still_fail_open():
+    assert all(classify(".github/workflows/unknown-new-gate.yml").values())
+
+
 def test_unknown_paths_fail_open():
     assert all(classify("new-language/main.rs").values())
 

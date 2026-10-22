@@ -7,9 +7,6 @@ on:
     branches: [main]
     types: [opened, synchronize, reopened, ready_for_review]
   merge_group:
-concurrency:
-  group: windows-build-${{ github.ref }}
-  cancel-in-progress: true
 
 jobs:
   changes:
@@ -106,6 +103,10 @@ jobs:
     name: Windows PR smoke (no installer)
     needs: changes
     if: github.event_name == 'pull_request' && github.event.pull_request.draft == false && (needs.changes.outputs.agent == 'true' || needs.changes.outputs.rust == 'true')
+    # Cancel only an eligible duplicate job, never on an unrelated push.
+    concurrency:
+      group: windows-pr-smoke-${{ github.ref }}
+      cancel-in-progress: true
     runs-on: windows-latest
     timeout-minutes: 15
     permissions:
@@ -127,7 +128,7 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~\AppData\Local\go-build
-          key: ${{ runner.os }}-go-compiler-v2-${{ hashFiles('agent/go.mod', 'agent/go.sum') }}-${{ hashFiles('agent/**/*.go', 'agent/**/*.c', 'agent/**/*.h', 'agent/**/*.s', 'agent/**/*.syso') }}
+          key: ${{ runner.os }}-go-compiler-v3-${{ hashFiles('agent/go.mod', 'agent/go.sum') }}
           restore-keys: |
             ${{ runner.os }}-go-compiler-v2-${{ hashFiles('agent/go.mod', 'agent/go.sum') }}-
             ${{ runner.os }}-go-compiler-v1-${{ hashFiles('agent/go.mod', 'agent/go.sum') }}-
@@ -156,6 +157,10 @@ jobs:
   build-windows:
     needs: changes
     if: github.event_name != 'pull_request' && needs.changes.outputs.windows == 'true'
+    # Cancel only an eligible duplicate job, never on an unrelated push.
+    concurrency:
+      group: windows-build-${{ github.ref }}
+      cancel-in-progress: true
     runs-on: windows-latest
     timeout-minutes: 45
     permissions:
@@ -184,7 +189,7 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~\AppData\Local\go-build
-          key: ${{ runner.os }}-go-compiler-v2-${{ hashFiles('agent/go.mod', 'agent/go.sum') }}-${{ hashFiles('agent/**/*.go', 'agent/**/*.c', 'agent/**/*.h', 'agent/**/*.s', 'agent/**/*.syso') }}
+          key: ${{ runner.os }}-go-compiler-v3-${{ hashFiles('agent/go.mod', 'agent/go.sum') }}
           restore-keys: |
             ${{ runner.os }}-go-compiler-v2-${{ hashFiles('agent/go.mod', 'agent/go.sum') }}-
             ${{ runner.os }}-go-compiler-v1-${{ hashFiles('agent/go.mod', 'agent/go.sum') }}-
@@ -296,7 +301,7 @@ jobs:
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~\AppData\Local\go-build
-          key: ${{ runner.os }}-go-compiler-v2-${{ hashFiles('agent/go.mod', 'agent/go.sum') }}-${{ hashFiles('agent/**/*.go', 'agent/**/*.c', 'agent/**/*.h', 'agent/**/*.s', 'agent/**/*.syso') }}
+          key: ${{ runner.os }}-go-compiler-v3-${{ hashFiles('agent/go.mod', 'agent/go.sum') }}
       - name: Prepare code-signing certificate and sign Go Agent binaries
         shell: pwsh
         env:

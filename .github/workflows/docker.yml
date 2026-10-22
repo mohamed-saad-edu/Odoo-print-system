@@ -11,9 +11,6 @@ on:
   schedule:
     - cron: '23 3 * * 0'  # Weekly pinned-image vulnerability scan
 
-concurrency:
-  group: docker-${{ github.ref }}
-  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -55,6 +52,10 @@ jobs:
   docker-image-scan:
     needs: changes
     if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && needs.changes.outputs.docker_scan == 'true'
+    # Cancel only an eligible duplicate job, never on an unrelated push.
+    concurrency:
+      group: docker-scan-${{ matrix.variant }}-${{ github.ref }}
+      cancel-in-progress: true
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -115,6 +116,10 @@ jobs:
     name: Docker Compose preflight (PR)
     needs: changes
     if: github.event_name == 'pull_request' && github.event.pull_request.draft == false && needs.changes.outputs.docker == 'true'
+    # Cancel only an eligible duplicate job, never on an unrelated push.
+    concurrency:
+      group: docker-pr-${{ github.ref }}
+      cancel-in-progress: true
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -132,6 +137,10 @@ jobs:
   docker-build-runtime:
     needs: changes
     if: github.event_name != 'pull_request' && needs.changes.outputs.docker == 'true'
+    # Cancel only an eligible duplicate job, never on an unrelated push.
+    concurrency:
+      group: docker-runtime-${{ github.ref }}
+      cancel-in-progress: true
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
