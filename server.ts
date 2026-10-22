@@ -1,4 +1,4 @@
-import { logError, logWarn } from "./src/lib/log";
+import { logError, logWarn, logInfo } from "./src/lib/log";
 import { createServer } from "http";
 import type { Server as HttpServer } from "http";
 import type { WebSocket, WebSocketServer } from "ws";
@@ -73,6 +73,18 @@ if (process.env.NODE_ENV === "production") {
   if (!platformTenantId || platformTenantId === "<required-platform-tenant-id>") {
     throw new Error("Refusing production startup: PLATFORM_TENANT_ID must be configured with the real platform workspace ID so the platform tenant cannot be suspended or deleted.");
   }
+  // Do not advertise a production Gateway with a dummy PostgreSQL pool.
+  // A database URL or the complete structured connection identity is
+  // required. Local/test module imports remain free of deployment settings.
+  const configuredDatabaseUrl = runtimeSecret("DATABASE_URL")?.trim();
+  const structuredDatabase = Boolean(
+    process.env.PGHOST?.trim() &&
+    process.env.PGUSER?.trim() &&
+    process.env.PGDATABASE?.trim()
+  );
+  if (!configuredDatabaseUrl && !structuredDatabase) {
+    throw new Error("Refusing production startup: DATABASE_URL or PGHOST, PGUSER and PGDATABASE are required.");
+  }
   assertRealSecret("GATEWAY_JWT_SECRET", runtimeSecret("GATEWAY_JWT_SECRET"), 32);
   if (!trustProxyEnabled() && !isLoopbackBinding(hostname)) {
     throw new Error("Refusing production startup: TRUST_PROXY=1 is required when the Gateway binds a non-loopback interface. Do not expose the Gateway application port directly.");
@@ -120,7 +132,7 @@ function maintenanceTask(operation: () => Promise<unknown>, failureEvent: string
 function shutdown(signal: string): void {
   if (shuttingDown) return;
   shuttingDown = true;
-  console.log(`[shutdown] ${signal}: draining connections...`);
+  logInfo("gateway.shutdown.draining", { signal });
   const hardExit = setTimeout(() => {
     logError("[shutdown] drain window elapsed; exiting (leases and the agent ledger make interrupted deliveries safe — jobs never silently reprint)");
     process.exit(1);
@@ -252,7 +264,7 @@ app.prepare().then(() => {
   server.listen(port, hostname, () => {
     const address = server.address();
     const boundPort = typeof address === "object" && address !== null ? address.port : port;
-    console.log(`> Ready on http://${hostname}:${boundPort} (Agent WS at /api/agent/ws)`);
+    logInfo("gateway.startup.ready", { hostname, port: boundPort, websocketPath: "/api/agent/ws" });
   });
 }).catch((error) => {
   logError("[startup] Next.js prepare failed; refusing to run without a request handler", { error: error instanceof Error ? error.message : String(error) });

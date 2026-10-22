@@ -16,13 +16,16 @@ export const dynamic = "force-dynamic";
 /**
  * Controlled migration switch for the v1 print-submission contract.
  *
- * v1 keeps accepting a submission without an `idempotencyKey` so existing
- * installations are not broken, but such a submission cannot be deduplicated:
- * a retry creates a second queued job and can print twice. Operators whose
- * callers all send a key can set this to "1" to make the missing key a hard
- * 400, then migrate callers at their own pace. v2 always requires the key.
+ * Production defaults to requiring a stable `idempotencyKey`: a missing key
+ * would make retries create duplicate physical prints. Development/test can
+ * exercise legacy callers; explicit "0" is a temporary production escape
+ * hatch that the operator must accept as an at-least-once printing risk.
+ * v2 always requires the key.
  */
 function idempotencyKeyRequired(): boolean {
+  if (process.env.NODE_ENV === "production") {
+    return process.env.YASEIR_REQUIRE_IDEMPOTENCY_KEY !== "0";
+  }
   return process.env.YASEIR_REQUIRE_IDEMPOTENCY_KEY === "1";
 }
 
@@ -220,7 +223,7 @@ export async function POST(req: Request) {
     // Anything else is an internal failure: log the detail, return a generic
     // sanitized error. Database constraint names, driver messages, and
     // stack traces never leave the server.
-    logError("print.job.create_failed", { key: parsed.data.idempotencyKey ?? null, error: error instanceof Error ? error.message : String(error) });
+    logError("print.job.create_failed", { operationIdentityProvided: Boolean(parsed.data.idempotencyKey), error: error instanceof Error ? error.message : String(error) });
     return NextResponse.json({ error: "Internal server error", code: "INTERNAL_ERROR", retryable: true }, { status: 500 });
   }
 }

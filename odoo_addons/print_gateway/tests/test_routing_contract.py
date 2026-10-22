@@ -78,6 +78,58 @@ class TestPrintGatewayRoutingContract(TransactionCase):
         self.config.write({"enabled": enabled})
         return self.config
 
+    def _invoice_automation(self):
+        reports = self.env["ir.actions.report"]
+        first = reports.create({
+            "name": "Automation invoice", "model": "account.move",
+            "report_type": "qweb-pdf", "report_name": "account.report_invoice",
+        })
+        other = first.copy({"name": "Other invoice action"})
+        binding = self.env["print_gateway.binding"].create({
+            "company_id": self.company.id, "destination_type": "report",
+            "report_id": first.id, "printer_id": "automation-test-printer",
+            "printer_protocol": "spooler",
+        })
+        values = {
+            "name": "Automatic invoice", "company_id": self.company.id,
+            "model_id": self.env["ir.model"]._get("account.move").id,
+            "event_type": "invoice_posted", "action_type": "report",
+            "report_id": first.id, "binding_id": binding.id,
+        }
+        return first, other, binding, values
+
+    def test_automation_report_and_explicit_rule_must_match_on_create_and_write(self):
+        first, other, binding, values = self._invoice_automation()
+        policies = self.env["print_gateway.policy"]
+        with self.assertRaisesRegex(ValidationError, "does not print report"), self.env.cr.savepoint():
+            policies.create({**values, "report_id": other.id})
+        policy = policies.create(values)
+        self.assertEqual(policy.binding_id, binding)
+        with self.assertRaisesRegex(ValidationError, "does not print report"), self.env.cr.savepoint():
+            policy.write({"report_id": other.id})
+        policy.write({"binding_id": False, "report_id": other.id})
+        self.assertEqual(policy.report_id, other)
+        self.assertEqual(binding.report_id, first)
+
+    def test_rule_report_changes_cannot_break_an_archived_automation(self):
+        first, other, binding, values = self._invoice_automation()
+        policy = self.env["print_gateway.policy"].create({**values, "active": False})
+        with self.assertRaisesRegex(ValidationError, "does not print report"), self.env.cr.savepoint():
+            binding.write({"report_id": other.id, "destination_report_id": other.id})
+        self.assertEqual(policy.report_id, first)
+
+    def test_legacy_automation_mismatch_is_explained_before_rendering_or_outbox(self):
+        _first, other, _binding, values = self._invoice_automation()
+        policy = self.env["print_gateway.policy"].create(values)
+        self.env.cr.execute("UPDATE print_gateway_policy SET report_id = %s WHERE id = %s", (other.id, policy.id))
+        policy.invalidate_recordset(["report_id"])
+        record = self.env["account.move"].new({"company_id": self.company.id})
+        router = self.env["print_gateway.print_router"]
+        with patch.object(type(router), "_render_pdf_payload") as render:
+            with self.assertRaisesRegex(ValidationError, "does not print report"):
+                router.route_intent(Mock(policy_id=policy), record)
+            render.assert_not_called()
+
     def _job(self, key):
         """Create a durable job and return only its scalar id."""
         cr = self.env.registry.cursor()

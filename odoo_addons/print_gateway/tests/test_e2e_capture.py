@@ -21,7 +21,7 @@ class TestE2ECaptureWizard(TransactionCase):
             [("company_id", "=", self.company.id)], limit=1,
         )
         values = {
-            "gateway_url": "https://example.invalid",
+            "gateway_url": "https://gateway.example.com",
             "gateway_api_key": "odoo_test_capture_key",
             "enabled": True,
         }

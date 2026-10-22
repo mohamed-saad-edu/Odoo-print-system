@@ -2,7 +2,7 @@
 
 This is the canonical first deployment path for a fresh production server.
 
-**Repository:** https://github.com/mo7medSa3d/oddo-print  
+**Repository:** https://github.com/mohamed-saad-edu/Odoo-print-system  
 **Web app:** Yaseir Gateway  
 **Customer portal:** `/signup` → `/verify-email` → `/onboarding` → `/login` → `/dashboard`  
 **Platform control plane:** `/platform/login`
@@ -47,7 +47,7 @@ cd /opt/yaseir
 Clone the current repository:
 
 ```bash
-git clone https://github.com/mo7medSa3d/oddo-print.git .
+git clone https://github.com/mohamed-saad-edu/Odoo-print-system.git .
 git checkout main
 git pull --ff-only origin main
 ```
@@ -234,13 +234,13 @@ Expected:
 {"ok":true}
 ```
 
-Check TLS:
+Check publicly trusted HTTPS and the Agent's authenticated WebSocket boundary:
 
 ```bash
-curl -I https://gw.example.com/
+node scripts/check-public-gateway.mjs https://gw.example.com
 ```
 
-You should get a normal HTTPS response from Caddy/Gateway.
+Run this from an external operator machine after `npm ci` (not from inside the Gateway container). It rejects redirects, untrusted certificates, an unhealthy DB, and unexpected unauthenticated WebSocket upgrades. A healthy deployment still requires paired-Agent and actual paper-output verification.
 
 ## 7. Provision the plans
 

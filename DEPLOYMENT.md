@@ -100,7 +100,7 @@ Deploy `print-agent.exe` with a YAML config file pointing to the Gateway URL.
 
 Use the Gateway origin root, such as `https://print.example.com` or `https://[2001:db8::1]:8443`. A trailing root slash and surrounding whitespace are normalized for all Agent HTTP and WebSocket endpoints; `/api`, other base paths, embedded credentials, queries and fragments are rejected with an explicit configuration error. The Desktop Manager also requires the origin root. Deploy a dedicated Gateway origin when a reverse proxy needs routing; a subpath deployment is not supported by the current Gateway/UI contract. Agent service configs and CLI pairing require an explicit HTTP(S) scheme; the Desktop Manager can add HTTPS to a bare hostname.
 
-TLS verification and redirect refusal remain enabled. Agent plain HTTP requires the existing `YASEIR_AGENT_ALLOW_INSECURE_HTTP=1` opt-in for isolated development/test environments. The Desktop Manager permits loopback HTTP for local development; the Agent opt-in is still required for an HTTP service config.
+TLS verification and redirect refusal remain enabled. The Agent **never** sends bearer credentials over remote HTTP; `YASEIR_AGENT_ALLOW_INSECURE_HTTP=1` permits plaintext transport only to loopback (localhost, 127.0.0.1, ::1) in isolated development/test. The Desktop Manager likewise permits only loopback HTTP for local development. Remote HTTPS remains mandatory.
 
 ## Docker Deployment
 
@@ -114,23 +114,33 @@ The `docker-compose.yml` includes Gateway, PostgreSQL, and Caddy services. Compo
 
 | Endpoint | Purpose |
 |----------|---------|
-| `GET /api/live` | Cheap unauthenticated liveness (no DB, no auth; Docker/Caddy probe) |
-| `GET /api/health` | Gateway readiness (returns 200 when DB reachable, 503 otherwise; unauthenticated liveness probe) |
+| `GET /api/live` | Cheap unauthenticated process liveness (no DB, no auth) |
+| `GET /api/health` | Gateway readiness (200 only with database connectivity; 503 otherwise); used by Docker deployment health checks |
 | `GET /api/system/health` | Full system health (manager auth `agents.read` required) |
 | Agent heartbeat | Agent liveness (30s interval via WebSocket or HTTP) |
+
+Container readiness now depends on PostgreSQL through `/api/health`. Keep `/api/live` only for process-only diagnostics; it must not admit requests when the database is unavailable. The production Gateway also refuses startup without a PostgreSQL URL or a complete `PGHOST`/`PGUSER`/`PGDATABASE` identity.
+
+After publishing the Gateway behind a publicly trusted TLS certificate, run the external HTTPS + unauthenticated WSS rejection acceptance test from an operator machine with the repository's installed Node dependencies:
+
+```bash
+node scripts/check-public-gateway.mjs https://print.example.com
+```
+
+This proves that HTTPS is publicly trusted and the WebSocket route is reachable through the same TLS proxy without granting access to an unauthenticated Agent. It does not replace a paired real-Agent and physical-printer acceptance test.
 
 ## Security Checklist
 
 - [ ] `GATEWAY_JWT_SECRET` is random, ≥ 32 chars, not a placeholder
 - [ ] `TRUST_PROXY_SECRET` is random, ≥ 32 chars, not a placeholder
 - [ ] `DATABASE_URL` uses SSL in production (`?sslmode=require`)
-- [ ] Caddy/proxy terminates TLS with a valid certificate
+- [ ] Caddy/proxy terminates TLS with a publicly trusted certificate; `node scripts/check-public-gateway.mjs https://print.example.com` passes from outside the VPS
 - [ ] Stripe webhook secret is configured for billing
 - [ ] `NODE_ENV=production` is set
 - [ ] `PLATFORM_TENANT_ID` is set to the immutable platform workspace ID
 - [ ] `TRUST_PROXY=1` is enabled for the bundled reverse-proxy deployment
 - [ ] Gateway port `3000` is private/unpublished; only the TLS reverse proxy is public
-- [ ] Static security gates (CodeQL, Dependency Review, Gitleaks) are required branch checks
+- [ ] `main` has a protected GitHub Ruleset requiring CodeQL, CI, Go/Odoo/Windows change-scoped checks and independent CODEOWNERS review; enable GitHub Dependency Review when the repository's dependency graph supports it
 
 ## Graceful Shutdown
 

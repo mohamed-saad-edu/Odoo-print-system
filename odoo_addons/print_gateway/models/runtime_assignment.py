@@ -17,6 +17,7 @@ class PrintGatewayRuntimeAgentAssignment(models.Model):
     )
     branch_id = fields.Many2one(
         "res.company", string="Odoo Branch", required=False,
+        default=lambda self: self.env.company if self.env.company.parent_id else False,
         ondelete="restrict", index=True,
         domain="[('parent_id', '=', company_id)]",
     )
@@ -121,7 +122,7 @@ class PrintGatewayRuntimeAgentAssignment(models.Model):
     @api.constrains("company_id", "branch_id", "runtime_agent_id")
     def _check_assignment(self):
         for record in self:
-            if record.company_id not in self.env.user.company_ids:
+            if not record.branch_id and record.company_id not in self.env.user.company_ids:
                 raise ValidationError(_("The selected Odoo Company is not available to the current user."))
             if record.company_id.parent_id:
                 raise ValidationError(_("Odoo Company must be a parent Company, not a Branch."))

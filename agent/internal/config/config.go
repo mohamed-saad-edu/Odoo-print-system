@@ -82,10 +82,16 @@ func ValidateServerURL(raw string) error {
 	case "https":
 		return nil
 	case "http":
-		if insecureHTTPAllowed() {
+		// An HTTP bearer credential must never be dispatched to a remote
+		// Gateway, even if an obsolete development opt-in survives on a
+		// production machine. Only an explicitly opted-in loopback server is
+		// permitted for isolated local testing.
+		host := strings.ToLower(strings.TrimSuffix(u.Hostname(), "."))
+		ip := net.ParseIP(host)
+		if insecureHTTPAllowed() && (host == "localhost" || (ip != nil && ip.IsLoopback())) {
 			return nil
 		}
-		return fmt.Errorf("server.url must use HTTPS; plain HTTP requires YASEIR_AGENT_ALLOW_INSECURE_HTTP=1 for isolated development/test environments")
+		return fmt.Errorf("server.url must use HTTPS for remote Gateways; development HTTP is permitted only on loopback with YASEIR_AGENT_ALLOW_INSECURE_HTTP=1")
 	default:
 		return fmt.Errorf("server.url scheme must be http or https, got %q", u.Scheme)
 	}
@@ -271,6 +277,8 @@ func (c *Config) Save(path string) error {
 		return fmt.Errorf("create temp config for %s: %w", path, err)
 	}
 	tmp := tmpFile.Name()
+	// Remove the temporary file after any failed write, sync, close or replace.
+	defer os.Remove(tmp)
 	// CreateTemp is 0600; re-assert explicitly since this file carries the
 	// (sealed) agent secret material alongside the config body.
 	if err := tmpFile.Chmod(0600); err != nil {

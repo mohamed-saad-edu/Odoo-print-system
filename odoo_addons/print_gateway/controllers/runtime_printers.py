@@ -21,7 +21,7 @@ class PrintGatewayRuntimePrinterController(http.Controller):
                 company = env["res.company"].browse(int(company_id)).exists()
             except (TypeError, ValueError):
                 raise Forbidden(env._("Access Denied: Invalid Odoo Company."))
-            if not company or company not in env.companies:
+            if not company:
                 raise Forbidden(env._("Access Denied: The selected Odoo Company is not available to the current user."))
         else:
             company = env.company
@@ -36,6 +36,10 @@ class PrintGatewayRuntimePrinterController(http.Controller):
                 raise Forbidden(env._("Access Denied: Invalid Odoo Branch."))
             if not branch or branch not in env.companies:
                 raise Forbidden(env._("Access Denied: The selected Odoo Branch is not available to the current user."))
+
+        # A branch's parent is metadata; authority comes from the exact allowed branch.
+        if company not in env.companies and not (branch and branch.parent_id == company):
+            raise Forbidden(env._("Access Denied: The selected Odoo Company is not available to the current user."))
 
         if company.parent_id:
             # Tolerate branch-scoped callers (e.g. a branch cashier whose

@@ -1,5 +1,4 @@
 export const AGENT_LIFECYCLES = ["active", "disabled", "retired"] as const;
-export const PRINTER_LIFECYCLES = ["active", "disabled", "retired"] as const;
 
 export type Lifecycle = (typeof AGENT_LIFECYCLES)[number];
 

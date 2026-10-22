@@ -52,7 +52,7 @@ def test_private_signing_identity_never_enters_shared_cache_or_pr_environment():
     assert "signing-cert-cache" not in WORKFLOW
     assert "$cachedPfx" not in WORKFLOW
     assert "$cachedPassFile" not in WORKFLOW
-    for secret in ("WINDOWS_PFX_BASE64", "WINDOWS_PFX_PASSWORD", "GH_PAT_SECRETS"):
+    for secret in ("WINDOWS_PFX_BASE64", "WINDOWS_PFX_PASSWORD"):
         line = next(line for line in WORKFLOW.splitlines() if line.strip().startswith(f"{secret}:"))
         assert "github.ref == 'refs/heads/main'" in line
         assert "github.event_name == 'push' || github.event_name == 'workflow_dispatch'" in line
@@ -60,6 +60,12 @@ def test_private_signing_identity_never_enters_shared_cache_or_pr_environment():
     assert '$hasPfx -ne $hasPassword' in WORKFLOW
     assert "Remove-Item -Force $tempPfx" in WORKFLOW
     assert "Export-Certificate -Cert $cert" in WORKFLOW  # Public certificate remains usable.
+    assert "GH_PAT_SECRETS" not in WORKFLOW
+    assert "gh secret set " not in WORKFLOW
+    assert "YASEIR_TRUSTED_RELEASE_SIGNING" in WORKFLOW
+    assert "Yaseir-Manager-Windows-NSIS-UNTRUSTED-TEST-ONLY" in WORKFLOW
+    assert WORKFLOW.index("$chain.Build($cert)") < WORKFLOW.index("Import-Certificate -FilePath $publicCer -CertStoreLocation Cert:")
+
 
 
 def test_native_ci_exercises_only_pure_production_helpers_before_packaging():

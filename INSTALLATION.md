@@ -5,14 +5,16 @@ The system has three runtime components: Gateway, Windows Agent/Desktop Manager,
 
 ### Gateway connection
 
-The Odoo addon uses HTTPS for Gateway communication by default. The `gateway_api_key` is stored as authenticated AES-256-GCM ciphertext using a deployment-managed key that is external to the Odoo database. Plain HTTP is an explicitly opt-in development mode only via `YASEIR_GATEWAY_ALLOW_INSECURE_HTTP=1`; do not use it for production credentials.
+The Odoo addon uses HTTPS for Gateway communication by default. The `gateway_api_key` is stored as authenticated AES-256-GCM ciphertext using a deployment-managed key external to the Odoo database. The Odoo server rejects loopback, private, link-local and metadata Gateway destinations by default; request-time DNS resolution rejects hosts resolving to those addresses. For a trusted privately hosted Gateway (including a deliberately local development instance), explicitly set `YASEIR_GATEWAY_ALLOWED_ORIGINS=https://print.internal.example:8443` **in the Odoo server environment**, with the exact scheme, hostname and port from the Odoo configuration. An allowlist is restrictive: when set, every configured Gateway origin must be listed (include **both old and new origins during a Gateway migration**, until the old endpoint is disabled). Metadata endpoint addresses remain forbidden even when allowlisted. Keep a network egress firewall denying metadata endpoints: DNS can rebind between validation and connection. Never treat the allowlist as a substitute for egress controls.
+
+Plain HTTP is restricted to loopback and needs **both** `YASEIR_GATEWAY_ALLOW_INSECURE_HTTP=1` and a matching loopback `YASEIR_GATEWAY_ALLOWED_ORIGINS=http://127.0.0.1:3000`. Remote HTTP is rejected even when the opt-in is present. Never use HTTP for production credentials.
 
 
 ## 1. Gateway
 
 ```bash
-git clone https://github.com/mo7medSa3d/oddo-print.git
-cd oddo-print
+git clone https://github.com/mohamed-saad-edu/Odoo-print-system.git
+cd Odoo-print-system
 npm ci
 cp .env.example .env
 npm run db:migrate

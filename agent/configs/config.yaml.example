@@ -1,8 +1,8 @@
 server:
-  # Production gateways MUST use HTTPS. Plain HTTP is rejected unless the
-  # process is explicitly started for an isolated development/test environment
-  # with YASEIR_AGENT_ALLOW_INSECURE_HTTP=1. Never enable that setting in a
-  # production service.
+  # Remote Gateways MUST use HTTPS. An isolated development Agent may set
+  # YASEIR_AGENT_ALLOW_INSECURE_HTTP=1 to connect to a loopback HTTP URL only.
+  # The opt-in never permits remote plaintext credentials, including LAN IPs.
+  # Do not enable it on production services.
   url: "https://your-print-gateway.example.com"
 
 agent:

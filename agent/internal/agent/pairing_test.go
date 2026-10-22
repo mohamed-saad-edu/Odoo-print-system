@@ -26,9 +26,14 @@ func TestValidateServerURLRequiresExplicitHTTPOptIn(t *testing.T) {
 		}
 	}
 	t.Setenv("YASEIR_AGENT_ALLOW_INSECURE_HTTP", "1")
-	for _, raw := range []string{"http://127.0.0.1:3000", "http://192.0.2.10:3000", "http://gateway.example.com"} {
+	for _, raw := range []string{"http://127.0.0.1:3000", "http://[::1]:3000", "http://localhost:3000"} {
 		if err := config.ValidateServerURL(raw); err != nil {
-			t.Fatalf("expected explicit opt-in to permit HTTP URL %q, got %v", raw, err)
+			t.Fatalf("expected loopback development opt-in to permit HTTP URL %q, got %v", raw, err)
+		}
+	}
+	for _, raw := range []string{"http://192.0.2.10:3000", "http://gateway.example.com"} {
+		if err := config.ValidateServerURL(raw); err == nil {
+			t.Fatalf("remote HTTP %q must remain forbidden despite development opt-in", raw)
 		}
 	}
 }

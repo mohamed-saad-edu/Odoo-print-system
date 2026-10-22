@@ -21,7 +21,7 @@ The final pass covered contracts/Windows Agent, Gateway core and UI, Odoo/POS, T
 | FG-UI1 | Gateway/Desktop local job search trims the same draft as server producers | Six actual production-memo cases pass |
 | FG-UI2 | Dashboard fetches billing only with exact permission; actor/permission changes clear state and refuse stale responses | Twelve mounted billing cases pass; eleven previous authority cases retained |
 
-Windows command-line guidance: [CreateProcessW](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-createprocessw). Owned stdin/EOF: [Rust ChildStdin](https://doc.rust-lang.org/std/process/struct.ChildStdin.html). Escaping: [Go encoding/json](https://pkg.go.dev/encoding/json#Marshal). Account-scoped discovery: [EnumPrinters](https://learn.microsoft.com/en-us/windows/win32/printdocs/enumprinters). Exact versions, cached pitfalls and other primary sources remain in [STACK_NOTES.md](</home/mo7amed_saad/work/odoo github/STACK_NOTES.md>).
+Windows command-line guidance: [CreateProcessW](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-createprocessw). Owned stdin/EOF: [Rust ChildStdin](https://doc.rust-lang.org/std/process/struct.ChildStdin.html). Escaping: [Go encoding/json](https://pkg.go.dev/encoding/json#Marshal). Account-scoped discovery: [EnumPrinters](https://learn.microsoft.com/en-us/windows/win32/printdocs/enumprinters). Exact versions, cached pitfalls and other primary sources remain in historical local STACK_NOTES.md (not committed).
 
 ## Final verification
 
@@ -44,9 +44,9 @@ The main integration map retains **18 flows: 3 wired, 11 fixed, 4 unverified liv
 
 UNVERIFIED: real Windows service/spooler/drivers/physical printers and signed CGO1 installer; live Odoo 19 ORM/OWL/POS upgrade/rollback; live Stripe account/signature delivery; deployed Caddy/agent WebSocket acceptance. No deployment, real printing, signing-key rotation, external cache deletion or dependency setup occurred. The reviewed source must be packaged into an updated Windows release before it changes an installed Agent.
 
-Operator/release decisions remain: restore already pinned missing dependencies in an authorized setup; perform native/live acceptance; remove old exposed signing caches and rotate the affected release identity if exposure is confirmed. Other deferred recommendations stay in [AUDIT_FINDINGS.md](</home/mo7amed_saad/work/odoo github/AUDIT_FINDINGS.md>).
+Operator/release decisions remain: restore already pinned missing dependencies in an authorized setup; perform native/live acceptance; remove old exposed signing caches and rotate the affected release identity if exposure is confirmed. Other deferred recommendations stay in historical local AUDIT_FINDINGS.md (not committed).
 
-Evidence: [root checks](</home/mo7amed_saad/work/odoo github/.audit/final-graph-20261014/root-verification-summary.json>), [Go checks](</home/mo7amed_saad/work/odoo github/.audit/final-graph-20261014/go-final-summary.json>), [native bridge checks](</home/mo7amed_saad/work/odoo github/.audit/final-graph-20261014/tauri-summary.json>), [FIX_LOG.md](</home/mo7amed_saad/work/odoo github/FIX_LOG.md>).
+Evidence: historical local root checks (not committed), historical local Go checks (not committed), historical local native bridge checks (not committed), historical local FIX_LOG.md (not committed).
 
 
 ## Local printer sharing source overlay (2026-10-14)

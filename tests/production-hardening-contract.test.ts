@@ -115,13 +115,31 @@ describe("production hardening contracts", () => {
     expect(server).toContain("Refusing production startup");
   });
 
+  it("refuses production startup without a configured PostgreSQL identity", () => {
+    const server = read("server.ts");
+    expect(server).toContain('runtimeSecret("DATABASE_URL")?.trim()');
+    expect(server).toContain("process.env.PGHOST?.trim()");
+    expect(server).toContain("process.env.PGUSER?.trim()");
+    expect(server).toContain("process.env.PGDATABASE?.trim()");
+    expect(server).toContain("Refusing production startup: DATABASE_URL or PGHOST, PGUSER and PGDATABASE are required.");
+  });
+
+  it("avoids logging raw caller-supplied print operation keys", () => {
+    for (const file of ["src/app/api/print/jobs/route.ts", "src/app/api/print/jobs/v2/route.ts"]) {
+      const route = read(file);
+      expect(route).toContain("operationIdentityProvided: Boolean(parsed.data.idempotencyKey)");
+      expect(route).not.toContain("logError(\"print.job.create_failed\", { key:");
+    }
+  });
+
   it("keeps Docker migration out of runtime startup and orders Compose migration before gateway", () => {
     const dockerfile = read("Dockerfile");
     const compose = read("docker-compose.yml");
-    expect(dockerfile).toContain('CMD ["npm", "start"]');
+    expect(dockerfile).toContain('CMD ["node", "--import", "tsx", "server.ts"]');
     expect(dockerfile).not.toContain("npm run db:migrate && npm start");
+    expect(dockerfile).toContain("rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx");
     expect(compose).toContain("migrate:");
-    expect(compose).toContain('command: ["npm", "run", "db:migrate"]');
+    expect(compose).toContain('command: ["node", "--import", "tsx", "scripts/db-migrate.ts"]');
     expect(compose).toContain("service_completed_successfully");
     expect(compose).toContain("condition: service_healthy");
     expect(compose).toContain("PGHOST: postgres");
