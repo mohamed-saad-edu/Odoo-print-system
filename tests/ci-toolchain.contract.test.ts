@@ -15,7 +15,7 @@ function workflows(): string[] {
 describe("CI/runtime alignment", () => {
   it("uses the declared Node version everywhere Node is provisioned", () => {
     expect(packageJson.engines.node).toBe(">=24.15.0");
-    expect(nodeVersion).toBe("24.22.0");
+    expect(nodeVersion).toBe("24.22.1");
     expect(dockerfile).toContain(`node:${nodeVersion}-alpine`);
     for (const workflow of workflows()) {
       if (/\bnpm (ci|install|run|test|audit)\b|\bnpx\b/.test(workflow)) {

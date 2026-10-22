@@ -48,13 +48,15 @@ public Windows code-signing certificate, or configure a host firewall.
 
 ## Outstanding upstream dependency advisories
 
-The immutable `security/image-vulnerability-baseline.json` records 32 inherited
-HIGH/CRITICAL findings in pinned Node, PostgreSQL/gosu and Caddy images.
+The immutable `security/image-vulnerability-baseline.json` records inherited HIGH/CRITICAL
+findings in pinned official parent images. Production Caddy and PostgreSQL
+are now rebuilt using the patched Go 1.26.10 toolchain and their *actual*
+final images are independently scanned with zero high-severity exceptions.
 Do not erase findings to create a green report. Keep scanning pinned upstream
 images; update each digest only after rebuilding/scanning the real replacement
 and testing deployment. The Node *runtime* image removes bundled npm to
 reduce exposure, but CI still scans the official Node base image, where the
-bundled npm advisories remain. Caddy binaries and gosu require independent
-upstream remediations.
+bundled npm advisories remain. The upstream gosu/Caddy advisories remain documented only for historical
+reference; the patched final images must not ship those binaries.
 
 Review every exception before its expiry in the baseline JSON.

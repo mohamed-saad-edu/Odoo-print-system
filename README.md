@@ -64,7 +64,7 @@ Email verification establishes mailbox ownership before password setup. `POST /a
 
 ## Development
 
-Node.js 24.22.0 is the project runtime baseline.
+Node.js 24.22.1 is the project runtime baseline.
 
 ```bash
 npm ci
