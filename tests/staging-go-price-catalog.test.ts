@@ -66,7 +66,10 @@ describe("staging-only catalogued fake Stripe Price admission", () => {
     const example = readFileSync("deploy/domain-test/.env.domain-test.example", "utf8");
     expect(setup).toContain("LEGACY_STAGING_PRICE_CATALOG=");
     expect(setup).toContain("DEFAULT_STAGING_PRICE_CATALOG=");
-    expect(setup).toContain('if [[ "$(get_env_value STRIPE_PLAN_CATALOG "$ENV_FILE")" == "$LEGACY_STAGING_PRICE_CATALOG" ]]');
+    expect(setup).toContain("LEGACY_TWO_PRICE_CATALOG=");
+    expect(setup).toContain(
+      '== "$LEGACY_STAGING_PRICE_CATALOG" || "$(get_env_value STRIPE_PLAN_CATALOG "$ENV_FILE")" == "$LEGACY_TWO_PRICE_CATALOG"'
+    );
     expect(setup).toContain("upsert_env STRIPE_PLAN_CATALOG");
     for (const price of ["price_http_test_yasser", "price_go_yasser"]) {
       expect(setup).toContain(price);

@@ -89,25 +89,17 @@ jobs:
           path: ~/go/bin/staticcheck
           key: ${{ runner.os }}-staticcheck-v0.7.0
 
-  ci:
-    name: App / Gateway
+  app-quality:
+    name: App / Quality
     needs: changes
     if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && needs.changes.outputs.app == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 20
     env:
-      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/app_db
       CI: true
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Start pinned PostgreSQL with rate-limit-only registry fallback
-        shell: bash
-        env:
-          CI_PG_USER: postgres
-          CI_PG_PASSWORD: postgres
-          CI_PG_DATABASE: app_db
-        run: bash scripts/ci-postgres.sh start
       - name: Verify relative imports only
         shell: bash
         run: |
@@ -174,6 +166,34 @@ jobs:
           pytest tests/test_*.py
       - name: Run unit tests (no DB)
         run: npm run test:unit
+
+  ci:
+    name: App / Gateway
+    needs: changes
+    if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && needs.changes.outputs.app == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/app_db
+      CI: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Start pinned PostgreSQL with rate-limit-only registry fallback
+        shell: bash
+        env:
+          CI_PG_USER: postgres
+          CI_PG_PASSWORD: postgres
+          CI_PG_DATABASE: app_db
+        run: bash scripts/ci-postgres.sh start
+      - name: Setup Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - name: Install dependencies
+        run: npm ci --prefer-offline --no-audit --fund=false
       - name: Build Next.js for production-server integration tests
         run: npm run build
       - name: Run Drizzle migrations

@@ -122,6 +122,14 @@ jobs:
           go-version-file: agent/go.mod
           cache: true
           cache-dependency-path: agent/go.sum
+      - name: Restore Windows Go compiler cache
+        id: go-compiler-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~\AppData\Local\go-build
+          key: ${{ runner.os }}-go-compiler-v1-${{ hashFiles('agent/go.mod', 'agent/go.sum') }}-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-go-compiler-v1-${{ hashFiles('agent/go.mod', 'agent/go.sum') }}-
       - name: Test native Windows Agent without expensive installer packaging
         if: needs.changes.outputs.agent == 'true'
         working-directory: agent
@@ -169,7 +177,15 @@ jobs:
           go-version-file: agent/go.mod
           cache: true
           cache-dependency-path: agent/go.sum
-      # A release must test its exact source even if an earlier run was cancelled.
+      # Windows race/vet checks run on the exact source when Agent inputs change.
+      - name: Restore Windows Go compiler cache
+        id: go-compiler-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~\AppData\Local\go-build
+          key: ${{ runner.os }}-go-compiler-v1-${{ hashFiles('agent/go.mod', 'agent/go.sum') }}-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-go-compiler-v1-${{ hashFiles('agent/go.mod', 'agent/go.sum') }}-
       - name: Verify and test native Windows Go Agent
         working-directory: agent
         shell: pwsh
@@ -248,6 +264,12 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Windows Agent CLI release build failed" }
           if (-not (Test-Path .\YaseirAgent.exe)) { throw "Missing agent/YaseirAgent.exe" }
           if (-not (Test-Path .\yaseir-agent-cli.exe)) { throw "Missing agent/yaseir-agent-cli.exe" }
+      - name: Save Windows Go compiler cache
+        if: github.ref == 'refs/heads/main' && steps.go-compiler-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~\AppData\Local\go-build
+          key: ${{ runner.os }}-go-compiler-v1-${{ hashFiles('agent/go.mod', 'agent/go.sum') }}-${{ github.sha }}
       - name: Prepare code-signing certificate and sign Go Agent binaries
         shell: pwsh
         env:
