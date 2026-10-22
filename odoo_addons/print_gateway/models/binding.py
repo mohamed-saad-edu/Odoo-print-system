@@ -502,6 +502,13 @@ class PrintGatewayBinding(models.Model):
         return selected_printer
 
 
+    @api.constrains("report_id")
+    def _check_automation_reports(self):
+        # A rule edit must not invalidate an automation owned by another allowed branch.
+        self.env["print_gateway.policy"].sudo().with_context(active_test=False).search([
+            ("binding_id", "in", self.ids), ("action_type", "=", "report"),
+        ])._check_action_configuration()
+
     @api.constrains("company_id", "branch_id")
     def _check_company_hierarchy(self):
         for record in self:

@@ -6,6 +6,7 @@ exercise them with small record fixtures and inspect the transaction boundary.
 import ast
 import copy
 import logging
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -34,6 +35,61 @@ def _class_methods(file, cls_name, method_names, extra=None):
     namespace.update(extra or {})
     exec(compile(extracted, str(BASE/file), 'exec'), namespace)
     return namespace['Target']
+
+
+class _PolicyRecords(list):
+    VALID_MODEL_EVENTS = {'account.move': {'invoice_posted'}}
+
+
+def _report_policy(binding_report_id):
+    policy_type = _class_methods(
+        'print_policy.py', 'PrintGatewayPolicy', {'_check_action_configuration'},
+    )
+    expected = SimpleNamespace(id=31, model='account.move', display_name='Invoice PDF')
+    actual = SimpleNamespace(id=binding_report_id, model='account.move', display_name='Other PDF')
+    return policy_type, SimpleNamespace(
+        model_name='account.move', event_type='invoice_posted', action_type='report',
+        report_id=expected, raw_template=False, domain_filter=False,
+        binding_id=SimpleNamespace(report_id=expected if binding_report_id == 31 else actual,
+                                   display_name='Invoice printer rule'),
+    )
+
+
+def test_report_policy_rejects_another_report_on_the_same_model_before_dispatch():
+    policy_type, policy = _report_policy(32)
+    with pytest.raises(ValidationError) as error:
+        policy_type._check_action_configuration(_PolicyRecords([policy]))
+    assert 'Invoice printer rule' in str(error.value)
+    assert 'Invoice PDF' in str(error.value)
+
+
+def test_report_policy_keeps_matching_explicit_and_automatic_targets():
+    policy_type, policy = _report_policy(31)
+    policy_type._check_action_configuration(_PolicyRecords([policy]))
+    policy.binding_id = False
+    policy_type._check_action_configuration(_PolicyRecords([policy]))
+
+
+def test_automation_form_filters_report_rules_without_widening_company_scope():
+    view = ET.parse(BASE.parent / 'views/print_policy_views.xml')
+    expression = view.find(".//field[@name='binding_id'][@domain]").attrib['domain']
+    scope = {'company_id': 1, 'branch_id': 2, 'report_id': 31, 'action_type': 'report'}
+    domain = eval(expression, {'__builtins__': {}}, scope)
+    assert ('report_id', '=', 31) in domain
+    assert ('company_id', '=', 1) in domain
+    assert ('branch_id', '=', 2) in domain
+    assert ('branch_id', '=', False) in domain
+    scope['action_type'] = 'raw_template'
+    assert ('report_id', '=', 31) not in eval(expression, {'__builtins__': {}}, scope)
+
+
+def test_pending_retry_does_not_claim_to_be_waiting_for_business_commit():
+    view = ET.parse(BASE.parent / 'views/print_intent_views.xml')
+    commit, retry = [node for node in view.iter('div') if 'attempts' in node.attrib.get('invisible', '')]
+    for attempts, visible in [(0, commit), (2, retry)]:
+        context = {'status': 'pending', 'attempts': attempts}
+        for node in (commit, retry):
+            assert (not eval(node.attrib['invisible'], {'__builtins__': {}}, context)) == (node is visible)
 
 
 def _harness(template):

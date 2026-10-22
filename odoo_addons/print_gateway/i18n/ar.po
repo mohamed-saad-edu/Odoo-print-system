@@ -1900,8 +1900,8 @@ msgstr "عدم تطابق نوع الحمولة: المتوقع raw/escpos ول�
 
 #. module: print_gateway
 #: model:ir.model.fields.selection,name:print_gateway.selection__print_gateway_intent__status__pending
-msgid "Pending Commit"
-msgstr "بانتظار تثبيت المعاملة"
+msgid "Pending"
+msgstr "قيد الانتظار"
 
 #. module: print_gateway
 #: model:ir.model.fields,field_description:print_gateway.field_print_gateway_gateway_config__pending_sync_revision
@@ -4210,3 +4210,13 @@ msgstr "يجري هذا الاختبار تشخيصًا من Odoo عبر Gateway
 #: code:addons/print_gateway/models/print_job.py:0
 msgid "Printer '%s' is local-only. Share it from the Agent before sending a cloud print job."
 msgstr "الطابعة '%s' للاستخدام المحلي فقط. فعّل مشاركتها من Agent قبل إرسال مهمة طباعة سحابية."
+
+#. module: print_gateway
+#: code:addons/print_gateway/models/print_policy.py:0
+msgid "Print Rule '%(binding)s' does not print report '%(report)s'. Select a Print Rule for that report or clear Target Binding to use automatic routing."
+msgstr "قاعدة الطباعة «%(binding)s» لا تطبع التقرير «%(report)s». اختر قاعدة طباعة لهذا التقرير، أو امسح «الربط المستهدف» لاستخدام التوجيه التلقائي."
+
+#. module: print_gateway
+#: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_intent_form
+msgid "Automatic printing is waiting to retry. Check the issue below and correct the automation rule or printer configuration if needed."
+msgstr "الطباعة التلقائية بانتظار إعادة المحاولة. راجع المشكلة أدناه وصحّح قاعدة الأتمتة أو إعدادات الطابعة عند الحاجة."

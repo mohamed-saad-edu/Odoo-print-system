@@ -305,6 +305,11 @@ class PrintGatewayPolicy(models.Model):
                     raise ValidationError(_("A report must be selected when action type is 'QWeb PDF Report'."))
                 if policy.report_id.model != policy.model_name:
                     raise ValidationError(_("Selected report model '%s' does not match policy target model '%s'.") % (policy.report_id.model, policy.model_name))
+                if policy.binding_id and policy.binding_id.report_id != policy.report_id:
+                    raise ValidationError(_(
+                        "Print Rule '%(binding)s' does not print report '%(report)s'. "
+                        "Select a Print Rule for that report or clear Target Binding to use automatic routing."
+                    ) % {"binding": policy.binding_id.display_name, "report": policy.report_id.display_name})
                 if policy.raw_template:
                     raise ValidationError(_("Raw template must not be configured when action type is 'QWeb PDF Report'."))
             elif policy.action_type == "raw_template":
