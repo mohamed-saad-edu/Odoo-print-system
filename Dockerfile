@@ -1,6 +1,6 @@
 # The immutable Docker Hub image is the production default. CI may use the
 # officially published ECR Public mirror with the same digest when Hub is throttled.
-ARG NODE_BASE_IMAGE=node:24.22.0-alpine@sha256:44fce696f38ba8c987c4db89954051000bbd05ffd8d8659ba15ed4a8602e937f
+ARG NODE_BASE_IMAGE=node:24.22.1-alpine@sha256:06d7adf3e0ef61a13f1d28682726366f97a15aa1888c934d3ecec86c33918b53
 
 FROM ${NODE_BASE_IMAGE} AS deps
 WORKDIR /app

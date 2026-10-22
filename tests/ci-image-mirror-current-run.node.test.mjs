@@ -64,7 +64,7 @@ test('Compose CLI selects the CI overlay without changing default production ref
   assert.match(workflow, /COMPOSE_FILE: docker-compose\.yml:docker-compose\.ci\.yml/);
   assert.match(secure, /^ARG POSTGRES_BASE=postgres:16\.15-alpine@sha256:[0-9a-f]{64}$/m);
   assert.match(secure, /^ARG CADDY_BASE=caddy:2\.11\.7-alpine@sha256:[0-9a-f]{64}$/m);
-  assert.match(dockerfile, /^ARG NODE_BASE_IMAGE=node:24\.22\.0-alpine@sha256:[a-f0-9]{64}$/m);
+  assert.match(dockerfile, /^ARG NODE_BASE_IMAGE=node:24\.22\.1-alpine@sha256:[a-f0-9]{64}$/m);
 });
 
 test('Odoo Community CI pulls the same immutable digest and uses Docker Hub only after throttling', () => {
