@@ -14,7 +14,7 @@ RUN set -eux; \
     curl --fail --location --retry 3 --silent --show-error "https://go.dev/dl/go1.26.10.linux-${go_arch}.tar.gz" -o /tmp/go.tgz; \
     echo "${expected}  /tmp/go.tgz" | sha256sum -c -; \
     tar -C /usr/local -xzf /tmp/go.tgz; rm /tmp/go.tgz
-ENV PATH="/usr/local/go/bin:${PATH}" GOTOOLCHAIN=local CGO_ENABLED=0
+ENV PATH="/usr/local/go/bin:${PATH}" GOPATH=/go GOTOOLCHAIN=local CGO_ENABLED=0
 RUN go version | grep -F 'go1.26.10'
 
 # Official gosu 1.19, rebuilt using a patched Go toolchain.
