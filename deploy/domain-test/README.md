@@ -10,9 +10,9 @@ Architecture:
 Cloudflare → Caddy :443 → Gateway :3000 (private) → PostgreSQL
 ```
 
-This directory reuses the existing PostgreSQL volume so staging data is not reset. Fake Stripe plans and email capture remain enabled. `YASEIR_HTTP_TEST_MODE` controls these test features only; it cannot disable HTTPS, Secure cookies, proxy authentication, or tenant isolation.
+This directory reuses the existing PostgreSQL volume so staging data is not reset. Fake Stripe plan fixtures and verification-email capture remain available behind `YASEIR_STAGING_FIXTURES_ENABLED`. This flag does not relax HTTPS, Secure cookies, proxy authentication, or tenant isolation.
 
-The legacy `deploy/http-test` files are retained for migration history; they are no longer a supported deployment or CI entry point. Use this HTTPS deployment.
+The obsolete plaintext-HTTP test deployment and its scripts were removed. Use **only** this HTTPS deployment. Old staging data and historical subscription IDs are not deleted.
 
 ## Cloudflare
 
@@ -36,7 +36,7 @@ From the repository root:
 bash deploy/domain-test/setup-domain-test.sh
 ```
 
-The script stops the old HTTP-only stack without deleting its PostgreSQL volume, reuses its secrets when available, starts Caddy + Gateway over HTTPS, validates the local HTTPS certificate and path, and provisions the existing test plan catalog.
+The script requires the existing HTTPS staging environment and its external PostgreSQL volume; it will not initialize an empty database silently. On first upgrade it migrates legacy environment key names without changing the actual database volume, then starts Caddy + Gateway over HTTPS, validates certificate and health, and provisions the existing staging plan catalog. Any obsolete separately running HTTP listener must be stopped explicitly by the operator.
 
 ## Fresh single-workspace staging
 
@@ -45,8 +45,8 @@ workspace. Login never creates a workspace. The first verified signup can
 create one; further registrations return STAGING_WORKSPACE_EXISTS. A
 transaction-level PostgreSQL lock prevents two simultaneous verifications
 from creating two tenants. Production continues to support multiple tenants.
-The old HTTP smoke script created a disposable tenant per run; it is now
-disabled unless explicitly opted into on an isolated loopback instance.
+The removed plaintext-HTTP smoke script is no longer runnable. HTTPS smoke
+tests avoid creating disposable customer tenants.
 
 The accumulated accounts can be replaced with a new, clean staging database
 without issuing unsafe foreign-key DELETEs. This also resets staging printer
@@ -69,7 +69,7 @@ safe retention policy.
 
 After reset, visit https://print.yaseir.cloud/signup, register the single
 intended account, verify its email, set a new password and complete onboarding
-using the HTTP Test plan with a 30-day trial. The test-only verification email
+using the staging trial plan (legacy database ID `http-test`) with a 30-day trial. The test-only verification email
 is captured in the Gateway container at
 /tmp/yaseir-domain-test-verification-email.txt. Read the captured email from
 the VM, never paste the one-time token into public chats. After the single
@@ -110,7 +110,7 @@ its limits, visibility and name in the web editor. Existing customer
 subscriptions remain unchanged. New test prices do not constitute
 verified payment-provider prices.
 
-## Renew an expired HTTP Test trial (one tenant only)
+## Renew an expired legacy staging trial (one tenant only)
 
 The `http-test` plan is a 30-day staging trial. When it expires, the
 subscription row can still say `trialing`, but the protected printing
@@ -210,8 +210,8 @@ Agent WebSocket:   wss://print.yaseir.cloud/api/agent/ws
 
 Do not expose Gateway port 3000. Caddy is the only public application entry point.
 
-Do not run `deploy/http-test` and `deploy/domain-test` simultaneously because they intentionally share the same PostgreSQL volume.
+The historical PostgreSQL database name and legacy subscription plan IDs are retained for data compatibility. Never run an old HTTP test stack against this volume. Existing tenants, jobs, devices and paid/expired subscriptions remain in place until explicitly migrated by an operator.
 
 The setup script migrates the database and configures the public HTTPS deployment before starting the Gateway. Workspace-domain binding is optional: it preserves an existing owner or registers `print.yaseir.cloud` automatically when there is one active non-platform workspace. With no eligible workspace or several possible owners, it skips binding and continues deployment without choosing an arbitrary workspace. Set `MANAGER_TENANT_ID` only when you deliberately want to select an existing active workspace as the domain owner. Conflicting or invalid explicit owners still fail. Reruns preserve the database, accounts, secrets, and existing domain owner.
 
-Authentication and HTTPS enforcement remain identical to main; fake Stripe provisioning and email capture are unchanged.
+Authentication and HTTPS enforcement remain identical to main; HTTPS staging fixture pricing and email capture are preserved under the staging-only variable name.

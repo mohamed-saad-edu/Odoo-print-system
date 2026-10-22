@@ -50,7 +50,7 @@ jobs:
           set -euo pipefail
           bash -n deploy/domain-test/setup-domain-test.sh
           bash -n deploy/domain-test/smoke-domain-test.sh
-          npm exec vitest run --config vitest.unit.config.mts tests/domain-staging-deployment.contract.test.ts tests/http-test-deployment-contract.test.ts tests/http-test-email-capture.test.ts tests/stripe-plan-binding.test.ts tests/request-guard.test.ts tests/request-guard-http.test.ts tests/desktop-auth-contract.test.ts
+          npm exec vitest run --config vitest.unit.config.mts tests/domain-staging-deployment.contract.test.ts tests/https-staging-policy.contract.test.ts tests/staging-email-capture.test.ts tests/stripe-plan-binding.test.ts tests/request-guard.test.ts tests/request-guard-http.test.ts tests/desktop-auth-contract.test.ts
           cp deploy/domain-test/.env.domain-test.example /tmp/yaseir-domain-test.env
           docker compose --env-file /tmp/yaseir-domain-test.env -f deploy/domain-test/docker-compose.yml config -q
           # Assert the rendered Gateway service receives the flag, not just the .env fixture.

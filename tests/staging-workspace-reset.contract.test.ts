@@ -7,18 +7,12 @@ const compose = load("deploy/domain-test/docker-compose.yml");
 const setup = load("deploy/domain-test/setup-domain-test.sh");
 const example = load("deploy/domain-test/.env.domain-test.example");
 const reset = load("deploy/domain-test/reset-staging-workspace.sh");
-const legacy = load("deploy/http-test/smoke-http-test.sh");
 const readme = load("deploy/domain-test/README.md");
 
 describe("single workspace staging reset safeguards", () => {
-  it("parses the reset and disabled legacy scripts as valid Bash", () => {
-    for (const file of [
-      "deploy/domain-test/reset-staging-workspace.sh",
-      "deploy/http-test/smoke-http-test.sh",
-    ]) {
-      const result = spawnSync("bash", ["-n", file], { encoding: "utf8" });
-      expect(result.status, result.stderr || "bash not available").toBe(0);
-    }
+  it("parses the HTTPS staging reset as valid Bash", () => {
+    const result = spawnSync("bash", ["-n", "deploy/domain-test/reset-staging-workspace.sh"], { encoding: "utf8" });
+    expect(result.status, result.stderr || "bash not available").toBe(0);
   });
 
   it("enforces one-workspace mode on the HTTPS staging stack only", () => {
@@ -26,11 +20,6 @@ describe("single workspace staging reset safeguards", () => {
     expect(setup).toContain("upsert_env YASEIR_STAGING_SINGLE_WORKSPACE 1");
     expect(example).toContain("YASEIR_STAGING_SINGLE_WORKSPACE=1");
     expect(load("docker-compose.yml")).not.toContain("YASEIR_STAGING_SINGLE_WORKSPACE");
-  });
-  it("disables the old data-creating HTTP smoke by default", () => {
-    expect(legacy).toContain("ALLOW_LEGACY_DATA_CREATING_SMOKE:-0");
-    expect(legacy).toContain("deploy/domain-test/smoke-domain-test.sh");
-    expect(legacy).toContain("http://127.0.0.1:*");
   });
   it("requires explicit interactive consent and a fully verified backup first", () => {
     expect(reset).toContain('[[ -t 0 ]]');
@@ -46,7 +35,7 @@ describe("single workspace staging reset safeguards", () => {
   });
   it("preserves original data and uses new volume and credentials", () => {
     expect(reset).toContain('docker volume create');
-    expect(reset).toContain('replace_env HTTP_TEST_VOLUME_NAME "$NEW_VOLUME"');
+    expect(reset).toContain('replace_env STAGING_PG_VOLUME "$NEW_VOLUME"');
     expect(reset).toContain('replace_env MANAGER_TENANT_ID ""');
     expect(reset).toContain('replace_env GATEWAY_JWT_SECRET');
     expect(reset).toContain('replace_env POSTGRES_PASSWORD');

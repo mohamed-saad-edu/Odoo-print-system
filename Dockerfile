@@ -17,10 +17,10 @@ COPY . .
 # for both an empty asset directory and deployments that add public files.
 RUN mkdir -p public && npm run build
 
-FROM ${NODE_BASE_IMAGE} AS runtime-deps
-WORKDIR /app
-COPY package.json package-lock.json* ./
-RUN npm ci --omit=dev
+# Reuse the lockfile-verified npm install from the deps stage instead of
+# downloading/installing a second copy for the production runtime layer.
+FROM deps AS runtime-deps
+RUN npm prune --omit=dev && npm cache clean --force
 
 FROM ${NODE_BASE_IMAGE} AS runtime
 ARG YASEIR_DEPLOYMENT_ID=""

@@ -22,12 +22,12 @@ docker compose version >/dev/null
 env_value() {
   grep -m1 "^$1=" "$ENV_FILE" | cut -d= -f2- || true
 }
-OLD_VOLUME="$(env_value HTTP_TEST_VOLUME_NAME)"
+OLD_VOLUME="$(env_value STAGING_PG_VOLUME)"
 DB_NAME="$(env_value POSTGRES_DB)"
 DB_USER="$(env_value POSTGRES_USER)"
 DOMAIN="$(env_value GATEWAY_DOMAIN)"
 BASE_URL="$(env_value APP_BASE_URL)"
-STAGING_MODE="$(env_value YASEIR_HTTP_TEST_MODE)"
+STAGING_MODE="$(env_value YASEIR_STAGING_FIXTURES_ENABLED)"
 if [[ "$DB_NAME" != "yasser_http_test" || "$DOMAIN" != "print.yaseir.cloud" ||
       "$BASE_URL" != "https://print.yaseir.cloud" || "$STAGING_MODE" != "1" ]]; then
   echo "ERROR: Refusing to reset any database other than isolated HTTPS staging" >&2
@@ -90,7 +90,7 @@ replace_env() {
     printf "%s=%s\n" "$key" "$value" >> "$NEW_ENV_FILE"
   fi
 }
-replace_env HTTP_TEST_VOLUME_NAME "$NEW_VOLUME"
+replace_env STAGING_PG_VOLUME "$NEW_VOLUME"
 replace_env MANAGER_TENANT_ID ""
 replace_env POSTGRES_PASSWORD "$(openssl rand -hex 24)"
 replace_env GATEWAY_JWT_SECRET "$(openssl rand -hex 32)"
@@ -113,5 +113,5 @@ echo "READY: 0 subscriptions in active staging. Old database has been archived, 
 echo "Old volume: $OLD_VOLUME"
 echo "New volume: $NEW_VOLUME"
 echo "Create the ONE new account at https://print.yaseir.cloud/signup"
-echo "Verify email, set password, and select the 30-day HTTP Test trial."
+echo "Verify email, set password, and select the 30-day staging trial."
 echo "Then rerun setup-domain-test.sh to bind the domain to that workspace."

@@ -90,14 +90,14 @@ describe("Stripe plan binding contract", () => {
     });
   });
 
-  it("uses the isolated HTTP test catalog without contacting Stripe", async () => {
+  it("uses the isolated HTTPS staging fixture catalog without contacting Stripe", async () => {
     const previousSecret = process.env.STRIPE_SECRET_KEY;
     delete process.env.STRIPE_SECRET_KEY;
-    process.env.YASEIR_HTTP_TEST_MODE = "1";
+    process.env.YASEIR_STAGING_FIXTURES_ENABLED = "1";
     process.env.STRIPE_PLAN_CATALOG = JSON.stringify([
       {
         id: "http-test",
-        name: "HTTP Test",
+        name: "Staging Trial",
         priceId: "price_http_test_yaseir",
         currency: "usd",
         interval: "month",
@@ -123,7 +123,7 @@ describe("Stripe plan binding contract", () => {
     } finally {
       if (previousSecret === undefined) delete process.env.STRIPE_SECRET_KEY;
       else process.env.STRIPE_SECRET_KEY = previousSecret;
-      delete process.env.YASEIR_HTTP_TEST_MODE;
+      delete process.env.YASEIR_STAGING_FIXTURES_ENABLED;
       delete process.env.STRIPE_PLAN_CATALOG;
     }
   });
@@ -131,7 +131,7 @@ describe("Stripe plan binding contract", () => {
   it("rejects an uncatalogued fake Price ID in isolated staging mode", async () => {
     const previousSecret = process.env.STRIPE_SECRET_KEY;
     delete process.env.STRIPE_SECRET_KEY;
-    process.env.YASEIR_HTTP_TEST_MODE = "1";
+    process.env.YASEIR_STAGING_FIXTURES_ENABLED = "1";
     process.env.STRIPE_PLAN_CATALOG = JSON.stringify([
       { priceId: "price_http_test_yaseir", currency: "usd", interval: "month" },
     ]);
@@ -150,7 +150,7 @@ describe("Stripe plan binding contract", () => {
     } finally {
       if (previousSecret === undefined) delete process.env.STRIPE_SECRET_KEY;
       else process.env.STRIPE_SECRET_KEY = previousSecret;
-      delete process.env.YASEIR_HTTP_TEST_MODE;
+      delete process.env.YASEIR_STAGING_FIXTURES_ENABLED;
       delete process.env.STRIPE_PLAN_CATALOG;
     }
   });

@@ -2,12 +2,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { validateStripePriceBinding } from "../src/lib/stripe";
 
-const keys = ["YASEIR_HTTP_TEST_MODE", "STRIPE_SECRET_KEY", "STRIPE_SECRET_KEY_FILE", "STRIPE_PLAN_CATALOG"] as const;
+const keys = ["YASEIR_STAGING_FIXTURES_ENABLED", "STRIPE_SECRET_KEY", "STRIPE_SECRET_KEY_FILE", "STRIPE_PLAN_CATALOG"] as const;
 const prior = Object.fromEntries(keys.map((k) => [k, process.env[k]])) as Record<typeof keys[number], string | undefined>;
 const originalFetch = globalThis.fetch;
 
 function configureTestPriceCatalog() {
-  process.env.YASEIR_HTTP_TEST_MODE = "1";
+  process.env.YASEIR_STAGING_FIXTURES_ENABLED = "1";
   delete process.env.STRIPE_SECRET_KEY;
   delete process.env.STRIPE_SECRET_KEY_FILE;
   process.env.STRIPE_PLAN_CATALOG = JSON.stringify([
@@ -55,7 +55,7 @@ describe("staging-only catalogued fake Stripe Price admission", () => {
 
   it("does not accept fake price catalog entries when test mode is disabled", async () => {
     configureTestPriceCatalog();
-    delete process.env.YASEIR_HTTP_TEST_MODE;
+    delete process.env.YASEIR_STAGING_FIXTURES_ENABLED;
     await expect(validateStripePriceBinding({
       priceId: "price_go_yasser", currency: "usd", interval: "month",
     })).rejects.toMatchObject({ code: "STRIPE_NOT_CONFIGURED", status: 503 });

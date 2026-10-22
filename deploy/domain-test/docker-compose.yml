@@ -10,7 +10,7 @@ services:
     secrets:
       - postgres_password
     volumes:
-      - postgres_http_test_data:/var/lib/postgresql/data
+      - staging_pg_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 5s
@@ -56,7 +56,7 @@ services:
       HOSTNAME: 0.0.0.0
       PORT: 3000
       # Test data/email capture only; HTTPS and authentication follow main.
-      YASEIR_HTTP_TEST_MODE: "1"
+      YASEIR_STAGING_FIXTURES_ENABLED: "1"
       # First owner provisions one test workspace; further signups are blocked.
       YASEIR_STAGING_SINGLE_WORKSPACE: "1"
       # Separate simulation queue; opt-in via the staging env, never production printing.
@@ -96,7 +96,7 @@ services:
       - yasser_domain_test
 
   caddy:
-    image: caddy:2.11.4-alpine@sha256:de23def33b17fb5d1290b0f6c2add1d70780e52341896c00a4c8a2a2fe9d355e
+    image: caddy:2.11.7-alpine@sha256:d8542f48d34a9cf4e4c11a478865229840e87e4c96ea3f439101f31a5d35f75f
     restart: unless-stopped
     depends_on:
       gateway:
@@ -116,9 +116,9 @@ services:
       - yasser_domain_test
 
 volumes:
-  postgres_http_test_data:
+  staging_pg_data:
     external: true
-    name: ${HTTP_TEST_VOLUME_NAME:?HTTP_TEST_VOLUME_NAME must be set}
+    name: ${STAGING_PG_VOLUME:?STAGING_PG_VOLUME must be set}
   yasser_domain_caddy_data:
   yasser_domain_caddy_config:
 

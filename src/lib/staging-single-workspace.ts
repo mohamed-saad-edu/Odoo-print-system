@@ -4,7 +4,7 @@ import { sql, type SQL } from "drizzle-orm";
 // accepts logins/invitations to the existing workspace, not new tenants.
 // This switch cannot be enabled accidentally on a production deployment.
 export function isSingleWorkspaceStaging(): boolean {
-  return process.env.YASEIR_HTTP_TEST_MODE === "1" &&
+  return process.env.YASEIR_STAGING_FIXTURES_ENABLED === "1" &&
     process.env.YASEIR_STAGING_SINGLE_WORKSPACE === "1" &&
     process.env.APP_BASE_URL === "https://print.yaseir.cloud";
 }

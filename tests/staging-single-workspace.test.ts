@@ -9,7 +9,7 @@ import {
 } from "../src/lib/staging-single-workspace";
 
 const original = {
-  YASEIR_HTTP_TEST_MODE: process.env.YASEIR_HTTP_TEST_MODE,
+  YASEIR_STAGING_FIXTURES_ENABLED: process.env.YASEIR_STAGING_FIXTURES_ENABLED,
   YASEIR_STAGING_SINGLE_WORKSPACE: process.env.YASEIR_STAGING_SINGLE_WORKSPACE,
   APP_BASE_URL: process.env.APP_BASE_URL,
 };
@@ -21,7 +21,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 const enable = () => {
-  process.env.YASEIR_HTTP_TEST_MODE = "1";
+  process.env.YASEIR_STAGING_FIXTURES_ENABLED = "1";
   process.env.YASEIR_STAGING_SINGLE_WORKSPACE = "1";
   process.env.APP_BASE_URL = "https://print.yaseir.cloud";
 };
@@ -40,7 +40,7 @@ describe("staging single-workspace admission", () => {
   it("is impossible to enable on main/other hosts by only setting the toggle", () => {
     process.env.YASEIR_STAGING_SINGLE_WORKSPACE = "1";
     process.env.APP_BASE_URL = "https://gateway.example.com";
-    delete process.env.YASEIR_HTTP_TEST_MODE;
+    delete process.env.YASEIR_STAGING_FIXTURES_ENABLED;
     expect(isSingleWorkspaceStaging()).toBe(false);
     enable();
     expect(isSingleWorkspaceStaging()).toBe(true);

@@ -71,6 +71,27 @@ describe("CI/runtime alignment", () => {
     expect(lock.packages?.["node_modules/undici"]?.version).toBe("8.10.2");
   });
 
+  it("keeps PR Docker preflight fast while retaining main full-stack and image gates", () => {
+    const workflow = readFileSync(path.join(root, ".github/workflows/docker.yml"), "utf8");
+    const compose = readFileSync(path.join(root, "docker-compose.ci.yml"), "utf8");
+    const runtime = workflow.split("\n  docker-build-runtime:")[1];
+    const preflight = workflow.split("\n  docker-compose-pr:")[1]?.split("\n  docker-build-runtime:")[0];
+    expect(preflight).toBeDefined();
+    expect(preflight).toContain("docker compose config --quiet");
+    expect(preflight).toContain("github.event_name == 'pull_request'");
+    expect(preflight).not.toContain("docker compose build");
+    expect(runtime).toContain("github.event_name != 'pull_request'");
+    expect(runtime).toContain("docker compose build");
+    expect(runtime).toContain("docker compose up -d gateway caddy");
+    expect(workflow).toContain("Enforce reviewed upstream image vulnerability baseline");
+    expect(workflow).toContain("Scan pinned base image (Trivy)");
+    expect(compose).not.toContain("public.ecr.aws");
+    expect(compose).toContain("sha256:");
+    const image = readFileSync(path.join(root, "Dockerfile"), "utf8");
+    expect(image).toContain("FROM deps AS runtime-deps");
+    expect(image).toContain("npm prune --omit=dev");
+  });
+
   it("keeps Docker smoke test on an HTTP-only bind without ACME", () => {
     const docker = readFileSync(path.join(root, ".github/workflows/docker.yml"), "utf8");
     expect(docker).toContain('GATEWAY_DOMAIN: "http://print.example.com"');
@@ -117,11 +138,8 @@ describe("CI/runtime alignment", () => {
 
   it("keeps Caddy's forwarded-header security contract warning-free", () => {
     const caddy = readFileSync(path.join(root, "Caddyfile"), "utf8");
-    const httpTestCaddy = readFileSync(path.join(root, "deploy/http-test/Caddyfile"), "utf8");
     expect(caddy).toContain("header_up X-Forwarded-For {http.request.remote.host}");
-    expect(httpTestCaddy).not.toContain("header_up X-Forwarded-For");
     expect(caddy).not.toContain("header_up Host {http.request.host}");
-    expect(httpTestCaddy).not.toContain("header_up Host {http.request.host}");
   });
 
   it("keeps the Rust desktop JSON contract while using idiomatic field names", () => {

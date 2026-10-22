@@ -169,7 +169,7 @@ function httpTestCatalogBinding(input: {
   interval: string;
   productId?: string | null;
 }): StripePriceBinding | null {
-  if (process.env.YASEIR_HTTP_TEST_MODE !== "1" || runtimeSecret("STRIPE_SECRET_KEY")) return null;
+  if (process.env.YASEIR_STAGING_FIXTURES_ENABLED !== "1" || runtimeSecret("STRIPE_SECRET_KEY")) return null;
 
   const raw = process.env.STRIPE_PLAN_CATALOG;
   if (!raw) return null;
@@ -211,7 +211,7 @@ export async function validateStripePriceBinding(input: {
   productId?: string | null;
   requireActive?: boolean;
 }): Promise<StripePriceBinding> {
-  if (process.env.YASEIR_HTTP_TEST_MODE === "1" && !runtimeSecret("STRIPE_SECRET_KEY")) {
+  if (process.env.YASEIR_STAGING_FIXTURES_ENABLED === "1" && !runtimeSecret("STRIPE_SECRET_KEY")) {
     const binding = httpTestCatalogBinding(input);
     if (binding) return binding;
     throw new StripePriceBindingError(

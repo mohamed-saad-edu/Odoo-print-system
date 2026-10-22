@@ -32,8 +32,8 @@ export function appBaseUrl(req: Request): string {
 }
 
 // Explicit staging-only email capture; the live provider takes priority if configured.
-function captureHttpTestEmail(message: TransactionalEmail): boolean {
-  if (process.env.YASEIR_HTTP_TEST_MODE !== "1" || runtimeSecret("RESEND_API_KEY")) return false;
+function captureStagingEmail(message: TransactionalEmail): boolean {
+  if (process.env.YASEIR_STAGING_FIXTURES_ENABLED !== "1" || runtimeSecret("RESEND_API_KEY")) return false;
   const captureFile = process.env.YASEIR_TEST_EMAIL_CAPTURE_FILE?.trim();
   if (!captureFile) return false;
   mkdirSync(dirname(captureFile), { recursive: true });
@@ -46,7 +46,7 @@ function captureHttpTestEmail(message: TransactionalEmail): boolean {
 }
 
 export async function sendTransactionalEmail(message: TransactionalEmail): Promise<void> {
-  if (captureHttpTestEmail(message)) return;
+  if (captureStagingEmail(message)) return;
   const apiKey = runtimeSecret("RESEND_API_KEY");
   const from = runtimeSecret("EMAIL_FROM");
   if (!apiKey || !from) {
