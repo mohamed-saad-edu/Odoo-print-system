@@ -32,7 +32,7 @@ class PrintGatewayIntent(models.Model):
     print_job_id = fields.Many2one("print_gateway.print_job", string="Resulting Outbox Job", ondelete="set null")
 
     status = fields.Selection([
-        ("pending", "Pending Commit"),
+        ("pending", "Pending"),
         ("claimed", "Claimed / In Flight"),
         ("dispatched", "Dispatched"),
         ("skipped", "Skipped"),

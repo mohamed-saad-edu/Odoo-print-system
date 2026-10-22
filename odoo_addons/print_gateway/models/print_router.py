@@ -768,8 +768,9 @@ class PrintGatewayRouter(models.AbstractModel):
         if not config:
             return {"status": "skipped", "message": _("Gateway printing is not enabled for company %s") % company.display_name}
 
-        # Action type authority: check action_type explicitly
+        # Legacy report/rule conflicts must be explained before rendering or outbox creation.
         if policy.action_type == "report":
+            policy._check_action_configuration()
             if not policy.report_id:
                 raise ValidationError(_("Policy '%s' is configured for report action but has no report selected.") % policy.name)
             route = self.resolve_binding(

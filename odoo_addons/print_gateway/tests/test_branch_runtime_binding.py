@@ -65,6 +65,61 @@ class TestBranchRuntimeBinding(TransactionCase):
     def _gets(self):
         return [Response({"agents": self.agents}), Response({"printers": self.printers})]
 
+    def _branch_admin_env(self):
+        user = self.env["res.users"].create({
+            "name": "Branch printing administrator",
+            "login": "branch_print_admin_%s" % self.branch.id,
+            "company_id": self.branch.id,
+            "company_ids": [(6, 0, [self.branch.id])],
+            "group_ids": [(6, 0, [self.env.ref("base.group_user").id, self.env.ref("base.group_system").id])],
+        })
+        return self.env["print_gateway.binding"].with_user(user).with_context(
+            allowed_company_ids=[self.branch.id],
+        ).env
+
+    def test_branch_admin_creates_rule_with_branch_defaults_without_parent_access(self):
+        values = self._values()
+        values.pop("company_id")
+        values.pop("branch_id")
+        env = self._branch_admin_env()
+        self.assertNotIn(self.company, env.companies)
+        self.assertNotIn(self.company, env.user.company_ids)
+        binding = env["print_gateway.binding"].create(values)
+        self.assertEqual(binding.company_id, self.company)
+        self.assertEqual(binding.branch_id, self.branch)
+        model = env["print_gateway.binding"]
+        draft = model.new(model.default_get(["company_id", "branch_id"]))
+        draft._onchange_company_id()
+        self.assertEqual(draft.branch_id, self.branch)
+
+    def test_branch_admin_defaults_assignment_and_automation_to_own_branch(self):
+        env = self._branch_admin_env()
+        assignment = env["print_gateway.runtime_agent_assignment"].create({
+            "runtime_agent_id": "branch-admin-agent",
+        })
+        self.assertEqual(assignment.company_id, self.company)
+        self.assertEqual(assignment.branch_id, self.branch)
+        defaults = env["print_gateway.policy"].default_get(["company_id", "branch_id"])
+        self.assertEqual(defaults["company_id"], self.company.id)
+        self.assertEqual(defaults["branch_id"], self.branch.id)
+
+    def test_branch_admin_controller_accepts_parent_metadata_but_rejects_other_scopes(self):
+        from odoo.addons.print_gateway.controllers.runtime_printers import PrintGatewayRuntimePrinterController
+        controller = PrintGatewayRuntimePrinterController()
+        env = self._branch_admin_env()
+        self.assertEqual(controller._scope(self.company.id, self.branch.id, env), (self.company, self.branch))
+        for company, branch in [(self.company, False), (self.other_company, self.branch), (self.company, self.other_branch)]:
+            with self.assertRaises(Forbidden):
+                controller._scope(company.id, branch.id if branch else None, env)
+
+    def test_branch_admin_cannot_create_company_wide_or_sibling_rule(self):
+        values = self._values()
+        env = self._branch_admin_env()
+        sibling = self.env["res.company"].create({"name": "Unauthorized sibling", "parent_id": self.company.id})
+        for branch in (False, sibling.id):
+            with self.assertRaises(ValidationError), self.env.cr.savepoint():
+                env["print_gateway.binding"].create({**values, "branch_id": branch})
+
     def _report(self):
         report = self.env.ref("sale.action_report_saleorder", raise_if_not_found=False)
         self.assertTrue(report)

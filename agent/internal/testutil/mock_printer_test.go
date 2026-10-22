@@ -35,6 +35,21 @@ func TestMockPrinterReportsReadFailure(t *testing.T) {
 		t.Fatalf("dial: %v", err)
 	}
 	tcp := conn.(*net.TCPConn)
+	defer tcp.Close()
+	// A reset before Accept can discard the connection on Windows, bypassing the reader under test.
+	acceptDeadline := time.Now().Add(3 * time.Second)
+	for {
+		m.mu.Lock()
+		accepted := len(m.connections) == 1
+		m.mu.Unlock()
+		if accepted {
+			break
+		}
+		if time.Now().After(acceptDeadline) {
+			t.Fatal("mock did not accept the connection before the reset")
+		}
+		time.Sleep(time.Millisecond)
+	}
 	if _, err := tcp.Write([]byte("partial-payload")); err != nil {
 		t.Fatalf("write: %v", err)
 	}
