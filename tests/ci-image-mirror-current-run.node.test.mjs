@@ -32,11 +32,11 @@ const prodCaddy = compose.match(/^\s*image:\s*(caddy:[^\s#]+)$/m)?.[1];
 const prodNode = dockerfile.match(/^ARG NODE_BASE_IMAGE=(node:[^\s#]+)$/m)?.[1];
 assert.ok(prodCaddy && prodNode);
 
-test('CI uses only exact-digest official ECR mirrors of reviewed production images', () => {
-  assert.ok(ciCompose.includes(`image: ${officialMirrorOf(prodPostgres)}`));
-  assert.ok(ciCompose.includes(`image: ${officialMirrorOf(prodCaddy)}`));
-  assert.equal(ciCompose.split(`NODE_BASE_IMAGE: ${officialMirrorOf(prodNode)}`).length - 1, 2);
-  assert.equal((dockerfile.match(/^FROM \$\{NODE_BASE_IMAGE\} AS /gm) ?? []).length, 4);
+test('Docker CI uses the same sha256-pinned Official Images as production', () => {
+  assert.ok(ciCompose.includes(`image: ${prodPostgres}`));
+  assert.ok(ciCompose.includes(`image: ${prodCaddy}`));
+  assert.equal(ciCompose.split(`NODE_BASE_IMAGE: ${prodNode}`).length - 1, 2);
+  assert.equal((dockerfile.match(/^FROM \$\{NODE_BASE_IMAGE\} AS /gm) ?? []).length, 3);
   assert.ok(postgresHelper.includes(officialMirrorOf(prodPostgres)));
   assert.ok(postgresHelper.includes('docker.io/library/' + prodPostgres));
   assert.ok(!ci.includes('    services:\\n      postgres:'));
@@ -74,9 +74,9 @@ test('Odoo Community CI pulls the same immutable digest and uses Docker Hub only
   assert.equal(ci.includes('docker pull odoo:19.0@'), false);
 });
 
-test('all CI mirror image overrides remain immutable and reject mutable tags', () => {
+test('Docker CI image references remain immutable and reject mutable tags', () => {
   const ciRefs = [...ciCompose.matchAll(/^\s*(?:image|NODE_BASE_IMAGE):\s*(\S+)/gm)].map(m => m[1]);
   assert.equal(ciRefs.length, 4);
-  for (const image of ciRefs) assert.match(image, /^public\.ecr\.aws\/docker\/library\/.+@sha256:[a-f0-9]{64}$/);
+  for (const image of ciRefs) assert.match(image, /^(?:postgres|caddy|node):[a-z0-9.\-]+@sha256:[a-f0-9]{64}$/);
   assert.throws(() => officialMirrorOf('node:latest'), /sha256/);
 });
