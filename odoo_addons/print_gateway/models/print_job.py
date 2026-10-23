@@ -1925,17 +1925,22 @@ class PrintGatewayJob(models.Model):
                             raise
                         break
                     if (isinstance(exc, ValidationError) and
-                            "GATEWAY_INSTALLATION_PROOF_MISSING:" in str(exc)):
-                        # The rejection happened *before* requests.post.
-                        # Missing external enrollment is operator-recoverable;
-                        # terminalizing would lose an already accepted intent
-                        # and permit unsafe rearming after a restored proof.
+                            any(marker in str(exc) for marker in (
+                                "GATEWAY_INSTALLATION_PROOF_MISSING:",
+                                "GATEWAY_INSTALLATION_ENROLLMENT_UNAVAILABLE:",
+                                "GATEWAY_INSTALLATION_IDENTITY_CONFLICT:",
+                            ))):
+                        # Automatic enrollment or clone detection happened
+                        # BEFORE sending the actual print job. Keep the original
+                        # immutable outbox row, with bounded retry/backoff;
+                        # never terminalize it as safely non-printed or mint a
+                        # replacement key just because enrollment failed.
                         values = self._billing_retry_values(job,
-                            "GATEWAY_INSTALLATION_PROOF_MISSING: No new job admitted; restore external enrollment before retry",
+                            "GATEWAY_INSTALLATION_RECOVERY_REQUIRED: No print submitted; automatic enrollment or installation ownership needs recovery",
                             3600)
                         persist_submit_state(values)
                         if raise_on_failure:
-                            raise ValidationError(_("Installation proof is unavailable; print request preserved without sending.")) from None
+                            raise ValidationError(_("Installation enrollment is unavailable; print request preserved without sending.")) from None
                         break
                     if self._is_deterministic_failure(exc):
                         # Programming/validation failures (corrupted
