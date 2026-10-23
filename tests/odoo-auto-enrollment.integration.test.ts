@@ -28,10 +28,10 @@ suite("zero-touch Odoo installation enrollment (PostgreSQL)", () => {
     fixture = await seedFixture();
   });
 
-  it("promotes a fresh tenant without asking for installation ID or cutover input", async () => {
+  it("registers a fresh strict-v2 tenant without customer cutover input", async () => {
     const who = credentials();
     const original = await pool().query("SELECT odoo_idempotency_mode AS mode FROM tenants WHERE id=$1", [fixture.tenantId]);
-    expect(original.rows[0].mode).toBe("legacy");
+    expect(original.rows[0].mode).toBe("strict_v2");
     const created = await attempt(fixture.odooKey, who.id, who.proof);
     expect(created.status).toBe(201);
     expect(await created.json()).toMatchObject({ installationId: who.id, idempotencyVersion: 2, state: "created" });
@@ -67,7 +67,8 @@ suite("zero-touch Odoo installation enrollment (PostgreSQL)", () => {
     expect(repeat.status).toBe(200);
   });
 
-  it("refuses an automatic cutover when historical v1 print jobs already exist", async () => {
+  it("refuses automatic enrollment for an existing legacy tenant with prior Odoo jobs", async () => {
+    await pool().query("UPDATE tenants SET odoo_idempotency_mode = 'legacy' WHERE id=$1", [fixture.tenantId]);
     const jobId = "legacy_auto_enrollment_history";
     await insertQueuedJob(fixture, jobId);
     const key = await pool().query("SELECT id FROM api_keys WHERE tenant_id=$1", [fixture.tenantId]);
@@ -88,6 +89,6 @@ suite("zero-touch Odoo installation enrollment (PostgreSQL)", () => {
     const response = await attempt(fixture.odooKey, a.id, a.proof);
     expect(response.status).toBe(403);
     const mode = await pool().query("SELECT odoo_idempotency_mode AS mode FROM tenants WHERE id=$1", [fixture.tenantId]);
-    expect(mode.rows[0].mode).toBe("legacy");
+    expect(mode.rows[0].mode).toBe("strict_v2");
   });
 });
