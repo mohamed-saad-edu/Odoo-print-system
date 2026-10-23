@@ -226,6 +226,36 @@ suite("billing checkout renewal after expiry (D-1)", () => {
     expect(row?.status).toBe(change === "none" ? "active" : "cancelled");
   });
 
+  it.each(["list_missing_status", "list_missing_customer", "list_wrong_customer", "retrieve_unknown_status", "retrieve_missing_status", "retrieve_wrong_id"])("blocks ambiguous stale checkout reconciliation: %s", async (scenario) => {
+    await seedExpiredSubscription();
+    const old = new Date(Date.now() - 26 * 3600_000);
+    await db.update(tenantSubscriptions).set({
+      status: "cancelled", stripeSubscriptionId: null, checkoutStatus: "creating",
+      checkoutPlanId: "plan_d1_recovery", checkoutIdempotencyKey: "checkout-intent-ambiguous",
+      checkoutIntentCreatedAt: old, updatedAt: old,
+    }).where(eq(tenantSubscriptions.tenantId, "tenant_d1"));
+    const { stripeRequest, stripeList, stripeRetrieve } = await import("../src/lib/stripe");
+    vi.mocked(stripeList).mockResolvedValueOnce({
+      data: [{
+        id: "sub_existing",
+        ...(scenario === "list_missing_customer" ? {} : { customer: scenario === "list_wrong_customer" ? "cus_other" : "cus_d1" }),
+        ...(scenario === "list_missing_status" ? {} : { status: "active" }),
+      }], hasMore: false,
+    });
+    vi.mocked(stripeRetrieve).mockResolvedValueOnce({
+      id: scenario === "retrieve_wrong_id" ? "sub_other" : "sub_existing",
+      customer: "cus_d1",
+      ...(scenario === "retrieve_missing_status" ? {} : { status: scenario === "retrieve_wrong_id" ? "canceled" : "future_status" }),
+    });
+    const response = await checkout(checkoutRequest("plan_d1_recovery"));
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ code: "CHECKOUT_RECONCILIATION_BLOCKED" });
+    expect(stripeRequest).not.toHaveBeenCalled();
+    const row = await db.query.tenantSubscriptions.findFirst({ where: eq(tenantSubscriptions.tenantId, "tenant_d1") });
+    expect(row?.checkoutIdempotencyKey).toBe("checkout-intent-ambiguous");
+    expect(row?.checkoutStatus).toBe("creating");
+  });
+
   async function platformRequest(body: Record<string, unknown>, method: "POST" | "PATCH") {
     vi.stubEnv("GATEWAY_JWT_SECRET", gatewayTestSigningKey());
     await db.update(users).set({ isPlatformOwner: true, emailVerifiedAt: new Date() }).where(eq(users.id, "user_d1"));
@@ -235,6 +265,70 @@ suite("billing checkout renewal after expiry (D-1)", () => {
       body: JSON.stringify(body),
     });
   }
+
+  async function seedLocallyExpiredOpenCheckout() {
+    await seedExpiredSubscription();
+    await db.update(tenantSubscriptions).set({
+      status: "cancelled", stripeSubscriptionId: null,
+      checkoutStatus: "open", checkoutPlanId: "plan_d1_recovery",
+      checkoutIdempotencyKey: "checkout-intent-prior-open",
+      checkoutSessionId: "cs_prior_open", checkoutSessionUrl: "https://checkout.example/prior-open",
+      checkoutSessionExpiresAt: new Date(Date.now() - 60_000),
+    }).where(eq(tenantSubscriptions.tenantId, "tenant_d1"));
+  }
+
+  function expiredCheckoutSnapshot() {
+    return { id: "cs_prior_open", customer: "cus_d1", client_reference_id: "tenant_d1",
+      mode: "subscription", status: "expired", subscription: null };
+  }
+
+  it.each(["complete", "open"])("does not replace a locally expired open checkout whose provider status is %s", async (status) => {
+    await seedLocallyExpiredOpenCheckout();
+    const { stripeRequest, stripeRetrieve } = await import("../src/lib/stripe");
+    vi.mocked(stripeRetrieve).mockResolvedValueOnce({ ...expiredCheckoutSnapshot(), status,
+      subscription: status === "complete" ? "sub_already_paid" : null });
+    const res = await checkout(checkoutRequest("plan_d1_recovery"));
+    expect(res.status).toBe(409);
+    expect(stripeRequest).not.toHaveBeenCalled();
+    const row = await db.query.tenantSubscriptions.findFirst({ where: eq(tenantSubscriptions.tenantId, "tenant_d1") });
+    expect(row?.checkoutIdempotencyKey).toBe("checkout-intent-prior-open");
+  });
+
+  it("retains a locally expired open checkout when provider verification is unavailable", async () => {
+    await seedLocallyExpiredOpenCheckout();
+    const { stripeRequest, stripeRetrieve } = await import("../src/lib/stripe");
+    vi.mocked(stripeRetrieve).mockRejectedValueOnce(new Error("synthetic provider outage"));
+    const res = await checkout(checkoutRequest("plan_d1_recovery"));
+    expect(res.status).toBe(502);
+    expect(stripeRequest).not.toHaveBeenCalled();
+    expect((await db.query.tenantSubscriptions.findFirst({ where: eq(tenantSubscriptions.tenantId, "tenant_d1") }))?.checkoutSessionId).toBe("cs_prior_open");
+  });
+
+  it.each(["revision", "intent", "suspended", "revoked", "customer"])("rechecks locally expired checkout authority and identity after provider verification: %s", async (change) => {
+    await seedLocallyExpiredOpenCheckout();
+    const { stripeRequest, stripeRetrieve } = await import("../src/lib/stripe");
+    vi.mocked(stripeRetrieve).mockImplementationOnce(async () => {
+      if (change === "revision") await db.update(tenantSubscriptions).set({ stripeStateRevision: 1 }).where(eq(tenantSubscriptions.tenantId, "tenant_d1"));
+      if (change === "intent") await db.update(tenantSubscriptions).set({ checkoutIdempotencyKey: "checkout-intent-newer" }).where(eq(tenantSubscriptions.tenantId, "tenant_d1"));
+      if (change === "suspended") await db.update(tenants).set({ lifecycle: "suspended" }).where(eq(tenants.id, "tenant_d1"));
+      if (change === "revoked") await db.update(managerSessions).set({ revokedAt: new Date() }).where(eq(managerSessions.jti, "test-manager-jti-d1"));
+      return { ...expiredCheckoutSnapshot(), customer: change === "customer" ? "cus_other" : "cus_d1" };
+    });
+    const res = await checkout(checkoutRequest("plan_d1_recovery"));
+    expect(res.status).toBe(change === "suspended" || change === "revoked" ? 403 : 409);
+    expect(stripeRequest).not.toHaveBeenCalled();
+  });
+
+  it("replaces a locally expired checkout only after Stripe proves that exact session expired without a subscription", async () => {
+    await seedLocallyExpiredOpenCheckout();
+    const { stripeRequest, stripeRetrieve } = await import("../src/lib/stripe");
+    vi.mocked(stripeRetrieve).mockResolvedValueOnce(expiredCheckoutSnapshot());
+    const res = await checkout(checkoutRequest("plan_d1_recovery"));
+    expect(res.status).toBe(200);
+    expect(stripeRetrieve).toHaveBeenCalledWith("checkout/sessions/cs_prior_open");
+    expect(vi.mocked(stripeRequest).mock.calls.filter(([path]) => path === "checkout/sessions")).toHaveLength(1);
+    expect((await db.query.tenantSubscriptions.findFirst({ where: eq(tenantSubscriptions.tenantId, "tenant_d1") }))?.checkoutIdempotencyKey).not.toBe("checkout-intent-prior-open");
+  });
 
   it.each(["POST", "PATCH"] as const)("rechecks platform owner authority after Stripe Price validation (%s)", async (method) => {
     await seedExpiredSubscription();

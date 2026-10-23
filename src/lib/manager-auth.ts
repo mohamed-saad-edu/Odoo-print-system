@@ -349,11 +349,20 @@ export async function revokeManagerSession(jti: string, tenantId?: string) {
   await db.update(managerSessions).set({ revokedAt: sql`clock_timestamp()` }).where(predicate);
 }
 
-export async function cleanupExpiredManagerSessions(): Promise<number> {
+export async function cleanupExpiredManagerSessions(limit = 500): Promise<number> {
   const result = await db.execute(sql`
-    DELETE FROM manager_sessions
-    WHERE expires_at <= clock_timestamp()
-    RETURNING jti
+    WITH candidates AS (
+      SELECT jti
+      FROM manager_sessions
+      WHERE expires_at <= clock_timestamp()
+      ORDER BY expires_at ASC
+      LIMIT ${limit}
+      FOR UPDATE SKIP LOCKED
+    )
+    DELETE FROM manager_sessions AS ms
+    USING candidates
+    WHERE ms.jti = candidates.jti
+    RETURNING ms.jti
   `);
   return result.rows.length;
 }
@@ -504,10 +513,6 @@ export async function authenticateCustomer(email: string, password: string): Pro
     row.passwordHash = upgraded;
   }
   return { userId: row.id, email: row.email, credentialVersion: credentialVersionFor(row.id, row.passwordHash) };
-}
-
-export async function getAuthenticatedUserClaims(req: Request): Promise<ManagerClaims | null> {
-  return validateManager(req);
 }
 
 export function getManagerUsername(): string | null {

@@ -288,30 +288,3 @@ export function getPrinterLanguageBadges(
   if (proto === "raw") badges.push(conn === "usb" ? "RAW" : "Raw 9100");
   return badges;
 }
-
-export function getTransportDisplayName(transport: TransportType): string {
-  const map: Record<string, string> = {
-    network: "Network (TCP)",
-    usb: "USB",
-    spooler: "Windows Spooler",
-    ipp: "IPP",
-    ipps: "IPPS (Secure)",
-    unknown: "Unknown",
-  };
-  return map[transport] ?? transport;
-}
-
-export function getProtocolDisplayName(protocol: ProtocolType): string {
-  const map: Record<string, string> = {
-    raw: "RAW",
-    escpos: "ESC/POS",
-    zpl: "ZPL",
-    tspl: "TSPL",
-    ipp: "IPP (driverless direction, not certified Everywhere)",
-    ipps: "IPPS (Secure, not certified Everywhere)",
-    spooler: "Spooler",
-    windows_spooler: "Windows Spooler",
-    unknown: "Unknown",
-  };
-  return map[protocol] ?? protocol;
-}

@@ -3,6 +3,7 @@ package printer
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
@@ -75,8 +76,10 @@ func loadRegistryPartitioned(registryPath string) (production, hidden []DeviceIn
 	return loadRegistryPartitionedLocked(registryPath)
 }
 
+const maxRegistryBytes = 16 << 20
+
 func loadRegistryPartitionedLocked(registryPath string) (production, hidden []DeviceInfo, removed int, err error) {
-	data, err := os.ReadFile(registryPath)
+	info, err := os.Lstat(registryPath)
 	if err != nil {
 		// An absent registry is the normal first-run state. Do not turn
 		// os.IsNotExist into a discovery error; the registry will be created
@@ -85,6 +88,42 @@ func loadRegistryPartitionedLocked(registryPath string) (production, hidden []De
 			return nil, nil, 0, nil
 		}
 		return nil, nil, 0, err
+	}
+	if !info.Mode().IsRegular() || info.Size() > maxRegistryBytes {
+		return nil, nil, 0, fmt.Errorf("registry %s is not a bounded regular file", registryPath)
+	}
+	if err := config.EnsureSecureDirectoryACL(filepath.Dir(registryPath)); err != nil {
+		return nil, nil, 0, err
+	}
+	if err := config.EnsureSecureFileACL(registryPath); err != nil {
+		return nil, nil, 0, err
+	}
+	f, err := os.Open(registryPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil, 0, nil
+		}
+		return nil, nil, 0, err
+	}
+	openInfo, statErr := f.Stat()
+	if statErr != nil {
+		_ = f.Close()
+		return nil, nil, 0, statErr
+	}
+	if !openInfo.Mode().IsRegular() || !os.SameFile(info, openInfo) || openInfo.Size() > maxRegistryBytes {
+		_ = f.Close()
+		return nil, nil, 0, fmt.Errorf("registry %s changed or exceeds size limit", registryPath)
+	}
+	data, readErr := io.ReadAll(io.LimitReader(f, maxRegistryBytes+1))
+	closeErr := f.Close()
+	if readErr != nil {
+		return nil, nil, 0, readErr
+	}
+	if closeErr != nil {
+		return nil, nil, 0, closeErr
+	}
+	if len(data) > maxRegistryBytes {
+		return nil, nil, 0, fmt.Errorf("registry %s exceeds %d bytes", registryPath, maxRegistryBytes)
 	}
 	if len(data) == 0 {
 		return nil, nil, 0, nil
@@ -187,6 +226,9 @@ func saveRegistryLocked(registryPath string, printers []DeviceInfo) error {
 	data, err := json.MarshalIndent(physical, "", "  ")
 	if err != nil {
 		return err
+	}
+	if len(data) > maxRegistryBytes {
+		return fmt.Errorf("serialized registry exceeds %d bytes", maxRegistryBytes)
 	}
 	tmp, err := os.CreateTemp(dir, ".printers-*.json")
 	if err != nil {

@@ -27,7 +27,6 @@ import { parseDbTimeMs } from "./database-clock";
 
 export const AUTH_RATE_WINDOW_MS = 15 * 60 * 1000;
 export const PAIRING_RATE_WINDOW_MS = 15 * 60 * 1000;
-export const AUTH_RATE_RETENTION_MS = 24 * 60 * 60 * 1000;
 
 let warnedUntrustedProxy = false;
 
@@ -364,25 +363,43 @@ export async function reserveAuthAttempt(ip: string, username: string): Promise<
 }
 
 export async function cleanupAuthRateLimits(): Promise<number> {
+  const parsedLimit = Number(process.env.MAINTENANCE_SWEEP_LIMIT);
+  const limit = Number.isFinite(parsedLimit) && parsedLimit >= 1
+    ? Math.min(Math.floor(parsedLimit), 5000)
+    : 500;
   // Production cleanup uses PostgreSQL's wall clock because the retained
   // security state is persisted in the same database as the reservation logic.
   const result = await db.execute(sql`
+    WITH candidates AS (
+      SELECT key
+      FROM auth_rate_limits
+      WHERE updated_at < clock_timestamp() - interval '24 hours'
+      ORDER BY updated_at ASC
+      LIMIT ${limit}
+      FOR UPDATE SKIP LOCKED
+    )
     DELETE FROM auth_rate_limits
-    WHERE updated_at < clock_timestamp() - interval '24 hours'
-    RETURNING key
+    USING candidates
+    WHERE auth_rate_limits.key = candidates.key
+    RETURNING auth_rate_limits.key
   `);
   return result.rows.length;
 }
 
 export async function recordAuthSuccess(ip: string, username: string): Promise<void> {
-  const keys = [accountKey(username)];
-  // A successful login proves the source is not guessing: clear the IP bucket
-  // too, or a shared NAT accumulates failures across users until it locks out.
-  if (isIP(ip) !== 0) keys.push(ipKey(ip));
-  await db.execute(sql`
-    DELETE FROM auth_rate_limits
-    WHERE key IN (${sql.join(keys.map((key) => sql`${key}`), sql`, `)})
-  `);
+  await db.transaction(async (tx) => {
+    // Keep the account -> IP lock order used by reserveAuthAttempt. An owned
+    // account proves only this attempt succeeded, not that other guesses from
+    // the same source were benign. Refund its one reservation instead of
+    // erasing the source's failure history or a concurrent lockout.
+    await tx.execute(sql`DELETE FROM auth_rate_limits WHERE key = ${accountKey(username)}`);
+    if (isIP(ip) !== 0) {
+      await tx.execute(sql`
+        UPDATE auth_rate_limits SET failures = GREATEST(failures - 1, 0)
+        WHERE key = ${ipKey(ip)}
+      `);
+    }
+  });
 }
 
 export async function recordPairingSuccess(ip: string): Promise<void> {

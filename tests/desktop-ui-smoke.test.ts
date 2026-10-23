@@ -226,6 +226,15 @@ describe("desktop manager", () => {
     expect(printers.find((p) => p.id === "p2")?.sharedWithGateway).toBe(true);
     expect(text()).toContain("Sharing preference saved on this computer");
 
+    window.location.hash = "jobs";
+    window.dispatchEvent(new Event("hashchange"));
+    await waitUntil(() => !!document.querySelector('[role="tab"]'));
+    const unknownTab = [...document.querySelectorAll<HTMLButtonElement>('[role="tab"]')]
+      .find((tab) => tab.textContent?.startsWith("Unknown"))!;
+    unknownTab.click();
+    await waitUntil(() => unknownTab.getAttribute("aria-selected") === "true");
+    expect(document.querySelector("main")?.textContent).not.toContain("job_1");
+
     for (const page of ["printers", "jobs", "test-center", "agents", "settings"] as const) {
       window.location.hash = page;
       window.dispatchEvent(new Event("hashchange"));
@@ -235,6 +244,18 @@ describe("desktop manager", () => {
 
     expect(text()).toContain("Gateway connection");
     expect(text()).toContain("Pair agent");
+
+    // Language is a presentation preference: changing it must preserve an
+    // intentionally edited Gateway draft rather than reloading persisted config.
+    const gatewayDraft = document.querySelector<HTMLInputElement>("#gw-url")!;
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(gatewayDraft, "https://draft.example.test");
+    gatewayDraft.dispatchEvent(new Event("input", { bubbles: true }));
+    await waitUntil(() => text().includes("A new address is ready to check."));
+    window.localStorage.setItem("yaseir:locale", "ar");
+    window.dispatchEvent(new StorageEvent("storage", { key: "yaseir:locale", newValue: "ar" }));
+    await waitUntil(() => document.documentElement.dir === "rtl");
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(document.querySelector<HTMLInputElement>("#gw-url")!.value).toBe("https://draft.example.test");
 
     console.error = origError;
     expect(errors.filter((e) => !String(e).includes("not wrapped in act"))).toEqual([]);

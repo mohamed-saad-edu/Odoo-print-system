@@ -4,21 +4,51 @@
         <field name="name">Gateway configuration company isolation</field>
         <field name="model_id" ref="model_print_gateway_gateway_config"/>
         <field name="groups" eval="[(4, ref('base.group_user'))]"/>
+        <field name="perm_read" eval="True"/>
+        <field name="perm_write" eval="False"/>
+        <field name="perm_create" eval="False"/>
+        <field name="perm_unlink" eval="False"/>
         <field name="domain_force">['|', ('company_id', 'in', company_ids), ('company_id.child_ids', 'in', company_ids)]</field>
+    </record>
+
+    <record id="rule_gateway_config_company_write" model="ir.rule">
+        <field name="name">Gateway configuration root company write isolation</field>
+        <field name="model_id" ref="model_print_gateway_gateway_config"/>
+        <field name="groups" eval="[(4, ref('base.group_user'))]"/>
+        <field name="perm_read" eval="False"/>
+        <field name="perm_write" eval="True"/>
+        <field name="perm_create" eval="True"/>
+        <field name="perm_unlink" eval="True"/>
+        <field name="domain_force">[('company_id', 'in', company_ids)]</field>
     </record>
 
     <record id="rule_runtime_assignment_company" model="ir.rule">
         <field name="name">Runtime agent assignment company isolation</field>
         <field name="model_id" ref="model_print_gateway_runtime_agent_assignment"/>
         <field name="groups" eval="[(4, ref('base.group_user'))]"/>
-        <field name="domain_force">['|', ('company_id', 'in', company_ids), ('branch_id', 'in', company_ids)]</field>
+        <field name="domain_force">['|', '&amp;', ('branch_id', '=', False), ('company_id', 'in', company_ids), ('branch_id', 'in', company_ids)]</field>
     </record>
 
     <record id="rule_binding_company" model="ir.rule">
         <field name="name">Print binding company isolation</field>
         <field name="model_id" ref="model_print_gateway_binding"/>
         <field name="groups" eval="[(4, ref('base.group_user'))]"/>
-        <field name="domain_force">['|', ('company_id', 'in', company_ids), ('branch_id', 'in', company_ids)]</field>
+        <field name="perm_read" eval="True"/>
+        <field name="perm_write" eval="False"/>
+        <field name="perm_create" eval="False"/>
+        <field name="perm_unlink" eval="False"/>
+        <field name="domain_force">['|', ('branch_id', 'in', company_ids), '&amp;', ('branch_id', '=', False), '|', ('company_id', 'in', company_ids), ('company_id.child_ids', 'in', company_ids)]</field>
+    </record>
+
+    <record id="rule_binding_company_write" model="ir.rule">
+        <field name="name">Print binding write company isolation</field>
+        <field name="model_id" ref="model_print_gateway_binding"/>
+        <field name="groups" eval="[(4, ref('base.group_user'))]"/>
+        <field name="perm_read" eval="False"/>
+        <field name="perm_write" eval="True"/>
+        <field name="perm_create" eval="True"/>
+        <field name="perm_unlink" eval="True"/>
+        <field name="domain_force">['|', '&amp;', ('branch_id', '=', False), ('company_id', 'in', company_ids), ('branch_id', 'in', company_ids)]</field>
     </record>
 
     <record id="rule_print_job_company" model="ir.rule">
@@ -41,7 +71,7 @@
         <field name="name">Print policy company isolation</field>
         <field name="model_id" ref="model_print_gateway_policy"/>
         <field name="groups" eval="[(4, ref('base.group_user'))]"/>
-        <field name="domain_force">['|', ('company_id', 'in', company_ids), ('branch_id', 'in', company_ids)]</field>
+        <field name="domain_force">['|', '&amp;', ('branch_id', '=', False), ('company_id', 'in', company_ids), ('branch_id', 'in', company_ids)]</field>
     </record>
 
     <record id="rule_print_intent_company" model="ir.rule">

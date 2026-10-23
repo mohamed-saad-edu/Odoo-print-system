@@ -115,14 +115,26 @@ class PrintGatewayRuntimeAgentAssignment(models.Model):
     def write(self, vals):
         if set(vals).intersection({"company_id", "branch_id", "runtime_agent_id", "enabled"}):
             self._check_admin()
+        self._check_assignment()
         result = super().write(vals)
         self._check_assignment()
         return result
 
+    def unlink(self):
+        self._check_admin()
+        self._check_assignment()
+        return super().unlink()
+
     @api.constrains("company_id", "branch_id", "runtime_agent_id")
     def _check_assignment(self):
+        is_su = getattr(self.env, "is_superuser", lambda: False)()
+        allowed_companies = getattr(self.env, "companies", None)
+        user_companies = getattr(getattr(self.env, "user", None), "company_ids", None)
         for record in self:
-            if not record.branch_id and record.company_id not in self.env.user.company_ids:
+            if not is_su and not record.branch_id and (
+                (user_companies is not None and record.company_id not in user_companies)
+                or (allowed_companies is not None and record.company_id not in allowed_companies)
+            ):
                 raise ValidationError(_("The selected Odoo Company is not available to the current user."))
             if record.company_id.parent_id:
                 raise ValidationError(_("Odoo Company must be a parent Company, not a Branch."))
@@ -134,7 +146,17 @@ class PrintGatewayRuntimeAgentAssignment(models.Model):
             # empty (company-wide assignment). Only a DISTINCT, set branch
             # must belong to the selected company.
             if record.branch_id:
-                if record.branch_id not in self.env.user.company_ids:
+                branch_allowed = allowed_companies is None or (
+                    record.branch_id in allowed_companies
+                    or (
+                        record.company_id in allowed_companies
+                        and (user_companies is None or record.company_id in user_companies)
+                    )
+                )
+                if not is_su and (
+                    (user_companies is not None and record.branch_id not in user_companies)
+                    or not branch_allowed
+                ):
                     raise ValidationError(_("The selected Odoo Branch is not available to the current user."))
                 if not record.branch_id.parent_id or record.branch_id.parent_id != record.company_id:
                     raise ValidationError(_("Odoo Branch must belong directly to the selected Odoo Company."))

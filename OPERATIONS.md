@@ -100,14 +100,15 @@ Procedure:
    spooler job identity. A late `success` from the original claim token still
    reconciles automatically within the 24-hour fenced window — wait for it
    before touching paper.
-3. Physically inspect the printer (output tray, reprint the spooler job
-   identity only as an inspection aid, never as the recovery itself).
+3. Physically inspect the printer's output tray and inspect the recorded
+   spooler job state. Do not resubmit a spooler job merely to inspect it.
 4. Recover exactly once, as an explicit new attempt: dashboard Reprint
    (`POST /api/jobs/[id]/reprint`, creates a NEW job with a NEW idempotency
-   key) or a new Odoo outbox row. Never reuse the original idempotency key
-   (returns `409 IDEMPOTENCY_CONFLICT` by design) and never flip the old row
-   back to `queued` with a database edit (that bypasses claim fencing and can
-   double-print alongside the original attempt).
+   key) or a new Odoo outbox row. Use a new key for this deliberate new print
+   intent. Retrying the original key with identical content returns the
+   original receipt; different content returns `409 IDEMPOTENCY_CONFLICT`.
+   Never flip the old row back to `queued` with a database edit (that bypasses
+   claim fencing and can double-print alongside the original attempt).
 5. Only after physical reconciliation, clear the agent's retained
    unknown-outcome row with `jobs cleanup --include-unknown`. Never delete
    the SQLite queue file.

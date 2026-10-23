@@ -391,11 +391,17 @@ class PrintGatewayRouter(models.AbstractModel):
                     raise ValidationError(_("The print binding was disabled before the durable job could be created."))
                 if str(selected_binding.printer_id or "").strip() != str(durable_values.get("printer_id") or "").strip():
                     raise ValidationError(_("The print binding was repointed to another printer before the durable job could be created."))
-                if selected_binding.runtime_agent_id and target_company:
+                if target_company:
                     router = env["print_gateway.print_router"]
                     gateway_company, branch = router._binding_scope(target_company)
+                    if (
+                        selected_binding.company_id != gateway_company
+                        or (selected_binding.branch_id and selected_binding.branch_id != branch)
+                    ):
+                        raise ValidationError(_("The print binding moved outside the current Odoo scope before the durable job could be created."))
+                if selected_binding.runtime_agent_id and target_company:
                     assigned = env["print_gateway.runtime_agent_assignment"].is_agent_assigned(
-                        gateway_company, branch, selected_binding.runtime_agent_id)
+                        gateway_company, selected_binding.branch_id or False, selected_binding.runtime_agent_id)
                     if not assigned:
                         raise ValidationError(
                             _("Gateway Runtime Agent '%s' is no longer assigned to the current Odoo scope.")
@@ -415,7 +421,10 @@ class PrintGatewayRouter(models.AbstractModel):
         status = job.status
         uncertain = (
             status not in ("queued", "submitted", "claimed", "printing", "success", "failed")
-            or (status == "failed" and str(job.last_error or "").startswith(job._GATEWAY_UNKNOWN_MARKERS))
+            # An admitted job can fail after delivering bytes without a
+            # recognized marker. Use the same physical evidence as the
+            # operator Retry action before allowing a fresh operation.
+            or (status == "failed" and job.physical_outcome != "not_printed")
         )
         if uncertain:
             status = "unknown"
@@ -607,6 +616,7 @@ class PrintGatewayRouter(models.AbstractModel):
         route = self.resolve_binding(
             report=report, document_type=document_type, company=company,
             explicit_destination=explicit_destination,
+            raise_if_not_found=False,
         )
         if route.get("native"):
             return route

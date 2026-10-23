@@ -148,6 +148,9 @@ func (p *program) Start(s service.Service) error {
 		restartBackoff := 5 * time.Second
 		const maxRestartBackoff = 60 * time.Second
 		for {
+			if freshCfg, loadErr := config.Load(p.configPath); loadErr == nil && freshCfg != nil && freshCfg.Agent.ID != "" && freshCfg.Agent.Secret != "" && freshCfg.Validate() == nil {
+				cfg = freshCfg
+			}
 			app, err := agent.New(cfg, p.configPath)
 			if err != nil {
 				log.Printf("Failed to initialize agent: %v — retrying in %s...", err, restartBackoff)
@@ -164,7 +167,11 @@ func (p *program) Start(s service.Service) error {
 			}
 			p.setAgent(app)
 
+			runStart := time.Now()
 			if err := app.Run(ctx); err != nil {
+				if time.Since(runStart) >= maxRestartBackoff {
+					restartBackoff = 5 * time.Second
+				}
 				log.Printf("Agent error: %v — restarting in %s...", err, restartBackoff)
 				// Release the failed instance's local SQLite handle before a
 				// replacement is created. Every agent.New opens its own
@@ -231,12 +238,13 @@ func (p *program) Stop(s service.Service) error {
 // writes to Program Files; the config path is the writable runtime root.
 func setupLogging(configPath string) (*lumberjack.Logger, error) {
 	logDir := filepath.Dir(configPath)
-	if logDir == "" || logDir == "." {
-		exeDir, err := config.ExecutableDir()
-		if err != nil {
-			return nil, fmt.Errorf("resolve executable dir: %w", err)
+	if configPath != "" {
+		if absPath, err := filepath.Abs(configPath); err == nil {
+			logDir = filepath.Dir(absPath)
 		}
-		logDir = exeDir
+	}
+	if logDir == "" || logDir == "." {
+		logDir = filepath.Dir(config.DefaultConfigPath())
 	}
 	runtimeRoot := logDir
 	// Establish the runtime trust root before creating any child path. If an

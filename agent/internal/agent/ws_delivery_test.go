@@ -245,8 +245,18 @@ func newAgentAgainst(t *testing.T, serverURL, printerID string, p printer.Printe
 	ag.printerConfigs = map[string]config.PrinterConfig{printerID: {ID: printerID, Name: "Test", Type: "network", Endpoint: "127.0.0.1:9100", Protocol: "raw"}}
 	allowInjectedPrintersForTest(ag)
 	t.Cleanup(func() {
+		// The test's deferred context cancel runs before Cleanup. Join every
+		// WebSocket/session worker before closing SQLite: Windows refuses to
+		// delete an open queue.db during t.TempDir cleanup.
+		ag.beginShutdown()
+		if !ag.waitForRuntimeUntil(time.Now().Add(10 * time.Second)) {
+			t.Error("Agent runtime did not drain before test cleanup")
+		}
+		if !ag.waitForJobsFor(10 * time.Second) {
+			t.Error("Agent print handlers did not drain before test cleanup")
+		}
 		if err := ag.Close(); err != nil {
-			t.Logf("Agent.Close: %v", err)
+			t.Errorf("Agent.Close: %v", err)
 		}
 	})
 	return ag
@@ -449,7 +459,7 @@ func TestMalformedWSDiscoveryIsRejectedAndLogged(t *testing.T) {
 	ag := newAgentAgainst(t, gateway.server.URL, "p1", &fakePrinter{})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go ag.connectWebSocket(ctx)
+	ag.launchTracked(func() { ag.connectWebSocket(ctx) })
 	waitFor(t, 5*time.Second, func() bool { return ag.getWSConn() != nil })
 
 	gateway.sendCh <- map[string]interface{}{"type": "discovery", "discoveryId": 12345}
@@ -467,7 +477,7 @@ func TestMalformedWSJobFieldsAreRejectedAndLogged(t *testing.T) {
 	ag := newAgentAgainst(t, gateway.server.URL, "p1", p)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go ag.connectWebSocket(ctx)
+	ag.launchTracked(func() { ag.connectWebSocket(ctx) })
 	waitFor(t, 5*time.Second, func() bool { return ag.getWSConn() != nil })
 
 	badJobs := []map[string]interface{}{
@@ -555,7 +565,7 @@ func TestDuplicateWSDeliveryPrintsOnceAndAcksAcceptedDeliveries(t *testing.T) {
 	ag := newAgentAgainst(t, gw.server.URL, "p1", p)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go ag.connectWebSocket(ctx)
+	ag.launchTracked(func() { ag.connectWebSocket(ctx) })
 	waitFor(t, 5*time.Second, func() bool { return ag.getWSConn() != nil })
 	gw.sendCh <- claimedEnvelope("job_dup", "p1")
 	waitFor(t, 5*time.Second, func() bool { return len(gw.Acks()) == 1 })
@@ -606,7 +616,7 @@ func TestWSReaderRemainsResponsiveWhileRejectionHTTPIsBlocked(t *testing.T) {
 	}()
 
 	ag.launchTracked(func() { ag.runRejectWorker(ctx) })
-	go ag.connectWebSocket(ctx)
+	ag.launchTracked(func() { ag.connectWebSocket(ctx) })
 	waitFor(t, 5*time.Second, func() bool { return ag.getWSConn() != nil })
 
 	gw.sendCh <- claimedEnvelope("job_ws_reject_block_1", "p1")
@@ -637,7 +647,7 @@ func TestWSDisconnectDoesNotCancelAdmittedJob(t *testing.T) {
 	p := &fakePrinter{blocked: make(chan struct{}), startedCh: make(chan string, 1)}
 	ag := newAgentAgainst(t, gw.server.URL, "p1", p)
 	ctx, cancel := context.WithCancel(context.Background())
-	go ag.connectWebSocket(ctx)
+	ag.launchTracked(func() { ag.connectWebSocket(ctx) })
 	waitFor(t, 5*time.Second, func() bool { return ag.getWSConn() != nil })
 
 	gw.sendCh <- claimedEnvelope("job_survives_ws_reconnect", "p1")
@@ -687,7 +697,7 @@ func TestWSDeliveryDoesNotAckWhenLocalExecutorIsFull(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	ag.launchTracked(func() { ag.runRejectWorker(ctx) })
-	go ag.connectWebSocket(ctx)
+	ag.launchTracked(func() { ag.connectWebSocket(ctx) })
 	waitFor(t, 5*time.Second, func() bool { return ag.getWSConn() != nil })
 
 	// Exhaust the exact bounded local admission capacity. A WS frame may arrive,
@@ -899,7 +909,7 @@ func TestClaimTokenEchoedInStatusUpdatesAndAck(t *testing.T) {
 	ag := newAgentAgainst(t, gw.server.URL, "p1", p)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go ag.connectWebSocket(ctx)
+	ag.launchTracked(func() { ag.connectWebSocket(ctx) })
 	waitFor(t, 5*time.Second, func() bool { return ag.getWSConn() != nil })
 
 	// The full chain: WS envelope carries the claim token, the agent echoes

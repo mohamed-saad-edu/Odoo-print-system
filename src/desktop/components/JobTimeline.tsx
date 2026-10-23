@@ -27,7 +27,9 @@ export function JobTimeline({ status, error = null, claimedAt = null, deliveredA
   const outcome = deriveOutcome(s, error);
   const done = s === "success";
   const failed = s === "failed" || s === "expired";
-  const unknown = outcome === "unknown";
+  // Physical output is unverified during active work as well. Only a
+  // terminal unknown result needs attention; active stages remain progress.
+  const unknown = (done || failed) && outcome === "unknown";
   const delivered = Boolean(deliveredAt ?? ackedAt);
 
   const reachedQueued = true;

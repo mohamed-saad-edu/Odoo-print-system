@@ -1,7 +1,7 @@
 import { liveTenantSubscriptionPredicate } from "./entitlements";
 import { db } from "../db";
 import { printJobs } from "../db/schema";
-import { and, sql } from "drizzle-orm";
+import { sql } from "drizzle-orm";
 import { fencedDeliveryWrite } from "./job-fencing";
 import { MAX_DELIVERY_ATTEMPTS, MAX_RETRIES, DELIVERY_EVIDENCE_PENDING } from "./job-maintenance";
 import { agentStaleThresholdSeconds, printerStaleThresholdSeconds } from "./agent-availability";
@@ -262,27 +262,24 @@ export async function markJobDeliveryUnknown(
 
 export async function recordJobAck(jobId: string, tenantId: string, agentId: string, claimToken?: string | null): Promise<boolean> {
   if (!claimToken) return false;
-  const res = await db.update(printJobs)
-    // ACK means the Agent admitted the job into its bounded local executor.
-    // Transport delivery evidence is recorded separately by markJobDelivered().
-    .set({ ackedAt: sql`COALESCE(${printJobs.ackedAt}, clock_timestamp())`, updatedAt: sql`clock_timestamp()` })
-    // A WebSocket close notification is an optimisation, not an authority:
-    // PostgreSQL LISTEN/NOTIFY is not a durable queue and a listener can be
-    // disconnected during a lifecycle transition.  Keep the durable Agent
-    // lifecycle as the authorization boundary for agent-originated ACKs, so a
-    // revoked socket cannot mutate delivery state merely because its close
-    // notification was missed or delayed.
-    .where(and(
-      fencedDeliveryWrite(jobId, tenantId, agentId, claimToken, ["claimed", "printing"]),
-      sql`EXISTS (
-        SELECT 1 FROM agents a
-        WHERE a.id = ${agentId}
-          AND a.tenant_id = ${tenantId}
-          AND a.lifecycle = 'active'
-      )`,
-    ))
-    .returning({ id: printJobs.id });
-  return res.length > 0;
+  return db.transaction(async (tx) => {
+    // The notification listener is best-effort: an authenticated socket can
+    // outlive tenant suspension or Agent disable. Hold the durable runtime
+    // fences through this claim write, in Tenant -> Agent -> Job lock order.
+    const tenant = await tx.execute(sql`SELECT id FROM tenants
+      WHERE id = ${tenantId} AND lifecycle = 'active' FOR SHARE`);
+    if (tenant.rows.length !== 1) return false;
+    const agent = await tx.execute(sql`SELECT id FROM agents
+      WHERE id = ${agentId} AND tenant_id = ${tenantId}
+        AND lifecycle = 'active' FOR SHARE`);
+    if (agent.rows.length !== 1) return false;
+    const res = await tx.update(printJobs)
+      // ACK means local executor admission, independently of transport evidence.
+      .set({ ackedAt: sql`COALESCE(${printJobs.ackedAt}, clock_timestamp())`, updatedAt: sql`clock_timestamp()` })
+      .where(fencedDeliveryWrite(jobId, tenantId, agentId, claimToken, ["claimed", "printing"]))
+      .returning({ id: printJobs.id });
+    return res.length > 0;
+  });
 }
 
 export type ReleaseOutcome = "requeued" | "failed" | "noop";

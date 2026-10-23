@@ -59,6 +59,17 @@ func New(dbPath string) (*Queue, error) {
 			return nil, fmt.Errorf("secure queue directory %s: %w", dir, err)
 		}
 	}
+	if dbPath != ":memory:" {
+		// SQLite opens its database and recovery sidecars itself. Validate every
+		// pre-existing file before the first PRAGMA can follow a planted link or
+		// use a child with a permissive explicit Windows DACL. Create the main
+		// database privately so new POSIX sidecars inherit its 0600 mode.
+		for _, suffix := range []string{"", "-wal", "-shm", "-journal"} {
+			if err := prepareQueueFile(dbPath+suffix, suffix == ""); err != nil {
+				return nil, err
+			}
+		}
+	}
 
 	// FULL WAL commits durably fence physical execution across power loss.
 	// NORMAL may lose an acknowledged printing/terminal ledger transaction.
@@ -168,6 +179,32 @@ func New(dbPath string) (*Queue, error) {
 	initialized = true
 
 	return &Queue{db: db}, nil
+}
+
+func prepareQueueFile(path string, create bool) error {
+	info, err := os.Lstat(path)
+	if os.IsNotExist(err) && create {
+		file, createErr := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0600)
+		if createErr != nil {
+			return fmt.Errorf("create private queue file %s: %w", path, createErr)
+		}
+		if err := file.Close(); err != nil {
+			return fmt.Errorf("close private queue file %s: %w", path, err)
+		}
+		info, err = os.Lstat(path)
+	} else if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("inspect queue file %s: %w", path, err)
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("refusing non-regular queue file %s", path)
+	}
+	if err := config.EnsureSecureFileACL(path); err != nil {
+		return fmt.Errorf("secure queue file %s: %w", path, err)
+	}
+	return nil
 }
 
 func (q *Queue) Close() error {
@@ -516,17 +553,44 @@ type TerminalReport struct {
 // outbox: they allow Agent restart recovery to re-report a proven outcome
 // without ever re-running the physical printer side effect.
 func (q *Queue) PendingTerminalReports(limit int) ([]TerminalReport, error) {
+	return q.pendingTerminalReports(limit, "", "", false)
+}
+
+// PendingTerminalReportsAfter provides stable keyset paging for the replay
+// worker. Permanently stale claims must retain their evidence, but cannot pin
+// every later outcome behind the first bounded batch forever.
+func (q *Queue) PendingTerminalReportsAfter(limit int, afterID, throughID string) ([]TerminalReport, error) {
+	return q.pendingTerminalReports(limit, afterID, throughID, true)
+}
+
+// PendingTerminalReportMaxID fixes the end of one replay sweep. Without it,
+// continuous arrivals beyond the cursor could postpone wrap indefinitely.
+func (q *Queue) PendingTerminalReportMaxID() (string, error) {
+	var id string
+	err := q.db.QueryRow(`SELECT COALESCE(MAX(id), '') FROM print_jobs
+		WHERE status IN ('success', 'failed') AND claim_token IS NOT NULL AND claim_token <> ''`).Scan(&id)
+	return id, err
+}
+
+func (q *Queue) pendingTerminalReports(limit int, afterID, throughID string, paged bool) ([]TerminalReport, error) {
 	if limit <= 0 {
 		limit = 32
 	}
-	rows, err := q.db.Query(`
+	query := `
 		SELECT id, status, COALESCE(last_error, ''), claim_token, COALESCE(spooler_job_id, '')
 		FROM print_jobs
 		WHERE status IN ('success', 'failed')
 		  AND claim_token IS NOT NULL
-		  AND claim_token <> ''
-		ORDER BY updated_at ASC
-		LIMIT ?`, limit)
+		  AND claim_token <> ''`
+	args := []interface{}{}
+	if paged {
+		query += ` AND id > ? AND id <= ? ORDER BY id ASC LIMIT ?`
+		args = append(args, afterID, throughID, limit)
+	} else {
+		query += ` ORDER BY updated_at ASC LIMIT ?`
+		args = append(args, limit)
+	}
+	rows, err := q.db.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}

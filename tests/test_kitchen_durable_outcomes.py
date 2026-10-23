@@ -75,7 +75,7 @@ def fixture(response=None, transport_error=None, unrecorded_error=None, lease_av
         "MAX_BILLING_PARK_ATTEMPTS": _const("MAX_BILLING_PARK_ATTEMPTS"),
         "BILLING_PARK_RETRY_SECONDS": _const("BILLING_PARK_RETRY_SECONDS"),
         "_logger": logging.getLogger(__name__)}
-    job_methods = methods("print_job.py", ["_action_submit_trusted", "_record_ambiguous_submission", "_is_deterministic_failure", "_persist_state", "_billing_retry_values"], namespace)
+    job_methods = methods("print_job.py", ["_action_submit_trusted", "_record_ambiguous_submission", "_is_deterministic_failure", "_persist_state", "_billing_retry_values", "_compute_physical_outcome"], namespace)
     class Job:
         _TERMINAL = {"success", "failed", "unknown", "partial"}
         _GATEWAY_UNKNOWN_MARKERS = ("AGENT_EXECUTION_TIMEOUT", "AGENT_RESTART_DURING_PRINT",
@@ -110,6 +110,14 @@ def fixture(response=None, transport_error=None, unrecorded_error=None, lease_av
             return job.write(dict(values, status=target))
         def _post_source_audit(self, _message): pass
         def _is_pre_dispatch_error(self, _error): return False
+        @property
+        def physical_outcome(self):
+            evidence = SimpleNamespace(status=self.status, last_error=self.last_error,
+                                       gateway_job_id=self.gateway_job_id)
+            class Evidence(list):
+                _GATEWAY_UNKNOWN_MARKERS = self._GATEWAY_UNKNOWN_MARKERS
+            job_methods['_compute_physical_outcome'](Evidence([evidence]))
+            return evidence.physical_outcome
     for name, method in job_methods.items(): setattr(Job, name, method)
     job = Job()
     class Env:
@@ -243,3 +251,19 @@ def test_committed_outbox_waiting_for_another_worker_does_not_claim_gateway_acce
     assert result["can_retry"] is False
     assert sent == []
     assert cursor.commits == 1 and cursor.closed
+
+
+def test_missing_external_v2_proof_parks_outbox_without_sending_or_terminalizing():
+    router, job, cursor, sent, _order = fixture(reply(201, {"jobId": "should-not-be-submitted"}))
+    job.gateway_idempotency_version = 2
+    def missing(_gateway_config):
+        raise ValidationError("GATEWAY_INSTALLATION_PROOF_MISSING: external proof unavailable")
+    job._gateway_headers_for_job = missing
+    result = router._submit_durable_job(7, structured_outcome=True)
+    assert sent == [], "No bytes leave Odoo while external enrollment proof is missing"
+    assert result["status"] == "queued"
+    assert result["can_retry"] is False
+    assert job.status == "queued"
+    assert "GATEWAY_INSTALLATION_PROOF_MISSING" in str(job.last_error)
+    assert job.next_retry_at
+    assert cursor.closed

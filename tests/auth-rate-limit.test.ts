@@ -266,6 +266,28 @@ suite("manager login rate limiting", () => {
     expect(otherIp.status).toBe(200);
   });
 
+  it("an owned account cannot erase the source budget for password spraying", async () => {
+    const ip = "198.51.100.63";
+    for (let i = 0; i < 10; i++) {
+      expect((await login(`spray-before-${i}`, "wrong", ip)).status).toBe(401);
+    }
+    expect((await login(USER, PASS, ip)).status).toBe(200);
+    // Successful authentication may forgive that account and its own reserved
+    // attempt, but does not prove unrelated guesses from the same IP benign.
+    const row = await pool().query("SELECT failures FROM auth_rate_limits WHERE key = $1", [ipKey(ip)]);
+    expect(Number(row.rows[0]?.failures ?? 0)).toBe(10);
+    for (let i = 0; i < 9; i++) {
+      expect((await login(`spray-after-${i}`, "wrong", ip)).status).toBe(401);
+    }
+    expect((await login("spray-last", "wrong", ip)).status).toBe(429);
+  });
+
+  it("successful logins alone do not exhaust a shared source budget", async () => {
+    for (let i = 0; i < 21; i++) {
+      expect((await login(USER, PASS, "198.51.100.64")).status).toBe(200);
+    }
+  });
+
   it("keeps unknown source addresses account-scoped instead of globally locking users", async () => {
     for (let i = 0; i < 20; i++) {
       const res = await login(`unknown-user-${i}`, "wrong", "not-an-ip");

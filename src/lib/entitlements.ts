@@ -70,7 +70,6 @@ export type EntitlementValue = number | "unlimited";
 export type TenantEntitlements = Record<PlanEntitlementKey, EntitlementValue>;
 
 export const PRINT_QUOTA_ENTITLEMENT = "max_prints_per_period" as const;
-export const PRINT_QUOTA_UNIT = "job" as const;
 
 export type TenantPrintUsage = {
   limit: number | "unlimited";

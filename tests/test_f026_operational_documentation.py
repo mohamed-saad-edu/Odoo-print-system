@@ -14,12 +14,14 @@ def test_migration_inventory_matches_current_journal():
     # journal and the SQL files, including new forward-only migrations.
     tags=[entry['tag'] for entry in journal]
     assert tags==[path.stem for path in sql]
-    assert len(journal)==len(sql)==85
-    assert journal[-1]['tag']=='0084_printer_cloud_sharing'
+    assert len(journal)==len(sql)==86
+    assert journal[-2]['tag']=='0084_printer_cloud_sharing'
+    assert journal[-1]['tag']=='0085_odoo_installation_idempotency'
     assert '| 0082 | 1 |' in read('MIGRATION.md')
     assert '| 0083 | 1 |' in read('MIGRATION.md')
     assert '| 0084 | 1 |' in read('MIGRATION.md')
-    assert '**Total**: 85 forward-only SQL migrations (0000–0084)' in read('MIGRATION.md')
+    assert '| 0085 | 1 |' in read('MIGRATION.md')
+    assert '**Total**: 86 forward-only SQL migrations (0000–0085)' in read('MIGRATION.md')
     sharing=read('drizzle/0084_printer_cloud_sharing.sql')
     assert '"shared_with_gateway" boolean NOT NULL DEFAULT true' in sharing
     assert '"shared_with_gateway_version" text' in sharing
@@ -55,3 +57,11 @@ def test_document_diagnostic_pdf_supported_for_spooler_and_ipp():
     assert 'Spooler and IPP printers are document transports that require driver-rendered content.' not in source
     assert 'generated PDF test ticket' in source
     assert 'Real document/report' in source
+
+def test_first_run_verify_email_documents_password_setup_redirect():
+    source=read('SERVER_FIRST_RUN.md')
+    sec9=source[source.index('## 9. Email verification'):source.index('## 10. First workspace setup')]
+    assert '/reset-password?token=...&setup=1' in sec9
+    assert 'requiresPasswordSetup' in sec9
+    assert '20-minute' in sec9
+    assert 'creates a customer/manager session cookie' not in sec9

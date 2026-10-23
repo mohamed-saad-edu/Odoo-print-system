@@ -42,11 +42,13 @@ function normalizeLogValue(value: unknown, seen = new WeakSet<object>(), depth =
   return out;
 }
 
+const SAFE_REQUEST_ID_RE = /^[A-Za-z0-9._:-]{1,128}$/;
+
 export function requestIdFrom(req: Request): string {
   const existing =
     req.headers.get("x-request-id")?.trim() ||
     req.headers.get("x-correlation-id")?.trim();
-  if (existing && existing.length <= 128) return existing;
+  if (existing && SAFE_REQUEST_ID_RE.test(existing)) return existing;
   return `req_${Date.now().toString(36)}_${randomBytes(8).toString("hex")}`;
 }
 

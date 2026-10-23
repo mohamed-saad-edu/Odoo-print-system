@@ -252,7 +252,7 @@ set -a
 . ./.env
 set +a
 
-sudo -E docker compose run --rm   -e STRIPE_PLAN_CATALOG="$STRIPE_PLAN_CATALOG"   gateway npm run db:provision-plans
+sudo -E docker compose run --rm   -e STRIPE_PLAN_CATALOG="$STRIPE_PLAN_CATALOG"   gateway node --import tsx scripts/provision-plans.ts
 ```
 
 Verify that the command ends with:
@@ -309,10 +309,10 @@ POST /api/auth/verify-email
 A successful verification:
 
 1. consumes the one-time token;
-2. marks the user verified;
+2. marks the user verified and invalidates the pre-registrant password hash;
 3. creates the first workspace if the user has no membership yet;
-4. creates a customer/manager session cookie;
-5. redirects to `/onboarding`.
+4. issues a single-use, 20-minute password setup token (`requiresPasswordSetup: true`) without setting a session cookie;
+5. redirects to `/reset-password?token=...&setup=1` so only the mailbox owner can set the account password before signing in and continuing to `/onboarding`.
 
 The verification token expires after 30 minutes.
 
@@ -537,7 +537,7 @@ For platform administration, bootstrap the first Platform Owner from the server:
 cd /opt/yaseir
 export PLATFORM_OWNER_EMAIL='owner@example.com'
 export PLATFORM_OWNER_PASSWORD='use-a-long-secret'
-sudo -E docker compose run --rm gateway npm run platform:bootstrap
+sudo -E docker compose run --rm gateway node --import tsx scripts/bootstrap-platform-owner.ts
 ```
 
 Then open:

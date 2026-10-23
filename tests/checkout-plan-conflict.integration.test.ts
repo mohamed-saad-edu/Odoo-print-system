@@ -20,6 +20,7 @@ vi.mock(import("../src/lib/stripe"), async (importOriginal) => ({
   ...(await importOriginal()),
   stripeRequest: vi.fn(),
   stripeList: vi.fn(),
+  stripeRetrieve: vi.fn(),
 }));
 
 const suite = describe.skipIf(!hasTestDatabase);
@@ -47,7 +48,16 @@ suite("billing checkout plan-conflict fence", () => {
       userId: "user_checkout_conflict",
       role: "owner",
     });
-    const { stripeRequest, stripeList } = await import("../src/lib/stripe");
+    const { stripeRequest, stripeList, stripeRetrieve } = await import("../src/lib/stripe");
+    vi.mocked(stripeRetrieve).mockReset();
+    // Replacement requires provider evidence, not just the local deadline.
+    // Keep the existing expiry/replacement assertion with an explicit offline
+    // response proving this exact Session has no subscription.
+    vi.mocked(stripeRetrieve).mockImplementation(async (path) => ({
+      id: path.split("/").at(-1), customer: "cus_checkout_conflict",
+      client_reference_id: "tenant_checkout_conflict", mode: "subscription",
+      status: "expired", subscription: null,
+    }));
     vi.mocked(stripeList).mockReset();
     // Aged Checkout intents may only rotate after read-side reconciliation
     // proves there is no non-terminal Stripe subscription. Keep the default

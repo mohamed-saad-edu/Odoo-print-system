@@ -236,11 +236,33 @@ class PrintGatewayPolicy(models.Model):
 
     @api.constrains("company_id", "branch_id", "binding_id")
     def _check_hierarchy(self):
+        env = getattr(self, "env", None)
+        is_su = getattr(env, "is_superuser", lambda: False)()
+        allowed_companies = getattr(env, "companies", None)
+        user_companies = getattr(getattr(env, "user", None), "company_ids", None)
         for policy in self:
             if policy.company_id.parent_id:
                 raise ValidationError(_("Odoo Company must be a root company, not a branch."))
             if policy.branch_id and policy.branch_id.parent_id != policy.company_id:
                 raise ValidationError(_("Odoo Branch must belong directly to the selected Odoo Company."))
+            if not is_su:
+                if not policy.branch_id:
+                    if (allowed_companies is not None and policy.company_id not in allowed_companies) or (
+                        user_companies is not None and policy.company_id not in user_companies
+                    ):
+                        raise ValidationError(_("The selected Odoo Company is not available to the current user."))
+                else:
+                    branch_allowed = allowed_companies is None or (
+                        policy.branch_id in allowed_companies
+                        or (
+                            policy.company_id in allowed_companies
+                            and (user_companies is None or policy.company_id in user_companies)
+                        )
+                    )
+                    if not branch_allowed or (
+                        user_companies is not None and policy.branch_id not in user_companies
+                    ):
+                        raise ValidationError(_("The selected Odoo Branch is not available to the current user."))
             if policy.binding_id:
                 binding = policy.binding_id
                 if binding.company_id != policy.company_id:

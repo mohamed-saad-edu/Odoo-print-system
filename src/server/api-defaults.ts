@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "http";
+import { requestPath } from "./request-path";
 
 /**
  * Response-policy defaults for the custom server boundary.
@@ -19,7 +20,7 @@ import type { IncomingMessage, ServerResponse } from "http";
  * the public, CDN-cacheable /api/billing/plans response private.
  */
 export function applyApiCacheControlDefault(req: IncomingMessage, res: ServerResponse): void {
-  if (!req.url?.startsWith("/api/")) return;
+  if (!requestPath(req.url).startsWith("/api/")) return;
   if (res.headersSent) return;
   const state = res as ServerResponse & { __apiCacheDefaultInstalled?: boolean };
   if (state.__apiCacheDefaultInstalled) return;

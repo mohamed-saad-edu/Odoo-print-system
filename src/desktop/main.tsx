@@ -767,6 +767,12 @@ export default function App() {
     getAutostart()
       .then((st) => setAutostartState(st.enabled))
       .catch(() => {});
+    // Persisted startup configuration is read once. Locale-aware polling below
+    // may restart when presentation changes, but must never replace a draft.
+  }, []);
+
+  useEffect(() => {
+    if (!isTauri) return;
     refreshStatus();
     void refreshLocalPrinters();
     const id = setInterval(refreshStatus, LOCAL_AGENT_STATUS_INTERVAL_MS);
@@ -780,7 +786,7 @@ export default function App() {
       window.removeEventListener("focus", refreshStatus);
       document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [refreshStatus, refreshLocalPrinters, t]);
+  }, [refreshStatus, refreshLocalPrinters]);
 
   useEffect(() => {
     if (!isTauri) return;
@@ -985,13 +991,10 @@ export default function App() {
       return dest === "unassigned" || pid === "unassigned" || !printers.some((p) => p.id === pid);
     }
     if (tab === "delivered") return st === "success";
-    // "Unknown outcome" must exclude success rows. deriveOutcome() reports
-    // "unknown" for success by design (transport success is not proof of
-    // paper), so a bare outcome check makes this tab a superset of
-    // "Delivered" and inflates the counter. This mirrors the Gateway's own
-    // marker-based status=unknown filter (src/app/api/jobs/route.ts) and
-    // the guard inside jobTone (src/shared/job-vocabulary.ts).
-    if (tab === "unknown") return st !== "success" && outcome === "unknown";
+    // Only terminal ambiguous failures need duplicate-print review. Claimed,
+    // printing and success have unverified paper output but belong in
+    // their progress/delivered tabs rather than Unknown.
+    if (tab === "unknown") return (st === "failed" || st === "expired") && outcome === "unknown";
     if (tab === "failed") return st === "failed" && outcome === "not_printed";
     if (tab === "expired") return st === "expired" && outcome !== "unknown";
     return true;

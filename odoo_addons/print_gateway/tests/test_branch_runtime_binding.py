@@ -1,10 +1,11 @@
 from psycopg2 import IntegrityError
 
+from unittest import TestCase as StandardTestCase
 from unittest.mock import patch
 
 # Hard imports: this module only runs under the Odoo test runner; a fallback
 # previously degraded the whole file into silent skips with a green exit.
-from odoo.exceptions import ValidationError
+from odoo.exceptions import AccessError, ValidationError
 from werkzeug.exceptions import Forbidden
 from odoo.tests.common import TransactionCase
 
@@ -1074,3 +1075,44 @@ class TestBranchRuntimeBinding(TransactionCase):
             "enabled": True,
         })
         self.assertEqual(recovered.runtime_agent_id, "agent-recovered")
+
+
+    def test_branch_admin_cannot_mutate_root_gateway_config_or_company_wide_rules(self):
+        branch_admin = self.env["res.users"].create(
+            {
+                "name": "Branch Only Gateway Admin",
+                "login": "branch_only_gateway_admin",
+                "email": "branch_only_gateway_admin@example.com",
+                "company_id": self.branch.id,
+                "company_ids": [(6, 0, [self.branch.id])],
+                "group_ids": [
+                    (
+                        6,
+                        0,
+                        [
+                            self.env.ref("base.group_user").id,
+                            self.env.ref("base.group_system").id,
+                        ],
+                    )
+                ],
+            }
+        )
+        branch_env = self.env(user=branch_admin, context={"allowed_company_ids": [self.branch.id]})
+        with StandardTestCase.assertRaises(self, (AccessError, ValidationError)), self.env.cr.savepoint():
+            self.config.with_env(branch_env).write({"runtime_agent_id": "forbidden-root-agent"})
+        policy_values = {
+            "name": "Forbidden Root Policy",
+            "company_id": self.company.id,
+            "branch_id": False,
+            "model_id": self.env["ir.model"]._get_id("account.move"),
+            "event_type": "invoice_posted",
+            "action_type": "raw_template",
+            "raw_protocol": "raw",
+            "raw_template": "Company-wide policy fixture",
+        }
+        # The values must be valid for a trusted caller, so the assertion below
+        # cannot pass merely because required fields or report setup are wrong.
+        trusted_policy = self.env["print_gateway.policy"].sudo().create(policy_values)
+        self.assertEqual(trusted_policy.company_id, self.company)
+        with StandardTestCase.assertRaises(self, (AccessError, ValidationError)), self.env.cr.savepoint():
+            branch_env["print_gateway.policy"].create(policy_values)

@@ -17,15 +17,6 @@
 
 import type { EntitlementValue } from "./entitlements";
 
-/** Canonical entitlement keys the dialog knows how to render. */
-export const LIMIT_SIGNAL_ENTITLEMENTS = [
-  "max_agents",
-  "max_printers",
-  "max_jobs_per_minute",
-  "max_concurrent_jobs",
-  "max_prints_per_period",
-] as const;
-
 export type EntitlementLimitSignal = {
   /** Machine code, e.g. `PRINT_QUOTA_EXCEEDED` or `TENANT_ENTITLEMENT_EXCEEDED`. */
   code: string;

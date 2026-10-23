@@ -2,13 +2,15 @@ import { NextResponse } from "next/server";
 import { db } from "../../../../../db";
 import { printJobs, printJobReceipts } from "../../../../../db/schema";
 import { validateOdooKey } from "../../../../../lib/odoo-auth";
+import { parseOdooIdentity } from "../../../../../lib/odoo-idempotency";
+import { OdooNamespaceError, verifyOdooInstallation } from "../../../../../lib/odoo-v2-admission";
 import { validatePrintJobPayload, type PrintJobPayload } from "../../../../../lib/payload";
 import { createPrintJobForPrinter, AgentQueueFullError, AgentQueuedJobsFullError, PrintJobCapabilityError, PrintJobInputError } from "../../../../../lib/print-job-service";
 import { TenantEntitlementError, TenantPrintQuotaExceededError, isTenantBillingError } from "../../../../../lib/entitlements";
 import { hasBodyOverLimit } from "../../../../../lib/request-limits";
 import { logError, requestIdFrom } from "../../../../../lib/log";
 import { databaseNowMs } from "../../../../../lib/database-clock";
-import { and, eq, isNotNull } from "drizzle-orm";
+import { and, eq, isNotNull, sql } from "drizzle-orm";
 import { z } from "zod";
 
 export const dynamic = "force-dynamic";
@@ -21,6 +23,11 @@ const bodySchema = z.object({
   payload: z.unknown(),
   expiresAt: z.string().optional(),
   idempotencyKey: z.string().trim().min(1).max(200),
+  // S06-006: optional only for legacy callers; v2 fields must travel together.
+  idempotencyVersion: z.literal(2).optional(),
+  installationId: z.string().optional(),
+  sourceCompanyId: z.string().optional(),
+  sourceOperationId: z.string().optional(),
 }).strict();
 
 function parseExpiresAt(value?: string) {
@@ -71,6 +78,16 @@ export async function POST(req: Request) {
   const parsed = bodySchema.safeParse(raw);
   if (!parsed.success) return NextResponse.json({ error: parsed.error.issues[0]?.message ?? "Invalid request" }, { status: 400 });
 
+  let v2Identity: ReturnType<typeof parseOdooIdentity>;
+  try {
+    v2Identity = parseOdooIdentity({ ...parsed.data, installationProof: req.headers.get("x-yaseir-odoo-proof") ?? undefined });
+  } catch (error) {
+    return NextResponse.json({ error: "Invalid versioned installation identity", code: error instanceof Error ? error.message : "INVALID_INSTALLATION_IDENTITY", retryable: false }, { status: 400 });
+  }
+  if (!parsed.data.idempotencyVersion && (parsed.data.installationId || parsed.data.sourceCompanyId || parsed.data.sourceOperationId || req.headers.has("x-yaseir-odoo-proof"))) {
+    return NextResponse.json({ error: "Incomplete installation namespace", code: "INVALID_INSTALLATION_IDENTITY" }, { status: 400 });
+  }
+
   let payload: PrintJobPayload;
   try { payload = validatePrintJobPayload(parsed.data.payload); }
   catch (error) { return NextResponse.json({ error: error instanceof Error ? error.message : "Invalid payload" }, { status: 400 }); }
@@ -91,6 +108,7 @@ export async function POST(req: Request) {
       documentType: parsed.data.documentType,
       expiresAt,
       rateLimitKeyId: odoo.id,
+      odooV2Identity: v2Identity ?? undefined,
       tenantId: odoo.tenantId,
       requestId: requestIdFrom(req),
     });
@@ -162,6 +180,9 @@ export async function POST(req: Request) {
     if (error instanceof PrintJobCapabilityError) {
       return NextResponse.json({ error: error.message, code: error.code, retryable: false }, { status: 422 });
     }
+    if (error instanceof OdooNamespaceError) {
+      return NextResponse.json({ error: error.code, code: error.code, retryable: false }, { status: error.status, headers: { "Cache-Control": "no-store" } });
+    }
     if (error instanceof PrintJobInputError) {
       return NextResponse.json({ error: error.message, code: error.code, retryable: error.status >= 500 }, { status: error.status });
     }
@@ -185,6 +206,10 @@ export async function POST(req: Request) {
 export async function GET(req: Request) {
   const odoo = await validateOdooKey(req);
   if (!odoo) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const namespaceVersion = req.headers.get("x-yaseir-odoo-idempotency-version");
+  if (namespaceVersion && namespaceVersion !== "2") return NextResponse.json({ error: "Unsupported namespace version" }, { status: 400 });
+  const installationId = req.headers.get("x-yaseir-odoo-installation") ?? "";
+  const installationProof = req.headers.get("x-yaseir-odoo-proof") ?? "";
   const params = new URL(req.url).searchParams;
   const id = params.get("id")?.trim();
   const idempotencyKey = params.get("idempotencyKey")?.trim();
@@ -197,6 +222,29 @@ export async function GET(req: Request) {
   if (!id && !idempotencyKey) {
     return NextResponse.json({ error: "id or idempotencyKey query param required" }, { status: 400 });
   }
+  // v2 receipt lookup is installation-scoped: never allow one installation to
+  // retrieve another's job by guessing its key or ID. v1 lookups remain
+  // available for historical, pre-cutover Odoo clients.
+  let resolvedJobId: string | null = null;
+  if (namespaceVersion === "2") {
+    if (!installationId || !installationProof) return NextResponse.json({ error: "Installation proof required", code: "INSTALLATION_NOT_ENROLLED" }, { status: 403 });
+    try {
+      const mapped = await db.transaction(async (tx) => {
+        await verifyOdooInstallation(tx, odoo.tenantId, odoo.id, { installationId, installationProof });
+        return tx.execute(sql`
+          SELECT accepted_job_id FROM odoo_v2_operations
+          WHERE tenant_id = ${odoo.tenantId} AND installation_id = ${installationId}
+            AND ${id ? sql`accepted_job_id = ${id}` : sql`idempotency_key = ${idempotencyKey}`}
+          LIMIT 1
+        `);
+      });
+      resolvedJobId = (mapped.rows[0] as { accepted_job_id?: string } | undefined)?.accepted_job_id ?? null;
+      if (!resolvedJobId) return NextResponse.json({ error: "Not found" }, { status: 404 });
+    } catch (error) {
+      if (error instanceof OdooNamespaceError) return NextResponse.json({ error: error.code, code: error.code }, { status: error.status });
+      throw error;
+    }
+  }
   // Odoo API-key authentication establishes the integration tenant. Only
   // Odoo-originated jobs belong to this API surface; `apiKeyId` must be present
   // but must not equal the current credential so rotated keys can still read
@@ -205,13 +253,13 @@ export async function GET(req: Request) {
   // Gateway job id because the response timed out after Gateway acceptance.
   const row = await db.query.printJobs.findFirst({
     where: and(
-      ...(id ? [eq(printJobs.id, id)] : [eq(printJobs.idempotencyKey, idempotencyKey!)]),
+      ...(resolvedJobId ? [eq(printJobs.id, resolvedJobId)] : id ? [eq(printJobs.id, id)] : [eq(printJobs.idempotencyKey, idempotencyKey!)]),
       eq(printJobs.tenantId, odoo.tenantId),
       isNotNull(printJobs.apiKeyId),
     ),
   });
   const receipt = row ? null : await db.query.printJobReceipts.findFirst({ where: and(
-    ...(id ? [eq(printJobReceipts.id, id)] : [eq(printJobReceipts.idempotencyKey, idempotencyKey!)]),
+    ...(resolvedJobId ? [eq(printJobReceipts.id, resolvedJobId)] : id ? [eq(printJobReceipts.id, id)] : [eq(printJobReceipts.idempotencyKey, idempotencyKey!)]),
     eq(printJobReceipts.tenantId, odoo.tenantId), isNotNull(printJobReceipts.apiKeyId),
   ) });
   if (!row && !receipt) return NextResponse.json({ error: "Not found" }, { status: 404 });

@@ -142,30 +142,16 @@ export function printerObservationFreshness(
   return sharedObservationFreshness(lastSeenAt, printerStaleThresholdSeconds(), nowMs);
 }
 
-export function agentHeartbeatFreshness(
-  lastSeenAt: Date | string | null | undefined,
-  nowMs = Date.now(),
-  staleThresholdSeconds?: number | null,
-): ObservationFreshness {
-  return sharedObservationFreshness(
-    lastSeenAt,
-    staleThresholdSeconds == null
-      ? agentStaleThresholdSeconds()
-      : resolveAgentStaleThresholdSeconds(staleThresholdSeconds),
-    nowMs,
-  );
-}
-
 export type PhysicalOutcome = "printed" | "not_printed" | "unknown";
 
 /** Client-side mirror of derivePhysicalOutcome (src/lib/job-status.ts).
- * In-flight rows (claimed/printing) are "not_printed": no paper evidence
- * exists yet. The job STATUS already conveys in-flight; the outcome must not
- * invent a fourth state the server never emits. */
+ * Claimed/printing rows have unknown physical output: the Agent can execute
+ * before its next status report arrives, so absence of paper evidence cannot
+ * prove that nothing printed. The existing job status still conveys progress. */
 export function deriveOutcome(status: string, error?: string | null): PhysicalOutcome {
   // Successful transport/execution is not proof of physical paper output.
   // Keep the physical result unverified until a real hardware proof exists.
-  if (status === "success") return "unknown";
+  if (status === "claimed" || status === "printing" || status === "success") return "unknown";
   const msg = error ?? "";
   if (UNKNOWN_OUTCOME_MARKERS.some((marker) => msg.startsWith(marker))) return "unknown";
   return "not_printed";
@@ -174,7 +160,7 @@ export function deriveOutcome(status: string, error?: string | null): PhysicalOu
 export function jobTone(status: string, outcome?: PhysicalOutcome): Tone {
   // A completed submission is informational until paper output is verified.
   // Unknown failures still need attention without inviting an automatic retry.
-  if (status.toLowerCase() !== "success" && outcome === "unknown") return "warn";
+  if ((status.toLowerCase() === "failed" || status.toLowerCase() === "expired") && outcome === "unknown") return "warn";
   switch (status.toLowerCase()) {
     case "success":
       return outcome === "printed" ? "ok" : "info";
@@ -230,12 +216,12 @@ export function jobDisplayLabel(
 export function jobGuidance(status: string, outcome: PhysicalOutcome, locale: Locale = DEFAULT_LOCALE): string {
   const word = (key: MessageKey) => translate(locale, key);
   if (status === "success") return word("job.guidance.success");
+  if (status === "claimed") return word("job.guidance.claimed");
+  if (status === "printing") return word("job.guidance.printing");
   if (outcome === "unknown") return word("job.guidance.unknown");
   if (status === "expired") return word("job.guidance.expired");
   if (status === "failed") return word("job.guidance.failed");
   if (status === "queued") return word("job.guidance.queued");
-  if (status === "claimed") return word("job.guidance.claimed");
-  if (status === "printing") return word("job.guidance.printing");
   return "";
 }
 

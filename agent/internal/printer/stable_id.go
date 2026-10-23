@@ -314,9 +314,14 @@ func StableIDForDevice(d DeviceInfo) string {
 				port := 631
 				if p := u.Port(); p != "" {
 					fmt.Sscanf(p, "%d", &port)
-				} else if u.Scheme == "https" {
+				} else if strings.HasPrefix(lowerEP, "https://") {
 					port = 443
+				} else if strings.HasPrefix(lowerEP, "http://") {
+					port = 80
 				}
+				// IPP and IPPS both default to 631. The parse-only rewrite
+				// to HTTP(S) above must not change the execution destination
+				// represented by this identity.
 				if host != "" {
 					if strings.HasPrefix(lowerEP, "ipp://") || strings.HasPrefix(lowerEP, "ipps://") || d.Protocol == "ipp" || d.Protocol == "ipps" {
 						return StableIDFromIPPURI(d.Endpoint, host, port)

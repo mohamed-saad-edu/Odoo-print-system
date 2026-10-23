@@ -296,11 +296,20 @@ export async function revokePlatformSession(jti: string): Promise<void> {
     .where(eq(platformSessions.jti, jti));
 }
 
-export async function cleanupExpiredPlatformSessions(): Promise<number> {
+export async function cleanupExpiredPlatformSessions(limit = 500): Promise<number> {
   const result = await db.execute(sql`
-    DELETE FROM platform_sessions
-    WHERE expires_at <= clock_timestamp()
-    RETURNING jti
+    WITH candidates AS (
+      SELECT jti
+      FROM platform_sessions
+      WHERE expires_at <= clock_timestamp()
+      ORDER BY expires_at ASC
+      LIMIT ${limit}
+      FOR UPDATE SKIP LOCKED
+    )
+    DELETE FROM platform_sessions AS ps
+    USING candidates
+    WHERE ps.jti = candidates.jti
+    RETURNING ps.jti
   `);
   return result.rows.length;
 }

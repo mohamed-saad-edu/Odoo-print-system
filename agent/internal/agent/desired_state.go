@@ -50,13 +50,12 @@ func desiredStatePath(configPath string) string {
 	// strands tombstones and applied revisions — and under Program Files the
 	// exe-dir write fails, fencing execution forever.
 	dir := filepath.Dir(configPath)
-	if absolute, err := filepath.Abs(configPath); err == nil {
-		dir = filepath.Dir(absolute)
-	}
-	if configPath == "" || dir == "." {
-		if exe, err := os.Executable(); err == nil {
-			dir = filepath.Dir(exe)
+	if configPath != "" {
+		if absolute, err := filepath.Abs(configPath); err == nil {
+			dir = filepath.Dir(absolute)
 		}
+	} else if wd, err := os.Getwd(); err == nil {
+		dir = wd
 	}
 	return filepath.Join(dir, "desired-state.json")
 }
@@ -64,6 +63,23 @@ func desiredStatePath(configPath string) string {
 const maxDesiredStateBytes = 16 << 20
 
 func (a *Agent) loadDesiredState() error {
+	lstatInfo, err := os.Lstat(a.desiredStatePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	if !lstatInfo.Mode().IsRegular() || lstatInfo.Size() > maxDesiredStateBytes {
+		return fmt.Errorf("desired state file is not a bounded regular file")
+	}
+	if err := config.EnsureSecureDirectoryACL(filepath.Dir(a.desiredStatePath)); err != nil {
+		return err
+	}
+	if err := config.EnsureSecureFileACL(a.desiredStatePath); err != nil {
+		return err
+	}
+
 	f, err := os.Open(a.desiredStatePath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -76,6 +92,9 @@ func (a *Agent) loadDesiredState() error {
 	info, err := f.Stat()
 	if err != nil {
 		return err
+	}
+	if !info.Mode().IsRegular() || !os.SameFile(lstatInfo, info) {
+		return fmt.Errorf("desired state file changed during open")
 	}
 	if info.Size() > maxDesiredStateBytes {
 		return fmt.Errorf("desired state file exceeds %d bytes", maxDesiredStateBytes)
@@ -224,7 +243,7 @@ func (a *Agent) persistDesiredState() error {
 	if err := config.EnsureSecureFileACL(tmpName); err != nil {
 		return err
 	}
-	if err := os.Rename(tmpName, a.desiredStatePath); err != nil {
+	if err := config.ReplaceFile(tmpName, a.desiredStatePath); err != nil {
 		return err
 	}
 	if err := config.EnsureSecureFileACL(a.desiredStatePath); err != nil {
@@ -508,7 +527,9 @@ func desiredPrinterConfig(row desiredPrinterRecord) config.PrinterConfig {
 
 func (a *Agent) removeGatewayRuntime(id string) {
 	lock := a.getPrinterLock(id)
-	lock.Lock()
+	if !lockPrinterUntil(lock, a.shutdownCh) {
+		return
+	}
 	defer lock.Unlock()
 
 	a.printersMu.Lock()
@@ -537,7 +558,9 @@ func (a *Agent) applyDesiredPrinter(row desiredPrinterRecord) error {
 		return fmt.Errorf("printer %s execution binding is disabled by local operator configuration", pc.ID)
 	}
 	lock := a.getPrinterLock(pc.ID)
-	lock.Lock()
+	if !lockPrinterUntil(lock, a.shutdownCh) {
+		return fmt.Errorf("agent stopping before printer %s desired revision %d could be applied", pc.ID, row.Desired.DesiredRevision)
+	}
 	defer lock.Unlock()
 	a.printersMu.Lock()
 	if a.retiredSessionMayBeLiveLocked(pc.ID) {
@@ -592,6 +615,68 @@ func desiredRecordForUpdate(current desiredPrinterRecord, desired desiredPrinter
 	return row
 }
 
+// validateDesiredStateCapacity accounts for retained deletion history before a
+// new snapshot can change live records or ownership. A bounded wire snapshot
+// alone does not bound the history accumulated across many reconciliations.
+func (a *Agent) validateDesiredStateCapacity(incoming map[string]desiredPrinterWire) error {
+	a.desiredStateMu.Lock()
+	prospective := make(map[string]desiredPrinterRecord, len(a.desiredStates)+len(incoming))
+	for id, row := range a.desiredStates {
+		prospective[id] = row
+	}
+	a.desiredStateMu.Unlock()
+	a.printersMu.RLock()
+	tombstones := make(map[string]struct{}, len(a.gatewayTombstones))
+	for id := range a.gatewayTombstones {
+		tombstones[id] = struct{}{}
+	}
+	a.printersMu.RUnlock()
+
+	for id := range prospective {
+		if _, ok := incoming[id]; !ok {
+			delete(prospective, id)
+			tombstones[id] = struct{}{}
+		}
+	}
+	for id, desired := range incoming {
+		current, exists := prospective[id]
+		if exists && desired.DesiredRevision < current.Desired.DesiredRevision {
+			continue
+		}
+		if exists && desired.DesiredRevision == current.Desired.DesiredRevision && !reflect.DeepEqual(desired, current.Desired) {
+			current.ApplyError = fmt.Sprintf("conflicting desired-state snapshot at revision %d", desired.DesiredRevision)
+			prospective[id] = current
+			continue
+		}
+		row := desiredRecordForUpdate(current, desired)
+		// Reserve the revision fields needed after a successful application.
+		// Keeping a larger existing value also covers unchanged active runtimes.
+		if row.AppliedDesiredRevision < desired.DesiredRevision {
+			row.AppliedDesiredRevision = desired.DesiredRevision
+		}
+		if desired.Lifecycle != "active" && row.ObservedDesiredRevision < desired.DesiredRevision {
+			row.ObservedDesiredRevision = desired.DesiredRevision
+		}
+		prospective[id] = row
+		delete(tombstones, id)
+	}
+	disk := desiredStateDisk{Printers: make([]desiredPrinterRecord, 0, len(prospective))}
+	for _, row := range prospective {
+		disk.Printers = append(disk.Printers, row)
+	}
+	for id := range tombstones {
+		disk.DeletedGatewayPrinterIds = append(disk.DeletedGatewayPrinterIds, id)
+	}
+	data, err := json.MarshalIndent(disk, "", "  ")
+	if err != nil {
+		return err
+	}
+	if len(data) > maxDesiredStateBytes {
+		return fmt.Errorf("serialized desired state exceeds %d bytes", maxDesiredStateBytes)
+	}
+	return nil
+}
+
 func (a *Agent) reconcileGatewayDesiredState(rows []desiredPrinterWire) bool {
 	incoming := make(map[string]desiredPrinterWire, len(rows))
 	for _, desired := range rows {
@@ -602,6 +687,13 @@ func (a *Agent) reconcileGatewayDesiredState(rows []desiredPrinterWire) bool {
 		if !ok || desired.DesiredRevision > current.DesiredRevision {
 			incoming[desired.ID] = desired
 		}
+	}
+	if err := a.validateDesiredStateCapacity(incoming); err != nil {
+		a.desiredStateMu.Lock()
+		a.desiredStateSynced = false
+		a.desiredStateMu.Unlock()
+		log.Printf("[desired-state] rejecting snapshot before changing live state: %v", err)
+		return false
 	}
 
 	var missing []string

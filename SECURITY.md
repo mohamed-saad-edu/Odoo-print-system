@@ -30,7 +30,8 @@
 - A refresh token presented after the grace window is treated as reuse/replay: the entire family is revoked, `auth.refresh.reuse_detected` is audited, and a notification email is attempted when an account email is available.
 - Refresh rotation revalidates the live security principal (tenant lifecycle, tenant membership/role, verified customer email, or Platform Owner status) before minting a new access token.
 - Password reset revokes every refresh family for the affected user.
-- Browser access cookies are HttpOnly + SameSite=Lax; browser refresh credentials are separate HttpOnly + SameSite=Strict cookies (`mgr_refresh`, `cust_refresh`, `plt_refresh`) and are path-scoped to their auth namespaces (`/api/auth/manager`, `/api/auth`, `/api/platform/auth`) so logout can revoke a family even after the 15-minute access token expires. The packaged desktop manager keeps the refresh credential only in Rust process memory; the Tauri renderer cannot supply its own refresh header to the native transport, and desktop token responses require the fixed Tauri local origin injected by Rust.
+- Browser access cookies are HttpOnly + SameSite=Lax; browser refresh credentials are separate HttpOnly + SameSite=Strict cookies (`mgr_refresh`, `cust_refresh`, `plt_refresh`) and are path-scoped to their auth namespaces (`/api/auth/manager`, `/api/auth`, `/api/platform/auth`) so the corresponding logout endpoint can revoke a family even after the 15-minute access token expires. The browser shell calls manager logout before generic logout.
+- The packaged desktop uses its paired Agent identity through the bundled Agent CLI. The Tauri renderer supplies bounded request parameters to the native bridge, not Agent credentials or manager refresh headers (`src/desktop/lib/ipc.ts`, `src-tauri/src/commands.rs`). It does not use the browser's manager-refresh session flow.
 - Existing pre-v2 manager/customer/platform sessions remain on the legacy `manager_sessions`/`platform_sessions` validation path until their original 8-hour expiry; no blanket forced logout is introduced.
 - Session kinds are explicit: Platform APIs accept only v2 `kind=platform`; tenant-scoped Workspace APIs explicitly accept v2 `kind=manager` or `kind=customer` because both represent authenticated workspace principals with the same tenant/role authorization model. Customer authentication endpoints generate `kind=customer`, while manager login generates `kind=manager`. A v2 token never falls through into legacy validation as a different session kind.
 - Legacy `manager_sessions`/`platform_sessions` rows remain only for compatibility and legacy-session revocation/validation during the migration window.
@@ -76,8 +77,8 @@ The availability tradeoff is intentional: legitimate login, registration, passwo
 
 ## Tenant Isolation
 
-- Application-level: All queries include `tenant_id` filter
-- Database: Composite FK constraints prevent cross-tenant references
+- Application-level: Tenant-scoped routes and services derive tenant context from the authenticated principal and apply tenant/ownership predicates. Global account lookup, authorized Platform operations, and maintenance queries have different scopes; this is application-enforced isolation, not PostgreSQL row-level security.
+- Database: Composite FK constraints enforce tenant consistency on the relations they cover. Relations with single-column references, such as a capture's API key reference, additionally rely on service-layer ownership checks before insertion.
 - Auth: Tenant context derived server-side, never from client-supplied values
 - Session: Tenant bound at authentication, not per-request
 
@@ -89,6 +90,8 @@ The `audit_events` table records:
 - Action (e.g., `agent.registered`, `billing.checkout.session.completed`)
 - Resource type and ID
 - Metadata (JSON)
+
+Persisted audit rows are durable, but not every business operation and audit write share one transaction. For example, `src/lib/agent-control.ts` records pairing-code creation after the business transaction and logs an audit-write failure without rolling back that transaction. Audit availability must therefore be monitored independently.
 
 ## Secrets Management
 
@@ -129,6 +132,8 @@ The pairing-code pepper is derived from `GATEWAY_JWT_SECRET`, which production s
 ## Pairing and Job Delivery
 
 Agent pairing codes are short-lived, hashed, and single-use. Successful pairing mints the long-lived Agent credential; the pairing value is not the Agent identity.
+
+Pairing rate limiting includes a source-IP budget and a bucket keyed by the presented code's hash. The latter limits repeated attempts with the same presented value; distinct guesses use distinct buckets, so it does not by itself aggregate distributed guessing against all valid codes.
 
 Gateway print delivery retains claim-token fencing, stale-claim recovery, and PostgreSQL `SKIP LOCKED` coordination. Jobs with uncertain physical outcomes remain unknown until a later reconciliation establishes the result; they are not blindly retried.
 

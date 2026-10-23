@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { db } from "../src/db";
+import { queueOdooCapture } from "../src/lib/e2e-capture";
 import { createPrintJobForPrinter } from "../src/lib/print-job-service";
 import { POST as printJobsPOST } from "../src/app/api/print/jobs/route";
 import { TenantEntitlementError, TenantPrintQuotaExceededError, getTenantPrintUsage } from "../src/lib/entitlements";
@@ -20,6 +21,77 @@ suite("tenant print quota", () => {
     const entitlements = { max_agents: "unlimited", max_printers: "unlimited", max_jobs_per_minute: "unlimited", max_concurrent_jobs: "unlimited", max_prints_per_period: limit };
     await pool().query(`UPDATE plans SET entitlements = $1::jsonb WHERE id = (SELECT plan_id FROM tenant_subscriptions WHERE tenant_id = $2)`, [JSON.stringify(entitlements), tenantId]);
   }
+
+  it("locks the Agent before the integration key during print admission", async () => {
+    const f = await seedFixture();
+    const key = (await pool().query("SELECT id FROM api_keys WHERE tenant_id = $1", [f.tenantId])).rows[0].id;
+    const blocker = await pool().connect();
+    let print: Promise<unknown> | undefined;
+    try {
+      await blocker.query("BEGIN");
+      await blocker.query("SELECT id FROM agents WHERE id = $1 FOR UPDATE", [f.agentId]);
+      const blockerPid = (await blocker.query("SELECT pg_backend_pid() AS pid")).rows[0].pid;
+      print = createPrintJobForPrinter(f.printerId, payload("agent-key-order"), {
+        tenantId: f.tenantId, requestedBy: "lock-order-test", rateLimitKeyId: key,
+      }).then(value => ({ value }), error => ({ error }));
+      await expect.poll(async () => Number((await pool().query(
+        "SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock' AND query LIKE '%agents%' AND $1 = ANY(pg_blocking_pids(pid))",
+        [blockerPid],
+      )).rows[0].n)).toBe(1);
+      await blocker.query("SET LOCAL lock_timeout = '150ms'");
+      // Agent capture claim uses this Agent -> key order. It must be able to
+      // acquire the key while a concurrent print is waiting for its Agent.
+      await expect(blocker.query("SELECT id FROM api_keys WHERE id = $1 FOR UPDATE", [key])).resolves.toMatchObject({ rowCount: 1 });
+    } finally {
+      await blocker.query("ROLLBACK");
+      blocker.release();
+      await print;
+    }
+    expect(await print).toMatchObject({ value: expect.anything() });
+  });
+
+  it("admits concurrent capture and physical print without a subscription/runtime lock inversion", async () => {
+    const f = await seedFixture();
+    const key = (await pool().query("SELECT id FROM api_keys WHERE tenant_id = $1", [f.tenantId])).rows[0].id;
+    const blocker = await pool().connect();
+    const previousCaptureEnabled = process.env.YASEIR_E2E_CAPTURE_ENABLED;
+    process.env.YASEIR_E2E_CAPTURE_ENABLED = "1";
+    let capture: Promise<unknown> | undefined;
+    let print: Promise<unknown> | undefined;
+    try {
+      await blocker.query("BEGIN");
+      await blocker.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`e2e_capture:tenant:${f.tenantId}`]);
+      capture = queueOdooCapture({ id: key, tenantId: f.tenantId }, {
+        agentId: f.agentId, idempotencyKey: "capture-lock-order-test", paperMm: 0,
+        payload: { type: "pdf", encoding: "base64", data: "JVBERi0xLjQK" }, fingerprint: "capture-lock-order-test",
+      }).then(value => ({ value }), error => ({ error }));
+      await expect.poll(async () => Number((await pool().query(
+        "SELECT count(*)::int AS n FROM pg_locks WHERE locktype = 'advisory' AND NOT granted AND objid = hashtext($1)::oid",
+        [`e2e_capture:tenant:${f.tenantId}`],
+      )).rows[0].n)).toBe(1);
+      const capturePid = (await pool().query(
+        "SELECT pid FROM pg_locks WHERE locktype = 'advisory' AND NOT granted AND objid = hashtext($1)::oid",
+        [`e2e_capture:tenant:${f.tenantId}`],
+      )).rows[0].pid;
+      let printSettled = false;
+      print = createPrintJobForPrinter(f.printerId, payload("concurrent-capture"), {
+        tenantId: f.tenantId, requestedBy: "lock-order-test", idempotencyKey: "print-lock-order-test", rateLimitKeyId: key,
+      }).then(value => ({ value }), error => ({ error })).finally(() => { printSettled = true; });
+      await expect.poll(async () => printSettled || Number((await pool().query(
+        "SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock' AND query LIKE '%tenant_subscriptions%' AND $1 = ANY(pg_blocking_pids(pid))",
+        [capturePid],
+      )).rows[0].n) > 0).toBe(true);
+      await blocker.query("COMMIT");
+      const results = await Promise.all([capture, print]);
+      expect(results).toEqual([expect.objectContaining({ value: expect.anything() }), expect.objectContaining({ value: expect.anything() })]);
+    } finally {
+      await blocker.query("ROLLBACK");
+      blocker.release();
+      await Promise.all([capture, print]);
+      if (previousCaptureEnabled === undefined) delete process.env.YASEIR_E2E_CAPTURE_ENABLED;
+      else process.env.YASEIR_E2E_CAPTURE_ENABLED = previousCaptureEnabled;
+    }
+  });
 
   it("enforces a finite print quota before the job row is inserted", async () => {
     const f = await seedFixture();
@@ -230,6 +302,35 @@ suite("tenant print quota", () => {
     expect(Number((await pool().query(
       "SELECT count(*)::int AS n FROM print_jobs WHERE tenant_id = $1", [f.tenantId],
     )).rows[0].n)).toBe(1);
+  });
+
+  it("does not charge a print whose explicit expiry elapsed while admission waited for its tenant lock", async () => {
+    const f = await seedFixture();
+    await setPlanLimit(f.tenantId, 1);
+    const blocker = await pool().connect();
+    let result: Promise<unknown> | undefined;
+    try {
+      await blocker.query("BEGIN");
+      await blocker.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`print_jobs:tenant:${f.tenantId}`]);
+      const clock = await blocker.query("SELECT clock_timestamp() AS now");
+      const expiresAt = new Date(new Date(clock.rows[0].now).getTime() + 500);
+      result = createPrintJobForPrinter(f.printerId, payload("expired-during-admission"), {
+        tenantId: f.tenantId, requestedBy: "quota-test", idempotencyKey: "expired-during-admission", expiresAt,
+      }).then(value => ({ value }), error => ({ error }));
+      await expect.poll(async () => Number((await pool().query(
+        "SELECT count(*)::int AS n FROM pg_locks WHERE locktype = 'advisory' AND NOT granted AND objid = hashtext($1)::oid",
+        [`print_jobs:tenant:${f.tenantId}`],
+      )).rows[0].n)).toBe(1);
+      await blocker.query("SELECT pg_sleep(0.75)");
+      await blocker.query("COMMIT");
+      expect(await result).toMatchObject({ error: { code: "INVALID_REQUEST" } });
+      expect((await getTenantPrintUsage(db, f.tenantId)).used).toBe(0);
+      expect(Number((await pool().query("SELECT count(*)::int AS n FROM print_jobs WHERE tenant_id = $1", [f.tenantId])).rows[0].n)).toBe(0);
+    } finally {
+      await blocker.query("ROLLBACK");
+      blocker.release();
+      await result;
+    }
   });
 
   it("starts a new quota bucket when Stripe advances the subscription period", async () => {

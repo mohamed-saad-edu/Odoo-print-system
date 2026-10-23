@@ -3177,12 +3177,15 @@ msgid "The selected Gateway Runtime Printer is not found."
 msgstr "طابعة الـ Gateway المحدَّدة غير موجودة."
 
 #. module: print_gateway
+#: code:addons/print_gateway/models/print_policy.py:0
 #: code:addons/print_gateway/models/runtime_assignment.py:0
 msgid "The selected Odoo Branch is not available to the current user."
 msgstr "فرع Odoo المحدَّد غير متاح للمستخدم الحالي."
 
 #. module: print_gateway
 #: code:addons/print_gateway/models/binding.py:0
+#: code:addons/print_gateway/models/gateway_config.py:0
+#: code:addons/print_gateway/models/print_policy.py:0
 #: code:addons/print_gateway/models/runtime_assignment.py:0
 msgid "The selected Odoo Company is not available to the current user."
 msgstr "شركة Odoo المحدَّدة غير متاحة للمستخدم الحالي."
@@ -4220,3 +4223,118 @@ msgstr "قاعدة الطباعة «%(binding)s» لا تطبع التقرير �
 #: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_intent_form
 msgid "Automatic printing is waiting to retry. Check the issue below and correct the automation rule or printer configuration if needed."
 msgstr "الطباعة التلقائية بانتظار إعادة المحاولة. راجع المشكلة أدناه وصحّح قاعدة الأتمتة أو إعدادات الطابعة عند الحاجة."
+
+#. module: print_gateway
+#: code:addons/print_gateway/models/print_job.py:0
+msgid "Print jobs must be created through the authorized print router."
+msgstr "يجب إنشاء مهام الطباعة عبر موجّه الطباعة المعتمد."
+
+#. module: print_gateway
+#: code:addons/print_gateway/models/print_job.py:0
+msgid "Print job routing and content may only be changed by the trusted print service."
+msgstr "لا يجوز تغيير توجيه مهمة الطباعة ومحتواها إلا بواسطة خدمة الطباعة الموثوقة."
+
+#. module: print_gateway
+#: code:addons/print_gateway/models/print_intent.py:0
+msgid "Print intents must be created by an authorized business event."
+msgstr "يجب إنشاء طلبات الطباعة بواسطة حدث أعمال معتمد."
+
+#. module: print_gateway
+#: code:addons/print_gateway/models/print_intent.py:0
+msgid "Print intent source and policy may only be changed by the trusted print service."
+msgstr "لا يجوز تغيير مصدر طلب الطباعة وسياسته إلا بواسطة خدمة الطباعة الموثوقة."
+
+#. module: print_gateway
+#: code:addons/print_gateway/models/print_job.py:0
+msgid "A print operation's Gateway namespace is immutable after creation."
+msgstr "لا يمكن تغيير هوية عملية الطباعة في Gateway بعد إنشائها."
+
+#. module: print_gateway
+#: model:ir.model.fields,help:print_gateway.field_print_gateway_gateway_config__idempotency_v2_enabled
+msgid "Enable only after Gateway tenant strict cutover, receipt backup and historical outbox review."
+msgstr "لا تفعّل هذا الخيار إلا بعد التحويل الصارم في Gateway ونسخ الإيصالات احتياطيًا ومراجعة سجل الإرسال القديم."
+
+#. module: print_gateway
+#: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_config_form
+msgid "Enrolled Gateway installation UUID"
+msgstr "معرّف التثبيت المسجّل في Gateway (UUID)"
+
+#. module: print_gateway
+#: model:ir.model.fields,field_description:print_gateway.field_print_gateway_gateway_config__installation_id
+msgid "Gateway Installation ID"
+msgstr "معرّف تثبيت Gateway"
+
+#. module: print_gateway
+#: code:addons/print_gateway/models/print_job.py:0
+msgid "Gateway enrollment proof is invalid or missing; job remains safely queued."
+msgstr "إثبات تسجيل التثبيت في Gateway غير صالح أو غير موجود؛ ستظل مهمة الطباعة في قائمة الانتظار بأمان."
+
+#. module: print_gateway
+#: model:ir.model.fields,field_description:print_gateway.field_print_gateway_print_job__gateway_idempotency_version
+msgid "Gateway idempotency version"
+msgstr "إصدار هوية منع تكرار العمليات في Gateway"
+
+#. module: print_gateway
+#: code:addons/print_gateway/models/print_job.py:0
+msgid "Gateway installation cutover is not active; the outbox has been preserved."
+msgstr "لم يُفعّل الانتقال إلى هوية التثبيت في Gateway؛ وتم الاحتفاظ بسجل الإرسال دون فقد."
+
+#. module: print_gateway
+#: model:ir.model.fields,field_description:print_gateway.field_print_gateway_print_job__gateway_installation_id
+msgid "Gateway installation id"
+msgstr "معرّف تثبيت Gateway"
+
+#. module: print_gateway
+#: model:ir.model.fields,field_description:print_gateway.field_print_gateway_print_job__gateway_wire_idempotency_key
+msgid "Gateway wire idempotency key"
+msgstr "مفتاح منع تكرار الطباعة المرسل للGateway"
+
+#. module: print_gateway
+#: code:addons/print_gateway/models/print_job.py:0
+msgid "Installation proof is unavailable; print request preserved without sending."
+msgstr "إثبات هوية التثبيت غير متاح؛ تم الاحتفاظ بطلب الطباعة دون إرساله."
+
+#. module: print_gateway
+#: code:addons/print_gateway/models/print_job.py:0
+msgid "Printing is paused: the enrolled Odoo installation proof is unavailable."
+msgstr "الطباعة متوقفة مؤقتًا: إثبات تسجيل تثبيت أودو غير متاح."
+
+#. module: print_gateway
+#: code:addons/print_gateway/models/print_job.py:0
+msgid "Printing was paused to prevent a duplicate historical operation; reconcile the Gateway receipt before retrying."
+msgstr "تم إيقاف الطباعة لتجنّب تكرار عملية قديمة؛ يجب مطابقة إيصال Gateway قبل إعادة المحاولة."
+
+#. module: print_gateway
+#: code:addons/print_gateway/models/print_job.py:0
+msgid "Stored versioned print identity is incomplete."
+msgstr "هوية الطباعة المخزنة ذات الإصدار المحدد غير مكتملة."
+
+#. module: print_gateway
+#: code:addons/print_gateway/models/print_router.py:0
+msgid "The print binding moved outside the current Odoo scope before the durable job could be created."
+msgstr "انتقل ربط الطابعة خارج نطاق صلاحيات أودو الحالي قبل إنشاء مهمة الطباعة الدائمة."
+
+#. module: print_gateway
+#: code:addons/print_gateway/models/print_job.py:0
+msgid "The registered print installation identity is invalid."
+msgstr "هوية تثبيت الطباعة المسجّلة غير صالحة."
+
+#. module: print_gateway
+#: model:ir.model.fields,field_description:print_gateway.field_print_gateway_gateway_config__idempotency_v2_enabled
+msgid "Use Version 2 Durable Print Identities"
+msgstr "استخدام الإصدار الثاني من هويات الطباعة الدائمة"
+
+#. module: print_gateway
+#: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_config_form
+msgid "Version 2 Identity Cutover"
+msgstr "الانتقال إلى الإصدار الثاني من هوية التثبيت"
+
+#. module: print_gateway
+#: code:addons/print_gateway/models/print_job.py:0
+msgid "Versioned print identity snapshot is missing; operator reconciliation required."
+msgstr "لقطة هوية الطباعة ذات الإصدار المحدد مفقودة؛ تلزم المطابقة بواسطة المسؤول."
+
+#. module: print_gateway
+#: code:addons/print_gateway/models/gateway_config.py:0
+msgid "Versioned printing requires a Gateway-enrolled installation ID and out-of-database proof."
+msgstr "تتطلب الطباعة بهوية الإصدار الجديد معرّف تثبيت مسجّلًا في Gateway وإثباتًا محفوظًا خارج قاعدة البيانات."

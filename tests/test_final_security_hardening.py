@@ -608,3 +608,96 @@ def test_delivery_unknown_path_requires_real_claim_token_contract():
     assert "claimToken: string," in unknown
     assert "claimToken: string | null" not in unknown
     assert "claimToken: string," in fencing[fencing.index("export function fencedDeliveryWrite"):]
+
+
+def test_agent_desired_state_and_registry_and_secret_store_enforce_preread_acl_and_toctou():
+    desired = read("agent/internal/agent/desired_state.go")
+    assert "os.Executable()" not in desired
+    load_start = desired.index("func (a *Agent) loadDesiredState() error {")
+    load_end = desired.index("func (a *Agent) markGatewayOwned", load_start)
+    load_body = desired[load_start:load_end]
+    assert "os.Lstat(a.desiredStatePath)" in load_body
+    assert "!lstatInfo.Mode().IsRegular()" in load_body
+    assert "maxDesiredStateBytes" in load_body
+    assert "config.EnsureSecureDirectoryACL(filepath.Dir(a.desiredStatePath))" in load_body
+    assert "config.EnsureSecureFileACL(a.desiredStatePath)" in load_body
+    assert "os.SameFile(lstatInfo, info)" in load_body
+
+    persist_start = desired.index("func (a *Agent) persistDesiredState() error {")
+    persist_body = desired[persist_start:]
+    assert "config.ReplaceFile(tmpName, a.desiredStatePath)" in persist_body
+
+    registry = read("agent/internal/printer/registry.go")
+    reg_start = registry.index("func loadRegistryPartitionedLocked(registryPath string)")
+    reg_end = registry.index("func withRegistrationSource(", reg_start)
+    reg_body = registry[reg_start:reg_end]
+    assert "os.Lstat(registryPath)" in reg_body
+    assert "!info.Mode().IsRegular()" in reg_body
+    assert "maxRegistryBytes" in reg_body
+    assert "config.EnsureSecureDirectoryACL(filepath.Dir(registryPath))" in reg_body
+    assert "config.EnsureSecureFileACL(registryPath)" in reg_body
+    assert "os.SameFile(info, openInfo)" in reg_body
+
+    secure_store = read("agent/internal/storage/secure.go")
+    read_start = secure_store.index("func readEntries(p string)")
+    read_body = secure_store[read_start:]
+    assert "os.Lstat(p)" in read_body
+    assert "!lstatInfo.Mode().IsRegular()" in read_body
+    assert "maxSecretStoreBytes" in read_body
+    assert "EnsureSecureDirectoryACL(filepath.Dir(p))" in read_body
+    assert "EnsureSecureFileACL(p)" in read_body
+    assert "os.SameFile(lstatInfo, openInfo)" in read_body
+
+
+def test_ipp_basic_auth_requires_tls_or_loopback_transport():
+    ipp = read("agent/internal/printer/ipp.go")
+    assert "func allowIPPCredentialsOverTransport(u *url.URL) bool" in ipp
+    assert 'strings.EqualFold(u.Scheme, "https")' in ipp
+    assert "ip.IsLoopback()" in ipp
+    assert "allowIPPCredentialsOverTransport(req.URL)" in ipp
+    assert ipp.count("allowIPPCredentialsOverTransport(req.URL)") >= 2
+
+
+def test_auth_rate_limit_cleanup_uses_bounded_skip_locked_batch():
+    rate_limit = read("src/lib/auth-rate-limit.ts")
+    start = rate_limit.index("export async function cleanupAuthRateLimits")
+    body = rate_limit[start:]
+    assert "FOR UPDATE SKIP LOCKED" in body
+    assert "LIMIT ${limit}" in body
+
+
+def test_server_trusted_proxy_gate_does_not_allocate_whatwg_headers_or_crash_on_obs_text():
+    server_src = read("server.ts")
+    assert "if (!isTrustedProxyRequest(req))" in server_src
+    assert "new Headers()" not in server_src
+    tp_src = read("src/server/trusted-proxy.ts")
+    assert "if (Array.isArray(raw)) return false;" in tp_src
+    assert 'if (!supplied || supplied.includes(",")) return false;' in tp_src
+
+
+def test_odoo_batch_status_and_ambiguous_lookup_validate_json_response_shape():
+    pj = read("odoo_addons/print_gateway/models/print_job.py")
+    assert 'if not isinstance(body, dict) or not isinstance(body.get("jobs"), list):' in pj
+    assert 'raise ValueError("Gateway batch-status response missing jobs list")' in pj
+    assert 'raise ValueError("Gateway ambiguous-submission lookup returned a non-object payload")' in pj
+
+
+def test_agent_main_reloads_config_resets_backoff_and_resolves_abs_log_dir():
+    main_go = read("agent/cmd/agent/main.go")
+    assert "freshCfg, loadErr := config.Load(p.configPath)" in main_go
+    assert "if time.Since(runStart) >= maxRestartBackoff {" in main_go
+    assert "logDir = filepath.Dir(config.DefaultConfigPath())" in main_go
+    assert "config.ExecutableDir()" not in main_go
+
+
+def test_all_session_and_token_housekeeping_queries_use_bounded_skip_locked_batches():
+    for rel in ("src/lib/auth-rate-limit.ts", "src/lib/manager-auth.ts", "src/lib/platform-auth.ts", "src/lib/session-tokens.ts"):
+        src = read(rel)
+        assert "FOR UPDATE SKIP LOCKED" in src, f"Missing FOR UPDATE SKIP LOCKED in {rel}"
+        assert "LIMIT ${limit}" in src, f"Missing LIMIT ${{limit}} in {rel}"
+
+
+def test_request_id_header_rejects_control_characters_and_whitespace():
+    log_src = read("src/lib/log.ts")
+    assert "const SAFE_REQUEST_ID_RE = /^[A-Za-z0-9._:-]{1,128}$/;" in log_src
+    assert "SAFE_REQUEST_ID_RE.test(existing)" in log_src

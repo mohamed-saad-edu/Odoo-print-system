@@ -6,8 +6,6 @@ import { sql, type SQL } from "drizzle-orm";
 // reason to retain the unique active-agent slot indefinitely. This operation
 // is invoked opportunistically when an Agent polls or a manager starts/views
 // a scan; it runs under PostgreSQL row-lock arbitration with report/cancel.
-export const DISCOVERY_STALE_AFTER_MINUTES = 10;
-
 export async function expireStaleAgentDiscovery(
   execute: (query: SQL) => Promise<unknown>,
   tenantId: string,

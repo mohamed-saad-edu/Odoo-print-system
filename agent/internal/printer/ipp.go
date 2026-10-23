@@ -242,6 +242,9 @@ func (p *IPPPrinter) printDocument(ctx context.Context, data []byte, documentFor
 	req.Header.Set("Accept", "application/ipp")
 	req.Header.Set("Expect", "")
 	if p.creds != nil {
+		if !allowIPPCredentialsOverTransport(req.URL) {
+			return fmt.Errorf("IPP credentials require TLS (ipps:// or https://) for non-loopback endpoint %s", p.URL)
+		}
 		if pass, ok := p.creds.Password(); ok {
 			req.SetBasicAuth(p.creds.Username(), pass)
 		}
@@ -457,10 +460,15 @@ func (p *IPPPrinter) getPrinterAttributes(ctx context.Context) (map[string]strin
 	req.Header.Set("Content-Type", "application/ipp")
 	req.Header.Set("Accept", "application/ipp")
 	if p.creds != nil {
+		if !allowIPPCredentialsOverTransport(req.URL) {
+			return nil, fmt.Errorf("IPP credentials require TLS (ipps:// or https://) for non-loopback endpoint %s", p.URL)
+		}
 		if pass, ok := p.creds.Password(); ok {
 			req.SetBasicAuth(p.creds.Username(), pass)
 		}
 	}
+
+	// Defense-in-depth: never transmit Basic Auth credentials over non-TLS LAN transports.
 	client := &http.Client{
 		Transport: ippDirectTransport,
 		Timeout:   5 * time.Second,
@@ -741,4 +749,19 @@ func ippStatusText(status uint16) string {
 	default:
 		return fmt.Sprintf("unknown-0x%04x", status)
 	}
+}
+
+func allowIPPCredentialsOverTransport(u *url.URL) bool {
+	if u == nil {
+		return false
+	}
+	if strings.EqualFold(u.Scheme, "https") {
+		return true
+	}
+	host := strings.TrimSpace(u.Hostname())
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }

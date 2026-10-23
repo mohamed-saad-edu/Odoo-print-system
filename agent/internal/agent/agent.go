@@ -243,6 +243,10 @@ type Agent struct {
 	captureMu sync.Mutex
 	// terminalReportMu prevents concurrent terminal-status reporting goroutines.
 	terminalReportMu sync.Mutex
+	// Guarded by terminalReportMu. Advance across rejected original claims
+	// without deleting evidence; wrap to retry them after the complete scan.
+	terminalReportAfterID   string
+	terminalReportThroughID string
 	// Execution fence driven by Gateway lifecycle responses. When the
 	// Gateway reports this agent disabled/retired (heartbeat 409), the
 	// agent must stop accepting new work instead of heartbeating and
@@ -287,6 +291,10 @@ type Agent struct {
 	shutdownGate sync.RWMutex
 	// runtimeWG tracks background goroutines owned by Run until shutdown drains them.
 	runtimeWG sync.WaitGroup
+	// runtimeActive permits a bounded drain without spawning a WaitGroup
+	// waiter that would itself survive a wedged native/control-plane call.
+	// A task retains ownership until all its tracked children are registered.
+	runtimeActive atomic.Int64
 
 	// rejectQueue is the bounded hand-back path used by the WS reader when
 	// local admission is saturated. The reader never performs the HTTP PATCH
@@ -514,7 +522,9 @@ func (a *Agent) addPrinter(id string, p printer.Printer, pc config.PrinterConfig
 		return false
 	}
 	lock := a.getPrinterLock(id)
-	lock.Lock()
+	if !lockPrinterUntil(lock, a.shutdownCh) {
+		return false
+	}
 	defer lock.Unlock()
 	a.printersMu.Lock()
 	defer a.printersMu.Unlock()
@@ -943,6 +953,13 @@ func (a *Agent) TestPrinter(printerID string) error {
 // defer window between removing the in-flight marker and the goroutine's final
 // Done. The shutdown gate must already be closed before Close is called.
 func (a *Agent) Close() error {
+	if remaining := a.runtimeActive.Load(); remaining > 0 {
+		log.Printf("WARNING: leaving local queue open during shutdown because %d runtime task(s) are still in flight", remaining)
+		return nil
+	}
+	// As with the physical-job ownership map below, zero ownership precedes
+	// the last goroutine's final Done. Join that defer before closing resources.
+	a.runtimeWG.Wait()
 	if remaining := a.inFlightCount(); remaining > 0 {
 		log.Printf("WARNING: leaving local queue open during shutdown because %d accepted job handler(s) are still in flight", remaining)
 		return nil
@@ -1053,11 +1070,35 @@ func firstLineOfBody(body []byte) string {
 }
 
 func (a *Agent) launchTracked(fn func()) {
+	a.runtimeActive.Add(1)
 	a.runtimeWG.Add(1)
 	go func() {
-		defer a.runtimeWG.Done()
+		defer func() {
+			a.runtimeActive.Add(-1)
+			a.runtimeWG.Done()
+		}()
 		fn()
 	}()
+}
+
+func (a *Agent) waitForRuntimeUntil(deadline time.Time) bool {
+	timer := time.NewTimer(max(time.Until(deadline), time.Millisecond))
+	defer timer.Stop()
+	ticker := time.NewTicker(25 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if a.runtimeActive.Load() == 0 {
+			// Run has stopped launching roots; no tracked parent remains that
+			// can register a child. Join the final Done defer after zero.
+			a.runtimeWG.Wait()
+			return true
+		}
+		select {
+		case <-timer.C:
+			return false
+		case <-ticker.C:
+		}
+	}
 }
 
 func (a *Agent) Run(ctx context.Context) error {
@@ -1110,14 +1151,24 @@ func (a *Agent) Run(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			log.Println("Agent stopping...")
+			shutdownDeadline := time.Now().Add(shutdownGrace)
 			a.beginShutdown()
 			if c := a.getWSConn(); c != nil {
 				if err := c.Close(); err != nil {
 					log.Printf("WebSocket shutdown close failed: %v", err)
 				}
 			}
-			a.runtimeWG.Wait()
-			if !a.waitForJobs() {
+			if !a.waitForRuntimeUntil(shutdownDeadline) {
+				// Capture metadata and OS/filesystem calls may not observe the
+				// request context. Keep their ownership accounted for: Close
+				// leaves SQLite open, and process teardown contains them.
+				log.Printf("WARNING: shutdown grace elapsed with runtime tasks still in flight; leaving the local queue open for process teardown")
+				return nil
+			}
+			// Control-plane draining is part of the same SCM stop budget. A
+			// ten-second heartbeat tail must not be followed by a fresh 25s
+			// physical-job grace (the service wrapper stops waiting at 27s).
+			if !a.waitForJobsFor(time.Until(shutdownDeadline)) {
 				// Some Windows print APIs (GDI/driver RPC) are synchronous and can
 				// remain blocked past context cancellation. Do not close their live
 				// handles from another goroutine and do not hold the SCM stop path
@@ -1194,7 +1245,23 @@ func (a *Agent) reportPendingTerminalStatuses(ctx context.Context) {
 	}
 	defer a.terminalReportMu.Unlock()
 
-	reports, err := a.queue.PendingTerminalReports(32)
+	var err error
+	if a.terminalReportThroughID == "" || a.terminalReportAfterID >= a.terminalReportThroughID {
+		a.terminalReportAfterID = ""
+		a.terminalReportThroughID, err = a.queue.PendingTerminalReportMaxID()
+	}
+	if err != nil {
+		log.Printf("Terminal status outbox boundary scan failed: %v", err)
+		return
+	}
+	reports, err := a.queue.PendingTerminalReportsAfter(32, a.terminalReportAfterID, a.terminalReportThroughID)
+	if err == nil && len(reports) == 0 && a.terminalReportAfterID != "" {
+		a.terminalReportAfterID = ""
+		a.terminalReportThroughID, err = a.queue.PendingTerminalReportMaxID()
+		if err == nil {
+			reports, err = a.queue.PendingTerminalReportsAfter(32, "", a.terminalReportThroughID)
+		}
+	}
 	if err != nil {
 		log.Printf("Terminal status outbox scan failed: %v", err)
 	}
@@ -1205,6 +1272,7 @@ func (a *Agent) reportPendingTerminalStatuses(ctx context.Context) {
 		if err := a.updateJobStatus(ctx, report.ID, report.Status, report.LastError, report.ClaimToken, report.SpoolerJobID); err != nil {
 			log.Printf("Job %s: pending terminal status report failed: %v", report.ID, err)
 		}
+		a.terminalReportAfterID = report.ID
 	}
 	// Claim receipt is not physical execution. Recover claims that crashed or
 	// were cancelled before BeginPrint with the original fenced token.
@@ -2275,6 +2343,30 @@ func (a *Agent) getPrinterLock(printerID string) *sync.Mutex {
 	return &a.jobLocks[printerLockIndex(printerID)]
 }
 
+// Physical workers retain their printer mutex until they actually return.
+// Reconciliation and queued jobs may stop waiting without releasing that
+// ownership: an uncancellable native call must not pin runtimeWG shutdown or
+// a cancelled waiter's executor reservation indefinitely.
+func lockPrinterUntil(lock *sync.Mutex, done <-chan struct{}) bool {
+	for {
+		select {
+		case <-done:
+			return false
+		default:
+		}
+		if lock.TryLock() {
+			return true
+		}
+		timer := time.NewTimer(25 * time.Millisecond)
+		select {
+		case <-done:
+			timer.Stop()
+			return false
+		case <-timer.C:
+		}
+	}
+}
+
 // sendHeartbeatGuarded makes heartbeat ticks non-reentrant: if the previous
 // heartbeat is still running (slow gateway, many offline printers) the tick
 // is skipped instead of queueing up duplicate probes and HTTP calls.
@@ -2871,7 +2963,9 @@ func (a *Agent) reconcileRegistryPrinters(infos []printer.DeviceInfo) {
 	// out from under an active print.
 	for _, id := range removed {
 		lock := a.getPrinterLock(id)
-		lock.Lock()
+		if !lockPrinterUntil(lock, a.shutdownCh) {
+			return
+		}
 		a.printersMu.Lock()
 		if _, gatewayManaged := a.gatewayOwned[id]; !gatewayManaged {
 			if _, stillPresent := present[id]; !stillPresent {
@@ -2929,6 +3023,10 @@ func (a *Agent) sendHeartbeatContext(parent context.Context) {
 	// different page.
 	keepAlive := a.inFlightJobIDs(64)
 	pages := buildHeartbeatPayloadPages(printerPayload, desiredAcks, gatewayOwnedIDs, privateIDs, keepAlive, inventoryComplete)
+	if len(pages) == 0 {
+		log.Printf("Heartbeat snapshot contains an item larger than the envelope budget; retaining the previous inventory and lifecycle fence")
+		return
+	}
 	for pageIndex, payload := range pages {
 		if parent.Err() != nil {
 			return
@@ -3194,7 +3292,12 @@ func (a *Agent) processJob(ctx context.Context, job map[string]interface{}) {
 	localPrinterID := a.resolvePrinterAlias(printerID)
 
 	lock := a.getPrinterLock(localPrinterID)
-	lock.Lock()
+	if !lockPrinterUntil(lock, ctx.Done()) {
+		// ReserveBeforeDispatch persisted the fenced claim while the job was
+		// waiting. Leave it queued for the startup/periodic hand-back outbox;
+		// no physical attempt began and no live worker's mutex is disturbed.
+		return
+	}
 	defer lock.Unlock()
 
 	if ctx.Err() != nil {

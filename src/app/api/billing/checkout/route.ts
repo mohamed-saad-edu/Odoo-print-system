@@ -176,6 +176,7 @@ async function handleCheckout(req: Request, subscriptionVerified = false): Promi
     | { kind: "plan_conflict"; openPlanId: string }
     | { kind: "recovery_wait"; retryAfterSeconds: number }
     | { kind: "recovery_blocked"; reason: string }
+    | { kind: "verify_checkout"; sessionId: string; customerId: string; revision: number; idempotencyKey: string | null }
     | { kind: "verify_subscription"; subscriptionId: string; customerId: string | null; revision: number; idempotencyKey: string | null }
     | { kind: "reconcile_stale"; priorPlanId: string | null; priorIdempotencyKey: string | null; customerId: string | null; intentCreatedAt: Date | string | null; lastAttemptAt: Date | string | null; revision: number }
     | { kind: "proceed"; intentId: string; idempotencyKey: string; customerId: string | null; requestParams: Record<string, string> };
@@ -226,6 +227,18 @@ async function handleCheckout(req: Request, subscriptionVerified = false): Promi
       }
       if (sub?.billingOperationId) {
         return { kind: "in_progress" as const };
+      }
+
+      if (sub?.checkoutStatus === "open" && checkoutIntentExpired(sub.checkoutSessionExpiresAt)) {
+        // expires_at is a deadline, not evidence that payment did not complete.
+        // A completed Session can already own a subscription while its webhook
+        // is delayed. Verify the exact Session before replacing its intent.
+        if (!sub.checkoutSessionId || !sub.stripeCustomerId) {
+          return { kind: "recovery_blocked" as const, reason: "The previous Checkout Session identity is incomplete. Reconcile it before starting another checkout." };
+        }
+        return { kind: "verify_checkout" as const, sessionId: sub.checkoutSessionId,
+          customerId: sub.stripeCustomerId, revision: sub.stripeStateRevision,
+          idempotencyKey: sub.checkoutIdempotencyKey };
       }
 
       const samePlan = sub?.checkoutPlanId === plan.id;
@@ -414,6 +427,42 @@ async function handleCheckout(req: Request, subscriptionVerified = false): Promi
   }
 
 
+  if (state.kind === "verify_checkout") {
+    const stale = state;
+    try {
+      const session = await stripeRetrieve(`checkout/sessions/${encodeURIComponent(stale.sessionId)}`);
+      if (session.id !== stale.sessionId || session.customer !== stale.customerId
+        || session.client_reference_id !== claims.tenantId || session.mode !== "subscription"
+        || session.status !== "expired" || session.subscription !== null) {
+        return NextResponse.json({ error: "The previous Checkout Session has not been verified as expired without a subscription. Wait for billing synchronization or reconcile it before retrying.", code: "CHECKOUT_RECONCILIATION_BLOCKED" }, { status: 409 });
+      }
+      const cleared = await db.transaction(async (tx) => {
+        await tx.execute(sql`SELECT id FROM tenants WHERE id = ${claims.tenantId} FOR UPDATE`);
+        await requireActiveTenantInTransaction(tx, claims.tenantId);
+        await requireManagerActorInTransaction(tx, claims, "billing.manage");
+        const current = await tx.query.tenantSubscriptions.findFirst({ where: eq(tenantSubscriptions.tenantId, claims.tenantId) });
+        if (!current || current.checkoutStatus !== "open"
+          || current.checkoutSessionId !== stale.sessionId
+          || current.stripeCustomerId !== stale.customerId
+          || current.stripeStateRevision !== stale.revision
+          || current.checkoutIdempotencyKey !== stale.idempotencyKey) return false;
+        await tx.update(tenantSubscriptions).set({
+          checkoutStatus: "none", checkoutPlanId: null, checkoutIdempotencyKey: null,
+          checkoutRequestParams: null, checkoutIntentCreatedAt: null,
+          checkoutSessionId: null, checkoutSessionUrl: null, checkoutSessionExpiresAt: null,
+          updatedAt: sql`clock_timestamp()`,
+        }).where(eq(tenantSubscriptions.tenantId, claims.tenantId));
+        return true;
+      });
+      if (!cleared) return NextResponse.json({ error: "Checkout changed while verifying Stripe state. Retry safely.", code: "CHECKOUT_STATE_CHANGED" }, { status: 409 });
+      return handleCheckout(new Request(req.url, { method: "POST", headers: req.headers, body: JSON.stringify(body) }), subscriptionVerified);
+    } catch (error) {
+      if (error instanceof ManagerMutationAuthorityChangedError || error instanceof TenantDeletedError || error instanceof TenantSuspendedError) return NextResponse.json({ error: error.message }, { status: 403 });
+      logError("billing.checkout_session_verification_failed", { tenantId: claims.tenantId, error: error instanceof Error ? error.message : "unknown" });
+      return NextResponse.json({ error: "Unable to verify the previous Checkout Session. Retry safely.", code: "CHECKOUT_RECONCILIATION_BLOCKED" }, { status: 502 });
+    }
+  }
+
   if (state.kind === "verify_subscription") {
     const stale = state;
     try {
@@ -492,11 +541,18 @@ async function handleCheckout(req: Request, subscriptionVerified = false): Promi
           // would mint a second Stripe subscription for a customer who already
           // has one. Block recovery instead and let an operator reconcile.
           const unmappable = owned.filter((subscription) => {
-            const raw = typeof subscription.status === "string" ? subscription.status : "";
-            return raw.length > 0 && localSubscriptionStatus(raw) === null;
+            return localSubscriptionStatus(subscription.status) === null;
           });
 
-          if (unmappable.length > 0) {
+          // This customer-filtered page must establish ownership for every
+          // result. Silently dropping an unfamiliar identity cannot prove
+          // that the customer's existing subscription is absent.
+          if (owned.length !== page.data.length) {
+            state = {
+              kind: "recovery_blocked",
+              reason: "Stripe subscription ownership could not be verified. Reconcile manually.",
+            };
+          } else if (unmappable.length > 0) {
             state = {
               kind: "recovery_blocked",
               reason: "Stripe reports a subscription whose lifecycle state could not be mapped. Reconcile manually.",
@@ -514,12 +570,17 @@ async function handleCheckout(req: Request, subscriptionVerified = false): Promi
             const metadata = stripeSubscriptionMetadata(current);
             const metadataTenantId = typeof metadata.tenant_id === "string" ? metadata.tenant_id : null;
 
-            if (currentCustomerId !== stale.customerId || (metadataTenantId && metadataTenantId !== claims.tenantId)) {
+            if (current.id !== subscriptionId || currentCustomerId !== stale.customerId || (metadataTenantId && metadataTenantId !== claims.tenantId)) {
               state = {
                 kind: "recovery_blocked",
                 reason: "Stripe subscription identity does not match this workspace.",
               };
-            } else if (currentStatus && STRIPE_NONTERMINAL_SUBSCRIPTION_STATUSES.has(currentStatus)) {
+            } else if (!currentStatus) {
+              state = {
+                kind: "recovery_blocked",
+                reason: "Stripe subscription lifecycle state could not be verified. Reconcile manually.",
+              };
+            } else if (STRIPE_NONTERMINAL_SUBSCRIPTION_STATUSES.has(currentStatus)) {
               recoveredSubscription = current;
             }
           }

@@ -140,8 +140,14 @@ else
       package.json|package-lock.json|npm-shrinkwrap.json)
         mark app docker supply postgres codeql_js
         ;;
-      Dockerfile*|docker-compose*|.dockerignore|deploy/*)
+      Dockerfile*|docker-compose*|Caddyfile|.dockerignore|deploy/*)
         mark docker docker_scan supply
+        ;;
+      security/image-vulnerability-baseline.json)
+        mark docker_scan supply
+        ;;
+      eslint.config.mjs|vitest*.mts|.npmrc|typography/*)
+        mark app codeql_js
         ;;
       contracts/*)
         mark app agent odoo docker codeql_js codeql_py codeql_go

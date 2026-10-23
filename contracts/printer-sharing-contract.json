@@ -37,5 +37,5 @@
     "restore": "Explicit Agent re-share consumes cloud capacity under the existing tenant lock and does not independently activate a disabled/retired lifecycle"
   },
   "odoo": "New printer selections exclude private queues; stale explicit bindings fail closed with PRINTER_NOT_SHARED. Existing saved IDs/job history are preserved without silent fallback or rebinding.",
-  "physicalOutcome": "SUCCESS remains completed submission/handoff and does not prove paper. FAILED is proven pre-dispatch failure; ambiguous submitted output remains UNKNOWN. GetJob/COMPLETE/PRINTED/disappearance cannot manufacture physical proof."
+  "physicalOutcome": "Logical success remains completed submission/handoff and does not prove paper. Logical failed/expired may carry unknown-outcome markers; only proven pre-dispatch failure establishes physical not_printed. Ambiguous submitted output remains physical unknown. GetJob/COMPLETE/PRINTED/disappearance cannot manufacture physical proof."
 }

@@ -61,3 +61,148 @@ def test_runtime_assignment_rejects_nonadministrator():
 @pytest.mark.parametrize("env", [environment(superuser=True), environment(administrator=True)])
 def test_runtime_assignment_preserves_authorized_administration(env):
     source_function("runtime_assignment.py", "_check_admin")(SimpleNamespace(env=env))
+
+
+class _RecordSet(list):
+    def __init__(self, rows, env):
+        super().__init__(rows)
+        self.env = env
+
+
+def test_gateway_config_check_admin_rejects_branch_only_admin_and_inactive_company():
+    check_admin = source_function("gateway_config.py", "_check_admin")
+    check_company = source_function("gateway_config.py", "_check_company_id")
+    root = SimpleNamespace(id=1, parent_id=False, display_name="Root Co")
+    branch = SimpleNamespace(id=2, parent_id=root, display_name="Branch A")
+
+    # Malicious: branch-only admin attempting to mutate root company config
+    branch_env = SimpleNamespace(
+        is_superuser=lambda: False,
+        companies=[branch],
+        user=SimpleNamespace(has_group=lambda name: True, company_ids=[branch]),
+    )
+    with pytest.raises(AccessError):
+        check_admin(_RecordSet([SimpleNamespace(company_id=root)], branch_env))
+    with pytest.raises(ValidationError):
+        check_company(_RecordSet([SimpleNamespace(company_id=root)], branch_env))
+
+    # Malicious: multi-company admin with root in user.company_ids but NOT in active env.companies
+    inactive_root_env = SimpleNamespace(
+        is_superuser=lambda: False,
+        companies=[branch],
+        user=SimpleNamespace(has_group=lambda name: True, company_ids=[root, branch]),
+    )
+    with pytest.raises(AccessError):
+        check_admin(_RecordSet([SimpleNamespace(company_id=root)], inactive_root_env))
+
+    # Legitimate: root company admin with root active in env.companies and user.company_ids
+    legit_root_env = SimpleNamespace(
+        is_superuser=lambda: False,
+        companies=[root],
+        user=SimpleNamespace(has_group=lambda name: True, company_ids=[root, branch]),
+    )
+    check_admin(_RecordSet([SimpleNamespace(company_id=root)], legit_root_env))
+    check_company(_RecordSet([SimpleNamespace(company_id=root)], legit_root_env))
+
+
+def test_print_policy_hierarchy_enforces_company_and_branch_boundaries():
+    check = source_function("print_policy.py", "_check_hierarchy")
+    root = SimpleNamespace(id=1, parent_id=False)
+    branch_a = SimpleNamespace(id=2, parent_id=root)
+    branch_b = SimpleNamespace(id=3, parent_id=root)
+
+    # Malicious: branch_a admin attempting company-wide (branch_id=False) or sibling branch_b policy
+    branch_a_env = SimpleNamespace(
+        is_superuser=lambda: False,
+        companies=[branch_a],
+        user=SimpleNamespace(company_ids=[branch_a]),
+    )
+    for forbidden_branch in (False, branch_b):
+        records = _RecordSet(
+            [SimpleNamespace(company_id=root, branch_id=forbidden_branch, binding_id=False)],
+            branch_a_env,
+        )
+        with pytest.raises(ValidationError):
+            check(records)
+
+    # Legitimate: branch_a admin managing branch_a policy
+    legit_branch_records = _RecordSet(
+        [SimpleNamespace(company_id=root, branch_id=branch_a, binding_id=False)],
+        branch_a_env,
+    )
+    check(legit_branch_records)
+
+    # Legitimate: root admin managing company-wide policy or newly created child branch policy
+    root_admin_env = SimpleNamespace(
+        is_superuser=lambda: False,
+        companies=[root],
+        user=SimpleNamespace(company_ids=[root, branch_a, branch_b]),
+    )
+    for allowed_branch in (False, branch_a, branch_b):
+        records = _RecordSet(
+            [SimpleNamespace(company_id=root, branch_id=allowed_branch, binding_id=False)],
+            root_admin_env,
+        )
+        check(records)
+
+
+def test_runtime_assignment_enforces_active_and_assigned_companies():
+    check = source_function("runtime_assignment.py", "_check_assignment")
+    root = SimpleNamespace(id=1, parent_id=False)
+    branch_a = SimpleNamespace(id=2, parent_id=root)
+    branch_b = SimpleNamespace(id=3, parent_id=root)
+
+    # Malicious: only branch_a is active in env.companies, attempting root-wide or branch_b assignment
+    branch_a_active_env = SimpleNamespace(
+        is_superuser=lambda: False,
+        companies=[branch_a],
+        user=SimpleNamespace(company_ids=[root, branch_a, branch_b]),
+    )
+    for forbidden_branch in (False, branch_b):
+        records = _RecordSet(
+            [SimpleNamespace(company_id=root, branch_id=forbidden_branch, runtime_agent_id="agent-1")],
+            branch_a_active_env,
+        )
+        with pytest.raises(ValidationError):
+            check(records)
+
+    # Legitimate: branch_a active in env.companies and user.company_ids
+    check(
+        _RecordSet(
+            [SimpleNamespace(company_id=root, branch_id=branch_a, runtime_agent_id="agent-1")],
+            branch_a_active_env,
+        )
+    )
+
+    # Legitimate: root company active in env.companies and user.company_ids
+    root_active_env = SimpleNamespace(
+        is_superuser=lambda: False,
+        companies=[root],
+        user=SimpleNamespace(company_ids=[root, branch_a]),
+    )
+    for allowed_branch in (False, branch_a):
+        check(
+            _RecordSet(
+                [SimpleNamespace(company_id=root, branch_id=allowed_branch, runtime_agent_id="agent-1")],
+                root_active_env,
+            )
+        )
+
+
+def test_binding_runtime_scope_enforces_user_company_ids_and_active_companies():
+    source = (ROOT / "odoo_addons/print_gateway/models/binding.py").read_text(encoding="utf-8")
+    assert 'user_companies = getattr(getattr(self.env, "user", None), "company_ids", None)' in source
+    assert "record.company_id not in user_companies" in source
+    assert "record.branch_id not in user_companies" in source
+    assert "no overrides needed" in source
+
+
+def test_pair_agent_wizard_enforces_admin_and_scope_before_http():
+    source = (ROOT / "odoo_addons/print_gateway/models/gateway_config.py").read_text(encoding="utf-8")
+    start = source.index("def action_confirm_pairing(self):")
+    body = source[start:]
+    http_pos = body.index("requests.get(")
+    guard_slice = body[:http_pos]
+    assert 'self.env.user.has_group("base.group_system")' in guard_slice
+    assert "self.branch_id not in user_companies" in guard_slice
+    assert "config.company_id not in allowed_companies" in guard_slice

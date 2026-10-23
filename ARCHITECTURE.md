@@ -37,18 +37,18 @@ Yaseir Cloud Printing Platform is a multi-tenant SaaS platform that enables sile
 
 ## 2. Component Architecture
 
-### 2.1 Central Gateway (Next.js 16.3.8 + Custom Server)
+### 2.1 Central Gateway (Next.js + Custom Server)
 
 **Location**: `src/`, `server.ts`
 
-The Gateway is a Next.js 16.3.8 application with a **custom HTTP server** (`server.ts`) that:
+The Gateway is a Next.js application (dependency versions are pinned in `package.json` and `package-lock.json`) with a **custom HTTP server** (`server.ts`) that:
 - Runs the Next.js request handler for API routes and dashboard UI
 - Attaches a WebSocket server for real-time agent communication (`/api/agent/ws`)
 - Runs periodic maintenance (job sweep, auth cleanup, agent presence sweep)
 - Enforces trusted proxy authentication (Caddy → Gateway)
 - Rejects known placeholder secrets in production mode
 
-**API Route Structure** (84 route files, verified 2026-10-19):
+**API Route Structure** (route handlers under `src/app/api/`):
 - `/api/agent/*` — Agent data plane (heartbeat, jobs, register, discovery)
 - `/api/agents/*` — Agent management (CRUD, discovery sessions)
 - `/api/odoo/*` — Odoo integration endpoints (agents, printers, keys, health)
@@ -127,14 +127,18 @@ Pool → Bridge (schema-per-tenant) → Silo (DB-per-tenant) → Cells/Stamps
 ### Discovery synchronization
 Discovered printer candidates are Gateway runtime observations owned by the Agent. Each Agent report carries a durable `identity_key`; repeated observations for the same Agent converge through the tenant+Agent+identity uniqueness boundary. Omitted devices are not automatically deleted from runtime inventory, and cancelled/failed/partial discovery sessions remain visible for reconciliation.
 
-The system uses four DISTINCT state dimensions that must NOT be collapsed:
+The system keeps the following state dimensions separate:
 
 | Dimension | Values | Owner | Purpose |
 |-----------|--------|-------|---------|
 | **Lifecycle** | `active`, `disabled`, `retired` | Gateway DB | Administrative control |
-| **Runtime** | `online`, `offline` | Gateway (via heartbeat) | Connection liveness |
+| **Agent runtime** | `online`, `offline` | Gateway (via heartbeat) | Connection liveness |
+| **Printer observation** | `online`, `offline`, `busy`, `error`, `unknown` | Agent observations persisted by Gateway | Device health evidence; freshness is evaluated separately |
 | **Availability** | Computed from lifecycle + runtime + lastSeenAt | Gateway logic | Job routing eligibility |
-| **Physical Outcome** | `success`, `failed`, `unknown` | Agent report | Actual print result |
+| **Job status** | `queued`, `claimed`, `printing`, `success`, `failed`, `expired` | Gateway queue and claim-fenced Agent reports | Logical delivery/execution progress |
+| **Physical outcome** | `not_printed`, `printed`, `unknown` | Derived from execution evidence | Whether physical output is proven; current transport success remains `unknown` |
+
+`success` means completed transport submission, not proof of paper output. A `failed` or `expired` job carrying an unknown-outcome marker is physically uncertain. Never use the logical status alone to authorize a reprint. The canonical Gateway definitions are `src/lib/job-status.ts`; Odoo uses its own outbox statuses and maps Gateway results in `models/print_job.py`.
 
 ### Job Status Flow
 
@@ -153,7 +157,8 @@ claimed → queued (fenced rejection / lease timeout)
 |------|-----------|
 | Agent → Gateway | Bearer token: `{agentId}:{secret}` with SHA-256 hash comparison (timing-safe) |
 | Odoo → Gateway | API key (Bearer token) with SHA-256 hash lookup |
-| Manager → Gateway | JWT with per-session JTI, stored in `manager_sessions` |
+| Browser workspace → Gateway | V2 15-minute manager/customer access JWT, checked against a live refresh family and current tenant membership; opaque refresh-token hashes are stored in PostgreSQL. `manager_sessions` is the compatibility path for unexpired pre-v2 sessions. |
+| Packaged desktop → Gateway | Paired Agent identity through the bundled Agent CLI; credentials remain outside the Tauri renderer |
 | Customer → Gateway | Email/password with Argon2id hash; legacy scrypt hashes are upgraded on successful login, with email verification and rate limiting |
 | Proxy → Gateway | `TRUST_PROXY_SECRET` header validation (≥32 chars, reject known placeholders) |
 
@@ -168,7 +173,7 @@ claimed → queued (fenced rejection / lease timeout)
 
 - API input validation is endpoint-specific: structured request payloads use Zod schemas, while simple probes and fixed/primitive inputs use explicit type and length checks.
 - Mutating `/api/*` requests require a valid `Content-Length`, are capped at 8 MiB, and reserve authenticated/unauthenticated concurrent-byte budgets until the response closes
-- Print job payloads are validated against the shared `contracts/print-payload-contract.json` wire contract and mirrored by the database CHECK constraint; PDF data must begin with `%PDF-`
+- Print job payloads are validated against the shared `contracts/print-payload-contract.json` wire vocabulary. The database CHECK enforces the object/type/protocol subset; application validators enforce encoding, byte limits, signatures, and peripheral values. PDF data must begin with `%PDF-` and Gateway admission requires a `%%EOF` marker in the final 4 KiB
 - Printer protocol/capability gating prevents incompatible job routing
 - Diagnostic ZPL/TSPL/ESC/POS pages sanitize user-controlled names for their target command language
 
@@ -176,9 +181,9 @@ claimed → queued (fenced rejection / lease timeout)
 
 ### PostgreSQL + Drizzle ORM
 
-**Schema**: 26 tables defined in `src/db/schema.ts`
-**Migrations**: 85 forward-only migrations (`0000`–`0084`) in `drizzle/`
-**Driver**: `pg` 8.23.0 with connection pool
+**Schema**: 30 tables defined in `src/db/schema.ts`
+**Migrations**: 86 forward-only migrations (`0000`–`0085`) in `drizzle/`
+**Driver**: `pg` with connection pool; exact version is pinned in the Node manifests
 
 ### Key Design Patterns
 

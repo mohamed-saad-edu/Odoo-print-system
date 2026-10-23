@@ -19,8 +19,8 @@ const now = new Date("2026-10-15T12:00:00Z");
 const printer = { id: "selected", tenantId: "tenant", agentId: "agent", name: "Installed queue",
   connectionType: "spooler", protocol: "spooler", capabilities: null, config: { spooler_name: "Installed queue" } };
 
-function replyRows(job: Record<string, unknown>) {
-  const rows = [[printer], [job], [{ id: "agent", lastSeenAt: now }]];
+function replyRows(job: Record<string, unknown>, agent: Record<string, unknown> = { id: "agent", lastSeenAt: now }) {
+  const rows = [[printer], [job], [agent]];
   mocks.select.mockImplementation(() => ({ from: () => ({ where: () => ({ limit: async () => rows.shift() ?? [] }) }) }));
 }
 
@@ -74,5 +74,28 @@ describe("certification evidence and request handling", () => {
     expect(result.steps.find((entry: { id: string }) => entry.id === "final").status).toBe("error");
     expect(result.certified).toBe(false);
     expect(result.blocked).toBe(true);
+  });
+
+  it.each([
+    ["future observation", { status: "online", lifecycle: "active", lastSeenAt: new Date(now.getTime() + 60_000) }],
+    ["offline status", { status: "offline", lifecycle: "active", lastSeenAt: now }],
+    ["disabled lifecycle", { status: "online", lifecycle: "disabled", lastSeenAt: now }],
+    ["retired lifecycle", { status: "online", lifecycle: "retired", lastSeenAt: now }],
+  ] as const)("does not label a queued job's Agent online with %s", async (_label, agent) => {
+    replyRows({ id: "job", status: "queued" }, { id: "agent", ...agent });
+    const result = await (await certify("{}")).json();
+    const step = result.steps.find((entry: { id: string }) => entry.id === "agent");
+    expect(step.status).toBe("blocked");
+    expect(step.message).not.toContain("Agent online");
+    expect(result.certified).toBe(false);
+  });
+
+  it("keeps a current active online Agent pending until the job is claimed", async () => {
+    replyRows({ id: "job", status: "queued" }, { id: "agent", status: "online", lifecycle: "active", lastSeenAt: now });
+    const result = await (await certify("{}")).json();
+    const step = result.steps.find((entry: { id: string }) => entry.id === "agent");
+    expect(step.status).toBe("pending");
+    expect(step.message).toContain("Agent online");
+    expect(result.certified).toBe(false);
   });
 });

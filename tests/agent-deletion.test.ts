@@ -7,10 +7,12 @@ import {
   closePool,
   pool,
   sha256,
+  seedFixture,
 } from "./helpers/pg";
 import { createManagerSession } from "../src/lib/manager-auth";
 import { validateAgent, hashPairingCode } from "../src/lib/agent-auth";
 import { POST as registerPOST } from "../src/app/api/agent/register/route";
+import { createPrintJobForPrinter } from "../src/lib/print-job-service";
 
 let currentManagerToken: string | null = null;
 
@@ -165,6 +167,54 @@ suite("permanent agent deletion lifecycle & invariants", () => {
     expect(a).toBeUndefined();
     expect(p).toBeUndefined();
     expect(j).toBeUndefined();
+  });
+
+  it.each(["replay", "revoked", "new-intent"])("preserves receipt and credential authority when deletion wins after print preflight: %s", async scenario => {
+    const fixture = await seedFixture();
+    currentManagerToken = (await createManagerSession(fixture.tenantId)).token;
+    const key = (await pool().query("SELECT id FROM api_keys WHERE tenant_id=$1", [fixture.tenantId])).rows[0].id;
+    const payload = { type: "pdf", encoding: "base64", data: Buffer.from("%PDF-1.4\n%%EOF\n").toString("base64") };
+    const options = { tenantId: fixture.tenantId, rateLimitKeyId: key, requestedBy: "odoo", idempotencyKey: "accepted-before-delete" };
+    const created = await createPrintJobForPrinter(fixture.printerId, payload, options);
+    await pool().query("UPDATE print_jobs SET status='success' WHERE id=$1", [created.id]);
+    const blocker = await pool().connect();
+    let deletion: Promise<unknown> | undefined;
+    let retry: Promise<unknown> | undefined;
+    try {
+      await blocker.query("BEGIN");
+      await blocker.query("SELECT id FROM agents WHERE id=$1 FOR UPDATE", [fixture.agentId]);
+      const blockerPid = (await blocker.query("SELECT pg_backend_pid() AS pid")).rows[0].pid;
+      deletion = deleteAgent(fixture.agentId).then(value => ({ value }), error => ({ error }));
+      // Deletion owns the admission advisory lock, but has not removed the
+      // inventory yet. The replay's nonlocking preflight still sees it.
+      await expect.poll(async () => Number((await pool().query(
+        "SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE '%agents%' AND $1=ANY(pg_blocking_pids(pid))",
+        [blockerPid],
+      )).rows[0].n)).toBe(1);
+      retry = createPrintJobForPrinter(fixture.printerId, payload, {
+        ...options, idempotencyKey: scenario === "new-intent" ? "unaccepted-intent" : options.idempotencyKey,
+      }).then(value => ({ value }), error => ({ error }));
+      await expect.poll(async () => Number((await pool().query(
+        "SELECT count(*)::int AS n FROM pg_locks WHERE locktype='advisory' AND NOT granted AND objid=hashtext($1)::oid",
+        [`print_jobs:tenant:${fixture.tenantId}`],
+      )).rows[0].n)).toBe(1);
+      if (scenario === "revoked") {
+        await blocker.query("UPDATE api_keys SET revoked_at=clock_timestamp() WHERE id=$1", [key]);
+      }
+      await blocker.query("COMMIT");
+      expect(await deletion).toEqual({ value: { ok: true } });
+      if (scenario === "replay") {
+        expect(await retry).toMatchObject({ value: { id: created.id, status: "success", isReused: true } });
+      } else {
+        expect(await retry).toMatchObject({ error: { code: scenario === "revoked" ? "UNAUTHORIZED" : "PRINTER_OWNER_CHANGED" } });
+      }
+      expect((await pool().query("SELECT id FROM print_jobs WHERE tenant_id=$1", [fixture.tenantId])).rowCount).toBe(0);
+      expect((await pool().query("SELECT id FROM print_job_receipts WHERE tenant_id=$1", [fixture.tenantId])).rows).toEqual([{ id: created.id }]);
+    } finally {
+      await blocker.query("ROLLBACK");
+      blocker.release();
+      await Promise.all([deletion, retry]);
+    }
   });
 
   it("deletes an eligible offline agent with no print jobs and cleans up removable runtime records", async () => {

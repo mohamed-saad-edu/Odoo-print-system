@@ -35,6 +35,17 @@ from odoo.tools import config as odoo_server_config
 _logger = logging.getLogger(__name__)
 
 
+def _validated_gateway_api_key_header(value):
+    """Reject unsafe decrypted keys before any caller can log requests errors."""
+    try:
+        requests.utils.check_header_validity(("Authorization", "Bearer %s" % value))
+    except requests.exceptions.InvalidHeader:
+        # InvalidHeader includes the rejected credential in its message. Do not
+        # retain that exception as a traceback cause in worker/server logs.
+        raise ValidationError("Gateway credential contains invalid request-header characters.") from None
+    return value
+
+
 def _friendly_gateway_request_error(exc, gateway_url):
     """Turn a raw requests failure into an operator-actionable message.
 
@@ -43,6 +54,11 @@ def _friendly_gateway_request_error(exc, gateway_url):
     language frame for Odoo's translation helper.
     """
     url = gateway_url or "the configured Gateway URL"
+    # requests includes the rejected header VALUE in InvalidHeader.__str__.
+    # This formatter feeds persistent diagnostics and must never echo a
+    # malformed Authorization credential (for example one pasted with CR/LF).
+    if isinstance(exc, requests.exceptions.InvalidHeader):
+        return "Gateway request to %s failed: InvalidHeader (check the configured credential and request headers)." % url
     detail = str(exc).strip()[:1500] or exc.__class__.__name__
     if isinstance(exc, requests.exceptions.ConnectionError):
         return (
@@ -142,6 +158,14 @@ class PrintGatewayConfig(models.Model):
         ondelete="restrict", index=True,
     )
     enabled = fields.Boolean(string="Printing Service Enabled", default=False)
+    # Operator-enrolled, Gateway-issued UUID; stored independently of a
+    # rotating API key. The 256-bit proof lives ONLY in the Odoo service env.
+    installation_id = fields.Char(string="Gateway Installation ID", copy=False, groups="base.group_system")
+    idempotency_v2_enabled = fields.Boolean(
+        string="Use Version 2 Durable Print Identities", default=False,
+        copy=False, groups="base.group_system",
+        help="Enable only after Gateway tenant strict cutover, receipt backup and historical outbox review.",
+    )
     enabled_sync_revision = fields.Integer(
         string="Activation Sync Revision", default=0, readonly=True, copy=False,
     )
@@ -391,12 +415,20 @@ class PrintGatewayConfig(models.Model):
 
     @api.constrains("company_id")
     def _check_company_id(self):
+        is_su = getattr(self.env, "is_superuser", lambda: False)()
+        allowed_companies = getattr(self.env, "companies", None)
+        user_companies = getattr(getattr(self.env, "user", None), "company_ids", None)
         for record in self:
             if record.company_id and record.company_id.parent_id:
                 raise ValidationError(
                     _("Gateway Configuration can only be created for parent companies, not branches (%s).")
                     % record.company_id.display_name
                 )
+            if record.company_id and not is_su and (
+                (allowed_companies is not None and record.company_id not in allowed_companies)
+                or (user_companies is not None and record.company_id not in user_companies)
+            ):
+                raise ValidationError(_("The selected Odoo Company is not available to the current user."))
 
     @api.constrains("gateway_url")
     def _check_gateway_url(self):
@@ -432,7 +464,7 @@ class PrintGatewayConfig(models.Model):
         if not value:
             return ""
         try:
-            return decrypt_gateway_api_key(value)
+            return _validated_gateway_api_key_header(decrypt_gateway_api_key(value))
         except (CredentialKeyUnavailable, CredentialDecryptError, ValueError) as exc:
             raise ValidationError(_("Gateway credential protection is unavailable or invalid.")) from exc
 
@@ -445,7 +477,7 @@ class PrintGatewayConfig(models.Model):
             if protected != self.gateway_api_key:
                 self.with_context(skip_enabled_sync=True).sudo().write({"gateway_api_key": protected})
                 self.invalidate_recordset(["gateway_api_key"])
-            return decrypt_gateway_api_key(self.gateway_api_key)
+            return _validated_gateway_api_key_header(decrypt_gateway_api_key(self.gateway_api_key))
         except (CredentialKeyUnavailable, CredentialDecryptError, ValueError) as exc:
             raise ValidationError(
                 _("Gateway credential protection is unavailable or invalid. Configure the deployment-managed credential encryption key before using Gateway printing.")
@@ -1168,16 +1200,37 @@ class PrintGatewayConfig(models.Model):
             )
 
     def _check_admin(self):
+        if getattr(self.env, "is_superuser", lambda: False)():
+            return
         if not self.env.user.has_group("base.group_system"):
             raise AccessError(_("Only Odoo system administrators can change Gateway configuration."))
+        allowed_companies = getattr(self.env, "companies", None)
+        user_companies = getattr(getattr(self.env, "user", None), "company_ids", None)
+        for record in (self if hasattr(self, "__iter__") else ()):
+            company = getattr(record, "company_id", None)
+            if company and (
+                (allowed_companies is not None and company not in allowed_companies)
+                or (user_companies is not None and company not in user_companies)
+            ):
+                raise AccessError(_("Only Odoo system administrators can change Gateway configuration."))
 
     def write(self, vals):
         sync_fields = {"enabled", "gateway_url", "gateway_api_key"}
         skip_enabled_sync = bool(self.env.context.get("skip_enabled_sync"))
-        if set(vals).intersection({"gateway_url", "gateway_api_key", "enabled", "company_id", "runtime_agent_id"}):
+        if set(vals).intersection({"gateway_url", "gateway_api_key", "enabled", "company_id", "runtime_agent_id", "installation_id", "idempotency_v2_enabled"}):
             self._check_admin()
 
         vals = dict(vals)
+        if vals.get("idempotency_v2_enabled"):
+            from ..idempotency_namespace import deployment_proof
+            for record in self:
+                chosen_installation = vals.get("installation_id") or record.installation_id
+                try:
+                    deployment_proof(chosen_installation)
+                except ValueError:
+                    raise ValidationError(_(
+                        "Versioned printing requires a Gateway-enrolled installation ID and out-of-database proof."
+                    )) from None
 
         # URL migration is a durable state machine. Serialize concurrent writes
         # per configuration row before reading the previous endpoint/revision;
@@ -2292,10 +2345,37 @@ class PrintGatewayPairAgentWizard(models.TransientModel):
     )
     def action_confirm_pairing(self):
         self.ensure_one()
+        if not (getattr(self.env, "is_superuser", lambda: False)() or self.env.user.has_group("base.group_system")):
+            raise AccessError(_("Only Odoo system administrators can change Gateway configuration."))
         target = (self.agent_id or "").strip()
         if not target:
             raise ValidationError(_("Please provide a valid Runtime Agent ID."))
         config = self.config_id
+        is_su = getattr(self.env, "is_superuser", lambda: False)()
+        allowed_companies = getattr(self.env, "companies", None)
+        user_companies = getattr(getattr(self.env, "user", None), "company_ids", None)
+        if self.branch_id:
+            if self.branch_id.parent_id != config.company_id:
+                raise ValidationError(
+                    _("The selected Target Branch must belong directly to the configured Odoo Company.")
+                )
+            branch_allowed = allowed_companies is None or (
+                self.branch_id in allowed_companies
+                or (
+                    config.company_id in allowed_companies
+                    and (user_companies is None or config.company_id in user_companies)
+                )
+            )
+            if not is_su and (
+                (user_companies is not None and self.branch_id not in user_companies)
+                or not branch_allowed
+            ):
+                raise AccessError(_("Only Odoo system administrators can change Gateway configuration."))
+        elif not is_su and (
+            (allowed_companies is not None and config.company_id not in allowed_companies)
+            or (user_companies is not None and config.company_id not in user_companies)
+        ):
+            raise ValidationError(_("The selected Odoo Company is not available to the current user."))
         try:
             response = requests.get(
                 "%s/api/odoo/agents" % config._gateway_base(for_request=True),

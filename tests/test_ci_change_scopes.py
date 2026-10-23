@@ -5,6 +5,7 @@ No network, Odoo, Node, or Docker dependency: test the real Bash classifier.
 import os
 import subprocess
 import tempfile
+import textwrap
 from pathlib import Path
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "ci-change-scopes.sh"
@@ -166,3 +167,77 @@ def test_weekly_security_scans_skip_unchanged_builds():
     assert flags["codeql_js"] and flags["codeql_py"] and flags["codeql_go"]
     assert not flags["docker"] and not flags["postgres"]
     assert not flags["app"] and not flags["agent"] and not flags["odoo"]
+
+
+def test_caddyfile_and_baseline_and_lint_config_scopes():
+    caddy_flags = classify("Caddyfile")
+    assert caddy_flags["docker"] and caddy_flags["docker_scan"] and caddy_flags["supply"]
+    assert not caddy_flags["agent"] and not caddy_flags["odoo"]
+
+    baseline_flags = classify("security/image-vulnerability-baseline.json")
+    assert baseline_flags["docker_scan"] and baseline_flags["supply"]
+    assert not baseline_flags["agent"] and not baseline_flags["odoo"] and not baseline_flags["postgres"]
+
+    lint_flags = classify("eslint.config.mjs", "vitest.config.mts", ".npmrc", "typography/tokens.json")
+    assert lint_flags["app"] and lint_flags["codeql_js"]
+    assert not lint_flags["agent"] and not lint_flags["odoo"] and not lint_flags["docker_scan"]
+
+
+def classify_windows(before, head, cwd):
+    """Execute the workflow's actual filter, without mirroring its path rules."""
+    workflow = (SCRIPT.parents[1] / ".github/workflows/build-windows.yml").read_text()
+    step = workflow.split("      - name: Detect Windows-relevant changes\n", 1)[1]
+    body = step.split("        run: |\n", 1)[1].split("\n  windows-pr-smoke:", 1)[0]
+    with tempfile.NamedTemporaryFile() as output:
+        env = dict(os.environ, EVENT_NAME="push", BEFORE_SHA=before,
+                   PR_BASE_SHA="", GITHUB_SHA=head, GITHUB_OUTPUT=output.name)
+        subprocess.run(["bash", "-c", textwrap.dedent(body)], env=env, cwd=cwd,
+                       check=True, capture_output=True, text=True)
+        return dict(line.split("=", 1) for line in Path(output.name).read_text().splitlines())
+
+
+def windows_git_fixture(tmp_path):
+    def git(*args):
+        return subprocess.run(["git", *args], cwd=tmp_path, check=True,
+                              capture_output=True, text=True).stdout.strip()
+
+    git("init", "-q")
+    git("config", "user.email", "ci@example.com")
+    git("config", "user.name", "CI Test")
+    (tmp_path / "README.md").write_text("base\n")
+    git("add", "README.md")
+    git("commit", "-q", "-m", "base")
+    return git, git("rev-parse", "HEAD")
+
+
+def test_windows_rewritten_push_cannot_hide_native_changes_behind_docs_only_diff(tmp_path):
+    git, base = windows_git_fixture(tmp_path)
+    (tmp_path / "agent").mkdir()
+    (tmp_path / "agent/main.go").write_text("package main\n")
+    git("add", "agent/main.go")
+    git("commit", "-q", "-m", "native change whose CI may still be running")
+    superseded_head = git("rev-parse", "HEAD")
+
+    git("checkout", "-q", "-b", "replacement", base)
+    (tmp_path / "agent").mkdir(exist_ok=True)
+    (tmp_path / "agent/main.go").write_text("package main\n")
+    (tmp_path / "README.md").write_text("docs edited while replacing the native commit\n")
+    git("add", "README.md", "agent/main.go")
+    git("commit", "-q", "-m", "replacement native change")
+    replacement_head = git("rev-parse", "HEAD")
+
+    assert git("diff", "--name-only", superseded_head, replacement_head) == "README.md"
+    assert classify_windows(superseded_head, replacement_head, tmp_path) == {
+        "windows": "true", "agent": "true", "rust": "true",
+    }
+
+
+def test_windows_single_parent_docs_push_still_skips_native_jobs(tmp_path):
+    git, base = windows_git_fixture(tmp_path)
+    (tmp_path / "README.md").write_text("ordinary docs update\n")
+    git("add", "README.md")
+    git("commit", "-q", "-m", "docs")
+    assert classify_windows(base, git("rev-parse", "HEAD"), tmp_path) == {
+        "windows": "false", "agent": "false", "rust": "false",
+    }
+

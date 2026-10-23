@@ -4,6 +4,11 @@ const widthRange = (value: unknown): number | null => {
   const n = typeof value === "string" && /^[0-9]+$/.test(value.trim()) ? Number(value.trim()) : value;
   return typeof n === "number" && Number.isInteger(n) && n >= 288 && n <= 576 ? n : null;
 };
+// Agent capability bags are untyped JSON. Never invoke object/array coercion
+// while serializing a printer list or infer a physical size from those values.
+const numericObservation = (value: unknown): number =>
+  typeof value === "number" ? value
+    : typeof value === "string" && value.trim() !== "" ? Number(value) : NaN;
 function dotsForPaper(mm: number, dpi: number | null): number | null {
   if (mm < 40 || mm > 82) return null;
   // Printer manufacturers use different printable margins, even on paper
@@ -36,16 +41,16 @@ export function receiptRasterWidthDots(capabilities: Caps): number | null {
   if (!capabilities || typeof capabilities !== "object" || Array.isArray(capabilities)) return null;
   const explicit = widthRange(capabilities.max_paper_width);
   if (explicit !== null) return explicit;
-  const dpi = Number(capabilities.print_dpi ?? capabilities.dpi);
+  const dpi = numericObservation(capabilities.print_dpi ?? capabilities.dpi);
   const knownDPI = dpi === 180 || dpi === 203 ? dpi : null;
-  const declaredMM = capabilities.paper_width_mm == null ? NaN : Number(capabilities.paper_width_mm);
+  const declaredMM = numericObservation(capabilities.paper_width_mm);
   if (Number.isFinite(declaredMM)) {
     const w = dotsForPaper(declaredMM, knownDPI);
     if (w !== null) return w;
   }
   const widths = capabilities.paper_widths;
   if (Array.isArray(widths) && widths.length) {
-    const values = widths.map(v => v == null || typeof v === "boolean" || (typeof v === "string" && v.trim() === "") ? NaN : Number(v)).filter(Number.isFinite);
+    const values = widths.map(numericObservation).filter(Number.isFinite);
     if (values.length !== widths.length) return null;
     const candidates = values.map(v => dotsForPaper(v, knownDPI));
     // Multiple possible rolls: lay out for the *narrowest* usable width.

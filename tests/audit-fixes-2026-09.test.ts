@@ -10,10 +10,10 @@ function read(path: string): string {
 
 describe("clean-room audit regression contracts (2026-09-29)", () => {
   it("client physical outcome matches the server vocabulary (no unproven state)", () => {
-    // Server derivePhysicalOutcome returns not_printed for claimed/printing;
-    // the client must not invent a fourth state the server never emits.
-    expect(deriveOutcome("claimed", null)).toBe("not_printed");
-    expect(deriveOutcome("printing", null)).toBe("not_printed");
+    // Once an Agent has claimed work, absent confirmation is not proof that
+    // nothing printed; preserve unknown physical outcome on both sides.
+    expect(deriveOutcome("claimed", null)).toBe("unknown");
+    expect(deriveOutcome("printing", null)).toBe("unknown");
     expect(deriveOutcome("success", null)).toBe("unknown");
     expect(deriveOutcome("failed", "AGENT_EXECUTION_TIMEOUT: x")).toBe("unknown");
     expect(deriveOutcome("failed", "ECONNREFUSED")).toBe("not_printed");
