@@ -87,7 +87,7 @@ suite("physical endpoint convergence and credential-row erasure", () => {
     const keyId = keyRow.rows[0].id as string;
     const installationId = "integration-acceptance";
     await pool().query("INSERT INTO odoo_installations(id,tenant_id,name,secret_hash) VALUES ($1,$2,$3,$4)",
-      [installationId, f.tenantId, "Odoo installation", "enrollment-proof"]);
+      [installationId, f.tenantId, "Odoo installation", sha256("enrollment-proof")]);
     await pool().query("INSERT INTO odoo_installation_credentials(tenant_id,installation_id,api_key_id) VALUES ($1,$2,$3)",
       [f.tenantId, installationId, keyId]);
     await pool().query(`INSERT INTO print_jobs
