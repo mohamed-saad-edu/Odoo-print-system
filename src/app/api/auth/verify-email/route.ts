@@ -186,7 +186,7 @@ export async function POST(req: Request) {
     ok: true,
     next: alreadyVerified ? "/login" : `/reset-password?token=${encodeURIComponent(resetToken)}&setup=1`,
     requiresPasswordSetup: !alreadyVerified,
-    invitationJoined,
+    ...(invitationJoined ? { invitationJoined: true } : {}),
   });
   response.headers.set("Cache-Control", "no-store");
   await recordAuthSuccess(ip, rateIdentity).catch((error) => logWarn("auth.verify_email.rate_limit_clear_failed", { ip, error: error instanceof Error ? error.message : "unknown" }));
