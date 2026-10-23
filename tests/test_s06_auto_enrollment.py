@@ -64,3 +64,19 @@ def test_bad_scope_fails_closed_without_credential_generation(tmp_path):
                              ("db", "http://untrusted.example.com")):
         with pytest.raises(ValueError):
             m.local_identity(database, origin, tmp_path)
+
+
+def test_same_database_multiple_root_companies_keep_distinct_enrollments(tmp_path):
+    m = impl()
+    a = m.local_identity("one-odoo-db", "https://gw.example.com", tmp_path,
+                         company_id=1)
+    b = m.local_identity("one-odoo-db", "https://gw.example.com", tmp_path,
+                         company_id=2)
+    assert a["installationId"] != b["installationId"]
+    assert m.deployment_proof(a["installationId"], "one-odoo-db",
+                              "https://gw.example.com", tmp_path,
+                              company_id=1) == a["installationProof"]
+    with pytest.raises(ValueError, match="another Odoo installation"):
+        m.deployment_proof(a["installationId"], "one-odoo-db",
+                           "https://gw.example.com", tmp_path,
+                           company_id=2)
