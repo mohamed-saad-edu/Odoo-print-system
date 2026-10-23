@@ -489,7 +489,7 @@ class PrintGatewayConfig(models.Model):
         self.ensure_one()
         gateway_url = self._gateway_base(for_request=True)
         try:
-            identity = local_identity(self.env.cr.dbname, gateway_url)
+            identity = local_identity(self.env.cr.dbname, gateway_url, company_id=self.company_id.id)
         except (ValueError, OSError, TypeError) as exc:
             raise ValidationError(_(
                 "GATEWAY_INSTALLATION_PROOF_MISSING: Automatic installation identity is "
@@ -514,7 +514,8 @@ class PrintGatewayConfig(models.Model):
             ))
         gateway_url = self._gateway_base(for_request=True)
         try:
-            proof = deployment_proof(installation_id, self.env.cr.dbname, gateway_url)
+            proof = deployment_proof(installation_id, self.env.cr.dbname, gateway_url,
+                                     company_id=self.company_id.id)
         except (ValueError, OSError):
             raise ValidationError(_(
                 "GATEWAY_INSTALLATION_PROOF_MISSING: Automatic installation proof is unavailable."
@@ -1311,6 +1312,7 @@ class PrintGatewayConfig(models.Model):
                         chosen_installation,
                         self.env.cr.dbname,
                         vals.get("gateway_url") or record.gateway_url,
+                        company_id=record.company_id.id,
                     )
                 except ValueError:
                     raise ValidationError(_(
