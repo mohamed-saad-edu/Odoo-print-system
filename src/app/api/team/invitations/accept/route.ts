@@ -12,6 +12,7 @@ import { getServerLocale, makeT } from "../../../../../i18n/server";
 import { findActiveInvitation, joinWorkspaceByInvitation } from "../../../../../lib/invitation-join";
 import { validateCustomer, issueCustomerSession, customerSessionCookie, customerRefreshCookie } from "../../../../../lib/customer-auth";
 import type { ManagerRole } from "../../../../../lib/manager-auth";
+import { credentialVersionFor } from "../../../../../lib/session-tokens";
 
 const headers = { "Cache-Control": "private, no-store", "Referrer-Policy": "no-referrer" };
 
@@ -67,7 +68,7 @@ export async function POST(req: Request) {
 
   const account = await db.query.users.findFirst({
     where: eq(users.email, invitation.email),
-    columns: { id: true, email: true, emailVerifiedAt: true },
+    columns: { id: true, email: true, emailVerifiedAt: true, passwordHash: true },
   });
   if (!account) {
     // No password is collected or chosen by the inviter. The random verifier
@@ -153,7 +154,8 @@ export async function POST(req: Request) {
   let session: Awaited<ReturnType<typeof issueCustomerSession>> | null = null;
   try {
     session = await issueCustomerSession(account.id, membership.tenantId,
-      membership.role as ManagerRole, { ipAddress: ip, userAgent: req.headers.get("user-agent") }, account.email);
+      membership.role as ManagerRole, { ipAddress: ip, userAgent: req.headers.get("user-agent") },
+      account.email, credentialVersionFor(account.id, account.passwordHash));
   } catch (error) {
     logError("team.invitation_session_issue_failed", { error: error instanceof Error ? error.message : "unknown" });
   }
