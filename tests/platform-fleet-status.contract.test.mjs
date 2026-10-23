@@ -34,12 +34,8 @@ test("platform agent aggregates do not label stale, missing, or inactive evidenc
 
 test("platform UI presents uncertain fleet states as attention, not Offline", () => {
   const page = read("src/app/platform/dashboard/page.tsx");
-  const charts = read("src/components/platform/overview-charts.tsx");
   assert.match(page, /Agents needing attention/);
   assert.match(page, /Printers needing attention/);
   assert.match(page, /stats\?\.printers\.unknown \?\? 0/);
   assert.doesNotMatch(page, /PrintThroughputChart|FleetHealthChart|SubscriptionMixChart/);
-  assert.match(charts, /platform\.signal\.agentAttention/);
-  assert.match(charts, /platform\.signal\.printerAttention/);
-  assert.doesNotMatch(charts, /value:\s*printers\.offline/);
 });

@@ -132,7 +132,7 @@ jobs:
       - name: Install dependencies
         run: npm ci --prefer-offline --no-audit --fund=false
       - name: Cross-language production source inventory
-        run: python3 scripts/production-source-audit.py --output production-source-audit.json
+        run: python3 tests/production-source-audit.py --output production-source-audit.json
       - name: Retain full dead-code and integrity candidate report
         if: ${{ always() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

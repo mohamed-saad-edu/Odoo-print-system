@@ -21,7 +21,7 @@ FLAGS = {
     "retired_capture": re.compile(r"\b(?:CaptureTestDocument|TestCenter|e2e_capture_runs)\b|/api/e2e-capture", re.I),
 }
 IMPORTS = re.compile(r"""(?:\bfrom\s*|\bimport\s*\(|\brequire\s*\(|\bimport\s*)['"]([^'"]+)['"]""")
-CONVENTION = re.compile(r"(?:^src/app/|^src/desktop/main\.|^src/desktop/ui\.|^src/db/schema\.|^src/i18n/messages/)")
+CONVENTION = re.compile(r"(?:^src/app/|^src/desktop/main\.|^src/desktop/ui\.|^src/desktop/preview/main\.|^src/db/schema\.|^src/i18n/messages/)")
 
 
 def scan(root: Path):
@@ -53,6 +53,13 @@ def scan(root: Path):
                     ast.parse(content, filename=rel)
                 except SyntaxError as exc:
                     errors.append({"path": rel, "error": "Python syntax", "line": exc.lineno})
+
+    # Include custom root entrypoints so their imports are not falsely marked unused.
+    for root_file in ("server.ts", "proxy.ts", "vite.desktop.config.mts"):
+        target = root / root_file
+        if target.is_file():
+            sources[root_file] = target.read_text(encoding="utf-8")
+            counts["root_entrypoints"] += 1
 
     addon = root / "odoo_addons/print_gateway"
     manifest = addon / "__manifest__.py"
