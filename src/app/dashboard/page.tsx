@@ -68,11 +68,7 @@ export default async function DashboardPage() {
             label={databaseError ? t("dashboard.page.dbUnavailableBadge") : t("dashboard.page.snapshotLoaded")}
           />
         }
-        actions={
-          <>
-            {!databaseError && canMutate.jobsCancel ? <JobCleanupButton /> : null}
-          </>
-        }
+        actions={!databaseError && canMutate.jobsCancel ? <JobCleanupButton /> : undefined}
       />
 
       <PageContainer width="wide">

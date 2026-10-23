@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertTriangle, LayoutDashboard, LifeBuoy } from "lucide-react";
+import { AlertTriangle, LayoutDashboard } from "lucide-react";
 import { Button, Mono } from "../components/ui";
 import { useI18n } from "../i18n/react";
 import { isServerActionVersionMismatch } from "../lib/server-action-version";
@@ -50,13 +50,6 @@ export default function GlobalError({
             )}
             <Button variant={versionSkew ? "secondary" : "primary"} href="/dashboard" icon={<LayoutDashboard className="h-4 w-4" />}>
               {t("error.boundary.backToConsole")}
-            </Button>
-            <Button
-              variant="ghost"
-              href="/system-health"
-              icon={<LifeBuoy className="h-4 w-4" />}
-            >
-              {t("error.boundary.checkHealth")}
             </Button>
           </div>
         </div>

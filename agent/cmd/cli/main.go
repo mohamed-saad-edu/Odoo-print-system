@@ -36,8 +36,6 @@ func main() {
 			return
 		}
 
-
-
 		// The packaged desktop uses the paired Agent identity for Gateway
 		// console requests; it never needs a separate Manager login.
 		if args[0] == "gateway-request" {
