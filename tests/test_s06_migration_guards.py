@@ -32,8 +32,8 @@ def test_forward_migration_registered_in_immutable_drizzle_journal():
     import json
     doc = json.loads((ROOT / "drizzle/meta/_journal.json").read_text())
     tags = [row["tag"] for row in doc["entries"]]
-    assert tags[-4] == "0085_odoo_installation_idempotency"
-    assert tags[-3] == "0086_printer_identity_and_api_key_deletion"
+    assert tags[-5] == "0085_odoo_installation_idempotency"
+    assert tags[-4] == "0086_printer_identity_and_api_key_deletion"
     assert tags[-3] == "0087_odoo_auto_enrollment"
     assert tags[-2] == "0088_retire_e2e_capture"
     assert tags[-1] == "0089_invitation_verification_binding"

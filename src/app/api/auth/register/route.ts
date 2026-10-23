@@ -39,7 +39,7 @@ export async function POST(req: Request) {
   // query parameter on a later verification step.
   const invitation = inviteToken ? await findActiveInvitation(inviteToken) : null;
   if (inviteToken && (!invitation || invitation.email !== email))
-    return setRateLimitHeaders(NextResponse.json({ error: "Invitation expired or for a different email", code: "INVITATION_INVALID" }, { status: 409 }), rate);
+    return setRateLimitHeaders(NextResponse.json({ error: "Invitation expired or for a different email", code: "INVITATION_INVALID" }, { status: 400 }), rate);
   const existing = await db.query.users.findFirst({ where: (u, { eq }) => eq(u.email, email), columns: { id: true, emailVerifiedAt: true } });
   if (existing) return setRateLimitHeaders(NextResponse.json(GENERIC, { status: 202 }), rate);
   const userId = `usr_${nanoid(18)}`;

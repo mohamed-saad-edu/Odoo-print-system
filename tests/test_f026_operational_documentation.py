@@ -15,9 +15,9 @@ def test_migration_inventory_matches_current_journal():
     tags=[entry['tag'] for entry in journal]
     assert tags==[path.stem for path in sql]
     assert len(journal)==len(sql)==90
-    assert journal[-5]['tag']=='0084_printer_cloud_sharing'
-    assert journal[-4]['tag']=='0085_odoo_installation_idempotency'
-    assert journal[-3]['tag']=='0086_printer_identity_and_api_key_deletion'
+    assert journal[-6]['tag']=='0084_printer_cloud_sharing'
+    assert journal[-5]['tag']=='0085_odoo_installation_idempotency'
+    assert journal[-4]['tag']=='0086_printer_identity_and_api_key_deletion'
     assert journal[-3]['tag']=='0087_odoo_auto_enrollment'
     assert journal[-2]['tag']=='0088_retire_e2e_capture'
     assert journal[-1]['tag']=='0089_invitation_verification_binding'
