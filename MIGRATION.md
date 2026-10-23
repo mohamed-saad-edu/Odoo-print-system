@@ -58,8 +58,9 @@ This runs `scripts/db-migrate.ts` which applies all pending migrations from `dri
 | 0083 | 1 | Standalone tenant-scoped E2E capture queue for simulated PDF rendering, without physical print-job accounting |
 | 0084 | 1 | Agent-owned printer cloud sharing and retained version fence, preserving canonical identities/health/lifecycle/history |
 | 0085 | 1 | Additive Gateway-enrolled Odoo installation identities, immutable v2 job associations, audited historical decisions, and opt-in strict cutover; existing print keys and receipts remain untouched |
+| 0086 | 1 | Agent-scoped physical printer endpoint identity, non-authorizing historical API key references and removal of deleted credential tombstones |
 
-**Total**: 86 forward-only SQL migrations (0000–0085), plus retained hash-versioned forward repairs in `scripts/db-migrate.ts`.
+**Total**: 87 forward-only SQL migrations (0000–0086), plus retained hash-versioned forward repairs in `scripts/db-migrate.ts`.
 
 Apply `0084` before deploying the matching Gateway and Agent/Desktop sharing feature. Existing rows default to shared; the owning Agent's newer explicit permission decides subsequent publication. Same-version denial is retained across pages/replays. Private printer/job identities are preserved, and no backfill deletes or disables Windows queues. Keep the protected local sharing file and a compatible Agent/CLI bundle during rollback; see `docs/RELEASE_GATES.md`.
 

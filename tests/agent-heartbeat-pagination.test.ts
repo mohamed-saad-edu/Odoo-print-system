@@ -18,7 +18,16 @@ function makePrinter(id: string) {
     connectionType: "network",
     protocol: "raw",
     status: "online",
-    config: { ip: "10.0.0.10", port: 9100 },
+    // Pagination fixtures must model *distinct physical endpoints*, not
+    // 501 separately named IDs pointing to the very same TCP socket.
+    config: { ip: (() => {
+      const numeric = /^hb-(\d{4})$/.exec(id);
+      if (numeric) return `10.1.${Math.floor(Number(numeric[1]) / 250)}.${(Number(numeric[1]) % 250) + 1}`;
+      if (id === "hb-replacement") return "10.10.10.1";
+      if (id === "hb-over-limit") return "10.10.10.2";
+      if (id === "gateway-owned-deletion-pending") return "10.10.10.3";
+      return "10.0.0.10";
+    })(), port: 9100 },
     capabilities: { supported_protocols: ["raw"] },
   };
 }

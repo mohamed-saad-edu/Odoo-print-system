@@ -406,7 +406,12 @@ export async function POST(req: Request) {
         where: and(eq(printers.tenantId, agent.tenantId), eq(printers.agentId, agent.id)),
       });
       const seenEndpoints = new Set<string>();
+      const knownIds = new Set(knownPhysicalPrinters.map(row => row.id));
       for (let i = sanitizedPrinters.length - 1; i >= 0; i--) {
+        // An already-enrolled stable ID must never be skipped just because
+        // another legacy row describes the same endpoint: its liveness is real.
+        // New IDs are the only candidates for physical deduplication.
+        if (knownIds.has(sanitizedPrinters[i]!.id)) continue;
         const observed = sanitizedPrinters[i]!;
         const key = physicalPrinterIdentityKey(observed);
         if (!key) continue;
