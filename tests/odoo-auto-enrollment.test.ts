@@ -37,4 +37,23 @@ describe("zero-touch Odoo v2 enrollment contracts", () => {
     expect(migration).not.toMatch(/UPDATE\s+"?print_jobs"?/i);
     expect(migration).not.toMatch(/DELETE\s+FROM/i);
   });
+  it("parks enrollment failures in the existing outbox instead of terminalizing them", () => {
+    const config = file("odoo_addons/print_gateway/models/gateway_config.py");
+    const job = file("odoo_addons/print_gateway/models/print_job.py");
+    expect(config).toContain("GATEWAY_INSTALLATION_ENROLLMENT_UNAVAILABLE:");
+    expect(config).toContain("GATEWAY_INSTALLATION_IDENTITY_CONFLICT:");
+    expect(config).toContain("GATEWAY_INSTALLATION_PROOF_MISSING:");
+    expect(job).toContain('"GATEWAY_INSTALLATION_ENROLLMENT_UNAVAILABLE:"');
+    expect(job).toContain('"GATEWAY_INSTALLATION_IDENTITY_CONFLICT:"');
+    expect(job).toContain("persist_submit_state(values)");
+  });
+
+  it("keeps one platform API-key row while representing all installed Odoo databases", () => {
+    const inventory = file("src/app/api/platform/integrations/route.ts");
+    const page = file("src/app/platform/integrations/page.tsx");
+    expect(inventory).toContain("installationCount: sql<number>");
+    expect(inventory).not.toContain(".leftJoin(odooInstallationCredentials,");
+    expect(page).toContain("row.installationCount > 1");
+  });
+
 });
