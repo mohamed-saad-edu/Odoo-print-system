@@ -49,7 +49,7 @@ def wire_key(version, company_id, operation_id, installation_id=None):
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
-def _identity_path(database_name, gateway_origin, data_dir=None):
+def _identity_path(database_name, gateway_origin, data_dir=None, company_id=None):
     """Private per-database, per-Gateway identity OUTSIDE the Odoo database."""
     import os
     import stat
@@ -70,7 +70,7 @@ def _identity_path(database_name, gateway_origin, data_dir=None):
         raise ValueError("Unsafe installation identity directory")
     if os.name == "posix" and (stat.S_IMODE(root.stat().st_mode) & 0o077):
         root.chmod(0o700)
-    scope = json.dumps([database_name, gateway_origin.rstrip("/")],
+    scope = json.dumps([database_name, gateway_origin.rstrip("/"), company_id],
                        separators=(",", ":"), ensure_ascii=False)
     return root / (hashlib.sha256(scope.encode("utf-8")).hexdigest() + ".json")
 
@@ -98,13 +98,13 @@ def _read_local_identity(path):
     return {"installationId": identity, "installationProof": proof}
 
 
-def local_identity(database_name, gateway_origin, data_dir=None):
+def local_identity(database_name, gateway_origin, data_dir=None, company_id=None):
     """Atomically generate stable credentials, even with concurrent Odoo workers."""
     import base64
     import os
     import tempfile
 
-    path = _identity_path(database_name, gateway_origin, data_dir)
+    path = _identity_path(database_name, gateway_origin, data_dir, company_id)
     try:
         return _read_local_identity(path)
     except FileNotFoundError:
@@ -129,7 +129,7 @@ def local_identity(database_name, gateway_origin, data_dir=None):
     return _read_local_identity(path)
 
 
-def deployment_proof(installation_id, database_name=None, gateway_origin=None, data_dir=None):
+def deployment_proof(installation_id, database_name=None, gateway_origin=None, data_dir=None, company_id=None):
     """Read enrollment proof from the Odoo PROCESS environment, never database.
 
     Supports several Odoo DBs in one service via an out-of-DB UUID->proof map.
@@ -138,7 +138,7 @@ def deployment_proof(installation_id, database_name=None, gateway_origin=None, d
     import os
 
     if database_name is not None and gateway_origin is not None:
-        path = _identity_path(database_name, gateway_origin, data_dir)
+        path = _identity_path(database_name, gateway_origin, data_dir, company_id)
         try:
             current = _read_local_identity(path)
         except FileNotFoundError:
