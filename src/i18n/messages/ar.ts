@@ -1832,6 +1832,7 @@ export const ar: Catalog = {
   "platform.nav.jobs": "عمليات الطباعة",
   "platform.nav.integrations": "التحكم في التكاملات",
   "platform.nav.fleet": "إدارة الأجهزة",
+  "platform.nav.database": "قاعدة البيانات",
   "platform.nav.overview": "نظرة عامة",
   "platform.nav.tenants": "المستأجرون",
   "platform.nav.subscriptions": "الاشتراكات",

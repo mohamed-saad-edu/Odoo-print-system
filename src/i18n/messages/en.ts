@@ -1823,6 +1823,7 @@ export const en = {
   "platform.nav.jobs": "Print operations",
   "platform.nav.integrations": "Integration control",
   "platform.nav.fleet": "Fleet control",
+  "platform.nav.database": "Database",
   "platform.nav.overview": "Overview",
   "platform.nav.tenants": "Tenants",
   "platform.nav.subscriptions": "Subscriptions",

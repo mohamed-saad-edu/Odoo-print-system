@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { isPlatformActionConfirmed, platformActionReason } from "../../../../../../lib/platform-action-confirmation";
 import { requirePlatformOwner, PlatformUnauthorizedError, PlatformMutationAuthorityChangedError } from "../../../../../../lib/platform-auth";
 import { hasBodyOverLimit } from "../../../../../../lib/request-limits";
 import { transitionTenantLifecycle, TenantLifecycleError } from "../../../../../../lib/tenant-lifecycle";
@@ -7,8 +8,10 @@ import { transitionTenantLifecycle, TenantLifecycleError } from "../../../../../
 export const dynamic = "force-dynamic";
 const HEADERS = { "Cache-Control": "private, no-store" };
 const schema = z.object({
-  confirmId: z.string().trim().min(1).max(120),
-  reason: z.string().trim().min(10).max(500),
+  // Native modal confirmation: no ID transcription or minimum reason length.
+  confirmed: z.literal(true).optional(),
+  confirmId: z.string().trim().min(1).max(120).optional(), // legacy clients
+  reason: z.string().trim().max(500).optional(),
 }).strict();
 
 /** Durable logical workspace deletion. Session/Agent access is revoked and
@@ -24,9 +27,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (!id || id.length > 120) return NextResponse.json({ error: "Invalid workspace ID" }, { status: 400, headers: HEADERS });
   if (hasBodyOverLimit(req, 4 * 1024)) return NextResponse.json({ error: "Request too large" }, { status: 413, headers: HEADERS });
   const parsed = schema.safeParse(await req.json().catch(() => null));
-  if (!parsed.success || parsed.data.confirmId !== id) return NextResponse.json({ error: "Confirm the exact workspace ID and reason" }, { status: 400, headers: HEADERS });
+  if (!parsed.success || !isPlatformActionConfirmed(parsed.data, id)) return NextResponse.json({ error: "Confirm workspace deletion" }, { status: 400, headers: HEADERS });
   try {
-    const result = await transitionTenantLifecycle(id, "deleted", parsed.data.reason, {
+    const result = await transitionTenantLifecycle(id, "deleted", platformActionReason(parsed.data.reason, "workspace deletion"), {
       type: "platform", id: actor.userId, claims: actor,
     });
     if (!result.changed) return NextResponse.json({ error: "Workspace was already deleted" }, { status: 409, headers: HEADERS });
