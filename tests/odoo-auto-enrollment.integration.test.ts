@@ -25,7 +25,16 @@ suite("zero-touch Odoo installation enrollment (PostgreSQL)", () => {
   afterAll(async () => { await closePool(); });
   beforeEach(async () => {
     await truncateAll();
-    fixture = await seedFixture();
+    fixture = await seedFixture({ odooIdempotencyMode: "strict_v2" });
+  });
+
+  it("fresh tenant schema default is strict_v2 without any migration input", async () => {
+    const freshId = "tenant_default_" + randomUUID().replaceAll("-", "").slice(0, 12);
+    const response = await pool().query(
+      "INSERT INTO tenants (id, name) VALUES ($1, $2) RETURNING odoo_idempotency_mode AS mode",
+      [freshId, "New tenant strict-v2 default"],
+    );
+    expect(response.rows[0].mode).toBe("strict_v2");
   });
 
   it("registers a fresh strict-v2 tenant without customer cutover input", async () => {
