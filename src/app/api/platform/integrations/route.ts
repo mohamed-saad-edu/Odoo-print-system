@@ -12,7 +12,7 @@ const HEADERS = { "Cache-Control": "private, no-store" };
 export async function GET(req: Request) {
   try { await requirePlatformOwner(req); }
   catch (error) {
-    return NextResponse.json({ error: error instanceof PlatformUnauthorizedError ? "Unauthorized" : "Authentication unavailable" },
+    return NextResponse.json({ error: error instanceof PlatformUnauthorizedError ? "Unauthorized" : "Platform authentication temporarily unavailable" },
       { status: error instanceof PlatformUnauthorizedError ? 401 : 503, headers: HEADERS });
   }
   const p = new URL(req.url).searchParams;

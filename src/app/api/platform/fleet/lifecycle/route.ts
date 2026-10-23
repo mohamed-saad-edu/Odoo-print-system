@@ -37,7 +37,7 @@ export async function POST(req: Request) {
   let claims;
   try { claims = await requirePlatformOwner(req); }
   catch (error) {
-    return NextResponse.json({ error: error instanceof PlatformUnauthorizedError ? "Unauthorized" : "Auth unavailable" },
+    return NextResponse.json({ error: error instanceof PlatformUnauthorizedError ? "Unauthorized" : "Platform authentication temporarily unavailable" },
       { status: error instanceof PlatformUnauthorizedError ? 401 : 503, headers: HEADERS });
   }
   if (hasBodyOverLimit(req, 8 * 1024)) return NextResponse.json({ error: "Request too large" }, { status: 413, headers: HEADERS });
