@@ -47,8 +47,8 @@ export async function exploreRows(client: PoolClient, table: ExploreTable, searc
   const preferred = table.columns.filter(c => /^(id|tenant_id|agent_id|printer_id|name|display_name|slug|status|lifecycle|plan_id|job_id|code|external_id|domain|type|protocol)$/i.test(c)).slice(0,10);
   const searchable = preferred.length ? preferred : table.primaryKey ? [table.primaryKey] : [];
   // Escape LIKE wildcards so user input is literal text, not a query language.
-  const term = search.replace(/[\\%_]/g, m => "\\\\" + m);
-  const where = search && searchable.length ? "WHERE (" + searchable.map(c=>`${quote(c)}::text ILIKE $1 ESCAPE '\\\\'`).join(" OR ") + ")" : "";
+  const term = search.replace(/[%_\\]/g, "");
+  const where = search && searchable.length ? "WHERE (" + searchable.map(c=>`${quote(c)}::text ILIKE $1`).join(" OR ") + ")" : "";
   const args = search ? [`%${term}%`,limit,offset] : [limit,offset];
   const index = search ? 2 : 1;
   if (search && !searchable.length) return [];
