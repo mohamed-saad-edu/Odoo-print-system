@@ -340,36 +340,36 @@ function PublicHome({ t, locale }: { t: Translator; locale: Locale }) {
 function PublicHeader({ t }: { t: Translator }) {
   return (
     <header className="yw-public-header glass-chrome sticky top-0 z-40 border-b border-edge">
-      <div className="mx-auto flex h-[72px] w-full max-w-[1280px] items-center gap-4 px-5 sm:px-8 lg:px-10">
-        <Link href="/" className="shrink-0 rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30">
-          <BrandMark title="Yaseir" subtitle="Print Manager" size="sm" showWordmark />
+      <div className="mx-auto flex h-[72px] w-full max-w-[1280px] items-center gap-2.5 px-4 sm:gap-3 sm:px-6 lg:px-8 xl:gap-4 2xl:px-10">
+        <Link href="/" aria-label={t("home.brandAria")} className="shrink-0 rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30">
+          <BrandMark title="Yaseir" subtitle="Print Manager" size="sm" showWordmark className="yw-public-brand-mark" />
         </Link>
 
-        <nav className="hidden min-w-0 flex-1 items-center gap-1 md:flex" aria-label={t("home.brandAria")}>
+        <nav className="hidden min-w-0 flex-1 flex-nowrap items-center gap-0.5 xl:flex 2xl:gap-1" aria-label={t("home.brandAria")}>
           <Anchor href="#product">{t("home.productEyebrow")}</Anchor>
           <Anchor href="#how-it-works">{t("home.navHowItWorks")}</Anchor>
           <Anchor href="#reliability">{t("home.navReliability")}</Anchor>
           <Anchor href="#security">{t("home.navSecurity")}</Anchor>
           <Link
             href="/pricing"
-            className="inline-flex h-9 items-center rounded-sm px-3 text-sm font-[550] text-ink-2 transition-colors duration-150 hover:bg-surface-2 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/35 focus-visible:ring-offset-2"
+            className="inline-flex h-9 shrink-0 items-center whitespace-nowrap rounded-sm px-2.5 text-sm font-[550] text-ink-2 transition-colors duration-150 hover:bg-surface-2 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/35 focus-visible:ring-offset-2 2xl:px-3"
           >
             {t("home.navPricing")}
           </Link>
         </nav>
 
-        <div className="ms-auto flex items-center gap-2">
-          <LanguageSwitcher />
+        <div className="ms-auto flex shrink-0 items-center gap-1 sm:gap-2">
+          <LanguageSwitcher compact={false} placement="below" />
           <ThemeToggle />
 
-          <div className="hidden items-center gap-2 sm:flex">
+          <div className="hidden items-center gap-2 md:flex">
             <Link
               href="/login"
-              className="inline-flex h-9 items-center rounded-sm px-3.5 text-sm font-[550] text-ink-2 transition-colors duration-150 hover:bg-surface-2 hover:text-ink"
+              className="hidden h-9 shrink-0 items-center whitespace-nowrap rounded-sm px-2.5 text-sm font-[550] text-ink-2 transition-colors duration-150 hover:bg-surface-2 hover:text-ink xl:inline-flex 2xl:px-3.5"
             >
               {t("auth.signIn.submit")}
             </Link>
-            <Button variant="primary" size="md" href="/signup">
+            <Button variant="primary" size="md" href="/signup" className="shrink-0 whitespace-nowrap">
               {t("home.startTrial")}
             </Button>
           </div>
@@ -422,7 +422,7 @@ function Anchor({ href, children, block = false }: { href: string; children: Rea
       className={
         block
           ? "menu-item"
-          : "inline-flex h-9 items-center rounded-sm px-3 text-sm font-[550] text-ink-2 transition-colors duration-150 hover:bg-surface-2 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/35 focus-visible:ring-offset-2"
+          : "inline-flex h-9 shrink-0 items-center whitespace-nowrap rounded-sm px-2.5 text-sm font-[550] text-ink-2 transition-colors duration-150 hover:bg-surface-2 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/35 focus-visible:ring-offset-2 2xl:px-3"
       }
     >
       {children}

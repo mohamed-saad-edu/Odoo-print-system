@@ -1538,6 +1538,11 @@
     -webkit-backdrop-filter: blur(16px) saturate(145%);
     backdrop-filter: blur(16px) saturate(145%);
   }
+  /* Keep the brand glyph visible at 320px: a full bilingual wordmark plus
+     language, theme and mobile-menu touch targets would otherwise overflow. */
+  @media (max-width: 399.98px) {
+    .yw-public-brand-mark > span:last-child { display: none; }
+  }
   .yw-hero {
     background:
       radial-gradient(ellipse 62% 75% at 104% 25%, color-mix(in srgb, var(--brand) 13%, transparent), transparent 76%),
