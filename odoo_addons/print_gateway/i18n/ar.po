@@ -4285,8 +4285,8 @@ msgstr "مفتاح منع تكرار الطباعة المرسل للGateway"
 
 #. module: print_gateway
 #: code:addons/print_gateway/models/print_job.py:0
-msgid "Installation proof is unavailable; print request preserved without sending."
-msgstr "إثبات هوية التثبيت غير متاح؛ تم الاحتفاظ بطلب الطباعة دون إرساله."
+msgid "Automatic Odoo installation proof is unavailable."
+msgstr "تعذّر الوصول إلى إثبات هوية تثبيت أودو التلقائي."
 
 #. module: print_gateway
 #: code:addons/print_gateway/models/print_job.py:0
