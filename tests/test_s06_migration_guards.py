@@ -32,13 +32,14 @@ def test_forward_migration_registered_in_immutable_drizzle_journal():
     import json
     doc = json.loads((ROOT / "drizzle/meta/_journal.json").read_text())
     tags = [row["tag"] for row in doc["entries"]]
-    assert tags[-4] == "0085_odoo_installation_idempotency"
-    assert tags[-3] == "0086_printer_identity_and_api_key_deletion"
-    assert tags[-2] == "0087_odoo_auto_enrollment"
-    assert tags[-1] == "0088_retire_e2e_capture"
+    assert tags[-5] == "0085_odoo_installation_idempotency"
+    assert tags[-4] == "0086_printer_identity_and_api_key_deletion"
+    assert tags[-3] == "0087_odoo_auto_enrollment"
+    assert tags[-2] == "0088_retire_e2e_capture"
+    assert tags[-1] == "0089_invitation_verification_binding"
     assert len(tags) == len(list((ROOT / "drizzle").glob("*.sql")))
     assert tags == [p.stem for p in sorted((ROOT / "drizzle").glob("*.sql"))]
-    assert len(tags) == 89
+    assert len(tags) == 90
 
 
 def test_rotation_preserves_installation_ownership():

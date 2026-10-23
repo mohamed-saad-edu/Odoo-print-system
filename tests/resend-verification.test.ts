@@ -19,6 +19,9 @@ vi.mock("../src/db", () => ({
   },
 }));
 
+vi.mock("../src/lib/invitation-join", () => ({
+  findActiveInvitation: vi.fn(async () => ({ id: "inv_resend_test", email: "user@example.com" })),
+}));
 vi.mock("../src/lib/email", () => ({
   sendTransactionalEmail: (...args: unknown[]) => sendEmailMock(...args),
   appBaseUrl: () => "http://localhost:3000",
@@ -111,6 +114,7 @@ describe("Resend Email Verification API", () => {
         execute: executeMock.mockResolvedValue({ rows: [{ id: "usr_unverified", emailVerifiedAt: null }] }),
         update: txUpdate,
         insert: txInsert,
+        query: { emailVerificationTokens: { findFirst: async () => undefined } },
       });
     });
     sendEmailMock.mockResolvedValue(undefined);

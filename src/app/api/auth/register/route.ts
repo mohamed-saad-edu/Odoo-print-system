@@ -10,6 +10,7 @@ import { getServerLocale, makeT } from "../../../../i18n/server";
 import { hasBodyOverLimit } from "../../../../lib/request-limits";
 import { clientIpFrom, reserveAuthAttempt, setRateLimitHeaders } from "../../../../lib/auth-rate-limit";
 import { sql } from "drizzle-orm";
+import { findActiveInvitation } from "../../../../lib/invitation-join";
 import { isSingleWorkspaceStaging, stagingWorkspaceExists, STAGING_WORKSPACE_EXISTS_MESSAGE } from "../../../../lib/staging-single-workspace";
 
 const GENERIC = { ok: true, message: "If the account can be created, a verification email will be sent." };
@@ -33,11 +34,16 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Registration temporarily unavailable" }, { status: 503 });
   }
   if (!rate.allowed) { const res = NextResponse.json({ error: "Too many attempts. Try again later." }, { status: 429 }); res.headers.set("Retry-After", String(rate.retryAfterSec)); return setRateLimitHeaders(res, rate); }
-  // This is an explicitly single-workspace staging deployment. Existing
-  // users log in normally; fresh signups must not generate another tenant.
-  // This preflight is only UX: the transaction-level verification lock below
-  // is the race-safe source of truth for concurrent registrants.
-  if (isSingleWorkspaceStaging()) {
+  // Compatibility for older invitation links that still navigate via
+  // /signup: bind the verified address to the invitation on the SERVER.
+  // Never create a default owner workspace because the browser dropped a
+  // query parameter on a later verification step.
+  const invitation = inviteToken ? await findActiveInvitation(inviteToken) : null;
+  if (inviteToken && (!invitation || invitation.email !== email))
+    return setRateLimitHeaders(NextResponse.json({ error: "Invitation expired or for a different email", code: "INVITATION_INVALID" }, { status: 400 }), rate);
+  // Public staging signups remain limited to one workspace. An existing
+  // invitation must be permitted: its mailbox proof JOINs that same workspace.
+  if (isSingleWorkspaceStaging() && !invitation) {
     try {
       if (await stagingWorkspaceExists(db)) {
         return setRateLimitHeaders(NextResponse.json({
@@ -65,7 +71,7 @@ export async function POST(req: Request) {
   try {
     await db.transaction(async (tx) => {
       await tx.insert(users).values({ id: userId, email, passwordHash });
-      await tx.insert(emailVerificationTokens).values({ id: `evt_${nanoid(18)}`, userId, tokenHash: await hashToken(rawToken), expiresAt });
+      await tx.insert(emailVerificationTokens).values({ id: `evt_${nanoid(18)}`, userId, tokenHash: await hashToken(rawToken), invitationId: invitation?.id ?? null, expiresAt });
     });
   } catch (error) {
     if (error instanceof Error && /duplicate|unique/i.test(error.message)) return setRateLimitHeaders(NextResponse.json(GENERIC, { status: 202 }), rate);

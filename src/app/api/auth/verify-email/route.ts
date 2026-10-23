@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
 import { hasBodyOverLimit } from "../../../../lib/request-limits";
 import { db } from "../../../../db";
-import { emailVerificationTokens, passwordResetTokens, tenantUsers, tenants, users } from "../../../../db/schema";
+import { emailVerificationTokens, passwordResetTokens, tenantInvitations, tenantUsers, tenants, users } from "../../../../db/schema";
+import { findActiveInvitation, joinWorkspaceByInvitation } from "../../../../lib/invitation-join";
+import { normalizeEmail } from "../../../../lib/password";
 import { and, eq, isNull, gt, sql } from "drizzle-orm";
 import { generateOpaqueToken, hashPassword, hashToken } from "../../../../lib/password";
 import { nanoid } from "../../../../lib/nanoid";
@@ -16,9 +18,10 @@ import { assertStagingWorkspaceSlot, StagingWorkspaceExistsError, STAGING_WORKSP
 
 export async function POST(req: Request) {
   if (hasBodyOverLimit(req, 16 * 1024)) return NextResponse.json({ error: "Request body too large" }, { status: 413 });
-  let body: { token?: unknown }; try { const parsedBody = await req.json(); if (!parsedBody || typeof parsedBody !== "object" || Array.isArray(parsedBody)) throw new Error("JSON object required"); body = parsedBody; } catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); }
+  let body: { token?: unknown; inviteToken?: unknown }; try { const parsedBody = await req.json(); if (!parsedBody || typeof parsedBody !== "object" || Array.isArray(parsedBody)) throw new Error("JSON object required"); body = parsedBody; } catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); }
   const token = typeof body.token === "string" ? body.token : "";
   if (!token || token.length > 256) return NextResponse.json({ error: "Invalid or expired verification link" }, { status: 400 });
+  const inviteToken = typeof body.inviteToken === "string" ? body.inviteToken : "";
   // Token-guessing throttle (mirrors login): no account identity is known
   // pre-token, so scope by endpoint + IP. Only a completed email proof
   // clears the budget; password setup is a separate authentication step.
@@ -49,6 +52,21 @@ export async function POST(req: Request) {
   if (!row) return NextResponse.json({ error: "Invalid or expired verification link" }, { status: 400 });
   const user = await db.query.users.findFirst({ where: eq(users.id, row.userId), columns: { id: true, emailVerifiedAt: true, email: true } });
   if (!user) return NextResponse.json({ error: "Invalid or expired verification link" }, { status: 400 });
+  // This binding is persisted on the verification token, NOT trusted from
+  // browser query parameters. It survives copied/resend links and prevents
+  // accidentally creating a second workspace when invite= is stripped.
+  const invitation = row.invitationId
+    ? await db.query.tenantInvitations.findFirst({
+        where: eq(tenantInvitations.id, row.invitationId),
+      })
+    : inviteToken ? await findActiveInvitation(inviteToken) : null;
+  if ((row.invitationId || inviteToken) && (
+    !invitation || normalizeEmail(invitation.email) !== normalizeEmail(user.email)
+  )) {
+    return setRateLimitHeaders(NextResponse.json({
+      error: "Workspace invitation is invalid or expired", code: "INVITATION_INVALID",
+    }, { status: 409 }), rate);
+  }
   const resetToken = generateOpaqueToken();
   // The submitted signup password may belong to an earlier unverified
   // registrant. Email proof must invalidate it before marking the email
@@ -65,6 +83,7 @@ export async function POST(req: Request) {
     columns: { tenantId: true },
   });
   let alreadyVerified = false;
+  let invitationJoined = false;
   let tenantId: string;
   const isManagerRole = (value: string): value is ManagerRole =>
     value === "owner" ||
@@ -76,7 +95,15 @@ export async function POST(req: Request) {
   try {
     await db.transaction(async (tx) => {
       let auditTenantId: string | null = null;
-      if (auditMembership?.tenantId) {
+      if (invitation) {
+        // Tenant lifecycle writers lock tenant before users. Keep that order
+        // so invitation enrollment cannot race suspension or deletion.
+        const lockedInvitedTenant = await tx.execute(sql`
+          SELECT id, lifecycle FROM tenants WHERE id = ${invitation.tenantId} FOR UPDATE
+        `);
+        if (!lockedInvitedTenant.rows[0]?.id || lockedInvitedTenant.rows[0].lifecycle !== "active")
+          throw new Error("INVITATION_WORKSPACE_UNAVAILABLE");
+      } else if (auditMembership?.tenantId) {
         const tenant = await tx.execute(sql`SELECT id FROM tenants WHERE id = ${auditMembership.tenantId} FOR SHARE`);
         if (tenant.rows[0]) auditTenantId = auditMembership.tenantId;
       }
@@ -118,21 +145,28 @@ export async function POST(req: Request) {
         expiresAt: sql`clock_timestamp() + interval '20 minutes'`,
       });
 
-      const existing = await tx.select({ tenantId: tenantUsers.tenantId, role: tenantUsers.role })
-        .from(tenantUsers)
-        .where(eq(tenantUsers.userId, currentUser.id))
-        .limit(1);
-      if (existing[0]) {
-        tenantId = existing[0].tenantId;
-        if (!isManagerRole(existing[0].role)) throw new Error("INVALID_TENANT_ROLE");
-      } else {
-        // Serialize the first tenant allocation when HTTPS staging is locked
-        // to one workspace. Production multi-tenant signup is unaffected.
-        await assertStagingWorkspaceSlot(tx);
-        tenantId = `ten_${nanoid(18)}`;
-        await tx.insert(tenants).values({ id: tenantId, name: `${currentUser.email.split("@")[0]}'s Workspace` });
-        await tx.insert(tenantUsers).values({ userId: currentUser.id, tenantId, role: "owner" });
+      if (invitation) {
+        const joined = await joinWorkspaceByInvitation(tx, invitation, currentUser.id, currentUser.email);
+        tenantId = joined.tenantId;
+        invitationJoined = true;
         auditTenantId = tenantId;
+      } else {
+        const existing = await tx.select({ tenantId: tenantUsers.tenantId, role: tenantUsers.role })
+          .from(tenantUsers)
+          .where(eq(tenantUsers.userId, currentUser.id))
+          .limit(1);
+        if (existing[0]) {
+          tenantId = existing[0].tenantId;
+          if (!isManagerRole(existing[0].role)) throw new Error("INVALID_TENANT_ROLE");
+        } else {
+          // Keep single-workspace staging signup fence: invitations join
+          // the existing tenant above, and MUST bypass new-tenant creation.
+          await assertStagingWorkspaceSlot(tx);
+          tenantId = `ten_${nanoid(18)}`;
+          await tx.insert(tenants).values({ id: tenantId, name: `${currentUser.email.split("@")[0]}'s Workspace` });
+          await tx.insert(tenantUsers).values({ userId: currentUser.id, tenantId, role: "owner" });
+          auditTenantId = tenantId;
+        }
       }
 
       await writeAuditEvent({
@@ -154,12 +188,15 @@ export async function POST(req: Request) {
         code: "STAGING_WORKSPACE_EXISTS",
       }, { status: 409 }), rate);
     }
+    if (error instanceof Error && error.message.startsWith("INVITATION_"))
+      return setRateLimitHeaders(NextResponse.json({ error: "Workspace invitation invalid, expired or unavailable", code: error.message }, { status: 409 }), rate);
     throw error;
   }
   const response = NextResponse.json({
     ok: true,
     next: alreadyVerified ? "/login" : `/reset-password?token=${encodeURIComponent(resetToken)}&setup=1`,
     requiresPasswordSetup: !alreadyVerified,
+    ...(invitationJoined ? { invitationJoined: true } : {}),
   });
   response.headers.set("Cache-Control", "no-store");
   await recordAuthSuccess(ip, rateIdentity).catch((error) => logWarn("auth.verify_email.rate_limit_clear_failed", { ip, error: error instanceof Error ? error.message : "unknown" }));

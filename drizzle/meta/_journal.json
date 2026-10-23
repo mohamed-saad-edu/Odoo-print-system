@@ -624,6 +624,13 @@
       "when": 1792790000002,
       "tag": "0088_retire_e2e_capture",
       "breakpoints": true
+    },
+    {
+      "idx": 89,
+      "version": "7",
+      "when": 1792822000000,
+      "tag": "0089_invitation_verification_binding",
+      "breakpoints": true
     }
   ]
 }
