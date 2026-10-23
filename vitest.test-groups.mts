@@ -50,6 +50,7 @@ export const integrationVitestTestFiles = [
   "tests/platform-stats.test.ts",
   "tests/printer-desired-state.test.ts",
   "tests/printer-endpoint-admin.integration.test.ts",
+  "tests/platform-delete-integrity.integration.test.ts",
   "tests/printer-sharing.integration.test.ts",
   "tests/printer-diagnostic-recovery.integration.test.ts",
   "tests/print-idempotency.test.ts",
