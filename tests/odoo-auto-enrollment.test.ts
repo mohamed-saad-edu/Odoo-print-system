@@ -15,7 +15,7 @@ describe("zero-touch Odoo v2 enrollment contracts", () => {
     const job = file("odoo_addons/print_gateway/models/print_job.py");
     expect(job).toContain("namespace_version = 2");
     expect(job).toContain("gateway_config._ensure_auto_installation()");
-    expect(job).toContain("gateway_config._register_auto_installation(self.gateway_installation_id)");
+    expect(job).toContain("gateway_config._register_auto_installation(job.gateway_installation_id)");
     expect(job).toContain("gateway_wire_idempotency_key");
   });
 
