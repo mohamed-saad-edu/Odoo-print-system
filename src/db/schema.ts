@@ -175,6 +175,7 @@ export const printers = pgTable("printers", {
   appliedDesiredRevision: bigint("applied_desired_revision", { mode: "number" }).notNull().default(0),
   observedDesiredRevision: bigint("observed_desired_revision", { mode: "number" }).notNull().default(0),
   observedDeviceClass: text("observed_device_class"),
+  physicalIdentityKey: text("physical_identity_key"),
   config: jsonb("config").$type<{ ip?: string; port?: number; vid?: number; pid?: number; serial?: string; address?: string; spooler_name?: string; paper_widths?: number[]; color_capable?: boolean; duplex_capable?: boolean; }>(),
   capabilities: jsonb("capabilities").$type<Record<string, unknown>>(),
   // Presence is separate from operator lifecycle. A printer omitted from a
@@ -189,6 +190,7 @@ export const printers = pgTable("printers", {
   tenantIdUnique: unique("printers_tenant_id_unique").on(table.tenantId, table.id),
   agentFk: foreignKey({ name: "printers_tenant_id_agent_id_agents_fk", columns: [table.tenantId, table.agentId], foreignColumns: [agents.tenantId, agents.id] }),
   agentIdx: index("printers_agent_id_idx").on(table.agentId),
+  endpointUnique: uniqueIndex("printers_tenant_agent_physical_identity_unique").on(table.tenantId, table.agentId, table.physicalIdentityKey).where(sql`${table.physicalIdentityKey} IS NOT NULL`),
   tenantCreatedIdx: index("printers_tenant_created_idx").on(table.tenantId, table.createdAt),
   printerTypeIdx: index("printers_printer_type_idx").on(table.printerType),
   statusIdx: index("printers_status_idx").on(table.status),
@@ -486,7 +488,7 @@ export const printJobs = pgTable("print_jobs", {
 }, (table) => ({
   agentFk: foreignKey({ name: "print_jobs_tenant_id_agent_id_agents_tenant_id_id_fk", columns: [table.tenantId, table.agentId], foreignColumns: [agents.tenantId, agents.id] }),
   printerFk: foreignKey({ name: "print_jobs_tenant_id_printer_id_printers_tenant_id_id_fk", columns: [table.tenantId, table.printerId], foreignColumns: [printers.tenantId, printers.id] }),
-  apiKeyTenantFk: foreignKey({ name: "print_jobs_tenant_id_api_key_id_api_keys_fk", columns: [table.tenantId, table.apiKeyId], foreignColumns: [apiKeys.tenantId, apiKeys.id] }),
+  // apiKeyId is a permanent historical identifier, NOT an FK to a live credential.
   tenantIdUnique: unique("print_jobs_tenant_id_unique").on(table.tenantId, table.id),
   tenantStatusIdx: index("print_jobs_tenant_status_idx").on(table.tenantId, table.status),
   tenantCreatedIdx: index("print_jobs_tenant_created_idx").on(table.tenantId, table.createdAt),

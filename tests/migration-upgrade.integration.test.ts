@@ -87,7 +87,7 @@ suite("production-like PostgreSQL migration upgrade", () => {
       const expectedHashes = sourceMigrations.map(row => row.hash).concat(AUDIT_REPAIRS.map(sql => createHash("sha256").update(sql).digest("hex")));
       const before = (await pool.query("SELECT id,hash,created_at FROM drizzle.__drizzle_migrations ORDER BY id")).rows;
       expect(before.map(row => row.hash)).toEqual(expectedHashes);
-      expect(sourceMigrations).toHaveLength(86);
+      expect(sourceMigrations).toHaveLength(87);
       await pool.query("INSERT INTO public.tenants(id,name) VALUES ('sharing_upgrade_tenant','Upgrade proof')");
       await pool.query("INSERT INTO public.agents(id,tenant_id,name) VALUES ('sharing_upgrade_agent','sharing_upgrade_tenant','Upgrade Agent')");
       await pool.query("INSERT INTO public.printers(id,tenant_id,agent_id,name,shared_with_gateway,shared_with_gateway_version) VALUES ('sharing_upgrade_printer','sharing_upgrade_tenant','sharing_upgrade_agent','Physical upgrade queue',false,'9223372036854775807')");

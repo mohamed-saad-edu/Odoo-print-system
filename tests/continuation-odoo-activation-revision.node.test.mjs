@@ -122,6 +122,7 @@ test('PATCH rejects a suspended tenant before key lock, billing, write or audit'
 async function deletionFixture() {
   const zstring = { trim() { return this; }, min() { return this; }, max() { return this; }, optional() { return this; } };
   const revisions = [];
+  const erased = [];
   const tx = {
     execute: async () => ({ rows: [] }),
     select: () => ({ from: () => ({ where: () => ({ for: async () => [{ id: 'key' }] }) }) }),
@@ -144,9 +145,10 @@ async function deletionFixture() {
     'drizzle-orm': { eq: (a,b) => [a,b], and: (...args) => args, desc: noop, sql },
     'zod': { z: { object: () => ({ strict: () => ({}) }), string: () => zstring } },
     '../../../../lib/audit': { writeAuditEvent: async () => {} },
+    '../../../../lib/api-key-deletion': { deleteApiKeyInTransaction: async (_tx, tenant, id) => { erased.push([tenant,id]); return true; } },
     '../../../../lib/entitlements': { isTenantBillingError: () => false, requireTenantBillingAccess: noop },
   });
-  return { api, revisions };
+  return { api, revisions, erased };
 }
 
 for (const remove of [false, true]) {
@@ -154,9 +156,14 @@ for (const remove of [false, true]) {
     const f = await deletionFixture();
     const response = await f.api.DELETE(new Request('https://gateway.test/api/odoo/keys', { method: 'DELETE', body: JSON.stringify({ id: 'key', remove }) }));
     assert.equal(response.status, 200);
-    assert.equal(f.revisions.length, 1);
-    assert.match(f.revisions[0], /LEAST\(/, 'saturating increment handles stored revision 2147483647');
-    assert.match(f.revisions[0], /2147483646/);
-    assert.match(f.revisions[0], /\+ 1/);
+    if (remove) {
+      assert.equal(f.revisions.length, 0, 'real key erasure must not create a disabled tombstone');
+      assert.deepEqual(f.erased, [['tenant','key']]);
+    } else {
+      assert.equal(f.revisions.length, 1);
+      assert.match(f.revisions[0], /LEAST\(/, 'saturating increment handles stored revision 2147483647');
+      assert.match(f.revisions[0], /2147483646/);
+      assert.match(f.revisions[0], /\+ 1/);
+    }
   });
 }

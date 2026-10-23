@@ -9,6 +9,7 @@ import { logError, logWarn } from "../../../../lib/log";
 import { getTenantEntitlementLimit, isTenantBillingError, TenantEntitlementError } from "../../../../lib/entitlements";
 import { requireActiveTenantInTransaction } from "../../../../lib/tenant-guard";
 import { aliasPrinterIdForAgent } from "../../../../lib/printer-identity";
+import { physicalPrinterIdentityKey, samePrinterProtocol } from "../../../../lib/physical-printer-identity";
 import { inventoryVersionAllowsPage, parseInventorySnapshotVersion } from "../../../../lib/inventory-snapshot";
 import { getDesiredPrinterPage } from "../../../../lib/desired-state-page";
 import { isVirtualPrinterRecord } from "../../../../lib/printer-virtual";
@@ -398,6 +399,55 @@ export async function POST(req: Request) {
       for (let index = sanitizedPrinters.length - 1; index >= 0; index -= 1) {
         if (privatePrinterIds.has(sanitizedPrinters[index]!.id)) sanitizedPrinters.splice(index, 1);
       }
+      // Check the physical endpoint, not only the Agent-generated row ID:
+      // manual registration and discovery can report identical printers under
+      // different IDs. Preserve the existing row and all accepted job history.
+      const knownPhysicalPrinters = sanitizedPrinters.length > 0
+        ? await tx.query.printers.findMany({
+            where: and(eq(printers.tenantId, agent.tenantId), eq(printers.agentId, agent.id)),
+          })
+        : [];
+      // Deterministic existing-row precedence: an explicit removal/withholding
+      // policy wins first, then manager ownership, then the oldest stable ID.
+      // Never backfill two legacy duplicate rows with the same partial-unique
+      // endpoint key; the historical duplicate keeps its NULL identity.
+      const rowPriority = (row: (typeof knownPhysicalPrinters)[number]) => [
+        row.lifecycle === "retired" || row.sharedWithGateway === false ? 0 : 1,
+        row.managementSource === "manager" ? 0 : 1,
+        row.createdAt.getTime(),
+        row.id,
+      ] as const;
+      knownPhysicalPrinters.sort((a, b) => {
+        const aa = rowPriority(a), bb = rowPriority(b);
+        for (let part = 0; part < aa.length; part++) {
+          if (aa[part] < bb[part]) return -1;
+          if (aa[part] > bb[part]) return 1;
+        }
+        return 0;
+      });
+      const knownByEndpoint = new Map<string, (typeof knownPhysicalPrinters)[number]>();
+      for (const row of knownPhysicalPrinters) {
+        const endpoint = row.physicalIdentityKey ?? physicalPrinterIdentityKey(row);
+        if (endpoint && !knownByEndpoint.has(endpoint)) knownByEndpoint.set(endpoint, row);
+      }
+      const seenEndpoints = new Set<string>();
+      // O(known inventory + reported page), not O(known * reported). Snapshot
+      // input is capped to 500 rows but tenant fleets can be substantially larger.
+      for (let i = sanitizedPrinters.length - 1; i >= 0; i--) {
+        const observed = sanitizedPrinters[i]!;
+        const key = physicalPrinterIdentityKey(observed);
+        if (!key) continue;
+        const match = knownByEndpoint.get(key);
+        if (match && match.id !== observed.id) {
+          skipped.push({ id: observed.id, reason: samePrinterProtocol(match, observed)
+            ? "duplicate_physical_endpoint_registered_as_" + match.id
+            : "physical_endpoint_protocol_conflict" });
+          sanitizedPrinters.splice(i, 1);
+        } else if (seenEndpoints.has(key)) {
+          skipped.push({ id: observed.id, reason: "duplicate_physical_endpoint_in_snapshot" });
+          sanitizedPrinters.splice(i, 1);
+        } else seenEndpoints.add(key);
+      }
       const inventoryIds = [...new Set(sanitizedPrinters.map(p => p.id))];
       const inventoryRows = inventoryIds.length ? await tx.query.printers.findMany({
         where: and(eq(printers.tenantId, agent.tenantId), inArray(printers.id, inventoryIds)),
@@ -405,6 +455,9 @@ export async function POST(req: Request) {
       const inventoryById = new Map(inventoryRows.map(p => [p.id, p]));
       let pageHadErrors = skipped.length > 0;
       const mayUpdateSharing = (p: SanitizedPrinter, existing: typeof printers.$inferSelect): boolean => {
+        // A platform-removed or retired printer is an irreversible negative
+        // tombstone; even a newer Agent snapshot may not re-share it.
+        if (existing.lifecycle === "retired") return false;
         if (p.sharedWithGateway !== true || !inventorySnapshotVersion) return false;
         if (existing.sharedWithGatewayVersion == null) return true;
         const incoming = BigInt(inventorySnapshotVersion);
@@ -504,6 +557,7 @@ export async function POST(req: Request) {
               connectionType: p.connectionType as typeof printers.$inferInsert.connectionType,
               protocol: p.protocol as typeof printers.$inferInsert.protocol,
               config: p.config as typeof printers.$inferInsert.config,
+              physicalIdentityKey: physicalPrinterIdentityKey(p),
             }
           : observedUpdateSet;
         await tx.update(printers)
@@ -547,6 +601,7 @@ export async function POST(req: Request) {
           observedDesiredRevision: 0,
           observedDeviceClass: p.deviceClass as typeof printers.$inferInsert.observedDeviceClass,
           config: p.config as typeof printers.$inferInsert.config,
+          physicalIdentityKey: physicalPrinterIdentityKey(p),
           capabilities: p.capabilities as typeof printers.$inferInsert.capabilities,
           inventoryPresent: true,
           inventorySnapshotId: snapshotEnabled ? inventorySnapshotId : null,

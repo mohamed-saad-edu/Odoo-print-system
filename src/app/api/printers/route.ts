@@ -16,6 +16,7 @@ import { agentStaleThresholdSeconds, getAgentHeartbeatFreshness, getEffectiveAge
 import { gatewayNow, refreshClockSkew } from "../../../lib/database-clock";
 import { logError } from "../../../lib/log";
 import { isVirtualPrinterRecord } from "../../../lib/printer-virtual";
+import { matchingPhysicalPrinter, physicalPrinterIdentityKey, samePrinterProtocol } from "../../../lib/physical-printer-identity";
 
 export const dynamic = "force-dynamic";
 const MAX_PRINTERS_LIST = 1000;
@@ -152,8 +153,9 @@ export async function POST(req: Request) {
     if (error) return NextResponse.json({ error }, { status: 400 });
 
     const id = data.id ?? `printer_${nanoid(8)}`;
+    const physicalIdentityKey = physicalPrinterIdentityKey({ connectionType, protocol, config });
     try {
-      const row = await db.transaction(async (tx) => {
+      const outcome = await db.transaction(async (tx) => {
         await requireActiveTenantInTransaction(tx, tenantId);
         await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('printers:' || ${tenantId}))`);
         const lockedAgent = await tx.execute(sql`SELECT lifecycle FROM agents WHERE id = ${data.agentId} AND tenant_id = ${tenantId} FOR UPDATE`);
@@ -163,12 +165,25 @@ export async function POST(req: Request) {
         if (auth.kind === "manager") {
           await requireManagerActorInTransaction(tx, auth.claims, "printers.manage");
         }
+        const known = await tx.query.printers.findMany({
+          where: and(eq(printers.tenantId, tenantId), eq(printers.agentId, data.agentId)),
+        });
+        const matching = matchingPhysicalPrinter(known, { connectionType, protocol, config });
+        if (matching) {
+          if (!samePrinterProtocol(matching, { connectionType, protocol, config })) {
+            return { kind: "conflict" as const, error: "Physical endpoint uses a different print protocol; change the existing printer instead" };
+          }
+          // Never reactivate a disabled, retired or locally-unshared printer.
+          return { kind: "existing" as const, row: matching };
+        }
+        if (known.some(row => row.id === id))
+          return { kind: "conflict" as const, error: "Printer ID is already assigned to a different endpoint" };
         await enforceTenantResourceEntitlement(tx, tenantId, "max_printers",
           sql`SELECT COUNT(*)::int AS count FROM printers WHERE tenant_id = ${tenantId} AND shared_with_gateway = true AND lifecycle <> 'retired' AND (management_source <> 'agent' OR inventory_present = true)`);
         const inserted = await tx.insert(printers).values({
           id, tenantId: tenantId, agentId: data.agentId, name: data.name,
           printerType: data.printerType, deviceClass: data.deviceClass,
-          connectionType, protocol,
+          connectionType, protocol, physicalIdentityKey,
           status: "unknown", lifecycle: "active", config,
           capabilities: null,
           // Gateway-owned desired state is necessary for the Windows Agent
@@ -190,9 +205,10 @@ export async function POST(req: Request) {
           resourceType: "printer",
           resourceId: created.id,
         }, tx);
-        return created;
+        return { kind: "created" as const, row: created };
       });
-      return NextResponse.json(row, { status: 201 });
+      if (outcome.kind === "conflict") return NextResponse.json({ error: outcome.error, code: "PRINTER_ENDPOINT_CONFLICT" }, { status: 409 });
+      return NextResponse.json({ ...outcome.row, already: outcome.kind === "existing" }, { status: outcome.kind === "existing" ? 200 : 201 });
     } catch (error) {
       if (error instanceof ManagerMutationAuthorityChangedError) return NextResponse.json({ error: error.message }, { status: 403 });
       if (error instanceof TenantEntitlementError) return NextResponse.json({ error: error.message, code: "MAX_PRINTERS_EXCEEDED", entitlement: error.entitlement, limit: error.limit, used: error.used, upgradeRequired: true }, { status: 429, headers: { "Retry-After": "60", "Cache-Control": "no-store" } });
