@@ -7,8 +7,8 @@ describe("release-readiness truth contracts", () => {
     expect(source).not.toContain('implemented: "PASS"');
     expect(source).toContain('sourceEvidence: "DOCUMENTED"');
     expect(source).toContain('sourceEvidence: "MISSING"');
-    expect(source).toContain("systemHealthError");
-    expect(source).toContain("fetchWithTimeout");
+    expect(source).not.toContain("systemHealthError");
+    expect(source).not.toContain('"/api/system/health"');
     expect(source).not.toContain("Leave the live section hidden");
   });
 

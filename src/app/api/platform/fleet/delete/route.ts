@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { isPlatformActionConfirmed, platformActionReason } from "../../../../../lib/platform-action-confirmation";
 import { requirePlatformOwner, PlatformUnauthorizedError, PlatformMutationAuthorityChangedError } from "../../../../../lib/platform-auth";
 import { hasBodyOverLimit } from "../../../../../lib/request-limits";
 import { removeFleetItem } from "../../../../../lib/platform-fleet-deletion";
@@ -11,8 +12,10 @@ const schema = z.object({
   tenantId: z.string().trim().min(1).max(120),
   id: z.string().trim().min(1).max(150),
   expectedLifecycle: z.enum(["active", "disabled", "retired"]),
-  confirmId: z.string().trim().min(1).max(150),
-  reason: z.string().trim().min(10).max(500),
+  // Native modal confirmation: no ID transcription or minimum reason length.
+  confirmed: z.literal(true).optional(),
+  confirmId: z.string().trim().min(1).max(150).optional(), // legacy clients
+  reason: z.string().trim().max(500).optional(),
 }).strict();
 
 export async function POST(req: Request) {
@@ -24,10 +27,10 @@ export async function POST(req: Request) {
   }
   if (hasBodyOverLimit(req, 4 * 1024)) return NextResponse.json({ error: "Request too large" }, { status: 413, headers: HEADERS });
   const parsed = schema.safeParse(await req.json().catch(() => null));
-  if (!parsed.success || parsed.data.confirmId !== parsed.data.id)
-    return NextResponse.json({ error: "Enter the exact device ID and a deletion reason" }, { status: 400, headers: HEADERS });
+  if (!parsed.success || !isPlatformActionConfirmed(parsed.data, parsed.data.id))
+    return NextResponse.json({ error: "Confirm device removal" }, { status: 400, headers: HEADERS });
   try {
-    const result = await removeFleetItem({ ...parsed.data, actor });
+    const result = await removeFleetItem({ ...parsed.data, reason: platformActionReason(parsed.data.reason, "device removal"), actor });
     return NextResponse.json(result, { status: result.status, headers: HEADERS });
   } catch (error) {
     if (error instanceof PlatformMutationAuthorityChangedError) return NextResponse.json({ error: error.message }, { status: 403, headers: HEADERS });

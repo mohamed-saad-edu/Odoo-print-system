@@ -3,6 +3,7 @@ import { requirePlatformOwner, PlatformUnauthorizedError, PlatformMutationAuthor
 import { hasBodyOverLimit } from "../../../../../../lib/request-limits";
 import { transitionTenantLifecycle, TenantLifecycleError } from "../../../../../../lib/tenant-lifecycle";
 import { runtimeSecret } from "../../../../../../lib/runtime-secret";
+import { platformActionReason } from "../../../../../../lib/platform-action-confirmation";
 
 export async function POST(req: Request, context: { params: Promise<{ id: string }> }) {
   let claims;
@@ -40,12 +41,12 @@ export async function POST(req: Request, context: { params: Promise<{ id: string
   }
 
   const reason = typeof body.reason === "string" ? body.reason.trim() : "";
-  if (!reason || reason.length > 500) {
-    return NextResponse.json({ error: "A valid suspension reason (1-500 characters) is required" }, { status: 400 });
+  if (reason.length > 500) {
+    return NextResponse.json({ error: "Reason is too long" }, { status: 400 });
   }
 
   try {
-    await transitionTenantLifecycle(id, "suspended", reason, {
+    await transitionTenantLifecycle(id, "suspended", platformActionReason(reason, "workspace suspension"), {
       type: "platform",
       id: claims.userId,
       claims,

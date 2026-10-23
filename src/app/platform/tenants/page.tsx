@@ -59,7 +59,7 @@ export default function PlatformTenantsPage() {
   const [selectedTenant, setSelectedTenant] = useState<Tenant | null>(null);
   const [dialogMode, setDialogMode] = useState<DialogMode>("suspend");
   const [suspendReason, setSuspendReason] = useState("");
-  const [confirmId, setConfirmId] = useState("");
+  
   const [actionLoading, setActionLoading] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
@@ -93,30 +93,30 @@ export default function PlatformTenantsPage() {
     if (actionLoading) return;
     setSelectedTenant(null);
     setSuspendReason("");
-    setConfirmId("");
+    
     setActionError(null);
   }
 
   function handleRefresh() { setError(null); setReloadKey((k) => k + 1); }
   function openSuspend(tenant: Tenant) { setSelectedTenant(tenant); setDialogMode("suspend"); setSuspendReason(""); setActionError(null); }
   function openReactivate(tenant: Tenant) { setSelectedTenant(tenant); setDialogMode("reactivate"); setSuspendReason(""); setActionError(null); }
-  function openDelete(tenant: Tenant) { setSelectedTenant(tenant); setDialogMode("delete"); setSuspendReason(""); setConfirmId(""); setActionError(null); }
+  function openDelete(tenant: Tenant) { setSelectedTenant(tenant); setDialogMode("delete"); setSuspendReason("");  setActionError(null); }
 
   async function handleLifecycleAction() {
     if (!selectedTenant) return;
     const reason = suspendReason.trim();
-    if (dialogMode !== "reactivate" && !reason) { setActionError(t("platform.tenants.reasonMissing")); return; }
-    if (dialogMode === "delete" && (reason.length < 10 || confirmId !== selectedTenant.id)) { setActionError(locale === "ar" ? "اكتب معرّف مساحة العمل وسبب واضح للحذف." : "Enter the exact workspace ID and a deletion reason."); return; }
+
+
     setActionLoading(true); setActionError(null); setNotice(null);
     const nextLifecycle = dialogMode === "suspend" ? "suspended" : dialogMode === "delete" ? "deleted" : "active";
     try {
       const endpoint = `/api/platform/tenants/${encodeURIComponent(selectedTenant.id)}/${dialogMode === "delete" ? "delete" : dialogMode === "suspend" ? "suspend" : "reactivate"}`;
       const options: RequestInit = { method: "POST", headers: { "Content-Type": "application/json" } };
-      if (dialogMode !== "reactivate") options.body = JSON.stringify(dialogMode === "delete" ? { reason, confirmId } : { reason });
+      if (dialogMode !== "reactivate") options.body = JSON.stringify(dialogMode === "delete" ? { reason, confirmed: true } : { reason });
       const res = await fetchWithTimeout(endpoint, options);
       if (!res.ok) throw new Error(t("platform.tenants.actionFailedBody"));
       const tenantName = selectedTenant.name;
-      setSelectedTenant(null); setSuspendReason(""); setConfirmId(""); setActionError(null);
+      setSelectedTenant(null); setSuspendReason("");  setActionError(null);
       setNotice(
         nextLifecycle === "suspended"
           ? t("platform.tenants.noticeSuspended", { name: tenantName })
@@ -371,7 +371,7 @@ export default function PlatformTenantsPage() {
             <Button
               variant={dialogMode !== "reactivate" ? "danger" : "primary"}
               onClick={() => void handleLifecycleAction()}
-              disabled={actionLoading || (dialogMode !== "reactivate" && !suspendReason.trim()) || (dialogMode === "delete" && (suspendReason.trim().length < 10 || confirmId !== selectedTenant?.id))}
+              disabled={actionLoading}
               loading={actionLoading}
             >
               {dialogMode === "delete" ? (locale === "ar" ? "تأكيد الحذف" : "Confirm deletion") : dialogMode === "suspend" ? t("platform.tenants.suspendTitle") : t("platform.tenants.reactivateTitle")}
@@ -394,8 +394,7 @@ export default function PlatformTenantsPage() {
                 <Field
                   label={t("platform.tenants.reasonLabel")}
                   htmlFor="suspension-reason"
-                  hint={t("platform.tenants.reasonHint")}
-                  required
+                  hint={locale === "ar" ? "اختياري — سيُسجَّل سبب تلقائي إذا تركته فارغًا." : "Optional — a default audit reason is recorded when blank."}
                 >
                   <Textarea
                     id="suspension-reason"
@@ -408,9 +407,7 @@ export default function PlatformTenantsPage() {
                     maxLength={500}
                   />
                 </Field>
-                {dialogMode === "delete" && <Field label={locale === "ar" ? "اكتب معرّف مساحة العمل للتأكيد" : "Type the exact workspace ID to confirm"} htmlFor="workspace-delete-confirm">
-                  <Input id="workspace-delete-confirm" autoComplete="off" value={confirmId} onChange={event => setConfirmId(event.target.value)} placeholder={selectedTenant.id} />
-                </Field>}
+                
                 <div className="text-end text-xs text-ink-3 tabular">{formatNumber(suspendReason.length)}/500</div>
               </>
             ) : (

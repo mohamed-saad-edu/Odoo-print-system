@@ -88,7 +88,6 @@ func encodeGatewayResponse(status uint16, data []byte, headers http.Header) ([]b
 var gatewayPrinterActionPathRe = regexp.MustCompile("^/api/printers/[A-Za-z0-9._~-]+/test-connection$")
 var gatewayTestPrintPathRe = regexp.MustCompile("^/api/printers/[A-Za-z0-9._~-]+/test-print$")
 var gatewayTestKeyRe = regexp.MustCompile("^[A-Za-z0-9._:-]+$")
-var gatewayCapturePreviewPathRe = regexp.MustCompile("^/api/agent/test-captures/preview[?]id=cap_[a-f0-9]{32}$")
 
 // Deliberately wider than the desktop console proxy (which allows exact
 // GET /api/agents only): the operator CLI needs single-agent fetch for
@@ -286,14 +285,9 @@ func isAllowedGatewayConsolePath(path, method string) bool {
 	case "GET":
 		return isAllowedFleetPath(path) ||
 			isAllowedJobsPath(path) ||
-			gatewayAgentPathRe.MatchString(path) ||
-			path == "/api/agent/test-captures/status" ||
-			gatewayCapturePreviewPathRe.MatchString(path)
+			gatewayAgentPathRe.MatchString(path)
 	case "POST":
 		return path == "/api/printers" || gatewayPrinterActionPathRe.MatchString(path) || gatewayTestPrintPathRe.MatchString(path)
-	case "DELETE":
-		// Explicit scoped deletion of terminal simulation evidence only.
-		return path == "/api/agent/test-captures/status"
 	// Agent diagnostic print is scoped to its own printer at Gateway; it is
 	// not authorized to mutate desired state or cross-Agent printer records.
 	default:

@@ -41,7 +41,7 @@ services:
       PGPASSWORD_FILE: /run/secrets/postgres_password
     secrets:
       - postgres_password
-    command: ["npm", "run", "db:migrate"]
+    command: ["node", "--import", "tsx", "scripts/db-migrate.ts"]
     networks:
       - yasser_domain_test
 
@@ -62,8 +62,6 @@ services:
       YASEIR_STAGING_FIXTURES_ENABLED: "1"
       # First owner provisions one test workspace; further signups are blocked.
       YASEIR_STAGING_SINGLE_WORKSPACE: "1"
-      # Separate simulation queue; opt-in via the staging env, never production printing.
-      YASEIR_E2E_CAPTURE_ENABLED: ${YASEIR_E2E_CAPTURE_ENABLED:-0}
       APP_BASE_URL: ${APP_BASE_URL}
       COOKIE_SECURE: "1"
       TRUST_PROXY: "1"

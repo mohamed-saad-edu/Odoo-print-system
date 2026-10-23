@@ -241,7 +241,7 @@ directly, so failed registry persistence cannot substitute stale inventory.
 
 Physical Test Print in the desktop, Gateway and Odoo uses the selected printer's supported document or byte-language path. Explicit local `printers test` submits a real Windows/IPP PDF or matched RAW/ESC-POS/ZPL/TSPL diagnostic. ZPL uses one small buffered `TEST` marker; TSPL uses the firmware's documented `SELFTEST`, without forcing stock size, gap, calibration or cutter settings. Actual application label commands keep their existing language/media requirements.
 
-Connection/setup checks remain read-only, and Test Center/E2E Capture remains rendering-only. A successful physical-test submission still requires checking paper before repeating an uncertain operation. Local exact printer IDs take precedence over names; ambiguous name aliases refuse rather than selecting another queue.
+Connection/setup checks remain read-only. A successful physical-test submission still requires checking paper before repeating an uncertain operation. Local exact printer IDs take precedence over names; ambiguous name aliases refuse rather than selecting another queue.
 
 * `POST /api/printers/:id/test-connection` — **no job is created**. Returns the cached
   heartbeat reachability (`latencyMs` is always `null`; the gateway cannot dial the LAN and

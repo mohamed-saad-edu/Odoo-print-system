@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { AlertCircle, ArrowUpRight, RefreshCw } from "lucide-react";
+import { AlertCircle, ArrowUpRight, RefreshCw, Building2, Server, Printer, Clock3, CheckCheck, KeyRound, Database, ShieldCheck, ListChecks } from "lucide-react";
 import { Button, Card, ErrorState, PageHeader, PageSkeleton } from "../../../components/ui";
 import { fetchWithTimeout } from "../../../lib/fetch-timeout";
 import { useI18n } from "../../../i18n/react";
@@ -70,25 +70,26 @@ export default function PlatformDashboardPage() {
       value: stats?.subscriptions.attention ?? 0, href: "/platform/subscriptions" },
   ];
   const links = [
-    { label: ar ? "مساحات العمل" : "Workspaces", href: "/platform/tenants" },
-    { label: ar ? "الطابعات والأيجنت" : "Printer & Agent control", href: "/platform/fleet" },
-    { label: ar ? "مفاتيح API" : "API keys", href: "/platform/integrations" },
-    { label: ar ? "سجل العمليات" : "Audit log", href: "/platform/audit" },
+    { label: ar ? "قاعدة البيانات" : "Database Explorer", href: "/platform/database", icon: Database },
+    { label: ar ? "مساحات العمل" : "Workspaces", href: "/platform/tenants", icon: Building2 },
+    { label: ar ? "الطابعات والأيجنت" : "Printer & Agent control", href: "/platform/fleet", icon: Printer },
+    { label: ar ? "مفاتيح API" : "API keys", href: "/platform/integrations", icon: KeyRound },
+    { label: ar ? "سجل العمليات" : "Audit log", href: "/platform/audit", icon: ShieldCheck },
   ];
   const tiles = [
     { label: ar ? "مساحات العمل النشطة" : "Active workspaces",
-      value: stats?.tenants.active ?? 0, sub: `/ ${formatNumber(stats?.tenants.total ?? 0)}`, href: "/platform/tenants" },
+      value: stats?.tenants.active ?? 0, sub: `/ ${formatNumber(stats?.tenants.total ?? 0)}`, href: "/platform/tenants", icon: Building2 },
     { label: ar ? "الأيجنت المتصلة" : "Online Agents",
-      value: stats?.agents.online ?? 0, sub: `/ ${formatNumber(stats?.agents.active ?? 0)}`, href: "/platform/fleet" },
+      value: stats?.agents.online ?? 0, sub: `/ ${formatNumber(stats?.agents.active ?? 0)}`, href: "/platform/fleet", icon: Server },
     { label: ar ? "الطابعات الجاهزة" : "Available printers",
       value: (stats?.printers.online ?? 0) + (stats?.printers.busy ?? 0),
-      sub: `/ ${formatNumber(stats?.printers.active ?? 0)}`, href: "/platform/fleet" },
+      sub: `/ ${formatNumber(stats?.printers.active ?? 0)}`, href: "/platform/fleet", icon: Printer },
     { label: ar ? "مهام في الانتظار الآن" : "Jobs waiting now",
-      value: queue.queued, sub: `${formatNumber(queue.inFlight)} ${ar ? "قيد التنفيذ" : "in progress"}`, href: "/platform/jobs" },
+      value: queue.queued, sub: `${formatNumber(queue.inFlight)} ${ar ? "قيد التنفيذ" : "in progress"}`, href: "/platform/jobs", icon: Clock3 },
     { label: ar ? "مهام تمت خلال 24 ساعة" : "Jobs printed in 24h",
-      value: stats?.jobs24h.success ?? 0, sub: `/ ${formatNumber(stats?.jobs24h.total ?? 0)}`, href: "/platform/jobs" },
+      value: stats?.jobs24h.success ?? 0, sub: `/ ${formatNumber(stats?.jobs24h.total ?? 0)}`, href: "/platform/jobs", icon: CheckCheck },
     { label: ar ? "مفاتيح API مصرح لها" : "Authorized API keys",
-      value: stats?.integrations?.keys.active ?? 0, sub: ar ? "مفاتيح فعالة" : "active credentials", href: "/platform/integrations" },
+      value: stats?.integrations?.keys.active ?? 0, sub: ar ? "مفاتيح فعالة" : "active credentials", href: "/platform/integrations", icon: KeyRound },
   ];
 
   return <div className="space-y-6 pb-10">
@@ -106,7 +107,7 @@ export default function PlatformDashboardPage() {
         {tiles.map(item => <Link key={item.href + item.label} href={item.href}
           className="group rounded-xl border border-edge bg-surface px-5 py-5 transition-colors hover:border-brand/40 focus-visible:outline-2 focus-visible:outline-brand">
           <div className="flex justify-between gap-3 text-sm font-medium text-ink-3">
-            <span>{item.label}</span><ArrowUpRight className="h-4 w-4 shrink-0 text-ink-4" aria-hidden />
+            <span>{item.label}</span><item.icon className="h-5 w-5 shrink-0 text-brand/75" aria-hidden />
           </div>
           <div className="mt-4 flex items-baseline gap-2">
             <strong className="text-3xl font-semibold tabular-nums tracking-tight text-ink">{formatNumber(item.value)}</strong>
@@ -129,7 +130,7 @@ export default function PlatformDashboardPage() {
       <section aria-label={ar ? "الإدارة" : "Management"} className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         {links.map(link => <Link key={link.href} href={link.href}
           className="flex min-h-12 items-center justify-between gap-3 rounded-xl border border-edge bg-surface px-4 py-3 text-sm font-medium text-ink-2 transition-colors hover:border-brand/40 hover:text-brand focus-visible:outline-2 focus-visible:outline-brand">
-          {link.label}<ArrowUpRight className="h-4 w-4 shrink-0 text-ink-4" aria-hidden />
+          <span className="flex items-center gap-2"><link.icon className="h-4 w-4 text-brand" aria-hidden />{link.label}</span><ArrowUpRight className="h-4 w-4 shrink-0 text-ink-4" aria-hidden />
         </Link>)}
       </section>
     </>}

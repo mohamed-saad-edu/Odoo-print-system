@@ -49,7 +49,7 @@ if [[ -z "$(get_env_value YASEIR_STAGING_FIXTURES_ENABLED "$ENV_FILE" || true)" 
   upsert_env YASEIR_STAGING_FIXTURES_ENABLED 1
 fi
 # Remove obsolete HTTP test switches after their values have been migrated.
-sed -i '/^HTTP_TEST_VOLUME_NAME=/d; /^YASEIR_HTTP_TEST_MODE=/d' "$ENV_FILE"
+sed -i '/^HTTP_TEST_VOLUME_NAME=/d; /^YASEIR_HTTP_TEST_MODE=/d; /^YASEIR_E2E_CAPTURE_ENABLED=/d' "$ENV_FILE"
 STAGING_PG_VOLUME="$(get_env_value STAGING_PG_VOLUME "$ENV_FILE" || true)"
 if [[ -z "$STAGING_PG_VOLUME" ]] || ! docker volume inspect "$STAGING_PG_VOLUME" >/dev/null 2>&1; then
   echo "ERROR: Existing HTTPS staging PostgreSQL volume was not found; refusing data reset." >&2
@@ -102,8 +102,6 @@ upsert_env TRUST_PROXY 1
 upsert_env YASEIR_STAGING_FIXTURES_ENABLED 1
 # Prevent accidental multi-tenant trial proliferation on shared HTTPS staging.
 upsert_env YASEIR_STAGING_SINGLE_WORKSPACE 1
-# Enable safe, isolated capture tests on staging, but preserve an explicit 0 opt-out.
-ensure_env YASEIR_E2E_CAPTURE_ENABLED 1
 # Continue using the same external PostgreSQL volume; NEVER delete/reset it.
 upsert_env STAGING_PG_VOLUME "$STAGING_PG_VOLUME"
 # These are STAGING-ONLY allowlisted pretend Stripe prices, not real Stripe
@@ -157,20 +155,7 @@ if ! curl -fsS --max-time 15 --resolve "$DOMAIN:443:127.0.0.1" "https://$DOMAIN/
   exit 1
 fi
 
-# An unauthenticated capture GET must return 401 when the route is deployed
-# and the flag is enabled. 404 indicates a missing/disabled capture API.
-# No integration API key or document payload is sent by this probe.
-if [[ "$(get_env_value YASEIR_E2E_CAPTURE_ENABLED "$ENV_FILE" || true)" == "1" ]]; then
-  echo "Checking staging E2E Capture API admission..."
-  capture_status="$(curl -sS --max-time 15 --resolve "$DOMAIN:443:127.0.0.1" -o /dev/null -w '%{http_code}' "https://$DOMAIN/api/odoo/test-captures" || true)"
-  if [[ "$capture_status" != "401" ]]; then
-    echo "ERROR: E2E Capture API expected HTTP 401 without credentials, got ${capture_status:-unreachable}." >&2
-    echo "Check the staging Gateway image and YASEIR_E2E_CAPTURE_ENABLED=1; do not disable HTTPS." >&2
-    exit 1
-  fi
-fi
-
-docker compose --env-file "$ENV_FILE" -f "$DEPLOY_DIR/docker-compose.yml" run --rm gateway npm run db:provision-plans
+docker compose --env-file "$ENV_FILE" -f "$DEPLOY_DIR/docker-compose.yml" run --rm gateway node --import tsx scripts/provision-plans.ts
 
 echo
 echo "Yaseir domain staging is READY."

@@ -54,7 +54,8 @@ def fixture(response=None, transport_error=None, unrecorded_error=None, lease_av
     company = SimpleNamespace(id=1)
     config = SimpleNamespace(enabled=True, sudo=lambda: config,
         _gateway_base=lambda **_kwargs: "https://gateway.example",
-        _gateway_headers=lambda: {"Authorization": "Bearer TEST_BOUNDARY_KEY"})
+        _gateway_headers=lambda: {"Authorization": "Bearer TEST_BOUNDARY_KEY"},
+        _register_auto_installation=lambda _installation_id: "registered-test-identity")
     requests = SimpleNamespace(exceptions=SimpleNamespace(Timeout=Timeout,
         ConnectionError=ConnectionError), RequestException=RequestException)
     sent = []
@@ -85,6 +86,7 @@ def fixture(response=None, transport_error=None, unrecorded_error=None, lease_av
         last_error = False
         next_retry_at = False
         gateway_job_id = False
+        gateway_installation_id = "00000000-0000-4000-8000-000000000001"
         submit_claim_token = "owned-lease"
         attempts = 0
         printer_id = "station-2"

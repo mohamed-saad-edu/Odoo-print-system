@@ -290,54 +290,6 @@ pub async fn restart_agent(app: tauri::AppHandle) -> Result<String, String> {
         .map(|_| "agent restarted".into())
 }
 
-// Read/write the one E2E opt-in setting through the bundled Go CLI, which
-// enforces the same protected service config ACL/DPAPI boundary as the Agent.
-// Neither the YAML nor its sealed secret ever enter the WebView.
-#[derive(Deserialize)]
-struct CaptureModeReply {
-    enabled: bool,
-}
-
-fn run_capture_mode(app: &tauri::AppHandle, mode: &str) -> Result<bool, String> {
-    let cli = agent::cli_path(app)?;
-    let config = paths::agent_config_path();
-    let root = paths::agent_data_root();
-    let mut cmd = Command::new(cli);
-    cmd.arg("capture-config")
-        .arg("-mode")
-        .arg(mode)
-        .arg("-config")
-        .arg(&config)
-        .env("YASEIR_AGENT_DATA_DIR", &root);
-    let output = agent::run_bounded_command(cmd, std::time::Duration::from_secs(15), 1024, 8192)?;
-    if !output.status.success() {
-        let error = String::from_utf8_lossy(&output.stderr);
-        return Err(format!(
-            "Agent capture setting: {}",
-            error.trim().chars().take(480).collect::<String>()
-        ));
-    }
-    let reply: CaptureModeReply = serde_json::from_slice(&output.stdout)
-        .map_err(|e| format!("invalid Agent capture setting response: {e}"))?;
-    Ok(reply.enabled)
-}
-
-#[tauri::command]
-pub async fn get_e2e_capture_config(app: tauri::AppHandle) -> Result<bool, String> {
-    run_blocking(move || run_capture_mode(&app, "status")).await
-}
-
-#[tauri::command]
-pub async fn set_e2e_capture_config(app: tauri::AppHandle, enabled: bool) -> Result<bool, String> {
-    if !is_running_as_admin() {
-        return Err(
-            "Administrator privileges are required to change the Agent service configuration"
-                .into(),
-        );
-    }
-    run_blocking(move || run_capture_mode(&app, if enabled { "enable" } else { "disable" })).await
-}
-
 #[tauri::command]
 pub async fn control_service(action: String, app: tauri::AppHandle) -> Result<String, String> {
     run_blocking(move || agent::control_service(&action, &app)).await
@@ -736,17 +688,6 @@ fn valid_fleet_query(path: &str) -> bool {
     true
 }
 
-fn valid_capture_preview_path(path: &str) -> bool {
-    const PREFIX: &str = "/api/agent/test-captures/preview?id=cap_";
-    let Some(id) = path.strip_prefix(PREFIX) else {
-        return false;
-    };
-    id.len() == 32
-        && id
-            .bytes()
-            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-}
-
 fn allowed_agent_gateway_path(path: &str, method: &str) -> bool {
     let method = method.to_ascii_uppercase();
     match method.as_str() {
@@ -757,15 +698,13 @@ fn allowed_agent_gateway_path(path: &str, method: &str) -> bool {
         "GET" => {
             valid_fleet_query(path)
                 || valid_jobs_query(path)
-                || path == "/api/agent/test-captures/status"
-                || valid_capture_preview_path(path)
+
         }
         "POST" => {
             path == "/api/printers"
                 || gateway_printer_action_path(path, "test-connection")
                 || gateway_printer_action_path(path, "test-print")
         }
-        "DELETE" => path == "/api/agent/test-captures/status",
         // Other PATCH/DELETE and arbitrary control-plane mutations remain denied.
         // The explicitly allowlisted test-print is authenticated and fenced
         // to this Agent's own printer by the Gateway API.
@@ -843,13 +782,7 @@ pub async fn gateway_agent_request(
         // The CLI independently bounds the HTTP body to8MiB. JSON string/HTML
         // escaping can expand one input byte to6 bytes; include bounded header
         // metadata/envelope overhead without changing any API or helper limit.
-        // Capture preview keeps its tighter existing cap: the producer allows
-        // one256KiB JPEG, whose base64/JSON envelope remains below512KiB.
-        let max_stdout = if valid_capture_preview_path(&path) {
-            512 * 1024
-        } else {
-            GATEWAY_CONSOLE_MAX_ENVELOPE_BYTES
-        };
+        let max_stdout = GATEWAY_CONSOLE_MAX_ENVELOPE_BYTES;
         let out = agent::run_bounded_command_with_input(
             request_cmd,
             input,
@@ -1455,343 +1388,6 @@ pub async fn get_printers(app: tauri::AppHandle) -> Result<Vec<PrinterInfo>, Str
         Ok(filtered)
     })
     .await
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CaptureTestRequest {
-    document_bytes: Vec<u8>,
-    format: String,
-    paper_mm: u16,
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CaptureTestResult {
-    outcome: String,
-    renderer: String,
-    pages: usize,
-    paper_mm: u16,
-    input_format: String,
-    pdf_path: String,
-    preview_path: String,
-    preview_data_uri: String,
-    sha256: String,
-    pdf_bytes: usize,
-}
-
-fn validate_capture_request(req: &CaptureTestRequest) -> Result<(), String> {
-    if req.document_bytes.is_empty() || req.document_bytes.len() > 4 * 1024 * 1024 {
-        return Err("test document must be 1 byte to 4 MiB".into());
-    }
-    match (req.format.as_str(), req.paper_mm) {
-        ("jpeg", 0 | 58 | 80) | ("pdf", 0) => Ok(()),
-        _ => Err("test source or paper width is unsupported".into()),
-    }
-}
-
-struct TemporaryCaptureInput(std::path::PathBuf);
-impl Drop for TemporaryCaptureInput {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.0);
-    }
-}
-
-#[tauri::command]
-pub async fn capture_test_document(
-    app: tauri::AppHandle,
-    request: CaptureTestRequest,
-) -> Result<CaptureTestResult, String> {
-    validate_capture_request(&request)?;
-    run_blocking(move || {
-        let root = paths::ensure_manager_data_root()
-            .map_err(|e| format!("private Manager storage: {e}"))?;
-        let folder = root.join("test-captures");
-        std::fs::create_dir_all(&folder)
-            .map_err(|e| format!("create private capture folder: {e}"))?;
-        paths::ensure_manager_directory_security(&folder)
-            .map_err(|e| format!("secure private capture folder: {e}"))?;
-        let id = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_err(|e| format!("capture timestamp: {e}"))?
-            .as_nanos();
-        let input_path = folder.join(format!("input-{}-{}.bin", std::process::id(), id));
-        let mut file = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&input_path)
-            .map_err(|e| format!("create capture input: {e}"))?;
-        let _cleanup = TemporaryCaptureInput(input_path.clone());
-        paths::ensure_manager_file_security(&input_path)
-            .map_err(|e| format!("secure capture input: {e}"))?;
-        file.write_all(&request.document_bytes)
-            .map_err(|e| format!("write capture input: {e}"))?;
-        file.sync_all()
-            .map_err(|e| format!("sync capture input: {e}"))?;
-        drop(file);
-
-        // Bundled CLI only: no Agent service, printer queue, or Gateway request.
-        let cli = agent::cli_path(&app)?;
-        let mut cmd = Command::new(cli);
-        cmd.arg("capture-test")
-            .arg("-input")
-            .arg(&input_path)
-            .arg("-output-dir")
-            .arg(&folder)
-            .arg("-format")
-            .arg(&request.format)
-            .arg("-paper-mm")
-            .arg(request.paper_mm.to_string());
-        let output = agent::run_bounded_command(
-            cmd,
-            std::time::Duration::from_secs(45),
-            3 * 1024 * 1024,
-            32 * 1024,
-        )?;
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(format!(
-                "PDF test failed: {}",
-                stderr.trim().chars().take(600).collect::<String>()
-            ));
-        }
-        let response: CaptureTestResult = serde_json::from_slice(&output.stdout)
-            .map_err(|e| format!("invalid capture response: {e}"))?;
-        if response.outcome != "rendered_locally"
-            || response.renderer != "embedded_pdfium"
-            || response.pages == 0
-            || response.pages > 10
-            || !response
-                .preview_data_uri
-                .starts_with("data:image/png;base64,")
-        {
-            return Err("invalid local PDFium capture result".into());
-        }
-        let canonical_folder = folder
-            .canonicalize()
-            .map_err(|e| format!("resolve capture folder: {e}"))?;
-        for path in [&response.pdf_path, &response.preview_path] {
-            let canonical_file = std::path::Path::new(path)
-                .canonicalize()
-                .map_err(|e| format!("verify local capture file: {e}"))?;
-            if !canonical_file.starts_with(&canonical_folder) || !canonical_file.is_file() {
-                return Err("capture artifact escaped private directory".into());
-            }
-        }
-        Ok(response)
-    })
-    .await
-}
-
-const CAPTURE_CLEANUP_GRACE_SECS: u64 = 120;
-
-#[derive(Default, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TestCaptureCleanupResult {
-    manager_files: usize,
-    manager_bytes: u64,
-    manager_recent_kept: usize,
-    agent_files: usize,
-    agent_bytes: u64,
-    agent_recent_kept: usize,
-    agent_cleanup_unavailable: bool,
-}
-
-/// Only files produced by the PDFium Test Center may be deleted.
-/// Arbitrary uploads, protected settings, secrets and Windows printer
-/// spool files cannot match this intentionally narrow filename contract.
-fn is_capture_artifact_name(name: &str) -> bool {
-    let Some(rest) = name.strip_prefix("capture-") else {
-        return false;
-    };
-    let stem = rest
-        .strip_suffix(".pdf")
-        .or_else(|| rest.strip_suffix(".png"));
-    let Some(stem) = stem else {
-        return false;
-    };
-    stem.len() == 24
-        && stem
-            .bytes()
-            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-}
-
-fn prune_manager_capture_evidence() -> Result<(usize, u64, usize), String> {
-    let root =
-        paths::ensure_manager_data_root().map_err(|e| format!("private Manager storage: {e}"))?;
-    let dir = root.join("test-captures");
-    let meta = match std::fs::symlink_metadata(&dir) {
-        Ok(meta) => meta,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok((0, 0, 0)),
-        Err(e) => return Err(format!("inspect Manager test storage: {e}")),
-    };
-    if !meta.is_dir() || meta.file_type().is_symlink() {
-        return Err("Manager capture directory must not be a link".into());
-    }
-    // Reject junctions/reparse-point redirects, including Windows junctions
-    // not surfaced as ordinary symlinks by symlink_metadata.
-    let expected = root
-        .canonicalize()
-        .map_err(|e| format!("resolve private Manager storage: {e}"))?
-        .join("test-captures");
-    let actual = dir
-        .canonicalize()
-        .map_err(|e| format!("resolve Manager capture directory: {e}"))?;
-    if actual != expected {
-        return Err("Manager capture directory redirects outside its private root".into());
-    }
-    paths::ensure_manager_directory_security(&dir)
-        .map_err(|e| format!("secure private capture directory: {e}"))?;
-
-    let mut removed = 0usize;
-    let mut bytes = 0u64;
-    let mut recent = 0usize;
-    let now = std::time::SystemTime::now();
-    let entries = std::fs::read_dir(&dir).map_err(|e| format!("read Manager test storage: {e}"))?;
-    for item in entries {
-        let item = item.map_err(|e| format!("read Manager test entry: {e}"))?;
-        let name = item.file_name();
-        let Some(name) = name.to_str() else {
-            continue;
-        };
-        if !is_capture_artifact_name(name) {
-            continue;
-        }
-        let info = std::fs::symlink_metadata(item.path())
-            .map_err(|e| format!("inspect Manager test artifact: {e}"))?;
-        if !info.file_type().is_file() || info.file_type().is_symlink() {
-            continue;
-        }
-        let age = info
-            .modified()
-            .ok()
-            .and_then(|created| now.duration_since(created).ok());
-        if age.map_or(true, |value| {
-            value < std::time::Duration::from_secs(CAPTURE_CLEANUP_GRACE_SECS)
-        }) {
-            recent += 1;
-            continue;
-        }
-        std::fs::remove_file(item.path())
-            .map_err(|e| format!("remove private test artifact: {e}"))?;
-        removed += 1;
-        bytes = bytes.saturating_add(info.len());
-    }
-    Ok((removed, bytes, recent))
-}
-
-/// Local evidence is removed separately from Gateway history: a network
-/// outage must never prevent an Administrator from recovering disk space.
-#[tauri::command]
-pub async fn clear_test_capture_files(
-    app: tauri::AppHandle,
-) -> Result<TestCaptureCleanupResult, String> {
-    if !is_running_as_admin() {
-        return Err(
-            "Administrator privileges are required to clear private capture evidence".into(),
-        );
-    }
-    run_blocking(move || {
-        let (manager_files, manager_bytes, manager_recent_kept) = prune_manager_capture_evidence()?;
-        let mut response = TestCaptureCleanupResult {
-            manager_files,
-            manager_bytes,
-            manager_recent_kept,
-            ..Default::default()
-        };
-        let cli = match agent::cli_path(&app) {
-            Ok(cli) => cli,
-            Err(_) => {
-                response.agent_cleanup_unavailable = true;
-                return Ok(response);
-            }
-        };
-        let mut cmd = std::process::Command::new(cli);
-        cmd.arg("capture-cleanup")
-            .arg("-config")
-            .arg(paths::agent_config_path())
-            .env("YASEIR_AGENT_DATA_DIR", paths::agent_data_root());
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            cmd.creation_flags(0x0800_0000);
-        }
-        let result =
-            agent::run_bounded_command(cmd, std::time::Duration::from_secs(20), 4096, 4096);
-        #[derive(Deserialize)]
-        #[serde(rename_all = "camelCase")]
-        struct CliCleanupReport {
-            files_deleted: usize,
-            bytes_freed: u64,
-            recent_kept: usize,
-        }
-        if let Ok(out) = result {
-            if out.status.success() {
-                if let Ok(body) = serde_json::from_slice::<CliCleanupReport>(&out.stdout) {
-                    response.agent_files = body.files_deleted;
-                    response.agent_bytes = body.bytes_freed;
-                    response.agent_recent_kept = body.recent_kept;
-                    return Ok(response);
-                }
-            }
-        }
-        response.agent_cleanup_unavailable = true;
-        Ok(response)
-    })
-    .await
-}
-
-#[cfg(test)]
-mod capture_request_tests {
-    use super::{CaptureTestRequest, is_capture_artifact_name, validate_capture_request};
-
-    #[test]
-    fn cleanup_does_not_accept_arbitrary_files_or_paths() {
-        assert!(is_capture_artifact_name(&format!(
-            "capture-{}.pdf",
-            "a".repeat(24)
-        )));
-        assert!(is_capture_artifact_name(&format!(
-            "capture-{}.png",
-            "0".repeat(24)
-        )));
-        for name in [
-            "config.yaml",
-            "capture-abc.pdf",
-            "../capture-.pdf",
-            "capture-aaaaaaaaaaaaaaaaaaaaaaaa.pdf.exe",
-            "capture-AAAAAAAAAAAAAAAAAAAAAAAA.pdf",
-            "capture-aaaaaaaaaaaaaaaaaaaaaaaa.bin",
-        ] {
-            assert!(
-                !is_capture_artifact_name(name),
-                "unexpected safe path: {name}"
-            );
-        }
-    }
-    #[test]
-    fn capture_rejects_virtual_queues_and_bad_dimensions() {
-        for (format, mm) in [("virtual", 80), ("pdf", 58), ("jpeg", 60)] {
-            assert!(
-                validate_capture_request(&CaptureTestRequest {
-                    document_bytes: vec![42],
-                    format: format.into(),
-                    paper_mm: mm,
-                })
-                .is_err()
-            );
-        }
-        for (format, mm) in [("pdf", 0), ("jpeg", 0), ("jpeg", 58), ("jpeg", 80)] {
-            assert!(
-                validate_capture_request(&CaptureTestRequest {
-                    document_bytes: vec![42],
-                    format: format.into(),
-                    paper_mm: mm,
-                })
-                .is_ok()
-            );
-        }
-    }
 }
 
 #[tauri::command]
@@ -2480,45 +2076,11 @@ mod agent_console_path_tests {
             "GET"
         ));
         assert!(!allowed_agent_gateway_path("/api/printers/p1", "PATCH"));
-        assert!(allowed_agent_gateway_path(
-            "/api/agent/test-captures/status",
-            "GET"
-        ));
-        assert!(allowed_agent_gateway_path(
-            &format!("/api/agent/test-captures/preview?id=cap_{}", "a".repeat(32)),
-            "GET"
-        ));
-        assert!(!allowed_agent_gateway_path(
-            "/api/agent/test-captures",
-            "GET"
-        ));
-        assert!(!allowed_agent_gateway_path(
-            "/api/agent/test-captures/status",
-            "POST"
-        ));
-        assert!(allowed_agent_gateway_path(
-            "/api/agent/test-captures/status",
-            "DELETE"
-        ));
-        assert!(!allowed_agent_gateway_path(
-            "/api/agent/test-captures",
-            "DELETE"
-        ));
-        assert!(!allowed_agent_gateway_path(
-            "/api/agent/test-captures/status?all=1",
-            "DELETE"
-        ));
-        assert!(!allowed_agent_gateway_path(
-            &format!(
-                "/api/agent/test-captures/preview?id=cap_{}&extra=1",
-                "a".repeat(32)
-            ),
-            "GET"
-        ));
-        assert!(!allowed_agent_gateway_path(
-            &format!("/api/agent/test-captures/preview?id=cap_{}", "A".repeat(32)),
-            "GET"
-        ));
+        // Removed customer E2E capture paths must stay denied.
+        for method in ["GET", "POST", "PATCH", "DELETE"] {
+            assert!(!allowed_agent_gateway_path("/api/agent/test-captures/status", method));
+            assert!(!allowed_agent_gateway_path("/api/agent/test-captures/preview?id=cap_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", method));
+        }
     }
 }
 #[cfg(test)]

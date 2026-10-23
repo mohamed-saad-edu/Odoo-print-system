@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 describe("domain staging deployment contracts", () => {
@@ -73,35 +73,25 @@ describe("domain staging deployment contracts", () => {
     expect(setup).not.toContain("curl -k");
   });
 
-  it("opts E2E Capture into the domain staging Gateway only, with an explicit off switch", () => {
+  it("removes retired E2E capture and executes staging migrations and plans without npm", () => {
     const production = read("docker-compose.yml");
     const staging = read("deploy/domain-test/docker-compose.yml");
-    const env = read("deploy/domain-test/.env.domain-test.example");
+    const sample = read("deploy/domain-test/.env.domain-test.example");
     const setup = read("deploy/domain-test/setup-domain-test.sh");
     const smoke = read("deploy/domain-test/smoke-domain-test.sh");
-    const odooRoute = read("src/app/api/odoo/test-captures/route.ts");
-    const windowsAgent = read("agent/internal/agent/e2e_capture.go");
-
-    // Both Compose files remain safe with absent environment configuration.
-    expect(production).toContain("YASEIR_E2E_CAPTURE_ENABLED: ${YASEIR_E2E_CAPTURE_ENABLED:-0}");
-    expect(staging).toContain("YASEIR_E2E_CAPTURE_ENABLED: ${YASEIR_E2E_CAPTURE_ENABLED:-0}");
-    // The HTTPS-only test deployment opts in, with no hard-coded production flag.
-    expect(env).toMatch(/^YASEIR_E2E_CAPTURE_ENABLED=1$/m);
-    expect(setup).toContain("ensure_env YASEIR_E2E_CAPTURE_ENABLED 1");
-    expect(setup).not.toContain("upsert_env YASEIR_E2E_CAPTURE_ENABLED 1");
+    expect(production).not.toContain("YASEIR_E2E_CAPTURE_ENABLED");
+    expect(staging).not.toContain("YASEIR_E2E_CAPTURE_ENABLED");
+    expect(sample).not.toContain("YASEIR_E2E_CAPTURE_ENABLED");
+    expect(setup).not.toContain("ensure_env YASEIR_E2E_CAPTURE_ENABLED");
+    expect(setup).not.toContain("/api/odoo/test-captures");
+    expect(smoke).not.toContain("/api/odoo/test-captures");
+    expect(existsSync(resolve(process.cwd(), "src/app/api/odoo/test-captures/route.ts"))).toBe(false);
+    expect(existsSync(resolve(process.cwd(), "docs/E2E_CAPTURE_TEST.md"))).toBe(false);
+    expect(staging).toContain('command: ["node", "--import", "tsx", "scripts/db-migrate.ts"]');
+    expect(setup).toContain("run --rm gateway node --import tsx scripts/provision-plans.ts");
     expect(staging).toContain('COOKIE_SECURE: "1"');
     expect(staging).toContain('TRUST_PROXY: "1"');
     expect(staging).not.toContain("YASEIR_AGENT_ALLOW_INSECURE_HTTP");
-
-    // A credential-free GET distinguishes a disabled route (404) from a live
-    // feature gate (401) without queuing anything or disclosing a token.
-    expect(odooRoute).toContain('new CaptureError("CAPTURE_NOT_ENABLED", 404)');
-    expect(odooRoute).toContain('status: 401');
-    expect(setup).toContain('https://$DOMAIN/api/odoo/test-captures');
-    expect(setup).toContain('if [[ "$capture_status" != "401" ]]');
-    expect(smoke).toContain('$BASE_URL/api/odoo/test-captures');
-    expect(smoke).toContain("SMOKE_EXPECT_E2E_CAPTURE:-1");
-    expect(windowsAgent).toContain("!a.cfg.Server.E2ECaptureTests");
   });
 
 });

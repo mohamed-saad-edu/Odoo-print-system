@@ -50,5 +50,4 @@ odoo_addons/**/*.pyc
 
 # Local verification logs, screenshots, binaries and generated graph cache
 .audit/
-graphify-out/*
-!graphify-out/FINAL_AUDIT.md
+graphify-out/

@@ -106,10 +106,15 @@ export async function truncateAll(): Promise<void> {
       await client.query("BEGIN");
       // Use DELETE instead of TRUNCATE CASCADE to avoid heavy DataFileImmediateSync I/O stalls on test environments
       const orderedTables = [
+        // Automatic v2 enrollment adds retained installation associations.
+        // Delete children first, or future fixture resets will hit FK errors.
+        "odoo_v2_operations",
+        "odoo_legacy_resolutions",
+        "odoo_installation_credentials",
+        "odoo_installations",
         // Delete child tables before their referenced parent rows. This keeps
         // the cheaper DELETE-based cleanup semantically equivalent to the
         // previous TRUNCATE ... CASCADE isolation without requiring CASCADE.
-        "e2e_capture_runs",
         "job_events",
         "print_job_receipts",
         "discovered_devices",
@@ -148,7 +153,13 @@ export function sha256(value: string): string { return createHash("sha256").upda
 
 export type Fixture = { tenantId: string; agentId: string; agentSecret: string; agentAuth: string; printerId: string; destination: string; odooKey: string };
 
-export async function seedFixture(opts?: { printerCapabilities?: unknown }): Promise<Fixture> {
+export async function seedFixture(opts?: {
+  printerCapabilities?: unknown;
+  // Existing integration tests intentionally exercise the historical v1 path.
+  // New-v2 tests must opt into a fresh strict_v2 fixture explicitly; the
+  // real PostgreSQL default for fresh production tenants remains strict_v2.
+  odooIdempotencyMode?: "legacy" | "strict_v2";
+}): Promise<Fixture> {
   const suffix = randomBytes(8).toString("hex");
   const agentId = `agt_${randomBytes(6).toString("base64url").slice(0, 8)}`;
   const agentSecret = randomBytes(16).toString("base64url");
@@ -164,8 +175,8 @@ export async function seedFixture(opts?: { printerCapabilities?: unknown }): Pro
       await client.query("BEGIN");
       const tenantId = `tenant_${suffix}`;
       await client.query(
-        `INSERT INTO tenants (id, name) VALUES ($1, $2)`,
-        [tenantId, `Tenant ${suffix}`],
+        `INSERT INTO tenants (id, name, odoo_idempotency_mode) VALUES ($1, $2, $3)`,
+        [tenantId, `Tenant ${suffix}`, opts?.odooIdempotencyMode ?? "legacy"],
       );
       // Entitlement enforcement is fail-closed: every print-job admission
       // requires an eligible subscription with canonical limits. Fixtures

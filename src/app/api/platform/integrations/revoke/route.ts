@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { and, eq, isNotNull, isNull, or, sql } from "drizzle-orm";
 import { z } from "zod";
+import { isPlatformActionConfirmed, platformActionReason } from "../../../../../lib/platform-action-confirmation";
 import { db } from "../../../../../db";
 import { apiKeys } from "../../../../../db/schema";
 import {
@@ -15,8 +16,10 @@ const HEADERS = { "Cache-Control": "private, no-store" };
 const inputSchema = z.object({
   tenantId: z.string().trim().min(1).max(120),
   id: z.string().trim().min(1).max(150),
-  confirmId: z.string().trim().min(1).max(150),
-  reason: z.string().trim().min(10).max(500),
+  // Native modal confirmation: no ID transcription or minimum reason length.
+  confirmed: z.literal(true).optional(),
+  confirmId: z.string().trim().min(1).max(150).optional(), // legacy clients
+  reason: z.string().trim().max(500).optional(),
 }).strict();
 
 /** Emergency deny-list: does NOT rotate, expose or mint integration credentials. */
@@ -29,10 +32,11 @@ export async function POST(req: Request) {
   }
   if (hasBodyOverLimit(req, 4 * 1024)) return NextResponse.json({ error: "Request too large" }, { status: 413, headers: HEADERS });
   const parsed = inputSchema.safeParse(await req.json().catch(() => null));
-  if (!parsed.success || parsed.data.id !== parsed.data.confirmId) {
-    return NextResponse.json({ error: "Confirm the exact API key ID and provide a reason" }, { status: 400, headers: HEADERS });
+  if (!parsed.success || !isPlatformActionConfirmed(parsed.data, parsed.data.id)) {
+    return NextResponse.json({ error: "Confirm this security action" }, { status: 400, headers: HEADERS });
   }
-  const { tenantId, id, reason } = parsed.data;
+  const { tenantId, id } = parsed.data;
+  const reason = platformActionReason(parsed.data.reason, "API key revocation");
   try {
     const result = await db.transaction(async tx => {
       const rows = await tx.select({ id: apiKeys.id, revokedAt: apiKeys.revokedAt, readOnlyUntil: apiKeys.readOnlyUntil })

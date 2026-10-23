@@ -21,7 +21,6 @@ def test_docker_context_excludes_generated_and_runtime_state():
         "agent/queue.db-*",
         "agent/config.yaml",
         "agent/config.yaml.*",
-        "agent/e2e-captures",
         "config.yaml",
         "queue.db",
         "queue.db-*",

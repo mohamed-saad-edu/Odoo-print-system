@@ -3,7 +3,7 @@
 import { fetchWithTimeout } from "../../lib/fetch-timeout";
 import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
-import { Activity, Building2, CreditCard, Tags, Shield, Printer, ListChecks, KeyRound } from "lucide-react";
+import { Activity, Building2, CreditCard, Tags, Shield, Printer, ListChecks, KeyRound, Database } from "lucide-react";
 import type { TopNavItem } from "../../components/TopNavbar";
 import { PlatformSidebar } from "../../components/platform/PlatformSidebar";
 import { PageContainer, PageSkeleton, ErrorState, Callout } from "../../components/ui";
@@ -17,6 +17,7 @@ const NAV_ITEMS: TopNavItem[] = [
   { href: "/platform/tenants", labelKey: "platform.nav.tenants", icon: Building2, sectionKey: "platform.section.operations", keywords: "tenants customers workspaces" },
   { href: "/platform/subscriptions", labelKey: "platform.nav.subscriptions", icon: CreditCard, sectionKey: "platform.section.commerce", keywords: "subscriptions billing invoices" },
   { href: "/platform/plans", labelKey: "platform.nav.plans", icon: Tags, sectionKey: "platform.section.commerce", keywords: "plans pricing tiers" },
+  { href: "/platform/database", labelKey: "platform.nav.database", icon: Database, sectionKey: "platform.section.security", keywords: "database table record id explorer data" },
   { href: "/platform/audit", labelKey: "platform.nav.audit", icon: Shield, sectionKey: "platform.section.security", keywords: "audit trail logs security" },
 ];
 

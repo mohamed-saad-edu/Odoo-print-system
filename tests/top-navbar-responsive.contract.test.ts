@@ -5,6 +5,31 @@ import { join } from "node:path";
 const read = (path: string) => readFileSync(join(process.cwd(), path), "utf8");
 
 describe("Gateway and Platform sidebar navigation", () => {
+  it("uses the same wide breakpoint for marketing links and the mobile sheet in RTL", () => {
+    const home = read("src/app/page.tsx");
+    const mobile = read("src/components/marketing/MobileNavigation.tsx");
+    const styles = read("src/app/globals.css");
+
+    // Long translated links must not crowd out sign-in, trial and theme
+    // controls at small desktop/tablet widths (up to 1279 CSS pixels).
+    expect(home).toContain('flex-nowrap items-center gap-0.5 xl:flex');
+    expect(home).toContain('whitespace-nowrap');
+    expect(home).toContain('aria-label={t("home.brandAria")}');
+    expect(home).toContain('<LanguageSwitcher compact={false} placement="below" />');
+    expect(home).toContain('className="hidden items-center gap-2 md:flex"');
+    expect(mobile).toContain('window.matchMedia("(min-width: 1280px)")');
+    expect(mobile).toContain('focus-visible:ring-brand xl:hidden');
+    expect(mobile).toContain('outline-none xl:hidden');
+    expect(mobile).not.toContain('(min-width: 768px)');
+    expect(mobile).not.toContain('md:hidden');
+
+    // At 320px the accessible logo label stays, only wordmark hides.
+    expect(home).toContain('className="yw-public-brand-mark"');
+    expect(styles).toContain('@media (max-width: 399.98px)');
+    expect(styles).toContain('.yw-public-brand-mark > span:last-child');
+  });
+
+
   it("removes the Gateway top navbar and retains its controls inside the sidebar", () => {
     const shell = read("src/components/AppShell.tsx");
     expect(shell).toContain("tg-console-rail");

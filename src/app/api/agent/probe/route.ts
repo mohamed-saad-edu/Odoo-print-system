@@ -6,7 +6,7 @@ export const dynamic = "force-dynamic";
  * This deliberately does not query PostgreSQL or require a Manager session:
  * Settings uses it to validate that a candidate URL points at a Yaseir
  * Gateway before saving the origin. Deeper database/service readiness remains
- * the responsibility of /api/health and the authenticated System page.
+ * the responsibility of /api/health and the authenticated Agent/Printer views.
  */
 export function GET() {
   return Response.json(

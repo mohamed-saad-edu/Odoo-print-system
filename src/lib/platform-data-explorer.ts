@@ -1,0 +1,102 @@
+import { pool } from "../db";
+import type { PoolClient } from "pg";
+
+/** Metadata-driven, read-only database inventory. Database identifiers are
+ * never supplied to SQL directly by the browser. All identifiers are quoted
+ * only after checking them against information_schema.
+ *
+ * Sensitive columns (including credential hashes, tokens and raw print payload)
+ * are excluded server-side, not masked after fetching. JSON/blob columns are
+ * excluded because they may contain nested secrets or customer documents.
+ */
+const SECRET = /(?:password|secret|token|credential|private|signature|salt|hash|payload|document|certificate|authorization|cookie|session_data|card_number|payment_method|refresh|recovery|otp|passcode|api_key_value|body|content|address_line|phone|email)/i;
+const SAFE_TYPES = new Set(["text","character varying","character","uuid","integer","bigint","smallint","numeric","boolean","timestamp without time zone","timestamp with time zone","date","double precision","real","USER-DEFINED"]);
+const ALWAYS_HIDDEN = new Set(["platform_sessions","refresh_tokens","auth_rate_limits","password_reset_tokens","email_verification_tokens","pg_stat_statements"]);
+export type ExploreTable = { name: string; columns: string[]; primaryKey: string | null };
+const quote = (v: string) => '"' + v.replaceAll('"', '""') + '"';
+
+export async function listExploreTables(client: PoolClient): Promise<ExploreTable[]> {
+  // One bounded catalog query rather than an N+1 request per table. The
+  // information_schema query itself does not read any customer row or secret.
+  const catalog = await client.query<{
+    table_name: string; column_name: string; data_type: string; is_primary: boolean;
+  }>(`SELECT c.table_name, c.column_name, c.data_type,
+        EXISTS (
+          SELECT 1 FROM information_schema.table_constraints tc
+          JOIN information_schema.key_column_usage kcu
+            ON kcu.constraint_catalog = tc.constraint_catalog
+            AND kcu.constraint_schema = tc.constraint_schema
+            AND kcu.constraint_name = tc.constraint_name
+            AND kcu.table_schema = tc.table_schema
+            AND kcu.table_name = tc.table_name
+          WHERE tc.constraint_type = 'PRIMARY KEY'
+            AND tc.table_schema = c.table_schema
+            AND tc.table_name = c.table_name
+            AND kcu.column_name = c.column_name
+        ) AS is_primary
+     FROM information_schema.columns c
+     JOIN (
+       SELECT table_name FROM information_schema.tables
+       WHERE table_schema = current_schema() AND table_type = 'BASE TABLE'
+       ORDER BY table_name LIMIT 250
+     ) t ON t.table_name = c.table_name
+     WHERE c.table_schema = current_schema()
+     ORDER BY c.table_name, c.ordinal_position`);
+  const grouped = new Map<string, {
+    columns: string[];
+    primary: string | null;
+  }>();
+  for (const column of catalog.rows) {
+    if (ALWAYS_HIDDEN.has(column.table_name)) continue;
+    let table = grouped.get(column.table_name);
+    if (!table) {
+      table = { columns: [], primary: null };
+      grouped.set(column.table_name, table);
+    }
+    if (!SAFE_TYPES.has(column.data_type) || SECRET.test(column.column_name)) continue;
+    if (table.columns.length >= 40) continue;
+    table.columns.push(column.column_name);
+    if (column.is_primary && !table.primary) table.primary = column.column_name;
+  }
+  return [...grouped.entries()]
+    .filter(([, table]) => table.columns.length > 0)
+    .map(([name, table]) => ({
+      name, columns: table.columns,
+      primaryKey: table.primary ?? (table.columns.includes("id") ? "id" : null),
+    }));
+}
+export async function exploreRows(client: PoolClient, table: ExploreTable, search: string, offset: number, limit: number) {
+  const colSQL = table.columns.map(quote).join(", ");
+  // Search visible scalar fields only; never fetch secrets or interpolate user input.
+  // Include exact/partial ID and common human labels (names, slugs, statuses).
+  const preferred = table.columns.filter(c => /^(id|tenant_id|agent_id|printer_id|name|display_name|slug|status|lifecycle|plan_id|job_id|code|external_id|domain|type|protocol)$/i.test(c)).slice(0,10);
+  const searchable = preferred.length ? preferred : table.primaryKey ? [table.primaryKey] : [];
+  // strpos treats punctuation, percent signs and underscores literally.
+  // Bind the term: browser input NEVER becomes a SQL identifier or expression.
+  const where = search && searchable.length
+    ? "WHERE (" + searchable.map(c => `strpos(lower(${quote(c)}::text), lower($1)) > 0`).join(" OR ") + ")"
+    : "";
+  const args = search ? [search, limit, offset] : [limit, offset];
+  const index = search ? 2 : 1;
+  if (search && !searchable.length) return [];
+  const result = await client.query<Record<string,unknown>>(
+    `SELECT ${colSQL} FROM ${quote(table.name)} ${where}
+      ORDER BY ${quote(table.columns.includes("created_at") ? "created_at" : table.primaryKey ?? table.columns[0])} DESC
+      LIMIT $${index} OFFSET $${index + 1}`,args);
+  return result.rows.map(row=>Object.fromEntries(Object.entries(row).map(([k,v])=>[k,
+     typeof v==="string" && v.length>320 ? v.slice(0,320)+"…" : v instanceof Date ? v.toISOString() : v])));
+}
+export async function readPlatformDatabase(input: { table?: string; search?: string; offset?: number }) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN READ ONLY");
+    await client.query("SET LOCAL statement_timeout = '4000ms'");
+    const tables = await listExploreTables(client);
+    const table = input.table ? tables.find(t=>t.name === input.table) : null;
+    const rows = table ? await exploreRows(client,table,input.search ?? "",input.offset ?? 0,25) : [];
+    await client.query("COMMIT");
+    return { tables, selected: table?.name ?? null, columns: table?.columns ?? [], rows,
+      hasMore:rows.length===25 };
+  } catch(e) { await client.query("ROLLBACK").catch(()=>{});throw e; }
+  finally { client.release(); }
+}

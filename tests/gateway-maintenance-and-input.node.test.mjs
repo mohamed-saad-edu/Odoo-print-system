@@ -115,28 +115,3 @@ test("logout requires both revocations and exposes failure without a rejected UI
     assert.deepEqual(failures, mode === "ok" ? [false] : [false, true]);
   }
 });
-
-test("a stale health response body cannot overwrite a newer sample or settle its loading state", async () => {
-  const source = readFileSync("src/app/system-health/system-health-client.tsx", "utf8");
-  const start = source.indexOf("useCallback(async (mode:") + "useCallback(".length;
-  const body = source.slice(start, source.indexOf(", [t]);", start));
-  const samples = [], loading = [];
-  let resolveOld;
-  const oldBody = new Promise(resolve => { resolveOld = resolve; });
-  let calls = 0;
-  const context = vm.createContext({
-    AbortController, setTimeout, clearTimeout, console,
-    request: { current: null }, t: key => key, statusMessageKey: () => undefined,
-    setHealth: value => samples.push(value), setError() {},
-    setLoading: value => loading.push(value), setRefreshing() {},
-    fetchWithTimeout: async () => ({ ok: true, json: () => ++calls === 1 ? oldBody : Promise.resolve({ sample: "new" }) }),
-  });
-  vm.runInContext("globalThis.load = " + stripTypeScriptTypes(body), context);
-  const old = context.load("initial");
-  await Promise.resolve();
-  await context.load("refresh");
-  resolveOld({ sample: "old" });
-  await old;
-  assert.deepEqual(samples, [{ sample: "new" }]);
-  assert.deepEqual(loading, [true, false]);
-});

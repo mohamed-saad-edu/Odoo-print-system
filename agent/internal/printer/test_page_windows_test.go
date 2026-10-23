@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"image/jpeg"
 	"os"
 	"testing"
 	"time"
@@ -105,9 +106,15 @@ func TestWindowsGeneratedDiagnosticIsRenderedByRealPDFium(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		capture, err := CaptureTestDocument(ctx, data, "pdf", 0)
-		if err != nil || capture.Pages != 1 || len(capture.PreviewPNG) == 0 {
-			t.Fatalf("generated diagnostic could not render: width=%g pages=%d err=%v", width, capture.Pages, err)
+		// Exercise the retained production PDFium rasterizer, not the retired
+		// E2E capture API. Decode the complete image to catch broken bitmaps.
+		rendered, err := renderIPPPDFToJPEG(ctx, data)
+		if err != nil {
+			t.Fatalf("generated diagnostic could not render: width=%g err=%v", width, err)
+		}
+		img, err := jpeg.Decode(bytes.NewReader(rendered))
+		if err != nil || img.Bounds().Dx() <= 0 || img.Bounds().Dy() <= 0 {
+			t.Fatalf("generated diagnostic rendered invalid JPEG: width=%g err=%v", width, err)
 		}
 	}
 }

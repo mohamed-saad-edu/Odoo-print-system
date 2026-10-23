@@ -12,7 +12,7 @@ type KeyRecord = {
   id: string; tenantId: string; tenantName: string; name: string; description: string | null;
   odooEnabled: boolean; revokedAt: string | null; readOnlyUntil: string | null; graceActive: boolean;
   createdAt: string; lastUsedAt: string | null;
-  installationId: string | null; installationName: string | null;
+  installationId: string | null; installationName: string | null; installationCount: number;
 };
 type InstallationRecord = {
   id: string; tenantId: string; tenantName: string; name: string; enabled: boolean;
@@ -23,11 +23,11 @@ type Action = { item: RecordItem; kind: "keys" | "installations"; operation?: "r
 const wording = {
   en: {
     title: "Integration control", eyebrow: "Gateway / Security operations", subtitle: "Inspect Odoo installations and API credentials across workspaces. Emergency actions revoke access; they never expose secrets or replay print jobs.",
-    readOnlyGrace: "Rotation read-only grace", keys: "API credentials", installations: "Odoo installations", search: "Search name, ID, workspace", workspace: "Workspace ID (optional)", all: "All", active: "Active", inactive: "Inactive", refresh: "Refresh", integration: "Integration", owner: "Workspace", state: "Access", activity: "Last used / created", operation: "Control", revoke: "Revoke key", remove: "Delete key", quarantine: "Quarantine", reason: "Incident / change reason (minimum 10 characters)", confirmId: "Type the exact ID to confirm", cancel: "Cancel", confirm: "Apply security action", confirmTitle: "Confirm an irreversible access change", confirmed: "Gateway change saved and written to the audit trail.", error: "Integration inventory unavailable", empty: "No matching integrations", page: "records", previous: "Previous", next: "Next", audit: "Audit log", safety: "Revoking an API key immediately ends its authorization, including read-only grace. Quarantining an Odoo installation blocks new v2 admissions; legacy v1 credentials may still work until separately revoked. Neither operation deletes prior receipts or retries jobs. Recovery needs an authenticated integration process.", denied: "Platform Owner access is required. No secrets are visible in this page.", role: "Platform Owner access only", never: "Secret values are never retrieved by this page.", credentials: "Credential bindings", issued: "Created", neverUsed: "Never used", noData: "—",
+    readOnlyGrace: "Rotation read-only grace", keys: "API credentials", installations: "Odoo installations", search: "Search name, ID, workspace", workspace: "Workspace ID (optional)", all: "All", active: "Active", inactive: "Inactive", refresh: "Refresh", integration: "Integration", owner: "Workspace", state: "Access", activity: "Last used / created", operation: "Control", revoke: "Revoke key", remove: "Delete key", quarantine: "Quarantine", reason: "Incident / change reason (optional)", confirmId: "Type the exact ID to confirm", cancel: "Cancel", confirm: "Apply security action", confirmTitle: "Confirm an irreversible access change", confirmed: "Gateway change saved and written to the audit trail.", error: "Integration inventory unavailable", empty: "No matching integrations", page: "records", previous: "Previous", next: "Next", audit: "Audit log", safety: "Revoking an API key immediately ends its authorization, including read-only grace. Quarantining an Odoo installation blocks new v2 admissions; legacy v1 credentials may still work until separately revoked. Neither operation deletes prior receipts or retries jobs. Recovery needs an authenticated integration process.", denied: "Platform Owner access is required. No secrets are visible in this page.", role: "Platform Owner access only", never: "Secret values are never retrieved by this page.", credentials: "Credential bindings", issued: "Created", neverUsed: "Never used", noData: "—",
   },
   ar: {
     title: "التحكم في التكاملات", eyebrow: "الجيتواي / أمان التشغيل", subtitle: "جرد تثبيتات Odoo ومفاتيح API لكل العملاء. إجراءات الطوارئ توقف الوصول بدون عرض أسرار أو إعادة تنفيذ مهام طباعة.",
-    readOnlyGrace: "فترة سماح للقراءة بعد التدوير", keys: "مفاتيح API", installations: "تثبيتات Odoo", search: "البحث بالاسم أو المعرّف أو العميل", workspace: "معرّف العميل (اختياري)", all: "الكل", active: "نشط", inactive: "معطّل", refresh: "تحديث", integration: "التكامل", owner: "العميل", state: "صلاحية الوصول", activity: "آخر استخدام / الإنشاء", operation: "التحكم", revoke: "إلغاء المفتاح", remove: "حذف المفتاح نهائيًا", quarantine: "حجر التثبيت", reason: "سبب الحادث أو الإجراء (10 أحرف على الأقل)", confirmId: "اكتب معرّف السجل كما هو للتأكيد", cancel: "إلغاء", confirm: "تنفيذ إجراء الأمان", confirmTitle: "تأكيد تغيير مؤثر على صلاحيات الاتصال", confirmed: "تم تنفيذ الإجراء وتسجيله في سجل التدقيق.", error: "تعذر تحميل جرد التكاملات", empty: "لا توجد تكاملات مطابقة", page: "سجل", previous: "السابق", next: "التالي", audit: "سجل التدقيق", safety: "إلغاء مفتاح API يوقف استخدامه فورًا حتى لو كان في فترة سماح للقراءة. حجز تثبيت Odoo يمنع عمليات v2 الجديدة، لكن مفاتيح v1 القديم قد تظل فعالة ما لم تُلغَ منفصلةً. لا يتم حذف السجلات القديمة أو تكرار الطباعة. استعادة الاتصال تحتاج إجراء تكامل موثّق.", denied: "الصفحة متاحة فقط لمالك المنصة. لا تظهر الأسرار هنا.", role: "مالك المنصة فقط", never: "لا يتم تحميل بيانات المفاتيح السرية في هذه الصفحة.", credentials: "عدد بيانات الاتصال", issued: "أُنشئ", neverUsed: "لم يُستخدم", noData: "—",
+    readOnlyGrace: "فترة سماح للقراءة بعد التدوير", keys: "مفاتيح API", installations: "تثبيتات Odoo", search: "البحث بالاسم أو المعرّف أو العميل", workspace: "معرّف العميل (اختياري)", all: "الكل", active: "نشط", inactive: "معطّل", refresh: "تحديث", integration: "التكامل", owner: "العميل", state: "صلاحية الوصول", activity: "آخر استخدام / الإنشاء", operation: "التحكم", revoke: "إلغاء المفتاح", remove: "حذف المفتاح نهائيًا", quarantine: "حجر التثبيت", reason: "سبب الحادث أو الإجراء (اختياري)", confirmId: "اكتب معرّف السجل كما هو للتأكيد", cancel: "إلغاء", confirm: "تنفيذ إجراء الأمان", confirmTitle: "تأكيد تغيير مؤثر على صلاحيات الاتصال", confirmed: "تم تنفيذ الإجراء وتسجيله في سجل التدقيق.", error: "تعذر تحميل جرد التكاملات", empty: "لا توجد تكاملات مطابقة", page: "سجل", previous: "السابق", next: "التالي", audit: "سجل التدقيق", safety: "إلغاء مفتاح API يوقف استخدامه فورًا حتى لو كان في فترة سماح للقراءة. حجز تثبيت Odoo يمنع عمليات v2 الجديدة، لكن مفاتيح v1 القديم قد تظل فعالة ما لم تُلغَ منفصلةً. لا يتم حذف السجلات القديمة أو تكرار الطباعة. استعادة الاتصال تحتاج إجراء تكامل موثّق.", denied: "الصفحة متاحة فقط لمالك المنصة. لا تظهر الأسرار هنا.", role: "مالك المنصة فقط", never: "لا يتم تحميل بيانات المفاتيح السرية في هذه الصفحة.", credentials: "عدد بيانات الاتصال", issued: "أُنشئ", neverUsed: "لم يُستخدم", noData: "—",
   },
 } as const;
 
@@ -48,7 +48,7 @@ export default function PlatformIntegrationsPage() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [selected, setSelected] = useState<Action | null>(null);
-  const [confirmId, setConfirmId] = useState("");
+  
   const [reason, setReason] = useState("");
   const [actionError, setActionError] = useState("");
   const [acting, setActing] = useState(false);
@@ -83,11 +83,11 @@ export default function PlatformIntegrationsPage() {
     if (acting) return;
     setSelected(null);
     setReason("");
-    setConfirmId("");
+    
     setActionError("");
   }
   async function applyAction() {
-    if (!selected || acting || selected.item.id !== confirmId || reason.trim().length < 10) return;
+    if (!selected || acting) return;
     setActing(true);
     setActionError("");
     try {
@@ -96,14 +96,14 @@ export default function PlatformIntegrationsPage() {
       const response = await fetchWithTimeout(`/api/platform/integrations/${operationEndpoint}`, {
         method: "POST", cache: "no-store", credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ tenantId: selected.item.tenantId, id: selected.item.id, confirmId, reason: reason.trim() }),
+        body: JSON.stringify({ tenantId: selected.item.tenantId, id: selected.item.id, confirmed: true, reason: reason.trim() }),
       });
       const result = await response.json().catch(() => null) as { error?: string } | null;
       if (!response.ok) throw new Error(result?.error || t.error);
       setNotice(t.confirmed);
       setSelected(null);
       setReason("");
-      setConfirmId("");
+      
       setRefresh(x => x + 1);
     } catch (e) { setActionError(e instanceof Error ? e.message : t.error); }
     finally { setActing(false); }
@@ -138,13 +138,13 @@ export default function PlatformIntegrationsPage() {
           <tbody>{loading ? <tr><td colSpan={5}><TableSkeleton rows={5} /></td></tr> : items.length === 0 ? <tr><td colSpan={5}><EmptyState icon={<Building2 className="h-5 w-5" />} title={t.empty} /></td></tr> : items.map(row => {
             const active = isKey(row) ? (!row.revokedAt || row.graceActive) : row.enabled;
             return <tr key={`${row.tenantId}-${row.id}`}>
-              <td><div className="flex items-center gap-2 font-semibold text-ink"><LockKeyhole className="h-4 w-4 text-brand" aria-hidden />{row.name}</div><div className="mt-1 font-mono text-xs text-ink-4" dir="ltr">{row.id}</div>{isKey(row) && row.installationName && <div className="mt-1 text-xs text-ink-3">{row.installationName}</div>}{!isKey(row) && <div className="mt-1 text-xs text-ink-3">{t.credentials}: {formatNumber(row.credentialCount)}</div>}</td>
+              <td><div className="flex items-center gap-2 font-semibold text-ink"><LockKeyhole className="h-4 w-4 text-brand" aria-hidden />{row.name}</div><div className="mt-1 font-mono text-xs text-ink-4" dir="ltr">{row.id}</div>{isKey(row) && row.installationName && <div className="mt-1 text-xs text-ink-3">{row.installationName}{row.installationCount > 1 ? ` (+${formatNumber(row.installationCount - 1)})` : ""}</div>}{!isKey(row) && <div className="mt-1 text-xs text-ink-3">{t.credentials}: {formatNumber(row.credentialCount)}</div>}</td>
               <td><div className="text-sm text-ink">{row.tenantName}</div><div className="font-mono text-xs text-ink-4" dir="ltr">{row.tenantId}</div></td>
               <td><StatusBadge tone={active ? (isKey(row) && row.graceActive ? "warn" : "ok") : "warn"} label={active ? (isKey(row) && row.graceActive ? t.readOnlyGrace : t.active) : t.inactive} size="sm" />{isKey(row) && row.readOnlyUntil && <div className="mt-1 text-xs text-ink-3">{formatDateTime(row.readOnlyUntil)}</div>}</td>
               <td className="text-xs text-ink-3">{isKey(row) && row.lastUsedAt ? formatDateTime(row.lastUsedAt) : isKey(row) ? t.neverUsed : `${t.issued}: ${formatDateTime(row.createdAt)}`}</td>
               <td><div className="flex flex-wrap gap-2">
-                {active && <Button size="xs" variant="secondary" onClick={() => { setSelected({ item: row, kind }); setConfirmId(""); setReason(""); setActionError(""); }}>{kind === "keys" ? t.revoke : t.quarantine}</Button>}
-                {kind === "keys" && <Button size="xs" variant="danger" onClick={() => { setSelected({ item: row, kind, operation: "remove" }); setConfirmId(""); setReason(""); setActionError(""); }}>{t.remove}</Button>}
+                {active && <Button size="xs" variant="secondary" onClick={() => { setSelected({ item: row, kind });  setReason(""); setActionError(""); }}>{kind === "keys" ? t.revoke : t.quarantine}</Button>}
+                {kind === "keys" && <Button size="xs" variant="danger" onClick={() => { setSelected({ item: row, kind, operation: "remove" });  setReason(""); setActionError(""); }}>{t.remove}</Button>}
                 {!active && kind !== "keys" && <span className="text-xs text-ink-4">{t.inactive}</span>}
               </div></td>
             </tr>;
@@ -152,9 +152,9 @@ export default function PlatformIntegrationsPage() {
         <div className="flex flex-wrap items-center justify-between gap-3 border-t border-edge p-4 text-xs text-ink-3"><span>{formatNumber(items.length)} {t.page}</span><div className="flex gap-2"><Button size="xs" variant="secondary" disabled={loading || offset === 0} onClick={() => setOffset(n => Math.max(0, n - PAGE_SIZE))}>{t.previous}</Button><Button size="xs" variant="secondary" disabled={loading || !hasMore} onClick={() => setOffset(n => n + PAGE_SIZE)}>{t.next}</Button></div></div>
       </Card>}
       <div className="flex flex-wrap items-center gap-3 text-xs text-ink-3"><ShieldCheck className="h-4 w-4 text-ok" aria-hidden /><span>{t.never}</span><Link href="/platform/audit" className="font-semibold text-brand underline underline-offset-4">{t.audit}</Link></div>
-      <Modal open={selected !== null} onClose={close} title={selected?.operation === "remove" ? t.remove : t.confirmTitle} description={selected?.operation === "remove" ? (locale === "ar" ? "هيتم حذف سجل المفتاح فعليًا من قاعدة البيانات، مع الاحتفاظ بمراجع مهام الطباعة القديمة فقط." : "The credential row will be deleted from the database. Historical print-job attribution remains.") : t.safety} footer={<><Button disabled={acting} variant="secondary" onClick={close}>{t.cancel}</Button><Button disabled={acting || reason.trim().length < 10 || confirmId !== selected?.item.id} loading={acting} variant="danger" onClick={() => void applyAction()}>{t.confirm}</Button></>}>
+      <Modal open={selected !== null} onClose={close} title={selected?.operation === "remove" ? t.remove : t.confirmTitle} description={selected?.operation === "remove" ? (locale === "ar" ? "هيتم حذف سجل المفتاح فعليًا من قاعدة البيانات، مع الاحتفاظ بمراجع مهام الطباعة القديمة فقط." : "The credential row will be deleted from the database. Historical print-job attribution remains.") : t.safety} footer={<><Button disabled={acting} variant="secondary" onClick={close}>{t.cancel}</Button><Button disabled={acting} loading={acting} variant="danger" onClick={() => void applyAction()}>{t.confirm}</Button></>}>
         <p className="mb-4 text-sm text-ink-2">{selected?.item.name} · {selected?.item.tenantName}</p>
-        <Field label={t.confirmId} htmlFor="confirm-integration-id"><input id="confirm-integration-id" value={confirmId} onChange={e => setConfirmId(e.target.value)} autoComplete="off" spellCheck={false} className="mt-1 h-11 w-full rounded-lg border border-edge bg-surface-2 px-3 font-mono text-sm text-ink focus-visible:outline-2 focus-visible:outline-brand" /></Field>
+        
         <div className="mt-4"><Field label={t.reason} htmlFor="integration-reason"><Textarea id="integration-reason" value={reason} onChange={e => setReason(e.target.value)} maxLength={500} rows={3} /></Field></div>
         {actionError && <div role="alert" className="mt-4 flex items-center gap-2 text-sm text-bad"><ShieldOff className="h-4 w-4" aria-hidden />{actionError}</div>}
       </Modal>

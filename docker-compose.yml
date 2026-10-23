@@ -63,8 +63,6 @@ services:
       HOSTNAME: 0.0.0.0
       PORT: 3000
       YASEIR_DEPLOYMENT_ID: ${YASEIR_DEPLOYMENT_ID:-}
-      # Opt-in only; test queue never creates a physical printer or print job.
-      YASEIR_E2E_CAPTURE_ENABLED: ${YASEIR_E2E_CAPTURE_ENABLED:-0}
       # Production rejects keyless retries by default to prevent duplicate printing.
       # Explicit 0 is a temporary legacy opt-out requiring operator acceptance.
       YASEIR_REQUIRE_IDEMPOTENCY_KEY: ${YASEIR_REQUIRE_IDEMPOTENCY_KEY:-1}
