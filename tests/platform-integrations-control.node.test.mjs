@@ -58,11 +58,12 @@ test('integrations are real navigable operational controls, not sample UI action
   assert.match(ui, /"quarantine"/);
 });
 
-test('dashboard charts expose real value-axis and keyboard-readable bucket details', () => {
-  const code = read('src/components/platform/overview-charts.tsx');
-  assert.match(code, /aria-describedby/);
-  assert.match(code, /role="table"|<table/);
-  assert.match(code, /yAxis|axisScale|valueTicks/);
+test('platform overview displays live API-backed operational metrics, not retired charts', () => {
+  const code = read('src/app/platform/dashboard/page.tsx');
+  assert.match(code, /fetchWithTimeout\("\/api\/platform\/stats"/);
+  assert.match(code, /stats\?\.jobs24h\.success/);
+  assert.match(code, /stats\?\.printers\.online/);
+  assert.doesNotMatch(code, /overview-charts/);
 });
 
 test('Gateway database documentation required by CI remains checked in', () => {

@@ -6,9 +6,8 @@
  * but they still have to render translated text and locale-aware dates.
  *
  * The provider writes the chosen language to a cookie, so a server render picks
- * it up on the next navigation. This module is deliberately NOT exported from
- * `src/i18n/index.ts`: importing `next/headers` would break the Vite desktop
- * bundle, which shares the rest of the i18n core.
+ * it up on the next navigation. Server-only locale helpers must not be exported from browser-safe i18n modules;
+ * importing `next/headers` from shared desktop code would break Vite.
  */
 import { cookies } from "next/headers";
 import { DEFAULT_LOCALE, LOCALE_COOKIE_KEY, resolveLocale, type Locale } from "./config";

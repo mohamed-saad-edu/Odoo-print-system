@@ -39,6 +39,9 @@ COPY --from=build /app/.next ./.next
 COPY --from=build /app/public ./public
 COPY --from=build /app/server.ts ./server.ts
 COPY --from=build /app/src ./src
+# Desktop-only Tauri/Vite sources and browser preview never execute inside Gateway.
+# Keep shared src/lib and server code, but omit the separate Desktop application.
+RUN rm -rf /app/src/desktop
 COPY --from=build /app/contracts ./contracts
 COPY --from=build /app/scripts ./scripts
 COPY --from=build /app/drizzle ./drizzle
