@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { and, eq, sql } from "drizzle-orm";
 import { z } from "zod";
+import { platformActionReason } from "../../../../../lib/platform-action-confirmation";
 import { db } from "../../../../../db";
 import { agents, printers } from "../../../../../db/schema";
 import {
@@ -23,7 +24,7 @@ const bodySchema = z.object({
   id: z.string().min(1).max(150),
   expectedLifecycle: z.enum(["active", "disabled"]),
   nextLifecycle: z.enum(["active", "disabled"]),
-  reason: z.string().trim().min(5).max(300),
+  reason: z.string().trim().max(300).optional(),
 }).strict();
 
 /**
@@ -43,7 +44,8 @@ export async function POST(req: Request) {
   if (hasBodyOverLimit(req, 8 * 1024)) return NextResponse.json({ error: "Request too large" }, { status: 413, headers: HEADERS });
   const input = bodySchema.safeParse(await req.json().catch(() => null));
   if (!input.success) return NextResponse.json({ error: "Invalid lifecycle operation" }, { status: 400, headers: HEADERS });
-  const { kind, tenantId, id, expectedLifecycle, nextLifecycle, reason } = input.data;
+  const { kind, tenantId, id, expectedLifecycle, nextLifecycle } = input.data;
+  const reason = platformActionReason(input.data.reason, "device lifecycle change");
   if (nextLifecycle === expectedLifecycle) return NextResponse.json({ error: "No lifecycle change requested" }, { status: 400, headers: HEADERS });
 
   try {
