@@ -318,6 +318,9 @@ export const managerSessions = pgTable("manager_sessions", {
 export const emailVerificationTokens = pgTable("email_verification_tokens", {
   id: text("id").primaryKey(),
   userId: text("user_id").references(() => users.id, { onDelete: "cascade" }).notNull(),
+  // Server-side binding: stripping invite= from a verification URL must NOT
+  // silently turn an invited employee into the owner of a new workspace.
+  invitationId: text("invitation_id").references(() => tenantInvitations.id, { onDelete: "cascade" }),
   tokenHash: text("token_hash").notNull().unique(),
   expiresAt: timestamp("expires_at").notNull(),
   consumedAt: timestamp("consumed_at"),
