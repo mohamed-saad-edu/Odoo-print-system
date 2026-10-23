@@ -1,135 +1,160 @@
-# Windows Service Recovery — Enterprise Grade
+# Windows Agent service recovery
 
-## Overview
-The Go agent and Tauri manager must survive crashes, restarts, and host reboots. This doc defines SCM (Service Control Manager) recovery, state reporting, and testing.
+This is an operator procedure for an installed Windows release. The source and documentation checks do not execute Windows Service Control Manager (SCM), crash a service, contact a printer, or prove Gateway reconnection. Record the Windows procedure as **NOT RUN** until the observations below have been collected on the intended host.
 
-## Official References
-- Microsoft SCM: https://learn.microsoft.com/en-us/windows/win32/services/service-control-manager
-- Failure actions: https://learn.microsoft.com/en-us/windows/win32/api/winsvc/ns-winsvc-service_failure_actionsa
-- Recovery actions: restart service, run program, restart computer
-- The Go Agent owns Windows SCM registration/recovery through `github.com/kardianos/service`; the Tauri Manager supervises that service or an owned background `YaseirAgent.exe` process and does not replace the Agent's SCM implementation.
+## What the installed service configures
 
-## Service Definition
-- Service Name: `YaseirAgent` (matches the `service.Config{Name: "YaseirAgent"}` registration in `agent/cmd/agent/main.go` and the `SERVICE_NAME` constant in `src-tauri/src/agent.rs`)
-- Display Name: `Yaseir Agent`
-- Start Type: Automatic (delayed start allowed)
-- Dependencies: `Tcpip` (matches the actual `Dependencies: []string{"Tcpip"}` in `main.go`; the Windows Print Spooler is a runtime requirement only when the optional `spooler` transport is used)
-- Binary: `YaseirAgent.exe` with config path (produced by `build-windows.yml` as `YaseirAgent.exe`)
-- Log On As: `LocalSystem` or dedicated service account with `SeServiceLogonRight` and printer access
+| Setting | Shipped behavior |
+| --- | --- |
+| Service name / display name | `YaseirAgent` / `Yaseir Agent` |
+| Startup | Automatic |
+| Declared dependency | `Tcpip` |
+| First, second, subsequent failure actions | Three `restart/60000` entries: restart after 60 seconds |
+| Failure-count reset period | `86400` seconds without a failure |
+| Recovery policy installation | Native SCM API; failure to apply it is logged as a warning, so verify the installed policy |
 
-### Printer visibility is security-context scoped
+The three entries are not a limit of three restarts. SCM repeats the last configured action after the array is exhausted. A clean service stop is different from a process crash; this code does not explicitly enable recovery actions for non-crash stops. These semantics are documented by Microsoft in [SERVICE_FAILURE_ACTIONSW](https://learn.microsoft.com/en-us/windows/win32/api/winsvc/ns-winsvc-service_failure_actionsw) and [SERVICE_FAILURE_ACTIONS_FLAG](https://learn.microsoft.com/en-us/windows/win32/api/winsvc/ns-winsvc-service_failure_actions_flag).
 
-Windows printer connections are not a machine-global inventory. `PRINTER_ENUM_LOCAL` covers queues available in the Agent process context; `PRINTER_ENUM_CONNECTIONS` covers connections for that context, not arbitrary signed-in desktop users. A LocalSystem service running in Session 0 must therefore **not** assume it sees the same connected queues or network credentials as an interactive user. The Agent marks interactive-user connected queues as discovery-only when they cannot be proved executable from Session 0. For production, install/share the queue for the service account or use a dedicated service account that has the required printer/network permissions. An `OpenPrinterW` access failure is reported as queue/access **unknown**, not proof that the physical printer is Offline.
+`Spooler` is not a declared service dependency. Check it separately when testing Windows printer queues. A running Agent does not establish that Spooler, a printer, or the Gateway is healthy. The Agent also has an internal error/restart loop; an internal retry that leaves the process alive is not an observed SCM restart or an increment of the SCM failure count.
 
-## Failure Actions (SCM)
-The Go Agent applies these recovery actions automatically through the native Windows SCM API on `YaseirAgent.exe -service install` (see `configureServiceRecovery` in `agent/cmd/agent/service_install_windows.go`). The commands below are operator diagnostics/examples only:
-```
-sc failure YaseirAgent reset= 86400 actions= restart/60000/restart/60000/restart/60000
-sc failureflag YaseirAgent 1
-```
-- First failure: restart after 60s
-- Second failure: restart after 60s
-- Subsequent: restart after 60s
-- Reset failure count after 86400s (1 day)
-- Failure flag: enabled (failure actions on non-crash failures too)
+Source: `agent/cmd/agent/main.go` (`handleServiceControl`, `program.Start`, `program.Stop`) and `agent/cmd/agent/service_install_windows.go` (`configureServiceRecovery`, service ownership checks). Normal stop waits for the Agent loop for up to 27 seconds and avoids closing its queue while that loop is still active.
 
-## State Model
-Expose via `/api/agents/health` and Tauri manager UI:
-- Service State: Running / Stopped / Paused / Start Pending / Stop Pending
-- Start Type: Automatic / Manual / Disabled / Automatic (Delayed)
-- Recovery: Restart on failure (with delays)
-- Last Restart: timestamp
-- Failure Count: number since reset
-- Exit Code: last exit code (0 = clean, non-zero = crash)
-- Uptime: seconds
+## 1. Inspect the exact installation
 
-## Implementation in Go Agent
-- The agent uses `github.com/kardianos/service` (see `agent/cmd/agent/main.go`) with
-  `service.Config{Name: "YaseirAgent"}` — not the raw `golang.org/x/sys/windows/svc`
-  handle. `program.Start/Stop` implement the service interface.
-- Handle `Stop`/`Shutdown` controls via the kardianos `service.Service` contract
-- On stop, graceful shutdown is bounded by the Agent's `shutdownGrace = 25s`; it cancels the runtime, drains/joins owned work, closes the local queue, and returns control to the service manager.
-- Recovery actions are applied automatically on install via `configureServiceRecovery` and `mgr.Service.SetRecoveryActions` after verifying the service `BinaryPathName` belongs to this installation. No inherited `SystemRoot`, `WINDIR`, or `PATH` lookup is used for this privileged mutation; recovery-policy update failure remains warn-only after a valid service installation.
-- No separate heartbeat file / external watchdog exists; liveness is the Gateway
-  heartbeat (`POST /api/agent/heartbeat`) plus SCM state.
-
-## Implementation in Tauri (Desktop Manager)
-- Tauri exposes `get_agent_status` for local service/process state and `control_service` for install/uninstall/start/stop/restart operations. Start/stop/status service control is delegated to the bundled Agent CLI, which verifies the SCM `BinaryPathName` belongs to the current install before mutating or presenting that registration as owned.
-- `start_agent` / `stop_agent` / `restart_agent` run through the Tauri blocking pool so process and service control does not block the WebView UI thread.
-- Background process ownership is recorded by PID plus process creation time and canonical image path; stop refuses to kill an unowned or identity-mismatched PID.
-
-## Kill → Restart → Reconnect Test
-Manual test for client demo:
-1. Start agent as service: `sc start YaseirAgent`
-2. Verify Gateway sees agent ONLINE via `/api/agents/health`
-3. Kill process: `taskkill /F /PID <pid>` or `Stop-Process -Id <pid> -Force`
-4. Wait for SCM recovery (60s): `sc query YaseirAgent` should show RUNNING again
-5. Verify new PID, check failure count incremented: `sc qfailure YaseirAgent`
-6. Verify Gateway sees agent ONLINE again within 90s (heartbeat)
-7. Verify queue depth preserved (jobs not lost)
-8. Verify printer status still reported
-
-Controlled crash/recovery drill (isolated Windows staging VM only; deliberately destructive):
-
-The operator **must not** select a process by image name. The snippet reads
-SCM's exact running service PID and executable path, then rechecks that exact
-PID, process creation timestamp, and image path immediately before the forced
-crash. If SCM reports an unquoted/ambiguous executable or identity changes,
-the drill aborts instead of guessing. This is not an application start/stop
-implementation, and is **not** an approved production automation.
+Use an elevated, 64-bit PowerShell session on the Windows test host. Set the expected executable from the installation you intend to test, not from an unverified service registration. Depending on the installed package, it is under the installation root or its `resources` directory.
 
 ```powershell
-$svc = Get-CimInstance Win32_Service -Filter "Name='YaseirAgent'"
-if (-not $svc -or $svc.State -ne 'Running' -or $svc.ProcessId -le 0) {
-  throw 'Expected the owned YaseirAgent SCM service to be running'
+$ErrorActionPreference = 'Stop'
+$ExpectedAgent = 'C:\Program Files\Yaseir Print Manager\resources\YaseirAgent.exe'
+$ExpectedAgent = (Resolve-Path -LiteralPath $ExpectedAgent).ProviderPath
+$ScExe = Join-Path ([Environment]::GetFolderPath('System')) 'sc.exe'
+
+function Get-OwnedAgentService {
+    $service = Get-CimInstance Win32_Service -Filter "Name='YaseirAgent'"
+    if ($null -eq $service) { throw 'YaseirAgent is not installed.' }
+    $command = [string]$service.PathName
+    if ($command -match '^\s*"([^\"]+)"(?:\s|$)') {
+        $image = $Matches[1]
+    } elseif ($command -match '^\s*(\S+)(?:\s|$)') {
+        $image = $Matches[1]
+    } else {
+        throw 'Cannot parse the registered service executable.'
+    }
+    if (-not [IO.Path]::IsPathRooted($image) -or
+        -not [string]::Equals([IO.Path]::GetFullPath($image), $ExpectedAgent,
+            [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'Service executable does not match the expected installation.'
+    }
+    return $service
 }
-$match = [regex]::Match($svc.PathName, '^"(?<exe>[^"]+\.exe)"(?:\s|$)')
-if (-not $match.Success) { throw 'Ambiguous/unquoted SCM executable path; abort' }
-$scmImage = [IO.Path]::GetFullPath($match.Groups['exe'].Value)
-$ownedPid = [int]$svc.ProcessId
-$before = Get-CimInstance Win32_Process -Filter "ProcessId=$ownedPid"
-if (-not $before -or [IO.Path]::GetFullPath($before.ExecutablePath) -ine $scmImage) {
-  throw 'SCM-owned executable identity mismatch; abort'
+
+$service = Get-OwnedAgentService
+$service | Select-Object Name, State, StartMode, StartName, PathName, ProcessId
+& $ScExe qc YaseirAgent
+& $ScExe qfailure YaseirAgent
+& $ScExe qfailureflag YaseirAgent
+& $ScExe queryex YaseirAgent
+Get-Service Spooler | Select-Object Name, Status, StartType
+```
+
+Check each command's output and exit status. `sc query`/`queryex` reports current state; `qfailure` reports the configured schedule, not a measured failure count or a history of successful recoveries. Preserve the exact binary path, package version, policy, and UTC observation time with the test record.
+
+If the service is missing, reopen the installed Manager as Administrator to install/start it. If ownership verification fails, resolve the conflicting installation before changing the service. Do not repair this by deleting an arbitrary same-name service or starting another Agent executable.
+
+For a stopped, verified installation, start it through its own ownership-checking command:
+
+```powershell
+$null = Get-OwnedAgentService
+& $ExpectedAgent -service start
+if ($LASTEXITCODE -ne 0) { throw 'Agent service start failed.' }
+& $ScExe queryex YaseirAgent
+```
+
+The SCM equivalent is `sc start YaseirAgent`; the bundled Agent command additionally checks that the registered service belongs to this installation. Starting the service does not pair it. An unpaired or invalidly configured Agent can remain running while it waits for configuration. Use the Manager to finish pairing and verify an authenticated heartbeat before testing recovery.
+
+## 2. Establish a baseline
+
+Use a dedicated test machine or an agreed maintenance window with no active print jobs. Record the Agent's Gateway identity and a fresh authenticated heartbeat. Closing the Manager is independent of stopping the service; do not count reopening the UI as service recovery.
+
+```powershell
+$service = Get-OwnedAgentService
+if ($service.State -ne 'Running' -or $service.ProcessId -eq 0) {
+    throw 'The owned service must be running before a crash test.'
 }
-$confirm = Read-Host 'Type YaseirAgent to force-crash this verified staging service'
-if ($confirm -cne 'YaseirAgent') { throw 'Drill canceled' }
-$liveSvc = Get-CimInstance Win32_Service -Filter "Name='YaseirAgent'"
-$liveProc = Get-CimInstance Win32_Process -Filter "ProcessId=$ownedPid"
-if (-not $liveSvc -or [int]$liveSvc.ProcessId -ne $ownedPid -or
-    -not $liveProc -or $liveProc.CreationDate -ne $before.CreationDate -or
-    [IO.Path]::GetFullPath($liveProc.ExecutablePath) -ine $scmImage) {
-  throw 'Process identity changed; abort'
+$process = Get-CimInstance Win32_Process -Filter "ProcessId=$($service.ProcessId)"
+if ($null -eq $process -or [string]::IsNullOrEmpty($process.ExecutablePath) -or
+    -not [string]::Equals([IO.Path]::GetFullPath($process.ExecutablePath),
+        $ExpectedAgent, [StringComparison]::OrdinalIgnoreCase)) {
+    throw 'Running process ownership could not be established.'
 }
-Stop-Process -Id $ownedPid -Force
-Start-Sleep -Seconds 65
-$restarted = Get-CimInstance Win32_Service -Filter "Name='YaseirAgent'"
-if (-not $restarted -or $restarted.State -ne 'Running' -or
-    [int]$restarted.ProcessId -le 0 -or [int]$restarted.ProcessId -eq $ownedPid) {
-  throw 'Service recovery or new process identity not verified'
+$process | Select-Object ProcessId, ExecutablePath, CreationDate
+$TestStarted = Get-Date
+```
+
+Keep `ExecutablePath` and `CreationDate` with the PID. A PID alone or an executable basename does not identify an installation or a process lifetime.
+
+## 3. Optional crash → SCM restart → Gateway reconnect test
+
+This step deliberately terminates the verified Agent process. Run it only for the recovery test after establishing the baseline. Do not use `taskkill /IM`, process-name enumeration, or a copied PID from an earlier session. The following keeps a handle to one process, verifies its path and start time, and rechecks the service before terminating that process. If any check fails, stop the test and collect a new baseline; do not bypass the check.
+
+```powershell
+$target = [Diagnostics.Process]::GetProcessById([int]$process.ProcessId)
+try {
+    $null = $target.Handle # Hold this process instance while verifying it.
+    if ($target.HasExited -or
+        -not [string]::Equals($target.MainModule.FileName, $ExpectedAgent,
+            [StringComparison]::OrdinalIgnoreCase) -or
+        [Math]::Abs(($target.StartTime.ToUniversalTime() -
+            $process.CreationDate.ToUniversalTime()).TotalMilliseconds) -gt 1) {
+        throw 'Process identity changed since the baseline.'
+    }
+    $currentService = Get-OwnedAgentService
+    $currentProcess = Get-CimInstance Win32_Process -Filter "ProcessId=$($target.Id)"
+    if ($currentService.State -ne 'Running' -or
+        $currentService.ProcessId -ne $target.Id -or
+        $null -eq $currentProcess -or
+        $currentProcess.CreationDate -ne $process.CreationDate -or
+        $currentProcess.ExecutablePath -ne $process.ExecutablePath) {
+        throw 'Service or process identity changed; crash test cancelled.'
+    }
+    $target.Kill()
+    if (-not $target.WaitForExit(10000)) { throw 'Process did not exit in 10s.' }
+} finally {
+    $target.Dispose()
 }
 ```
 
-Verify Agent health **through a separately authenticated Manager session** in
-the saved Gateway origin (the `GET /api/agents/health?agentId=...` route requires
-workspace Manager authorization and `agents.read`). Do not use unauthenticated
-`Invoke-RestMethod`, transmit session cookies in logs, or paste customer tokens
-into scripts. The permitted Manager must verify tenant/Agent identity, fresh
-heartbeat after restart, retained queue contents, and printer observations.
-Native Windows SCM and Gateway session checks still require operator evidence.
+Observe SCM without manually starting the service or reopening the Manager during the observation window:
 
-## Observability
-- Structured logs include `requestId`, `agentId`, `failureCount`, `exitCode`, `lastRestart`
-- Metrics: `agent_restarts_total`, `agent_failures_total`
-- Dashboard: System Health page shows service state per agent
+```powershell
+$deadline = (Get-Date).AddSeconds(90)
+do {
+    $after = Get-OwnedAgentService
+    $after | Select-Object Name, State, ProcessId
+    if ($after.State -eq 'Running' -and $after.ProcessId -ne 0) { break }
+    Start-Sleep -Seconds 2
+} while ((Get-Date) -lt $deadline)
+& $ScExe queryex YaseirAgent
+if ($after.State -eq 'Running' -and $after.ProcessId -ne 0) {
+    Get-CimInstance Win32_Process -Filter "ProcessId=$($after.ProcessId)" |
+        Select-Object ProcessId, ExecutablePath, CreationDate
+}
+Get-WinEvent -FilterHashtable @{
+    LogName = 'System'; ProviderName = 'Service Control Manager'; StartTime = $TestStarted
+} | Where-Object { $_.Message -match 'YaseirAgent|Yaseir Agent' } |
+    Select-Object TimeCreated, Id, Message
+```
 
-## BLOCKED Handling
-In sandbox (no Windows SCM), this is BLOCKED by design. Code is hardened with SCM binary-path ownership verification, bounded helper execution, trusted OS system-directory resolution for the remaining native utilities, and background PID metadata (`creation_time` + canonical image). Real Windows service testing requires a Windows host.
+The 90s window is an operator observation budget around the configured 60-second delay, not a recovery SLA. Confirm a new process creation time, the expected executable path, and matching SCM termination/restart events. If no recovery occurs, retain the observed state, installed recovery policy, event records, and Agent log before intervening. A manually issued start is useful remediation, but is not proof that SCM restarted the process.
 
-## Future: Tauri Updater Signed
-- Use Tauri updater with signed artifacts (see DESKTOP_UPDATER.md)
-- Windows service update requires stopping service, replacing binary, starting service
-- MSI has no supported Agent service lifecycle in this repository; NSIS is the only shipping installer until separately implemented and verified
+Verify Gateway reconnection separately using the signed-in Workspace's Agent health view or its authenticated `GET /api/agents/health?agentId=...` request. The caller needs `agents.read` and must belong to the Agent's tenant. Record a heartbeat observed after the restart; an old “online” display or SCM `Running` state alone is insufficient. Do not paste cookies or Agent credentials into a report or an unauthenticated health command.
 
-### Agent-health collection pagination
+`GET /api/agents/service-status` currently returns a blocked diagnostic structure, including `UNKNOWN` state and null failure count/exit code. Its configured defaults are not a live query of Windows SCM and must not be used as proof of a restart, even when the remote Agent is on Windows.
 
-`GET /api/agents/health` remains an array response for compatibility, but the collection form is bounded. It accepts `limit` (default 100, maximum 200) and `offset` (default 0, maximum 100000). Responses include `x-has-more` and, when another page exists, `x-next-offset`. Supplying `agentId` continues to return a single Agent health object and does not use collection pagination.
+## 4. Evidence and recovery decisions
+
+Record the release/version, expected and observed executable paths, before/after PID and creation time, recovery policy, SCM event timestamps, reconnect heartbeat time, and pass/fail/NOT RUN result. Read the protected Agent log under the configured runtime directory (normally `%PROGRAMDATA%\YaseirAgent\logs\agent.log`); include only the relevant redacted excerpt.
+
+If a print was in flight, reconcile its recorded outcome before submitting a new print intent. Service restart cannot prove whether paper was physically printed. Do not clear the queue or use `-service uninstall`/`-service purge` as a restart workaround: those commands remove local data. For routine recovery, use the installed Manager's service controls or the verified Agent's `-service stop` and `-service start` commands.
+
+Source-only regression checks: `tests/windows-service-recovery.test.ts`, `tests/windows-service-recovery-native.contract.test.mjs`, and `tests/test_f026_operational_documentation.py`. Passing them establishes agreement with source contracts, not execution of this Windows procedure.

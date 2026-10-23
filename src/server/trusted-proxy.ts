@@ -60,12 +60,19 @@ export function isAllowedWebSocketOrigin(originHeader: string | null): boolean {
   return configured.has(supplied);
 }
 
-export function isTrustedProxyRequest(req: Request): boolean {
+export function isTrustedProxyRequest(
+  req: Request | { headers: Headers | Record<string, string | string[] | undefined> },
+): boolean {
   if (!trustProxyEnabled()) return true;
   const secret = configuredProxySecret();
   if (!secret) return false;
-  const supplied = req.headers.get("x-gateway-proxy-token")?.trim() ?? "";
-  return supplied.length > 0 && safeEqual(supplied, secret);
+  const headers = req.headers;
+  if (typeof (headers as Headers).get === "function") {
+    const raw = (headers as Headers).get("x-gateway-proxy-token")?.trim() ?? "";
+    if (!raw || raw.includes(",")) return false;
+    return safeEqual(raw, secret);
+  }
+  return isTrustedProxyUpgrade(headers as Record<string, string | string[] | undefined>);
 }
 
 export function isTrustedProxyUpgrade(headers: Record<string, string | string[] | undefined>): boolean {
@@ -73,6 +80,8 @@ export function isTrustedProxyUpgrade(headers: Record<string, string | string[] 
   const secret = configuredProxySecret();
   if (!secret) return false;
   const raw = headers["x-gateway-proxy-token"];
-  const supplied = Array.isArray(raw) ? raw[0] ?? "" : raw ?? "";
-  return supplied.trim().length > 0 && safeEqual(supplied.trim(), secret);
+  if (Array.isArray(raw)) return false;
+  const supplied = (raw ?? "").trim();
+  if (!supplied || supplied.includes(",")) return false;
+  return safeEqual(supplied, secret);
 }

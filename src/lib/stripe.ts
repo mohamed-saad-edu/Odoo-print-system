@@ -123,11 +123,12 @@ export async function stripeList(path: string, params: URLSearchParams = new URL
   }
   const object = requireStripeObject(data);
   if (!Array.isArray(object.data)) throw new Error(`Stripe list response missing data for ${path}`);
+  if (typeof object.has_more !== "boolean") throw new Error(`Stripe list response has unverified pagination for ${path}`);
   const rows = object.data.map((entry) => requireStripeObject(entry));
   if (rows.some((entry) => typeof entry.id !== "string" || entry.id.length === 0)) {
     throw new Error(`Stripe list response contains an invalid object for ${path}`);
   }
-  return { data: rows, hasMore: object.has_more === true };
+  return { data: rows, hasMore: object.has_more };
 }
 
 export async function stripeRetrieve(path:string): Promise<Record<string, unknown>> {

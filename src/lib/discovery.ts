@@ -5,8 +5,6 @@ import { z } from "zod";
 export const DISCOVERY_SOURCES = ["mdns","ipp","ipps","raw","lpr","snmp","wsd","windows_spooler","usb","unknown","subnet","config","registry"] as const;
 export type DiscoverySource = typeof DISCOVERY_SOURCES[number];
 export const DISCOVERY_PROTOCOLS = ["ipp","ipps","raw","lpr","mdns","snmp","wsd","windows_spooler","usb","unknown","escpos","spooler"] as const;
-export const DISCOVERY_CONFIDENCE = ["low","medium","high"] as const;
-export const DISCOVERY_VERIFICATION = ["candidate","verified"] as const;
 export const DISCOVERY_CANDIDATE_STATUS = ["discovered","verified","provisioned"] as const;
 export const DISCOVERY_SESSION_STATUS = ["running","completed","partial","failed","cancelled"] as const;
 

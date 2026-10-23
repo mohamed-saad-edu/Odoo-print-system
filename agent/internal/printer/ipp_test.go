@@ -1,6 +1,7 @@
 package printer
 
 import (
+	"net/url"
 	"bytes"
 	"context"
 	"encoding/binary"
@@ -682,5 +683,30 @@ func TestIPPPrinterURIUsesIPPTransportSchemeAndOriginalPort(t *testing.T) {
 				t.Fatalf("incorrect IPP printer-uri: %q want %q", printer.PrinterURI, tc.attribute)
 			}
 		})
+	}
+}
+
+
+func TestIPPAllowCredentialsOverTransportUnit(t *testing.T) {
+	cases := []struct {
+		rawURL string
+		want   bool
+	}{
+		{"https://printer.corp.example:631/ipp/print", true},
+		{"http://127.0.0.1:631/ipp/print", true},
+		{"http://localhost:631/ipp/print", true},
+		{"http://[::1]:631/ipp/print", true},
+		{"http://192.168.1.50:631/ipp/print", false},
+		{"http://10.0.0.15:631/ipp/print", false},
+		{"http://printer.local:631/ipp/print", false},
+	}
+	for _, tc := range cases {
+		u, err := url.Parse(tc.rawURL)
+		if err != nil {
+			t.Fatalf("parse %q: %v", tc.rawURL, err)
+		}
+		if got := allowIPPCredentialsOverTransport(u); got != tc.want {
+			t.Errorf("allowIPPCredentialsOverTransport(%q) = %v, want %v", tc.rawURL, got, tc.want)
+		}
 	}
 }

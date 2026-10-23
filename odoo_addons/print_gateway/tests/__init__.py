@@ -8,3 +8,4 @@ from . import test_migration_upgrade
 from . import test_control_plane
 from . import test_intent_recovery
 from . import test_e2e_capture
+from . import test_durable_identity_security

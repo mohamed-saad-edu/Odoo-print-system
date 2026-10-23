@@ -359,6 +359,13 @@ fn wait_service_state(expected: u32) -> Result<(), String> {
 
 static AGENT_CONTROL: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+/// Hold runtime control across pairing's status read, durable identity save and
+/// activation. The callback must use restart_inner rather than reacquiring.
+pub(crate) fn with_control<T>(operation: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
+    let _control = AGENT_CONTROL.lock().map_err(|_| "Agent control lock poisoned")?;
+    operation()
+}
+
 #[cfg(windows)]
 fn is_process_running(app: &tauri::AppHandle) -> bool {
     read_background_record()
@@ -1030,7 +1037,11 @@ fn stop_inner(app: &tauri::AppHandle) -> Result<(), String> {
 }
 
 pub fn restart(app: &tauri::AppHandle) -> Result<(), String> {
-    let _control = AGENT_CONTROL.lock().map_err(|_| "Agent control lock poisoned")?;
+    with_control(|| restart_inner(app))
+}
+
+/// Caller must already hold AGENT_CONTROL for the entire operation.
+pub(crate) fn restart_inner(app: &tauri::AppHandle) -> Result<(), String> {
     stop_inner(app)?;
     ensure_service_installed(app)?;
     start_inner(app)

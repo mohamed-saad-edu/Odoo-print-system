@@ -15,6 +15,7 @@ from odoo import api, fields, models, _
 from odoo.exceptions import AccessError, ValidationError
 
 from ..runtime_clock import db_now_utc
+from ..idempotency_namespace import wire_key, deployment_proof
 from ..runtime_policy import inventory_has_shared_printer
 
 
@@ -98,6 +99,11 @@ class PrintGatewayJob(models.Model):
     printer_profile = fields.Text(string="Printer Hardware Profile", readonly=True)
     fallback_binding_id = fields.Many2one("print_gateway.binding", string="Failover Backup Binding", readonly=True)
     idempotency_key = fields.Char(required=True, index=True, copy=False, readonly=True)
+    # Existing rows default to v1. Persist an immutable wire key and the
+    # installation snapshot on NEW v2 rows before any HTTP side effect.
+    gateway_idempotency_version = fields.Integer(default=1, copy=False, readonly=True)
+    gateway_wire_idempotency_key = fields.Char(index=True, copy=False, readonly=True)
+    gateway_installation_id = fields.Char(index=True, copy=False, readonly=True)
     attempts = fields.Integer(default=0, readonly=True)
     reprint_attempt_count = fields.Integer(string="Reprint Attempts", default=0, readonly=True)
     next_retry_at = fields.Datetime(index=True, readonly=True)
@@ -337,6 +343,12 @@ class PrintGatewayJob(models.Model):
 
     @api.model_create_multi
     def create(self, vals_list):
+        # Only the private router service may mint executable outbox work.
+        # Administrator model ACLs are also granted to branch-limited users;
+        # an RPC create must not bypass create_operation's routing checks and
+        # borrow an unrelated configuration's credential during sudo dispatch.
+        if not self.env.is_superuser():
+            raise AccessError(_("Print jobs must be created through the authorized print router."))
         for vals in vals_list:
             payload_json = vals.get("payload")
             if "payload_type" not in vals:
@@ -390,6 +402,21 @@ class PrintGatewayJob(models.Model):
         return super().create(vals_list)
 
     def write(self, vals):
+        routing_fields = {
+            "company_id", "gateway_config_id", "printer_id", "destination",
+            "destination_key", "document_type", "payload", "payload_type",
+            "protocol", "raw_payload", "printer_profile", "fallback_binding_id",
+            "idempotency_key", "gateway_idempotency_version", "gateway_wire_idempotency_key", "gateway_installation_id",
+            "source_model", "source_record_id", "report_id",
+            "gateway_job_id",
+        }
+        if routing_fields.intersection(vals) and not self.env.is_superuser():
+            raise AccessError(_("Print job routing and content may only be changed by the trusted print service."))
+        # Even sudo cannot silently remap an already accepted business intent
+        # into a fresh namespace; clone/restore requires operator reconciliation.
+        snapshots = {"gateway_idempotency_version", "gateway_wire_idempotency_key", "gateway_installation_id"}
+        if snapshots.intersection(vals):
+            raise ValidationError(_("A print operation's Gateway namespace is immutable after creation."))
         if "status" in vals:
             target_status = vals["status"]
             for job in self:
@@ -578,6 +605,19 @@ class PrintGatewayJob(models.Model):
                 ))
 
         key = (idempotency_key or uuid.uuid4().hex).strip()
+        namespace_version = 2 if gateway_config.idempotency_v2_enabled else 1
+        installation_id = (gateway_config.installation_id or "").strip() if namespace_version == 2 else False
+        if namespace_version == 2:
+            try:
+                deployment_proof(installation_id)
+            except ValueError:
+                raise ValidationError(_(
+                    "Printing is paused: the enrolled Odoo installation proof is unavailable."
+                )) from None
+        try:
+            selected_wire_key = wire_key(namespace_version, company.id, key, installation_id)
+        except ValueError:
+            raise ValidationError(_("The registered print installation identity is invalid.")) from None
 
         def same_operation(existing):
             return (
@@ -609,6 +649,9 @@ class PrintGatewayJob(models.Model):
             "printer_profile": printer_profile or False,
             "fallback_binding_id": fallback_binding.id if fallback_binding else False,
             "idempotency_key": key,
+            "gateway_idempotency_version": namespace_version,
+            "gateway_wire_idempotency_key": selected_wire_key,
+            "gateway_installation_id": installation_id,
             "next_retry_at": db_now_utc(self.env.cr),
             "source_model": source_model or False,
             "source_record_id": source_record_id or False,
@@ -984,18 +1027,31 @@ class PrintGatewayJob(models.Model):
                 payload["peripherals"] = active_periph
 
     def _gateway_idempotency_key(self):
-        """Return a tenant-safe Gateway idempotency key for this Odoo job.
+        """Return the immutable, historically correct Gateway identity.
 
-        Odoo's durable idempotency constraint is company-scoped, while the
-        Gateway's uniqueness boundary is tenant-scoped. Namespace the Odoo
-        operation with its owning company before sending it across the
-        boundary so identical caller-supplied keys from two companies in the
-        same Gateway tenant cannot collapse into one Gateway job. The digest
-        is deterministic, bounded, and stable across retries/restarts.
+        Rows created before the upgrade have no saved wire-key snapshot and
+        always use the original v1 derivation. Neither key rotation nor a new
+        v2 enrollment may change an already accepted print operation.
         """
         self.ensure_one()
-        source = f"odoo:{self.company_id.id}:{self.idempotency_key}"
-        return hashlib.sha256(source.encode("utf-8")).hexdigest()
+        if self.gateway_wire_idempotency_key:
+            return self.gateway_wire_idempotency_key
+        if int(self.gateway_idempotency_version or 1) != 1:
+            raise ValidationError(_("Versioned print identity snapshot is missing; operator reconciliation required."))
+        return wire_key(1, self.company_id.id, self.idempotency_key)
+
+    def _gateway_headers_for_job(self, gateway_config):
+        self.ensure_one()
+        headers = dict(gateway_config._gateway_headers())
+        if int(self.gateway_idempotency_version or 1) == 2:
+            try:
+                proof = deployment_proof(self.gateway_installation_id)
+            except ValueError:
+                raise ValidationError("GATEWAY_INSTALLATION_PROOF_MISSING: No externally enrolled proof; no print was sent.") from None
+            headers["X-Yaseir-Odoo-Proof"] = proof
+            headers["X-Yaseir-Odoo-Installation"] = self.gateway_installation_id
+            headers["X-Yaseir-Odoo-Idempotency-Version"] = "2"
+        return headers
 
     def _submission_body(self):
         self.ensure_one()
@@ -1017,6 +1073,15 @@ class PrintGatewayJob(models.Model):
             "idempotencyKey": self._gateway_idempotency_key(),
             "expiresAt": expires_at,
         }
+        if int(self.gateway_idempotency_version or 1) == 2:
+            if not self.gateway_installation_id or not self.gateway_wire_idempotency_key:
+                raise ValidationError(_("Stored versioned print identity is incomplete."))
+            body.update({
+                "idempotencyVersion": 2,
+                "installationId": self.gateway_installation_id,
+                "sourceCompanyId": str(self.company_id.id),
+                "sourceOperationId": self.idempotency_key,
+            })
         return body
 
     def _post_source_audit(self, message):
@@ -1407,7 +1472,9 @@ class PrintGatewayJob(models.Model):
                 try:
                     response = requests.post(
                         "%s/api/print/jobs" % gateway_config._gateway_base(for_request=True),
-                        json=job._submission_body(), headers=gateway_config._gateway_headers(),
+                        json=job._submission_body(), headers=(job._gateway_headers_for_job(gateway_config)
+                                 if int(getattr(job, "gateway_idempotency_version", 1) or 1) == 2
+                                 else gateway_config._gateway_headers()),
                         timeout=20, allow_redirects=False,
                     )
                     if response.status_code == 429:
@@ -1550,7 +1617,32 @@ class PrintGatewayJob(models.Model):
                                 grace_body = {}
                             if not isinstance(grace_body, dict):
                                 grace_body = {}
-                            if str(grace_body.get("code") or "").strip() == "API_KEY_READ_ONLY":
+                            namespace_code = str(grace_body.get("code") or "").strip()
+                            if namespace_code in ("RECONCILIATION_REQUIRED", "UPGRADE_REQUIRED"):
+                                # Gateway explicitly admitted ZERO new bytes.
+                                # A historical operation may nevertheless have
+                                # printed: keep its original wire key and mark
+                                # the physical outcome unknown while awaiting
+                                # operator proof, never rotate its identity.
+                                values = self._billing_retry_values(
+                                    job,
+                                    "UNKNOWN_SUBMISSION_OUTCOME: %s (operator must reconcile old receipts before re-arming)" % namespace_code,
+                                    BILLING_PARK_RETRY_SECONDS,
+                                )
+                                persist_submit_state(values)
+                                if raise_on_failure:
+                                    raise ValidationError(_(
+                                        "Printing was paused to prevent a duplicate historical operation; reconcile the Gateway receipt before retrying."
+                                    ))
+                                break
+                            if namespace_code == "CUTOVER_NOT_ACTIVE":
+                                values = self._billing_retry_values(job,
+                                    "GATEWAY_CUTOVER_PENDING: Strict v2 enrollment is not yet active", 3600)
+                                persist_submit_state(values)
+                                if raise_on_failure:
+                                    raise ValidationError(_("Gateway installation cutover is not active; the outbox has been preserved."))
+                                break
+                            if namespace_code == "API_KEY_READ_ONLY":
                                 values = self._billing_retry_values(
                                     job,
                                     "GATEWAY_KEY_ROTATION_GRACE: API key is in its rotation grace period; re-queued to retry with the current key",
@@ -1561,6 +1653,19 @@ class PrintGatewayJob(models.Model):
                                     raise ValidationError(
                                         _("The API key is rotating. The job was safely re-queued and will retry automatically.")
                                     )
+                                break
+
+                        if response.status_code == 403:
+                            try:
+                                installation_body = response.json()
+                            except (TypeError, ValueError):
+                                installation_body = {}
+                            if isinstance(installation_body, dict) and installation_body.get("code") == "INSTALLATION_NOT_ENROLLED":
+                                values = self._billing_retry_values(job,
+                                    "GATEWAY_INSTALLATION_NOT_ENROLLED: Re-enroll the out-of-DB installation proof", 3600)
+                                persist_submit_state(values)
+                                if raise_on_failure:
+                                    raise ValidationError(_("Gateway enrollment proof is invalid or missing; job remains safely queued."))
                                 break
 
                         # Every 401 the Gateway emits is operator-recoverable:
@@ -1816,6 +1921,19 @@ class PrintGatewayJob(models.Model):
                         if raise_on_failure:
                             raise
                         break
+                    if (isinstance(exc, ValidationError) and
+                            "GATEWAY_INSTALLATION_PROOF_MISSING:" in str(exc)):
+                        # The rejection happened *before* requests.post.
+                        # Missing external enrollment is operator-recoverable;
+                        # terminalizing would lose an already accepted intent
+                        # and permit unsafe rearming after a restored proof.
+                        values = self._billing_retry_values(job,
+                            "GATEWAY_INSTALLATION_PROOF_MISSING: No new job admitted; restore external enrollment before retry",
+                            3600)
+                        persist_submit_state(values)
+                        if raise_on_failure:
+                            raise ValidationError(_("Installation proof is unavailable; print request preserved without sending.")) from None
+                        break
                     if self._is_deterministic_failure(exc):
                         # Programming/validation failures (corrupted
                         # persisted payload, gateway contract violation,
@@ -1931,7 +2049,9 @@ class PrintGatewayJob(models.Model):
         response = requests.get(
             "%s/api/print/jobs" % gateway_config._gateway_base(for_request=True),
             params={"idempotencyKey": job._gateway_idempotency_key()},
-            headers=gateway_config._gateway_headers(),
+            headers=(job._gateway_headers_for_job(gateway_config)
+                                 if int(getattr(job, "gateway_idempotency_version", 1) or 1) == 2
+                                 else gateway_config._gateway_headers()),
             timeout=10,
             allow_redirects=False,
         )
@@ -1943,6 +2063,8 @@ class PrintGatewayJob(models.Model):
             return None
         response.raise_for_status()
         body = response.json()
+        if not isinstance(body, dict):
+            raise ValueError("Gateway ambiguous-submission lookup returned a non-object payload")
         remote_id = body.get("jobId") or body.get("id")
         if not isinstance(remote_id, str) or not remote_id.strip():
             raise ValueError("Gateway ambiguous-submission lookup returned no job id")
@@ -1952,6 +2074,9 @@ class PrintGatewayJob(models.Model):
         if not job.gateway_job_id:
             if job.status != "unknown" or not str(job.last_error or "").startswith("UNKNOWN_SUBMISSION_OUTCOME:"):
                 return None
+            # Only this authenticated response may repair the immutable remote
+            # identity; the public sync action already checked operator rights.
+            job = job.sudo()
             job.write({"gateway_job_id": remote_id.strip(), "next_retry_at": False})
         return body
 
@@ -2049,7 +2174,9 @@ class PrintGatewayJob(models.Model):
                         continue
                     response = requests.get(
                         "%s/api/print/jobs" % gateway_config._gateway_base(for_request=True),
-                        params={"id": job.gateway_job_id}, headers=gateway_config._gateway_headers(),
+                        params={"id": job.gateway_job_id}, headers=(job._gateway_headers_for_job(gateway_config)
+                                 if int(getattr(job, "gateway_idempotency_version", 1) or 1) == 2
+                                 else gateway_config._gateway_headers()),
                         timeout=10, allow_redirects=False,
                     )
                     if response.status_code == 404:
@@ -2383,10 +2510,12 @@ class PrintGatewayJob(models.Model):
                         )
                         if response.status_code == 200:
                             body = response.json()
+                            if not isinstance(body, dict) or not isinstance(body.get("jobs"), list):
+                                raise ValueError("Gateway batch-status response missing jobs list")
                             returned = {
                                 item["jobId"]: item
-                                for item in body.get("jobs", [])
-                                if isinstance(item, dict) and "jobId" in item
+                                for item in body["jobs"]
+                                if isinstance(item, dict) and isinstance(item.get("jobId"), str) and item["jobId"].strip()
                             }
                     except Exception as exc:
                         _logger.warning("Batch status sync failed for config %s: %s; falling back to per-job sync", config.id, exc)

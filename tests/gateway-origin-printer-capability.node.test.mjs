@@ -34,9 +34,11 @@ function productionModule(file, imports = {}) {
 
 const runtime = productionModule('src/lib/runtime-secret.ts');
 const limits = productionModule('src/lib/request-limits.ts');
+const requestPath = productionModule('src/server/request-path.ts');
 const guard = productionModule('src/server/request-guard.ts', {
   '../lib/request-limits': limits,
   '../lib/runtime-secret': runtime,
+  './request-path': requestPath,
 });
 const capability = productionModule('src/lib/printer-capability.ts', {
   '../../contracts/print-payload-contract.json': JSON.parse(readFileSync(resolve(root, 'contracts/print-payload-contract.json'), 'utf8')),

@@ -189,16 +189,7 @@ app.prepare().then(() => {
     // would inconsistently gate /api/health?x=1 while exempting /api/health.
     const probePath = (req.url ?? "").split("?", 1)[0].split("#", 1)[0];
     if (trustProxyEnabled() && probePath !== "/api/health" && probePath !== "/api/live") {
-      const headers = new Headers();
-      for (const [key, value] of Object.entries(req.headers)) {
-        if (value == null) continue;
-        headers.set(key, Array.isArray(value) ? value.join(", ") : value);
-      }
-      const protocolReq = new Request("http://127.0.0.1/", {
-        method: req.method ?? "GET",
-        headers,
-      });
-      if (!isTrustedProxyRequest(protocolReq)) {
+      if (!isTrustedProxyRequest(req)) {
         res.statusCode = 400;
         res.setHeader("content-type", "application/json; charset=utf-8");
         res.end(JSON.stringify({ error: "TRUSTED_PROXY_REQUIRED" }));

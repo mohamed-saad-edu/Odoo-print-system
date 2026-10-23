@@ -8,8 +8,8 @@ export const dynamic = "force-dynamic";
 
 /**
  * Windows Service Recovery status — enterprise requirement
- * In real Windows deployment, this would query SCM via Go agent heartbeat metadata
- * or via Tauri command. In sandbox, returns BLOCKED with explanation.
+ * Live SCM observations are not implemented here. Return BLOCKED with
+ * configured recovery defaults and explicit unknown observation fields.
  */
 
 export async function GET(req: Request) {
@@ -22,13 +22,13 @@ export async function GET(req: Request) {
   const agentId = url.searchParams.get("agentId");
 
   return runWithCorrelation({ requestId, tenantId: claims.tenantId, agentId: agentId ?? undefined }, async () => {
-    // In production Windows, this data comes from agent metadata (service state) and SCM query
-    // For now, return structure with BLOCKED note for sandbox
+    // This endpoint does not query the remote Agent's SCM on any host.
+    // Recovery timings below are configured defaults, not observed policy.
     // Service identity must match the actual registration in
     // agent/cmd/agent/main.go (service.Config{Name: "YaseirAgent"}) and the
     // SERVICE_NAME constant in src-tauri/src/agent.rs. The recovery timings
     // match configureServiceRecovery: three `restart/60000` actions + one-day
-    // reset counter. The status body is still BLOCKED in non-Windows runtime,
+    // reset counter. The status body remains BLOCKED until live observations exist,
     // but it must never state a different service name or recovery schedule
     // than the one the installers actually apply.
     const mockStatus = {
@@ -42,7 +42,9 @@ export async function GET(req: Request) {
         secondFailure: "restart/60000",
         subsequentFailure: "restart/60000",
         resetPeriodSec: 86400,
-        failureFlag: true,
+        // The installer does not set the non-crash failure flag, and this
+        // endpoint cannot observe the installed SCM value.
+        failureFlag: null,
       },
       lastRestart: null,
       // Failure history is not measured by this sandbox endpoint.
@@ -52,8 +54,8 @@ export async function GET(req: Request) {
       exitCode: null,
       uptimeSeconds: null,
       blocked: true,
-      blockedReason: "BLOCKED: Windows Service Control Manager query requires Windows host with sc.exe and service installed. In sandbox, code is hardened (system32_exe validation, run_bounded_command budget, background PID meta creation_time+image) but runtime not proven. See docs/WINDOWS_SERVICE_RECOVERY.md for kill→restart→reconnect test procedure.",
-      instructions: "On Windows: sc query YaseirAgent, sc qfailure YaseirAgent, taskkill /F /PID <pid>, wait 60s, sc query, verify Gateway /api/agents/health shows ONLINE again.",
+      blockedReason: "BLOCKED: Live Windows Service Control Manager observation requires Windows host with the service installed and is not implemented by this endpoint. Configured recovery defaults are not measured service status. See docs/WINDOWS_SERVICE_RECOVERY.md for the recovery test procedure.",
+      instructions: "Follow docs/WINDOWS_SERVICE_RECOVERY.md to verify the installation, process path and creation time before any crash test, observe SCM recovery, then confirm a fresh authenticated Gateway heartbeat.",
       correlation: { requestId, tenantId: claims.tenantId, agentId },
     };
 

@@ -297,6 +297,10 @@ describe("request guard (real HTTP)", () => {
 
 
 describe("Agent route admission budgets", () => {
+  it.each(["/x/../api/agent/register", "/x/%2e%2e/api/agent/register", "/api/print/../agent/register?retry=1"])("uses the routed path for the smaller Agent ceiling: %s", (path) => {
+    expect(maxApiBodyBytesForRequest(path, "POST")).toBe(64 * 1024);
+  });
+
   it("enforces each published Agent write ceiling before parsing a JSON body", () => {
     expect(maxApiBodyBytesForRequest("/api/agent/register", "POST")).toBe(64 * 1024);
     expect(maxApiBodyBytesForRequest("/api/agent/heartbeat", "POST")).toBe(512 * 1024);

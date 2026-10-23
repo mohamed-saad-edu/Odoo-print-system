@@ -218,3 +218,11 @@ Validate the scheduled actions through `ir.cron.method_direct_trigger()` in an
 Odoo registry test environment, then exercise actual invoice, stock, POS,
 multi-company, rollback, outage and recovery flows in staging. Offline source
 tests cannot establish native ORM, scheduler, asset or physical-printer acceptance.
+
+## Installation-scoped idempotency (S06-006)
+
+Starting with forward migration `0085_odoo_installation_idempotency`, independent Odoo databases using one Gateway tenant can opt into a server-enrolled version-2 namespace. Historical v1 operations and lifetime receipts retain their original identities. The tenant remains in legacy mode until an administrator explicitly completes the reconciliation and one-way strict cutover.
+
+Before enabling version 2, read [S06 cutover runbook](docs/S06_IDEMPOTENCY_CUTOVER.md). It specifies secure enrollment, external 256-bit installation proofs, API-key rotation, verification of old receipts, operator-controlled `reuse`/`distinct` decisions, and clone/restore restrictions. Never regenerate a key for a pre-existing Odoo outbox job. A pending historical operation requires reconciliation, not a new physical print.
+
+The Gateway installation-management endpoints are `/api/odoo/installations`, `/api/odoo/installations/resolutions`, and `/api/odoo/installations/cutover` (workspace-manager permissions required). Versioned Odoo job submission and status reads continue through the existing `/api/print/jobs` and `/api/print/jobs/v2` routes, with an additional independently enrolled installation identity and proof. Older Agents continue to receive the existing print job and acknowledgment schema; they do not interpret the Odoo source-key version.

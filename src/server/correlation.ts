@@ -18,10 +18,6 @@ export function getCorrelationContext(): CorrelationContext | undefined {
   return storage.getStore();
 }
 
-export function getRequestId(): string | undefined {
-  return storage.getStore()?.requestId;
-}
-
 export function runWithCorrelation<T>(ctx: CorrelationContext, fn: () => T): T {
   return storage.run(ctx, fn);
 }
@@ -36,24 +32,6 @@ export function generateAttemptId(): string {
 
 export function generateClaimId(): string {
   return `claim_${nanoid(10)}`;
-}
-
-export function extractRequestIdFromHeaders(headers: Headers | Record<string, string | undefined>): string | null {
-  const raw = headers instanceof Headers
-    ? headers.get("x-request-id")?.trim() || headers.get("x-correlation-id")?.trim()
-    : headers["x-request-id"]?.trim() || headers["x-correlation-id"]?.trim();
-  // Mirror ensureRequestId's 128-char bound so an overlong inbound id cannot
-  // propagate unbounded into logs or database columns through this path.
-  if (!raw) return null;
-  return raw.length <= 128 ? raw : null;
-}
-
-export function ensureRequestId(headers: Headers): string {
-  const existing = headers.get("x-request-id")?.trim() || headers.get("x-correlation-id")?.trim();
-  if (existing && existing.length > 0 && existing.length <= 128) return existing;
-  const generated = generateRequestId();
-  headers.set("x-request-id", generated);
-  return generated;
 }
 
 export function withCorrelationHeaders(base: Record<string, string>, ctx: Partial<CorrelationContext>): Record<string, string> {

@@ -860,11 +860,20 @@ export async function revokeSessionFamily(familyId: string, reason = "logout"): 
   await db.transaction((tx) => revokeSessionFamilyInTransaction(tx, familyId, reason));
 }
 
-export async function cleanupExpiredRefreshTokens(): Promise<number> {
+export async function cleanupExpiredRefreshTokens(limit = 500): Promise<number> {
   const result = await db.execute(sql`
-    DELETE FROM refresh_tokens
-    WHERE expires_at <= clock_timestamp()
-    RETURNING id
+    WITH candidates AS (
+      SELECT id
+      FROM refresh_tokens
+      WHERE expires_at <= clock_timestamp()
+      ORDER BY expires_at ASC
+      LIMIT ${limit}
+      FOR UPDATE SKIP LOCKED
+    )
+    DELETE FROM refresh_tokens AS rt
+    USING candidates
+    WHERE rt.id = candidates.id
+    RETURNING rt.id
   `);
   return result.rows.length;
 }

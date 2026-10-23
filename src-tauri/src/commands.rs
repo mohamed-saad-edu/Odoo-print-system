@@ -424,6 +424,10 @@ pub async fn pair_agent(args: PairArgs, app: tauri::AppHandle) -> Result<String,
 /// save the runtime is restarted when it was running, and the result reports
 /// whether activation converged or the agent still needs a manual start.
 fn run_pairing(app: tauri::AppHandle, code: &str, gateway_url: &str) -> Result<String, String> {
+    agent::with_control(|| run_pairing_inner(app, code, gateway_url))
+}
+
+fn run_pairing_inner(app: tauri::AppHandle, code: &str, gateway_url: &str) -> Result<String, String> {
     let cli = agent::cli_path(&app)?;
     let config = paths::agent_config_path();
     paths::ensure_agent_data_root().map_err(|e| format!("create agent data dir: {e}"))?;
@@ -461,7 +465,7 @@ fn run_pairing(app: tauri::AppHandle, code: &str, gateway_url: &str) -> Result<S
     // the agent id and a success hint; keep that contract on the Rust side.
     logging::info(&format!("pairing succeeded: {stdout}"));
     if was_running {
-        agent::restart(&app).map_err(|e| {
+        agent::restart_inner(&app).map_err(|e| {
             format!("pairing saved but the running agent could not be restarted to use it ({e}); restart the agent manually")
         })?;
         logging::info(&format!("agent restarted after pairing: {stdout}"));

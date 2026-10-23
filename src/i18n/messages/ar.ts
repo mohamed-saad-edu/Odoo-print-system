@@ -2334,7 +2334,7 @@ export const ar: Catalog = {
   "platform.tenants.reasonPlaceholder": "مثال: فاتورة متأخرة، مراجعة أمنية…",
   "platform.tenants.reasonMissing": "أدخل سببًا قبل إيقاف هذا المستأجر.",
   "platform.tenants.accessResumes": "يستأنف الوصول فورًا",
-  "platform.tenants.accessResumesBody": "يمكن للجلسات النشطة وعمليات الطباعة الاستمرار بعد هذا الإجراء.",
+  "platform.tenants.accessResumesBody": "يمكن استئناف الوصول إلى مساحة العمل بعد هذا الإجراء. يجب على الأعضاء الذين أُلغيت جلساتهم تسجيل الدخول مجددًا.",
   "platform.tenants.actionFailed": "فشل الإجراء",
   "platform.tenants.actionFailedBody": "تعذّر تأكيد ما إذا كان تغيير دورة حياة المستأجر قد طُبِّق. حدّث حالة المستأجر قبل إعادة المحاولة.",
   "platform.tenants.noticeSuspended": "تم إيقاف المستأجر «{name}» بنجاح.",

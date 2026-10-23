@@ -39,4 +39,21 @@ describe("receipt raster print width comes from the actual device rather than br
     expect(receiptRasterWidthDots({ max_paper_width: " 384 " })).toBe(384);
     expect(receiptRasterWidthDots({ max_paper_width: "3.84e2" })).toBeNull();
   });
+
+  it.each(["dpi", "print_dpi"])("ignores non-numeric %s metadata without invoking object coercion", (field) => {
+    const invalid = JSON.parse('{"toString":false,"valueOf":false}');
+    expect(receiptRasterWidthDots({ paper_width_mm: 80, [field]: invalid })).toBe(512);
+  });
+
+  it.each(["paper_width_mm", "paper_widths"])("rejects non-numeric %s metadata without throwing", (field) => {
+    const invalid = JSON.parse('{"toString":false,"valueOf":false}');
+    const value = field === "paper_widths" ? [80, invalid] : invalid;
+    expect(receiptRasterWidthDots({ dpi: 203, [field]: value })).toBeNull();
+  });
+
+  it("does not manufacture a paper width from an array-valued observation", () => {
+    expect(receiptRasterWidthDots({ paper_width_mm: [80], dpi: 203 })).toBeNull();
+    expect(receiptRasterWidthDots({ paper_widths: [[58]], dpi: 203 })).toBeNull();
+    expect(receiptRasterWidthDots({ paper_width_mm: "80", dpi: "203" })).toBe(576);
+  });
 });

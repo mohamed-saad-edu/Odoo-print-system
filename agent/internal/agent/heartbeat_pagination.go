@@ -250,15 +250,27 @@ func buildHeartbeatPayloadPages(
 		// One individually valid capability/config record can exceed the
 		// reserved metadata slice after Go HTML escaping. Keep that record;
 		// move auxiliary data to a later page rather than lose any field/ID.
+		// An item that cannot fit on a page by itself is not splittable. Reject
+		// the whole snapshot instead of extending totalPages indefinitely.
 		if heartbeatJSONBytes(page) > maxHeartbeatEnvelopeBytes-128 && i < len(privatePages) && len(privatePages[i]) > 0 {
+			if len(pagePrinters) == 0 && len(pageAcks) == 0 {
+				return nil
+			}
 			privatePages = append(privatePages, privatePages[i])
 			privatePages[i] = []string{}
 			delete(page, "privatePrinterIds")
 		}
 		if heartbeatJSONBytes(page) > maxHeartbeatEnvelopeBytes-128 && len(pageAcks) > 0 {
+			if len(pagePrinters) == 0 {
+				return nil
+			}
 			ackPages = append(ackPages, pageAcks)
 			ackPages[i] = []map[string]interface{}{}
 			page["desiredStateAcks"] = []map[string]interface{}{}
+		}
+		if heartbeatJSONBytes(page) > maxHeartbeatEnvelopeBytes-128 {
+			// Metadata or common keepalive fields alone exceed the envelope.
+			return nil
 		}
 		if len(privatePages) > totalPages {
 			totalPages = len(privatePages)

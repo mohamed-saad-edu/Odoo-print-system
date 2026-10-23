@@ -125,15 +125,6 @@ if (wsBucketGcTimer && typeof (wsBucketGcTimer as { unref?: () => void }).unref 
   (wsBucketGcTimer as { unref: () => void }).unref();
 }
 
-export function __pruneIdleWsBucketsForTests(nowMs?: number): number {
-  return pruneIdleWsBuckets(nowMs);
-}
-
-export function __clearWsBucketsForTests(): void {
-  wsMessageBucketsByAgentId.clear();
-  wsMessageInFlightByAgentId.clear();
-}
-
 export function __getNotificationListenerPidForTests(): number | null {
   return notificationListenerPid;
 }
@@ -739,12 +730,28 @@ async function startJobNotificationListener(): Promise<() => Promise<void>> {
   const notificationRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
   const MAX_NOTIFICATION_RETRY_TIMERS = 128;
   const NOTIFICATION_RETRY_DELAYS_MS = [125, 375, 1_000] as const;
-  type JobNotice = { jobId: string; agentId: string; requestId: string | null };
+  type JobNotice = { jobId: string; agentId: string; tenantId: unknown; requestId: string | null };
+  // LISTEN events have no transport backpressure. Bound the entire readiness /
+  // claim / delivery task, including duplicate events, before awaiting any I/O.
+  // Jobs beyond this opportunistic push budget remain durable for Agent polling.
+  const activeJobNotifications = new Set<string>();
+  const MAX_ACTIVE_JOB_NOTIFICATIONS = 16;
 
   const pushNotifiedJob = (notice: JobNotice, retryCount = 0): void => {
     if (stopped || (!hasOpenAgentSocket(notice.agentId)
         && (pendingAgentSocketRegistrations.get(notice.agentId) ?? 0) === 0)) return;
-    void claimAndPushJobToAgent({ id: notice.jobId, agentId: notice.agentId }).then((outcome) => {
+    const key = `${notice.agentId}:${notice.jobId}`;
+    if (activeJobNotifications.has(key) || activeJobNotifications.size >= MAX_ACTIVE_JOB_NOTIFICATIONS) return;
+    activeJobNotifications.add(key);
+    void (async () => {
+      if (!hasOpenAgentSocket(notice.agentId)) await waitForAgentSocketReady(notice.agentId);
+      if (stopped) return;
+      const socketTenant = agentSockets.get(notice.agentId)?.values().next().value?.tenantId;
+      if (!jobNoticeTenantAllowed(notice.tenantId, socketTenant)) {
+        logWarn("[ws] ignored job notification with mismatched tenant", { agentId: notice.agentId });
+        return;
+      }
+      const outcome = await claimAndPushJobToAgent({ id: notice.jobId, agentId: notice.agentId });
       logInfo("print.job.dispatch_boundary", {
         requestId: notice.requestId,
         jobId: notice.jobId,
@@ -754,7 +761,6 @@ async function startJobNotificationListener(): Promise<() => Promise<void>> {
       });
       if (outcome !== "not_claimable" || stopped || retryCount >= NOTIFICATION_RETRY_DELAYS_MS.length
           || !hasOpenAgentSocket(notice.agentId)) return;
-      const key = `${notice.agentId}:${notice.jobId}`;
       // A later notification should not multiply retry timers for this job.
       // After the bounded budget, polling is authoritative recovery.
       if (notificationRetryTimers.has(key) || notificationRetryTimers.size >= MAX_NOTIFICATION_RETRY_TIMERS) return;
@@ -764,7 +770,7 @@ async function startJobNotificationListener(): Promise<() => Promise<void>> {
       }, NOTIFICATION_RETRY_DELAYS_MS[retryCount]);
       timer.unref?.();
       notificationRetryTimers.set(key, timer);
-    }).catch((error) => {
+    })().catch((error) => {
       logWarn("ws.job_cross_instance_delivery_failed", { jobId: notice.jobId, error });
       logWarn("print.job.ws_push_deferred", {
         requestId: notice.requestId,
@@ -772,7 +778,7 @@ async function startJobNotificationListener(): Promise<() => Promise<void>> {
         agentId: notice.agentId,
         error: error instanceof Error ? error.message : String(error),
       });
-    });
+    }).finally(() => activeJobNotifications.delete(key));
   };
 
   const handleNotification = (notification: { channel?: string; payload?: string }) => {
@@ -870,21 +876,12 @@ async function startJobNotificationListener(): Promise<() => Promise<void>> {
       // readiness wait for exactly this pending-registration window.
       if (!hasOpenAgentSocket(message.agentId)
           && (pendingAgentSocketRegistrations.get(message.agentId) ?? 0) === 0) return;
-      const agentId = message.agentId;
-      const jobId = message.jobId;
-      void (async () => {
-        if (!hasOpenAgentSocket(agentId)) await waitForAgentSocketReady(agentId);
-        const socketTenant = agentSockets.get(agentId)?.values().next().value?.tenantId;
-        if (!jobNoticeTenantAllowed(message.tenantId, socketTenant)) {
-          logWarn("[ws] ignored job notification with mismatched tenant", { agentId });
-          return;
-        }
-        pushNotifiedJob({
-          jobId,
-          agentId,
-          requestId: typeof message.requestId === "string" ? message.requestId : null,
-        });
-      })().catch((error) => logWarn("[ws] job notification admission failed", { agentId, error }));
+      pushNotifiedJob({
+        jobId: message.jobId,
+        agentId: message.agentId,
+        tenantId: message.tenantId,
+        requestId: typeof message.requestId === "string" ? message.requestId : null,
+      });
     } catch {
       logWarn("[ws] ignored malformed PostgreSQL job notification");
     }

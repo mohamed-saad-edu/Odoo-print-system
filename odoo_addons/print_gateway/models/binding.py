@@ -523,11 +523,18 @@ class PrintGatewayBinding(models.Model):
     @api.constrains("company_id", "branch_id", "runtime_agent_id", "printer_id")
     def _check_runtime_scope(self):
         assignment_model = self.env["print_gateway.runtime_agent_assignment"]
+        is_su = getattr(self.env, "is_superuser", lambda: False)()
+        user_companies = getattr(getattr(self.env, "user", None), "company_ids", None)
         for record in self:
-            if not record.branch_id and record.company_id not in self.env.companies:
+            if not record.branch_id and (
+                record.company_id not in self.env.companies
+                or (not is_su and user_companies is not None and record.company_id not in user_companies)
+            ):
                 raise ValidationError(_("The selected Odoo Company is not available to the current user."))
             if record.branch_id:
-                if record.branch_id not in self.env.companies:
+                if record.branch_id not in self.env.companies or (
+                    not is_su and user_companies is not None and record.branch_id not in user_companies
+                ):
                     raise ValidationError(_("Odoo Branch is not available to the current user."))
                 if not isinstance(record.runtime_agent_id, str) or not record.runtime_agent_id.strip():
                     raise ValidationError(_("A Gateway Runtime Agent is required for a branch binding."))
@@ -701,7 +708,10 @@ class PrintGatewayBinding(models.Model):
         normalized = (document_type or "").strip().lower()
         if not binding.enabled:
             raise ValidationError(_("The explicitly selected print binding is disabled."))
-        branch_matches = binding.branch_id == branch or (branch and not binding.branch_id)
+        # An unset Many2one is an empty recordset, not the Python False
+        # sentinel used by root-company callers. Company-wide rules also
+        # remain valid fallbacks for a branch; sibling-specific rules do not.
+        branch_matches = not binding.branch_id or binding.branch_id == branch
         if binding.company_id != company or not branch_matches:
             raise ValidationError(_("The explicitly selected print binding is not scoped to the current company and branch."))
         if report and binding.report_id != report:

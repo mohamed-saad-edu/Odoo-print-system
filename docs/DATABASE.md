@@ -1,143 +1,100 @@
 # Gateway database reference
 
-Derived from the schema and production migration sources in this repository:
+The Gateway uses PostgreSQL through the shared `pg` pool and Drizzle definitions in [`src/db/index.ts`](../src/db/index.ts) and [`src/db/schema.ts`](../src/db/schema.ts). This document describes the checked-in schema and migration process. It is not evidence that a deployment was migrated, backed up, restored, or tested successfully.
 
-- `src/db/schema.ts` — the Drizzle schema every query is written against.
-- `drizzle/*.sql` — immutable historical SQL.
-- `scripts/db-migrate.ts` — hash ledger and versioned forward repairs applied by `npm run db:migrate`.
+## Schema inventory
 
-This file is derived, not hand-maintained: if a table is added, renamed or
-dropped, regenerate the table matrix below so the documentation cannot drift
-from the schema again.
+There are **30 current application tables**, **86 forward-only SQL migrations (`0000`–`0085`)**, and additional versioned forward repairs in [`scripts/db-migrate.ts`](../scripts/db-migrate.ts). The inventory checker finds 37 created table names and 7 subsequently dropped legacy names. The migration ledger, `drizzle.__drizzle_migrations`, is separate from the 30 application tables.
 
-## At a glance
+| Table | Purpose and identity | Scope and relevant constraints |
+| --- | --- | --- |
+| `tenants` | Workspace identity, name, lifecycle and lifecycle timestamps | Primary key `id`; lifecycle is `active`, `suspended`, or `deleted` |
+| `tenant_domains` | Workspace domain bindings and verification metadata | Tenant reference; globally unique domain; verification is explicit |
+| `users` | Global account identity, password hash, email verification and Platform Owner flag | Globally unique email; partial unique index permits at most one Platform Owner |
+| `tenant_users` | Membership and current role for a user in a workspace | Unique `(user_id, tenant_id)` identity and at most one owner per tenant; role CHECK; no formal primary key |
+| `platform_sessions` | Compatibility validation/revocation of pre-v2 Platform sessions | JTI primary key, user reference, expiry and revocation; current application issuance uses v2 refresh families |
+| `manager_sessions` | Compatibility validation/revocation of pre-v2 workspace sessions | JTI primary key, tenant, optional user, role, expiry and revocation; not the current v2 access-token ledger |
+| `refresh_tokens` | Hashed opaque v2 refresh credentials, family history and replacement/revocation evidence | Unique token hash; family/user/tenant indexes; kind/scope and time-order CHECKs; replacement self-reference |
+| `email_verification_tokens` | Single-use mailbox verification credential hashes | User reference, unique token hash, expiry and consumed timestamp |
+| `password_reset_tokens` | Password reset/setup credential hashes | User reference, unique token hash, expiry and consumed timestamp |
+| `tenant_invitations` | Pending/accepted/revoked workspace invitations | Tenant and inviter references, unique token hash, expiry, bounded member role set excluding owner |
+| `agents` | Paired Agent identity, hashed bearer secret, pairing-code hash/expiry, lifecycle and inventory snapshot progress | Tenant reference and unique `(tenant_id, id)`; global uniqueness for pending pairing-code hashes; separate runtime status and lifecycle |
+| `printers` | Printer configuration, capability metadata, desired/applied revisions, inventory presence and local sharing permission | Tenant-scoped `(tenant_id, id)` UNIQUE identity, not a global ID primary key; composite tenant/Agent FK; revision and sharing-version CHECKs |
+| `api_keys` | Integration credential hashes, revocation/read-only grace and Odoo activation revision | Tenant reference, unique credential hash and `(tenant_id, id)`; read-only grace requires revocation |
+| `odoo_installations` | Operator-enrolled Gateway identity for each independently managed Odoo deployment; proof hash, state and lifecycle | Unique tenant/installation ID; proof never stored in job/audit rows |
+| `odoo_installation_credentials` | Preserved credential-to-installation ownership, including key rotations | Unique `(tenant_id, api_key_id)` and tenant/installation composite foreign key |
+| `odoo_v2_operations` | Lifetime association of versioned Odoo business identity to original accepted Gateway job | Per-installation operation composite primary key, tenant-wide versioned-key unique constraint; no physical retry implied |
+| `odoo_legacy_resolutions` | Explicit, audited operator decisions about old-key collisions | Tenant/installation uniqueness, immutable observed job fingerprint and decision (`reuse` or `distinct`) |
+| `discovery_sessions` | Agent discovery run state, requested scan configuration and chunk/summary evidence | Composite tenant/Agent FK; at most one `running` session per tenant/Agent |
+| `discovered_devices` | Tenant-scoped observations, candidate identity, verification and optional provisioned-printer link | Composite tenant/discovery, tenant/Agent and tenant/printer FKs; unique non-null `(tenant_id, agent_id, identity_key)` |
+| `print_jobs` | Admitted print payload, destination, state, claim/attempt fencing and delivery/acknowledgment timestamps | Composite tenant/Agent, tenant/printer and tenant/API-key FKs; unique non-null `(tenant_id, idempotency_key)`; payload/status/counter CHECKs |
+| `job_events` | Per-job timeline and attempt/correlation metadata | Composite tenant/job FK with cascade on job deletion; bounded stage/status sets |
+| `print_job_receipts` | Payload-free terminal receipt and idempotency evidence retained after job-history cleanup | Tenant reference, unique `(tenant_id, idempotency_key)`, fingerprint and terminal outcome; retained historical resource IDs are not all live FKs |
+| `gateway_metrics` | Shared operational counters | Global metric-name primary key; nonnegative value; written by the metrics service |
+| `audit_events` | Actor/action/resource audit metadata | Tenant is required except for Platform actor records; actor type CHECK and scope/time indexes |
+| `auth_rate_limits` | Authentication attempt windows, failure counters and lockout expiry | Global opaque-key primary key; account/source-IP/pairing scope is encoded by the application, not a tenant column |
+| `plans` | Public/private plan catalog, entitlements and current/historical Stripe price identity | Global plan identity/name; optional Stripe price/product uniqueness; active/public/display-order fields |
+| `tenant_subscriptions` | Tenant plan and provider billing state, checkout intent/session and billing-operation reconciliation | One row per tenant; plan references; unique provider/idempotency identities; bounded subscription/checkout/operation states |
+| `billing_events` | Provider webhook receipt, payload and processing state | Provider event ID primary key for deduplication; optional tenant reference until the event is associated |
+| `print_usage_periods` | Reserved/used print credits per billing period | Composite primary key `(tenant_id, period_start)`; nonnegative use and ordered optional period end |
+| `e2e_capture_runs` | Opt-in render-only diagnostic queue independent of physical print jobs and billing | Composite tenant/Agent FK; tenant/API-key/idempotency uniqueness; bounded attempts/pages/size; terminal rows clear the submitted payload but may retain a preview |
 
-| Metric | Value |
-| --- | --- |
-| Tables in `schema.ts` | 26 |
-| Migration files | 85 (`0000` … `0084`) plus versioned forward repairs |
-| Tables created by migration history and forward repairs | 33 |
-| Legacy tables later dropped | 7 |
-| Historical index definitions through `0080` | 117 (later migrations add more; see SQL) |
-| Foreign keys added after table creation | 67 |
+The schema retains global account, catalog, metric and authentication data alongside tenant-scoped data. A missing `tenant_id` on a global table is not by itself an isolation defect. Conversely, the existence of a tenant column does not authorize access to a row.
 
-## Table matrix
+## Isolation and state invariants
 
-| Table | schema.ts line | created in | historical indexes | historical late foreign keys |
-| --- | --- | --- | --- | --- |
-| `agents` | 110 | `0000_simple_tigra.sql` | 6 | 5 |
-| `api_keys` | 210 | `0000_simple_tigra.sql` | 1 | 3 |
-| `audit_events` | 504 | `0034_saas_control_plane.sql` | 3 | 0 |
-| `auth_rate_limits` | 301 | `0005_auth_rate_limits.sql` | 4 | 0 |
-| `billing_events` | 289 | `0037_customer_identity_billing.sql` | 2 | 0 |
-| `discovered_devices` | 332 | `0010_discovery.sql` | 12 | 10 |
-| `discovery_sessions` | 312 | `0010_discovery.sql` | 6 | 4 |
-| `e2e_capture_runs` | 625 | `0083_e2e_capture_runs.sql` | 2 | 0 |
-| `email_verification_tokens` | 245 | `0037_customer_identity_billing.sql` | 2 | 1 |
-| `gateway_metrics` | 495 | `0015_metrics_and_agent_notifications.sql` | 0 | 0 |
-| `job_events` | 454 | `0055_job_events_and_spooler_job_id.sql` | 4 | 2 |
-| `manager_sessions` | 230 | `0000_simple_tigra.sql` | 3 | 1 |
-| `password_reset_tokens` | 257 | `0037_customer_identity_billing.sql` | 2 | 1 |
-| `plans` | 524 | `0034_saas_control_plane.sql` | 3 | 0 |
-| `platform_sessions` | 43 | `0043_add_platform_owner.sql` | 2 | 0 |
-| `print_job_receipts` | 601 | `scripts/db-migrate.ts` A86 | 1 | 0 |
-| `print_jobs` | 384 | `0000_simple_tigra.sql` | 23 | 15 |
-| `print_usage_periods` | 585 | `0061_print_usage_quota.sql` | 1 | 0 |
-| `printers` | 150 | `0000_simple_tigra.sql` | 9 | 6 |
-| `refresh_tokens` | 54 | `0073_refresh_tokens.sql` | 4 | 1 |
-| `tenant_domains` | 18 | `0030_tenant_domains_and_manager_sessions.sql` | 3 | 0 |
-| `tenant_invitations` | 269 | `0037_customer_identity_billing.sql` | 3 | 2 |
-| `tenant_subscriptions` | 546 | `0034_saas_control_plane.sql` | 7 | 0 |
-| `tenant_users` | 91 | `0028_add_multi_tenancy.sql` | 3 | 2 |
-| `tenants` | 4 | `0028_add_multi_tenancy.sql` | 1 | 0 |
-| `users` | 31 | `0028_add_multi_tenancy.sql` | 1 | 0 |
+Isolation is enforced by authenticated tenant context, permission checks, ownership predicates and transactional revalidation in the Gateway. The supplied migrations do not enable PostgreSQL row-level security. Composite foreign keys add database enforcement where declared; they do not replace current-actor or tenant-lifecycle checks.
 
-Migration `0084_printer_cloud_sharing.sql` adds `printers.shared_with_gateway` (non-null, legacy default true) and nullable `shared_with_gateway_version` (validated positive int64 decimal text). The authenticated owning Agent controls sharing through versioned inventory; same-version denial is sticky across pages and only a newer explicit positive may restore it under quota. Observation bookkeeping and physical health/lifecycle stay independent. Private canonical records and job history are retained; default cloud inventories/counts and new job admission exclude them.
+In particular, printer and discovered-device IDs are unique within a tenant. Agent-generated IDs can legitimately repeat in different tenants. Queries and references must use the full tenant-scoped identity. The capture queue's API-key FK references the key by ID; its admission service additionally verifies that the active key and Agent belong to the authenticated tenant before insertion (`src/lib/e2e-capture.ts`).
 
-The `e2e_capture_runs` table is a tenant/Agent- and API-key-scoped,
-**simulation-only** outbox installed by `0083_e2e_capture_runs.sql`.
-It has a composite `(tenant_id, agent_id)` foreign key, unique
-`(tenant_id, api_key_id, idempotency_key)`, two indexes for Agent claims
-and retention, a 12-minute default TTL, a three-attempt limit, bounded
-page/byte constraints, and a terminal-state check requiring the original
-payload to be cleared. It deliberately has **no** printer id, `print_jobs`
-foreign key, physical status or billing linkage. A successful local render
-is never proof of paper output. The feature is opt-in at Gateway and Agent.
+Keep printer lifecycle, observed health, inventory presence, sharing permission and physical print outcome separate. The database's physical-printer filters reject known virtual/redirected metadata patterns; they are not hardware attestation. An accepted or acknowledged print job is not universal proof of paper output. Claim tokens and terminal receipts support reconciliation; do not reset an uncertain job to `queued` by hand. See [OPERATIONS.md](../OPERATIONS.md).
 
-Every table declared in `schema.ts` is created by a migration, and every
-table created by a migration is either declared in `schema.ts` or dropped
-again later. There is no drift between the two.
+`print_jobs_payload_contract_check` uses `COALESCE` to reject missing type/protocol discriminators on new or updated rows. Migration `0082` and its retained forward repair add this CHECK as **NOT VALID**: existing historical rows are not validated by that step. This must not be presented as proof that every old payload is valid. Application payload validation remains necessary.
 
-## Legacy tables (created then dropped)
+`users_single_platform_owner_idx` and the tenant-owner partial unique index impose **at most one** owner at their respective scopes. They do not create an owner or guarantee that one exists. Account/bootstrap and ownership-transfer transactions enforce those workflows.
 
-- `applications` — created in `0028_add_multi_tenancy.sql`, dropped in a later migration. Do not reintroduce.
-- `branches` — created in `0001_phase1_branch_foundation.sql`, dropped in a later migration. Do not reintroduce.
-- `destinations` — created in `0001_phase1_branch_foundation.sql`, dropped in a later migration. Do not reintroduce.
-- `document_types` — created in `0002_add_document_types.sql`, dropped in a later migration. Do not reintroduce.
-- `local_networks` — created in `0001_phase1_branch_foundation.sql`, dropped in a later migration. Do not reintroduce.
-- `print_job_rate_limits` — created in `0016_print_job_rate_limits.sql`, dropped in a later migration. Do not reintroduce.
-- `printer_bindings` — created in `0001_phase1_branch_foundation.sql`, dropped in a later migration. Do not reintroduce.
+## Authentication and sensitive data
 
-The matrix counts index creation and late foreign-key additions over migration history, including entries later replaced or dropped. It is not a count of the live PostgreSQL catalog; inspect `pg_indexes`/`pg_constraint` after migration for the current definitions.
+Current browser access JWTs are short-lived and are not stored as refresh-token rows. The `refresh_tokens` table holds hashes of opaque refresh secrets, family history and revocation evidence. Validation also checks the live principal and current membership. Legacy session tables remain for pre-v2 compatibility and revocation. See [SECURITY.md](../SECURITY.md) for cookie, rotation and expiry behavior.
 
-## Invariants enforced outside `schema.ts`
+Agent and API-key columns contain credential hashes, not recoverable raw bearer secrets. Passwords use the account password-hashing implementation. Pairing codes use the deployment's configured keyed hashing policy. A database backup still contains sensitive data: credential hashes, account identifiers, print payloads, billing webhook payloads, capture previews and operational metadata. Restrict database/backup access and apply deployment encryption and retention controls; the schema does not encrypt all of those columns.
 
-Agent inventory ordering retains `agents.inventory_snapshot_version` after each completed snapshot. Migration `0080` stores the int64 value as checked decimal text, preserving exact values through Drizzle and JSON. Its high-water mark and page-state validation share the Agent row lock. Legacy versionless observations cannot reconcile absence or downgrade an established versioned writer. See [Agent heartbeat contract](../API.md#agent-heartbeat-pagination).
+Audit rows are persisted in PostgreSQL, but not every audit write is atomic with its business operation. Some paths write best effort after commit. The audit table is not an external alert-delivery service or an immutable storage boundary against a privileged database account.
 
-Several guarantees live only in SQL (CHECK constraints, partial unique
-indexes, composite foreign keys and database triggers) because Drizzle
-cannot express them. The most important ones:
+## Connection and transaction behavior
 
-- `0000_simple_tigra.sql`: agents_last_seen_idx; manager_sessions_expires_idx; print_jobs_agent_status_idx; print_jobs_printer_status_idx; print_jobs_status_expires_idx; printers_agent_id_idx
-- `0001_phase1_branch_foundation.sql`: agents_branch_id_idx; agents_local_network_id_idx; api_keys_branch_id_idx; branches_enabled_idx; branches_name_idx; destinations_branch_id_idx
-- `0002_add_document_types.sql`: document_types_branch_id_idx; document_types_name_idx
-- `0003_add_idempotency_key.sql`: print_jobs_branch_idempotency_idx; print_jobs_branch_idempotency_unique
-- `0004_add_job_delivery_tracking.sql`: print_jobs_claimed_at_idx
-- `0005_auth_rate_limits.sql`: auth_rate_limits_locked_until_idx
-- `0006_architecture_hardening.sql`: agents_gateway_id_global_unique; agents_lifecycle_idx; printers_gateway_id_global_unique; printers_lifecycle_idx
-- `0007_auth_rate_limit_retention.sql`: auth_rate_limits_updated_at_idx
-- `0010_discovery.sql`: discovered_devices_agent_id_idx; discovered_devices_agent_identity_unique; discovered_devices_branch_id_idx; discovered_devices_candidate_status_idx; discovered_devices_confidence_idx; discovered_devices_discovery_id_idx
-- `0015_metrics_and_agent_notifications.sql`: 
-- `0016_print_job_rate_limits.sql`: print_job_rate_limits_updated_idx
-- `0017_notify_requeued_jobs.sql`: 
-- `0018_global_print_job_idempotency.sql`: print_jobs_idempotency_unique
-- `0021_scope_print_jobs_to_api_key.sql`: print_jobs_api_key_id_idx; print_jobs_idempotency_unique
-- `0023_internal_print_job_idempotency.sql`: print_jobs_internal_idempotency_unique
-- `0028_add_multi_tenancy.sql`: auth_rate_limits_locked_until_idx; auth_rate_limits_updated_at_idx; discovered_devices_agent_id_idx; discovered_devices_candidate_status_idx; discovered_devices_confidence_idx; discovered_devices_discovery_id_idx
-- `0030_tenant_domains_and_manager_sessions.sql`: manager_sessions_tenant_idx; tenant_domains_primary_unique; tenant_domains_tenant_idx; tenant_domains_verified_idx
-- `0032_pairing_code_hash_unique.sql`: agents_pairing_code_hash_pending_unique
-- `0033_manager_identity.sql`: manager_sessions_user_idx
-- `0034_saas_control_plane.sql`: audit_events_actor_idx; audit_events_resource_idx; audit_events_tenant_created_idx
-- `0036_print_job_request_id.sql`: print_jobs_request_id_idx
-- `0037_customer_identity_billing.sql`: billing_events_tenant_idx; billing_events_type_idx; email_verification_tokens_expires_idx; email_verification_tokens_user_idx; password_reset_tokens_expires_idx; password_reset_tokens_user_idx
-- `0040_tenant_lifecycle.sql`: tenants_lifecycle_idx
-- `0042_dos_indexes.sql`: print_jobs_tenant_agent_status_expiry_idx; print_jobs_tenant_created_idx
-- `0043_add_platform_owner.sql`: platform_sessions_expires_idx; platform_sessions_user_idx
-- `0044_single_platform_owner_idx.sql`: users_single_platform_owner_idx
-- `0046_scope_internal_print_job_idempotency.sql`: print_jobs_internal_idempotency_unique
-- `0047_desired_printer_reconciliation.sql`: printers_agent_lifecycle_desired_idx
-- `0048_discovery_running_agent_unique.sql`: discovery_sessions_active_agent_unique
-- `0049_tenant_scoped_idempotency_and_owner_unique.sql`: print_jobs_tenant_idempotency_unique; tenant_users_single_owner_idx
-- `0050_billing_single_flight_state.sql`: tenant_subscriptions_billing_operation_key_unique; tenant_subscriptions_billing_operation_unique; tenant_subscriptions_checkout_idempotency_unique; tenant_subscriptions_checkout_session_unique; tenant_subscriptions_checkout_status_idx
-- `0052_plan_catalog_management.sql`: plans_catalog_idx; plans_stripe_product_id_unique
-- `0055_job_events_and_spooler_job_id.sql`: job_events_created_idx; job_events_job_id_idx; job_events_stage_idx; job_events_tenant_job_idx
-- `0057_api_key_composite_index.sql`: print_jobs_tenant_api_key_idx
-- `0061_print_usage_quota.sql`: print_usage_periods_tenant_period_end_idx
-- `0070_discovered_device_identity.sql`: discovered_devices_tenant_agent_identity_idx; discovered_devices_tenant_agent_identity_unique
-- `0073_refresh_tokens.sql`: refresh_tokens_expires_idx; refresh_tokens_family_idx; refresh_tokens_replaced_by_idx; refresh_tokens_user_idx
+The runtime accepts `DATABASE_URL` or structured `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER` and password settings through the secret-loading implementation. The supplied Compose stack reads its database password from a mounted secret file. Never put real connection credentials in this reference or command logs.
 
+The shared pool uses UTC sessions and UTC serialization for JavaScript dates. Most schema timestamps are timezone-naive and interpreted as UTC; `job_events.created_at` and `gateway_metrics.updated_at` are explicitly timezone-aware. Do not change session timezone or reinterpret historical naive values as local wall-clock times.
 
-The production migration entry point is `npm run db:migrate` (`scripts/db-migrate.ts`). It applies missing content hashes in journal index order, under one PostgreSQL advisory transaction lock, so older journal timestamps cannot suppress 0033–0036 or 0074. Historical SQL and hashes remain immutable. The same transaction applies versioned forward audit repairs embedded in that script and records their hashes in the existing Drizzle ledger. Do not substitute the timestamp-only Drizzle migrator for deployment upgrades.
+Current pool defaults are 20 connections, a 10-second connection timeout, 30-second idle/statement timeouts, a 5-second lock timeout and recycling after 10,000 uses. These are implementation settings, not throughput guarantees. Cross-instance claim/admission coordination uses PostgreSQL transactions, row/advisory locks and fenced state changes in the relevant services; process-local state alone is not the authority.
 
-Terminal Agent reports require an immutable attempt claim token. A successful write retains its SHA-256 hash in `print_jobs.closed_claim_token_hash` while clearing the live execution token when appropriate. Retries of exactly the same terminal status and attempt receive `{success:true,status:<terminal status>}` without changing outcome, evidence or timestamps. Other attempts or statuses remain fenced. A new claim clears closed acknowledgement evidence. Agents retain outbox tokens until a bounded JSON acknowledgement confirms both success and the requested status. The database column is installed by the versioned forward repair in `scripts/db-migrate.ts`.
+The shipped Compose migration and runtime services use the same configured PostgreSQL principal. A separate reduced-privilege runtime role is not provisioned by that configuration. Deployments that separate migration/runtime privileges must provide and validate the grants for their environment.
 
-The forward payload constraint repair in `scripts/db-migrate.ts` coalesces both missing type and protocol discriminators. Absent/null type is rejected on new writes; NOT VALID preserves historic rows for explicit review. ORM and newest snapshot mirror this repaired constraint.
+## Applying migrations
 
-`tenant_subscriptions.checkout_request_params` stores immutable form parameters for one checkout intent. A forward repair installs this nullable JSONB column; missing legacy snapshots fail closed during external-mutation recovery.
+With the intended database connection configured, the application command is:
 
-`tenant_subscriptions.stripe_state_revision` is the monotonic fence for retrieved Stripe snapshots, independent of second-resolution event timestamps and app clocks. All Stripe state producers increment it; the embedded migration installs it at zero.
+```sh
+npm run db:migrate
+```
 
-`plans.stripe_price_history` preserves current and retired Stripe Price IDs under a shared catalog-mutation advisory lock. Price IDs cannot be reassigned to another plan. Webhooks require exactly one current/historical mapping, independent of public/active catalog visibility. The forward migration seeds current IDs; operators must supply lost pre-upgrade historical mappings from Stripe/account evidence.
+`scripts/db-migrate.ts` reads the Drizzle journal, begins a transaction, fixes the target `search_path` to `public`, and takes a database/schema-scoped transaction advisory lock. It checks recorded content hashes in `drizzle.__drizzle_migrations`, applies missing journal entries in order, then applies missing hash-addressed `AUDIT_REPAIRS`. Success commits; a failure rolls back the transaction.
 
-### `print_job_receipts`
-Payload-free terminal receipts are inserted atomically with history cleanup under the tenant enqueue lock. They retain tenant/key uniqueness, SHA-256 of the canonical admission fingerprint, original job/owner identity, terminal status/error/timestamps and the closed attempt-token hash. They have no printer/agent/API-key foreign keys and survive resource removal. Only tenant deletion removes them; no time-based pruning is safe without an explicit idempotency expiry contract. Odoo single/batch lookups and closed Agent ACKs use the same scoped evidence after payload cleanup. The production hash migrator creates this table via its versioned forward repair.
+Append new migrations or versioned forward repairs. Do not edit historical SQL/hash identities, delete migration-ledger rows to force replay, or substitute a direct schema push for the production migration path. Some migrations update or remove historical data, so review the applicable changes and take a verified backup before deployment. The supplied Compose Gateway depends on successful completion of its separate migration service.
+
+The application table count excludes the migration-ledger schema and isolated test-worker schemas. Tests may create temporary schemas/databases; their results do not establish the state of a production database.
+
+## Backup, restore and verification
+
+[`scripts/postgres-backup.sh`](../scripts/postgres-backup.sh) and [`scripts/postgres-restore.sh`](../scripts/postgres-restore.sh) implement the repository's logical backup/restore workflow. Follow [DEPLOYMENT.md](../DEPLOYMENT.md) for protected credentials, independent backup storage, archive/checksum checks and an isolated restore target. A backup file alone is not evidence of a successful restore or a measured recovery time.
+
+After an isolated restore, run the current migrations and application checks before admitting traffic. Preserve the restored job/claim/receipt evidence and reconcile uncertain physical outcomes; restoring database state cannot undo paper already printed.
+
+Run the source consistency gate without a database connection:
+
+```sh
+npm run db:docs:check
+```
+
+This checks current table names against schema declarations, migration creates/drops and this document, plus the counts in `ARCHITECTURE.md`. It does not apply migrations or validate a live database, every column/index definition, tenant authorization, or backup recovery. Use the repository's PostgreSQL integration suites and deployment verification procedure for those separate checks.

@@ -14,6 +14,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
@@ -198,13 +199,51 @@ type entry struct {
 	Value string
 }
 
+const maxSecretStoreBytes = 1 << 20
+
 func readEntries(p string) ([]entry, error) {
-	data, err := os.ReadFile(p)
+	lstatInfo, err := os.Lstat(p)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
 		}
-		return nil, fmt.Errorf("storage: read %s: %w", p, err)
+		return nil, fmt.Errorf("storage: stat %s: %w", p, err)
+	}
+	if !lstatInfo.Mode().IsRegular() || lstatInfo.Size() > maxSecretStoreBytes {
+		return nil, fmt.Errorf("storage: %s is not a bounded regular file", p)
+	}
+	if err := EnsureSecureDirectoryACL(filepath.Dir(p)); err != nil {
+		return nil, fmt.Errorf("storage: secure dir %s: %w", filepath.Dir(p), err)
+	}
+	if err := EnsureSecureFileACL(p); err != nil {
+		return nil, fmt.Errorf("storage: secure file %s: %w", p, err)
+	}
+	f, err := os.Open(p)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("storage: open %s: %w", p, err)
+	}
+	openInfo, statErr := f.Stat()
+	if statErr != nil {
+		_ = f.Close()
+		return nil, fmt.Errorf("storage: stat open %s: %w", p, statErr)
+	}
+	if !openInfo.Mode().IsRegular() || !os.SameFile(lstatInfo, openInfo) || openInfo.Size() > maxSecretStoreBytes {
+		_ = f.Close()
+		return nil, fmt.Errorf("storage: %s changed during open", p)
+	}
+	data, readErr := io.ReadAll(io.LimitReader(f, maxSecretStoreBytes+1))
+	closeErr := f.Close()
+	if readErr != nil {
+		return nil, fmt.Errorf("storage: read %s: %w", p, readErr)
+	}
+	if closeErr != nil {
+		return nil, fmt.Errorf("storage: close %s: %w", p, closeErr)
+	}
+	if len(data) > maxSecretStoreBytes {
+		return nil, fmt.Errorf("storage: %s exceeds %d bytes", p, maxSecretStoreBytes)
 	}
 	var entries []entry
 	for _, line := range strings.Split(string(data), "\n") {

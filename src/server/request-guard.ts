@@ -2,6 +2,7 @@ import { IncomingMessage, type ServerResponse } from "http";
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { parseStrictContentLength } from "../lib/request-limits";
 import { runtimeSecret } from "../lib/runtime-secret";
+import { requestPath } from "./request-path";
 
 /**
  * API body limit. The custom Next server must never consume the IncomingMessage
@@ -28,7 +29,7 @@ const AGENT_ROUTE_BODY_LIMITS: Readonly<Record<string, number>> = {
 
 export function maxApiBodyBytesForRequest(url: string | undefined, method: string, ceiling = MAX_API_BODY_BYTES): number {
   if (!url || (method !== "POST" && method !== "PATCH")) return ceiling;
-  const path = url.split("?", 1)[0].replace(/\/$/, "");
+  const path = requestPath(url).replace(/\/$/, "");
   return Math.min(ceiling, AGENT_ROUTE_BODY_LIMITS[path] ?? ceiling);
 }
 
@@ -87,6 +88,14 @@ function rejectRequest(req: IncomingMessage, res: ServerResponse, status: number
     if (!req.destroyed) req.destroy();
   };
 
+  const scheduleTeardown = () => {
+    if (res.writableFinished) {
+      teardownAfterResponse();
+    } else {
+      res.once("finish", teardownAfterResponse);
+    }
+  };
+
   res.writeHead(status);
   // Flush the status line/headers immediately. The response body remains
   // buffered until the bounded request drain finishes, allowing the client to
@@ -94,20 +103,23 @@ function rejectRequest(req: IncomingMessage, res: ServerResponse, status: number
   if (typeof res.flushHeaders === "function") res.flushHeaders();
   res.write(payload);
 
-  req.on("data", (chunk: Buffer) => {
+  const onData = (chunk: Buffer) => {
     drained += chunk.length;
     if (drained >= REJECT_DRAIN_MAX_BYTES) {
-      res.once("finish", teardownAfterResponse);
+      req.removeListener("data", onData);
+      scheduleTeardown();
       finishResponse();
     }
-  });
+  };
+  req.on("data", onData);
   req.once("end", finishResponse);
   req.once("error", () => {
     finishResponse();
   });
 
   timer = setTimeout(() => {
-    res.once("finish", teardownAfterResponse);
+    req.removeListener("data", onData);
+    scheduleTeardown();
     finishResponse();
   }, REJECT_DRAIN_TIMEOUT_MS);
   if (typeof timer.unref === "function") timer.unref();
@@ -315,11 +327,12 @@ export async function guardApiRequest(
   options: ApiBodyGuardOptions = {},
 ): Promise<IncomingMessage | null> {
   const method = (req.method ?? "").toUpperCase();
-  const maxBytes = maxApiBodyBytesForRequest(req.url, method, options.maxBytes ?? MAX_API_BODY_BYTES);
-  if (!req.url?.startsWith("/api/")) return req;
+  const path = requestPath(req.url);
+  const maxBytes = maxApiBodyBytesForRequest(path, method, options.maxBytes ?? MAX_API_BODY_BYTES);
+  if (!path.startsWith("/api/")) return req;
   if (!MUTATING_METHODS.includes(method)) return req;
 
-  const payloadBearing = isPayloadBearingEndpoint(req.url);
+  const payloadBearing = isPayloadBearingEndpoint(path);
   const authenticated = isLikelyAuthenticated(req);
 
   if (!isCookieMutationSameOrigin(req)) {

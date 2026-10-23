@@ -59,7 +59,20 @@ class PrintGatewayIntent(models.Model):
         "failed": {"failed", "pending"},
     }
 
+    @api.model_create_multi
+    def create(self, vals_list):
+        # The worker trusts these source/policy identities after commit.
+        # Branch administrators may recover existing work, but must not forge
+        # work for arbitrary records through the ordinary model RPC surface.
+        if not self.env.is_superuser():
+            raise AccessError(_("Print intents must be created by an authorized business event."))
+        return super().create(vals_list)
+
     def write(self, vals):
+        if set(vals).intersection({
+            "company_id", "intent_key", "policy_id", "res_model", "res_id", "event_type",
+        }) and not self.env.is_superuser():
+            raise AccessError(_("Print intent source and policy may only be changed by the trusted print service."))
         if "status" in vals:
             target = vals["status"]
             for record in self:

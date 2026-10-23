@@ -651,10 +651,6 @@ export interface RegisterPrinterRequest {
   spoolerPassthroughProtocols?: Array<"raw" | "escpos">;
 }
 
-export function registerPrinter(req: RegisterPrinterRequest): Promise<string> {
-  return invoke<string>("register_printer", { request: req });
-}
-
 export interface AutostartStatus {
   enabled: boolean;
 }

@@ -93,12 +93,6 @@ export async function queueOdooCapture(auth: AuthenticatedIntegration, input: Ca
       SELECT id FROM tenants WHERE id = ${auth.tenantId} AND lifecycle = 'active' FOR SHARE
     `);
     if (tenant.rows.length !== 1) throw new CaptureError("TENANT_UNAVAILABLE", 403);
-    // Re-decide billing access INSIDE the write transaction. The route-level
-    // check runs in its own statement, so a subscription that lapses between
-    // that check and this insert would otherwise still create a run row.
-    // The row lock makes the decision and the insert atomic against the
-    // webhook that revokes access.
-    await requireTenantBillingAccess(tx, auth.tenantId);
     // Global per-tenant budget is serialized to avoid a test-only data flood.
     await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${"e2e_capture:tenant:" + auth.tenantId}))`);
     const agent = await tx.execute(sql`
@@ -113,6 +107,15 @@ export async function queueOdooCapture(auth: AuthenticatedIntegration, input: Ca
       FOR UPDATE
     `);
     if (key.rows.length !== 1) throw new CaptureError("UNAUTHORIZED", 401);
+    // Runtime and credential writers lock Agent -> API key -> subscription.
+    // Taking billing first would deadlock with a physical-print admission
+    // holding this Agent/key while waiting for the same subscription row.
+    // Re-decide billing access INSIDE the write transaction. The route-level
+    // check runs in its own statement, so a subscription that lapses between
+    // that check and this insert would otherwise still create a run row.
+    // The row lock makes the decision and the insert atomic against the
+    // webhook that revokes access.
+    await requireTenantBillingAccess(tx, auth.tenantId);
     // Retention is per tenant, not a global deletion during a customer request.
     await tx.execute(sql`DELETE FROM e2e_capture_runs
       WHERE tenant_id = ${auth.tenantId} AND created_at < now() - interval '48 hours'`);

@@ -14,7 +14,7 @@ import { createPrintJobForPrinter, AgentQueueFullError, AgentQueuedJobsFullError
 import { TenantEntitlementError, TenantSubscriptionRequiredError, TenantEntitlementConfigError } from "../../../../../lib/entitlements";
 import { MAX_AGENT_IN_FLIGHT_JOBS } from "../../../../../lib/job-delivery";
 import { databaseNowMs, parseDbTimeMs } from "../../../../../lib/database-clock";
-import { agentStaleThresholdSeconds } from "../../../../../lib/agent-availability";
+import { getAgentAvailability } from "../../../../../lib/agent-availability";
 import { hasBodyOverLimit } from "../../../../../lib/request-limits";
 import { receiptPaperWidthMM } from "../../../../../lib/receipt-width";
 import { validatePayloadForPrinter } from "../../../../../lib/printer-capability";
@@ -306,10 +306,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         // parseDbTimeMs: naive DB strings are UTC; new Date(str) is host-local.
         const seenMs = parseDbTimeMs(agent.lastSeenAt);
         const age = seenMs === null ? Number.POSITIVE_INFINITY : certificationNowMs - seenMs;
-        if (age <= agentStaleThresholdSeconds() * 1000) {
+        const availability = getAgentAvailability(agent, new Date(certificationNowMs));
+        if (availability.available) {
           setStep("agent", "pending", `Agent online ${Math.round(age/1000)}s ago, waiting to claim`, `agentId=${printer.agentId} lastSeen ${Math.round(age/1000)}s`);
         } else {
-          setStep("agent", "blocked", `Agent offline last seen ${Math.round(age/1000)}s ago — cannot claim`, `agentId=${printer.agentId} lastSeenAt=${agent.lastSeenAt}`);
+          setStep("agent", "blocked", `Agent unavailable (${availability.reason}) — cannot claim`, `agentId=${printer.agentId} lastSeenAt=${agent.lastSeenAt}`);
         }
       }
     } else if (claimObserved) {

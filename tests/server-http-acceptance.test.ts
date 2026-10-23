@@ -1,4 +1,4 @@
-import { createServer, type Server } from "http";
+import { createServer, request, type Server } from "http";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -19,6 +19,24 @@ if (process.env.CI && !hasProductionBuild) {
 const suite = describe.skipIf(!hasProductionBuild);
 
 const PORT = 3987;
+
+// fetch canonicalizes dot segments before sending them. Exercise the raw
+// request target that the custom server receives from a native HTTP client.
+function rawRequest(path: string, body?: string): Promise<{ status: number; cacheControl?: string; body: string }> {
+  return new Promise((resolve, reject) => {
+    const req = request({
+      host: "127.0.0.1", port: PORT, path,
+      method: body === undefined ? "GET" : "POST",
+      headers: body === undefined ? {} : { "content-type": "application/json", "transfer-encoding": "chunked" },
+    }, (res) => {
+      const chunks: Buffer[] = [];
+      res.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+      res.on("end", () => resolve({ status: res.statusCode ?? 0, cacheControl: res.headers["cache-control"], body: Buffer.concat(chunks).toString("utf8") }));
+    });
+    req.on("error", reject);
+    req.end(body);
+  });
+}
 
 function isNextInternalErrorPage(res: Response): boolean {
   const type = res.headers.get("content-type") ?? "";
@@ -148,6 +166,20 @@ suite("production server HTTP acceptance (real Next.js + guard)", () => {
   });
 
   describe("body ceiling", () => {
+    it.each(["/x/../api/auth/manager/login", "/x/%2e%2e/api/auth/manager/login"])("keeps chunked admission in force for normalized API path %s", async (path) => {
+      // Bounded fixture exceeds the route's 64 KiB declared-length limit.
+      // Missing credentials stop the real handler before any DB lookup.
+      const res = await rawRequest(path, JSON.stringify({ username: "probe", padding: "x".repeat(65 * 1024) }));
+      expect(res.status).toBe(411);
+      expect(res.body).toContain("CONTENT_LENGTH_REQUIRED");
+    });
+
+    it("keeps the response cache policy on a normalized API path", async () => {
+      const res = await rawRequest("/x/../api/live");
+      expect(res.status).toBe(200);
+      expect(res.cacheControl).toBe("no-store");
+    });
+
     it("rejects a declared 8MB+ body with 413 before the handler", async () => {
       const { connect } = await import("net");
       const { status, body } = await new Promise<{ status: number; body: string }>((resolve) => {

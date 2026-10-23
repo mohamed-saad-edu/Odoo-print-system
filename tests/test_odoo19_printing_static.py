@@ -588,12 +588,21 @@ def test_odoo_js_device_class_filter_uses_only_canonical_gateway_values():
 
 
 def test_gateway_idempotency_is_namespaced_by_odoo_company():
+    """Freeze historical v1 bytes while requiring immutable v2 snapshots."""
+    import importlib.util
+    import hashlib
     jobs = read("models/print_job.py")
     assert 'def _gateway_idempotency_key(self)' in jobs
-    assert 'source = f"odoo:{self.company_id.id}:{self.idempotency_key}"' in jobs
-    assert 'hashlib.sha256(source.encode("utf-8")).hexdigest()' in jobs
+    assert 'return wire_key(1, self.company_id.id, self.idempotency_key)' in jobs
+    assert 'if self.gateway_wire_idempotency_key:' in jobs
     assert '"idempotencyKey": self._gateway_idempotency_key()' in jobs
     assert '"idempotencyKey": self.idempotency_key' not in jobs
+    identity_file = ADDON / "idempotency_namespace.py"
+    spec = importlib.util.spec_from_file_location("s06_immutable_identity", identity_file)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert module.wire_key(1, 7, "operation-123") == hashlib.sha256(b"odoo:7:operation-123").hexdigest()
+    assert module.wire_key(2, 7, "operation-123", "00000000-0000-4000-8000-000000000001") != module.wire_key(2, 7, "operation-123", "00000000-0000-4000-8000-000000000002")
 
 
 def test_rotation_grace_409_requeues_with_key_reresolution():

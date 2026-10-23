@@ -8,6 +8,10 @@ import { and, eq, sql } from "drizzle-orm";
 import { nanoid } from "./nanoid";
 import { canonicalize } from "./canonicalize";
 import { MAX_AGENT_IN_FLIGHT_JOBS } from "./job-delivery";
+import { getAgentAvailability } from "./agent-availability";
+import { parseDbTimeMs } from "./database-clock";
+import type { V2OdooIdentity } from "./odoo-idempotency";
+import { reserveV2Operation, OdooNamespaceError } from "./odoo-v2-admission";
 
 import { enforceTenantJobEntitlements, reserveTenantPrintCredit } from "./entitlements";
 import { logInfo, logWarn } from "./log";
@@ -23,7 +27,8 @@ export const MAX_AGENT_QUEUED_PAYLOAD_BYTES = 128 * 1024 * 1024;
  * Queue admission intentionally does not require a fresh Agent heartbeat.
  * Gateway jobs are durable until their expiry, so an active but temporarily
  * offline Agent remains a valid owner. Heartbeat freshness is enforced when
- * claiming/executing the job, not when the job is created.
+ * claiming/executing the job. Interactive diagnostics may explicitly require
+ * a live Agent when admitting a new operation; accepted retries still reconcile.
  */
 
 export class AgentQueueFullError extends Error {
@@ -85,6 +90,9 @@ export type CreatePrintJobOptions = {
   /** A paired Agent may enqueue a diagnostic only for its own printer;
    * the transaction fences ownership again before all idempotency reuse. */
   agentDiagnosticAuthority?: { agentId: string; tenantId: string };
+  /** Interactive diagnostics require a live Agent only for new admission,
+   * after current authority and accepted idempotency identities are checked. */
+  requireAvailableAgent?: boolean;
   requestedBy: string;
   idempotencyKey?: string | null;
   tenantId: string;
@@ -93,6 +101,8 @@ export type CreatePrintJobOptions = {
   expiresAt?: Date;
   rateLimitKeyId?: string | null;
   requestId?: string | null;
+  /** Authenticated server-registered namespace (never derived from a DB name). */
+  odooV2Identity?: V2OdooIdentity;
   /** Generate a serialized operator reprint key for this original job inside the enqueue transaction. */
   reprintOfJobId?: string | null;
 };
@@ -113,7 +123,7 @@ function normalizeRequestedBy(value: string): string {
 
 async function insertQueuedJobAtomically({
   jobId, printerId, agentId, tenantId, validatedPayload, expiresAt, requestedBy,
-  idempotencyKey, destination, documentType, rateLimitKeyId, requestId, reprintOfJobId, managerAuthority, agentDiagnosticAuthority,
+  idempotencyKey, destination, documentType, rateLimitKeyId, requestId, reprintOfJobId, managerAuthority, agentDiagnosticAuthority, requireAvailableAgent, odooV2Identity,
 }: {
   jobId: string;
   printerId: string;
@@ -130,29 +140,21 @@ async function insertQueuedJobAtomically({
   reprintOfJobId?: string | null;
   managerAuthority?: { claims: ManagerClaims; permission: ManagerPermission };
   agentDiagnosticAuthority?: { agentId: string; tenantId: string };
+  requireAvailableAgent?: boolean;
+  odooV2Identity?: V2OdooIdentity;
 }): Promise<{ jobId: string; status: string; agentId: string; printerId: string; isReused: boolean }> {
   if (!tenantId || tenantId.length > 128) throw new PrintJobInputError("tenantId is invalid", "INVALID_TENANT", 400);
 
   return await db.transaction(async (tx) => {
-    const tenant = await tx.execute(sql`SELECT lifecycle FROM tenants WHERE id = ${tenantId} FOR SHARE`);
+    const tenant = await tx.execute(sql`SELECT lifecycle, odoo_idempotency_mode FROM tenants WHERE id = ${tenantId} FOR SHARE`);
     if ((tenant.rows[0] as { lifecycle?: string } | undefined)?.lifecycle !== "active") {
       throw new PrintJobInputError("Workspace is no longer active", "TENANT_UNAVAILABLE", 403);
     }
-    // PostgreSQL is the authoritative clock for print-job lifetime.
-    const clockResult = await tx.execute(sql`SELECT clock_timestamp() AS now`);
-    const clockRows = (clockResult as unknown as { rows?: Array<{ now?: Date | string }> }).rows ?? [];
-    const rawNow = clockRows[0]?.now;
-    const dbNow = rawNow instanceof Date
-      ? rawNow
-      : new Date(typeof rawNow === "string"
-        ? rawNow.trim().replace(" ", "T").replace(/([+-]\d{2})$/, "$1:00")
-        : "");
-    if (Number.isNaN(dbNow.getTime())) {
-      throw new PrintJobInputError("Database clock is unavailable", "INTERNAL_ERROR", 500);
-    }
-    const effectiveExpiresAt = expiresAt ?? new Date(dbNow.getTime() + 60 * 60 * 1000);
-
-
+    // A strict cutover blocks new or replayed legacy Odoo POSTs; historical
+    // GET lookups remain available for operators and already accepted jobs.
+    const currentMode = (tenant.rows[0] as { odoo_idempotency_mode?: string } | undefined)?.odoo_idempotency_mode;
+    if (rateLimitKeyId && !odooV2Identity && currentMode === "strict_v2") throw new OdooNamespaceError("UPGRADE_REQUIRED");
+    if (rateLimitKeyId && odooV2Identity && currentMode !== "strict_v2") throw new OdooNamespaceError("CUTOVER_NOT_ACTIVE");
     // Serialize admission per tenant so max_jobs_per_minute and
     // max_concurrent_jobs cannot be exceeded by racing requests.
     await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`print_jobs:tenant:${tenantId}`}))`);
@@ -165,17 +167,25 @@ async function insertQueuedJobAtomically({
         throw new PrintJobInputError("Agent diagnostic printer ownership changed", "AGENT_PRINTER_MISMATCH", 403);
       }
     }
+    if (managerAuthority && managerAuthority.claims.tenantId !== tenantId) {
+      throw new PrintJobInputError("Workspace session does not own this job", "MANAGER_TENANT_MISMATCH", 403);
+    }
+    // Capture claims and lifecycle mutations lock Agent before integration
+    // credentials. Keep Odoo admission in that order too, including replays.
+    if (managerAuthority || rateLimitKeyId) {
+      const guardedAgent = await tx.execute(sql`
+        SELECT id FROM agents WHERE id = ${agentId} AND tenant_id = ${tenantId} FOR UPDATE
+      `);
+      // An Odoo retry may have read inventory just before deletion won the
+      // admission lock. Its retained receipt still owns that business intent.
+      // Check the current key and receipt below before rejecting new work at
+      // the runtime-owner fence; Manager authority retains its existing guard.
+      if (!guardedAgent.rows.length && managerAuthority) throw new PrintJobInputError("Agent no longer exists", "AGENT_NOT_FOUND", 404);
+    }
     if (managerAuthority) {
       // Identity reuse can disclose a job ID and requestedBy even without a
       // new insert. Fence the live principal BEFORE all idempotency/reprint
       // reuse paths. Preserve Tenant -> Agent -> Actor -> session lock order.
-      if (managerAuthority.claims.tenantId !== tenantId) {
-        throw new PrintJobInputError("Workspace session does not own this job", "MANAGER_TENANT_MISMATCH", 403);
-      }
-      const guardedAgent = await tx.execute(sql`
-        SELECT id FROM agents WHERE id = ${agentId} AND tenant_id = ${tenantId} FOR UPDATE
-      `);
-      if (!guardedAgent.rows.length) throw new PrintJobInputError("Agent no longer exists", "AGENT_NOT_FOUND", 404);
       try {
         await requireManagerActorInTransaction(tx, managerAuthority.claims, managerAuthority.permission);
       } catch (error) {
@@ -199,6 +209,16 @@ async function insertQueuedJobAtomically({
           AND revoked_at IS NULL AND read_only_until IS NULL AND odoo_enabled = TRUE
         FOR UPDATE`);
       if (!credential.rows.length) throw new PrintJobInputError("Integration credential is no longer active", "UNAUTHORIZED", 401);
+    }
+
+    if (odooV2Identity) {
+      if (!rateLimitKeyId || idempotencyKey !== odooV2Identity.key) throw new OdooNamespaceError("INVALID_INSTALLATION_IDEMPOTENCY_KEY", 400);
+      const reused = await reserveV2Operation(tx, {
+        tenantId, apiKeyId: rateLimitKeyId, identity: odooV2Identity,
+        requestedFingerprint: idempotencyDigest({ printerId, documentType, destination, payload: validatedPayload }),
+        digest: idempotencyDigest, newJobId: jobId,
+      });
+      if (reused) return reused;
     }
 
     // Reprint coordination happens only after the tenant enqueue lock is
@@ -305,13 +325,6 @@ async function insertQueuedJobAtomically({
         Object.assign(conflictErr, { code: "IDEMPOTENCY_CONFLICT" });
         throw conflictErr;
       }
-    }
-
-    if (!(effectiveExpiresAt instanceof Date) || Number.isNaN(effectiveExpiresAt.getTime()) || effectiveExpiresAt.getTime() <= dbNow.getTime()) {
-      throw new PrintJobInputError("expiresAt must be in the future", "INVALID_REQUEST", 400);
-    }
-    if (effectiveExpiresAt.getTime() - dbNow.getTime() > 24 * 60 * 60 * 1000) {
-      throw new PrintJobInputError("expiresAt exceeds the 24 hour maximum", "INVALID_REQUEST", 400);
     }
 
     // Re-validate the runtime owner INSIDE the enqueue transaction.
@@ -421,6 +434,24 @@ async function insertQueuedJobAtomically({
     })) {
       throw new PrintJobInputError("Printer is not executable", "PRINTER_OFFLINE", 503);
     }
+    if (requireAvailableAgent) {
+      // Read the database clock after taking the owner locks: an enqueue may
+      // wait behind a heartbeat, whose timestamp must not appear in the future
+      // relative to a clock sampled before that wait.
+      const availabilityClock = await tx.execute(sql`SELECT clock_timestamp() AS now`);
+      const availabilityNowMs = parseDbTimeMs((availabilityClock.rows[0] as { now?: Date | string } | undefined)?.now);
+      if (availabilityNowMs === null) {
+        throw new PrintJobInputError("Database clock is unavailable", "INTERNAL_ERROR", 500);
+      }
+      const availability = getAgentAvailability({
+        lifecycle: owner.agent_lifecycle,
+        status: owner.agent_status,
+        lastSeenAt: owner.agent_last_seen_at,
+      }, new Date(availabilityNowMs));
+      if (!availability.available) {
+        throw new PrintJobInputError(`Agent is unavailable (${availability.reason})`, "AGENT_OFFLINE", 503);
+      }
+    }
     if (owner.agent_lifecycle !== "active") {
       throw new PrintJobInputError(`Agent is ${owner.agent_lifecycle ?? "unavailable"}`, "AGENT_UNAVAILABLE", 409);
     }
@@ -483,6 +514,29 @@ async function insertQueuedJobAtomically({
     }
     if (inFlight >= MAX_AGENT_IN_FLIGHT_JOBS) throw new AgentQueueFullError(agentId, inFlight);
 
+    // Sample the admission clock after all contended tenant, credential,
+    // owner and subscription locks. A request may have expired while waiting;
+    // rejecting here rolls back its reserved credit with the job transaction.
+    // PostgreSQL is the authoritative clock for print-job lifetime.
+    const clockResult = await tx.execute(sql`SELECT clock_timestamp() AS now`);
+    const clockRows = (clockResult as unknown as { rows?: Array<{ now?: Date | string }> }).rows ?? [];
+    const rawNow = clockRows[0]?.now;
+    const dbNow = rawNow instanceof Date
+      ? rawNow
+      : new Date(typeof rawNow === "string"
+        ? rawNow.trim().replace(" ", "T").replace(/([+-]\d{2})$/, "$1:00")
+        : "");
+    if (Number.isNaN(dbNow.getTime())) {
+      throw new PrintJobInputError("Database clock is unavailable", "INTERNAL_ERROR", 500);
+    }
+    const effectiveExpiresAt = expiresAt ?? new Date(dbNow.getTime() + 60 * 60 * 1000);
+    if (!(effectiveExpiresAt instanceof Date) || Number.isNaN(effectiveExpiresAt.getTime()) || effectiveExpiresAt.getTime() <= dbNow.getTime()) {
+      throw new PrintJobInputError("expiresAt must be in the future", "INVALID_REQUEST", 400);
+    }
+    if (effectiveExpiresAt.getTime() - dbNow.getTime() > 24 * 60 * 60 * 1000) {
+      throw new PrintJobInputError("expiresAt exceeds the 24 hour maximum", "INVALID_REQUEST", 400);
+    }
+
     await tx.insert(printJobs).values({
       id: jobId,
       tenantId,
@@ -541,16 +595,30 @@ async function recoverReceiptForMissingOwner(
   if (tenantId.length > 128) throw new PrintJobInputError("tenantId is invalid", "INVALID_TENANT", 400);
 
   return db.transaction(async (tx) => {
-    const tenant = await tx.execute(sql`SELECT lifecycle FROM tenants WHERE id = ${tenantId} FOR SHARE`);
+    const tenant = await tx.execute(sql`SELECT lifecycle, odoo_idempotency_mode FROM tenants WHERE id = ${tenantId} FOR SHARE`);
     if ((tenant.rows[0] as { lifecycle?: string } | undefined)?.lifecycle !== "active") {
       throw new PrintJobInputError("Workspace is no longer active", "TENANT_UNAVAILABLE", 403);
     }
+    const mode = (tenant.rows[0] as { odoo_idempotency_mode?: string } | undefined)?.odoo_idempotency_mode;
+    if (!options.odooV2Identity && mode === "strict_v2") throw new OdooNamespaceError("UPGRADE_REQUIRED");
+    if (options.odooV2Identity && mode !== "strict_v2") throw new OdooNamespaceError("CUTOVER_NOT_ACTIVE");
     await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`print_jobs:tenant:${tenantId}`}))`);
     const credential = await tx.execute(sql`SELECT id FROM api_keys
       WHERE id = ${apiKeyId} AND tenant_id = ${tenantId}
         AND revoked_at IS NULL AND read_only_until IS NULL AND odoo_enabled = TRUE
       FOR UPDATE`);
     if (!credential.rows.length) throw new PrintJobInputError("Integration credential is no longer active", "UNAUTHORIZED", 401);
+    if (options.odooV2Identity) {
+      if (options.odooV2Identity.key !== idempotencyKey) throw new OdooNamespaceError("INVALID_INSTALLATION_IDEMPOTENCY_KEY", 400);
+      const reused = await reserveV2Operation(tx, {
+        tenantId, apiKeyId, identity: options.odooV2Identity,
+        requestedFingerprint: idempotencyDigest({ printerId, documentType: options.documentType,
+          destination: options.destination, payload: validatedPayload }),
+        digest: idempotencyDigest, newJobId: null,
+      });
+      return reused ? { id: reused.jobId, printerId: reused.printerId, agentId: reused.agentId,
+        status: reused.status, isReused: true } : null;
+    }
     await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`print_jobs:idempotency:${tenantId}:${idempotencyKey}`}))`);
     const receipt = await tx.query.printJobReceipts.findFirst({ where: and(
       eq(printJobReceipts.tenantId, tenantId), eq(printJobReceipts.idempotencyKey, idempotencyKey),
@@ -618,6 +686,8 @@ export async function createPrintJobForPrinter(
     reprintOfJobId: options.reprintOfJobId ?? null,
     managerAuthority: options.managerAuthority,
     agentDiagnosticAuthority: options.agentDiagnosticAuthority,
+    requireAvailableAgent: options.requireAvailableAgent,
+    odooV2Identity: options.odooV2Identity,
     tenantId: options.tenantId,
   });
   logInfo("print.trace.gateway_enqueue", {

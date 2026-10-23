@@ -261,6 +261,18 @@ suite("platform-trial to paid conversion invariants", () => {
       .set({ checkoutSessionExpiresAt: new Date(Date.now() - 60_000) })
       .where(eq(tenantSubscriptions.tenantId, TENANT));
 
+    // A local deadline alone cannot distinguish expiry from completed
+    // checkout whose webhook is delayed. Model Stripe's matching expired
+    // session, with no subscription, before permitting a replacement.
+    stripeRetrieveMock.mockResolvedValueOnce({
+      id: afterCancel?.checkoutSessionId,
+      customer: afterCancel?.stripeCustomerId,
+      client_reference_id: TENANT,
+      mode: "subscription",
+      status: "expired",
+      subscription: null,
+    });
+
     const next = await checkout(checkoutRequest(otherPlan));
     expect(next.status).toBe(200);
     const nextBody = (await next.json()) as { url?: string; existing?: boolean };

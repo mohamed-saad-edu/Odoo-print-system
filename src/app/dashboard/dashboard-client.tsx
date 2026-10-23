@@ -922,7 +922,8 @@ export default function DashboardClient({
 
     const completedJobs = kpiJobs.filter((j) => j.status.toLowerCase() === "success").length;
     const attentionJobs = kpiJobs.filter(
-      (j) => deriveOutcome(j.status, j.error) === "unknown"
+      (j) => !["queued", "claimed", "printing", "success"].includes(j.status.toLowerCase())
+        && deriveOutcome(j.status, j.error) === "unknown"
     ).length;
     const failedJobs = kpiJobs.filter((j) => j.status.toLowerCase() === "failed" && deriveOutcome(j.status, j.error) === "not_printed").length;
     const expiredJobs = kpiJobs.filter((j) => j.status.toLowerCase() === "expired").length;
@@ -2250,7 +2251,10 @@ export default function DashboardClient({
               {jobGuidance(selectedJobView.status, deriveOutcome(selectedJobView.status, selectedJobView.error), locale)}
             </p>
 
-            {deriveOutcome(selectedJobView.status, selectedJobView.error) === "unknown" && (
+            {/* Progress without paper evidence is not a terminal duplicate-print warning. */}
+            {!isJobInFlight(selectedJobView.status)
+              && selectedJobView.status.toLowerCase() !== "success"
+              && deriveOutcome(selectedJobView.status, selectedJobView.error) === "unknown" && (
               <Callout tone="warn" title={t("job.reprintWarning")}>
                 {t("job.reprintDuplicates")}
               </Callout>

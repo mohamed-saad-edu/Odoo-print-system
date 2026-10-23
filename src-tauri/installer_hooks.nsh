@@ -32,9 +32,6 @@ ${StrStr}
   Pop $R0
   Pop $R1
   StrCmp $R0 "1060" yaseir_owned_done_${tag}
-  ${StrStr} $R2 $R1 "1060"
-  StrCmp $R2 "" +2 0
-    Goto yaseir_owned_done_${tag}
   StrCmp $R0 "0" +3 0
     DetailPrint "Cannot inspect service ${name}; refusing to mutate an unverified registration."
     Abort "Unable to verify Windows service ${name}. Repair or remove it manually, then rerun the installer."
@@ -84,16 +81,19 @@ ${StrStr}
     Pop $R1
     StrCpy $R3 0
   yaseir_stop_poll_${tag}:
-    IntCmp $R3 10 yaseir_stop_check_${tag} yaseir_stop_wait_${tag} yaseir_stop_check_${tag}
+    ; Agent drains for up to 25s within its 27s Windows service shutdown
+    ; bound. Poll up to 30s (as the Manager does), returning as soon as STOPPED.
+    IntCmp $R3 30 yaseir_stop_check_${tag} yaseir_stop_wait_${tag} yaseir_stop_check_${tag}
   yaseir_stop_wait_${tag}:
     Sleep 1000
     IntOp $R3 $R3 + 1
     nsExec::ExecToStack '"$SYSDIR\sc.exe" query "${name}"'
     Pop $R0
     Pop $R1
-    ${StrStr} $R2 $R1 "1060"
-    StrCmp $R2 "" +2 0
-      Goto yaseir_owned_done_${tag}
+    StrCmp $R0 "1060" yaseir_owned_done_${tag}
+    StrCmp $R0 "0" +3 0
+      SetErrorLevel 1
+      Abort "Unable to verify Windows service ${name} stopped. Repair it before rerunning the installer."
     ${StrStr} $R2 $R1 "STOPPED"
     StrCmp $R2 "" 0 yaseir_owned_done_${tag}
     Goto yaseir_stop_poll_${tag}
@@ -101,9 +101,10 @@ ${StrStr}
     nsExec::ExecToStack '"$SYSDIR\sc.exe" query "${name}"'
     Pop $R0
     Pop $R1
-    ${StrStr} $R2 $R1 "1060"
-    StrCmp $R2 "" +2 0
-      Goto yaseir_owned_done_${tag}
+    StrCmp $R0 "1060" yaseir_owned_done_${tag}
+    StrCmp $R0 "0" +3 0
+      SetErrorLevel 1
+      Abort "Unable to verify Windows service ${name} stopped. Repair it before rerunning the installer."
     ${StrStr} $R2 $R1 "STOPPED"
     StrCmp $R2 "" 0 yaseir_owned_done_${tag}
     DetailPrint "Service ${name} did not stop; aborting before replacing binaries."
@@ -134,15 +135,10 @@ ${StrStr}
   Abort "Agent executable is missing. Reinstall the complete signed package."
 
   agent_resource_found:
-  IfFileExists "$INSTDIR\resources\yaseir-public.cer" 0 yaseir_cert_install_done
-    DetailPrint "Installing bundled Yaseir publisher certificate..."
-    nsExec::ExecToStack '"$SYSDIR\certutil.exe" -addstore -f "Root" "$INSTDIR\resources\yaseir-public.cer"'
-    Pop $R0
-    Pop $R1
-    nsExec::ExecToStack '"$SYSDIR\certutil.exe" -addstore -f "TrustedPublisher" "$INSTDIR\resources\yaseir-public.cer"'
-    Pop $R0
-    Pop $R1
-  yaseir_cert_install_done:
+  ; Signing proves artifact provenance; installing the application must not
+  ; change machine-wide Root or TrustedPublisher policy. A bundled public
+  ; certificate is informational only. Trust deployment belongs to the
+  ; administrator's independently managed certificate policy.
 
   ; Do not pin a fresh canonical config path here.  The Agent's
   ; DefaultConfigPath() deliberately prefers an existing canonical config,

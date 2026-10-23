@@ -1,0 +1,64 @@
+package printer
+
+import (
+	"fmt"
+	"net/url"
+	"path/filepath"
+	"testing"
+)
+
+func TestIPPIdentityDefaultsMatchExecutionPort(t *testing.T) {
+	for _, tc := range []struct {
+		scheme string
+		port   int
+	}{{"ipp", 631}, {"ipps", 631}, {"http", 80}, {"https", 443}} {
+		t.Run(tc.scheme, func(t *testing.T) {
+			implicit := DeviceInfo{ConnectionType: "ipp", Protocol: "ipp", Endpoint: tc.scheme + "://192.168.1.20/ipp/print"}
+			explicit := implicit
+			explicit.Endpoint = fmt.Sprintf("%s://192.168.1.20:%d/ipp/print", tc.scheme, tc.port)
+			backend, err := NewIPPPrinter(implicit.Endpoint, "fixture")
+			if err != nil {
+				t.Fatal(err)
+			}
+			uri, err := url.Parse(backend.PrinterURI)
+			if err != nil || uri.Port() != fmt.Sprint(tc.port) {
+				t.Fatalf("execution URI=%q err=%v", backend.PrinterURI, err)
+			}
+			if StableIDForDevice(implicit) != StableIDForDevice(explicit) {
+				t.Fatalf("same execution endpoint has different IDs: implicit=%s explicit=%s", StableIDForDevice(implicit), StableIDForDevice(explicit))
+			}
+		})
+	}
+}
+
+func TestManualIPPPortsRemainSeparateDestinations(t *testing.T) {
+	for _, tc := range []struct {
+		scheme    string
+		otherPort int
+	}{{"ipps", 443}, {"http", 631}} {
+		t.Run(tc.scheme, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "printers.json")
+			endpoints := []string{tc.scheme + "://192.168.1.20/ipp/print", fmt.Sprintf("%s://192.168.1.20:%d/ipp/print", tc.scheme, tc.otherPort)}
+			var rows []DeviceInfo
+			for _, endpoint := range endpoints {
+				var err error
+				rows, err = RegisterManual(path, DeviceInfo{Name: "Office", ConnectionType: "ipp", Protocol: "ipp", Endpoint: endpoint, Enabled: true})
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			if len(rows) != 2 {
+				t.Fatalf("different physical destinations collapsed to %d registry rows: %+v", len(rows), rows)
+			}
+			seen := map[string]bool{}
+			for _, row := range rows {
+				seen[row.Endpoint] = true
+			}
+			for _, endpoint := range endpoints {
+				if !seen[endpoint] {
+					t.Fatalf("registration overwrote destination %q", endpoint)
+				}
+			}
+		})
+	}
+}

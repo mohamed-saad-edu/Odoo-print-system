@@ -4,7 +4,7 @@ import {
   isLateSuccessAllowed,
   PHYSICAL_OUTCOMES,
 } from "../src/lib/job-status";
-import { jobLabel, jobGuidance, jobTone } from "../src/shared/job-vocabulary";
+import { deriveOutcome, jobLabel, jobGuidance, jobTone } from "../src/shared/job-vocabulary";
 import { translate } from "../src/i18n/translate";
 
 describe("physical print outcome semantics", () => {
@@ -26,6 +26,20 @@ describe("physical print outcome semantics", () => {
     expect(translate("ar", "job.timeline.successUnverified")).toContain("خروج الورق غير مؤكد");
   });
 
+  it.each(["claimed", "printing"])("keeps %s physical output unknown while execution may be in flight", (status) => {
+    expect(derivePhysicalOutcome(status, null)).toBe("unknown");
+    expect(deriveOutcome(status, null)).toBe("unknown");
+    expect(jobTone(status, "unknown")).toBe("info");
+    expect(jobGuidance(status, "unknown", "en")).toBe(translate("en", `job.guidance.${status as "claimed" | "printing"}`));
+  });
+
+  it("retains not-printed evidence before admission and on pre-dispatch failure", () => {
+    for (const status of ["queued", "failed", "expired"]) {
+      expect(derivePhysicalOutcome(status, null)).toBe("not_printed");
+      expect(deriveOutcome(status, null)).toBe("not_printed");
+    }
+  });
+
   it("does not confuse an ordinary failed job with an unknown physical result", () => {
     expect(derivePhysicalOutcome("failed", "CAPABILITY_MISMATCH")).toBe("not_printed");
     expect(derivePhysicalOutcome("failed", "connection refused")).toBe("not_printed");
@@ -34,6 +48,8 @@ describe("physical print outcome semantics", () => {
   it("classifies crash, execution-timeout, and expiry-during-print as UNKNOWN", () => {
     expect(derivePhysicalOutcome("failed", "AGENT_RESTART_DURING_PRINT: physical output unknown")).toBe("unknown");
     expect(derivePhysicalOutcome("failed", "AGENT_EXECUTION_TIMEOUT: printer did not finish")).toBe("unknown");
+    expect(jobTone("failed", "unknown")).toBe("warn");
+    expect(jobGuidance("failed", "unknown", "en")).toBe(translate("en", "job.guidance.unknown"));
     expect(derivePhysicalOutcome("expired", "JOB_EXPIRED_DURING_PRINT: physical output is unknown")).toBe("unknown");
   });
 

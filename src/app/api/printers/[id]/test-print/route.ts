@@ -14,7 +14,6 @@ import { buildTestPrintPayloadForPrinter } from "../../../../../lib/payload";
 import { MAX_AGENT_IN_FLIGHT_JOBS } from "../../../../../lib/job-delivery";
 import { logError } from "../../../../../lib/log";
 import { databaseNowMs } from "../../../../../lib/database-clock";
-import { getAgentAvailability } from "../../../../../lib/agent-availability";
 import { isVirtualPrinterRecord } from "../../../../../lib/printer-virtual";
 
 export const dynamic = "force-dynamic";
@@ -61,18 +60,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   const agent = await db.query.agents.findFirst({ where: and(eq(agents.id, printer.agentId), eq(agents.tenantId, tenantId)) });
   if (!agent) return NextResponse.json({ error: "Printer owner agent missing", code: "AGENT_NOT_FOUND" }, { status: 404 });
-  if (printer.lifecycle !== "active") return NextResponse.json({ error: "printer disabled" }, { status: 409 });
-  // Diagnostic Test Print is intentionally fail-fast when the owning Agent
-  // cannot accept work. No job has been persisted at this point, so say that
-  // explicitly instead of implying a queued job exists.
-  const availability = getAgentAvailability(agent);
-  if (!availability.available) {
-    return NextResponse.json({
-      error: `Agent is unavailable (${availability.reason}). Test print was not queued; reconnect or restore the Agent and try again.`,
-      code: "AGENT_OFFLINE",
-      retryable: true,
-    }, { status: 503 });
-  }
 
   let payload: ReturnType<typeof buildTestPrintPayloadForPrinter>;
   try {
@@ -93,6 +80,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       requestedBy: pairedAgent ? "agent-diagnostic" : "manager-test",
       ...(claims ? { managerAuthority: { claims, permission: "printers.test" as const } } : {}),
       ...(pairedAgent ? { agentDiagnosticAuthority: { agentId: pairedAgent.id, tenantId: pairedAgent.tenantId } } : {}),
+      requireAvailableAgent: true,
       documentType: "test_page",
       idempotencyKey: effectiveKey,
       tenantId: tenantId,
@@ -175,7 +163,17 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       return NextResponse.json({ error: e.message, code: e.code, retryable: false }, { status: 422 });
     }
     if (e instanceof PrintJobInputError) {
+      if (e.code === "AGENT_OFFLINE") {
+        return NextResponse.json({
+          error: `${e.message}. Test print was not queued; reconnect or restore the Agent and try again.`,
+          code: e.code,
+          retryable: true,
+        }, { status: e.status });
+      }
       return NextResponse.json({ error: e.message, code: e.code, retryable: e.status >= 500 }, { status: e.status });
+    }
+    if (e instanceof Error && (e as Error & { code?: string }).code === "IDEMPOTENCY_CONFLICT") {
+      return NextResponse.json({ error: "IDEMPOTENCY_CONFLICT", code: "IDEMPOTENCY_CONFLICT", retryable: false }, { status: 409 });
     }
     logError("printer.test_print_failed", { printerId: id, error: e instanceof Error ? e.message : String(e) });
     return NextResponse.json({ error: "Internal server error", code: "INTERNAL_ERROR" }, { status: 500 });

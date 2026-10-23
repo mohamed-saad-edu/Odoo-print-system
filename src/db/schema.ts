@@ -8,11 +8,14 @@ export const tenants = pgTable("tenants", {
   suspendedAt: timestamp("suspended_at"),
   deletedAt: timestamp("deleted_at"),
   lifecycleReason: text("lifecycle_reason"),
+  // Controlled S06-006 cutover; existing tenants start in legacy and must be explicitly enrolled.
+  odooIdempotencyMode: text("odoo_idempotency_mode").notNull().default("legacy"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 }, (table) => ({
   lifecycleIdx: index("tenants_lifecycle_idx").on(table.lifecycle),
   lifecycleCheck: check("tenants_lifecycle_check", sql`${table.lifecycle} in ('active','suspended','deleted')`),
+  odooIdempotencyModeCheck: check("tenants_odoo_idempotency_mode_check", sql`${table.odooIdempotencyMode} in ('legacy','strict_v2')`),
 }));
 
 export const tenantDomains = pgTable("tenant_domains", {
@@ -232,6 +235,66 @@ export const apiKeys = pgTable("api_keys", {
   tenantIdUnique: unique("api_keys_tenant_id_unique").on(table.tenantId, table.id),
   odooEnabledRevisionCheck: check("api_keys_odoo_enabled_revision_check", sql`${table.odooEnabledRevision} >= -1`),
   readOnlyUntilCheck: check("api_keys_read_only_until_check", sql`${table.readOnlyUntil} IS NULL OR ${table.revokedAt} IS NOT NULL`),
+}));
+
+// S06-006 operator-enrolled Odoo deployments. A copied DB UUID is not proof
+// of a distinct installation; the out-of-DB proof binds an enrollment.
+export const odooInstallations = pgTable("odoo_installations", {
+  id: text("id").primaryKey(),
+  tenantId: text("tenant_id").references(() => tenants.id).notNull(),
+  name: text("name").notNull(),
+  secretHash: text("secret_hash").notNull(),
+  enabled: boolean("enabled").notNull().default(true),
+  createdAt: timestamp("created_at").default(sql`clock_timestamp()`).notNull(),
+  disabledAt: timestamp("disabled_at"),
+}, table => ({
+  tenantUnique: unique("odoo_installations_tenant_id_unique").on(table.tenantId, table.id),
+  tenantIdx: index("odoo_installations_tenant_idx").on(table.tenantId),
+}));
+
+export const odooInstallationCredentials = pgTable("odoo_installation_credentials", {
+  tenantId: text("tenant_id").notNull(),
+  installationId: text("installation_id").notNull(),
+  apiKeyId: text("api_key_id").notNull(),
+  createdAt: timestamp("created_at").default(sql`clock_timestamp()`).notNull(),
+}, table => ({
+  pk: primaryKey({ columns: [table.tenantId, table.installationId, table.apiKeyId] }),
+  keyUnique: unique("odoo_installation_credentials_tenant_key_unique").on(table.tenantId, table.apiKeyId),
+  installationFk: foreignKey({ columns: [table.tenantId, table.installationId], foreignColumns: [odooInstallations.tenantId, odooInstallations.id] }),
+  apiKeyFk: foreignKey({ columns: [table.tenantId, table.apiKeyId], foreignColumns: [apiKeys.tenantId, apiKeys.id] }),
+}));
+
+export const odooV2Operations = pgTable("odoo_v2_operations", {
+  tenantId: text("tenant_id").notNull(),
+  installationId: text("installation_id").notNull(),
+  idempotencyKey: text("idempotency_key").notNull(),
+  legacyKey: text("legacy_key").notNull(),
+  sourceCompanyId: text("source_company_id").notNull(),
+  sourceOperationId: text("source_operation_id").notNull(),
+  acceptedJobId: text("accepted_job_id").notNull(),
+  createdAt: timestamp("created_at").default(sql`clock_timestamp()`).notNull(),
+}, table => ({
+  pk: primaryKey({ columns: [table.tenantId, table.installationId, table.sourceCompanyId, table.sourceOperationId] }),
+  idempotencyUnique: unique("odoo_v2_operations_tenant_idempotency_unique").on(table.tenantId, table.idempotencyKey),
+  jobIdx: index("odoo_v2_operations_job_idx").on(table.tenantId, table.acceptedJobId),
+  installationFk: foreignKey({ columns: [table.tenantId, table.installationId], foreignColumns: [odooInstallations.tenantId, odooInstallations.id] }),
+}));
+
+export const odooLegacyResolutions = pgTable("odoo_legacy_resolutions", {
+  tenantId: text("tenant_id").notNull(),
+  installationId: text("installation_id").notNull(),
+  idempotencyKey: text("idempotency_key").notNull(),
+  legacyKey: text("legacy_key").notNull(),
+  disposition: text("disposition").notNull(),
+  legacyJobId: text("legacy_job_id").notNull(),
+  legacyFingerprint: text("legacy_fingerprint").notNull(),
+  approvedBy: text("approved_by").notNull(),
+  approvedAt: timestamp("approved_at").default(sql`clock_timestamp()`).notNull(),
+}, table => ({
+  pk: primaryKey({ columns: [table.tenantId, table.installationId, table.idempotencyKey] }),
+  idempotencyUnique: unique("odoo_legacy_resolutions_tenant_idempotency_unique").on(table.tenantId, table.idempotencyKey),
+  installationFk: foreignKey({ columns: [table.tenantId, table.installationId], foreignColumns: [odooInstallations.tenantId, odooInstallations.id] }),
+  dispositionCheck: check("odoo_legacy_resolutions_disposition_check", sql`${table.disposition} in ('reuse','distinct')`),
 }));
 
 export const managerSessions = pgTable("manager_sessions", {

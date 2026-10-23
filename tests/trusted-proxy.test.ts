@@ -62,4 +62,27 @@ describe("trusted proxy boundary", () => {
     })).toBe(false);
     expect(isTrustedProxyUpgrade({})).toBe(false);
   });
+
+  it("accepts raw IncomingMessage-shaped headers without allocating a Request and rejects duplicate header arrays", () => {
+    expect(isTrustedProxyRequest({
+      headers: {
+        "x-gateway-proxy-token": "proxy-secret-that-is-at-least-32-characters",
+        "user-agent": "Mozilla/5.0 \u0080",
+      },
+    })).toBe(true);
+    expect(isTrustedProxyRequest({
+      headers: {
+        "x-gateway-proxy-token": [
+          "proxy-secret-that-is-at-least-32-characters",
+          "attacker-second-token",
+        ],
+      },
+    })).toBe(false);
+    expect(isTrustedProxyUpgrade({
+      "x-gateway-proxy-token": [
+        "proxy-secret-that-is-at-least-32-characters",
+        "attacker-second-token",
+      ],
+    })).toBe(false);
+  });
 });

@@ -4,10 +4,126 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"testing"
 )
+
+func TestQueueRejectsExistingDatabaseSymlinkBeforeSQLiteWrites(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "unrelated.db")
+	if err := os.WriteFile(target, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(root, "agent")
+	if err := os.Mkdir(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "queue.db")
+	if err := os.Symlink(target, path); err != nil {
+		if runtime.GOOS == "windows" {
+			t.Skipf("runner does not permit symlink creation: %v", err)
+		}
+		t.Fatal(err)
+	}
+	q, err := New(path)
+	if q != nil {
+		_ = q.Close()
+	}
+	if err == nil {
+		t.Error("queue initialization followed an existing database symlink")
+	}
+	data, readErr := os.ReadFile(target)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if len(data) != 0 {
+		t.Fatalf("queue initialization modified the unrelated symlink target (%d bytes)", len(data))
+	}
+}
+
+func TestQueueProtectsExistingDatabasePermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX mode assertion; Windows protection uses the file DACL")
+	}
+	path := filepath.Join(t.TempDir(), "queue.db")
+	if err := os.WriteFile(path, nil, 0666); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0666); err != nil {
+		t.Fatal(err)
+	}
+	q, err := New(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer q.Close()
+	if err := q.Push("private-payload", "p1", []byte("confidential receipt")); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0600 {
+		t.Fatalf("queue payload database mode = %04o, want 0600", got)
+	}
+}
+
+func TestQueueCreatesDatabaseWithPrivatePermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX mode assertion; Windows protection uses the file DACL")
+	}
+	path := filepath.Join(t.TempDir(), "queue.db")
+	q, err := New(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer q.Close()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0600 {
+		t.Fatalf("new queue payload database mode = %04o, want 0600", got)
+	}
+}
+
+func TestQueueRejectsSymlinkSidecarsBeforeSQLiteWrites(t *testing.T) {
+	for _, suffix := range []string{"-wal", "-shm", "-journal"} {
+		t.Run(suffix, func(t *testing.T) {
+			root := t.TempDir()
+			target := filepath.Join(root, "unrelated")
+			original := []byte("unrelated confidential file")
+			if err := os.WriteFile(target, original, 0600); err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(root, "queue.db")
+			if err := os.Symlink(target, path+suffix); err != nil {
+				if runtime.GOOS == "windows" {
+					t.Skipf("runner does not permit symlink creation: %v", err)
+				}
+				t.Fatal(err)
+			}
+			q, err := New(path)
+			if q != nil {
+				_ = q.Close()
+			}
+			if err == nil {
+				t.Error("queue initialization accepted a symlink sidecar")
+			}
+			data, readErr := os.ReadFile(target)
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			if string(data) != string(original) {
+				t.Fatalf("queue initialization modified the unrelated %s target", suffix)
+			}
+		})
+	}
+}
 
 func newTestQueue(t *testing.T) *Queue {
 	t.Helper()

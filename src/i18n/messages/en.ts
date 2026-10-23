@@ -2328,7 +2328,7 @@ export const en = {
   "platform.tenants.reasonPlaceholder": "e.g. Billing overdue, security review…",
   "platform.tenants.reasonMissing": "Enter a reason before suspending this tenant.",
   "platform.tenants.accessResumes": "Access resumes immediately",
-  "platform.tenants.accessResumesBody": "Active sessions and print operations can continue after this action.",
+  "platform.tenants.accessResumesBody": "Workspace access can resume after this action. Members with revoked sessions must sign in again.",
   "platform.tenants.actionFailed": "Action failed",
   "platform.tenants.actionFailedBody": "We couldn’t confirm whether the tenant lifecycle change was applied. Refresh tenant state before retrying.",
   "platform.tenants.noticeSuspended": "Tenant “{name}” was suspended successfully.",

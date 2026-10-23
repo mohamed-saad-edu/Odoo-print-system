@@ -38,6 +38,7 @@ class SimulatedRouter(Production):
         self.stored_job = SimpleNamespace(
             id=332, status=self.state, gateway_job_id=False,
             last_error='UNKNOWN_PARTIAL_DELIVERY: printer may have accepted the job',
+            physical_outcome='unknown',
             _GATEWAY_UNKNOWN_MARKERS=('UNKNOWN_PARTIAL_DELIVERY:',),
         )
         return self.stored_job.id
@@ -71,7 +72,8 @@ def test_pos_route_preserves_definite_failure_without_fabricating_unknown(method
     original = router._persist_durable_job
     def definite(values):
         job_id = original(values)
-        router.stored_job.last_error = 'PRINTER_NOT_CONFIGURED: no dispatch occurred'
+        router.stored_job.last_error = 'GATEWAY_REJECTED_422: no dispatch occurred'
+        router.stored_job.physical_outcome = 'not_printed'
         return job_id
     router._persist_durable_job = definite
     record = ref('pos.order' if method == 'route_pos_receipt' else 'pos.session', 221,

@@ -767,6 +767,12 @@ export default function App() {
     getAutostart()
       .then((st) => setAutostartState(st.enabled))
       .catch(() => {});
+    // Persisted startup configuration is read once. Locale-aware polling below
+    // may restart when presentation changes, but must never replace a draft.
+  }, []);
+
+  useEffect(() => {
+    if (!isTauri) return;
     refreshStatus();
     void refreshLocalPrinters();
     const id = setInterval(refreshStatus, LOCAL_AGENT_STATUS_INTERVAL_MS);
@@ -780,7 +786,7 @@ export default function App() {
       window.removeEventListener("focus", refreshStatus);
       document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [refreshStatus, refreshLocalPrinters, t]);
+  }, [refreshStatus, refreshLocalPrinters]);
 
   useEffect(() => {
     if (!isTauri) return;

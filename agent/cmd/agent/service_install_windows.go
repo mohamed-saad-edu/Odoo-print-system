@@ -268,8 +268,9 @@ func updateInstalledService(wanted *service.Config) error {
 }
 
 // configureServiceRecovery declares SCM failure actions so a crashed Agent
-// restarts itself (60s delay, 3 attempts, counter reset daily). Use the native
-// SCM API instead of resolving/executing sc.exe from inherited process state.
+// restarts itself (three 60s restart entries; SCM repeats the last entry and
+// resets the counter after 24 hours without a failure). Use the native SCM API
+// instead of resolving/executing sc.exe from inherited process state.
 // Failure is warn-only: recovery policy should not invalidate an otherwise
 // correctly installed service.
 func configureServiceRecovery(serviceName string) {

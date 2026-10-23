@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"testing"
@@ -641,5 +642,22 @@ func TestDesiredSpoolerPassthroughIsExplicitAndAdditive(t *testing.T) {
 	}
 	if seen["raw"] {
 		t.Fatalf("stale RAW capability leaked into desired config: %v", got)
+	}
+}
+
+
+func TestLoadDesiredStateRejectsOversizedFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	statePath := filepath.Join(tmpDir, "desired_printers.json")
+	oversized := bytes.Repeat([]byte("a"), maxDesiredStateBytes+1024)
+	if err := os.WriteFile(statePath, oversized, 0600); err != nil {
+		t.Fatalf("write oversized state: %v", err)
+	}
+	a := &Agent{
+		desiredStatePath: statePath,
+		gatewayOwned:     make(map[string]struct{}),
+	}
+	if err := a.loadDesiredState(); err == nil {
+		t.Fatalf("expected loadDesiredState to reject oversized file, got nil")
 	}
 }
