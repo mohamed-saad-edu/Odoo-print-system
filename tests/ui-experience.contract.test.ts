@@ -30,10 +30,12 @@ describe("public marketing and operational UI experience contracts", () => {
       expect(source).not.toContain("useDialog(");
     }
     expect(publicMenu).toContain("Dialog.Close");
-    // The desktop marketing nav starts at md, so the mobile trigger must
-    // remain available throughout the entire 640–767px tablet gap.
-    expect(publicMenu).toContain("md:hidden");
-    expect(publicMenu).toContain("(min-width: 768px)");
+    // Long Arabic and English links need the wider marketing breakpoint:
+    // the focus-managed sheet must stay available through 1279 CSS pixels.
+    const home = load("src/app/page.tsx");
+    expect(home).toContain("flex-nowrap items-center gap-0.5 xl:flex");
+    expect(publicMenu).toContain("xl:hidden");
+    expect(publicMenu).toContain("(min-width: 1280px)");
     expect(shell).toContain("onCloseAutoFocus");
     expect(agent).toContain("onCloseAutoFocus");
     expect(agent).toContain("Dialog.Overlay");
