@@ -402,9 +402,11 @@ export async function POST(req: Request) {
       // Check the physical endpoint, not only the Agent-generated row ID:
       // manual registration and discovery can report identical printers under
       // different IDs. Preserve the existing row and all accepted job history.
-      const knownPhysicalPrinters = await tx.query.printers.findMany({
-        where: and(eq(printers.tenantId, agent.tenantId), eq(printers.agentId, agent.id)),
-      });
+      const knownPhysicalPrinters = sanitizedPrinters.length > 0
+        ? await tx.query.printers.findMany({
+            where: and(eq(printers.tenantId, agent.tenantId), eq(printers.agentId, agent.id)),
+          })
+        : [];
       const seenEndpoints = new Set<string>();
       const knownIds = new Set(knownPhysicalPrinters.map(row => row.id));
       for (let i = sanitizedPrinters.length - 1; i >= 0; i--) {
