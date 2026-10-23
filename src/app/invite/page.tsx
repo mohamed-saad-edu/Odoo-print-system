@@ -23,7 +23,9 @@ function InviteContent() {
   const [message, setMessage] = useState("");
   const feedbackRef = useRef<HTMLDivElement>(null);
   const returnUrl = `/invite?token=${encodeURIComponent(token)}`;
-  const signInUrl = `/login?next=${encodeURIComponent(returnUrl)}`;
+  // Even if the browser currently holds a different account session,
+  // the invitee must be able to sign in as the address shown on the card.
+  const signInUrl = `/login?next=${encodeURIComponent(returnUrl)}&switch=1`;
 
   useEffect(() => {
     const controller = new AbortController();
