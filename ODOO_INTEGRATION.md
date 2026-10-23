@@ -221,12 +221,13 @@ tests cannot establish native ORM, scheduler, asset or physical-printer acceptan
 
 ## Automatic installation identities (zero-touch Version 2)
 
-**First enrollment automatically promotes an empty Gateway workspace to
-strict-v2, after verifying that it has no historical Odoo jobs or receipts.**
+**Newly provisioned Gateway workspaces start in strict-v2 automatically.**
+Legacy workspaces are NOT automatically converted, even when they appear empty,
+because a disconnected Odoo database could still have an external print outbox.
 There is no Gateway Installation ID to copy or Version 2 Identity Cutover checkbox for
-the customer to activate. Every independent Odoo database creates its own
-UUIDv4 and 256-bit installation proof automatically and stores them in a
-private JSON file inside the Odoo service's persistent
+the customer to activate. Every independent Odoo database/root-company scope
+creates its own UUIDv4 and 256-bit installation proof automatically and stores
+them in a private JSON file inside the Odoo service's persistent
 \`data_dir/yaseir-print-installations/\` directory. The proof never enters
 the Odoo database, so a normal database-only clone cannot copy the proof.
 
@@ -257,15 +258,16 @@ as fresh prints by the clone. Full virtual machine/filesystem clones can
 also copy the private identity files, so operators must deliberately rotate
 the enrollment after a FULL host clone, not treat it as two independent hosts.
 
-**Existing deployments:** An empty Gateway workspace with no historical Odoo
-jobs or receipts is automatically promoted under a tenant transaction lock.
-Any legacy workspace with prior jobs/receipts is rejected for operator review:
-historical physical outcomes must not be silently remapped or reprinted.
+**Existing deployments:** Any pre-existing Gateway workspace still in `legacy`
+mode must undergo a separate operator-reviewed cutover. Automatic enrollment
+returns a recoverable `RECONCILIATION_REQUIRED` error rather than silently
+promoting that workspace. This prevents accidental replay of historical Odoo
+outbox jobs that may live outside the Gateway database.
 
 ## Installation-scoped idempotency (S06-006)
 
-Starting with forward migration `0085_odoo_installation_idempotency`, independent Odoo databases using one Gateway tenant can opt into a server-enrolled version-2 namespace. Historical v1 operations and lifetime receipts retain their original identities. The tenant remains in legacy mode until an administrator explicitly completes the reconciliation and one-way strict cutover.
+Starting with forward migration `0085_odoo_installation_idempotency`, independent Odoo databases using one Gateway tenant can opt into a server-enrolled version-2 namespace. Historical v1 operations and lifetime receipts retain their original identities. Tenants already in legacy mode remain there until an administrator explicitly completes the reconciliation and one-way strict cutover; brand-new tenants start in strict-v2 by default.
 
-Before enabling version 2, read [S06 cutover runbook](docs/S06_IDEMPOTENCY_CUTOVER.md). It specifies secure enrollment, external 256-bit installation proofs, API-key rotation, verification of old receipts, operator-controlled `reuse`/`distinct` decisions, and clone/restore restrictions. Never regenerate a key for a pre-existing Odoo outbox job. A pending historical operation requires reconciliation, not a new physical print.
+For a pre-existing legacy workspace, follow a reviewed manual cutover procedure: secure enrollment, external 256-bit installation proofs, API-key rotation, verification of old receipts, operator-controlled `reuse`/`distinct` decisions, and clone/restore restrictions. Never regenerate a key for a pre-existing Odoo outbox job. A pending historical operation requires reconciliation, not a new physical print.
 
 The Gateway installation-management endpoints are `/api/odoo/installations`, `/api/odoo/installations/resolutions`, and `/api/odoo/installations/cutover` (workspace-manager permissions required). Versioned Odoo job submission and status reads continue through the existing `/api/print/jobs` and `/api/print/jobs/v2` routes, with an additional independently enrolled installation identity and proof. Older Agents continue to receive the existing print job and acknowledgment schema; they do not interpret the Odoo source-key version.
