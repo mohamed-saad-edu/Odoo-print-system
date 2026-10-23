@@ -14,18 +14,20 @@ def test_migration_inventory_matches_current_journal():
     # journal and the SQL files, including new forward-only migrations.
     tags=[entry['tag'] for entry in journal]
     assert tags==[path.stem for path in sql]
-    assert len(journal)==len(sql)==88
-    assert journal[-4]['tag']=='0084_printer_cloud_sharing'
-    assert journal[-3]['tag']=='0085_odoo_installation_idempotency'
-    assert journal[-2]['tag']=='0086_printer_identity_and_api_key_deletion'
-    assert journal[-1]['tag']=='0087_odoo_auto_enrollment'
+    assert len(journal)==len(sql)==89
+    assert journal[-5]['tag']=='0084_printer_cloud_sharing'
+    assert journal[-4]['tag']=='0085_odoo_installation_idempotency'
+    assert journal[-3]['tag']=='0086_printer_identity_and_api_key_deletion'
+    assert journal[-2]['tag']=='0087_odoo_auto_enrollment'
+    assert journal[-1]['tag']=='0088_retire_e2e_capture'
     assert '| 0082 | 1 |' in read('MIGRATION.md')
     assert '| 0083 | 1 |' in read('MIGRATION.md')
     assert '| 0084 | 1 |' in read('MIGRATION.md')
     assert '| 0085 | 1 |' in read('MIGRATION.md')
     assert '| 0086 | 1 |' in read('MIGRATION.md')
     assert '| 0087 | 1 |' in read('MIGRATION.md')
-    assert '**Total**: 88 forward-only SQL migrations (0000–0087)' in read('MIGRATION.md')
+    assert '| 0088 | 1 |' in read('MIGRATION.md')
+    assert '**Total**: 89 forward-only SQL migrations (0000–0088)' in read('MIGRATION.md')
     sharing=read('drizzle/0084_printer_cloud_sharing.sql')
     assert '"shared_with_gateway" boolean NOT NULL DEFAULT true' in sharing
     assert '"shared_with_gateway_version" text' in sharing
