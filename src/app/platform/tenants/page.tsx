@@ -394,8 +394,7 @@ export default function PlatformTenantsPage() {
                 <Field
                   label={t("platform.tenants.reasonLabel")}
                   htmlFor="suspension-reason"
-                  hint={t("platform.tenants.reasonHint")}
-                  required
+                  hint={locale === "ar" ? "اختياري — سيُسجَّل سبب تلقائي إذا تركته فارغًا." : "Optional — a default audit reason is recorded when blank."}
                 >
                   <Textarea
                     id="suspension-reason"

@@ -12,7 +12,16 @@ const querySchema=z.object({
 });
 export async function GET(request:Request) {
   try { await requirePlatformOwner(request); }
-  catch(e) { return NextResponse.json({error:e instanceof PlatformUnauthorizedError?"Unauthorized":"Authentication unavailable"},{status:e instanceof PlatformUnauthorizedError?401:503,headers}); }
+  catch (error) {
+    if (error instanceof PlatformUnauthorizedError) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401, headers });
+    }
+    // A broken auth dependency is NOT an invalid login. Fail closed, visibly.
+    return NextResponse.json(
+      { error: "Platform authentication temporarily unavailable" },
+      { status: 503, headers },
+    );
+  }
   const url=new URL(request.url);
   const args=querySchema.safeParse({table:url.searchParams.get("table")??undefined,
     q:url.searchParams.get("q")??undefined,offset:url.searchParams.get("offset")??"0"});

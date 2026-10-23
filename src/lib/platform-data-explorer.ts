@@ -3,7 +3,7 @@ import type { PoolClient } from "pg";
 
 /** Metadata-driven, read-only database inventory. Database identifiers are
  * never supplied to SQL directly by the browser. All identifiers are quoted
- * only after checking them against pg_catalog.
+ * only after checking them against information_schema.
  *
  * Sensitive columns (including credential hashes, tokens and raw print payload)
  * are excluded server-side, not masked after fetching. JSON/blob columns are
@@ -16,29 +16,54 @@ export type ExploreTable = { name: string; columns: string[]; primaryKey: string
 const quote = (v: string) => '"' + v.replaceAll('"', '""') + '"';
 
 export async function listExploreTables(client: PoolClient): Promise<ExploreTable[]> {
-  const tables = await client.query<{ table_name: string }>(
-    `SELECT table_name FROM information_schema.tables
-     WHERE table_schema = current_schema() AND table_type = 'BASE TABLE'
-     ORDER BY table_name LIMIT 250`);
-  const result: ExploreTable[] = [];
-  for (const { table_name } of tables.rows) {
-    if (ALWAYS_HIDDEN.has(table_name)) continue;
-    const meta = await client.query<{ column_name: string; data_type: string; is_primary: boolean }>(
-      `SELECT c.column_name,c.data_type,
-         EXISTS (SELECT 1 FROM information_schema.table_constraints t
-           JOIN information_schema.key_column_usage k
-             ON k.constraint_name=t.constraint_name AND k.table_schema=t.table_schema AND k.table_name=t.table_name
-           WHERE t.constraint_type='PRIMARY KEY' AND t.table_schema=c.table_schema
-             AND t.table_name=c.table_name AND k.column_name=c.column_name) AS is_primary
-       FROM information_schema.columns c
-       WHERE c.table_schema = current_schema() AND c.table_name=$1
-       ORDER BY c.ordinal_position`, [table_name]);
-    const columns = meta.rows.filter(c=>SAFE_TYPES.has(c.data_type) && !SECRET.test(c.column_name)).map(c=>c.column_name).slice(0,40);
-    if (!columns.length) continue;
-    const primaryKey = meta.rows.find(c=>c.is_primary && columns.includes(c.column_name))?.column_name ?? (columns.includes("id") ? "id" : null);
-    result.push({name:table_name, columns, primaryKey});
+  // One bounded catalog query rather than an N+1 request per table. The
+  // information_schema query itself does not read any customer row or secret.
+  const catalog = await client.query<{
+    table_name: string; column_name: string; data_type: string; is_primary: boolean;
+  }>(`SELECT c.table_name, c.column_name, c.data_type,
+        EXISTS (
+          SELECT 1 FROM information_schema.table_constraints tc
+          JOIN information_schema.key_column_usage kcu
+            ON kcu.constraint_catalog = tc.constraint_catalog
+            AND kcu.constraint_schema = tc.constraint_schema
+            AND kcu.constraint_name = tc.constraint_name
+            AND kcu.table_schema = tc.table_schema
+            AND kcu.table_name = tc.table_name
+          WHERE tc.constraint_type = 'PRIMARY KEY'
+            AND tc.table_schema = c.table_schema
+            AND tc.table_name = c.table_name
+            AND kcu.column_name = c.column_name
+        ) AS is_primary
+     FROM information_schema.columns c
+     JOIN (
+       SELECT table_name FROM information_schema.tables
+       WHERE table_schema = current_schema() AND table_type = 'BASE TABLE'
+       ORDER BY table_name LIMIT 250
+     ) t ON t.table_name = c.table_name
+     WHERE c.table_schema = current_schema()
+     ORDER BY c.table_name, c.ordinal_position`);
+  const grouped = new Map<string, {
+    columns: string[];
+    primary: string | null;
+  }>();
+  for (const column of catalog.rows) {
+    if (ALWAYS_HIDDEN.has(column.table_name)) continue;
+    let table = grouped.get(column.table_name);
+    if (!table) {
+      table = { columns: [], primary: null };
+      grouped.set(column.table_name, table);
+    }
+    if (!SAFE_TYPES.has(column.data_type) || SECRET.test(column.column_name)) continue;
+    if (table.columns.length >= 40) continue;
+    table.columns.push(column.column_name);
+    if (column.is_primary && !table.primary) table.primary = column.column_name;
   }
-  return result;
+  return [...grouped.entries()]
+    .filter(([, table]) => table.columns.length > 0)
+    .map(([name, table]) => ({
+      name, columns: table.columns,
+      primaryKey: table.primary ?? (table.columns.includes("id") ? "id" : null),
+    }));
 }
 export async function exploreRows(client: PoolClient, table: ExploreTable, search: string, offset: number, limit: number) {
   const colSQL = table.columns.map(quote).join(", ");
@@ -46,10 +71,12 @@ export async function exploreRows(client: PoolClient, table: ExploreTable, searc
   // Include exact/partial ID and common human labels (names, slugs, statuses).
   const preferred = table.columns.filter(c => /^(id|tenant_id|agent_id|printer_id|name|display_name|slug|status|lifecycle|plan_id|job_id|code|external_id|domain|type|protocol)$/i.test(c)).slice(0,10);
   const searchable = preferred.length ? preferred : table.primaryKey ? [table.primaryKey] : [];
-  // Escape LIKE wildcards so user input is literal text, not a query language.
-  const term = search.replace(/[%_\\]/g, "");
-  const where = search && searchable.length ? "WHERE (" + searchable.map(c=>`${quote(c)}::text ILIKE $1`).join(" OR ") + ")" : "";
-  const args = search ? [`%${term}%`,limit,offset] : [limit,offset];
+  // strpos treats punctuation, percent signs and underscores literally.
+  // Bind the term: browser input NEVER becomes a SQL identifier or expression.
+  const where = search && searchable.length
+    ? "WHERE (" + searchable.map(c => `strpos(lower(${quote(c)}::text), lower($1)) > 0`).join(" OR ") + ")"
+    : "";
+  const args = search ? [search, limit, offset] : [limit, offset];
   const index = search ? 2 : 1;
   if (search && !searchable.length) return [];
   const result = await client.query<Record<string,unknown>>(
