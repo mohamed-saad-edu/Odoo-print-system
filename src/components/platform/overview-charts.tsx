@@ -1,7 +1,7 @@
 "use client";
 
 import { AlertTriangle, CheckCircle2 } from "lucide-react";
-import { useId } from "react";
+import { useId, useState } from "react";
 import { useI18n } from "../../i18n/react";
 
 export type OverviewHourlyPoint = {
@@ -63,6 +63,9 @@ export function PrintThroughputChart({
 }) {
   const { t, formatNumber, formatTime } = useI18n();
   const gradientId = useId().replace(/:/g, "");
+  const chartDescriptionId = useId().replace(/:/g, "");
+  const { locale } = useI18n();
+  const [activeMetric, setActiveMetric] = useState<"total" | "success" | "failed">("total");
   const width = 760;
   const height = 282;
   const top = 22;
@@ -71,6 +74,10 @@ export function PrintThroughputChart({
   const success = data.map((point) => point.success);
   const failed = data.map((point) => point.failed);
   const max = Math.max(1, ...totals);
+  // Visible scale values are computed from the SAME backend series as the plot.
+  const valueTicks = [0, 0.25, 0.5, 0.75, 1].map(fraction => ({
+    fraction, value: Math.round(max * fraction),
+  }));
   const total = totals.reduce((n, value) => n + value, 0);
   const ok = success.reduce((n, value) => n + value, 0);
   const fail = failed.reduce((n, value) => n + value, 0);
@@ -83,39 +90,45 @@ export function PrintThroughputChart({
       <div className="mb-4 grid grid-cols-3 gap-2 rounded-xl border border-edge bg-surface-2/80 p-3 sm:gap-5 sm:p-4" role="group" aria-label={t("platform.chart.throughputAria")}>
         {[{ value:total, label:t("platform.chart.allPrintJobs"), accent:"text-brand" }, { value:ok, label:t("platform.chart.successful"), accent:"text-ok" }, { value:fail, label:t("platform.chart.failed"), accent:"text-bad" }].map(item => <div key={item.label} className="min-w-0"><div className={`truncate text-xl font-bold tabular-nums tracking-tight sm:text-2xl ${item.accent}`}>{formatNumber(item.value)}</div><div className="mt-1 truncate text-xs text-ink-3">{item.label}</div></div>)}
       </div>
-      <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-sm text-ink-3">
-        <span className="inline-flex items-center gap-2"><span className="h-2 w-2 rounded-full bg-brand-solid" />{t("platform.chart.allPrintJobs")}</span>
-        <span className="inline-flex items-center gap-2"><span className="h-2 w-2 rounded-full bg-ok-solid" />{t("platform.chart.successful")}</span>
-        <span className="inline-flex items-center gap-2"><span className="h-2 w-2 rounded-full bg-bad-solid" />{t("platform.chart.failed")}</span>
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-sm text-ink-3" role="group" aria-label={locale === "ar" ? "تحديد مؤشر الرسم" : "Select chart focus"}>
+        {([
+          { key: "total", label: t("platform.chart.allPrintJobs"), color: "bg-brand-solid" },
+          { key: "success", label: t("platform.chart.successful"), color: "bg-ok-solid" },
+          { key: "failed", label: t("platform.chart.failed"), color: "bg-bad-solid" },
+        ] as const).map(metric => (
+          <button key={metric.key} type="button" aria-pressed={activeMetric === metric.key} onClick={() => setActiveMetric(metric.key)}
+            className={`inline-flex min-h-10 items-center gap-2 rounded-lg border px-3 py-2 text-xs font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-brand ${activeMetric === metric.key ? "border-brand/40 bg-brand-subtle text-ink" : "border-transparent text-ink-3 hover:border-edge hover:bg-surface-2"}`}>
+            <span className={`h-2.5 w-2.5 rounded-full ${metric.color}`} aria-hidden />{metric.label}
+          </button>
+        ))}
       </div>
+      <p id={chartDescriptionId} className="sr-only">
+        {locale === "ar" ? "كل نقطة تمثل ساعة من سجلات الجيتواي. النجاح يعني نتيجة معالجة الجيتواي ولا يثبت خروج الورق. التفاصيل الرقمية متاحة في جدول البيانات التالي." : "Each point represents one hour of real Gateway records. Success is a Gateway outcome, not proof that paper printed. Exact values follow in the accessible data table."}
+      </p>
       <div className="yw-throughput-plot mt-3 overflow-hidden rounded-xl border border-edge bg-surface-2 px-3 py-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
         <svg
           viewBox={`0 0 ${width} ${height}`}
           className="block h-auto w-full"
           role="img"
           aria-label={t("platform.chart.throughputAria")}
+          aria-describedby={chartDescriptionId}
         >
           <defs><linearGradient id={gradientId} x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stopColor="#38BDF8" stopOpacity="0.25"/><stop offset="88%" stopColor="#38BDF8" stopOpacity="0.015"/></linearGradient></defs>
-          {[0, 0.25, 0.5, 0.75, 1].map((fraction) => {
+          {valueTicks.map(({ fraction, value }) => {
             const y = top + (height - top - bottom) * (1 - fraction);
             return (
-              <line
-                key={fraction}
-                x1="0"
-                x2={width}
-                y1={y}
-                y2={y}
-                className="stroke-edge"
-                strokeDasharray={fraction === 0 ? undefined : "4 8"}
-                strokeOpacity={fraction === 0 ? 0.8 : 0.55}
-                strokeWidth="1"
-              />
+              <g key={fraction}>
+                <line x1="0" x2={width} y1={y} y2={y} className="stroke-edge"
+                  strokeDasharray={fraction === 0 ? undefined : "4 8"}
+                  strokeOpacity={fraction === 0 ? 0.8 : 0.55} strokeWidth="1" />
+                <text x="8" y={y - 5} fill="currentColor" className="fill-ink-4 text-[10px]" aria-hidden="true">{formatNumber(value)}</text>
+              </g>
             );
           })}
           <path d={areaPath(totals, width, height, top, bottom, max)} fill={`url(#${gradientId})`} />
-          <path d={linePath(totals, width, height, top, bottom, max)} className="fill-none stroke-brand-solid" strokeLinecap="round" strokeLinejoin="round" strokeWidth="3.5" vectorEffect="non-scaling-stroke" />
-          <path d={linePath(success, width, height, top, bottom, max)} className="fill-none stroke-ok-solid" strokeLinecap="round" strokeWidth="2.75" vectorEffect="non-scaling-stroke" />
-          <path d={linePath(failed, width, height, top, bottom, max)} className="fill-none stroke-bad-solid" strokeLinecap="round" strokeDasharray="5 4" strokeWidth="2.25" vectorEffect="non-scaling-stroke" />
+          <path d={linePath(totals, width, height, top, bottom, max)} className="fill-none stroke-brand-solid" strokeLinecap="round" strokeLinejoin="round" strokeWidth={activeMetric === "total" ? 3.5 : 1.5} opacity={activeMetric === "total" ? 1 : 0.35} vectorEffect="non-scaling-stroke" />
+          <path d={linePath(success, width, height, top, bottom, max)} className="fill-none stroke-ok-solid" strokeLinecap="round" strokeWidth={activeMetric === "success" ? 3.5 : 1.75} opacity={activeMetric === "success" ? 1 : 0.45} vectorEffect="non-scaling-stroke" />
+          <path d={linePath(failed, width, height, top, bottom, max)} className="fill-none stroke-bad-solid" strokeLinecap="round" strokeDasharray="5 4" strokeWidth={activeMetric === "failed" ? 3.5 : 1.75} opacity={activeMetric === "failed" ? 1 : 0.45} vectorEffect="non-scaling-stroke" />
           {data.map((point, index) => {
             const x = data.length > 1 ? (index / (data.length - 1)) * width : width / 2;
             const y = top + (height - top - bottom) * (1 - point.total / max);
@@ -152,6 +165,23 @@ export function PrintThroughputChart({
           })}
         </div>
       </div>
+      <details className="mt-3 overflow-hidden rounded-xl border border-edge bg-surface-2">
+        <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-brand focus-visible:outline-2 focus-visible:outline-brand">
+          {locale === "ar" ? "عرض البيانات الرقمية للرسم" : "View exact chart data"}
+        </summary>
+        <div className="max-h-80 overflow-auto border-t border-edge">
+          <table className="data-table w-full" role="table">
+            <caption className="sr-only">{t("platform.chart.throughputAria")}</caption>
+            <thead><tr><th scope="col">{locale === "ar" ? "الساعة" : "Hour"}</th><th scope="col">{t("platform.chart.allPrintJobs")}</th><th scope="col">{t("platform.chart.successful")}</th><th scope="col">{t("platform.chart.failed")}</th></tr></thead>
+            <tbody>{data.map(point => <tr key={point.bucket}>
+              <th scope="row" className="text-start font-medium text-ink-2">{formatTime(point.bucket)}</th>
+              <td className="tabular-nums">{formatNumber(point.total)}</td>
+              <td className="tabular-nums">{formatNumber(point.success)}</td>
+              <td className="tabular-nums">{formatNumber(point.failed)}</td>
+            </tr>)}</tbody>
+          </table>
+        </div>
+      </details>
     </div>
   );
 }

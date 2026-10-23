@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { requirePlatformOwner, PlatformUnauthorizedError } from "../../../../lib/platform-auth";
 import { db } from "../../../../db";
 import { queryWithTimeout } from "../../../../db/client";
-import { tenants, tenantSubscriptions, users, agents, printers } from "../../../../db/schema";
+import { tenants, tenantSubscriptions, users, agents, printers, apiKeys, odooInstallations } from "../../../../db/schema";
 import { sql, eq, and } from "drizzle-orm";
 import { agentStaleThresholdSeconds, printerStaleThresholdSeconds } from "../../../../lib/agent-availability";
 import { nonVirtualPrinterPredicate } from "../../../../lib/printer-virtual-sql";
@@ -33,7 +33,7 @@ export async function GET(req: Request) {
   const cached = getCachedPlatformStats(bypassCache);
   if (cached) {
     return NextResponse.json(cached, {
-      headers: { "X-Cache": "HIT" },
+      headers: { "X-Cache": "HIT", "Cache-Control": "private, no-store" },
     });
   }
 
@@ -44,6 +44,8 @@ export async function GET(req: Request) {
     agentStats,
     printerStats,
     hourlyJobStats,
+    credentialStats,
+    installationStats,
   ] = await queryWithTimeout(
     () => Promise.all([
       db.select({
@@ -193,6 +195,19 @@ export async function GET(req: Request) {
         GROUP BY hours.bucket
         ORDER BY hours.bucket
       `),
+      db.select({
+        total: sql<number>`count(*)::int`,
+        // A rotated key can remain valid for read-only receipt lookup during
+        // a grace window. It is NOT fully revoked until that window ends.
+        active: sql<number>`count(*) filter (where ${apiKeys.revokedAt} is null or ${apiKeys.readOnlyUntil} > clock_timestamp())::int`,
+        grace: sql<number>`count(*) filter (where ${apiKeys.revokedAt} is not null and ${apiKeys.readOnlyUntil} > clock_timestamp())::int`,
+        revoked: sql<number>`count(*) filter (where ${apiKeys.revokedAt} is not null and (${apiKeys.readOnlyUntil} is null or ${apiKeys.readOnlyUntil} <= clock_timestamp()))::int`,
+      }).from(apiKeys),
+      db.select({
+        total: sql<number>`count(*)::int`,
+        enabled: sql<number>`count(*) filter (where ${odooInstallations.enabled} = true)::int`,
+        quarantined: sql<number>`count(*) filter (where ${odooInstallations.enabled} = false)::int`,
+      }).from(odooInstallations),
     ]),
     8_000,
     "platformStatsAggregate",
@@ -217,6 +232,10 @@ export async function GET(req: Request) {
     users: userStats[0] ?? { total: 0, verified: 0 },
     agents: agentStats[0] ?? { total: 0, active: 0, online: 0, offline: 0, unknown: 0, inactive: 0 },
     printers: printerStats[0] ?? { total: 0, active: 0, online: 0, busy: 0, offline: 0, error: 0, unknown: 0, inactive: 0 },
+    integrations: {
+      keys: credentialStats[0] ?? { total: 0, active: 0, grace: 0, revoked: 0 },
+      installations: installationStats[0] ?? { total: 0, enabled: 0, quarantined: 0 },
+    },
     jobs24h: aggregatedJobs24h,
     jobs24hHourly: hourlyRows.map((row) => ({
       bucket: new Date(row.bucket).toISOString(),
@@ -232,6 +251,6 @@ export async function GET(req: Request) {
   setCachedPlatformStats(responseBody);
 
   return NextResponse.json(responseBody, {
-    headers: { "X-Cache": "MISS" },
+    headers: { "X-Cache": "MISS", "Cache-Control": "private, no-store" },
   });
 }

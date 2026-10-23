@@ -2,8 +2,8 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, ArrowRight, Clock3, History, Printer, RefreshCw, Search, ShieldCheck } from "lucide-react";
-import { Button, Card, EmptyState, ErrorState, PageHeader, StatusBadge, TableSkeleton, type Tone } from "../../../components/ui";
+import { ArrowLeft, ArrowRight, Clock3, Eye, History, Printer, RefreshCw, Search, ShieldCheck } from "lucide-react";
+import { Button, Card, EmptyState, ErrorState, Modal, PageHeader, StatusBadge, TableSkeleton, type Tone } from "../../../components/ui";
 import { fetchWithTimeout } from "../../../lib/fetch-timeout";
 import { useI18n } from "../../../i18n/react";
 
@@ -12,11 +12,13 @@ type PrintRecord = {
   id: string; tenantId: string; tenantName: string | null; printerId: string; printerName: string | null;
   agentId: string; agentName: string | null; destination: string | null; documentType: string | null;
   status: string; error: string | null; createdAt: string; updatedAt: string; archived: boolean;
+  retries: number | null; deliveryAttempts: number | null; requestedBy: string | null;
+  claimedAt: string | null; deliveredAt: string | null; ackedAt: string | null; expiresAt: string | null;
   physicalOutcome: "printed" | "not_printed" | "unknown";
 };
 const labels = {
-  en: { title: "Print operations", eyebrow: "Gateway / Operations", description: "Live queue and durable receipts across every workspace. Historical records carry metadata, not print payloads.", all: "All states", active: "In progress", success: "Submitted", failed: "Failed", expired: "Expired", unknown: "Uncertain outcome", search: "Find job / destination / workspace", tenant: "Workspace ID (optional)", refresh: "Refresh", workspace: "Workspace", job: "Job / document", destination: "Device / agent", state: "Gateway outcome", seen: "Created", archived: "Archived receipt", live: "Live queue", paper: "Paper output unverified", empty: "No matching print operations", emptyBody: "Adjust your filters or choose another workspace.", fail: "Couldn't load Gateway print history.", newer: "Previous", older: "Next", audit: "Audit trail", records: "records on this page", privacy: "Print payloads and credentials are never included in this view.", operator: "A successful Gateway submission is not independent proof of physical paper output." },
-  ar: { title: "عمليات الطباعة", eyebrow: "الجيتواي / العمليات", description: "الطابور الحالي والسجلات المحفوظة لكل مساحات العمل. السجل التاريخي بدون محتوى الملفات المطبوعة.", all: "كل الحالات", active: "قيد التنفيذ", success: "تم التسليم للجهاز", failed: "فشل", expired: "منتهية", unknown: "نتيجة غير مؤكدة", search: "بحث برقم المهمة أو الوجهة أو العميل", tenant: "معرّف العميل (اختياري)", refresh: "تحديث", workspace: "مساحة العمل", job: "المهمة / النوع", destination: "الطابعة / الأيجنت", state: "حالة الجيتواي", seen: "تاريخ الإنشاء", archived: "سجل مؤرشف", live: "نشط", paper: "خروج الورق غير مؤكد", empty: "مفيش مهام مطابقة", emptyBody: "غيّر الفلاتر أو اختر عميلًا آخر.", fail: "تعذر تحميل تاريخ مهام الطباعة.", newer: "السابق", older: "التالي", audit: "سجل التدقيق", records: "مهمة في الصفحة", privacy: "لا تُعرض ملفات الطباعة أو بيانات الدخول هنا.", operator: "تأكيد التسليم من الجيتواي لا يثبت خروج الورق فعليًا." },
+  en: { title: "Print operations", eyebrow: "Gateway / Operations", description: "Live queue and durable receipts across every workspace. Historical records carry metadata, not print payloads.", all: "All states", active: "In progress", success: "Submitted", failed: "Failed", expired: "Expired", unknown: "Uncertain outcome", search: "Find job / destination / workspace", tenant: "Workspace ID (optional)", refresh: "Refresh", workspace: "Workspace", job: "Job / document", destination: "Device / agent", state: "Gateway outcome", seen: "Created", archived: "Archived receipt", live: "Live queue", paper: "Paper output unverified", empty: "No matching print operations", emptyBody: "Adjust your filters or choose another workspace.", fail: "Couldn't load Gateway print history.", newer: "Previous", older: "Next", audit: "Audit trail", records: "records on this page", privacy: "Print payloads and credentials are never included in this view.", operator: "A successful Gateway submission is not independent proof of physical paper output.", details: "Job diagnostics", detailAction: "Inspect timeline", attempts: "Delivery attempts", retries: "Retries", submittedBy: "Requested by", lastUpdate: "Last updated", claimed: "Claimed", delivered: "Delivered", acknowledged: "Acknowledged", expires: "Expires", physical: "Physical outcome", errorDetail: "Last recorded error", unavailable: "Not recorded" },
+  ar: { title: "عمليات الطباعة", eyebrow: "الجيتواي / العمليات", description: "الطابور الحالي والسجلات المحفوظة لكل مساحات العمل. السجل التاريخي بدون محتوى الملفات المطبوعة.", all: "كل الحالات", active: "قيد التنفيذ", success: "تم التسليم للجهاز", failed: "فشل", expired: "منتهية", unknown: "نتيجة غير مؤكدة", search: "بحث برقم المهمة أو الوجهة أو العميل", tenant: "معرّف العميل (اختياري)", refresh: "تحديث", workspace: "مساحة العمل", job: "المهمة / النوع", destination: "الطابعة / الأيجنت", state: "حالة الجيتواي", seen: "تاريخ الإنشاء", archived: "سجل مؤرشف", live: "نشط", paper: "خروج الورق غير مؤكد", empty: "مفيش مهام مطابقة", emptyBody: "غيّر الفلاتر أو اختر عميلًا آخر.", fail: "تعذر تحميل تاريخ مهام الطباعة.", newer: "السابق", older: "التالي", audit: "سجل التدقيق", records: "مهمة في الصفحة", privacy: "لا تُعرض ملفات الطباعة أو بيانات الدخول هنا.", operator: "تأكيد التسليم من الجيتواي لا يثبت خروج الورق فعليًا.", details: "تفاصيل المهمة وتشخيصها", detailAction: "عرض التسلسل", attempts: "محاولات التسليم", retries: "إعادة المحاولة", submittedBy: "طلب الطباعة", lastUpdate: "آخر تحديث", claimed: "استلام المهمة", delivered: "تسليم المهمة", acknowledged: "تأكيد الاستلام", expires: "انتهاء الصلاحية", physical: "النتيجة الفعلية", errorDetail: "آخر خطأ مسجل", unavailable: "غير مسجل" },
 } as const;
 function tone(status: string): Tone { return status === "success" ? "ok" : status === "failed" ? "bad" : status === "expired" ? "warn" : status === "queued" ? "info" : "neutral"; }
 
@@ -24,6 +26,7 @@ export default function PlatformPrintOperationsPage() {
   const { locale, formatDateTime, formatNumber } = useI18n();
   const t = labels[locale];
   const [records, setRecords] = useState<PrintRecord[]>([]);
+  const [selectedJob, setSelectedJob] = useState<PrintRecord | null>(null);
   const [status, setStatus] = useState("all");
   const [query, setQuery] = useState("");
   const [tenant, setTenant] = useState("");
@@ -80,7 +83,8 @@ export default function PlatformPrintOperationsPage() {
         <div className="overflow-x-auto"><table className="data-table min-w-[820px]"><caption className="sr-only">{t.title}</caption><thead><tr><th scope="col">{t.job}</th><th scope="col">{t.workspace}</th><th scope="col">{t.destination}</th><th scope="col">{t.state}</th><th scope="col">{t.seen}</th></tr></thead>
           <tbody>{loading ? <tr><td colSpan={5}><TableSkeleton rows={5} /></td></tr> : records.length === 0 ? <tr><td colSpan={5}><EmptyState title={t.empty} description={search.length === 1 ? (locale === "ar" ? "اكتب حرفين على الأقل" : "Enter at least two characters") : t.emptyBody} icon={<Clock3 className="h-5 w-5" />} /></td></tr> : records.map(job => (
             <tr key={`${job.tenantId}-${job.id}`}>
-              <td><div className="font-mono text-xs font-semibold text-ink" dir="ltr">{job.id}</div><div className="mt-1 text-xs text-ink-3">{job.documentType || "—"} · {job.destination || "—"}</div><div className="mt-1"><StatusBadge size="sm" tone={job.archived ? "info" : "neutral"} label={job.archived ? t.archived : t.live} /></div></td>
+              <td><div className="font-mono text-xs font-semibold text-ink" dir="ltr">{job.id}</div><div className="mt-1 text-xs text-ink-3">{job.documentType || "—"} · {job.destination || "—"}</div><div className="mt-1"><StatusBadge size="sm" tone={job.archived ? "info" : "neutral"} label={job.archived ? t.archived : t.live} /></div>
+                <div className="mt-2"><Button size="xs" variant="secondary" onClick={() => setSelectedJob(job)} icon={<Eye className="h-3.5 w-3.5" />}>{t.detailAction}</Button></div></td>
               <td><div className="text-sm font-semibold text-ink">{job.tenantName || job.tenantId}</div><div className="font-mono text-xs text-ink-4" dir="ltr">{job.tenantId}</div></td>
               <td><div className="inline-flex items-center gap-2 text-sm text-ink"><Printer className="h-4 w-4 text-brand" aria-hidden />{job.printerName || job.printerId}</div><div className="text-xs text-ink-3">{job.agentName || job.agentId}</div></td>
               <td><StatusBadge tone={tone(job.status)} label={job.status} size="sm" />{job.status === "success" && <div className="mt-1 text-xs text-ink-3">{t.paper}</div>}{job.error && <div title={job.error} className="mt-1 max-w-[230px] truncate text-xs text-bad">{job.error}</div>}</td>
@@ -88,6 +92,34 @@ export default function PlatformPrintOperationsPage() {
             </tr>))}</tbody></table></div>
         <div className="flex flex-wrap items-center justify-between gap-3 border-t border-edge px-4 py-3 text-xs text-ink-3"><span>{formatNumber(records.length)} {t.records}</span><div className="flex gap-2"><Button size="xs" variant="secondary" disabled={loading || offset === 0} onClick={() => setOffset(x => Math.max(0, x-LIMIT))}>{locale === "ar" ? <ArrowRight className="h-4 w-4" /> : <ArrowLeft className="h-4 w-4" />}{t.newer}</Button><Button size="xs" variant="secondary" disabled={loading || !hasMore} onClick={() => setOffset(x => x+LIMIT)}>{t.older}{locale === "ar" ? <ArrowLeft className="h-4 w-4" /> : <ArrowRight className="h-4 w-4" />}</Button></div></div>
       </Card>}
+      <Modal open={selectedJob !== null} onClose={() => setSelectedJob(null)} title={t.details} description={t.operator} wide>
+        {selectedJob && (
+          <div className="space-y-5 text-sm text-ink-2">
+            <div className="rounded-lg border border-edge bg-surface-2 p-4">
+              <p className="font-mono text-xs text-ink" dir="ltr">{selectedJob.id}</p>
+              <p className="mt-2 text-xs text-ink-3">{selectedJob.tenantName || selectedJob.tenantId} · {selectedJob.archived ? t.archived : t.live}</p>
+              <div className="mt-3 flex flex-wrap items-center gap-3"><StatusBadge tone={tone(selectedJob.status)} label={selectedJob.status} size="sm" />
+                <span className="font-medium text-ink-3">{t.physical}: {selectedJob.physicalOutcome}</span></div>
+            </div>
+            <dl className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              {([
+                [t.destination, selectedJob.destination || t.unavailable],
+                [t.submittedBy, selectedJob.requestedBy || t.unavailable],
+                [t.attempts, selectedJob.deliveryAttempts == null ? t.unavailable : formatNumber(selectedJob.deliveryAttempts)],
+                [t.retries, selectedJob.retries == null ? t.unavailable : formatNumber(selectedJob.retries)],
+                [t.seen, formatDateTime(selectedJob.createdAt)],
+                [t.lastUpdate, formatDateTime(selectedJob.updatedAt)],
+                [t.claimed, selectedJob.claimedAt ? formatDateTime(selectedJob.claimedAt) : t.unavailable],
+                [t.delivered, selectedJob.deliveredAt ? formatDateTime(selectedJob.deliveredAt) : t.unavailable],
+                [t.acknowledged, selectedJob.ackedAt ? formatDateTime(selectedJob.ackedAt) : t.unavailable],
+                [t.expires, selectedJob.expiresAt ? formatDateTime(selectedJob.expiresAt) : t.unavailable],
+              ] as [string, string][]).map(([name, value]) => <div key={name} className="min-w-0 rounded-lg border border-edge px-3 py-2"><dt className="text-xs text-ink-3">{name}</dt><dd className="mt-1 break-words font-medium text-ink">{value}</dd></div>)}
+            </dl>
+            {selectedJob.error && <div className="rounded-lg border border-bad-edge bg-bad-bg p-3"><p className="font-semibold text-bad">{t.errorDetail}</p><p className="mt-1 break-words text-xs text-ink-2">{selectedJob.error}</p></div>}
+            <p className="text-xs text-ink-3">{t.privacy} {t.operator}</p>
+          </div>
+        )}
+      </Modal>
       <p className="rounded-lg border border-edge bg-surface-2 p-3 text-sm text-ink-3">{t.operator} <Link href="/platform/audit" className="font-semibold text-brand underline underline-offset-4">{t.audit}</Link></p>
     </div>
   );

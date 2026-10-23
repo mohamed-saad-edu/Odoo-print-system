@@ -1830,6 +1830,7 @@ export const ar: Catalog = {
   "invite.loadingShort": "جارٍ تحميل الدعوة…",
   "invite.signIn": "تسجيل الدخول",
   "platform.nav.jobs": "عمليات الطباعة",
+  "platform.nav.integrations": "التحكم في التكاملات",
   "platform.nav.fleet": "إدارة الأجهزة",
   "platform.nav.overview": "نظرة عامة",
   "platform.nav.tenants": "المستأجرون",

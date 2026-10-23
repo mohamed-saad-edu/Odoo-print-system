@@ -1,0 +1,158 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import Link from "next/link";
+import { AlertTriangle, Building2, KeyRound, LockKeyhole, RefreshCw, Search, ShieldCheck, ShieldOff } from "lucide-react";
+import { Button, Card, EmptyState, ErrorState, Field, Modal, PageHeader, StatusBadge, TableSkeleton, Textarea } from "../../../components/ui";
+import { fetchWithTimeout } from "../../../lib/fetch-timeout";
+import { useI18n } from "../../../i18n/react";
+
+const PAGE_SIZE = 40;
+type KeyRecord = {
+  id: string; tenantId: string; tenantName: string; name: string; description: string | null;
+  odooEnabled: boolean; revokedAt: string | null; readOnlyUntil: string | null; graceActive: boolean;
+  createdAt: string; lastUsedAt: string | null;
+  installationId: string | null; installationName: string | null;
+};
+type InstallationRecord = {
+  id: string; tenantId: string; tenantName: string; name: string; enabled: boolean;
+  disabledAt: string | null; createdAt: string; credentialCount: number;
+};
+type RecordItem = KeyRecord | InstallationRecord;
+type Action = { item: RecordItem; kind: "keys" | "installations" };
+const wording = {
+  en: {
+    title: "Integration control", eyebrow: "Gateway / Security operations", subtitle: "Inspect Odoo installations and API credentials across workspaces. Emergency actions revoke access; they never expose secrets or replay print jobs.",
+    readOnlyGrace: "Rotation read-only grace", keys: "API credentials", installations: "Odoo installations", search: "Search name, ID, workspace", workspace: "Workspace ID (optional)", all: "All", active: "Active", inactive: "Inactive", refresh: "Refresh", integration: "Integration", owner: "Workspace", state: "Access", activity: "Last used / created", operation: "Control", revoke: "Revoke key", quarantine: "Quarantine", reason: "Incident / change reason (minimum 10 characters)", confirmId: "Type the exact ID to confirm", cancel: "Cancel", confirm: "Apply security action", confirmTitle: "Confirm an irreversible access change", confirmed: "Gateway change saved and written to the audit trail.", error: "Integration inventory unavailable", empty: "No matching integrations", page: "records", previous: "Previous", next: "Next", audit: "Audit log", safety: "Revoking an API key immediately ends its authorization, including read-only grace. Quarantining an Odoo installation blocks new v2 admissions; legacy v1 credentials may still work until separately revoked. Neither operation deletes prior receipts or retries jobs. Recovery needs an authenticated integration process.", denied: "Platform Owner access is required. No secrets are visible in this page.", role: "Platform Owner access only", never: "Secret values are never retrieved by this page.", credentials: "Credential bindings", issued: "Created", neverUsed: "Never used", noData: "—",
+  },
+  ar: {
+    title: "التحكم في التكاملات", eyebrow: "الجيتواي / أمان التشغيل", subtitle: "جرد تثبيتات Odoo ومفاتيح API لكل العملاء. إجراءات الطوارئ توقف الوصول بدون عرض أسرار أو إعادة تنفيذ مهام طباعة.",
+    readOnlyGrace: "فترة سماح للقراءة بعد التدوير", keys: "مفاتيح API", installations: "تثبيتات Odoo", search: "البحث بالاسم أو المعرّف أو العميل", workspace: "معرّف العميل (اختياري)", all: "الكل", active: "نشط", inactive: "معطّل", refresh: "تحديث", integration: "التكامل", owner: "العميل", state: "صلاحية الوصول", activity: "آخر استخدام / الإنشاء", operation: "التحكم", revoke: "إلغاء المفتاح", quarantine: "حجر التثبيت", reason: "سبب الحادث أو الإجراء (10 أحرف على الأقل)", confirmId: "اكتب معرّف السجل كما هو للتأكيد", cancel: "إلغاء", confirm: "تنفيذ إجراء الأمان", confirmTitle: "تأكيد تغيير مؤثر على صلاحيات الاتصال", confirmed: "تم تنفيذ الإجراء وتسجيله في سجل التدقيق.", error: "تعذر تحميل جرد التكاملات", empty: "لا توجد تكاملات مطابقة", page: "سجل", previous: "السابق", next: "التالي", audit: "سجل التدقيق", safety: "إلغاء مفتاح API يوقف استخدامه فورًا حتى لو كان في فترة سماح للقراءة. حجز تثبيت Odoo يمنع عمليات v2 الجديدة، لكن مفاتيح v1 القديم قد تظل فعالة ما لم تُلغَ منفصلةً. لا يتم حذف السجلات القديمة أو تكرار الطباعة. استعادة الاتصال تحتاج إجراء تكامل موثّق.", denied: "الصفحة متاحة فقط لمالك المنصة. لا تظهر الأسرار هنا.", role: "مالك المنصة فقط", never: "لا يتم تحميل بيانات المفاتيح السرية في هذه الصفحة.", credentials: "عدد بيانات الاتصال", issued: "أُنشئ", neverUsed: "لم يُستخدم", noData: "—",
+  },
+} as const;
+
+function isKey(row: RecordItem): row is KeyRecord { return "odooEnabled" in row; }
+
+export default function PlatformIntegrationsPage() {
+  const { locale, formatDateTime, formatNumber } = useI18n();
+  const t = wording[locale];
+  const [kind, setKind] = useState<"keys" | "installations">("keys");
+  const [status, setStatus] = useState("all");
+  const [search, setSearch] = useState("");
+  const [tenant, setTenant] = useState("");
+  const [offset, setOffset] = useState(0);
+  const [refresh, setRefresh] = useState(0);
+  const [loadedKey, setLoadedKey] = useState("");
+  const [items, setItems] = useState<RecordItem[]>([]);
+  const [hasMore, setHasMore] = useState(false);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [selected, setSelected] = useState<Action | null>(null);
+  const [confirmId, setConfirmId] = useState("");
+  const [reason, setReason] = useState("");
+  const [actionError, setActionError] = useState("");
+  const [acting, setActing] = useState(false);
+  const query = search.trim();
+  const key = JSON.stringify([kind, status, query, tenant.trim(), offset, refresh]);
+  const loading = loadedKey !== key;
+
+  useEffect(() => {
+    const controller = new AbortController();
+    let cancelled = false;
+    async function load() {
+      if (query.length === 1) { setItems([]); setHasMore(false); setLoadedKey(key); return; }
+      const params = new URLSearchParams({ kind, status, limit: String(PAGE_SIZE), offset: String(offset) });
+      if (query) params.set("search", query);
+      if (tenant.trim()) params.set("tenantId", tenant.trim());
+      try {
+        const response = await fetchWithTimeout(`/api/platform/integrations?${params}`, { signal: controller.signal, cache: "no-store" });
+        if (!response.ok) throw new Error(`${response.status}`);
+        const data = await response.json() as { items?: RecordItem[]; hasMore?: boolean };
+        if (cancelled) return;
+        setItems(Array.isArray(data.items) ? data.items : []);
+        setHasMore(data.hasMore === true);
+        setError("");
+      } catch { if (!cancelled) { setError(t.error); setItems([]); setHasMore(false); } }
+      finally { if (!cancelled) setLoadedKey(key); }
+    }
+    void load();
+    return () => { cancelled = true; controller.abort(); };
+  }, [key, kind, status, query, tenant, offset, t.error]);
+
+  function close() {
+    if (acting) return;
+    setSelected(null);
+    setReason("");
+    setConfirmId("");
+    setActionError("");
+  }
+  async function applyAction() {
+    if (!selected || acting || selected.item.id !== confirmId || reason.trim().length < 10) return;
+    setActing(true);
+    setActionError("");
+    try {
+      const endpoint = selected.kind === "keys" ? "revoke" : "quarantine";
+      const response = await fetchWithTimeout(`/api/platform/integrations/${endpoint}`, {
+        method: "POST", cache: "no-store", credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tenantId: selected.item.tenantId, id: selected.item.id, confirmId, reason: reason.trim() }),
+      });
+      const result = await response.json().catch(() => null) as { error?: string } | null;
+      if (!response.ok) throw new Error(result?.error || t.error);
+      setNotice(t.confirmed);
+      setSelected(null);
+      setReason("");
+      setConfirmId("");
+      setRefresh(x => x + 1);
+    } catch (e) { setActionError(e instanceof Error ? e.message : t.error); }
+    finally { setActing(false); }
+  }
+
+  return (
+    <div className="space-y-5 pb-10">
+      <PageHeader title={t.title} eyebrow={t.eyebrow} icon={<KeyRound className="h-5 w-5" />} description={t.subtitle}
+        actions={<Button variant="secondary" size="sm" onClick={() => setRefresh(v => v + 1)} icon={<RefreshCw className="h-4 w-4" />}>{t.refresh}</Button>} />
+      <div className="rounded-xl border border-edge bg-surface p-4 sm:p-5">
+        <div role="tablist" aria-label={t.title} className="mb-4 inline-flex rounded-xl border border-edge bg-surface-2 p-1">
+          {(["keys", "installations"] as const).map(tab => (
+            <button key={tab} type="button" role="tab" aria-selected={kind === tab} onClick={() => { setKind(tab); setOffset(0); setStatus("all"); }}
+              className={`min-h-10 rounded-lg px-4 text-sm font-semibold focus-visible:outline-2 focus-visible:outline-brand ${kind === tab ? "bg-surface text-brand shadow-sm" : "text-ink-3 hover:bg-surface"}`}>
+              {t[tab]}
+            </button>
+          ))}
+        </div>
+        <div className="grid gap-3 md:grid-cols-[2fr_1fr]">
+          <label className="relative"><span className="sr-only">{t.search}</span><Search className="absolute start-3 top-3 h-4 w-4 text-ink-3" aria-hidden /><input value={search} onChange={e => { setSearch(e.target.value); setOffset(0); }} maxLength={64} placeholder={t.search} className="h-11 w-full rounded-lg border border-edge bg-surface-2 ps-10 pe-3 text-sm text-ink focus-visible:outline-2 focus-visible:outline-brand" /></label>
+          <label><span className="sr-only">{t.workspace}</span><input value={tenant} onChange={e => { setTenant(e.target.value); setOffset(0); }} maxLength={120} placeholder={t.workspace} className="h-11 w-full rounded-lg border border-edge bg-surface-2 px-3 text-sm text-ink focus-visible:outline-2 focus-visible:outline-brand" /></label>
+        </div>
+        <div className="mt-3 flex flex-wrap gap-2">
+          {(["all", "active", "inactive"] as const).map(value => <button key={value} type="button" aria-pressed={status === value} onClick={() => { setStatus(value); setOffset(0); }} className={`min-h-9 rounded-full border px-3 text-xs font-semibold focus-visible:outline-2 focus-visible:outline-brand ${status === value ? "border-brand bg-brand-subtle text-brand" : "border-edge text-ink-3 hover:bg-surface-2"}`}>{t[value]}</button>)}
+        </div>
+      </div>
+      <div className="flex items-start gap-2 rounded-xl border border-warn-edge bg-warn-bg p-4 text-sm text-ink-2"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warn" aria-hidden /><span>{t.safety}</span></div>
+      {notice && <div role="status" className="rounded-lg border border-ok-edge bg-ok-bg p-3 text-sm text-ok">{notice}</div>}
+      {error && <ErrorState title={t.error} message={error} retry={() => setRefresh(v => v + 1)} />}
+      {!error && <Card className="overflow-hidden">
+        <div className="overflow-x-auto"><table className="data-table min-w-[800px]"><caption className="sr-only">{t.title}</caption><thead><tr><th scope="col">{t.integration}</th><th scope="col">{t.owner}</th><th scope="col">{t.state}</th><th scope="col">{t.activity}</th><th scope="col">{t.operation}</th></tr></thead>
+          <tbody>{loading ? <tr><td colSpan={5}><TableSkeleton rows={5} /></td></tr> : items.length === 0 ? <tr><td colSpan={5}><EmptyState icon={<Building2 className="h-5 w-5" />} title={t.empty} /></td></tr> : items.map(row => {
+            const active = isKey(row) ? (!row.revokedAt || row.graceActive) : row.enabled;
+            return <tr key={`${row.tenantId}-${row.id}`}>
+              <td><div className="flex items-center gap-2 font-semibold text-ink"><LockKeyhole className="h-4 w-4 text-brand" aria-hidden />{row.name}</div><div className="mt-1 font-mono text-xs text-ink-4" dir="ltr">{row.id}</div>{isKey(row) && row.installationName && <div className="mt-1 text-xs text-ink-3">{row.installationName}</div>}{!isKey(row) && <div className="mt-1 text-xs text-ink-3">{t.credentials}: {formatNumber(row.credentialCount)}</div>}</td>
+              <td><div className="text-sm text-ink">{row.tenantName}</div><div className="font-mono text-xs text-ink-4" dir="ltr">{row.tenantId}</div></td>
+              <td><StatusBadge tone={active ? (isKey(row) && row.graceActive ? "warn" : "ok") : "warn"} label={active ? (isKey(row) && row.graceActive ? t.readOnlyGrace : t.active) : t.inactive} size="sm" />{isKey(row) && row.readOnlyUntil && <div className="mt-1 text-xs text-ink-3">{formatDateTime(row.readOnlyUntil)}</div>}</td>
+              <td className="text-xs text-ink-3">{isKey(row) && row.lastUsedAt ? formatDateTime(row.lastUsedAt) : isKey(row) ? t.neverUsed : `${t.issued}: ${formatDateTime(row.createdAt)}`}</td>
+              <td>{active ? <Button size="xs" variant="danger" onClick={() => { setSelected({ item: row, kind }); setConfirmId(""); setReason(""); setActionError(""); }}>{kind === "keys" ? t.revoke : t.quarantine}</Button> : <span className="text-xs text-ink-4">{t.inactive}</span>}</td>
+            </tr>;
+          })}</tbody></table></div>
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-edge p-4 text-xs text-ink-3"><span>{formatNumber(items.length)} {t.page}</span><div className="flex gap-2"><Button size="xs" variant="secondary" disabled={loading || offset === 0} onClick={() => setOffset(n => Math.max(0, n - PAGE_SIZE))}>{t.previous}</Button><Button size="xs" variant="secondary" disabled={loading || !hasMore} onClick={() => setOffset(n => n + PAGE_SIZE)}>{t.next}</Button></div></div>
+      </Card>}
+      <div className="flex flex-wrap items-center gap-3 text-xs text-ink-3"><ShieldCheck className="h-4 w-4 text-ok" aria-hidden /><span>{t.never}</span><Link href="/platform/audit" className="font-semibold text-brand underline underline-offset-4">{t.audit}</Link></div>
+      <Modal open={selected !== null} onClose={close} title={t.confirmTitle} description={t.safety} footer={<><Button disabled={acting} variant="secondary" onClick={close}>{t.cancel}</Button><Button disabled={acting || reason.trim().length < 10 || confirmId !== selected?.item.id} loading={acting} variant="danger" onClick={() => void applyAction()}>{t.confirm}</Button></>}>
+        <p className="mb-4 text-sm text-ink-2">{selected?.item.name} · {selected?.item.tenantName}</p>
+        <Field label={t.confirmId} htmlFor="confirm-integration-id"><input id="confirm-integration-id" value={confirmId} onChange={e => setConfirmId(e.target.value)} autoComplete="off" spellCheck={false} className="mt-1 h-11 w-full rounded-lg border border-edge bg-surface-2 px-3 font-mono text-sm text-ink focus-visible:outline-2 focus-visible:outline-brand" /></Field>
+        <div className="mt-4"><Field label={t.reason} htmlFor="integration-reason"><Textarea id="integration-reason" value={reason} onChange={e => setReason(e.target.value)} maxLength={500} rows={3} /></Field></div>
+        {actionError && <div role="alert" className="mt-4 flex items-center gap-2 text-sm text-bad"><ShieldOff className="h-4 w-4" aria-hidden />{actionError}</div>}
+      </Modal>
+    </div>
+  );
+}

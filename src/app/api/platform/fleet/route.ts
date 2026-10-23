@@ -5,7 +5,7 @@ import { agents, printers, tenants } from "../../../../db/schema";
 import { queryWithTimeout } from "../../../../db/client";
 import { requirePlatformOwner, PlatformUnauthorizedError } from "../../../../lib/platform-auth";
 import { nonVirtualPrinterPredicate } from "../../../../lib/printer-virtual-sql";
-import { gatewayNow } from "../../../../lib/database-clock";
+import { databaseNowMs } from "../../../../lib/database-clock";
 import { getEffectiveAgentStatus, getEffectivePrinterStatus } from "../../../../lib/agent-availability";
 
 export const dynamic = "force-dynamic";
@@ -45,7 +45,8 @@ export async function GET(req: Request) {
       }).from(agents).innerJoin(tenants, eq(tenants.id, agents.tenantId))
         .where(and(...clauses)).orderBy(desc(agents.createdAt), desc(agents.id))
         .limit(limit + 1).offset(offset), 6_000, "platformAgentInventory");
-      return NextResponse.json({ items: rows.slice(0, limit).map(row => ({ ...row, reportedStatus: row.status, status: getEffectiveAgentStatus(row, gatewayNow()) })), hasMore: rows.length > limit, kind, limit, offset }, { headers: HEADERS });
+      const observedAt = new Date(await databaseNowMs());
+      return NextResponse.json({ items: rows.slice(0, limit).map(row => ({ ...row, reportedStatus: row.status, status: getEffectiveAgentStatus(row, observedAt) })), hasMore: rows.length > limit, kind, limit, offset, observedAt: observedAt.toISOString() }, { headers: HEADERS });
     } catch {
       return NextResponse.json({ error: "Agent inventory unavailable" }, { status: 503, headers: HEADERS });
     }
@@ -66,7 +67,8 @@ export async function GET(req: Request) {
       .where(and(...clauses, nonVirtualPrinterPredicate()))
       .orderBy(desc(printers.createdAt), desc(printers.id))
       .limit(limit + 1).offset(offset), 6_000, "platformPrinterInventory");
-    return NextResponse.json({ items: rows.slice(0, limit).map(row => ({ ...row, reportedStatus: row.status, status: getEffectivePrinterStatus(row, undefined, gatewayNow()) })), hasMore: rows.length > limit, kind, limit, offset }, { headers: HEADERS });
+    const observedAt = new Date(await databaseNowMs());
+    return NextResponse.json({ items: rows.slice(0, limit).map(row => ({ ...row, reportedStatus: row.status, status: getEffectivePrinterStatus(row, undefined, observedAt) })), hasMore: rows.length > limit, kind, limit, offset, observedAt: observedAt.toISOString() }, { headers: HEADERS });
   } catch {
     return NextResponse.json({ error: "Printer inventory unavailable" }, { status: 503, headers: HEADERS });
   }

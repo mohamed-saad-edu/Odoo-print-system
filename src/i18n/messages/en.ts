@@ -1821,6 +1821,7 @@ export const en = {
   "invite.loadingShort": "Loading invitation…",
   "invite.signIn": "Sign in",
   "platform.nav.jobs": "Print operations",
+  "platform.nav.integrations": "Integration control",
   "platform.nav.fleet": "Fleet control",
   "platform.nav.overview": "Overview",
   "platform.nav.tenants": "Tenants",

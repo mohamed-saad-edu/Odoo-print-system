@@ -27,6 +27,7 @@ export default function PlatformFleetPage() {
   const [refresh, setRefresh] = useState(0);
   const [loadedKey, setLoadedKey] = useState("");
   const [items, setItems] = useState<FleetItem[]>([]);
+  const [observedAt, setObservedAt] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -50,9 +51,10 @@ export default function PlatformFleetPage() {
       try {
         const res = await fetchWithTimeout(`/api/platform/fleet?${params}`, {cache:"no-store", signal: controller.signal});
         if (!res.ok) throw Error(String(res.status));
-        const data = await res.json() as { items?: FleetItem[]; hasMore?: boolean };
+        const data = await res.json() as { items?: FleetItem[]; hasMore?: boolean; observedAt?: string };
         if (cancelled) return;
         setItems(Array.isArray(data.items) ? data.items : []);
+        setObservedAt(typeof data.observedAt === "string" ? data.observedAt : null);
         setHasMore(data.hasMore === true);
         setError("");
       } catch { if (!cancelled) { setError(t.error); setItems([]); setHasMore(false); } }
@@ -93,13 +95,13 @@ export default function PlatformFleetPage() {
     {notice && <div role="status" className="rounded-lg border border-ok-edge bg-ok-bg p-3 text-sm text-ok">{notice}</div>}
     {error && <ErrorState title={t.error} message={error} retry={()=>setRefresh(x=>x+1)} />}
     {!error && <Card className="overflow-hidden"><div className="overflow-x-auto"><table className="data-table min-w-[780px]"><caption className="sr-only">{t.inventory}</caption><thead><tr><th>{t.node}</th><th>{t.owner}</th><th>{t.health}</th><th>{t.life}</th><th>{t.last}</th><th>{t.action}</th></tr></thead><tbody>{loading ? <tr><td colSpan={6}><TableSkeleton rows={5} /></td></tr> : items.length===0 ? <tr><td colSpan={6}><EmptyState title={t.empty} icon={<AlertCircle className="h-5 w-5" />} /></td></tr> : items.map(device => <tr key={`${device.tenantId}-${device.id}`}>
-      <td><div className="flex items-center gap-2 font-semibold text-ink">{kind==="agents" ? <Cpu className="h-4 w-4 text-brand" /> : <Printer className="h-4 w-4 text-brand" />}{device.name}</div><div className="mt-1 font-mono text-xs text-ink-4" dir="ltr">{device.id}</div>{kind==="printers" && <div className="mt-1 text-xs text-ink-3">{device.protocol || device.agentName || device.agentId || "—"}</div>}</td>
+      <td><div className="flex items-center gap-2 font-semibold text-ink">{kind==="agents" ? <Cpu className="h-4 w-4 text-brand" /> : <Printer className="h-4 w-4 text-brand" />}{device.name}</div><div className="mt-1 font-mono text-xs text-ink-4" dir="ltr">{device.id}</div>{kind==="printers" && <><div className="mt-1 text-xs text-ink-3">{device.protocol || device.agentName || device.agentId || "—"}</div>{device.sharedWithGateway === false && <div className="mt-1 text-xs font-semibold text-warn">{locale === "ar" ? "صاحب الطابعة منع المشاركة مع الجيتواي" : "Local owner has not shared with Gateway"}</div>}</>}</td>
       <td><div className="text-sm text-ink">{device.tenantName}</div><div className="font-mono text-xs text-ink-4" dir="ltr">{device.tenantId}</div></td>
       <td><StatusBadge size="sm" tone={healthTone(device.status)} label={device.status} /></td>
       <td><StatusBadge size="sm" tone={lifecycleTone(device.lifecycle)} label={device.lifecycle} /></td>
       <td className="text-xs text-ink-3">{device.lastSeenAt ? formatDateTime(device.lastSeenAt) : t.notNow}</td>
       <td>{device.lifecycle !== "retired" && <Button size="xs" variant={device.lifecycle === "active" ? "danger" : "secondary"} onClick={()=>{setSelected(device);setReason("");setActionError("");setPairing("");}}>{device.lifecycle === "active" ? t.disabled : t.active}</Button>}</td>
-    </tr>)}</tbody></table></div><div className="flex flex-wrap items-center justify-between gap-2 border-t border-edge p-4 text-xs text-ink-3"><span>{formatNumber(items.length)} {t.inventory}</span><div className="flex gap-2"><Button size="xs" disabled={loading||offset===0} onClick={()=>setOffset(x=>Math.max(0,x-LIMIT))}>{t.prev}</Button><Button size="xs" disabled={loading||!hasMore} onClick={()=>setOffset(x=>x+LIMIT)}>{t.next}</Button></div></div></Card>}
+    </tr>)}</tbody></table></div><div className="flex flex-wrap items-center justify-between gap-2 border-t border-edge p-4 text-xs text-ink-3"><span>{formatNumber(items.length)} {t.inventory}{observedAt ? ` · ${formatDateTime(observedAt)}` : ""}</span><div className="flex gap-2"><Button size="xs" disabled={loading||offset===0} onClick={()=>setOffset(x=>Math.max(0,x-LIMIT))}>{t.prev}</Button><Button size="xs" disabled={loading||!hasMore} onClick={()=>setOffset(x=>x+LIMIT)}>{t.next}</Button></div></div></Card>}
     <div className="flex items-start gap-2 rounded-lg border border-edge bg-surface-2 p-3 text-sm text-ink-3"><ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-ok" aria-hidden /><p>{t.warning} <Link href="/platform/audit" className="font-semibold text-brand underline underline-offset-4">{t.audit}</Link></p></div>
     <Modal open={selected!==null} onClose={()=>{if(!acting){setSelected(null);setPairing("");setReason("");}}} title={pairing ? t.pairing : t.confirmTitle} description={pairing ? t.pairingHelp : t.explanation} footer={pairing ? <Button onClick={()=>{setSelected(null);setPairing("");setReason("");}}>{t.close}</Button> : <><Button disabled={acting} variant="secondary" onClick={()=>setSelected(null)}>{t.close}</Button><Button disabled={acting||reason.trim().length<5} loading={acting} variant={selected?.lifecycle === "active" ? "danger" : "primary"} onClick={()=>void applyLifecycle()}>{t.confirm}</Button></>}>
       {pairing ? <div className="rounded-xl border border-edge-accent bg-brand-subtle p-4"><div className="flex gap-2 text-sm font-semibold text-brand"><LockKeyhole className="h-4 w-4" />{t.pairing}</div><code className="mt-3 block select-all text-center font-mono text-2xl tracking-widest text-ink" dir="ltr">{pairing}</code><p className="mt-3 text-xs text-ink-3">{t.pairingHelp}</p></div> : <><p className="mb-4 text-sm text-ink-2">{selected?.name} · {selected?.tenantName}</p><Field label={t.reason} htmlFor="lifecycle-reason"><Textarea id="lifecycle-reason" value={reason} onChange={e=>setReason(e.target.value)} maxLength={300} rows={3} /></Field>{actionError && <p role="alert" className="mt-3 text-sm text-bad">{actionError}</p>}</>}

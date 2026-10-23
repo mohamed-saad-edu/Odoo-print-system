@@ -14,6 +14,7 @@ import {
   ArrowRight,
   ListChecks,
   Wifi,
+  KeyRound,
 } from "lucide-react";
 import {
   FleetHealthChart,
@@ -54,6 +55,10 @@ type Stats = {
   users: { total: number; verified: number };
   agents: { total: number; active: number; online: number; offline: number; unknown: number; inactive: number };
   printers: { total: number; active: number; online: number; busy: number; offline: number; error: number; unknown: number; inactive: number };
+  integrations?: {
+    keys: { total: number; active: number; grace: number; revoked: number };
+    installations: { total: number; enabled: number; quarantined: number };
+  };
   jobs24h: { total: number; success: number; failed: number; queued: number; inFlight: number; expired: number };
   jobs24hHourly: OverviewHourlyPoint[];
 };
@@ -105,7 +110,7 @@ const LIFECYCLE_META: Record<TenantRow["lifecycle"], { tone: Tone; key: MessageK
 
 export default function PlatformDashboardPage() {
   const router = useRouter();
-  const { t, formatNumber, formatDate } = useI18n();
+  const { t, locale, formatNumber, formatDate } = useI18n();
   const [stats, setStats] = useState<Stats | null>(null);
   const [tenants, setTenants] = useState<TenantRow[]>([]);
   const [subscriptions, setSubscriptions] = useState<SubscriptionRow[]>([]);
@@ -248,7 +253,7 @@ export default function PlatformDashboardPage() {
             </Callout>
           )}
 
-          <section className="grid gap-3 sm:grid-cols-3" aria-label="Gateway operations">
+          <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4" aria-label="Gateway operations">
             <Link href="/platform/jobs" className="group relative flex min-h-[100px] items-center gap-4 overflow-hidden rounded-xl border border-edge bg-surface px-5 py-4 transition-[border-color,box-shadow,transform] hover:-translate-y-0.5 hover:border-brand/50 hover:shadow-md focus-visible:outline-2 focus-visible:outline-brand">
               <span className="rounded-xl bg-brand-subtle p-3 text-brand"><ListChecks className="h-5 w-5" aria-hidden /></span>
               <span className="min-w-0 flex-1"><span className="block text-sm font-semibold text-ink">{t("platform.nav.jobs")}</span><span className="mt-1 block text-xs text-ink-3">{formatNumber(stats?.jobs24h.total ?? 0)} / 24h</span></span><ArrowRight className="h-4 w-4 text-ink-4 transition-transform group-hover:translate-x-1 rtl:-scale-x-100" aria-hidden />
@@ -256,6 +261,10 @@ export default function PlatformDashboardPage() {
             <Link href="/platform/fleet" className="group flex min-h-[100px] items-center gap-4 rounded-xl border border-edge bg-surface px-5 py-4 transition-[border-color,box-shadow,transform] hover:-translate-y-0.5 hover:border-brand/50 hover:shadow-md focus-visible:outline-2 focus-visible:outline-brand">
               <span className="rounded-xl bg-ok-bg p-3 text-ok"><Wifi className="h-5 w-5" aria-hidden /></span>
               <span className="min-w-0 flex-1"><span className="block text-sm font-semibold text-ink">{t("platform.nav.fleet")}</span><span className="mt-1 block text-xs text-ink-3">{formatNumber(stats?.agents.online ?? 0)} / {formatNumber(stats?.agents.active ?? 0)} {t("platform.fleet.agents")}</span></span><ArrowRight className="h-4 w-4 text-ink-4 transition-transform group-hover:translate-x-1 rtl:-scale-x-100" aria-hidden />
+            </Link>
+            <Link href="/platform/integrations" className="group flex min-h-[100px] items-center gap-4 rounded-xl border border-edge bg-surface px-5 py-4 transition-[border-color,box-shadow,transform] hover:-translate-y-0.5 hover:border-brand/50 hover:shadow-md focus-visible:outline-2 focus-visible:outline-brand">
+              <span className="rounded-xl bg-info-bg p-3 text-info"><KeyRound className="h-5 w-5" aria-hidden /></span>
+              <span className="min-w-0 flex-1"><span className="block text-sm font-semibold text-ink">{t("platform.nav.integrations")}</span><span className="mt-1 block text-xs text-ink-3">{formatNumber(stats?.integrations?.keys.active ?? 0)} {locale === "ar" ? "مفتاح مصرح له" : "authorized keys"} · {formatNumber(stats?.integrations?.keys.grace ?? 0)} {locale === "ar" ? "قراءة خلال فترة السماح" : "read-only grace"} · {formatNumber(stats?.integrations?.installations.quarantined ?? 0)} {locale === "ar" ? "تثبيت محجوز" : "quarantined"}</span></span><ArrowRight className="h-4 w-4 text-ink-4 transition-transform group-hover:translate-x-1 rtl:-scale-x-100" aria-hidden />
             </Link>
             <Link href="/platform/audit" className="group flex min-h-[100px] items-center gap-4 rounded-xl border border-edge bg-surface px-5 py-4 transition-[border-color,box-shadow,transform] hover:-translate-y-0.5 hover:border-brand/50 hover:shadow-md focus-visible:outline-2 focus-visible:outline-brand">
               <span className="rounded-xl bg-warn-bg p-3 text-warn"><ShieldCheck className="h-5 w-5" aria-hidden /></span>
