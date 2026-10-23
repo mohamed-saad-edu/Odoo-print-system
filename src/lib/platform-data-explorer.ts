@@ -42,14 +42,19 @@ export async function listExploreTables(client: PoolClient): Promise<ExploreTabl
 }
 export async function exploreRows(client: PoolClient, table: ExploreTable, search: string, offset: number, limit: number) {
   const colSQL = table.columns.map(quote).join(", ");
-  const idColumn = table.primaryKey;
-  const where = search ? idColumn ? `WHERE ${quote(idColumn)}::text = $1` : "" : "";
-  if (search && !idColumn) return [];
-  const args = search ? [search,limit,offset] : [limit,offset];
+  // Search visible scalar fields only; never fetch secrets or interpolate user input.
+  // Include exact/partial ID and common human labels (names, slugs, statuses).
+  const preferred = table.columns.filter(c => /^(id|tenant_id|agent_id|printer_id|name|display_name|slug|status|lifecycle|plan_id|job_id|code|external_id|domain|type|protocol)$/i.test(c)).slice(0,10);
+  const searchable = preferred.length ? preferred : table.primaryKey ? [table.primaryKey] : [];
+  // Escape LIKE wildcards so user input is literal text, not a query language.
+  const term = search.replace(/[\\%_]/g, m => "\\\\" + m);
+  const where = search && searchable.length ? "WHERE (" + searchable.map(c=>`${quote(c)}::text ILIKE $1 ESCAPE '\\\\'`).join(" OR ") + ")" : "";
+  const args = search ? [`%${term}%`,limit,offset] : [limit,offset];
   const index = search ? 2 : 1;
+  if (search && !searchable.length) return [];
   const result = await client.query<Record<string,unknown>>(
     `SELECT ${colSQL} FROM ${quote(table.name)} ${where}
-      ORDER BY ${quote(table.columns.includes("created_at") ? "created_at" : idColumn ?? table.columns[0])} DESC
+      ORDER BY ${quote(table.columns.includes("created_at") ? "created_at" : table.primaryKey ?? table.columns[0])} DESC
       LIMIT $${index} OFFSET $${index + 1}`,args);
   return result.rows.map(row=>Object.fromEntries(Object.entries(row).map(([k,v])=>[k,
      typeof v==="string" && v.length>320 ? v.slice(0,320)+"…" : v instanceof Date ? v.toISOString() : v])));
