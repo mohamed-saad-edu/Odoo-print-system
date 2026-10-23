@@ -10,6 +10,7 @@ import { generateOdooApiKey } from "../../../../lib/odoo-auth";
 import { eq, and, desc, sql } from "drizzle-orm";
 import { z } from "zod";
 import { writeAuditEvent } from "../../../../lib/audit";
+import { deleteApiKeyInTransaction } from "../../../../lib/api-key-deletion";
 import { isTenantBillingError, requireTenantBillingAccess } from "../../../../lib/entitlements";
 
 const keyInputSchema = z.object({
@@ -137,19 +138,12 @@ export async function DELETE(req: Request) {
         .where(and(eq(apiKeys.id, id), eq(apiKeys.tenantId, manager.tenantId), sql`${apiKeys.hashedKey} NOT LIKE 'deleted:%'`)).for("update");
       if (!existing.length) return null;
       await requireManagerActorInTransaction(tx, manager, "integrations.manage");
-      // Saturate the control-plane int4 revision at its maximum so key
-      // removal remains possible even if Odoo submitted revision 2147483647.
-      // The revoked/removed credential can never reactivate at that revision.
-      // Erase the usable credential, retaining only the FK history anchor.
-      // Nulling api_key_id would misclassify accepted Odoo jobs as internal
-      // and make the addon's reconciliation/status lookups lose those jobs.
-      await tx.update(apiKeys).set({ hashedKey: `deleted:${id}`, revokedAt: sql`clock_timestamp()`,
-        readOnlyUntil: null, odooEnabled: false, odooEnabledRevision: sql`LEAST(${apiKeys.odooEnabledRevision}, 2147483646) + 1`,
-        odooEnabledUpdatedAt: sql`clock_timestamp()` })
-        .where(and(eq(apiKeys.id, id), eq(apiKeys.tenantId, manager.tenantId)));
+      // Physically erase the credential row; past jobs/receipts keep only
+      // their historical API-key identifier, never reusable authorization.
+      if (!(await deleteApiKeyInTransaction(tx, manager.tenantId, id))) return null;
       await writeAuditEvent({ tenantId: manager.tenantId, actorType: manager.userId ? "user" : "system",
         actorId: manager.userId ?? "legacy-manager", action: "api_key.deleted", resourceType: "api_key", resourceId: id,
-        metadata: { credentialErased: true, historyReferenceRetained: true } }, tx);
+        metadata: { credentialDeleted: true, historyReferenceRetained: true } }, tx);
       return id;
     });
     return removed ? NextResponse.json({ id: removed, removed: true }) : NextResponse.json({ error: "API key not found" }, { status: 404 });

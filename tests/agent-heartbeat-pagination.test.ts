@@ -18,7 +18,16 @@ function makePrinter(id: string) {
     connectionType: "network",
     protocol: "raw",
     status: "online",
-    config: { ip: "10.0.0.10", port: 9100 },
+    // Pagination fixtures must model *distinct physical endpoints*, not
+    // 501 separately named IDs pointing to the very same TCP socket.
+    config: { ip: (() => {
+      const numeric = /^hb-(\d{4})$/.exec(id);
+      if (numeric) return `10.1.${Math.floor(Number(numeric[1]) / 250)}.${(Number(numeric[1]) % 250) + 1}`;
+      if (id === "hb-replacement") return "10.10.10.1";
+      if (id === "hb-over-limit") return "10.10.10.2";
+      if (id === "gateway-owned-deletion-pending") return "10.10.10.3";
+      return "10.0.0.10";
+    })(), port: 9100 },
     capabilities: { supported_protocols: ["raw"] },
   };
 }
@@ -125,6 +134,34 @@ suite("agent heartbeat pagination contract", () => {
     const results = await Promise.all([heartbeat(f.agentAuth, first), heartbeat(f.agentAuth, fresh)]);
     expect(results.map(r => r.status)).toEqual([409, 200]);
     expect((await pool().query("SELECT inventory_present FROM printers WHERE tenant_id = $1 AND id = $2", [f.tenantId, f.printerId])).rows[0].inventory_present).toBe(true);
+  });
+
+  it("reconciles pre-migration duplicate IDs without unique-index failure or changing accepted IDs", async () => {
+    const f = await seedFixture();
+    // These two legacy records predate physical_identity_key. They describe
+    // the same real TCP socket but retain distinct historical printer IDs.
+    await pool().query(`UPDATE printers SET connection_type='network', protocol='raw',
+      config='{"ip":"10.0.0.10","port":9100}'::jsonb, physical_identity_key=NULL
+      WHERE tenant_id=$1 AND id=$2`, [f.tenantId, f.printerId]);
+    await pool().query(`INSERT INTO printers
+      (id,tenant_id,agent_id,name,connection_type,protocol,config,physical_identity_key)
+      VALUES('legacy-duplicate-printer',$1,$2,'Legacy duplicate','network','raw',
+        '{"ip":"10.0.0.10","port":9100}'::jsonb,NULL)`, [f.tenantId, f.agentId]);
+
+    const response = await heartbeat(f.agentAuth, snapshotHeartbeat("legacy-duplicates", true, [
+      makePrinter(f.printerId), makePrinter("legacy-duplicate-printer"),
+    ]));
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.skippedPrinters).toEqual(expect.arrayContaining([
+      { id: "legacy-duplicate-printer", reason: `duplicate_physical_endpoint_registered_as_${f.printerId}` },
+    ]));
+    const rows = await pool().query(`SELECT id,physical_identity_key FROM printers
+      WHERE tenant_id=$1 AND id=ANY($2::text[]) ORDER BY id`,
+      [f.tenantId, [f.printerId, "legacy-duplicate-printer"]]);
+    expect(rows.rows).toHaveLength(2);
+    expect(rows.rows.find(row => row.id === f.printerId)?.physical_identity_key).toMatch(/^v1:[0-9a-f]{64}$/);
+    expect(rows.rows.find(row => row.id === "legacy-duplicate-printer")?.physical_identity_key).toBeNull();
   });
 
   it("accepts 501 printers across multiple pages without truncating inventory", async () => {

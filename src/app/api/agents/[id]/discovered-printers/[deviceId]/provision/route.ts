@@ -13,6 +13,7 @@ import { requireActiveTenantInTransaction, TenantSuspendedError, TenantDeletedEr
 import { logError } from "../../../../../../../lib/log";
 
 import { isVirtualPrinterRecord } from "../../../../../../../lib/printer-virtual";
+import { matchingPhysicalPrinter, physicalPrinterIdentityKey, samePrinterProtocol } from "../../../../../../../lib/physical-printer-identity";
 
 export const dynamic = "force-dynamic";
 
@@ -180,6 +181,17 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     // Spooler queues and stable Agent identities need convergence as well as
     // network endpoint dedupe; never create a second runtime target for one queue.
     const existingPrinters = await tx.query.printers.findMany({ where: and(eq(printers.agentId, agentId), eq(printers.tenantId, claims.tenantId)) });
+    const matching = matchingPhysicalPrinter(existingPrinters, { connectionType: transport.connectionType, protocol: transport.protocol, config: printerConfig });
+    if (matching) {
+      if (matching.lifecycle === "retired" || matching.sharedWithGateway === false)
+        return { kind: "invalid_endpoint" as const, error: "This physical endpoint was removed or withheld from the Gateway" };
+      if (!samePrinterProtocol(matching, { connectionType: transport.connectionType, protocol: transport.protocol, config: printerConfig })) {
+        return { kind: "invalid_endpoint" as const, error: "Physical endpoint already uses another print protocol. Configure the existing printer." };
+      }
+      await tx.update(discoveredDevices).set({ candidateStatus: "provisioned", provisionedPrinterId: matching.id, updatedAt: sql`now()` })
+        .where(and(eq(discoveredDevices.id, deviceId), eq(discoveredDevices.tenantId, claims.tenantId), eq(discoveredDevices.agentId, agentId), eq(discoveredDevices.candidateStatus, "verified")));
+      return { kind: "already" as const, printerId: matching.id };
+    }
     const existing = existingPrinters.find(p => p.connectionType === transport.connectionType && p.protocol === transport.protocol && (
       (transport.connectionType === "spooler" && (p.config as { spooler_name?: string; address?: string } | null)?.spooler_name === (printerConfig as { spooler_name?: string }).spooler_name)
       || ((p.id === device.identityKey || p.id === device.id) && JSON.stringify(canonicalize(p.config)) === JSON.stringify(canonicalize(printerConfig)))
@@ -214,6 +226,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       managementSource: "manager",
       desiredRevision: 1,
       config: printerConfig,
+      physicalIdentityKey: physicalPrinterIdentityKey({ connectionType: transport.connectionType, protocol: transport.protocol, config: printerConfig }),
       capabilities: {
         ...(device.capabilities as Record<string, unknown> | null ?? {}),
       },

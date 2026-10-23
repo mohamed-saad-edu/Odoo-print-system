@@ -38,7 +38,7 @@ type Tenant = {
   printerCount: number;
 };
 
-type DialogMode = "suspend" | "reactivate";
+type DialogMode = "suspend" | "reactivate" | "delete";
 
 const LIFECYCLE_META: Record<Tenant["lifecycle"], { tone: Tone; key: MessageKey }> = {
   active: { tone: "ok", key: "platform.tenants.lifecycle.active" },
@@ -59,6 +59,7 @@ export default function PlatformTenantsPage() {
   const [selectedTenant, setSelectedTenant] = useState<Tenant | null>(null);
   const [dialogMode, setDialogMode] = useState<DialogMode>("suspend");
   const [suspendReason, setSuspendReason] = useState("");
+  const [confirmId, setConfirmId] = useState("");
   const [actionLoading, setActionLoading] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
@@ -92,30 +93,34 @@ export default function PlatformTenantsPage() {
     if (actionLoading) return;
     setSelectedTenant(null);
     setSuspendReason("");
+    setConfirmId("");
     setActionError(null);
   }
 
   function handleRefresh() { setError(null); setReloadKey((k) => k + 1); }
   function openSuspend(tenant: Tenant) { setSelectedTenant(tenant); setDialogMode("suspend"); setSuspendReason(""); setActionError(null); }
   function openReactivate(tenant: Tenant) { setSelectedTenant(tenant); setDialogMode("reactivate"); setSuspendReason(""); setActionError(null); }
+  function openDelete(tenant: Tenant) { setSelectedTenant(tenant); setDialogMode("delete"); setSuspendReason(""); setConfirmId(""); setActionError(null); }
 
   async function handleLifecycleAction() {
     if (!selectedTenant) return;
     const reason = suspendReason.trim();
-    if (dialogMode === "suspend" && !reason) { setActionError(t("platform.tenants.reasonMissing")); return; }
+    if (dialogMode !== "reactivate" && !reason) { setActionError(t("platform.tenants.reasonMissing")); return; }
+    if (dialogMode === "delete" && (reason.length < 10 || confirmId !== selectedTenant.id)) { setActionError(locale === "ar" ? "اكتب معرّف مساحة العمل وسبب واضح للحذف." : "Enter the exact workspace ID and a deletion reason."); return; }
     setActionLoading(true); setActionError(null); setNotice(null);
-    const nextLifecycle = dialogMode === "suspend" ? "suspended" : "active";
+    const nextLifecycle = dialogMode === "suspend" ? "suspended" : dialogMode === "delete" ? "deleted" : "active";
     try {
-      const endpoint = dialogMode === "suspend" ? `/api/platform/tenants/${selectedTenant.id}/suspend` : `/api/platform/tenants/${selectedTenant.id}/reactivate`;
+      const endpoint = `/api/platform/tenants/${encodeURIComponent(selectedTenant.id)}/${dialogMode === "delete" ? "delete" : dialogMode === "suspend" ? "suspend" : "reactivate"}`;
       const options: RequestInit = { method: "POST", headers: { "Content-Type": "application/json" } };
-      if (dialogMode === "suspend") options.body = JSON.stringify({ reason });
+      if (dialogMode !== "reactivate") options.body = JSON.stringify(dialogMode === "delete" ? { reason, confirmId } : { reason });
       const res = await fetchWithTimeout(endpoint, options);
       if (!res.ok) throw new Error(t("platform.tenants.actionFailedBody"));
       const tenantName = selectedTenant.name;
-      setSelectedTenant(null); setSuspendReason(""); setActionError(null);
+      setSelectedTenant(null); setSuspendReason(""); setConfirmId(""); setActionError(null);
       setNotice(
         nextLifecycle === "suspended"
           ? t("platform.tenants.noticeSuspended", { name: tenantName })
+          : nextLifecycle === "deleted" ? (locale === "ar" ? `تم حذف مساحة العمل ${tenantName} وإلغاء الوصول إليها.` : `Workspace ${tenantName} deleted and access revoked.`)
           : t("platform.tenants.noticeReactivated", { name: tenantName }),
       );
       handleRefresh();
@@ -144,6 +149,7 @@ export default function PlatformTenantsPage() {
             disabled: actionLoading,
             onSelect: () => openSuspend(tenant),
           },
+          { key: "delete", label: locale === "ar" ? "حذف مساحة العمل" : "Delete workspace", icon: <AlertOctagon className="h-4 w-4" />, tone: "danger", disabled: actionLoading, onSelect: () => openDelete(tenant) },
         ]
       : tenant.lifecycle === "suspended"
         ? [
@@ -154,6 +160,7 @@ export default function PlatformTenantsPage() {
               disabled: actionLoading,
               onSelect: () => openReactivate(tenant),
             },
+            { key: "delete", label: locale === "ar" ? "حذف مساحة العمل" : "Delete workspace", icon: <AlertOctagon className="h-4 w-4" />, tone: "danger", disabled: actionLoading, onSelect: () => openDelete(tenant) },
           ]
         : [];
 
@@ -354,20 +361,20 @@ export default function PlatformTenantsPage() {
       <Modal
         open={selectedTenant !== null}
         onClose={closeDialog}
-        title={dialogMode === "suspend" ? t("platform.tenants.suspendTitle") : t("platform.tenants.reactivateTitle")}
-        description={dialogMode === "suspend" ? t("platform.tenants.suspendDescription") : t("platform.tenants.reactivateDescription")}
+        title={dialogMode === "delete" ? (locale === "ar" ? "حذف مساحة العمل" : "Delete workspace") : dialogMode === "suspend" ? t("platform.tenants.suspendTitle") : t("platform.tenants.reactivateTitle")}
+        description={dialogMode === "delete" ? (locale === "ar" ? "إجراء نهائي يوقف وصول المستخدمين والأيجنت. يتم حفظ سجلات المحاسبة والطباعة للمراجعة." : "Permanently disables workspace access. Billing and print history stay retained for audit.") : dialogMode === "suspend" ? t("platform.tenants.suspendDescription") : t("platform.tenants.reactivateDescription")}
         footer={
           <>
             <Button variant="secondary" onClick={closeDialog} disabled={actionLoading}>
               {t("common.cancel")}
             </Button>
             <Button
-              variant={dialogMode === "suspend" ? "danger" : "primary"}
+              variant={dialogMode !== "reactivate" ? "danger" : "primary"}
               onClick={() => void handleLifecycleAction()}
-              disabled={actionLoading || (dialogMode === "suspend" && !suspendReason.trim())}
+              disabled={actionLoading || (dialogMode !== "reactivate" && !suspendReason.trim()) || (dialogMode === "delete" && (suspendReason.trim().length < 10 || confirmId !== selectedTenant?.id))}
               loading={actionLoading}
             >
-              {dialogMode === "suspend" ? t("platform.tenants.suspendTitle") : t("platform.tenants.reactivateTitle")}
+              {dialogMode === "delete" ? (locale === "ar" ? "تأكيد الحذف" : "Confirm deletion") : dialogMode === "suspend" ? t("platform.tenants.suspendTitle") : t("platform.tenants.reactivateTitle")}
             </Button>
           </>
         }
@@ -379,7 +386,7 @@ export default function PlatformTenantsPage() {
               <div dir="ltr" className="mt-1 font-mono text-xs text-ink-3 [unicode-bidi:plaintext]">{selectedTenant.id}</div>
             </div>
 
-            {dialogMode === "suspend" ? (
+            {dialogMode !== "reactivate" ? (
               <>
                 <Callout tone="warn" title={t("platform.tenants.whatSuspensionDoes")} icon={<Ban className="h-4 w-4" />}>
                   {t("platform.tenants.whatSuspensionBody")}
@@ -401,6 +408,9 @@ export default function PlatformTenantsPage() {
                     maxLength={500}
                   />
                 </Field>
+                {dialogMode === "delete" && <Field label={locale === "ar" ? "اكتب معرّف مساحة العمل للتأكيد" : "Type the exact workspace ID to confirm"} htmlFor="workspace-delete-confirm">
+                  <Input id="workspace-delete-confirm" autoComplete="off" value={confirmId} onChange={event => setConfirmId(event.target.value)} placeholder={selectedTenant.id} />
+                </Field>}
                 <div className="text-end text-xs text-ink-3 tabular">{formatNumber(suspendReason.length)}/500</div>
               </>
             ) : (

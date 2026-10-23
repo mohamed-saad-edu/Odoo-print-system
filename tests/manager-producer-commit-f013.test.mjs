@@ -58,6 +58,7 @@ const lib={
  }}),
  '/lib/entitlements':stub({requireTenantBillingAccess:async(t,id)=>{state.events.push('billing entitlement '+id)},isTenantBillingError:()=>false}),
  '/lib/odoo-auth':stub({generateOdooApiKey:()=>({raw:'secret',hashed:'hash',id:'key1'})}),
+ '/lib/api-key-deletion':stub({deleteApiKeyInTransaction:async()=>{throw Error('Unexpected credential deletion in creation test')}}),
  '/lib/audit':stub({writeAuditEvent:async()=>{state.audit++}}),
  '/lib/action-error':stub({ActionError:class ActionError extends Error{constructor(msg,status,code){super(msg);this.status=status;this.code=code}}}),
  '/lib/request-limits':stub({hasBodyOverLimit:()=>false}),

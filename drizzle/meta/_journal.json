@@ -603,6 +603,13 @@
       "when": 1792700000000,
       "tag": "0085_odoo_installation_idempotency",
       "breakpoints": true
+    },
+    {
+      "idx": 86,
+      "version": "7",
+      "when": 1792790000000,
+      "tag": "0086_printer_identity_and_api_key_deletion",
+      "breakpoints": true
     }
   ]
 }

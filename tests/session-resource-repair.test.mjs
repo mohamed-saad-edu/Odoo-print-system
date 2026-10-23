@@ -45,8 +45,8 @@ test('temporary session failure is not treated as a logout or retried mutation',
 
 function fixture() {
   const tables={};
-  for(const name of ['agents','printers','printJobs','printJobReceipts','apiKeys','discoveredDevices','discoverySessions']) tables[name]=new Proxy({name},{get:(o,k)=>k==='name'?o.name:{field:k}});
-  const rows={agents:[{id:'a',tenantId:'t',status:'online',lifecycle:'active'},{id:'foreign',tenantId:'other'}],printers:[{id:'p',agentId:'a',tenantId:'t'},{id:'f',agentId:'foreign',tenantId:'other'}],printJobs:[],printJobReceipts:[],apiKeys:[{id:'key',tenantId:'t',revokedAt:null}],discoveredDevices:[],discoverySessions:[]};
+  for(const name of ['agents','printers','printJobs','printJobReceipts','apiKeys','odooInstallationCredentials','discoveredDevices','discoverySessions']) tables[name]=new Proxy({name},{get:(o,k)=>k==='name'?o.name:{field:k}});
+  const rows={agents:[{id:'a',tenantId:'t',status:'online',lifecycle:'active'},{id:'foreign',tenantId:'other'}],printers:[{id:'p',agentId:'a',tenantId:'t'},{id:'f',agentId:'foreign',tenantId:'other'}],printJobs:[],printJobReceipts:[],apiKeys:[{id:'key',tenantId:'t',revokedAt:null}],odooInstallationCredentials:[],discoveredDevices:[],discoverySessions:[]};
   const events=[],locks=[];
   const eq=(column,value)=>row=>row[column.field]===value;
   const and=(...tests)=>row=>tests.filter(Boolean).every(fn=>fn(row));
@@ -122,23 +122,30 @@ test('Agent deletion rolls back runtime and receipt writes when audit fails',asy
   const api=await deletion(f);await assert.rejects(api.deleteAgent('a'),/audit unavailable/);
   assert.equal(f.rows.agents.length,2);assert.equal(f.rows.printJobs.length,1);assert.equal(f.rows.printJobReceipts.length,0);
 });
+async function keyDeletionApi(f) {
+  const helper = await actual('src/lib/api-key-deletion.ts', f.globals,
+    s => s.slice(s.indexOf('export async function deleteApiKeyInTransaction')));
+  f.globals.deleteApiKeyInTransaction = helper.deleteApiKeyInTransaction;
+  return actual('src/app/api/odoo/keys/route.ts', f.globals,
+    s => s.slice(s.indexOf('export async function DELETE')));
+}
 test('permanent active key deletion retains accepted work and key/job audit attribution',async()=>{
-  const f=fixture();f.rows.printJobs.push(job('j','printing'));
-  const api=await actual('src/app/api/odoo/keys/route.ts',f.globals,s=>s.slice(s.indexOf('export async function DELETE')));
+  const f=fixture();f.rows.printJobs.push(job('j','printing'));f.rows.odooInstallationCredentials.push({id:'binding',tenantId:'t',apiKeyId:'key'});
+  const api=await keyDeletionApi(f);
   const result=await api.DELETE(new Request('https://gateway/api/odoo/keys',{method:'DELETE',body:JSON.stringify({id:'key',remove:true})}));
-  assert.equal(result.status,200);assert.equal(f.rows.apiKeys.length,1);
-  assert.equal(f.rows.apiKeys[0].hashedKey,'deleted:key');assert.equal(f.rows.apiKeys[0].odooEnabled,false);assert.equal(f.rows.apiKeys[0].readOnlyUntil,null);
+  assert.equal(result.status,200);assert.equal(f.rows.apiKeys.length,0);assert.equal(f.rows.odooInstallationCredentials.length,0);
+  assert.equal(f.rows.apiKeys.some(k=>k.id==='key'),false);
   assert.equal(f.rows.printJobs[0].status,'printing');assert.equal(f.rows.printJobs[0].apiKeyId,'key');
-  assert.equal(f.events[0].resourceId,'key');assert.equal(f.events[0].metadata.credentialErased,true);
+  assert.equal(f.events[0].resourceId,'key');assert.equal(f.events[0].metadata.credentialDeleted,true);
   const repeat=await api.DELETE(new Request('https://gateway/api/odoo/keys',{method:'DELETE',body:JSON.stringify({id:'key',remove:true})}));assert.equal(repeat.status,404);
 });
 test('permanent key removal remains tenant scoped and rolls back on audit failure',async()=>{
   const f=fixture();f.rows.apiKeys[0].tenantId='other';
-  const api=await actual('src/app/api/odoo/keys/route.ts',f.globals,s=>s.slice(s.indexOf('export async function DELETE')));
+  const api=await keyDeletionApi(f);
   const request=()=>new Request('https://gateway/api/odoo/keys',{method:'DELETE',body:JSON.stringify({id:'key',remove:true})});
   assert.equal((await api.DELETE(request())).status,404);assert.equal(f.rows.apiKeys.length,1);
   f.rows.apiKeys[0].tenantId='t';f.rows.printJobs.push(job('j'));f.globals.writeAuditEvent=async()=>{throw new Error('audit unavailable');};
-  const other=await actual('src/app/api/odoo/keys/route.ts',f.globals,s=>s.slice(s.indexOf('export async function DELETE')));
+  const other=await keyDeletionApi(f);
   await assert.rejects(other.DELETE(request()),/audit unavailable/);assert.equal(f.rows.apiKeys.length,1);assert.equal(f.rows.printJobs[0].apiKeyId,'key');
 });
 test('Dashboard expected failures cross the action boundary as explicit data',async()=>{

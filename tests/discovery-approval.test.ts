@@ -406,10 +406,12 @@ suite("discovery trust and approval flow", () => {
       await managerRequest(manager.token, `/api/agents/${f.agentId}/discovered-printers/device-zpl-on-shared-socket/provision`),
       { params: Promise.resolve({ id: f.agentId, deviceId: "device-zpl-on-shared-socket" }) } as any,
     );
-    expect(result.status).toBe(201);
-    expect((await result.json()).printerId).not.toBe("existing_escpos_socket");
+    // One physical target must not be registered a second time with a different
+    // print language: it could produce random ESC/POS/ZPL bytes on paper.
+    expect(result.status).toBe(422);
+    expect((await result.json()).code).toBe("INVALID_PRINTER_ENDPOINT");
     const printers = await pool().query(`SELECT protocol FROM printers WHERE tenant_id = $1 AND agent_id = $2 AND config->>'ip' = '192.168.10.78'`, [f.tenantId, f.agentId]);
-    expect(new Set(printers.rows.map((row: { protocol: string }) => row.protocol))).toEqual(new Set(["escpos", "zpl"]));
+    expect(printers.rows.map((row: { protocol: string }) => row.protocol)).toEqual(["escpos"]);
   });
 
   it("refuses to synthesize a Windows queue from a network discovery candidate", async () => {
