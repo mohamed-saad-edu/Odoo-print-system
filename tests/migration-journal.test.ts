@@ -68,10 +68,8 @@ describe("Drizzle Migration Journal & File Integrity", () => {
 
     expect(schemaTables.size).toBeGreaterThan(0);
     expect(snapshotTables).toEqual(schemaTables);
-    // The simulation outbox is a distinct tenant/Agent-scoped table, NOT a
-    // physical printer or a print job. Its claim and privacy limits must be
-    // The former simulation-only queue is removed by the final forward
-    // migration; it must NOT survive in the runtime schema snapshot.
+    // Historical migration 0083 remains immutable, but migration 0088 retires
+    // its simulation-only storage from the final runtime schema.
     expect(snapshot.tables).not.toHaveProperty("public.e2e_capture_runs");
 
     // snapshot that still advertises virtual printers will cause drizzle-kit
@@ -89,5 +87,29 @@ describe("Drizzle Migration Journal & File Integrity", () => {
     expect(sharingCheck).toContain(`"printers"."shared_with_gateway_version" IS NULL`);
     expect(sharingCheck).toContain("'^[1-9][0-9]{0,18}$'");
     expect(sharingCheck).toContain("9223372036854775807");
+  });
+
+  it("keeps retired capture and Test Center backends out of shipped runtime code", () => {
+    const roots = [
+      "src", "agent/internal", "src-tauri/src",
+      "odoo_addons/print_gateway/models",
+      "odoo_addons/print_gateway/controllers",
+      "odoo_addons/print_gateway/static/src",
+    ];
+    const retired = /\be2e_capture_runs\b|\bCaptureTestDocument\b|\bTestCenter\b|\/api\/e2e-capture\b/i;
+    let checked = 0;
+    const walk = (dir: string): void => {
+      for (const item of readdirSync(dir, { withFileTypes: true })) {
+        const path = join(dir, item.name);
+        if (item.isDirectory()) { walk(path); continue; }
+        if (!item.isFile() || !/\.(?:ts|tsx|js|go|py|rs|xml)$/.test(item.name) ||
+            /(?:_test\.go|^test_.*\.py$)/.test(item.name)) continue;
+        expect(readFileSync(path, "utf8")).not.toMatch(retired);
+        checked += 1;
+      }
+    };
+    for (const root of roots) walk(join(process.cwd(), root));
+    expect(readFileSync(join(process.cwd(), "server.ts"), "utf8")).not.toMatch(retired);
+    expect(checked).toBeGreaterThan(100);
   });
 });
