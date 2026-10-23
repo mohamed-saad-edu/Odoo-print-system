@@ -5,7 +5,13 @@ import { createRoot, type Root } from "react-dom/client";
 import DashboardClient, { type Job } from "../src/app/dashboard/dashboard-client";
 import { getDashboardJobsResult, getDashboardStateResult } from "../src/app/actions";
 
-vi.mock("next/navigation", () => ({ useRouter: () => ({ replace() {}, refresh() {} }) }));
+// Stable router identity prevents loading effects from retriggering on every render.
+vi.mock("next/navigation", () => {
+  const router = { replace() {}, refresh() {} };
+  return { useRouter: () => router };
+});
+// The timeline has separate tests; keep this suite scoped to the inspector.
+vi.mock("../src/components/JobTimeline", () => ({ default: () => null }));
 vi.mock("../src/lib/session-config", () => ({ ensureCustomerSession: async () => ({ authenticated: true }) }));
 vi.mock("../src/app/actions", () => ({
   getDashboardJobsResult: vi.fn(), getDashboardStateResult: vi.fn(), deleteAgentResult: vi.fn(),

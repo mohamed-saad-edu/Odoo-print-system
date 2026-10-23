@@ -6,8 +6,9 @@ describe("system-health", () => {
   it("derives schema version from the latest Drizzle migration", async () => {
     const journal = await import("../drizzle/meta/_journal.json");
     expect(CURRENT_SCHEMA_VERSION).toBe(Number(journal.default.entries.at(-1)?.tag?.slice(0, 4)));
-    // Local-owner cloud sharing is forward migration 0084; earlier SQL stays immutable.
-    expect(CURRENT_SCHEMA_VERSION).toBe(84);
+    // The additive S06-006 namespace migration must be visible and forward-only.
+    expect(journal.default.entries.some((entry) => entry.tag === "0085_odoo_installation_idempotency")).toBe(true);
+    expect(CURRENT_SCHEMA_VERSION).toBeGreaterThanOrEqual(85);
   });
   it("gateway check returns ok with heap and uptime", () => {
     const check = checkGateway();

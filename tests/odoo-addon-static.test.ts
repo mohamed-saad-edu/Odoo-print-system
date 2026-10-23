@@ -107,7 +107,11 @@ describe("Odoo addon static contracts", () => {
     expect(jobs).toContain('"printerId": self.printer_id');
     expect(jobs).toContain('"documentType": self.document_type');
     expect(jobs).toContain('def _gateway_idempotency_key(self)');
-    expect(jobs).toContain('source = f"odoo:{self.company_id.id}:{self.idempotency_key}"');
+    expect(jobs).toContain("return wire_key(1, self.company_id.id, self.idempotency_key)");
+    expect(jobs).toContain("if self.gateway_wire_idempotency_key:");
+    expect(jobs).toContain("return self.gateway_wire_idempotency_key");
+    expect(jobs).toContain('"installationId": self.gateway_installation_id');
+    expect(jobs).toContain('"idempotencyVersion": 2');
     expect(jobs).toContain('"idempotencyKey": self._gateway_idempotency_key()');
     expect(jobs).not.toContain('"idempotencyKey": self.idempotency_key');
     expect(jobs).not.toContain("pcl");
