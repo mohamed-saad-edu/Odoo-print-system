@@ -236,6 +236,13 @@ Enrollment is repeatable and safe to retry after a lost HTTP response. One
 Gateway workspace and API key can register multiple Odoo database identities,
 even if their Odoo company and operation IDs happen to match.
 
+**Integration activation:** The existing Odoo Enable/Disable state remains scoped
+to its API key, not per database. If multiple Odoo databases share one API
+key, disabling it in one Odoo database disables printing for all databases
+using that key. For independent enable/disable control, issue a separate
+Odoo API key for each database. IDs and version cutovers are still automatic
+in either case.
+
 **Installation:** Make the Odoo \`data_dir\` persistent and writable by the
 Odoo process. Back up its \`yaseir-print-installations/\` credentials using a
 separate encrypted/secret backup policy. Do not share that directory between

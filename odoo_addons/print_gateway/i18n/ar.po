@@ -3910,7 +3910,6 @@ msgstr "لم يعد الـ Gateway Runtime Agent '%s' مُسنَدًا إلى ا
 msgid "The printer is temporarily unavailable. The job was safely re-queued for retry."
 msgstr "الطابعة غير متاحة مؤقتًا. أُعيدت المهمة إلى قائمة الانتظار بأمان لإعادة المحاولة."
 
-
 #. module: print_gateway
 #: model:ir.model,name:print_gateway.model_print_gateway_e2e_capture_wizard
 msgid "End-to-End Document Capture Test"
@@ -4255,11 +4254,6 @@ msgid "Enable only after Gateway tenant strict cutover, receipt backup and histo
 msgstr "لا تفعّل هذا الخيار إلا بعد التحويل الصارم في Gateway ونسخ الإيصالات احتياطيًا ومراجعة سجل الإرسال القديم."
 
 #. module: print_gateway
-#: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_config_form
-msgid "Enrolled Gateway installation UUID"
-msgstr "معرّف التثبيت المسجّل في Gateway (UUID)"
-
-#. module: print_gateway
 #: model:ir.model.fields,field_description:print_gateway.field_print_gateway_gateway_config__installation_id
 msgid "Gateway Installation ID"
 msgstr "معرّف تثبيت Gateway"
@@ -4296,11 +4290,6 @@ msgstr "إثبات هوية التثبيت غير متاح؛ تم الاحتفا
 
 #. module: print_gateway
 #: code:addons/print_gateway/models/print_job.py:0
-msgid "Printing is paused: the enrolled Odoo installation proof is unavailable."
-msgstr "الطباعة متوقفة مؤقتًا: إثبات تسجيل تثبيت أودو غير متاح."
-
-#. module: print_gateway
-#: code:addons/print_gateway/models/print_job.py:0
 msgid "Printing was paused to prevent a duplicate historical operation; reconcile the Gateway receipt before retrying."
 msgstr "تم إيقاف الطباعة لتجنّب تكرار عملية قديمة؛ يجب مطابقة إيصال Gateway قبل إعادة المحاولة."
 
@@ -4325,11 +4314,6 @@ msgid "Use Version 2 Durable Print Identities"
 msgstr "استخدام الإصدار الثاني من هويات الطباعة الدائمة"
 
 #. module: print_gateway
-#: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_config_form
-msgid "Version 2 Identity Cutover"
-msgstr "الانتقال إلى الإصدار الثاني من هوية التثبيت"
-
-#. module: print_gateway
 #: code:addons/print_gateway/models/print_job.py:0
 msgid "Versioned print identity snapshot is missing; operator reconciliation required."
 msgstr "لقطة هوية الطباعة ذات الإصدار المحدد مفقودة؛ تلزم المطابقة بواسطة المسؤول."
@@ -4338,3 +4322,49 @@ msgstr "لقطة هوية الطباعة ذات الإصدار المحدد مف
 #: code:addons/print_gateway/models/gateway_config.py:0
 msgid "Versioned printing requires a Gateway-enrolled installation ID and out-of-database proof."
 msgstr "تتطلب الطباعة بهوية الإصدار الجديد معرّف تثبيت مسجّلًا في Gateway وإثباتًا محفوظًا خارج قاعدة البيانات."
+
+#. module: print_gateway
+#: code:addons/print_gateway/models/gateway_config.py:0
+msgid "Automatic Odoo installation identity is unavailable. Check the Odoo service's persistent, writable data directory."
+msgstr "تعذّر إنشاء هوية تثبيت أودو تلقائيًا. تحقّق من صلاحية الكتابة واستمرارية مجلد بيانات خدمة أودو."
+
+#. module: print_gateway
+#: code:addons/print_gateway/models/gateway_config.py:0
+msgid "This saved job belongs to another Odoo installation. Review cloned/restored print history before reprinting."
+msgstr "تنتمي مهمة الطباعة المحفوظة هذه إلى تثبيت أودو آخر. راجع سجل الطباعة المنسوخ أو المستعاد قبل إعادة الطباعة."
+
+#. module: print_gateway
+#: code:addons/print_gateway/models/gateway_config.py:0
+#: code:addons/print_gateway/models/print_job.py:0
+msgid "Automatic Odoo installation proof is unavailable."
+msgstr "إثبات هوية تثبيت أودو التلقائي غير متاح."
+
+#. module: print_gateway
+#: code:addons/print_gateway/models/gateway_config.py:0
+msgid "Gateway enrollment is temporarily unavailable; no print was submitted."
+msgstr "تسجيل تثبيت أودو في Gateway غير متاح مؤقتًا؛ لم يُرسَل أي طلب طباعة."
+
+#. module: print_gateway
+#: code:addons/print_gateway/models/gateway_config.py:0
+msgid "Gateway installation enrollment refused a redirect."
+msgstr "رفض تسجيل تثبيت Gateway الاستجابة التي تعيد توجيه الاتصال."
+
+#. module: print_gateway
+#: code:addons/print_gateway/models/gateway_config.py:0
+msgid "Gateway installation identity needs reconciliation. No print was submitted; contact your Yaseir administrator."
+msgstr "تحتاج هوية تثبيت Gateway إلى مطابقة. لم يُرسَل طلب طباعة؛ تواصل مع مسؤول Yaseir."
+
+#. module: print_gateway
+#: code:addons/print_gateway/models/gateway_config.py:0
+msgid "Gateway installation enrollment failed (HTTP %s)."
+msgstr "فشل تسجيل تثبيت Gateway (رمز HTTP %s)."
+
+#. module: print_gateway
+#: code:addons/print_gateway/models/gateway_config.py:0
+msgid "Gateway enrollment returned invalid data."
+msgstr "أعاد تسجيل تثبيت Gateway بيانات غير صالحة."
+
+#. module: print_gateway
+#: code:addons/print_gateway/models/gateway_config.py:0
+msgid "Gateway enrollment confirmation did not match this database."
+msgstr "تأكيد تسجيل تثبيت Gateway لا يتطابق مع قاعدة البيانات هذه."

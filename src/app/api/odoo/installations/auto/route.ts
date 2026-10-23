@@ -13,7 +13,7 @@ import { logError } from "../../../../../lib/log";
 export const dynamic = "force-dynamic";
 const HEADERS = { "Cache-Control": "no-store" };
 const schema = z.object({
-  installationId: z.string().uuid(),
+  installationId: z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/),
   installationProof: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
   name: z.string().trim().min(1).max(120).optional(),
 }).strict();
@@ -47,13 +47,15 @@ export async function POST(req: Request) {
   try {
     const outcome = await db.transaction(async (tx) => {
       await requireActiveTenantInTransaction(tx, key.tenantId);
-      await requireTenantBillingAccess(tx, key.tenantId);
+      // Lock order is critical: print admission and activation acquire the
+      // live API credential before billing. Avoid key/subscription deadlocks.
       // A concurrent rotate, delete, or revoke cannot create fresh authority.
       const active = await tx.select({ id: apiKeys.id }).from(apiKeys)
         .where(and(eq(apiKeys.id, key.id), eq(apiKeys.tenantId, key.tenantId),
           isNull(apiKeys.revokedAt), isNull(apiKeys.readOnlyUntil)))
         .for("share");
       if (active.length !== 1) return "invalid_key" as const;
+      await requireTenantBillingAccess(tx, key.tenantId);
       const tenant = await tx.select({ mode: tenants.odooIdempotencyMode })
         .from(tenants).where(eq(tenants.id, key.tenantId)).for("share");
       if (tenant[0]?.mode !== "strict_v2") return "legacy_workspace" as const;
