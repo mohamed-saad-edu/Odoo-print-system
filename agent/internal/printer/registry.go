@@ -2,8 +2,8 @@ package printer
 
 import (
 	"encoding/json"
-	"io"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"path/filepath"

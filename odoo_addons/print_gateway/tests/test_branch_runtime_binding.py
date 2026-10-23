@@ -1,5 +1,6 @@
 from psycopg2 import IntegrityError
 
+from unittest import TestCase as StandardTestCase
 from unittest.mock import patch
 
 # Hard imports: this module only runs under the Odoo test runner; a fallback
@@ -1097,7 +1098,7 @@ class TestBranchRuntimeBinding(TransactionCase):
             }
         )
         branch_env = self.env(user=branch_admin, context={"allowed_company_ids": [self.branch.id]})
-        with self.assertRaises((AccessError, ValidationError)), self.env.cr.savepoint():
+        with StandardTestCase.assertRaises(self, (AccessError, ValidationError)), self.env.cr.savepoint():
             self.config.with_env(branch_env).write({"runtime_agent_id": "forbidden-root-agent"})
         policy_values = {
             "name": "Forbidden Root Policy",
@@ -1113,5 +1114,5 @@ class TestBranchRuntimeBinding(TransactionCase):
         # cannot pass merely because required fields or report setup are wrong.
         trusted_policy = self.env["print_gateway.policy"].sudo().create(policy_values)
         self.assertEqual(trusted_policy.company_id, self.company)
-        with self.assertRaises((AccessError, ValidationError)), self.env.cr.savepoint():
+        with StandardTestCase.assertRaises(self, (AccessError, ValidationError)), self.env.cr.savepoint():
             branch_env["print_gateway.policy"].create(policy_values)

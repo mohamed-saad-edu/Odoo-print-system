@@ -1,13 +1,13 @@
 package printer
 
 import (
-	"net/url"
 	"bytes"
 	"context"
 	"encoding/binary"
 	"log"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"strings"
 	"testing"
@@ -685,7 +685,6 @@ func TestIPPPrinterURIUsesIPPTransportSchemeAndOriginalPort(t *testing.T) {
 		})
 	}
 }
-
 
 func TestIPPAllowCredentialsOverTransportUnit(t *testing.T) {
 	cases := []struct {

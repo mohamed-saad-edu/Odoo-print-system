@@ -28,7 +28,7 @@ const approveSchema = operationSchema.extend({
 
 type LegacyCandidate = { id: string; fingerprint: string; status: string };
 
-async function findLegacyHistory(tx: typeof db, tenantId: string, legacyKey: string): Promise<LegacyCandidate | null> {
+async function findLegacyHistory(tx: Pick<typeof db, "execute">, tenantId: string, legacyKey: string): Promise<LegacyCandidate | null> {
   const receipt = await tx.execute(sql`
     SELECT id, fingerprint, status FROM print_job_receipts
     WHERE tenant_id = ${tenantId} AND idempotency_key = ${legacyKey}
@@ -106,7 +106,7 @@ export async function POST(req: Request) {
         WHERE tenant_id = ${manager.tenantId} AND idempotency_key = ${v2Key} FOR UPDATE
       `);
       if (reserved.rows.length) return "already_accepted";
-      const found = await findLegacyHistory(tx as typeof db, manager.tenantId, legacyKey);
+      const found = await findLegacyHistory(tx, manager.tenantId, legacyKey);
       if (!found || found.id !== expectedLegacyJobId || found.fingerprint !== expectedLegacyFingerprint) return "history_mismatch";
       const existing = await tx.execute(sql`
         SELECT disposition, legacy_job_id, legacy_fingerprint FROM odoo_legacy_resolutions
