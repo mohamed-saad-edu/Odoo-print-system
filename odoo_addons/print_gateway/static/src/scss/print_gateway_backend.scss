@@ -402,9 +402,8 @@
 }
 
 /* Dialogs keep their native height; readable typography does not turn a
-   pairing/capture modal into a full-viewport backend page. */
-.o_pg_view.o_pg_pairing_wizard,
-.o_pg_view.o_pg_wizard { min-height: 0; }
+   pairing modal into a full-viewport backend page. */
+.o_pg_view.o_pg_pairing_wizard { min-height: 0; }
 
 .o_pg_view .o_pg_picker_feedback {
     flex-wrap: wrap;

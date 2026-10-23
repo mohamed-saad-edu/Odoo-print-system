@@ -4,7 +4,7 @@ The Gateway uses PostgreSQL through the shared `pg` pool and Drizzle definitions
 
 ## Schema inventory
 
-There are **30 current application tables**, **86 forward-only SQL migrations (`0000`–`0085`)**, and additional versioned forward repairs in [`scripts/db-migrate.ts`](../scripts/db-migrate.ts). The inventory checker finds 37 created table names and 7 subsequently dropped legacy names. The migration ledger, `drizzle.__drizzle_migrations`, is separate from the 30 application tables.
+There are **29 current application tables**, **89 forward-only SQL migrations (`0000`–`0088`)**, and additional versioned forward repairs in [`scripts/db-migrate.ts`](../scripts/db-migrate.ts). The inventory checker finds 37 created table names and 7 subsequently dropped legacy names. The migration ledger, `drizzle.__drizzle_migrations`, is separate from the 30 application tables.
 
 | Table | Purpose and identity | Scope and relevant constraints |
 | --- | --- | --- |
@@ -37,7 +37,6 @@ There are **30 current application tables**, **86 forward-only SQL migrations (`
 | `tenant_subscriptions` | Tenant plan and provider billing state, checkout intent/session and billing-operation reconciliation | One row per tenant; plan references; unique provider/idempotency identities; bounded subscription/checkout/operation states |
 | `billing_events` | Provider webhook receipt, payload and processing state | Provider event ID primary key for deduplication; optional tenant reference until the event is associated |
 | `print_usage_periods` | Reserved/used print credits per billing period | Composite primary key `(tenant_id, period_start)`; nonnegative use and ordered optional period end |
-| `e2e_capture_runs` | Opt-in render-only diagnostic queue independent of physical print jobs and billing | Composite tenant/Agent FK; tenant/API-key/idempotency uniqueness; bounded attempts/pages/size; terminal rows clear the submitted payload but may retain a preview |
 
 The schema retains global account, catalog, metric and authentication data alongside tenant-scoped data. A missing `tenant_id` on a global table is not by itself an isolation defect. Conversely, the existence of a tenant column does not authorize access to a row.
 

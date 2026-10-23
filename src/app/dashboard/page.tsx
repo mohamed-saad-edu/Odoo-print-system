@@ -5,8 +5,8 @@ import { getManagerCookieName, verifyWorkspaceTokenFromCookieValues } from "../.
 import { hasManagerPermission } from "../../lib/authorization";
 import DashboardClient from "./dashboard-client";
 import { JobCleanupButton } from "../../components/JobCleanupButton";
-import { Activity, ClipboardCheck, Database, LifeBuoy } from "lucide-react";
-import { Button, Callout, PageContainer, PageHeader, StatusBadge } from "../../components/ui";
+import { Activity, Database } from "lucide-react";
+import { Callout, PageContainer, PageHeader, StatusBadge } from "../../components/ui";
 import { getServerLocale, makeT } from "../../i18n/server";
 import { loadDashboardStateForTenant } from "../../lib/dashboard-state";
 
@@ -70,12 +70,6 @@ export default async function DashboardPage() {
         }
         actions={
           <>
-            <Button variant="secondary" size="sm" href="/capture-tests" icon={<ClipboardCheck className="h-4 w-4" aria-hidden />}>
-              {t("nav.captureTests")}
-            </Button>
-            <Button variant="ghost" size="sm" href="/system-health" icon={<LifeBuoy className="h-4 w-4" />}>
-              {t("dashboard.page.systemHealth")}
-            </Button>
             {!databaseError && canMutate.jobsCancel ? <JobCleanupButton /> : null}
           </>
         }
@@ -87,11 +81,6 @@ export default async function DashboardPage() {
             tone="bad"
             title={t("dashboard.page.dbUnavailableTitle")}
             icon={<Database className="h-4 w-4" />}
-            action={
-              <Button variant="secondary" size="sm" href="/system-health">
-                {t("dashboard.page.runDiagnostics")}
-              </Button>
-            }
           >
             {t("dashboard.page.dbUnavailableBody")}
           </Callout>

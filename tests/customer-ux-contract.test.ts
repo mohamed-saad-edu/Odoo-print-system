@@ -1,17 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
 
 const read = (path: string) => readFileSync(path, "utf8");
 
 describe("customer-facing UX contracts", () => {
-  it("keeps System Health focused on customer-actionable services", () => {
-    const page = read("src/app/system-health/system-health-client.tsx");
-    expect(page).toContain("const customerChecks = [health.gateway, health.agents, health.printers, health.odoo]");
-    expect(page).toContain("const visibleOverall = customerOverall(customerChecks)");
-    expect(page).not.toContain('label="X-Request-Id"');
-    expect(page).not.toContain('t("health.tracing")');
-    expect(page).not.toContain("JSON.stringify(check.details");
-    expect(page).not.toContain("check.latencyMs");
+  it("keeps obsolete diagnostics and capture routes out of customer navigation", () => {
+    const shell = read("src/components/AppShell.tsx");
+    expect(shell).not.toContain('href: "/system-health"');
+    expect(shell).not.toContain('href: "/capture-tests"');
+    expect(existsSync("src/app/system-health/page.tsx")).toBe(false);
+    expect(existsSync("src/app/capture-tests/page.tsx")).toBe(false);
+    expect(existsSync("src/app/api/health/route.ts")).toBe(true);
   });
 
   it("uses the IBM Plex bilingual font system in the web console", () => {

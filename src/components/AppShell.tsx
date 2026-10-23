@@ -12,8 +12,6 @@ import {
   Users,
   CreditCard,
   Settings as SettingsIcon,
-  Activity,
-  ClipboardCheck,
   LogOut,
   PanelLeftClose,
   PanelLeftOpen,
@@ -35,9 +33,7 @@ import type { Translator } from "../i18n/translate";
 
 const NAV_ITEMS: TopNavItem[] = [
   { href: "/dashboard", labelKey: "nav.console", icon: LayoutDashboard, sectionKey: "nav.section.operations", keywords: "console dashboard overview printers jobs" },
-  { href: "/system-health", labelKey: "nav.systemHealth", icon: Activity, sectionKey: "nav.section.operations", keywords: "system health monitoring uptime incidents" },
   { href: "/api-keys", labelKey: "nav.odooIntegration", icon: KeyRound, sectionKey: "nav.section.integration", keywords: "odoo integration api keys credentials" },
-  { href: "/capture-tests", labelKey: "nav.captureTests", icon: ClipboardCheck, sectionKey: "nav.section.integration", keywords: "odoo e2e capture tests gateway agent received documents" },
   { href: "/team", labelKey: "nav.team", icon: Users, sectionKey: "nav.section.administration", keywords: "team members roles invitations" },
   { href: "/billing", labelKey: "nav.billing", icon: CreditCard, sectionKey: "nav.section.administration", keywords: "billing plan subscription invoices" },
   { href: "/settings", labelKey: "nav.settings", icon: SettingsIcon, sectionKey: "nav.section.administration", keywords: "settings preferences workspace" },

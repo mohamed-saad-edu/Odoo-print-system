@@ -617,6 +617,13 @@
       "when": 1792790000001,
       "tag": "0087_odoo_auto_enrollment",
       "breakpoints": true
+    },
+    {
+      "idx": 88,
+      "version": "7",
+      "when": 1792790000002,
+      "tag": "0088_retire_e2e_capture",
+      "breakpoints": true
     }
   ]
 }

@@ -33,8 +33,9 @@ def test_forward_migration_registered_in_immutable_drizzle_journal():
     doc = json.loads((ROOT / "drizzle/meta/_journal.json").read_text())
     tags = [row["tag"] for row in doc["entries"]]
     assert tags[-3] == "0085_odoo_installation_idempotency"
-    assert tags[-2] == "0086_printer_identity_and_api_key_deletion"
-    assert tags[-1] == "0087_odoo_auto_enrollment"
+    assert tags[-3] == "0086_printer_identity_and_api_key_deletion"
+    assert tags[-2] == "0087_odoo_auto_enrollment"
+    assert tags[-1] == "0088_retire_e2e_capture"
     assert len(tags) == len(list((ROOT / "drizzle").glob("*.sql")))
     assert tags == [p.stem for p in sorted((ROOT / "drizzle").glob("*.sql"))]
     assert len(tags) == 88
@@ -64,5 +65,8 @@ def test_auto_cutover_is_history_fenced_and_api_keys_can_be_shared():
     assert "UPDATE tenants SET odoo_idempotency_mode = 'strict_v2'" in endpoint
     assert "DROP CONSTRAINT IF EXISTS" in migration
     assert "CREATE INDEX IF NOT EXISTS" in migration
-    assert 'odooIdempotencyMode: text("odoo_idempotency_mode").notNull().default("legacy")' in schema
+    assert 'odooIdempotencyMode: text("odoo_idempotency_mode").notNull().default("strict_v2")' in schema
+    retirement = (ROOT / "drizzle/0088_retire_e2e_capture.sql").read_text()
+    assert "DROP TABLE IF EXISTS" in retirement
+    assert "SET DEFAULT 'strict_v2'" in retirement
     assert 'odoo_installation_credentials_tenant_api_key_idx' in schema

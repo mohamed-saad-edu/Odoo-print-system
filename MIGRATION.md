@@ -60,8 +60,9 @@ This runs `scripts/db-migrate.ts` which applies all pending migrations from `dri
 | 0085 | 1 | Additive Gateway-enrolled Odoo installation identities, immutable v2 job associations, audited historical decisions, and opt-in strict cutover; existing print keys and receipts remain untouched |
 | 0086 | 1 | Agent-scoped physical printer endpoint identity, non-authorizing historical API key references and removal of deleted credential tombstones |
 | 0087 | 1 | Allow multiple independent Odoo installations per API key; first registration of an empty workspace safely switches it from legacy to strict-v2 without rewriting historical receipts |
+| 0088 | 1 | Retire simulated E2E capture storage without touching real print jobs; make strict-v2 the default for new workspaces |
 
-**Total**: 88 forward-only SQL migrations (0000–0087), plus retained hash-versioned forward repairs in `scripts/db-migrate.ts`.
+**Total**: 89 forward-only SQL migrations (0000–0088), plus retained hash-versioned forward repairs in `scripts/db-migrate.ts`.
 
 Apply `0084` before deploying the matching Gateway and Agent/Desktop sharing feature. Existing rows default to shared; the owning Agent's newer explicit permission decides subsequent publication. Same-version denial is retained across pages/replays. Private printer/job identities are preserved, and no backfill deletes or disables Windows queues. Keep the protected local sharing file and a compatible Agent/CLI bundle during rollback; see `docs/RELEASE_GATES.md`.
 

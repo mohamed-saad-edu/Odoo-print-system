@@ -70,18 +70,10 @@ describe("Drizzle Migration Journal & File Integrity", () => {
     expect(snapshotTables).toEqual(schemaTables);
     // The simulation outbox is a distinct tenant/Agent-scoped table, NOT a
     // physical printer or a print job. Its claim and privacy limits must be
-    // represented in the latest schema snapshot for future drizzle-kit diffs.
-    const capture = snapshot.tables?.["public.e2e_capture_runs"] as
-      | { columns?: Record<string, unknown>; foreignKeys?: Record<string, unknown>;
-          indexes?: Record<string, unknown>; checkConstraints?: Record<string, unknown> }
-      | undefined;
-    expect(capture?.columns).toHaveProperty("payload_json");
-    expect(capture?.columns).not.toHaveProperty("printer_id");
-    expect(capture?.foreignKeys).toHaveProperty("e2e_capture_runs_tenant_agent_fk");
-    expect(capture?.indexes).toHaveProperty("e2e_capture_runs_agent_claim_idx");
-    expect(capture?.indexes).toHaveProperty("e2e_capture_runs_retention_idx");
-    expect(capture?.checkConstraints).toHaveProperty("e2e_capture_runs_finished_payload_check");
-    // Version 0081 tightens the actual printers CHECK to physical-only. A
+    // The former simulation-only queue is removed by the final forward
+    // migration; it must NOT survive in the runtime schema snapshot.
+    expect(snapshot.tables).not.toHaveProperty("public.e2e_capture_runs");
+
     // snapshot that still advertises virtual printers will cause drizzle-kit
     // to emit misleading follow-up migrations.
     const printersSnapshot = snapshot.tables?.["public.printers"] as

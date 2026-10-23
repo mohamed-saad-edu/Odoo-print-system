@@ -4,7 +4,6 @@ import { createRoot } from "react-dom/client";
 import {
   AlertTriangle,
   ClipboardList,
-  FlaskConical,
   Cpu,
   Info,
   LayoutDashboard,
@@ -39,7 +38,6 @@ import { AddPrinterDialog } from "./components/AddPrinterDialog";
 import { AdminPrivilegeDialog } from "./components/AdminPrivilegeDialog";
 import { PrinterSharingControl } from "./components/PrinterSharingControl";
 import { OverviewPage } from "./pages/Overview";
-import { TestCenterPage } from "./pages/TestCenter";
 import { PrintersPage } from "./pages/Printers";
 import { JobsPage } from "./pages/Jobs";
 import { AgentsPage } from "./pages/Agents";
@@ -132,7 +130,7 @@ import {
 /* Desktop Manager uses the shared light/dark theme tokens. */
 import "./theme-light.css";
 
-const PAGES: Page[] = ["dashboard", "printers", "jobs", "test-center", "agents", "settings"];
+const PAGES: Page[] = ["dashboard", "printers", "jobs", "agents", "settings"];
 const GATEWAY_AUTO_PROBE_INTERVAL_MS = 10_000;
 const LOCAL_AGENT_STATUS_INTERVAL_MS = 10_000;
 
@@ -1076,7 +1074,6 @@ export default function App() {
     { id: "dashboard", label: t("desktop.nav.overview"), icon: LayoutDashboard },
     { id: "printers", label: t("desktop.nav.printers"), icon: PrinterIcon },
     { id: "jobs", label: t("desktop.nav.printJobs"), icon: ClipboardList },
-    { id: "test-center", label: t("desktop.testCenter.title"), icon: FlaskConical },
     { id: "agents", label: t("desktop.nav.agents"), icon: Cpu },
     { id: "settings", label: t("desktop.nav.settings"), icon: SettingsIcon },
   ];
@@ -1088,7 +1085,6 @@ export default function App() {
     dashboard: { title: t("desktop.nav.overview") },
     printers: { title: t("desktop.nav.printers") },
     jobs: { title: t("desktop.nav.printJobs") },
-    "test-center": { title: t("desktop.testCenter.title") },
     agents: { title: t("desktop.nav.agents"), subtitle: t("desktop.page.agentsSubtitle") },
     settings: { title: t("desktop.nav.settings"), subtitle: t("desktop.page.settingsSubtitle") },
   };
@@ -1351,7 +1347,6 @@ export default function App() {
           {page === "dashboard" && <OverviewPage s={state} />}
           {page === "printers" && <PrintersPage s={state} />}
           {page === "jobs" && <JobsPage s={state} />}
-          {page === "test-center" && <TestCenterPage />}
           {page === "agents" && <AgentsPage s={state} />}
           {page === "settings" && <SettingsPage s={state} />}
           </div>
