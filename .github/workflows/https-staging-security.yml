@@ -2,7 +2,7 @@ name: HTTPS Staging Security
 
 on:
   pull_request:
-    branches: [main]
+    branches: [main, test/http-server-ready]
     types: [opened, synchronize, reopened, ready_for_review]
 
 permissions:
@@ -53,6 +53,6 @@ jobs:
           npm exec vitest run --config vitest.unit.config.mts tests/domain-staging-deployment.contract.test.ts tests/https-staging-policy.contract.test.ts tests/staging-email-capture.test.ts tests/stripe-plan-binding.test.ts tests/request-guard.test.ts tests/request-guard-http.test.ts tests/desktop-auth-contract.test.ts
           cp deploy/domain-test/.env.domain-test.example /tmp/yaseir-domain-test.env
           docker compose --env-file /tmp/yaseir-domain-test.env -f deploy/domain-test/docker-compose.yml config -q
-          # Assert the rendered Gateway service receives the flag, not just the .env fixture.
-          docker compose --env-file /tmp/yaseir-domain-test.env -f deploy/domain-test/docker-compose.yml config --format json | node -e 'let s="";process.stdin.on("data",c=>s+=c);process.stdin.on("end",()=>{if(JSON.parse(s).services.gateway.environment.YASEIR_E2E_CAPTURE_ENABLED!=="1")throw Error("Domain staging must enable E2E Capture");});'
-
+          # Verify actual staging security settings and the installed migration entrypoint.
+          # The E2E capture feature was retired; it must NOT appear in the container.
+          docker compose --env-file /tmp/yaseir-domain-test.env -f deploy/domain-test/docker-compose.yml config --format json | node -e 'let s="";process.stdin.on("data",c=>s+=c);process.stdin.on("end",()=>{const services=JSON.parse(s).services;const e=services.gateway.environment;if(e.YASEIR_STAGING_FIXTURES_ENABLED!=="1"||e.COOKIE_SECURE!=="1"||e.TRUST_PROXY!=="1")throw Error("Staging HTTPS fixture, Secure cookie, or trusted proxy policy is missing");if(Object.prototype.hasOwnProperty.call(e,"YASEIR_E2E_CAPTURE_ENABLED"))throw Error("Retired capture flag must not be deployed");if(services.migrate.command.join(" ")!=="node --import tsx scripts/db-migrate.ts")throw Error("Migrations must use the production runtime entrypoint without npm");});'
