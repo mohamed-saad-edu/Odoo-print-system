@@ -1,26 +1,16 @@
 #!/usr/bin/env node
 // High-severity npm audit gate with a narrow, explicit advisory allowlist.
 //
-// Why this exists instead of a bare `npm audit --audit-level=high`:
-// `npm audit` has no built-in allowlist, and the one advisory we currently
-// carry has NO upstream fix available at all. Refusing to merge until a
-// maintainer publishes a patched release is not a gate anyone can pass, and
-// silently downgrading the severity threshold would hide future high findings
-// too. So this wrapper keeps the full `high` threshold and, on failure, checks
-// every high/critical finding against an explicit list instead.
+// npm audit has no per-advisory exception policy. This wrapper keeps the
+// high/critical threshold, checks all findings, and refuses stale exceptions
+// or credentials that unexpectedly become runtime dependencies.
 //
-// The allowlist is deliberately strict about two things that a plain
-// `--audit-level` run would not enforce:
+// Exception removal is intentional: the latest staging npm audit report
+// no longer includes the former braces advisory in its installed tree.
+// No HIGH or CRITICAL security finding is permitted by default.
 //
-//   1. dev-only. npm reports the tree as installed; we additionally confirm the
-//      vulnerable package is not reachable from `dependencies`. A production
-//      install (the Docker runtime image runs `npm ci --omit=dev`) must never
-//      be able to satisfy an allowlist entry, so a dev-only advisory that
-//      becomes a runtime dependency fails this gate.
-//   2. stale entries. If an allowlisted advisory stops being reported, the
-//      entry has served its purpose and the gate fails so it gets removed.
-//
-// Delete an entry as soon as the upstream fix ships.
+// A future narrowly scoped exception must include documented reachability
+// and an independently verified dev-only dependency path.
 
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
@@ -31,22 +21,9 @@ import { resolve } from "node:path";
 const require = createRequire(import.meta.url);
 const pkg = require("../package.json");
 
-// Keep this list as short as its lifetime allows.
-export const ALLOWED = [
-  {
-    id: "GHSA-vfj7-8cjw-p6xm", // CVE-2026-93687
-    package: "braces",
-    reason:
-      "Stack-exhaustion DoS via deeply nested brace patterns in braces' " +
-      "recursive AST walkers. Affected <= 3.0.3, patched: NONE, so there is " +
-      "no version to upgrade to. Only reachable as a devDependency of " +
-      "eslint-config-next -> @next/eslint-plugin-next -> fast-glob -> " +
-      "micromatch, where it matches glob patterns that come from this " +
-      "repository's own ESLint configuration, not from untrusted input. " +
-      "Absent from the runtime image (npm ci --omit=dev). Upstream fix is " +
-      "unmerged: https://github.com/micromatch/braces/pull/72",
-  },
-];
+// Deliberately empty. Old GHSA-vfj7-8cjw-p6xm exception was stale in
+// the current runner's npm audit report and must not survive automatically.
+export const ALLOWED = [];
 
 function runAudit() {
   try {
