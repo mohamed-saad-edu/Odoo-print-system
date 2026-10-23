@@ -54,7 +54,7 @@ export async function GET(req: Request) {
   if (tenantId) clauses.push(eq(printers.tenantId, tenantId));
   // Platform inventory shows removed/tombstoned printers only in the explicit
   // retired filter, never as active devices in the default fleet list.
-  if (status !== "retired") clauses.push(eq(printers.sharedWithGateway, true));
+  if (status !== "retired") clauses.push(sql`NOT (${printers.lifecycle} = 'retired' AND ${printers.sharedWithGateway} = false)`);
   if (status !== "all") clauses.push(eq(printers.lifecycle, status));
   if (search) clauses.push(sql`(LOWER(${printers.id}) LIKE ${term} ESCAPE '\\' OR LOWER(${printers.name}) LIKE ${term} ESCAPE '\\' OR LOWER(${tenants.name}) LIKE ${term} ESCAPE '\\')`);
   try {

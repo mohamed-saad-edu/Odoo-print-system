@@ -12,8 +12,8 @@ export async function deleteApiKeyInTransaction(tx: DbTx, tenantId: string, id: 
     eq(odooInstallationCredentials.tenantId, tenantId),
     eq(odooInstallationCredentials.apiKeyId, id),
   ));
-  const removed = await tx.delete(apiKeys).where(and(
+  await tx.delete(apiKeys).where(and(
     eq(apiKeys.tenantId, tenantId), eq(apiKeys.id, id),
-  )).returning({ id: apiKeys.id });
-  return removed.length === 1;
+  ));
+  return true;
 }

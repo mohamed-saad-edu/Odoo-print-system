@@ -64,6 +64,8 @@ export default function PlatformDashboardPage() {
       value: (stats?.jobs24h.failed ?? 0) + (stats?.jobs24h.expired ?? 0), href: "/platform/jobs" },
     { label: ar ? "أيجنت تحتاج متابعة" : "Agents needing attention",
       value: (stats?.agents.offline ?? 0) + (stats?.agents.unknown ?? 0), href: "/platform/fleet" },
+    { label: ar ? "طابعات تحتاج متابعة" : "Printers needing attention",
+      value: (stats?.printers.offline ?? 0) + (stats?.printers.error ?? 0) + (stats?.printers.unknown ?? 0), href: "/platform/fleet" },
     { label: ar ? "اشتراكات تحتاج متابعة" : "Billing issues",
       value: stats?.subscriptions.attention ?? 0, href: "/platform/subscriptions" },
   ];

@@ -323,7 +323,7 @@ jobs:
                 ('discovered_devices', 'printers', ARRAY['tenant_id','provisioned_printer_id']::text[], ARRAY['tenant_id','id']::text[], false),
                 ('print_jobs', 'agents', ARRAY['tenant_id','agent_id']::text[], ARRAY['tenant_id','id']::text[], false),
                 ('print_jobs', 'printers', ARRAY['tenant_id','printer_id']::text[], ARRAY['tenant_id','id']::text[], false),
-                ('print_jobs', 'api_keys', ARRAY['tenant_id','api_key_id']::text[], ARRAY['tenant_id','id']::text[], false),
+                -- Historical API-key ID no longer has a live-credential FK.
                 ('job_events', 'print_jobs', ARRAY['tenant_id','job_id']::text[], ARRAY['tenant_id','id']::text[], true)
               ) AS v(child_table, parent_table, child_columns, parent_columns, require_cascade)
             LOOP
@@ -365,7 +365,13 @@ jobs:
                   array_to_string(expected.parent_columns, ',');
               END IF;
             END LOOP;
-          END $$;
+            IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'print_jobs_tenant_id_api_key_id_api_keys_fk') THEN
+              RAISE EXCEPTION 'historical print_jobs.api_key_id must not block API key removal';
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'print_jobs_api_key_tenant_insert_guard' AND NOT tgisinternal) THEN
+              RAISE EXCEPTION 'new job API-key tenant guard missing';
+            END IF;
+          END $;
           SQL
       - name: Run integration tests (PostgreSQL)
         env:
