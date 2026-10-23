@@ -40,14 +40,8 @@ RUN go mod init example.com/yaseir-caddy-build \
     && go version -m /tmp/caddy-patched | grep -F 'golang.org/x/net' | grep -F 'v0.61.0'
 
 FROM ${CADDY_BASE} AS caddy
-# The SHA-pinned parent may contain Brotli <1.2.1 (CVE-2026-111497).
-# Alpine 3.23 publishes the fixed 1.2.1-r0; fail if the repository
-# cannot provide a patched library instead of relaxing the Trivy gate.
-RUN apk add --no-cache 'brotli-libs>=1.2.1-r0' \
-    && installed="$(apk info -v brotli-libs | sed -n 's/^brotli-libs-//p')" \
-    && test -n "$installed" \
-    && apk version -t "$installed" '1.2.1-r0' | grep -Eq '^(>|=)
-RUN caddy version
-
+# Upgrade the SHA-pinned base's Brotli decoder to a CVE-2026-111497-fixed release.
+# The constrained apk install fails the image build if no fixed package exists.
+RUN apk add --no-cache 'brotli-libs>=1.2.1-r0'
 COPY --from=caddy-build /tmp/caddy-patched /usr/bin/caddy
 RUN caddy version
