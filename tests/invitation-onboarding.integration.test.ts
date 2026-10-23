@@ -7,6 +7,7 @@ import { applyMigrations, closePool, hasTestDatabase, truncateAll, pool } from "
 import { POST as accept } from "../src/app/api/team/invitations/accept/route";
 import { GET as preview } from "../src/app/api/team/invitations/preview/route";
 import { POST as verify } from "../src/app/api/auth/verify-email/route";
+import { findActiveInvitation, joinWorkspaceByInvitation } from "../src/lib/invitation-join";
 
 const emails = vi.hoisted(() => ({ sent: vi.fn(async (_input: unknown) => {}) }));
 vi.mock("../src/lib/email", () => ({
@@ -123,4 +124,31 @@ suite("company invitation onboarding", () => {
     })).toBeUndefined();
     expect((await db.query.tenantInvitations.findFirst({ where: eq(tenantInvitations.id, f.invitationId) }))?.acceptedAt).toBeNull();
   });
+  it("adds an existing verified account to the invited company, never as owner, and consumes only one token", async () => {
+    const f = await fixture({ invitedAccount: "verified" });
+    const invitation = await findActiveInvitation(f.token);
+    expect(invitation?.tenantId).toBe(f.tenantId);
+    const joined = await db.transaction(tx =>
+      joinWorkspaceByInvitation(tx, invitation!, f.inviteeId, f.email));
+    expect(joined).toEqual({ tenantId: f.tenantId, role: "viewer" });
+    const rows = await db.select().from(tenantUsers);
+    expect(rows).toHaveLength(2);
+    expect(rows.find(m => m.userId === f.inviteeId)).toMatchObject({ tenantId: f.tenantId, role: "viewer" });
+    expect((await db.select().from(tenants)).length).toBe(1);
+    await expect(db.transaction(tx =>
+      joinWorkspaceByInvitation(tx, invitation!, f.inviteeId, f.email)))
+      .rejects.toThrow("INVITATION_INVALID");
+  });
+
+  it("cannot join a verified global account with a different email", async () => {
+    const f = await fixture({ invitedAccount: "verified" });
+    const invitation = await findActiveInvitation(f.token);
+    await expect(db.transaction(tx =>
+      joinWorkspaceByInvitation(tx, invitation!, f.inviteeId, "someone-else@example.test")))
+      .rejects.toThrow("INVITATION_INVALID");
+    expect((await db.query.tenantInvitations.findFirst({
+      where: eq(tenantInvitations.id, f.invitationId),
+    }))?.acceptedAt).toBeNull();
+  });
+
 });
