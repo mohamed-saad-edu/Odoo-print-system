@@ -327,6 +327,7 @@ export const emailVerificationTokens = pgTable("email_verification_tokens", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
 }, (table) => ({
   userIdx: index("email_verification_tokens_user_idx").on(table.userId),
+  invitationIdx: index("email_verification_tokens_invitation_id_idx").on(table.invitationId).where(sql`${table.invitationId} IS NOT NULL`),
   expiresIdx: index("email_verification_tokens_expires_idx").on(table.expiresAt),
 }));
 
