@@ -1,0 +1,141 @@
+services:
+  postgres:
+    build:
+      context: ../..
+      dockerfile: Dockerfile.secure-images
+      target: postgres
+    restart: unless-stopped
+    environment:
+      TZ: UTC
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    secrets:
+      - postgres_password
+    volumes:
+      - staging_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - yasser_domain_test
+
+  migrate:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      TZ: UTC
+      PGHOST: postgres
+      PGPORT: 5432
+      PGDATABASE: ${POSTGRES_DB}
+      PGUSER: ${POSTGRES_USER}
+      PGPASSWORD_FILE: /run/secrets/postgres_password
+    secrets:
+      - postgres_password
+    command: ["node", "--import", "tsx", "scripts/db-migrate.ts"]
+    networks:
+      - yasser_domain_test
+
+  gateway:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      NODE_ENV: production
+      TZ: UTC
+      HOSTNAME: 0.0.0.0
+      PORT: 3000
+      # Test data/email capture only; HTTPS and authentication follow main.
+      YASEIR_STAGING_FIXTURES_ENABLED: "1"
+      # First owner provisions one test workspace; further signups are blocked.
+      YASEIR_STAGING_SINGLE_WORKSPACE: "1"
+      APP_BASE_URL: ${APP_BASE_URL}
+      COOKIE_SECURE: "1"
+      TRUST_PROXY: "1"
+      STALE_AGENT_THRESHOLD_SECONDS: "90"
+      PGHOST: postgres
+      PGPORT: 5432
+      PGDATABASE: ${POSTGRES_DB}
+      PGUSER: ${POSTGRES_USER}
+      PGPASSWORD_FILE: /run/secrets/postgres_password
+      GATEWAY_JWT_SECRET_FILE: /run/secrets/gateway_jwt_secret
+      MANAGER_USERNAME: ${MANAGER_USERNAME}
+      MANAGER_TENANT_ID: ${MANAGER_TENANT_ID:-}
+      MANAGER_PASSWORD_HASH_FILE: /run/secrets/manager_password_hash
+      ALLOW_PLAINTEXT_MANAGER_PASSWORD:
+      TRUST_PROXY_SECRET_FILE: /run/secrets/trust_proxy_secret
+      PLATFORM_TENANT_ID: ${PLATFORM_TENANT_ID}
+      STRIPE_PLAN_CATALOG: ${STRIPE_PLAN_CATALOG}
+      YASEIR_TEST_EMAIL_CAPTURE_FILE: /tmp/yaseir-domain-test-verification-email.txt
+    secrets:
+      - postgres_password
+      - gateway_jwt_secret
+      - manager_password_hash
+      - trust_proxy_secret
+    expose:
+      - "3000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/live').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    networks:
+      - yasser_domain_test
+
+  caddy:
+    build:
+      context: ../..
+      dockerfile: Dockerfile.secure-images
+      target: caddy
+    restart: unless-stopped
+    depends_on:
+      gateway:
+        condition: service_healthy
+    environment:
+      GATEWAY_DOMAIN: ${GATEWAY_DOMAIN}
+    secrets:
+      - trust_proxy_secret
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - yasser_domain_caddy_data:/data
+      - yasser_domain_caddy_config:/config
+    networks:
+      - yasser_domain_test
+
+volumes:
+  staging_pg_data:
+    external: true
+    name: ${STAGING_PG_VOLUME:?STAGING_PG_VOLUME must be set}
+  yasser_domain_caddy_data:
+  yasser_domain_caddy_config:
+
+secrets:
+  postgres_password:
+    environment: POSTGRES_PASSWORD
+  gateway_jwt_secret:
+    environment: GATEWAY_JWT_SECRET
+  manager_password_hash:
+    environment: MANAGER_PASSWORD_HASH
+  trust_proxy_secret:
+    environment: TRUST_PROXY_SECRET
+
+networks:
+  yasser_domain_test:
+    driver: bridge

@@ -9,22 +9,28 @@ func TestDiscoverySemaphoreReleasedOnNormalFinish(t *testing.T) {
 	a := &Agent{discoverySem: make(chan struct{}, 1)}
 	a.discoverySem <- struct{}{}
 	finished := make(chan struct{})
-	close(finished)
 	a.releaseDiscoverySemaphoreWhenFinished(finished, time.Minute)
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		select {
-		case <-a.discoverySem:
-			if a.discoveryWedged.Load() {
-				t.Fatal("normal finish must not mark the scan wedged")
-			}
-			return
-		default:
-			if time.Now().After(deadline) {
-				t.Fatal("semaphore was not released after normal finish")
-			}
-			time.Sleep(10 * time.Millisecond)
+
+	// The buffered token represents the ACTIVE scan. A successor must not
+	// acquire a slot while that scan's worker is still running.
+	select {
+	case a.discoverySem <- struct{}{}:
+		t.Fatal("discovery semaphore released before the worker finished")
+	default:
+	}
+
+	close(finished)
+
+	// Release removes the token; a successful send proves the slot became
+	// available. Receiving from the channel here would race the release
+	// waiter and could incorrectly pass or fail based on scheduling.
+	select {
+	case a.discoverySem <- struct{}{}:
+		if a.discoveryWedged.Load() {
+			t.Fatal("normal finish must not mark the scan wedged")
 		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("semaphore was not released after normal finish")
 	}
 }
 

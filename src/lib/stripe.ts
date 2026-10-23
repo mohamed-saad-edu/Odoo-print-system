@@ -164,10 +164,41 @@ export type StripePriceBinding = {
   productId: string | null;
 };
 
+function httpTestCatalogBinding(input: {
+  priceId: string;
+  currency: string;
+  interval: string;
+  productId?: string | null;
+}): StripePriceBinding | null {
+  if (process.env.YASEIR_STAGING_FIXTURES_ENABLED !== "1" || runtimeSecret("STRIPE_SECRET_KEY")) return null;
+
+  const raw = process.env.STRIPE_PLAN_CATALOG;
+  if (!raw) return null;
+
+  try {
+    const catalog = JSON.parse(raw) as Array<Record<string, unknown>>;
+    if (Array.isArray(catalog)) {
+      const entry = catalog.find((item) => item && item.priceId === input.priceId);
+      if (entry) {
+        const currency = typeof entry.currency === "string" ? entry.currency.trim().toLowerCase() : "usd";
+        const interval = typeof entry.interval === "string" ? entry.interval.trim().toLowerCase() : "month";
+        const productId = typeof entry.productId === "string" ? entry.productId.trim() : null;
+        if (currency !== input.currency.toLowerCase() || interval !== input.interval) return null;
+        if (input.productId && input.productId !== productId) return null;
+        return { id: input.priceId, active: true, type: "recurring", currency, interval, productId };
+      }
+    }
+    // Never invent a valid Price from its shape: staging accepts catalogued prices only.
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 export class StripePriceBindingError extends Error {
   constructor(
     message: string,
-    public readonly code: "STRIPE_PRICE_INVALID" | "STRIPE_NOT_CONFIGURED" | "STRIPE_UNAVAILABLE",
+    public readonly code: "STRIPE_PRICE_INVALID" | "STRIPE_NOT_CONFIGURED" | "STRIPE_UNAVAILABLE" | "TEST_PRICE_NOT_IN_CATALOG",
     public readonly status: 400 | 502 | 503,
   ) {
     super(message);
@@ -181,6 +212,17 @@ export async function validateStripePriceBinding(input: {
   productId?: string | null;
   requireActive?: boolean;
 }): Promise<StripePriceBinding> {
+  if (process.env.YASEIR_STAGING_FIXTURES_ENABLED === "1" && !runtimeSecret("STRIPE_SECRET_KEY")) {
+    const binding = httpTestCatalogBinding(input);
+    if (binding) return binding;
+    throw new StripePriceBindingError(
+      "Test Stripe Price is not registered with matching currency and interval in the staging catalog.",
+      "TEST_PRICE_NOT_IN_CATALOG",
+      400,
+    );
+  }
+
+
   let price: Record<string, unknown>;
   try {
     price = await stripeRetrieve(`prices/${encodeURIComponent(input.priceId)}`);

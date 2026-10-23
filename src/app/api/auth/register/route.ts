@@ -11,6 +11,7 @@ import { hasBodyOverLimit } from "../../../../lib/request-limits";
 import { clientIpFrom, reserveAuthAttempt, setRateLimitHeaders } from "../../../../lib/auth-rate-limit";
 import { sql } from "drizzle-orm";
 import { findActiveInvitation } from "../../../../lib/invitation-join";
+import { isSingleWorkspaceStaging, stagingWorkspaceExists, STAGING_WORKSPACE_EXISTS_MESSAGE } from "../../../../lib/staging-single-workspace";
 
 const GENERIC = { ok: true, message: "If the account can be created, a verification email will be sent." };
 
@@ -40,6 +41,22 @@ export async function POST(req: Request) {
   const invitation = inviteToken ? await findActiveInvitation(inviteToken) : null;
   if (inviteToken && (!invitation || invitation.email !== email))
     return setRateLimitHeaders(NextResponse.json({ error: "Invitation expired or for a different email", code: "INVITATION_INVALID" }, { status: 400 }), rate);
+  // Public staging signups remain limited to one workspace. An existing
+  // invitation must be permitted: its mailbox proof JOINs that same workspace.
+  if (isSingleWorkspaceStaging() && !invitation) {
+    try {
+      if (await stagingWorkspaceExists(db)) {
+        return setRateLimitHeaders(NextResponse.json({
+          error: STAGING_WORKSPACE_EXISTS_MESSAGE, code: "STAGING_WORKSPACE_EXISTS",
+        }, { status: 409 }), rate);
+      }
+    } catch (error) {
+      logError("auth.register.staging_workspace_check_failed", {
+        error: error instanceof Error ? error.message : "unknown",
+      });
+      return setRateLimitHeaders(NextResponse.json({ error: "Registration temporarily unavailable" }, { status: 503 }), rate);
+    }
+  }
   const existing = await db.query.users.findFirst({ where: (u, { eq }) => eq(u.email, email), columns: { id: true, emailVerifiedAt: true } });
   if (existing) return setRateLimitHeaders(NextResponse.json(GENERIC, { status: 202 }), rate);
   const userId = `usr_${nanoid(18)}`;
