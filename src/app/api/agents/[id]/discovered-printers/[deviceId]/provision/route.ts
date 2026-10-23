@@ -183,6 +183,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const existingPrinters = await tx.query.printers.findMany({ where: and(eq(printers.agentId, agentId), eq(printers.tenantId, claims.tenantId)) });
     const matching = matchingPhysicalPrinter(existingPrinters, { connectionType: transport.connectionType, protocol: transport.protocol, config: printerConfig });
     if (matching) {
+      if (matching.lifecycle === "retired" || matching.sharedWithGateway === false)
+        return { kind: "invalid_endpoint" as const, error: "This physical endpoint was removed or withheld from the Gateway" };
       if (!samePrinterProtocol(matching, { connectionType: transport.connectionType, protocol: transport.protocol, config: printerConfig })) {
         return { kind: "invalid_endpoint" as const, error: "Physical endpoint already uses another print protocol. Configure the existing printer." };
       }

@@ -428,6 +428,9 @@ export async function POST(req: Request) {
       const inventoryById = new Map(inventoryRows.map(p => [p.id, p]));
       let pageHadErrors = skipped.length > 0;
       const mayUpdateSharing = (p: SanitizedPrinter, existing: typeof printers.$inferSelect): boolean => {
+        // A platform-removed or retired printer is an irreversible negative
+        // tombstone; even a newer Agent snapshot may not re-share it.
+        if (existing.lifecycle === "retired") return false;
         if (p.sharedWithGateway !== true || !inventorySnapshotVersion) return false;
         if (existing.sharedWithGatewayVersion == null) return true;
         const incoming = BigInt(inventorySnapshotVersion);
