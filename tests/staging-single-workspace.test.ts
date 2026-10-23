@@ -74,9 +74,12 @@ describe("staging single-workspace admission", () => {
     const verification = readFileSync("src/app/api/auth/verify-email/route.ts", "utf8");
     expect(login).not.toContain("insert(tenants)");
     expect(onboarding).not.toContain("insert(tenants)");
-    expect(register).toContain("if (isSingleWorkspaceStaging())");
+    expect(register).toContain("if (isSingleWorkspaceStaging() && !invitation)");
+    expect(register).toContain("invitationId: invitation?.id ?? null");
     expect(register).toContain("stagingWorkspaceExists(db)");
     expect(verification).toContain("await assertStagingWorkspaceSlot(tx)");
+    expect(verification).toContain("if (invitation) {");
+    expect(verification).toContain("joinWorkspaceByInvitation(tx, invitation, currentUser.id, currentUser.email)");
     expect(verification).toContain("error instanceof StagingWorkspaceExistsError");
   });
 });

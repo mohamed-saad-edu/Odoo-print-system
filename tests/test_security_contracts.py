@@ -87,10 +87,14 @@ def test_registration_does_not_disclose_existing_account_state():
     # occupied. It is tested before ANY user-email lookup, so new and existing
     # emails have the identical response in that staging state.
     assert route.count("status: 409") == 1
-    staging_check = route.index("if (isSingleWorkspaceStaging())")
+    staging_check = route.index("if (isSingleWorkspaceStaging() && !invitation)")
     user_lookup = route.index("const existing = await db.query.users.findFirst")
+    # The invitation is verified before the public-signup-only fence:
+    # invited employees join the existing company, never claim a tenant slot.
+    assert route.index("const invitation = inviteToken ?") < staging_check
     assert staging_check < route.index('code: "STAGING_WORKSPACE_EXISTS"') < user_lookup
     assert "stagingWorkspaceExists(db)" in route[staging_check:user_lookup]
+    assert "invitationId: invitation?.id ?? null" in route
     assert "if (existing) return setRateLimitHeaders(NextResponse.json(GENERIC, { status: 202 }), rate);" in route
 
 
