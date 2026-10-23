@@ -147,8 +147,8 @@ export type Job = {
   documentType?: string | null;
   error?: string | null;
   payload?: unknown;
-  retries?: number;
-  deliveryAttempts?: number;
+  retries?: number | null;
+  deliveryAttempts?: number | null;
   claimedAt?: Date | string | null;
   deliveredAt?: Date | string | null;
   ackedAt?: Date | string | null;

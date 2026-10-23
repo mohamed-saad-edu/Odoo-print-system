@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { requirePlatformOwner, PlatformUnauthorizedError } from "../../../../lib/platform-auth";
 import { db } from "../../../../db";
 import { queryWithTimeout } from "../../../../db/client";
-import { tenants, tenantSubscriptions, users, agents, printers, printJobs } from "../../../../db/schema";
+import { tenants, tenantSubscriptions, users, agents, printers } from "../../../../db/schema";
 import { sql, eq, and } from "drizzle-orm";
 import { agentStaleThresholdSeconds, printerStaleThresholdSeconds } from "../../../../lib/agent-availability";
 import { nonVirtualPrinterPredicate } from "../../../../lib/printer-virtual-sql";
@@ -158,12 +158,25 @@ export async function GET(req: Request) {
         .where(and(eq(printers.sharedWithGateway, true), nonVirtualPrinterPredicate())),
 
       db.execute(sql<PlatformHourlyJobStatsRow>`
-        WITH hours AS (
+        WITH observation AS (SELECT clock_timestamp() AS at),
+        hours AS (
           SELECT generate_series(
-            date_trunc('hour', clock_timestamp() - interval '24 hours'),
-            date_trunc('hour', clock_timestamp()),
+            date_trunc('hour', (SELECT at FROM observation) - interval '24 hours'),
+            date_trunc('hour', (SELECT at FROM observation)),
             interval '1 hour'
           ) AS bucket
+        ),
+        -- Retention moves terminal jobs to this durable payload-free table.
+        -- Count accepted submissions once across both sources, by created_at.
+        history AS (
+          SELECT j.id, j.created_at, j.status
+          FROM print_jobs j
+          WHERE j.created_at >= (SELECT at FROM observation) - interval '24 hours'
+          UNION ALL
+          SELECT r.id, r.created_at, r.status
+          FROM print_job_receipts r
+          WHERE r.created_at >= (SELECT at FROM observation) - interval '24 hours'
+            AND NOT EXISTS (SELECT 1 FROM print_jobs live WHERE live.id = r.id)
         )
         SELECT
           hours.bucket AS bucket,
@@ -174,10 +187,9 @@ export async function GET(req: Request) {
           count(j.id) FILTER (WHERE j.status IN ('claimed','printing'))::int AS "inFlight",
           count(j.id) FILTER (WHERE j.status = 'expired')::int AS expired
         FROM hours
-        LEFT JOIN print_jobs j
+        LEFT JOIN history j
           ON j.created_at >= hours.bucket
          AND j.created_at < hours.bucket + interval '1 hour'
-         AND j.created_at >= clock_timestamp() - interval '24 hours'
         GROUP BY hours.bucket
         ORDER BY hours.bucket
       `),

@@ -306,7 +306,12 @@ describe("production fixes — presence sweep and Gateway test-page HTTP path", 
 describe("2026-09-24 remediation contracts", () => {
   it("keeps dashboard job filters tenant-fenced and printer lifecycle on DB time", () => {
     const source = read("src/app/actions.ts");
-    expect(source).toContain("tenant_id = ${printJobs.tenantId} AND lifecycle = 'active'");
+    const history = read("src/lib/job-history.ts");
+    expect(source).toContain("listPrintJobHistory");
+    expect(history).toContain("p0.tenant_id = h.tenant_id AND p0.lifecycle = 'active'");
+    expect(history).toContain("a0.tenant_id = h.tenant_id AND a0.lifecycle = 'active'");
+    expect(history).toContain(`scopedWhere("j", input.tenantId)`);
+    expect(history).toContain(`scopedWhere("r", input.tenantId)`);
     expect(source).not.toContain("SELECT id FROM printers WHERE lifecycle = 'active'");
     expect(source).not.toContain("SELECT id FROM agents WHERE lifecycle = 'active'");
     expect(source).not.toContain("updatedAt: new Date()");

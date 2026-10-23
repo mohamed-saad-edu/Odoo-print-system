@@ -1,5 +1,6 @@
 import { db } from "../db";
-import { agents, printers, printJobs } from "../db/schema";
+import { agents, printers } from "../db/schema";
+import { listPrintJobHistory } from "./job-history";
 import { and, count, desc, eq, or, sql, type SQL } from "drizzle-orm";
 import { agentStaleThresholdSeconds, getEffectiveAgentStatus, printerStaleThresholdSeconds } from "./agent-availability";
 import { gatewayNow } from "./database-clock";
@@ -175,34 +176,9 @@ export async function loadDashboardStateForTenant(
       .orderBy(desc(printers.createdAt), desc(printers.id))
       .limit(DASHBOARD_FLEET_PAGE_SIZE + 1)
       .offset(printerOffset),
-    db
-      .select({
-        id: printJobs.id,
-        tenantId: printJobs.tenantId,
-        destination: printJobs.destination,
-        documentType: printJobs.documentType,
-        agentId: printJobs.agentId,
-        agentName: agents.name,
-        printerId: printJobs.printerId,
-        printerName: printers.name,
-        status: printJobs.status,
-        error: printJobs.error,
-        requestedBy: printJobs.requestedBy,
-        retries: printJobs.retries,
-        deliveryAttempts: printJobs.deliveryAttempts,
-        claimedAt: printJobs.claimedAt,
-        deliveredAt: printJobs.deliveredAt,
-        ackedAt: printJobs.ackedAt,
-        expiresAt: printJobs.expiresAt,
-        createdAt: printJobs.createdAt,
-        updatedAt: printJobs.updatedAt,
-      })
-      .from(printJobs)
-      .leftJoin(agents, and(eq(agents.id, printJobs.agentId), eq(agents.tenantId, tenantId)))
-      .leftJoin(printers, and(eq(printers.id, printJobs.printerId), eq(printers.tenantId, tenantId)))
-      .where(eq(printJobs.tenantId, tenantId))
-      .orderBy(desc(printJobs.createdAt))
-      .limit(50),
+    // Terminal history moves to print_job_receipts; never present a
+    // live-only initial list while the history tab can show archived rows.
+    listPrintJobHistory({ tenantId, limit: 50 }),
     db
       .select({
         total: count(),

@@ -130,14 +130,17 @@ describe("print-job bulk memory bound", () => {
     expect(src).not.toContain("for (const row of candidates) {\n        await tx.insert(printJobReceipts)");
   });
 
-  it("escapes LIKE wildcards on the jobs list search in parity with the dashboard action (F006)", () => {
-    const src = read("src/app/api/jobs/route.ts");
+  it("escapes LIKE wildcards in the shared, tenant-fenced live-and-receipt history read model (F006)", () => {
+    const history = read("src/lib/job-history.ts");
+    const route = read("src/app/api/jobs/route.ts");
     const actions = read("src/app/actions.ts");
-    // Both search paths must treat `%`/`_` literally: an unescaped `_`
-    // matches every job id containing any single character there.
-    for (const file of [src, actions]) {
-      expect(file).toContain('.replace(/%/g, "\\\\%").replace(/_/g, "\\\\_")');
-      expect(file).toContain("ESCAPE '\\\\'");
-    }
+    expect(route).toContain("listPrintJobHistory");
+    expect(actions).toContain("listPrintJobHistory");
+    expect(history).toContain(String.raw`.replace(/%/g, "\\%").replace(/_/g, "\\_")`);
+    expect(history).toContain(String.raw`ESCAPE '\\'`);
+    expect(history).toContain('FROM print_job_receipts r');
+    expect(history).toContain('FROM print_jobs j');
+    expect(history).toContain('r.tenant_id');
+    expect(history).toContain('j.tenant_id');
   });
 });

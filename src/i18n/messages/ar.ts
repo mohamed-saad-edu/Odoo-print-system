@@ -1829,6 +1829,8 @@ export const ar: Catalog = {
   "invite.loading": "جارٍ تحميل الدعوة",
   "invite.loadingShort": "جارٍ تحميل الدعوة…",
   "invite.signIn": "تسجيل الدخول",
+  "platform.nav.jobs": "عمليات الطباعة",
+  "platform.nav.fleet": "إدارة الأجهزة",
   "platform.nav.overview": "نظرة عامة",
   "platform.nav.tenants": "المستأجرون",
   "platform.nav.subscriptions": "الاشتراكات",

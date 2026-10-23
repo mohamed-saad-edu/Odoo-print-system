@@ -12,6 +12,8 @@ import {
   ShieldCheck,
   Users,
   ArrowRight,
+  ListChecks,
+  Wifi,
 } from "lucide-react";
 import {
   FleetHealthChart,
@@ -245,6 +247,21 @@ export default function PlatformDashboardPage() {
               {partialError}
             </Callout>
           )}
+
+          <section className="grid gap-3 sm:grid-cols-3" aria-label="Gateway operations">
+            <Link href="/platform/jobs" className="group relative flex min-h-[100px] items-center gap-4 overflow-hidden rounded-xl border border-edge bg-surface px-5 py-4 transition-[border-color,box-shadow,transform] hover:-translate-y-0.5 hover:border-brand/50 hover:shadow-md focus-visible:outline-2 focus-visible:outline-brand">
+              <span className="rounded-xl bg-brand-subtle p-3 text-brand"><ListChecks className="h-5 w-5" aria-hidden /></span>
+              <span className="min-w-0 flex-1"><span className="block text-sm font-semibold text-ink">{t("platform.nav.jobs")}</span><span className="mt-1 block text-xs text-ink-3">{formatNumber(stats?.jobs24h.total ?? 0)} / 24h</span></span><ArrowRight className="h-4 w-4 text-ink-4 transition-transform group-hover:translate-x-1 rtl:-scale-x-100" aria-hidden />
+            </Link>
+            <Link href="/platform/fleet" className="group flex min-h-[100px] items-center gap-4 rounded-xl border border-edge bg-surface px-5 py-4 transition-[border-color,box-shadow,transform] hover:-translate-y-0.5 hover:border-brand/50 hover:shadow-md focus-visible:outline-2 focus-visible:outline-brand">
+              <span className="rounded-xl bg-ok-bg p-3 text-ok"><Wifi className="h-5 w-5" aria-hidden /></span>
+              <span className="min-w-0 flex-1"><span className="block text-sm font-semibold text-ink">{t("platform.nav.fleet")}</span><span className="mt-1 block text-xs text-ink-3">{formatNumber(stats?.agents.online ?? 0)} / {formatNumber(stats?.agents.active ?? 0)} {t("platform.fleet.agents")}</span></span><ArrowRight className="h-4 w-4 text-ink-4 transition-transform group-hover:translate-x-1 rtl:-scale-x-100" aria-hidden />
+            </Link>
+            <Link href="/platform/audit" className="group flex min-h-[100px] items-center gap-4 rounded-xl border border-edge bg-surface px-5 py-4 transition-[border-color,box-shadow,transform] hover:-translate-y-0.5 hover:border-brand/50 hover:shadow-md focus-visible:outline-2 focus-visible:outline-brand">
+              <span className="rounded-xl bg-warn-bg p-3 text-warn"><ShieldCheck className="h-5 w-5" aria-hidden /></span>
+              <span className="min-w-0 flex-1"><span className="block text-sm font-semibold text-ink">{t("platform.nav.audit")}</span><span className="mt-1 block text-xs text-ink-3">{t("platform.dashboard.securityAudit")}</span></span><ArrowRight className="h-4 w-4 text-ink-4 transition-transform group-hover:translate-x-1 rtl:-scale-x-100" aria-hidden />
+            </Link>
+          </section>
 
           <OperationalSignals
             jobs={{
