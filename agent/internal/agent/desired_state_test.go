@@ -645,7 +645,6 @@ func TestDesiredSpoolerPassthroughIsExplicitAndAdditive(t *testing.T) {
 	}
 }
 
-
 func TestLoadDesiredStateRejectsOversizedFile(t *testing.T) {
 	tmpDir := t.TempDir()
 	statePath := filepath.Join(tmpDir, "desired_printers.json")
