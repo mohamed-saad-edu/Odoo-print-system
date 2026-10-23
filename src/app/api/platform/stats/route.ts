@@ -2,8 +2,8 @@ import { NextResponse } from "next/server";
 import { requirePlatformOwner, PlatformUnauthorizedError } from "../../../../lib/platform-auth";
 import { db } from "../../../../db";
 import { queryWithTimeout } from "../../../../db/client";
-import { tenants, tenantSubscriptions, users, agents, printers, apiKeys, odooInstallations } from "../../../../db/schema";
-import { sql, eq, and } from "drizzle-orm";
+import { tenants, tenantSubscriptions, users, agents, printers, printJobs, apiKeys, odooInstallations } from "../../../../db/schema";
+import { sql, eq, and, inArray } from "drizzle-orm";
 import { agentStaleThresholdSeconds, printerStaleThresholdSeconds } from "../../../../lib/agent-availability";
 import { nonVirtualPrinterPredicate } from "../../../../lib/printer-virtual-sql";
 
@@ -44,6 +44,7 @@ export async function GET(req: Request) {
     agentStats,
     printerStats,
     hourlyJobStats,
+    liveQueueStats,
     credentialStats,
     installationStats,
   ] = await queryWithTimeout(
@@ -195,6 +196,12 @@ export async function GET(req: Request) {
         GROUP BY hours.bucket
         ORDER BY hours.bucket
       `),
+      // Current backlog is independent of the historical 24-hour chart.
+      // In particular, old queued or claimed jobs still count as open.
+      db.select({
+        queued: sql<number>`count(*) FILTER (WHERE ${printJobs.status} = 'queued')::int`,
+        inFlight: sql<number>`count(*) FILTER (WHERE ${printJobs.status} IN ('claimed','printing'))::int`,
+      }).from(printJobs).where(inArray(printJobs.status, ["queued", "claimed", "printing"])),
       db.select({
         total: sql<number>`count(*)::int`,
         // A rotated key can remain valid for read-only receipt lookup during
@@ -236,6 +243,7 @@ export async function GET(req: Request) {
       keys: credentialStats[0] ?? { total: 0, active: 0, grace: 0, revoked: 0 },
       installations: installationStats[0] ?? { total: 0, enabled: 0, quarantined: 0 },
     },
+    queueNow: liveQueueStats[0] ?? { queued: 0, inFlight: 0 },
     jobs24h: aggregatedJobs24h,
     jobs24hHourly: hourlyRows.map((row) => ({
       bucket: new Date(row.bucket).toISOString(),

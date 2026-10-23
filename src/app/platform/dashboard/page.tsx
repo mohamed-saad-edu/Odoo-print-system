@@ -59,6 +59,7 @@ type Stats = {
     keys: { total: number; active: number; grace: number; revoked: number };
     installations: { total: number; enabled: number; quarantined: number };
   };
+  queueNow: { queued: number; inFlight: number };
   jobs24h: { total: number; success: number; failed: number; queued: number; inFlight: number; expired: number };
   jobs24hHourly: OverviewHourlyPoint[];
 };
@@ -276,8 +277,8 @@ export default function PlatformDashboardPage() {
             jobs={{
               failed: stats?.jobs24h.failed ?? 0,
               expired: stats?.jobs24h.expired ?? 0,
-              queued: stats?.jobs24h.queued ?? 0,
-              inFlight: stats?.jobs24h.inFlight ?? 0,
+              queued: stats?.queueNow?.queued ?? 0,
+              inFlight: stats?.queueNow?.inFlight ?? 0,
             }}
             agents={{ attention: (stats?.agents.offline ?? 0) + (stats?.agents.unknown ?? 0) }}
             printers={{
