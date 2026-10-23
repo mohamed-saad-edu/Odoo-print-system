@@ -2,8 +2,8 @@ import { NextResponse } from "next/server";
 import { requirePlatformOwner, PlatformUnauthorizedError } from "../../../../lib/platform-auth";
 import { db } from "../../../../db";
 import { queryWithTimeout } from "../../../../db/client";
-import { tenants, tenantSubscriptions, users, agents, printers, printJobs } from "../../../../db/schema";
-import { sql, eq, and } from "drizzle-orm";
+import { tenants, tenantSubscriptions, users, agents, printers, printJobs, apiKeys, odooInstallations } from "../../../../db/schema";
+import { sql, eq, and, inArray } from "drizzle-orm";
 import { agentStaleThresholdSeconds, printerStaleThresholdSeconds } from "../../../../lib/agent-availability";
 import { nonVirtualPrinterPredicate } from "../../../../lib/printer-virtual-sql";
 
@@ -33,7 +33,7 @@ export async function GET(req: Request) {
   const cached = getCachedPlatformStats(bypassCache);
   if (cached) {
     return NextResponse.json(cached, {
-      headers: { "X-Cache": "HIT" },
+      headers: { "X-Cache": "HIT", "Cache-Control": "private, no-store" },
     });
   }
 
@@ -44,6 +44,9 @@ export async function GET(req: Request) {
     agentStats,
     printerStats,
     hourlyJobStats,
+    liveQueueStats,
+    credentialStats,
+    installationStats,
   ] = await queryWithTimeout(
     () => Promise.all([
       db.select({
@@ -158,12 +161,25 @@ export async function GET(req: Request) {
         .where(and(eq(printers.sharedWithGateway, true), nonVirtualPrinterPredicate())),
 
       db.execute(sql<PlatformHourlyJobStatsRow>`
-        WITH hours AS (
+        WITH observation AS (SELECT clock_timestamp() AS at),
+        hours AS (
           SELECT generate_series(
-            date_trunc('hour', clock_timestamp() - interval '24 hours'),
-            date_trunc('hour', clock_timestamp()),
+            date_trunc('hour', (SELECT at FROM observation) - interval '24 hours'),
+            date_trunc('hour', (SELECT at FROM observation)),
             interval '1 hour'
           ) AS bucket
+        ),
+        -- Retention moves terminal jobs to this durable payload-free table.
+        -- Count accepted submissions once across both sources, by created_at.
+        history AS (
+          SELECT j.id, j.created_at, j.status
+          FROM print_jobs j
+          WHERE j.created_at >= (SELECT at FROM observation) - interval '24 hours'
+          UNION ALL
+          SELECT r.id, r.created_at, r.status
+          FROM print_job_receipts r
+          WHERE r.created_at >= (SELECT at FROM observation) - interval '24 hours'
+            AND NOT EXISTS (SELECT 1 FROM print_jobs live WHERE live.id = r.id)
         )
         SELECT
           hours.bucket AS bucket,
@@ -174,13 +190,31 @@ export async function GET(req: Request) {
           count(j.id) FILTER (WHERE j.status IN ('claimed','printing'))::int AS "inFlight",
           count(j.id) FILTER (WHERE j.status = 'expired')::int AS expired
         FROM hours
-        LEFT JOIN print_jobs j
+        LEFT JOIN history j
           ON j.created_at >= hours.bucket
          AND j.created_at < hours.bucket + interval '1 hour'
-         AND j.created_at >= clock_timestamp() - interval '24 hours'
         GROUP BY hours.bucket
         ORDER BY hours.bucket
       `),
+      // Current backlog is independent of the historical 24-hour chart.
+      // In particular, old queued or claimed jobs still count as open.
+      db.select({
+        queued: sql<number>`count(*) FILTER (WHERE ${printJobs.status} = 'queued')::int`,
+        inFlight: sql<number>`count(*) FILTER (WHERE ${printJobs.status} IN ('claimed','printing'))::int`,
+      }).from(printJobs).where(inArray(printJobs.status, ["queued", "claimed", "printing"])),
+      db.select({
+        total: sql<number>`count(*)::int`,
+        // A rotated key can remain valid for read-only receipt lookup during
+        // a grace window. It is NOT fully revoked until that window ends.
+        active: sql<number>`count(*) filter (where ${apiKeys.revokedAt} is null or ${apiKeys.readOnlyUntil} > clock_timestamp())::int`,
+        grace: sql<number>`count(*) filter (where ${apiKeys.revokedAt} is not null and ${apiKeys.readOnlyUntil} > clock_timestamp())::int`,
+        revoked: sql<number>`count(*) filter (where ${apiKeys.revokedAt} is not null and (${apiKeys.readOnlyUntil} is null or ${apiKeys.readOnlyUntil} <= clock_timestamp()))::int`,
+      }).from(apiKeys),
+      db.select({
+        total: sql<number>`count(*)::int`,
+        enabled: sql<number>`count(*) filter (where ${odooInstallations.enabled} = true)::int`,
+        quarantined: sql<number>`count(*) filter (where ${odooInstallations.enabled} = false)::int`,
+      }).from(odooInstallations),
     ]),
     8_000,
     "platformStatsAggregate",
@@ -205,6 +239,11 @@ export async function GET(req: Request) {
     users: userStats[0] ?? { total: 0, verified: 0 },
     agents: agentStats[0] ?? { total: 0, active: 0, online: 0, offline: 0, unknown: 0, inactive: 0 },
     printers: printerStats[0] ?? { total: 0, active: 0, online: 0, busy: 0, offline: 0, error: 0, unknown: 0, inactive: 0 },
+    integrations: {
+      keys: credentialStats[0] ?? { total: 0, active: 0, grace: 0, revoked: 0 },
+      installations: installationStats[0] ?? { total: 0, enabled: 0, quarantined: 0 },
+    },
+    queueNow: liveQueueStats[0] ?? { queued: 0, inFlight: 0 },
     jobs24h: aggregatedJobs24h,
     jobs24hHourly: hourlyRows.map((row) => ({
       bucket: new Date(row.bucket).toISOString(),
@@ -220,6 +259,6 @@ export async function GET(req: Request) {
   setCachedPlatformStats(responseBody);
 
   return NextResponse.json(responseBody, {
-    headers: { "X-Cache": "MISS" },
+    headers: { "X-Cache": "MISS", "Cache-Control": "private, no-store" },
   });
 }

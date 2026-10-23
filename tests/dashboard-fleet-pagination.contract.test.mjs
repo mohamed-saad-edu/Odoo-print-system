@@ -38,9 +38,11 @@ test("printer filtering is server-side and job labels do not depend on the visib
   assert.match(client, /maxLength=\{64\}/);
   assert.match(client, /printerSearch: debouncedPrinterSearch/);
   assert.match(state, /agentName: agents\.name/);
-  assert.match(state, /printerName: printers\.name/);
-  assert.match(actions, /agentName: agents\.name/);
-  assert.match(actions, /printerName: printers\.name/);
+  const history = fs.readFileSync("src/lib/job-history.ts", "utf8");
+  assert.match(history, /a\.name AS "agentName"/);
+  assert.match(history, /p\.name AS "printerName"/);
+  assert.match(state, /listPrintJobHistory/);
+  assert.match(actions, /listPrintJobHistory/);
   assert.match(client, /job\.printerName \?\? printer\?\.name/);
 });
 

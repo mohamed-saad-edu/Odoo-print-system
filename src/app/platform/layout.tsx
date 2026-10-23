@@ -3,7 +3,7 @@
 import { fetchWithTimeout } from "../../lib/fetch-timeout";
 import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
-import { Activity, Building2, CreditCard, Tags, Shield } from "lucide-react";
+import { Activity, Building2, CreditCard, Tags, Shield, Printer, ListChecks, KeyRound } from "lucide-react";
 import type { TopNavItem } from "../../components/TopNavbar";
 import { PlatformSidebar } from "../../components/platform/PlatformSidebar";
 import { PageContainer, PageSkeleton, ErrorState, Callout } from "../../components/ui";
@@ -11,6 +11,9 @@ import { useI18n } from "../../i18n/react";
 
 const NAV_ITEMS: TopNavItem[] = [
   { href: "/platform/dashboard", labelKey: "platform.nav.overview", icon: Activity, sectionKey: "platform.section.operations", keywords: "overview dashboard platform" },
+  { href: "/platform/jobs", labelKey: "platform.nav.jobs", icon: ListChecks, sectionKey: "platform.section.operations", keywords: "jobs printing history archived receipts" },
+  { href: "/platform/integrations", labelKey: "platform.nav.integrations", icon: KeyRound, sectionKey: "platform.section.security", keywords: "gateway od oo odoo API keys credentials installations quarantine emergency revoke" },
+  { href: "/platform/fleet", labelKey: "platform.nav.fleet", icon: Printer, sectionKey: "platform.section.operations", keywords: "agents printers fleet lifecycle control" },
   { href: "/platform/tenants", labelKey: "platform.nav.tenants", icon: Building2, sectionKey: "platform.section.operations", keywords: "tenants customers workspaces" },
   { href: "/platform/subscriptions", labelKey: "platform.nav.subscriptions", icon: CreditCard, sectionKey: "platform.section.commerce", keywords: "subscriptions billing invoices" },
   { href: "/platform/plans", labelKey: "platform.nav.plans", icon: Tags, sectionKey: "platform.section.commerce", keywords: "plans pricing tiers" },

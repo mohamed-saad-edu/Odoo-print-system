@@ -11,7 +11,14 @@ describe("print-job cleanup contract", () => {
     expect(src).toContain("const claims = await validateWorkspaceManager(req)");
     expect(src).toContain('["success", "failed", "expired"]');
     expect(src).toContain("inArray(printJobs.status");
-    expect(src).toContain("PHYSICAL_OUTCOME_UNKNOWN_MARKERS.map");
+    // Cleanup now archives terminal evidence rather than dropping it. The
+    // canonical uncertain-outcome markers are handled by the shared history
+    // reader, including for archived receipt rows.
+    const history = read("src/lib/job-history.ts");
+    expect(history).toContain("PHYSICAL_OUTCOME_UNKNOWN_MARKERS.map");
+    expect(src).toContain("tx.insert(printJobReceipts)");
+    expect(src).toContain("status: row.status, error: row.error, closedClaimTokenHash: row.closedClaimTokenHash");
+    expect(src.indexOf("tx.insert(printJobReceipts)")).toBeLessThan(src.indexOf("tx.delete(printJobs)"));
     expect(src).toContain("isNull(printJobs.claimToken)");
     expect(src).toContain("lt(printJobs.updatedAt, before)");
     expect(src).toContain("orderBy(printJobs.updatedAt)");
@@ -130,14 +137,17 @@ describe("print-job bulk memory bound", () => {
     expect(src).not.toContain("for (const row of candidates) {\n        await tx.insert(printJobReceipts)");
   });
 
-  it("escapes LIKE wildcards on the jobs list search in parity with the dashboard action (F006)", () => {
-    const src = read("src/app/api/jobs/route.ts");
+  it("escapes LIKE wildcards in the shared, tenant-fenced live-and-receipt history read model (F006)", () => {
+    const history = read("src/lib/job-history.ts");
+    const route = read("src/app/api/jobs/route.ts");
     const actions = read("src/app/actions.ts");
-    // Both search paths must treat `%`/`_` literally: an unescaped `_`
-    // matches every job id containing any single character there.
-    for (const file of [src, actions]) {
-      expect(file).toContain('.replace(/%/g, "\\\\%").replace(/_/g, "\\\\_")');
-      expect(file).toContain("ESCAPE '\\\\'");
-    }
+    expect(route).toContain("listPrintJobHistory");
+    expect(actions).toContain("listPrintJobHistory");
+    expect(history).toContain(String.raw`.replace(/%/g, "\\%").replace(/_/g, "\\_")`);
+    expect(history).toContain(String.raw`ESCAPE '\\'`);
+    expect(history).toContain('FROM print_job_receipts r');
+    expect(history).toContain('FROM print_jobs j');
+    expect(history).toContain('r.tenant_id');
+    expect(history).toContain('j.tenant_id');
   });
 });

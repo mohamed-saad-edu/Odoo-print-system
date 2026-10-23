@@ -1,5 +1,6 @@
 "use server";
 import { logError } from "../lib/log";
+import { listPrintJobHistory } from "../lib/job-history";
 
 import { db } from "../db";
 import { agents, printers, printJobs, printJobReceipts, discoverySessions, discoveredDevices } from "../db/schema";
@@ -362,93 +363,16 @@ export async function getDashboardJobs(options?: {
     throw new ActionError(t("errors.invalidStatusFilter"), 400);
   }
 
-  const conditions = [eq(printJobs.tenantId, manager.tenantId)];
-
-  if (statusParam && statusParam !== "all") {
-    if (statusParam === "active" || statusParam === "in_flight") {
-      conditions.push(inArray(printJobs.status, ["queued", "claimed", "printing"]));
-    } else if (statusParam === "queued" || statusParam === "claimed" || statusParam === "printing" || statusParam === "expired") {
-      conditions.push(eq(printJobs.status, statusParam));
-    } else if (statusParam === "success" || statusParam === "printed") {
-      conditions.push(eq(printJobs.status, "success"));
-    } else if (statusParam === "unknown" || statusParam === "attention") {
-      conditions.push(
-        // Non-null: PHYSICAL_OUTCOME_UNKNOWN_MARKERS is a non-empty tuple, so or() always receives >= 1 clause.
-        or(...PHYSICAL_OUTCOME_UNKNOWN_MARKERS.map((m) => sql`${printJobs.error} LIKE ${m + "%"}`))!
-      );
-    } else if (statusParam === "failed") {
-      conditions.push(
-        // Non-null: and() always receives the fixed eq() clause plus the marker clauses.
-        and(
-          eq(printJobs.status, "failed"),
-          ...PHYSICAL_OUTCOME_UNKNOWN_MARKERS.map((m) => sql`COALESCE(${printJobs.error}, '') NOT LIKE ${m + "%"}`)
-        )!
-      );
-    } else if (statusParam === "unassigned") {
-      conditions.push(
-        or(eq(printJobs.destination, "unassigned"), eq(printJobs.printerId, "unassigned"), sql`${printJobs.printerId} NOT IN (SELECT id FROM printers WHERE tenant_id = ${printJobs.tenantId} AND lifecycle = 'active')`, sql`${printJobs.agentId} NOT IN (SELECT id FROM agents WHERE tenant_id = ${printJobs.tenantId} AND lifecycle = 'active')`)!
-      );
-    }
-  }
-
-  if (searchParam) {
-    // Escape LIKE wildcards: `%`/`_` in user input must match literally and
-    // `\` is the ESCAPE character (same policy as the reprint LIKE in
-    // print-job-service.ts). Without this, a job-search term containing `_`
-    // matches far more rows than the operator typed.
-    const escaped = searchParam.toLowerCase().replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_");
-    const term = `%${escaped}%`;
-    conditions.push(
-      // Non-null: or() always receives six fixed LIKE clauses.
-      // ESCAPE is literal SQL text (NOT an interpolated binding —
-      // Drizzle would send that as a parameter and Postgres would
-      // reject `LIKE $1 $2`).
-      or(
-        sql`LOWER(${printJobs.id}) LIKE ${term} ESCAPE '\\'`,
-        sql`LOWER(COALESCE(${printJobs.destination}, '')) LIKE ${term} ESCAPE '\\'`,
-        sql`LOWER(COALESCE(${printJobs.documentType}, '')) LIKE ${term} ESCAPE '\\'`,
-        sql`LOWER(${printJobs.printerId}) LIKE ${term} ESCAPE '\\'`,
-        sql`LOWER(${printJobs.agentId}) LIKE ${term} ESCAPE '\\'`,
-        sql`LOWER(COALESCE(${printJobs.error}, '')) LIKE ${term} ESCAPE '\\'`
-      )!
-    );
-  }
-
-  const rows = await db
-    .select({
-      id: printJobs.id,
-      destination: printJobs.destination,
-      documentType: printJobs.documentType,
-      agentId: printJobs.agentId,
-      agentName: agents.name,
-      printerId: printJobs.printerId,
-      printerName: printers.name,
-      status: printJobs.status,
-      error: printJobs.error,
-      requestedBy: printJobs.requestedBy,
-      retries: printJobs.retries,
-      deliveryAttempts: printJobs.deliveryAttempts,
-      claimedAt: printJobs.claimedAt,
-      deliveredAt: printJobs.deliveredAt,
-      ackedAt: printJobs.ackedAt,
-      expiresAt: printJobs.expiresAt,
-      createdAt: printJobs.createdAt,
-      updatedAt: printJobs.updatedAt,
-    })
-    .from(printJobs)
-    .leftJoin(agents, and(eq(agents.id, printJobs.agentId), eq(agents.tenantId, manager.tenantId)))
-    .leftJoin(printers, and(eq(printers.id, printJobs.printerId), eq(printers.tenantId, manager.tenantId)))
-    .where(conditions.length ? and(...conditions)! : undefined)
-    .orderBy(desc(printJobs.createdAt))
-    .limit(limit)
-    .offset(offset);
-
-  return rows.map((row) => ({
-    ...row,
-    physicalOutcome: derivePhysicalOutcome(row.status, row.error),
-  }));
+  // Keep both current dispatches and durable payload-free terminal receipts.
+  // The shared read model applies search and pagination AFTER the union.
+  return listPrintJobHistory({
+    tenantId: manager.tenantId,
+    status: statusParam,
+    search: searchParam,
+    limit,
+    offset,
+  });
 }
-
 
 
 async function dashboardResult<T>(operation: () => Promise<T>) {

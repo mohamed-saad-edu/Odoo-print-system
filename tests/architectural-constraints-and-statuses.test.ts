@@ -77,7 +77,8 @@ describe("Architectural Constraints, ACLs, and Runtime Statuses", () => {
 
     const jobsRoute = read("src/app/api/jobs/route.ts");
     expect(jobsRoute).toContain("validateConsoleAuth");
-    expect(jobsRoute).toContain("eq(printJobs.agentId, auth.agent.id)");
+    expect(jobsRoute).toContain('agentId: auth.kind === "agent" ? auth.agent.id');
+    expect(read("src/lib/job-history.ts")).toContain("h.agent_id");
   });
 
   it("keeps Windows HALFTONE rendering aligned with SetBrushOrgEx", () => {

@@ -78,10 +78,14 @@ describe("print_jobs api-key index consolidation", () => {
 });
 
 describe("tenant-fenced unassigned subqueries", () => {
-  it("fences NOT IN subqueries by tenant_id so they hit composite indexes", () => {
-    const jobsRoute = readFileSync("src/app/api/jobs/route.ts", "utf8");
-    expect(jobsRoute).toContain("SELECT id FROM printers WHERE tenant_id = ");
-    expect(jobsRoute).toContain("SELECT id FROM agents WHERE tenant_id = ");
+  it("uses correlated tenant-and-identity ownership checks against both current and archived history", () => {
+    const route = readFileSync("src/app/api/jobs/route.ts", "utf8");
+    const history = readFileSync("src/lib/job-history.ts", "utf8");
+    expect(route).toContain("listPrintJobHistory");
+    expect(history).toContain("p0.id = h.printer_id AND p0.tenant_id = h.tenant_id");
+    expect(history).toContain("a0.id = h.agent_id AND a0.tenant_id = h.tenant_id");
+    expect(history).toContain(`scopedWhere("j", input.tenantId)`);
+    expect(history).toContain(`scopedWhere("r", input.tenantId)`);
   });
 });
 

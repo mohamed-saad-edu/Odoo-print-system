@@ -210,7 +210,9 @@ describe("clock authority is enforced in the source", () => {
 
   it("uses PostgreSQL time for the platform 24-hour job window", () => {
     const stats = read("src/app/api/platform/stats/route.ts");
-    expect(stats).toContain("clock_timestamp() - interval '24 hours'");
+    // One DB observation timestamp anchors every generated hourly bucket.
+    expect(stats).toContain("SELECT clock_timestamp() AS at");
+    expect(stats).toContain("(SELECT at FROM observation) - interval '24 hours'");
     expect(stats).not.toContain("Date.now()");
   });
 
