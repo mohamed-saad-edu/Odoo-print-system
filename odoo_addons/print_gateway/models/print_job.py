@@ -1050,7 +1050,6 @@ class PrintGatewayJob(models.Model):
                     gateway_config._gateway_base(for_request=True),
                     company_id=gateway_config.company_id.id,
                 )
-                gateway_config._register_auto_installation(self.gateway_installation_id)
             except ValueError:
                 raise ValidationError("GATEWAY_INSTALLATION_PROOF_MISSING: No externally enrolled proof; no print was sent.") from None
             headers["X-Yaseir-Odoo-Proof"] = proof
@@ -1475,6 +1474,8 @@ class PrintGatewayJob(models.Model):
                 response_state_persisted = False
                 gateway_config = job.gateway_config_id.sudo()
                 try:
+                    if int(getattr(job, "gateway_idempotency_version", 1) or 1) == 2:
+                        gateway_config._register_auto_installation(job.gateway_installation_id)
                     response = requests.post(
                         "%s/api/print/jobs" % gateway_config._gateway_base(for_request=True),
                         json=job._submission_body(), headers=(job._gateway_headers_for_job(gateway_config)

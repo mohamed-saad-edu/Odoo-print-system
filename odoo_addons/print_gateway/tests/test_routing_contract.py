@@ -14,6 +14,15 @@ from odoo.addons.print_gateway.models.gateway_config import PrintGatewayConfig
 class TestPrintGatewayRoutingContract(TransactionCase):
     def setUp(self):
         super().setUp()
+        # Routing tests intentionally simulate the print HTTP boundary rather
+        # than exercising automatic Gateway installation enrollment. Mock that
+        # separate handshake; dedicated identity tests cover enrollment.
+        auto_enrollment = patch.object(
+            PrintGatewayConfig, "_register_auto_installation",
+            return_value="test-auto-enrollment",
+        )
+        auto_enrollment.start()
+        self.addCleanup(auto_enrollment.stop)
         self.company = self.env.company
         values = {
             "gateway_url": "https://gateway.example.com",

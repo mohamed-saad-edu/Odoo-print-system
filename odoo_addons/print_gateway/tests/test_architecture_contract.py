@@ -681,6 +681,7 @@ class TestPrintGatewayArchitectureContract(TransactionCase):
                 mock_resp.json.return_value = {"jobId": "gw_branch_submit_1", "status": "queued"}
                 router = exec_env["print_gateway.print_router"].with_user(branch_user).with_context(allowed_company_ids=[branch.id])
                 with patch("odoo.addons.print_gateway.models.gateway_config.PrintGatewayConfig._validate_gateway_host", return_value=None), \
+                     patch("odoo.addons.print_gateway.models.gateway_config.PrintGatewayConfig._register_auto_installation", return_value="test-auto-enrollment"), \
                      patch("requests.post", return_value=mock_resp):
                     res = router.route_raw_command(
                         "\x1b@Branch submit ticket",
