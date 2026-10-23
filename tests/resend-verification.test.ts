@@ -111,6 +111,7 @@ describe("Resend Email Verification API", () => {
         execute: executeMock.mockResolvedValue({ rows: [{ id: "usr_unverified", emailVerifiedAt: null }] }),
         update: txUpdate,
         insert: txInsert,
+        query: { emailVerificationTokens: { findFirst: async () => undefined } },
       });
     });
     sendEmailMock.mockResolvedValue(undefined);
