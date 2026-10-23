@@ -47,6 +47,18 @@ jobs:
               base="$PR_BASE_SHA"
             fi
 
+            # A rewritten or multi-commit push must validate the new release.
+            # Two superseded heads can differ only in docs while the previous
+            # native validation was cancelled. Raw parent headers also work
+            # with the depth-one checkout used by this job.
+            if [ "$EVENT_NAME" = "push" ]; then
+              first_parent="$(git cat-file -p "$GITHUB_SHA" 2>/dev/null | awk '$1 == "parent" && !found { print $2; found = 1 }')"
+              if [ "$first_parent" != "$base" ]; then
+                echo "Push is not a single-parent continuation; running full Windows validation."
+                base=""
+              fi
+            fi
+
             if [ -z "$base" ] || printf '%s' "$base" | grep -Eq '^0+$'; then
               echo "No usable base SHA; running the full Windows validation."
               windows=true
@@ -58,17 +70,21 @@ jobs:
               fi
 
               if git cat-file -e "$base^{commit}" 2>/dev/null; then
-                if ! files="$(git diff --name-only "$base" "$GITHUB_SHA")"; then
+                # Keep BOTH old and new names for renames, and preserve exotic
+                # filenames with a NUL-delimited diff rather than line parsing.
+                path_list="$(mktemp)"
+                trap 'rm -f "$path_list"' EXIT
+                if ! git diff --no-renames --name-only -z "$base" "$GITHUB_SHA" > "$path_list"; then
                   echo "Could not compute changed paths; running the full Windows validation."
                   windows=true
                   agent=true
                   rust=true
                 fi
-                printf 'Changed files:\n%s\n' "$files"
-                while IFS= read -r file; do
+                while IFS= read -r -d '' file; do
+                  printf 'Changed file: %q\n' "$file"
                   [ -z "$file" ] && continue
                   case "$file" in
-                    agent/*|src-tauri/*|src/desktop/*|src/components/*|src/i18n/*|src/shared/*|src/lib/*|src/app/globals.css|contracts/*|scripts/build-windows-installer.ps1|scripts/smoke-test-windows.ps1|tests/windows-release-builder-helpers.ps1|tests/test_windows_release_builder_guards.py|vite.desktop.config.mts|postcss.config.*|package.json|package-lock.json|tsconfig.json|.nvmrc|.github/workflows/build-windows.yml)
+                    agent/*|src-tauri/*|src/desktop/*|src/components/*|src/i18n/*|src/shared/*|src/lib/*|src/app/globals.css|typography/*|public/*|contracts/*|scripts/build-windows-installer.ps1|scripts/smoke-test-windows.ps1|tests/windows-release-builder-helpers.ps1|tests/test_windows_release_builder_guards.py|vite.desktop.config.mts|postcss.config.*|package.json|package-lock.json|tsconfig.json|.nvmrc|.github/workflows/build-windows.yml)
                       windows=true
                       ;;
                   esac
@@ -82,7 +98,7 @@ jobs:
                       rust=true
                       ;;
                   esac
-                done <<< "$files"
+                done < "$path_list"
               else
                 echo "Could not resolve the base commit; failing open to full Windows validation."
                 windows=true
