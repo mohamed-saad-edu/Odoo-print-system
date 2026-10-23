@@ -14,7 +14,6 @@ export default function PlatformDatabasePage(){
  useEffect(()=>{
    const ctl=new AbortController();let active=true;
    const p=new URLSearchParams();if(table)p.set("table",table);if(search)p.set("id",search);p.set("offset",String(offset));
-   setLoading(true);
    fetchWithTimeout("/api/platform/database?"+p.toString(),{signal:ctl.signal,cache:"no-store"})
       .then(async r=>{const x=await r.json();if(!r.ok)throw Error(x.error||"Database unavailable");return x as Result})
       .then(x=>{if(active){setData(x);setError("");}}).catch(e=>{if(active)setError(String(e));})
