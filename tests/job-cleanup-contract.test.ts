@@ -11,7 +11,14 @@ describe("print-job cleanup contract", () => {
     expect(src).toContain("const claims = await validateWorkspaceManager(req)");
     expect(src).toContain('["success", "failed", "expired"]');
     expect(src).toContain("inArray(printJobs.status");
-    expect(src).toContain("PHYSICAL_OUTCOME_UNKNOWN_MARKERS.map");
+    // Cleanup now archives terminal evidence rather than dropping it. The
+    // canonical uncertain-outcome markers are handled by the shared history
+    // reader, including for archived receipt rows.
+    const history = read("src/lib/job-history.ts");
+    expect(history).toContain("PHYSICAL_OUTCOME_UNKNOWN_MARKERS.map");
+    expect(src).toContain("tx.insert(printJobReceipts)");
+    expect(src).toContain("status: row.status, error: row.error, closedClaimTokenHash: row.closedClaimTokenHash");
+    expect(src.indexOf("tx.insert(printJobReceipts)")).toBeLessThan(src.indexOf("tx.delete(printJobs)"));
     expect(src).toContain("isNull(printJobs.claimToken)");
     expect(src).toContain("lt(printJobs.updatedAt, before)");
     expect(src).toContain("orderBy(printJobs.updatedAt)");

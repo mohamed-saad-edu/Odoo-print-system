@@ -251,7 +251,14 @@ describe("production hardening contracts", () => {
     expect(dashboard).toContain("loadDashboardStateForTenant(claims.tenantId)");
     expect(dashboardState).toContain("eq(agents.tenantId, tenantId)");
     expect(dashboardState).toContain("eq(printers.tenantId, tenantId)");
-    expect(dashboardState).toContain("eq(printJobs.tenantId, tenantId)");
+    // The dashboard delegates jobs to the shared history reader. Both live
+    // jobs and archived receipts MUST carry the tenant parameter into SQL.
+    const history = read("src/lib/job-history.ts");
+    expect(dashboardState).toContain("listPrintJobHistory({");
+    expect(history).toContain('sql`WHERE j.tenant_id = ${tenantId}`');
+    expect(history).toContain('sql`WHERE r.tenant_id = ${tenantId}`');
+    expect(history).toContain('FROM print_jobs j ${scopedWhere("j", input.tenantId)}');
+    expect(history).toContain('FROM print_job_receipts r ${scopedWhere("r", input.tenantId)}');
     expect(lifecycle).toContain("transitionAgentLifecycle(id, lifecycle, claims.tenantId, {");
     expect(helper).toContain("eq(agents.tenantId, tenantId)");
     expect(helper).not.toContain("tx.update(printers)");
