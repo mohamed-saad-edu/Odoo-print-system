@@ -32,11 +32,12 @@ def test_forward_migration_registered_in_immutable_drizzle_journal():
     import json
     doc = json.loads((ROOT / "drizzle/meta/_journal.json").read_text())
     tags = [row["tag"] for row in doc["entries"]]
-    assert tags[-2] == "0085_odoo_installation_idempotency"
-    assert tags[-1] == "0086_printer_identity_and_api_key_deletion"
+    assert tags[-3] == "0085_odoo_installation_idempotency"
+    assert tags[-2] == "0086_printer_identity_and_api_key_deletion"
+    assert tags[-1] == "0087_odoo_auto_enrollment"
     assert len(tags) == len(list((ROOT / "drizzle").glob("*.sql")))
     assert tags == [p.stem for p in sorted((ROOT / "drizzle").glob("*.sql"))]
-    assert len(tags) == 87
+    assert len(tags) == 88
 
 
 def test_rotation_preserves_installation_ownership():
@@ -51,3 +52,13 @@ def test_reuse_approval_immediately_maps_receipt_without_second_post():
     assert "INSERT INTO odoo_v2_operations" in source
     assert 'disposition === "reuse"' in source
     assert "found.id" in source
+
+
+def test_new_tenants_start_strict_v2_and_shared_api_keys_are_not_unique():
+    migration = (ROOT / "drizzle/0087_odoo_auto_enrollment.sql").read_text()
+    schema = (ROOT / "src/db/schema.ts").read_text()
+    assert "SET DEFAULT 'strict_v2'" in migration
+    assert "DROP CONSTRAINT IF EXISTS" in migration
+    assert "CREATE INDEX IF NOT EXISTS" in migration
+    assert 'odooIdempotencyMode: text("odoo_idempotency_mode").notNull().default("strict_v2")' in schema
+    assert 'odoo_installation_credentials_tenant_api_key_idx' in schema

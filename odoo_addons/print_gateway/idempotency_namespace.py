@@ -49,7 +49,87 @@ def wire_key(version, company_id, operation_id, installation_id=None):
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
-def deployment_proof(installation_id):
+def _identity_path(database_name, gateway_origin, data_dir=None):
+    """Private per-database, per-Gateway identity OUTSIDE the Odoo database."""
+    import os
+    import stat
+    from pathlib import Path
+
+    if not isinstance(database_name, str) or not database_name:
+        raise ValueError("Odoo database name is required")
+    if not isinstance(gateway_origin, str) or not gateway_origin.startswith("https://"):
+        raise ValueError("HTTPS Gateway origin is required")
+    if data_dir is None:
+        from odoo.tools import config as odoo_config
+        data_dir = odoo_config["data_dir"]
+    if not data_dir:
+        raise ValueError("A persistent Odoo data_dir is required for automatic enrollment")
+    root = Path(data_dir) / "yaseir-print-installations"
+    root.mkdir(parents=True, mode=0o700, exist_ok=True)
+    if root.is_symlink() or not root.is_dir():
+        raise ValueError("Unsafe installation identity directory")
+    if os.name == "posix" and (stat.S_IMODE(root.stat().st_mode) & 0o077):
+        root.chmod(0o700)
+    scope = json.dumps([database_name, gateway_origin.rstrip("/")],
+                       separators=(",", ":"), ensure_ascii=False)
+    return root / (hashlib.sha256(scope.encode("utf-8")).hexdigest() + ".json")
+
+
+def _read_local_identity(path):
+    import os
+    import stat
+
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    try:
+        mode = os.fstat(descriptor).st_mode
+        if not stat.S_ISREG(mode) or (os.name == "posix" and stat.S_IMODE(mode) & 0o077):
+            raise ValueError("Installation proof file is not private")
+        with os.fdopen(descriptor, "r", encoding="utf-8") as reader:
+            descriptor = -1
+            data = json.load(reader)
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+    if not isinstance(data, dict):
+        raise ValueError("Invalid installation identity file")
+    identity = data.get("installationId")
+    proof = data.get("installationProof")
+    require_v2_identity(identity, proof)
+    return {"installationId": identity, "installationProof": proof}
+
+
+def local_identity(database_name, gateway_origin, data_dir=None):
+    """Atomically generate stable credentials, even with concurrent Odoo workers."""
+    import base64
+    import os
+    import tempfile
+
+    path = _identity_path(database_name, gateway_origin, data_dir)
+    try:
+        return _read_local_identity(path)
+    except FileNotFoundError:
+        pass
+    identity = {
+        "installationId": str(uuid.uuid4()),
+        "installationProof": base64.urlsafe_b64encode(os.urandom(32)).decode("ascii").rstrip("="),
+    }
+    descriptor, temp_path = tempfile.mkstemp(prefix=".enrollment-", dir=path.parent)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as writer:
+            os.chmod(temp_path, 0o600)
+            json.dump(identity, writer, separators=(",", ":"))
+            writer.flush()
+            os.fsync(writer.fileno())
+        try:
+            os.link(temp_path, path)  # Atomic winner; never replace another worker.
+        except FileExistsError:
+            pass
+    finally:
+        os.unlink(temp_path)
+    return _read_local_identity(path)
+
+
+def deployment_proof(installation_id, database_name=None, gateway_origin=None, data_dir=None):
     """Read enrollment proof from the Odoo PROCESS environment, never database.
 
     Supports several Odoo DBs in one service via an out-of-DB UUID->proof map.
@@ -57,6 +137,18 @@ def deployment_proof(installation_id):
     """
     import os
 
+    if database_name is not None and gateway_origin is not None:
+        path = _identity_path(database_name, gateway_origin, data_dir)
+        try:
+            current = _read_local_identity(path)
+        except FileNotFoundError:
+            current = None
+        if current:
+            if current["installationId"] != installation_id:
+                # A clone's old outbox must never be reprinted with new credentials.
+                raise ValueError("Saved print job belongs to another Odoo installation")
+            return current["installationProof"]
+    # Backward compatibility for explicitly provisioned external proof maps.
     raw = os.environ.get("YASEIR_ODOO_INSTALLATION_PROOFS", "")
     if raw:
         try:

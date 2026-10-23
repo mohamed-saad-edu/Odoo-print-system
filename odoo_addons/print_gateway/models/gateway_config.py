@@ -17,6 +17,7 @@ import requests
 from psycopg2 import sql
 
 from ..runtime_clock import db_now_utc
+from ..idempotency_namespace import local_identity, deployment_proof
 
 from .crypto import (
     CredentialDecryptError,
@@ -483,6 +484,69 @@ class PrintGatewayConfig(models.Model):
                 _("Gateway credential protection is unavailable or invalid. Configure the deployment-managed credential encryption key before using Gateway printing.")
             ) from exc
 
+    def _ensure_auto_installation(self):
+        """Get an independent identity without requesting customer input."""
+        self.ensure_one()
+        gateway_url = self._gateway_base(for_request=True)
+        try:
+            identity = local_identity(self.env.cr.dbname, gateway_url)
+        except (ValueError, OSError, TypeError) as exc:
+            raise ValidationError(_(
+                "Automatic Odoo installation identity is unavailable. "
+                "Check the Odoo service's persistent, writable data directory."
+            )) from exc
+        installation_id = identity["installationId"]
+        if self.installation_id != installation_id or not self.idempotency_v2_enabled:
+            self.sudo().with_context(skip_enabled_sync=True).write({
+                "installation_id": installation_id,
+                "idempotency_v2_enabled": True,
+            })
+        return installation_id
+
+    def _register_auto_installation(self, expected_installation_id=None):
+        """Register on the wire with the normal API key (safe to retry)."""
+        self.ensure_one()
+        installation_id = self._ensure_auto_installation()
+        if expected_installation_id and expected_installation_id != installation_id:
+            raise ValidationError(_(
+                "This saved job belongs to another Odoo installation. "
+                "Review cloned/restored print history before reprinting."
+            ))
+        gateway_url = self._gateway_base(for_request=True)
+        try:
+            proof = deployment_proof(installation_id, self.env.cr.dbname, gateway_url)
+        except (ValueError, OSError):
+            raise ValidationError(_("Automatic Odoo installation proof is unavailable.")) from None
+        try:
+            response = requests.post(
+                "%s/api/odoo/installations/auto" % gateway_url,
+                headers=self._gateway_headers(),
+                json={"installationId": installation_id, "installationProof": proof,
+                      "name": "Odoo %s" % self.env.cr.dbname[:80]},
+                timeout=10,
+                allow_redirects=False,
+            )
+        except requests.RequestException as exc:
+            raise ValidationError(_(
+                "Gateway enrollment is temporarily unavailable; no print was submitted."
+            )) from exc
+        if _gateway_redirect_message(response, gateway_url):
+            raise ValidationError(_("Gateway installation enrollment refused a redirect."))
+        if response.status_code not in (200, 201):
+            if response.status_code == 409:
+                raise ValidationError(_(
+                    "Gateway installation identity needs reconciliation. "
+                    "No print was submitted; contact your Yaseir administrator."
+                ))
+            raise ValidationError(_("Gateway installation enrollment failed (HTTP %s).") % response.status_code)
+        try:
+            body = response.json()
+        except ValueError:
+            raise ValidationError(_("Gateway enrollment returned invalid data.")) from None
+        if not isinstance(body, dict) or body.get("installationId") != installation_id or body.get("idempotencyVersion") != 2:
+            raise ValidationError(_("Gateway enrollment confirmation did not match this database."))
+        return installation_id
+
     def _gateway_headers(self):
         self.ensure_one()
         api_key = self._gateway_api_key_plaintext()
@@ -546,6 +610,7 @@ class PrintGatewayConfig(models.Model):
                     "last_test_error": message,
                 })
                 return False
+            self._register_auto_installation()
             return self._write_test_result_if_current(expected_revision, {
                 "last_test_at": fields.Datetime.now(),
                 "last_test_status": "success",
@@ -1221,12 +1286,21 @@ class PrintGatewayConfig(models.Model):
             self._check_admin()
 
         vals = dict(vals)
+        if ("gateway_url" in vals or "gateway_api_key" in vals) and "installation_id" not in vals:
+            # Re-enroll under an updated Gateway or API key on the next use.
+            # Saved print-job identities remain unchanged.
+            vals["installation_id"] = False
+            vals["idempotency_v2_enabled"] = False
         if vals.get("idempotency_v2_enabled"):
             from ..idempotency_namespace import deployment_proof
             for record in self:
                 chosen_installation = vals.get("installation_id") or record.installation_id
                 try:
-                    deployment_proof(chosen_installation)
+                    deployment_proof(
+                        chosen_installation,
+                        self.env.cr.dbname,
+                        vals.get("gateway_url") or record.gateway_url,
+                    )
                 except ValueError:
                     raise ValidationError(_(
                         "Versioned printing requires a Gateway-enrolled installation ID and out-of-database proof."
@@ -2129,6 +2203,8 @@ class PrintGatewayConfig(models.Model):
             body = response.json() if response.content else {}
             if response.status_code != 200 or not isinstance(body, dict) or body.get("ok") is not True:
                 raise ValidationError(_("Gateway connection test failed (HTTP %s).") % response.status_code)
+
+            self._register_auto_installation()
 
             # Re-read the persisted identity and revision after the network
             # health check. A newer key/activation save may have committed while

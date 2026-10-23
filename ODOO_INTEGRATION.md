@@ -1,6 +1,6 @@
 # Odoo Integration Guide
 
-> Module: `print_gateway` | Version: 19.0.2.16.0 | Odoo: 19 Community Edition
+> Module: `print_gateway` | Version: 19.0.2.17.0 | Odoo: 19 Community Edition
 
 ## Overview
 
@@ -218,6 +218,41 @@ Validate the scheduled actions through `ir.cron.method_direct_trigger()` in an
 Odoo registry test environment, then exercise actual invoice, stock, POS,
 multi-company, rollback, outage and recovery flows in staging. Offline source
 tests cannot establish native ORM, scheduler, asset or physical-printer acceptance.
+
+## Automatic installation identities (zero-touch Version 2)
+
+**New Gateway workspaces now use strict-v2 printing by default.** There is
+no Gateway Installation ID to copy or Version 2 Identity Cutover checkbox for
+the customer to activate. Every independent Odoo database creates its own
+UUIDv4 and 256-bit installation proof automatically and stores them in a
+private JSON file inside the Odoo service's persistent
+\`data_dir/yaseir-print-installations/\` directory. The proof never enters
+the Odoo database, so a normal database-only clone cannot copy the proof.
+
+On "Test Connection" and at the actual print-job submission boundary, the
+addon sends its installation identity over HTTPS to
+\`POST /api/odoo/installations/auto\` using the existing Odoo API key.
+Enrollment is repeatable and safe to retry after a lost HTTP response. One
+Gateway workspace and API key can register multiple Odoo database identities,
+even if their Odoo company and operation IDs happen to match.
+
+**Installation:** Make the Odoo \`data_dir\` persistent and writable by the
+Odoo process. Back up its \`yaseir-print-installations/\` credentials using a
+separate encrypted/secret backup policy. Do not share that directory between
+unrelated Odoo hosts. No customer needs to copy the proof into environment
+variables for a fresh deployment.
+
+**Restores:** A database-only clone with a different database name or data
+directory gets a new installation identity. All previously persisted print
+jobs retain their original identity, and will stop rather than be dispatched
+as fresh prints by the clone. Full virtual machine/filesystem clones can
+also copy the private identity files, so operators must deliberately rotate
+the enrollment after a FULL host clone, not treat it as two independent hosts.
+
+**Existing deployments:** This automatic enrollment path intentionally
+refuses old legacy Gateway workspaces. Historical v1 jobs and receipts must be
+reconciled with the operator-controlled runbook below; automatic promotion of
+an existing tenant risks duplicate physical prints.
 
 ## Installation-scoped idempotency (S06-006)
 

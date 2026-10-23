@@ -37,8 +37,6 @@
                         <field name="enabled" widget="boolean_toggle" string="Enable Printing Service"/>
                         <field name="gateway_url" placeholder="https://print.example.com"/>
                         <field name="gateway_api_key" password="True" placeholder="Enter the installation API key"/>
-                        <field name="installation_id" groups="base.group_system" placeholder="Enrolled Gateway installation UUID"/>
-                        <field name="idempotency_v2_enabled" groups="base.group_system" string="Version 2 Identity Cutover"/>
                         <field name="last_test_status"
                                string="Connection"
                                widget="badge"

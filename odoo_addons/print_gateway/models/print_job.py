@@ -604,15 +604,15 @@ class PrintGatewayJob(models.Model):
                 ))
 
         key = (idempotency_key or uuid.uuid4().hex).strip()
-        namespace_version = 2 if gateway_config.idempotency_v2_enabled else 1
-        installation_id = (gateway_config.installation_id or "").strip() if namespace_version == 2 else False
-        if namespace_version == 2:
-            try:
-                deployment_proof(installation_id)
-            except ValueError:
-                raise ValidationError(_(
-                    "Printing is paused: the enrolled Odoo installation proof is unavailable."
-                )) from None
+        # Every NEW operation is scoped to its own local Odoo database.
+        # No customer-visible Installation ID or manual cutover is needed.
+        namespace_version = 2
+        installation_id = gateway_config._ensure_auto_installation()
+        try:
+            deployment_proof(installation_id, self.env.cr.dbname,
+                             gateway_config._gateway_base(for_request=True))
+        except (ValueError, OSError):
+            raise ValidationError(_("Automatic Odoo installation proof is unavailable.")) from None
         try:
             selected_wire_key = wire_key(namespace_version, company.id, key, installation_id)
         except ValueError:
@@ -1044,7 +1044,11 @@ class PrintGatewayJob(models.Model):
         headers = dict(gateway_config._gateway_headers())
         if int(self.gateway_idempotency_version or 1) == 2:
             try:
-                proof = deployment_proof(self.gateway_installation_id)
+                proof = deployment_proof(
+                    self.gateway_installation_id, self.env.cr.dbname,
+                    gateway_config._gateway_base(for_request=True),
+                )
+                gateway_config._register_auto_installation(self.gateway_installation_id)
             except ValueError:
                 raise ValidationError("GATEWAY_INSTALLATION_PROOF_MISSING: No externally enrolled proof; no print was sent.") from None
             headers["X-Yaseir-Odoo-Proof"] = proof

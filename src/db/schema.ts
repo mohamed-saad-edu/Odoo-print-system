@@ -8,8 +8,9 @@ export const tenants = pgTable("tenants", {
   suspendedAt: timestamp("suspended_at"),
   deletedAt: timestamp("deleted_at"),
   lifecycleReason: text("lifecycle_reason"),
-  // Controlled S06-006 cutover; existing tenants start in legacy and must be explicitly enrolled.
-  odooIdempotencyMode: text("odoo_idempotency_mode").notNull().default("legacy"),
+  // All newly created tenants use automatic v2 installation identities.
+  // Existing legacy tenants preserve history until explicit reconciliation.
+  odooIdempotencyMode: text("odoo_idempotency_mode").notNull().default("strict_v2"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 }, (table) => ({
@@ -239,8 +240,8 @@ export const apiKeys = pgTable("api_keys", {
   readOnlyUntilCheck: check("api_keys_read_only_until_check", sql`${table.readOnlyUntil} IS NULL OR ${table.revokedAt} IS NOT NULL`),
 }));
 
-// S06-006 operator-enrolled Odoo deployments. A copied DB UUID is not proof
-// of a distinct installation; the out-of-DB proof binds an enrollment.
+// S06-006 Odoo deployments: independent identities are generated on the
+// Odoo host and registered with the Gateway; a copied DB UUID is not a proof.
 export const odooInstallations = pgTable("odoo_installations", {
   id: text("id").primaryKey(),
   tenantId: text("tenant_id").references(() => tenants.id).notNull(),
@@ -261,7 +262,7 @@ export const odooInstallationCredentials = pgTable("odoo_installation_credential
   createdAt: timestamp("created_at").default(sql`clock_timestamp()`).notNull(),
 }, table => ({
   pk: primaryKey({ columns: [table.tenantId, table.installationId, table.apiKeyId] }),
-  keyUnique: unique("odoo_installation_credentials_tenant_key_unique").on(table.tenantId, table.apiKeyId),
+  tenantKeyIdx: index("odoo_installation_credentials_tenant_api_key_idx").on(table.tenantId, table.apiKeyId),
   installationFk: foreignKey({ columns: [table.tenantId, table.installationId], foreignColumns: [odooInstallations.tenantId, odooInstallations.id] }),
   apiKeyFk: foreignKey({ columns: [table.tenantId, table.apiKeyId], foreignColumns: [apiKeys.tenantId, apiKeys.id] }),
 }));
