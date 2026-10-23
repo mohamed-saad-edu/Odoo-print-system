@@ -492,8 +492,8 @@ class PrintGatewayConfig(models.Model):
             identity = local_identity(self.env.cr.dbname, gateway_url)
         except (ValueError, OSError, TypeError) as exc:
             raise ValidationError(_(
-                "Automatic Odoo installation identity is unavailable. "
-                "Check the Odoo service's persistent, writable data directory."
+                "GATEWAY_INSTALLATION_PROOF_MISSING: Automatic installation identity is "
+                "unavailable. Check the Odoo service's persistent, writable data directory."
             )) from exc
         installation_id = identity["installationId"]
         if self.installation_id != installation_id or not self.idempotency_v2_enabled:
@@ -509,14 +509,16 @@ class PrintGatewayConfig(models.Model):
         installation_id = self._ensure_auto_installation()
         if expected_installation_id and expected_installation_id != installation_id:
             raise ValidationError(_(
-                "This saved job belongs to another Odoo installation. "
-                "Review cloned/restored print history before reprinting."
+                "GATEWAY_INSTALLATION_IDENTITY_CONFLICT: This saved job belongs to "
+                "another Odoo installation. Review cloned/restored print history before reprinting."
             ))
         gateway_url = self._gateway_base(for_request=True)
         try:
             proof = deployment_proof(installation_id, self.env.cr.dbname, gateway_url)
         except (ValueError, OSError):
-            raise ValidationError(_("Automatic Odoo installation proof is unavailable.")) from None
+            raise ValidationError(_(
+                "GATEWAY_INSTALLATION_PROOF_MISSING: Automatic installation proof is unavailable."
+            )) from None
         try:
             response = requests.post(
                 "%s/api/odoo/installations/auto" % gateway_url,
@@ -528,23 +530,32 @@ class PrintGatewayConfig(models.Model):
             )
         except requests.RequestException as exc:
             raise ValidationError(_(
-                "Gateway enrollment is temporarily unavailable; no print was submitted."
+                "GATEWAY_INSTALLATION_ENROLLMENT_UNAVAILABLE: Gateway enrollment is "
+                "temporarily unavailable; no print was submitted."
             )) from exc
         if _gateway_redirect_message(response, gateway_url):
-            raise ValidationError(_("Gateway installation enrollment refused a redirect."))
+            raise ValidationError(_(
+                "GATEWAY_INSTALLATION_ENROLLMENT_UNAVAILABLE: Enrollment refused a redirect."
+            ))
         if response.status_code not in (200, 201):
             if response.status_code == 409:
                 raise ValidationError(_(
-                    "Gateway installation identity needs reconciliation. "
-                    "No print was submitted; contact your Yaseir administrator."
+                    "GATEWAY_INSTALLATION_IDENTITY_CONFLICT: Gateway installation identity "
+                    "needs reconciliation. No print was submitted; contact your Yaseir administrator."
                 ))
-            raise ValidationError(_("Gateway installation enrollment failed (HTTP %s).") % response.status_code)
+            raise ValidationError(_(
+                "GATEWAY_INSTALLATION_ENROLLMENT_UNAVAILABLE: Gateway enrollment failed (HTTP %s)."
+            ) % response.status_code)
         try:
             body = response.json()
         except ValueError:
-            raise ValidationError(_("Gateway enrollment returned invalid data.")) from None
+            raise ValidationError(_(
+                "GATEWAY_INSTALLATION_ENROLLMENT_UNAVAILABLE: Enrollment returned invalid data."
+            )) from None
         if not isinstance(body, dict) or body.get("installationId") != installation_id or body.get("idempotencyVersion") != 2:
-            raise ValidationError(_("Gateway enrollment confirmation did not match this database."))
+            raise ValidationError(_(
+                "GATEWAY_INSTALLATION_IDENTITY_CONFLICT: Enrollment confirmation did not match this database."
+            ))
         return installation_id
 
     def _gateway_headers(self):
