@@ -54,11 +54,15 @@ def test_reuse_approval_immediately_maps_receipt_without_second_post():
     assert "found.id" in source
 
 
-def test_new_tenants_start_strict_v2_and_shared_api_keys_are_not_unique():
+def test_auto_cutover_is_history_fenced_and_api_keys_can_be_shared():
     migration = (ROOT / "drizzle/0087_odoo_auto_enrollment.sql").read_text()
     schema = (ROOT / "src/db/schema.ts").read_text()
-    assert "SET DEFAULT 'strict_v2'" in migration
+    endpoint = (ROOT / "src/app/api/odoo/installations/auto/route.ts").read_text()
+    assert "SET DEFAULT 'strict_v2'" not in migration
+    assert "FROM print_jobs" in endpoint and "FROM print_job_receipts" in endpoint
+    assert "FOR UPDATE" in endpoint
+    assert "UPDATE tenants SET odoo_idempotency_mode = 'strict_v2'" in endpoint
     assert "DROP CONSTRAINT IF EXISTS" in migration
     assert "CREATE INDEX IF NOT EXISTS" in migration
-    assert 'odooIdempotencyMode: text("odoo_idempotency_mode").notNull().default("strict_v2")' in schema
+    assert 'odooIdempotencyMode: text("odoo_idempotency_mode").notNull().default("legacy")' in schema
     assert 'odoo_installation_credentials_tenant_api_key_idx' in schema

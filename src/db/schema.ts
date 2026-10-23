@@ -8,9 +8,9 @@ export const tenants = pgTable("tenants", {
   suspendedAt: timestamp("suspended_at"),
   deletedAt: timestamp("deleted_at"),
   lifecycleReason: text("lifecycle_reason"),
-  // All newly created tenants use automatic v2 installation identities.
-  // Existing legacy tenants preserve history until explicit reconciliation.
-  odooIdempotencyMode: text("odoo_idempotency_mode").notNull().default("strict_v2"),
+  // Safe legacy default; first zero-history auto enrollment moves to strict_v2
+  // atomically. This preserves existing v1 fixtures and historical receipts.
+  odooIdempotencyMode: text("odoo_idempotency_mode").notNull().default("legacy"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 }, (table) => ({

@@ -1,9 +1,9 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import { NextResponse } from "next/server";
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../../../../../db";
-import { apiKeys, odooInstallationCredentials, odooInstallations, tenants } from "../../../../../db/schema";
+import { apiKeys, odooInstallationCredentials, odooInstallations } from "../../../../../db/schema";
 import { validateOdooKey } from "../../../../../lib/odoo-auth";
 import { requireActiveTenantInTransaction } from "../../../../../lib/tenant-guard";
 import { isTenantBillingError, requireTenantBillingAccess } from "../../../../../lib/entitlements";
@@ -27,7 +27,10 @@ function proofMatches(candidate: string, storedHash: string): boolean {
 
 /**
  * Zero-touch, idempotent Odoo installation enrollment for newly provisioned
- * strict-v2 workspaces. One Odoo API key may connect multiple independent
+ * workspaces. A tenant with no historical jobs or receipts is atomically
+ * promoted to strict-v2 at first enrollment. Historical tenants must
+ * reconcile their print history before this one-way cutover.
+ * One Odoo API key may connect multiple independent
  * Odoo databases. Installation proofs are generated on the Odoo host and
  * never returned from this endpoint or persisted as plaintext on Gateway.
  */
@@ -46,6 +49,15 @@ export async function POST(req: Request) {
   const secretHash = createHash("sha256").update(installationProof).digest("hex");
   try {
     const outcome = await db.transaction(async (tx) => {
+      // Serialize with every Gateway print admission and the manual cutover:
+      // print admission locks tenants FOR SHARE before accepting a job.
+      const tenant = await tx.execute(sql`
+        SELECT lifecycle, odoo_idempotency_mode AS mode
+        FROM tenants WHERE id = ${key.tenantId} FOR UPDATE
+      `);
+      if (tenant.rows.length !== 1 || tenant.rows[0].lifecycle !== "active") {
+        return "tenant_unavailable" as const;
+      }
       await requireActiveTenantInTransaction(tx, key.tenantId);
       // Lock order is critical: print admission and activation acquire the
       // live API credential before billing. Avoid key/subscription deadlocks.
@@ -56,9 +68,25 @@ export async function POST(req: Request) {
         .for("share");
       if (active.length !== 1) return "invalid_key" as const;
       await requireTenantBillingAccess(tx, key.tenantId);
-      const tenant = await tx.select({ mode: tenants.odooIdempotencyMode })
-        .from(tenants).where(eq(tenants.id, key.tenantId)).for("share");
-      if (tenant[0]?.mode !== "strict_v2") return "legacy_workspace" as const;
+      if (tenant.rows[0].mode !== "strict_v2") {
+        if (tenant.rows[0].mode !== "legacy") return "legacy_workspace" as const;
+        const history = await tx.execute(sql`
+          SELECT (
+            EXISTS (SELECT 1 FROM print_jobs
+                    WHERE tenant_id = ${key.tenantId} AND api_key_id IS NOT NULL)
+            OR EXISTS (SELECT 1 FROM print_job_receipts
+                       WHERE tenant_id = ${key.tenantId} AND api_key_id IS NOT NULL)
+          ) AS has_history
+        `);
+        if (history.rows[0]?.has_history === true) return "legacy_workspace" as const;
+        // One-way activation happens before installation enrollment in this
+        // same transaction; failures roll back BOTH mutations.
+        await tx.execute(sql`
+          UPDATE tenants SET odoo_idempotency_mode = 'strict_v2',
+            updated_at = clock_timestamp()
+          WHERE id = ${key.tenantId}
+        `);
+      }
 
       // The primary key enforces one immutable proof per ID. Concurrent
       // first-time registrations converge; mismatched proofs never rebind.
@@ -96,6 +124,9 @@ export async function POST(req: Request) {
       error: "Legacy workspace requires print-history reconciliation",
       code: "RECONCILIATION_REQUIRED",
     }, { status: 409, headers: HEADERS });
+    if (outcome === "tenant_unavailable") return NextResponse.json({
+      error: "Workspace is unavailable",
+    }, { status: 403, headers: HEADERS });
     if (outcome === "invalid_key") return NextResponse.json({
       error: "Odoo integration key is no longer active",
     }, { status: 401, headers: HEADERS });

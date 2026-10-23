@@ -5087,7 +5087,7 @@
           "type": "text",
           "primaryKey": false,
           "notNull": true,
-          "default": "'strict_v2'"
+          "default": "'legacy'"
         }
       },
       "indexes": {

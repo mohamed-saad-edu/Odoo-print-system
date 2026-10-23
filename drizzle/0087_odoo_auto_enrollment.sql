@@ -1,7 +1,6 @@
--- The new-product default: no customer Cutover step for NEW Gateway workspaces.
--- Existing tenant rows remain untouched; historical v1 receipts never change.
-ALTER TABLE "tenants" ALTER COLUMN "odoo_idempotency_mode" SET DEFAULT 'strict_v2';
---> statement-breakpoint
+-- A zero-history Gateway tenant automatically promotes to strict_v2 during
+-- first authenticated Odoo enrollment, under FOR UPDATE tenant row lock.
+-- Leave the legacy tenant default intact and never rewrite historical receipts.
 -- An existing Gateway API key may authenticate more than one Odoo database.
 -- Retain the (tenant, installation, api_key) PK and installation FK constraints.
 ALTER TABLE "odoo_installation_credentials"

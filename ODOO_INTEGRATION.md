@@ -221,8 +221,9 @@ tests cannot establish native ORM, scheduler, asset or physical-printer acceptan
 
 ## Automatic installation identities (zero-touch Version 2)
 
-**New Gateway workspaces now use strict-v2 printing by default.** There is
-no Gateway Installation ID to copy or Version 2 Identity Cutover checkbox for
+**First enrollment automatically promotes an empty Gateway workspace to
+strict-v2, after verifying that it has no historical Odoo jobs or receipts.**
+There is no Gateway Installation ID to copy or Version 2 Identity Cutover checkbox for
 the customer to activate. Every independent Odoo database creates its own
 UUIDv4 and 256-bit installation proof automatically and stores them in a
 private JSON file inside the Odoo service's persistent
@@ -256,10 +257,10 @@ as fresh prints by the clone. Full virtual machine/filesystem clones can
 also copy the private identity files, so operators must deliberately rotate
 the enrollment after a FULL host clone, not treat it as two independent hosts.
 
-**Existing deployments:** This automatic enrollment path intentionally
-refuses old legacy Gateway workspaces. Historical v1 jobs and receipts must be
-reconciled with the operator-controlled runbook below; automatic promotion of
-an existing tenant risks duplicate physical prints.
+**Existing deployments:** An empty Gateway workspace with no historical Odoo
+jobs or receipts is automatically promoted under a tenant transaction lock.
+Any legacy workspace with prior jobs/receipts is rejected for operator review:
+historical physical outcomes must not be silently remapped or reprinted.
 
 ## Installation-scoped idempotency (S06-006)
 

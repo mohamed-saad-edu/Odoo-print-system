@@ -59,7 +59,7 @@ This runs `scripts/db-migrate.ts` which applies all pending migrations from `dri
 | 0084 | 1 | Agent-owned printer cloud sharing and retained version fence, preserving canonical identities/health/lifecycle/history |
 | 0085 | 1 | Additive Gateway-enrolled Odoo installation identities, immutable v2 job associations, audited historical decisions, and opt-in strict cutover; existing print keys and receipts remain untouched |
 | 0086 | 1 | Agent-scoped physical printer endpoint identity, non-authorizing historical API key references and removal of deleted credential tombstones |
-| 0087 | 1 | Enable strict-v2 Odoo identities for new tenants and allow multiple independently enrolled Odoo databases per API key |
+| 0087 | 1 | Support multiple independent Odoo installations per API key; zero-history first enrollment activates strict-v2 automatically without changing tenant defaults |
 
 **Total**: 88 forward-only SQL migrations (0000–0087), plus retained hash-versioned forward repairs in `scripts/db-migrate.ts`.
 
