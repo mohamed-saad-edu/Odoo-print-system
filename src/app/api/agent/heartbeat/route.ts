@@ -9,6 +9,7 @@ import { logError, logWarn } from "../../../../lib/log";
 import { getTenantEntitlementLimit, isTenantBillingError, TenantEntitlementError } from "../../../../lib/entitlements";
 import { requireActiveTenantInTransaction } from "../../../../lib/tenant-guard";
 import { aliasPrinterIdForAgent } from "../../../../lib/printer-identity";
+import { physicalPrinterIdentityKey, matchingPhysicalPrinter, samePrinterProtocol } from "../../../../lib/physical-printer-identity";
 import { inventoryVersionAllowsPage, parseInventorySnapshotVersion } from "../../../../lib/inventory-snapshot";
 import { getDesiredPrinterPage } from "../../../../lib/desired-state-page";
 import { isVirtualPrinterRecord } from "../../../../lib/printer-virtual";
@@ -398,6 +399,28 @@ export async function POST(req: Request) {
       for (let index = sanitizedPrinters.length - 1; index >= 0; index -= 1) {
         if (privatePrinterIds.has(sanitizedPrinters[index]!.id)) sanitizedPrinters.splice(index, 1);
       }
+      // Check the physical endpoint, not only the Agent-generated row ID:
+      // manual registration and discovery can report identical printers under
+      // different IDs. Preserve the existing row and all accepted job history.
+      const knownPhysicalPrinters = await tx.query.printers.findMany({
+        where: and(eq(printers.tenantId, agent.tenantId), eq(printers.agentId, agent.id)),
+      });
+      const seenEndpoints = new Set<string>();
+      for (let i = sanitizedPrinters.length - 1; i >= 0; i--) {
+        const observed = sanitizedPrinters[i]!;
+        const key = physicalPrinterIdentityKey(observed);
+        if (!key) continue;
+        const match = matchingPhysicalPrinter(knownPhysicalPrinters, observed, observed.id);
+        if (match) {
+          skipped.push({ id: observed.id, reason: samePrinterProtocol(match, observed)
+            ? "duplicate_physical_endpoint_registered_as_" + match.id
+            : "physical_endpoint_protocol_conflict" });
+          sanitizedPrinters.splice(i, 1);
+        } else if (seenEndpoints.has(key)) {
+          skipped.push({ id: observed.id, reason: "duplicate_physical_endpoint_in_snapshot" });
+          sanitizedPrinters.splice(i, 1);
+        } else seenEndpoints.add(key);
+      }
       const inventoryIds = [...new Set(sanitizedPrinters.map(p => p.id))];
       const inventoryRows = inventoryIds.length ? await tx.query.printers.findMany({
         where: and(eq(printers.tenantId, agent.tenantId), inArray(printers.id, inventoryIds)),
@@ -504,6 +527,7 @@ export async function POST(req: Request) {
               connectionType: p.connectionType as typeof printers.$inferInsert.connectionType,
               protocol: p.protocol as typeof printers.$inferInsert.protocol,
               config: p.config as typeof printers.$inferInsert.config,
+              physicalIdentityKey: physicalPrinterIdentityKey(p),
             }
           : observedUpdateSet;
         await tx.update(printers)
@@ -547,6 +571,7 @@ export async function POST(req: Request) {
           observedDesiredRevision: 0,
           observedDeviceClass: p.deviceClass as typeof printers.$inferInsert.observedDeviceClass,
           config: p.config as typeof printers.$inferInsert.config,
+          physicalIdentityKey: physicalPrinterIdentityKey(p),
           capabilities: p.capabilities as typeof printers.$inferInsert.capabilities,
           inventoryPresent: true,
           inventorySnapshotId: snapshotEnabled ? inventorySnapshotId : null,
