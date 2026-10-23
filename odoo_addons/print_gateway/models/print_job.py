@@ -610,7 +610,8 @@ class PrintGatewayJob(models.Model):
         installation_id = gateway_config._ensure_auto_installation()
         try:
             deployment_proof(installation_id, self.env.cr.dbname,
-                             gateway_config._gateway_base(for_request=True))
+                             gateway_config._gateway_base(for_request=True),
+                             company_id=gateway_config.company_id.id)
         except (ValueError, OSError):
             raise ValidationError(_("Automatic Odoo installation proof is unavailable.")) from None
         try:
@@ -1047,6 +1048,7 @@ class PrintGatewayJob(models.Model):
                 proof = deployment_proof(
                     self.gateway_installation_id, self.env.cr.dbname,
                     gateway_config._gateway_base(for_request=True),
+                    company_id=gateway_config.company_id.id,
                 )
                 gateway_config._register_auto_installation(self.gateway_installation_id)
             except ValueError:
