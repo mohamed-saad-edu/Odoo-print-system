@@ -1938,8 +1938,13 @@ class PrintGatewayJob(models.Model):
                         # immutable outbox row, with bounded retry/backoff;
                         # never terminalize it as safely non-printed or mint a
                         # replacement key just because enrollment failed.
+                        enrollment_code = next((code for code in (
+                            "GATEWAY_INSTALLATION_PROOF_MISSING",
+                            "GATEWAY_INSTALLATION_ENROLLMENT_UNAVAILABLE",
+                            "GATEWAY_INSTALLATION_IDENTITY_CONFLICT",
+                        ) if code in str(exc)), "GATEWAY_INSTALLATION_RECOVERY_REQUIRED")
                         values = self._billing_retry_values(job,
-                            "GATEWAY_INSTALLATION_RECOVERY_REQUIRED: No print submitted; automatic enrollment or installation ownership needs recovery",
+                            enrollment_code + ": No print submitted; original job identity preserved for recovery",
                             3600)
                         persist_submit_state(values)
                         if raise_on_failure:
