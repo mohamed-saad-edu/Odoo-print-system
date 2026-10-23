@@ -10,7 +10,6 @@ import {
   User,
   Shield,
   Save,
-  AlertTriangle,
   Settings as SettingsIcon,
   CheckCircle2,
 } from "lucide-react";
@@ -175,24 +174,6 @@ export default function SettingsPage() {
               </div>
             </Card>
 
-            <Card>
-              <CardHeader
-                title={t("settings.dangerZone")}
-                subtitle={t("settings.dangerZoneSubtitle")}
-                icon={<AlertTriangle className="h-4 w-4" />}
-              />
-              <div className="px-5 py-4">
-                <div className="flex items-start gap-3 rounded-md border border-bad-edge bg-bad-bg px-4 py-3.5">
-                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-bad" aria-hidden />
-                  <div className="min-w-0">
-                    <h3 className="text-sm font-[600] text-bad">{t("settings.deleteWorkspaceTitle")}</h3>
-                    <p className="mt-0.5 text-sm leading-relaxed text-ink-2">
-                      {t("settings.deleteWorkspaceBody")}
-                    </p>
-                  </div>
-                </div>
-              </div>
-            </Card>
           </div>
         )}
       </PageContainer>

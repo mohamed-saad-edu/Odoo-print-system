@@ -604,15 +604,16 @@ class PrintGatewayJob(models.Model):
                 ))
 
         key = (idempotency_key or uuid.uuid4().hex).strip()
-        namespace_version = 2 if gateway_config.idempotency_v2_enabled else 1
-        installation_id = (gateway_config.installation_id or "").strip() if namespace_version == 2 else False
-        if namespace_version == 2:
-            try:
-                deployment_proof(installation_id)
-            except ValueError:
-                raise ValidationError(_(
-                    "Printing is paused: the enrolled Odoo installation proof is unavailable."
-                )) from None
+        # Every NEW operation is scoped to its own local Odoo database.
+        # No customer-visible Installation ID or manual cutover is needed.
+        namespace_version = 2
+        installation_id = gateway_config._ensure_auto_installation()
+        try:
+            deployment_proof(installation_id, self.env.cr.dbname,
+                             gateway_config._gateway_base(for_request=True),
+                             company_id=gateway_config.company_id.id)
+        except (ValueError, OSError):
+            raise ValidationError(_("Automatic Odoo installation proof is unavailable.")) from None
         try:
             selected_wire_key = wire_key(namespace_version, company.id, key, installation_id)
         except ValueError:
@@ -1044,7 +1045,11 @@ class PrintGatewayJob(models.Model):
         headers = dict(gateway_config._gateway_headers())
         if int(self.gateway_idempotency_version or 1) == 2:
             try:
-                proof = deployment_proof(self.gateway_installation_id)
+                proof = deployment_proof(
+                    self.gateway_installation_id, self.env.cr.dbname,
+                    gateway_config._gateway_base(for_request=True),
+                    company_id=gateway_config.company_id.id,
+                )
             except ValueError:
                 raise ValidationError("GATEWAY_INSTALLATION_PROOF_MISSING: No externally enrolled proof; no print was sent.") from None
             headers["X-Yaseir-Odoo-Proof"] = proof
@@ -1469,6 +1474,8 @@ class PrintGatewayJob(models.Model):
                 response_state_persisted = False
                 gateway_config = job.gateway_config_id.sudo()
                 try:
+                    if int(getattr(job, "gateway_idempotency_version", 1) or 1) == 2:
+                        gateway_config._register_auto_installation(job.gateway_installation_id)
                     response = requests.post(
                         "%s/api/print/jobs" % gateway_config._gateway_base(for_request=True),
                         json=job._submission_body(), headers=(job._gateway_headers_for_job(gateway_config)
@@ -1921,17 +1928,27 @@ class PrintGatewayJob(models.Model):
                             raise
                         break
                     if (isinstance(exc, ValidationError) and
-                            "GATEWAY_INSTALLATION_PROOF_MISSING:" in str(exc)):
-                        # The rejection happened *before* requests.post.
-                        # Missing external enrollment is operator-recoverable;
-                        # terminalizing would lose an already accepted intent
-                        # and permit unsafe rearming after a restored proof.
+                            any(marker in str(exc) for marker in (
+                                "GATEWAY_INSTALLATION_PROOF_MISSING:",
+                                "GATEWAY_INSTALLATION_ENROLLMENT_UNAVAILABLE:",
+                                "GATEWAY_INSTALLATION_IDENTITY_CONFLICT:",
+                            ))):
+                        # Automatic enrollment or clone detection happened
+                        # BEFORE sending the actual print job. Keep the original
+                        # immutable outbox row, with bounded retry/backoff;
+                        # never terminalize it as safely non-printed or mint a
+                        # replacement key just because enrollment failed.
+                        enrollment_code = next((code for code in (
+                            "GATEWAY_INSTALLATION_PROOF_MISSING",
+                            "GATEWAY_INSTALLATION_ENROLLMENT_UNAVAILABLE",
+                            "GATEWAY_INSTALLATION_IDENTITY_CONFLICT",
+                        ) if code in str(exc)), "GATEWAY_INSTALLATION_RECOVERY_REQUIRED")
                         values = self._billing_retry_values(job,
-                            "GATEWAY_INSTALLATION_PROOF_MISSING: No new job admitted; restore external enrollment before retry",
+                            enrollment_code + ": No print submitted; original job identity preserved for recovery",
                             3600)
                         persist_submit_state(values)
                         if raise_on_failure:
-                            raise ValidationError(_("Installation proof is unavailable; print request preserved without sending.")) from None
+                            raise ValidationError(_("Installation enrollment is unavailable; print request preserved without sending.")) from None
                         break
                     if self._is_deterministic_failure(exc):
                         # Programming/validation failures (corrupted

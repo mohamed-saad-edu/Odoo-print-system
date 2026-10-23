@@ -22,7 +22,6 @@ describe("debugging / robustness contracts", () => {
       "src/components/JobTimeline.tsx",
       "src/components/PrintCertificationWizard.tsx",
       "src/app/api-keys/page.tsx",
-      "src/app/system-health/system-health-client.tsx",
     ]) {
       const source = read(path);
       expect(source).not.toMatch(/catch\s*\([^)]*:\s*any\)/);

@@ -26,7 +26,6 @@ describe("production TypeScript safety contracts", () => {
     const managerProtectedPages = [
       "app/billing/page.tsx",
       "app/release-readiness/page.tsx",
-      "app/system-health/page.tsx",
     ];
     for (const relative of managerProtectedPages) {
       const source = readFileSync(resolve(process.cwd(), "src", relative), "utf8");

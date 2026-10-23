@@ -28,6 +28,16 @@ class TestControlPlane(TransactionCase):
     def setUp(self):
         super().setUp()
 
+        # These tests mock actual print submissions. Keep the independent
+        # installation-enrollment HTTP handshake out of those job mocks;
+        # enrollment is tested separately by the zero-touch identity suite.
+        auto_enrollment = patch.object(
+            PrintGatewayConfig, "_register_auto_installation",
+            return_value="test-auto-enrollment",
+        )
+        auto_enrollment.start()
+        self.addCleanup(auto_enrollment.stop)
+
         self.company = self.env.company
         self.branch = self.env["res.company"].create({
             "name": "Control Plane Branch 1",

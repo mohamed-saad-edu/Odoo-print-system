@@ -11,8 +11,8 @@ export const dynamic = "force-dynamic";
 
 export default async function ReleaseReadinessPage() {
   // Workspace auth (not manager-only): customer sessions with agents.read
-  // must reach this page like they reach the dashboard — the client below
-  // calls /api/system/health, which enforces agents.read anyway.
+  // may access this independent, documented release-evidence page.
+  // Customer-facing System Health diagnostics have been retired.
   const cookieStore = await cookies();
   const claims = await verifyWorkspaceTokenFromCookieValues(
     cookieStore.get("cust_session")?.value ?? null,

@@ -32,11 +32,13 @@ def test_forward_migration_registered_in_immutable_drizzle_journal():
     import json
     doc = json.loads((ROOT / "drizzle/meta/_journal.json").read_text())
     tags = [row["tag"] for row in doc["entries"]]
-    assert tags[-2] == "0085_odoo_installation_idempotency"
-    assert tags[-1] == "0086_printer_identity_and_api_key_deletion"
+    assert tags[-4] == "0085_odoo_installation_idempotency"
+    assert tags[-3] == "0086_printer_identity_and_api_key_deletion"
+    assert tags[-2] == "0087_odoo_auto_enrollment"
+    assert tags[-1] == "0088_retire_e2e_capture"
     assert len(tags) == len(list((ROOT / "drizzle").glob("*.sql")))
     assert tags == [p.stem for p in sorted((ROOT / "drizzle").glob("*.sql"))]
-    assert len(tags) == 87
+    assert len(tags) == 89
 
 
 def test_rotation_preserves_installation_ownership():
@@ -51,3 +53,20 @@ def test_reuse_approval_immediately_maps_receipt_without_second_post():
     assert "INSERT INTO odoo_v2_operations" in source
     assert 'disposition === "reuse"' in source
     assert "found.id" in source
+
+
+def test_auto_cutover_is_history_fenced_and_api_keys_can_be_shared():
+    migration = (ROOT / "drizzle/0087_odoo_auto_enrollment.sql").read_text()
+    schema = (ROOT / "src/db/schema.ts").read_text()
+    endpoint = (ROOT / "src/app/api/odoo/installations/auto/route.ts").read_text()
+    assert "SET DEFAULT 'strict_v2'" not in migration
+    assert "FROM print_jobs" in endpoint and "FROM print_job_receipts" in endpoint
+    assert "FOR UPDATE" in endpoint
+    assert "UPDATE tenants SET odoo_idempotency_mode = 'strict_v2'" in endpoint
+    assert "DROP CONSTRAINT IF EXISTS" in migration
+    assert "CREATE INDEX IF NOT EXISTS" in migration
+    assert 'odooIdempotencyMode: text("odoo_idempotency_mode").notNull().default("strict_v2")' in schema
+    retirement = (ROOT / "drizzle/0088_retire_e2e_capture.sql").read_text()
+    assert "DROP TABLE IF EXISTS" in retirement
+    assert "SET DEFAULT 'strict_v2'" in retirement
+    assert 'odoo_installation_credentials_tenant_api_key_idx' in schema

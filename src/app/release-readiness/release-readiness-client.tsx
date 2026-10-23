@@ -1,20 +1,18 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { ChevronDown } from "lucide-react";
 import {
   Button,
   Card,
   CardHeader,
   Callout,
-  ErrorState,
   SegmentedControl,
   StatusBadge,
   type Tone,
 } from "../../components/ui";
 import { useI18n } from "../../i18n/react";
 import type { MessageKey } from "../../i18n/messages/en";
-import { fetchWithTimeout } from "../../lib/fetch-timeout";
 
 type Status = "PASS" | "FAIL" | "BLOCKED" | "NOT APPLICABLE" | "UNVERIFIED";
 
@@ -47,12 +45,6 @@ type Row = {
   status: Status;
   evidence: string;
   rootCause?: string;
-};
-
-type SystemHealthPayload = {
-  policy?: string;
-  overall?: string;
-  [key: string]: unknown;
 };
 
 type Filter = "all" | "attention" | "pass";
@@ -97,51 +89,8 @@ export default function ReleaseReadinessClient() {
     { area: t("release.area.goRace"), evidence: t("release.evidence.goRace"), sourceEvidence: "DOCUMENTED", runtimeVerified: "UNVERIFIED", status: "UNVERIFIED" },
   ];
 
-  const [systemHealth, setSystemHealth] = useState<SystemHealthPayload | null>(null);
-  const [systemHealthLoading, setSystemHealthLoading] = useState(true);
-  const [systemHealthError, setSystemHealthError] = useState<string | null>(null);
-  const [healthReloadKey, setHealthReloadKey] = useState(0);
-  const [showRawHealth, setShowRawHealth] = useState(false);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [filter, setFilter] = useState<Filter>("all");
-
-  useEffect(() => {
-    let cancelled = false;
-    const controller = new AbortController();
-    queueMicrotask(() => {
-      if (cancelled) return;
-      setSystemHealthLoading(true);
-      setSystemHealthError(null);
-      void fetchWithTimeout(
-        "/api/system/health",
-        { credentials: "include", cache: "no-store", signal: controller.signal },
-        10_000,
-      )
-        .then((r) => {
-          if (!r.ok) throw new Error(t("release.liveHealthError"));
-          return r.json() as Promise<SystemHealthPayload>;
-        })
-        .then((data) => {
-          if (!cancelled) {
-            setSystemHealth(data);
-            setSystemHealthError(null);
-          }
-        })
-        .catch(() => {
-          if (!cancelled) {
-            setSystemHealth(null);
-            setSystemHealthError(t("release.liveHealthError"));
-          }
-        })
-        .finally(() => {
-          if (!cancelled) setSystemHealthLoading(false);
-        });
-    });
-    return () => {
-      cancelled = true;
-      controller.abort();
-    };
-  }, [healthReloadKey, t]);
 
   const overall: Status = rows.some((r) => r.status === "FAIL")
     ? "FAIL"
@@ -278,40 +227,6 @@ export default function ReleaseReadinessClient() {
           </ul>
         )}
       </Card>
-
-      {systemHealthLoading && (
-        <Card>
-          <CardHeader title={t("release.liveHealth")} subtitle={t("release.liveHealthLoading")} />
-        </Card>
-      )}
-
-      {!systemHealthLoading && systemHealthError && (
-        <ErrorState
-          tone="warn"
-          title={t("release.liveHealthUnavailable")}
-          message={systemHealthError}
-          retry={() => setHealthReloadKey((value) => value + 1)}
-        />
-      )}
-
-      {!systemHealthLoading && !systemHealthError && systemHealth && (
-        <Card>
-          <CardHeader
-            title={t("release.liveHealth")}
-            subtitle={systemHealth.policy ? t("release.overallPolicy", { policy: systemHealth.policy }) : undefined}
-            actions={
-              <Button variant="secondary" size="sm" onClick={() => setShowRawHealth((v) => !v)}>
-                {showRawHealth ? t("release.hideJson") : t("release.showJson")}
-              </Button>
-            }
-          />
-          {showRawHealth && (
-            <pre dir="ltr" className="mx-5 my-4 max-h-64 overflow-auto rounded-md border border-edge-subtle bg-surface-2 p-3.5 font-mono text-xs leading-relaxed text-ink-2 [unicode-bidi:plaintext]">
-              {JSON.stringify(systemHealth, null, 2)}
-            </pre>
-          )}
-        </Card>
-      )}
 
       <Card>
         <CardHeader

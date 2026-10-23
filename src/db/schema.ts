@@ -8,8 +8,9 @@ export const tenants = pgTable("tenants", {
   suspendedAt: timestamp("suspended_at"),
   deletedAt: timestamp("deleted_at"),
   lifecycleReason: text("lifecycle_reason"),
-  // Controlled S06-006 cutover; existing tenants start in legacy and must be explicitly enrolled.
-  odooIdempotencyMode: text("odoo_idempotency_mode").notNull().default("legacy"),
+  // Safe legacy default; first zero-history auto enrollment moves to strict_v2
+  // atomically. This preserves existing v1 fixtures and historical receipts.
+  odooIdempotencyMode: text("odoo_idempotency_mode").notNull().default("strict_v2"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 }, (table) => ({
@@ -239,8 +240,8 @@ export const apiKeys = pgTable("api_keys", {
   readOnlyUntilCheck: check("api_keys_read_only_until_check", sql`${table.readOnlyUntil} IS NULL OR ${table.revokedAt} IS NOT NULL`),
 }));
 
-// S06-006 operator-enrolled Odoo deployments. A copied DB UUID is not proof
-// of a distinct installation; the out-of-DB proof binds an enrollment.
+// S06-006 Odoo deployments: independent identities are generated on the
+// Odoo host and registered with the Gateway; a copied DB UUID is not a proof.
 export const odooInstallations = pgTable("odoo_installations", {
   id: text("id").primaryKey(),
   tenantId: text("tenant_id").references(() => tenants.id).notNull(),
@@ -261,7 +262,7 @@ export const odooInstallationCredentials = pgTable("odoo_installation_credential
   createdAt: timestamp("created_at").default(sql`clock_timestamp()`).notNull(),
 }, table => ({
   pk: primaryKey({ columns: [table.tenantId, table.installationId, table.apiKeyId] }),
-  keyUnique: unique("odoo_installation_credentials_tenant_key_unique").on(table.tenantId, table.apiKeyId),
+  tenantKeyIdx: index("odoo_installation_credentials_tenant_api_key_idx").on(table.tenantId, table.apiKeyId),
   installationFk: foreignKey({ columns: [table.tenantId, table.installationId], foreignColumns: [odooInstallations.tenantId, odooInstallations.id] }),
   apiKeyFk: foreignKey({ columns: [table.tenantId, table.apiKeyId], foreignColumns: [apiKeys.tenantId, apiKeys.id] }),
 }));
@@ -691,49 +692,4 @@ export const printJobReceipts = pgTable("print_job_receipts", {
 }, (table) => ({
   idempotencyUnique: uniqueIndex("print_job_receipts_tenant_idempotency_unique").on(table.tenantId, table.idempotencyKey),
   statusCheck: check("print_job_receipts_status_check", sql`${table.status} in ('success','failed','expired')`),
-}));
-
-/** E2E test-only outbox: independent of printJobs, printer inventory and billing. */
-export const e2eCaptureRuns = pgTable("e2e_capture_runs", {
-  id: text("id").primaryKey(),
-  tenantId: text("tenant_id").references(() => tenants.id, { onDelete: "cascade" }).notNull(),
-  agentId: text("agent_id").notNull(),
-  apiKeyId: text("api_key_id").references(() => apiKeys.id, { onDelete: "cascade" }).notNull(),
-  idempotencyKey: text("idempotency_key").notNull(),
-  fingerprint: text("fingerprint").notNull(),
-  payloadJson: jsonb("payload_json").$type<{ type: "pdf" | "image"; encoding: "base64"; data: string } | null>(),
-  paperMm: integer("paper_mm").notNull().default(0),
-  status: text("status").notNull().default("queued"),
-  claimTokenHash: text("claim_token_hash"),
-  attempts: integer("attempts").notNull().default(0),
-  pages: integer("pages"),
-  pdfSha256: text("pdf_sha256"),
-  pdfBytes: integer("pdf_bytes"),
-  previewJpeg: text("preview_jpeg"),
-  errorCode: text("error_code"),
-  createdAt: timestamp("created_at").notNull().defaultNow(),
-  updatedAt: timestamp("updated_at").notNull().defaultNow(),
-  claimedAt: timestamp("claimed_at"),
-  finishedAt: timestamp("finished_at"),
-  expiresAt: timestamp("expires_at").notNull().default(sql`now() + interval '12 minutes'`),
-}, (table) => ({
-  tenantAgentFk: foreignKey({ name: "e2e_capture_runs_tenant_agent_fk",
-    columns: [table.tenantId, table.agentId], foreignColumns: [agents.tenantId, agents.id] }).onDelete("cascade"),
-  idempotencyUnique: unique("e2e_capture_runs_idempotency_unique")
-    .on(table.tenantId, table.apiKeyId, table.idempotencyKey),
-  agentClaimIdx: index("e2e_capture_runs_agent_claim_idx")
-    .on(table.tenantId, table.agentId, table.status, table.createdAt),
-  retentionIdx: index("e2e_capture_runs_retention_idx").on(table.tenantId, table.createdAt),
-  statusCheck: check("e2e_capture_runs_status_check",
-    sql`${table.status} IN ('queued','claimed','rendered_locally','failed','expired')`),
-  attemptsCheck: check("e2e_capture_runs_attempts_check",
-    sql`${table.attempts} >= 0 AND ${table.attempts} <= 3`),
-  paperCheck: check("e2e_capture_runs_paper_check", sql`${table.paperMm} IN (0,58,80)`),
-  pagesCheck: check("e2e_capture_runs_pages_check",
-    sql`${table.pages} IS NULL OR ${table.pages} BETWEEN 1 AND 10`),
-  pdfBytesCheck: check("e2e_capture_runs_pdf_bytes_check",
-    sql`${table.pdfBytes} IS NULL OR ${table.pdfBytes} BETWEEN 1 AND 8388608`),
-  finishedPayloadCheck: check("e2e_capture_runs_finished_payload_check", sql`
-    (${table.status} IN ('queued','claimed') AND ${table.payloadJson} IS NOT NULL)
-    OR (${table.status} IN ('rendered_locally','failed','expired') AND ${table.payloadJson} IS NULL)`),
 }));

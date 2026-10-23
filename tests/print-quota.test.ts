@@ -1,6 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { db } from "../src/db";
-import { queueOdooCapture } from "../src/lib/e2e-capture";
 import { createPrintJobForPrinter } from "../src/lib/print-job-service";
 import { POST as printJobsPOST } from "../src/app/api/print/jobs/route";
 import { TenantEntitlementError, TenantPrintQuotaExceededError, getTenantPrintUsage } from "../src/lib/entitlements";
@@ -39,8 +38,7 @@ suite("tenant print quota", () => {
         [blockerPid],
       )).rows[0].n)).toBe(1);
       await blocker.query("SET LOCAL lock_timeout = '150ms'");
-      // Agent capture claim uses this Agent -> key order. It must be able to
-      // acquire the key while a concurrent print is waiting for its Agent.
+      // Keep admission lock order compatible with key mutation under contention.
       await expect(blocker.query("SELECT id FROM api_keys WHERE id = $1 FOR UPDATE", [key])).resolves.toMatchObject({ rowCount: 1 });
     } finally {
       await blocker.query("ROLLBACK");
@@ -48,49 +46,6 @@ suite("tenant print quota", () => {
       await print;
     }
     expect(await print).toMatchObject({ value: expect.anything() });
-  });
-
-  it("admits concurrent capture and physical print without a subscription/runtime lock inversion", async () => {
-    const f = await seedFixture();
-    const key = (await pool().query("SELECT id FROM api_keys WHERE tenant_id = $1", [f.tenantId])).rows[0].id;
-    const blocker = await pool().connect();
-    const previousCaptureEnabled = process.env.YASEIR_E2E_CAPTURE_ENABLED;
-    process.env.YASEIR_E2E_CAPTURE_ENABLED = "1";
-    let capture: Promise<unknown> | undefined;
-    let print: Promise<unknown> | undefined;
-    try {
-      await blocker.query("BEGIN");
-      await blocker.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`e2e_capture:tenant:${f.tenantId}`]);
-      capture = queueOdooCapture({ id: key, tenantId: f.tenantId }, {
-        agentId: f.agentId, idempotencyKey: "capture-lock-order-test", paperMm: 0,
-        payload: { type: "pdf", encoding: "base64", data: "JVBERi0xLjQK" }, fingerprint: "capture-lock-order-test",
-      }).then(value => ({ value }), error => ({ error }));
-      await expect.poll(async () => Number((await pool().query(
-        "SELECT count(*)::int AS n FROM pg_locks WHERE locktype = 'advisory' AND NOT granted AND objid = hashtext($1)::oid",
-        [`e2e_capture:tenant:${f.tenantId}`],
-      )).rows[0].n)).toBe(1);
-      const capturePid = (await pool().query(
-        "SELECT pid FROM pg_locks WHERE locktype = 'advisory' AND NOT granted AND objid = hashtext($1)::oid",
-        [`e2e_capture:tenant:${f.tenantId}`],
-      )).rows[0].pid;
-      let printSettled = false;
-      print = createPrintJobForPrinter(f.printerId, payload("concurrent-capture"), {
-        tenantId: f.tenantId, requestedBy: "lock-order-test", idempotencyKey: "print-lock-order-test", rateLimitKeyId: key,
-      }).then(value => ({ value }), error => ({ error })).finally(() => { printSettled = true; });
-      await expect.poll(async () => printSettled || Number((await pool().query(
-        "SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock' AND query LIKE '%tenant_subscriptions%' AND $1 = ANY(pg_blocking_pids(pid))",
-        [capturePid],
-      )).rows[0].n) > 0).toBe(true);
-      await blocker.query("COMMIT");
-      const results = await Promise.all([capture, print]);
-      expect(results).toEqual([expect.objectContaining({ value: expect.anything() }), expect.objectContaining({ value: expect.anything() })]);
-    } finally {
-      await blocker.query("ROLLBACK");
-      blocker.release();
-      await Promise.all([capture, print]);
-      if (previousCaptureEnabled === undefined) delete process.env.YASEIR_E2E_CAPTURE_ENABLED;
-      else process.env.YASEIR_E2E_CAPTURE_ENABLED = previousCaptureEnabled;
-    }
   });
 
   it("enforces a finite print quota before the job row is inserted", async () => {

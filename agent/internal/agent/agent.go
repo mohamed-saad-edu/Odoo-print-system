@@ -239,8 +239,6 @@ type Agent struct {
 	// printers probing at 2s, slow gateway) must never let ticks pile up.
 	hbMu   sync.Mutex
 	pollMu sync.Mutex
-	// Dedicated, non-reentrant local PDFium simulation lane.
-	captureMu sync.Mutex
 	// terminalReportMu prevents concurrent terminal-status reporting goroutines.
 	terminalReportMu sync.Mutex
 	// Guarded by terminalReportMu. Advance across rejected original claims
@@ -1139,9 +1137,6 @@ func (a *Agent) Run(ctx context.Context) error {
 	// Send an immediate heartbeat/poll on startup instead of waiting a full tick.
 	a.launchTracked(func() { a.sendHeartbeatGuardedContext(ctx) })
 	a.launchTracked(func() { a.pollJobsGuarded(ctx) })
-	if a.cfg.Server.E2ECaptureTests {
-		a.launchTracked(func() { a.pollE2ECaptures(ctx) })
-	}
 	a.launchTracked(func() { a.pollDiscovery(ctx) })
 
 	// Counts poll ticks skipped because the WebSocket is connected.
@@ -1213,9 +1208,6 @@ func (a *Agent) Run(ctx context.Context) error {
 				}
 			}
 		case <-discoveryTicker.C:
-			if a.cfg.Server.E2ECaptureTests && !a.fencedForDispatch() && !a.lifecycleBackoffActive() {
-				a.launchTracked(func() { a.pollE2ECaptures(ctx) })
-			}
 			a.launchTracked(func() { a.pollDiscovery(ctx) })
 		case <-cleanupTicker.C:
 			a.launchTracked(func() { a.cleanupRetainedLocalJobs() })

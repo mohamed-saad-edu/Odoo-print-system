@@ -25,8 +25,6 @@
             <form string="Connection &amp; Printing" create="1" class="o_pg_view o_pg_form">
                 <header>
                     <button name="action_test_connection" type="object" string="Test Connection" class="oe_highlight"/>
-                    <button name="action_open_e2e_capture_wizard" type="object" string="E2E Capture Test"
-                            groups="base.group_system"/>
                     <button name="action_retry_enabled_sync" type="object" string="Retry Synchronization"/>
                     <button name="action_reset_stale_sync_state" type="object" string="Recover Stale Synchronization" confirm="Recover synchronization state only after checking the previous Gateway endpoint."/>
                     <field name="gateway_sync_state" widget="statusbar"/>
@@ -37,8 +35,6 @@
                         <field name="enabled" widget="boolean_toggle" string="Enable Printing Service"/>
                         <field name="gateway_url" placeholder="https://print.example.com"/>
                         <field name="gateway_api_key" password="True" placeholder="Enter the installation API key"/>
-                        <field name="installation_id" groups="base.group_system" placeholder="Enrolled Gateway installation UUID"/>
-                        <field name="idempotency_v2_enabled" groups="base.group_system" string="Version 2 Identity Cutover"/>
                         <field name="last_test_status"
                                string="Connection"
                                widget="badge"

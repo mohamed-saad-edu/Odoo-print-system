@@ -47,12 +47,22 @@ export async function GET(req: Request) {
         odooEnabled: apiKeys.odooEnabled,
         revokedAt: apiKeys.revokedAt, readOnlyUntil: apiKeys.readOnlyUntil,
         graceActive: sql<boolean>`${apiKeys.revokedAt} IS NOT NULL AND ${apiKeys.readOnlyUntil} IS NOT NULL AND ${apiKeys.readOnlyUntil} > clock_timestamp()`,
-        installationId: odooInstallationCredentials.installationId,
-        installationName: odooInstallations.name,
+        // Aggregated metadata only: one API key can enroll several Odoo databases.
+        // Never multiply API-key rows via a one-to-many credential JOIN.
+        installationId: sql<string | null>`(SELECT c.installation_id
+          FROM odoo_installation_credentials c
+          WHERE c.tenant_id = ${apiKeys.tenantId} AND c.api_key_id = ${apiKeys.id}
+          ORDER BY c.created_at, c.installation_id LIMIT 1)`,
+        installationName: sql<string | null>`(SELECT i.name
+          FROM odoo_installation_credentials c
+          JOIN odoo_installations i ON i.tenant_id = c.tenant_id AND i.id = c.installation_id
+          WHERE c.tenant_id = ${apiKeys.tenantId} AND c.api_key_id = ${apiKeys.id}
+          ORDER BY c.created_at, c.installation_id LIMIT 1)`,
+        installationCount: sql<number>`(SELECT COUNT(*)::int
+          FROM odoo_installation_credentials c
+          WHERE c.tenant_id = ${apiKeys.tenantId} AND c.api_key_id = ${apiKeys.id})`,
       }).from(apiKeys)
         .innerJoin(tenants, eq(tenants.id, apiKeys.tenantId))
-        .leftJoin(odooInstallationCredentials, and(eq(odooInstallationCredentials.apiKeyId, apiKeys.id), eq(odooInstallationCredentials.tenantId, apiKeys.tenantId)))
-        .leftJoin(odooInstallations, and(eq(odooInstallations.id, odooInstallationCredentials.installationId), eq(odooInstallations.tenantId, apiKeys.tenantId)))
         .where(and(...conditions))
         .orderBy(desc(apiKeys.createdAt), desc(apiKeys.id))
         .limit(limit + 1).offset(offset), 6_000, "platformIntegrationKeys");

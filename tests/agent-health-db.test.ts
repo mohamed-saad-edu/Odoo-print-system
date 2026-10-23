@@ -2,7 +2,6 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import { hasTestDatabase, applyMigrations, truncateAll, seedFixture, pool, closePool } from "./helpers/pg";
 import { renderPrometheusMetrics } from "../src/lib/metrics";
 import { getAgentHealth, getAllAgentsHealth } from "../src/lib/agent-health";
-import { checkPrinters } from "../src/lib/system-health";
 import { BoundedQueryRunner } from "../src/lib/bounded-query";
 import { Pool as IsolatedPool } from "pg";
 
@@ -116,8 +115,6 @@ suite("agent health (database-backed)", () => {
       expect(detail).toMatchObject({ printerCount: expected, onlinePrinterCount: expected });
       expect(fleet).toHaveLength(1);
       expect(fleet[0]).toMatchObject({ printerCount: expected, onlinePrinterCount: expected });
-      const system = await checkPrinters(f.tenantId);
-      expect(system.details).toMatchObject({ total: expected, routable: expected });
       const metrics = await renderPrometheusMetrics();
       // The other tenant's one physical queue remains part of global metrics.
       expect(metrics.match(/^printers_online (\d+)$/m)?.[1]).toBe(String(expected + 1));

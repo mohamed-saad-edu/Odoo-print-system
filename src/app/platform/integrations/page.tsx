@@ -12,7 +12,7 @@ type KeyRecord = {
   id: string; tenantId: string; tenantName: string; name: string; description: string | null;
   odooEnabled: boolean; revokedAt: string | null; readOnlyUntil: string | null; graceActive: boolean;
   createdAt: string; lastUsedAt: string | null;
-  installationId: string | null; installationName: string | null;
+  installationId: string | null; installationName: string | null; installationCount: number;
 };
 type InstallationRecord = {
   id: string; tenantId: string; tenantName: string; name: string; enabled: boolean;
@@ -138,7 +138,7 @@ export default function PlatformIntegrationsPage() {
           <tbody>{loading ? <tr><td colSpan={5}><TableSkeleton rows={5} /></td></tr> : items.length === 0 ? <tr><td colSpan={5}><EmptyState icon={<Building2 className="h-5 w-5" />} title={t.empty} /></td></tr> : items.map(row => {
             const active = isKey(row) ? (!row.revokedAt || row.graceActive) : row.enabled;
             return <tr key={`${row.tenantId}-${row.id}`}>
-              <td><div className="flex items-center gap-2 font-semibold text-ink"><LockKeyhole className="h-4 w-4 text-brand" aria-hidden />{row.name}</div><div className="mt-1 font-mono text-xs text-ink-4" dir="ltr">{row.id}</div>{isKey(row) && row.installationName && <div className="mt-1 text-xs text-ink-3">{row.installationName}</div>}{!isKey(row) && <div className="mt-1 text-xs text-ink-3">{t.credentials}: {formatNumber(row.credentialCount)}</div>}</td>
+              <td><div className="flex items-center gap-2 font-semibold text-ink"><LockKeyhole className="h-4 w-4 text-brand" aria-hidden />{row.name}</div><div className="mt-1 font-mono text-xs text-ink-4" dir="ltr">{row.id}</div>{isKey(row) && row.installationName && <div className="mt-1 text-xs text-ink-3">{row.installationName}{row.installationCount > 1 ? ` (+${formatNumber(row.installationCount - 1)})` : ""}</div>}{!isKey(row) && <div className="mt-1 text-xs text-ink-3">{t.credentials}: {formatNumber(row.credentialCount)}</div>}</td>
               <td><div className="text-sm text-ink">{row.tenantName}</div><div className="font-mono text-xs text-ink-4" dir="ltr">{row.tenantId}</div></td>
               <td><StatusBadge tone={active ? (isKey(row) && row.graceActive ? "warn" : "ok") : "warn"} label={active ? (isKey(row) && row.graceActive ? t.readOnlyGrace : t.active) : t.inactive} size="sm" />{isKey(row) && row.readOnlyUntil && <div className="mt-1 text-xs text-ink-3">{formatDateTime(row.readOnlyUntil)}</div>}</td>
               <td className="text-xs text-ink-3">{isKey(row) && row.lastUsedAt ? formatDateTime(row.lastUsedAt) : isKey(row) ? t.neverUsed : `${t.issued}: ${formatDateTime(row.createdAt)}`}</td>
