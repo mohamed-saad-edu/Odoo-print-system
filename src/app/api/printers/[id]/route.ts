@@ -15,6 +15,7 @@ import { requireActiveTenantInTransaction } from "../../../../lib/tenant-guard";
 import { agentStaleThresholdSeconds, getAgentHeartbeatFreshness, getEffectiveAgentStatus, getEffectivePrinterStatus, getPrinterObservationFreshness } from "../../../../lib/agent-availability";
 import { gatewayNow, refreshClockSkew } from "../../../../lib/database-clock";
 import { isVirtualPrinterRecord } from "../../../../lib/printer-virtual";
+import { matchingPhysicalPrinter, physicalPrinterIdentityKey } from "../../../../lib/physical-printer-identity";
 
 export const dynamic = "force-dynamic";
 
@@ -101,6 +102,9 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   try {
     result = await db.transaction(async (tx) => {
     await requireActiveTenantInTransaction(tx, tenantId);
+    // Same tenant-level printer admission gate as registration, provisioning
+    // and heartbeats; one endpoint cannot be reassigned during a PATCH race.
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('printers:' || ${tenantId}))`);
     await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('printer:' || ${tenantId} || ':' || ${id}))`);
 
     const owner = await tx.query.printers.findFirst({
@@ -158,6 +162,17 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       if (err) return { kind: "invalid" as const, message: err };
     }
 
+    const endpointChanged = parsed.data.connectionType !== undefined ||
+      parsed.data.protocol !== undefined || parsed.data.config !== undefined;
+    const updatedIdentity = physicalPrinterIdentityKey({ connectionType, protocol, config: cfg });
+    if (endpointChanged) {
+      const siblings = await tx.query.printers.findMany({
+        where: and(eq(printers.tenantId, tenantId), eq(printers.agentId, owner.agentId)),
+      });
+      if (matchingPhysicalPrinter(siblings, { connectionType, protocol, config: cfg }, id)) {
+        return { kind: "conflict" as const, message: "Printer endpoint already belongs to another row on this Agent" };
+      }
+    }
     const desiredStateChanged =
       parsed.data.name !== undefined ||
       parsed.data.printerType !== undefined ||
@@ -175,6 +190,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       connectionType?: (typeof printers.$inferInsert)["connectionType"];
       protocol?: (typeof printers.$inferInsert)["protocol"];
       config?: (typeof printers.$inferInsert)["config"];
+      physicalIdentityKey?: (typeof printers.$inferInsert)["physicalIdentityKey"];
       lifecycle?: (typeof printers.$inferInsert)["lifecycle"];
 } = { updatedAt: sql`now()` };
     if (parsed.data.name !== undefined) update.name = parsed.data.name;
@@ -183,6 +199,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     if (parsed.data.connectionType !== undefined || connectionType !== existing.connectionType) update.connectionType = connectionType;
     if (parsed.data.protocol !== undefined || protocol !== existing.protocol) update.protocol = protocol;
     if (parsed.data.config !== undefined || scrubInheritedPassthrough) update.config = cfg;
+    if (endpointChanged) update.physicalIdentityKey = updatedIdentity;
     if (parsed.data.lifecycle !== undefined) update.lifecycle = parsed.data.lifecycle;
 
     const setValues = desiredStateChanged
