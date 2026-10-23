@@ -371,7 +371,7 @@ jobs:
             IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'print_jobs_api_key_tenant_insert_guard' AND NOT tgisinternal) THEN
               RAISE EXCEPTION 'new job API-key tenant guard missing';
             END IF;
-          END $;
+          END $$;
           SQL
       - name: Run integration tests (PostgreSQL)
         env:
