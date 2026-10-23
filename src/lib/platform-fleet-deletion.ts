@@ -101,8 +101,10 @@ export async function removeFleetItem(input: {
       .where(and(eq(printers.tenantId, tenantId), eq(printers.id, id), eq(printers.agentId, owner[0].agentId))).for("update");
     const printer = locked[0];
     if (!printer) return { status: 409, error: "Printer owner changed" };
-    if (printer.lifecycle !== expectedLifecycle || printer.sharedWithGateway === false)
-      return { status: 409, error: "Printer was already removed or its state changed" };
+    if (printer.lifecycle !== expectedLifecycle || printer.lifecycle === "retired")
+      return { status: 409, error: "Printer is already removed or its state changed" };
+    // Even a locally unshared printer remains under platform administrative
+    // jurisdiction; retiring it does not grant any new execution permission.
     await requirePlatformActorInTransaction(tx, actor);
     const archivedJobs = await archiveJobs(tx, tenantId,
       and(eq(printJobs.tenantId, tenantId), eq(printJobs.printerId, id)),

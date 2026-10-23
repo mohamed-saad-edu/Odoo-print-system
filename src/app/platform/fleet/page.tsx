@@ -122,7 +122,7 @@ export default function PlatformFleetPage() {
       <td className="text-xs text-ink-3">{device.lastSeenAt ? formatDateTime(device.lastSeenAt) : t.notNow}</td>
       <td><div className="flex flex-wrap gap-2">
         {device.lifecycle !== "retired" && <Button size="xs" variant="secondary" onClick={()=>{setSelected(device);setOperation("lifecycle");setReason("");setConfirmId("");setActionError("");setPairing("");}}>{device.lifecycle === "active" ? t.disabled : t.active}</Button>}
-        {(kind === "agents" || (device.lifecycle !== "retired" && device.sharedWithGateway !== false)) &&
+        {(kind === "agents" || device.lifecycle !== "retired") &&
           <Button size="xs" variant="danger" onClick={()=>{setSelected(device);setOperation("delete");setReason("");setConfirmId("");setActionError("");setPairing("");}}>{t.remove}</Button>}
       </div></td>
     </tr>)}</tbody></table></div><div className="flex flex-wrap items-center justify-between gap-2 border-t border-edge p-4 text-xs text-ink-3"><span>{formatNumber(items.length)} {t.inventory}{observedAt ? ` · ${formatDateTime(observedAt)}` : ""}</span><div className="flex gap-2"><Button size="xs" disabled={loading||offset===0} onClick={()=>setOffset(x=>Math.max(0,x-LIMIT))}>{t.prev}</Button><Button size="xs" disabled={loading||!hasMore} onClick={()=>setOffset(x=>x+LIMIT)}>{t.next}</Button></div></div></Card>}
