@@ -9,7 +9,7 @@ import { logError, logWarn } from "../../../../lib/log";
 import { getTenantEntitlementLimit, isTenantBillingError, TenantEntitlementError } from "../../../../lib/entitlements";
 import { requireActiveTenantInTransaction } from "../../../../lib/tenant-guard";
 import { aliasPrinterIdForAgent } from "../../../../lib/printer-identity";
-import { physicalPrinterIdentityKey, matchingPhysicalPrinter, samePrinterProtocol } from "../../../../lib/physical-printer-identity";
+import { physicalPrinterIdentityKey, samePrinterProtocol } from "../../../../lib/physical-printer-identity";
 import { inventoryVersionAllowsPage, parseInventorySnapshotVersion } from "../../../../lib/inventory-snapshot";
 import { getDesiredPrinterPage } from "../../../../lib/desired-state-page";
 import { isVirtualPrinterRecord } from "../../../../lib/printer-virtual";
@@ -407,18 +407,38 @@ export async function POST(req: Request) {
             where: and(eq(printers.tenantId, agent.tenantId), eq(printers.agentId, agent.id)),
           })
         : [];
+      // Deterministic existing-row precedence: an explicit removal/withholding
+      // policy wins first, then manager ownership, then the oldest stable ID.
+      // Never backfill two legacy duplicate rows with the same partial-unique
+      // endpoint key; the historical duplicate keeps its NULL identity.
+      const rowPriority = (row: (typeof knownPhysicalPrinters)[number]) => [
+        row.lifecycle === "retired" || row.sharedWithGateway === false ? 0 : 1,
+        row.managementSource === "manager" ? 0 : 1,
+        row.createdAt.getTime(),
+        row.id,
+      ] as const;
+      knownPhysicalPrinters.sort((a, b) => {
+        const aa = rowPriority(a), bb = rowPriority(b);
+        for (let part = 0; part < aa.length; part++) {
+          if (aa[part] < bb[part]) return -1;
+          if (aa[part] > bb[part]) return 1;
+        }
+        return 0;
+      });
+      const knownByEndpoint = new Map<string, (typeof knownPhysicalPrinters)[number]>();
+      for (const row of knownPhysicalPrinters) {
+        const endpoint = row.physicalIdentityKey ?? physicalPrinterIdentityKey(row);
+        if (endpoint && !knownByEndpoint.has(endpoint)) knownByEndpoint.set(endpoint, row);
+      }
       const seenEndpoints = new Set<string>();
-      const knownIds = new Set(knownPhysicalPrinters.map(row => row.id));
+      // O(known inventory + reported page), not O(known * reported). Snapshot
+      // input is capped to 500 rows but tenant fleets can be substantially larger.
       for (let i = sanitizedPrinters.length - 1; i >= 0; i--) {
-        // An already-enrolled stable ID must never be skipped just because
-        // another legacy row describes the same endpoint: its liveness is real.
-        // New IDs are the only candidates for physical deduplication.
-        if (knownIds.has(sanitizedPrinters[i]!.id)) continue;
         const observed = sanitizedPrinters[i]!;
         const key = physicalPrinterIdentityKey(observed);
         if (!key) continue;
-        const match = matchingPhysicalPrinter(knownPhysicalPrinters, observed, observed.id);
-        if (match) {
+        const match = knownByEndpoint.get(key);
+        if (match && match.id !== observed.id) {
           skipped.push({ id: observed.id, reason: samePrinterProtocol(match, observed)
             ? "duplicate_physical_endpoint_registered_as_" + match.id
             : "physical_endpoint_protocol_conflict" });
