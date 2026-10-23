@@ -35,6 +35,13 @@ export default function LoginPage() {
 
   useEffect(() => {
     let cancelled = false;
+    // An invitation can be opened in a browser signed into a different
+    // account. Force the credential form for an explicit account switch
+    // rather than bouncing straight back to /invite in a redirect loop.
+    if (new URLSearchParams(window.location.search).get("switch") === "1") {
+      queueMicrotask(() => { if (!cancelled) setCheckingSession(false); });
+      return () => { cancelled = true; };
+    }
     ensureCustomerSession()
       .then((session) => {
         if (!cancelled && session.authenticated) router.replace(postAuthDestination());

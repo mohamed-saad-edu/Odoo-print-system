@@ -9,6 +9,7 @@ import { getServerLocale, makeT } from "../../../../i18n/server";
 import { hasBodyOverLimit } from "../../../../lib/request-limits";
 import { clientIpFrom, reserveAuthAttempt, setRateLimitHeaders } from "../../../../lib/auth-rate-limit";
 import { logError } from "../../../../lib/log";
+import { findActiveInvitation } from "../../../../lib/invitation-join";
 
 const GENERIC = { ok: true, message: "If the account exists and is unverified, a new verification link has been sent." };
 
@@ -54,6 +55,9 @@ export async function POST(req: Request) {
   if (!user || user.emailVerifiedAt) {
     return setRateLimitHeaders(NextResponse.json(GENERIC, { status: 202 }), rate);
   }
+  const invitation = inviteToken ? await findActiveInvitation(inviteToken) : null;
+  if (inviteToken && (!invitation || invitation.email !== email))
+    return setRateLimitHeaders(NextResponse.json({ error: "Invitation expired or for a different email", code: "INVITATION_INVALID" }, { status: 409 }), rate);
 
   const rawToken = generateOpaqueToken();
   const tokenHash = await hashToken(rawToken);
@@ -68,6 +72,11 @@ export async function POST(req: Request) {
       const lockedRow = locked.rows[0] as { id?: string; emailVerifiedAt?: Date | string | null } | undefined;
       if (!lockedRow?.id || lockedRow.emailVerifiedAt) return false;
 
+      const pending = await tx.query.emailVerificationTokens.findFirst({
+        where: and(eq(emailVerificationTokens.userId, user.id),
+          isNull(emailVerificationTokens.consumedAt)),
+        columns: { invitationId: true },
+      });
       await tx
         .update(emailVerificationTokens)
         .set({ consumedAt: sql`now()` })
@@ -82,6 +91,7 @@ export async function POST(req: Request) {
         id: `evt_${nanoid(18)}`,
         userId: user.id,
         tokenHash,
+        invitationId: invitation?.id ?? pending?.invitationId ?? null,
         expiresAt: sql`clock_timestamp() + interval '30 minutes'`,
       });
       return true;

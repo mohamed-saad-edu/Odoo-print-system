@@ -13,23 +13,24 @@ import { fetchWithTimeout } from "../../lib/fetch-timeout";
 // A token represents one mutation, even through StrictMode remounts/locale changes.
 // Failures are NOT retained: a rejected or 5xx outcome must not poison the
 // cache, or a later successful retry in the same browser is impossible (C063).
-const verificationRequests = new Map<string, Promise<{ ok: boolean; code?: string; next?: string }>>();
-function verifyOnce(token: string) {
-  const existing = verificationRequests.get(token);
+const verificationRequests = new Map<string, Promise<{ ok: boolean; code?: string; next?: string; invitationJoined?: boolean }>>();
+function verifyOnce(token: string, inviteToken: string) {
+  const key = `${token}:${inviteToken}`;
+  const existing = verificationRequests.get(key);
   if (existing) return existing;
-  const request = fetchWithTimeout("/api/auth/verify-email", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token }) }, 15_000)
-    .then(async response => { const body = await response.json().catch(() => ({})); return { ok: response.ok, code: typeof body?.code === "string" ? body.code : undefined, next: typeof body?.next === "string" ? body.next : undefined }; })
+  const request = fetchWithTimeout("/api/auth/verify-email", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token, inviteToken }) }, 15_000)
+    .then(async response => { const body = await response.json().catch(() => ({})); return { ok: response.ok, code: typeof body?.code === "string" ? body.code : undefined, next: typeof body?.next === "string" ? body.next : undefined, invitationJoined: body?.invitationJoined === true }; })
     .then(
       (result) => {
-        if (!result.ok) verificationRequests.delete(token);
+        if (!result.ok) verificationRequests.delete(key);
         return result;
       },
       (error) => {
-        verificationRequests.delete(token);
+        verificationRequests.delete(key);
         throw error;
       },
     );
-  verificationRequests.set(token, request);
+  verificationRequests.set(key, request);
   if (verificationRequests.size > 64) verificationRequests.delete(verificationRequests.keys().next().value!);
   return request;
 }
@@ -67,7 +68,7 @@ function VerifyEmailContent() {
 
     (async () => {
       try {
-        const result = await verifyOnce(token);
+        const result = await verifyOnce(token, inviteToken);
         if (cancelled) return;
         if (!result.ok) {
           setVerifyError({ kind: "code", code: result.code });
@@ -84,7 +85,8 @@ function VerifyEmailContent() {
         // neither query parameter grants a workspace or a session.
         if (destination.pathname === "/reset-password") {
           if (planId) destination.searchParams.set("plan", planId);
-          if (inviteToken) destination.searchParams.set("invite", inviteToken);
+          if (result.invitationJoined) destination.searchParams.set("joined", "1");
+          else if (inviteToken) destination.searchParams.set("invite", inviteToken);
         }
         setVerifyError(null);
         setState("ok");

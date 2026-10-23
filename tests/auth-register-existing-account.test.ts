@@ -24,6 +24,9 @@ vi.mock("../src/lib/password", () => ({
   hashToken: vi.fn(async () => "fixture-token-hash"),
 }));
 
+vi.mock("../src/lib/invitation-join", () => ({
+  findActiveInvitation: vi.fn(async () => ({ id: "inv_registration_test", email: "new@example.test" })),
+}));
 vi.mock("../src/lib/email", () => ({
   appBaseUrl: () => "https://gateway.test",
   sendTransactionalEmail: (...args: unknown[]) => sendEmail(...args),

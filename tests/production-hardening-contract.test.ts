@@ -338,9 +338,11 @@ describe("production hardening contracts", () => {
     const invitation = read("src/app/api/team/invitations/accept/route.ts");
     expect(invitation).toContain("FROM tenants");
     expect(invitation).toContain("FOR UPDATE");
-    expect(invitation).toContain("tenantRow.lifecycle !== \"active\"");
-    expect(invitation).toContain('action: "team.invitation.accepted"');
-    expect(invitation).toContain("}, tx);");
+    const enrollment = read("src/lib/invitation-join.ts");
+    expect(invitation).toContain('lockedTenant.rows[0]?.lifecycle !== "active"');
+    expect(enrollment).toContain('tenant.rows[0].lifecycle !== "active"');
+    expect(enrollment).toContain('action: "team.invitation.accepted"');
+    expect(enrollment).toContain("}, tx);");
 
     const onboarding = read("src/app/api/onboarding/route.ts");
     expect(onboarding).toContain("await tx.update(tenants)");

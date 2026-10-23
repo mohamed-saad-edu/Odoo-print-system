@@ -318,12 +318,16 @@ export const managerSessions = pgTable("manager_sessions", {
 export const emailVerificationTokens = pgTable("email_verification_tokens", {
   id: text("id").primaryKey(),
   userId: text("user_id").references(() => users.id, { onDelete: "cascade" }).notNull(),
+  // Server-side binding: stripping invite= from a verification URL must NOT
+  // silently turn an invited employee into the owner of a new workspace.
+  invitationId: text("invitation_id").references(() => tenantInvitations.id, { onDelete: "cascade" }),
   tokenHash: text("token_hash").notNull().unique(),
   expiresAt: timestamp("expires_at").notNull(),
   consumedAt: timestamp("consumed_at"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 }, (table) => ({
   userIdx: index("email_verification_tokens_user_idx").on(table.userId),
+  invitationIdx: index("email_verification_tokens_invitation_id_idx").on(table.invitationId).where(sql`${table.invitationId} IS NOT NULL`),
   expiresIdx: index("email_verification_tokens_expires_idx").on(table.expiresAt),
 }));
 

@@ -1,107 +1,169 @@
 import { NextResponse } from "next/server";
 import { db } from "../../../../../db";
-import { tenantInvitations, tenantUsers, users } from "../../../../../db/schema";
+import { emailVerificationTokens, tenantInvitations, tenants, users } from "../../../../../db/schema";
 import { and, eq, gt, isNull, sql } from "drizzle-orm";
-import { hashToken, normalizeEmail } from "../../../../../lib/password";
-import { writeAuditEvent } from "../../../../../lib/audit";
+import { generateOpaqueToken, hashPassword, hashToken, normalizeEmail } from "../../../../../lib/password";
+import { nanoid } from "../../../../../lib/nanoid";
 import { hasBodyOverLimit } from "../../../../../lib/request-limits";
 import { clientIpFrom, reserveAuthAttempt, setRateLimitHeaders } from "../../../../../lib/auth-rate-limit";
 import { logError } from "../../../../../lib/log";
+import { appBaseUrl, sendTransactionalEmail } from "../../../../../lib/email";
+import { getServerLocale, makeT } from "../../../../../i18n/server";
+import { findActiveInvitation, joinWorkspaceByInvitation } from "../../../../../lib/invitation-join";
+import { validateCustomer, issueCustomerSession, customerSessionCookie, customerRefreshCookie } from "../../../../../lib/customer-auth";
+import type { ManagerRole } from "../../../../../lib/manager-auth";
+import { credentialVersionFor } from "../../../../../lib/session-tokens";
 
+const headers = { "Cache-Control": "private, no-store", "Referrer-Policy": "no-referrer" };
+
+/** An invitation never provisions a second tenant. New employees receive a
+ * mailbox-proof link and choose their password only after email verification.
+ * Existing employees must authenticate as the invited mailbox. */
 export async function POST(req: Request) {
-  if (hasBodyOverLimit(req, 16 * 1024)) return NextResponse.json({ error: "Request body too large" }, { status: 413 });
-  let body: { token?: unknown; email?: unknown };
-  try { const parsedBody = await req.json(); if (!parsedBody || typeof parsedBody !== "object" || Array.isArray(parsedBody)) throw new Error("JSON object required"); body = parsedBody; } catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); }
-  const token = typeof body.token === "string" ? body.token : "";
-  const email = typeof body.email === "string" ? normalizeEmail(body.email) : "";
-  if (!token || token.length > 256 || !email) return NextResponse.json({ error: "Invitation is invalid or expired" }, { status: 400 });
+  if (hasBodyOverLimit(req, 16 * 1024))
+    return NextResponse.json({ error: "Request body too large" }, { status: 413, headers });
 
-  // Token-guessing throttle (mirrors reset-password/verify-email): no account
-  // identity is known pre-token, so scope by endpoint + IP. Accepting an
-  // invitation mints no session, so the budget is never cleared on success.
-  const ip = clientIpFrom(req);
+  let payload: { token?: unknown; email?: unknown };
+  try {
+    const body: unknown = await req.json();
+    if (!body || typeof body !== "object" || Array.isArray(body)) throw Error("Expected object");
+    payload = body as typeof payload;
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON" }, { status: 400, headers });
+  }
+  const token = typeof payload.token === "string" ? payload.token : "";
+  if (!token || token.length > 256)
+    return NextResponse.json({ error: "Invitation is invalid or expired" }, { status: 400, headers });
+
   const tokenHash = await hashToken(token);
-  // Known clients share an endpoint/source bucket; unattributed clients
-  // share only the presented token's bucket, never a global lockout key.
+  const ip = clientIpFrom(req);
   const rateIdentity = `invitation-token:${ip === "unknown" ? tokenHash : ip}`;
   let rate: Awaited<ReturnType<typeof reserveAuthAttempt>>;
   try {
     rate = await reserveAuthAttempt(ip, rateIdentity);
   } catch (error) {
     logError("auth.rate_limit.store_unavailable", { endpoint: "invitation_accept", error: error instanceof Error ? error.message : "unknown" });
-    return NextResponse.json({ error: "Service temporarily unavailable" }, { status: 503 });
+    return NextResponse.json({ error: "Service temporarily unavailable" }, { status: 503, headers });
   }
+  const respond = (body: Record<string, unknown>, status: number) =>
+    setRateLimitHeaders(NextResponse.json(body, { status, headers }), rate);
   if (!rate.allowed) {
-    const res = NextResponse.json({ error: "Too many attempts. Try again later." }, { status: 429 });
+    const res = respond({ error: "Too many attempts. Try again later." }, 429);
     res.headers.set("Retry-After", String(rate.retryAfterSec));
-    return setRateLimitHeaders(res, rate);
+    return res;
   }
 
-  const row = await db.query.tenantInvitations.findFirst({
-    where: and(eq(tenantInvitations.tokenHash, tokenHash), isNull(tenantInvitations.acceptedAt), isNull(tenantInvitations.revokedAt), gt(tenantInvitations.expiresAt, sql`clock_timestamp()`)),
+  const invitation = await findActiveInvitation(token);
+  if (!invitation || (typeof payload.email === "string" && normalizeEmail(payload.email) !== invitation.email))
+    return respond({ error: "Invitation is invalid or expired" }, 400);
+
+  // Check before onboarding/sign-in branches, and again *under the tenant row
+  // lock* at the write. Suspended/deleted workspaces cannot enroll members.
+  const tenant = await db.query.tenants.findFirst({
+    where: eq(tenants.id, invitation.tenantId),
+    columns: { id: true, lifecycle: true },
   });
-  if (!row || row.email !== email) return NextResponse.json({ error: "Invitation is invalid or expired" }, { status: 400 });
-  const user = await db.query.users.findFirst({ where: eq(users.email, email), columns: { id: true } });
-  if (!user) return NextResponse.json({ error: "Create an account with the invited email before accepting the invitation", code: "ACCOUNT_REQUIRED" }, { status: 409 });
+  if (!tenant || tenant.lifecycle !== "active")
+    return respond({ error: "Workspace suspended or unavailable", code: "WORKSPACE_UNAVAILABLE" }, 409);
 
-  try {
-    await db.transaction(async (tx) => {
-      const tenant = await tx.execute(sql`
-        SELECT id, lifecycle
-        FROM tenants
-        WHERE id = ${row.tenantId}
-        FOR UPDATE
-      `);
-      const tenantRow = tenant.rows[0] as { id?: string; lifecycle?: string } | undefined;
-      if (!tenantRow?.id) throw new Error("TENANT_NOT_FOUND");
-      if (tenantRow.lifecycle !== "active") throw new Error("TENANT_NOT_ACTIVE");
-
-      const existingMembership = await tx.query.tenantUsers.findFirst({
-        where: and(eq(tenantUsers.userId, user.id), eq(tenantUsers.tenantId, row.tenantId)),
-        columns: { userId: true },
+  const account = await db.query.users.findFirst({
+    where: eq(users.email, invitation.email),
+    columns: { id: true, email: true, emailVerifiedAt: true, passwordHash: true },
+  });
+  if (!account) {
+    // No password is collected or chosen by the inviter. The random verifier
+    // cannot authenticate. The mailbox owner will set a password after proving
+    // email ownership, without being sent to public signup/onboarding.
+    const userId = `usr_${nanoid(18)}`;
+    const rawVerification = generateOpaqueToken();
+    let passwordHash: string;
+    try { passwordHash = await hashPassword(generateOpaqueToken()); }
+    catch { return respond({ error: "Invitation onboarding temporarily unavailable" }, 503); }
+    try {
+      const created = await db.transaction(async tx => {
+        const lockedTenant = await tx.execute(sql`SELECT id, lifecycle FROM tenants WHERE id = ${invitation.tenantId} FOR UPDATE`);
+        if (!lockedTenant.rows[0]?.id || lockedTenant.rows[0]?.lifecycle !== "active")
+          throw new Error("INVITATION_WORKSPACE_UNAVAILABLE");
+        const live = await tx.query.tenantInvitations.findFirst({
+          where: and(eq(tenantInvitations.id, invitation.id),
+            eq(tenantInvitations.tokenHash, invitation.tokenHash),
+            isNull(tenantInvitations.acceptedAt), isNull(tenantInvitations.revokedAt),
+            gt(tenantInvitations.expiresAt, sql`clock_timestamp()`)),
+        });
+        if (!live) throw new Error("INVITATION_INVALID");
+        const added = await tx.insert(users).values({
+          id: userId, email: invitation.email, passwordHash,
+        }).onConflictDoNothing().returning({ id: users.id });
+        if (added.length === 0) return false; // concurrent signup: recover via resend
+        await tx.insert(emailVerificationTokens).values({
+          id: `evt_${nanoid(18)}`, userId,
+          tokenHash: await hashToken(rawVerification),
+          invitationId: invitation.id,
+          expiresAt: sql`clock_timestamp() + interval '30 minutes'`,
+        });
+        return true;
       });
-      if (existingMembership) throw new Error("USER_ALREADY_MEMBER");
-
-      const consumed = await tx.update(tenantInvitations).set({ acceptedAt: sql`now()` })
-        .where(and(
-          eq(tenantInvitations.id, row.id),
-          isNull(tenantInvitations.acceptedAt),
-          isNull(tenantInvitations.revokedAt),
-          gt(tenantInvitations.expiresAt, sql`clock_timestamp()`),
-        ))
-        .returning({ id: tenantInvitations.id });
-      if (consumed.length !== 1) throw new Error("Invitation already consumed or expired");
-
-      const membership = await tx.insert(tenantUsers)
-        .values({ userId: user.id, tenantId: row.tenantId, role: row.role })
-        .onConflictDoNothing()
-        .returning({ userId: tenantUsers.userId });
-      if (membership.length !== 1) throw new Error("USER_ALREADY_MEMBER");
-
-      await writeAuditEvent({
-        tenantId: row.tenantId,
-        actorType: "user",
-        actorId: user.id,
-        action: "team.invitation.accepted",
-        resourceType: "tenant_invitation",
-        resourceId: row.id,
-      }, tx);
-    });
-  } catch (error) {
-    if (error instanceof Error && error.message === "TENANT_NOT_ACTIVE") {
-      return NextResponse.json({ error: "Workspace is suspended or unavailable" }, { status: 409 });
+      if (!created) return respond({ code: "VERIFY_EMAIL_REQUIRED" }, 409);
+    } catch (error) {
+      if (error instanceof Error && (error.message === "INVITATION_WORKSPACE_UNAVAILABLE" || error.message === "INVITATION_INVALID"))
+        return respond({ error: "Invitation is no longer available", code: error.message }, 409);
+      logError("team.invitation_onboarding_failed", { error: error instanceof Error ? error.message : "unknown" });
+      return respond({ error: "Invitation onboarding temporarily unavailable" }, 503);
     }
-    if (error instanceof Error && error.message === "TENANT_NOT_FOUND") {
-      return NextResponse.json({ error: "Workspace not found" }, { status: 404 });
+    try {
+      const t = makeT(await getServerLocale());
+      const url = `${appBaseUrl(req)}/verify-email?token=${encodeURIComponent(rawVerification)}&invite=${encodeURIComponent(token)}`;
+      await sendTransactionalEmail({
+        to: invitation.email,
+        subject: t("mail.verify.subject"),
+        html: `<p>${t("mail.verify.body")}</p><p><a href="${url}">${t("mail.verify.cta")}</a></p><p>${t("mail.verify.expires")}</p>`,
+        text: t("mail.verify.text", { url }),
+      });
+    } catch (error) {
+      logError("team.invitation_verification_email_failed", { error: error instanceof Error ? error.message : "unknown" });
+      // The durable pending identity remains and can request a new link.
+      return respond({ error: "Check your mailbox or request a new verification email", code: "VERIFY_EMAIL_REQUIRED" }, 503);
     }
-    if (error instanceof Error && error.message === "USER_ALREADY_MEMBER") {
-      return NextResponse.json({ error: "User is already a member of this workspace" }, { status: 409 });
-    }
-    return NextResponse.json({
-      error: error instanceof Error && error.message === "Invitation already consumed"
-        ? "Invitation is already used"
-        : "Invitation could not be accepted",
-    }, { status: 409 });
+    return respond({ ok: true, code: "VERIFICATION_SENT" }, 202);
   }
-  return setRateLimitHeaders(NextResponse.json({ ok: true, tenantId: row.tenantId }), rate);
+
+  if (!account.emailVerifiedAt) {
+    // Never grant a membership to an unverified account. The browser can ask
+    // the existing, rate-limited resend-verification endpoint for fresh proof.
+    return respond({ code: "VERIFY_EMAIL_REQUIRED" }, 409);
+  }
+
+  const principal = await validateCustomer(req);
+  if (!principal?.userId || principal.userId !== account.id)
+    return respond({ code: "SIGN_IN_REQUIRED" }, 401);
+
+  let membership: { tenantId: string; role: string };
+  try {
+    membership = await db.transaction(async tx =>
+      joinWorkspaceByInvitation(tx, invitation, account.id, account.email));
+  } catch (error) {
+    const code = error instanceof Error ? error.message : "INVITATION_FAILED";
+    if (code === "INVITATION_ALREADY_MEMBER") return respond({ code: "ALREADY_MEMBER" }, 409);
+    if (code === "INVITATION_WORKSPACE_UNAVAILABLE" || code === "INVITATION_INVALID" || code === "INVITATION_IDENTITY_MISMATCH")
+      return respond({ error: "Invitation is invalid or expired", code }, 409);
+    logError("team.invitation_accept_failed", { error: code });
+    return respond({ error: "Invitation temporarily unavailable" }, 503);
+  }
+  // Issue a session scoped to the *invited workspace*, not the tenant the
+  // user happened to be using before the invitation.
+  let session: Awaited<ReturnType<typeof issueCustomerSession>> | null = null;
+  try {
+    session = await issueCustomerSession(account.id, membership.tenantId,
+      membership.role as ManagerRole, { ipAddress: ip, userAgent: req.headers.get("user-agent") },
+      account.email, credentialVersionFor(account.id, account.passwordHash));
+  } catch (error) {
+    logError("team.invitation_session_issue_failed", { error: error instanceof Error ? error.message : "unknown" });
+  }
+  const res = respond({ ok: true, code: "INVITATION_ACCEPTED",
+    tenantId: membership.tenantId, sessionEstablished: Boolean(session) }, 200);
+  if (session) {
+    res.headers.set("Set-Cookie", customerSessionCookie(session));
+    res.headers.append("Set-Cookie", customerRefreshCookie(session));
+  }
+  return res;
 }
