@@ -500,7 +500,21 @@ jobs:
           severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
           limit-severities-for-sarif: true
           ignore-unfixed: false
-          exit-code: '1'
+          # Trivy retains every issue in SARIF; the next step is the
+          # fail-closed, exact-finding, expiring reviewed-risk gate.
+          exit-code: '0'
+      - name: Enforce reviewed Odoo image findings (no new or high-risk issues)
+        if: ${{ !cancelled() && steps.hardened-image.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # A reviewed exception applies to THIS exact, immutable runtime
+          # profile only; a Dockerfile or Python lockfile change invalidates it.
+          test "$(git hash-object Dockerfile.odoo-hardened)" = "48135c5448e39203e3c2ac7ac9a29347445e287b"
+          test "$(git hash-object docs/runtime-hardening/requirements-python312-linux-x86_64.lock)" = "0213f5552156b3d81f2515ee3f6bc786aca475ab"
+          test "$(git hash-object docs/runtime-hardening/build-tools.lock)" = "96b65dba00600b2c78b4af0ff5eaf2c83365c672"
+          test -s odoo-hardened.sarif
+          python3 scripts/check-trivy-baseline.py odoo-hardened.sarif yaseir-odoo-hardened:review-20261025
       - name: Retain exact Odoo image evidence
         if: ${{ !cancelled() && steps.hardened-image.outcome == 'success' }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
