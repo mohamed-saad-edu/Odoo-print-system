@@ -20,6 +20,7 @@ from psycopg2 import sql
 
 from ..runtime_clock import db_now_utc
 from ..idempotency_namespace import local_identity, deployment_proof
+from ..customer_presentation import customer_error_message
 
 from .crypto import (
     CredentialDecryptError,
@@ -357,16 +358,15 @@ class PrintGatewayConfig(models.Model):
         self.ensure_one()
         if not self.gateway_api_key:
             return "not_configured", _(
-                "Enter the installation API key from your Yaseir Print Gateway account to connect this company."
+                "Copy the connection key from Connect Odoo in Yaseir to connect this company."
             )
         if self.last_test_status == "revoked":
             return "attention", _(
-                "The installation key is no longer active. Create or select a new key in Yaseir Print Gateway, then save it here."
+                "The connection key is no longer active. Create a replacement in Connect Odoo, then save it here."
             )
         if self.last_test_status == "failed":
-            return "attention", (
-                self.last_test_error
-                or _("The Gateway could not be reached. Check the Gateway URL and network connection.")
+            return "attention", customer_error_message(
+                self.env._, self.last_test_error or "CONNECTION_ERROR"
             )
         if self.last_enabled_sync_error:
             return "attention", _(
@@ -375,13 +375,9 @@ class PrintGatewayConfig(models.Model):
         if self.pending_disable_gateway_url and self.last_gateway_migration_sync_error:
             # Old-endpoint shutdown blocks the current revision. Keep the
             # actual cause and recovery path visible to the current reader.
-            return "attention", _(
-                "The previous Gateway endpoint (%(url)s) could not be disabled: %(error)s "
-                "Fix the previous endpoint or replace the Gateway key, then save again."
-            ) % {
-                "url": self.pending_disable_gateway_url,
-                "error": (self.last_gateway_migration_sync_error or "")[:500],
-            }
+            return "attention", self.env._(
+                "The previous connection could not be safely disconnected. Ask your administrator to review it before changing the connection again."
+            )
         if int(self.last_enabled_sync_revision) != int(self.enabled_sync_revision or 0):
             # The pending revision's start, never write_date, bounds the wait.
             # A missing timestamp is a legacy/anomalous pending state and is
@@ -2258,6 +2254,28 @@ class PrintGatewayConfig(models.Model):
             "type": "ir.actions.act_window",
             "name": _("Branch Agent Assignments"),
             "res_model": "print_gateway.runtime_agent_assignment",
+            "view_mode": "list,form",
+            "domain": [("company_id", "=", self.company_id.id)],
+            "context": {"default_company_id": self.company_id.id},
+        }
+
+    def action_open_printers(self):
+        """Open live, company-scoped inventory without granting new assignments."""
+        self.ensure_one()
+        self._check_admin()
+        return {
+            "type": "ir.actions.client",
+            "tag": "print_gateway.printers",
+            "context": {"default_company_id": self.company_id.id},
+        }
+
+    def action_open_print_rules(self):
+        self.ensure_one()
+        self._check_admin()
+        return {
+            "type": "ir.actions.act_window",
+            "name": self.env._("Print Rules"),
+            "res_model": "print_gateway.policy",
             "view_mode": "list,form",
             "domain": [("company_id", "=", self.company_id.id)],
             "context": {"default_company_id": self.company_id.id},

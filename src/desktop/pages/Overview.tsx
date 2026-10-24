@@ -1,4 +1,5 @@
 import React from "react";
+import { SetupGuide } from "../components/SetupGuide";
 import { Activity, AlertTriangle, CheckCircle2, ClipboardList, Clock, FileText, Loader2, Play, Printer as PrinterIcon, RefreshCw, Server, Settings } from "lucide-react";
 import { Button, Card, CardHeader, EmptyState, ErrorState, LoadingState, Mono, StatusBadge } from "../../components/ui";
 import { DetailList, StatItem, StatStrip, StatusNotice, ViewAllButton, PrinterAvatar } from "../ui";
@@ -61,6 +62,7 @@ export function OverviewPage({ s }: { s: DesktopState }) {
   return (
     <div className="yw-agent-overview space-y-6">
       <div className="yw-agent-status">{banner}</div>
+      <SetupGuide s={s} />
 
       <div className="yw-agent-stats"><StatStrip>
         <StatItem label={t("desktop.overview.statAgent")} value={serviceState === "unknown" ? t("desktop.status.unknown") : s.isOnline ? t("desktop.status.online") : t("desktop.status.offline")} sub={t(agentStatusNoteKey(s.agentStatus))} tone={serviceState === "unknown" ? "neutral" : s.isOnline ? "ok" : "bad"} icon={<Activity className="h-4 w-4" />} />
@@ -177,10 +179,12 @@ export function OverviewPage({ s }: { s: DesktopState }) {
         const spooler = shownPrinters.find((p) => badgesOf(p).some((b) => b.includes("Spooler") || b.includes("IPP")));
         return (
           <Card className="p-5">
-            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <details><summary className="cursor-pointer text-sm font-semibold text-ink">{t("v4.experience.advanced")}</summary>
+            <div className="mt-4 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex items-start gap-2.5"><Activity className="mt-0.5 h-4 w-4 shrink-0 text-ink-3" /><div className="min-w-0"><div className="text-sm font-semibold text-ink">{t("desktop.overview.hardwareProfile")}</div><p className="mt-1 text-xs text-ink-3">{t("desktop.overview.hardwareProfileBody")}</p></div></div>
               <div className="flex min-w-0 flex-wrap gap-2">{escpos && <Button variant="secondary" disabled={s.busy || !s.gatewayTestPrinterIds.has(escpos.id)} onClick={() => s.handleTest(escpos.id)} icon={<Activity className="h-4 w-4" />}>{t("desktop.overview.testEscPos")}</Button>}{zpl && <Button variant="secondary" disabled={s.busy || !s.gatewayTestPrinterIds.has(zpl.id)} onClick={() => s.handleTest(zpl.id)} icon={<Activity className="h-4 w-4" />}>{t("desktop.overview.testZpl")}</Button>}{spooler && <Button variant="secondary" disabled={s.busy || !s.gatewayTestPrinterIds.has(spooler.id)} onClick={() => s.handleTest(spooler.id)} icon={<Activity className="h-4 w-4" />}>{t("desktop.overview.testSpooler")}</Button>}{!escpos && !zpl && !spooler && <Button variant="secondary" disabled={s.busy || !s.gatewayTestPrinterIds.has(shownPrinters[0].id)} onClick={() => s.handleTest(shownPrinters[0].id)} icon={<Play className="h-4 w-4" />}>{t("desktop.overview.testNamed", { name: shownPrinters[0].name.slice(0, 18) })}</Button>}<p className="w-full text-xs text-ink-3">{t("desktop.printers.cloudTestUnavailable")}</p></div>
             </div>
+            </details>
           </Card>
         );
       })()}

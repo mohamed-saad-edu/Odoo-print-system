@@ -2,7 +2,6 @@ package printer
 
 import (
 	"fmt"
-	"reflect"
 	"strconv"
 	"strings"
 )
@@ -77,32 +76,4 @@ func capabilityInt(v interface{}) (int, bool) {
 		return n, true
 	}
 	return 0, false
-}
-
-func capabilityInts(v interface{}) ([]int, bool) {
-	switch x := v.(type) {
-	case []int:
-		return append([]int(nil), x...), true
-	case []interface{}:
-		out := make([]int, 0, len(x))
-		for _, item := range x {
-			if n, ok := capabilityInt(item); ok {
-				out = append(out, n)
-			}
-		}
-		return out, len(out) == len(x)
-	}
-	rv := reflect.ValueOf(v)
-	if rv.IsValid() && rv.Kind() == reflect.Slice {
-		out := make([]int, 0, rv.Len())
-		for i := 0; i < rv.Len(); i++ {
-			n, ok := capabilityInt(rv.Index(i).Interface())
-			if !ok {
-				return nil, false
-			}
-			out = append(out, n)
-		}
-		return out, true
-	}
-	return nil, false
 }

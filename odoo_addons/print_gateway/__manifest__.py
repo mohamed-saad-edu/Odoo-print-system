@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 {
     'name': 'Yaseir Print Gateway',
-    'version': '19.0.2.20.0',
+    'version': '19.0.2.21.0',
     'summary': 'Reliable silent printing for Odoo through Yaseir Print Gateway',
     'description': """
 Yaseir Print Gateway connects Odoo with the printers used by your business.
@@ -51,6 +51,8 @@ to the printing service without opening the browser print dialog.
             'print_gateway/static/src/js/printer_verification.js',
             'print_gateway/static/src/js/operation_recovery.js',
             'print_gateway/static/src/scss/print_gateway_backend.scss',
+            'print_gateway/static/src/components/printers_overview.js',
+            'print_gateway/static/src/components/printers_overview.xml',
             'print_gateway/static/src/components/runtime_agent_field.js',
             'print_gateway/static/src/components/runtime_printer_field.js',
             'print_gateway/static/src/components/language_switcher.js',

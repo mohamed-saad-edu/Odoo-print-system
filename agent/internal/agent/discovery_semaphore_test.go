@@ -9,23 +9,23 @@ func TestDiscoverySemaphoreReleasedOnNormalFinish(t *testing.T) {
 	a := &Agent{discoverySem: make(chan struct{}, 1)}
 	a.discoverySem <- struct{}{}
 	finished := make(chan struct{})
-	close(finished)
 	a.releaseDiscoverySemaphoreWhenFinished(finished, time.Minute)
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		select {
-		case <-a.discoverySem:
-			if a.discoveryWedged.Load() {
-				t.Fatal("normal finish must not mark the scan wedged")
-			}
-			return
-		default:
-			if time.Now().After(deadline) {
-				t.Fatal("semaphore was not released after normal finish")
-			}
-			time.Sleep(10 * time.Millisecond)
-		}
+	select {
+	case a.discoverySem <- struct{}{}:
+		t.Fatal("unfinished scan must retain its discovery slot")
+	default:
 	}
+	close(finished)
+	// A successor acquires by sending only after cleanup drains the held slot.
+	select {
+	case a.discoverySem <- struct{}{}:
+	case <-time.After(5 * time.Second):
+		t.Fatal("semaphore was not released after normal finish")
+	}
+	if a.discoveryWedged.Load() {
+		t.Fatal("normal finish must not mark the scan wedged")
+	}
+	<-a.discoverySem // Drain the successor slot acquired by this test.
 }
 
 func TestDiscoverySemaphoreForceReleasedWhenScanWedges(t *testing.T) {

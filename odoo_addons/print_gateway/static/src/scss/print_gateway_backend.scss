@@ -516,3 +516,12 @@
         }
     }
 }
+
+
+// V4 setup and inventory follow the host language direction.
+.o_pg_setup_steps { display: flex; flex-wrap: wrap; align-items: center; gap: 1rem; padding: 1rem; border: 1px solid var(--border-color, #dce3ea); border-radius: .75rem; }
+.o_pg_inventory { max-inline-size: 1440px; margin-inline: auto; }
+.o_pg_inventory .btn, .o_pg_inventory .form-select { min-block-size: 44px; }
+.o_pg_inventory bdi { overflow-wrap: anywhere; }
+.o_pg_inventory details > summary { cursor: pointer; padding-block: .75rem; }
+.o_pg_inventory :focus-visible { outline: 3px solid #2563eb; outline-offset: 3px; }

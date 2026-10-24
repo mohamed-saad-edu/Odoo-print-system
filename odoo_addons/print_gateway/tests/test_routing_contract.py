@@ -7,10 +7,12 @@ import requests
 # previously degraded the whole file into silent skips with a green exit.
 from odoo import api
 from odoo.exceptions import ValidationError
+from odoo.tests import tagged
 from odoo.tests.common import TransactionCase
 from odoo.addons.print_gateway.models.gateway_config import PrintGatewayConfig
 
 
+@tagged("post_install", "-at_install")
 class TestPrintGatewayRoutingContract(TransactionCase):
     def setUp(self):
         super().setUp()

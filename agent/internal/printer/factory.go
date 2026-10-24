@@ -156,29 +156,3 @@ func receiptPaperProfile(cfg config.PrinterConfig) (paperMM, dots, dpi int) {
 	}
 	return int(*g.PaperWidthMM), g.PrintableWidthDots, *g.DPIX
 }
-
-func capabilityProtocolListed(capabilities map[string]interface{}, protocol string) bool {
-	protocol = strings.ToLower(strings.TrimSpace(protocol))
-	if protocol == "" || capabilities == nil {
-		return false
-	}
-	value, ok := capabilities["supported_protocols"]
-	if !ok {
-		return false
-	}
-	switch list := value.(type) {
-	case []string:
-		for _, item := range list {
-			if strings.EqualFold(strings.TrimSpace(item), protocol) {
-				return true
-			}
-		}
-	case []interface{}:
-		for _, item := range list {
-			if text, ok := item.(string); ok && strings.EqualFold(strings.TrimSpace(text), protocol) {
-				return true
-			}
-		}
-	}
-	return false
-}

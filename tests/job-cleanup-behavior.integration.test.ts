@@ -6,6 +6,7 @@ import { DELETE as cleanupDELETE } from "../src/app/api/jobs/route";
 import { validateWorkspaceManager, verifyWorkspaceToken } from "../src/lib/manager-auth";
 import { applyMigrations, closePool, hasTestDatabase, truncateAll, seedFixture, pool } from "./helpers/pg";
 import { createWorkspaceManagerTestSession } from "./helpers/workspace-session";
+import { gatewayTestSigningKey } from "./helpers/test-secrets";
 
 vi.mock(import("../src/lib/manager-auth"), async (importOriginal) => ({
   ...(await importOriginal()),
@@ -25,8 +26,9 @@ suite("manual job cleanup behavior (J-2)", () => {
   beforeEach(async () => {
     await truncateAll();
     vi.stubEnv("APP_BASE_URL", "https://cleanup.test");
+    vi.stubEnv("GATEWAY_JWT_SECRET", gatewayTestSigningKey());
   });
-  afterAll(async () => { await closePool(); });
+  afterAll(async () => { await closePool(); vi.unstubAllEnvs(); });
 
   it("deletes only released terminal rows, preserves fenced/foreign/active work, and writes receipts", async () => {
     const f = await seedFixture();

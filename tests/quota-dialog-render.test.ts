@@ -82,12 +82,22 @@ describe("quota-exhausted upgrade dialog", () => {
 
     const upgrade = body.querySelector('a[href="/billing"]');
     expect(upgrade).not.toBeNull();
-    expect(upgrade?.textContent ?? "").toContain("Upgrade plan");
+    expect(upgrade?.textContent ?? "").toContain("Review subscription");
 
     // Portal architecture: dialog mounts at body level, above dashboard containers.
     const root = body.querySelector("[data-dialog-root]");
     expect(root).not.toBeNull();
     expect(root?.parentElement).toBe(document.body);
+  });
+
+  it("treats device caps as technical safeguards without a commercial upsell", () => {
+    for (const resource of ["agents", "printers"] as const) {
+      const body = renderDialog({ open: true, resource, used: 200, limit: 200 });
+      const dialogs = body.querySelectorAll('[role="dialog"]');
+      const dialog = dialogs[dialogs.length - 1]!;
+      expect(dialog.textContent).toContain("technical safety limit");
+      expect(dialog.querySelector('a[href="/billing"]')).toBeNull();
+    }
   });
 
   it("explains a rolling rate limit and a concurrency limit differently", () => {

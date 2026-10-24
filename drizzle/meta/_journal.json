@@ -666,6 +666,13 @@
       "when": 1792847804479,
       "tag": "0094_printer_operational_verification",
       "breakpoints": true
+    },
+    {
+      "idx": 95,
+      "version": "7",
+      "when": 1792880000000,
+      "tag": "0095_manual_subscriptions",
+      "breakpoints": true
     }
   ]
 }

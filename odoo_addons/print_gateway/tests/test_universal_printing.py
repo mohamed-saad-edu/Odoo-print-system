@@ -6,11 +6,13 @@ from unittest.mock import patch
 import secrets
 
 from odoo.exceptions import AccessError, ValidationError
+from odoo.tests import tagged
 from odoo.tests.common import TransactionCase
 
 from .printer_fixtures import verified_printer
 
 
+@tagged("post_install", "-at_install")
 class TestUniversalPrinting(TransactionCase):
     def _printer(self):
         return verified_printer({"id": "file-printer", "connectionType": "pdf_output", "protocol": "pdf",

@@ -207,9 +207,9 @@ describe("architecture hardening", () => {
 
   it("keeps external failure outcomes explicit instead of assuming success", () => {
     const webhook = readFileSync("src/app/api/billing/webhook/route.ts", "utf8");
-    expect(webhook).toContain("ON CONFLICT (event_id) DO NOTHING");
-    expect(webhook).toContain("Unable to verify current Stripe subscription state");
-    expect(webhook).toContain("return NextResponse.json({ error: \"Unable to verify current Stripe subscription state\" }, { status: 502 });");
+    expect(webhook).toContain('status:410');
+    expect(webhook).toContain('MANUAL_BILLING_REQUIRED');
+    expect(webhook).not.toContain('stripeRequest');
 
     const ws = readFileSync("src/server/ws.ts", "utf8");
     expect(ws).toContain("releaseUndeliveredClaim");

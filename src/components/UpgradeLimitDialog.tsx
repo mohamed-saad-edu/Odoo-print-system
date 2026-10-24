@@ -58,6 +58,7 @@ export default function UpgradeLimitDialog({
 }) {
   const { t, tc, formatNumber, formatDate } = useI18n();
   const copy = COPY[resource];
+  const technicalCapacity = resource === "agents" || resource === "printers";
   const billingUrl = copyBillingDestination?.url ?? null;
   const [copiedUrl, setCopiedUrl] = useState("");
   const usedText = typeof used === "number" ? formatNumber(used) : "—";
@@ -72,13 +73,13 @@ export default function UpgradeLimitDialog({
     <Modal
       open={open}
       onClose={onClose}
-      title={t(copy.title)}
+      title={t(technicalCapacity ? "v4.experience.limit.technical" : copy.title)}
       description={t("limit.modalDescription")}
     >
       <div className="space-y-5">
         <div className="flex items-start gap-3 rounded-md border border-warn-edge bg-warn-bg px-4 py-3.5 text-sm text-warn">
           <CircleAlert className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
-          <p className="leading-relaxed">{t(copy.description)}</p>
+          <p className="leading-relaxed">{t(technicalCapacity ? "v4.experience.limit.technicalBody" : copy.description)}</p>
         </div>
 
         <div className="grid grid-cols-2 gap-px overflow-hidden rounded-md border border-edge bg-edge-subtle">
@@ -87,7 +88,7 @@ export default function UpgradeLimitDialog({
             <div className="mt-1.5 text-xl font-bold tabular-nums text-ink">{usedText}</div>
           </div>
           <div className="bg-surface-2 px-4 py-3.5">
-            <div className="text-xs font-[550] text-ink-3">{t("limit.planLimit")}</div>
+            <div className="text-xs font-[550] text-ink-3">{t(technicalCapacity ? "v4.experience.limit.safetyCap" : "limit.planLimit")}</div>
             <div className="mt-1.5 text-xl font-bold tabular-nums text-ink">{limitText}</div>
           </div>
         </div>
@@ -108,7 +109,7 @@ export default function UpgradeLimitDialog({
           <Button variant="secondary" onClick={onClose}>
             {t("ui.closeDialog")}
           </Button>
-          {copyBillingDestination ? (
+          {!technicalCapacity && (copyBillingDestination ? (
             billingUrl ? (
               <div className="flex min-w-0 flex-1 flex-col gap-2 sm:items-end">
                 {/* A read-only selectable URL remains usable even if clipboard permission is denied. */}
@@ -148,9 +149,9 @@ export default function UpgradeLimitDialog({
               onClick={onClose}
               icon={<ArrowUpRight className="h-4 w-4" aria-hidden />}
             >
-              {t("limit.upgradePlan")}
+              {t("v4.experience.health.manage")}
             </Button>
-          )}
+          ))}
         </div>
       </div>
     </Modal>

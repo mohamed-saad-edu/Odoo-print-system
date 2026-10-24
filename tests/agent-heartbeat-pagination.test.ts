@@ -258,7 +258,7 @@ suite("agent heartbeat pagination contract", () => {
     expect(rows.rows[0].count).toBe(0);
   });
 
-  it("skips only over-limit new printers while refreshing the existing fleet", async () => {
+  it("admits new printers beyond legacy commercial caps while refreshing the existing fleet", async () => {
     const f = await seedFixture();
     await pool().query(
       `UPDATE plans
@@ -284,9 +284,7 @@ suite("agent heartbeat pagination contract", () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({
       success: true,
-      skippedPrinters: expect.arrayContaining([
-        { id: "hb-over-limit", reason: "max_printers_exceeded" },
-      ]),
+      skippedPrinters: [],
     });
 
     const existing = await pool().query(
@@ -305,7 +303,7 @@ suite("agent heartbeat pagination contract", () => {
       `SELECT COUNT(*)::int AS count FROM printers WHERE tenant_id = $1 AND id = 'hb-over-limit'`,
       [f.tenantId],
     );
-    expect(rejected.rows[0].count).toBe(0);
+    expect(rejected.rows[0].count).toBe(1);
   });
 
   it("marks a missing agent-owned printer absent only after a complete snapshot and hides it from Odoo inventory", async () => {
@@ -481,7 +479,7 @@ suite("agent heartbeat pagination contract", () => {
     ]));
   });
 
-  it("does not let a tombstoned stable ID bypass max_printers when its replacement owns the slot", async () => {
+  it("retains both observed stable identities when a printer reappears beyond a legacy device cap", async () => {
     const f = await seedFixture();
     await pool().query(
       `UPDATE plans
@@ -504,9 +502,7 @@ suite("agent heartbeat pagination contract", () => {
     ));
     expect(reappearance.status).toBe(200);
     expect(await reappearance.json()).toMatchObject({
-      skippedPrinters: expect.arrayContaining([
-        { id: f.printerId, reason: "max_printers_exceeded" },
-      ]),
+      skippedPrinters: [],
     });
 
     const rows = await pool().query(
@@ -517,10 +513,10 @@ suite("agent heartbeat pagination contract", () => {
       [f.tenantId, [f.printerId, "hb-replacement"]],
     );
     expect(rows.rows).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: f.printerId, inventory_present: false, status: "unknown" }),
+      expect.objectContaining({ id: f.printerId, inventory_present: true }),
       expect.objectContaining({ id: "hb-replacement", inventory_present: true }),
     ]));
-    expect(rows.rows.filter((row) => row.inventory_present)).toHaveLength(1);
+    expect(rows.rows.filter((row) => row.inventory_present)).toHaveLength(2);
   });
 
   it("allows a tombstoned stable ID to reappear after its replacement slot is actually freed", async () => {

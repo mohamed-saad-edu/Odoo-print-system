@@ -37,7 +37,7 @@ const tx={
   if(/manager_sessions/i.test(text))return {rows:state.legacyActive?[{jti:'signed'}]:[]};
   throw Error('Unexpected tx.execute: '+text);
  },
- query:{tenantUsers:{findFirst:async()=>state.memberRole?{role:state.memberRole}:null},tenantSubscriptions:{findFirst:async()=>null}},
+ query:{tenantUsers:{findFirst:async()=>state.memberRole?{role:state.memberRole}:null},tenantSubscriptions:{findFirst:async()=>null},plans:{findFirst:async()=>({id:'plan'})}},
  update:()=>({set:(data)=>({where:async()=>{state.writes.push(data);return []}})}),
  insert:()=>({values:async(data)=>{state.writes.push(data)}}),
  select:()=>({from:()=>({where:()=>({for:async()=>[{id:'api-key'}]})})}),
@@ -66,6 +66,9 @@ const lib={
    if(v.rows[0]?.lifecycle!=='active')throw new TenantSuspendedError('TENANT_SUSPENDED');return 'active';
  }}),
  '/lib/entitlements':stub({requireTenantBillingAccess:async(t,id)=>{state.events.push('billing entitlement '+id)},isTenantBillingError:()=>false}),
+ '/lib/manual-subscriptions':stub({ensurePendingManualSubscription:async(t,tenantId,planId)=>{
+   assert.equal(t,tx);state.writes.push({tenantId,planId,status:'awaiting_activation'});
+ }}),
  '/lib/odoo-auth':stub({generateOdooApiKey:()=>({raw:'secret',hashed:'hash',id:'key1'})}),
  '/lib/api-key-deletion':stub({deleteApiKeyInTransaction:async()=>{throw Error('Unexpected credential deletion in creation test')}}),
  '/lib/audit':stub({writeAuditEvent:async()=>{state.audit++}}),
@@ -106,17 +109,21 @@ test('actual Odoo credential route refuses revoked family before issuing key',as
 test('actual Odoo credential route refuses demoted actor before issuing key',async()=>{
  reset({memberRole:'viewer'});const response=await keys.POST(req('/api/odoo/keys',{name:'Printer key'}));assert.equal(response.status,403);assert.equal(state.writes.length,0);
 });
-test('actual onboarding route protects trial and workspace name together',async()=>{
- reset({role:'owner',memberRole:'owner'});const response=await onboarding.POST(req('/api/onboarding',{workspaceName:'New workspace',planId:'plan',trial:true}));assert.equal(response.status,200);assert.equal(state.writes.length,2);assert.equal(state.audit,0);
+test('actual onboarding route saves workspace and pending request only after live owner authority',async()=>{
+ reset({role:'owner',memberRole:'owner'});const response=await onboarding.POST(req('/api/onboarding',{workspaceName:'New workspace',planId:'plan'}));assert.equal(response.status,200);assert.equal(state.writes.length,2);assert.equal(state.audit,1);
+ assert.equal(state.writes[0].name,'New workspace');assert.deepEqual(state.writes[1],{tenantId:'tenant',planId:'plan',status:'awaiting_activation'});
 });
-test('actual onboarding route rejects stale session before trial or workspace write',async()=>{
- reset({role:'owner',memberRole:'owner',familyActive:false});const response=await onboarding.POST(req('/api/onboarding',{workspaceName:'New workspace',planId:'plan',trial:true}));assert.equal(response.status,401);assert.equal((await response.json()).code,'SESSION_EXPIRED');assert.equal(state.writes.length,0);
+test('actual onboarding route refuses legacy self-activation without workspace or entitlement writes',async()=>{
+ reset({role:'owner',memberRole:'owner'});const response=await onboarding.POST(req('/api/onboarding',{workspaceName:'New workspace',planId:'plan',trial:true}));assert.equal(response.status,400);assert.equal((await response.json()).code,'MANUAL_ACTIVATION_REQUIRED');assert.equal(state.writes.length,0);assert.equal(state.audit,0);
 });
-test('stale password proof blocks settings, credential issuance and trial side effects',async()=>{
- const operations=[()=>setting.PATCH(patch({name:'New workspace'})),()=>keys.POST(req('/api/odoo/keys',{name:'Printer key'})),()=>onboarding.POST(req('/api/onboarding',{workspaceName:'New workspace',planId:'plan',trial:true}))];
+test('actual onboarding route rejects stale session before pending subscription or workspace write',async()=>{
+ reset({role:'owner',memberRole:'owner',familyActive:false});const response=await onboarding.POST(req('/api/onboarding',{workspaceName:'New workspace',planId:'plan'}));assert.equal(response.status,401);assert.equal((await response.json()).code,'SESSION_EXPIRED');assert.equal(state.writes.length,0);assert.equal(state.audit,0);
+});
+test('stale password proof blocks settings, credential issuance and manual onboarding side effects',async()=>{
+ const operations=[()=>setting.PATCH(patch({name:'New workspace'})),()=>keys.POST(req('/api/odoo/keys',{name:'Printer key'})),()=>onboarding.POST(req('/api/onboarding',{workspaceName:'New workspace',planId:'plan'}))];
  for(const operation of operations){reset({role:'owner',memberRole:'owner',staleProof:true});const response=await operation();
   assert.equal(response.status,403);assert.equal((await response.json()).code,'WORKSPACE_REAUTHENTICATION_REQUIRED');assert.equal(response.headers.get('X-Yaseir-Reauthentication'),'required');assert.equal(state.writes.length,0);assert.equal(state.audit,0);}
 });
-test('actual onboarding route rejects suspended Tenant before trial or workspace write',async()=>{
- reset({role:'owner',memberRole:'owner',tenantActive:false});const response=await onboarding.POST(req('/api/onboarding',{workspaceName:'New workspace',planId:'plan',trial:true}));assert.equal(response.status,403);assert.equal(state.writes.length,0);
+test('actual onboarding route rejects suspended Tenant before pending subscription or workspace write',async()=>{
+ reset({role:'owner',memberRole:'owner',tenantActive:false});const response=await onboarding.POST(req('/api/onboarding',{workspaceName:'New workspace',planId:'plan'}));assert.equal(response.status,403);assert.equal(state.writes.length,0);assert.equal(state.audit,0);
 });

@@ -1,15 +1,17 @@
 import { describe, expect, it } from "vitest";
 // @ts-expect-error - addon JS has no type declarations; @web/* resolves to the shared mock module.
-import { gatewayServerMessage } from "../odoo_addons/print_gateway/static/src/js/gateway_limit_dialog";
+import { gatewayDiagnosticMessage as gatewayServerMessage } from "../odoo_addons/print_gateway/static/src/js/gateway_limit_dialog";
 
 /**
- * POS must surface the server-side message, not the generic RPC title.
+ * Diagnostic extraction must retain the server-side evidence. V4 customer
+ * presentation is separately checked in v4-odoo-errors.test.ts and never echoes
+ * this raw diagnostic text to POS notifications.
  * Odoo serializes server exceptions into an RPCError whose `.message` is the
  * fixed string "Odoo Server Error"; the real text lives in `data.message`.
  * Reading only `error.message` turned every deterministic printer failure
  * (e.g. PRINTER_OFFLINE ValidationError) into a generic server-error alert.
  */
-describe("gatewayServerMessage", () => {
+describe("gatewayDiagnosticMessage", () => {
   it("prefers the server message over the generic RPC title", () => {
     expect(
       gatewayServerMessage({

@@ -5,6 +5,7 @@ import { validateWorkspaceManager, verifyWorkspaceToken, type ManagerClaims } fr
 import { hashPassword } from "../src/lib/password";
 import { randomBytes } from "node:crypto";
 import { createWorkspaceManagerTestSession } from "./helpers/workspace-session";
+import { gatewayTestSigningKey } from "./helpers/test-secrets";
 import { GET as timelineGET } from "../src/app/api/jobs/[id]/timeline/route";
 import { GET as teamMembersGET } from "../src/app/api/team/members/route";
 import { GET as billingStatusGET } from "../src/app/api/billing/status/route";
@@ -36,8 +37,9 @@ suite("Tenant isolation extended vectors (J-6)", () => {
     await truncateAll();
     currentClaims.clear();
     vi.stubEnv("APP_BASE_URL", "https://xiso.test");
+    vi.stubEnv("GATEWAY_JWT_SECRET", gatewayTestSigningKey());
   });
-  afterAll(async () => { await closePool(); });
+  afterAll(async () => { await closePool(); vi.unstubAllEnvs(); });
 
   async function twoTenants() {
     const a = await seedFixture();

@@ -14,7 +14,7 @@ def test_migration_inventory_matches_current_journal():
     # journal and the SQL files, including new forward-only migrations.
     tags=[entry['tag'] for entry in journal]
     assert tags==[path.stem for path in sql]
-    assert len(journal)==len(sql)==95
+    assert len(journal)==len(sql)==96
     assert journal[84]['tag']=='0084_printer_cloud_sharing'
     assert journal[85]['tag']=='0085_odoo_installation_idempotency'
     assert journal[86]['tag']=='0086_printer_identity_and_api_key_deletion'
@@ -39,7 +39,7 @@ def test_migration_inventory_matches_current_journal():
     assert journal[93]['tag']=='0093_password_only_authentication'
     assert journal[94]['tag']=='0094_printer_operational_verification'
     assert '| 0094 | 1 |' in read('MIGRATION.md')
-    assert '**Total**: 95 forward-only SQL migrations (0000–0094)' in read('MIGRATION.md')
+    assert '**Total**: 96 forward-only SQL migrations (0000–0095)' in read('MIGRATION.md')
     sharing=read('drizzle/0084_printer_cloud_sharing.sql')
     assert '"shared_with_gateway" boolean NOT NULL DEFAULT true' in sharing
     assert '"shared_with_gateway_version" text' in sharing
@@ -85,3 +85,9 @@ def test_first_run_verify_email_documents_password_setup_redirect():
     assert 'requiresPasswordSetup' in sec9
     assert '20-minute' in sec9
     assert 'creates a customer/manager session cookie' not in sec9
+
+
+def test_manual_subscription_migration_registered():
+    import json
+    journal=json.loads((ROOT/"drizzle/meta/_journal.json").read_text())["entries"]
+    assert journal[95]["tag"]=="0095_manual_subscriptions"

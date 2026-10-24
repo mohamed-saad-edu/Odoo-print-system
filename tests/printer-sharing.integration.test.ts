@@ -164,14 +164,14 @@ suite("local-owner printer sharing across Gateway/Odoo boundaries", () => {
     expect((await pool().query("SELECT id FROM printers WHERE id = 'private-new'")).rows).toEqual([]);
   });
 
-  it("enforces capacity on re-sharing a manager-owned private row without changing disabled lifecycle", async () => {
+  it("allows explicit re-sharing beyond a legacy cap while preserving a manager-disabled lifecycle", async () => {
     await pool().query("UPDATE plans SET entitlements = jsonb_set(entitlements, '{max_printers}', '1'::jsonb) WHERE id = (SELECT plan_id FROM tenant_subscriptions WHERE tenant_id = $1)", [f.tenantId]);
     await pool().query("UPDATE printers SET shared_with_gateway = false, management_source = 'manager', lifecycle = 'disabled' WHERE tenant_id = $1 AND id = $2", [f.tenantId, f.printerId]);
     await pool().query("INSERT INTO printers (id,tenant_id,agent_id,name) VALUES ('capacity-owner',$1,$2,'Existing shared printer')", [f.tenantId, f.agentId]);
     const blocked = await heartbeat({ printers: [sharedObservation()] });
     expect(blocked.status).toBe(200);
-    expect((await blocked.json()).skippedPrinters).toContainEqual({ id: f.printerId, reason: "max_printers_exceeded" });
-    expect(await printerRow()).toMatchObject({ shared_with_gateway: false, lifecycle: "disabled" });
+    expect((await blocked.json()).skippedPrinters).toEqual([]);
+    expect(await printerRow()).toMatchObject({ shared_with_gateway: true, lifecycle: "disabled" });
     await pool().query("DELETE FROM printers WHERE tenant_id=$1 AND id='capacity-owner'", [f.tenantId]);
     expect((await heartbeat({ printers: [sharedObservation()] })).status).toBe(200);
     expect(await printerRow()).toMatchObject({ shared_with_gateway: true, lifecycle: "disabled", management_source: "manager" });
@@ -209,7 +209,7 @@ suite("local-owner printer sharing across Gateway/Odoo boundaries", () => {
     expect(response.status).toBe(409);
     expect(await response.json()).toMatchObject({ code: "PRINTER_NOT_SHARED", retryable: false });
     expect((await pool().query("SELECT id FROM print_jobs WHERE tenant_id=$1", [f.tenantId])).rows).toEqual([]);
-    expect((await pool().query("SELECT * FROM print_usage_periods WHERE tenant_id=$1", [f.tenantId])).rows).toEqual([]);
+    expect((await pool().query("SELECT * FROM print_monthly_usage WHERE tenant_id=$1", [f.tenantId])).rows).toEqual([]);
   });
 
   it("preserves the original idempotent admission and status lookup after unsharing", async () => {
@@ -255,10 +255,9 @@ suite("local-owner printer sharing across Gateway/Odoo boundaries", () => {
     await pool().query("UPDATE plans SET entitlements = jsonb_set(entitlements, '{max_printers}', '1'::jsonb) WHERE id = (SELECT plan_id FROM tenant_subscriptions WHERE tenant_id=$1)", [f.tenantId]);
     await pool().query("INSERT INTO printers (id,tenant_id,agent_id,name) VALUES ('pause-capacity',$1,$2,'Shared capacity owner')", [f.tenantId, f.agentId]);
     const blocked = await heartbeat({ printers: [sharedObservation()] });
-    expect(blocked.status).toBe(200); expect((await blocked.json()).skippedPrinters).toContainEqual({ id: f.printerId, reason: "max_printers_exceeded" });
-    await paused();
-    await pool().query("DELETE FROM printers WHERE tenant_id=$1 AND id='pause-capacity'", [f.tenantId]);
-    expect((await heartbeat({ printers: [sharedObservation()] })).status).toBe(200);
+    // The fresh explicit sharing permission releases the zero-byte pause.
+    // The retained old commercial cap cannot prevent re-sharing in V4.
+    expect(blocked.status).toBe(200); expect((await blocked.json()).skippedPrinters).toEqual([]);
     expect(await jobRow(claim!.id)).toMatchObject({ status: "queued", error: null, retries: 1, delivery_attempts: 0, expires_at: before.expires_at });
     expect(await claimJobForDelivery(claim!.id, f.agentId)).not.toBeNull();
   });

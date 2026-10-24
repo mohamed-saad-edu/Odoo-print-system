@@ -24,6 +24,7 @@ export function PrintersPage({ s }: { s: DesktopState }) {
 
   return (
     <div className="space-y-5">
+      <Card className="p-5"><h2 className="text-base font-semibold text-ink">{t("v4.experience.printers.guide")}</h2><p className="mt-2 text-sm leading-relaxed text-ink-3">{t("v4.experience.printers.guideBody")}</p></Card>
       <Toolbar>
         <div className="relative min-w-0 flex-1">
           <Search className="pointer-events-none absolute start-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-3" aria-hidden />
@@ -38,8 +39,8 @@ export function PrintersPage({ s }: { s: DesktopState }) {
           <option value="saved">{t("printer.presentation.saved")}</option>
         </Select>
         <div className="flex flex-wrap gap-2">
-          <Button variant="primary" onClick={() => s.setShowAdd(true)} icon={<Plus className="h-4 w-4" />} className="rounded-md">{t("desktop.printers.addPrinter")}</Button>
-          <Button variant="secondary" onClick={s.handleDiscover} loading={s.printersLoading} icon={<RefreshCw className="h-4 w-4" />} className="rounded-md">{t("desktop.printers.discover")}</Button>
+          <Button variant="ghost" onClick={() => s.setShowAdd(true)} icon={<Plus className="h-4 w-4" />} className="rounded-md">{t("v4.experience.printers.manual")}</Button>
+          <Button variant="primary" onClick={s.handleDiscover} loading={s.printersLoading} icon={<RefreshCw className="h-4 w-4" />} className="rounded-md">{t("desktop.printers.discover")}</Button>
           <Button variant="ghost" onClick={s.refreshPrinters} icon={<RefreshCw className="h-4 w-4" />}>{t("desktop.printers.refresh")}</Button>
         </div>
       </Toolbar>
@@ -50,7 +51,7 @@ export function PrintersPage({ s }: { s: DesktopState }) {
       {pendingLocal.length > 0 && (
         <Card className="overflow-hidden">
           <CardHeader title={t("desktop.printers.localPendingTitle")} subtitle={t("desktop.printers.localPendingBody", { count: pendingLocal.length })} />
-          <details>
+          <details open>
           <summary className="cursor-pointer px-5 pb-3 text-sm font-semibold text-ink-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/35">{t("desktop.printers.details")}</summary>
           <ul className="divide-y divide-edge-subtle lg:hidden">
             {pendingLocal.map((p) => (
@@ -85,7 +86,7 @@ export function PrintersPage({ s }: { s: DesktopState }) {
       <Card className="overflow-hidden">
         <CardHeader title={<span className="flex flex-wrap items-center gap-2.5">{t("desktop.printers.title")}<span className="min-w-0 max-w-full rounded-sm border border-edge bg-surface-2 px-2.5 py-0.5 text-xs font-semibold tabular-nums text-ink-3 [overflow-wrap:anywhere]">{t("desktop.printers.total", { count: total })}</span></span>} subtitle={t("desktop.printers.subtitle")} icon={<PrinterIcon className="h-4 w-4 text-brand" />} />
         {(s.printersLoading || s.localPrintersLoading) && rows.length === 0 ? <div className="p-5"><LoadingState rows={5} /></div> : rows.length === 0 && s.printersError ? null : rows.length === 0 ? (
-          <EmptyState icon={<PrinterIcon className="h-8 w-8" />} title={total === 0 && s.statusFilter === "saved" ? t("printer.presentation.savedEmpty") : total === 0 && pendingLocal.length > 0 ? t("desktop.printers.waitingTitle") : total === 0 ? t("desktop.printers.emptyTitle") : t("desktop.printers.noMatches")} description={total === 0 && s.statusFilter === "saved" ? t("printer.presentation.savedEmptyBody") : total === 0 && pendingLocal.length > 0 ? t("desktop.printers.waitingBody") : total === 0 ? t("desktop.printers.emptyBody") : t("desktop.printers.noMatchesBody")} action={total === 0 && s.statusFilter !== "saved" ? <><Button variant="primary" onClick={s.handleDiscover} icon={<RefreshCw className="h-4 w-4" />}>{t("desktop.printers.discoverPrinters")}</Button><Button variant="secondary" onClick={() => s.setShowAdd(true)} icon={<Plus className="h-4 w-4" />}>{t("desktop.printers.addPrinter")}</Button></> : undefined} />
+          <EmptyState icon={<PrinterIcon className="h-8 w-8" />} title={total === 0 && s.statusFilter === "saved" ? t("printer.presentation.savedEmpty") : total === 0 && pendingLocal.length > 0 ? t("desktop.printers.waitingTitle") : total === 0 ? t("desktop.printers.emptyTitle") : t("desktop.printers.noMatches")} description={total === 0 && s.statusFilter === "saved" ? t("printer.presentation.savedEmptyBody") : total === 0 && pendingLocal.length > 0 ? t("desktop.printers.waitingBody") : total === 0 ? t("desktop.printers.emptyBody") : t("desktop.printers.noMatchesBody")} action={total === 0 && s.statusFilter !== "saved" ? <><Button variant="primary" onClick={s.handleDiscover} icon={<RefreshCw className="h-4 w-4" />}>{t("desktop.printers.discoverPrinters")}</Button><Button variant="secondary" onClick={() => s.setShowAdd(true)} icon={<Plus className="h-4 w-4" />}>{t("v4.experience.printers.manual")}</Button></> : undefined} />
         ) : (
           <>
           <ul className="divide-y divide-edge-subtle xl:hidden" aria-label={t("desktop.printers.title")}>

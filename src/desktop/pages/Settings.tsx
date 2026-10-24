@@ -28,7 +28,10 @@ export function SettingsPage({ s }: { s: DesktopState }) {
 
   return (
     <div className="space-y-5">
-      <div className="grid gap-5 xl:grid-cols-2">
+      <div className="grid gap-5">
+        <details open={!s.pairingConfirmed} className="rounded-xl border border-edge bg-surface p-4">
+        <summary className="cursor-pointer text-base font-semibold text-ink">{t("v4.experience.setup.gateway")}</summary>
+        <div className="mt-4">
         <SettingsSection title={t("desktop.settings.gatewaySection")} description={t("desktop.settings.gatewaySectionBody")} icon={<Link2 className="h-4 w-4" />}>
           <div className="flex items-center gap-3 rounded-md border border-edge bg-surface-2/45 p-4">
             <StatusDot tone={gatewayDraftPending ? "neutral" : s.gatewayConnected ? "ok" : s.gatewayUrl ? "bad" : "neutral"} pulse={!gatewayDraftPending && s.gatewayConnected} />
@@ -49,6 +52,10 @@ export function SettingsPage({ s }: { s: DesktopState }) {
           {gatewayDisplayError && <ErrorState title={t("desktop.settings.checkFailed")} message={gatewayDisplayError} retry={s.checkHealth} />}
         </SettingsSection>
 
+        </div></details>
+        <details className="rounded-xl border border-edge bg-surface p-4">
+        <summary className="cursor-pointer text-base font-semibold text-ink">{t("v4.experience.settings.device")}</summary>
+        <div className="mt-4">
         <SettingsSection title={t("desktop.settings.localAgentSection")} description={t("desktop.settings.localAgentSectionBody")} icon={<Server className="h-4 w-4" />}>
           <div className="flex items-center gap-3 rounded-md border border-edge bg-surface-2/45 p-4">
             <StatusDot tone={serviceState === "unknown" ? "neutral" : s.isOnline ? "ok" : "bad"} pulse={s.isOnline} />
@@ -92,9 +99,12 @@ export function SettingsPage({ s }: { s: DesktopState }) {
             )}
           </div>
         </SettingsSection>
+        <Button variant="secondary" onClick={() => s.navigate("agents")}>{t("desktop.agents.cardThisPc")}</Button>
+        </div></details>
       </div>
 
       <Card className="overflow-hidden">
+        <details open={!s.pairingConfirmed}><summary className="cursor-pointer px-5 py-4 text-base font-semibold text-ink">{t("v4.experience.settings.pairAgain")}</summary>
         <div className="flex flex-wrap items-start justify-between gap-4 border-b border-edge-subtle px-5 py-4">
           <div className="flex items-start gap-2.5"><KeyRound className="mt-0.5 h-4 w-4 shrink-0 text-ink-3" /><div className="min-w-0"><h2 className="text-base font-semibold text-ink">{t("desktop.settings.pairTitle")}</h2><p className="mt-1 text-sm leading-snug text-ink-3">{t("desktop.settings.pairSubtitle")}</p></div></div>
           <StatusBadge label={serviceState === "unknown" ? t("desktop.agents.statusUnavailable") : s.isOnline ? (s.gatewayConnected ? t("desktop.settings.pairRunning") : t("desktop.settings.pairGatewayUnreachable")) : t("desktop.settings.pairStopped")} tone={s.isOnline ? (s.gatewayConnected ? "ok" : "warn") : "neutral"} />
@@ -107,13 +117,15 @@ export function SettingsPage({ s }: { s: DesktopState }) {
           </ol>
           <div className="flex w-full max-w-sm flex-col gap-3">
             <Field label={t("desktop.settings.pairCodeLabel")} htmlFor="pair-code" className="flex-1">
-              <div className="flex items-center gap-2"><Input id="pair-code" value={s.pairCode} onChange={(e) => s.setPairCode(e.target.value.toUpperCase())} placeholder="KQ7XTM" maxLength={6} className="text-center font-mono text-lg font-bold uppercase tracking-[0.3em] h-11 rounded-md" autoComplete="off" /><Button variant="primary" onClick={s.pair} loading={s.busy} disabled={!s.pairCode.trim() || s.pairCode.trim().length !== 6} icon={<ShieldCheck className="h-4 w-4" />} className="h-11 rounded-md">{t("desktop.settings.pair")}</Button></div>
+              <div className="flex items-center gap-2"><Input id="pair-code" dir="ltr" value={s.pairCode} onChange={(e) => s.setPairCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ""))} placeholder="KQ7XTM" maxLength={6} className="text-center font-mono text-lg font-bold uppercase tracking-[0.3em] h-11 rounded-md" autoComplete="off" /><Button variant="primary" onClick={s.pair} loading={s.busy} disabled={!s.pairCode.trim() || s.pairCode.trim().length !== 6} icon={<ShieldCheck className="h-4 w-4" />} className="h-11 rounded-md">{t("desktop.settings.pair")}</Button></div>
             </Field>
           </div>
         </div>
+        </details>
       </Card>
 
       <Card className="overflow-hidden">
+        <details><summary className="cursor-pointer px-5 py-4 text-base font-semibold text-ink">{t("desktop.settings.currentStatus")}</summary>
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-edge bg-surface-2/30 px-5 py-4">
           <div><h2 className="text-base font-semibold text-ink">{t("desktop.settings.currentStatus")}</h2><p className="mt-1 text-sm leading-snug text-ink-3">{t("desktop.settings.currentStatusBody")}</p></div>
           <Button size="sm" variant="secondary" onClick={async (event) => {
@@ -137,6 +149,7 @@ export function SettingsPage({ s }: { s: DesktopState }) {
             {s.printers.length === 0 && <p className="py-3 text-sm text-ink-3">{t("desktop.settings.noDevices")}</p>}
           </div>
         </div>
+        </details>
       </Card>
 
       <Card className="overflow-hidden">

@@ -22,6 +22,7 @@ from odoo.addons.print_gateway.idempotency_namespace import _identity_path
 _logger = logging.getLogger(__name__)
 
 
+@tagged("post_install", "-at_install")
 class TestPrintGatewayURLTransport(TransactionCase):
     def _config(self, url):
         return self.env['print_gateway.gateway_config'].create({

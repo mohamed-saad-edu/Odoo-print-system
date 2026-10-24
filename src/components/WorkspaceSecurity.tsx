@@ -11,7 +11,7 @@ import type { MessageKey } from "../i18n/messages/en";
 
 const REAUTHENTICATED_EVENT = "yaseir:workspace-reauthenticated";
 const ACTIVITY_EVENTS = ["pointerdown", "keydown", "wheel", "touchstart"] as const;
-const WORKSPACE_ROUTES = ["/dashboard", "/api-keys", "/team", "/billing", "/settings", "/release-readiness"];
+const WORKSPACE_ROUTES = ["/onboarding", "/dashboard", "/api-keys", "/team", "/billing", "/settings", "/release-readiness"];
 type ActivityBudget = { lastSent: number | null };
 
 /** Only explicit navigation to a known same-origin workspace UI is allowed. */

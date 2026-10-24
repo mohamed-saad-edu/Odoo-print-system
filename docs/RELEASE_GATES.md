@@ -2,8 +2,8 @@
 
 This document is the operational gate for the source hardening dated 2026-10-24.
 The source package is a release candidate, **not an authorization to deploy**.
-Use the separately delivered `YASEIR_PRODUCTION_READINESS_V3.md` and verification
-archive for actual results. A missing Windows, hardware, Stripe or staging
+Use the separately delivered `YASEIR_V4_PRODUCTION_READINESS.md` and verification
+archive for actual results. A missing Windows, hardware or staging
 result must remain blocked, even when software unit tests pass.
 
 ## Supported execution boundaries
@@ -13,7 +13,7 @@ result must remain blocked, even when software unit tests pass.
 | Gateway | Node version in `.nvmrc`, locked npm dependencies, Next production build, PostgreSQL 16+ | Production image, private networking, real proxy/TLS, alerting and sustained load |
 | Go agent | Go version in `agent/go.mod`, read-only module graph, durable SQLite queue | Real Windows/CGO build; SCM/GDI/spooler/USB and supported printer models |
 | Desktop | Rust version in `src-tauri/rust-toolchain.toml` where present, locked Cargo graph, Tauri/NSIS | Real MSVC/Windows SDK build, WebView2, installer/update/uninstall, signed artifact |
-| Odoo addon | Odoo 19; addon `19.0.2.20.0`; persistent data directory; deployment-managed encryption keys | Exact hardened upstream runtime, production addon upgrade, POS/report/printer acceptance |
+| Odoo addon | Odoo 19; addon `19.0.2.21.0`; persistent data directory; deployment-managed encryption keys | Exact hardened upstream runtime, production addon upgrade, POS/report/printer acceptance |
 
 Read `docs/runtime-hardening/` for the exact Odoo runtime dependency
 set and upstream PDF decompression patch. An audit of dependency metadata alone
@@ -94,13 +94,13 @@ for this candidate does not execute Win32 code.
    key versions, Odoo `data_dir/yaseir-print-installations/`, and protected agent
    configuration/SQLite/sharing state. Keep independent encrypted copies and
    restore them in recovery before release. Do not place keys inside a source ZIP.
-3. Upgrade the addon to `19.0.2.20.0` before enforcing the new Gateway status-read
+3. Upgrade the addon to `19.0.2.21.0` before enforcing the new Gateway status-read
    contract. Its status batches carry each saved job's version and installation
    proof. Older addon status requests may be rejected by a strict-v2 Gateway.
    Preserve saved operation keys and proofs; do not turn reconciliation failure
    into a new print operation.
-4. Stop every V2 Gateway instance before applying the V3 forward migrations
-   with `npm run db:migrate`, then start only the matching V3 Gateway. Never
+4. Stop every older Gateway instance before applying the forward migrations
+   with `npm run db:migrate`, then start only the matching V4 Gateway. Never
    rewrite existing SQL or repair hashes.
    Migration 0081 already present in the input removes virtual/redirected
    destinations/history and refuses affected active jobs; its existing backup
@@ -113,7 +113,11 @@ for this candidate does not execute Win32 code.
    job binding and file-output evidence. Existing queued jobs without an admitted
    binding remain pending; an upgrade must not guess or backfill their target
    from a mutable printer row. See `MIGRATION.md` for populated-upgrade and
-   rollback evidence.
+   rollback evidence. V4 migration 0095 preserves provider/history records,
+   separates manual subscriptions from authenticated requests and initializes
+   the independent UTC calendar-month ledger conservatively. Review its cutover
+   usage before admitting jobs. Retired provider routes cannot renew access;
+   reconcile any previous external recurring charges separately.
 5. Upgrade the compatible agent/desktop together, preserving machine data and
    desired-state version fences. Confirm heartbeat and shared-printer inventory
    convergence and fresh native verification before admitting work. A configured
@@ -140,7 +144,7 @@ directory, database connection and encryption-key environment.
 ```
 
 Require exit zero and inspect the upgrade log before restarting Odoo with its
-normal service configuration. The full `at_install` regression suite belongs
+normal service configuration. The full `post_install` regression suite belongs
 on a fresh disposable test database; do not add it to this ordinary deployment
 upgrade command. The release evidence includes a failed test-on-upgrade fixture
 attempt separately from the successful ordinary upgrade and fresh native suite.
@@ -172,7 +176,7 @@ directly or enable HTTP, host-fallback or plaintext-password development flags.
 | Data | Disposable synthetic tenants and documents | Authorized isolated staging first; backup and retention policy for production |
 | TLS | API/native clients explicitly trust the test CA; Chromium uses a fixture-leaf SPKI pin after independent CA verification | Public trusted certificate; renewal and expiry alerts exercised without test pins or trust bypass |
 | Proxy | Loopback-only or isolated private network | Validated trusted-proxy secret and private backend port |
-| Payments | Local signed fake event tests | Stripe **test mode** first; owner-configured keys and matching webhook endpoint |
+| Manual subscriptions | Authenticated request, explicit owner approval, quota/race and retired-provider tests | Authorized staging activation, contact details and verified download URL; reconcile any historical external recurring charge separately |
 | Email | Fake transport, no external recipients | Provider sandbox/authorized test mailbox before customer delivery |
 | Printers | Isolated software transport, no LAN discovery | Explicitly authorized physical devices and supported models |
 | Secrets | Ephemeral private fixture files | Secret manager/mounts, key rotation and disaster-recovery ownership |
@@ -238,12 +242,15 @@ rewrite a historical job to `queued` to remove uncertainty.
 
 ## Billing, authentication and operational release gaps
 
-Local signed webhook regressions cover duplicate/out-of-order events and
-transactional entitlement effects. They do not prove delivery by Stripe.
-With authorized test-mode keys, exercise checkout, trial conversion, renewal,
-failed payment, cancellation, duplicate/reordered delivery, unavailable API,
-and reconciliation against the Stripe test dashboard. Confirm no entitlement
-is granted from browser claims or checkout completion alone.
+V4 has no active payment-provider integration or automated settlement. Exercise
+the authenticated request, Platform Owner approval, free/paid classification,
+monthly/yearly/custom dates, renewal, quota override, suspension/reactivation,
+stale mutation and replay flows in authorized staging. Confirm that only the
+explicit audited owner action grants access, that the monthly UTC ledger does
+not reset on renewal, and that retired provider endpoints return 410 without
+mutations. Configure the external contact and signed Windows download URL.
+Payment settlement and any required invoice remain outside Yaseir. Migration
+does not cancel historical external charges; reconcile them operationally.
 
 Every human role uses email/password login followed by its scoped session and dashboard. Current owner/membership authorization, database-backed attempt reservations, screened new passwords, secure cookies, exact live session IDs and password-verifier binding remain mandatory. New passwords use local common/contextual checks and the padded HIBP prefix protocol; see `security/PASSWORD_SCREENING.md`. Both security interfaces list only the signed-in account's live sessions across its workspaces, with bounded account-bound pagination. Workspace session revocation requires the actual password; platform-target revocation also requires current same-account platform authority and recent platform password confirmation.
 

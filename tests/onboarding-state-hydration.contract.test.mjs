@@ -3,35 +3,25 @@ import fs from "node:fs";
 import test from "node:test";
 
 const source = fs.readFileSync("src/app/onboarding/page.tsx", "utf8");
-
-test("onboarding mount uses the same reconciliation loader exactly once", () => {
-  const effectStart = source.indexOf("useEffect(() => {");
-  const effectEnd = source.indexOf("async function submit", effectStart);
-  assert.ok(effectStart >= 0 && effectEnd > effectStart, "onboarding mount effect missing");
-  const effect = source.slice(effectStart, effectEnd);
-  assert.match(effect, /const controller = new AbortController\(\)/);
-  assert.match(effect, /void loadPlans\(controller\.signal\)/);
-  assert.match(effect, /return \(\) => controller\.abort\(\)/);
-  assert.doesNotMatch(effect, /void fetchPlans\(/, "mount must not bypass the reconciliation loader");
+// V4 intentionally replaces trial hydration with manual request reconciliation.
+test("onboarding shares cancellation and reconciles the workspace plus recorded request", () => {
+  assert.match(source, /void load\(controller\.signal\)/);
+  assert.match(source, /return \(\) => controller\.abort\(\)/);
+  assert.match(source, /\["\/api\/onboarding", "\/api\/subscription-requests"\]/);
+  assert.match(source, /cache: "no-store", signal/);
+  assert.match(source, /signal\?\.aborted \|\| generation !== loadGeneration\.current/);
+  assert.match(source, /setName\(current => current \|\| nextWorkspace\.tenant\.name\)/);
+  assert.match(source, /nextWorkspace\.subscription\?\.planId/);
 });
-
-test("reconciliation hydrates persisted workspace and subscription state", () => {
-  const loadStart = source.indexOf("const loadPlans = useCallback");
-  const effectStart = source.indexOf("useEffect(() => {", loadStart);
-  assert.ok(loadStart >= 0 && effectStart > loadStart, "loadPlans block missing");
-  const loader = source.slice(loadStart, effectStart);
-  assert.match(loader, /fetchPlans\(signal\)/);
-  assert.match(loader, /fetchWithTimeout\("\/api\/onboarding"/);
-  assert.match(loader, /setName\(\(current\) => current \|\| tenantName\)/);
-  assert.match(loader, /subscription\?\.planId/);
-  assert.match(loader, /setWorkspaceProvisioned\(provisioned\)/);
+test("activation requests reuse an idempotency key and never invoke checkout or trials", () => {
+  assert.match(source, /requestKey\.current\?\.fingerprint !== fingerprint/);
+  assert.match(source, /"Idempotency-Key": requestKey\.current\.key/);
+  assert.doesNotMatch(source, /billing\/checkout|submit\(true\)|startFreeTrial|continueToCheckout/);
+  assert.match(source, /workspace\?\.role !== "owner"/);
 });
-
-test("all onboarding mount requests share the caller abort signal", () => {
-  const fetchStart = source.indexOf("const fetchPlans = useCallback");
-  const submitStart = source.indexOf("async function submit", fetchStart);
-  const loaders = source.slice(fetchStart, submitStart);
-  assert.match(loaders, /fetchWithTimeout\("\/api\/billing\/plans",[\s\S]*?signal,/);
-  assert.match(loaders, /fetchWithTimeout\("\/api\/onboarding",[\s\S]*?signal,/);
-  assert.match(loaders, /if \(signal\?\.aborted\) return;/);
+test("pending state offers refresh and active state reaches real device views", () => {
+  assert.match(source, /document\.visibilityState === "visible"/);
+  assert.match(source, /\/dashboard#agents/);
+  assert.match(source, /\/dashboard#printers/);
+  assert.match(source, /downloadUnavailable/);
 });

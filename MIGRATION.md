@@ -67,8 +67,9 @@ This runs `scripts/db-migrate.ts` which applies all pending migrations from `dri
 | 0092 | 1 | Historical workspace factor/session cutover; superseded by 0093 without rewriting this SQL |
 | 0093 | 1 | Password-only human login; remove eight retired factor tables and factor-only columns; preserve accounts, verifier hashes, memberships, session families and deadlines |
 | 0094 | 1 | Add live printer verification, scoped logical identity, immutable job destination bindings, and retained PDF file-result evidence; historical inventory remains pending until verified |
+| 0095 | 1 | Manual subscriptions, authenticated activation requests, immutable change history, owner names and UTC monthly admission ledger; retains provider evidence and conservatively carries prior usage |
 
-**Total**: 95 forward-only SQL migrations (0000–0094), plus retained hash-versioned forward repairs in `scripts/db-migrate.ts`.
+**Total**: 96 forward-only SQL migrations (0000–0095), plus retained hash-versioned forward repairs in `scripts/db-migrate.ts`.
 
 Apply all migrations through `0094` before starting V3, with older Gateway instances stopped. Historical `0090` and `0092` remain in the journal so existing content hashes and fresh replay remain valid. V3 uses email/password login and the existing production `__Host-` access/refresh cookies. Migration `0094` does not convert stored configuration into live printer proof: existing registrations and historical queued jobs without an admitted binding remain ineligible for new execution. Deploy the matching Agent, obtain a fresh verified inventory, and reconcile retained legacy jobs explicitly. Terminal history remains available for exact result replay. See the V3 upgrade procedure below and `SECURITY.md`.
 
@@ -184,3 +185,12 @@ Do not start V2 against the V3 schema: its removed tables and columns no longer 
 This release caps registration, resend and invitation-onboarding email proofs, password-reset links and the mailbox-owner password-setup continuation at ten minutes. All five issuers stamp creation and expiry from PostgreSQL time after preceding lock waits. Both consumers enforce the original creation-time cap at lookup and atomic consumption, even when an older outstanding row has a twenty- or thirty-minute stored expiry. Future creation timestamps fail closed, and a shorter stored expiry still takes precedence. No schema or historical migration rewrite is needed, and no existing issue time is backfilled.
 
 Drain older Gateway instances during this policy cutover so they cannot continue accepting the former longer deadlines. An expired verification proof can be replaced through the existing resend flow; expired reset and setup pages now link explicitly to `/forgot-password`. Requesting a new link remains a deliberate user action and does not replay a password change. SMTP delay or an old email's longer expiry wording cannot extend the stored proof's authority. The invitation offer's own business deadline, paired-Agent/service credentials and human session lifetimes are unchanged; an invitation still requires separate mailbox or current-session proof before joining a workspace.
+
+
+## V4 manual subscription cutover
+
+0095 preserves all historical Stripe columns, receipts, job identities and prior `print_usage_periods`. It records a `subscription_changes` before/after snapshot per existing subscription. Only previously usable active/trialing/past_due records with an unexpired or open-ended contract retain active access; paused becomes suspended and all other legacy statuses become expired. New subscriptions default to awaiting activation. Finite inherited quotas are frozen as workspace overrides.
+
+`print_monthly_usage` is a new UTC calendar-month admission ledger. Receipt/live overlap is deduplicated by persistent logical job ID. For the cutover month, an overlapping legacy usage allowance is conservatively retained when it exceeds reconstructed evidence. This may overcount a prior non-calendar allowance, but never grants fresh midmonth credits. An owner may review evidence and increase the monthly quota; historical counters are never reset. Do not delete old usage records.
+
+Every annual or custom contract uses monthly credits. Renewals and quota changes retain the existing monthly ledger. Accepted jobs consume one credit even if canceled/failed/uncertain; rejection before admission and idempotent replay consume none. Provider endpoints now return 410 and never mutate subscription state. Catalog bootstrap uses `YASEIR_PLAN_CATALOG`, with no payment provider configuration.

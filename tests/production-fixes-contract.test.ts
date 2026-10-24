@@ -132,7 +132,7 @@ describe("production fixes contracts (2026-09)", () => {
     const dashboard = read("src/app/dashboard/dashboard-client.tsx");
     const agentRoute = read("src/app/api/agents/route.ts");
     expect(dialog).toContain('href="/billing"');
-    expect(dialog).toContain('t("limit.upgradePlan")');
+    expect(dialog).toContain('t("v4.experience.health.manage")');
     expect(dialog).toContain('t("limit.note.prints")');
     expect(dashboard).toContain('case "max_agents": return "agents"');
     expect(dashboard).toContain('case "max_prints_per_period": return "prints"');
@@ -349,7 +349,7 @@ describe("2026-09-24 remediation contracts", () => {
   it("keeps workspace timestamps on the database clock", () => {
     expect(read("src/app/api/settings/route.ts")).toContain("updatedAt: sql");
     const onboarding = read("src/app/api/onboarding/route.ts");
-    expect(onboarding).toContain("clock_timestamp()");
+    expect(onboarding).toContain("updatedAt: sql`now()`");
     expect(onboarding).not.toContain("Date.now()");
     expect(onboarding).not.toContain("updatedAt: new Date()");
   });

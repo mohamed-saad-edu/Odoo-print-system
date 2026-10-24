@@ -18,7 +18,7 @@ import { once } from "node:events";
 import pg from "pg";
 import { workspaceBrowserAcceptance } from "./workspace-browser.mjs";
 
-const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+const root = process.env.YASEIR_BROWSER_ROOT ? path.resolve(process.env.YASEIR_BROWSER_ROOT) : path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const output = path.resolve(process.argv[2] || "");
 if (!process.argv[2] || fs.existsSync(output)) throw new Error("A new output directory is required");
 if (!process.env.DATABASE_URL || !process.env.CHROMIUM_EXECUTABLE) throw new Error("DATABASE_URL and CHROMIUM_EXECUTABLE are required");
@@ -35,10 +35,16 @@ const jwt = randomBytes(48).toString("hex"), proxyKey = randomBytes(32).toString
 const sensitive = [password, jwt, proxyKey];
 const redact = text => sensitive.reduce((value, secret) => secret.length >= 6 ? value.replaceAll(secret, "[REDACTED]") : value, String(text));
 const result = { status: "FAIL", startedAt: new Date().toISOString(), source: {
-  revision: execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim(),
+  revision: fs.existsSync(path.join(root,".git")) ? execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim() : null,
+  root,
   buildId: fs.readFileSync(path.join(root, ".next/BUILD_ID"), "utf8").trim(),
 }, environment: { node: process.version, playwright: "recorded at runtime", browser: "recorded at runtime" }, checks: [],
 limitations: ["Browser trusts only an ephemeral loopback certificate SPKI pin; not public PKI or deployed staging acceptance", "Synthetic database and accounts only; HIBP and Resend transport fixtures verify application timing/lifecycle, not live provider delivery"] };
+const appFiles = fs.readdirSync(path.join(root,"src"),{recursive:true,withFileTypes:true}).filter(entry=>entry.isFile()).map(entry=>path.relative(root,path.join(entry.parentPath,entry.name))).sort().map(file=>({path:file,sha256:createHash("sha256").update(fs.readFileSync(path.join(root,file))).digest("hex")}));
+result.source.workingTreeSourceSha256=createHash("sha256").update(appFiles.map(file=>`${file.sha256}  ${file.path}\n`).join("")).digest("hex");
+result.source.sourceHashScope="All regular files under src; sorted sha256 + two spaces + relative path + newline";
+result.environment.timezone=process.env.YASEIR_BROWSER_TIMEZONE??"browser default";
+fs.writeFileSync(path.join(output,"source-files-sha256.json"),JSON.stringify(appFiles,null,2)+"\n");
 const check = name => { result.checks.push({ name, status: "PASS" }); console.log(`PASS ${name}`); };
 let created = false, gateway, browser, context, page, proxy, tlsCA, pendingDelivery = false;
 const sockets = new Set(), pageErrors = [];
@@ -149,16 +155,22 @@ try {
   const tool = process.env.PLAYWRIGHT_MODULE;
   const playwright = await import(tool ? pathToFileURL(path.resolve(tool)).href : "playwright");
   browser = await playwright.chromium.launch({ executablePath: process.env.CHROMIUM_EXECUTABLE, headless: true,
-    args: ["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu", "--no-zygote", "--single-process", `--ignore-certificate-errors-spki-list=${certificatePin}`] });
+    args: ["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu", "--no-zygote", `--ignore-certificate-errors-spki-list=${certificatePin}`] });
   result.environment.browser = browser.version();
   result.environment.playwright = tool ? JSON.parse(fs.readFileSync(path.join(path.dirname(tool), "package.json"), "utf8")).version : "installed Playwright";
-  context = await browser.newContext({ ignoreHTTPSErrors: false, locale: "en-US", viewport: { width: 1440, height: 1100 } });
+  context = await browser.newContext({ ...(process.env.YASEIR_BROWSER_TIMEZONE?{timezoneId:process.env.YASEIR_BROWSER_TIMEZONE}:{}), ignoreHTTPSErrors: false, locale: "en-US", viewport: { width: 1440, height: 1100 } });
   result.environment.browserSecurity = { ignoreHTTPSErrors: false, bypassCSP: false, certificatePin: "single ephemeral fixture leaf SPKI" };
   await context.addCookies([{ name: "__Host-yaseir_locale", value: "en", url: origin, secure: true, sameSite: "Lax" }]);
-  await context.addInitScript(() => { if (!localStorage.getItem("yaseir:locale")) localStorage.setItem("yaseir:locale", "en"); });
+  await context.addInitScript(() => { try { if (!localStorage.getItem("yaseir:locale")) localStorage.setItem("yaseir:locale", "en"); } catch { /* about:blank has no origin storage */ } });
   page = await context.newPage(); page.setDefaultTimeout(20000);
   page.on("pageerror", error => pageErrors.push(error.message));
   await passwordLogin(origin);
+  if (process.env.YASEIR_ADMIN_BROWSER_MODULE) {
+    const { adminBrowserAcceptance } = await import(pathToFileURL(path.resolve(process.env.YASEIR_ADMIN_BROWSER_MODULE)).href);
+    await adminBrowserAcceptance({page,context,browser,db,origin,output,check,password,sensitive,baseline:process.env.YASEIR_BROWSER_BASELINE==='1'});
+    assert.deepEqual(pageErrors, []); check("No JavaScript exceptions across manual subscription admin acceptance");
+    result.status="PASS";
+  } else {
   const authenticatedHtml = await page.goto(`${origin}/platform/dashboard`);
   assert.equal(authenticatedHtml.status(), 200);
   assert.match(authenticatedHtml.headers()["content-type"], /text\/html/);
@@ -248,6 +260,7 @@ try {
   pendingDelivery = true;
   check("Registration commits before generic202 and does not wait for provider delivery");
   result.status = "PASS";
+  }
 } catch (error) {
   result.failure = redact(error.stack || error.message || error); console.error(result.failure);
 } finally {

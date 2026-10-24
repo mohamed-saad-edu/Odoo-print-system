@@ -153,41 +153,17 @@ EMAIL_FROM=Yaseir <no-reply@example.com>
 
 The registration endpoint deliberately keeps its response generic and suppresses provider errors to avoid account enumeration. Therefore a missing/broken email provider can look like a successful signup while leaving the user unable to verify the account. Treat transactional email as a required production dependency, not an optional first-run component.
 
-## 4. Billing plan catalog must exist before onboarding
+## 4. Configure the manual plan catalog and contact
 
-The customer onboarding UI only shows plans with a valid `stripePriceId`.
-
-For a real deployment, provision at least one Stripe Price in the correct Stripe mode and provide the catalog as `STRIPE_PLAN_CATALOG`.
-
-Example shape:
+Public onboarding plans require an active, public plan with a monthly job allowance. No provider price identifier is required. Create the catalog in Platform Admin, or bootstrap it once with:
 
 ```bash
-export STRIPE_PLAN_CATALOG='[
-  {
-    "id": "starter",
-    "name": "Starter",
-    "priceId": "price_XXXXXXXX",
-    "currency": "usd",
-    "interval": "month",
-    "entitlements": {
-      "max_agents": 2,
-      "max_printers": 5,
-      "max_jobs_per_minute": 60,
-      "max_concurrent_jobs": 8
-    }
-  }
-]'
+export YASEIR_PLAN_CATALOG='[{"id":"starter","name":"Starter","description":"Monthly printing allowance","monthlyQuota":1000}]'
 ```
 
-For paid checkout, also configure:
+Set `YASEIR_ACTIVATION_WHATSAPP` to the official contact in E.164 digits and `YASEIR_AGENT_DOWNLOAD_URL` to the verified signed Windows installer's HTTPS URL. Missing settings leave those actions unavailable; the application does not guess a phone number or download location.
 
-```dotenv
-STRIPE_SECRET_KEY=<stripe-secret>
-STRIPE_WEBHOOK_SECRET=<stripe-webhook-secret>
-STRIPE_PUBLISHABLE_KEY=<stripe-publishable-key>
-```
-
-Do not put monetary amounts in source; the plan catalog is tied to the Stripe Price IDs.
+Activation is manual, including free plans. The platform owner records external settlement if relevant, reviews the saved request and activates the chosen dates and allowance. V4 does not process payments. Reconcile any historical recurring charges outside Yaseir before a real migration.
 
 ## 5. First deployment
 
@@ -264,13 +240,13 @@ set -a
 . ./.env
 set +a
 
-sudo -E docker compose run --rm   -e STRIPE_PLAN_CATALOG="$STRIPE_PLAN_CATALOG"   gateway node --import tsx scripts/provision-plans.ts
+sudo -E docker compose run --rm -e YASEIR_PLAN_CATALOG="$YASEIR_PLAN_CATALOG" gateway node --import tsx scripts/provision-plans.ts
 ```
 
 Verify that the command ends with:
 
 ```text
-Provisioned N Stripe-backed plan(s).
+Processed N manual plans; existing plans preserved.
 ```
 
 Then confirm the public plan endpoint:
@@ -333,14 +309,14 @@ The verification token expires after 30 minutes.
 On `/onboarding`:
 
 1. Enter the workspace name.
-2. Select a provisioned plan.
-3. Choose **Start trial** or **Continue to checkout**.
+2. Select a public plan and a monthly or yearly term.
+3. Submit the activation request and retain its reference.
+4. The platform owner reviews the request, records the business reason and dates, and activates it manually.
+5. Refresh the pending screen to obtain the actual active state, then connect a Windows computer, discover and verify its printer, and use **Connect Odoo**.
 
-For a trial, the server creates a 30-day `trialing` subscription for that workspace.
+The subscription term and monthly quota reset are separate. A request or email verification never grants print access. Invited users join their intended existing workspace without creating another workspace or subscription. New invitations grant Full Access for ordinary work; only the workspace owner can invite people or change ownership/billing.
 
-For checkout, the browser is redirected to Stripe after the Gateway validates the selected plan.
-
-Do not skip plan provisioning; an empty plan catalog means onboarding cannot complete.
+Do not skip plan provisioning; an empty catalog prevents a meaningful request.
 
 ## 11. Customer login
 

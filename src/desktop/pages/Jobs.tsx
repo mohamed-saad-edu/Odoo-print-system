@@ -14,11 +14,11 @@ function useJobTabLabels() {
   return {
     all: t("desktop.jobs.tab.all"),
     in_flight: t("desktop.jobs.tab.in_flight"),
-    queued: t("desktop.jobs.tab.queued"),
+    queued: t("v4.experience.job.waiting"),
     unassigned: t("desktop.jobs.tab.unassigned"),
-    delivered: t("desktop.jobs.tab.delivered"),
+    delivered: t("v4.experience.job.sent"),
     failed: t("desktop.jobs.tab.failed"),
-    unknown: t("desktop.jobs.tab.unknown"),
+    unknown: t("v4.experience.job.review"),
     expired: t("desktop.jobs.tab.expired"),
   };
 }

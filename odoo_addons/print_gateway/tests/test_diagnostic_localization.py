@@ -5,10 +5,12 @@ from pathlib import Path
 
 import polib
 
+from odoo.tests import tagged
 from odoo.tests.common import TransactionCase
 from odoo.tools.translate import code_translations, xml_translate
 
 
+@tagged("post_install", "-at_install")
 class TestDiagnosticReportEncoding(TransactionCase):
     def test_catalog_code_terms_are_loaded_by_odoo(self):
         catalog = polib.pofile(str(Path(__file__).resolve().parents[1] / "i18n/ar.po"))
@@ -35,7 +37,7 @@ class TestDiagnosticReportEncoding(TransactionCase):
         })
         english = config.gateway_sync_message
         arabic = config.with_context(lang="ar_001").gateway_sync_message
-        self.assertIn("installation API key", english)
+        self.assertIn("connection key from Connect Odoo", english)
         self.assertTrue(any("\u0600" <= character <= "\u06ff" for character in arabic))
         self.assertEqual(config.gateway_sync_message, english)
         self.assertEqual(config.gateway_sync_state, "not_configured")

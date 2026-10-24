@@ -268,14 +268,19 @@ def test_odoo_activation_can_always_disable_but_enable_is_subscription_gated():
     assert 'const updated = await db.transaction(async (tx) =>' in route
 
 
-def test_settings_does_not_duplicate_first_class_operational_pages():
+def test_settings_links_to_operational_pages_without_embedding_their_controls():
     page = read("src/app/settings/page.tsx")
     assert 'id: "members"' not in page
     assert 'id: "billing"' not in page
     assert 'id: "integrations"' not in page
-    assert 'href="/team"' not in page
-    assert 'href="/billing"' not in page
-    assert 'href="/api-keys"' not in page
+    # V4 groups secondary destinations under Settings; navigation must not
+    # duplicate credential, subscription or member mutation forms here.
+    assert 'href="/team"' in page
+    assert 'href="/billing"' in page
+    assert 'href="/api-keys"' in page
+    assert '"/api/team"' not in page
+    assert '"/api/billing/checkout"' not in page
+    assert '"/api/keys"' not in page
 
 
 def test_agent_http_transport_has_one_yaseir_opt_in_and_no_legacy_odoo_alias():

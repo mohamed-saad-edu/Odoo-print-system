@@ -66,6 +66,7 @@ export default function PlatformSecurityPage() {
   }
   const fresh = freshUntil > 0;
   return <div className="space-y-6">
+    <nav className="flex flex-wrap gap-4"><Link href="/platform/audit" className="underline">{t("platform.nav.audit")}</Link><Link href="/platform/database" className="underline">{t("platform.nav.database")}</Link></nav>
     <PageHeader title={t("security.title")} description={t("security.description")} />
     {error && <ErrorState title={t("security.settingsFailed")} message={error} />}
     <Card><CardHeader title={t("security.stepUpTitle")} subtitle={t("security.stepUpDescription")} /><div className="space-y-4 p-5">

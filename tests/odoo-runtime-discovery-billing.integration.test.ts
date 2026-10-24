@@ -22,7 +22,7 @@ suite("Odoo runtime discovery billing boundary", () => {
     await closePool();
   });
 
-  it("keeps agent discovery available during past_due recovery after nominal period end", async () => {
+  it("requires explicit manual activation for discovery after a legacy past_due term expires", async () => {
     await pool().query(
       "UPDATE tenant_subscriptions SET status = 'past_due', current_period_end = now() - interval '1 minute' WHERE tenant_id = $1",
       [fixture.tenantId],
@@ -34,10 +34,8 @@ suite("Odoo runtime discovery billing boundary", () => {
       }),
     );
 
-    expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({
-      agents: [{ id: fixture.agentId, lifecycle: "active" }],
-    });
+    expect(response.status).toBe(403);
+    expect(await response.json()).toMatchObject({ code: "SUBSCRIPTION_REQUIRED" });
   });
 
   it("blocks printer inventory discovery after subscription cancellation", async () => {

@@ -1,432 +1,118 @@
 "use client";
 
-import { fetchWithTimeout } from "../../lib/fetch-timeout";
-import { useCallback, useEffect, useState } from "react";
-import { useI18n } from "../../i18n/react";
-import type { Translator } from "../../i18n/translate";
-import {
-  AlertTriangle,
-  ArrowRight,
-  Building2,
-  CheckCircle2,
-  CreditCard,
-  KeyRound,
-  Printer,
-  Server,
-  Sparkles,
-} from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { Building2, CheckCircle2, Clock, Download, KeyRound, Printer, Server } from "lucide-react";
+import { useI18n } from "../../i18n/react";
+import { fetchWithTimeout } from "../../lib/fetch-timeout";
+import { ensureCustomerSession } from "../../lib/session-config";
 import { codeMessageKey } from "../../lib/api-error-keys";
-import { billingIntervalLabel } from "../../lib/billing-labels";
-import {
-  Button,
-  Callout,
-  Card,
-  CardHeader,
-  EmptyState,
-  ErrorState,
-  Field,
-  Input,
-  Skeleton,
-  StatusBadge,
-} from "../../components/ui";
+import { Button, Callout, Card, CardHeader, ErrorState, Field, Input, Skeleton, StatusBadge } from "../../components/ui";
 
-type Plan = {
-  id: string;
-  name: string;
-  currency: string | null;
-  interval: string | null;
-  entitlements: Record<string, unknown>;
-};
-
-// Built per render, not at module scope: `t` comes from the useI18n hook and
-// does not exist until the component runs. A module-level constant would also
-// freeze these strings at first evaluation, so they would never follow a
-// language switch.
-function nextSteps(t: Translator) {
-  return [
-    {
-      icon: Server,
-      title: t("onboarding.step.agent"),
-      text: t("onboarding.step.agentText"),
-    },
-    {
-      icon: KeyRound,
-      title: t("onboarding.step.odoo"),
-      text: t("onboarding.step.odooText"),
-    },
-    {
-      icon: Printer,
-      title: t("onboarding.step.job"),
-      text: t("onboarding.step.jobText"),
-    },
-  ];
-}
+type Plan = { id: string; name: string; entitlements: Record<string, unknown> };
+type ActivationRequest = { id: string; reference: string; status: string; createdAt: string; planId: string; term: string; whatsappUrl?: string | null };
+type WorkspaceState = { tenant: { id: string; name: string }; role: string; plans: Plan[]; agentDownloadUrl?: string | null; subscription?: { planId: string } | null };
+type RequestState = { requests: ActivationRequest[]; status: "awaiting_activation" | "active" | "expired" | "suspended" };
 
 export default function Onboarding() {
-  const [name, setName] = useState("");
-  const { t, tc, formatNumber } = useI18n();
-  const [plans, setPlans] = useState<Plan[]>([]);
-  const [planId, setPlanId] = useState("");
-  const [err, setErr] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [plansLoading, setPlansLoading] = useState(true);
-  const [plansError, setPlansError] = useState("");
-  const [workspaceProvisioned, setWorkspaceProvisioned] = useState(false);
+  const { t, formatNumber, formatDateTime } = useI18n();
   const router = useRouter();
+  const [workspace, setWorkspace] = useState<WorkspaceState | null>(null);
+  const [state, setState] = useState<RequestState | null>(null);
+  const [name, setName] = useState("");
+  const [planId, setPlanId] = useState("");
+  const [term, setTerm] = useState<"monthly" | "yearly">("monthly");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const flight = useRef(false);
+  const loadGeneration = useRef(0);
+  const requestKey = useRef<{ fingerprint: string; key: string } | null>(null);
 
-  const fetchPlans = useCallback(async (signal?: AbortSignal): Promise<Plan[]> => {
-    const response = await fetchWithTimeout("/api/billing/plans", {
-      credentials: "include",
-      cache: "no-store",
-      signal,
-    });
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      throw new Error(t(codeMessageKey(typeof data.code === "string" ? data.code : undefined) ?? "onboarding.plansUnavailable"));
-    }
-    return Array.isArray(data.plans) ? data.plans : [];
-  }, [t]);
-
-  const loadPlans = useCallback(async (signal?: AbortSignal) => {
-    setPlansLoading(true);
-    setPlansError("");
+  const load = useCallback(async (signal?: AbortSignal) => {
+    const generation = ++loadGeneration.current;
     try {
-      const nextPlans = await fetchPlans(signal);
-      const requestedPlanId = new URLSearchParams(window.location.search).get("plan") ?? "";
-      if (signal?.aborted) return;
-      setPlans(nextPlans);
-      // Hydrate existing workspace state from the onboarding contract: a
-      // returning operator sees their saved name and plan, and an already
-      // provisioned subscription reconciles instead of offering a second
-      // trial after a lost response (C060).
-      let existingPlanId = "";
-      let provisioned = false;
-      try {
-        const stateRes = await fetchWithTimeout("/api/onboarding", {
-          credentials: "include",
-          cache: "no-store",
-          signal,
-        });
-        if (stateRes.ok) {
-          const state = await stateRes.json();
-          if (signal?.aborted) return;
-          const tenantName = typeof state?.tenant?.name === "string" ? state.tenant.name : "";
-          if (tenantName) setName((current) => current || tenantName);
-          const subPlanId = typeof state?.subscription?.planId === "string" ? state.subscription.planId : "";
-          if (subPlanId && nextPlans.some((plan) => plan.id === subPlanId)) existingPlanId = subPlanId;
-          const subStatus = typeof state?.subscription?.status === "string" ? state.subscription.status : "";
-          provisioned = subStatus === "trialing" || subStatus === "active" || subStatus === "past_due";
-        }
-      } catch (error) {
-        if (signal?.aborted) throw error;
-        // State hydration is best-effort; plans remain selectable.
-      }
-      if (signal?.aborted) return;
-      setWorkspaceProvisioned(provisioned);
-      setPlanId((current) => {
-        if (provisioned) return existingPlanId;
-        if (current && nextPlans.some((plan) => plan.id === current)) return current;
-        if (existingPlanId) return existingPlanId;
-        if (requestedPlanId && nextPlans.some((plan) => plan.id === requestedPlanId)) return requestedPlanId;
-        return nextPlans[0]?.id ?? "";
-      });
-      return provisioned;
-    } catch (error) {
-      if (signal?.aborted) return;
-      setPlans([]);
-      setPlanId("");
-      setPlansError(error instanceof Error ? error.message : t("onboarding.plansUnavailable"));
-    } finally {
-      if (!signal?.aborted) setPlansLoading(false);
-    }
-  }, [fetchPlans, t]);
+      if (!(await ensureCustomerSession()).authenticated) { router.replace("/login?next=%2Fonboarding"); return; }
+      const responses = await Promise.all(["/api/onboarding", "/api/subscription-requests"].map(url => fetchWithTimeout(url, { credentials: "include", cache: "no-store", signal })));
+      if (responses.some(response => !response.ok)) throw new Error();
+      const [nextWorkspace, nextState] = await Promise.all(responses.map(response => response.json())) as [WorkspaceState, RequestState];
+      if (signal?.aborted || generation !== loadGeneration.current) return;
+      setWorkspace(nextWorkspace); setState(nextState); setError("");
+      setName(current => current || nextWorkspace.tenant.name);
+      setPlanId(current => current || nextWorkspace.subscription?.planId || nextWorkspace.plans.find(plan => plan.id === new URLSearchParams(window.location.search).get("plan"))?.id || nextWorkspace.plans[0]?.id || "");
+    } catch { if (!signal?.aborted && generation === loadGeneration.current) setError(t("v4.onboarding.loadFailed")); }
+    finally { if (!signal?.aborted && generation === loadGeneration.current) setLoading(false); }
+  }, [router, t]);
 
   useEffect(() => {
     const controller = new AbortController();
-    queueMicrotask(() => {
-      if (!controller.signal.aborted) void loadPlans(controller.signal);
-    });
+    queueMicrotask(() => { if (!controller.signal.aborted) void load(controller.signal); });
     return () => controller.abort();
-  }, [loadPlans]);
+  }, [load]);
 
-  async function submit(trial: boolean) {
-    if (loading || workspaceProvisioned) return;
-    setErr("");
-    if (!name.trim() || !planId) {
-      setErr(t("onboarding.chooseNameAndPlan"));
-      return;
-    }
-    setLoading(true);
+  // Pending users can keep this page open; activation becomes visible without a new login.
+  useEffect(() => {
+    if (!state || state.status === "active") return;
+    const controller = new AbortController();
+    const timer = setInterval(() => { if (document.visibilityState === "visible") void load(controller.signal); }, 30000);
+    return () => { controller.abort(); clearInterval(timer); };
+  }, [state, load]);
+
+  async function submit(event: React.FormEvent) {
+    event.preventDefault();
+    if (flight.current || workspace?.role !== "owner") return;
+    flight.current = true; setBusy(true); setError("");
     try {
-      const response = await fetchWithTimeout("/api/onboarding", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ workspaceName: name.trim(), planId, trial }),
-      });
+      const saved = await fetchWithTimeout("/api/onboarding", { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ workspaceName: name.trim(), planId }) });
+      const savedBody = await saved.json().catch(() => ({}));
+      if (!saved.ok) { setError(t(codeMessageKey(savedBody.code) ?? "v4.onboarding.failed")); return; }
+      const fingerprint = `${planId}:${term}`;
+      if (requestKey.current?.fingerprint !== fingerprint) requestKey.current = { fingerprint, key: crypto.randomUUID() };
+      const response = await fetchWithTimeout("/api/subscription-requests", { method: "POST", credentials: "include", headers: { "Content-Type": "application/json", "Idempotency-Key": requestKey.current.key }, body: JSON.stringify({ planId, term }) });
       const data = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        const code = typeof data.code === "string" ? data.code : undefined;
-        // An accepted-but-unobserved trial (lost response, double submit)
-        // reconciles against current state instead of offering the trial
-        // again as a generic conflict (C060).
-        if (response.status === 409) {
-          const provisioned = await loadPlans();
-          if (provisioned) return;
-        }
-        throw new Error(t(codeMessageKey(code) ?? "onboarding.failed"));
-      }
-      if (trial) {
-        router.replace("/dashboard");
-        return;
-      }
-      const checkout = await fetchWithTimeout("/api/billing/checkout", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ planId }),
-      });
-      const checkoutData = await checkout.json().catch(() => ({}));
-      if (!checkout.ok || typeof checkoutData.url !== "string") {
-        throw new Error(t(codeMessageKey(checkoutData.code) ?? "onboarding.checkoutUnavailable"));
-      }
-      window.location.href = checkoutData.url;
-    } catch (error) {
-      setErr(error instanceof Error ? error.message : t("onboarding.failed"));
-    } finally {
-      setLoading(false);
-    }
+      if (!response.ok) { setError(t(codeMessageKey(data.code) ?? "v4.onboarding.failed")); return; }
+      await load();
+    } catch { setError(t("v4.onboarding.failed")); }
+    finally { flight.current = false; setBusy(false); }
   }
 
-  const canContinue = name.trim().length >= 2 && !!planId && !plansLoading && !plansError;
-  const selectedPlan = plans.find((plan) => plan.id === planId) ?? null;
-
-  return (
-    <main className="ambient-surface min-h-screen px-4 py-10 sm:px-6 lg:py-14">
-      <div className="mx-auto w-full max-w-[1080px]">
-        <header className="mx-auto max-w-2xl text-center">
-          <span className="inline-flex items-center gap-2 rounded-sm border border-edge-accent bg-brand-subtle px-3 py-1.5 text-xs font-[600] text-brand-subtle-text">
-            <Sparkles className="h-3.5 w-3.5" aria-hidden />
-            {t("onboarding.eyebrow")}
-          </span>
-          <h1 className="mt-4 text-4xl font-[670] tracking-[-0.035em] text-ink sm:text-5xl">
-            {t("onboarding.heading")}
-          </h1>
-          <p className="mx-auto mt-3 max-w-xl text-base leading-relaxed text-ink-3">
-            {t("onboarding.intro")}
-          </p>
-        </header>
-
-        <div className="mt-9 grid gap-5 lg:grid-cols-[minmax(0,1.5fr)_minmax(280px,0.85fr)]">
-          <Card>
-            <CardHeader
-              title={t("onboarding.sectionTitle")}
-              subtitle={t("onboarding.sectionSubtitle")}
-              icon={<Building2 className="h-4 w-4" />}
-              actions={
-                <ol className="flex items-center gap-2 text-xs font-[600] text-ink-3" aria-label={t("onboarding.progressAria")}>
-                  <li className="inline-flex items-center gap-1.5">
-                    <span className="flex h-5 w-5 items-center justify-center rounded-full bg-brand-solid text-2xs font-[700] text-brand-contrast">1</span>
-                    {t("onboarding.stepWorkspace")}
-                  </li>
-                  <li aria-hidden className="h-px w-4 bg-edge-strong" />
-                  <li className="inline-flex items-center gap-1.5">
-                    <span className="flex h-5 w-5 items-center justify-center rounded-full border border-edge-strong bg-surface-2 text-2xs font-[700] text-ink-3">2</span>
-                    {t("onboarding.stepPlan")}
-                  </li>
-                </ol>
-              }
-            />
-
-            <div className="space-y-6 px-5 py-6">
-              <Field
-                label={t("onboarding.workspaceName")}
-                htmlFor="workspace-name"
-                hint={t("onboarding.nameHint")}
-                required
-              >
-                <Input
-                  id="workspace-name"
-                  value={name}
-                  onChange={(event) => setName(event.target.value)}
-                  minLength={2}
-                  maxLength={120}
-                  autoComplete="organization"
-                  placeholder={t("onboarding.namePlaceholder")}
-                  required
-                  autoFocus
-                  disabled={loading || workspaceProvisioned}
-                />
-              </Field>
-
-              <fieldset disabled={loading || workspaceProvisioned}>
-                <legend className="flex w-full items-end justify-between gap-4 pb-3">
-                  <span className="text-sm font-[600] text-ink">{t("onboarding.choosePlanLegend")}</span>
-                  {plans.length > 0 && (
-                    <span className="text-xs font-[550] text-ink-3">{tc("onboarding.plansAvailable", plans.length, { count: formatNumber(plans.length) })}</span>
-                  )}
-                </legend>
-
-                {plansLoading ? (
-                  <div className="grid gap-3 md:grid-cols-2" role="status" aria-label={t("onboarding.loadingPlansAria")}>
-                    {[0, 1].map((item) => (
-                      <div key={item} className="space-y-3 rounded-md border border-edge bg-surface-2 p-4">
-                        <Skeleton className="h-4 w-28" />
-                        <Skeleton className="h-3 w-20" />
-                        <Skeleton className="h-3 w-full" />
-                        <Skeleton className="h-3 w-3/4" />
-                      </div>
-                    ))}
-                    <span className="sr-only">{t("onboarding.loadingPlansShort")}</span>
-                  </div>
-                ) : plansError ? (
-                  <ErrorState
-                    title={t("onboarding.plansLoadFailed")}
-                    message={plansError}
-                    retry={() => void loadPlans()}
-                  />
-                ) : plans.length === 0 ? (
-                  <EmptyState
-                    icon={<CreditCard className="h-5 w-5" />}
-                    title={t("onboarding.noPlans")}
-                    description={t("onboarding.noPlansBody")}
-                  />
-                ) : (
-                  <div role="radiogroup" aria-label={t("onboarding.choosePlanAria")} className="grid gap-3 md:grid-cols-2">
-                    {plans.map((plan) => {
-                      const selected = planId === plan.id;
-                      const included = Object.entries(plan.entitlements ?? {}).slice(0, 4);
-                      return (
-                        <label
-                          key={plan.id}
-                          className={`relative rounded-md border p-4 text-start transition-[border-color,background-color,box-shadow] duration-200 focus-within:shadow-[var(--focus-ring-shadow)] ${
-                            selected
-                              ? "border-brand bg-brand-subtle shadow-xs"
-                              : "border-edge bg-surface hover:border-edge-strong hover:bg-surface-2"
-                          } ${loading ? "pointer-events-none opacity-60" : ""}`}
-                        >
-                          <input type="radio" name="onboarding-plan" value={plan.id} checked={selected} onChange={() => setPlanId(plan.id)} className="sr-only" />
-                          <div className="flex items-start justify-between gap-4">
-                            <div className="min-w-0">
-                              <div className="text-md font-[620] text-ink">{plan.name}</div>
-                              <div className="mt-1 text-xs font-[550] text-ink-3">
-                                {plan.currency ? plan.currency.toUpperCase() : "—"}
-                                {plan.interval ? ` / ${billingIntervalLabel(plan.interval, t)}` : ""}
-                              </div>
-                            </div>
-                            {selected ? (
-                              <CheckCircle2 className="h-5 w-5 shrink-0 text-brand" aria-hidden />
-                            ) : (
-                              <span className="h-4 w-4 shrink-0 rounded-full border border-edge-strong" aria-hidden />
-                            )}
-                          </div>
-                          {included.length > 0 && (
-                            <dl className="mt-3.5 space-y-2 border-t border-edge-subtle pt-3 text-xs">
-                              {included.map(([key, value]) => (
-                                <div key={key} className="flex items-center justify-between gap-4">
-                                  <dt className="capitalize text-ink-3">
-                                    {t(({ max_agents: "pricing.entitlement.agents", max_printers: "pricing.entitlement.printers", max_jobs_per_minute: "pricing.entitlement.jobsPerMinute", max_concurrent_jobs: "pricing.entitlement.concurrentJobs", max_prints_per_period: "pricing.entitlement.prints" } as Record<string, import("../../i18n/messages/en").MessageKey>)[key] ?? "common.unknown")}
-                                  </dt>
-                                  <dd className="font-[600] tabular text-ink">
-                                    {typeof value === "boolean" ? (value ? t("onboarding.included") : t("onboarding.notIncluded")) : typeof value === "number" ? formatNumber(value) : value === "unlimited" ? t("billing.unlimited") : String(value)}
-                                  </dd>
-                                </div>
-                              ))}
-                            </dl>
-                          )}
-                        </label>
-                      );
-                    })}
-                  </div>
-                )}
-              </fieldset>
-
-              {err && (
-                <Callout tone="bad" title={t("onboarding.setupFailedTitle")} icon={<AlertTriangle className="h-4 w-4" />}>
-                  {err}
-                </Callout>
-              )}
-              {workspaceProvisioned && !err && (
-                <Callout tone="ok" title={t("onboarding.alreadySetupTitle")}>
-                  {t("onboarding.alreadySetupBody")}
-                </Callout>
-              )}
-            </div>
-
-            <div className="flex flex-col gap-3 border-t border-edge-subtle px-5 py-5 sm:flex-row sm:items-center sm:justify-between">
-              <p className="text-sm text-ink-3">
-                {workspaceProvisioned ? t("onboarding.alreadySetupTitle") : selectedPlan ? (
-                  <>
-                    {t("onboarding.selectedPrefix")} <span className="font-[600] text-ink">{selectedPlan.name}</span>{" "}
-                    {t("onboarding.selectedTail")}
-                  </>
-                ) : (
-                  t("onboarding.choosePlan")
-                )}
-              </p>
-              <div className="flex flex-col gap-2 sm:flex-row">
-                {workspaceProvisioned ? (
-                  <>
-                    <Button variant="primary" href="/dashboard" icon={<ArrowRight className="h-4 w-4 rtl:-scale-x-100" />}>{t("common.continue")}</Button>
-                    <Button variant="secondary" href="/billing">{t("billing.manageBilling")}</Button>
-                  </>
-                ) : (
-                  <>
-                    <Button
-                      variant="primary"
-                      disabled={!canContinue || loading}
-                      loading={loading}
-                      onClick={() => void submit(true)}
-                      icon={loading ? undefined : <ArrowRight className="h-4 w-4 rtl:-scale-x-100" />}
-                    >
-                      {t("onboarding.startFreeTrial")}
-                    </Button>
-                    <Button variant="secondary" disabled={!canContinue || loading} onClick={() => void submit(false)}>
-                      {t("onboarding.continueToCheckout")}
-                    </Button>
-                  </>
-                )}
-              </div>
-            </div>
-          </Card>
-
-          <aside className="space-y-5">
-            <Card>
-              <CardHeader
-                title={t("onboarding.whatsNext")}
-                subtitle={t("onboarding.whatsNextSubtitle")}
-                icon={<Sparkles className="h-4 w-4" />}
-              />
-              <ol className="space-y-4 px-5 py-5">
-                {nextSteps(t).map((step, index) => (
-                  <li key={step.title} className="flex gap-3">
-                    <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-edge bg-surface-2 text-ink-3">
-                      <step.icon className="h-3.5 w-3.5" aria-hidden />
-                    </span>
-                    <div className="min-w-0">
-                      <div className="flex items-baseline gap-2">
-                        <h3 className="text-sm font-[600] text-ink">{step.title}</h3>
-                        <span className="font-mono text-2xs tabular text-ink-4">0{index + 1}</span>
-                      </div>
-                      <p className="mt-0.5 text-sm leading-relaxed text-ink-3">{step.text}</p>
-                    </div>
-                  </li>
-                ))}
-              </ol>
-            </Card>
-
-            <Callout tone="info" title={t("onboarding.noCard")}>
-              {t("onboarding.noCardBody")}
-            </Callout>
-
-            <div className="flex items-center gap-2 text-sm text-ink-3">
-              <StatusBadge tone="ok" label={t("onboarding.odooReady")} size="sm" />
-              <span>{t("onboarding.downloadsIncluded")}</span>
-            </div>
-          </aside>
-        </div>
-      </div>
-    </main>
-  );
+  const request = state?.requests.find(item => item.status === "pending") ?? state?.requests[0];
+  const pending = request?.status === "pending";
+  const active = state?.status === "active";
+  const owner = workspace?.role === "owner";
+  const steps = [
+    { icon: Download, title: "v4.onboarding.download", body: "v4.onboarding.downloadBody", href: workspace?.agentDownloadUrl ?? "" },
+    { icon: Server, title: "v4.onboarding.pair", body: "v4.onboarding.pairBody", href: "/dashboard#agents" },
+    { icon: Printer, title: "v4.onboarding.printers", body: "v4.onboarding.printersBody", href: "/dashboard#printers" },
+    { icon: KeyRound, title: "v4.onboarding.odoo", body: "v4.onboarding.odooBody", href: "/api-keys" },
+  ] as const;
+  return <main className="ambient-surface min-h-screen px-4 py-10 sm:px-6">
+    <div className="mx-auto max-w-3xl space-y-6">
+      <header className="space-y-3">
+        <StatusBadge tone={active ? "ok" : "warn"} label={t(active ? "v4.onboarding.active" : state?.status === "expired" ? "v4.onboarding.expired" : state?.status === "suspended" ? "v4.onboarding.suspended" : "v4.onboarding.pending")} />
+        <h1 className="text-3xl font-semibold text-ink">{t(active ? "v4.onboarding.ready" : pending ? "v4.onboarding.requestReceived" : "v4.onboarding.title")}</h1>
+        <p className="text-base leading-relaxed text-ink-3">{t(active ? "v4.onboarding.readyBody" : "v4.onboarding.intro")}</p>
+      </header>
+      {error && <ErrorState title={t("errors.operationFailed")} message={error} retry={() => void load()} />}
+      {loading ? <div role="status" aria-label={t("common.loading")} className="space-y-3"><Skeleton className="h-28 w-full" /><Skeleton className="h-48 w-full" /></div> : active ? <>
+        <Card><CardHeader title={workspace?.tenant.name ?? ""} icon={<CheckCircle2 className="h-5 w-5" />} />
+          <ol className="divide-y divide-edge-subtle">{steps.map((step, index) => <li key={step.href} className="flex flex-wrap items-center gap-4 p-5"><step.icon className="h-5 w-5 text-brand" aria-hidden /><div className="min-w-48 flex-1"><h2 className="font-semibold">{formatNumber(index + 1)}. {t(step.title)}</h2><p className="mt-1 text-sm text-ink-3">{t(step.body)}</p></div><Button href={step.href || undefined} disabled={!step.href} variant="secondary">{t(step.href ? "common.continue" : "v4.onboarding.downloadUnavailable")}</Button></li>)}</ol>
+        </Card><Button href="/dashboard" variant="primary">{t("v4.onboarding.start")}</Button>
+      </> : workspace && state ? <>
+        {(pending || !owner || state.status === "suspended") ? <Card><CardHeader title={workspace.tenant.name} icon={<Clock className="h-5 w-5" />} /><div className="space-y-4 p-5">
+          <h2 className="text-xl font-semibold">{t(state.status === "suspended" ? "v4.onboarding.suspended" : "v4.onboarding.wait")}</h2>
+          <p className="leading-relaxed text-ink-3">{t(owner ? "v4.onboarding.waitBody" : "v4.onboarding.memberWait")}</p>
+          {request && <dl className="space-y-2 text-sm"><div><dt className="text-ink-3">{t("v4.onboarding.reference")}</dt><dd dir="ltr" className="break-all font-mono text-start">{request.reference}</dd></div><div><dt className="text-ink-3">{t("v4.onboarding.requestedAt")}</dt><dd>{formatDateTime(request.createdAt)}</dd></div></dl>}
+          <div className="flex flex-wrap gap-3">{request?.whatsappUrl && <Button href={request.whatsappUrl} variant="primary" target="_blank" rel="noopener noreferrer">{t("v4.onboarding.whatsapp")}</Button>}<Button variant="secondary" onClick={() => void load()}>{t("v4.onboarding.refresh")}</Button><Button variant="ghost" href="/settings">{t("v4.onboarding.account")}</Button></div>
+          {owner && !request?.whatsappUrl && <p className="text-sm text-ink-3">{t("v4.onboarding.contactUnavailable")}</p>}
+        </div></Card> : <Card><CardHeader title={t("v4.onboarding.companyPlan")} icon={<Building2 className="h-5 w-5" />} /><form onSubmit={submit} className="space-y-6 p-5">
+          <Field label={t("onboarding.workspaceName")} htmlFor="workspace-name" required><Input id="workspace-name" value={name} onChange={event => setName(event.target.value)} required minLength={2} maxLength={120} autoComplete="organization" disabled={busy} /></Field>
+          <fieldset disabled={busy}><legend className="mb-3 font-semibold">{t("onboarding.choosePlanLegend")}</legend><div className="grid gap-3 sm:grid-cols-2">{workspace.plans.map(plan => <label key={plan.id} className={`flex min-h-28 cursor-pointer gap-3 rounded-md border p-4 focus-within:ring-2 focus-within:ring-brand ${planId === plan.id ? "border-brand bg-brand-subtle" : "border-edge"}`}><input type="radio" name="plan" value={plan.id} checked={planId === plan.id} onChange={() => setPlanId(plan.id)} required /><span><span className="block font-semibold">{plan.name}</span><span className="mt-2 block text-sm text-ink-3">{t("v4.onboarding.monthlyJobs", { count: typeof plan.entitlements.max_prints_per_period === "number" ? formatNumber(plan.entitlements.max_prints_per_period) : t("billing.unlimited") })}</span></span></label>)}</div>{workspace.plans.length === 0 && <p>{t("onboarding.noPlansBody")}</p>}</fieldset>
+          <fieldset disabled={busy}><legend className="mb-3 font-semibold">{t("v4.onboarding.term")}</legend><div className="flex flex-wrap gap-4">{(["monthly", "yearly"] as const).map(value => <label key={value} className="flex min-h-11 items-center gap-2"><input type="radio" name="term" checked={term === value} onChange={() => setTerm(value)} />{t(value === "monthly" ? "v4.onboarding.monthly" : "v4.onboarding.yearly")}</label>)}</div><p className="text-sm text-ink-3">{t("v4.onboarding.monthlyReset")}</p></fieldset>
+          <Callout tone="info" title={t("v4.onboarding.manualTitle")}>{t("v4.onboarding.manualBody")}</Callout>
+          <Button type="submit" variant="primary" loading={busy} disabled={busy || name.trim().length < 2 || !workspace.plans.some(plan => plan.id === planId)}>{t("v4.onboarding.request")}</Button>
+        </form></Card>}
+      </> : null}
+    </div>
+  </main>;
 }

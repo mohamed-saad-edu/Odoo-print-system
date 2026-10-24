@@ -98,7 +98,7 @@ suite("accepted Odoo v2 replay versus unrelated tenant admission contention", ()
     return { jobs: jobs.map(({ payload, ...job }) => ({ ...job, payloadSha256: digest(JSON.stringify(payload)) })),
       operations: (await pool().query(`SELECT installation_id,source_company_id,source_operation_id,idempotency_key,
         accepted_job_id FROM odoo_v2_operations WHERE tenant_id=$1 ORDER BY idempotency_key`, [fixture.tenantId])).rows,
-      usage: (await pool().query("SELECT used_prints FROM print_usage_periods WHERE tenant_id=$1", [fixture.tenantId])).rows };
+      usage: (await pool().query("SELECT used_prints FROM print_monthly_usage WHERE tenant_id=$1", [fixture.tenantId])).rows };
   }
   async function holdAdmission() {
     const blocker = await pool().connect();

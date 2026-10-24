@@ -98,23 +98,25 @@ describe("platform operational status presentation", () => {
   it("renders authoritative counts without claiming submission proves printing or busy devices are ready", async () => {
     fetchMock.mockResolvedValue(response({
       tenants: { total: 8, active: 7, suspended: 1 },
-      agents: { active: 6, online: 5, offline: 1, unknown: 0 },
+      agents: { total: 6, active: 6, online: 5, offline: 1, unknown: 0 },
+      business:{active:7,pendingRequests:2,free:3,paid:5,expiringSoon:1,suspended:1},
+      logicalUsage:{today:100,month:2000,year:10000},verifiedPrinters:4,
       printers: { active: 10, online: 4, busy: 3, offline: 1, error: 1, unknown: 1 },
       queueNow: { queued: 25, inFlight: 2 },
       jobs24h: { total: 100, success: 73, failed: 4, expired: 1 },
       subscriptions: { attention: 2 }, integrations: { keys: { active: 3 } },
     }));
     await render(h(PlatformDashboardPage));
-    const metrics = [...host.querySelectorAll("section a")];
-    expect(metrics.find((tile) => tile.textContent?.includes("Submissions completed in 24h"))?.textContent).toContain("73");
-    expect(metrics.find((tile) => tile.textContent?.includes("Online / busy printers"))?.textContent).toContain("7");
+    expect(host.textContent).toContain("Jobs today");
+    expect(host.textContent).toContain("100");
+    expect(host.textContent).toContain("Verified printers");
     expect(host.textContent).not.toContain("Jobs printed in 24h");
-    expect(host.textContent).toContain("Paper output is not independently verified");
+    expect(host.textContent).toContain("not proof of physical printing");
   });
 
   it.each([
-    ["en", "Submission completed · paper unverified", "Unknown outcome", "Inspect details", "Paper output unverified"],
-    ["ar", "اكتمل الإرسال · الورق غير مؤكد", "النتيجة غير معروفة", "عرض التفاصيل", "خروج الورق غير مؤكد"],
+    ["en", "Sent to printer", "Needs review", "Inspect details", "Paper output unverified"],
+    ["ar", "أُرسلت إلى الطابعة", "تحتاج إلى مراجعة", "عرض التفاصيل", "خروج الورق غير مؤكد"],
   ] as const)("uses canonical %s outcome labels in the rows and diagnostics", async (locale, success, unknown, inspect, paper) => {
     fetchMock.mockResolvedValue(response({ jobs: [
       { id: "job-one", tenantId: "tenant-one", tenantName: "Synthetic workspace", printerId: "printer-one", printerName: "Reception", agentId: "agent-one", agentName: "Front desk", destination: "receipt", documentType: "pdf", status: "success", physicalOutcome: "unknown", createdAt: "2026-10-01T10:00:00Z", updatedAt: "2026-10-01T10:00:01Z", archived: true },

@@ -114,18 +114,31 @@ def test_platform_owner_routes_distinguish_invalid_auth_from_platform_dependency
     assert routes
     for route in routes:
         source = route.read_text(encoding="utf-8")
-        assert "PlatformUnauthorizedError" in source, route
-        assert "Platform authentication temporarily unavailable" in source, route
-        assert "status: 503" in source, route
+        if "manualApiError" in source:
+            # Shared responder must keep invalid identity distinct from outage.
+            handler = read("src/lib/manual-api-error.ts")
+            assert "error instanceof PlatformUnauthorizedError" in handler
+            assert "status:401" in handler
+            assert "status:503" in handler
+        else:
+            assert "PlatformUnauthorizedError" in source, route
+            assert "Platform authentication temporarily unavailable" in source, route
+            assert "status: 503" in source, route
 
 def test_billing_page_surfaces_print_usage_lookup_failures():
     source = read("src/app/billing/page.tsx")
-    assert "billing.print_usage_unavailable" in source
-    assert "printUsageUnavailable = true" in source
-    # User-facing copy is keyed (i18n contract): the title and body resolve
-    # through the catalog, never as inline English.
-    assert 't("billing.usageUnavailable")' in source
-    assert 't("billing.usageUnavailableBody")' in source
+    assert "billing.monthly_usage_unavailable" in source
+    assert re.search(r"let usage: .*\| null = null;", source)
+    failure = re.search(r"catch\s*\{(.*?)\}\s*\n\s*const date", source, re.S)
+    assert failure
+    assert "billing.monthly_usage_unavailable" in failure.group(1)
+    assert not re.search(r"usage\s*=", failure.group(1))
+    # Missing usage remains unavailable, never a fabricated zero. A successful
+    # read alone renders numbers; the failure branch resolves localized copy.
+    assert "{usage ? <div" in source
+    assert "formatNumber(usage.used,locale)" in source
+    assert 't(sub ? "billing.usageUnavailableBody" : "v4.subscription.noAllowance")' in source
+    assert not re.search(r"usage\?\.(used|remaining)\s*\?\?\s*0", source)
 
 def test_health_metrics_do_not_turn_database_lookup_failures_into_zero_values():
     source = read("src/lib/agent-health.ts")
@@ -274,14 +287,13 @@ def test_production_startup_fails_closed_on_secrets_and_proxy_boundary():
     assert "assertRealSecret(" in source
 
 
-def test_billing_webhook_binds_identity_before_metadata_tenant_mutation():
+def test_retired_billing_webhook_cannot_grant_or_mutate_entitlements():
     source = read("src/app/api/billing/webhook/route.ts")
-    assert "billingIdentityConflict" in source
-    assert "stripeSubscriptionId" in source
-    assert "stripeCustomerId" in source
-    assert 'return NextResponse.json({ received: true, ignored: true })' in source
-    assert "if (billingIdentityConflict)" in source
-    assert "processedAt: sql`clock_timestamp()`" in source
+    assert 'code:"MANUAL_BILLING_REQUIRED"' in source
+    assert 'status:410' in source
+    assert 'db' not in source
+    assert 'stripeRequest' not in source
+    assert 'update(' not in source
 
 
 def test_tenant_entitlements_fail_closed_without_active_subscription():
@@ -295,7 +307,8 @@ def test_tenant_entitlements_fail_closed_without_active_subscription():
 
 def test_plan_catalog_uses_shared_canonical_entitlement_normalizer():
     source = read("scripts/provision-plans.ts")
-    assert 'normalizePlanEntitlements(plan.entitlements)' in source
+    assert 'parseManualPlan(input)' in source
+    assert 'normalizePlanEntitlements({' in read('src/lib/manual-plans.ts')
     helper = read("src/lib/entitlements.ts")
     assert '"max_agents"' in helper
     assert '"max_printers"' in helper

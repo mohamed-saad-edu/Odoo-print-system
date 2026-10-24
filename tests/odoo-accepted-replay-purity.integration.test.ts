@@ -58,7 +58,7 @@ suite("accepted-only replay does not publish legacy namespace adoption", () => {
       jobs: (await pool().query("SELECT id,status,delivery_attempts,retries,idempotency_key,binding_digest FROM print_jobs WHERE tenant_id=$1 ORDER BY id", [fixture.tenantId])).rows,
       receipts: (await pool().query("SELECT id,status,idempotency_key,fingerprint,binding_digest FROM print_job_receipts WHERE tenant_id=$1 ORDER BY id", [fixture.tenantId])).rows,
       operations: (await pool().query("SELECT installation_id,source_company_id,source_operation_id,idempotency_key,accepted_job_id FROM odoo_v2_operations WHERE tenant_id=$1 ORDER BY idempotency_key", [fixture.tenantId])).rows,
-      usage: (await pool().query("SELECT used_prints FROM print_usage_periods WHERE tenant_id=$1", [fixture.tenantId])).rows,
+      usage: (await pool().query("SELECT used_prints FROM print_monthly_usage WHERE tenant_id=$1", [fixture.tenantId])).rows,
     };
   }
   function reserve(acceptedOnly = false) {

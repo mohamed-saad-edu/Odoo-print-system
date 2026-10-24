@@ -11,6 +11,23 @@ from ..printer_verification import is_verified_runtime_printer
 
 
 class PrintGatewayRuntimePrinterController(http.Controller):
+    @http.route('/print_gateway/setup-context', type='jsonrpc', auth='user', methods=['POST'])
+    def setup_context(self):
+        """Only enabled company scopes; no credentials or implicit assignments."""
+        self._require_runtime_admin()
+        scopes = []
+        for company in request.env.companies:
+            root, branch = self._scope(company.id)
+            config, _root = self._get_config(root)
+            scopes.append({
+                'id': company.id,
+                'name': company.display_name,
+                'companyId': root.id,
+                'branchId': branch.id if branch else False,
+                'configId': config.id if config else False,
+            })
+        return {'scopes': scopes, 'currentCompanyId': request.env.company.id}
+
     @staticmethod
     def _require_runtime_admin():
         if not request.env.user.has_group("base.group_system"):

@@ -20,11 +20,11 @@ const permissionsByRole: Record<ManagerRole, ReadonlySet<ManagerPermission>> = {
     "integrations.read", "integrations.manage", "billing.read", "billing.manage",
   ]),
   admin: new Set<ManagerPermission>([
-    "tenant.read", "users.read", "users.manage",
+    "tenant.read", "tenant.update", "users.read",
     "agents.read", "agents.pair", "agents.disable", "agents.retire",
     "printers.read", "printers.manage", "printers.test",
     "jobs.read", "jobs.payload.read", "jobs.create", "jobs.retry", "jobs.cancel", "bindings.read", "bindings.manage",
-    "integrations.read", "integrations.manage", "billing.read", "billing.manage",
+    "integrations.read", "integrations.manage", "billing.read",
   ]),
   operator: new Set<ManagerPermission>([
     "tenant.read", "agents.read", "printers.read", "printers.test",

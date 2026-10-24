@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { PgDialect } from "drizzle-orm/pg-core";
 import { credentialVersionFor } from "../src/lib/session-credentials";
 
-const state = vi.hoisted(() => ({ role: "admin", live: true, lifecycle: "active",
+const state = vi.hoisted(() => ({ role: "owner", callerRole: "owner", live: true, lifecycle: "active",
   statements: [] as string[], inserts: 0, emails: 0 }));
 const dialect = new PgDialect();
 const tx = {
@@ -26,7 +26,7 @@ const tx = {
 };
 vi.mock("../src/db", () => ({ db: { transaction: async (fn: (tx: unknown) => unknown) => fn(tx) } }));
 vi.mock("../src/lib/manager-auth", () => ({ validateWorkspaceManager: async () => ({
-  tenantId: "workspace", userId: "actor", role: "admin", kind: "manager", sub: "manager",
+  tenantId: "workspace", userId: "actor", role: state.callerRole, kind: "manager", sub: "manager",
   familyId: "f".repeat(32), jti: "a".repeat(32), ver: 2, sid: "b".repeat(32), iat: 1, exp: 9999999999,
 }) }));
 vi.mock("../src/lib/email", () => ({ appBaseUrl: () => "https://audit.invalid",
@@ -37,12 +37,24 @@ import { POST } from "../src/app/api/team/invitations/route";
 
 function request() {
   return new Request("http://gateway.test/api/team/invitations", { method: "POST",
-    body: JSON.stringify({ email: "synthetic@example.invalid", role: "viewer" }) });
+    body: JSON.stringify({ email: "synthetic@example.invalid", role: "admin" }) });
 }
 describe("invitation actor authority and lifecycle lock ordering", () => {
   beforeEach(() => { process.env.GATEWAY_JWT_SECRET = "invitation-authority-test-secret-at-least-32";
-    state.role = "admin"; state.live = true; state.lifecycle = "active";
+    state.role = "owner"; state.callerRole = "owner"; state.live = true; state.lifecycle = "active";
     state.statements.length = 0; state.inserts = 0; state.emails = 0; });
+  it("denies Full Access invitation creation before a database or email side effect", async () => {
+    state.callerRole = "admin";
+    expect((await POST(request())).status).toBe(403);
+    expect(state.statements).toEqual([]);
+    expect(state.inserts).toBe(0);
+    expect(state.emails).toBe(0);
+  });
+  it.each(["viewer", "operator", "owner", "billing_admin", "integration_admin"])("only exposes Full Access for new invitations (%s rejected)", async role => {
+    const response = await POST(new Request("http://gateway.test/api/team/invitations", { method: "POST", body: JSON.stringify({ email: "invite@example.invalid", role }) }));
+    expect(response.status).toBe(400);
+    expect(state.inserts).toBe(0);
+  });
   it("locks tenant before users/family/session, consistent with suspension, and commits one invitation", async () => {
     const response = await POST(request());
     expect(response.status).toBe(200);
@@ -56,7 +68,7 @@ describe("invitation actor authority and lifecycle lock ordering", () => {
     expect(state.inserts).toBe(1);
     expect(state.emails).toBe(1);
   });
-  it.each(["viewer", "operator"])("does not invite or send email using a demoted actor (%s)", async role => {
+  it.each(["admin", "viewer", "operator"])("does not invite or send email using a demoted actor (%s)", async role => {
     state.role = role;
     expect((await POST(request())).status).toBe(403);
     expect(state.statements[0]).toContain("FROM tenants");
@@ -78,7 +90,7 @@ describe("invitation actor authority and lifecycle lock ordering", () => {
   });
   it.each(["invalid", "recipient\n@example.invalid", `${"a".repeat(310)}@example.invalid`])("rejects an invalid email before creating an invitation (%s)", async email => {
     const response = await POST(new Request("http://gateway.test/api/team/invitations", {
-      method: "POST", body: JSON.stringify({ email, role: "viewer" }),
+      method: "POST", body: JSON.stringify({ email, role: "admin" }),
     }));
     expect(response.status).toBe(400);
     expect(state.statements).toEqual([]);

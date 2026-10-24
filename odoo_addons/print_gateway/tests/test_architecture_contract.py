@@ -9,6 +9,7 @@ from unittest.mock import patch
 # only to avoid restructuring the cursor-visibility test they guard.)
 from odoo import api, fields
 from odoo.exceptions import ValidationError
+from odoo.tests import tagged
 from odoo.tests.common import TransactionCase
 from odoo.addons.print_gateway.models.print_policy import sanitize_raw_value
 
@@ -19,6 +20,7 @@ VIEWS = ADDON / "views"
 CONTROLLERS = ADDON / "controllers"
 
 
+@tagged("post_install", "-at_install")
 class TestPrintGatewayArchitectureContract(TransactionCase):
     def test_final_integration_models_include_only_ollama_owned_binding_layer(self):
         allowed = {

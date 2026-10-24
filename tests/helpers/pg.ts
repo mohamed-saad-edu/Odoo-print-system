@@ -106,6 +106,9 @@ export async function truncateAll(): Promise<void> {
       await client.query("BEGIN");
       // Use DELETE instead of TRUNCATE CASCADE to avoid heavy DataFileImmediateSync I/O stalls on test environments
       const orderedTables = [
+        "subscription_requests",
+        "subscription_changes",
+        "print_monthly_usage",
         // Automatic v2 enrollment adds retained installation associations.
         // Delete children first, or future fixture resets will hit FK errors.
         "odoo_v2_operations",

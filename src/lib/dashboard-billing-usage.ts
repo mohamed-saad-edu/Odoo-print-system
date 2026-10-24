@@ -5,6 +5,21 @@
  * correctly returns 403. This client policy prevents those predictable 403s
  * without changing the API's RBAC or entitlement checks.
  */
+export type DashboardSubscriptionSummary = {
+  customerState: "awaiting_activation" | "active" | "expired" | "suspended";
+  currentPeriodEnd: string | null;
+};
+
+export function dashboardSubscriptionSummary(value: unknown): DashboardSubscriptionSummary | null {
+  if (!value || typeof value !== "object") return null;
+  const row = value as Record<string, unknown>;
+  if (!["awaiting_activation", "active", "expired", "suspended"].includes(String(row.customerState))) return null;
+  return {
+    customerState: row.customerState as DashboardSubscriptionSummary["customerState"],
+    currentPeriodEnd: typeof row.currentPeriodEnd === "string" && Number.isFinite(Date.parse(row.currentPeriodEnd)) ? row.currentPeriodEnd : null,
+  };
+}
+
 export type DashboardBillingUsageResult<T> =
   | { kind: "available"; usage: T }
   | { kind: "unsubscribed" }
@@ -14,6 +29,7 @@ export type DashboardBillingUsageResult<T> =
 export async function fetchDashboardBillingUsage<T>(
   request: (url: string, init: RequestInit) => Promise<Response>,
   signal: AbortSignal,
+  onSubscription?: (summary: DashboardSubscriptionSummary | null) => void,
 ): Promise<DashboardBillingUsageResult<T>> {
   const init: RequestInit = { credentials: "same-origin", cache: "no-store", signal };
   const status = await request("/api/billing/status", init);
@@ -25,6 +41,7 @@ export async function fetchDashboardBillingUsage<T>(
       typeof (summary as { hasSubscription?: unknown }).hasSubscription !== "boolean") {
     return { kind: "unavailable" };
   }
+  if (!signal.aborted) onSubscription?.(dashboardSubscriptionSummary(summary));
   if (!(summary as { hasSubscription: boolean }).hasSubscription) return { kind: "unsubscribed" };
 
   const usageResponse = await request("/api/billing/usage", init);

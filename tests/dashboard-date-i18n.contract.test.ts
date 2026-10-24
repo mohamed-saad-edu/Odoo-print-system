@@ -7,8 +7,11 @@ describe("dashboard localized date phrases", () => {
     const en = readFileSync("src/i18n/messages/en.ts", "utf8");
     const ar = readFileSync("src/i18n/messages/ar.ts", "utf8");
 
-    expect(dashboard).toContain('t("billing.resetsOnDate", { date: formatDate(prints.periodEnd) })');
+    expect(dashboard).toContain('t("billing.resetsOnDate", { date: formatManualCalendarDate(prints.periodEnd, locale) ?? t("common.notAvailable") })');
     expect(dashboard).not.toContain('${t("billing.resetsOn")} ${formatDate(prints.periodEnd)}');
+    const calendarDates = readFileSync("src/lib/manual-calendar-date.ts", "utf8");
+    expect(calendarDates).toContain("intlLocale(locale)");
+    expect(calendarDates).toMatch(/timeZone:\s*['"]UTC['"]/);
     expect(en).toContain('"billing.resetsOnDate": "Resets {date}"');
     expect(ar).toContain('"billing.resetsOnDate": "يُعاد الضبط في {date}"');
   });

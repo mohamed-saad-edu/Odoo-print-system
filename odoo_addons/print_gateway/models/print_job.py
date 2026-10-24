@@ -11,6 +11,8 @@ from . import gateway_http as requests
 from psycopg2 import IntegrityError, sql as psycopg2_sql
 
 from odoo import api, fields, models, _
+from ..customer_presentation import customer_error_message
+
 from odoo.exceptions import AccessError, ValidationError
 
 from ..runtime_clock import db_now_utc
@@ -117,12 +119,31 @@ class PrintGatewayJob(models.Model):
     # eligible rows a turn before already-inspected unresolved rows.
     last_status_polled_at = fields.Datetime(index=True, readonly=True, copy=False)
     last_error = fields.Text(readonly=True)
+    customer_issue = fields.Text(string="What to do next", compute="_compute_customer_presentation", compute_sudo=False)
+    customer_status = fields.Selection([
+        ("waiting", "Waiting"), ("processing", "Processing"),
+        ("sent_to_printer", "Sent to printer"), ("needs_review", "Needs review"),
+        ("failed_before_output", "Failed before output"), ("file_created", "File created"),
+    ], string="Print status", compute="_compute_customer_presentation", compute_sudo=False)
     source_model = fields.Char(readonly=True)
     source_record_id = fields.Integer(readonly=True)
     report_id = fields.Many2one("ir.actions.report", readonly=True, ondelete="set null")
     create_date = fields.Datetime(readonly=True)
     write_date = fields.Datetime(readonly=True)
     completed_at = fields.Datetime(readonly=True)
+
+    @api.depends("status", "physical_outcome", "output_medium", "output_outcome", "last_error")
+    @api.depends_context("lang")
+    def _compute_customer_presentation(self):
+        from ..customer_presentation import customer_error_message, job_customer_state
+        for job in self:
+            job.customer_status = job_customer_state(
+                job.status, job.physical_outcome, job.output_medium, job.output_outcome,
+            )
+            job.customer_issue = customer_error_message(
+                job.env._,
+                "UNKNOWN_PRINT_OUTCOME" if job.customer_status == "needs_review" else job.last_error,
+            )
 
     _idempotency_unique = models.Constraint(
         "UNIQUE(company_id, idempotency_key)",
@@ -1361,7 +1382,7 @@ class PrintGatewayJob(models.Model):
             job.write(values)
         _logger.warning("Gateway connection failed for job %s (attempt %s/5)", job.idempotency_key[:8], next_attempt)
         if raise_on_failure:
-            raise ValidationError(_("Gateway connection failed: %s") % str(exc)[:500]) from exc
+            raise ValidationError(customer_error_message(self.env._, "CONNECTION_ERROR")) from None
         return current_binding, failover_count, "break"
 
     def _require_outbox_write(self):
@@ -1991,7 +2012,7 @@ class PrintGatewayJob(models.Model):
                         persist_submit_state(values)
                         _logger.warning("Gateway submission failed deterministically for job %s: %s", job.idempotency_key[:8], str(exc)[:300])
                         if raise_on_failure:
-                            raise ValidationError(_("Gateway submission failed: %s") % str(exc)[:500]) from exc
+                            raise ValidationError(customer_error_message(self.env._, str(exc))) from None
                         break
                     next_attempt = job.attempts + 1
                     terminal = next_attempt >= 5
@@ -2003,7 +2024,7 @@ class PrintGatewayJob(models.Model):
                     }
                     persist_submit_state(values)
                     if raise_on_failure:
-                        raise ValidationError(_("Gateway submission failed: %s") % str(exc)[:500]) from exc
+                        raise ValidationError(customer_error_message(self.env._, str(exc))) from None
                     break
         return True
 

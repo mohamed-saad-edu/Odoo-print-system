@@ -57,7 +57,7 @@ describe("workspace dashboard evidence and feedback", () => {
     const host = document.createElement("div"); document.body.appendChild(host); const root = createRoot(host);
     try {
       await act(async () => root.render(h(I18nProvider, { initialLocale: "en", children:
-        h("div", null, h(WorkspaceSecurityNotice), h(DashboardClient, { ...props, initialAgents: [agent] })) })));
+        h("div", null, h(WorkspaceSecurityNotice), h(DashboardClient, { ...props, initialView: "agents", initialAgents: [agent] })) })));
       const button = [...host.querySelectorAll<HTMLButtonElement>("button")].find(node => node.textContent?.trim() === "Re-enable agent…");
       expect(button).toBeDefined();
       await act(async () => button!.click());
@@ -86,7 +86,7 @@ describe("workspace dashboard evidence and feedback", () => {
     try {
       localStorage.setItem("yaseir:locale", locale);
       document.cookie = `yaseir_locale=${locale}; path=/`;
-      await act(async () => root.render(h(I18nProvider, { initialLocale: locale, children: h(DashboardClient, props) })));
+      await act(async () => root.render(h(I18nProvider, { initialLocale: locale, children: h(DashboardClient, { ...props, initialView: "agents" }) })));
       const trigger = [...host.querySelectorAll<HTMLButtonElement>("button")].find(node => node.textContent?.trim() === (locale === "en" ? "Register an agent" : "تسجيل وكيل"))!;
       await act(async () => { trigger.focus(); trigger.click(); });
       const dialog = document.querySelector('[role="dialog"]')!;
@@ -120,7 +120,7 @@ describe("workspace dashboard evidence and feedback", () => {
     const fetchMock = vi.mocked(fetchWithTimeout);
     fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ code: "AGENT_CREATE_FAILED", error: "synthetic-private-diagnostic" }), { status: 503 }));
     try {
-      await act(async () => { root.render(h(DashboardClient, props)); });
+      await act(async () => { root.render(h(DashboardClient, { ...props, initialView: "agents" })); });
       const open = [...host.querySelectorAll("button")].find((node) => node.textContent?.trim() === "Register an agent")!;
       await act(async () => open.click());
       const dialog = document.querySelector('[role="dialog"]')!;

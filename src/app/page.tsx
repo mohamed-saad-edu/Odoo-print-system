@@ -31,12 +31,12 @@ import {
   verifyWorkspaceTokenFromCookieValues,
 } from "../lib/manager-auth";
 import { hasManagerPermission } from "../lib/authorization";
-import { isBillingAccessStatus, isSubscriptionPeriodLive } from "../lib/entitlements";
-import { refreshClockSkew } from "../lib/database-clock";
+import { customerSubscriptionState } from "../lib/manual-subscriptions";
+import { databaseNowMs } from "../lib/database-clock";
+import { roleLabel } from "../lib/roles";
 import { Button, StatusBadge, type Tone } from "../components/ui";
 import { getServerLocale, makeT } from "../i18n/server";
-import type { MessageKey } from "../i18n/messages/en";
-import { formatDate } from "../i18n/format";
+import { formatManualCalendarDate } from "../lib/manual-calendar-date";
 import type { Locale } from "../i18n/config";
 import type { Translator } from "../i18n/translate";
 
@@ -56,27 +56,23 @@ export default async function Home() {
     const [tenant, subscription] = await Promise.all([
       db.query.tenants.findFirst({
         where: eq(tenants.id, claims.tenantId),
-        columns: { name: true },
+        columns: { name: true, lifecycle: true },
       }),
       db.query.tenantSubscriptions.findFirst({
         where: eq(tenantSubscriptions.tenantId, claims.tenantId),
-        columns: { planId: true, status: true, currentPeriodEnd: true, entitlementBlocked: true },
+        columns: { planId: true, status: true, currentPeriodStart: true, currentPeriodEnd: true, entitlementBlocked: true },
       }),
     ]);
 
-    const plan = subscription
+    const canBilling = hasManagerPermission(claims, "billing.read");
+    const plan = canBilling && subscription
       ? await db.query.plans.findFirst({
           where: eq(plans.id, subscription.planId),
           columns: { name: true },
         })
       : null;
 
-    await refreshClockSkew();
-    const hasActiveSubscription = !!subscription && !subscription.entitlementBlocked
-      && isBillingAccessStatus(subscription.status)
-      && (subscription.status === "past_due" || isSubscriptionPeriodLive(subscription.currentPeriodEnd));
-    const requiresBillingAttention = !!subscription && (subscription.entitlementBlocked
-      || (isBillingAccessStatus(subscription.status) && !hasActiveSubscription));
+    const subscriptionStatus = customerSubscriptionState(subscription, tenant?.lifecycle, await databaseNowMs());
 
     return (
       <AuthenticatedHome
@@ -85,11 +81,9 @@ export default async function Home() {
         tenantName={tenant?.name ?? t("home.authWorkspace")}
         role={claims.role}
         planName={plan?.name ?? null}
-        subscriptionStatus={subscription?.status ?? null}
-        periodEnd={subscription?.currentPeriodEnd ?? null}
-        hasActiveSubscription={hasActiveSubscription}
-        requiresBillingAttention={requiresBillingAttention}
-        canBilling={hasManagerPermission(claims, "billing.read")}
+        subscriptionStatus={subscriptionStatus}
+        periodEnd={canBilling ? subscription?.currentPeriodEnd ?? null : null}
+        canBilling={canBilling}
         canTeam={hasManagerPermission(claims, "users.read")}
       />
     );
@@ -131,7 +125,7 @@ function PublicHome({ t, locale }: { t: Translator; locale: Locale }) {
                   href="/signup"
                   icon={<ArrowRight className="h-4 w-4 rtl:-scale-x-100" />}
                 >
-                  {t("home.heroCta")}
+                  {t("home.ctaPrimary")}
                 </Button>
                 <Button
                   variant="secondary"
@@ -212,13 +206,13 @@ function PublicHome({ t, locale }: { t: Translator; locale: Locale }) {
               <FlowRow
                 icon={<Workflow className="h-4 w-4" />}
                 number="01"
-                title="Odoo"
+                title={t("home.visualStep1Title")}
                 text={t("home.flow1Text")}
               />
               <FlowRow
                 icon={<Server className="h-4 w-4" />}
                 number="02"
-                title="Gateway"
+                title={t("home.visualStep2Title")}
                 text={t("home.flow2Text")}
               />
               <FlowRow
@@ -371,7 +365,7 @@ function PublicHeader({ t }: { t: Translator }) {
               {t("auth.signIn.submit")}
             </Link>
             <Button variant="primary" size="md" href="/signup" className="shrink-0 whitespace-nowrap">
-              {t("home.startTrial")}
+              {t("home.ctaPrimary")}
             </Button>
           </div>
 
@@ -379,7 +373,7 @@ function PublicHeader({ t }: { t: Translator }) {
             menuLabel={t("home.navMenu")}
             closeLabel={t("ui.closeDialog")}
             title={t("home.brandAria")}
-            actionLabel={t("home.startTrial")}
+            actionLabel={t("home.ctaPrimary")}
             items={[
               { href: "#product", label: t("home.productEyebrow") },
               { href: "#how-it-works", label: t("home.navHowItWorks") },
@@ -580,8 +574,6 @@ function AuthenticatedHome({
   planName,
   subscriptionStatus,
   periodEnd,
-  hasActiveSubscription,
-  requiresBillingAttention,
   canBilling,
   canTeam,
 }: {
@@ -590,25 +582,19 @@ function AuthenticatedHome({
   tenantName: string;
   role: string;
   planName: string | null;
-  subscriptionStatus: string | null;
+  subscriptionStatus: ReturnType<typeof customerSubscriptionState>;
   periodEnd: Date | null;
-  hasActiveSubscription: boolean;
-  requiresBillingAttention: boolean;
   canBilling: boolean;
   canTeam: boolean;
 }) {
-  const hasPlan = !!planName && hasActiveSubscription;
-  const statusTone: Tone = requiresBillingAttention
-    ? "warn"
-    : !subscriptionStatus
-      ? "neutral"
-      : subscriptionStatus === "active"
-        ? "ok"
-        : subscriptionStatus === "trialing"
-          ? "brand"
-          : subscriptionStatus === "past_due" || subscriptionStatus === "paused"
-            ? "warn"
-            : "bad";
+  const hasPlan = !!planName && subscriptionStatus === "active";
+  const statusTone: Tone = subscriptionStatus === "active" ? "ok" : subscriptionStatus === "suspended" ? "bad" : "warn";
+  const statusKey = {
+    active: "v4.onboarding.active",
+    awaiting_activation: "v4.onboarding.pending",
+    expired: "v4.onboarding.expired",
+    suspended: "v4.onboarding.suspended",
+  } as const;
 
   return (
     <div className="mx-auto w-full max-w-[1200px] px-6 py-9 sm:px-8">
@@ -618,7 +604,7 @@ function AuthenticatedHome({
             <p className="text-eyebrow">{t("home.authWorkspace")}</p>
             <h1 className="mt-2 text-3xl font-[660] tracking-[-0.03em] text-ink">{tenantName}</h1>
             <p className="mt-1.5 text-base text-ink-2">
-              {t("home.authSignedInAs")} <span className="font-[600] capitalize text-ink">{role.replace(/_/g, " ")}</span>
+              {t("home.authSignedInAs")} <span className="font-[600] text-ink">{roleLabel(role, t)}</span>
             </p>
           </div>
           <div className="flex shrink-0 flex-wrap gap-2">
@@ -627,33 +613,32 @@ function AuthenticatedHome({
             </Button>
             {canBilling && (
               <Button variant="secondary" href="/billing" icon={<CreditCard className="h-4 w-4" />}>
-                {t("nav.billing")}
+                {t("v4.subscription.title")}
               </Button>
             )}
           </div>
         </div>
 
-        <dl className="grid grid-cols-1 divide-y divide-edge-subtle border-t border-edge-subtle sm:grid-cols-3 sm:divide-x sm:divide-y-0">
-          <div className="px-6 py-4">
+        <dl className={`grid grid-cols-1 divide-y divide-edge-subtle border-t border-edge-subtle ${canBilling ? "sm:grid-cols-3 sm:divide-x sm:divide-y-0" : ""}`}>
+          {canBilling && <div className="px-6 py-4">
             <dt className="label-caps">{t("home.planLabel")}</dt>
             <dd className="mt-1.5 text-sm font-[600] text-ink">{hasPlan ? planName : t("billing.noPlanSelected")}</dd>
-          </div>
+          </div>}
           <div className="px-6 py-4">
             <dt className="label-caps">{t("home.subscriptionLabel")}</dt>
             <dd className="mt-1.5">
               <StatusBadge
                 tone={statusTone}
-                label={requiresBillingAttention ? t("billing.paymentAttention")
-                  : subscriptionStatus ? formatStatus(subscriptionStatus, t) : t("billing.notConfigured")}
+                label={t(statusKey[subscriptionStatus])}
               />
             </dd>
           </div>
-          <div className="px-6 py-4">
-            <dt className="label-caps">{t("home.renewalLabel")}</dt>
+          {canBilling && <div className="px-6 py-4">
+            <dt className="label-caps">{t("v4.subscription.end")}</dt>
             <dd className="mt-1.5 text-sm font-[600] text-ink">
-              {periodEnd ? formatDate(periodEnd, locale) : "—"}
+              {formatManualCalendarDate(periodEnd, locale) ?? t("common.notAvailable")}
             </dd>
-          </div>
+          </div>}
         </dl>
       </section>
 
@@ -733,19 +718,4 @@ function QuickLink({
       </span>
     </Link>
   );
-}
-
-function formatStatus(status: string, t: Translator) {
-  const known: Record<string, MessageKey> = {
-    trialing: "billing.trial",
-    active: "billing.active",
-    past_due: "billing.paymentAttention",
-    unpaid: "billing.paymentRequired",
-    paused: "billing.paused",
-    incomplete: "billing.paymentRequired",
-    incomplete_expired: "billing.checkoutExpired",
-    cancelled: "billing.canceled",
-  };
-  if (known[status]) return t(known[status]);
-  return status.replace(/_/g, " ").replace(/\b\w/g, (char) => char.toUpperCase());
 }

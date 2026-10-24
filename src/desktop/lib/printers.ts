@@ -1,3 +1,4 @@
+import { documentTypeLabel } from "../../shared/document-label";
 import { isPrinterOperationallyVerified, validatePrinterOperationalVerification } from "../../lib/printer-operational-verification";
 import type { PrinterInfo } from "./ipc";
 import type { Tone } from "../../shared/job-vocabulary";
@@ -431,7 +432,7 @@ export function friendlyPrinterError(raw: string, locale: Locale = DEFAULT_LOCAL
     return tr(locale, "desktop.printer.operationFailed");
   }
 
-  return raw.length > 140 ? raw.slice(0, 140) + "…" : raw;
+  return tr(locale, "desktop.printer.operationFailed");
 }
 
 /* ---------- Job field accessors (gateway payloads are loosely typed) ---------- */
@@ -441,7 +442,7 @@ export function jobId(j: Record<string, unknown>): string {
 }
 export function jobDocType(j: Record<string, unknown>, locale: Locale = DEFAULT_LOCALE): string {
   const raw = j.documentType ?? j.document_type;
-  return raw ? String(raw) : tr(locale, "desktop.job.document");
+  return documentTypeLabel(raw, locale);
 }
 export function jobPrinterId(j: Record<string, unknown>): string {
   return String(j.printerId ?? "");

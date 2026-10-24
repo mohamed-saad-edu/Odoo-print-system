@@ -51,6 +51,8 @@ export interface DesktopState {
   gatewayConnected: boolean;
   gatewayChecking: boolean;
   checkHealth: () => void;
+  /** True only after a successful native pairing or authenticated inventory reply for this origin. */
+  pairingConfirmed?: boolean;
   pairCode: string;
   setPairCode: (v: string) => void;
   pair: () => void;

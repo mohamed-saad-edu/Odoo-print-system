@@ -26,6 +26,7 @@ function component(file, fetch, session = async () => ({ authenticated: true }),
     },
     useRef(initial) { const slot = refCursor++; if (!refs[slot]) refs[slot] = { current: initial }; return refs[slot]; },
     useEffect(effect) { effects.push(effect); },
+    useSyncExternalStore(_subscribe, getSnapshot) { return getSnapshot(); },
     useCallback(callback) { callbacks.push(callback); return callback; },
     Suspense: "Suspense",
   };
@@ -62,7 +63,7 @@ function component(file, fetch, session = async () => ({ authenticated: true }),
     callback => { timers.add(callback); return callback; },
     callback => timers.delete(callback),
     { addEventListener() {}, removeEventListener() {}, visibilityState: "visible" },
-    { location: { origin: "https://gateway.test", search: options.search ?? "" }, matchMedia: options.matchMedia },
+    { location: { origin: "https://gateway.test", search: options.search ?? "", hash: options.hash ?? "" }, matchMedia: options.matchMedia },
   );
   const harness = { states, effects, callbacks, refs, timers, redirects, tree: null, render() {
     stateCursor = 0; refCursor = 0;
@@ -240,8 +241,12 @@ test("same-frame API-key generation submits one mutation and retains its one-tim
   let mutations = 0;
   const harness = component("src/app/api-keys/page.tsx", async (url, init) => {
     if (init?.method === "POST") { mutations += 1; return response.promise; }
+    if (url === "/api/auth/me") return { ok: true, json: async () => ({ permissions: ["integrations.manage"] }) };
+    if (url === "/api/subscription-requests") return { ok: true, json: async () => ({ status: "active", hasSubscription: true }) };
     return { ok: true, json: async () => [] };
   });
+  const cleanups = harness.effects.map(effect => effect());
+  await flush(); harness.render();
   const submit = find(harness.tree, node => node.type === "form").props.onSubmit;
   submit({ preventDefault() {} });
   submit({ preventDefault() {} });
@@ -249,7 +254,9 @@ test("same-frame API-key generation submits one mutation and retains its one-tim
   assert.equal(mutations, 1);
   response.resolve({ ok: true, json: async () => ({ id: "new-key-id", apiKey: "shown-once-secret" }) });
   await flush();
-  assert.equal(harness.states[3], "shown-once-secret");
+  harness.render();
+  assert.ok(find(harness.tree, node => node.type === "code" && node.props.children === "shown-once-secret"));
+  for (const cleanup of cleanups) cleanup?.();
 });
 
 test("Platform mobile drawer closes when CSS switches to desktop, then removes its breakpoint listener", () => {

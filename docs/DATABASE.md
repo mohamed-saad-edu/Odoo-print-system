@@ -118,3 +118,12 @@ npm run db:docs:check
 ```
 
 This checks current table names against schema declarations, migration creates/drops and this document, plus the counts in `ARCHITECTURE.md`. It does not apply migrations or validate a live database, every column/index definition, tenant authorization, or backup recovery. Use the repository's PostgreSQL integration suites and deployment verification procedure for those separate checks.
+
+
+## Manual subscriptions (V4)
+
+- `subscription_requests`: verified authenticated requester identity snapshots, workspace/plan relationship, one pending request per workspace, request idempotency/digest, reviewer decision/reason/time and resulting subscription revision. Historical requester names remain blank if never recorded; never inferred from an email.
+- `subscription_changes`: append-only business history of every manual subscription mutation and migration, actor, old/new values, reason, request digest and per-workspace idempotency key. Every application write also records an `audit_events` entry in the same transaction.
+- `print_monthly_usage`: transactional credit consumption keyed by workspace and UTC calendar month. Separate from contract start/end and historical `print_usage_periods`. Renewal and plan changes cannot reset it. Receipts and live jobs provide deduplicated logical-job reporting; the cutover month conservatively preserves overlapping legacy consumption.
+
+`tenant_subscriptions` adds `billing_mode=manual`, free/paid type, optional finite monthly quota override, monthly/yearly/custom term, internal reference and revision. New status defaults to awaiting_activation. Runtime requires explicit active status, valid start/end, unblocked entitlement and an active tenant fence. `users.display_name` is nullable for historical accounts. Provider columns remain read-only historical evidence.

@@ -15,11 +15,10 @@ describe("console plan summary and billing permission boundaries", () => {
 
   it("only reads and returns a plan name for a live subscription and billing.read manager", () => {
     expect(status).toContain('includePlanName = new URL(req.url).searchParams.get("includePlanName") === "1"');
-    expect(status).toContain('includePlanName && hasSubscription && hasManagerPermission(manager, "billing.read") && sub');
-    expect(status).toContain('where: eq(plans.id, sub.planId)');
-    expect(status).toContain('...(includePlanName ? { planName: currentPlan?.name ?? null } : {})');
-    expect(status).toContain('"Cache-Control": "no-store"');
-    expect(status).toContain('!sub.entitlementBlocked && isBillingAccessStatus(sub.status)');
+    expect(status).toContain("includePlanName && customerState==='active' && hasManagerPermission(manager,\"billing.read\") && sub");
+    expect(status).toContain('where:eq(plans.id,sub.planId)');
+    expect(status).toContain("'Cache-Control':'no-store'");
+    expect(status).toContain('customerSubscriptionState(sub,tenant?.lifecycle,await databaseNowMs())');
   });
 
   it("keeps the protected usage endpoint denied to managers without billing.read", () => {

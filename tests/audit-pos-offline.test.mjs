@@ -193,9 +193,11 @@ test("billing dialog passes every placeholder through native Odoo interpolation"
     used: 15, limit: 20, retryAfterSeconds: 61, periodEnd: "2026-10-13T12:00:00Z",
   }), true);
   assert.match(dialogs[0].body, /Used: 15/);
-  assert.match(dialogs[0].body, /Plan limit: 20/);
+  assert.match(dialogs[0].body, /Allowance: 20/);
   assert.match(dialogs[0].body, /Try again in about 2 minute\(s\)\./);
-  assert.match(dialogs[0].body, /Billing period ends: /);
+  assert.match(dialogs[0].body, /Monthly allowance resets: /);
+  assert.match(dialogs[0].body, /This request was not accepted/);
+  assert.doesNotMatch(dialogs[0].body, /Nothing was printed|upgrade|checkout/i);
   assert.doesNotMatch(dialogs[0].body, /%s|undefined/);
 });
 
@@ -210,7 +212,7 @@ test("kitchen fallback interpolates both values without replacing error content"
 });
 
 for (const file of ["report_interceptor.js", "pos_sale_details_router.js"]) {
-  test(`${file} preserves literal replacement sequences in an unconfirmed error`, async () => {
+  test(`${file} keeps output unconfirmed while suppressing raw backend error text`, async () => {
     const { hooks } = await loadHooks(file);
     const message = "Printer $& $$ $` $' reports %s";
     const notifications = [];
@@ -234,7 +236,10 @@ for (const file of ["report_interceptor.js", "pos_sale_details_router.js"]) {
       assert.equal(await hooks.onClick.call(button), false);
     }
     assert.equal(notifications.length, 1);
-    assert.ok(notifications[0][0].includes(message), notifications[0][0]);
+    assert.equal(notifications[0][0].includes(message), false, "Raw backend diagnostics must not appear in customer copy");
+    assert.match(notifications[0][0], /unconfirmed/i);
+    assert.match(notifications[0][0], /Check Print Activity and printer before retrying/);
+    assert.doesNotMatch(notifications[0][0], /\$&|\$`|\$'|%s/);
     assert.equal(notifications[0][1].type, "warning");
   });
 }

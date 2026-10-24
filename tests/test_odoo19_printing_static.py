@@ -268,10 +268,16 @@ def test_gateway_config_form_exposes_guarded_connection_and_recovery_actions():
     assert 'confirm="Recover synchronization state' in form
     for action in (
         'name="action_open_pairing_wizard"',
-        'name="action_open_runtime_assignments"',
         'name="action_clear_api_key"',
     ):
         assert action not in form
+    # V4 exposes explicit branch administration only inside Advanced, while
+    # keeping guarded recovery and credential deletion out of the main flow.
+    advanced = form[form.index('<page string="Advanced connection settings"'):]
+    assert 'name="action_open_runtime_assignments"' in advanced
+    assert 'name="action_reset_stale_sync_state"' in advanced
+    assert 'name="action_open_printers"' in form
+    assert 'name="action_open_print_rules"' in form
     assert 'field name="gateway_url"' in form
     assert 'field name="gateway_api_key"' in form
     assert 'field name="enabled" widget="boolean_toggle"' in form

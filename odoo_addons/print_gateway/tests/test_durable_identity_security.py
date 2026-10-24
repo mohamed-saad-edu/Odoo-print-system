@@ -9,10 +9,12 @@ import tempfile
 from unittest.mock import Mock, patch
 
 from odoo.exceptions import AccessError
+from odoo.tests import tagged
 from odoo.tests.common import TransactionCase
 from odoo.addons.print_gateway.idempotency_namespace import deployment_proof
 
 
+@tagged("post_install", "-at_install")
 class TestDurableIdentitySecurity(TransactionCase):
     def setUp(self):
         super().setUp()
@@ -69,6 +71,7 @@ class TestDurableIdentitySecurity(TransactionCase):
         self.assertEqual(job.last_error, "operator recovery")
 
 
+@tagged("post_install", "-at_install")
 class TestStatusInstallationIsolation(TransactionCase):
     """Real ORM/SQL polling with an isolated HTTP response boundary."""
 

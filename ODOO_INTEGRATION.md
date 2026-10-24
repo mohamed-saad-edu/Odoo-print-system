@@ -1,10 +1,22 @@
 # Odoo Integration Guide
 
-> Module: `print_gateway` | Version: 19.0.2.20.0 | Odoo: 19 Community Edition
+> Module: `print_gateway` | Version: 19.0.2.21.0 | Odoo: 19 Community Edition
 
 ## Overview
 
 The Yaseir Print Gateway Odoo addon enables silent, hardware-level printing from Odoo ERP to physical printers through the central Gateway. Odoo owns all business context (what to print, where to print); the Gateway owns runtime infrastructure (agents, printers, job queue).
+
+## V4 operator workflow
+
+The primary Yaseir navigation is **Connection → Printers → Print Rules → Print Activity**. Connection uses three steps: enter the company connection address and the key from Gateway's **Connect Odoo**, choose verified printers and document rules, then enable printing. Checking a connection never proves physical paper output. The Windows computer pairing code is separate from the Odoo connection key.
+
+The Printers screen reads actual assigned computers and approved printer inventory. Its authenticated `/print_gateway/setup-context` endpoint returns only the user's activated company scopes and connection record identifiers; it returns no credentials and creates no assignments. A system administrator must explicitly assign a computer to the exact company or branch. A printer becomes selectable only when its existing verification and availability checks pass. Existing server-side branch authorization remains the authority when a rule is saved.
+
+Advanced connection settings retain guarded synchronization recovery and branch-computer management. Document destinations, branch computers and automation activity remain available under Advanced. Saved historical lifecycle, diagnostic, output and idempotency evidence is retained. Print Activity uses a separate customer presentation: **Waiting**, **Processing**, **Sent to printer**, **Failed before output**, or **Needs review**. Verified file output remains **File created**. Neither accepted submission nor `success` claims that paper physically emerged.
+
+Customer errors are classified into localized next steps without interpolating raw backend exception text. Arabic translations are evaluated in the current reader's language; raw diagnostic evidence remains available to authorized technical workflows. An uncertain output warns the operator to check before retrying.
+
+Gateway subscriptions are activated manually by the platform owner. A monthly job allowance is independent of the subscription's monthly, yearly or custom contractual term. A quota refusal blocks the current admission and asks the operator to review earlier attempts; it never asserts that previous paper output did not occur.
 
 Document test pages use the selected runtime printer's optional `capabilities.paper_width_mm` (58 or 80) to generate a matching 100mm-long source ticket. The Gateway inventory and Odoo picker retain this physical-media field separately from `printableWidthDots`. Windows spooler tests can use the selected driver's validated paper when roll metadata is unavailable: the Agent tries the document form, then fits the complete page proportionally inside that same driver's printable area before submission. A direct IPP POS/kitchen binding (`pos`/`pos_printer`) with exact `deviceClass=thermal` still requires declared integer58/80mm; no Windows driver is available on that direct path. Other source formats remain: ASCII uses Letter with bounded wrapped metadata, Unicode uses the Odoo report/company paperformat. Names and `document_type` do not establish media. Actual report files retain their layout, while their Windows output uses the same complete-page fit. No global paperformat or installed-printer defaults are modified; submission remains informational until paper is observed.
 

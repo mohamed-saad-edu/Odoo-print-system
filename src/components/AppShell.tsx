@@ -9,7 +9,6 @@ import { usePathname, useRouter } from "next/navigation";
 import {
   LayoutDashboard,
   KeyRound,
-  Users,
   CreditCard,
   Settings as SettingsIcon,
   LogOut,
@@ -33,10 +32,8 @@ import type { Translator } from "../i18n/translate";
 import { WorkspaceSecurityNotice } from "./WorkspaceSecurity";
 
 const NAV_ITEMS: TopNavItem[] = [
-  { href: "/dashboard", labelKey: "nav.console", icon: LayoutDashboard, sectionKey: "nav.section.operations", keywords: "console dashboard overview printers jobs" },
-  { href: "/api-keys", labelKey: "nav.odooIntegration", icon: KeyRound, sectionKey: "nav.section.integration", keywords: "odoo integration api keys credentials" },
-  { href: "/team", labelKey: "nav.team", icon: Users, sectionKey: "nav.section.administration", keywords: "team members roles invitations" },
-  { href: "/billing", labelKey: "nav.billing", icon: CreditCard, sectionKey: "nav.section.administration", keywords: "billing plan subscription invoices" },
+  { href: "/dashboard", labelKey: "v4.experience.home", icon: LayoutDashboard, sectionKey: "nav.section.operations", keywords: "console dashboard overview printers jobs" },
+  { href: "/api-keys", labelKey: "v4.experience.connection", icon: KeyRound, sectionKey: "nav.section.integration", keywords: "odoo integration api keys credentials" },
   { href: "/settings", labelKey: "nav.settings", icon: SettingsIcon, sectionKey: "nav.section.administration", keywords: "settings preferences workspace" },
 ];
 
@@ -50,6 +47,7 @@ type WorkspaceInfo = {
 const COLLAPSE_KEY = "yaseir:console-nav";
 
 function isActive(pathname: string, href: string) {
+  if (href === "/settings" && ["/team", "/billing"].some((path) => pathname === path || pathname.startsWith(`${path}/`))) return true;
   return pathname === href || pathname.startsWith(`${href}/`);
 }
 

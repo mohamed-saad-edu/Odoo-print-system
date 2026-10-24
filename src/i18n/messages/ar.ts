@@ -1,3 +1,6 @@
+import { v4AdminAr } from "./v4-admin";
+import { v4OnboardingAr } from "./v4-onboarding";
+import { v4ExperienceAr } from "./v4-experience";
 import type { Catalog } from "./en";
 
 /**
@@ -21,6 +24,9 @@ import type { Catalog } from "./en";
  * Typed as `Catalog`, so a missing or extra key is a compile error.
  */
 export const ar: Catalog = {
+  ...v4AdminAr,
+  ...v4OnboardingAr,
+  ...v4ExperienceAr,
   "printer.verification.fileQueued": "إخراج ملف PDF في قائمة الانتظار",
   "printer.verification.fileCreating": "جارٍ إنشاء ملف PDF",
   "printer.verification.fileFailed": "لم يتم إنشاء ملف PDF",
@@ -1007,15 +1013,15 @@ export const ar: Catalog = {
   "home.heroCheck2": "توجيه الطابعات حسب الفرع",
   "home.heroCheck3": "تنفيذ محلي على Windows مع تتبّع مركزي",
   "home.heroCheck4": "حالة توصيل صادقة لكل مهمة",
-  "home.visualTitle": "Yaseir Gateway",
+  "home.visualTitle": "بوابة Yaseir",
   "home.visualSubtitle": "عمليات الطباعة",
   "home.visualBadge": "قيد التشغيل",
   "home.visualPath": "مسار الطباعة",
-  "home.visualStep1Title": "Odoo",
+  "home.visualStep1Title": "أودو",
   "home.visualStep1Text": "تبقى نية العمل داخل نظام ERP",
-  "home.visualStep2Title": "Gateway",
+  "home.visualStep2Title": "بوابة الطباعة",
   "home.visualStep2Text": "طابور durable وتوجيه حسب الفرع",
-  "home.visualStep3Title": "Windows agent",
+  "home.visualStep3Title": "تطبيق الطباعة على Windows",
   "home.visualStep3Text": "تنفيذ محلي وإبلاغ بالحالة",
   "home.visualStep4Title": "الطابعة",
   "home.visualStep4Text": "الطباعة المحلية",
@@ -1049,7 +1055,7 @@ export const ar: Catalog = {
   "home.flowChain": "نية العمل ← التوصيل في وقت التشغيل ← التنفيذ الفعلي",
   "home.flow1Text": "ينشئ مهمة الطباعة مع سياق العمل والتوجيه.",
   "home.flow2Text": "يرصِف كل مهمة ويوجّهها ويتتبّعها إلى أن تُعرف نتيجة التوصيل.",
-  "home.flow3Title": "Windows agent",
+  "home.flow3Title": "تطبيق الطباعة على Windows",
   "home.flow3Text": "يشغّل المهمة على جهاز Windows المحلي ويُبلغ الـ Gateway بالنتيجة.",
   "home.flow4Text": "يطبع عبر الاتصال المحلي المتاح ويعيد نتيجة التوصيل.",
   "home.reliabilityEyebrow": "الموثوقية",
@@ -1091,7 +1097,7 @@ export const ar: Catalog = {
   "home.quickSettingsTitle": "الإعدادات",
   "home.quickSettingsText": "هوية مساحة العمل ووصول الحساب.",
   "home.quickSettingsMeta": "عام",
-  "home.printChain": "Odoo → Gateway → Windows agent → Printer",
+  "home.printChain": "أودو · بوابة الطباعة · تطبيق Windows · الطابعة",
   "home.navPricing": "الأسعار",
   "home.navSecurity": "الأمان",
   "home.navMenu": "القائمة",
@@ -1734,7 +1740,7 @@ export const ar: Catalog = {
   "auth.shell.body": "يوجّه Yaseir المستندات من Odoo إلى الطابعات المحلية عبر Agent مُدار.",
   "auth.shell.invitation": "دعوة إلى مساحة عمل",
   "auth.shell.platformAdmin": "إدارة المنصة",
-  "auth.shell.gateway": "Yaseir Print Gateway",
+  "auth.shell.gateway": "بوابة الطباعة Yaseir",
   "auth.shell.console": "وصول آمن إلى مساحة العمل",
   "platform.login.eyebrow": "وصول إلى المنصة",
   "platform.login.description": "بيانات مالك المنصة تُدير المستأجرين والخطط والاشتراكات.",
@@ -2339,7 +2345,7 @@ export const ar: Catalog = {
   "platform.plans.field.planIdHint": "معرّف بأحرف صغيرة يُستخدم في حمولات الـ API. لا يمكن تغييره لاحقًا.",
   "platform.plans.field.planIdPlaceholder": "business",
   "platform.plans.field.name": "الاسم",
-  "platform.plans.field.namePlaceholder": "Business",
+  "platform.plans.field.namePlaceholder": "الأعمال",
   "platform.plans.field.priceId": "معرّف سعر Stripe",
   "platform.plans.field.priceIdHint": "مطلوب — تشير عمليات الدفع إلى كائن السعر هذا.",
   "platform.plans.field.productId": "معرّف منتج Stripe",
@@ -2439,7 +2445,7 @@ export const ar: Catalog = {
   "health.check.agents": "الـ Agents",
   "health.check.printers": "الطابعات",
   "health.check.gateway": "الـ Gateway",
-  "health.check.odoo": "Odoo",
+  "health.check.odoo": "أودو",
   "health.check.billing": "الفوترة",
   "health.dbOk": "يمكن الوصول إلى Postgres",
   "health.dbUnreachable": "قاعدة البيانات لا تستجيب. تحقّق من تشغيل PostgreSQL ومن إمكانية وصول الـ Gateway إليها.",
@@ -2585,7 +2591,7 @@ export const ar: Catalog = {
   "platform.audit.actor.user": "مستخدم إداري",
   "platform.audit.actor.system": "النظام",
   "platform.audit.actor.agent": "الـ Agent",
-  "platform.audit.actor.odoo": "Odoo",
+  "platform.audit.actor.odoo": "أودو",
   "platform.audit.actor.desktop": "سطح المكتب",
   "platform.audit.platformScope": "على مستوى المنصة",
   "printer.presentation.ready": "جاهزة",

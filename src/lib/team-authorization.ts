@@ -23,7 +23,7 @@ export class TeamAuthorizationChangedError extends Error {
 export async function requireTeamActorInTransaction(
   tx: DbTx, claims: ManagerClaims, relatedUserIds: string[] = [],
 ): Promise<void> {
-  if (!claims.userId) throw new TeamAuthorizationChangedError();
+  if (!claims.userId || claims.role !== "owner") throw new TeamAuthorizationChangedError();
   // Lifecycle writers take the tenant before principal/session state. Hold
   // the same fence through membership changes and their tenant audit insert.
   try {

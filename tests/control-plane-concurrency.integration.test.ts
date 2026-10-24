@@ -28,6 +28,7 @@ suite("control-plane concurrency invariants", () => {
   beforeAll(async () => { await applyMigrations(); passwordHash = await hashPassword(randomBytes(32).toString("base64url")); });
   beforeEach(async () => {
     await truncateAll();
+    vi.clearAllMocks();
     vi.stubEnv("APP_BASE_URL", "https://billing.test");
     vi.stubEnv("GATEWAY_JWT_SECRET", jwtSecret);
     vi.mocked(stripeRequest).mockImplementation(async (path: string, _form: URLSearchParams, idempotencyKey?: string) => {
@@ -105,7 +106,7 @@ suite("control-plane concurrency invariants", () => {
     ).rejects.toThrow();
   });
 
-  it("allows only one concurrent onboarding trial for a tenant", async () => {
+  it("persists one pending manual subscription during concurrent onboarding without self-activation", async () => {
     const planId = `plan_trial_${nanoid(8)}`;
     await db.insert(plans).values({
       id: planId, name: `Trial ${nanoid(6)}`, stripePriceId: `price_${nanoid(8)}`,
@@ -113,16 +114,16 @@ suite("control-plane concurrency invariants", () => {
     });
     const request = () => onboarding(new Request("http://localhost/api/onboarding", {
       method: "POST", headers: { "content-type": "application/json", cookie: managerCookie },
-      body: JSON.stringify({ workspaceName: "Control Plane Tenant", planId, trial: true }),
+      body: JSON.stringify({ workspaceName: "Control Plane Tenant", planId }),
     }));
     const [a, b] = await Promise.all([request(), request()]);
-    expect([a.status, b.status].sort()).toEqual([200, 409]);
+    expect([a.status, b.status].sort()).toEqual([200, 200]);
     const subscription = await db.query.tenantSubscriptions.findFirst({ where: eq(tenantSubscriptions.tenantId, "tenant_control_plane") });
-    expect(subscription?.status).toBe("trialing");
-    expect(subscription?.trialStartedAt).toBeInstanceOf(Date);
+    expect(subscription?.status).toBe("awaiting_activation");
+    expect(subscription?.trialStartedAt).toBeNull();
   });
 
-  it("serializes concurrent checkout requests and creates one Stripe customer/session per tenant+plan", async () => {
+  it("rejects concurrent retired checkout requests without creating a provider customer or subscription", async () => {
     const planId = `plan_checkout_${nanoid(8)}`;
     await db.insert(plans).values({
       id: planId, name: `Checkout ${nanoid(6)}`, stripePriceId: `price_${nanoid(8)}`,
@@ -133,18 +134,12 @@ suite("control-plane concurrency invariants", () => {
       body: JSON.stringify({ planId }),
     }));
     const [a, b] = await Promise.all([request(), request()]);
-    expect([a.status, b.status].sort()).toEqual([200, 200]);
-    const stripeCalls = vi.mocked(stripeRequest).mock.calls;
-    const customerCalls = stripeCalls.filter(([path]) => path === "customers");
-    const checkoutCalls = stripeCalls.filter(([path]) => path === "checkout/sessions");
-    expect(customerCalls).toHaveLength(2);
-    expect(customerCalls.map((call) => call[2])).toEqual([`tenant-customer-${"tenant_control_plane"}`, `tenant-customer-${"tenant_control_plane"}`]);
-    expect(checkoutCalls).toHaveLength(2);
-    expect(checkoutCalls[0]?.[2]).toMatch(/^checkout-intent-chk_/);
-    expect(checkoutCalls[1]?.[2]).toBe(checkoutCalls[0]?.[2]);
+    expect([a.status, b.status].sort()).toEqual([410, 410]);
+    expect(await a.json()).toMatchObject({ code: "MANUAL_BILLING_REQUIRED" });
+    expect(await b.json()).toMatchObject({ code: "MANUAL_BILLING_REQUIRED" });
+    expect(stripeRequest).not.toHaveBeenCalled();
     const subscription = await db.query.tenantSubscriptions.findFirst({ where: eq(tenantSubscriptions.tenantId, "tenant_control_plane") });
-    expect(subscription?.stripeCustomerId).toBe("cus_control_plane");
-    expect(subscription?.stripeSubscriptionId).toBeNull();
+    expect(subscription).toBeUndefined();
   });
 
   it("allows at most one running discovery session per agent", async () => {

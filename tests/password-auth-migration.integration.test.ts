@@ -100,17 +100,19 @@ describe.skipIf(!hasTestDatabase)("populated V2 to password-only migration", () 
       const expected = (rows as Array<{row:Record<string,unknown>}>).map(({row}) => {
         const kept = {...row}; for (const column of retiredColumns[table] ?? []) delete kept[column];
         if (table === "platform_session_security") kept.password_version = digest(passwordHash);
+        // V4 adds an optional display name; historical identity is not guessed.
+        if (table === "users") kept.display_name = null;
         return {row:kept};
       });
       expect(after[table],`Preserve ${table} records, revocation and timestamps`).toEqual(expected);
     }
     expect(after.ledger).toEqual(expect.arrayContaining(before.ledger as unknown[]));
-    // The full V3 upgrade applies password-only0093 and the additive
-    // operational-verification0094 migration; neither may rewrite V2 hashes.
-    expect((after.ledger as unknown[]).length).toBe((before.ledger as unknown[]).length+2);
+    // The V4 chain includes password-only0093, operational-verification0094
+    // and manual-subscriptions0095; historical migration hashes stay immutable.
+    expect((after.ledger as unknown[]).length).toBe((before.ledger as unknown[]).length+3);
     const priorHashes = new Set((before.ledger as Array<{hash:string}>).map(row=>row.hash));
     const addedHashes = (after.ledger as Array<{hash:string}>).filter(row=>!priorHashes.has(row.hash)).map(row=>row.hash).sort();
-    const expectedHashes = await Promise.all(["0093_password_only_authentication.sql", "0094_printer_operational_verification.sql"]
+    const expectedHashes = await Promise.all(["0093_password_only_authentication.sql", "0094_printer_operational_verification.sql", "0095_manual_subscriptions.sql"]
       .map(async name=>digest(await readFile(join("drizzle",name),"utf8"))));
     expect(addedHashes).toEqual(expectedHashes.sort());
     expect((await target.query("SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_name=ANY($1::text[])",[factorTables])).rows).toEqual([]);
@@ -119,6 +121,6 @@ describe.skipIf(!hasTestDatabase)("populated V2 to password-only migration", () 
     expect(await isPlatformSessionAssured("revoked-family","owner",false,connection)).toBe(false);
     for (const kind of ["customer","manager"] as const) expect(await readWorkspaceSessionState({ familyId:`${kind}-family`,kind,tenantId:"upgrade-tenant",userId:"owner",sid:`${kind}-sid`,role:"owner" },connection)).not.toBeNull();
     const baseline = await snapshot(); await apply(join(process.cwd(),"drizzle")); expect(await snapshot()).toEqual(baseline);
-    expect((await readdir("drizzle")).filter(n=>n.endsWith(".sql"))).toHaveLength(95);
+    expect((await readdir("drizzle")).filter(n=>n.endsWith(".sql"))).toHaveLength(96);
   });
 });

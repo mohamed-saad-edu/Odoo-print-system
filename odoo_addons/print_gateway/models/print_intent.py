@@ -43,8 +43,16 @@ class PrintGatewayIntent(models.Model):
     max_attempts = fields.Integer(string="Max Attempts", default=3, required=True)
     next_retry_at = fields.Datetime(string="Next Retry At", index=True)
     last_error = fields.Text(string="Last Error", readonly=True)
+    customer_issue = fields.Text(string="What to do next", compute="_compute_customer_issue", compute_sudo=False)
     claimed_at = fields.Datetime(string="Claimed At", index=True)
     claim_token = fields.Char(string="Claim Token", copy=False, index=True)
+
+    @api.depends("last_error")
+    @api.depends_context("lang")
+    def _compute_customer_issue(self):
+        from ..customer_presentation import customer_error_message
+        for record in self:
+            record.customer_issue = customer_error_message(record.env._, record.last_error)
 
     _intent_unique = models.Constraint(
         "UNIQUE(intent_key)",

@@ -66,7 +66,8 @@
                         </group>
                     </group>
                     <group string="Issue" invisible="not last_error">
-                        <field name="last_error" readonly="1" nolabel="1" class="o_pg_mono text-danger"/>
+                        <field name="last_error" invisible="1"/>
+                        <field name="customer_issue" readonly="1" nolabel="1"/>
                     </group>
                 </sheet>
             </form>

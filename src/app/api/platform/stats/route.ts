@@ -1,3 +1,4 @@
+import { logicalUsageReport } from "../../../../lib/manual-usage-report";
 import { NextResponse } from "next/server";
 import { requirePlatformOwner, PlatformUnauthorizedError } from "../../../../lib/platform-auth";
 import { db } from "../../../../db";
@@ -233,7 +234,24 @@ export async function GET(req: Request) {
     { total: 0, success: 0, failed: 0, queued: 0, inFlight: 0, expired: 0 },
   );
 
+  const logicalUsage = await logicalUsageReport();
+  const business = await db.execute(sql`WITH states AS (
+    SELECT s.subscription_type,s.current_period_end,
+    CASE WHEN t.lifecycle<>'active' OR s.status='suspended' OR s.entitlement_blocked THEN 'suspended'
+      WHEN s.status='awaiting_activation' OR s.current_period_start>clock_timestamp() THEN 'awaiting_activation'
+      WHEN s.status='active' AND (s.current_period_end IS NULL OR s.current_period_end>clock_timestamp()) THEN 'active'
+      ELSE 'expired' END AS effective_status
+    FROM tenant_subscriptions s JOIN tenants t ON t.id=s.tenant_id
+  ) SELECT
+    (SELECT count(*)::int FROM subscription_requests WHERE status='pending') AS "pendingRequests",
+    count(*) FILTER(WHERE subscription_type='free')::int AS free,
+    count(*) FILTER(WHERE subscription_type='paid')::int AS paid,
+    count(*) FILTER(WHERE effective_status='active' AND current_period_end<=clock_timestamp()+interval '30 days')::int AS "expiringSoon",
+    count(*) FILTER(WHERE effective_status='suspended')::int AS suspended,
+    count(*) FILTER(WHERE effective_status='active')::int AS active FROM states`);
+  const verified = await db.execute(sql`SELECT count(*) FILTER(WHERE verification_state='verified' AND inventory_present=true AND lifecycle='active')::int AS verified FROM printers`);
   const responseBody = {
+    business:business.rows[0], logicalUsage, verifiedPrinters:verified.rows[0]?.verified??0,
     tenants: tenantStats[0] ?? { total: 0, active: 0, suspended: 0, deleted: 0 },
     subscriptions: subscriptionStats[0] ?? { total: 0, active: 0, trialing: 0, pastDue: 0, incomplete: 0, incompleteExpired: 0, unpaid: 0, paused: 0, cancelled: 0, attention: 0 },
     users: userStats[0] ?? { total: 0, verified: 0 },

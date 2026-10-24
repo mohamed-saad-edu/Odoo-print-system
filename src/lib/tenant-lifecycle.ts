@@ -1,3 +1,4 @@
+import { parseDbTimeMs } from "./database-timestamp";
 import { db } from "../db";
 import { tenants } from "../db/schema";
 import { eq, sql } from "drizzle-orm";
@@ -50,7 +51,7 @@ export async function transitionTenantLifecycle(
   tenantId: string,
   next: TenantLifecycleState,
   reason: string,
-  actor: { type: AuditActor; id: string | null; claims?: PlatformOwnerClaims },
+  actor: { type: AuditActor; id: string | null; claims?: PlatformOwnerClaims; idempotencyKey?: string; expectedLifecycle?: TenantLifecycleState; expectedUpdatedAt?: string },
 ): Promise<TransitionTenantLifecycleResult> {
   if (!isTenantLifecycleState(next)) {
     throw new TenantLifecycleError(`Invalid lifecycle state: ${next}`, "INVALID_LIFECYCLE_STATE", 400);
@@ -62,12 +63,12 @@ export async function transitionTenantLifecycle(
   const trimmedReason = reason.trim();
   return db.transaction(async (tx) => {
     const locked = await tx.execute(sql`
-      SELECT id, lifecycle
+      SELECT id, lifecycle, updated_at AS "updatedAt"
       FROM tenants
       WHERE id = ${tenantId}
       FOR UPDATE
     `);
-    const tenant = locked.rows[0] as { id?: string; lifecycle?: unknown } | undefined;
+    const tenant = locked.rows[0] as { id?: string; lifecycle?: unknown; updatedAt?: Date | string } | undefined;
     if (!tenant?.id) {
       throw new TenantLifecycleError("Tenant not found", "TENANT_NOT_FOUND", 404);
     }
@@ -90,6 +91,16 @@ export async function transitionTenantLifecycle(
     }
     if (!isTenantLifecycleState(tenant.lifecycle)) {
       throw new TenantLifecycleError("Tenant has an invalid lifecycle value", "INVALID_STORED_LIFECYCLE", 500);
+    }
+
+    if (actor.idempotencyKey) {
+      const previous=await tx.execute(sql`SELECT action,metadata FROM audit_events WHERE tenant_id=${tenantId} AND actor_type=${actor.type} AND actor_id=${actor.id} AND request_id=${actor.idempotencyKey} AND resource_type='tenant' LIMIT 1`);
+      if (previous.rows.length) {
+        const metadata=previous.rows[0].metadata as {reason?:string;from?:TenantLifecycleState;expectedUpdatedAt?:string};
+        if(previous.rows[0].action!==`tenant.lifecycle.${next}` || metadata.reason!==trimmedReason || metadata.expectedUpdatedAt!==actor.expectedUpdatedAt) throw new TenantLifecycleError('Conflicting operation retry','IDEMPOTENCY_CONFLICT',409);
+        return {changed:false,lifecycle:tenant.lifecycle,previousLifecycle:metadata.from??tenant.lifecycle};
+      }
+      if(actor.expectedLifecycle!==tenant.lifecycle || parseDbTimeMs(actor.expectedUpdatedAt)!==parseDbTimeMs(tenant.updatedAt)) throw new TenantLifecycleError('Workspace changed; refresh before applying','WORKSPACE_REVISION_CONFLICT',409);
     }
 
     const current = tenant.lifecycle;
@@ -152,7 +163,8 @@ export async function transitionTenantLifecycle(
         action: `tenant.lifecycle.${next}`,
         resourceType: "tenant",
         resourceId: tenantId,
-        metadata: { from: current, to: next, reason: trimmedReason },
+        requestId: actor.idempotencyKey,
+        metadata: { from: current, to: next, reason: trimmedReason, ...(actor.idempotencyKey ? {expectedUpdatedAt:actor.expectedUpdatedAt} : {}) },
       },
       tx,
     );

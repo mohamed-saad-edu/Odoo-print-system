@@ -83,9 +83,9 @@ describe.skipIf(!hasTestDatabase)("customer-owned account-wide session inventory
   });
 
   it.each(["customer", "manager"] as const)("rotates surviving %s access and refresh tokens without extending the family", async kind => {
-    await pool().query("UPDATE tenant_users SET role='admin' WHERE user_id='u' AND tenant_id='a'");
-    const current = await issueWorkspaceTestSession({ kind, tenantId: "a", userId: "u", email: "u@example.test", role: "admin" });
-    const other = await issueWorkspaceTestSession({ kind, tenantId: "a", userId: "u", email: "u@example.test", role: "admin" });
+    await pool().query("UPDATE tenant_users SET role='owner' WHERE user_id='u' AND tenant_id='a'");
+    const current = await issueWorkspaceTestSession({ kind, tenantId: "a", userId: "u", email: "u@example.test", role: "owner" });
+    const other = await issueWorkspaceTestSession({ kind, tenantId: "a", userId: "u", email: "u@example.test", role: "owner" });
     // Deliberately make the family older than the presented access token so a
     // fresh 30-day expiry at reauthentication would be a detectable extension.
     await pool().query("UPDATE refresh_tokens SET family_created_at=family_created_at-interval '1 day', expires_at=expires_at-interval '1 day' WHERE family_id=$1", [current.familyId]);
@@ -109,7 +109,7 @@ describe.skipIf(!hasTestDatabase)("customer-owned account-wide session inventory
     expect(body.signedOut).toBe(false);
     expect(JSON.stringify(body)).not.toMatch(/accessToken|refreshToken|credentialVersion|passwordHash/);
     const nextClaims = verifyAccessTokenSignature(nextAccess!, kind)!;
-    expect(nextClaims).toMatchObject({ familyId: current.familyId, kind, tenantId: "a", userId: "u", role: "admin" });
+    expect(nextClaims).toMatchObject({ familyId: current.familyId, kind, tenantId: "a", userId: "u", role: "owner" });
     expect(nextClaims.sid).not.toBe(priorClaims.sid);
     const after = (await pool().query("SELECT family_created_at, expires_at FROM refresh_tokens WHERE id=$1", [nextClaims.sid])).rows[0];
     expect(after).toEqual(before);

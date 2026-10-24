@@ -12,10 +12,12 @@ children, and that they never expose another Company's rows.
 import json
 from unittest.mock import patch
 
+from odoo.tests import tagged
 from odoo.tests.common import TransactionCase
 from odoo.addons.print_gateway.models.gateway_config import PrintGatewayConfig
 
 
+@tagged("post_install", "-at_install")
 class TestPrintGatewayBranchActivityVisibility(TransactionCase):
 
     def setUp(self):

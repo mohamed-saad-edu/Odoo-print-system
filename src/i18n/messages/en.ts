@@ -1,3 +1,6 @@
+import { v4AdminEn } from "./v4-admin";
+import { v4OnboardingEn } from "./v4-onboarding";
+import { v4ExperienceEn } from "./v4-experience";
 /**
  * English message catalog — the source of truth.
  *
@@ -13,6 +16,9 @@
  * Printer, Print job, Workspace and POS are product names, not descriptions.
  */
 export const en = {
+  ...v4AdminEn,
+  ...v4OnboardingEn,
+  ...v4ExperienceEn,
   "printer.verification.fileQueued": "PDF file output queued",
   "printer.verification.fileCreating": "Creating PDF file",
   "printer.verification.fileFailed": "PDF file was not created",

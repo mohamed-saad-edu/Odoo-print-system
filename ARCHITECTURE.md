@@ -187,8 +187,8 @@ second physical attempt.
 
 ### PostgreSQL + Drizzle ORM
 
-**Schema**: 31 tables defined in `src/db/schema.ts`
-**Migrations**: 95 forward-only migrations (`0000`–`0094`) in `drizzle/`
+**Schema**: 34 tables defined in `src/db/schema.ts`
+**Migrations**: 96 forward-only migrations (`0000`–`0095`) in `drizzle/`
 **Driver**: `pg` with connection pool; exact version is pinned in the Node manifests
 
 ### Key Design Patterns

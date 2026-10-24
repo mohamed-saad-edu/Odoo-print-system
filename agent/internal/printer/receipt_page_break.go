@@ -10,8 +10,6 @@ import (
 	"github.com/klippa-app/go-pdfium/requests"
 )
 
-type generatedReceiptJPEGKey struct{}
-
 type receiptRasterSegment struct{ Start, Rows int }
 
 func receiptRowIsBlank(source image.Image, y int) bool {

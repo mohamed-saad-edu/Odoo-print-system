@@ -21,9 +21,9 @@ describe("Odoo 19 view architecture contract — gateway_config_views.xml", () =
 
     // The setup form exposes only persisted operator-facing configuration.
     expect(formSection).toContain('field name="company_id" string="Company"');
-    expect(formSection).toContain('field name="enabled" widget="boolean_toggle" string="Enable Printing Service"');
+    expect(formSection).toContain('field name="enabled" widget="boolean_toggle" string="Enable printing"');
     expect(formSection).toContain('field name="gateway_url"');
-    expect(formSection).toContain('field name="gateway_api_key" password="True"');
+    expect(formSection).toMatch(/field name="gateway_api_key"[^>]*password="True"/);
     expect(formSection).toContain('field name="last_test_status"');
     expect(formSection).toContain('field name="gateway_sync_state" widget="statusbar"');
     expect(formSection).toContain('field name="gateway_sync_message"');
@@ -47,11 +47,15 @@ describe("Odoo 19 view architecture contract — gateway_config_views.xml", () =
     expect(formSection).toContain('confirm="Recover synchronization state');
     for (const action of [
       'name="action_open_pairing_wizard"',
-      'name="action_open_runtime_assignments"',
       'name="action_clear_api_key"',
     ]) {
       expect(formSection).not.toContain(action);
     }
+    const advanced = formSection.slice(formSection.indexOf('<page string="Advanced connection settings"'));
+    expect(advanced).toContain('name="action_open_runtime_assignments"');
+    expect(advanced).toContain('name="action_reset_stale_sync_state"');
+    expect(formSection).toContain('name="action_open_printers"');
+    expect(formSection).toContain('name="action_open_print_rules"');
   });
 
   it("keeps the Odoo 19 configuration state readable through connection status", () => {

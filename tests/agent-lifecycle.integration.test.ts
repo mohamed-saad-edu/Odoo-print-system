@@ -1,4 +1,4 @@
-import { beforeAll, afterAll, describe, expect, it } from "vitest";
+import { beforeAll, afterAll, describe, expect, it, vi } from "vitest";
 import { db } from "../src/db";
 import { agents, auditEvents, printers, tenants } from "../src/db/schema";
 import { and, eq } from "drizzle-orm";
@@ -8,6 +8,7 @@ import { transitionAgentLifecycle, LifecycleConflict, type AgentLifecycleResult 
 import { verifyWorkspaceToken, type ManagerClaims } from "../src/lib/manager-auth";
 import { createWorkspaceManagerTestSession } from "./helpers/workspace-session";
 import { nanoid } from "../src/lib/nanoid";
+import { gatewayTestSigningKey } from "./helpers/test-secrets";
 
 const suite = describe.skipIf(!hasTestDatabase);
 
@@ -21,8 +22,11 @@ async function createLifecycleManager(tenantId: string): Promise<ManagerClaims> 
 }
 
 suite("Agent Lifecycle", () => {
-  beforeAll(async () => { await applyMigrations(); });
-  afterAll(async () => { await closePool(); });
+  beforeAll(async () => {
+    vi.stubEnv("GATEWAY_JWT_SECRET", gatewayTestSigningKey());
+    await applyMigrations();
+  });
+  afterAll(async () => { await closePool(); vi.unstubAllEnvs(); });
 
   it("returns the persisted pairing expiry when reenabling and no credentials on an unchanged transition", async () => {
     const fixture = await seedFixture();

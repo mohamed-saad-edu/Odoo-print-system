@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { apiMessageKey } from "../../lib/api-error-keys";
 import { fetchWithTimeout } from "../../lib/fetch-timeout";
 import { SessionInventory } from "../../components/SessionInventory";
@@ -35,7 +35,17 @@ type SettingsPayload = {
   role?: string;
 };
 
+function securityDestinationSnapshot() {
+  return new URLSearchParams(window.location.search).get("reauth") === "1" || window.location.hash === "#workspace-security";
+}
+function subscribeSecurityDestination(onChange: () => void) {
+  window.addEventListener("hashchange", onChange);
+  window.addEventListener("popstate", onChange);
+  return () => { window.removeEventListener("hashchange", onChange); window.removeEventListener("popstate", onChange); };
+}
+
 export default function SettingsPage() {
+  const securityRequested = useSyncExternalStore(subscribeSecurityDestination, securityDestinationSnapshot, () => false);
   const nameEdited = useRef(false);
   const [name, setName] = useState("");
   const { t, formatDate } = useI18n();
@@ -96,13 +106,20 @@ export default function SettingsPage() {
         icon={<SettingsIcon className="h-4 w-4" />}
         title={t("nav.settings")}
         width="narrow"
-        description={t("settings.pageDescription")}
+        description={t("v4.experience.settings.body")}
       />
 
       <PageContainer width="narrow">
         <div className="space-y-5">
-          <WorkspaceSecurity />
-          <SessionInventory />
+          <nav aria-label={t("nav.section.workspace")} className="flex flex-wrap gap-3">
+            <Button href="/billing" variant="secondary">{t("v4.experience.subscription")}</Button>
+            <Button href="/team" variant="secondary">{t("v4.experience.team")}</Button>
+            <Button href="/api-keys" variant="secondary">{t("v4.experience.connection")}</Button>
+          </nav>
+          <details open={securityRequested} className="rounded-xl border border-edge bg-surface p-5">
+            <summary className="cursor-pointer text-base font-semibold text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/35">{t("v4.experience.settings.security")}</summary>
+            <div className="mt-5 space-y-5"><WorkspaceSecurity /><SessionInventory /></div>
+          </details>
         {loading ? (
           <div className="space-y-5" role="status" aria-label={t("settings.loadingAria")}>
             <Skeleton className="h-[240px] rounded-lg" />

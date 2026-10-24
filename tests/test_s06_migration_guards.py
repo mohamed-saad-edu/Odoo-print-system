@@ -42,7 +42,7 @@ def test_forward_migration_registered_in_immutable_drizzle_journal():
     assert tags[92] == "0092_workspace_mfa"
     assert len(tags) == len(list((ROOT / "drizzle").glob("*.sql")))
     assert tags == [p.stem for p in sorted((ROOT / "drizzle").glob("*.sql"))]
-    assert len(tags) == 95
+    assert len(tags) == 96
     assert tags[93] == "0093_password_only_authentication"
     assert tags[94] == "0094_printer_operational_verification"
 
@@ -78,3 +78,9 @@ def test_auto_enrollment_requires_explicit_legacy_cutover_and_api_keys_can_be_sh
     assert "DROP TABLE IF EXISTS" in retirement
     assert "SET DEFAULT 'strict_v2'" in retirement
     assert 'odoo_installation_credentials_tenant_api_key_idx' in schema
+
+
+def test_manual_subscription_migration_registered():
+    import json
+    journal=json.loads((ROOT/"drizzle/meta/_journal.json").read_text())["entries"]
+    assert journal[95]["tag"]=="0095_manual_subscriptions"

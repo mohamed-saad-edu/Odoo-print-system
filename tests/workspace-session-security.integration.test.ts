@@ -72,7 +72,7 @@ describe.skipIf(!hasTestDatabase)("workspace persisted activity and fresh-passwo
     await truncateAll();
     await pool().query("INSERT INTO tenants(id,name) VALUES ('a','A'),('b','B')");
     await pool().query("INSERT INTO users(id,email,password_hash,email_verified_at) VALUES ('u','u@example.test',$1,clock_timestamp())", [passwordHash]);
-    await pool().query("INSERT INTO tenant_users(user_id,tenant_id,role) VALUES ('u','a','admin'),('u','b','admin')");
+    await pool().query("INSERT INTO tenant_users(user_id,tenant_id,role) VALUES ('u','a','owner'),('u','b','owner')");
   });
   afterAll(closePool);
   afterEach(() => vi.unstubAllEnvs());

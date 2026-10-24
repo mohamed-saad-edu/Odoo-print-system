@@ -27,9 +27,9 @@ Internet → Caddy (TLS + reverse proxy) → Gateway (Node.js) → PostgreSQL 16
 | `DATABASE_URL` | PostgreSQL connection string |
 | `GATEWAY_JWT_SECRET` | ≥ 32 chars, random, for manager/customer session signing |
 | `TRUST_PROXY_SECRET` | ≥ 32 chars, shared with reverse proxy; required when `TRUST_PROXY=1` |
-| `APP_BASE_URL` | Public-facing HTTPS origin used by email/billing callbacks |
+| `APP_BASE_URL` | Public-facing HTTPS origin used by authentication links and application navigation |
 
-### Email and Billing Providers (Optional)
+### Manual activation and email configuration
 
 These variables are forwarded by `docker-compose.yml` as empty strings when unset, so missing optional providers do not prevent the core Gateway from starting.
 
@@ -37,11 +37,11 @@ These variables are forwarded by `docker-compose.yml` as empty strings when unse
 |----------|-------------|
 | `RESEND_API_KEY` | Resend API key; leave unset to disable provider-backed email |
 | `EMAIL_FROM` | Sender address used when email delivery is configured |
-| `STRIPE_SECRET_KEY` | Stripe API secret key |
-| `STRIPE_WEBHOOK_SECRET` | Stripe webhook signing secret |
-| `STRIPE_PUBLISHABLE_KEY` | Stripe publishable key |
-| `STRIPE_API_VERSION` | Optional pinned Stripe API version |
-| `STRIPE_PLAN_CATALOG` | Optional plan catalog configuration |
+| `YASEIR_PLAN_CATALOG` | Optional bootstrap JSON array of `{id,name,description,monthlyQuota}`; preserves existing plans |
+| `YASEIR_ACTIVATION_WHATSAPP` | Official activation contact in E.164 digits; the link contains only a persisted opaque request reference |
+| `YASEIR_AGENT_DOWNLOAD_URL` | HTTPS URL of the verified official Windows installer; configure only after signing and acceptance |
+
+V4 uses manual platform-owner activation. Payment-provider credentials are not required or forwarded. Retired checkout, portal, webhook, cancel and resume routes return HTTP 410 without changing subscriptions or processing money. Historical provider identifiers and billing events remain available as retained evidence. External financial settlement and any legacy recurring provider charges must be reconciled by the business operator; a local V4 migration does not contact or cancel an external account.
 
 ### Platform Operations
 
@@ -108,7 +108,7 @@ TLS verification and redirect refusal remain enabled. The Agent **never** sends 
 docker-compose up -d
 ```
 
-The `docker-compose.yml` includes Gateway, PostgreSQL, and Caddy services. Compose requires `APP_BASE_URL` and forwards the optional email/billing variables listed above; production secrets remain supplied through Compose secrets (`POSTGRES_PASSWORD`, `GATEWAY_JWT_SECRET`, `MANAGER_PASSWORD_HASH`, and `TRUST_PROXY_SECRET`).
+The `docker-compose.yml` includes Gateway, PostgreSQL, and Caddy services. Compose requires `APP_BASE_URL` and forwards the email and manual-activation settings listed above; production secrets remain supplied through Compose secrets (`POSTGRES_PASSWORD`, `GATEWAY_JWT_SECRET`, `MANAGER_PASSWORD_HASH`, and `TRUST_PROXY_SECRET`).
 
 ## Health Checks
 
@@ -135,7 +135,8 @@ This proves that HTTPS is publicly trusted and the WebSocket route is reachable 
 - [ ] `TRUST_PROXY_SECRET` is random, ≥ 32 chars, not a placeholder
 - [ ] `DATABASE_URL` uses SSL in production (`?sslmode=require`)
 - [ ] Caddy/proxy terminates TLS with a publicly trusted certificate; `node scripts/check-public-gateway.mjs https://print.example.com` passes from outside the VPS
-- [ ] Stripe webhook secret is configured for billing
+- [ ] Manual plans, official activation contact and a verified Windows download URL are configured
+- [ ] Any historical external recurring charges have been reconciled by the business operator
 - [ ] `NODE_ENV=production` is set
 - [ ] `PLATFORM_TENANT_ID` is set to the immutable platform workspace ID
 - [ ] `TRUST_PROXY=1` is enabled for the bundled reverse-proxy deployment

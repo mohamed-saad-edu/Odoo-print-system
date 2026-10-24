@@ -164,7 +164,7 @@ def extract_occurrences(addon: Path = ADDON) -> dict[str, set[str]]:
                 if name == "arch" and model == "ir.ui.view":
                     for child in field:
                         xml_terms(child, f"model_terms:ir.ui.view,arch_db:{xmlid}")
-                elif name in {"name", "help"} and model in {"ir.actions.act_window", "ir.actions.report", "ir.ui.menu", "res.groups", "ir.module.category"}:
+                elif name in {"name", "help"} and model in {"ir.actions.act_window", "ir.actions.client", "ir.actions.report", "ir.ui.menu", "res.groups", "ir.module.category"}:
                     add((field.text or "").strip(), f"model:{model},{name}:{xmlid}")
         for template in tree.iter("template"):
             xmlid = template.attrib.get("id", "")

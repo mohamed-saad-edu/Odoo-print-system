@@ -7,6 +7,7 @@ from unittest.mock import patch
 # previously degraded the whole file into silent skips with a green exit.
 from odoo.exceptions import AccessError, ValidationError
 from werkzeug.exceptions import Forbidden
+from odoo.tests import tagged
 from odoo.tests.common import TransactionCase
 from .printer_fixtures import verified_printer
 
@@ -21,6 +22,7 @@ class Response:
         return self.body
 
 
+@tagged("post_install", "-at_install")
 class TestBranchRuntimeBinding(TransactionCase):
     def setUp(self):
         super().setUp()
@@ -78,6 +80,42 @@ class TestBranchRuntimeBinding(TransactionCase):
         return self.env["print_gateway.binding"].with_user(user).with_context(
             allowed_company_ids=[self.branch.id],
         ).env
+
+    def test_v4_setup_context_contains_only_activated_scope_and_safe_metadata(self):
+        from odoo.addons.print_gateway.controllers.runtime_printers import PrintGatewayRuntimePrinterController
+        controller = PrintGatewayRuntimePrinterController()
+        branch_env = self._branch_admin_env()
+        with patch("odoo.addons.print_gateway.controllers.runtime_printers.request",
+                   type("RequestStub", (), {"env": branch_env})()):
+            result = controller.setup_context()
+        self.assertEqual(result["currentCompanyId"], self.branch.id)
+        self.assertEqual(len(result["scopes"]), 1)
+        scope = result["scopes"][0]
+        self.assertEqual(scope["id"], self.branch.id)
+        self.assertEqual(scope["companyId"], self.company.id)
+        self.assertEqual(scope["branchId"], self.branch.id)
+        self.assertEqual(set(scope), {"id", "name", "companyId", "branchId", "configId"})
+        self.assertNotEqual(scope["id"], self.other_branch.id)
+
+    def test_v4_setup_context_rejects_non_admin_before_reading_configuration(self):
+        from odoo.addons.print_gateway.controllers.runtime_printers import PrintGatewayRuntimePrinterController
+        controller = PrintGatewayRuntimePrinterController()
+        user = self.env["res.users"].create({
+            "name": "Ordinary printing user",
+            "login": "v4_ordinary_print_user_%s" % self.branch.id,
+            "company_id": self.branch.id,
+            "company_ids": [(6, 0, [self.branch.id])],
+            "group_ids": [(6, 0, [self.env.ref("base.group_user").id])],
+        })
+        ordinary_env = self.env["print_gateway.binding"].with_user(user).with_context(
+            allowed_company_ids=[self.branch.id],
+        ).env
+        with patch("odoo.addons.print_gateway.controllers.runtime_printers.request",
+                   type("RequestStub", (), {"env": ordinary_env})()), \
+             patch.object(controller, "_get_config") as config_read:
+            with self.assertRaises(Forbidden):
+                controller.setup_context()
+            config_read.assert_not_called()
 
     def test_branch_admin_creates_rule_with_branch_defaults_without_parent_access(self):
         values = self._values()
@@ -212,24 +250,26 @@ class TestBranchRuntimeBinding(TransactionCase):
             )
 
     def test_non_root_company_is_rejected(self):
-        record = self.env["print_gateway.binding"].new({
-            "company_id": self.branch.id,
-            "branch_id": False,
-            "runtime_agent_id": "agent-a",
-            "printer_id": "printer-a",
-        })
         with self.assertRaises(ValidationError):
+            # Odoo's assertRaises enters a flushing savepoint. Construct the
+            # virtual onchange record after that flush so its cache survives.
+            record = self.env["print_gateway.binding"].new({
+                "company_id": self.branch.id,
+                "branch_id": False,
+                "runtime_agent_id": "agent-a",
+                "printer_id": "printer-a",
+            })
             record._check_company_hierarchy()
 
     def test_branch_from_another_company_is_rejected(self):
-        record = self.env["print_gateway.binding"].new({"company_id": self.company.id, "branch_id": self.other_branch.id, "runtime_agent_id": "agent-a", "printer_id": "printer-a"})
         with self.assertRaises(ValidationError):
+            record = self.env["print_gateway.binding"].new({"company_id": self.company.id, "branch_id": self.other_branch.id, "runtime_agent_id": "agent-a", "printer_id": "printer-a"})
             record._check_company_hierarchy()
 
     def test_unauthorized_company_is_rejected(self):
         restricted = self.env(context=dict(self.env.context, allowed_company_ids=[self.company.id]))
-        record = restricted["print_gateway.binding"].new({"company_id": self.other_company.id, "branch_id": self.other_branch.id, "runtime_agent_id": "agent-b", "printer_id": "printer-b"})
         with self.assertRaises(ValidationError):
+            record = restricted["print_gateway.binding"].new({"company_id": self.other_company.id, "branch_id": self.other_branch.id, "runtime_agent_id": "agent-b", "printer_id": "printer-b"})
             record._check_runtime_scope()
 
     def test_retired_agent_is_rejected_on_hardware_verification(self):
@@ -329,10 +369,15 @@ class TestBranchRuntimeBinding(TransactionCase):
             self.assertEqual(res.get("params", {}).get("type"), "success")
 
     def test_printer_from_another_agent_is_rejected(self):
-        record = self.env["print_gateway.binding"].new({"company_id": self.company.id, "branch_id": self.branch.id, "runtime_agent_id": "agent-a", "printer_id": "printer-b"})
+        self.env["print_gateway.runtime_agent_assignment"].create({
+            "company_id": self.company.id, "branch_id": self.branch.id,
+            "runtime_agent_id": "agent-a", "enabled": True,
+        })
         with patch("odoo.addons.print_gateway.models.binding.requests.get", side_effect=self._gets()), patch("odoo.addons.print_gateway.models.gateway_config.PrintGatewayConfig._validate_gateway_host", return_value=None):
-            with self.assertRaises(ValidationError):
+            with self.assertRaises(ValidationError) as rejected:
+                record = self.env["print_gateway.binding"].new({"company_id": self.company.id, "branch_id": self.branch.id, "runtime_agent_id": "agent-a", "printer_id": "printer-b"})
                 record._validate_runtime_target()
+            self.assertIn("does not belong", str(rejected.exception))
 
     def test_parent_company_destination_is_rejected_for_branch(self):
         picking_type = self.env["stock.picking.type"].search([("company_id", "=", self.company.id)], limit=1)

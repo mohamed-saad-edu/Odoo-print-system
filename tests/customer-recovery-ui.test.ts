@@ -4,12 +4,12 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import InvitePage from "../src/app/invite/page";
 import OnboardingPage from "../src/app/onboarding/page";
-import { BillingActions } from "../src/components/BillingActions";
 import { I18nProvider } from "../src/i18n/react";
 import { fetchWithTimeout } from "../src/lib/fetch-timeout";
 
 const navigation = vi.hoisted(() => ({ replace: vi.fn(), refresh: vi.fn(), push: vi.fn() }));
 vi.mock("../src/lib/fetch-timeout", () => ({ fetchWithTimeout: vi.fn() }));
+vi.mock("../src/lib/session-config", () => ({ ensureCustomerSession: vi.fn(async () => ({ authenticated: true, expiresAt: Date.now() + 3600000 })) }));
 vi.mock("../src/components/AuthShell", () => ({ AuthShell: ({ children }: { children: ReactNode }) => h("main", null, children) }));
 vi.mock("next/navigation", () => ({ useRouter: () => navigation, useSearchParams: () => new URLSearchParams("token=synthetic-invitation") }));
 vi.mock("next/link", () => ({ default: ({ children, ...props }: Record<string, unknown>) => h("a", props, children as ReactNode) }));
@@ -19,8 +19,8 @@ let host: HTMLDivElement;
 const fetchMock = vi.mocked(fetchWithTimeout);
 const response = (status: number, value: unknown) => ({ status, ok: status >= 200 && status < 300, json: async () => value }) as Response;
 const plans = [
-  { id: "plan-one", name: "Starter", currency: "USD", interval: "month", entitlements: { max_agents: 1 } },
-  { id: "plan-two", name: "Team", currency: "USD", interval: "year", entitlements: { max_agents: 3 } },
+  { id: "plan-one", name: "Starter", currency: "USD", interval: "month", entitlements: { max_prints_per_period: 100 } },
+  { id: "plan-two", name: "Team", currency: "USD", interval: "year", entitlements: { max_prints_per_period: 1000 } },
 ];
 
 beforeEach(() => {
@@ -70,81 +70,105 @@ describe("customer recovery feedback", () => {
     expect(navigation.replace).not.toHaveBeenCalled();
   });
 
-  it.each(["en", "ar"] as const)("keeps cancellation failure and retry inside the active billing dialog (%s)", async (locale) => {
-    vi.spyOn(console, "warn").mockImplementation(() => {});
-    fetchMock.mockResolvedValueOnce(response(503, { error: "synthetic-provider-diagnostic" }));
-    await render(h(BillingActions, { hasSubscription: true, cancelAtPeriodEnd: false, subscriptionStatus: "active", canOpenPortal: true }), locale);
-    const action = locale === "en" ? "Cancel at period end" : "إلغاء بنهاية الدورة";
-    await act(async () => button(action).click());
-    let dialog = document.querySelector('[role="dialog"]')!;
-    await act(async () => button(action, dialog).click());
-    dialog = document.querySelector('[role="dialog"]')!;
-    expect(dialog).not.toBeNull();
-    expect(dialog.querySelector('[role="alert"]')?.textContent).toContain(locale === "en" ? "Billing request failed" : "تعذّر تنفيذ طلب الفوترة");
-    expect(dialog.querySelectorAll('[role="alert"]')).toHaveLength(1);
-    expect(dialog.textContent).not.toContain("synthetic-provider-diagnostic");
-    expect(navigation.refresh).not.toHaveBeenCalled();
-    fetchMock.mockResolvedValueOnce(response(200, { ok: true }));
-    await act(async () => button(action, dialog).click());
-    expect(document.querySelector('[role="dialog"]')).toBeNull();
-    expect(navigation.refresh).toHaveBeenCalledTimes(1);
-    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual(["/api/billing/cancel", "/api/billing/cancel"]);
-  });
-});
+ });
 
-describe("onboarding recovery", () => {
-  function onboardingFixture(status: string | null) {
-    const state = { status };
+describe("manual onboarding recovery", () => {
+  function onboardingFixture(status: "awaiting_activation" | "active" | "expired" | "suspended", pending = false) {
+    const state = { status, pending };
     fetchMock.mockImplementation(async (url, init) => {
-      if (url === "/api/billing/plans") return response(200, { plans });
       if (url === "/api/onboarding" && init?.method !== "POST") return response(200, {
-        tenant: { name: "Synthetic café" }, subscription: state.status ? { planId: "plan-one", status: state.status } : null,
+        tenant: { id: "tenant-ui", name: "Synthetic café" }, role: "owner", plans, subscription: { planId: "plan-one" },
+      });
+      if (url === "/api/subscription-requests" && init?.method !== "POST") return response(200, {
+        status: state.status, requests: state.pending ? [{ id: "req_one", reference: "req_one", status: "pending", createdAt: "2026-01-01T10:00:00Z", planId: "plan-one", term: "monthly" }] : [],
       });
       return response(200, { ok: true });
     });
     return state;
   }
 
-  it.each(["trialing", "active", "past_due"])("offers continuation instead of another trial for a %s workspace", async (status) => {
-    onboardingFixture(status);
-    await render(h(OnboardingPage));
-    expect(host.textContent).toContain("Workspace already set up");
-    expect([...host.querySelectorAll("button")].some((node) => node.textContent === "Start free trial")).toBe(false);
+  it.each(["en", "ar"] as const)("shows the activated checklist without starting another subscription (%s)", async locale => {
+    onboardingFixture("active");
+    await render(h(OnboardingPage), locale);
+    expect(host.textContent).toContain(locale === "en" ? "Your workspace is ready" : "مساحة عملك جاهزة");
     expect(host.querySelector('a[href="/dashboard"]')).not.toBeNull();
-    expect(host.querySelector('a[href="/billing"]')).not.toBeNull();
+    expect(host.querySelector('a[href="/api-keys"]')).not.toBeNull();
+    expect(host.querySelector('form')).toBeNull();
     expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(0);
   });
 
-  it("reconciles an accepted trial with a lost response into a usable continuation state", async () => {
-    const state = onboardingFixture(null);
+  it("keeps a recorded request pending until the authoritative status changes", async () => {
+    const state = onboardingFixture("awaiting_activation", true);
+    await render(h(OnboardingPage));
+    expect(host.textContent).toContain("Your activation request is recorded");
+    expect(host.textContent).toContain("req_one");
+    expect(host.querySelector('form')).toBeNull();
+    expect(host.querySelector('a[href="/dashboard"]')).toBeNull();
+    state.status = "active";
+    await act(async () => button("Check activation status").click());
+    expect(host.textContent).toContain("Your workspace is ready");
+    expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(0);
+  });
+
+  it("reconciles a recorded request with a lost response through an explicit status refresh", async () => {
+    const state = onboardingFixture("awaiting_activation");
     const normalFetch = fetchMock.getMockImplementation()!;
     fetchMock.mockImplementation(async (...args) => {
-      if (args[0] === "/api/onboarding" && args[1]?.method === "POST") {
-        state.status = "trialing";
-        return response(409, { code: "TRIAL_NOT_AVAILABLE" });
+      if (args[0] === "/api/subscription-requests" && args[1]?.method === "POST") {
+        state.pending = true;
+        throw new Error("synthetic transport failure with private diagnostic");
       }
       return normalFetch(...args);
     });
     await render(h(OnboardingPage));
-    await act(async () => button("Start free trial").click());
-    expect(host.querySelector('a[href="/dashboard"]')).not.toBeNull();
-    expect(host.textContent).toContain("Workspace already set up");
-    expect(host.textContent).not.toContain("Setup failed");
-    expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(1);
+    await act(async () => button("Request activation").click());
+    expect(host.textContent).toContain("We could not confirm your activation request");
+    expect(host.textContent).not.toContain("private diagnostic");
+    expect(navigation.replace).not.toHaveBeenCalled();
+    await act(async () => button("Try again").click());
+    expect(host.textContent).toContain("Your activation request is recorded");
+    expect(host.querySelector('a[href="/dashboard"]')).toBeNull();
+    expect(fetchMock.mock.calls.filter(([url, init]) => url === "/api/subscription-requests" && init?.method === "POST")).toHaveLength(1);
   });
 
-  it("uses native radio selection and preserves a fresh trial's selected immutable plan", async () => {
-    onboardingFixture(null);
+  it("uses native plan and term radios and submits no trial or checkout fields", async () => {
+    const state = onboardingFixture("awaiting_activation");
+    const normalFetch = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(async (...args) => {
+      if (args[0] === "/api/subscription-requests" && args[1]?.method === "POST") state.pending = true;
+      return normalFetch(...args);
+    });
     await render(h(OnboardingPage));
-    const radios = host.querySelectorAll<HTMLInputElement>('input[type="radio"][name="onboarding-plan"]');
+    const radios = host.querySelectorAll<HTMLInputElement>('input[type="radio"][name="plan"]');
     expect(radios).toHaveLength(2);
     expect(radios[0].checked).toBe(true);
     await act(async () => radios[1].click());
     expect(radios[1].checked).toBe(true);
     expect(radios[0].checked).toBe(false);
-    await act(async () => button("Start free trial").click());
-    const [, init] = fetchMock.mock.calls.find(([url, request]) => url === "/api/onboarding" && request?.method === "POST")!;
-    expect(JSON.parse(String(init?.body))).toEqual({ workspaceName: "Synthetic café", planId: "plan-two", trial: true });
-    expect(navigation.replace).toHaveBeenCalledWith("/dashboard");
+    await act(async () => host.querySelectorAll<HTMLInputElement>('input[name="term"]')[1].click());
+    await act(async () => button("Request activation").click());
+    const setup = fetchMock.mock.calls.find(([url, init]) => url === "/api/onboarding" && init?.method === "POST")!;
+    expect(JSON.parse(String(setup[1]?.body))).toEqual({ workspaceName: "Synthetic café", planId: "plan-two" });
+    const request = fetchMock.mock.calls.find(([url, init]) => url === "/api/subscription-requests" && init?.method === "POST")!;
+    expect(JSON.parse(String(request[1]?.body))).toEqual({ planId: "plan-two", term: "yearly" });
+    expect(new Headers(request[1]?.headers).get("Idempotency-Key")).toMatch(/^[a-f0-9-]{36}$/);
+    expect(navigation.replace).not.toHaveBeenCalled();
+    expect(fetchMock.mock.calls.some(([url]) => String(url).startsWith("/api/billing/checkout"))).toBe(false);
+  });
+
+  it("reuses the request identity after an ambiguous submission retry", async () => {
+    onboardingFixture("awaiting_activation");
+    const normalFetch = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(async (...args) => {
+      if (args[0] === "/api/subscription-requests" && args[1]?.method === "POST") return response(503, { code: "TEMPORARILY_UNAVAILABLE" });
+      return normalFetch(...args);
+    });
+    await render(h(OnboardingPage));
+    await act(async () => button("Request activation").click());
+    await act(async () => button("Request activation").click());
+    const requests = fetchMock.mock.calls.filter(([url, init]) => url === "/api/subscription-requests" && init?.method === "POST");
+    expect(requests).toHaveLength(2);
+    expect(new Headers(requests[0][1]?.headers).get("Idempotency-Key")).toBe(new Headers(requests[1][1]?.headers).get("Idempotency-Key"));
+    expect(host.querySelector('a[href="/dashboard"]')).toBeNull();
   });
 });

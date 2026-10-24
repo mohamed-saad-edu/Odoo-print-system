@@ -19,13 +19,15 @@ const GENERIC = { ok: true, message: "If the account can be created, a verificat
 export async function POST(req: Request) {
   const t = makeT(await getServerLocale());
   if (hasBodyOverLimit(req, 64 * 1024)) return NextResponse.json({ error: "Request body too large" }, { status: 413 });
-  let body: { email?: unknown; password?: unknown; planId?: unknown; inviteToken?: unknown };
+  let body: { email?: unknown; password?: unknown; planId?: unknown; inviteToken?: unknown; displayName?: unknown };
   try { const parsedBody = await req.json(); if (!parsedBody || typeof parsedBody !== "object" || Array.isArray(parsedBody)) throw new Error("JSON object required"); body = parsedBody; } catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); }
   const email = typeof body.email === "string" ? normalizeEmail(body.email) : "";
   const password = typeof body.password === "string" ? body.password : "";
   const planId = typeof body.planId === "string" && body.planId.length <= 128 ? body.planId : "";
   const inviteToken = typeof body.inviteToken === "string" && body.inviteToken.length <= 256 ? body.inviteToken : "";
   if (!validEmail(email) || !isValidNewPasswordLength(password)) return NextResponse.json({ error: "Enter a valid email and a password of at least 12 characters." }, { status: 400 });
+  const displayName = typeof body.displayName === "string" ? body.displayName.trim() : "";
+  if (displayName.length > 120 || /[\u0000-\u001f\u007f]/.test(displayName)) return NextResponse.json({ error: "Invalid name", code: "INVALID_INPUT" }, { status: 400 });
   const ip = clientIpFrom(req);
   let rate: Awaited<ReturnType<typeof reserveAuthAttempt>>;
   try {
@@ -60,7 +62,7 @@ export async function POST(req: Request) {
   const rawToken = generateOpaqueToken();
   try {
     await db.transaction(async (tx) => {
-      await tx.insert(users).values({ id: userId, email, passwordHash });
+      await tx.insert(users).values({ id: userId, email, passwordHash, displayName: displayName || null });
       await tx.insert(emailVerificationTokens).values({ id: `evt_${nanoid(18)}`, userId, tokenHash: await hashToken(rawToken), invitationId: invitation?.id ?? null, ...emailAuthTokenTimes() });
     });
   } catch (error) {

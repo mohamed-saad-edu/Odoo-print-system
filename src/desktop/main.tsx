@@ -197,6 +197,7 @@ export default function App() {
   const gatewayConnectivityRef = useRef<GatewayConnectivityEvidence>(emptyGatewayConnectivityEvidence());
   const configurationFlight = useRef(false);
   const [pairCode, setPairCode] = useState("");
+  const [pairedOrigin, setPairedOrigin] = useState<string | null>(null);
   const [health, setHealth] = useState<Record<string, unknown> | null>(null);
   const [healthError, setHealthError] = useState<string | null>(null);
   // Errors from checking the editable Settings draft are separate from the
@@ -211,6 +212,7 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<ToastMessage>(null);
   const [confirmStop, setConfirmStop] = useState(false);
+  const [confirmRestart, setConfirmRestart] = useState(false);
   const [repeatDiagnosticPrinterId, setRepeatDiagnosticPrinterId] = useState<string | null>(null);
   const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
   const [adminDismissed, setAdminDismissed] = useState<boolean>(false);
@@ -405,11 +407,13 @@ export default function App() {
     try {
       const list = await fetchGatewayPrinters(savedGatewayUrl);
       if (!current()) return false;
+      if (isTauri) setPairedOrigin(savedGatewayUrl);
       observeGatewaySuccess(savedGatewayUrl);
       setPrinters(list.filter(isProductionPrinter));
       return true;
     } catch (e) {
       if (!current()) return false;
+      setPairedOrigin(null);
       setPrintersError(friendlyPrinterError(errMsg(e), locale));
       return false;
     } finally {
@@ -602,6 +606,7 @@ export default function App() {
         type: persistFailed ? "error" : !refreshed ? "info" : list.length > 0 ? "success" : "info",
       });
     } catch (e) {
+      setPairedOrigin(null);
       setPrintersError(friendlyPrinterError(errMsg(e), locale));
     } finally {
       setPrintersLoading(false);
@@ -715,6 +720,8 @@ export default function App() {
     try {
       setBusyBoth(true);
       await pairAgent(pairCode.trim(), savedGatewayUrl);
+      if (savedOriginRef.current !== savedGatewayUrl) return;
+      setPairedOrigin(savedGatewayUrl);
       setMsg({ text: t("desktop.app.agentPaired"), type: "success" });
       setPairCode("");
       refreshStatus();
@@ -1076,10 +1083,9 @@ export default function App() {
   );
 
   const nav: NavItem[] = [
-    { id: "dashboard", label: t("desktop.nav.overview"), icon: LayoutDashboard },
+    { id: "dashboard", label: t("v4.experience.home"), icon: LayoutDashboard },
     { id: "printers", label: t("desktop.nav.printers"), icon: PrinterIcon },
-    { id: "jobs", label: t("desktop.nav.printJobs"), icon: ClipboardList },
-    { id: "agents", label: t("desktop.nav.agents"), icon: Cpu },
+    { id: "jobs", label: t("v4.experience.activity"), icon: ClipboardList },
     { id: "settings", label: t("desktop.nav.settings"), icon: SettingsIcon },
   ];
 
@@ -1087,9 +1093,9 @@ export default function App() {
   // The two that remain answer a question the operator cannot read off screen:
   // whose Agent this is, and what is configured here.
   const pageMeta: Record<Page, { title: string; subtitle?: string }> = {
-    dashboard: { title: t("desktop.nav.overview") },
+    dashboard: { title: t("v4.experience.home") },
     printers: { title: t("desktop.nav.printers") },
-    jobs: { title: t("desktop.nav.printJobs") },
+    jobs: { title: t("v4.experience.activity") },
     agents: { title: t("desktop.nav.agents"), subtitle: t("desktop.page.agentsSubtitle") },
     settings: { title: t("desktop.nav.settings"), subtitle: t("desktop.page.settingsSubtitle") },
   };
@@ -1125,7 +1131,7 @@ export default function App() {
     refreshStatus,
     startAgent,
     requestStopAgent: () => setConfirmStop(true),
-    restartAgent,
+    restartAgent: () => setConfirmRestart(true),
     gatewayUrl: savedGatewayUrl,
     gatewayDraftUrl: gatewayUrl,
     setGatewayDraftUrl: (value: string) => { setGw(value); setGatewayDraftError(null); },
@@ -1137,6 +1143,7 @@ export default function App() {
     gatewayConnected,
     gatewayChecking,
     checkHealth,
+    pairingConfirmed: pairedOrigin === savedGatewayUrl && !!savedGatewayUrl,
     pairCode,
     setPairCode,
     pair,
@@ -1397,6 +1404,10 @@ export default function App() {
         <p className="text-sm leading-relaxed text-ink-2">{t("diagnostic.repeatConfirm")}</p>
       </Modal>
 
+      <Modal open={confirmRestart} onClose={() => setConfirmRestart(false)} title={t("v4.experience.restart.title")}
+        footer={<><Button variant="secondary" onClick={() => setConfirmRestart(false)}>{t("common.cancel")}</Button><Button variant="danger" disabled={busy} onClick={() => { setConfirmRestart(false); void restartAgent(); }}>{t("desktop.agents.restart")}</Button></>}>
+        <p className="text-sm leading-relaxed text-ink-2">{t("v4.experience.restart.body")}</p>
+      </Modal>
       <Modal
         open={confirmStop}
         onClose={() => setConfirmStop(false)}

@@ -4,7 +4,6 @@ Production cron method runs unchanged; ORM/storage and elapsed scheduler budget
 are controlled. Native PostgreSQL/Odoo verification is recorded separately.
 """
 from contextlib import contextmanager
-from types import SimpleNamespace
 
 import pytest
 

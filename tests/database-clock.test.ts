@@ -66,10 +66,10 @@ describe("gateway clock calibration", () => {
 });
 
 describe("subscription period gate", () => {
-  it("treats only trialing/active/past_due as access-granting statuses", () => {
+  it("treats only explicit active manual subscriptions as access-granting statuses", () => {
     expect(isBillingAccessStatus("active")).toBe(true);
-    expect(isBillingAccessStatus("trialing")).toBe(true);
-    expect(isBillingAccessStatus("past_due")).toBe(true);
+    expect(isBillingAccessStatus("trialing")).toBe(false);
+    expect(isBillingAccessStatus("past_due")).toBe(false);
     for (const status of ["cancelled", "unpaid", "paused", "incomplete", "", null, undefined]) {
       expect(isBillingAccessStatus(status)).toBe(false);
     }
@@ -249,9 +249,8 @@ describe("clock authority is enforced in the source", () => {
     expect(signature.slice(0, 1200)).not.toContain("Date.now()");
 
     const checkout = read("src/app/api/billing/checkout/route.ts");
-    const expiry = checkout.slice(checkout.indexOf("function checkoutIntentExpired"), checkout.indexOf("export async function POST"));
-    expect(expiry).toContain("gatewayNowMs()");
-    expect(expiry).not.toContain("Date.now()");
+    expect(checkout).toContain("MANUAL_BILLING_REQUIRED");
+    expect(checkout).not.toContain("stripeRequest");
   });
 
   it("uses the database-authoritative subscription gate before calibrated-clock presentation", () => {
@@ -267,8 +266,8 @@ describe("clock authority is enforced in the source", () => {
 
   it("routes subscription access through the intended billing contract for each entry point", () => {
     const billingStatus = read("src/app/api/billing/status/route.ts");
-    expect(billingStatus).toContain("isBillingAccessStatus");
-    expect(billingStatus).toContain("isSubscriptionPeriodLive");
+    expect(billingStatus).toContain("customerSubscriptionState");
+    expect(billingStatus).toContain("await databaseNowMs()");
     expect(billingStatus).not.toContain("currentPeriodEnd) > new Date()");
 
     for (const path of [

@@ -25,22 +25,22 @@ function database(role: string | null, active: boolean, lifecycle = "active") {
   } as unknown as DbTx;
   return { tx, statements };
 }
-const actor = { userId: "admin", tenantId: "workspace", role: "admin" as const,
+const actor = { userId: "admin", tenantId: "workspace", role: "owner" as const,
   kind: "manager" as const, sub: "manager" as const, jti: "a".repeat(32),
   ver: 2 as const, sid: "b".repeat(32), familyId: "f".repeat(32), iat: 1, exp: 9999999999 };
 
 describe("transactional team authority", () => {
   process.env.GATEWAY_JWT_SECRET = "team-authority-tests-secret-at-least-32";
-  it.each(["viewer", "operator", null])("denies a removed/demoted actor (%s) before mutation", async role => {
+  it.each(["admin", "viewer", "operator", null])("denies a removed/demoted actor (%s) before mutation", async role => {
     const { tx } = database(role, true);
     await expect(requireTeamActorInTransaction(tx, actor, ["target"])).rejects.toBeInstanceOf(TeamAuthorizationChangedError);
   });
   it("denies a revoked family even when membership still grants permission", async () => {
-    const { tx } = database("admin", false);
+    const { tx } = database("owner", false);
     await expect(requireTeamActorInTransaction(tx, actor)).rejects.toBeInstanceOf(TeamAuthorizationChangedError);
   });
-  it("allows a current administrator with a live family and orders shared user locks", async () => {
-    const { tx, statements } = database("admin", true);
+  it("allows the current owner with a live family and orders shared user locks", async () => {
+    const { tx, statements } = database("owner", true);
     await expect(requireTeamActorInTransaction(tx, actor, ["target", "admin"])).resolves.toBeUndefined();
     expect(statements[0]).toContain("FROM tenants");
     expect(statements[0]).toContain("FOR SHARE");
@@ -50,14 +50,14 @@ describe("transactional team authority", () => {
     expect(statements.some(statement => /credential_version/.test(statement) && /password_hash/.test(statement) && /password_verified_at/.test(statement))).toBe(true);
   });
   it.each(["suspended", "deleted", "unexpected"])("denies %s tenant before user/session locks", async lifecycle => {
-    const { tx, statements } = database("admin", true, lifecycle);
+    const { tx, statements } = database("owner", true, lifecycle);
     await expect(requireTeamActorInTransaction(tx, actor)).rejects.toBeInstanceOf(TeamAuthorizationChangedError);
     expect(statements).toHaveLength(1);
     expect(statements[0]).toContain("FROM tenants");
   });
   it("requires fresh login for live and revoked legacy sessions after the policy cutover", async () => {
     const legacy = { ...actor, ver: undefined, kind: undefined, sid: undefined, familyId: undefined };
-    await expect(requireTeamActorInTransaction(database("admin", true).tx, legacy)).rejects.toMatchObject({ code: "SESSION_EXPIRED" });
-    await expect(requireTeamActorInTransaction(database("admin", false).tx, legacy)).rejects.toBeInstanceOf(TeamAuthorizationChangedError);
+    await expect(requireTeamActorInTransaction(database("owner", true).tx, legacy)).rejects.toMatchObject({ code: "SESSION_EXPIRED" });
+    await expect(requireTeamActorInTransaction(database("owner", false).tx, legacy)).rejects.toBeInstanceOf(TeamAuthorizationChangedError);
   });
 });

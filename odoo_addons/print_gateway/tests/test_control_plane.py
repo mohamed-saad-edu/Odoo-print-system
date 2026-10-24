@@ -18,11 +18,13 @@ from unittest.mock import patch, MagicMock
 # to plain unittest previously turned every behavioral test into a silent
 # skip while the suite still exited green.
 from odoo import api, fields
+from odoo.tests import tagged
 from odoo.tests.common import TransactionCase
 from odoo.exceptions import AccessError, ValidationError
 from odoo.addons.print_gateway.models.gateway_config import PrintGatewayConfig
 
 
+@tagged("post_install", "-at_install")
 class TestControlPlane(TransactionCase):
 
     def setUp(self):
@@ -1636,7 +1638,7 @@ class TestControlPlane(TransactionCase):
     def test_26g_gateway_500_stays_retryable_and_honest(self):
         """Genuine infrastructure failures (5xx) must NOT be terminalized and
         must NOT be hidden: the job stays queued for retry and the interactive
-        error still carries the real Gateway status."""
+        customer gets localized guidance while diagnostics retain the status."""
         job = self._submit_test_job("test_500_retry_%s" % uuid.uuid4().hex[:8])
         mock_resp = MagicMock()
         mock_resp.status_code = 500
@@ -1645,7 +1647,8 @@ class TestControlPlane(TransactionCase):
              patch("odoo.addons.print_gateway.models.gateway_http.post", return_value=mock_resp):
             with self.assertRaises(ValidationError) as ctx:
                 job._action_submit_trusted(raise_on_failure=True)
-        self.assertIn("GATEWAY_HTTP_500", str(ctx.exception))
+        self.assertNotIn("GATEWAY_HTTP_500", str(ctx.exception))
+        self.assertIn("Print Activity", str(ctx.exception))
 
         persisted = self._submit_test_job("test_500_retry_persisted_%s" % uuid.uuid4().hex[:8])
         with patch.object(type(self.gateway_config), "_validate_gateway_host", return_value=None), \
@@ -1654,6 +1657,7 @@ class TestControlPlane(TransactionCase):
         persisted.invalidate_recordset(["status", "last_error", "next_retry_at", "gateway_job_id", "attempts"])
         self.assertEqual(persisted.status, "queued")
         self.assertTrue(persisted.next_retry_at)
+        self.assertIn("GATEWAY_HTTP_500", persisted.last_error)
 
     def test_26d_gateway_config_unlink_checks_dependencies_before_remote_shutdown(self):
         """A config with dependent print jobs must fail before any Gateway shutdown side effect."""

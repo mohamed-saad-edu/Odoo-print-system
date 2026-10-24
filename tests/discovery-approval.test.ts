@@ -314,7 +314,7 @@ suite("discovery trust and approval flow", () => {
     expect(printer.rows[0].config).toMatchObject({ spooler_name: "HP LaserJet Enterprise", address: "HP LaserJet Enterprise" });
   });
 
-  it("reuses a reviewed Windows queue at capacity while still denying a new queue", async () => {
+  it("reuses a reviewed Windows queue and admits another despite a historical commercial device cap", async () => {
     const discoveryId = await createDiscoverySession("disc-spooler-at-capacity");
     await pool().query(`UPDATE printers SET config = $2::jsonb WHERE id = $1`,
       [f.printerId, JSON.stringify({ spooler_name: "Existing Queue", address: "Existing Queue" })]);
@@ -337,12 +337,15 @@ suite("discovery trust and approval flow", () => {
     expect(await existing.json()).toEqual({ printerId: f.printerId, already: true });
     const fresh = await provisionPOST(await managerRequest(manager.token, "/api/provision"),
       { params: Promise.resolve({ id: f.agentId, deviceId: "spooler-new-at-cap" }) });
-    expect(fresh.status).toBe(429);
-    expect((await fresh.json()).code).toBe("MAX_PRINTERS_EXCEEDED");
+    expect(fresh.status).toBe(201);
+    const created = await fresh.json();
+    expect(created).toMatchObject({ already: false, printerId: expect.any(String) });
+    expect(created.printerId).not.toBe(f.printerId);
     const printers = await pool().query("SELECT id FROM printers WHERE tenant_id = $1", [f.tenantId]);
-    expect(printers.rows).toEqual([{ id: f.printerId }]);
-    const unprovisioned = await pool().query("SELECT candidate_status FROM discovered_devices WHERE id = $1", ["spooler-new-at-cap"]);
-    expect(unprovisioned.rows[0].candidate_status).toBe("verified");
+    expect(printers.rows).toHaveLength(2);
+    expect(printers.rows).toEqual(expect.arrayContaining([{ id: f.printerId }, { id: created.printerId }]));
+    const provisioned = await pool().query("SELECT candidate_status FROM discovered_devices WHERE id = $1", ["spooler-new-at-cap"]);
+    expect(provisioned.rows[0].candidate_status).toBe("provisioned");
   });
 
   it("refuses to provision an LPR-only candidate as raw (LAW: no heuristic protocol inference)", async () => {

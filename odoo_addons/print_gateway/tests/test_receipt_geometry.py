@@ -10,10 +10,12 @@ import uuid
 from PIL import Image
 from odoo import api
 from odoo.exceptions import AccessError, ValidationError
+from odoo.tests import tagged
 from odoo.tests.common import TransactionCase
 from odoo.addons.print_gateway.models.gateway_config import PrintGatewayConfig
 
 
+@tagged("post_install", "-at_install")
 class TestReceiptGeometry(TransactionCase):
     def _geometry(self, dots=576, dpi=203):
         return {"version": 1, "source": "validated_profile", "validation": "configured",

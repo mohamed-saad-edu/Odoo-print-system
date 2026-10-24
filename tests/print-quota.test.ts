@@ -288,21 +288,22 @@ suite("tenant print quota", () => {
     }
   });
 
-  it("starts a new quota bucket when Stripe advances the subscription period", async () => {
+  it("does not grant duplicate monthly credits when the subscription term is renewed or extended", async () => {
     const f = await seedFixture();
     await setPlanLimit(f.tenantId, 2);
-    const firstStart = new Date(Date.now() - 60_000);
-    const firstEnd = new Date(Date.now() + 60_000);
-    await pool().query("UPDATE tenant_subscriptions SET current_period_start = $1, current_period_end = $2 WHERE tenant_id = $3", [firstStart, firstEnd, f.tenantId]);
-    await createPrintJobForPrinter(f.printerId, payload("period-1"), { tenantId: f.tenantId, requestedBy: "quota-test", documentType: "receipt", destination: f.destination, idempotencyKey: "period-1" });
-
-    const nextStart = new Date(Date.now() + 120_000);
-    const nextEnd = new Date(Date.now() + 181_000);
-    await pool().query("UPDATE tenant_subscriptions SET current_period_start = $1, current_period_end = $2 WHERE tenant_id = $3", [nextStart, nextEnd, f.tenantId]);
-    await createPrintJobForPrinter(f.printerId, payload("period-2"), { tenantId: f.tenantId, requestedBy: "quota-test", documentType: "receipt", destination: f.destination, idempotencyKey: "period-2" });
-
-    const rows = await pool().query("SELECT period_start, used_prints FROM print_usage_periods WHERE tenant_id = $1 ORDER BY period_start", [f.tenantId]);
-    expect(rows.rows).toHaveLength(2);
-    expect(rows.rows.map((r: { used_prints: number }) => Number(r.used_prints))).toEqual([1, 1]);
+    await pool().query("UPDATE tenant_subscriptions SET current_period_start=clock_timestamp()-interval '1 day', current_period_end=clock_timestamp()+interval '1 month' WHERE tenant_id=$1", [f.tenantId]);
+    await createPrintJobForPrinter(f.printerId, payload("term-1"), { tenantId: f.tenantId, requestedBy: "quota-test", documentType: "receipt", destination: f.destination, idempotencyKey: "term-1" });
+    const first = await getTenantPrintUsage(db, f.tenantId);
+    await pool().query("UPDATE tenant_subscriptions SET current_period_start=clock_timestamp()-interval '1 hour', current_period_end=clock_timestamp()+interval '1 year', term='yearly' WHERE tenant_id=$1", [f.tenantId]);
+    await createPrintJobForPrinter(f.printerId, payload("term-2"), { tenantId: f.tenantId, requestedBy: "quota-test", documentType: "receipt", destination: f.destination, idempotencyKey: "term-2" });
+    const renewed = await getTenantPrintUsage(db, f.tenantId);
+    expect(renewed.periodStart).toEqual(first.periodStart);
+    expect(renewed.periodEnd).toEqual(first.periodEnd);
+    expect(renewed.used).toBe(2);
+    expect(renewed.remaining).toBe(0);
+    await expect(createPrintJobForPrinter(f.printerId, payload("term-3"), { tenantId: f.tenantId, requestedBy: "quota-test", documentType: "receipt", destination: f.destination, idempotencyKey: "term-3" })).rejects.toBeInstanceOf(TenantPrintQuotaExceededError);
+    const rows = await pool().query("SELECT period_start, used_prints FROM print_monthly_usage WHERE tenant_id=$1", [f.tenantId]);
+    expect(rows.rows).toHaveLength(1);
+    expect(rows.rows[0].used_prints).toBe(2);
   });
 });

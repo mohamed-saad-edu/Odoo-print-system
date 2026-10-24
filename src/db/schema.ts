@@ -35,6 +35,7 @@ export const tenantDomains = pgTable("tenant_domains", {
 export const users = pgTable("users", {
   id: text("id").primaryKey(),
   email: text("email").notNull().unique(),
+  displayName: text("display_name"),
   passwordHash: text("password_hash").notNull(),
   emailVerifiedAt: timestamp("email_verified_at"),
   isPlatformOwner: boolean("is_platform_owner").notNull().default(false),
@@ -681,7 +682,13 @@ export const tenantSubscriptions = pgTable("tenant_subscriptions", {
   planId: text("plan_id").references(() => plans.id).notNull(),
   stripeCustomerId: text("stripe_customer_id").unique(),
   stripeSubscriptionId: text("stripe_subscription_id").unique(),
-  status: text("status").notNull().default("active"),
+  status: text("status").notNull().default("awaiting_activation"),
+  billingMode: text("billing_mode").notNull().default("manual"),
+  subscriptionType: text("subscription_type").notNull().default("paid"),
+  monthlyQuota: integer("monthly_quota"),
+  term: text("term").notNull().default("monthly"),
+  internalReference: text("internal_reference"),
+  revision: integer("revision").notNull().default(0),
   currentPeriodStart: timestamp("current_period_start").notNull().defaultNow(),
   currentPeriodEnd: timestamp("current_period_end"),
   trialStartedAt: timestamp("trial_started_at"),
@@ -705,7 +712,9 @@ export const tenantSubscriptions = pgTable("tenant_subscriptions", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 }, (table) => ({
-  statusCheck: check("tenant_subscriptions_status_check", sql`${table.status} in ('trialing','active','past_due','incomplete','incomplete_expired','unpaid','paused','cancelled')`),
+  statusCheck: check("tenant_subscriptions_status_check", sql`${table.status} in ('awaiting_activation','active','expired','suspended','trialing','past_due','incomplete','incomplete_expired','unpaid','paused','cancelled')`),
+  monthlyQuotaCheck: check("tenant_subscriptions_monthly_quota_check", sql`${table.monthlyQuota} IS NULL OR ${table.monthlyQuota} > 0`),
+  manualTypeCheck: check("tenant_subscriptions_manual_type_check", sql`${table.subscriptionType} IN ('free','paid') AND ${table.term} IN ('monthly','yearly','custom') AND ${table.billingMode} = 'manual'`),
   checkoutStatusCheck: check("tenant_subscriptions_checkout_status_check", sql`${table.checkoutStatus} in ('none','creating','open','completed')`),
   billingOperationTypeCheck: check("tenant_subscriptions_billing_operation_type_check", sql`${table.billingOperationType} IS NULL OR ${table.billingOperationType} in ('cancel','resume')`),
   checkoutIdempotencyUnique: uniqueIndex("tenant_subscriptions_checkout_idempotency_unique").on(table.checkoutIdempotencyKey).where(sql`${table.checkoutIdempotencyKey} IS NOT NULL`),
@@ -757,4 +766,61 @@ export const printJobReceipts = pgTable("print_job_receipts", {
   outputCheck: check("print_job_receipts_output_check", sql`${table.outputMedium} IN ('physical','file') AND (${table.outputEvidence} IS NULL OR (${table.outputMedium} = 'file' AND ${table.status} = 'success' AND jsonb_typeof(${table.outputEvidence}) = 'object'))`),
   idempotencyUnique: uniqueIndex("print_job_receipts_tenant_idempotency_unique").on(table.tenantId, table.idempotencyKey),
   statusCheck: check("print_job_receipts_status_check", sql`${table.status} in ('success','failed','expired')`),
+}));
+
+
+/** Authenticated owner requests; snapshots preserve who actually requested access. */
+export const subscriptionRequests = pgTable("subscription_requests", {
+  id: text("id").primaryKey(),
+  tenantId: text("tenant_id").notNull().references(() => tenants.id),
+  requesterUserId: text("requester_user_id").notNull().references(() => users.id),
+  requesterName: text("requester_name").notNull(),
+  requesterEmail: text("requester_email").notNull(),
+  requesterVerifiedAt: timestamp("requester_verified_at").notNull(),
+  planId: text("plan_id").notNull().references(() => plans.id),
+  term: text("term").notNull(),
+  requestedMonthlyQuota: integer("requested_monthly_quota"),
+  status: text("status").notNull().default("pending"),
+  idempotencyKey: text("idempotency_key").notNull(),
+  requestDigest: text("request_digest").notNull(),
+  lastActionBy: text("last_action_by").references(() => users.id),
+  lastActionAt: timestamp("last_action_at"),
+  lastActionReason: text("last_action_reason"),
+  subscriptionRevision: integer("subscription_revision"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+}, table => ({
+  requestKey: uniqueIndex("subscription_requests_key_idx").on(table.tenantId, table.idempotencyKey),
+  pendingUnique: uniqueIndex("subscription_requests_pending_idx").on(table.tenantId).where(sql`${table.status} = 'pending'`),
+  statusCheck: check("subscription_requests_status_check", sql`${table.status} IN ('pending','approved','rejected')`),
+  termCheck: check("subscription_requests_term_check", sql`${table.term} IN ('monthly','yearly','custom')`),
+  quotaCheck: check("subscription_requests_requested_monthly_quota_check", sql`${table.requestedMonthlyQuota} IS NULL OR ${table.requestedMonthlyQuota} > 0`),
+}));
+
+export const subscriptionChanges = pgTable("subscription_changes", {
+  id: text("id").primaryKey(),
+  tenantId: text("tenant_id").notNull().references(() => tenants.id),
+  actorId: text("actor_id").references(() => users.id),
+  action: text("action").notNull(),
+  idempotencyKey: text("idempotency_key").notNull(),
+  requestDigest: text("request_digest").notNull(),
+  before: jsonb("before").$type<Record<string, unknown>>(),
+  after: jsonb("after").$type<Record<string, unknown>>().notNull(),
+  reason: text("reason").notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+}, table => ({
+  keyUnique: uniqueIndex("subscription_changes_key_idx").on(table.tenantId, table.idempotencyKey),
+  historyIdx: index("subscription_changes_history_idx").on(table.tenantId, table.createdAt),
+}));
+
+/** Calendar-month admission ledger. Never reset by subscription edits or renewals. */
+export const printMonthlyUsage = pgTable("print_monthly_usage", {
+  tenantId: text("tenant_id").notNull().references(() => tenants.id),
+  periodStart: timestamp("period_start").notNull(),
+  periodEnd: timestamp("period_end").notNull(),
+  usedPrints: integer("used_prints").notNull().default(0),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+}, table => ({
+  pk: primaryKey({ columns: [table.tenantId, table.periodStart], name: "print_monthly_usage_pkey" }),
+  valid: check("print_monthly_usage_valid", sql`${table.usedPrints} >= 0 AND ${table.periodEnd} > ${table.periodStart}`),
 }));
