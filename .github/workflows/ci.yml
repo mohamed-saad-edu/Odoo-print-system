@@ -447,6 +447,9 @@ jobs:
           odoo_image="$(cat "$RUNNER_TEMP/odoo-hardened.image-id")"
           # Test the built image by immutable local content ID. Its source,
           # Python environment and addon are carried in the image itself.
+          # Production has 512/640 MiB limits; CI's single-process native
+          # test suite needs more room for 275 cases and large PDF fixtures.
+          # Increase only this disposable test container's memory ceiling.
           rm -f /tmp/odoo19_test.log
           timeout --signal=TERM --kill-after=30s 12m \
             docker run --rm --network host --name odoo19_test_run \
@@ -466,9 +469,6 @@ jobs:
                 --workers=0 --max-cron-threads=0 \
                 --without-demo=true \
                 --no-http \
-                # The production Odoo image defaults to 512/640 MiB. Native \
-                # module integration tests load hundreds of large fixtures \
-                # into one process; raise limits only in this isolated CI run. \
                 --limit-memory-soft=3221225472 \
                 --limit-memory-hard=4294967296 \
                 --init=print_gateway \
