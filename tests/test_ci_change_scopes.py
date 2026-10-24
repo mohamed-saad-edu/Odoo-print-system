@@ -201,6 +201,13 @@ def test_weekly_security_scans_skip_unchanged_builds():
     assert not flags["app"] and not flags["agent"] and not flags["odoo"]
 
 
+def test_native_odoo_security_contract_change_must_rerun_the_image_gate():
+    flags = classify("tests/ci-image-mirror-current-run.node.test.mjs")
+    assert flags["app"] and flags["odoo"] and flags["docker_scan"] and flags["supply"]
+    assert flags["codeql_js"] and flags["codeql_py"]
+    assert not flags["agent"] and not flags["postgres"]
+
+
 def test_caddyfile_and_baseline_and_lint_config_scopes():
     caddy_flags = classify("Caddyfile")
     assert caddy_flags["docker"] and caddy_flags["docker_scan"] and caddy_flags["supply"]
@@ -208,7 +215,8 @@ def test_caddyfile_and_baseline_and_lint_config_scopes():
 
     baseline_flags = classify("security/image-vulnerability-baseline.json")
     assert baseline_flags["docker_scan"] and baseline_flags["supply"]
-    assert not baseline_flags["agent"] and not baseline_flags["odoo"] and not baseline_flags["postgres"]
+    assert baseline_flags["odoo"]
+    assert not baseline_flags["agent"] and not baseline_flags["postgres"]
 
     lint_flags = classify("eslint.config.mjs", "vitest.config.mts", ".npmrc", "typography/tokens.json")
     assert lint_flags["app"] and lint_flags["codeql_js"]
