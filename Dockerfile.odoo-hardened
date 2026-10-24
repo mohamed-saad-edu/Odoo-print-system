@@ -51,6 +51,16 @@ RUN git init /opt/odoo \
     && git -C /opt/odoo checkout --detach FETCH_HEAD \
     && test "$(git -C /opt/odoo rev-parse HEAD)" = 14f9b8149d5260d92fb74404df09483fb42dd820 \
     && python /profile/apply-odoo19-pdf-bounds.py /opt/odoo \
+    # Upstream bundles static private keys for unrelated IoT / EDI sample addons.
+    # They are never required by print_gateway; do not ship reusable keys in
+    # the production source tree or image. Production keys must be provisioned.
+    && for key in \
+         account_peppol/tools/private_key.pem \
+         iot_box_image/overwrite_after_init/etc/ssl/private/nginx-cert.key \
+         l10n_it_edi/data/pkey.key; do \
+         test -f "/opt/odoo/addons/$key" || exit 1; \
+         rm "/opt/odoo/addons/$key"; \
+       done \
     && rm -rf /opt/odoo/.git
 RUN python -m pip install --no-index --no-deps /wheels/*.whl \
     && python -m pip check \
@@ -103,6 +113,21 @@ RUN python3 -c "import platform,sys; assert sys.version_info[:2] == (3,12); asse
     && rm -rf /bootstrap /wheels /tmp/venv-module \
     && chmod -R a-w /opt/odoo /opt/yaseir-addons /opt/yaseir-runtime-profile /opt/yaseir-venv \
     && chmod 0555 /usr/local/bin/yaseir-odoo-entrypoint.py /usr/local/bin/yaseir-odoo-healthcheck.py
+# The official Odoo parent includes obsolete *global* Python installations.
+# Runtime uses only /opt/yaseir-venv (with patched dependencies already
+# hash-pinned in docs/runtime-hardening). Remove vulnerable unused global
+# wheels rather than accepting their high-severity advisories. This build is
+# offline here; unexpected package versions and pip failures remain visible.
+RUN set -eu; \
+    for item in 'msgpack|1.1.2' 'setuptools|70.3.0' 'urllib3|2.7.0'; do \
+      name="${item%%|*}"; vulnerable="${item#*|}"; \
+      current="$(/usr/bin/python3 -m pip show "$name" 2>/dev/null | sed -n 's/^Version: //p' | head -n 1 || true)"; \
+      if [ "$current" = "$vulnerable" ]; then \
+        /usr/bin/python3 -m pip uninstall --break-system-packages --yes "$name"; \
+      fi; \
+    done; \
+    /opt/yaseir-venv/bin/python -m pip check; \
+    /opt/yaseir-venv/bin/python -c 'import importlib.metadata as m; assert m.version("urllib3") == "2.8.0"; assert m.version("setuptools") == "84.2.1"'
 LABEL org.opencontainers.image.title="Yaseir hardened Odoo 19 runtime" \
     org.opencontainers.image.revision="14f9b8149d5260d92fb74404df09483fb42dd820" \
     io.yaseir.runtime-profile="cpython312-linux-x86_64-pypdf-bounds"
