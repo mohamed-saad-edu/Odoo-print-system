@@ -68,33 +68,40 @@ jobs:
       - name: Checkout security baseline
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Build patched Go release binary
-        if: matrix.variant != 'node'
+      - name: Build exact release image for scanning
         env:
           PATCHED_VARIANT: ${{ matrix.variant }}
         shell: bash
         run: |
-          if [ "$PATCHED_VARIANT" != postgres ] && [ "$PATCHED_VARIANT" != caddy ]; then
-            exit 1
-          fi
-          docker build --file Dockerfile.secure-images --target "$PATCHED_VARIANT" --tag "yaseir-${PATCHED_VARIANT}:ci-go1.26.10" .
-          if [ "$PATCHED_VARIANT" = postgres ]; then
-            docker run --rm --entrypoint gosu yaseir-postgres:ci-go1.26.10 --version | grep -F go1.26.10
-          else
-            docker run --rm --entrypoint caddy yaseir-caddy:ci-go1.26.10 version
-          fi
+          set -euo pipefail
+          case "$PATCHED_VARIANT" in
+            node)
+              # Scan what the Gateway actually ships: the final runtime stage
+              # removes upstream npm CLI (including its unused vulnerable deps).
+              docker build --file Dockerfile --target runtime --tag yaseir-gateway:ci-node24.22.1 .
+              ;;
+            postgres|caddy)
+              docker build --file Dockerfile.secure-images --target "$PATCHED_VARIANT" --tag "yaseir-${PATCHED_VARIANT}:ci-go1.26.10" .
+              if [ "$PATCHED_VARIANT" = postgres ]; then
+                docker run --rm --entrypoint gosu yaseir-postgres:ci-go1.26.10 --version | grep -F go1.26.10
+              else
+                docker run --rm --entrypoint caddy yaseir-caddy:ci-go1.26.10 version
+              fi
+              ;;
+            *) exit 1 ;;
+          esac
 
-      - name: Scan pinned base image (Trivy)
+      - name: Scan release image (Trivy)
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
-          image-ref: ${{ matrix.variant == 'node' && 'node:24.22.1-alpine@sha256:06d7adf3e0ef61a13f1d28682726366f97a15aa1888c934d3ecec86c33918b53' || format('yaseir-{0}:ci-go1.26.10', matrix.variant) }}
+          image-ref: ${{ matrix.variant == 'node' && 'yaseir-gateway:ci-node24.22.1' || format('yaseir-{0}:ci-go1.26.10', matrix.variant) }}
           format: 'sarif'
           output: 'trivy.sarif'
           severity: 'UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL'
           limit-severities-for-sarif: true
           ignore-unfixed: false
-          # Retain every severity and unfixed advisory. The digest-bound,
-          # expiring review gate rejects every unreviewed finding.
+          # Scan the real release images, preserving every severity and
+          # unfixed advisory; reject unreviewed findings via the gate below.
           exit-code: '0'
 
       - name: Enforce reviewed upstream image vulnerability baseline
@@ -106,7 +113,7 @@ jobs:
             exit 1
           fi
           if [ "$PATCHED_VARIANT" = node ]; then
-            image='node:24.22.1-alpine@sha256:06d7adf3e0ef61a13f1d28682726366f97a15aa1888c934d3ecec86c33918b53'
+            image='yaseir-gateway:ci-node24.22.1'
           else
             image="yaseir-${PATCHED_VARIANT}:ci-go1.26.10"
           fi
@@ -157,6 +164,13 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Generate ephemeral CI database role secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf 'POSTGRES_OWNER_PASSWORD=%s\n' "$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+          printf 'POSTGRES_RUNTIME_PASSWORD=%s\n' "$(openssl rand -hex 32)" >> "$GITHUB_ENV"
 
       - name: Validate Compose configuration
         run: docker compose config
@@ -246,13 +260,60 @@ jobs:
           set -euo pipefail
           docker compose exec -T caddy caddy validate --config /etc/caddy/Caddyfile
 
-          docker compose exec -T gateway node <<'NODE'
+          # Seed this isolated fixture using the migration owner's credential.
+          # The Gateway keeps its runtime-only credential and never receives
+          # the database administrator or owner password.
+          fixture_suffix="$(openssl rand -hex 8)"
+          fixture_secret="$(openssl rand -hex 32)"
+          docker compose run -T --rm --no-deps \
+            -e PHASE0_SUFFIX="$fixture_suffix" \
+            -e PHASE0_AGENT_SECRET="$fixture_secret" \
+            migrate node --input-type=module <<'NODE'
+          import fs from "node:fs";
+          import crypto from "node:crypto";
+          import { Client } from "pg";
+          const suffix = process.env.PHASE0_SUFFIX;
+          const agentSecret = process.env.PHASE0_AGENT_SECRET;
+          const tenantId = "phase0_tenant_" + suffix;
+          const agentId = "agt_" + suffix;
+          const jti = "phase0_jti_" + suffix;
+          const exp = Math.floor(Date.now() / 1000) + 3600;
+          const client = new Client({
+            host: process.env.PGHOST,
+            port: Number(process.env.PGPORT),
+            database: process.env.PGDATABASE,
+            user: process.env.PGUSER,
+            password: fs.readFileSync("/run/secrets/postgres_owner_password", "utf8").trim(),
+          });
+          await client.connect();
+          try {
+            await client.query("BEGIN");
+            await client.query("INSERT INTO tenants (id, name) VALUES ($1, $2)", [tenantId, "Phase 0 smoke tenant"]);
+            await client.query(
+              "INSERT INTO agents (id, tenant_id, name, secret, status, lifecycle, last_seen_at) VALUES ($1,$2,$3,$4,'online','active',clock_timestamp())",
+              [agentId, tenantId, "Phase 0 smoke agent", crypto.createHash("sha256").update(agentSecret).digest("hex")],
+            );
+            await client.query(
+              "INSERT INTO manager_sessions (jti, tenant_id, role, expires_at) VALUES ($1,$2,'admin',to_timestamp($3))",
+              [jti, tenantId, exp],
+            );
+            await client.query("COMMIT");
+          } catch (err) {
+            await client.query("ROLLBACK");
+            throw err;
+          } finally {
+            await client.end();
+          }
+          NODE
+
+          docker compose exec -T \
+            -e PHASE0_SUFFIX="$fixture_suffix" \
+            -e PHASE0_AGENT_SECRET="$fixture_secret" \
+            gateway node --input-type=module <<'NODE'
           const fs = await import("node:fs");
           const crypto = await import("node:crypto");
-          const { Client } = await import("pg");
           const { default: WebSocket } = await import("ws");
 
-          const sha256 = (v) => crypto.createHash("sha256").update(v).digest("hex");
           const b64url = (v) => Buffer.from(v).toString("base64url");
           const signJwt = (secret, claims) => {
             const header = b64url(JSON.stringify({alg:"HS256",typ:"JWT"}));
@@ -262,46 +323,15 @@ jobs:
             return data + "." + sig;
           };
 
-          const pgPassword = fs.readFileSync("/run/secrets/postgres_password", "utf8").trim();
           const jwtSecret = fs.readFileSync("/run/secrets/gateway_jwt_secret", "utf8").trim();
           const proxySecret = fs.readFileSync("/run/secrets/trust_proxy_secret", "utf8").trim();
-          const suffix = crypto.randomBytes(8).toString("hex");
+          const suffix = process.env.PHASE0_SUFFIX;
           const tenantId = "phase0_tenant_" + suffix;
-          const agentId = "agt_" + crypto.randomBytes(6).toString("base64url").slice(0, 8);
-          const agentSecret = "phase0_secret_" + crypto.randomBytes(18).toString("base64url");
-          const jti = "phase0_jti_" + crypto.randomBytes(16).toString("hex");
+          const agentId = "agt_" + suffix;
+          const agentSecret = process.env.PHASE0_AGENT_SECRET;
+          const jti = "phase0_jti_" + suffix;
           const now = Math.floor(Date.now() / 1000);
           const exp = now + 3600;
-
-          const client = new Client({
-            host: process.env.PGHOST,
-            port: Number(process.env.PGPORT),
-            database: process.env.PGDATABASE,
-            user: process.env.PGUSER,
-            password: pgPassword,
-          });
-          await client.connect();
-          try {
-            await client.query("BEGIN");
-            await client.query(
-              "INSERT INTO tenants (id, name) VALUES ($1, $2)",
-              [tenantId, "Phase 0 smoke tenant"],
-            );
-            await client.query(
-              "INSERT INTO agents (id, tenant_id, name, secret, status, lifecycle, last_seen_at) VALUES ($1,$2,$3,$4,'online','active',clock_timestamp())",
-              [agentId, tenantId, "Phase 0 smoke agent", sha256(agentSecret)],
-            );
-            await client.query(
-              "INSERT INTO manager_sessions (jti, tenant_id, role, expires_at) VALUES ($1,$2,'admin',to_timestamp($3))",
-              [jti, tenantId, exp],
-            );
-            await client.query("COMMIT");
-          } catch (e) {
-            await client.query("ROLLBACK");
-            throw e;
-          } finally {
-            await client.end();
-          }
 
           const managerToken = signJwt(jwtSecret, {
             jti, iat: now, exp, sub: "manager", tenantId, role: "admin",

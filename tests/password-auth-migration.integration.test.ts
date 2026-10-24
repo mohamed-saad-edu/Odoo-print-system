@@ -107,8 +107,8 @@ describe.skipIf(!hasTestDatabase)("populated V2 to password-only migration", () 
       expect(after[table],`Preserve ${table} records, revocation and timestamps`).toEqual(expected);
     }
     expect(after.ledger).toEqual(expect.arrayContaining(before.ledger as unknown[]));
-    // The V4 chain includes password-only0093, operational-verification0094
-    // and manual-subscriptions0095; historical migration hashes stay immutable.
+    // V4 adds three forward migrations (0093, 0094, 0095).
+    // Preserve the hashes of all historical migrations.
     expect((after.ledger as unknown[]).length).toBe((before.ledger as unknown[]).length+3);
     const priorHashes = new Set((before.ledger as Array<{hash:string}>).map(row=>row.hash));
     const addedHashes = (after.ledger as Array<{hash:string}>).filter(row=>!priorHashes.has(row.hash)).map(row=>row.hash).sort();

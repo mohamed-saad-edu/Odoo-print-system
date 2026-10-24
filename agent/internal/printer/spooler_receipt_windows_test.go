@@ -6,6 +6,8 @@ import (
 	"context"
 	"testing"
 	"time"
+
+	"github.com/yaseir-agent/agent/internal/config"
 )
 
 func TestWindowsReceiptProvenancePreservesPDFCallbacksAndContext(t *testing.T) {
@@ -15,6 +17,16 @@ func TestWindowsReceiptProvenancePreservesPDFCallbacksAndContext(t *testing.T) {
 		t.Run(seam, func(t *testing.T) {
 			p := NewSpooler("Receipt provenance test", "")
 			p.ReceiptPaperMM, p.ReceiptRasterDots, p.ReceiptDPI = 80, 576, 203
+			// Exercise PDF callback provenance with a validated, explicitly bound
+			// geometry fixture; GitHub's Windows runner has no installed printer.
+			// Native queue geometry is independently enforced in production.
+			p.Config = config.PrinterConfig{ID: "receipt-provenance-fixture", Type: "spooler", Protocol: "spooler", SpoolerName: p.SpoolerName}
+			dpi, paperMM := 203, 80.0
+			geometry, err := NewGeometry(p.Config, config.GeometryProfile{PrintableWidthDots: 576, DPIX: &dpi, DPIY: &dpi, PaperWidthMM: &paperMM}, "windows_driver", "observed", "test-only-geometry")
+			if err != nil {
+				t.Fatal(err)
+			}
+			p.testImageGeometry = func(context.Context) (*Geometry, error) { return geometry, nil }
 			parent, cancel := context.WithTimeout(context.Background(), 7*time.Second)
 			defer cancel()
 			deadline, _ := parent.Deadline()
@@ -43,7 +55,7 @@ func TestWindowsReceiptProvenancePreservesPDFCallbacksAndContext(t *testing.T) {
 				}
 			}
 			for _, doc := range []Document{
-				{Kind: KindImage, Data: testReceiptJPEG(t, 576, 900), JobID: "image"},
+				{Kind: KindImage, Data: testReceiptJPEG(t, 576, 900), JobID: "image", GeometryFingerprint: geometry.ConfigFingerprint},
 				{Kind: KindPDF, Data: validPDF(), JobID: "ordinary-pdf-on-receipt-queue"},
 			} {
 				wantReceipt = doc.Kind == KindImage
@@ -54,7 +66,7 @@ func TestWindowsReceiptProvenancePreservesPDFCallbacksAndContext(t *testing.T) {
 			if calls != 2 || admissions != 3 {
 				t.Fatalf("conversion or callback duplicated: calls=%d admissions=%d", calls, admissions)
 			}
-			if err := p.PrintDocument(ctx, Document{Kind: KindImage, Data: []byte("invalid JPEG")}); err == nil || calls != 2 {
+			if err := p.PrintDocument(ctx, Document{Kind: KindImage, Data: []byte("invalid JPEG"), GeometryFingerprint: geometry.ConfigFingerprint}); err == nil || calls != 2 {
 				t.Fatal("invalid image entered PDF execution")
 			}
 		})

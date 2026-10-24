@@ -465,7 +465,7 @@ jobs:
                 --addons-path=/opt/odoo/odoo/addons,/opt/odoo/addons,/opt/yaseir-addons \
                 --workers=0 --max-cron-threads=0 \
                 --without-demo=true \
-                --http-interface=127.0.0.1 \
+                --no-http \
                 --init=print_gateway \
                 --test-tags=/print_gateway \
                 --stop-after-init \
