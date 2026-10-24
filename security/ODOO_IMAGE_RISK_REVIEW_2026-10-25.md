@@ -4,7 +4,7 @@
 - GitHub CI builds and scans the EXACT immutable local image ID, not a stale upstream base tag.
 - The 2026-10-24 SARIF contained 82 results: 7 HIGH, 58 MEDIUM, 17 LOW.
 - The HIGH results were 3 static private keys shipped in unrelated upstream Odoo add-ons, one msgpack, one setuptools, and two urllib3 findings. Three further fixed-version LOW/MEDIUM findings were in obsolete setuptools and urllib3.
-- The Dockerfile now removes the three upstream bundled private keys and attempts to remove obsolete global Python packages. Runtime is isolated in a hash-pinned virtual environment containing urllib3 2.8.0 and setuptools 84.2.1. Successful native Odoo tests and a fresh scan are mandatory evidence of the changes.
+- The Dockerfile now removes the three upstream bundled private keys and removes the runtime pip package and its obsolete vendored Python dependencies (without removing patched runtime libraries). Runtime is isolated in a hash-pinned virtual environment containing urllib3 2.8.0 and setuptools 84.2.1. Successful native Odoo tests and a fresh scan are mandatory evidence of the changes.
 - The 72 entries in security/image-vulnerability-baseline.json are the **exact** LOW/MEDIUM findings for which Trivy reported no fixed version on the recorded image. They are risk-tracked; **they are not fixed** and must not be presented as zero vulnerabilities.
 
 ## Policy

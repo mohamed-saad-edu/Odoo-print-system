@@ -510,7 +510,7 @@ jobs:
           set -euo pipefail
           # A reviewed exception applies to THIS exact, immutable runtime
           # profile only; a Dockerfile or Python lockfile change invalidates it.
-          test "$(git hash-object Dockerfile.odoo-hardened)" = "48135c5448e39203e3c2ac7ac9a29347445e287b"
+          test "$(git hash-object Dockerfile.odoo-hardened)" = "30e0b31668a342c5de4211252789c0be9668e91e"
           test "$(git hash-object docs/runtime-hardening/requirements-python312-linux-x86_64.lock)" = "0213f5552156b3d81f2515ee3f6bc786aca475ab"
           test "$(git hash-object docs/runtime-hardening/build-tools.lock)" = "96b65dba00600b2c78b4af0ff5eaf2c83365c672"
           test -s odoo-hardened.sarif

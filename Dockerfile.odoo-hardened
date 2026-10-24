@@ -110,24 +110,18 @@ RUN python3 -c "import platform,sys; assert sys.version_info[:2] == (3,12); asse
     && /opt/yaseir-venv/bin/python /opt/yaseir-runtime-profile/verify-odoo19-pdf-bounds.py /opt/odoo \
     && /opt/yaseir-venv/bin/python /opt/odoo/odoo-bin --version \
     && wkhtmltopdf --version \
+    # Runtime must not ship pip and its vendored outdated dependencies;
+    # the patched application dependencies are already installed in the venv.
+    && /opt/yaseir-venv/bin/python -m pip uninstall --yes pip \
+    && test ! -e /opt/yaseir-venv/lib/python3.12/site-packages/pip \
     && rm -rf /bootstrap /wheels /tmp/venv-module \
     && chmod -R a-w /opt/odoo /opt/yaseir-addons /opt/yaseir-runtime-profile /opt/yaseir-venv \
     && chmod 0555 /usr/local/bin/yaseir-odoo-entrypoint.py /usr/local/bin/yaseir-odoo-healthcheck.py
-# The official Odoo parent includes obsolete *global* Python installations.
-# Runtime uses only /opt/yaseir-venv (with patched dependencies already
-# hash-pinned in docs/runtime-hardening). Remove vulnerable unused global
-# wheels rather than accepting their high-severity advisories. This build is
-# offline here; unexpected package versions and pip failures remain visible.
-RUN set -eu; \
-    for item in 'msgpack|1.1.2' 'setuptools|70.3.0' 'urllib3|2.7.0'; do \
-      name="${item%%|*}"; vulnerable="${item#*|}"; \
-      current="$(/usr/bin/python3 -m pip show "$name" 2>/dev/null | sed -n 's/^Version: //p' | head -n 1 || true)"; \
-      if [ "$current" = "$vulnerable" ]; then \
-        /usr/bin/python3 -m pip uninstall --break-system-packages --yes "$name"; \
-      fi; \
-    done; \
-    /opt/yaseir-venv/bin/python -m pip check; \
-    /opt/yaseir-venv/bin/python -c 'import importlib.metadata as m; assert m.version("urllib3") == "2.8.0"; assert m.version("setuptools") == "84.2.1"'
+# The pinned venv contains modern, hash-verified application dependencies.
+# Pip is needed to BUILD the venv, never to run Odoo. Remove the runtime pip
+# package (and its vendored legacy msgpack/urllib3/setuptools copies) above.
+# Check that pip cannot be imported while patched runtime packages remain.
+RUN /opt/yaseir-venv/bin/python -c 'import importlib.metadata as m, importlib.util as u; assert u.find_spec("pip") is None; assert m.version("urllib3") == "2.8.0"; assert m.version("setuptools") == "84.2.1"'
 LABEL org.opencontainers.image.title="Yaseir hardened Odoo 19 runtime" \
     org.opencontainers.image.revision="14f9b8149d5260d92fb74404df09483fb42dd820" \
     io.yaseir.runtime-profile="cpython312-linux-x86_64-pypdf-bounds"
