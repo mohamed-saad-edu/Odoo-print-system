@@ -169,8 +169,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          printf 'POSTGRES_OWNER_PASSWORD=%s\n' "$(openssl rand -hex 32)" >> "$GITHUB_ENV"
-          printf 'POSTGRES_RUNTIME_PASSWORD=%s\n' "$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+          for key in POSTGRES_PASSWORD POSTGRES_OWNER_PASSWORD POSTGRES_RUNTIME_PASSWORD; do
+            secret="$(openssl rand -hex 32)"
+            echo "::add-mask::$secret"
+            printf '%s=%s\n' "$key" "$secret" >> "$GITHUB_ENV"
+          done
 
       - name: Validate Compose configuration
         run: docker compose config
