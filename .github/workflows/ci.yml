@@ -466,6 +466,11 @@ jobs:
                 --workers=0 --max-cron-threads=0 \
                 --without-demo=true \
                 --no-http \
+                # The production Odoo image defaults to 512/640 MiB. Native \
+                # module integration tests load hundreds of large fixtures \
+                # into one process; raise limits only in this isolated CI run. \
+                --limit-memory-soft=3221225472 \
+                --limit-memory-hard=4294967296 \
                 --init=print_gateway \
                 --test-tags=/print_gateway \
                 --stop-after-init \
