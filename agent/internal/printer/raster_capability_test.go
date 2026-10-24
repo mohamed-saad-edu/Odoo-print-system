@@ -19,8 +19,8 @@ func rasterWidthFromESCPOS(data []byte) int {
 }
 
 func TestRasterMaxWidthFromDesiredPaperWidth(t *testing.T) {
-	if got := RasterMaxWidthFromPaperWidthMM(80); got != 512 {
-		t.Fatalf("80mm unknown-DPI paper: got %d dots, want conservative 512", got)
+	if got := RasterMaxWidthFromPaperWidthMM(80); got != 0 {
+		t.Fatalf("80mm unknown-DPI paper: got %d dots, want unknown (0)", got)
 	}
 }
 
@@ -29,12 +29,12 @@ func TestRasterWidthHonorsReal80mmResolutionAndOperatorDots(t *testing.T) {
 		caps map[string]interface{}
 		want int
 	}{
-		{map[string]interface{}{"print_dpi": 180}, 512},
-		{map[string]interface{}{"print_dpi": 203}, 576},
+		{map[string]interface{}{"print_dpi": 180}, 0},
+		{map[string]interface{}{"print_dpi": 203}, 0},
 		{map[string]interface{}{"print_dpi": 180, "max_paper_width": 512}, 512},
 		{map[string]interface{}{"print_dpi": 203, "max_paper_width": 512}, 512},
 		{map[string]interface{}{"max_paper_width": 576}, 576},
-		{nil, 512},
+		{nil, 0},
 	} {
 		if got := RasterMaxWidthForConfiguredPaper(80, test.caps); got != test.want {
 			t.Errorf("80mm dimensions: caps=%v got=%d want=%d", test.caps, got, test.want)
@@ -51,11 +51,11 @@ func TestRasterMaxWidthFromCapabilities(t *testing.T) {
 		caps map[string]interface{}
 		want int
 	}{
-		{"unknown", nil, SafeRasterMaxWidth},
-		{"explicit 58mm", map[string]interface{}{"max_paper_width": 58}, 384},
+		{"unknown", nil, 0},
+		{"explicit 58mm", map[string]interface{}{"max_paper_width": 58}, 0},
 		{"explicit 576 dots", map[string]interface{}{"max_paper_width": 576}, 576},
-		{"legacy narrow set", map[string]interface{}{"paper_widths": []int{58, 80}}, 384},
-		{"json numbers", map[string]interface{}{"paper_widths": []interface{}{80.0}}, 512},
+		{"legacy narrow set", map[string]interface{}{"paper_widths": []int{58, 80}}, 0},
+		{"json numbers", map[string]interface{}{"paper_widths": []interface{}{80.0}}, 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -66,25 +66,14 @@ func TestRasterMaxWidthFromCapabilities(t *testing.T) {
 	}
 }
 
-func TestRasterMaxWidthClampedToHardware(t *testing.T) {
-	// An absurd capability (unit typo, hostile value) must never become an
-	// execution raster width the 576-dot thermal path cannot take.
-	cases := []struct {
-		name string
-		caps map[string]interface{}
-	}{
-		{"huge dot width", map[string]interface{}{"max_paper_width": 5000}},
-		{"huge paper widths", map[string]interface{}{"paper_widths": []int{500}}},
+func TestRasterMaxWidthRejectsSoftwareBoundInsteadOfGuessingHardware(t *testing.T) {
+	for _, value := range []interface{}{0, -1, 80, MaxJPEGDimension + 1, 1e30, "broken"} {
+		if got := RasterMaxWidthFromCapabilities(map[string]interface{}{"max_paper_width": value}); got != 0 {
+			t.Fatalf("invalid value %v became %d dots", value, got)
+		}
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := RasterMaxWidthFromCapabilities(tc.caps); got > maxRasterWidth {
-				t.Fatalf("got %d dots, exceeds hardware ceiling %d", got, maxRasterWidth)
-			}
-		})
-	}
-	if got := RasterMaxWidthFromPaperWidthMM(200); got > maxRasterWidth {
-		t.Fatalf("200mm paper: got %d dots, exceeds hardware ceiling %d", got, maxRasterWidth)
+	if got := RasterMaxWidthFromCapabilities(map[string]interface{}{"max_paper_width": 5000}); got != 5000 {
+		t.Fatalf("explicit bounded width was altered: %d", got)
 	}
 }
 

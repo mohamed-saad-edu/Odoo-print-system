@@ -14,7 +14,7 @@ import { agentLiveView, errMsg, friendlyGatewayError, isProductionPrinter, print
 import UpgradeLimitDialog, { type UpgradeLimitResource } from "../../components/UpgradeLimitDialog";
 import { useI18n } from "../../i18n/react";
 
-type Conn = "spooler" | "network" | "usb" | "ipp" | "ipps";
+type Conn = "spooler" | "network" | "usb" | "ipp" | "ipps" | "pdf_output";
 
 export function AddPrinterDialog({
   open,
@@ -33,6 +33,7 @@ export function AddPrinterDialog({
   const [name, setName] = useState("");
   const [conn, setConn] = useState<Conn>("spooler");
   const [spoolerName, setSpoolerName] = useState("");
+  const [outputProfileId, setOutputProfileId] = useState("");
   const [spoolerRaw, setSpoolerRaw] = useState(false);
   const [spoolerEscpos, setSpoolerEscpos] = useState(false);
   const [host, setHost] = useState("");
@@ -132,6 +133,7 @@ export function AddPrinterDialog({
     if (!name.trim()) return t("desktop.add.nameRequired");
     if (conn === "spooler" && !spoolerName.trim())
       return t("desktop.add.spoolerRequired");
+    if (conn === "pdf_output" && !/^[A-Za-z0-9_-]{1,64}$/.test(outputProfileId.trim())) return t("printer.verification.invalidProfile");
     if (conn === "network") {
       if (!host.trim()) return t("desktop.add.hostRequired");
       if (host.includes(" ")) return t("desktop.add.hostInvalid");
@@ -165,6 +167,7 @@ export function AddPrinterDialog({
     setHost("");
     setPort("9100");
     setSpoolerName("");
+    setOutputProfileId("");
     setSpoolerRaw(false);
     setSpoolerEscpos(false);
     setIppUrl("");
@@ -181,6 +184,9 @@ export function AddPrinterDialog({
     setError(null);
     try {
       const req: RegisterPrinterRequest = { name: name.trim(), connectionType: conn };
+      if (conn === "pdf_output") {
+        req.protocol = "pdf"; req.printerType = "file"; req.outputProfileId = outputProfileId.trim();
+      }
       if (conn === "spooler") {
         req.spoolerName = spoolerName.trim();
         req.endpoint = spoolerName.trim();
@@ -323,7 +329,6 @@ export function AddPrinterDialog({
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder={t("desktop.add.namePlaceholder")}
-            autoFocus
           />
         </Field>
         <Field label={t("desktop.add.connectionType")} htmlFor="pp-conn">
@@ -337,8 +342,12 @@ export function AddPrinterDialog({
             <option value="usb">{t("desktop.connection.usb")}</option>
             <option value="ipp">{t("desktop.connection.ipp")}</option>
             <option value="ipps">IPPS</option>
+            <option value="pdf_output">{t("printer.verification.file")}</option>
           </Select>
         </Field>
+        {conn === "pdf_output" && <Field label={t("printer.verification.profileId")} htmlFor="pp-output-profile" hint={t("printer.verification.profileHelp")}>
+          <Input id="pp-output-profile" value={outputProfileId} maxLength={64} onChange={event => setOutputProfileId(event.target.value)} />
+        </Field>}
         {conn === "spooler" && (
           <Field
             label={t("desktop.add.spoolerPrinter")}

@@ -35,10 +35,14 @@ func TestFailureTimeout(t *testing.T) {
 	}
 	defer mock.Close()
 	p := &printer.NetworkPrinter{Address: mock.Addr}
+	// Prepare the large payload before the transport deadline starts. Under
+	// race instrumentation allocation can otherwise consume the entire deadline
+	// before a connection is made, which does not exercise a stalled write.
+	payload := bytes.Repeat([]byte("x"), 5*1024*1024)
 	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
 	defer cancel()
 	started := time.Now()
-	err := p.Print(ctx, bytes.Repeat([]byte("x"), 5*1024*1024))
+	err := p.Print(ctx, payload)
 	if err == nil {
 		t.Fatal("stalled large write incorrectly reported success")
 	}
@@ -48,6 +52,9 @@ func TestFailureTimeout(t *testing.T) {
 	captures := mock.WaitForCaptures(1, time.Second)
 	if len(captures) != 1 || len(captures[0]) != 1 {
 		t.Fatalf("server did not stall after exactly one byte: %v", captures)
+	}
+	if !printer.OutcomeUnknown(err) {
+		t.Fatalf("partial delivery must prohibit automatic retry: %v", err)
 	}
 }
 

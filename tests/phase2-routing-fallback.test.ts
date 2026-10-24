@@ -1,5 +1,7 @@
+import { verifiedPrinterState } from "./helpers/printer-verification";
 import { describe, expect, it } from "vitest";
 import { validatePayloadForPrinter, isPrinterAvailableForJob, isAgentAvailableForPrinter } from "../src/lib/routing";
+import { fixtureImagePayload, fixturePrinterGeometry } from "./helpers/printer-geometry";
 
 /**
  * The capability model is EXPLICIT: byte protocols never wildcard and are
@@ -24,12 +26,15 @@ describe("runtime routing capability and availability", () => {
       connectionType: "ipp",
       capabilities: { supported_protocols: ["pdf", "image"] },
     }).ok).toBe(false);
-    // An explicitly ESC/POS device raster-converts JPEGs.
-    expect(validatePayloadForPrinter({ type: "image" }, {
+    // An explicit GS v 0 profile supplies the measured raster contract.
+    expect(validatePayloadForPrinter(fixtureImagePayload, {
       protocol: "escpos",
       connectionType: "network",
-      capabilities: null,
+      capabilities: { geometry: fixturePrinterGeometry("fixture-printer", true) },
     }).ok).toBe(true);
+    expect(validatePayloadForPrinter(fixtureImagePayload, {
+      protocol: "escpos", connectionType: "network", capabilities: null,
+    }).ok).toBe(false);
   });
 
   it("rejects image payloads when the printer explicitly lacks image support", () => {
@@ -66,16 +71,16 @@ describe("runtime routing capability and availability", () => {
     expect(validatePayloadForPrinter({ type: "escpos", protocol: "escpos" }, { protocol: "spooler", connectionType: "spooler" }).ok).toBe(false);
     // An explicit capability list can narrow/confirm the byte-stream language.
     expect(validatePayloadForPrinter({ type: "escpos", protocol: "escpos" }, {
-      protocol: "spooler", connectionType: "spooler", capabilities: { supported_protocols: ["escpos"] },
+      protocol: "spooler", connectionType: "spooler", capabilities: { geometry: fixturePrinterGeometry(), supported_protocols: ["escpos"] },
     }).ok).toBe(true);
   });
 
   it("keeps spooler document printing available when passthrough is explicitly enabled", () => {
     const printer = {
-      protocol: "spooler", connectionType: "spooler", capabilities: { supported_protocols: ["escpos"] },
+      protocol: "spooler", connectionType: "spooler", capabilities: { geometry: fixturePrinterGeometry(), supported_protocols: ["escpos"] },
     };
     expect(validatePayloadForPrinter({ type: "pdf" }, printer).ok).toBe(true);
-    expect(validatePayloadForPrinter({ type: "image" }, printer).ok).toBe(true);
+    expect(validatePayloadForPrinter(fixtureImagePayload, printer).ok).toBe(true);
     expect(validatePayloadForPrinter({ type: "escpos", protocol: "escpos" }, printer).ok).toBe(true);
     expect(validatePayloadForPrinter({ type: "raw", protocol: "raw" }, printer).ok).toBe(false);
   });
@@ -106,7 +111,8 @@ describe("runtime routing capability and availability", () => {
     expect(validatePayloadForPrinter({ type: "pdf" }, { protocol: "unknown", connectionType: "network" }).ok).toBe(false);
     expect(validatePayloadForPrinter({ type: "image" }, { protocol: "unknown", connectionType: "network" }).ok).toBe(false);
     expect(validatePayloadForPrinter({ type: "pdf" }, { protocol: "unknown", connectionType: "spooler" }).ok).toBe(true);
-    expect(validatePayloadForPrinter({ type: "image" }, { protocol: "unknown", connectionType: "spooler" }).ok).toBe(true);
+    expect(validatePayloadForPrinter(fixtureImagePayload, { protocol: "unknown", connectionType: "spooler", capabilities: { geometry: fixturePrinterGeometry() } }).ok).toBe(true);
+    expect(validatePayloadForPrinter(fixtureImagePayload, { protocol: "unknown", connectionType: "spooler" }).ok).toBe(false);
     expect(validatePayloadForPrinter({ type: "pdf" }, { protocol: "unknown", connectionType: "ipp" }).ok).toBe(true);
     // ESC/POS on spooler requires explicit supported_protocols (same gate as declared spooler).
     expect(validatePayloadForPrinter({ type: "escpos", protocol: "escpos" }, { protocol: "unknown", connectionType: "spooler" }).ok).toBe(false);
@@ -129,9 +135,9 @@ describe("runtime routing capability and availability", () => {
       capabilities: null,
       config: {},
     };
-    expect(isPrinterAvailableForJob({ ...base, lifecycle: "active", status: "online" })).toBe(true);
-    expect(isPrinterAvailableForJob({ ...base, lifecycle: "active", status: "offline" })).toBe(false);
-    expect(isPrinterAvailableForJob({ ...base, lifecycle: "disabled", status: "online" })).toBe(false);
+    expect(isPrinterAvailableForJob({ ...verifiedPrinterState(), ...base, lifecycle: "active", status: "online" })).toBe(true);
+    expect(isPrinterAvailableForJob({ ...verifiedPrinterState(), ...base, lifecycle: "active", status: "offline" })).toBe(false);
+    expect(isPrinterAvailableForJob({ ...verifiedPrinterState(), ...base, lifecycle: "disabled", status: "online" })).toBe(false);
   });
 
   it("requires a recently seen active agent", () => {

@@ -53,6 +53,7 @@ func TestStableIDForSpoolerSurvivesQueueRename(t *testing.T) {
 		Protocol:       "spooler",
 		ConnectionType: "spooler",
 	}
+	a = withPublishedQueueGUID(a)
 	b := a
 	b.SpoolerName = "Receipt Front Renamed"
 	if gotA, gotB := StableIDForDevice(a), StableIDForDevice(b); gotA != gotB {
@@ -108,6 +109,7 @@ func TestUpsertRegistryPreservesSpoolerIDAcrossQueueRename(t *testing.T) {
 		Status:         "online",
 		Enabled:        true,
 	}
+	legacy = withPublishedQueueGUID(legacy)
 	if _, err := UpsertRegistry(path, []DeviceInfo{legacy}); err != nil {
 		t.Fatalf("seed spooler registry: %v", err)
 	}
@@ -148,6 +150,7 @@ func TestUpsertRegistryRefreshesSpoolerTupleWhenStrongIDSurvivesRename(t *testin
 		Status:         "online",
 		Enabled:        true,
 	}
+	original = withPublishedQueueGUID(original)
 	original.ID = StableIDForDevice(original)
 	if _, err := UpsertRegistry(path, []DeviceInfo{original}); err != nil {
 		t.Fatalf("seed registry: %v", err)
@@ -192,6 +195,7 @@ func TestUpsertRegistryMatchesLegacyCapabilityOnlySpoolerIdentity(t *testing.T) 
 			"driver_name": "Generic Thermal",
 		},
 	}
+	legacy = withPublishedQueueGUID(legacy)
 	if _, err := UpsertRegistry(path, []DeviceInfo{legacy}); err != nil {
 		t.Fatalf("seed legacy registry: %v", err)
 	}
@@ -207,6 +211,7 @@ func TestUpsertRegistryMatchesLegacyCapabilityOnlySpoolerIdentity(t *testing.T) 
 		Status:         "online",
 		Enabled:        true,
 	}
+	incoming = withPublishedQueueGUID(incoming)
 	incoming.ID = StableIDForDevice(incoming)
 	if incoming.ID == legacy.ID {
 		t.Fatal("test precondition: strong identity ID must differ from legacy queue-name ID")

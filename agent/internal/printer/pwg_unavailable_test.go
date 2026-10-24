@@ -19,6 +19,12 @@ func TestPWGExplicitUnavailableCapabilitiesNeverSelectDefaults(t *testing.T) {
 				if value, present := attrs[name]; !present || value != "" {
 					t.Fatalf("explicit unavailable value was confused with omission: %v", attrs)
 				}
+				// Keep the other required capability valid to isolate this case.
+				if name == "pwg-raster-document-type-supported" {
+					attrs["pwg-raster-document-resolution-supported"] = "300x300dpi"
+				} else {
+					attrs["pwg-raster-document-type-supported"] = "sgray_8"
+				}
 				if _, _, err := pwgOptionsFromIPPAttributes(attrs); err == nil || !strings.Contains(err.Error(), name) {
 					t.Fatalf("unknown capability authorized unadvertised raster defaults: %v", err)
 				}

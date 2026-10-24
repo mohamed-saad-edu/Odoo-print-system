@@ -88,7 +88,11 @@ func (a *Agent) privatePrinterIDs(snapshot localPrinterSharingSnapshot) ([]strin
 	a.printersMu.RUnlock()
 	a.desiredStateMu.Lock()
 	for _, row := range a.desiredStates {
-		configs = append(configs, desiredPrinterConfig(row))
+		pc, err := a.resolvedDesiredPrinterConfig(row)
+		if err != nil {
+			pc = desiredPrinterConfig(row) // unresolved binding fails closed below
+		}
+		configs = append(configs, pc)
 	}
 	a.desiredStateMu.Unlock()
 	private := make(map[string]struct{})
@@ -170,6 +174,10 @@ func (a *Agent) localPrinterBindingDisabled(pc config.PrinterConfig) bool {
 		if local.IsEnabled() {
 			continue
 		}
+		local, err = a.resolveLocalPrinter(local)
+		if err != nil {
+			continue
+		}
 		localDigest, err := config.PrinterBindingDigest(local)
 		if err == nil && localDigest == digest {
 			return true
@@ -184,7 +192,7 @@ func (a *Agent) cloudDiscoveryPayload(result printer.DiscoveryResult) ([]map[str
 	if snapshot.err == nil && snapshot.policy.Present {
 		// Fresh local native groups may precede registry persistence. Resolve
 		// the complete scan coherently before emitting even its first row.
-		snapshot.known, snapshot.err = printer.AppendLocalSharingBindings(snapshot.known, result.Printers)
+		snapshot.known, snapshot.err = printer.AppendLocalSharingBindings(snapshot.known, result.Printers, a.cfg)
 		if snapshot.err == nil {
 			snapshot.view = snapshot.policy.Resolve(snapshot.known)
 			snapshot.err = snapshot.view.Err()
@@ -195,7 +203,8 @@ func (a *Agent) cloudDiscoveryPayload(result printer.DiscoveryResult) ([]map[str
 		return devices, []string{"local printer sharing policy unavailable; cloud discovery metadata withheld"}
 	}
 	for _, device := range result.Printers {
-		if snapshot.view.DiscoveryShared(printer.SharingConfigForDevice(device)) {
+		pc, err := a.resolveLocalPrinter(printer.SharingConfigForDevice(device))
+		if err == nil && snapshot.view.DiscoveryShared(pc) {
 			devices = append(devices, discoveryDevicePayload(a.cfg.Agent.ID, device))
 		}
 	}

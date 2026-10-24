@@ -1,3 +1,4 @@
+import type { OperationalPrinterState } from "../../lib/printer-operational-verification";
 /**
  * Typed IPC boundary between the desktop WebView and the Rust backend.
  *
@@ -281,7 +282,7 @@ export async function closeApp(): Promise<void> {
   }
 }
 
-export interface PrinterInfo {
+export interface PrinterInfo extends OperationalPrinterState {
   id: string;
   name: string;
   display_name?: string;
@@ -425,7 +426,10 @@ export async function registerGatewayPrinter(
   const config: Record<string, unknown> = {};
   const connectionType = req.connectionType.toLowerCase();
 
-  if (connectionType === "network") {
+  if (connectionType === "pdf_output") {
+    if (!req.outputProfileId || !/^[A-Za-z0-9_-]{1,64}$/.test(req.outputProfileId)) throw new Error("An approved output profile ID is required");
+    config.output_profile_id = req.outputProfileId;
+  } else if (connectionType === "network") {
     const network = networkConfigFromEndpoint(req.endpoint || "", req.protocol || "");
     config.ip = network.ip;
     config.port = network.port;
@@ -544,6 +548,7 @@ export interface RegisterPrinterRequest {
   usbPid?: string;
   usbSerial?: string;
   spoolerPassthroughProtocols?: Array<"raw" | "escpos">;
+  outputProfileId?: string;
 }
 
 export interface AutostartStatus {

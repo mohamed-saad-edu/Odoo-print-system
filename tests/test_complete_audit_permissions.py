@@ -28,6 +28,7 @@ def source_function(filename, name):
 
 def environment(superuser=False, administrator=False, groups=()):
     return SimpleNamespace(
+        _=lambda message: message,
         is_superuser=lambda: superuser,
         user=SimpleNamespace(has_group=lambda name: administrator, all_group_ids=SimpleNamespace(ids=list(groups))),
     )

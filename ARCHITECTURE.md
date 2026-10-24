@@ -1,25 +1,20 @@
 # Yaseir Cloud Printing Platform — Architecture
 
-> **Version**: 19.0.2.16.0 | **Node**: 24.22.1 | **Go**: 1.26 | **Odoo**: 19 CE
+> **Addon version**: 19.0.2.20.0 | **Node**: 24.22.1 | **Go**: 1.26.10 | **Odoo**: 19 CE
 
 ## 1. System Overview
 
 Yaseir Cloud Printing Platform is a multi-tenant SaaS platform that enables silent, hardware-level printing from Odoo ERP to physical printers through a three-tier distributed architecture.
 
-```
-┌──────────────────┐     ┌────────────────────┐     ┌──────────────────┐
-│   Odoo 19 CE     │────▶│  Central Gateway    │◀───▶│ Windows Agent    │
-│   (ERP Layer)    │ API │  (Control Plane)    │ WS  │ (Data Plane)     │
-│                  │     │                     │     │                  │
-│ Business Context │     │ Runtime Infra       │     │ Physical Print   │
-│ Print Intent     │     │ Tenant Isolation    │     │ Device Discovery │
-│ Binding Config   │     │ Job Queue           │     │ Job Execution    │
-└──────────────────┘     └────────────────────┘     └──────────────────┘
-         │                        │                        │
-    ┌────▼────┐             ┌─────▼─────┐           ┌─────▼─────┐
-    │ Odoo DB │             │PostgreSQL │           │ Printers  │
-    │ (Biz)   │             │ (Runtime) │           │ (HW/Net)  │
-    └─────────┘             └───────────┘           └───────────┘
+```mermaid
+flowchart TD
+  O["Odoo 19 / API client"] --> G["Gateway: admission and authorization"]
+  O <--> B["Odoo business data and outbox"]
+  G <--> D["PostgreSQL: claims, identities and history"]
+  G <--> A["Windows Agent: fenced execution"]
+  A <--> Q["SQLite: durable local outcomes"]
+  A --> R["Renderer and declared transport"]
+  R --> P["Selected physical printer"]
 ```
 
 ### Ownership Boundary (Critical Design Decision)
@@ -142,12 +137,23 @@ The system keeps the following state dimensions separate:
 
 ### Job Status Flow
 
+```mermaid
+stateDiagram-v2
+  [*] --> queued
+  queued --> claimed: atomic claim
+  claimed --> queued: proven safe pre-execution return
+  claimed --> printing: acknowledged fenced admission
+  claimed --> expired: ambiguous delivery expires
+  printing --> success: transport acceptance recorded
+  printing --> failed: rejected or interrupted execution
+  printing --> expired: lifetime exhausted
 ```
-queued → claimed → printing → success
-                            → failed
-                            → expired
-claimed → queued (fenced rejection / lease timeout)
-```
+
+A transition from a delivered or printing state to a terminal error carries the
+physical-uncertainty marker where output may exist. It is never an automatic
+transition back to a printable queue. Terminal acknowledgement replay updates
+history using the original claim and operation identity; it does not create a
+second physical attempt.
 
 ## 5. Security Architecture
 
@@ -181,8 +187,8 @@ claimed → queued (fenced rejection / lease timeout)
 
 ### PostgreSQL + Drizzle ORM
 
-**Schema**: 29 tables defined in `src/db/schema.ts`
-**Migrations**: 90 forward-only migrations (`0000`–`0089`) in `drizzle/`
+**Schema**: 31 tables defined in `src/db/schema.ts`
+**Migrations**: 95 forward-only migrations (`0000`–`0094`) in `drizzle/`
 **Driver**: `pg` with connection pool; exact version is pinned in the Node manifests
 
 ### Key Design Patterns
@@ -223,10 +229,9 @@ The WebSocket server (`src/server/ws.ts`) implements:
 
 ### Production Stack
 
-```
-Internet → Caddy (reverse proxy + TLS) → Next.js Gateway → PostgreSQL 16
-                                                          → Go Agent (per site)
-```
+Public HTTPS terminates at Caddy. The private Gateway uses PostgreSQL 16 for
+runtime state; site Agents establish outbound authenticated connections to the
+Gateway. Printer traffic originates from the selected site's Agent.
 
 - **Caddy**: Handles TLS termination, injects `TRUST_PROXY_SECRET` header
 - **Docker**: `Dockerfile` for Gateway, `docker-compose.yml` for full stack
@@ -234,9 +239,13 @@ Internet → Caddy (reverse proxy + TLS) → Next.js Gateway → PostgreSQL 16
 
 ### CI/CD
 
-GitHub Actions with two jobs:
-1. **CI**: TypeScript (typecheck, lint, build), unit tests, migration replay, schema verification, integration tests, Go (build, vet, test, race)
-2. **Odoo 19**: Full Odoo 19 CE environment with addon installation and test execution (≥80 tests expected)
+The repository has separate CI, Docker, Windows installer, native-backport,
+static-security, and security/supply-chain workflows. Their executable YAML files
+under `.github/workflows/` are authoritative. Gates cover the locked dependency
+graphs, TypeScript/build/regression checks, actual PostgreSQL migrations and
+integration tests, Odoo installation/tests, Go race/vet, native source patches,
+scanners and release artifacts. A successful cross-compile does not execute
+Windows APIs or establish a signed installer acceptance result.
 
 ## 10. Time Authority & Clock Discipline
 
@@ -282,3 +291,147 @@ single-reading TTL invariant, quota rollback).
 New physical dispatch requires an acknowledged, claim-fenced `printing` response (`success: true`, `status: "printing"`). Local delivery receipt age is diagnostic only; a buffered frame may already have a stale claim. An unacknowledged admission sends no hardware bytes. Printing that already crossed this boundary retains its durable outcome reporting through a later disconnect. Repeated admission for the same live printing claim is acknowledged without creating another job or physical attempt.
 
 Gateway document-type displays and admission share the pure `validatePayloadForPrinter` implementation in `src/lib/printer-capability.ts`, re-exported by routing. Explicit supported_protocols remain authoritative, and physical backend restrictions still override unsupported image/PDF capabilities. The Go capability matrix remains the matching Agent authority.
+
+
+## 11. Measured printer capabilities and image geometry
+
+The V3 wire authority is `contracts/printer-geometry-contract.json`, with shared
+positive and negative fixtures consumed by TypeScript, Go and Odoo. The existing
+`printers.capabilities` and `printers.config` JSON columns carry observations and
+desired configuration; this printer change does not require a new SQL migration.
+
+| Field / boundary | Meaning and owner |
+| --- | --- |
+| `capabilities.geometry.version` | Version 1 of the common measurement contract |
+| `source` / `validation` | `windows_driver` or `ipp` observations are `observed`; an explicit operator profile is `validated_profile` / `configured` |
+| `printer_id` | Exact Agent execution ID, matching the Gateway printer row; aliases require a fresh observation using the adopted ID |
+| `observed_at` | Observation timestamp; freshness and desired-state convergence remain separate checks |
+| `config_fingerprint` | Agent-generated SHA-256 over the destination binding, protocol, measurements and driver/media observation identity; timestamps and credentials are excluded |
+| `printable_width_dots` | Required measured or explicitly configured printable width; nominal 58/80 mm labels cannot supply it |
+| Optional dimensions | Actual paper dimensions, printable height, offsets and horizontal/vertical DPI when known; omitted values remain unknown |
+| `raster_command` | `gs_v_0` only when explicitly validated for the selected ESC/POS device |
+| `config.geometry_profile` | Manager/operator supplied measurements; the Agent validates them before emitting a configured observation |
+| Image `geometry_fingerprint` | Immutable reference to the geometry used to render that image |
+
+Windows observations use the current printer/driver/port identity, full DEVMODE
+and actual device-context `PHYSICALWIDTH`, `PHYSICALHEIGHT`, `HORZRES`, `VERTRES`,
+`PHYSICALOFFSETX/Y`, and `LOGPIXELSX/Y`. Physical paper and printable bounds remain
+distinct. The native path rechecks the actual context before `StartDoc`; a stale
+image geometry cannot silently shrink to a smaller newly selected printhead.
+
+IPP queries request actual media, media collections, default/ready media,
+resolutions, raster types, scaling and document formats. Collection parsing is
+bounded by the 64 KiB response budget, eight nesting levels, typed dimensions and
+margins, and explicit member/value limits. Supported media and margins are
+published under `ipp_capabilities`; a failed or older concurrent probe cannot
+refresh stale observations. Geometry is published only when a selected media and
+its real margins establish an unambiguous printable area. Non-integral DPI
+converted from dpcm is not misreported as integral observed DPI in the v1 profile.
+
+When a real IPP response supplies `printer-uuid`, the Agent pins that printer
+service identity to its execution binding. The first successful observation is
+persisted before a print preflight can finish, including a print started before
+the first heartbeat. A changed or disappearing established UUID blocks physical
+submission and invalidates fresh media/geometry observations. Restarting the
+Agent or refreshing discovery cannot silently replace that binding. An endpoint
+that has never advertised a UUID remains explicitly without that identity proof;
+the UUID is a service continuity signal, not cryptographic device attestation.
+
+Manager changes clear the old geometry. The Gateway exposes geometry for a
+managed printer after its desired revision, applied revision and observed
+configuration converge. An ID alias or changed known destination/protocol cannot
+rebind someone else's old geometry. Timestamp-only refreshes preserve discovery
+approval; changed measurements, origin, binding or fingerprints invalidate it.
+The existing manager printer-details UI accepts validated profiles; paired
+Desktop credentials do not gain manager mutation permissions.
+
+### Image generation and physical rendering
+
+Odoo obtains the selected route's current geometry before rendering a POS,
+kitchen or Sales Details receipt. CSS layout uses printable dots and actual DPI
+to preserve physical typography: CSS width is `dots × 96 / dpi_x`; raster scale
+uses the actual axis DPI. It does not use a 512-dot default or cap valid widths at
+576. A direct raster layout can derive printable millimetres from dots and DPI;
+turning an image into a physical PDF page additionally requires real paper width.
+Missing geometry, missing image/font resources, invalid canvas output and
+excessive raster dimensions fail before a print operation is enqueued.
+
+The JPEG image ceilings remain 16,384 pixels on either axis, 40 million decoded
+pixels and the shared encoded-byte limit. A long receipt within these bounds is
+not reduced to fit a page height. A document beyond a security/resource ceiling
+fails explicitly; the limit is not bypassed by an unadvertised lower DPI.
+
+New Gateway image admission locks the selected printer row and requires a
+matching fingerprint. The Agent validates it again at execution. An already
+accepted idempotent operation is reconciled with its original payload, even if
+its geometry is now old or the legacy payload had no fingerprint. That recovery
+path does not authorize a new image job without current geometry.
+Odoo performs this exact durable replay lookup after current record, company and
+route authorization and before checking new live geometry. It returns the saved
+outcome without resetting the operation or making another outbound submission;
+a different payload, fingerprint, source or route cannot reuse the old operation.
+
+| Transport | Input and behavior |
+| --- | --- |
+| Windows local/shared/USB-backed driver queue | PDF through the embedded PDFium/GDI path; JPEG requires physical geometry. Receipt pages preserve printable width and paginate vertically within the selected driver form and bitmap budget. Per-axis output DPI and nonprintable offsets are retained. |
+| Direct USB or TCP ESC/POS | Explicit protocol plus measured width and validated `gs_v_0` authorize JPEG-to-raster conversion. Rows are segmented with bounded buffers. A protocol label alone never authorizes a raster command. |
+| IPP/IPPS | PDF input only. Real PDFium metadata establishes each page size before submission. A matching advertised fixed/custom media is selected; unknown or mixed media requires a supported driver path. Native PDF is preferred when advertised; otherwise advertised PWG Raster or single-page JPEG may be prepared on Windows. |
+| ZPL/TSPL and explicit RAW | Declared byte-language passthrough only; they are not generic PDF/image renderers and an inferred printer class cannot enable them. |
+
+IPP sends `ipp-attribute-fidelity=true`, the selected media/known margins,
+advertised resolution where applicable, and `print-scaling=none` when advertised.
+An advertised orientation may authorize landscape selection. Missing PWG
+resolution/type never becomes a 300-DPI/gray default. JPEG raster density is chosen
+from the advertised square resolutions; it is not silently lowered to fit the
+bitmap ceiling. Preparation may choose a different independently advertised
+format before transmission, but only one `Print-Job` is sent. An ignored or
+substituted strict attribute response is an unknown physical outcome, not a
+successful exact-geometry claim and not permission to resend.
+
+The software does not promise compatibility with every driver, arbitrary label
+language, IPP implementation or raster variant. Device-specific paper limits,
+spooler behavior, physical margins, actual QR/barcode readability, USB interfaces,
+service permissions and transport completion still require the retained Windows
+and physical-printer acceptance gates. The detailed supported and blocked matrix
+is delivered with the V3 printer compatibility report.
+
+## 12. Shutdown, security and release evidence
+
+The custom HTTP and WebSocket serializers share the security-header policy,
+including refusals, malformed upgrade responses and successful upgrades. HTML
+responses retain nonce-based CSP; the bounded CSP report collector logs only
+allowlisted report fields. COOP is `same-origin`; no COEP isolation claim is made.
+Password-only login and recent password confirmation replace the removed factor
+flows; current membership/owner authorization and live session-family checks
+remain mandatory.
+
+Accepted maintenance, WebSocket acknowledgement, registration, notification and
+dispatch work is tracked and drained before the database pool closes. An abort,
+timeout, transport failure or lost acknowledgement does not erase durable claim
+and uncertainty evidence. The production runtime database role can append/read
+audit events but cannot update or delete them; migration postconditions recheck
+that privilege boundary. Deployment-owner access and protected external log
+custody remain distinct operational controls.
+
+HTTP policy refusals, WebSocket handshake refusals and central Manager
+permission denials emit a fixed-schema security event. The process-wide monitor
+retains 120 detailed events per minute and aggregates excess counts by a bounded
+surface/status set, flushing them on the minute boundary and graceful shutdown.
+It never accepts URLs, request content or credentials as log fields. This
+operational stream does not replace protected external log custody or claim
+complete upstream/native authorization-event coverage.
+
+An interrupted physical attempt always remains uncertain. The deprecated
+`reprint_after_crash` configuration is accepted for configuration compatibility
+but cannot authorize another attempt, even when explicitly true. The local
+ledger, Agent recovery and Gateway status transition each enforce this boundary.
+Only work known not to have crossed the execution boundary may retry normally;
+an operator must reconcile an uncertain result before authorizing a separate new
+operation.
+
+Verification records distinguish actual PostgreSQL, PDFium, Chromium, native
+Linux builds and loopback protocol exchanges from simulated Agent/device work.
+The final workload must run against a frozen source inventory after printer
+changes, with less-compressible representative payloads and recorded tail
+latency, memory, queues and recovery outcomes. Neither simulated submission nor
+a previous source revision's test result is physical printer acceptance.

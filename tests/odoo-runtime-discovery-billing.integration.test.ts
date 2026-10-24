@@ -1,3 +1,4 @@
+import geometryFixtures from "../contracts/printer-geometry-fixtures.json";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { GET as agentsGET } from "../src/app/api/odoo/agents/route";
 import { GET as printersGET } from "../src/app/api/odoo/printers/route";
@@ -60,7 +61,7 @@ suite("Odoo runtime discovery billing boundary", () => {
   it("publishes bounded selected roll media separately from printable dots", async () => {
     await pool().query(
       "UPDATE printers SET capabilities = $1::jsonb WHERE tenant_id = $2 AND id = $3",
-      [JSON.stringify({ paper_width_mm: 58, max_paper_width: 384, supported_protocols: ["pdf", "image"] }), fixture.tenantId, fixture.printerId],
+      [JSON.stringify({ geometry: { ...geometryFixtures.geometryCases.find((entry) => entry.name === "physical-384-dots-203-dpi-58-mm")!.geometry, printer_id: fixture.printerId }, supported_protocols: ["pdf", "image"] }), fixture.tenantId, fixture.printerId],
     );
     const request = () => new Request("https://gateway.test/api/odoo/printers", { headers: { "x-api-key": fixture.odooKey } });
     const response = await printersGET(request());
@@ -74,6 +75,8 @@ suite("Odoo runtime discovery billing boundary", () => {
       [JSON.stringify({ max_paper_width: 512, paper_widths: [58, 80] }), fixture.tenantId, fixture.printerId],
     );
     const ambiguous = await (await printersGET(request())).json();
-    expect(ambiguous.printers.find((printer: { id: string }) => printer.id === fixture.printerId).capabilities).not.toHaveProperty("paper_width_mm");
+    const ambiguousPrinter = ambiguous.printers.find((printer: { id: string }) => printer.id === fixture.printerId);
+    expect(ambiguousPrinter.capabilities).not.toHaveProperty("paper_width_mm");
+    expect(ambiguousPrinter.printableWidthDots).toBeNull();
   });
 });

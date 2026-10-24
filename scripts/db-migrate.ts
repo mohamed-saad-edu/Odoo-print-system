@@ -1,5 +1,6 @@
 import { readMigrationFiles } from "drizzle-orm/migrator";
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { PoolClient } from "pg";
@@ -79,6 +80,10 @@ export async function migrateByHash(client: PoolClient, migrationsFolder: string
       await client.query('INSERT INTO drizzle.__drizzle_migrations (hash, created_at) VALUES ($1, $2)', [hash, Math.max(...migrations.map(m => m.folderMillis))]);
       applied.add(hash);
     }
+    // A privilege postcondition, not a new schema migration: every owner run
+    // must preserve append-only audit access for this profile's runtime role,
+    // including a fresh table created after default privileges were applied.
+    await client.query(readFileSync(new URL("./audit-runtime-privileges.sql", import.meta.url), "utf8"));
     await client.query("COMMIT");
   } catch (error) {
     await client.query("ROLLBACK");

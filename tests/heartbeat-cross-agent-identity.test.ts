@@ -2,6 +2,7 @@ import { beforeAll, beforeEach, afterAll, describe, expect, it } from "vitest";
 import { createHash, randomBytes } from "node:crypto";
 import { POST as heartbeatPOST } from "../src/app/api/agent/heartbeat/route";
 import { hasTestDatabase, applyMigrations, truncateAll, seedFixture, closePool, pool } from "./helpers/pg";
+import geometryFixtures from "../contracts/printer-geometry-fixtures.json";
 
 const suite = describe.skipIf(!hasTestDatabase);
 
@@ -15,7 +16,7 @@ function makePrinter(id: string) {
     protocol: "raw",
     status: "online",
     config: { ip: "10.0.0.10", port: 9100 },
-    capabilities: { supported_protocols: ["raw"] },
+    capabilities: { supported_protocols: ["raw"], geometry: { ...geometryFixtures.geometryCases[0].geometry, printer_id: id } },
   };
 }
 
@@ -93,6 +94,8 @@ suite("heartbeat cross-agent printer identity", () => {
       expect(row.lifecycle).toBe("active");
       expect(row.inventory_present).toBe(true);
     }
+    const aliasedGeometry = await pool().query("SELECT capabilities FROM printers WHERE tenant_id=$1 AND id=$2", [f.tenantId, alias]);
+    expect(aliasedGeometry.rows[0].capabilities).not.toHaveProperty("geometry");
 
     // Reconnection stability: both agents heartbeat again, no duplicates,
     // no ownership flapping, same alias.
@@ -104,5 +107,12 @@ suite("heartbeat cross-agent printer identity", () => {
     expect((await firstAgain.json()).printerIdAliases ?? {}).toEqual({});
     const recount = await pool().query(`SELECT COUNT(*)::int AS n FROM printers WHERE tenant_id = $1`, [f.tenantId]);
     expect(Number(recount.rows[0]?.n)).toBe(2);
+
+    // Only a new Agent observation under the adopted execution identity can
+    // restore geometry; the Gateway never rewrites the original provenance.
+    const adopted = await heartbeat(second.agentAuth, [makePrinter(alias)]);
+    expect(adopted.status).toBe(200);
+    const rebound = await pool().query("SELECT capabilities FROM printers WHERE tenant_id=$1 AND id=$2", [f.tenantId, alias]);
+    expect(rebound.rows[0].capabilities.geometry.printer_id).toBe(alias);
   });
 });

@@ -1,3 +1,4 @@
+import { printerOperationalVerificationPredicate } from "./printer-verification-sql";
 import { liveTenantSubscriptionPredicate } from "./entitlements";
 import { db } from "../db";
 import { printJobs } from "../db/schema";
@@ -62,6 +63,7 @@ export type ClaimedJobRow = {
   retries: number;
   deliveryAttempts: number;
   claimToken: string | null;
+  bindingDigest?: string | null;
   error?: string | null;
   createdAt: Date | string;
   requestId: string | null;
@@ -79,6 +81,7 @@ export const CLAIM_RETURNING = sql`
   print_jobs.retries AS retries,
   print_jobs.delivery_attempts AS "deliveryAttempts",
   print_jobs.claim_token AS "claimToken",
+  print_jobs.binding_digest AS "bindingDigest",
   print_jobs.error AS error,
   print_jobs.created_at AS "createdAt",
   print_jobs.request_id AS "requestId"
@@ -169,10 +172,13 @@ export async function claimJobForDelivery(
         AND a.last_seen_at IS NOT NULL
         AND a.last_seen_at <= now()
         AND a.last_seen_at >= now() - make_interval(secs => ${agentStaleThresholdSeconds()})
+        AND p.binding_digest IS NOT NULL AND p.binding_digest = pr.verification_binding_digest
+        AND p.output_medium = pr.output_medium
+        AND ${printerOperationalVerificationPredicate(sql`pr`)}
         AND pr.lifecycle = 'active'
         AND pr.inventory_present = true
         AND pr.shared_with_gateway = true
-        AND (pr.status = 'online' OR pr.status = 'busy' OR (pr.status = 'unknown' AND (pr.connection_type = 'spooler' OR pr.connection_type IN ('ipp','ipps') OR (pr.connection_type = 'network' AND pr.protocol IN ('ipp','ipps')) OR (pr.connection_type IN ('network','usb') AND pr.protocol IN ('raw','escpos','zpl','tspl')))))
+        AND (pr.status = 'online' OR pr.status = 'busy' OR (pr.status = 'unknown' AND (pr.connection_type = 'spooler' OR (pr.connection_type = 'pdf_output' AND pr.protocol = 'pdf') OR pr.connection_type IN ('ipp','ipps') OR (pr.connection_type = 'network' AND pr.protocol IN ('ipp','ipps')) OR (pr.connection_type IN ('network','usb') AND pr.protocol IN ('raw','escpos','zpl','tspl')))))
         AND (pr.management_source = 'agent' OR (
           pr.applied_desired_revision >= pr.desired_revision
           AND pr.observed_desired_revision >= pr.desired_revision

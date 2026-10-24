@@ -9,7 +9,7 @@ import {
   sha256,
   seedFixture,
 } from "./helpers/pg";
-import { createManagerSession } from "../src/lib/manager-auth";
+import { createWorkspaceManagerTestSession } from "./helpers/workspace-session";
 import { validateAgent, hashPairingCode } from "../src/lib/agent-auth";
 import { POST as registerPOST } from "../src/app/api/agent/register/route";
 import { createPrintJobForPrinter } from "../src/lib/print-job-service";
@@ -65,7 +65,7 @@ suite("permanent agent deletion lifecycle & invariants", () => {
       `INSERT INTO tenant_subscriptions (tenant_id, plan_id, status, current_period_end) VALUES ($1, 'plan_agent_deletion', 'active', NULL) ON CONFLICT (tenant_id) DO UPDATE SET plan_id = 'plan_agent_deletion', status = 'active', current_period_end = NULL`,
       [TENANT_ID],
     );
-    const session = await createManagerSession(TENANT_ID);
+    const session = await createWorkspaceManagerTestSession(TENANT_ID);
     currentManagerToken = session.token;
   });
 
@@ -171,7 +171,7 @@ suite("permanent agent deletion lifecycle & invariants", () => {
 
   it.each(["replay", "revoked", "new-intent"])("preserves receipt and credential authority when deletion wins after print preflight: %s", async scenario => {
     const fixture = await seedFixture();
-    currentManagerToken = (await createManagerSession(fixture.tenantId)).token;
+    currentManagerToken = (await createWorkspaceManagerTestSession(fixture.tenantId)).token;
     const key = (await pool().query("SELECT id FROM api_keys WHERE tenant_id=$1", [fixture.tenantId])).rows[0].id;
     const payload = { type: "pdf", encoding: "base64", data: Buffer.from("%PDF-1.4\n%%EOF\n").toString("base64") };
     const options = { tenantId: fixture.tenantId, rateLimitKeyId: key, requestedBy: "odoo", idempotencyKey: "accepted-before-delete" };

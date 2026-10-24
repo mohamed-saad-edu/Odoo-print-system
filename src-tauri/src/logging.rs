@@ -6,7 +6,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::paths;
 
-struct LogWriter { file: Option<File>, path: PathBuf }
+struct LogWriter {
+    file: Option<File>,
+    path: PathBuf,
+}
 static LOG_FILE: OnceLock<Mutex<LogWriter>> = OnceLock::new();
 
 /// Rotate the log once it grows past this size; rotated copies are kept under
@@ -62,7 +65,10 @@ pub fn init() -> Option<PathBuf> {
         );
         return None;
     }
-    let _ = LOG_FILE.set(Mutex::new(LogWriter { file: Some(file), path: path.clone() }));
+    let _ = LOG_FILE.set(Mutex::new(LogWriter {
+        file: Some(file),
+        path: path.clone(),
+    }));
     info("application logger initialized");
     Some(path)
 }
@@ -187,19 +193,34 @@ fn write_line(level: &str, msg: &str) {
     {
         if let Some(m) = LOG_FILE.get() {
             if let Ok(mut logger) = m.lock() {
-                let full = logger.file.as_ref().and_then(|file| file.metadata().ok())
+                let full = logger
+                    .file
+                    .as_ref()
+                    .and_then(|file| file.metadata().ok())
                     .is_some_and(|meta| meta.len() > MAX_LOG_BYTES);
                 if full {
                     // Close the handle before rename, including on Windows.
                     drop(logger.file.take());
                     rotate_if_full(&logger.path);
-                    logger.file = OpenOptions::new().create(true).append(true).open(&logger.path).ok();
-                    if logger.file.is_some() && paths::ensure_manager_file_security(&logger.path).is_err() {
+                    logger.file = OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open(&logger.path)
+                        .ok();
+                    if logger.file.is_some()
+                        && paths::ensure_manager_file_security(&logger.path).is_err()
+                    {
                         logger.file = None;
                     }
                 }
                 if let Some(file) = logger.file.as_mut() {
-                    if file.write_all(line.as_bytes()).and_then(|_| file.flush()).is_ok() { return; }
+                    if file
+                        .write_all(line.as_bytes())
+                        .and_then(|_| file.flush())
+                        .is_ok()
+                    {
+                        return;
+                    }
                 }
             }
         }

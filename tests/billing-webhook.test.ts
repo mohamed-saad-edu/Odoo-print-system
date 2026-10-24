@@ -1,3 +1,4 @@
+import type * as StripeModule from "../src/lib/stripe";
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vitest";
 import { POST } from "../src/app/api/billing/webhook/route";
 import { db } from "../src/db";
@@ -8,7 +9,7 @@ import { createHmac } from "node:crypto";
 const { stripeRetrieveMock } = vi.hoisted(() => ({ stripeRetrieveMock: vi.fn() }));
 
 vi.mock("../src/lib/stripe", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../src/lib/stripe")>();
+  const actual = await importOriginal<typeof StripeModule>();
   return {
     ...actual,
     stripeRetrieve: stripeRetrieveMock,

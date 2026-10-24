@@ -4,7 +4,7 @@ import { db } from "../../../../db";
 import { emailVerificationTokens, passwordResetTokens, tenantInvitations, tenantUsers, tenants, users } from "../../../../db/schema";
 import { findActiveInvitation, joinWorkspaceByInvitation } from "../../../../lib/invitation-join";
 import { normalizeEmail } from "../../../../lib/password";
-import { and, eq, isNull, gt, sql } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import { generateOpaqueToken, hashPassword, hashToken } from "../../../../lib/password";
 import { nanoid } from "../../../../lib/nanoid";
 import { revokeLegacyManagerSessionsForUserInTransaction } from "../../../../lib/manager-auth";
@@ -14,6 +14,7 @@ import { clientIpFrom, recordAuthSuccess, reserveAuthAttempt, setRateLimitHeader
 import { logError, logWarn } from "../../../../lib/log";
 import { writeAuditEvent } from "../../../../lib/audit";
 import type { ManagerRole } from "../../../../lib/manager-auth";
+import { emailAuthTokenIsLive, emailAuthTokenTimes } from "../../../../lib/email-auth-token-policy";
 
 export async function POST(req: Request) {
   if (hasBodyOverLimit(req, 16 * 1024)) return NextResponse.json({ error: "Request body too large" }, { status: 413 });
@@ -45,7 +46,7 @@ export async function POST(req: Request) {
     where: and(
       eq(emailVerificationTokens.tokenHash, tokenHash),
       isNull(emailVerificationTokens.consumedAt),
-      gt(emailVerificationTokens.expiresAt, sql`clock_timestamp()`),
+      emailAuthTokenIsLive(emailVerificationTokens),
     ),
   });
   if (!row) return NextResponse.json({ error: "Invalid or expired verification link" }, { status: 400 });
@@ -122,7 +123,7 @@ export async function POST(req: Request) {
         .where(and(
           eq(emailVerificationTokens.id, row.id),
           isNull(emailVerificationTokens.consumedAt),
-          gt(emailVerificationTokens.expiresAt, sql`clock_timestamp()`),
+          emailAuthTokenIsLive(emailVerificationTokens),
         ))
         .returning({ id: emailVerificationTokens.id });
       if (consumed.length !== 1) throw new Error("Verification token already consumed");
@@ -141,7 +142,7 @@ export async function POST(req: Request) {
         id: `prt_${nanoid(18)}`,
         userId: currentUser.id,
         tokenHash: await hashToken(resetToken),
-        expiresAt: sql`clock_timestamp() + interval '20 minutes'`,
+        ...emailAuthTokenTimes(),
       });
 
       if (invitation) {

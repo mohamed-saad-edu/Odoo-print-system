@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -156,6 +157,8 @@ func loadRegistryPartitionedLocked(registryPath string) (production, hidden []De
 		// completion order and can overwrite a fresher Windows spooler result.
 		// Force registry status to unknown; live OS/backend probes repopulate it.
 		d.Status = "unknown"
+		// Persisted evidence is history, never proof of current access.
+		delete(d.Capabilities, "operational_verification")
 		if !IsManagedPrinter(d) {
 			hidden = append(hidden, d)
 			continue
@@ -277,9 +280,9 @@ func UpsertRegistry(registryPath string, discovered []DeviceInfo) ([]DeviceInfo,
 	return mutateRegistryFromDiscovery(registryPath, discovered, nil)
 }
 
-// ReconcileDiscoveryRegistry merges a live discovery snapshot and, only for
-// discovery sources whose absence semantics are authoritative, removes stale
-// automatically-discovered rows that the completed source no longer reports.
+// ReconcileDiscoveryRegistry retains identity/history through absence. A
+// complete Windows enumeration can make a queue unavailable, never delete its
+// saved configuration or silently assign its jobs to a replacement queue.
 //
 // Today only the Windows spooler queue inventory is absence-authoritative:
 // EnumPrintersW enumerates configured queues, so a queue missing from a
@@ -367,7 +370,73 @@ func mutateRegistryFromDiscovery(registryPath string, discovered []DeviceInfo, c
 				d.ID = existing[continuityIndex].ID
 			}
 		}
+		if _, found := byID[d.ID]; !found {
+			// URI spelling is not a new IPP execution destination. Reuse the
+			// same canonical binding as local sharing policy so aliases keep
+			// the established ID and the operator's enable/disable decision.
+			// Do not rewrite historical IDs or guess between pre-existing
+			// duplicates; jobs may still refer to either of those identities.
+			if binding, ok := ippRegistryBinding(d); ok {
+				continuityIndex := -1
+				ambiguous := false
+				for idx, prior := range existing {
+					priorBinding, priorOK := ippRegistryBinding(prior)
+					if prior.ID == "" || !priorOK || priorBinding != binding {
+						continue
+					}
+					if continuityIndex != -1 {
+						ambiguous = true
+						break
+					}
+					continuityIndex = idx
+				}
+				if ambiguous {
+					log.Printf("[registry] ambiguous IPP alias for printer %q; retaining established identities without rebinding", d.Name)
+					continue
+				}
+				if continuityIndex != -1 {
+					d.ID = existing[continuityIndex].ID
+				}
+			}
+		}
+		if _, found := byID[d.ID]; !found && !isSpoolerDevice(d) {
+			// The exact configured interface/endpoint can preserve a registration
+			// without trusting a caller-supplied hardware serial or UUID. This also
+			// migrates legacy manual USB IDs while keeping distinct paths separate.
+			if binding, bindingErr := config.PrinterBindingDigest(SharingConfigForDevice(d)); bindingErr == nil {
+				matches := make([]int, 0, 1)
+				for index, prior := range existing {
+					priorBinding, err := config.PrinterBindingDigest(SharingConfigForDevice(prior))
+					if err == nil && priorBinding == binding {
+						matches = append(matches, index)
+					}
+				}
+				if len(matches) > 1 {
+					for _, index := range matches {
+						existing[index] = withRegistryIdentityCollision(existing[index], "ambiguous_execution_endpoint")
+					}
+					continue
+				}
+				if len(matches) == 1 {
+					d.ID = existing[matches[0]].ID
+				}
+			}
+		}
 		if idx, ok := byID[d.ID]; ok {
+			if isSpoolerDevice(existing[idx]) && isSpoolerDevice(d) && !sameSpoolerQueueDuringDetailLoss(existing[idx], d) {
+				oldGUID, newGUID := verifiedWindowsQueueGUID(existing[idx]), verifiedWindowsQueueGUID(d)
+				source, _ := d.Capabilities["registration_source"].(string)
+				if (oldGUID == "" || oldGUID != newGUID) && source != "manual" && source != "config" {
+					existing[idx] = withRegistryIdentityCollision(existing[idx], "same_id_different_queue")
+					log.Printf("[registry] conflicting native queues share persisted ID %q; explicit reconciliation required", d.ID)
+					continue
+				}
+			}
+			if conflictingVerifiedIPPUUID(existing[idx].Capabilities, d.Capabilities) {
+				log.Printf("[registry] verified IPP identity changed for %q; retaining established binding", d.ID)
+				existing[idx] = retainedIPPIdentityConflict(existing[idx])
+				continue
+			}
 			d = preserveRegistryObservationEvidence(existing[idx], d)
 			// Merge into the stored row so a bare rediscovery observation
 			// never wipes previously observed capabilities/serials — but
@@ -417,24 +486,32 @@ func mutateRegistryFromDiscovery(registryPath string, discovered []DeviceInfo, c
 			continue
 		}
 
-		// Preserve the persisted ID when a stronger physical identity proves
+		// Preserve the persisted ID when a stronger device or logical identity proves
 		// that an observed printer is the same device/queue after an IP or
 		// spooler-name change. This also migrates IDs created by older
 		// name/IP-based implementations without destructive re-registration.
-		if identity, ok := physicalIdentityKey(d); ok {
+		if identity, ok := physicalIdentityKey(d); ok && registryMayUseObservedIdentity(d) {
+			matches := make([]int, 0, 1)
 			for idx, prior := range existing {
 				if priorIdentity, priorOK := physicalIdentityKey(prior); priorOK && priorIdentity == identity {
-					oldID := prior.ID
-					d = preserveRegistryObservationEvidence(prior, d)
-					d.ID = oldID
-					// Matching physical identity changes the observation, not
-					// the operator's enable/disable decision.
-					d.Enabled = prior.Enabled
-					existing[idx] = d
-					byID[oldID] = idx
-					log.Printf("[registry] preserved printer ID %s across identity-preserving endpoint/name change", oldID)
-					goto persisted
+					matches = append(matches, idx)
 				}
+			}
+			if len(matches) > 1 {
+				for _, idx := range matches {
+					existing[idx] = withRegistryIdentityCollision(existing[idx], "ambiguous_persisted_queue")
+				}
+				log.Printf("[registry] multiple registrations match printer %q; explicit reconciliation required", d.Name)
+				continue
+			}
+			if len(matches) == 1 {
+				idx := matches[0]
+				prior := existing[idx]
+				d = preserveRegistryObservationEvidence(prior, d)
+				d.ID, d.Enabled = prior.ID, prior.Enabled
+				existing[idx] = d
+				byID[d.ID] = idx
+				goto persisted
 			}
 		}
 
@@ -444,15 +521,17 @@ func mutateRegistryFromDiscovery(registryPath string, discovered []DeviceInfo, c
 	}
 
 	if len(completeSources) > 0 {
-		kept := existing[:0]
-		for _, stored := range existing {
+		for index, stored := range existing {
 			if shouldPruneMissingDiscoveryRow(stored, discovered, completeSources) {
-				log.Printf("[registry] removing absent auto-discovered Windows queue %s (%q) after complete spooler inventory", stored.ID, stored.Name)
-				continue
+				stored.Capabilities = maps.Clone(stored.Capabilities)
+				stored.Capabilities["inventory_present"] = false
+				delete(stored.Capabilities, "operational_verification")
+				delete(stored.Capabilities, "geometry")
+				stored.Status = "unknown"
+				existing[index] = stored
+				log.Printf("[registry] retained absent Windows queue %s (%q) as unavailable history", stored.ID, stored.Name)
 			}
-			kept = append(kept, stored)
 		}
-		existing = kept
 	}
 
 	// Persist hidden records too: hiding a queue must never delete it.
@@ -461,6 +540,16 @@ func mutateRegistryFromDiscovery(registryPath string, discovered []DeviceInfo, c
 		return nil, err
 	}
 	return existing, nil
+}
+
+func ippRegistryBinding(device DeviceInfo) (string, bool) {
+	pc := SharingConfigForDevice(device)
+	protocol, err := pc.NormalizedProtocol()
+	if err != nil || (protocol != "ipp" && protocol != "ipps") {
+		return "", false
+	}
+	binding, err := config.PrinterBindingDigest(pc)
+	return binding, err == nil
 }
 
 // preserveRegistryObservationEvidence keeps operator intent and last-known
@@ -473,6 +562,15 @@ func preserveRegistryObservationEvidence(prior, incoming DeviceInfo) DeviceInfo 
 	}
 	for key, value := range incoming.Capabilities {
 		caps[key] = value
+	}
+	// A newly observed queue is present again. Old absence is history only;
+	// the operational probe still has to establish fresh dispatch eligibility.
+	delete(caps, "inventory_present")
+	delete(caps, "operational_verification")
+	// Unverified discovery UUID hints cannot replace an identity obtained
+	// from the execution endpoint's actual IPP response.
+	if uuid := verifiedIPPUUIDFromCapabilities(prior.Capabilities); uuid != "" {
+		preserveVerifiedIPPUUID(caps, uuid)
 	}
 	if sameSpoolerQueueDuringDetailLoss(prior, incoming) {
 		for _, key := range []string{"port_name", "driver_name", "server_name", "share_name"} {
@@ -590,20 +688,24 @@ func RegisterManual(registryPath string, info DeviceInfo) ([]DeviceInfo, error) 
 	}
 
 	if info.ID == "" {
-		// Preserve the established manual USB ID namespace so existing operator
-		// registrations remain stable. Automatic discovery can still use the
-		// stronger source-independent identity and UpsertRegistry will migrate
-		// to an existing persisted ID when the physical identity matches.
-		if info.ConnectionType == "usb" && (info.USBVID != "" || info.USBPID != "" || info.USBSerial != "") {
-			location := capabilityIdentityValue(info, "location", "usb_location", "usbLocation")
-			info.ID = StableIDFromUSB(info.USBVID, info.USBPID, info.USBSerial, location)
+		// A declared UUID/serial is an expected value, never an observed
+		// identity. New manual IDs use the exact logical execution endpoint;
+		// registry continuity above preserves an established ID for that same
+		// endpoint, including older manual USB ID namespaces.
+		binding, err := config.PrinterBindingDigest(SharingConfigForDevice(info))
+		if err == nil {
+			info.ID = stableIDFromIdentityKey("manual-execution-endpoint:" + binding)
 		} else {
-			info.ID = StableIDForDevice(info)
+			if info.ConnectionType == "usb" {
+				return nil, fmt.Errorf("manual USB registration needs a valid distinct interface: %w", err)
+			}
+			identity := info
+			identity.Capabilities = nil
+			identity.USBSerial = ""
+			info.ID = StableIDForDevice(identity)
 		}
 	}
-	if info.Status == "" {
-		info.Status = "unknown"
-	}
+	info.Status = "unknown"
 	if info.Protocol == "" {
 		switch info.ConnectionType {
 		case "spooler":
@@ -622,19 +724,20 @@ func RegisterManual(registryPath string, info DeviceInfo) ([]DeviceInfo, error) 
 	// construction or Gateway heartbeat validation.
 	enabled := info.Enabled
 	cfg := config.PrinterConfig{
-		ID:             info.ID,
-		Name:           info.Name,
-		Type:           info.ConnectionType,
-		ConnectionType: info.ConnectionType,
-		Endpoint:       info.Endpoint,
-		Protocol:       info.Protocol,
-		SpoolerName:    info.SpoolerName,
-		PrinterType:    info.PrinterType,
-		USBVID:         info.USBVID,
-		USBPID:         info.USBPID,
-		USBSerial:      info.USBSerial,
-		Capabilities:   info.Capabilities,
-		Enabled:        &enabled,
+		ID:              info.ID,
+		Name:            info.Name,
+		Type:            info.ConnectionType,
+		ConnectionType:  info.ConnectionType,
+		Endpoint:        info.Endpoint,
+		OutputProfileID: info.OutputProfileID,
+		Protocol:        info.Protocol,
+		SpoolerName:     info.SpoolerName,
+		PrinterType:     info.PrinterType,
+		USBVID:          info.USBVID,
+		USBPID:          info.USBPID,
+		USBSerial:       info.USBSerial,
+		Capabilities:    info.Capabilities,
+		Enabled:         &enabled,
 	}
 	if err := config.ValidatePrinterConfig(cfg); err != nil {
 		return nil, fmt.Errorf("printer %q: invalid manual configuration: %w", info.ID, err)
@@ -645,11 +748,31 @@ func RegisterManual(registryPath string, info DeviceInfo) ([]DeviceInfo, error) 
 	// the protocol is configured.
 	if info.Capabilities == nil {
 		info.Capabilities = map[string]interface{}{}
+	} else {
+		info.Capabilities = maps.Clone(info.Capabilities)
 	}
-	if _, ok := info.Capabilities["registration_source"]; !ok {
-		info.Capabilities["registration_source"] = "manual"
+	for _, key := range []string{"operational_verification", "verification", "ipp_verified", "snmp_verified", "print_endpoint_verified", "windows_queue_guid", "windows_queue_guid_verified"} {
+		delete(info.Capabilities, key)
 	}
+	info.Capabilities["verification"] = "pending"
+	info.Capabilities["registration_source"] = "manual"
 	return UpsertRegistry(registryPath, []DeviceInfo{info})
+}
+
+func registryMayUseObservedIdentity(device DeviceInfo) bool {
+	source, _ := device.Capabilities["registration_source"].(string)
+	return source != "manual" && source != "config"
+}
+
+func withRegistryIdentityCollision(device DeviceInfo, reason string) DeviceInfo {
+	device.Capabilities = maps.Clone(device.Capabilities)
+	if device.Capabilities == nil {
+		device.Capabilities = map[string]interface{}{}
+	}
+	device.Capabilities["identity_collision"] = reason
+	delete(device.Capabilities, "operational_verification")
+	device.Status = "unknown"
+	return device
 }
 
 // RemoveFromRegistry removes a printer by ID.

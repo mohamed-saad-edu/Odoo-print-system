@@ -1,3 +1,4 @@
+import { verifiedPrinterState } from "./helpers/printer-verification";
 // @vitest-environment jsdom
 import { readFileSync } from "node:fs";
 import { act, createElement as h } from "react";
@@ -25,9 +26,11 @@ const agent = {
   lastSeenAt: seen, createdAt: seen, printerCount: 1,
 } as const satisfies Agent;
 const printer = {
+  ...verifiedPrinterState("test-printer", seen),
   id: "physical", agentId: agent.id, name: "Canon", printerType: "physical",
   connectionType: "spooler", protocol: "spooler", lifecycle: "active", status: "online", lastSeenAt: seen,
   sharedWithGateway: true,
+  managementSource: "agent", desiredRevision: 0, appliedDesiredRevision: 0, observedDesiredRevision: 0,
 } as const satisfies Printer;
 const fleet = { pageSize: 100, agentOffset: 0, agentHasMore: false, printerOffset: 0,
   printerHasMore: false, totalAgents: 1, onlineAgents: 1, totalPrinters: 1, onlinePrinters: 1, savedPrinters: 0 };

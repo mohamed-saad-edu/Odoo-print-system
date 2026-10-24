@@ -24,9 +24,10 @@ const (
 )
 
 type Document struct {
-	Kind  string
-	Data  []byte
-	JobID string
+	Kind                string
+	Data                []byte
+	JobID               string
+	GeometryFingerprint string
 	// TestPage is internal Agent dispatch metadata from an authenticated
 	// Gateway job with documentType=test_page, not user-supplied payload data.
 	TestPage bool

@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
+import { pool as gatewayPool } from "../src/db";
 import {
   hasTestDatabase,
   applyMigrations,
@@ -20,6 +21,7 @@ suite("database runtime state constraints", () => {
 
   afterAll(async () => {
     await closePool();
+    await gatewayPool.end();
   });
 
   beforeEach(async () => {
@@ -34,6 +36,36 @@ suite("database runtime state constraints", () => {
   it("rejects invalid agent status", async () => {
     await expectRejected(`UPDATE agents SET status = 'bogus' WHERE id = $1`, [f.agentId]);
   });
+
+  it("expires a stalled transaction and releases its locks within the production idle budget", async () => {
+    const holder = await gatewayPool.connect();
+    let released = false;
+    try {
+      const setting = await holder.query("SHOW idle_in_transaction_session_timeout");
+      expect(setting.rows[0].idle_in_transaction_session_timeout).toBe("30s");
+      const lock = 2140000000;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const expired = new Promise<Error & { code?: string }>((resolve, reject) => {
+        timer = setTimeout(() => reject(new Error("Stalled transaction survived its idle budget")), 35_000);
+        holder.once("error", (error: Error & { code?: string }) => { clearTimeout(timer); resolve(error); });
+      });
+      try {
+        await holder.query("BEGIN");
+        await holder.query("SELECT pg_advisory_xact_lock($1)", [lock]);
+        expect((await pool().query("SELECT pg_try_advisory_xact_lock($1) AS available", [lock])).rows[0].available).toBe(false);
+        const error = await expired;
+        expect(error.code).toBe("25P03");
+        expect((await pool().query("SELECT pg_try_advisory_xact_lock($1) AS available", [lock])).rows[0].available).toBe(true);
+        holder.release(true); released = true;
+        expect((await gatewayPool.query("SELECT 1 AS healthy")).rows[0].healthy).toBe(1);
+      } finally { clearTimeout(timer); }
+    } finally {
+      if (!released) {
+        try { await holder.query("ROLLBACK"); } catch { /* timed-out connection */ }
+        holder.release(true);
+      }
+    }
+  }, 40_000);
 
   it("rejects invalid printer status", async () => {
     await expectRejected(`UPDATE printers SET status = 'bogus' WHERE id = $1`, [f.printerId]);

@@ -5,6 +5,7 @@ import { GET as odooPrintersGET } from "../src/app/api/odoo/printers/route";
 import { GET as agentJobsGET } from "../src/app/api/agent/jobs/route";
 import { POST as printJobsPOST } from "../src/app/api/print/jobs/route";
 import { claimJobForDelivery } from "../src/lib/job-delivery";
+import { physicalPrinterIdentityKey } from "../src/lib/physical-printer-identity";
 import { hasTestDatabase, applyMigrations, truncateAll, seedFixture, closePool, pool, insertQueuedJob, jobRow } from "./helpers/pg";
 
 const suite = describe.skipIf(!hasTestDatabase);
@@ -160,7 +161,9 @@ suite("agent heartbeat pagination contract", () => {
       WHERE tenant_id=$1 AND id=ANY($2::text[]) ORDER BY id`,
       [f.tenantId, [f.printerId, "legacy-duplicate-printer"]]);
     expect(rows.rows).toHaveLength(2);
-    expect(rows.rows.find(row => row.id === f.printerId)?.physical_identity_key).toMatch(/^v1:[0-9a-f]{64}$/);
+    const acceptedIdentity = rows.rows.find(row => row.id === f.printerId)?.physical_identity_key;
+    expect(acceptedIdentity).toMatch(/^v2:[0-9a-f]{64}$/);
+    expect(acceptedIdentity).toBe(physicalPrinterIdentityKey(makePrinter(f.printerId)));
     expect(rows.rows.find(row => row.id === "legacy-duplicate-printer")?.physical_identity_key).toBeNull();
   });
 

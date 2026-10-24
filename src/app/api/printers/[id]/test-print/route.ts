@@ -163,6 +163,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       return NextResponse.json({ error: e.message, code: e.code, retryable: false }, { status: 422 });
     }
     if (e instanceof PrintJobInputError) {
+      if (e.authorityError?.policy) return e.authorityError.response();
       if (e.code === "AGENT_OFFLINE") {
         return NextResponse.json({
           error: `${e.message}. Test print was not queued; reconnect or restore the Agent and try again.`,

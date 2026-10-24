@@ -1,3 +1,4 @@
+import { printerOperationalVerificationPredicate } from "./printer-verification-sql";
 import { logWarn } from "./log";
 import { agentStaleThresholdSeconds, printerStaleThresholdSeconds } from "./agent-availability";
 import { db, pool } from "../db";
@@ -81,6 +82,7 @@ async function renderFleetGauges(): Promise<string> {
           COUNT(*) FILTER (
             WHERE p.lifecycle = 'active'
               AND p.status IN ('online', 'busy')
+              AND ${printerOperationalVerificationPredicate(sql`p`)}
               AND printer_fresh
               AND a.lifecycle = 'active'
               AND a.status = 'online'

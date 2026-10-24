@@ -1,3 +1,4 @@
+import { receiptGeometry } from "./helpers/odoo-printer-geometry.mjs";
 /**
  * Execute the real SaleDetailsButton.onClick, replacing only Odoo registrations,
  * report renderer, backend ORM and browser recovery storage boundaries.
@@ -58,9 +59,9 @@ async function fixture({ outcomes = [], enabled = true } = {}) {
     data: { call: async (_, method, args, kwargs) => {
       if (method === 'is_gateway_printing_enabled') return enabled;
       if (method === 'get_sale_details') return { lines: [] };
-      if (method === 'get_gateway_sale_details_raster_width') return 384;
+      if (method === 'get_gateway_sale_details_geometry') return receiptGeometry(384);
       if (method === 'action_print_gateway_sale_details') {
-        submissions.push({ operation_id: kwargs.operation_id, image: kwargs.image });
+        submissions.push({ operation_id: kwargs.operation_id, image: kwargs.image, geometry_fingerprint: kwargs.geometry_fingerprint });
         return outcomes.shift() ?? { gateway_enabled: true, status: 'queued' };
       }
       throw new Error(`Unexpected ORM method: ${method}`);
@@ -82,6 +83,21 @@ test('contradictory Sale Details response remains unresolved and keeps exact ras
   assert.equal(f.submissions.length, 2);
   assert.equal(f.submissions[0].operation_id, f.submissions[1].operation_id);
   assert.equal(f.submissions[0].image, f.submissions[1].image);
+  assert.equal(f.submissions[0].geometry_fingerprint, receiptGeometry().config_fingerprint);
+  assert.equal(f.submissions[0].geometry_fingerprint, f.submissions[1].geometry_fingerprint);
+});
+
+test('Sale Details never falls back to a guessed width after its selected geometry RPC fails', async () => {
+  const f = await fixture();
+  const original = f.pos.data.call;
+  f.pos.data.call = async (...args) => {
+    if (args[1] === 'get_gateway_sale_details_geometry') throw new Error('Validated geometry is unavailable');
+    return original(...args);
+  };
+  assert.equal(await f.button.onClick(), false);
+  assert.equal(f.submissions.length, 0);
+  assert.equal(f.pos.gatewaySaleDetailsPending, false);
+  assert.match(f.notifications[0][0], /geometry is unavailable/);
 });
 
 test('valid terminal Gateway response ends previous attempt, later explicit click uses new identity', async () => {

@@ -308,40 +308,73 @@ fn sc_query() -> Result<Option<u32>, String> {
     #[repr(C)]
     #[derive(Default)]
     struct ServiceStatusProcess {
-        service_type: u32, current_state: u32, controls_accepted: u32,
-        win32_exit_code: u32, service_specific_exit_code: u32,
-        checkpoint: u32, wait_hint: u32, process_id: u32, service_flags: u32,
+        service_type: u32,
+        current_state: u32,
+        controls_accepted: u32,
+        win32_exit_code: u32,
+        service_specific_exit_code: u32,
+        checkpoint: u32,
+        wait_hint: u32,
+        process_id: u32,
+        service_flags: u32,
     }
     #[link(name = "advapi32")]
     unsafe extern "system" {
         fn OpenSCManagerW(machine: *const u16, database: *const u16, access: u32) -> Handle;
         fn OpenServiceW(manager: Handle, name: *const u16, access: u32) -> Handle;
-        fn QueryServiceStatusEx(service: Handle, level: u32, buffer: *mut u8, size: u32, needed: *mut u32) -> i32;
+        fn QueryServiceStatusEx(
+            service: Handle,
+            level: u32,
+            buffer: *mut u8,
+            size: u32,
+            needed: *mut u32,
+        ) -> i32;
         fn CloseServiceHandle(handle: Handle) -> i32;
     }
     #[link(name = "kernel32")]
-    unsafe extern "system" { fn GetLastError() -> u32; }
+    unsafe extern "system" {
+        fn GetLastError() -> u32;
+    }
     let name: Vec<u16> = SERVICE_NAME.encode_utf16().chain(Some(0)).collect();
     unsafe {
         let manager = OpenSCManagerW(std::ptr::null(), std::ptr::null(), 0x0001);
-        if manager.is_null() { return Err(format!("OpenSCManagerW failed: {}", GetLastError())); }
+        if manager.is_null() {
+            return Err(format!("OpenSCManagerW failed: {}", GetLastError()));
+        }
         let service = OpenServiceW(manager, name.as_ptr(), 0x0004);
         if service.is_null() {
             let error = GetLastError();
             CloseServiceHandle(manager);
-            return if error == 1060 { Ok(None) } else { Err(format!("OpenServiceW failed: {error}")) };
+            return if error == 1060 {
+                Ok(None)
+            } else {
+                Err(format!("OpenServiceW failed: {error}"))
+            };
         }
         let mut status = ServiceStatusProcess::default();
         let mut needed = 0;
-        let ok = QueryServiceStatusEx(service, 0, &mut status as *mut _ as *mut u8, std::mem::size_of::<ServiceStatusProcess>() as u32, &mut needed);
+        let ok = QueryServiceStatusEx(
+            service,
+            0,
+            &mut status as *mut _ as *mut u8,
+            std::mem::size_of::<ServiceStatusProcess>() as u32,
+            &mut needed,
+        );
         let error = if ok == 0 { Some(GetLastError()) } else { None };
-        CloseServiceHandle(service); CloseServiceHandle(manager);
-        if let Some(error) = error { Err(format!("QueryServiceStatusEx failed: {error}")) } else { Ok(Some(status.current_state)) }
+        CloseServiceHandle(service);
+        CloseServiceHandle(manager);
+        if let Some(error) = error {
+            Err(format!("QueryServiceStatusEx failed: {error}"))
+        } else {
+            Ok(Some(status.current_state))
+        }
     }
 }
 
 #[cfg(not(windows))]
-fn sc_query() -> Result<Option<u32>, String> { Ok(None) }
+fn sc_query() -> Result<Option<u32>, String> {
+    Ok(None)
+}
 
 fn wait_service_state(expected: u32) -> Result<(), String> {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
@@ -349,10 +382,18 @@ fn wait_service_state(expected: u32) -> Result<(), String> {
         match sc_query()? {
             Some(state) if state == expected => return Ok(()),
             None => return Err("service disappeared during control operation".into()),
-            Some(state) if state != 2 && state != 3 => return Err(format!("service reached unexpected state {state}; expected {expected}")),
+            Some(state) if state != 2 && state != 3 => {
+                return Err(format!(
+                    "service reached unexpected state {state}; expected {expected}"
+                ));
+            }
             _ => {}
         }
-        if std::time::Instant::now() >= deadline { return Err("service state transition timed out; background fallback is blocked".into()); }
+        if std::time::Instant::now() >= deadline {
+            return Err(
+                "service state transition timed out; background fallback is blocked".into(),
+            );
+        }
         std::thread::sleep(std::time::Duration::from_millis(250));
     }
 }
@@ -362,7 +403,9 @@ static AGENT_CONTROL: std::sync::Mutex<()> = std::sync::Mutex::new(());
 /// Hold runtime control across pairing's status read, durable identity save and
 /// activation. The callback must use restart_inner rather than reacquiring.
 pub(crate) fn with_control<T>(operation: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
-    let _control = AGENT_CONTROL.lock().map_err(|_| "Agent control lock poisoned")?;
+    let _control = AGENT_CONTROL
+        .lock()
+        .map_err(|_| "Agent control lock poisoned")?;
     operation()
 }
 
@@ -385,8 +428,7 @@ fn run_agent_service_command(
 ) -> Result<String, String> {
     let path = agent_path(app)?;
     let config = paths::agent_config_path();
-    let _ = paths::ensure_agent_data_root()
-        .map_err(|e| format!("create agent data dir: {e}"))?;
+    let _ = paths::ensure_agent_data_root().map_err(|e| format!("create agent data dir: {e}"))?;
     let mut service_cmd = Command::new(&path);
     service_cmd
         .args(["-service", action, "-config"])
@@ -701,11 +743,16 @@ fn terminate_owned_background_process(
 
 fn normalized_process_image(image: &str) -> String {
     let path = image.replace('/', "\\");
-    if path.get(..8).is_some_and(|prefix| prefix.eq_ignore_ascii_case(r"\\?\UNC\")) {
+    if path
+        .get(..8)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case(r"\\?\UNC\"))
+    {
         return format!(r"\\{}", &path[8..]);
     }
     if let Some(drive) = path.strip_prefix(r"\\?\") {
-        if drive.as_bytes().get(1) == Some(&b':') { return drive.to_string(); }
+        if drive.as_bytes().get(1) == Some(&b':') {
+            return drive.to_string();
+        }
     }
     path
 }
@@ -809,8 +856,7 @@ fn spawn_persist_or_reconcile(
     // after spawn. Poll for a bounded startup grace instead of checking only
     // once after 250ms: Windows may not schedule a newly created child before
     // that single probe on an overloaded machine.
-    let startup_deadline = std::time::Instant::now()
-        + std::time::Duration::from_secs(1);
+    let startup_deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
     loop {
         match child.try_wait() {
             Ok(Some(status)) => {
@@ -910,13 +956,17 @@ fn ensure_service_installed(_app: &tauri::AppHandle) -> Result<(), String> {
 }
 
 pub fn ensure_started(app: &tauri::AppHandle) -> Result<(), String> {
-    let _control = AGENT_CONTROL.lock().map_err(|_| "Agent control lock poisoned")?;
+    let _control = AGENT_CONTROL
+        .lock()
+        .map_err(|_| "Agent control lock poisoned")?;
     ensure_service_installed(app)?;
     start_inner(app)
 }
 
 pub fn start(app: &tauri::AppHandle) -> Result<(), String> {
-    let _control = AGENT_CONTROL.lock().map_err(|_| "Agent control lock poisoned")?;
+    let _control = AGENT_CONTROL
+        .lock()
+        .map_err(|_| "Agent control lock poisoned")?;
     ensure_service_installed(app)?;
     start_inner(app)
 }
@@ -956,7 +1006,9 @@ fn start_inner(app: &tauri::AppHandle) -> Result<(), String> {
 }
 
 pub fn stop(app: &tauri::AppHandle) -> Result<(), String> {
-    let _control = AGENT_CONTROL.lock().map_err(|_| "Agent control lock poisoned")?;
+    let _control = AGENT_CONTROL
+        .lock()
+        .map_err(|_| "Agent control lock poisoned")?;
     stop_inner(app)
 }
 
@@ -981,56 +1033,56 @@ fn stop_inner(app: &tauri::AppHandle) -> Result<(), String> {
     }
     #[cfg(windows)]
     if is_process_running(app) {
-    let record = read_background_record().ok_or_else(|| {
+        let record = read_background_record().ok_or_else(|| {
         "background agent is running but its secure ownership record is missing or legacy; refusing to kill arbitrary YaseirAgent.exe processes".to_string()
     })?;
-    if !background_record_matches(app, &record) {
-        return Err(format!(
-            "refusing to stop PID {} because its image path or creation time no longer matches the owned YaseirAgent.exe",
-            record.pid
-        ));
-    }
-
-    // Preserve the previous graceful-stop behavior, but only
-    // after verifying that the recorded PID still denotes our exact
-    // executable instance. If the process ignores graceful stop,
-    // re-verify identity and then use the same exact PID for force
-    // termination.
-    let out = taskkill_pid(record.pid, false)?;
-    if !out.status.success() {
-        logging::warn(&format!(
-            "graceful taskkill for owned agent pid={} reported: {}",
-            record.pid,
-            String::from_utf8_lossy(&out.stderr).trim()
-        ));
-    } else {
-        logging::info(&format!(
-            "graceful shutdown requested for owned agent pid={}",
-            record.pid
-        ));
-    }
-
-    for _ in 0..5 {
         if !background_record_matches(app, &record) {
-            break;
+            return Err(format!(
+                "refusing to stop PID {} because its image path or creation time no longer matches the owned YaseirAgent.exe",
+                record.pid
+            ));
         }
-        std::thread::sleep(std::time::Duration::from_secs(2));
-    }
 
-    if background_record_matches(app, &record) {
-        terminate_owned_background_process(app, &record)?;
-        logging::warn(&format!(
-            "owned agent pid={} did not exit within the grace window; force-terminated after identity re-verification",
-            record.pid
-        ));
-    }
-    if background_record_matches(app, &record) {
-        return Err(format!(
-            "owned YaseirAgent.exe PID {} is still running after forced termination",
-            record.pid
-        ));
-    }
-    clear_background_pid();
+        // Preserve the previous graceful-stop behavior, but only
+        // after verifying that the recorded PID still denotes our exact
+        // executable instance. If the process ignores graceful stop,
+        // re-verify identity and then use the same exact PID for force
+        // termination.
+        let out = taskkill_pid(record.pid, false)?;
+        if !out.status.success() {
+            logging::warn(&format!(
+                "graceful taskkill for owned agent pid={} reported: {}",
+                record.pid,
+                String::from_utf8_lossy(&out.stderr).trim()
+            ));
+        } else {
+            logging::info(&format!(
+                "graceful shutdown requested for owned agent pid={}",
+                record.pid
+            ));
+        }
+
+        for _ in 0..5 {
+            if !background_record_matches(app, &record) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_secs(2));
+        }
+
+        if background_record_matches(app, &record) {
+            terminate_owned_background_process(app, &record)?;
+            logging::warn(&format!(
+                "owned agent pid={} did not exit within the grace window; force-terminated after identity re-verification",
+                record.pid
+            ));
+        }
+        if background_record_matches(app, &record) {
+            return Err(format!(
+                "owned YaseirAgent.exe PID {} is still running after forced termination",
+                record.pid
+            ));
+        }
+        clear_background_pid();
     }
     logging::info("agent stopped");
     Ok(())
@@ -1053,13 +1105,29 @@ pub fn status(app: &tauri::AppHandle) -> (bool, bool, String) {
         Err(error) => (
             process_running,
             false,
-            format!("service state unavailable: {error}; background fallback is {}", if process_running { "running" } else { "not running" }),
+            format!(
+                "service state unavailable: {error}; background fallback is {}",
+                if process_running {
+                    "running"
+                } else {
+                    "not running"
+                }
+            ),
         ),
         Ok(None) => {
             if process_running {
-                (true, false, "background process YaseirAgent.exe is running (service not detected)".to_string())
+                (
+                    true,
+                    false,
+                    "background process YaseirAgent.exe is running (service not detected)"
+                        .to_string(),
+                )
             } else {
-                (false, false, "agent is not running; service/process not detected".to_string())
+                (
+                    false,
+                    false,
+                    "agent is not running; service/process not detected".to_string(),
+                )
             }
         }
         Ok(Some(state)) => {
@@ -1073,7 +1141,9 @@ pub fn status(app: &tauri::AppHandle) -> (bool, bool, String) {
             let note = if service_running {
                 format!("Windows service {SERVICE_NAME} is running")
             } else if process_running {
-                format!("Windows service {SERVICE_NAME} is owned but stopped/transitioning; owned background Agent is running")
+                format!(
+                    "Windows service {SERVICE_NAME} is owned but stopped/transitioning; owned background Agent is running"
+                )
             } else {
                 format!("Windows service {SERVICE_NAME} is owned but not running")
             };
@@ -1083,7 +1153,9 @@ pub fn status(app: &tauri::AppHandle) -> (bool, bool, String) {
 }
 
 pub fn control_service(action: &str, app: &tauri::AppHandle) -> Result<String, String> {
-    let _control = AGENT_CONTROL.lock().map_err(|_| "Agent control lock poisoned")?;
+    let _control = AGENT_CONTROL
+        .lock()
+        .map_err(|_| "Agent control lock poisoned")?;
     match action {
         "install" | "uninstall" | "start" | "stop" | "restart" => {
             // Service install/start/restart and destructive uninstall must
@@ -1247,7 +1319,9 @@ mod tests {
         for name in ["tasklist.exe", "taskkill.exe"] {
             let path = system32_exe(name).expect("Windows system executable must exist");
             assert_eq!(
-                path.file_name().and_then(|part| part.to_str()).map(|part| part.to_ascii_lowercase()),
+                path.file_name()
+                    .and_then(|part| part.to_str())
+                    .map(|part| part.to_ascii_lowercase()),
                 Some(name.to_ascii_lowercase()),
             );
             assert_eq!(
@@ -1289,7 +1363,9 @@ mod tests {
             path.display()
         );
         assert_eq!(
-            path.file_name().and_then(|part| part.to_str()).map(|part| part.to_ascii_lowercase()),
+            path.file_name()
+                .and_then(|part| part.to_str())
+                .map(|part| part.to_ascii_lowercase()),
             Some("taskkill.exe".to_string()),
         );
         assert_eq!(
@@ -1307,9 +1383,18 @@ mod image_identity_audit_tests {
     use super::*;
     #[test]
     fn extended_paths_retain_executable_identity() {
-        assert!(process_images_match(r"\\?\C:\Program Files\Yaseir\YaseirAgent.exe", r"c:\Program Files\Yaseir\YaseirAgent.exe"));
-        assert!(process_images_match(r"\\?\UNC\server\share\YaseirAgent.exe", r"\\server\share\YaseirAgent.exe"));
-        assert!(!process_images_match(r"C:\other\YaseirAgent.exe", r"C:\Yaseir\YaseirAgent.exe"));
+        assert!(process_images_match(
+            r"\\?\C:\Program Files\Yaseir\YaseirAgent.exe",
+            r"c:\Program Files\Yaseir\YaseirAgent.exe"
+        ));
+        assert!(process_images_match(
+            r"\\?\UNC\server\share\YaseirAgent.exe",
+            r"\\server\share\YaseirAgent.exe"
+        ));
+        assert!(!process_images_match(
+            r"C:\other\YaseirAgent.exe",
+            r"C:\Yaseir\YaseirAgent.exe"
+        ));
         assert!(!process_images_match("طابعة مختلفة", "different"));
     }
 }

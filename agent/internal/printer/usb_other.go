@@ -28,6 +28,7 @@ type USBPrinter struct {
 	USBLocation    string
 	Protocol       string
 	SupportsESCPOS bool
+	Geometry       *Geometry
 }
 
 func (p *USBPrinter) Identify() string {
@@ -75,15 +76,31 @@ func (p *USBPrinter) SupportsKind(kind string) bool {
 	case KindRaw:
 		return p.Protocol == "raw" || p.Protocol == "escpos" || p.Protocol == "zpl" || p.Protocol == "tspl"
 	case KindESCPOS:
-		return p.SupportsESCPOS
+		return p.Protocol == "escpos" && p.SupportsESCPOS
+	case KindImage:
+		return p.Protocol == "escpos" && rasterGeometryReady(p.Geometry)
 	default:
 		return false
 	}
 }
 
 func (p *USBPrinter) PrintDocument(ctx context.Context, doc Document) error {
+	if NormalizeKind(doc.Kind) == KindImage {
+		data, err := prepareESCPOSImage(p.Protocol, p.Geometry, doc)
+		if err != nil {
+			return fmt.Errorf("render image for USB printer: %w", err)
+		}
+		return p.Print(ctx, data)
+	}
 	if !p.SupportsKind(doc.Kind) {
 		return CapabilityMismatchf("USB printer %s cannot render %s payloads", p.Name, NormalizeKind(doc.Kind))
 	}
 	return p.Print(ctx, doc.Data)
+}
+
+func (p *USBPrinter) PrinterGeometry(ctx context.Context) (*Geometry, error) {
+	if err := p.Geometry.Validate(); err != nil {
+		return nil, err
+	}
+	return p.Geometry, nil
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { readdirSync, readFileSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { integrationTestFiles, integrationVitestTestFiles } from "../vitest.test-groups.mts";
 
@@ -10,6 +10,13 @@ function requiresIntegrationPhase(source: string): boolean {
 }
 
 describe("test suite classification", () => {
+  it("does not silently classify missing or duplicate integration suites", () => {
+    expect(new Set(integrationTestFiles).size).toBe(integrationTestFiles.length);
+    for (const file of integrationTestFiles) {
+      expect(statSync(file, { throwIfNoEntry: false })?.isFile(), file).toBe(true);
+    }
+  });
+
   it("uses the dedicated unit config", () => {
     expect(packageJson.scripts["test:unit"]).toBe("vitest run --config vitest.unit.config.mts");
   });

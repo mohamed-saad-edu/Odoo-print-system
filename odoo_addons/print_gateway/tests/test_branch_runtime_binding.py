@@ -8,6 +8,7 @@ from unittest.mock import patch
 from odoo.exceptions import AccessError, ValidationError
 from werkzeug.exceptions import Forbidden
 from odoo.tests.common import TransactionCase
+from .printer_fixtures import verified_printer
 
 
 class Response:
@@ -64,7 +65,7 @@ class TestBranchRuntimeBinding(TransactionCase):
                 self.config.write(vals)
 
     def _gets(self):
-        return [Response({"agents": self.agents}), Response({"printers": self.printers})]
+        return [Response({"agents": self.agents}), Response({"printers": [verified_printer(p) for p in self.printers]})]
 
     def _branch_admin_env(self):
         user = self.env["res.users"].create({
@@ -261,9 +262,20 @@ class TestBranchRuntimeBinding(TransactionCase):
         self.assertTrue(model._runtime_printer_accepts_image({
             "protocol": "unknown", "connectionType": "spooler", "deviceClass": "laser",
         }))
-        self.assertTrue(model._runtime_printer_accepts_image({
+        self.assertFalse(model._runtime_printer_accepts_image({
             "protocol": "escpos", "connectionType": "network", "deviceClass": "thermal",
         }))
+        geometry = {
+            "version": 1, "source": "validated_profile", "validation": "configured",
+            "observed_at": "2026-10-24T12:00:00Z", "printer_id": "explicit-raster-printer",
+            "config_fingerprint": "a" * 64, "printable_width_dots": 576,
+            "raster_command": "gs_v_0",
+        }
+        for connection in ("network", "usb"):
+            self.assertTrue(model._runtime_printer_accepts_image({
+                "id": geometry["printer_id"], "protocol": "escpos", "connectionType": connection,
+                "deviceClass": "thermal", "capabilities": {"geometry": geometry},
+            }))
         self.assertFalse(model._runtime_printer_accepts_image({
             "protocol": "unknown", "connectionType": "network", "deviceClass": "thermal",
         }))

@@ -1,3 +1,4 @@
+import { verifiedPrinterState } from "./helpers/printer-verification";
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { printerDisplayName, printerPresentation, printerStatusDetail } from "../src/shared/printer-presentation";
@@ -5,6 +6,7 @@ import { isMainInventoryPrinter, printerHealthCounts } from "../src/desktop/lib/
 
 const now = Date.parse("2026-10-14T12:00:00Z");
 const fresh = {
+  ...verifiedPrinterState("printer_spooler_0123456789abcdef", new Date(now)),
   id: "printer_spooler_0123456789abcdef", name: "Front desk", status: "online", enabled: true,
   lastSeenAt: new Date(now - 1000).toISOString(), agentId: "owner", agentStatus: "online",
   agentLastSeenAt: new Date(now - 1000).toISOString(), agentLifecycle: "active", lifecycle: "active" as const,

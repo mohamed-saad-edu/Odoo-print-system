@@ -1,10 +1,11 @@
 import { beforeAll, afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { db } from "../src/db";
-import { users, tenantUsers, managerSessions, printJobs, printJobReceipts } from "../src/db/schema";
+import { printJobs, printJobReceipts } from "../src/db/schema";
 import { DELETE as cleanupDELETE } from "../src/app/api/jobs/route";
-import { validateWorkspaceManager } from "../src/lib/manager-auth";
+import { validateWorkspaceManager, verifyWorkspaceToken } from "../src/lib/manager-auth";
 import { applyMigrations, closePool, hasTestDatabase, truncateAll, seedFixture, pool } from "./helpers/pg";
+import { createWorkspaceManagerTestSession } from "./helpers/workspace-session";
 
 vi.mock(import("../src/lib/manager-auth"), async (importOriginal) => ({
   ...(await importOriginal()),
@@ -30,17 +31,10 @@ suite("manual job cleanup behavior (J-2)", () => {
   it("deletes only released terminal rows, preserves fenced/foreign/active work, and writes receipts", async () => {
     const f = await seedFixture();
     const g = await seedFixture();
-    const exp = Math.floor(Date.now() / 1000) + 3600;
-    vi.mocked(validateWorkspaceManager).mockResolvedValue({
-      jti: "test-manager-jti-cleanup", iat: exp - 3600, exp, sub: "manager",
-      tenantId: f.tenantId, userId: "user_cleanup", role: "owner",
-    });
-    await db.insert(users).values({ id: "user_cleanup", email: "cleanup@example.test", passwordHash: "unused" });
-    await db.insert(tenantUsers).values({ userId: "user_cleanup", tenantId: f.tenantId, role: "owner" });
-    await db.insert(managerSessions).values({
-      jti: "test-manager-jti-cleanup", tenantId: f.tenantId, userId: "user_cleanup",
-      role: "owner", expiresAt: new Date(exp * 1000),
-    });
+    const session = await createWorkspaceManagerTestSession(f.tenantId);
+    const claims = await verifyWorkspaceToken(session.token);
+    expect(claims).toMatchObject({ ver: 2, kind: "manager", tenantId: f.tenantId, role: "owner" });
+    vi.mocked(validateWorkspaceManager).mockResolvedValue(claims);
     const old = new Date(Date.now() - 3 * 24 * 3600_000);
     await pool().query(
       `INSERT INTO print_jobs (id, tenant_id, agent_id, printer_id, status, payload, expires_at, claim_token, error, updated_at)

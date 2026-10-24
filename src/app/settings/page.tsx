@@ -3,6 +3,8 @@
 import { useEffect, useRef, useState } from "react";
 import { apiMessageKey } from "../../lib/api-error-keys";
 import { fetchWithTimeout } from "../../lib/fetch-timeout";
+import { SessionInventory } from "../../components/SessionInventory";
+import { WorkspaceSecurity } from "../../components/WorkspaceSecurity";
 import { roleLabel } from "../../lib/roles";
 import { useI18n } from "../../i18n/react";
 import {
@@ -98,6 +100,9 @@ export default function SettingsPage() {
       />
 
       <PageContainer width="narrow">
+        <div className="space-y-5">
+          <WorkspaceSecurity />
+          <SessionInventory />
         {loading ? (
           <div className="space-y-5" role="status" aria-label={t("settings.loadingAria")}>
             <Skeleton className="h-[240px] rounded-lg" />
@@ -173,9 +178,9 @@ export default function SettingsPage() {
                 </div>
               </div>
             </Card>
-
           </div>
         )}
+        </div>
       </PageContainer>
     </>
   );

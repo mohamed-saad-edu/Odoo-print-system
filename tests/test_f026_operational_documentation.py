@@ -14,13 +14,16 @@ def test_migration_inventory_matches_current_journal():
     # journal and the SQL files, including new forward-only migrations.
     tags=[entry['tag'] for entry in journal]
     assert tags==[path.stem for path in sql]
-    assert len(journal)==len(sql)==90
-    assert journal[-6]['tag']=='0084_printer_cloud_sharing'
-    assert journal[-5]['tag']=='0085_odoo_installation_idempotency'
-    assert journal[-4]['tag']=='0086_printer_identity_and_api_key_deletion'
-    assert journal[-3]['tag']=='0087_odoo_auto_enrollment'
-    assert journal[-2]['tag']=='0088_retire_e2e_capture'
-    assert journal[-1]['tag']=='0089_invitation_verification_binding'
+    assert len(journal)==len(sql)==95
+    assert journal[84]['tag']=='0084_printer_cloud_sharing'
+    assert journal[85]['tag']=='0085_odoo_installation_idempotency'
+    assert journal[86]['tag']=='0086_printer_identity_and_api_key_deletion'
+    assert journal[87]['tag']=='0087_odoo_auto_enrollment'
+    assert journal[88]['tag']=='0088_retire_e2e_capture'
+    assert journal[89]['tag']=='0089_invitation_verification_binding'
+    assert journal[90]['tag']=='0090_platform_mfa_sessions'
+    assert journal[91]['tag']=='0091_workspace_session_security'
+    assert journal[92]['tag']=='0092_workspace_mfa'
     assert '| 0082 | 1 |' in read('MIGRATION.md')
     assert '| 0083 | 1 |' in read('MIGRATION.md')
     assert '| 0084 | 1 |' in read('MIGRATION.md')
@@ -29,7 +32,14 @@ def test_migration_inventory_matches_current_journal():
     assert '| 0087 | 1 |' in read('MIGRATION.md')
     assert '| 0088 | 1 |' in read('MIGRATION.md')
     assert '| 0089 | 1 |' in read('MIGRATION.md')
-    assert '**Total**: 90 forward-only SQL migrations (0000–0089)' in read('MIGRATION.md')
+    assert '| 0090 | 1 |' in read('MIGRATION.md')
+    assert '| 0091 | 1 |' in read('MIGRATION.md')
+    assert '| 0092 | 1 |' in read('MIGRATION.md')
+    assert '| 0093 | 1 |' in read('MIGRATION.md')
+    assert journal[93]['tag']=='0093_password_only_authentication'
+    assert journal[94]['tag']=='0094_printer_operational_verification'
+    assert '| 0094 | 1 |' in read('MIGRATION.md')
+    assert '**Total**: 95 forward-only SQL migrations (0000–0094)' in read('MIGRATION.md')
     sharing=read('drizzle/0084_printer_cloud_sharing.sql')
     assert '"shared_with_gateway" boolean NOT NULL DEFAULT true' in sharing
     assert '"shared_with_gateway_version" text' in sharing
@@ -57,6 +67,8 @@ def test_first_run_auth_cookie_and_unknown_heartbeat_are_truthful():
     source=read('SERVER_FIRST_RUN.md')
     assert '`cust_session` HttpOnly cookie' in source
     assert '`cust_refresh`' in source
+    assert '`__Host-cust_session`' in source
+    assert '`__Host-cust_refresh`' in source
     assert 'A stale heartbeat is treated as offline.' not in source
     assert 'unknown' in source
 

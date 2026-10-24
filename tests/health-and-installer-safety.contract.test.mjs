@@ -37,5 +37,14 @@ test("Docker checks DB-backed readiness rather than process-only liveness", () =
   const compose = readFileSync("docker-compose.yml", "utf8");
   const dockerfile = readFileSync("Dockerfile", "utf8");
   assert.match(compose, /\/api\/health'\)\.then/);
-  assert.match(dockerfile, /\/api\/health \|\| exit 1/);
+  const runtime = dockerfile.split(/^FROM\s+.*\s+AS\s+runtime\s*$/im)[1];
+  assert.ok(runtime, "the runtime stage must be identifiable");
+  const probes = runtime.replace(/\\\r?\n\s*/g, " ").split(/\r?\n/).filter(line => /^HEALTHCHECK\b/i.test(line));
+  assert.equal(probes.length, 1, "a later HEALTHCHECK must not override the bounded readiness probe");
+  assert.match(probes[0], /--timeout=5s/);
+  assert.match(probes[0], /CMD node -e/);
+  assert.match(probes[0], /fetch\('http:\/\/127\.0\.0\.1:3000\/api\/health'/);
+  assert.match(probes[0], /AbortSignal\.timeout\(4000\)/);
+  assert.match(probes[0], /process\.exit\(r\.ok\?0:1\)/);
+  assert.match(probes[0], /catch\(\(\)=>process\.exit\(1\)\)/);
 });

@@ -1,13 +1,17 @@
+import type * as StripeModule from "../src/lib/stripe";
 import { beforeAll, afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { eq, sql } from "drizzle-orm";
 import { db } from "../src/db";
-import { tenants, users, tenantUsers, managerSessions, plans, tenantSubscriptions } from "../src/db/schema";
+import { tenants, users, tenantUsers, plans, tenantSubscriptions } from "../src/db/schema";
 import { nanoid } from "../src/lib/nanoid";
 import { POST as checkout } from "../src/app/api/billing/checkout/route";
-import { validateWorkspaceManager } from "../src/lib/manager-auth";
+import { validateWorkspaceManager, verifyWorkspaceToken } from "../src/lib/manager-auth";
+import { hashPassword } from "../src/lib/password";
 import { POST as webhook } from "../src/app/api/billing/webhook/route";
 import { stripeRequest } from "../src/lib/stripe";
 import { applyMigrations, closePool, hasTestDatabase, truncateAll } from "./helpers/pg";
+import { createWorkspaceManagerTestSession } from "./helpers/workspace-session";
+import { gatewayTestSigningKey } from "./helpers/test-secrets";
 
 vi.mock(import("../src/lib/manager-auth"), async (importOriginal) => ({
   ...(await importOriginal()),
@@ -22,7 +26,7 @@ vi.mock("../src/lib/authorization", () => ({
 const { stripeRetrieveMock } = vi.hoisted(() => ({ stripeRetrieveMock: vi.fn() }));
 
 vi.mock("../src/lib/stripe", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../src/lib/stripe")>();
+  const actual = await importOriginal<typeof StripeModule>();
   return {
     ...actual,
     stripeRequest: vi.fn(),
@@ -66,23 +70,16 @@ function sessionCreateCalls(): number {
 }
 
 suite("platform-trial to paid conversion invariants", () => {
+  let passwordHash: string;
   beforeAll(async () => {
+    vi.stubEnv("GATEWAY_JWT_SECRET", gatewayTestSigningKey());
+    passwordHash = await hashPassword("synthetic-billing-trial-fixture-password");
     process.env.STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET ?? "whsec_test_trial_convert";
     await applyMigrations();
   });
   beforeEach(async () => {
     await truncateAll();
     vi.stubEnv("APP_BASE_URL", "https://billing.test");
-    const managerExpiry = Math.floor(Date.now() / 1000) + 3600;
-    vi.mocked(validateWorkspaceManager).mockResolvedValue({
-      jti: "test-manager-jti-1234567890",
-      iat: Math.floor(Date.now() / 1000) - 10,
-      exp: managerExpiry,
-      sub: "manager",
-      tenantId: TENANT,
-      userId: "user_trial_convert",
-      role: "owner",
-    });
     const { stripeRequest } = await import("../src/lib/stripe");
     vi.mocked(stripeRequest).mockReset();
     stripeRetrieveMock.mockReset();
@@ -102,14 +99,14 @@ suite("platform-trial to paid conversion invariants", () => {
       throw new Error(`unexpected Stripe path: ${path}`);
     });
     await db.insert(tenants).values({ id: TENANT, name: "Trial Convert Tenant" });
-    await db.insert(users).values({ id: "user_trial_convert", email: "trial-convert@example.test", passwordHash: "unused" });
+    await db.insert(users).values({ id: "user_trial_convert", email: "trial-convert@example.test", passwordHash, emailVerifiedAt: new Date() });
     await db.insert(tenantUsers).values({ userId: "user_trial_convert", tenantId: TENANT, role: "owner" });
-    await db.insert(managerSessions).values({
-      jti: "test-manager-jti-1234567890", tenantId: TENANT,
-      userId: "user_trial_convert", role: "owner", expiresAt: new Date(managerExpiry * 1000),
-    });
+    const session = await createWorkspaceManagerTestSession(TENANT, { userId: "user_trial_convert", role: "owner" });
+    const claims = await verifyWorkspaceToken(session.token);
+    expect(claims).toMatchObject({ ver: 2, sid: session.refreshTokenId, familyId: session.familyId });
+    vi.mocked(validateWorkspaceManager).mockResolvedValue(claims);
   });
-  afterAll(async () => { await closePool(); });
+  afterAll(async () => { vi.unstubAllEnvs(); await closePool(); });
 
   it("platform trial -> Keep this plan -> exactly one checkout session -> webhooks convert the SAME row to active on the same plan", async () => {
     const trialPlan = `plan_trial_${nanoid(6)}`;

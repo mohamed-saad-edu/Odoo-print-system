@@ -67,6 +67,9 @@ func mergeIPPSourceObservations(sources ...[]DeviceInfo) []DeviceInfo {
 }
 
 func discoverIPPviaTCP(ctx context.Context) ([]DeviceInfo, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, discoveryScanError("IPP TCP", 0, 0, err)
+	}
 	hosts, diagnostics := localPrivateDiscoveryTargets()
 	var sourceErr error
 	if len(diagnostics) > 0 {
@@ -77,7 +80,7 @@ func discoverIPPviaTCP(ctx context.Context) ([]DeviceInfo, error) {
 		targets = append(targets, net.JoinHostPort(host, "631"))
 	}
 	if len(targets) == 0 {
-		return nil, sourceErr
+		return nil, errors.Join(sourceErr, discoveryScanError("IPP TCP", 0, 0, ctx.Err()))
 	}
 	const workers = 32
 	const perHostTimeout = 500 * time.Millisecond
@@ -122,6 +125,7 @@ func discoverIPPviaTCP(ctx context.Context) ([]DeviceInfo, error) {
 				status := "unknown"
 				verified := false
 				statusDetail := "probe_unanswered"
+				var observedAttributes map[string]string
 				probeCtx, cancel2 := context.WithTimeout(ctx, 2*time.Second)
 				if constructorErr == nil {
 					// Reuse this probe's attributes with the single shared
@@ -131,6 +135,7 @@ func discoverIPPviaTCP(ctx context.Context) ([]DeviceInfo, error) {
 					if attrs, probeErr := ippProbe.getPrinterAttributes(probeCtx); probeErr == nil && hasUsableIPPPrinterState(attrs) {
 						status, statusDetail = interpretIPPPrinterStatus(attrs)
 						verified = true
+						observedAttributes = attrs
 					}
 				}
 				cancel2()
@@ -180,6 +185,9 @@ func discoverIPPviaTCP(ctx context.Context) ([]DeviceInfo, error) {
 						"ipp_verified":       verified,
 						"ipp_status_detail":  statusDetail,
 					},
+				}
+				if verified {
+					addIPPDiscoveryCapabilities(&di, observedAttributes)
 				}
 				select {
 				case results <- di:
@@ -389,6 +397,7 @@ func verifyMDNSIPPCandidatesWithProbe(ctx context.Context, candidates []DeviceIn
 					di.Capabilities["mdns_verified"] = true
 					di.Capabilities["verification"] = "verified"
 					di.Capabilities["ipp_status_detail"] = detail
+					addIPPDiscoveryCapabilities(di, attrs)
 				}
 				cancel()
 			}

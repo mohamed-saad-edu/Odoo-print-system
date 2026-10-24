@@ -836,9 +836,8 @@ func TestDiscoverFromConfigPreservesDeclaredConfiguration(t *testing.T) {
 	if !ok || len(protos) != 1 || protos[0] != "zpl" {
 		t.Fatalf("declared supported_protocols lost: %v", di.Capabilities["supported_protocols"])
 	}
-	width, ok := di.Capabilities["max_paper_width"].(int)
-	if !ok || width != RasterMaxWidthFromPaperWidthMM(80) {
-		t.Fatalf("paper width lost: %v", di.Capabilities["max_paper_width"])
+	if width, present := di.Capabilities["max_paper_width"]; present {
+		t.Fatalf("nominal 80mm invented printable width: %v", width)
 	}
 	if di.Capabilities["paper_width_mm"] != 80 {
 		t.Fatalf("nominal selected media width lost: %v", di.Capabilities)

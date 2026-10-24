@@ -7,7 +7,7 @@ import { isGatewayTimeoutError, withGatewayDeadline } from "./async_control";
 import { PosStore } from "@point_of_sale/app/services/pos_store";
 import { changesToOrder } from "@point_of_sale/app/models/utils/order_change";
 import { renderToElement } from "@web/core/utils/render";
-import { renderGatewayReceiptJpeg, normalizedReceiptRasterWidth, DEFAULT_RECEIPT_RASTER_WIDTH } from "./receipt_raster";
+import { renderGatewayReceiptJpeg } from "./receipt_raster";
 import { OrderReceipt } from "@point_of_sale/app/screens/receipt_screen/receipt/order_receipt";
 import { RetryPrintPopup } from "@point_of_sale/app/components/popups/retry_print_popup/retry_print_popup";
 import { printRecoveryKey, claimPrintOperation, finishPrintOperation } from "./operation_recovery";
@@ -132,7 +132,14 @@ function gatewayDataCall(store, model, method, args, kwargs = {}, silent = true,
         POS_RPC_TIMEOUT_MS,
         _t("Printing service request timed out."),
         { ambiguous },
-    );
+    ).then((result) => {
+        // Only an explicit boolean false authorizes native printing. Missing
+        // or malformed activation metadata cannot establish that policy.
+        if (method === "is_gateway_printing_enabled" && typeof result !== "boolean") {
+            throw new Error(_t("The printing service returned an invalid activation state. No print was sent."));
+        }
+        return result;
+    });
 }
 
 function gatewaySilentCall(store, model, method, args, kwargs = {}) {
@@ -181,8 +188,8 @@ function gatewayUuid() {
     return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
-async function elementToJpeg(element, renderer, width = DEFAULT_RECEIPT_RASTER_WIDTH) {
-    return renderGatewayReceiptJpeg(element, { renderer, width });
+async function elementToJpeg(element, renderer, geometry) {
+    return renderGatewayReceiptJpeg(element, { renderer, geometry });
 }
 
 // Diagnostic tracing must NEVER change print behavior. Odoo embedded runtimes
@@ -203,7 +210,7 @@ function recordReceiptLatency(stage, startedAt) {
     }
 }
 
-export async function renderReceiptImage(pos, currentOrder, basic = false, rasterWidth = DEFAULT_RECEIPT_RASTER_WIDTH) {
+export async function renderReceiptImage(pos, currentOrder, basic = false, geometry) {
     const renderStartedAt = globalThis.performance?.now?.() ?? Date.now();
     try {
     const renderer = pos.env?.services?.renderer || pos.printer?.renderer;
@@ -219,7 +226,7 @@ export async function renderReceiptImage(pos, currentOrder, basic = false, raste
         for (let attempt = 0; attempt < 2; attempt++) {
             try {
                 const element = await renderer.toHtml(receiptComponent, props);
-                return await elementToJpeg(element, renderer, rasterWidth);
+                return await elementToJpeg(element, renderer, geometry);
             } catch (err) {
                 if (err?.code === "POS_RECEIPT_GEOMETRY") {
                     throw err;
@@ -233,7 +240,7 @@ export async function renderReceiptImage(pos, currentOrder, basic = false, raste
     // but it must pass through the *same* width/overflow-checked capture.
     // Never fall back to arbitrary canvas dimensions or default page zoom.
     const receipt = renderToElement(receiptComponent.template || "point_of_sale.OrderReceipt", props);
-    return await elementToJpeg(receipt, renderer, rasterWidth);
+    return await elementToJpeg(receipt, renderer, geometry);
     } finally {
         // Render time is distinct from Gateway enqueue and physical printing;
         // no receipt, order, printer or customer data is included in the log.
@@ -241,29 +248,23 @@ export async function renderReceiptImage(pos, currentOrder, basic = false, raste
     }
 }
 
-// Width is resolved for the ACTUAL bound printer on EACH print action,
+// Geometry is resolved for the ACTUAL bound printer on EACH new print action,
 // not cached by POS config: the same POS can switch between 58mm and 80mm
 // bindings inside five minutes. Reusing config-wide geometry made receipts
 // clip or shrink after a routing/driver change. Fetch once per action; not
-// per receipt line. The Agent independently clamps to hardware limits.
-async function gatewayReceiptRasterWidth(pos, orderId) {
+// per receipt line. An unresolved operation retains its original image and
+// fingerprint; silently rendering different bytes would break safe replay.
+async function gatewayReceiptGeometry(pos, orderId) {
     const lookupStartedAt = globalThis.performance?.now?.() ?? Date.now();
-    let width = DEFAULT_RECEIPT_RASTER_WIDTH;
     try {
-        const candidate = await gatewayDataCall(
-            pos, "pos.order", "get_gateway_receipt_raster_width", [[orderId]], {}, true,
+        return await gatewayDataCall(
+            pos, "pos.order", "get_gateway_receipt_geometry", [[orderId]], {}, true,
         );
-        width = normalizedReceiptRasterWidth(candidate);
-    } catch (error) {
-        // A missing/stale metadata endpoint must not force fallback to local
-        // browser printing. The Gateway will still authorize the real job.
-        console.warn("Gateway printer width unavailable; using Odoo's native receipt width:", error);
     } finally {
         // The width RPC can be slow even when the printer and Gateway are fast.
         // Do not cache across actions: routing may change from 58mm to 80mm.
-        recordReceiptLatency("pos_width_lookup", lookupStartedAt);
+        recordReceiptLatency("pos_geometry_lookup", lookupStartedAt);
     }
-    return width;
 }
 
 patch(PosStore.prototype, {
@@ -355,11 +356,13 @@ patch(PosStore.prototype, {
             activePrintClaim = { recoveryKey, id: claim.id, newIntent: claim.newIntent, orderId };
             const operationId = claim.id;
             let image = memoryRetry ? lastOp.image : undefined;
+            let geometryFingerprint = memoryRetry ? lastOp.geometryFingerprint : undefined;
             if (!memoryRetry) {
-                const rasterWidth = await gatewayReceiptRasterWidth(this, orderId);
-                image = await gatewayRender(() => renderReceiptImage(this, currentOrder, basic, rasterWidth));
+                const geometry = await gatewayReceiptGeometry(this, orderId);
+                image = await gatewayRender(() => renderReceiptImage(this, currentOrder, basic, geometry));
+                geometryFingerprint = geometry.config_fingerprint;
             }
-            receiptOps.set(orderId, { id: operationId, image, terminal: false, at: Date.now(), counted: lastOp?.id === operationId && lastOp.counted });
+            receiptOps.set(orderId, { id: operationId, image, geometryFingerprint, terminal: false, at: Date.now(), counted: lastOp?.id === operationId && lastOp.counted });
             let result;
             try {
                 submissionAttempted = true;
@@ -368,12 +371,12 @@ patch(PosStore.prototype, {
                     "pos.order",
                     "action_print_gateway_receipt",
                     [[orderId]],
-                    { image, operation_id: operationId },
+                    { image, operation_id: operationId, geometry_fingerprint: geometryFingerprint },
                     true,
                     { ambiguous: true },
                 );
             } catch (rpcError) {
-                receiptOps.set(orderId, { id: operationId, image, at: Date.now(), terminal: false });
+                receiptOps.set(orderId, { id: operationId, image, geometryFingerprint, at: Date.now(), terminal: false });
                 throw rpcError;
             }
             // Resolve the operation: definitive outcomes (accepted for
@@ -390,6 +393,7 @@ patch(PosStore.prototype, {
                 id: operationId,
                 // Queued and uncertain operations keep the EXACT raster for replay.
                 image: terminal ? undefined : image,
+                geometryFingerprint: terminal ? undefined : geometryFingerprint,
                 at: Date.now(),
                 terminal,
                 counted: lastOp?.id === operationId && lastOp.counted,
@@ -401,7 +405,7 @@ patch(PosStore.prototype, {
             // an absent or unexpected status must never claim success.
             if (["unknown", "partial"].includes(status)) {
                 this.notification.add(
-                    _t("Print status is unknown. Check the printer before trying again."),
+                    result?.outputMedium === "file" ? result.message : _t("Print status is unknown. Check the printer before trying again."),
                     { type: "warning", sticky: true }
                 );
             } else if (status === "failed") {
@@ -805,7 +809,7 @@ patch(PosStore.prototype, {
                                 data,
                                 printer,
                                 route.pos_printer_id || null,
-                                route.raster_width
+                                route.geometry
                             );
                             if (!reprint) attempts[attemptKey] = result;
 
@@ -894,7 +898,7 @@ patch(PosStore.prototype, {
             }
         }, gatewayOwner);
     },
-    async printOrderChanges(data, printer, posPrinterId = null, rasterWidth = DEFAULT_RECEIPT_RASTER_WIDTH) {
+    async printOrderChanges(data, printer, posPrinterId = null, geometry) {
         const orderId = data?.orderData?.__gateway_order_id;
         const sessionId = data?.orderData?.__gateway_session_id;
         const reprint = Boolean(data?.orderData?.__gateway_reprint);
@@ -926,7 +930,7 @@ patch(PosStore.prototype, {
         try {
             const receipt = renderToElement("point_of_sale.OrderChangeReceipt", { data });
             const image = await gatewayRender(() =>
-                elementToJpeg(receipt, this.env.services.renderer, rasterWidth)
+                elementToJpeg(receipt, this.env.services.renderer, geometry)
             );
             submissionStarted = true;
             const result = await gatewayDataCall(
@@ -936,6 +940,7 @@ patch(PosStore.prototype, {
                 [[orderId]],
                 {
                     image,
+                    geometry_fingerprint: geometry.config_fingerprint,
                     reprint,
                     operation_id: operationId,
                     pos_printer_id: posPrinterId || undefined,
@@ -959,7 +964,7 @@ patch(PosStore.prototype, {
                     warningCode: undefined,
                     message: {
                         title: _t("Printing Service"),
-                        body: outcome === "unknown"
+                        body: result?.outputMedium === "file" ? result.message : outcome === "unknown"
                             ? _t("Kitchen print outcome is unknown. The ticket may already have printed; automatic retry is disabled.")
                             : _t("Kitchen print status is unclear. Automatic retry is paused to prevent duplicate tickets."),
                     },

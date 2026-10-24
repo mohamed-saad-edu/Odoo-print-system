@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, beforeEach, afterAll } from "vitest";
 import { hasTestDatabase, applyMigrations, truncateAll, closePool, pool } from "./helpers/pg";
 import { gatewayTestSigningKey } from "./helpers/test-secrets";
-import { createManagerSession } from "../src/lib/manager-auth";
+import { createWorkspaceManagerTestSession } from "./helpers/workspace-session";
 import { POST as agentsPOST } from "../src/app/api/agents/route";
 
 const suite = describe.skipIf(!hasTestDatabase);
@@ -31,7 +31,7 @@ suite("agent creation HTTP authentication boundary", () => {
   });
 
   it("accepts a valid manager bearer request without requiring a browser cookie", async () => {
-    const session = await createManagerSession(tenantId);
+    const session = await createWorkspaceManagerTestSession(tenantId);
     const response = await agentsPOST(new Request("http://gateway.test/api/agents", {
       method: "POST",
       headers: {

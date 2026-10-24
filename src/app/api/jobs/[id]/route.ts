@@ -1,3 +1,4 @@
+import { printOutputPresentation } from "../../../../lib/print-output";
 import { NextResponse } from "next/server";
 import { db } from "../../../../db";
 import { printJobs, printJobReceipts } from "../../../../db/schema";
@@ -23,6 +24,8 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
       agentId: printJobs.agentId,
       printerId: printJobs.printerId,
       status: printJobs.status,
+      outputMedium: printJobs.outputMedium,
+      outputEvidence: printJobs.outputEvidence,
       error: printJobs.error,
       retries: printJobs.retries,
       deliveryAttempts: printJobs.deliveryAttempts,
@@ -42,7 +45,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
     if (!receipt) return NextResponse.json({ error: "Not found" }, { status: 404 });
     const { fingerprint: _fingerprint, closedClaimTokenHash: _claimHash, apiKeyId: _apiKey, ...metadata } = receipt;
     return NextResponse.json(
-      { ...metadata, archived: true, diagnosticPayload: null },
+      { ...metadata, ...printOutputPresentation(metadata), archived: true, diagnosticPayload: null },
       { headers: { "Cache-Control": "no-store" } },
     );
   }
@@ -58,7 +61,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
     : buildJobDiagnosticPayload(payload);
 
   return NextResponse.json(
-    { ...metadata, diagnosticPayload },
+    { ...metadata, ...printOutputPresentation(metadata), diagnosticPayload },
     { headers: { "Cache-Control": "private, no-store" } },
   );
 }

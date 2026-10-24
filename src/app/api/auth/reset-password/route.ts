@@ -3,13 +3,16 @@ import { NextResponse } from "next/server";
 import { hasBodyOverLimit } from "../../../../lib/request-limits";
 import { db } from "../../../../db";
 import { passwordResetTokens, tenantUsers, users } from "../../../../db/schema";
-import { and, eq, isNull, gt, sql } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import { hashPassword, hashToken } from "../../../../lib/password";
 import { clientIpFrom, recordAuthSuccess, reserveAuthAttempt, setRateLimitHeaders } from "../../../../lib/auth-rate-limit";
 import { writeAuditEvent } from "../../../../lib/audit";
 import { revokeLegacyManagerSessionsForUserInTransaction } from "../../../../lib/manager-auth";
 import { revokeLegacyPlatformSessionsForUserInTransaction } from "../../../../lib/platform-auth";
 import { revokeUserRefreshFamiliesInTransaction } from "../../../../lib/session-tokens";
+import { passwordScreeningFailure, screenNewPassword } from "../../../../lib/password-screening";
+import { emailAuthTokenIsLive } from "../../../../lib/email-auth-token-policy";
+import { isValidNewPasswordLength } from "../../../../lib/new-password-policy";
 
 export async function POST(req: Request) {
   if (hasBodyOverLimit(req, 32 * 1024)) return NextResponse.json({ error: "Request body too large" }, { status: 413 });
@@ -17,7 +20,7 @@ export async function POST(req: Request) {
   try { const parsedBody = await req.json(); if (!parsedBody || typeof parsedBody !== "object" || Array.isArray(parsedBody)) throw new Error("JSON object required"); body = parsedBody; } catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); }
   const token = typeof body.token === "string" ? body.token : "";
   const password = typeof body.password === "string" ? body.password : "";
-  if (!token || password.length < 12 || password.length > 4096) {
+  if (!token || !isValidNewPasswordLength(password)) {
     return NextResponse.json({ error: "Invalid or incomplete reset request" }, { status: 400 });
   }
 
@@ -46,11 +49,14 @@ export async function POST(req: Request) {
     where: and(
       eq(passwordResetTokens.tokenHash, tokenHash),
       isNull(passwordResetTokens.consumedAt),
-      gt(passwordResetTokens.expiresAt, sql`clock_timestamp()`)
+      emailAuthTokenIsLive(passwordResetTokens),
     ),
   });
   if (!row) return NextResponse.json({ error: "Reset link expired or invalid" }, { status: 400 });
 
+  // A provider outage or breached candidate must not consume the reset proof.
+  const passwordFailure = passwordScreeningFailure(await screenNewPassword(password));
+  if (passwordFailure) return setRateLimitHeaders(NextResponse.json(passwordFailure.body, { status: passwordFailure.status }), rate);
   const nextHash = await hashPassword(password);
   const auditMembership = await db.query.tenantUsers.findFirst({
     where: eq(tenantUsers.userId, row.userId),
@@ -75,7 +81,7 @@ export async function POST(req: Request) {
         .where(and(
           eq(passwordResetTokens.id, row.id),
           isNull(passwordResetTokens.consumedAt),
-          gt(passwordResetTokens.expiresAt, sql`clock_timestamp()`),
+          emailAuthTokenIsLive(passwordResetTokens),
         ))
         .returning({ id: passwordResetTokens.id });
 

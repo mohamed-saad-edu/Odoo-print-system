@@ -4,12 +4,19 @@ import { tenantUsers } from "../db/schema";
 import type { ManagerClaims } from "./manager-auth";
 import { hasManagerPermission } from "./authorization";
 import { requireActiveTenantInTransaction, TenantDeletedError, TenantSuspendedError } from "./tenant-guard";
+import { requireWorkspaceSessionInTransaction, WorkspaceSessionExpiredError, WorkspaceReauthenticationRequiredError,
+  workspacePolicyResponse, type WorkspacePolicyError } from "./workspace-session-security";
 
 export class TeamAuthorizationChangedError extends Error {
-  constructor() {
-    super("Your workspace access changed. Sign in again.");
+  readonly code: string;
+  readonly status: number;
+  constructor(readonly policy?: WorkspacePolicyError) {
+    super(policy?.message ?? "Your workspace access changed. Sign in again.");
     this.name = "TeamAuthorizationChangedError";
+    this.code = policy?.code ?? "WORKSPACE_AUTHORITY_CHANGED";
+    this.status = policy?.status ?? 403;
   }
+  response(): Response { return this.policy ? workspacePolicyResponse(this.policy) : Response.json({ error: this.message }, { status: 403 }); }
 }
 
 /** Keep the actor's live authority valid through a team mutation commit. */
@@ -42,9 +49,10 @@ export async function requireTeamActorInTransaction(
   }
   let active;
   if (claims.familyId) {
+    if (claims.ver !== 2 || !claims.sid) throw new TeamAuthorizationChangedError();
     await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${claims.familyId}, 0))`);
     active = await tx.execute(sql`SELECT id FROM refresh_tokens
-      WHERE family_id = ${claims.familyId} AND user_id = ${claims.userId}
+      WHERE id = ${claims.sid} AND family_id = ${claims.familyId} AND user_id = ${claims.userId}
         AND tenant_id = ${claims.tenantId} AND kind = ${claims.kind ?? "manager"}
         AND revoked_at IS NULL AND expires_at > clock_timestamp()
         AND ${claims.exp} > EXTRACT(EPOCH FROM clock_timestamp())
@@ -55,5 +63,10 @@ export async function requireTeamActorInTransaction(
         AND tenant_id = ${claims.tenantId} AND revoked_at IS NULL
         AND expires_at > clock_timestamp() FOR SHARE`);
   }
-  if (active.rows.length === 0) throw new TeamAuthorizationChangedError();
+  if (active.rows.length === 0) throw new TeamAuthorizationChangedError(new WorkspaceSessionExpiredError());
+  try { await requireWorkspaceSessionInTransaction(tx, claims, { fresh: true, touch: true }); }
+  catch (error) {
+    if (error instanceof WorkspaceSessionExpiredError || error instanceof WorkspaceReauthenticationRequiredError) throw new TeamAuthorizationChangedError(error);
+    throw error;
+  }
 }

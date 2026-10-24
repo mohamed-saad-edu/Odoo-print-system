@@ -97,7 +97,7 @@ export async function POST(req: Request) {
       );
     });
   } catch (error) {
-    if (error instanceof TeamAuthorizationChangedError) return NextResponse.json({ error: error.message }, { status: 403 });
+    if (error instanceof TeamAuthorizationChangedError) return error.response();
     if (error instanceof OwnershipConflict) return NextResponse.json({ error: error.message }, { status: error.status });
     throw error;
   }

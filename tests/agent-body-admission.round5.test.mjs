@@ -6,7 +6,7 @@ import vm from 'node:vm';
 
 const source = await readFile('src/server/request-guard.ts', 'utf8');
 const pathSource = await readFile('src/server/request-path.ts', 'utf8');
-const start = source.indexOf('const AGENT_ROUTE_BODY_LIMITS:');
+const start = source.indexOf('const ROUTE_BODY_LIMITS:');
 const end = source.indexOf('const MUTATING_METHODS =', start);
 assert.ok(start > 0 && end > start);
 const context = vm.createContext({Math, URL});

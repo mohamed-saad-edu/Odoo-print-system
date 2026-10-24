@@ -1,3 +1,4 @@
+import { printerOperationalVerificationPredicate } from "./printer-verification-sql";
 import { createHash } from "node:crypto";
 import { agents, printJobs, printers, printJobReceipts } from "../db/schema";
 import { db } from "../db";
@@ -58,7 +59,7 @@ export class PrintJobCapabilityError extends Error {
 export class PrintJobInputError extends Error {
   readonly code: string;
   readonly status: number;
-  constructor(message: string, code: string, status: number) {
+  constructor(message: string, code: string, status: number, readonly authorityError?: ManagerMutationAuthorityChangedError) {
     super(message);
     this.code = code;
     this.status = status;
@@ -113,6 +114,7 @@ export type CreatePrintJobResult = {
   agentId: string;
   status: string;
   isReused?: boolean;
+  outputMedium?: string;
 };
 
 function normalizeRequestedBy(value: string): string {
@@ -142,7 +144,7 @@ async function insertQueuedJobAtomically({
   agentDiagnosticAuthority?: { agentId: string; tenantId: string };
   requireAvailableAgent?: boolean;
   odooV2Identity?: V2OdooIdentity;
-}): Promise<{ jobId: string; status: string; agentId: string; printerId: string; isReused: boolean }> {
+}): Promise<{ jobId: string; status: string; agentId: string; printerId: string; isReused: boolean; outputMedium?: string }> {
   if (!tenantId || tenantId.length > 128) throw new PrintJobInputError("tenantId is invalid", "INVALID_TENANT", 400);
 
   return await db.transaction(async (tx) => {
@@ -190,7 +192,7 @@ async function insertQueuedJobAtomically({
         await requireManagerActorInTransaction(tx, managerAuthority.claims, managerAuthority.permission);
       } catch (error) {
         if (error instanceof ManagerMutationAuthorityChangedError) {
-          throw new PrintJobInputError(error.message, "MANAGER_AUTH_CHANGED", 403);
+          throw new PrintJobInputError(error.message, error.policy?.code ?? "MANAGER_AUTH_CHANGED", error.policy?.status ?? 403, error);
         }
         throw error;
       }
@@ -344,6 +346,9 @@ async function insertQueuedJobAtomically({
     // admission equally strict.
     const runtimeOwner = await tx.execute(sql`
       SELECT
+        (${printerOperationalVerificationPredicate(sql`p`)}) AS printer_verified,
+        p.output_medium AS printer_output_medium,
+        p.verification_binding_digest AS printer_binding_digest,
         p.name AS printer_name,
         p.printer_type AS printer_type,
         p.device_class AS printer_device_class,
@@ -358,6 +363,7 @@ async function insertQueuedJobAtomically({
         p.capabilities AS printer_capabilities,
         p.config AS printer_config,
         p.applied_desired_revision AS applied_desired_revision,
+        p.observed_desired_revision AS observed_desired_revision,
         p.desired_revision AS desired_revision,
         a.lifecycle AS agent_lifecycle,
         a.status AS agent_status,
@@ -376,6 +382,9 @@ async function insertQueuedJobAtomically({
       FOR UPDATE OF a, p
     `);
     const owner = runtimeOwner.rows[0] as {
+      printer_verified?: boolean;
+      printer_output_medium?: string;
+      printer_binding_digest?: string;
       printer_name?: string;
       printer_type?: string;
       printer_device_class?: string;
@@ -387,9 +396,10 @@ async function insertQueuedJobAtomically({
       printer_protocol?: string;
       printer_agent_id?: string;
       management_source?: string;
-      printer_capabilities?: { supported_protocols?: string[]; virtual_spooler_test?: boolean } | null;
+      printer_capabilities?: Record<string, unknown> | null;
       printer_config?: Record<string, unknown> | null;
       applied_desired_revision?: number | string;
+      observed_desired_revision?: number | string;
       desired_revision?: number | string;
       agent_lifecycle?: string;
       agent_status?: string;
@@ -427,6 +437,9 @@ async function insertQueuedJobAtomically({
     if (owner.printer_inventory_present === false) {
       throw new PrintJobInputError("Printer is no longer present in the Agent inventory", "PRINTER_UNAVAILABLE", 409);
     }
+    if (owner.printer_verified !== true) {
+      throw new PrintJobInputError("Printer verification is pending or expired. Wait for a successful Agent verification of this exact target.", "PRINTER_UNVERIFIED", 409);
+    }
     if (!isPrinterStatusExecutable({
       status: owner.printer_status ?? null,
       connectionType: owner.printer_connection_type ?? null,
@@ -462,7 +475,8 @@ async function insertQueuedJobAtomically({
     // not admission eligibility.
     if (
       owner.management_source === "manager" &&
-      Number(owner.applied_desired_revision ?? 0) < Number(owner.desired_revision ?? 0)
+      (Number(owner.applied_desired_revision ?? 0) < Number(owner.desired_revision ?? 0)
+        || (validatedPayload.type === "image" && Number(owner.observed_desired_revision ?? 0) < Number(owner.desired_revision ?? 0)))
     ) {
       throw new PrintJobInputError("Printer configuration is still applying; retry when the printer is ready", "PRINTER_UNAVAILABLE", 503);
     }
@@ -473,6 +487,8 @@ async function insertQueuedJobAtomically({
     // read and INSERT; without this second check, a payload accepted for the
     // old capability set could be durably queued against the new one.
     const runtimeCapability = validatePayloadForPrinter(validatedPayload, {
+      id: printerId,
+      config: owner.printer_config,
       protocol: owner.printer_protocol,
       connectionType: owner.printer_connection_type,
       capabilities: owner.printer_capabilities,
@@ -547,6 +563,8 @@ async function insertQueuedJobAtomically({
       printerId,
       status: "queued",
       payload: validatedPayload,
+      outputMedium: owner.printer_output_medium === "file" ? "file" : "physical",
+      bindingDigest: owner.printer_binding_digest!,
       requestedBy,
       requestId: requestId ?? null,
       idempotencyKey: effectiveIdempotencyKey,
@@ -568,7 +586,55 @@ async function insertQueuedJobAtomically({
       agentId,
       printerId,
       isReused: false,
+      outputMedium: owner.printer_output_medium === "file" ? "file" : "physical",
     };
+  });
+}
+
+/**
+ * Reconcile accepted v2 operations without the new-admission quota locks.
+ * Current authority still serializes with lifecycle/key/installation changes.
+ * A miss ends this transaction before normal admission takes its tenant-first
+ * locks; retaining a key/Agent lock while acquiring them would invert order.
+ */
+async function reconcileAcceptedV2Operation(
+  printerId: string,
+  agentId: string | null,
+  validatedPayload: ReturnType<typeof validatePrintJobPayload>,
+  options: CreatePrintJobOptions,
+): ReturnType<typeof reserveV2Operation> {
+  const apiKeyId = options.rateLimitKeyId;
+  const suppliedIdentity = options.odooV2Identity;
+  if (!apiKeyId || !suppliedIdentity || options.managerAuthority || options.agentDiagnosticAuthority || options.reprintOfJobId) return null;
+  const tenantId = options.tenantId;
+  if (!tenantId || tenantId.length > 128) throw new PrintJobInputError("tenantId is invalid", "INVALID_TENANT", 400);
+  const identity = { ...suppliedIdentity };
+  const idempotencyKey = options.idempotencyKey;
+  const requestedFingerprint = idempotencyDigest({ printerId, documentType: options.documentType,
+    destination: options.destination, payload: validatedPayload });
+
+  return db.transaction(async (tx) => {
+    const tenant = await tx.execute(sql`SELECT lifecycle, odoo_idempotency_mode FROM tenants WHERE id = ${tenantId} FOR SHARE`);
+    if ((tenant.rows[0] as { lifecycle?: string } | undefined)?.lifecycle !== "active") {
+      throw new PrintJobInputError("Workspace is no longer active", "TENANT_UNAVAILABLE", 403);
+    }
+    if ((tenant.rows[0] as { odoo_idempotency_mode?: string } | undefined)?.odoo_idempotency_mode !== "strict_v2") {
+      throw new OdooNamespaceError("CUTOVER_NOT_ACTIVE");
+    }
+    // Preserve Agent -> key order used by claims and lifecycle mutations. An
+    // accepted operation can outlive its inventory owner; absent owners never
+    // authorize new work here, and the immutable namespace remains required.
+    if (agentId) {
+      await tx.execute(sql`SELECT id FROM agents WHERE id = ${agentId} AND tenant_id = ${tenantId} FOR UPDATE`);
+    }
+    const credential = await tx.execute(sql`SELECT id FROM api_keys
+      WHERE id = ${apiKeyId} AND tenant_id = ${tenantId}
+        AND revoked_at IS NULL AND read_only_until IS NULL AND odoo_enabled = TRUE
+      FOR UPDATE`);
+    if (!credential.rows.length) throw new PrintJobInputError("Integration credential is no longer active", "UNAUTHORIZED", 401);
+    if (idempotencyKey !== identity.key) throw new OdooNamespaceError("INVALID_INSTALLATION_IDEMPOTENCY_KEY", 400);
+    return reserveV2Operation(tx, { tenantId, apiKeyId, identity, requestedFingerprint,
+      digest: idempotencyDigest, newJobId: null, acceptedOnly: true });
   });
 }
 
@@ -593,6 +659,10 @@ async function recoverReceiptForMissingOwner(
   if (!apiKeyId || !idempotencyKey || options.managerAuthority || options.agentDiagnosticAuthority) return null;
   const tenantId = options.tenantId;
   if (tenantId.length > 128) throw new PrintJobInputError("tenantId is invalid", "INVALID_TENANT", 400);
+
+  const accepted = await reconcileAcceptedV2Operation(printerId, null, validatedPayload, options);
+  if (accepted) return { id: accepted.jobId, printerId: accepted.printerId, agentId: accepted.agentId,
+    status: accepted.status, isReused: true };
 
   return db.transaction(async (tx) => {
     const tenant = await tx.execute(sql`SELECT lifecycle, odoo_idempotency_mode FROM tenants WHERE id = ${tenantId} FOR SHARE`);
@@ -646,9 +716,9 @@ export async function createPrintJobForPrinter(
   if (typeof options.tenantId !== "string" || !options.tenantId.trim()) throw new PrintJobInputError("tenant context is required", "TENANT_CONTEXT_REQUIRED", 400);
   const requestedBy = normalizeRequestedBy(options.requestedBy);
   const validatedPayload = validatePrintJobPayload(payload);
-  // Normal identity reuse is decided in the enqueue transaction, after live
-  // authority checks. If the original inventory owner has disappeared, the
-  // separate terminal-receipt recovery below performs the same live fences.
+  // Accepted v2 identity reuse has its own live-authority transaction; a miss
+  // finishes before normal admission starts. Missing inventory uses the same
+  // accepted-operation fences before considering legacy receipt recovery.
   // No unfenced optimistic read is permitted during key rotation/revocation.
   const printer = await db.query.printers.findFirst({ where: and(eq(printers.id, normalizedPrinterId), eq(printers.tenantId, options.tenantId)) });
   const ownerAgent = printer
@@ -671,7 +741,8 @@ export async function createPrintJobForPrinter(
   }
 
   const enqueueStartedAt = Date.now();
-  const result = await insertQueuedJobAtomically({
+  const accepted = await reconcileAcceptedV2Operation(printer.id, ownerAgent.id, validatedPayload, options);
+  const result = accepted ?? await insertQueuedJobAtomically({
     jobId: id,
     printerId: printer.id,
     agentId: ownerAgent.id,
@@ -738,5 +809,5 @@ export async function createPrintJobForPrinter(
     return { id: result.jobId, printerId: result.printerId, agentId: result.agentId, status: result.status, isReused: true };
   }
 
-  return { id: result.jobId, printerId: printer.id, agentId: ownerAgent.id, status: "queued", isReused: false };
+  return { id: result.jobId, printerId: printer.id, agentId: ownerAgent.id, status: "queued", isReused: false, outputMedium: result.outputMedium };
 }

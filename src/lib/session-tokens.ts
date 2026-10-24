@@ -4,12 +4,18 @@ import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypt
 import { and, eq, sql } from "drizzle-orm";
 import { requiredRuntimeSecret } from "./runtime-secret";
 import { requireActiveTenantInTransaction, TenantDeletedError, TenantSuspendedError } from "./tenant-guard";
-import { sessionCookieSecure } from "./session-config";
+import { LEGACY_SESSION_MAX_AGE_SECONDS, sessionCookieName, sessionCookieSecure } from "./session-config";
 import { sendTransactionalEmail } from "./email";
 import { DEFAULT_LOCALE, type Locale } from "../i18n/config";
 import { translate } from "../i18n/translate";
 import { writeAuditEvent } from "./audit";
 import { logError, logWarn } from "./log";
+import { preparePlatformSessionInTransaction, isPlatformSessionAssured, PLATFORM_SESSION_TTL_MS } from "./platform-session-security";
+import type { ManagerClaims } from "./manager-auth";
+import { credentialVersionFor } from "./session-credentials";
+export { credentialVersionFor } from "./session-credentials";
+import { assertWorkspaceCredentialInTransaction, persistWorkspaceSessionInTransaction, prepareWorkspaceSessionInTransaction,
+  readWorkspaceSessionState, refreshWorkspacePasswordProofInTransaction, WORKSPACE_ABSOLUTE_MS } from "./workspace-session-security";
 
 export type SessionKind = "manager" | "platform" | "customer";
 
@@ -43,7 +49,7 @@ const CONFIG: Record<SessionKind, SessionKindConfig> = {
 
 export const ACCESS_TOKEN_VERSION = 2 as const;
 export const ACCESS_TOKEN_TTL_SECONDS = 15 * 60;
-export const REFRESH_FAMILY_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+export const REFRESH_FAMILY_TTL_MS = WORKSPACE_ABSOLUTE_MS;
 export const REFRESH_ROTATION_GRACE_MS = 5_000;
 
 export type SharedSessionPrincipal = {
@@ -54,6 +60,10 @@ export type SharedSessionPrincipal = {
   email?: string | null;
   /** Internal credential proof from password verification; never serialized as session claims. */
   credentialVersion?: string;
+  /** Snapshot of an actually verified, explicitly enabled environment login. */
+  environmentCredentialVersion?: string;
+  /** Original password check time from a verified, short-lived workspace chooser. */
+  passwordVerifiedAtMs?: number;
 };
 
 export type SessionRequestContext = {
@@ -64,6 +74,11 @@ export type SessionRequestContext = {
    * a request (tests, scripts) simply get the default.
    */
   locale?: Locale | null;
+  /** Presented selectors only; never persisted, serialized or logged. Full
+   * authentication must succeed before issuance may revoke their old family. */
+  replaceCurrent?: { accessToken: string | null; refreshToken: string | null };
+  /** Existing exact session used for workspace selection, never fresh proof. */
+  continueWorkspace?: ManagerClaims;
 };
 
 export type SharedSessionClaims = {
@@ -110,7 +125,8 @@ function getSecret(): string {
 }
 
 function configFor(kind: SessionKind): SessionKindConfig {
-  return CONFIG[kind];
+  return { ...CONFIG[kind], accessCookieName: sessionCookieName(kind), refreshCookieName: sessionCookieName(kind, true),
+    refreshCookiePath: process.env.NODE_ENV === "production" ? "/" : CONFIG[kind].refreshCookiePath };
 }
 
 export function hashRefreshToken(token: string): string {
@@ -122,13 +138,6 @@ export class AuthenticationChangedError extends Error {
     super("Authentication changed; sign in again");
     this.name = "AuthenticationChangedError";
   }
-}
-
-/** Bind a password-authentication snapshot without exposing the password verifier. */
-export function credentialVersionFor(userId: string, passwordHash: string): string {
-  return createHmac("sha256", getSecret())
-    .update("session-credential-v1\0").update(userId).update("\0").update(passwordHash)
-    .digest("hex");
 }
 
 export async function assertSessionCredentialInTransaction(
@@ -304,6 +313,7 @@ async function insertInitialPair(
   if (principal.kind !== "platform") {
     await requireActiveTenantInTransaction(tx, principal.tenantId!);
   }
+  if (principal.kind === "platform" && !principal.credentialVersion) throw new AuthenticationChangedError();
   if (principal.credentialVersion) {
     if (!principal.userId) throw new AuthenticationChangedError();
     await assertSessionCredentialInTransaction(tx, principal.userId, principal.credentialVersion);
@@ -311,6 +321,8 @@ async function insertInitialPair(
 
   const nowMs = await dbNowMsInTransaction(tx);
   const nowSec = Math.floor(nowMs / 1000);
+  const workspaceState = principal.kind === "platform" ? undefined
+    : await prepareWorkspaceSessionInTransaction(tx, principal, nowMs, context?.continueWorkspace);
   let sessionEmail = principal.email ?? null;
   if (!sessionEmail && principal.userId) {
     const user = await tx.query.users.findFirst({
@@ -325,9 +337,12 @@ async function insertInitialPair(
   const accessJti = randomBytes(16).toString("hex");
   const refreshToken = randomBytes(32).toString("base64url");
   const accessExpiresAt = new Date((nowSec + ACCESS_TOKEN_TTL_SECONDS) * 1000);
-  const refreshExpiresAt = new Date(nowMs + REFRESH_FAMILY_TTL_MS);
+  const refreshExpiresAt = new Date(workspaceState?.expiresAtMs ?? nowMs + PLATFORM_SESSION_TTL_MS);
+  if (principal.kind === "platform") await preparePlatformSessionInTransaction(tx, principal, familyId, nowMs);
   const normalized = normalizeContext(context);
   const accessToken = signAccessToken(makeClaims(resolvedPrincipal, accessJti, refreshTokenId, familyId, nowSec));
+
+  if (context?.replaceCurrent) await revokePresentedSessionInTransaction(tx, principal, context.replaceCurrent);
 
   await tx.insert(refreshTokens).values({
     id: refreshTokenId,
@@ -339,12 +354,13 @@ async function insertInitialPair(
     email: sessionEmail,
     tokenHash: hashRefreshToken(refreshToken),
     issuedAt: new Date(nowMs),
-    familyCreatedAt: new Date(nowMs),
+    familyCreatedAt: new Date(workspaceState?.createdAtMs ?? nowMs),
     expiresAt: refreshExpiresAt,
     ipAddress: normalized.ipAddress,
     userAgent: normalized.userAgent,
   });
 
+  if (workspaceState) await persistWorkspaceSessionInTransaction(tx, familyId, workspaceState);
   return { accessToken, accessJti, refreshToken, refreshTokenId, familyId, accessExpiresAt, refreshExpiresAt };
 }
 
@@ -417,6 +433,7 @@ async function rotateWithinFamily(
     role: string | null;
     email: string | null;
     familyCreatedAtMs: number;
+    expiresAtMs?: number | string;
   },
   context: SessionRequestContext | undefined,
   nowMs: number,
@@ -433,7 +450,12 @@ async function rotateWithinFamily(
   const familyCreatedAtMs = row.familyCreatedAtMs;
   if (!Number.isFinite(familyCreatedAtMs)) throw new Error("Invalid persisted refresh family timestamp");
 
-  const refreshExpiresAt = new Date(familyCreatedAtMs + REFRESH_FAMILY_TTL_MS);
+  const absoluteExpiryMs = familyCreatedAtMs + (row.kind === "platform" ? PLATFORM_SESSION_TTL_MS : REFRESH_FAMILY_TTL_MS);
+  const persistedExpiryMs = row.expiresAtMs === undefined ? absoluteExpiryMs : Number(row.expiresAtMs);
+  if (!Number.isFinite(persistedExpiryMs)) throw new Error("Invalid persisted refresh expiry");
+  // A persisted shorter deadline is authoritative too. Neither ordinary
+  // refresh nor fresh reauthentication may reset it to the full family TTL.
+  const refreshExpiresAt = new Date(Math.min(absoluteExpiryMs, persistedExpiryMs));
   if (refreshExpiresAt.getTime() <= nowMs) throw new Error("REFRESH_FAMILY_EXPIRED");
 
   const refreshTokenId = randomBytes(16).toString("hex");
@@ -488,8 +510,11 @@ export async function isSessionFamilyActive(
   kind: SessionKind,
   tenantId: string | null,
   userId?: string,
+  tokenId?: string,
 ): Promise<boolean> {
   if (!/^[0-9a-f]{32}$/.test(familyId)) return false;
+  if (kind !== "platform") return !!tenantId && !!await readWorkspaceSessionState({ familyId, kind, tenantId, userId, sid: tokenId });
+  if (kind === "platform" && (!userId || !(await isPlatformSessionAssured(familyId, userId)))) return false;
   const row = await db.query.refreshTokens.findFirst({
     where: and(
       eq(refreshTokens.familyId, familyId),
@@ -498,17 +523,89 @@ export async function isSessionFamilyActive(
       sql`${refreshTokens.revokedAt} IS NULL`,
       sql`${refreshTokens.expiresAt} > clock_timestamp()`,
       ...(userId ? [eq(refreshTokens.userId, userId)] : []),
+      ...(tokenId ? [eq(refreshTokens.id, tokenId)] : []),
     ),
     columns: { id: true },
   });
   return !!row;
 }
 
+/** Password reauthentication rotates the exact admitted session under account
+ * and family locks. It preserves the original family creation time and expiry,
+ * and cannot resurrect a predecessor already replaced by another confirmation. */
+export async function rotatePlatformSessionAfterReauthenticationInTransaction(
+  tx: DbTx, claims: import("./platform-auth").PlatformOwnerClaims, credentialVersion: string, context?: SessionRequestContext,
+): Promise<SessionPair> {
+  if (claims.ver !== 2 || claims.kind !== "platform" || !claims.familyId || !claims.sid) throw new AuthenticationChangedError();
+  await assertSessionCredentialInTransaction(tx, claims.userId, credentialVersion);
+  await lockRefreshFamily(tx, claims.familyId);
+  const result = await tx.execute(sql`
+    SELECT r.family_id AS "familyId", r.kind, r.user_id AS "userId", r.email,
+      EXTRACT(EPOCH FROM r.family_created_at) * 1000 AS "familyCreatedAtMs",
+      EXTRACT(EPOCH FROM r.expires_at) * 1000 AS "expiresAtMs"
+    FROM refresh_tokens r JOIN users u ON u.id=r.user_id
+    WHERE r.id=${claims.sid} AND r.family_id=${claims.familyId} AND r.user_id=${claims.userId}
+      AND r.kind='platform' AND r.tenant_id IS NULL AND r.email=${claims.email} AND r.email=u.email
+      AND u.is_platform_owner=true AND u.email_verified_at IS NOT NULL
+      AND r.revoked_at IS NULL AND r.expires_at>clock_timestamp()
+      AND ${claims.exp}>EXTRACT(EPOCH FROM clock_timestamp())
+      AND ${claims.iat}<=EXTRACT(EPOCH FROM clock_timestamp())+60
+    FOR UPDATE OF r
+  `);
+  const row = result.rows[0] as { familyId: string; kind: "platform"; userId: string; email: string;
+    familyCreatedAtMs: string | number; expiresAtMs: string | number } | undefined;
+  if (!row || !(await isPlatformSessionAssured(claims.familyId, claims.userId, false, tx))) throw new AuthenticationChangedError();
+  await tx.execute(sql`UPDATE platform_session_security SET password_verified_at=clock_timestamp(),last_seen_at=clock_timestamp()
+    WHERE family_id=${claims.familyId} AND user_id=${claims.userId} AND revoked_at IS NULL`);
+  await tx.execute(sql`UPDATE refresh_tokens SET revoked_at=clock_timestamp(),revoked_reason='reauthentication'
+    WHERE family_id=${claims.familyId} AND user_id=${claims.userId} AND kind='platform' AND revoked_at IS NULL`);
+  return rotateWithinFamily(tx, { ...row, tenantId: null, role: null, familyCreatedAtMs: Number(row.familyCreatedAtMs) }, context, await dbNowMsInTransaction(tx));
+}
+
+/** Fresh-password workspace reauthentication keeps the original family and
+ * deadline. Every predecessor is revoked, including ordinary refresh siblings.
+ * Callers must verify the password for this request; its internal credential
+ * snapshot is rechecked under the same locks as reset, logout and refresh. */
+export async function rotateWorkspaceSessionAfterReauthenticationInTransaction(
+  tx: DbTx, claims: ManagerClaims, credentialVersion: string, context?: SessionRequestContext,
+): Promise<SessionPair> {
+  if (claims.ver !== 2 || !claims.familyId || !claims.sid ||
+      (claims.kind !== "customer" && claims.kind !== "manager")) throw new AuthenticationChangedError();
+  await requireActiveTenantInTransaction(tx, claims.tenantId);
+  await assertWorkspaceCredentialInTransaction(tx, { kind: claims.kind, tenantId: claims.tenantId, userId: claims.userId, role: claims.role }, credentialVersion);
+  await lockRefreshFamily(tx, claims.familyId);
+  const result = await tx.execute(sql`
+    SELECT family_id AS "familyId", kind, tenant_id AS "tenantId", user_id AS "userId", role, email,
+      EXTRACT(EPOCH FROM family_created_at) * 1000 AS "familyCreatedAtMs",
+      EXTRACT(EPOCH FROM expires_at) * 1000 AS "expiresAtMs"
+    FROM refresh_tokens
+    WHERE id=${claims.sid} AND family_id=${claims.familyId} AND kind=${claims.kind}
+      AND tenant_id=${claims.tenantId} AND ${claims.userId ? sql`user_id=${claims.userId}` : sql`user_id IS NULL`} AND role=${claims.role}
+      AND revoked_at IS NULL AND expires_at>clock_timestamp()
+      AND ${claims.exp}>EXTRACT(EPOCH FROM clock_timestamp())
+    FOR UPDATE
+  `);
+  const row = result.rows[0] as { familyId: string; kind: "customer" | "manager"; tenantId: string;
+    userId: string | null; role: string; email: string | null; familyCreatedAtMs: string | number; expiresAtMs: string | number } | undefined;
+  if (!row || !(await refreshPrincipalStillValid(tx, row))) throw new AuthenticationChangedError();
+  await refreshWorkspacePasswordProofInTransaction(tx, claims, credentialVersion);
+  await tx.execute(sql`UPDATE refresh_tokens SET revoked_at=clock_timestamp(),revoked_reason='reauthentication'
+    WHERE family_id=${claims.familyId} AND kind=${claims.kind} AND tenant_id=${claims.tenantId}
+      AND ${claims.userId ? sql`user_id=${claims.userId}` : sql`user_id IS NULL`} AND revoked_at IS NULL`);
+  return rotateWithinFamily(tx, { ...row, familyCreatedAtMs: Number(row.familyCreatedAtMs) }, context, await dbNowMsInTransaction(tx));
+}
+
 export function readCookie(req: Request, name: string): string | null {
   const cookieHeader = req.headers.get("cookie") ?? "";
+  let found: string | null = null;
+  let matched = false;
   for (const part of cookieHeader.split(";")) {
     const [key, ...rest] = part.trim().split("=");
     if (key === name) {
+      // Ambiguous same-name cookies can be injected through a different path.
+      // Reject them rather than trusting order supplied by a user agent/proxy.
+      if (matched) return null;
+      matched = true;
       let value = rest.join("=").trim();
       if (value.startsWith('"') && value.endsWith('"')) value = value.slice(1, -1);
       try {
@@ -516,10 +613,10 @@ export function readCookie(req: Request, name: string): string | null {
       } catch {
         // Malformed percent-encoding: return the raw value rather than throwing.
       }
-      return value || null;
+      found = value || null;
     }
   }
-  return null;
+  return found;
 }
 
 export function isTrustedDesktopRequest(req: Request): boolean {
@@ -545,6 +642,79 @@ export function getRefreshTokenFromRequest(req: Request, kind: SessionKind): str
   return readCookie(req, configFor(kind).refreshCookieName);
 }
 
+export function sessionReplacementFromRequest(req: Request, kind: SessionKind): SessionRequestContext["replaceCurrent"] {
+  const accessToken = getAccessTokenFromRequest(req, kind);
+  const refreshToken = getRefreshTokenFromRequest(req, kind);
+  return accessToken || refreshToken ? { accessToken, refreshToken } : undefined;
+}
+
+/** Signature-only legacy selector for revocation AFTER fresh authentication.
+ * This never admits a legacy session or supplies authentication authority. */
+function legacyReplacementClaims(token: string, kind: SessionKind) {
+  if (token.length < 40 || token.length > 4096) return null;
+  try {
+    const parts = token.split(".");
+    if (parts.length !== 3) return null;
+    const [headerPart, payloadPart, signature] = parts;
+    const header = JSON.parse(decode(headerPart).toString("utf8"));
+    if (header.alg !== "HS256" || header.typ !== "JWT") return null;
+    const expected = createHmac("sha256", getSecret()).update(`${headerPart}.${payloadPart}`).digest("base64url");
+    if (!compareStringsSafe(signature, expected)) return null;
+    const claims = JSON.parse(decode(payloadPart).toString("utf8")) as {
+      ver?: unknown; kind?: unknown; sid?: unknown; familyId?: unknown; sub?: unknown;
+      jti?: unknown; iat?: unknown; exp?: unknown; userId?: unknown; tenantId?: unknown; role?: unknown;
+    };
+    if (claims.ver !== undefined || claims.kind !== undefined || claims.sid !== undefined || claims.familyId !== undefined ||
+        claims.sub !== configFor(kind).sub || typeof claims.jti !== "string" || claims.jti.length < 16 || claims.jti.length > 128 ||
+        typeof claims.iat !== "number" || typeof claims.exp !== "number" || !Number.isSafeInteger(claims.iat) || !Number.isSafeInteger(claims.exp) ||
+        claims.exp <= claims.iat || claims.exp - claims.iat > LEGACY_SESSION_MAX_AGE_SECONDS ||
+        (claims.userId !== undefined && (typeof claims.userId !== "string" || !claims.userId || claims.userId.length > 128))) return null;
+    if (kind === "platform" ? (!claims.userId || claims.tenantId !== undefined) :
+        (typeof claims.tenantId !== "string" || !claims.tenantId || typeof claims.role !== "string" || !claims.role)) return null;
+    return claims as { jti: string; userId?: string; tenantId?: string; role?: string; exp: number; iat: number };
+  } catch { return null; }
+}
+
+async function revokePresentedSessionInTransaction(
+  tx: DbTx, principal: SharedSessionPrincipal, presented: NonNullable<SessionRequestContext["replaceCurrent"]>,
+): Promise<void> {
+  // The new principal has already passed its credential check (and the
+  // locked password proof, where applicable). Never sweep a user's
+  // other devices, another cookie kind, tenant, or a different principal.
+  const userPredicate = principal.userId ? sql`user_id=${principal.userId}` : sql`user_id IS NULL`;
+  const tenantPredicate = principal.kind === "platform" ? sql`tenant_id IS NULL` : sql`tenant_id=${principal.tenantId}`;
+  const scope = sql`kind=${principal.kind} AND ${userPredicate} AND ${tenantPredicate}`;
+  const access = presented.accessToken ? verifyAccessTokenSignature(presented.accessToken, principal.kind) : null;
+  let familyId: string | undefined;
+  if (access && (access.userId ?? null) === (principal.userId ?? null) && (access.tenantId ?? null) === (principal.tenantId ?? null)) {
+    const result = await tx.execute(sql`SELECT family_id FROM refresh_tokens WHERE id=${access.sid}
+      AND family_id=${access.familyId} AND ${scope} AND revoked_at IS NULL AND expires_at>clock_timestamp()`);
+    familyId = result.rows[0]?.family_id as string | undefined;
+  }
+  if (!familyId && presented.accessToken) {
+    const legacy = legacyReplacementClaims(presented.accessToken, principal.kind);
+    if (legacy && (legacy.userId ?? null) === (principal.userId ?? null) && (legacy.tenantId ?? null) === (principal.tenantId ?? null)) {
+      const table = principal.kind === "platform" ? sql`platform_sessions` : sql`manager_sessions`;
+      const legacyScope = principal.kind === "platform" ? userPredicate : sql`${userPredicate} AND tenant_id=${principal.tenantId} AND role=${legacy.role}`;
+      const result = await tx.execute(sql`UPDATE ${table} SET revoked_at=clock_timestamp() WHERE jti=${legacy.jti}
+        AND ${legacyScope} AND revoked_at IS NULL AND expires_at>clock_timestamp()
+        AND FLOOR(EXTRACT(EPOCH FROM expires_at))=${legacy.exp} AND ${legacy.iat}<=EXTRACT(EPOCH FROM clock_timestamp())+60 RETURNING jti`);
+      if (result.rows.length) return;
+    }
+  }
+  if (!familyId && presented.refreshToken && /^[A-Za-z0-9_-]{43}$/.test(presented.refreshToken)) {
+    const result = await tx.execute(sql`SELECT family_id FROM refresh_tokens WHERE token_hash=${hashRefreshToken(presented.refreshToken)}
+      AND ${scope} AND revoked_at IS NULL AND expires_at>clock_timestamp()`);
+    familyId = result.rows[0]?.family_id as string | undefined;
+  }
+  if (!familyId) return;
+  await lockRefreshFamily(tx, familyId);
+  await tx.execute(sql`UPDATE refresh_tokens SET revoked_at=clock_timestamp(),revoked_reason='login_replaced'
+    WHERE family_id=${familyId} AND ${scope} AND revoked_at IS NULL`);
+  if (principal.kind === "platform") await tx.execute(sql`UPDATE platform_session_security SET revoked_at=clock_timestamp()
+    WHERE family_id=${familyId} AND user_id=${principal.userId} AND revoked_at IS NULL`);
+}
+
 export function accessCookieHeader(kind: SessionKind, token: string, expiresAt: Date): string {
   const config = configFor(kind);
   const secure = sessionCookieSecure() ? "; Secure" : "";
@@ -554,7 +724,7 @@ export function accessCookieHeader(kind: SessionKind, token: string, expiresAt: 
 export function refreshCookieHeader(kind: SessionKind, token: string, expiresAt: Date): string {
   const config = configFor(kind);
   const secure = sessionCookieSecure() ? "; Secure" : "";
-  return `${config.refreshCookieName}=${token}; Path=${config.refreshCookiePath}; HttpOnly; SameSite=Strict${secure}; Expires=${expiresAt.toUTCString()}; Max-Age=${REFRESH_FAMILY_TTL_MS / 1000}`;
+  return `${config.refreshCookieName}=${token}; Path=${config.refreshCookiePath}; HttpOnly; SameSite=Strict${secure}; Expires=${expiresAt.toUTCString()}; Max-Age=${(kind === "platform" ? PLATFORM_SESSION_TTL_MS : REFRESH_FAMILY_TTL_MS) / 1000}`;
 }
 
 export function clearAccessCookieHeader(kind: SessionKind): string {
@@ -653,13 +823,15 @@ export async function rotateRefreshToken(
     if (!row || row.kind !== kind || row.familyId !== initial.familyId || row.revokedAt) {
       return { status: "invalid" as const };
     }
-
+    if (kind === "platform" && (!row.userId || !(await isPlatformSessionAssured(row.familyId, row.userId, false, tx)))) {
+      return { status: "invalid" as const };
+    }
     const nowMs = await dbNowMsInTransaction(tx);
     const familyCreatedAtMs = Number(row.familyCreatedAtMs);
     const expiresAtMs = Number(row.expiresAtMs);
     if (!Number.isFinite(familyCreatedAtMs) || !Number.isFinite(expiresAtMs)) throw new Error("Invalid persisted refresh timestamp");
 
-    if (nowMs >= familyCreatedAtMs + REFRESH_FAMILY_TTL_MS) {
+    if (nowMs >= familyCreatedAtMs + (kind === "platform" ? PLATFORM_SESSION_TTL_MS : REFRESH_FAMILY_TTL_MS)) {
       await tx.execute(sql`
         UPDATE refresh_tokens
         SET revoked_at = clock_timestamp(), revoked_reason = 'absolute_expired'
@@ -677,6 +849,15 @@ export async function rotateRefreshToken(
         SET revoked_at = clock_timestamp(), revoked_reason = 'principal_invalid'
         WHERE family_id = ${row.familyId} AND revoked_at IS NULL
       `);
+      return { status: "invalid" as const };
+    }
+    // Preserve the established explicit-expiry and principal-invalid reasons.
+    // The additional policy fence still runs under the same locks before any
+    // refresh consumption or successor issuance, including grace-window reuse.
+    if (kind !== "platform" && (!row.tenantId || !(await readWorkspaceSessionState({ familyId: row.familyId, kind,
+      tenantId: row.tenantId, userId: row.userId, sid: row.id, role: row.role ?? undefined }, tx)))) {
+      await tx.execute(sql`UPDATE refresh_tokens SET revoked_at=clock_timestamp(),revoked_reason='workspace_session_expired'
+        WHERE family_id=${row.familyId} AND revoked_at IS NULL`);
       return { status: "invalid" as const };
     }
 
@@ -861,6 +1042,12 @@ export async function revokeSessionFamily(familyId: string, reason = "logout"): 
 }
 
 export async function cleanupExpiredRefreshTokens(limit = 500): Promise<number> {
+  // Policy rows contain no bearer material, but still need bounded retention.
+  // Refresh ledgers remain authoritative until their own expiry/cleanup.
+  await db.execute(sql`DELETE FROM workspace_session_security WHERE family_id IN (
+    SELECT family_id FROM workspace_session_security WHERE expires_at<=clock_timestamp()
+    ORDER BY expires_at LIMIT ${limit} FOR UPDATE SKIP LOCKED
+  )`);
   const result = await db.execute(sql`
     WITH candidates AS (
       SELECT id

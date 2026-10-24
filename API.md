@@ -27,6 +27,32 @@ Odoo Gateway authentication is based on the Odoo installation API key. The Odoo 
 
 The raw Odoo key is returned only when generated. Gateway persists only its cryptographic hash plus lifecycle metadata; rotated keys use a bounded read-only grace window before full invalidation.
 
+### Odoo status read authority
+
+Status reads on `GET /api/print/jobs`, `GET /api/print/jobs/v2`, and
+`POST /api/print/jobs/batch-status` require the saved installation identity for
+v2 operations, in addition to the authenticated Odoo API key:
+
+```text
+X-Yaseir-Odoo-Idempotency-Version: 2
+X-Yaseir-Odoo-Installation: <saved-installation-uuid>
+X-Yaseir-Odoo-Proof: <saved-installation-proof>
+```
+
+The proof must belong to an enabled installation enrolled for the credential
+and workspace. Both live jobs and durable receipts are restricted to that
+installation's accepted-operation mapping. A valid proof for another
+installation does not reveal the job, even when both installations share an
+API key. Key rotation can preserve access within the same installation; the
+historical job's API-key ID records provenance rather than requiring equality
+with the current key.
+
+Omitting the headers is allowed only while the workspace remains `legacy`,
+and never grants access to an operation already mapped to v2. Strict-v2
+workspaces reject missing proof with `403 INSTALLATION_NOT_ENROLLED`;
+partial or unsupported version headers are rejected. Status responses are
+`no-store` and project bounded metadata without fetching document payloads.
+
 ## `GET /api/odoo/health`
 
 Authenticated with the Odoo installation key. Returns the authenticated integration health, including its replicated Odoo activation state (`enabled`). This endpoint is used by the Odoo **Test Connection** button.
@@ -71,7 +97,7 @@ Request:
 
 No Gateway branch ID, Gateway destination ID, Gateway document-type ID, agent provisioning data, or printer-creation data is accepted.
 
-The Gateway validates the Odoo key, payload, expiration and idempotency before queueing the runtime job. The Odoo installation key is a credential for the Odoo integration API surface documented here. It is not a Manager or Platform credential and is not accepted by generic console endpoints. It is not restricted by document type. A created Odoo-originated job is stamped with the authenticated API-key identity. Status lookup is scoped to Odoo-originated jobs in the authenticated tenant after successful API-key authentication; `apiKeyId` must be present but is treated as credential provenance rather than an equality check against the current key, so credential rotation does not strand historical jobs. Internal Manager-created jobs without an Odoo API-key provenance remain outside the Odoo integration flow.
+The Gateway validates the Odoo key, payload, expiration and idempotency before queueing the runtime job. The Odoo installation key is a credential for the Odoo integration API surface documented here. It is not a Manager or Platform credential and is not accepted by generic console endpoints. It is not restricted by document type. A created Odoo-originated job is stamped with the authenticated API-key identity. Status lookup follows the installation proof and legacy restrictions in **Odoo status read authority** above. Internal Manager-created jobs without Odoo API-key provenance remain outside the Odoo integration flow.
 
 `201` means a new job was accepted. `200` means an idempotent retry matched an existing job and returns that job identity. A reused key with different routing/payload data returns `409 IDEMPOTENCY_CONFLICT`. Idempotent replay is checked within the same transaction as the integration's **current credential and workspace authorization**; a key revoked, rotated to read-only, or disabled after initial HTTP authentication cannot reuse an old receipt to bypass authorization. A historical terminal receipt can still be reconciled if its original printer or Agent record has been removed, using a separately fenced **read-only recovery** path that never submits a new print or consumes another quota credit. This receipt replay is not evidence that paper came out.
 
@@ -83,7 +109,7 @@ Typical failures include `400` invalid input, `401` authentication failure, `404
 
 ## `GET /api/print/jobs?id=<jobId>`
 
-Authenticated with the Odoo installation key. Returns the runtime status and routing identifiers for Odoo-originated jobs belonging to the authenticated tenant. Internal Manager-created jobs are outside this integration surface. A job belonging to another tenant, or a non-Odoo job in the same tenant, is returned as `404 Not found`. API-key rotation does not hide Odoo jobs created with the previous credential.
+Authenticated with the Odoo API key and the saved v2 installation proof where applicable. Returns runtime status and routing metadata for an authorized Odoo operation. A job belonging to another tenant or installation, or a non-Odoo job, is returned as `404 Not found`. The same authority applies to the `/v2` route and idempotency-key lookups. See **Odoo status read authority** for legacy behavior and rotation.
 
 ## Agent heartbeat pagination
 
@@ -137,7 +163,7 @@ Gateway APIs for Branches, business destinations, business document catalogs and
 
 ## Reliability contract
 
-The Odoo addon commits a durable outbox row before making the HTTP submission. The same logical operation key is reused for retry attempts, but the value sent to Gateway is a deterministic company-namespaced digest because Odoo uniqueness is company-scoped while Gateway uniqueness is tenant-scoped. This prevents two Odoo companies under one Gateway tenant from colliding on the same caller-supplied idempotency key. Network timeouts are recorded as an unknown physical outcome instead of a definite failure. Gateway-side Odoo idempotency is tenant-scoped so credential rotation does not strand retries; Odoo status reads remain tenant-scoped after installation-key authentication so API-key rotation does not strand historical jobs.
+The Odoo addon commits a durable outbox row before making the HTTP submission. The same logical operation key is reused for retries. Legacy v1 operations retain their company-namespaced digest; v2 operations additionally use an independently enrolled installation namespace. Identical source IDs in different installations remain independent. Network timeouts are recorded as an unknown physical outcome instead of a definite failure. Credential rotation preserves the operation namespace. Status reads use each durable job's saved version and installation proof, including historical receipts, rather than the current configuration's identity.
 
 ## Agent expiry and uncertain delivery receipts
 
@@ -155,6 +181,13 @@ The Odoo addon commits a durable outbox row before making the HTTP submission. T
 
 Customer authentication uses `POST /api/auth/register`, `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/me`, `POST /api/auth/verify-email`, `POST /api/auth/forgot-password`, `POST /api/auth/reset-password`, and `POST /api/auth/select-tenant`. The `/api/auth/me` browser probe also accepts Manager workspace sessions; their refresh stays at `/api/auth/manager/refresh`. Legacy manager bootstrap endpoints remain under `/api/auth/manager/*`.
 
+When valid customer credentials have multiple active workspace memberships,
+login returns `409` with a short-lived `selectionToken`, the existing
+`workspaces: string[]`, and additive `workspaceOptions: [{ id, name }]` display
+metadata. Unrelated, suspended and erased workspaces are excluded. No session
+is issued until the selected active membership is revalidated. These responses
+are `no-store`; names never replace membership IDs as authorization input.
+
 Workspace lifecycle uses `POST /api/onboarding`. Team lifecycle uses `GET/POST/DELETE /api/team/invitations`, `POST /api/team/invitations/accept`, `GET/PATCH/DELETE /api/team/members`, and `POST /api/team/ownership`. Team collection reads are bounded and paginated: both GET routes accept `limit`/`offset` (default 50, maximum 100) and return `hasMore`, `offset`, `limit`, and the tenant-scoped `total` alongside the collection.
 
 Billing uses `GET /api/billing/plans`, `POST /api/billing/checkout`, `POST /api/billing/portal`, `POST /api/billing/cancel`, `POST /api/billing/resume`, and `POST /api/billing/webhook`. Stripe webhook events are signature-verified and persisted by provider event ID before processing; the application database remains the local subscription/entitlement source of truth.
@@ -163,7 +196,7 @@ The public plan catalog is provisioned with `npm run db:provision-plans` using o
 
 ## `POST /api/print/jobs/batch-status`
 
-Authenticated with the Odoo installation key. Request a batch of print job statuses. Max 100 job IDs per request.
+Authenticated with the Odoo API key and saved v2 installation proof where applicable. Request at most 100 job statuses using the authority described above. The addon groups batches by each job's saved identity version and installation.
 
 Request:
 
@@ -193,7 +226,7 @@ Response:
   ]
 }
 ```
-Only Odoo-originated jobs in the authenticated tenant are returned. The current installation key does not have to equal the key recorded on a historical job, so rotation does not strand status synchronization.
+Only Odoo-originated jobs authorized by the installation scope (or unmapped v1 jobs in a legacy workspace) are returned. Unknown or unauthorized IDs are omitted. The current API key need not equal the historical provenance key, so valid rotation within the same installation does not strand synchronization. Document payloads and credentials are never included.
 
 Discovery reports use the additive `errors: string[]` contract in `contracts/print-payload-contract.json` (maximum 64 messages, 2048 UTF-16 units each). The Gateway returns these in session `stats.errors`; optional unavailable device fields are omitted, and protocol defaults to `unknown`. Odoo consumes approved runtime printers, not discovery candidates or source diagnostics; no addon producer emits discovery reports.
 

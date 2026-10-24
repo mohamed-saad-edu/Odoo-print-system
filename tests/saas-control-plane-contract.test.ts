@@ -12,7 +12,8 @@ describe("SaaS control-plane contracts", () => {
     expect(schema).toContain('userId: text("user_id").references(() => users.id)');
     expect(schema).toContain('role: text("role").notNull().default("owner")');
     expect(auth).toContain("tenantUsers.userId");
-    expect(auth).toContain("row.role !== claims.role");
+    expect(auth).toContain("membership.role !== claims.role");
+    expect(read("src/lib/workspace-session-security.ts")).toContain("m.role=r.role");
   });
 
   it("centralizes manager permissions", () => {

@@ -2,6 +2,7 @@ import payloadContract from "../../contracts/print-payload-contract.json";
 import { z } from "zod";
 import { receiptPaperWidthMM } from "./receipt-width";
 import { validatePayloadForPrinter } from "./printer-capability";
+import { GEOMETRY_FINGERPRINT_PATTERN } from "./printer-geometry";
 
 const MAX_PAYLOAD_BYTES = payloadContract.maxPayloadBytes;
 const PAYLOAD_TYPES = payloadContract.wireTypes as ["raw", "escpos", "pdf", "image"];
@@ -14,6 +15,7 @@ export const printJobPayloadSchema = z.object({
   type: z.enum(PAYLOAD_TYPES),
   encoding: z.literal(payloadContract.encoding),
   protocol: z.enum(RAW_PROTOCOLS).optional(),
+  geometry_fingerprint: z.string().regex(GEOMETRY_FINGERPRINT_PATTERN, "geometry_fingerprint must be lowercase SHA256 hex").optional(),
   peripherals: z.object({
     drawer: z.enum(DRAWER_MODES).optional(),
     cutter: z.enum(CUTTER_MODES).optional(),
@@ -24,6 +26,12 @@ export const printJobPayloadSchema = z.object({
   }).strict().optional(),
   data: z.string().min(1).max((MAX_PAYLOAD_BYTES / 3) * 4 + 8, { message: `payload.data must be valid base64 and decode to 1..${MAX_PAYLOAD_BYTES} bytes` }),
 }).superRefine((payload, ctx) => {
+  // Optional at the syntax boundary so historical accepted image operations
+  // can still reconcile their exact original payload. New image admission
+  // requires a matching fingerprint under the authoritative printer row lock.
+  if (payload.type !== "image" && payload.geometry_fingerprint !== undefined) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["geometry_fingerprint"], message: "geometry_fingerprint is only applicable to image payloads" });
+  }
   // Single base64 decode for the whole admission: the round-trip check below
   // rejects non-canonical input, then every signature check reuses `decoded`.
   let decoded: Buffer;

@@ -12,15 +12,21 @@ _logger = logging.getLogger(__name__)
 class PosOrderGatewayPrinting(models.Model):
     _inherit = "pos.order"
 
-    def action_print_gateway_receipt(self, image, operation_id=None):
+    def action_print_gateway_receipt(self, image, operation_id=None, geometry_fingerprint=None):
         self.ensure_one()
         self.check_access("read")
         if not image:
             raise ValidationError(_("The rendered POS receipt image is required."))
-        return self.env["print_gateway.print_router"].route_pos_receipt(self, image, idempotency_key=operation_id)
+        return self.env["print_gateway.print_router"].route_pos_receipt(
+            self, image, idempotency_key=operation_id, geometry_fingerprint=geometry_fingerprint,
+        )
 
     def get_gateway_receipt_raster_width(self):
-        """Resolve the real receipt binding before choosing browser pixels.
+        """Compatibility dot-width accessor; unknown geometry fails closed."""
+        return self.get_gateway_receipt_geometry()["printable_width_dots"]
+
+    def get_gateway_receipt_geometry(self):
+        """Resolve the real receipt binding before choosing physical layout.
 
         A separate, bounded runtime lookup is used only for receipt images.
         No data is written; normal routing/authentication is still enforced
@@ -36,7 +42,7 @@ class PosOrderGatewayPrinting(models.Model):
             record=self, company=company, document_type="receipt",
             raise_if_not_found=False,
         )
-        return router._receipt_width_for_route(route)
+        return router._receipt_geometry_for_route(route)
 
     def has_gateway_kitchen_binding(self, pos_printer_id=None):
         self.ensure_one()
@@ -93,7 +99,7 @@ class PosOrderGatewayPrinting(models.Model):
                 "category_ids": pos_printer.product_categories_ids.ids,
             }
             if route.get("binding"):
-                route_info["raster_width"] = router._receipt_width_for_route(route)
+                route_info["geometry"] = router._receipt_geometry_for_route(route)
                 routes.append(route_info)
             else:
                 missing.append(route_info)
@@ -115,12 +121,12 @@ class PosOrderGatewayPrinting(models.Model):
             return {
                 "mode": "pos_fallback",
                 "routes": [{"pos_printer_id": False, "category_ids": [],
-                            "raster_width": router._receipt_width_for_route(fallback)}],
+                            "geometry": router._receipt_geometry_for_route(fallback)}],
                 "missing_routes": [],
             }
         return {"mode": "missing", "routes": [], "missing_routes": []}
 
-    def action_print_gateway_kitchen(self, image, reprint=False, operation_id=None, pos_printer_id=None):
+    def action_print_gateway_kitchen(self, image, reprint=False, operation_id=None, pos_printer_id=None, geometry_fingerprint=None):
         self.ensure_one()
         self.check_access("read")
         if not image:
@@ -138,6 +144,7 @@ class PosOrderGatewayPrinting(models.Model):
         return self.env["print_gateway.print_router"].route_kitchen_print(
             self, image, reprint=bool(reprint), idempotency_key=operation_id,
             pos_printer=pos_printer,
+            geometry_fingerprint=geometry_fingerprint,
         )
 
     def is_gateway_printing_enabled(self):

@@ -1,3 +1,7 @@
+{
+	admin 127.0.0.1:2019
+}
+
 {$GATEWAY_DOMAIN} {
 	encode gzip zstd
 

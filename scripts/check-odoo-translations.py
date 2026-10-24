@@ -46,7 +46,7 @@ ADDON = Path(__file__).resolve().parent.parent / "odoo_addons" / "print_gateway"
 CATALOG = ADDON / "i18n" / "ar.po"
 
 # Attributes Odoo exports from views as translatable terms.
-XML_ATTRS = ("string", "help", "placeholder", "confirm", "title")
+XML_ATTRS = ("string", "help", "placeholder", "confirm", "title", "aria-label")
 
 # Literals that are identical in every language: URLs and code samples. The
 # checker must not demand a translation for these.
@@ -67,6 +67,17 @@ CONCATENATION = rf"({STRING}(?:\s*{STRING})*)"
 PLACEHOLDER = re.compile(r"%(?:\([A-Za-z_][A-Za-z0-9_]*\))?[sd]")
 
 ARABIC = re.compile(r"[\u0600-\u06FF]")
+
+
+class TranslationTreeBuilder(ET.TreeBuilder):
+    """Translation source has no DTD; reject it before entity expansion.
+
+    This is an XML parser event, so UTF-16 declarations cannot bypass the
+    policy as they could a raw-byte search. Standard XML escapes still work.
+    """
+
+    def doctype(self, name, pubid, system):
+        raise ValueError("DTD declarations are not allowed in translation XML")
 
 
 def unquote(literal_blob: str) -> str:
@@ -139,7 +150,7 @@ def extract_occurrences(addon: Path = ADDON) -> dict[str, set[str]]:
             xml_terms(child, ref, disabled)
             add((child.tail or "").strip(), ref)
     for path in sorted(addon.rglob("*.xml")):
-        tree = ET.parse(path).getroot()
+        tree = ET.parse(path, parser=ET.XMLParser(target=TranslationTreeBuilder())).getroot()
         code = f"code:addons/{addon.name}/{path.relative_to(addon).as_posix()}:0"
         if "static" in path.relative_to(addon).parts:
             xml_terms(tree, code)
@@ -174,9 +185,30 @@ def extract_terms() -> dict[str, str]:
     return {term: sorted(refs)[0] for term, refs in extract_occurrences().items()}
 
 
+def catalog_blocks(text: str):
+    """Yield entry blocks, including valid entries without a blank separator."""
+    lines: list[str] = []
+    has_entry = False
+    has_translation = False
+    for line in text.splitlines():
+        if ((line.startswith("#") and has_translation)
+                or (line.startswith("msgid ") and has_entry)
+                or (not line.strip() and has_translation)):
+            yield "\n".join(lines)
+            lines = []
+            has_entry = has_translation = False
+        lines.append(line)
+        if line.startswith("msgid "):
+            has_entry = True
+        elif line.startswith("msgstr "):
+            has_translation = True
+    if lines:
+        yield "\n".join(lines)
+
+
 def catalog_occurrences(text: str) -> dict[str, set[str]]:
     result: dict[str, set[str]] = {}
-    for block in re.split(r"\n\s*\n", text):
+    for block in catalog_blocks(text):
         entries = parse_catalog(block)
         refs = {ref for line in block.splitlines() if line.startswith("#:") for ref in line[2:].split()}
         for msgid, _ in entries:
@@ -186,6 +218,26 @@ def catalog_occurrences(text: str) -> dict[str, set[str]]:
 
 def valid_occurrence(ref: str) -> bool:
     return bool(re.fullmatch(r"code:[\w/.]+:[0-9]+", ref) or re.fullmatch(r"model(?:_terms)?:[\w.]+,[\w]+:[\w]+\.[^ ]+", ref))
+
+
+def catalog_marker_failures(text: str) -> list[tuple[str, str]]:
+    """Odoo 19 ignores code terms without its extracted language marker.
+
+    Typed occurrences alone are insufficient. Shared Python/JavaScript terms
+    need both markers, whereas model/model_terms entries need neither.
+    """
+    failures: list[tuple[str, str]] = []
+    for block in catalog_blocks(text):
+        refs = {ref for line in block.splitlines() if line.startswith("#:") for ref in line[2:].split()}
+        comments = {line[2:].strip() for line in block.splitlines() if line.startswith("#.")}
+        required = []
+        if any(re.fullmatch(r"code:[\w/.]+\.py:[0-9]+", ref) for ref in refs):
+            required.append("odoo-python")
+        if any(re.fullmatch(r"code:[\w/.]+/static/[\w/.]+\.(?:js|xml):[0-9]+", ref) for ref in refs):
+            required.append("odoo-javascript")
+        for msgid, _msgstr in parse_catalog(block):
+            failures.extend((msgid, marker) for marker in required if marker not in comments)
+    return failures
 
 
 def unescape(po_text: str) -> str:
@@ -252,6 +304,8 @@ def main() -> int:
     catalog_ids = {msgid for msgid, _ in catalog}
     expected_refs = extract_occurrences()
     actual_refs = catalog_occurrences(CATALOG.read_text(encoding="utf-8"))
+    for msgid, marker in catalog_marker_failures(CATALOG.read_text(encoding="utf-8")):
+        fail(f"missing Odoo 19 code marker {marker!r} for {msgid!r}")
     for msgid, refs in actual_refs.items():
         for ref in refs:
             if not valid_occurrence(ref):

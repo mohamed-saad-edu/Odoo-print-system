@@ -211,6 +211,11 @@ func PrinterBindingDigest(pc PrinterConfig) (string, error) {
 	}
 	var binding string
 	switch pc.NormalizedType() {
+	case "pdf_output":
+		binding, err = pdfOutputBinding(pc)
+		if err != nil {
+			return "", err
+		}
 	case "spooler":
 		if protocol != "spooler" {
 			return "", fmt.Errorf("invalid spooler binding protocol")

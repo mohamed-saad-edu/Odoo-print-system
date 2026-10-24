@@ -9,10 +9,10 @@ import (
 	"github.com/yaseir-agent/agent/internal/testutil"
 )
 
-// TestCrashWindowSimulation proves the honest duplicate window:
-// bytes reach printer → agent would crash before PATCH success → gateway reclaims after lease.
-// We simulate by ensuring mock captured bytes while agent queue would still be printing.
-// Do NOT claim exactly-once; document at-least-once over socket during crash window.
+// TestCrashWindowSimulation calls the raw transport directly twice to show
+// why the Agent/Gateway must fence uncertain physical outcomes. It does not
+// execute an Agent crash, queue recovery, Gateway reclaim or physical printer.
+// Production recovery forbids a second dispatch for an unknown prior outcome.
 func TestCrashWindowSimulation(t *testing.T) {
 	mock := testutil.NewMockTCPPrinter("127.0.0.1:0")
 	mock.Start()
@@ -31,13 +31,9 @@ func TestCrashWindowSimulation(t *testing.T) {
 		t.Fatalf("capture failed %v", caps)
 	}
 
-	// Step 2: simulate crash before queue.UpdateStatus success + PATCH success.
-	// Without the explicit crash-reprint policy, the ambiguous attempt remains
-	// terminal/unknown and must not be silently reprinted. With the documented
-	// at-least-once policy enabled, the Agent explicitly asks the Gateway to
-	// requeue the fenced printing claim; the next delivery is a new physical
-	// attempt and may duplicate paper. This simulation proves that the physical
-	// side effect itself is not exactly-once.
+	// Step 2: deliberately call the transport again outside the Agent safeguards.
+	// The wire duplicates bytes; this is the hazard guarded by the actual queue
+	// and Agent policy tests, including when legacy reprint_after_crash is true.
 	if err := p.Print(ctx, data); err != nil {
 		t.Fatalf("re-print after crash reclaim: %v", err)
 	}

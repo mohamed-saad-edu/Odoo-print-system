@@ -94,7 +94,8 @@ test("dashboard unwraps lifecycle conflicts as operator messages and redirects e
     React: { useCallback: fn => fn },
     ensureCustomerSession: async () => ({ authenticated: true }),
     router: { replace: path => redirects.push(path) },
-    t: key => key, apiMessageKey: () => "errors.operationFailed",
+    t: key => key === "errors.sessionExpired" ? "Session expired" : key,
+    apiMessageKey: () => "errors.operationFailed",
   });
   await assert.rejects(api.dashboardRequest(async () => ({ ok: false, status: 409, code: "INTERNAL_ERROR", error: "Enable the owning Agent first" })), /Enable the owning Agent first/);
   await assert.rejects(api.dashboardRequest(async () => ({ ok: false, status: 401, code: "UNAUTHORIZED", error: "Session expired" })), /Session expired/);

@@ -1,11 +1,12 @@
 import { beforeAll, afterAll, describe, expect, it } from "vitest";
 import { db } from "../src/db";
-import { agents, auditEvents, managerSessions, printers, tenantUsers, tenants, users } from "../src/db/schema";
+import { agents, auditEvents, printers, tenants } from "../src/db/schema";
 import { and, eq } from "drizzle-orm";
 import { applyMigrations, closePool, hasTestDatabase, seedFixture } from "./helpers/pg";
 import { hashPairingCode } from "../src/lib/agent-auth";
 import { transitionAgentLifecycle, LifecycleConflict, type AgentLifecycleResult } from "../src/lib/agent-lifecycle";
-import type { ManagerClaims } from "../src/lib/manager-auth";
+import { verifyWorkspaceToken, type ManagerClaims } from "../src/lib/manager-auth";
+import { createWorkspaceManagerTestSession } from "./helpers/workspace-session";
 import { nanoid } from "../src/lib/nanoid";
 
 const suite = describe.skipIf(!hasTestDatabase);
@@ -13,15 +14,10 @@ const suite = describe.skipIf(!hasTestDatabase);
 // Exercise the real transaction-time manager membership and session guards;
 // the lifecycle API no longer accepts unvalidated four-argument calls.
 async function createLifecycleManager(tenantId: string): Promise<ManagerClaims> {
-  const suffix = nanoid(12);
-  const userId = `lifecycle_user_${suffix}`;
-  const jti = `lifecycle_session_${nanoid(24)}`;
-  const now = Math.floor(Date.now() / 1000);
-  const exp = now + 3600;
-  await db.insert(users).values({ id: userId, email: `lifecycle_${suffix}@example.test`, passwordHash: "test-only" });
-  await db.insert(tenantUsers).values({ userId, tenantId, role: "owner" });
-  await db.insert(managerSessions).values({ jti, tenantId, userId, role: "owner", expiresAt: new Date(exp * 1000) });
-  return { jti, iat: now, exp, sub: "manager", tenantId, userId, role: "owner" };
+  const session = await createWorkspaceManagerTestSession(tenantId);
+  const claims = await verifyWorkspaceToken(session.token);
+  expect(claims).toMatchObject({ ver: 2, kind: "manager", tenantId, role: "owner" });
+  return claims!;
 }
 
 suite("Agent Lifecycle", () => {

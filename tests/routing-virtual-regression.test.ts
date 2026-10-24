@@ -1,8 +1,10 @@
+import { verifiedPrinterState } from "./helpers/printer-verification";
 import { describe, expect, it } from "vitest";
 import { isPrinterAvailableForJob, validatePayloadForPrinter } from "../src/lib/routing";
 
 function printer(overrides: Record<string, unknown> = {}) {
   return {
+    ...verifiedPrinterState("printer-1"),
     id: "printer-1", agentId: "agent-1", name: "Physical Printer", printerType: "physical", deviceClass: "thermal",
     connectionType: "network", protocol: "raw", lifecycle: "active", status: "online", capabilities: null, config: {},
     ...overrides,
@@ -49,6 +51,6 @@ describe("runtime printer routing regressions", () => {
       protocol: "escpos",
       connectionType: "network",
       capabilities: { supported_protocols: ["escpos"] },
-    }).ok).toBe(true);
+    }).ok).toBe(false);
   });
 });

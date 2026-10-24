@@ -1,3 +1,4 @@
+import { sessionCookieName } from "../../lib/session-config";
 import { logError } from "../../lib/log";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
@@ -16,7 +17,7 @@ export default async function DashboardPage() {
   const t = makeT(await getServerLocale());
   const cookieStore = await cookies();
   const claims = await verifyWorkspaceTokenFromCookieValues(
-    cookieStore.get("cust_session")?.value ?? null,
+    cookieStore.get(sessionCookieName("customer"))?.value ?? null,
     cookieStore.get(getManagerCookieName())?.value ?? null,
   );
   if (!claims) redirect("/login");

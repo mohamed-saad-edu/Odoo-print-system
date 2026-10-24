@@ -1,5 +1,7 @@
+import { printerOperationalVerificationPredicate } from "../../../../lib/printer-verification-sql";
+import { operationalVerificationPresentation, type OperationalPrinterState } from "../../../../lib/printer-operational-verification";
 import { NextResponse } from "next/server";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { db } from "../../../../db";
 import { agents, printers } from "../../../../db/schema";
 import { validateOdooKey } from "../../../../lib/odoo-auth";
@@ -9,6 +11,7 @@ import { receiptPaperWidthMM, receiptRasterWidthDots } from "../../../../lib/rec
 import { TenantSubscriptionRequiredError, requireTenantBillingAccess } from "../../../../lib/entitlements";
 import { isVirtualPrinterRecord } from "../../../../lib/printer-virtual";
 import { getSupportedDocumentTypes, type ProtocolType, type TransportType } from "../../../../lib/printer-capability";
+import { capabilitiesWithCurrentGeometry, printerGeometryFromCapabilities } from "../../../../lib/printer-geometry";
 
 export const dynamic = "force-dynamic";
 
@@ -20,8 +23,9 @@ export const dynamic = "force-dynamic";
  */
 function odooPrinterCapabilities(value: unknown, connectionType: string, protocol: string, config?: Record<string, unknown> | null) {
   const reported = value && typeof value === "object" && !Array.isArray(value)
-    ? value as { supported_protocols?: string[] }
+    ? value as Record<string, unknown>
     : null;
+  const geometry = printerGeometryFromCapabilities(reported);
   const paperWidth = receiptPaperWidthMM(reported) ?? receiptPaperWidthMM(config);
   return {
     supported_protocols: getSupportedDocumentTypes(
@@ -30,6 +34,8 @@ function odooPrinterCapabilities(value: unknown, connectionType: string, protoco
       reported,
     ),
     ...(paperWidth ? { paper_width_mm: paperWidth } : {}),
+    ...(geometry ? { geometry } : {}),
+    ...(reported?.operational_verification ? { operational_verification: reported.operational_verification } : {}),
   };
 }
 
@@ -48,14 +54,14 @@ export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const agentId = searchParams.get("agent_id")?.trim();
 
-  const conditions = [eq(printers.lifecycle, "active"), eq(printers.inventoryPresent, true), eq(printers.sharedWithGateway, true), eq(agents.lifecycle, "active"), eq(printers.tenantId, apiKey.tenantId), eq(agents.tenantId, apiKey.tenantId)];
+  const conditions = [printerOperationalVerificationPredicate(sql`printers`), eq(printers.lifecycle, "active"), eq(printers.inventoryPresent, true), eq(printers.sharedWithGateway, true), eq(agents.lifecycle, "active"), eq(printers.tenantId, apiKey.tenantId), eq(agents.tenantId, apiKey.tenantId)];
   if (agentId) {
     conditions.push(eq(agents.id, agentId));
   }
 
   await refreshClockSkew();
   const now = gatewayNow();
-  let rows: Array<{
+  let rows: Array<OperationalPrinterState & {
     id: string;
     name: string;
     status: string | null;
@@ -69,6 +75,9 @@ export async function GET(req: Request) {
     capabilities: Record<string, unknown> | null;
     config: Record<string, unknown> | null;
     managementSource: string | null;
+    desiredRevision: number;
+    appliedDesiredRevision: number;
+    observedDesiredRevision: number;
     agentId: string;
     agentName: string;
     agentStatus: string | null;
@@ -80,6 +89,14 @@ export async function GET(req: Request) {
       await requireTenantBillingAccess(tx, apiKey.tenantId);
       return tx
         .select({
+          verificationState: printers.verificationState,
+          verificationVerifiedAt: printers.verificationVerifiedAt,
+          verificationReceivedAt: printers.verificationReceivedAt,
+          verificationBindingDigest: printers.verificationBindingDigest,
+          verificationReason: printers.verificationReason,
+          logicalQueueKey: printers.logicalQueueKey,
+          physicalDeviceKey: printers.physicalDeviceKey,
+          outputMedium: printers.outputMedium,
           id: printers.id,
           name: printers.name,
           status: printers.status,
@@ -93,6 +110,9 @@ export async function GET(req: Request) {
           capabilities: printers.capabilities,
           config: printers.config,
           managementSource: printers.managementSource,
+          desiredRevision: printers.desiredRevision,
+          appliedDesiredRevision: printers.appliedDesiredRevision,
+          observedDesiredRevision: printers.observedDesiredRevision,
           agentId: agents.id,
           agentName: agents.name,
           agentStatus: agents.status,
@@ -115,6 +135,7 @@ export async function GET(req: Request) {
   }
   return NextResponse.json({
     printers: rows.filter((row) => !isVirtualPrinterRecord(row)).map((row) => ({
+      ...operationalVerificationPresentation(row, now),
       id: row.id,
       name: row.name,
       reportedStatus: row.status,
@@ -131,11 +152,8 @@ export async function GET(req: Request) {
       deviceClass: row.deviceClass,
       connectionType: row.connectionType,
       protocol: row.protocol,
-      capabilities: odooPrinterCapabilities(row.capabilities, row.connectionType ?? "", row.protocol ?? "", row.config),
-      printableWidthDots: receiptRasterWidthDots({
-        ...(row.config ?? {}),
-        ...(row.capabilities ?? {}),
-      }),
+      capabilities: odooPrinterCapabilities(capabilitiesWithCurrentGeometry(row), row.connectionType ?? "", row.protocol ?? "", row.config),
+      printableWidthDots: receiptRasterWidthDots(capabilitiesWithCurrentGeometry(row)),
       agent: {
         id: row.agentId,
         name: row.agentName,

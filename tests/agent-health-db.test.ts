@@ -153,9 +153,19 @@ suite("agent health (database-backed)", () => {
       "INSERT INTO printers (id, tenant_id, agent_id, name, status, lifecycle, last_seen_at) VALUES ($1, $2, $3, 'Stale printer', 'online', 'active', now() - interval '5 minutes')",
       ["fleet_stale_printer", f.tenantId, secondAgentId],
     );
+    // These are explicitly verified test queues; this case varies presence,
+    // lifecycle and tenant scope independently of operational eligibility.
+    for (const [id, binding] of [["fleet_busy_printer", "b".repeat(64)], ["fleet_stale_printer", "c".repeat(64)]]) {
+      const proof = { version: 1, verified_at: new Date().toISOString(), printer_id: id,
+        binding_digest: binding, logical_queue_key: binding, method: "windows_queue", identity_strength: "queue", output_medium: "physical" };
+      await pool().query(`UPDATE printers SET connection_type='spooler', protocol='spooler',
+        verification_state='verified', verification_verified_at=clock_timestamp(), verification_received_at=clock_timestamp(),
+        verification_binding_digest=$1, logical_queue_key=$1, config=$2::jsonb, capabilities=$3::jsonb
+        WHERE tenant_id=$4 AND id=$5`, [binding, JSON.stringify({ spooler_name: id }), JSON.stringify({ operational_verification: proof }), f.tenantId, id]);
+    }
     await pool().query("UPDATE printers SET status = 'busy' WHERE tenant_id = $1 AND id = $2", [f.tenantId, f.printerId]);
     await pool().query(
-      "INSERT INTO print_jobs (id, tenant_id, agent_id, printer_id, status, payload, expires_at) VALUES ($1, $2, $3, $4, 'queued', $5::jsonb, now() + interval '1 hour')",
+      "INSERT INTO print_jobs (id, tenant_id, agent_id, printer_id, status, payload, expires_at, binding_digest) VALUES ($1, $2, $3, $4, 'queued', $5::jsonb, now() + interval '1 hour', (SELECT verification_binding_digest FROM printers WHERE tenant_id=$2 AND id=$4))",
       ["fleet_health_pending", f.tenantId, f.agentId, f.printerId, JSON.stringify({ type: "raw", protocol: "raw", encoding: "base64", data: "aGVsbG8=" })],
     );
     const fleet = await getAllAgentsHealth(f.tenantId, 50, 0);

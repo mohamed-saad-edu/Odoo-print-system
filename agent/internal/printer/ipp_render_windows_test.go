@@ -19,7 +19,7 @@ import (
 func TestIPPWindowsOnePagePDFToJPEG(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 55*time.Second)
 	defer cancel()
-	result, err := renderIPPPDFToJPEG(ctx, validPDF())
+	result, err := renderIPPPDFToJPEG(ctx, validPDF(), map[string]string{"printer-resolution-supported": "200x200dpi"})
 	if err != nil {
 		t.Fatalf("PDFium-to-JPEG fallback failed: %v", err)
 	}

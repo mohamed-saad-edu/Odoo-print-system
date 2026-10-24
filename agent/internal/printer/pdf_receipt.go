@@ -12,18 +12,137 @@ import (
 type pdfPagePlan struct {
 	width, height float64
 	crop          *requests.RenderPageCrop
+	// A document may fit horizontally once before it is divided vertically.
+	// Generated receipts keep their measured physical width (the zero value is 1).
+	renderScale float64
 }
 
 func (p pdfPagePlan) printableDestination(physicalW, physicalH, printableW, printableH, dpiX, dpiY, offsetX, offsetY int) (x, y, w, h int, err error) {
-	width, height := p.width, p.height
-	if p.crop != nil {
-		width, height = p.crop.Width, p.crop.Height
+	if err = p.rejectUnsafeNarrowConversion(physicalW, dpiX); err != nil {
+		return
 	}
-	x, y, w, h, err = pdfPrintableDestination(width, height, physicalW, physicalH, printableW, printableH, dpiX, dpiY, offsetX, offsetY)
-	if p.crop != nil && err == nil {
-		y = 0 // Receipts retain their own feed margins without centering down a long roll form.
+	if p.crop == nil {
+		if p.isNarrowReceipt(physicalW, dpiX) {
+			scale := math.Min(1, float64(printableW)/(p.width*float64(dpiX)/72))
+			if p.height*float64(dpiY)/72*scale > float64(printableH)+1e-7 {
+				return 0, 0, 0, 0, fmt.Errorf("long receipt requires vertical pagination; refusing to shrink its width to fit page height")
+			}
+		}
+		return pdfPrintableDestination(p.width, p.height, physicalW, physicalH, printableW, printableH, dpiX, dpiY, offsetX, offsetY)
 	}
-	return
+	if _, _, _, _, err = pdfPrintableDestination(p.width, p.height, physicalW, physicalH, printableW, printableH, dpiX, dpiY, offsetX, offsetY); err != nil {
+		return
+	}
+	if err = p.validateCrop(); err != nil {
+		return
+	}
+	scale := p.renderScale
+	if scale == 0 {
+		scale = 1
+	}
+	width := p.crop.Width * float64(dpiX) / 72 * scale
+	height := p.crop.Height * float64(dpiY) / 72 * scale
+	// PDF object bounds use finite-precision points. A subpixel difference
+	// rounds to the same device row/column and is not physical scaling.
+	if width > float64(printableW)+0.49 {
+		return 0, 0, 0, 0, fmt.Errorf("receipt printable width changed; refresh the measured printer profile before submission")
+	}
+	if height > float64(printableH)+0.49 {
+		return 0, 0, 0, 0, fmt.Errorf("long receipt requires vertical pagination; refusing to shrink its width to fit page height")
+	}
+	w, h = max(1, int(math.Round(width))), max(1, int(math.Round(height)))
+	return (printableW - w) / 2, 0, w, h, nil
+}
+
+func (p pdfPagePlan) validateCrop() error {
+	if p.crop == nil {
+		return nil
+	}
+	if err := validatePDFPageDimensions(p.crop.Width, p.crop.Height); err != nil {
+		return err
+	}
+	if math.IsNaN(p.crop.X) || math.IsNaN(p.crop.Y) || math.IsInf(p.crop.X, 0) || math.IsInf(p.crop.Y, 0) ||
+		p.crop.X < 0 || p.crop.Y < 0 || p.crop.X+p.crop.Width > p.width+1e-7 || p.crop.Y+p.crop.Height > p.height+1e-7 ||
+		math.IsNaN(p.renderScale) || math.IsInf(p.renderScale, 0) || p.renderScale < 0 || p.renderScale > 1 {
+		return fmt.Errorf("invalid receipt crop or physical scale")
+	}
+	return nil
+}
+
+func (p pdfPagePlan) isNarrowReceipt(physicalW, dpiX int) bool {
+	if physicalW <= 0 || dpiX <= 0 {
+		return false
+	}
+	pageMM, driverMM := p.width*25.4/72, float64(physicalW)*25.4/float64(dpiX)
+	return pageMM >= 40 && pageMM <= 120 && driverMM >= 40 && driverMM <= 120 && p.height >= 4*p.width
+}
+
+func (p pdfPagePlan) rejectUnsafeNarrowConversion(physicalW, dpiX int) error {
+	if p.crop == nil && physicalW > 0 && dpiX > 0 && float64(physicalW)*25.4/float64(dpiX) <= 120 && p.width*25.4/72 > 120 {
+		return CapabilityMismatchf("office-width PDF cannot be fitted safely onto narrow media; choose compatible document paper or generate a dedicated reflowed receipt layout")
+	}
+	return nil
+}
+
+// paginate uses the selected driver's actual printable height and independent
+// axis DPI. It runs before StartDocW; no page can be accepted while this plan
+// is incomplete. Crop coordinates are PDFium's rendered-page points, measured
+// downwards from the top, so adjacent regions cover the source exactly once.
+func (p pdfPagePlan) paginate(physicalW, physicalH, printableW, printableH, dpiX, dpiY, offsetX, offsetY int) ([]pdfPagePlan, error) {
+	if err := p.rejectUnsafeNarrowConversion(physicalW, dpiX); err != nil {
+		return nil, err
+	}
+	if _, _, _, _, err := pdfPrintableDestination(p.width, p.height, physicalW, physicalH, printableW, printableH, dpiX, dpiY, offsetX, offsetY); err != nil {
+		return nil, err
+	}
+	if p.crop == nil {
+		if !p.isNarrowReceipt(physicalW, dpiX) {
+			return []pdfPagePlan{p}, nil
+		}
+		p.crop = &requests.RenderPageCrop{Width: p.width, Height: p.height}
+		p.renderScale = math.Min(1, float64(printableW)/(p.width*float64(dpiX)/72))
+	}
+	if err := p.validateCrop(); err != nil {
+		return nil, err
+	}
+	scale := p.renderScale
+	if scale == 0 {
+		scale = 1
+	}
+	if p.crop.Width*float64(dpiX)/72*scale > float64(printableW)+0.49 {
+		return nil, fmt.Errorf("receipt printable width changed; refresh the measured printer profile before submission")
+	}
+	maxPoints := float64(printableH) * 72 / float64(dpiY) / scale
+	// Every generated receipt crop keeps its native width, including A4 at
+	// 600 DPI. Restrict vertical segments before the shared render allocator
+	// would otherwise lower both axes and then stretch the bitmap back out.
+	density := float64(max(dpiX, dpiY))
+	renderWidth := math.Ceil(p.crop.Width * density / 72 * scale)
+	if renderWidth < 1 || renderWidth > maxPDFRenderPixels {
+		return nil, fmt.Errorf("receipt width exceeds bounded renderer capacity")
+	}
+	renderRows := math.Floor(float64(maxPDFRenderPixels) / renderWidth)
+	deviceRows := math.Floor(renderRows * float64(dpiY) / density)
+	if deviceRows < 1 {
+		return nil, fmt.Errorf("receipt row exceeds bounded renderer capacity")
+	}
+	maxPoints = math.Min(maxPoints, deviceRows*72/float64(dpiY)/scale)
+	segments := math.Max(1, math.Ceil(p.crop.Height/maxPoints-1e-10))
+	if segments < 1 || segments > 500 || math.IsNaN(segments) || math.IsInf(segments, 0) {
+		return nil, fmt.Errorf("receipt pagination exceeds the 500-page document budget")
+	}
+	result := make([]pdfPagePlan, 0, int(segments))
+	for index := 0; index < int(segments); index++ {
+		start := float64(index) * maxPoints
+		part := p
+		part.crop = &requests.RenderPageCrop{X: p.crop.X, Y: p.crop.Y + start,
+			Width: p.crop.Width, Height: math.Min(maxPoints, p.crop.Height-start)}
+		if _, _, _, _, err := part.printableDestination(physicalW, physicalH, printableW, printableH, dpiX, dpiY, offsetX, offsetY); err != nil {
+			return nil, err
+		}
+		result = append(result, part)
+	}
+	return result, nil
 }
 
 // Only Agent-generated receipt PDFs reach this helper; remove blank side margins, never image pixels or feed margins.

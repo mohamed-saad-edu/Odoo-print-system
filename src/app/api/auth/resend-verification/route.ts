@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
 import { db } from "../../../../db";
 import { users, emailVerificationTokens } from "../../../../db/schema";
 import { and, eq, isNull, sql } from "drizzle-orm";
@@ -10,6 +10,7 @@ import { hasBodyOverLimit } from "../../../../lib/request-limits";
 import { clientIpFrom, reserveAuthAttempt, setRateLimitHeaders } from "../../../../lib/auth-rate-limit";
 import { logError } from "../../../../lib/log";
 import { findActiveInvitation } from "../../../../lib/invitation-join";
+import { emailAuthTokenTimes } from "../../../../lib/email-auth-token-policy";
 
 const GENERIC = { ok: true, message: "If the account exists and is unverified, a new verification link has been sent." };
 
@@ -47,6 +48,12 @@ export async function POST(req: Request) {
     return setRateLimitHeaders(res, rate);
   }
 
+  // An invalid continuation must receive the same response regardless of
+  // whether this email has an unverified account.
+  const invitation = inviteToken ? await findActiveInvitation(inviteToken) : null;
+  if (inviteToken && (!invitation || invitation.email !== email))
+    return setRateLimitHeaders(NextResponse.json({ error: "Invitation expired or for a different email", code: "INVITATION_INVALID" }, { status: 409 }), rate);
+
   const user = await db.query.users.findFirst({
     where: eq(users.email, email),
     columns: { id: true, emailVerifiedAt: true },
@@ -55,10 +62,6 @@ export async function POST(req: Request) {
   if (!user || user.emailVerifiedAt) {
     return setRateLimitHeaders(NextResponse.json(GENERIC, { status: 202 }), rate);
   }
-  const invitation = inviteToken ? await findActiveInvitation(inviteToken) : null;
-  if (inviteToken && (!invitation || invitation.email !== email))
-    return setRateLimitHeaders(NextResponse.json({ error: "Invitation expired or for a different email", code: "INVITATION_INVALID" }, { status: 409 }), rate);
-
   const rawToken = generateOpaqueToken();
   const tokenHash = await hashToken(rawToken);
   try {
@@ -92,7 +95,7 @@ export async function POST(req: Request) {
         userId: user.id,
         tokenHash,
         invitationId: invitation?.id ?? pending?.invitationId ?? null,
-        expiresAt: sql`clock_timestamp() + interval '30 minutes'`,
+        ...emailAuthTokenTimes(),
       });
       return true;
     });
@@ -101,23 +104,28 @@ export async function POST(req: Request) {
     logError("auth.resend_verification.persistence_failed", { error: error instanceof Error ? error.message : "unknown" });
     // Keep this endpoint enumeration-safe even when token persistence is
     // temporarily unavailable. No token is sent unless persistence succeeds.
-    return NextResponse.json(GENERIC, { status: 202 });
+    return setRateLimitHeaders(NextResponse.json(GENERIC, { status: 202 }), rate);
   }
 
-  try {
-    const planQuery = planId ? `&plan=${encodeURIComponent(planId)}` : "";
-    const inviteQuery = inviteToken ? `&invite=${encodeURIComponent(inviteToken)}` : "";
-    const url = `${appBaseUrl(req)}/verify-email?token=${encodeURIComponent(rawToken)}${planQuery}${inviteQuery}`;
-    await sendTransactionalEmail({
-      to: email,
-      subject: t("mail.verify.subject"),
-      html: `<p>${t("mail.verify.body")}</p><p><a href="${url}">${t("mail.verify.cta")}</a></p><p>${t("mail.verify.expires")}</p>`,
-      text: t("mail.verify.text", { url }),
-    });
-  } catch (error) {
-    logError("auth.resend_verification.email_failed", { error: error instanceof Error ? error.message : "unknown" });
-    // Suppress email delivery error in response to preserve anti-enumeration
-  }
+  // The replacement proof is committed before scheduling delivery. Provider
+  // latency must not reveal which addresses have unverified accounts.
+  // Next tracks this work for graceful shutdown; abrupt failure can still
+  // require another rate-limited resend and never extends the token deadline.
+  after(async () => {
+    try {
+      const planQuery = planId ? `&plan=${encodeURIComponent(planId)}` : "";
+      const inviteQuery = inviteToken ? `&invite=${encodeURIComponent(inviteToken)}` : "";
+      const url = `${appBaseUrl(req)}/verify-email?token=${encodeURIComponent(rawToken)}${planQuery}${inviteQuery}`;
+      await sendTransactionalEmail({
+        to: email,
+        subject: t("mail.verify.subject"),
+        html: `<p>${t("mail.verify.body")}</p><p><a href="${url}">${t("mail.verify.cta")}</a></p><p>${t("mail.verify.expires")}</p>`,
+        text: t("mail.verify.text", { url }),
+      });
+    } catch (error) {
+      logError("auth.resend_verification.email_failed", { error: error instanceof Error ? error.message : "unknown" });
+    }
+  });
 
   return setRateLimitHeaders(NextResponse.json(GENERIC, { status: 202 }), rate);
 }

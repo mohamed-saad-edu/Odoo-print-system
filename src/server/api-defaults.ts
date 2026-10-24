@@ -1,5 +1,54 @@
 import type { IncomingMessage, ServerResponse } from "http";
+import type { Duplex } from "node:stream";
 import { requestPath } from "./request-path";
+
+export function securityHeaders(): Record<string, string> {
+  // Match next.config.ts, including redirects and rejections that never reach
+  // Next's configured headers. HSTS remains production-only for local HTTP.
+  return {
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "strict-origin-when-cross-origin",
+    "X-Frame-Options": "DENY",
+    "Cross-Origin-Opener-Policy": "same-origin",
+    "Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=()",
+    ...(process.env.NODE_ENV === "production"
+      ? { "Strict-Transport-Security": "max-age=31536000; includeSubDomains" }
+      : {}),
+  };
+}
+
+export function applyHttpSecurityHeaders(res: ServerResponse): void {
+  for (const [name, value] of Object.entries(securityHeaders())) {
+    if (res.getHeader(name) === undefined) res.setHeader(name, value);
+  }
+}
+
+/** Parser failures occur before a request/response pair reaches the handler. */
+export function handleHttpClientError(error: NodeJS.ErrnoException, socket: Duplex): void {
+  // Match Node's in-flight-response protection: never append a second HTTP
+  // response after a partial application response has already been written.
+  const active = (socket as Duplex & { _httpMessage?: ServerResponse })._httpMessage;
+  if (!socket.writable || socket.writableEnded || socket.destroyed || active?.headersSent || error.code === "ECONNRESET") {
+    socket.destroy();
+    return;
+  }
+  const [status, reason] = error.code === "HPE_HEADER_OVERFLOW" ? [431, "Request Header Fields Too Large"]
+    : error.code === "HPE_CHUNK_EXTENSIONS_OVERFLOW" ? [413, "Payload Too Large"]
+      : error.code === "ERR_HTTP_REQUEST_TIMEOUT" ? [408, "Request Timeout"]
+        : [400, "Bad Request"];
+  const body = JSON.stringify({ error: "INVALID_HTTP_REQUEST" });
+  const headers = {
+    ...securityHeaders(), "Cache-Control": "no-store", "Content-Type": "application/json; charset=utf-8",
+    "Content-Length": String(Buffer.byteLength(body)), Connection: "close",
+  };
+  // End gracefully so the generic response is delivered, but bound a peer
+  // that never finishes its side of the connection. No request bytes/logs
+  // are reflected, including parser error.rawPacket and error.message.
+  const timeout = setTimeout(() => socket.destroy(), 5_000);
+  timeout.unref();
+  socket.once("close", () => clearTimeout(timeout));
+  socket.end(`HTTP/1.1 ${status} ${reason}\r\n${Object.entries(headers).map(([name, value]) => `${name}: ${value}`).join("\r\n")}\r\n\r\n${body}`);
+}
 
 /**
  * Response-policy defaults for the custom server boundary.

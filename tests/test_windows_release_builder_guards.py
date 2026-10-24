@@ -70,8 +70,22 @@ def test_private_signing_identity_never_enters_shared_cache_or_pr_environment():
 
 def test_native_ci_exercises_only_pure_production_helpers_before_packaging():
     helper_path = "tests/windows-release-builder-helpers.ps1"
-    assert helper_path in WORKFLOW
-    assert WORKFLOW.index(f"run: ./{helper_path}") < WORKFLOW.index("name: Build Go Agent resources for Tauri")
+    step_name = "- name: Verify Windows release helper behavior without building or signing"
+    step_start = WORKFLOW.index(step_name)
+    helper_step = WORKFLOW[step_start:].split("\n      - name:", 1)[0]
+    assert re.search(r"(?m)^\s+shell: pwsh$", helper_step)
+    checks = [
+        helper_path,
+        "tests/windows-native-exit-guards.ps1",
+        "tests/windows-release-evidence-helpers.ps1",
+    ]
+    positions = []
+    for path in checks:
+        invocation = re.search(rf"(?m)^\s+\./{re.escape(path)}$", helper_step)
+        assert invocation, f"Missing pure helper invocation: {path}"
+        positions.append(invocation.start())
+    assert positions == sorted(positions)
+    assert step_start + positions[-1] < WORKFLOW.index("name: Build Go Agent resources for Tauri")
     behavioral = (ROOT / helper_path).read_text(encoding="utf-8")
     assert "Parser]::ParseFile($builder" in behavioral
     assert "Invoke-Expression $definitions[0].Extent.Text" in behavioral

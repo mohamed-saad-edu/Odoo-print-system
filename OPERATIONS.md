@@ -24,10 +24,15 @@ tenant-routing troubleshooting section: misrouting presents as login
 landing in the wrong workspace — check the table above first.
 
 ## Metrics endpoint
-`GET /api/metrics` requires a platform owner session (`plt_session`). Tenant
-manager sessions are never sufficient, even for members of the platform
-workspace: global telemetry is control-plane data. Configure Prometheus
-scraping with a platform owner credential (static `Cookie` header).
+`GET /api/metrics` accepts a current password-authenticated platform owner session or an
+explicitly configured independent collector credential. Unattended collection
+uses `METRICS_SCRAPE_TOKEN_FILE` and the Bearer header; it is disabled by default.
+Its authority is limited to the exact read-only metrics endpoint. Tenant
+membership and workspace sessions never grant global telemetry access. Follow
+[Metrics collection](docs/METRICS_COLLECTION.md) for secret-file custody,
+the optional Compose overlay, verified HTTPS, rotation, revocation and receiver
+acceptance. Human session cookies expire and are unsuitable for unattended
+scraping.
 
 Fleet gauges are evidence-specific: `agents_online`/`agents_offline` require a fresh explicit Agent state, while stale and never-seen Agents are exposed separately as `agents_stale`/`agents_unknown`. Printer physical observations are split into `printers_online`, `printers_busy`, `printers_offline`, `printers_error`, `printers_stale`, and `printers_unknown`. `printers_routable` is the cross-component routing signal (fresh printer ready/busy evidence plus a reachable active Agent); do not interpret it as proof that a physical printer is Online.
 
@@ -65,7 +70,19 @@ Run migrations before starting the application. Migration `0029` intentionally s
 ## Session invalidation
 Migration `0030` was the historical manager-session reset used when the legacy session store was introduced; it is not the refresh-token cutover mechanism.
 
-The current session migration is gradual. New logins issue a 15-minute access JWT plus a rotating refresh-token family with a 30-day absolute cap. Existing pre-v2 `manager_sessions`/`platform_sessions` sessions remain valid through their original 8-hour expiry and are verified through the legacy fallback path. No blanket logout is performed by the refresh-token migration.
+Current human authentication requires persisted password/session policy. Apply
+all immutable migrations through `0093` with older instances drained. The V3
+forward migration removes retired factor material while preserving accounts,
+password hashes, memberships, existing session families, revocation state and
+deadlines. Legacy/pre-policy sessions cannot bypass current admission guards.
+See [Migration](MIGRATION.md) for the backup, upgrade, rollback and pending
+Agent-pairing-code procedures.
+
+Access JWTs expire after 15 minutes and also require the exact live session row.
+Platform sessions have an eight-hour absolute cap; workspace sessions have a
+30-day cap. Both human realms enforce 30-minute idle expiry, and sensitive
+actions require fresh password proof within five minutes.
+Background refresh does not extend idle activity or mint fresh password proof.
 
 The Gateway's existing 5-minute housekeeping loop removes expired legacy manager/platform sessions and expired refresh-token rows.
 
@@ -83,7 +100,7 @@ Unknown outcomes carry one of these durable markers (`PHYSICAL_OUTCOME_UNKNOWN_M
 |---|---|---|
 | `UNKNOWN_PARTIAL_DELIVERY` | Bytes may have reached the agent; no execution report arrived within the claim lease | Gateway job timeline + agent SQLite outbox row for the job |
 | `AGENT_EXECUTION_TIMEOUT` | Agent started printing but the execution lease expired | Agent logs around `transport_complete`; printer output tray |
-| `AGENT_RESTART_DURING_PRINT` | Agent restarted mid-print (crash recovery path) | Agent startup logs; `reprint_after_crash` setting |
+| `AGENT_RESTART_DURING_PRINT` | Agent restarted mid-print; original outcome remains unknown | Agent startup logs and the original claim/spooler evidence. The deprecated `reprint_after_crash` flag cannot authorize another attempt, including when set to `true`. |
 | `JOB_EXPIRED_DURING_PRINT` | TTL elapsed mid-execution | Timeline `expired` entry; printer output tray |
 | `UNKNOWN_SUBMISSION_OUTCOME` | Submission response lost; Gateway acceptance uncertain | Odoo outbox `gateway_job_id`; Gateway job lookup by idempotency key |
 

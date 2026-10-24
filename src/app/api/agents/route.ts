@@ -97,7 +97,8 @@ export async function POST(req: Request) {
     return NextResponse.json(await createAgentForManager(parsed.data.name, claims), { status: 201 });
   } catch (error) {
     if (error instanceof ActionError) {
-      return NextResponse.json({ error: error.message, code: error.code ?? "ACTION_ERROR", ...(error.details ?? {}) }, { status: error.status });
+      return NextResponse.json({ error: error.message, code: error.code ?? "ACTION_ERROR", ...(error.details ?? {}) }, { status: error.status,
+        headers: { "Cache-Control": "private, no-store", ...(error.code === "WORKSPACE_REAUTHENTICATION_REQUIRED" ? { "X-Yaseir-Reauthentication": "required" } : {}) } });
     }
     logError("agent.create_failed", { error: error instanceof Error ? error.message : "unknown" });
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });

@@ -138,7 +138,7 @@ func TestIPPPrintWithMockServer(t *testing.T) {
 	}
 }
 
-func TestIPPPrintAcceptsSuccessStatusClass(t *testing.T) {
+func TestIPPPrintSubstitutedAttributesAreUnknownWithoutReplay(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/ipp")
 		body := readAll(r.Body)
@@ -150,8 +150,8 @@ func TestIPPPrintAcceptsSuccessStatusClass(t *testing.T) {
 	}))
 	defer server.Close()
 	p, _ := NewIPPPrinter(server.URL, "Test")
-	if err := p.PrintDocument(context.Background(), Document{Kind: KindPDF, Data: validTestPDFBytes()}); err != nil {
-		t.Fatalf("0x0001 must be successful: %v", err)
+	if err := p.PrintDocument(context.Background(), Document{Kind: KindPDF, Data: validTestPDFBytes()}); !OutcomeUnknown(err) {
+		t.Fatalf("0x0001 ignored strict media fidelity, so output is unknown: %v", err)
 	}
 }
 
@@ -500,7 +500,7 @@ func readAll(r interface{ Read([]byte) (int, error) }) []byte {
 }
 
 func validTestPDFBytes() []byte {
-	return []byte("%PDF-1.4\n1 0 obj<</Type/Catalog>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF\n")
+	return validPDF()
 }
 
 // TestParseIPPAttributesNeverPanicsOnMalformedInput exercises the recovery guard
@@ -608,7 +608,7 @@ func TestIPPRequestedAttributesUseAdditionalValues(t *testing.T) {
 			t.Fatalf("missing zero-name additional value %q", value)
 		}
 	}
-	if got := parseIPPAttributes(packet)["requested-attributes"]; got != "printer-state,printer-state-reasons,printer-is-accepting-jobs,document-format-supported,document-format-default,pwg-raster-document-type-supported,pwg-raster-document-resolution-supported" {
+	if got := parseIPPAttributes(packet)["requested-attributes"]; got != "printer-state,printer-state-reasons,printer-is-accepting-jobs,document-format-supported,document-format-default,pwg-raster-document-type-supported,pwg-raster-document-resolution-supported,media-supported,media-ready,media-default,media-col-default,media-col-ready,media-col-database,printer-resolution-supported,printer-resolution-default,print-scaling-supported,orientation-requested-supported,printer-uuid" {
 		t.Fatalf("requested attribute values = %q", got)
 	}
 }

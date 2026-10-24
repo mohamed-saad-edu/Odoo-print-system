@@ -1,4 +1,5 @@
 import type { ManagerClaims, ManagerRole } from "./manager-auth";
+import { recordAuthorizationDenial } from "../server/authorization-monitor";
 
 export type ManagerPermission =
   | "tenant.read" | "tenant.update"
@@ -47,6 +48,9 @@ export function hasManagerPermission(claims: ManagerClaims, permission: ManagerP
 
 export function requireManagerPermission(claims: ManagerClaims, permission: ManagerPermission): void {
   if (!hasManagerPermission(claims, permission)) {
+    recordAuthorizationDenial("manager", 403, {
+      permission, role: claims.role, actorId: claims.userId, tenantId: claims.tenantId,
+    });
     const error = new Error(`Missing permission: ${permission}`);
     Object.assign(error, { code: "FORBIDDEN", status: 403 });
     throw error;

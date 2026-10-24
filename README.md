@@ -60,7 +60,7 @@ The legacy `STRIPE_PLAN_CATALOG` / `npm run db:provision-plans` path remains ava
 
 ## Account activation
 
-Email verification establishes mailbox ownership before password setup. `POST /api/auth/verify-email` consumes the email proof, invalidates any password chosen before that proof, revokes existing sessions/reset links, and returns `{ ok: true, next, requiresPasswordSetup }` with `Cache-Control: no-store` and no session cookies. A new verification's `next` points to the existing single-use, 20-minute password reset page in setup mode; after choosing a password, the owner signs in and continues onboarding or an invitation. Already verified accounts return `/login` without changing their password. Registration and resend preserve optional plan/invitation context; those values grant no access. This prevents an earlier registrant from retaining a password for somebody else's email address.
+Email verification establishes mailbox ownership before password setup. `POST /api/auth/verify-email` consumes the email proof, invalidates any password chosen before that proof, revokes existing sessions/reset links, and returns `{ ok: true, next, requiresPasswordSetup }` with `Cache-Control: no-store` and no session cookies. A new verification's `next` points to the existing single-use, 10-minute password reset page in setup mode; after choosing a password, the owner signs in and continues onboarding or an invitation. Already verified accounts return `/login` without changing their password. Registration and resend preserve optional plan/invitation context; those values grant no access. This prevents an earlier registrant from retaining a password for somebody else's email address.
 
 ## Development
 

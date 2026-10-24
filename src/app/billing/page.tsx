@@ -1,3 +1,4 @@
+import { sessionCookieName } from "../../lib/session-config";
 import { cookies } from "next/headers";
 import { getServerLocale, makeT } from "../../i18n/server";
 import { formatDate as formatDateI18n, formatNumber } from "../../i18n/format";
@@ -80,7 +81,13 @@ function planStatus(
     return {
       tone: "ok" as const,
       label: t("billing.active"),
-      message: sub.cancelAtPeriodEnd && end ? t("billing.cancelScheduled", { date: end }) : end ? t("billing.renewsOn", { date: end }) : t("billing.activeBody"),
+      message: sub.cancelAtPeriodEnd && end
+        ? t("billing.cancelScheduled", { date: end })
+        : end
+          ? sub.stripeCustomerId && sub.stripeSubscriptionId
+            ? t("billing.renewsOn", { date: end })
+            : t("billing.periodEndsOn", { date: end })
+          : t("billing.activeBody"),
     };
   }
   if (sub.status === "past_due") {
@@ -108,7 +115,7 @@ function planStatus(
 export default async function BillingPage({ searchParams }: { searchParams: SearchParams }) {
   const cookieStore = await cookies();
   const claims = await verifyWorkspaceTokenFromCookieValues(
-    cookieStore.get("cust_session")?.value ?? null,
+    cookieStore.get(sessionCookieName("customer"))?.value ?? null,
     cookieStore.get(getManagerCookieName())?.value ?? null,
   );
   if (!claims) redirect("/login");
@@ -185,7 +192,9 @@ export default async function BillingPage({ searchParams }: { searchParams: Sear
       : sub.cancelAtPeriodEnd && sub.currentPeriodEnd
         ? t("billing.cancelScheduled", { date: formatDate(sub.currentPeriodEnd) })
         : sub.currentPeriodEnd
-          ? t("billing.renewsOn", { date: formatDate(sub.currentPeriodEnd) })
+          ? hasStripeSubscription && (sub.status === "active" || sub.status === "trialing")
+            ? t("billing.renewsOn", { date: formatDate(sub.currentPeriodEnd) })
+            : t("billing.periodEndsOn", { date: formatDate(sub.currentPeriodEnd) })
           : t("billing.noRenewalDate");
 
   const usagePct =

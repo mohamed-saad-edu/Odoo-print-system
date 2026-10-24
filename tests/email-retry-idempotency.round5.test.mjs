@@ -59,3 +59,29 @@ test('a timeout after an ambiguous POST is retried with the identical email key'
   assert.equal(keys.length, 2);
   assert.equal(keys[0], keys[1]);
 });
+
+test('provider rejection bodies cannot disclose recipients or reset links in caller logs', async () => {
+  let reads = 0;
+  let cancellations = 0;
+  const send = await loadEmailHandler(async () => ({
+    ok: false, status: 422,
+    text: async () => { reads++; return 'Rejected operator@example.test https://gateway.test/reset-password?token=private-proof'; },
+    body: { cancel: async () => { cancellations++; } },
+  }));
+  await assert.rejects(send(mail), error => {
+    assert.equal(error.message, 'Transactional email provider rejected the request (422)');
+    assert.doesNotMatch(error.message, /operator@|private-proof|reset-password/);
+    return true;
+  });
+  assert.equal(reads, 0, 'an arbitrary provider body is neither parsed nor logged');
+  assert.equal(cancellations, 1, 'the rejected response body is released');
+});
+
+test('successful email responses release the unread provider body', async () => {
+  let cancellations = 0;
+  const send = await loadEmailHandler(async () => ({
+    ok: true, status: 200, body: { cancel: async () => { cancellations++; } },
+  }));
+  await send(mail);
+  assert.equal(cancellations, 1);
+});

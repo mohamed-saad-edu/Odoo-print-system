@@ -59,7 +59,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     if (!result) return NextResponse.json({ error: "Not found" }, { status: 404 });
     return NextResponse.json({ ok: true, lifecycle: result.lifecycle, pairingCode: result.pairingCode });
   } catch (error) {
-    if (error instanceof ManagerMutationAuthorityChangedError) return NextResponse.json({ error: error.message }, { status: 403 });
+    if (error instanceof ManagerMutationAuthorityChangedError) return error.response();
     if (error instanceof LifecycleConflict) return NextResponse.json({ error: error.message }, { status: 409 });
     if (isTenantBillingError(error)) return NextResponse.json({ error: error.message, code: error.code }, { status: 403 });
     logError("agent.lifecycle_failed", { agentId: id, error: error instanceof Error ? error.message : "unknown" });

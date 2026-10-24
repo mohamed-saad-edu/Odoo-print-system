@@ -35,8 +35,9 @@ func readPDFPrinterDevMode(printerName string, paper *pdfPaper) ([]byte, error) 
 		return nil, fmt.Errorf("DocumentPropertiesW returned invalid size %d: %v", int32(size), callErr)
 	}
 	buf := make([]byte, int(size))
-	ptr := uintptr(unsafe.Pointer(&buf[0]))
-	ret, _, callErr := procDocumentPropertiesW.Call(0, uintptr(handle), uintptr(unsafe.Pointer(name)), ptr, 0, 2) // DM_OUT_BUFFER
+	// Keep pointer conversions in the syscall argument list so the compiler
+	// retains the allocation for the complete native call.
+	ret, _, callErr := procDocumentPropertiesW.Call(0, uintptr(handle), uintptr(unsafe.Pointer(name)), uintptr(unsafe.Pointer(&buf[0])), 0, 2) // DM_OUT_BUFFER
 	if int32(ret) != 1 {
 		return nil, fmt.Errorf("read printer DEVMODEW: %v", callErr)
 	}
@@ -48,7 +49,7 @@ func readPDFPrinterDevMode(printerName string, paper *pdfPaper) ([]byte, error) 
 	if err != nil {
 		return nil, err
 	}
-	ret, _, callErr = procDocumentPropertiesW.Call(0, uintptr(handle), uintptr(unsafe.Pointer(name)), ptr, ptr, 2|8) // OUT|IN_BUFFER
+	ret, _, callErr = procDocumentPropertiesW.Call(0, uintptr(handle), uintptr(unsafe.Pointer(name)), uintptr(unsafe.Pointer(&buf[0])), uintptr(unsafe.Pointer(&buf[0])), 2|8) // OUT|IN_BUFFER
 	if int32(ret) != 1 {
 		return nil, fmt.Errorf("driver rejected PDF paper settings: %v", callErr)
 	}

@@ -237,9 +237,12 @@ func TestManualRegistrationWithUSBFields(t *testing.T) {
 	if infos[0].USBVID != "03f0" || infos[0].USBPID != "0c17" || infos[0].USBSerial != "CN999" {
 		t.Fatalf("USB fields not preserved %+v", infos[0])
 	}
-	expectedID := StableIDFromUSB("03f0", "0c17", "CN999", "")
-	if infos[0].ID != expectedID {
-		t.Fatalf("expected stable ID %s got %s", expectedID, infos[0].ID)
+	if infos[0].ID == "" || infos[0].ID == StableIDFromUSB("03f0", "0c17", "CN999", "") {
+		t.Fatalf("manual registration must bind its exact interface without trusting a declared serial: %+v", infos[0])
+	}
+	repeated, err := RegisterManual(path, di)
+	if err != nil || len(repeated) != 1 || repeated[0].ID != infos[0].ID || repeated[0].Status != "unknown" {
+		t.Fatalf("same manual interface must preserve its pending registration: rows=%+v err=%v", repeated, err)
 	}
 }
 
@@ -380,8 +383,13 @@ func TestFactoryUSBDoesNotInferESCPOSFromRawTransport(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New with explicit capabilities: %v", err)
 	}
-	if !SupportsKind(p, KindESCPOS) {
-		t.Fatal("explicit supported_protocols=escpos must enable ESC/POS")
+	if SupportsKind(p, KindESCPOS) {
+		t.Fatal("capability list cannot override an explicit raw byte language")
+	}
+	pc.Protocol = "escpos"
+	p, err = New(pc)
+	if err != nil || !SupportsKind(p, KindESCPOS) {
+		t.Fatalf("declared ESC/POS backend unavailable: %v", err)
 	}
 }
 

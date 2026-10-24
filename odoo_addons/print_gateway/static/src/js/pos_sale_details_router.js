@@ -21,7 +21,12 @@ function gatewayDataCall(pos, model, method, args, kwargs = {}, silent = true, {
         20000,
         _t("Printing service request timed out."),
         { ambiguous },
-    );
+    ).then((result) => {
+        if (method === "is_gateway_printing_enabled" && typeof result !== "boolean") {
+            throw new Error(_t("The printing service returned an invalid activation state. No print was sent."));
+        }
+        return result;
+    });
 }
 
 // Secure per-click operation identity (mirrors gatewayUuid in
@@ -94,6 +99,7 @@ patch(SaleDetailsButton.prototype, {
             activePrintClaim = { recoveryKey, id: claim.id, newIntent: claim.newIntent };
             let operationId = claim.id;
             let image = memoryRetry ? lastOp.image : undefined;
+            let geometryFingerprint = memoryRetry ? lastOp.geometryFingerprint : undefined;
             if (!memoryRetry) {
                 const saleDetails = await gatewayDataCall(
                     this.pos, "report.point_of_sale.report_saledetails",
@@ -107,24 +113,20 @@ patch(SaleDetailsButton.prototype, {
                         formatCurrency: this.pos.env.utils.formatCurrency,
                     })
                 );
-                let rasterWidth = 512;
-                try {
-                    rasterWidth = await gatewayDataCall(this.pos,
-                        "pos.session", "get_gateway_sale_details_raster_width", [[sessionId]], {}, true,
-                    );
-                } catch (error) {
-                    console.warn("Sale Details printer width unavailable, using native 512px:", error);
-                }
+                const geometry = await gatewayDataCall(this.pos,
+                    "pos.session", "get_gateway_sale_details_geometry", [[sessionId]], {}, true,
+                );
                 image = await withGatewayDeadline(
                     () => renderGatewayReceiptJpeg(report, {
                         renderer: this.env.services.renderer,
-                        width: rasterWidth,
+                        geometry,
                     }),
                     15000,
                     _t("Receipt rendering timed out."),
                 );
+                geometryFingerprint = geometry.config_fingerprint;
             }
-            saleDetailsOps.set(sessionId, { id: operationId, image, terminal: false, at: Date.now() });
+            saleDetailsOps.set(sessionId, { id: operationId, image, geometryFingerprint, terminal: false, at: Date.now() });
             let result;
             try {
                 submissionAttempted = true;
@@ -133,12 +135,12 @@ patch(SaleDetailsButton.prototype, {
                     "pos.session",
                     "action_print_gateway_sale_details",
                     [[sessionId]],
-                    { image, operation_id: operationId },
+                    { image, operation_id: operationId, geometry_fingerprint: geometryFingerprint },
                     true,
                     { ambiguous: true },
                 );
             } catch (rpcError) {
-                saleDetailsOps.set(sessionId, { id: operationId, image, at: Date.now(), terminal: false });
+                saleDetailsOps.set(sessionId, { id: operationId, image, geometryFingerprint, at: Date.now(), terminal: false });
                 throw rpcError;
             }
             // Queued jobs retain the operation ID and raster: a second click
@@ -153,16 +155,17 @@ patch(SaleDetailsButton.prototype, {
             saleDetailsOps.set(sessionId, {
                 id: operationId,
                 image: terminal ? undefined : image,
+                geometryFingerprint: terminal ? undefined : geometryFingerprint,
                 at: Date.now(),
                 terminal,
             });
-            if (!result?.gateway_enabled) {
+            if (result?.gateway_enabled !== true) {
                 throw new Error(_t("Print Gateway returned an invalid Sale Details response."));
             }
             if (!result?.status || ["unknown", "partial"].includes(result.status)
                 || !["queued", "submitted", "claimed", "printing", "success", "failed"].includes(result.status)) {
                 this.env.services.notification.add(
-                    _t("Print status is unknown. Check the printer before trying again."),
+                    result?.outputMedium === "file" ? result.message : _t("Print status is unknown. Check the printer before trying again."),
                     { type: "warning", sticky: true }
                 );
             } else if (result?.status === "queued") {

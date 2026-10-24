@@ -1,3 +1,4 @@
+import { isPrinterOperationallyVerified, type OperationalPrinterState } from "./printer-operational-verification";
 import payloadContract from "../../contracts/print-payload-contract.json";
 import { gatewayNow } from "./database-clock";
 import { isVirtualPrinterRecord, type PrinterLike } from "./printer-virtual";
@@ -5,7 +6,7 @@ import { getAgentAvailability } from "./agent-availability";
 
 export { validatePayloadForPrinter, type CapabilityCheckResult, type PayloadSpec } from "./printer-capability";
 
-export interface PrinterAvailability extends PrinterLike {
+export interface PrinterAvailability extends PrinterLike, OperationalPrinterState {
   lifecycle: string | null;
   status: string | null;
   inventoryPresent?: boolean | null;
@@ -37,6 +38,7 @@ export function isPrinterStatusExecutable(printer: Pick<PrinterAvailability, "st
   // A protocol token alone must not turn a network/USB row into a spooler.
   // OpenPrinterW + GetPrinterW (level 2) is the pre-dispatch probe.
   if (conn === "spooler") return true;
+  if (conn === "pdf_output" && proto === "pdf") return true;
   // IPP/IPPS document transport: the endpoint URL IS the declaration.
   if (conn === "ipp" || conn === "ipps" || (conn === "network" && (proto === "ipp" || proto === "ipps"))) return true;
   // Direct byte-stream transports: require an explicitly declared language.
@@ -55,8 +57,8 @@ export function isPrinterStatusExecutable(printer: Pick<PrinterAvailability, "st
  * gates add lifecycle, agent freshness, printer freshness, desired-state and
  * entitlement on top; they must never reimplement the status/transport rule.
  */
-export function isPrinterClaimable(printer: Pick<PrinterAvailability, "status" | "connectionType" | "protocol">): boolean {
-  return isPrinterStatusExecutable(printer);
+export function isPrinterClaimable(printer: Pick<PrinterAvailability, "status" | "connectionType" | "protocol"> & OperationalPrinterState, now = gatewayNow()): boolean {
+  return isPrinterOperationallyVerified(printer, now) && isPrinterStatusExecutable(printer);
 }
 
 export function isPrinterAvailableForJob(
@@ -69,7 +71,7 @@ export function isPrinterAvailableForJob(
   if (printer.inventoryPresent === false) return false;
   if (isVirtualPrinterRecord(printer)) return false;
   if (agent !== undefined && !isAgentAvailableForPrinter(agent, now)) return false;
-  return isPrinterStatusExecutable(printer);
+  return isPrinterClaimable(printer, now);
 }
 
 export function isAgentAvailableForPrinter(

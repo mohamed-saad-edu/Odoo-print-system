@@ -43,7 +43,7 @@ suite("legacy authentication fallback", () => {
     await closePool();
   });
 
-  it("keeps an existing manager legacy JWT valid until its original 8-hour expiry", async () => {
+  it("requires a fresh password login for an existing manager legacy JWT at the0091 cutover", async () => {
     const row = (await pool().query(
       "SELECT FLOOR(EXTRACT(EPOCH FROM clock_timestamp()))::bigint AS now_sec",
     )).rows[0];
@@ -66,13 +66,10 @@ suite("legacy authentication fallback", () => {
     const claims = await validateManager(new Request("http://gateway.test/api/auth/manager/me", {
       headers: { cookie: "mgr_session=" + token },
     }));
-    expect(claims).not.toBeNull();
-    expect(claims?.jti).toBe(jti);
-    expect(claims?.ver).toBeUndefined();
-    expect(claims?.familyId).toBeUndefined();
+    expect(claims).toBeNull();
   });
 
-  it("keeps an existing customer legacy JWT valid through the shared customer validation path", async () => {
+  it("rejects an existing legacy JWT through the shared customer validation path", async () => {
     const row = (await pool().query(
       "SELECT FLOOR(EXTRACT(EPOCH FROM clock_timestamp()))::bigint AS now_sec",
     )).rows[0];
@@ -95,11 +92,10 @@ suite("legacy authentication fallback", () => {
     const claims = await validateCustomer(new Request("http://gateway.test/api/auth/me", {
       headers: { cookie: "mgr_session=" + token },
     }));
-    expect(claims).not.toBeNull();
-    expect(claims?.jti).toBe(jti);
+    expect(claims).toBeNull();
   });
 
-  it("keeps an existing platform legacy JWT valid through the platform fallback", async () => {
+  it("requires fresh password instead of accepting an existing platform legacy JWT", async () => {
     const row = (await pool().query(
       "SELECT FLOOR(EXTRACT(EPOCH FROM clock_timestamp()))::bigint AS now_sec",
     )).rows[0];
@@ -121,9 +117,6 @@ suite("legacy authentication fallback", () => {
     const claims = await validatePlatformOwner(new Request("http://gateway.test/api/platform/me", {
       headers: { cookie: "plt_session=" + token },
     }));
-    expect(claims).not.toBeNull();
-    expect(claims?.jti).toBe(jti);
-    expect(claims?.ver).toBeUndefined();
-    expect(claims?.familyId).toBeUndefined();
+    expect(claims).toBeNull();
   });
 });

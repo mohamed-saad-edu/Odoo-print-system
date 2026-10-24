@@ -1,3 +1,5 @@
+import { operationalVerificationProjection } from "../../../../lib/printer-operational-verification";
+import { parseDbTimeMs } from "../../../../lib/database-timestamp";
 import { db } from "../../../../db";
 import { agents, printJobs, printers } from "../../../../db/schema";
 import { validateAgent } from "../../../../lib/agent-auth";
@@ -14,6 +16,7 @@ import { inventoryVersionAllowsPage, parseInventorySnapshotVersion } from "../..
 import { getDesiredPrinterPage } from "../../../../lib/desired-state-page";
 import { isVirtualPrinterRecord } from "../../../../lib/printer-virtual";
 import { PRINTER_NOT_SHARED_PAUSE } from "../../../../lib/job-status";
+import { validatePrinterGeometry } from "../../../../lib/printer-geometry";
 
 const MAX_HEARTBEAT_BODY_BYTES = 512 * 1024;
 const MAX_KEEP_ALIVE_JOB_IDS = 64;
@@ -107,6 +110,7 @@ function sanitizePrinter(p: ReportedPrinter): {
   }
   if (!printerType) printerType = "physical";
   if (!(PRINTER_TYPES as readonly string[]).includes(printerType) || !(DEVICE_CLASSES as readonly string[]).includes(deviceClass)) return { ok: false, reason: "invalid_device_class_or_printer_type" };
+  if ((printerType === "file") !== (connectionType === "pdf_output")) return { ok: false, reason: "invalid_output_type" };
   let protocol = normalizeProtocol(p.protocol ?? (p.config as Record<string, unknown>)?.protocol);
   if (!protocol) return { ok: false, reason: "invalid_or_unsupported_protocol" };
   const config = p.config && typeof p.config === "object" ? { ...(p.config as Record<string, unknown>) } : {};
@@ -122,6 +126,18 @@ function sanitizePrinter(p: ReportedPrinter): {
     config.address = config.spooler_name.trim();
   }
   let capabilities = p.capabilities && typeof p.capabilities === "object" ? { ...(p.capabilities as Record<string, unknown>) } : null;
+  if (capabilities && "geometry" in capabilities) {
+    const geometry = validatePrinterGeometry(capabilities.geometry, { printerId: p.id.trim() });
+    if (geometry.ok) {
+      capabilities.geometry = geometry.value;
+      delete capabilities.geometry_error;
+    } else {
+      // Preserve ordinary document transport inventory; only geometry-based
+      // image output is unavailable until a valid observation arrives.
+      delete capabilities.geometry;
+      capabilities.geometry_error = geometry.reason;
+    }
+  }
   if (capabilities && "supported_protocols" in capabilities) {
     // Presence is authoritative: an explicitly empty/invalid list means the
     // device declares no supported payload protocols. Do not delete the key,
@@ -392,6 +408,13 @@ export async function POST(req: Request) {
           const alias = aliasPrinterIdForAgent(p.id, agent.id);
           printerIdAliases[p.id] = alias;
           p.id = alias;
+          // The Agent must adopt its alias and publish a new bound geometry.
+          // Rewriting printer_id here would forge the Agent's provenance.
+          if (p.capabilities) {
+            delete p.capabilities.geometry;
+            delete p.capabilities.operational_verification;
+            p.capabilities.geometry_error = "Printer identity is changing; refresh geometry after alias adoption";
+          }
         }
       }
       // The Agent may know the canonical alias while the observation still
@@ -427,7 +450,7 @@ export async function POST(req: Request) {
       });
       const knownByEndpoint = new Map<string, (typeof knownPhysicalPrinters)[number]>();
       for (const row of knownPhysicalPrinters) {
-        const endpoint = row.physicalIdentityKey ?? physicalPrinterIdentityKey(row);
+        const endpoint = physicalPrinterIdentityKey(row) ?? row.physicalIdentityKey;
         if (endpoint && !knownByEndpoint.has(endpoint)) knownByEndpoint.set(endpoint, row);
       }
       const seenEndpoints = new Set<string>();
@@ -453,6 +476,41 @@ export async function POST(req: Request) {
         where: and(eq(printers.tenantId, agent.tenantId), inArray(printers.id, inventoryIds)),
       }) : [];
       const inventoryById = new Map(inventoryRows.map(p => [p.id, p]));
+      const clockRow = await tx.execute(sql`SELECT clock_timestamp() AS verification_now`);
+      const verificationNowMs = parseDbTimeMs(clockRow.rows[0]?.verification_now as Date | string | null);
+      if (verificationNowMs === null) throw new Error("Database verification clock unavailable");
+      const verificationNow = new Date(verificationNowMs);
+      const verificationById = new Map<string, ReturnType<typeof operationalVerificationProjection>>();
+      const logicalOwners = new Map(knownPhysicalPrinters.filter(row => row.logicalQueueKey).map(row => [row.logicalQueueKey!, row.id]));
+      const identityConflicts = new Set<string>();
+      for (const p of sanitizedPrinters) {
+        const existing = inventoryById.get(p.id);
+        let projection = operationalVerificationProjection(p.capabilities?.operational_verification, p, verificationNow);
+        if (existing?.managementSource === "manager") {
+          const destination = physicalPrinterIdentityKey(existing);
+          if (!destination || destination !== physicalPrinterIdentityKey(p) || !samePrinterProtocol(existing, p)) {
+            projection = { ...operationalVerificationProjection(null, p, verificationNow), verificationReason: "verification_destination_mismatch" };
+          } else if (existing.appliedDesiredRevision < existing.desiredRevision || existing.observedDesiredRevision < existing.desiredRevision) {
+            projection = { ...operationalVerificationProjection(null, p, verificationNow), verificationReason: "verification_configuration_pending" };
+          }
+        }
+        if (projection.verificationState === "verified") {
+          const owner = logicalOwners.get(projection.logicalQueueKey);
+          if (owner && owner !== p.id) {
+            identityConflicts.add(owner); identityConflicts.add(p.id);
+            skipped.push({ id: p.id, reason: "logical_queue_identity_collision" });
+          } else logicalOwners.set(projection.logicalQueueKey, p.id);
+        }
+        verificationById.set(p.id, projection);
+      }
+      // Do not choose one of two contradictory identity claims. Retain both
+      // registration histories and the established unique key, but pause work.
+      for (const id of identityConflicts) {
+        verificationById.set(id, { ...operationalVerificationProjection(null, { id }, verificationNow), verificationReason: "verification_identity_collision" });
+        await tx.update(printers).set({ verificationState: "pending", verificationVerifiedAt: null, verificationReceivedAt: null, verificationBindingDigest: null, verificationReason: "verification_identity_collision" })
+          .where(and(eq(printers.tenantId, agent.tenantId), eq(printers.agentId, agent.id), eq(printers.id, id)));
+      }
+
       let pageHadErrors = skipped.length > 0;
       const mayUpdateSharing = (p: SanitizedPrinter, existing: typeof printers.$inferSelect): boolean => {
         // A platform-removed or retired printer is an irreversible negative
@@ -466,6 +524,19 @@ export async function POST(req: Request) {
         // earlier observation from this same snapshot. New permission needs
         // new evidence even if the canonical policy is already shared.
         return incoming > retained;
+      };
+      const observedCapabilities = (p: SanitizedPrinter, existing: typeof printers.$inferSelect) => {
+        const capabilities = p.capabilities ? { ...p.capabilities } : null;
+        if (capabilities && verificationById.get(p.id)?.verificationState !== "verified") delete capabilities.operational_verification;
+        if (!capabilities?.geometry || existing.managementSource !== "manager") return capabilities;
+        const desiredEndpoint = physicalPrinterIdentityKey(existing);
+        const observedEndpoint = physicalPrinterIdentityKey(p);
+        if (!samePrinterProtocol(existing, p)
+            || (desiredEndpoint !== null && observedEndpoint !== null && desiredEndpoint !== observedEndpoint)) {
+          delete capabilities.geometry;
+          capabilities.geometry_error = "Geometry was observed for a previous printer destination or protocol";
+        }
+        return capabilities;
       };
 
       const capacityCandidateIds = [...new Set(
@@ -538,9 +609,10 @@ export async function POST(req: Request) {
         if (updateSharing && !reshareBlocked && !reactivationBlocked) positivelySharedIds.push(p.id);
 
         const observedUpdateSet = {
+          ...verificationById.get(p.id),
           status: reactivationBlocked ? "unknown" : p.status,
           observedDeviceClass: p.deviceClass as typeof printers.$inferInsert.observedDeviceClass,
-          capabilities: p.capabilities as typeof printers.$inferInsert.capabilities,
+          capabilities: observedCapabilities(p, existing) as typeof printers.$inferInsert.capabilities,
           lastSeenAt: sql`now()`,
           inventoryPresent: reactivationBlocked ? false : true,
           ...(snapshotEnabled ? { inventorySnapshotId } : {}),
@@ -558,6 +630,7 @@ export async function POST(req: Request) {
               protocol: p.protocol as typeof printers.$inferInsert.protocol,
               config: p.config as typeof printers.$inferInsert.config,
               physicalIdentityKey: physicalPrinterIdentityKey(p),
+              outputMedium: p.connectionType === "pdf_output" ? "file" : "physical",
             }
           : observedUpdateSet;
         await tx.update(printers)
@@ -602,7 +675,9 @@ export async function POST(req: Request) {
           observedDeviceClass: p.deviceClass as typeof printers.$inferInsert.observedDeviceClass,
           config: p.config as typeof printers.$inferInsert.config,
           physicalIdentityKey: physicalPrinterIdentityKey(p),
-          capabilities: p.capabilities as typeof printers.$inferInsert.capabilities,
+          ...verificationById.get(p.id),
+          outputMedium: p.connectionType === "pdf_output" ? "file" : "physical",
+          capabilities: verificationById.get(p.id)?.verificationState === "verified" ? p.capabilities : p.capabilities ? Object.fromEntries(Object.entries(p.capabilities).filter(([key]) => key !== "operational_verification")) : null,
           inventoryPresent: true,
           inventorySnapshotId: snapshotEnabled ? inventorySnapshotId : null,
           lastSeenAt: sql`now()`,
@@ -615,9 +690,10 @@ export async function POST(req: Request) {
           if (raced && raced.agentId === agent.id) {
             await tx.update(printers)
               .set({
+                ...verificationById.get(p.id),
                 status: p.status,
                 observedDeviceClass: p.deviceClass as typeof printers.$inferInsert.observedDeviceClass,
-                capabilities: p.capabilities as typeof printers.$inferInsert.capabilities,
+                capabilities: observedCapabilities(p, raced) as typeof printers.$inferInsert.capabilities,
                 inventoryPresent: true,
                 ...(snapshotEnabled ? { inventorySnapshotId } : {}),
                 lastSeenAt: sql`now()`,
@@ -657,7 +733,7 @@ export async function POST(req: Request) {
       if (mayReconcileAbsence) {
         await tx.execute(sql`
           UPDATE printers
-          SET inventory_present = false, status = 'unknown', updated_at = now()
+          SET inventory_present = false, status = 'unknown', verification_state = 'pending', verification_verified_at = NULL, verification_received_at = NULL, verification_binding_digest = NULL, verification_reason = 'verification_inventory_absent', updated_at = now()
           WHERE tenant_id = ${agent.tenantId}
             AND agent_id = ${agent.id}
             AND management_source = 'agent'

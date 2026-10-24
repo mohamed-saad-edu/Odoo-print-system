@@ -1,4 +1,13 @@
+import type * as PasswordScreeningModule from "../src/lib/password-screening";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+// External breach-corpus fixture for these unrelated account/transaction tests.
+// Production always screens; password-screening*.test.ts exercise the real
+// range protocol, positive matches, privacy, limits and fail-closed behavior.
+vi.mock("../src/lib/password-screening", async (importActual) => ({
+  ...await importActual<typeof PasswordScreeningModule>(),
+  screenNewPassword: vi.fn(async () => "acceptable"),
+}));
 import { getTableName } from "drizzle-orm";
 import { PgDialect } from "drizzle-orm/pg-core";
 
@@ -51,6 +60,7 @@ vi.mock("../src/db", () => ({ pool: { end: vi.fn() }, db: {
 } }));
 
 import { main as bootstrap } from "../scripts/bootstrap-platform-owner";
+import { verifyPassword } from "../src/lib/password";
 
 describe("Platform Owner bootstrap credential cutover", () => {
   afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
@@ -103,11 +113,37 @@ describe("Platform Owner bootstrap credential cutover", () => {
     expect(state.audits).toHaveLength(0);
   });
 
+  it("preserves intentional leading and trailing password spaces during bootstrap", async () => {
+    const exact = "  intentional whitespace password 456  ";
+    vi.stubEnv("PLATFORM_OWNER_PASSWORD", exact);
+    await bootstrap();
+    const hash = String(state.rows.users[0].passwordHash);
+    expect(await verifyPassword(exact, hash)).toBe(true);
+    expect(await verifyPassword(exact.trim(), hash)).toBe(false);
+  });
+
   it("rolls back password replacement when recovery-proof invalidation fails", async () => {
     state.failAt = "password_reset_tokens";
     const before = structuredClone(state.rows);
     await expect(bootstrap()).rejects.toThrow("synthetic transaction failure");
     expect(state.rows).toEqual(before);
     expect(state.audits).toHaveLength(0);
+  });
+
+  it.each(["😀".repeat(6), "Ab9!?xyZ😃🧪🔐"])("rejects a new bootstrap password with fewer than twelve code points", async (password) => {
+    vi.stubEnv("PLATFORM_OWNER_PASSWORD", password);
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(process, "exit").mockImplementation(() => { throw new Error("bootstrap rejected password"); });
+    const before = structuredClone(state.rows);
+    await expect(bootstrap()).rejects.toThrow("bootstrap rejected password");
+    expect(state.rows).toEqual(before);
+    expect(state.queries).toHaveLength(0);
+  });
+
+  it("accepts and preserves a twelve-code-point emoji bootstrap password", async () => {
+    const password = "😀".repeat(12);
+    vi.stubEnv("PLATFORM_OWNER_PASSWORD", password);
+    await bootstrap();
+    expect(await verifyPassword(password, String(state.rows.users[0].passwordHash))).toBe(true);
   });
 });

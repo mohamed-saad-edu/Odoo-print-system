@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createManagerSession, managerCookieHeader, managerRefreshCookieHeader, verifyManagerPassword, getManagerUsername, resolveManagerTenantId, authenticateManagerUser } from "../../../../../lib/manager-auth";
-import { isTrustedDesktopRequest, AuthenticationChangedError } from "../../../../../lib/session-tokens";
+import { isTrustedDesktopRequest, AuthenticationChangedError, sessionReplacementFromRequest } from "../../../../../lib/session-tokens";
 import {
   clientIpFrom,
   reserveAuthAttempt,
@@ -11,6 +11,7 @@ import { hasBodyOverLimit } from "../../../../../lib/request-limits";
 import { logWarn, logInfo, logError, requestIdFrom } from "../../../../../lib/log";
 import { writeAuditEvent } from "../../../../../lib/audit";
 import { runtimeSecret } from "../../../../../lib/runtime-secret";
+import { environmentManagerCredentialVersion } from "../../../../../lib/session-credentials";
 import { TenantDeletedError, TenantSuspendedError } from "../../../../../lib/tenant-guard";
 
 const INVALID = "Invalid credentials";
@@ -98,10 +99,11 @@ export async function POST(req: Request) {
   try {
     sess = await createManagerSession(
       tenantId,
-      identity ?? { role: "owner" },
+      identity ?? { role: "owner", environmentCredentialVersion: environmentManagerCredentialVersion(tenantId) ?? undefined },
       {
         ipAddress: ip,
         userAgent: req.headers.get("user-agent"),
+        replaceCurrent: sessionReplacementFromRequest(req, "manager"),
         email: username.includes("@") ? username : null,
       },
     );
@@ -133,5 +135,7 @@ export async function POST(req: Request) {
   }
   res.headers.set("X-Request-Id", requestId);
   res.headers.set("Cache-Control", "no-store");
+  if (!desktopClient) clearLegacySessionCookies(res.headers, "manager");
   return setRateLimitHeaders(res, pre);
 }
+import { clearLegacySessionCookies } from "../../../../../lib/session-config";

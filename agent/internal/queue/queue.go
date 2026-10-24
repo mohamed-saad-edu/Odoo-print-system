@@ -2,8 +2,10 @@ package queue
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -73,7 +75,23 @@ func New(dbPath string) (*Queue, error) {
 
 	// FULL WAL commits durably fence physical execution across power loss.
 	// NORMAL may lose an acknowledged printing/terminal ledger transaction.
-	dsn := fmt.Sprintf("%s?_busy_timeout=5000&_journal_mode=WAL&_synchronous=FULL", dbPath)
+	dsnPath := dbPath
+	if dbPath != ":memory:" {
+		// The SQLite driver splits DSN options at '?', even in an ordinary
+		// filename. Encode the filesystem path as a file URI so it opens the
+		// exact file checked above, not a truncated path with different ACLs
+		// or sidecars. Resolve drive-relative Windows paths before encoding.
+		absolutePath, err := filepath.Abs(dbPath)
+		if err != nil {
+			return nil, fmt.Errorf("resolve queue database path: %w", err)
+		}
+		uriPath := filepath.ToSlash(absolutePath)
+		if volume := filepath.VolumeName(absolutePath); len(volume) == 2 && volume[1] == ':' {
+			uriPath = "/" + uriPath
+		}
+		dsnPath = (&url.URL{Scheme: "file", Path: uriPath}).String()
+	}
+	dsn := dsnPath + "?_busy_timeout=5000&_journal_mode=WAL&_synchronous=FULL"
 	db, err := sql.Open("sqlite3", dsn)
 	if err != nil {
 		return nil, err
@@ -126,7 +144,10 @@ func New(dbPath string) (*Queue, error) {
 			updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			claimed_at DATETIME,
 			claim_token TEXT,
-			spooler_job_id TEXT
+			spooler_job_id TEXT,
+			execution_claim_token TEXT,
+			execution_transport TEXT,
+			output_evidence TEXT
 		);
 		CREATE INDEX IF NOT EXISTS idx_queue_status ON print_jobs(status);
 		CREATE INDEX IF NOT EXISTS idx_queue_printer ON print_jobs(printer_id);
@@ -163,6 +184,9 @@ func New(dbPath string) (*Queue, error) {
 		{"last_error", "last_error TEXT"}, {"updated_at", "updated_at DATETIME"},
 		{"claimed_at", "claimed_at DATETIME"}, {"claim_token", "claim_token TEXT"},
 		{"spooler_job_id", "spooler_job_id TEXT"},
+		{"execution_claim_token", "execution_claim_token TEXT"},
+		{"execution_transport", "execution_transport TEXT"},
+		{"output_evidence", "output_evidence TEXT"},
 	} {
 		if !columns[column.name] {
 			if _, err := tx.Exec("ALTER TABLE print_jobs ADD COLUMN " + column.declaration); err != nil {
@@ -172,6 +196,9 @@ func New(dbPath string) (*Queue, error) {
 	}
 	if _, err := tx.Exec(`UPDATE print_jobs SET updated_at = COALESCE(created_at, CURRENT_TIMESTAMP) WHERE updated_at IS NULL`); err != nil {
 		return nil, fmt.Errorf("backfill queue timestamps: %w", err)
+	}
+	if _, err := tx.Exec(`UPDATE print_jobs SET execution_claim_token = claim_token WHERE execution_claim_token IS NULL AND status IN ('printing','success','failed') AND claim_token IS NOT NULL`); err != nil {
+		return nil, fmt.Errorf("retain execution claims during queue migration: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("commit queue schema migration: %w", err)
@@ -252,9 +279,8 @@ func (q *Queue) ReserveBeforeDispatch(id, printerID string, payload []byte, clai
 	// was provably NOT printed. In that case, the new delivery must persist its
 	// own queued claim before waiting on hardware: leaving the old failed row
 	// untouched would lose the new token on crash and strand the Gateway claim.
-	// Unknown outcomes retain their terminal row and are reopened, if ever, only
-	// by the operator's explicit opt-in in BeginPrint. Success and live printing
-	// rows must never be mutated here.
+	// Unknown outcomes retain their terminal row under every legacy policy value.
+	// Success and live printing rows must never be mutated here.
 	var status string
 	var lastErr sql.NullString
 	if err := tx.QueryRow(`SELECT status, last_error FROM print_jobs WHERE id = ?`, id).Scan(&status, &lastErr); err != nil {
@@ -267,7 +293,7 @@ func (q *Queue) ReserveBeforeDispatch(id, printerID string, payload []byte, clai
 			}
 		}
 		if _, err := tx.Exec(`UPDATE print_jobs
-			SET status = 'queued', claim_token = ?, last_error = NULL, spooler_job_id = NULL, updated_at = CURRENT_TIMESTAMP
+			SET status = 'queued', claim_token = ?, execution_claim_token = NULL, execution_transport = NULL, output_evidence = NULL, last_error = NULL, spooler_job_id = NULL, updated_at = CURRENT_TIMESTAMP
 			WHERE id = ? AND status = 'failed'`, token, id); err != nil {
 			return err
 		}
@@ -345,10 +371,10 @@ func (q *Queue) UpdateStatus(id, status string) error {
 		// terminal report. Clearing it here creates a crash window where the
 		// local ledger durably knows the physical outcome but the restarted
 		// Agent can no longer prove which Gateway attempt produced it.
-		_, err := q.db.Exec(`UPDATE print_jobs SET status = ?, claimed_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, status, id)
+		_, err := q.db.Exec(`UPDATE print_jobs SET status = ?, execution_claim_token = COALESCE(execution_claim_token, claim_token), claimed_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND output_evidence IS NULL`, status, id)
 		return err
 	}
-	_, err := q.db.Exec(`UPDATE print_jobs SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, status, id)
+	_, err := q.db.Exec(`UPDATE print_jobs SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND output_evidence IS NULL`, status, id)
 	return err
 }
 
@@ -362,10 +388,10 @@ func (q *Queue) UpdateStatusWithError(id, status, lastErr string) error {
 	if status == "success" || status == "failed" {
 		// The terminal state is a durable outbox record for the Gateway status
 		// report. Preserve claim_token until a validated terminal acknowledgement.
-		_, err := q.db.Exec(`UPDATE print_jobs SET status = ?, last_error = ?, claimed_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, status, lastErr, id)
+		_, err := q.db.Exec(`UPDATE print_jobs SET status = ?, last_error = ?, execution_claim_token = COALESCE(execution_claim_token, claim_token), claimed_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND output_evidence IS NULL`, status, lastErr, id)
 		return err
 	}
-	_, err := q.db.Exec(`UPDATE print_jobs SET status = ?, last_error = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, status, lastErr, id)
+	_, err := q.db.Exec(`UPDATE print_jobs SET status = ?, last_error = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND output_evidence IS NULL`, status, lastErr, id)
 	return err
 }
 
@@ -373,15 +399,55 @@ func (q *Queue) UpdateStatusWithError(id, status, lastErr string) error {
 // and any platform spooler identity in the local outbox. The claim token is
 // deliberately retained until the Gateway acknowledges this exact report.
 func (q *Queue) UpdateTerminalWithEvidence(id, status, lastErr, spoolerJobID string) error {
+	return q.UpdateTerminalResult(id, status, lastErr, spoolerJobID, "", "")
+}
+
+// UpdateTerminalResult commits an invocation's result, original claim and
+// optional opaque file evidence together. Clearing the report-outbox token
+// after acknowledgement never erases the immutable execution identity.
+// OutputEvidence is canonical, validated JSON supplied by the Agent; this
+// storage boundary additionally bounds the value and rejects malformed JSON.
+func (q *Queue) UpdateTerminalResult(id, status, lastErr, spoolerJobID, transport, outputEvidence string) error {
 	if status != "success" && status != "failed" {
 		return fmt.Errorf("terminal evidence requires success/failed status, got %q", status)
+	}
+	if len(outputEvidence) > 1024 || (outputEvidence != "" && (status != "success" || transport != "pdf_output" || !json.Valid([]byte(outputEvidence)))) {
+		return fmt.Errorf("invalid terminal file evidence")
+	}
+	if status == "success" && transport == "pdf_output" && outputEvidence == "" {
+		return fmt.Errorf("successful PDF output requires durable file evidence")
+	}
+	if len(transport) > 32 {
+		return fmt.Errorf("invalid terminal transport")
 	}
 	var spoolerID interface{}
 	if strings.TrimSpace(spoolerJobID) != "" {
 		spoolerID = strings.TrimSpace(spoolerJobID)
 	}
-	_, err := q.db.Exec(`UPDATE print_jobs SET status = ?, last_error = ?, spooler_job_id = ?, claimed_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, status, lastErr, spoolerID, id)
-	return err
+	var outputValue interface{}
+	if outputEvidence != "" {
+		outputValue = outputEvidence
+	}
+	var transportValue interface{}
+	if transport != "" {
+		transportValue = transport
+	}
+	result, err := q.db.Exec(`UPDATE print_jobs SET status = ?, last_error = ?, spooler_job_id = ?,
+		execution_claim_token = COALESCE(execution_claim_token, claim_token), execution_transport = ?, output_evidence = ?,
+		claimed_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?
+		AND (output_evidence IS NULL OR (status = ? AND output_evidence = ? AND COALESCE(last_error, '') = ? AND COALESCE(execution_transport, '') = ?))`,
+		status, lastErr, spoolerID, transportValue, outputValue, id, status, outputEvidence, lastErr, transport)
+	if err != nil {
+		return err
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if changed != 1 {
+		return ErrTerminalState
+	}
+	return nil
 }
 
 // AbortPrint rolls a 'printing' ledger row back to 'queued' when the attempt
@@ -396,7 +462,7 @@ func (q *Queue) UpdateTerminalWithEvidence(id, status, lastErr, spoolerJobID str
 // that concurrently reached a terminal state.
 func (q *Queue) AbortPrint(id, reason string) error {
 	_, err := q.db.Exec(
-		`UPDATE print_jobs SET status = 'queued', last_error = ?, claim_token = NULL, spooler_job_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'printing'`,
+		`UPDATE print_jobs SET status = 'queued', last_error = ?, claim_token = NULL, execution_claim_token = NULL, execution_transport = NULL, output_evidence = NULL, spooler_job_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'printing'`,
 		reason, id,
 	)
 	return err
@@ -412,18 +478,16 @@ func (q *Queue) AbortPrint(id, reason string) error {
 // only ever move a row INTO 'printing' from a non-terminal state. A local
 // record whose physical outcome is terminal ('success') or unknown/ambiguous
 // ('failed' carrying an unknown-outcome marker) is NEVER reopened by the
-// normal path: doing so would reprint a document whose previous attempt may
-// already have produced paper. The only sanctioned reopen of a marked
-// unknown row is the explicit, opt-in `reprint_after_crash` behavior,
-// surfaced here as allowUnknownReprint (and the caller only sets it from the
-// operator's documented configuration). A success row is never reopened
-// under any setting; the gateway treats success as terminal.
+// execution path: doing so could duplicate physical output. The final bool
+// argument remains accepted for API compatibility but cannot reopen an unknown
+// outcome, even when an older caller supplies true. A deliberate new physical
+// operation must carry its own separately authorized job identity.
 //
 // Returns ErrTerminalState (without touching the row) when the guard
 // rejects the transition, and reports it as such so the caller re-reports
 // the stored outcome instead of mistaking it for ledger unavailability
 // (which would requeue the job).
-func (q *Queue) BeginPrint(id, printerID string, payload []byte, claimToken string, allowUnknownReprint bool) error {
+func (q *Queue) BeginPrint(id, printerID string, payload []byte, claimToken string, _ bool) error {
 	// Keep the state machine explicit instead of dynamically concatenating SQL
 	// guards. The transaction is the local ownership fence: SQLite permits only
 	// one writer because Queue uses a single DB connection.
@@ -457,9 +521,7 @@ func (q *Queue) BeginPrint(id, printerID string, payload []byte, claimToken stri
 		return err
 	}
 
-	// A success row is permanently terminal. This check deliberately precedes
-	// allowUnknownReprint: operator reprint can only reopen an explicitly
-	// unknown failed outcome, never a proven success.
+	// Success is permanently terminal; no legacy argument can reopen it.
 	if status == "success" {
 		return ErrTerminalState
 	}
@@ -490,7 +552,7 @@ func (q *Queue) BeginPrint(id, printerID string, payload []byte, claimToken stri
 				}
 			}
 		}
-		if unknown && !allowUnknownReprint {
+		if unknown {
 			return ErrTerminalState
 		}
 	}
@@ -505,8 +567,8 @@ func (q *Queue) BeginPrint(id, printerID string, payload []byte, claimToken stri
 		updateToken = claimToken
 	}
 	updated, err := tx.Exec(
-		`UPDATE print_jobs SET status = 'printing', claim_token = COALESCE(?, claim_token), spooler_job_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status IN ('queued','failed')`,
-		updateToken, id,
+		`UPDATE print_jobs SET status = 'printing', claim_token = COALESCE(?, claim_token), execution_claim_token = COALESCE(?, claim_token), execution_transport = NULL, output_evidence = NULL, spooler_job_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status IN ('queued','failed')`,
+		updateToken, updateToken, id,
 	)
 	if err != nil {
 		return err
@@ -541,11 +603,28 @@ func (q *Queue) ClearClaimToken(id, claimToken string) error {
 }
 
 type TerminalReport struct {
-	ID           string
-	Status       string
-	LastError    string
-	ClaimToken   string
-	SpoolerJobID string
+	ID             string
+	Status         string
+	LastError      string
+	ClaimToken     string
+	SpoolerJobID   string
+	Transport      string
+	OutputEvidence string
+}
+
+// TerminalResultFor also reads acknowledged results. Their original execution
+// claim survives outbox cleanup so a later duplicate cannot relabel the result
+// as evidence for a different delivery attempt.
+func (q *Queue) TerminalResultFor(id string) (TerminalReport, bool, error) {
+	var result TerminalReport
+	err := q.db.QueryRow(`SELECT id, status, COALESCE(last_error, ''), COALESCE(execution_claim_token, claim_token, ''),
+		COALESCE(spooler_job_id, ''), COALESCE(execution_transport, ''), COALESCE(output_evidence, '')
+		FROM print_jobs WHERE id = ? AND status IN ('success','failed')`, id).Scan(
+		&result.ID, &result.Status, &result.LastError, &result.ClaimToken, &result.SpoolerJobID, &result.Transport, &result.OutputEvidence)
+	if err == sql.ErrNoRows {
+		return TerminalReport{}, false, nil
+	}
+	return result, err == nil, err
 }
 
 // PendingTerminalReports returns durable terminal outcomes whose Gateway
@@ -577,7 +656,7 @@ func (q *Queue) pendingTerminalReports(limit int, afterID, throughID string, pag
 		limit = 32
 	}
 	query := `
-		SELECT id, status, COALESCE(last_error, ''), claim_token, COALESCE(spooler_job_id, '')
+		SELECT id, status, COALESCE(last_error, ''), claim_token, COALESCE(spooler_job_id, ''), COALESCE(execution_transport, ''), COALESCE(output_evidence, '')
 		FROM print_jobs
 		WHERE status IN ('success', 'failed')
 		  AND claim_token IS NOT NULL
@@ -599,7 +678,7 @@ func (q *Queue) pendingTerminalReports(limit int, afterID, throughID string, pag
 	result := make([]TerminalReport, 0)
 	for rows.Next() {
 		var report TerminalReport
-		if err := rows.Scan(&report.ID, &report.Status, &report.LastError, &report.ClaimToken, &report.SpoolerJobID); err != nil {
+		if err := rows.Scan(&report.ID, &report.Status, &report.LastError, &report.ClaimToken, &report.SpoolerJobID, &report.Transport, &report.OutputEvidence); err != nil {
 			return nil, err
 		}
 		result = append(result, report)
@@ -716,9 +795,9 @@ var UnknownOutcomeMarkers = []string{
 }
 
 // WasOutcomeUnknown reports whether the local record for id carries a
-// physically ambiguous failure. Such rows are never reprinted by a duplicate
-// delivery unless reprint_after_crash is explicitly enabled: the previous
-// attempt may have produced paper.
+// physically ambiguous failure. Such rows are never reprinted by duplicate
+// delivery, regardless of legacy configuration: the previous attempt may have
+// produced paper. Reconciliation may report that original outcome only.
 func (q *Queue) WasOutcomeUnknown(id string) bool {
 	var status string
 	var lastErr sql.NullString

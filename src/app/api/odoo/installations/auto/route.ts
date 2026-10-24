@@ -27,9 +27,9 @@ function proofMatches(candidate: string, storedHash: string): boolean {
 
 /**
  * Zero-touch, idempotent Odoo installation enrollment for newly provisioned
- * workspaces. A tenant with no historical jobs or receipts is atomically
- * promoted to strict-v2 at first enrollment. Historical tenants must
- * reconcile their print history before this one-way cutover.
+ * workspaces that already use strict-v2. Legacy workspaces require explicit
+ * reconciliation and cutover: absent Gateway history cannot establish that
+ * an Odoo outbox or restored database contains no historical operations.
  * One Odoo API key may connect multiple independent
  * Odoo databases. Installation proofs are generated on the Odoo host and
  * never returned from this endpoint or persisted as plaintext on Gateway.
@@ -69,23 +69,7 @@ export async function POST(req: Request) {
       if (active.length !== 1) return "invalid_key" as const;
       await requireTenantBillingAccess(tx, key.tenantId);
       if (tenant.rows[0].mode !== "strict_v2") {
-        if (tenant.rows[0].mode !== "legacy") return "legacy_workspace" as const;
-        const history = await tx.execute(sql`
-          SELECT (
-            EXISTS (SELECT 1 FROM print_jobs
-                    WHERE tenant_id = ${key.tenantId} AND api_key_id IS NOT NULL)
-            OR EXISTS (SELECT 1 FROM print_job_receipts
-                       WHERE tenant_id = ${key.tenantId} AND api_key_id IS NOT NULL)
-          ) AS has_history
-        `);
-        if (history.rows[0]?.has_history === true) return "legacy_workspace" as const;
-        // One-way activation happens before installation enrollment in this
-        // same transaction; failures roll back BOTH mutations.
-        await tx.execute(sql`
-          UPDATE tenants SET odoo_idempotency_mode = 'strict_v2',
-            updated_at = clock_timestamp()
-          WHERE id = ${key.tenantId}
-        `);
+        return "legacy_workspace" as const;
       }
 
       // The primary key enforces one immutable proof per ID. Concurrent

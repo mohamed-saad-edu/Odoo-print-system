@@ -30,6 +30,7 @@ import { BrandMark } from "./brand";
 import { NavIconFrame, ShellSearchButton } from "./visual-system";
 import { useI18n } from "../i18n/react";
 import type { Translator } from "../i18n/translate";
+import { WorkspaceSecurityNotice } from "./WorkspaceSecurity";
 
 const NAV_ITEMS: TopNavItem[] = [
   { href: "/dashboard", labelKey: "nav.console", icon: LayoutDashboard, sectionKey: "nav.section.operations", keywords: "console dashboard overview printers jobs" },
@@ -415,7 +416,7 @@ function ConsoleShell({
           onOpenNavigation={() => setMobileOpen(true)}
           onSearch={() => setPaletteOpen(true)}
         />
-        <main className="page-transition min-w-0 max-w-full">{children}</main>
+        <main className="page-transition min-w-0 max-w-full"><WorkspaceSecurityNotice />{children}</main>
       </div>
 
       {/* Radix manages Escape, focus trapping and return-to-trigger. */}

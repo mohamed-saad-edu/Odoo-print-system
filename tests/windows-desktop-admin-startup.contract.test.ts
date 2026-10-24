@@ -28,11 +28,14 @@ describe("Windows desktop Agent startup contract", () => {
   it("shows Administrator recovery when local Agent service is missing or stopped", () => {
     const desktop = read("src/desktop/main.tsx");
     const commands = read("src-tauri/src/commands.rs");
+    const statusClassifier = read("src-tauri/src/agent_status.rs");
     expect(desktop).toContain("const agentServiceNeedsAdmin =");
     expect(desktop).toContain('agentStatus.note_code !== "service_running"');
     expect(desktop).toContain("open={agentServiceNeedsAdmin && !adminDismissed}");
-    expect(commands).toContain('"service_missing"');
-    expect(commands).toContain('"service_stopped"');
-    expect(commands).toContain('"background_running_service_missing"');
+    expect(commands).toContain("crate::agent_status::note_code(running, service_running, &note)");
+    expect(commands).toContain("note_code: note_code.into()");
+    expect(statusClassifier).toContain('"service_missing"');
+    expect(statusClassifier).toContain('"service_stopped"');
+    expect(statusClassifier).toContain('"background_running_service_missing"');
   });
 });

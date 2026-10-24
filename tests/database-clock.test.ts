@@ -191,15 +191,21 @@ describe("clock authority is enforced in the source", () => {
     const resend = read("src/app/api/auth/resend-verification/route.ts");
     const reset = read("src/app/api/auth/reset-password/route.ts");
     const verifyEmail = read("src/app/api/auth/verify-email/route.ts");
+    const policy = read("src/lib/email-auth-token-policy.ts");
 
-    expect(forgot).toContain("clock_timestamp() + interval '20 minutes'");
-    expect(resend).toContain("clock_timestamp() + interval '30 minutes'");
-    expect(reset).toContain("gt(passwordResetTokens.expiresAt, sql`clock_timestamp()`)");
+    expect(forgot).toContain("...emailAuthTokenTimes()");
+    expect(resend).toContain("...emailAuthTokenTimes()");
+    expect(policy).toContain("createdAt: sql`clock_timestamp()`");
+    expect(policy).toContain("clock_timestamp() + interval '10 minutes'");
+    expect(policy).toContain("${table.createdAt} <= clock_timestamp()");
+    expect(policy).toContain("${table.createdAt} > clock_timestamp() - interval '10 minutes'");
+    expect(policy).toContain("${table.expiresAt} > clock_timestamp()");
+    expect(policy).not.toContain("Date.now()");
+    // Both the optimistic read and the atomic write retain the same fence.
+    expect(reset.split("emailAuthTokenIsLive(passwordResetTokens)")).toHaveLength(3);
     expect(reset).toContain("isNull(passwordResetTokens.consumedAt)");
-    expect(reset).toContain("gt(passwordResetTokens.expiresAt, sql`clock_timestamp()`)");
-    expect(verifyEmail).toContain("gt(emailVerificationTokens.expiresAt, sql`clock_timestamp()`)");
+    expect(verifyEmail.split("emailAuthTokenIsLive(emailVerificationTokens)")).toHaveLength(3);
     expect(verifyEmail).toContain("isNull(emailVerificationTokens.consumedAt)");
-    expect(verifyEmail).toContain("gt(emailVerificationTokens.expiresAt, sql`clock_timestamp()`)");
   });
 
   it("writes tenant lifecycle transition timestamps on the database clock", () => {

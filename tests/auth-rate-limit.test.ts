@@ -184,15 +184,24 @@ suite("manager login rate limiting", () => {
     await pool().query(`INSERT INTO users (id, email, password_hash, email_verified_at) VALUES ('user_b', $1, $2, now())`, [email, await hashPassword(password)]);
     await pool().query(`INSERT INTO tenant_users (user_id, tenant_id, role) VALUES ('user_b', 'tenant_b', 'admin')`);
 
-    const res = await login(email, password, "198.51.100.13", "tenant-b.test");
-    expect(res.status).toBe(200);
-    const session = await pool().query(`SELECT tenant_id, user_id, role, kind FROM refresh_tokens`);
-    expect(session.rows).toEqual([{
-      tenant_id: "tenant_b",
-      user_id: "user_b",
-      role: "admin",
-      kind: "manager",
-    }]);
+    vi.stubEnv("APP_BASE_URL", "https://tenant-b.test");
+    try {
+      const request = new Request("https://tenant-b.test/api/auth/manager/login", {
+        method: "POST", headers: { origin: "https://tenant-b.test", host: "tenant-b.test",
+          "content-type": "application/json", "x-real-ip": "198.51.100.13" },
+        body: JSON.stringify({ username: email, password }),
+      });
+      const res = await loginPOST(request);
+      expect(res.status).toBe(200);
+      expect(res.headers.getSetCookie()).toContainEqual(expect.stringContaining("mgr_session="));
+      const session = await pool().query(`SELECT tenant_id, user_id, role, kind FROM refresh_tokens`);
+      expect(session.rows).toEqual([{
+        tenant_id: "tenant_b",
+        user_id: "user_b",
+        role: "admin",
+        kind: "manager",
+      }]);
+    } finally { vi.unstubAllEnvs(); }
   });
 
   it("repeated failures then 429 with Retry-After", async () => {

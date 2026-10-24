@@ -1,4 +1,5 @@
 import ast
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -55,8 +56,10 @@ def test_windows_system_utilities_are_not_path_resolved():
     assert 'OpenSCManagerW' in source
     assert 'OpenServiceW' in source
     assert 'QueryServiceStatusEx' in source
-    assert 'if error == 1060 { Ok(None) }' in source
-    assert 'AGENT_CONTROL.lock()' in source
+    # Keep this guard scoped to the SCM query while accepting rustfmt's
+    # multiline form; formatting must not change the missing-service contract.
+    assert 'if error == 1060 { Ok(None) }' in " ".join(function_body("sc_query").split())
+    assert 'AGENT_CONTROL.lock()' in "".join(source.split())
     assert "run_net(" not in source
     assert "run_agent_service_command" in source
     assert "verify_installed_service_ownership" in source
@@ -358,8 +361,12 @@ def test_odoo_sql_identifiers_never_use_raw_table_name_formatting():
 
 def test_shared_session_tokens_use_short_access_and_long_refresh_lifetimes():
     source = read("src/lib/session-tokens.ts")
+    workspace_policy = read("src/lib/workspace-session-security.ts")
     assert "ACCESS_TOKEN_TTL_SECONDS = 15 * 60" in source
-    assert "REFRESH_FAMILY_TTL_MS = 30 * 24 * 60 * 60 * 1000" in source
+    # Refresh issuance now shares the persisted workspace policy; keep the
+    # exact 30-day contract across the alias and its authoritative definition.
+    assert "REFRESH_FAMILY_TTL_MS = WORKSPACE_ABSOLUTE_MS" in source
+    assert "WORKSPACE_ABSOLUTE_MS = 30 * 24 * 60 * 60 * 1000" in workspace_policy
     assert 'createHash("sha256").update(token' in source
     assert 'tokenHash: hashRefreshToken(refreshToken)' in source
     assert "REFRESH_ROTATION_GRACE_MS = 5_000" in source
@@ -453,11 +460,19 @@ def test_auth_login_paths_do_not_send_refresh_tokens_to_browser_renderers():
     assert '"Cache-Control", "no-store"' in manager
     assert 'if (!desktopClient)' in manager
     platform = read("src/app/api/platform/auth/login/route.ts")
-    assert "platformRefreshCookieHeader" in platform
+    assert "createPlatformSession" in platform
+    assert "platformCookieHeader(session.token" in platform
+    assert "platformRefreshCookieHeader(session.refreshToken" in platform
+    assert "{ ok: true, expiresAt: session.exp.toISOString() }" in platform
     assert '"Cache-Control", "no-store"' in platform
+    assert "accessToken:" not in platform and "refreshToken:" not in platform
     customer = read("src/app/api/auth/login/route.ts")
+    assert "issueCustomerSession" in customer
+    assert "customerSessionCookie(session)" in customer
     assert "customerRefreshCookie(session)" in customer
-    assert '"Cache-Control", "no-store"' in customer
+    assert "accessToken:" not in customer and "refreshToken:" not in customer
+    assert '"Cache-Control": "private, no-store"' in customer
+    assert '"Cache-Control": "private, no-store"' in read("src/lib/workspace-session-http.ts")
 
 
 def test_password_reset_revokes_shared_refresh_families():
@@ -529,16 +544,18 @@ def test_legacy_session_tables_are_isolated_to_compatibility_adapters():
     for path in Path("src").rglob("*.ts"):
         relative = path.as_posix()
         source = path.read_text(encoding="utf-8")
-        if "managerSessions" in source:
+        # Match the storage identifier, not UI translation keys such as
+        # security.platformSessionsHint that do not import a legacy table.
+        if re.search(r"\bmanagerSessions\b", source):
             assert relative in allowed_manager, f"managerSessions leaked outside legacy adapter: {relative}"
-        if "platformSessions" in source:
+        if re.search(r"\bplatformSessions\b", source):
             assert relative in allowed_platform, f"platformSessions leaked outside legacy adapter: {relative}"
 
     for path in Path("src").rglob("*.tsx"):
         relative = path.as_posix()
         source = path.read_text(encoding="utf-8")
-        assert "managerSessions" not in source, f"legacy manager session dependency in page: {relative}"
-        assert "platformSessions" not in source, f"legacy platform session dependency in page: {relative}"
+        assert not re.search(r"\bmanagerSessions\b", source), f"legacy manager session dependency in page: {relative}"
+        assert not re.search(r"\bplatformSessions\b", source), f"legacy platform session dependency in page: {relative}"
 
     source = Path("src/lib/session-tokens.ts").read_text(encoding="utf-8")
     assert "Date.now(" not in source

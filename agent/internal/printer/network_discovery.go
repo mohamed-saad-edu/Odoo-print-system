@@ -21,6 +21,9 @@ import (
 // Port 9100 reachability does not identify the print language, so Protocol
 // remains unknown until an operator or a protocol-specific probe identifies it.
 func discoverNetworkPrinters(ctx context.Context) ([]DeviceInfo, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, discoveryScanError("network TCP", 0, 0, err)
+	}
 	// Global timeout for network discovery
 	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()

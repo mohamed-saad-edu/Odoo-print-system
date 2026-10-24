@@ -143,7 +143,8 @@ describe("production hardening contracts", () => {
     expect(compose).toContain("service_completed_successfully");
     expect(compose).toContain("condition: service_healthy");
     expect(compose).toContain("PGHOST: postgres");
-    expect(compose).toContain("PGPASSWORD_FILE: /run/secrets/postgres_password");
+    expect(compose).toContain("PGPASSWORD_FILE: /run/secrets/postgres_runtime_password");
+    expect(compose).toContain("PGPASSWORD_FILE: /run/secrets/postgres_owner_password");
     expect(compose).not.toContain("PGPASSWORD: ${POSTGRES_PASSWORD");
     expect(compose).not.toContain("DATABASE_URL: postgresql://");
     expect(read("src/db/index.ts")).toContain("runtimeSecret(\"PGPASSWORD\")");
@@ -393,9 +394,15 @@ describe("production hardening contracts", () => {
     expect(printRoute).toContain("rateLimitKeyId: odoo.id,");
     expect(printRoute).toContain("tenantId: odoo.tenantId,");
     expect(printRoute).not.toContain("eq(printJobs.idempotencyKey, parsed.data.idempotencyKey)");
-    expect(printRoute).toContain("eq(printJobs.tenantId, odoo.tenantId)");
-    expect(printRoute).toContain("eq(printJobs.idempotencyKey, idempotencyKey!)");
-    expect(printRoute).toContain("isNotNull(printJobs.apiKeyId)");
+    expect(printRoute).toContain("readOdooJobStatus(odoo, identity,");
+    const statusScope = read("src/lib/odoo-status-scope.ts");
+    expect(statusScope).toContain("eq(printJobs.tenantId, key.tenantId)");
+    expect(statusScope).toContain("eq(printJobs.idempotencyKey, lookup.idempotencyKey!)");
+    expect(statusScope).toContain("isNotNull(printJobs.apiKeyId)");
+    const statusGuard = statusScope.indexOf("await requireOdooStatusAccess(tx, key, identity)");
+    expect(statusGuard).toBeGreaterThan(-1);
+    expect(statusScope.indexOf("await tx.query.printJobs.findFirst")).toBeGreaterThan(statusGuard);
+    expect(statusScope.indexOf("await tx.query.printJobReceipts.findFirst")).toBeGreaterThan(statusGuard);
     const keyFence = printService.indexOf("WHERE id = ${rateLimitKeyId} AND tenant_id = ${tenantId}");
     const firstReceiptRead = printService.indexOf("const receipt = await tx.query.printJobReceipts.findFirst");
     const firstJobRead = printService.indexOf("const existing = await tx.execute(sql`SELECT id, printer_id");
@@ -449,14 +456,13 @@ describe("production hardening contracts", () => {
 
 });
 
-it("agent crash reprint is a fenced printing->queued transition, separate from pre-execution rejection", () => {
+it("legacy crash reprint is refused separately from safe pre-execution rejection", () => {
   const source = read("src/app/api/agent/jobs/route.ts");
   const status = read("src/lib/job-status.ts");
   expect(status).toContain('AGENT_REPRINT_AFTER_CRASH_REASON = "agent_reprint_after_crash"');
-  expect(source).toContain('requestedStatus === "queued" && currentStatus === "printing"');
-  expect(source).toContain('reason !== AGENT_REPRINT_AFTER_CRASH_REASON');
-  expect(source).toContain('printJobs.expiresAt} > now()');
-  expect(source).toContain('printJobs.retries} < ${MAX_RETRIES}');
+  const refusal = source.slice(source.indexOf('if (requestedStatus === "queued" && currentStatus === "printing")'), source.indexOf('if (requestedStatus === "queued" && currentStatus === "claimed")'));
+  expect(refusal).toContain('UNKNOWN_OUTCOME_REPRINT_FORBIDDEN');
+  expect(refusal).toContain('physicalOutcome: "unknown"');
+  expect(refusal).not.toContain('db.update');
   expect(source).toContain('retries: sql`${printJobs.retries} + 1`');
-  expect(source).not.toMatch(/agent_reprint_after_crash[\s\S]{0,500}deliveryAttempts: sql`GREATEST/);
 });

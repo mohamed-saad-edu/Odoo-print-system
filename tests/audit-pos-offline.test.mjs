@@ -1,3 +1,4 @@
+import { receiptGeometry } from "./helpers/odoo-printer-geometry.mjs";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { readFile } from "node:fs/promises";
@@ -8,8 +9,16 @@ import vm from "node:vm";
 // offline suite requires Node's built-in modules only, never downloaded deps.
 async function loadHooks(file = "pos_print_router.js") {
   let hooks;
+  const nativeCalls = [];
+  const native = {
+    async printReceipt() { nativeCalls.push("receipt"); return true; },
+    async sendOrderInPreparation() { nativeCalls.push("preparation"); return true; },
+    async printChanges() { nativeCalls.push("changes"); return true; },
+    async printOrderChanges() { nativeCalls.push("station"); return { successful: true }; },
+    async onClick() { nativeCalls.push("sale-details"); return true; },
+  };
   const mocks = {
-    patch: (_prototype, extension) => { hooks = extension; },
+    patch: (_prototype, extension) => { hooks = extension; Object.setPrototypeOf(extension, native); },
     _t: (text, ...args) => { let index = 0; return text.replace(/%s/g, () => String(args[index++])); },
     PosStore: class {}, SaleDetailsButton: class {}, OrderReceipt: { template: "point_of_sale.OrderReceipt" },
     RetryPrintPopup: class {}, ConfirmationDialog: class {},
@@ -30,11 +39,8 @@ async function loadHooks(file = "pos_print_router.js") {
   // isolated raster boundary while the real pixel/layout contract is tested
   // in tests/pos-receipt-font.test.ts against the actual module.
   const raster = new vm.SyntheticModule([
-    "DEFAULT_RECEIPT_RASTER_WIDTH", "normalizedReceiptRasterWidth", "renderGatewayReceiptJpeg",
+    "renderGatewayReceiptJpeg",
   ], function () {
-    this.setExport("DEFAULT_RECEIPT_RASTER_WIDTH", 512);
-    this.setExport("normalizedReceiptRasterWidth", (value) =>
-      Number.isInteger(value) && value >= 288 && value <= 576 ? value : 512);
     this.setExport("renderGatewayReceiptJpeg", async () => "VALIDJPEG");
   }, { context });
   const asyncSource = await readFile(new URL("../odoo_addons/print_gateway/static/src/js/async_control.js", import.meta.url), "utf8");
@@ -46,12 +52,12 @@ async function loadHooks(file = "pos_print_router.js") {
   await limits.link(() => common);
   const recoverySource = await readFile(new URL("../odoo_addons/print_gateway/static/src/js/operation_recovery.js", import.meta.url), "utf8");
   const recovery = new vm.SourceTextModule(recoverySource, { context });
-  await recovery.link(() => { throw new Error("Unexpected recovery import"); });
+  await recovery.link((name) => { assert.equal(name, "@web/core/l10n/translation"); return common; });
   const source = await readFile(new URL(`../odoo_addons/print_gateway/static/src/js/${file}`, import.meta.url), "utf8");
   const loadedModule = new vm.SourceTextModule(source, { context });
   await loadedModule.link((name) => name === "./gateway_limit_dialog" ? limits : name === "./async_control" ? asyncControl : name === "./receipt_raster" ? raster : name === "./operation_recovery" ? recovery : common);
   await loadedModule.evaluate();
-  return { hooks, exports: loadedModule.namespace, limits: limits.namespace, mocks };
+  return { hooks, exports: loadedModule.namespace, limits: limits.namespace, mocks, nativeCalls };
 }
 function canvas() {
   return { width: 100, height: 100, getContext: () => ({ fillRect() {} }), toDataURL: () => "data:image/jpeg;base64,VALIDJPEG" };
@@ -171,7 +177,7 @@ test("sales report failed status does not toast success", async () => {
   assert.deepEqual(calls.map(([, method]) => method), [
     "is_gateway_printing_enabled",
     "get_sale_details",
-    "get_gateway_sale_details_raster_width",
+    "get_gateway_sale_details_geometry",
     "action_print_gateway_sale_details",
   ]);
   assert.equal(notifications[0][1].type, "danger");
@@ -232,3 +238,82 @@ for (const file of ["report_interceptor.js", "pos_sale_details_router.js"]) {
     assert.equal(notifications[0][1].type, "warning");
   });
 }
+
+for (const method of ["printReceipt", "sendOrderInPreparation", "printChanges", "printOrderChanges"]) {
+  test(`${method} rejects nonboolean activation without native fallback`, async () => {
+    for (const enabled of [null, undefined, 0, 1, "false", {}, []]) {
+      const { hooks, nativeCalls } = await loadHooks();
+      const f = fixture({ successful: true });
+      f.pos.data.call = async () => enabled;
+      const args = method === "printReceipt" ? [{ order: f.order }]
+        : method === "printOrderChanges" ? [{ orderData: { __gateway_session_id: 5, __gateway_order_id: 21 } }, {}]
+          : [f.order, [{ new: [] }]];
+      const result = await hooks[method].call(f.pos, ...args);
+      assert.deepEqual(nativeCalls, [], `${method} treated ${JSON.stringify(enabled)} as disabled`);
+      assert.equal(typeof result === "object" ? result.successful : result, false);
+      assert.equal(f.outcomes.length, 0);
+      assert.equal(f.notifications.length, 1);
+    }
+  });
+
+  test(`${method} preserves explicit disabled activation native behavior`, async () => {
+    const { hooks, nativeCalls } = await loadHooks();
+    const f = fixture({ successful: true });
+    f.pos.data.call = async () => false;
+    const args = method === "printReceipt" ? [{ order: f.order }]
+      : method === "printOrderChanges" ? [{ orderData: { __gateway_session_id: 5, __gateway_order_id: 21 } }, {}]
+        : [f.order, [{ new: [] }]];
+    const result = await hooks[method].call(f.pos, ...args);
+    assert.equal(typeof result === "object" ? result.successful : result, true);
+    assert.equal(nativeCalls.length, 1);
+    assert.equal(f.notifications.length, 0);
+  });
+}
+
+test("Sale Details rejects nonboolean activation without native fallback", async () => {
+  for (const enabled of [null, undefined, 0, 1, "false", {}, []]) {
+    const { hooks, nativeCalls } = await loadHooks("pos_sale_details_router.js");
+    const notifications = [];
+    const button = {
+      pos: { session: { id: 5 }, data: { call: async () => enabled } },
+      env: { services: { notification: { add: (...args) => notifications.push(args) } } },
+    };
+    assert.equal(await hooks.onClick.call(button), false);
+    assert.deepEqual(nativeCalls, []);
+    assert.equal(notifications.length, 1);
+    assert.equal(button.pos.gatewaySaleDetailsPending, false);
+  }
+});
+
+test("Sale Details preserves explicit disabled activation native behavior", async () => {
+  const { hooks, nativeCalls } = await loadHooks("pos_sale_details_router.js");
+  const button = { pos: { session: { id: 5 }, data: { call: async () => false } } };
+  assert.equal(await hooks.onClick.call(button), true);
+  assert.deepEqual(nativeCalls, ["sale-details"]);
+  assert.equal(button.pos.gatewaySaleDetailsPending, false);
+});
+
+test("Sale Details rejects truthy invalid Gateway ownership and retains exact operation", async () => {
+  for (const ownership of [1, "true", {}]) {
+    const { hooks } = await loadHooks("pos_sale_details_router.js");
+    const notifications = [], submissions = [];
+    const button = {
+      pos: { session: { id: 5 }, env: { utils: { formatCurrency: () => "" } },
+        data: { call: async (_model, method, _args, kwargs) => {
+          if (method === "is_gateway_printing_enabled") return true;
+          if (method === "action_print_gateway_sale_details") {
+            submissions.push(kwargs);
+            return { gateway_enabled: submissions.length === 1 ? ownership : true, status: "submitted" };
+          }
+          return {};
+        } } },
+      env: { services: { notification: { add: (...args) => notifications.push(args) } } },
+    };
+    assert.equal(await hooks.onClick.call(button), false, "Nonboolean ownership cannot confirm admission");
+    assert.equal(notifications[0][1].type, "warning");
+    assert.equal((await hooks.onClick.call(button)).status, "submitted");
+    assert.equal(submissions.length, 2);
+    assert.equal(submissions[0].operation_id, submissions[1].operation_id);
+    assert.equal(submissions[0].image, submissions[1].image);
+  }
+});

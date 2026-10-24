@@ -1,6 +1,24 @@
-// Compatibility-only lifetime for sessions issued before refresh-token cutover.
-// New sessions use the shared 15-minute access / 30-day refresh design.
+// Historical shape bound for revoking pre-policy tokens; these tokens are no
+// longer admitted. Human workspace sessions use 15-minute access, 30-minute
+// inactivity and an original 30-day absolute family deadline.
 export const LEGACY_SESSION_MAX_AGE_SECONDS = 8 * 60 * 60;
+
+/** Production cutover deliberately does not read the old unprefixed cookies. */
+export function sessionCookieName(kind: "manager" | "customer" | "platform", refresh = false): string {
+  const base = kind === "manager" ? "mgr" : kind === "customer" ? "cust" : "plt";
+  const prefix = process.env.NODE_ENV === "production" ? "__Host-" : "";
+  return `${prefix}${base}_${refresh ? "refresh" : "session"}`;
+}
+
+/** Expire obsolete scoped/host-unbound cookies during the production cutover. */
+export function clearLegacySessionCookies(headers: Headers, kind: "manager" | "customer" | "platform"): void {
+  if (process.env.NODE_ENV !== "production") return;
+  const base = kind === "manager" ? "mgr" : kind === "customer" ? "cust" : "plt";
+  const path = kind === "manager" ? "/api/auth/manager" : kind === "customer" ? "/api/auth" : "/api/platform/auth";
+  for (const [name, cookiePath] of [[`${base}_session`, "/"], [`${base}_refresh`, path], [`__Secure-${base}_refresh`, path]]) {
+    headers.append("Set-Cookie", `${name}=; Path=${cookiePath}; HttpOnly; Secure; SameSite=Strict; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT`);
+  }
+}
 
 export function sessionCookieSecure(): boolean {
   // Production sessions are always transport-secure. Never allow an
@@ -22,10 +40,12 @@ export type RefreshKind = "manager" | "customer";
  * Refresh endpoint attempt order for one recovery round. The indicated kind
  * goes first; the other follows on 401.
  *
- * The manager refresh cookie is scoped to Path=/api/auth/manager, so the
+ * The nonproduction manager refresh cookie is scoped to /api/auth/manager, so the
  * /api/auth/me probe cannot see it: after the 15-minute manager access
  * cookie expires, the browser stops sending it and the probe can no longer
- * tell a manager session from "signed out". Trying both endpoints (bounded)
+ * tell a manager session from "signed out". Production cookies use Path=/;
+ * the bounded two-endpoint recovery also preserves the nonproduction flow.
+ * Trying both endpoints (bounded)
  * recovers through the live family instead of misreporting signed out.
  * Pure function of its input so the precedence is unit-pinned.
  */

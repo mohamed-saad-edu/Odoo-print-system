@@ -19,6 +19,7 @@ const NAV_ITEMS: TopNavItem[] = [
   { href: "/platform/plans", labelKey: "platform.nav.plans", icon: Tags, sectionKey: "platform.section.commerce", keywords: "plans pricing tiers" },
   { href: "/platform/database", labelKey: "platform.nav.database", icon: Database, sectionKey: "platform.section.security", keywords: "database table record id explorer data" },
   { href: "/platform/audit", labelKey: "platform.nav.audit", icon: Shield, sectionKey: "platform.section.security", keywords: "audit trail logs security" },
+  { href: "/platform/security", labelKey: "security.title", icon: Shield, sectionKey: "platform.section.security", keywords: "security password confirmation sessions" },
 ];
 
 export default function PlatformLayout({ children }: { children: React.ReactNode }) {

@@ -13,6 +13,7 @@ import { db } from "../src/db";
 import { createPrintJobForPrinter } from "../src/lib/print-job-service";
 import { POST as printJobsPOST, GET as printJobsGET } from "../src/app/api/print/jobs/route";
 import { vi } from "vitest";
+import { fixtureImagePayload, fixturePrinterGeometry } from "./helpers/printer-geometry";
 
 const suite = describe.skipIf(!hasTestDatabase);
 
@@ -67,9 +68,9 @@ suite("gateway runtime printer availability + payload capability contract", () =
     expect(source).not.toContain("delete capabilities.supported_protocols");
   });
 
-  it("allows spooler pdf/image by default but requires explicit declaration for spooler raw passthrough", () => {
-    // Document printers render through the driver: pdf/image pass without an
-    // explicit list. Raw byte passthrough bypasses rendering and is only for
+  it("allows spooler PDF and geometry-bound images but requires explicit declaration for raw passthrough", () => {
+    // Document printers render through the driver: PDF is a baseline, while
+    // images require current geometry. Raw byte passthrough is only for
     // passthrough-mode queues whose operator explicitly declared support —
     // otherwise a Brother MFC would receive raw ESC/POS garbage.
     expect(validatePayloadForPrinter({ type: "pdf" }, {
@@ -77,6 +78,10 @@ suite("gateway runtime printer availability + payload capability contract", () =
     }).ok).toBe(true);
     expect(validatePayloadForPrinter({ type: "image" }, {
       protocol: "spooler", connectionType: "spooler", capabilities: null,
+    }).ok).toBe(false);
+    expect(validatePayloadForPrinter(fixtureImagePayload, {
+      id: "fixture-spooler", protocol: "spooler", connectionType: "spooler",
+      capabilities: { geometry: fixturePrinterGeometry("fixture-spooler") },
     }).ok).toBe(true);
     expect(validatePayloadForPrinter({ type: "raw", protocol: "raw" }, {
       protocol: "spooler", connectionType: "spooler", capabilities: null,
@@ -173,6 +178,10 @@ suite("gateway runtime printer availability + payload capability contract", () =
     expect(validatePayloadForPrinter({ type: "image" }, {
       protocol: "spooler",
       connectionType: "usb",
+    }).ok).toBe(false);
+    expect(validatePayloadForPrinter(fixtureImagePayload, {
+      id: "fixture-usb-spooler", protocol: "spooler", connectionType: "usb",
+      capabilities: { geometry: fixturePrinterGeometry("fixture-usb-spooler") },
     }).ok).toBe(true);
     // Raw passthrough on a spooler-backed USB queue requires explicit support.
     expect(validatePayloadForPrinter({ type: "escpos", protocol: "escpos" }, {

@@ -1,15 +1,16 @@
 import React from "react";
-import { Activity, AlertTriangle, CheckCircle2, ClipboardList, Clock, FileText, Play, Printer as PrinterIcon, RefreshCw, Server, Settings } from "lucide-react";
+import { Activity, AlertTriangle, CheckCircle2, ClipboardList, Clock, FileText, Loader2, Play, Printer as PrinterIcon, RefreshCw, Server, Settings } from "lucide-react";
 import { Button, Card, CardHeader, EmptyState, ErrorState, LoadingState, Mono, StatusBadge } from "../../components/ui";
 import { DetailList, StatItem, StatStrip, StatusNotice, ViewAllButton, PrinterAvatar } from "../ui";
 import { PrinterSharingControl } from "../components/PrinterSharingControl";
 import type { DesktopState } from "../types";
 import { useI18n } from "../../i18n/react";
 import { getPrinterLanguageBadges } from "../../lib/printer-capability";
-import { agentStatusNoteKey, deriveOutcome, isProductionPrinter, isMainInventoryPrinter, jobDocType, jobId, jobPrinterId, jobStatus, jobTimestamp, labelJob, toneJob, printerDisplayName, printerPresentation, printerHealthCounts } from "../lib/printers";
+import { agentServiceState, agentStatusNoteKey, deriveOutcome, isProductionPrinter, isMainInventoryPrinter, jobDocType, jobId, jobPrinterId, jobStatus, jobTimestamp, labelJob, toneJob, printerDisplayName, printerPresentation, printerHealthCounts } from "../lib/printers";
 
 export function OverviewPage({ s }: { s: DesktopState }) {
   const { t, tc, locale, formatTime, formatDateTime } = useI18n();
+  const serviceState = agentServiceState(s.agentStatus);
   const shownPrinters = s.printers.filter(isMainInventoryPrinter);
   const gatewayPrinterIds = new Set(s.printers.map((p) => p.id));
   const pendingLocalPrinters = s.discoveredPrinters.filter(isProductionPrinter).filter((p) => !gatewayPrinterIds.has(p.id));
@@ -17,7 +18,7 @@ export function OverviewPage({ s }: { s: DesktopState }) {
   // Uncertain physical outcomes are attention-worthy on their own: a failed
   // job whose outcome markers say UNKNOWN may already exist on paper.
   const unknownJobs = s.jobs.filter(
-    (j) => jobStatus(j) === "failed" && deriveOutcome(jobStatus(j), typeof j.error === "string" ? j.error : null) === "unknown",
+    (j) => ["failed", "expired"].includes(jobStatus(j)) && deriveOutcome(jobStatus(j), typeof j.error === "string" ? j.error : null) === "unknown",
   ).length;
 
   const banner = (() => {
@@ -27,7 +28,10 @@ export function OverviewPage({ s }: { s: DesktopState }) {
     if (!s.gatewayConnected) {
       return <StatusNotice tone="warn" icon={<AlertTriangle className="h-5 w-5" />} title={t("desktop.overview.gatewayUnreachable")} action={<Button variant="primary" onClick={s.checkHealth} icon={<Activity className="h-4 w-4" />}>{t("desktop.overview.retryCheck")}</Button>}>{s.healthError ? t("desktop.overview.gatewayNoAnswer", { detail: s.healthError }) : t("desktop.overview.gatewayNoAnswerPlain")}</StatusNotice>;
     }
-    if (!s.isOnline) {
+    if (serviceState === "unknown") {
+      return <StatusNotice tone="info" icon={<Activity className="h-5 w-5" />} title={t("desktop.agents.statusUnavailable")} action={<Button variant="secondary" onClick={s.refreshStatus} icon={<RefreshCw className="h-4 w-4" />}>{t("desktop.overview.refresh")}</Button>}>{t(agentStatusNoteKey(s.agentStatus))}</StatusNotice>;
+    }
+    if (serviceState === "stopped") {
       return <StatusNotice tone="warn" icon={<AlertTriangle className="h-5 w-5" />} title={t("desktop.overview.agentOfflineTitle")} action={<Button variant="primary" onClick={s.startAgent} icon={<Play className="h-4 w-4" />}>{t("desktop.overview.startAgent")}</Button>}>{t("desktop.overview.agentNotRunning")}</StatusNotice>;
     }
     if (s.localPrintersError) {
@@ -37,6 +41,9 @@ export function OverviewPage({ s }: { s: DesktopState }) {
       const detail = s.printersError || s.jobsError || t("desktop.overview.gatewayNoAnswerPlain");
       return <StatusNotice tone="warn" icon={<AlertTriangle className="h-5 w-5" />} title={t("desktop.overview.needsAttention")} action={<Button variant="secondary" onClick={() => { void s.refreshPrinters(); void s.refreshJobs(); }} icon={<RefreshCw className="h-4 w-4" />}>{t("desktop.overview.refresh")}</Button>}>{detail}</StatusNotice>;
     }
+    if (s.printersLoading || s.localPrintersLoading || s.jobsLoading) {
+      return <StatusNotice tone="info" icon={<Loader2 className="h-5 w-5 animate-spin" aria-hidden />} title={t("common.checking")} />;
+    }
     if (offline > 0 || unknownPrinters > 0 || s.failedJobs > 0 || unknownJobs > 0) {
       const parts: string[] = [];
       if (offline > 0) parts.push(tc("desktop.overview.printersNeedAttention", offline));
@@ -44,6 +51,9 @@ export function OverviewPage({ s }: { s: DesktopState }) {
       if (s.failedJobs > 0) parts.push(tc("desktop.overview.jobsFailed", s.failedJobs));
       if (unknownJobs > 0) parts.push(tc("desktop.overview.jobsUnknown", unknownJobs));
       return <StatusNotice tone="warn" icon={<AlertTriangle className="h-5 w-5" />} title={t("desktop.overview.needsAttention")} action={<Button variant="secondary" onClick={() => s.navigate(offline > 0 || unknownPrinters > 0 ? "printers" : "jobs")}>{offline > 0 || unknownPrinters > 0 ? t("desktop.overview.reviewPrinters") : t("desktop.overview.reviewJobs")}</Button>}>{parts.join(" • ")}</StatusNotice>;
+    }
+    if (shownPrinters.length === 0) {
+      return <StatusNotice tone="info" icon={<PrinterIcon className="h-5 w-5" />} title={pendingLocalPrinters.length > 0 ? t("desktop.printers.waitingTitle") : t("desktop.overview.noPhysicalPrinters")} action={<Button variant="primary" onClick={() => s.navigate("printers")}>{t("desktop.overview.reviewPrinters")}</Button>}>{pendingLocalPrinters.length > 0 ? t("desktop.printers.waitingBody") : t("desktop.overview.noPhysicalPrintersBody")}</StatusNotice>;
     }
     return <StatusNotice tone="ok" icon={<CheckCircle2 className="h-5 w-5" />} title={t("desktop.overview.allNormal")}>{t("desktop.overview.allNormalBody")}</StatusNotice>;
   })();
@@ -53,10 +63,10 @@ export function OverviewPage({ s }: { s: DesktopState }) {
       <div className="yw-agent-status">{banner}</div>
 
       <div className="yw-agent-stats"><StatStrip>
-        <StatItem label={t("desktop.overview.statAgent")} value={s.isOnline ? t("desktop.status.online") : t("desktop.status.offline")} sub={s.agentStatus ? t(agentStatusNoteKey(s.agentStatus as Record<string, unknown>)) : s.isOnline ? t("desktop.overview.agentRunningExe") : t("desktop.overview.notRunning")} tone={s.isOnline ? "ok" : "bad"} icon={<Activity className="h-4 w-4" />} />
+        <StatItem label={t("desktop.overview.statAgent")} value={serviceState === "unknown" ? t("desktop.status.unknown") : s.isOnline ? t("desktop.status.online") : t("desktop.status.offline")} sub={t(agentStatusNoteKey(s.agentStatus))} tone={serviceState === "unknown" ? "neutral" : s.isOnline ? "ok" : "bad"} icon={<Activity className="h-4 w-4" />} />
         <StatItem label={t("desktop.overview.statGateway")} value={s.gatewayUrl ? (s.gatewayConnected ? t("desktop.status.connected") : t("desktop.status.unreachable")) : t("desktop.status.notConfigured")} sub={!s.gatewayUrl ? t("desktop.overview.setUrlInSettings") : s.gatewayConnected ? t("desktop.status.reachable") : t("desktop.status.failedLastCheck")} tone={s.gatewayConnected ? "ok" : s.gatewayUrl ? "bad" : "neutral"} icon={<Server className="h-4 w-4" />} />
         <StatItem label={t("desktop.overview.statPrinters")} value={`${online} / ${shownPrinters.length}`} sub={unknownPrinters > 0 ? t("printer.presentation.unavailableCount", { count: unknownPrinters }) : offline > 0 ? t("printer.presentation.attentionCount", { count: offline }) : t("printer.presentation.availableCount", { count: online })} tone={shownPrinters.length > 0 && offline + unknownPrinters === 0 ? "ok" : shownPrinters.length === 0 ? "neutral" : "warn"} icon={<PrinterIcon className="h-4 w-4" />} />
-        <StatItem label={t("desktop.overview.statJobs")} value={String(s.pendingJobs)} sub={s.failedJobs > 0 ? tc("desktop.overview.jobsFailed", s.failedJobs) : t("desktop.status.pending")} tone={s.failedJobs > 0 ? "bad" : s.pendingJobs > 0 ? "info" : "neutral"} icon={<ClipboardList className="h-4 w-4" />} />
+        <StatItem label={t("desktop.overview.statJobs")} value={s.jobsLoading || s.jobsError ? "—" : String(s.pendingJobs)} sub={s.jobsLoading ? t("common.checking") : s.jobsError ? t("desktop.overview.queueUnavailable") : s.failedJobs > 0 ? tc("desktop.overview.jobsFailed", s.failedJobs) : t("desktop.status.pending")} tone={s.jobsLoading || s.jobsError ? "neutral" : s.failedJobs > 0 ? "bad" : s.pendingJobs > 0 ? "info" : "neutral"} icon={<ClipboardList className="h-4 w-4" />} />
       </StatStrip></div>
 
       <div className="grid gap-6 lg:grid-cols-3">
@@ -77,7 +87,7 @@ export function OverviewPage({ s }: { s: DesktopState }) {
                   const name = printerDisplayName(p, locale);
                   return (
                     <div key={p.id} className="flex w-full min-w-0 flex-wrap items-center justify-between gap-3 px-1 py-3.5 transition-colors hover:bg-surface-hover sm:px-2">
-                      <button type="button" onClick={() => { s.setJobPrinterFilter(p.id); s.setJobTab("all"); s.setJobSearch(""); s.navigate("jobs"); }} className="flex min-w-0 flex-1 items-center gap-3 text-start focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/35 focus-visible:ring-offset-1 focus-visible:ring-offset-app">
+                      <button type="button" onClick={() => { s.setJobPrinterFilter(p.id); s.setJobTab("all"); s.setJobSearch(""); s.navigate("jobs"); }} className="flex w-full min-w-0 items-center gap-3 text-start focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/35 focus-visible:ring-offset-1 focus-visible:ring-offset-app sm:w-auto sm:flex-1">
                         <PrinterAvatar name={name} size="lg" tone={view.tone} />
                         <span className="min-w-0 flex-1"><span className="block break-words text-base font-semibold text-ink">{name}</span>{p.agentName && <span className="mt-0.5 block break-words text-xs text-ink-3">{p.agentName}</span>}</span>
                       </button>
@@ -109,7 +119,7 @@ export function OverviewPage({ s }: { s: DesktopState }) {
                 ),
               },
               { label: t("desktop.overview.statGateway"), value: <span className="block truncate text-xs">{s.gatewayUrl || "—"}</span> },
-              { label: t("desktop.overview.statAgent"), value: s.isOnline ? t("desktop.status.running") : t("desktop.status.stopped") },
+              { label: t("desktop.overview.statAgent"), value: serviceState === "unknown" ? t("desktop.status.unknown") : s.isOnline ? t("desktop.status.running") : t("desktop.status.stopped") },
             ]} />
             <div className="mt-4 border-t border-edge pt-4 space-y-2">
               <div className="flex items-center justify-between text-xs"><span className="font-[550] text-ink-3">{t("desktop.overview.queueTitle")}</span><span className={`font-semibold ${s.jobsError || s.jobsLoading ? "text-ink-3" : s.pendingJobs > 20 ? "text-warn" : s.pendingJobs > 0 ? "text-brand" : "text-ok"}`}>{s.jobsLoading ? t("desktop.overview.queueChecking") : s.jobsError ? t("desktop.overview.queueUnavailable") : s.pendingJobs > 20 ? t("desktop.overview.queueBacklogged") : s.pendingJobs > 0 ? t("desktop.overview.queueInFlight") : t("desktop.overview.queueClear")}</span></div>

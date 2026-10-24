@@ -10,14 +10,12 @@ import (
 	"os"
 	"runtime"
 	"strconv"
-	"sync"
 	"time"
 	"unsafe"
 
 	pdfium "github.com/klippa-app/go-pdfium"
 	"github.com/klippa-app/go-pdfium/requests"
 	"github.com/klippa-app/go-pdfium/responses"
-	"github.com/klippa-app/go-pdfium/webassembly"
 	"golang.org/x/sys/windows"
 )
 
@@ -33,7 +31,6 @@ import (
 // selection and physical spooling; RAW/ESC-POS traffic never enters this path.
 
 const (
-	maxPDFPages        = 500
 	maxPDFDevModeBytes = 8 * 1024 * 1024
 
 	// GetDeviceCaps indices.
@@ -83,19 +80,6 @@ type winDOCINFOW struct {
 type generatedReceiptPDFKey struct{}
 
 var (
-	pdfiumOnce sync.Once
-	pdfiumPool pdfium.Pool
-	pdfiumErr  error
-
-	// PDFium is limited to one live worker. This both bounds memory and keeps
-	// GDI page submission serialized so independent PDF jobs cannot overlap
-	// on the same renderer/print pipeline.
-	//
-	// The slot is a channel, not a sync.Mutex, so a cancelled job refuses to
-	// wait behind the holder: Lock would block past the SCM stop bound even
-	// when ctx is already done, while the select below fails fast.
-	embeddedPDFPrintSlot = make(chan struct{}, 1)
-
 	modGDI32              = windows.NewLazySystemDLL("gdi32.dll")
 	procCreateDCW         = modGDI32.NewProc("CreateDCW")
 	procDeleteDC          = modGDI32.NewProc("DeleteDC")
@@ -111,16 +95,6 @@ var (
 	procSetStretchBltMode = modGDI32.NewProc("SetStretchBltMode")
 	procSetBrushOrgEx     = modGDI32.NewProc("SetBrushOrgEx")
 )
-
-func getPDFiumPool() (pdfium.Pool, error) {
-	pdfiumOnce.Do(func() {
-		// Configuration (including the headless-safe stdout/stderr policy
-		// required by Session 0 Windows Services) lives in pdfium_pool.go so
-		// it is shared by every PDFium consumer and testable off Windows.
-		pdfiumPool, pdfiumErr = webassembly.Init(newPDFiumPoolConfig())
-	})
-	return pdfiumPool, pdfiumErr
-}
 
 // pinGDIPrintThread keeps the printer DC, any child memory DC, drawing and
 // deferred AbortDoc/DeleteDC on one OS thread. The slot serializes PDF jobs,
@@ -441,13 +415,15 @@ func renderAndPrintPDFWithPDFiumResultObserved(ctx context.Context, printerName 
 		return fmt.Errorf("PDF page count %d exceeds embedded renderer limit %d", pages.PageCount, maxPDFPages)
 	}
 	receipt, _ := ctx.Value(generatedReceiptPDFKey{}).(bool)
+	imageGeometry, _ := ctx.Value(imageGeometryKey{}).(*Geometry)
 	if receipt && pages.PageCount != 1 {
 		return fmt.Errorf("generated receipt PDF must contain exactly one page")
 	}
 	type pagePlan struct {
 		pdfPagePlan
-		paper pdfPaper
-		mode  []byte
+		paper       pdfPaper
+		mode        []byte
+		sourceIndex int
 	}
 	plans := make([]pagePlan, pages.PageCount)
 	modes := make(map[pdfPaper][]byte)
@@ -470,6 +446,11 @@ func renderAndPrintPDFWithPDFiumResultObserved(ctx context.Context, printerName 
 		if !ok {
 			var usedCurrent bool
 			mode, usedCurrent, err = selectPDFPaperMode(func() ([]byte, error) {
+				// Profiled images retain the driver's selected physical form;
+				// variable receipt height is divided into pages, not fit to height.
+				if imageGeometry != nil {
+					return nil, fmt.Errorf("use measured current driver form for image")
+				}
 				// A valid source need not fit DEVMODE's signed-short form limits.
 				if paperErr != nil {
 					return nil, paperErr
@@ -498,7 +479,7 @@ func renderAndPrintPDFWithPDFiumResultObserved(ctx context.Context, printerName 
 			}
 			modes[paper] = mode
 		}
-		plan := pagePlan{pdfPagePlan: pdfPagePlan{width: size.Width, height: size.Height}, paper: paper, mode: mode}
+		plan := pagePlan{pdfPagePlan: pdfPagePlan{width: size.Width, height: size.Height}, paper: paper, mode: mode, sourceIndex: pageIndex}
 		if receipt {
 			plan.crop, err = receiptPDFCrop(instance, requests.Page{ByIndex: &requests.PageByIndex{Document: doc.Document, Index: pageIndex}}, size.Width, size.Height)
 			if err != nil {
@@ -518,13 +499,19 @@ func renderAndPrintPDFWithPDFiumResultObserved(ctx context.Context, printerName 
 	}
 	defer func() { procDeleteDC.Call(hdc) }()
 
-	// Validate every actual printable form before StartDoc. Driver substitutions
-	// are fitted proportionally; invalid geometry still refuses all submission.
-	validated := make(map[pdfPaper]bool)
-	for pageIndex, plan := range plans {
-		if validated[plan.paper] {
-			continue
+	if imageGeometry != nil {
+		if err := checkImageDeviceGeometry(imageGeometry, deviceCaps(hdc, capPhysicalWidth), deviceCaps(hdc, capPhysicalHeight),
+			deviceCaps(hdc, capHorzRes), deviceCaps(hdc, capVertRes), deviceCaps(hdc, capLogPixelsX), deviceCaps(hdc, capLogPixelsY),
+			deviceCaps(hdc, capPhysicalOffsetX), deviceCaps(hdc, capPhysicalOffsetY)); err != nil {
+			return err
 		}
+	}
+
+	// Validate and paginate every actual printable form before StartDoc. Long
+	// receipts retain their width and use multiple pages in one spool document;
+	// they never become an unreadably thin image to fit a fixed form's height.
+	expandedPlans := make([]pagePlan, 0, len(plans))
+	for pageIndex, plan := range plans {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -537,9 +524,14 @@ func renderAndPrintPDFWithPDFiumResultObserved(ctx context.Context, printerName 
 		}
 		physicalW, physicalH := deviceCaps(checkDC, capPhysicalWidth), deviceCaps(checkDC, capPhysicalHeight)
 		dpiX, dpiY := deviceCaps(checkDC, capLogPixelsX), deviceCaps(checkDC, capLogPixelsY)
-		_, _, _, _, validationErr := plan.printableDestination(physicalW, physicalH,
+		segments, validationErr := plan.paginate(physicalW, physicalH,
 			deviceCaps(checkDC, capHorzRes), deviceCaps(checkDC, capVertRes), dpiX, dpiY,
 			deviceCaps(checkDC, capPhysicalOffsetX), deviceCaps(checkDC, capPhysicalOffsetY))
+		if receiptJPEG, ok := ctx.Value(generatedReceiptJPEGKey{}).([]byte); ok && validationErr == nil {
+			segments, validationErr = plan.paginateReceiptJPEG(receiptJPEG, physicalW, physicalH,
+				deviceCaps(checkDC, capHorzRes), deviceCaps(checkDC, capVertRes), dpiX, dpiY,
+				deviceCaps(checkDC, capPhysicalOffsetX), deviceCaps(checkDC, capPhysicalOffsetY))
+		}
 		if validationErr != nil {
 			validationErr = pdfSheetDiagnostic(validationErr, pageIndex+1, true, plan.width, plan.height,
 				physicalW, physicalH, deviceCaps(checkDC, capHorzRes), deviceCaps(checkDC, capVertRes),
@@ -553,8 +545,16 @@ func renderAndPrintPDFWithPDFiumResultObserved(ctx context.Context, printerName 
 		if validationErr != nil {
 			return validationErr
 		}
-		validated[plan.paper] = true
+		if len(expandedPlans)+len(segments) > maxPDFPages {
+			return fmt.Errorf("paginated document exceeds the %d-page embedded renderer limit", maxPDFPages)
+		}
+		for _, segment := range segments {
+			part := plan
+			part.pdfPagePlan = segment
+			expandedPlans = append(expandedPlans, part)
+		}
 	}
+	plans = expandedPlans
 
 	pageWidth, pageHeight, offsetX, offsetY, maxW, maxH := 0, 0, 0, 0, 0, 0
 	destinationX, destinationY, destinationW, destinationH := 0, 0, 0, 0
@@ -569,7 +569,7 @@ func renderAndPrintPDFWithPDFiumResultObserved(ctx context.Context, printerName 
 			return pdfSheetDiagnostic(err, index+1, index == 0, plans[index].width, plans[index].height,
 				pageWidth, pageHeight, deviceCaps(hdc, capHorzRes), deviceCaps(hdc, capVertRes), dpiX, dpiY, offsetX, offsetY)
 		}
-		maxW, maxH, err = renderBounds(destinationW, destinationH)
+		maxW, maxH, err = renderBoundsForDPI(destinationW, destinationH, dpiX, dpiY)
 		return err
 	}
 	if err := pageBounds(0); err != nil {
@@ -577,13 +577,13 @@ func renderAndPrintPDFWithPDFiumResultObserved(ctx context.Context, printerName 
 	}
 	log.Printf("Embedded PDF print on %q: source=%.2fx%.2fpt crop=%+v physical=%dx%d printable=%dx%d dpi=%dx%d offset=%d,%d fitted=%d,%d %dx%d render-cap=%dx%d pages=%d", printerName,
 		plans[0].width, plans[0].height, plans[0].crop, pageWidth, pageHeight, deviceCaps(hdc, capHorzRes), deviceCaps(hdc, capVertRes), deviceCaps(hdc, capLogPixelsX), deviceCaps(hdc, capLogPixelsY),
-		offsetX, offsetY, destinationX, destinationY, destinationW, destinationH, maxW, maxH, pages.PageCount)
+		offsetX, offsetY, destinationX, destinationY, destinationW, destinationH, maxW, maxH, len(plans))
 
 	// Render the first page before StartDocW. A renderer failure here is a
 	// deterministic pre-dispatch error, not an unknown physical outcome.
 	firstPageStarted := time.Now()
 	first, cleanup, err := renderPageWithContext(ctx, instance, &requests.RenderPageInPixels{
-		Page:   requests.Page{ByIndex: &requests.PageByIndex{Document: doc.Document, Index: 0}},
+		Page:   requests.Page{ByIndex: &requests.PageByIndex{Document: doc.Document, Index: plans[0].sourceIndex}},
 		Width:  maxW,
 		Height: maxH,
 		Crop:   plans[0].crop,
@@ -593,19 +593,19 @@ func renderAndPrintPDFWithPDFiumResultObserved(ctx context.Context, printerName 
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		return fmt.Errorf("render PDF page 1/%d: %w", pages.PageCount, err)
+		return fmt.Errorf("render PDF output page 1/%d: %w", len(plans), err)
 	}
 	if cleanup == nil {
 		cleanup = func() {}
 	}
 	if err := rgbaToBGRAInPlace(first); err != nil {
 		cleanup()
-		return fmt.Errorf("prepare PDF page 1/%d bitmap: %w", pages.PageCount, err)
+		return fmt.Errorf("prepare PDF output page 1/%d bitmap: %w", len(plans), err)
 	}
 	firstDraw, releaseBitmap, err := prepareGDIBitmap(hdc, first.Pix, first.Rect.Dx(), first.Rect.Dy(), destinationW, destinationH, destinationX, destinationY)
 	if err != nil {
 		cleanup()
-		return fmt.Errorf("prepare PDF page 1/%d for printer: %w", pages.PageCount, err)
+		return fmt.Errorf("prepare PDF output page 1/%d for printer: %w", len(plans), err)
 	}
 	cleanupRender := cleanup
 	cleanup = func() { releaseBitmap(); cleanupRender() }
@@ -669,7 +669,7 @@ func renderAndPrintPDFWithPDFiumResultObserved(ctx context.Context, printerName 
 	cleanup()
 	cleanupFirst = false
 
-	for pageIndex := 1; pageIndex < pages.PageCount; pageIndex++ {
+	for pageIndex := 1; pageIndex < len(plans); pageIndex++ {
 		select {
 		case <-ctx.Done():
 			return markPDFDispatchUnknown(printerName, fmt.Sprintf("was cancelled before page %d", pageIndex+1), ctx.Err())
@@ -689,7 +689,7 @@ func renderAndPrintPDFWithPDFiumResultObserved(ctx context.Context, printerName 
 		}
 
 		img, cleanupPage, err := renderPageWithContext(ctx, instance, &requests.RenderPageInPixels{
-			Page:   requests.Page{ByIndex: &requests.PageByIndex{Document: doc.Document, Index: pageIndex}},
+			Page:   requests.Page{ByIndex: &requests.PageByIndex{Document: doc.Document, Index: plans[pageIndex].sourceIndex}},
 			Width:  maxW,
 			Height: maxH,
 			Crop:   plans[pageIndex].crop,

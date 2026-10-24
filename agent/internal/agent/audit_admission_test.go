@@ -40,7 +40,7 @@ func TestPrintingAdmissionRequiresExplicitGatewayAcknowledgement(t *testing.T) {
 			device := &fakePrinter{}
 			ag.printers = map[string]printer.Printer{"p1": device}
 			ag.printerConfigs = map[string]config.PrinterConfig{
-				"p1": {ID: "p1", Name: "Test", Type: "network", Endpoint: "127.0.0.1:9100", Protocol: "raw"},
+				"p1": {ID: "p1", Name: "Test", Type: "network", Endpoint: "10.0.0.20:9100", Protocol: "raw"},
 			}
 			allowInjectedPrintersForTest(ag)
 			ag.dispatchJob(context.Background(), dispatchTestJob("admission", "p1"))

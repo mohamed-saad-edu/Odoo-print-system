@@ -1,3 +1,4 @@
+import { verifiedPrinterState } from "./helpers/printer-verification";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({ transaction: vi.fn() }));
@@ -21,7 +22,7 @@ describe("sharing controls require ordered snapshot identity before mutation", (
   });
 
   it("separates physical readiness from permission to receive cloud work", () => {
-    const printer = { lifecycle: "active", status: "online", connectionType: "spooler", protocol: "spooler" };
+    const printer = { ...verifiedPrinterState(), lifecycle: "active", status: "online", connectionType: "spooler", protocol: "spooler" };
     expect(isPrinterStatusExecutable(printer)).toBe(true);
     expect(isPrinterAvailableForJob({ ...printer, sharedWithGateway: false })).toBe(false);
     expect(isPrinterAvailableForJob({ ...printer, sharedWithGateway: true })).toBe(true);

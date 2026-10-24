@@ -3,7 +3,7 @@ import { POST as registerPrinter } from "../src/app/api/printers/route";
 import { POST as agentHeartbeat } from "../src/app/api/agent/heartbeat/route";
 import { DELETE as removeOdooKey } from "../src/app/api/odoo/keys/route";
 import { GET as listOdooPrinters } from "../src/app/api/odoo/printers/route";
-import { createManagerSession } from "../src/lib/manager-auth";
+import { createWorkspaceManagerTestSession } from "./helpers/workspace-session";
 import { gatewayTestSigningKey } from "./helpers/test-secrets";
 import { applyMigrations, closePool, hasTestDatabase, pool, seedFixture, truncateAll, sha256 } from "./helpers/pg";
 
@@ -28,7 +28,7 @@ suite("physical endpoint convergence and credential-row erasure", () => {
 
   it("converges two simultaneous manager registrations of the same physical Windows queue", async () => {
     const f = await seedFixture();
-    const manager = await createManagerSession(f.tenantId);
+    const manager = await createWorkspaceManagerTestSession(f.tenantId);
     const payload = { agentId: f.agentId, name: "Kitchen Queue", printerType: "physical",
       deviceClass: "thermal", connectionType: "spooler", protocol: "spooler",
       config: { spooler_name: "Receipt Thermal 80mm" } };
@@ -44,12 +44,12 @@ suite("physical endpoint convergence and credential-row erasure", () => {
       [f.tenantId, f.agentId, "Receipt Thermal 80mm"],
     );
     expect(rows.rows).toHaveLength(1);
-    expect(rows.rows[0].physical_identity_key).toMatch(/^v1:[0-9a-f]{64}$/);
+    expect(rows.rows[0].physical_identity_key).toMatch(/^v2:[0-9a-f]{64}$/);
   });
 
   it("does not register an Agent discovery duplicate of an existing manager queue", async () => {
     const f = await seedFixture();
-    const manager = await createManagerSession(f.tenantId);
+    const manager = await createWorkspaceManagerTestSession(f.tenantId);
     const payload = { agentId: f.agentId, name: "Real Windows Queue",
       printerType: "physical", deviceClass: "thermal", connectionType: "spooler",
       protocol: "spooler", config: { spooler_name: "Sales Register" } };
@@ -80,7 +80,7 @@ suite("physical endpoint convergence and credential-row erasure", () => {
 
   it("physically removes an Odoo API credential and its binding but preserves accepted print history", async () => {
     const f = await seedFixture();
-    const manager = await createManagerSession(f.tenantId);
+    const manager = await createWorkspaceManagerTestSession(f.tenantId);
     const keyRow = await pool().query("SELECT id FROM api_keys WHERE tenant_id=$1 AND hashed_key=$2",
       [f.tenantId, sha256(f.odooKey)]);
     expect(keyRow.rows).toHaveLength(1);
@@ -91,10 +91,10 @@ suite("physical endpoint convergence and credential-row erasure", () => {
     await pool().query("INSERT INTO odoo_installation_credentials(tenant_id,installation_id,api_key_id) VALUES ($1,$2,$3)",
       [f.tenantId, installationId, keyId]);
     await pool().query(`INSERT INTO print_jobs
-      (id,tenant_id,agent_id,printer_id,api_key_id,destination,document_type,status,payload,expires_at)
+      (id,tenant_id,agent_id,printer_id,api_key_id,destination,document_type,status,payload,expires_at,binding_digest)
       VALUES ('history-key-removal', $1, $2, $3, $4, 'POS', 'receipt', 'queued',
       '{"type":"raw","protocol":"raw","encoding":"base64","data":"aGVsbG8="}'::jsonb,
-      now() + interval '1 hour')`, [f.tenantId, f.agentId, f.printerId, keyId]);
+      now() + interval '1 hour', (SELECT verification_binding_digest FROM printers WHERE tenant_id=$1 AND id=$3))`, [f.tenantId, f.agentId, f.printerId, keyId]);
     const removed = await removeOdooKey(new Request("http://gateway.test/api/odoo/keys", {
       method: "DELETE", headers: { Authorization: "Bearer " + manager.token, "Content-Type": "application/json" },
       body: JSON.stringify({ id: keyId, remove: true }),

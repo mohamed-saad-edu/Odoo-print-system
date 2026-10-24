@@ -39,12 +39,15 @@
   "diagnosticPage": {
     "inventoryEndpoint": "/api/odoo/printers",
     "optionalCapability": "paper_width_mm",
-    "rollWidthsMM": [58, 80],
+    "rollWidthsMM": [
+      58,
+      80
+    ],
     "rollLengthMM": 100,
     "source": "explicit paper_width_mm or one advertised paper_widths value; never infer physical media from printable dots, printer names or ambiguous multiple widths",
     "producerConsumers": "Gateway test-print/certification, Odoo exact-binding document tests and explicit Agent local test commands use the selected document backend. Declared58/80mm diagnostics retain100mm source media; source metadata wraps inside its PDF. Agent negotiates Windows driver media and validates complete-page fit before submission",
     "fallback": "Generic or office diagnostics retain their source format when no unambiguous roll is declared. Windows spooler diagnostics may defer missing or malformed roll metadata to the selected driver's validated current paper before StartDoc; direct IPP exact pos/pos_printer bindings whose current deviceClass is thermal still require declared integer58/80mm before rendering/outbox. Names and document_type alone do not establish receipt purpose. ASCII office source is Letter; Unicode uses the existing Odoo report/company paperformat. Successful submission does not prove physical paper output",
-    "windowsPaperFit": "Try the document form first; if unsupported, use only the same selected driver's validated current media before StartDoc. Proportionally shrink and center the entire PDF inside its actual printable bounds, accounting for axis DPI, without cropping, distortion, enlargement or modifying global printer defaults. Invalid geometry/driver errors remain failures. Never change transport or retry/fallback after possible submission",
+    "windowsPaperFit": "Ordinary PDF pages try their document form first, then the same selected driver's validated current media before StartDoc, with proportional fitting inside measured printable bounds. Profiled receipt images retain measured physical width and independent X/Y DPI on the selected driver form. Long narrow receipts divide into contiguous vertical page regions before StartDoc instead of shrinking width to fit height; total pages and each bitmap are bounded. Generated image geometry is rechecked against the actual DC; unknown or changed geometry fails before submission. Do not modify global defaults, change transport, or retry after possible submission",
     "byteDiagnosticTemplates": {
       "zpl": "^XA\n^FO4,4^A0N,12,12^FDTEST^FS\n^XZ\n",
       "tspl": "SELFTEST\r\n"
@@ -65,5 +68,13 @@
       "persistedAt": "discovery_sessions.stats.errors"
     },
     "verification": "Gateway observations stay candidates until manager approval"
+  },
+  "imageGeometry": {
+    "field": "geometry_fingerprint",
+    "requiredFor": "new image admission; optional syntax preserves exact historical accepted-operation replay",
+    "format": "64 lowercase SHA256 hex",
+    "source": "capabilities.geometry.config_fingerprint",
+    "validation": "Must match current validated geometry for the exact execution printer, checked at Gateway admission and native execution; rerender after any change.",
+    "geometryContract": "printer-geometry-contract.json"
   }
 }

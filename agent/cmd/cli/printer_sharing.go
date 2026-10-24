@@ -51,7 +51,7 @@ func runPrinterSharing(args []string, defaultPath string, output io.Writer) erro
 	if err != nil {
 		return err
 	}
-	selected, err := printer.SelectSharingPrinter(*id, devices)
+	selected, err := printer.SelectSharingPrinter(*id, devices, cfg)
 	if err != nil {
 		return err
 	}
@@ -65,7 +65,7 @@ func runPrinterSharing(args []string, defaultPath string, output io.Writer) erro
 		if device.ID != selected.ID {
 			continue
 		}
-		bindings, err := printer.SharingBindingsForDevice(device)
+		bindings, err := printer.SharingBindingsForDevice(device, cfg)
 		if err != nil {
 			return err
 		}

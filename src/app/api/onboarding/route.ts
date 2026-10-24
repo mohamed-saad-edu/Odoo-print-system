@@ -71,7 +71,7 @@ export async function POST(req: Request) {
     }
     });
   } catch (error) {
-    if (error instanceof ManagerMutationAuthorityChangedError) return NextResponse.json({ error: error.message }, { status: 403 });
+    if (error instanceof ManagerMutationAuthorityChangedError) return error.response();
     if (error instanceof Error && error.message === "TENANT_NOT_ACTIVE") return NextResponse.json({ error: "Workspace unavailable" }, { status: 403 });
     if (error instanceof Error && error.message === "TENANT_NOT_FOUND") return NextResponse.json({ error: "Workspace not found" }, { status: 404 });
     if (error instanceof Error && error.message === "Workspace already has billing state") return NextResponse.json({ error: "Trial is unavailable for a workspace with an existing subscription or checkout", code: "TRIAL_NOT_AVAILABLE" }, { status: 409 });

@@ -1,3 +1,4 @@
+import { validateFileOutputEvidence } from "../lib/print-output";
 // ============================================================
 // Single source of truth for operator-facing status vocabulary.
 // Web console, desktop app and the Odoo screens must render the
@@ -207,7 +208,14 @@ export function jobDisplayLabel(
   status: string,
   error?: string | null,
   locale: Locale = DEFAULT_LOCALE,
+  output?: { outputMedium?: unknown; outputEvidence?: unknown },
 ): string {
+  if (output?.outputMedium === "file") {
+    if (status === "success") return translate(locale, validateFileOutputEvidence(output.outputEvidence) ? "printer.verification.fileCreated" : "printer.verification.fileUncertain");
+    if (status === "queued" || status === "claimed") return translate(locale, "printer.verification.fileQueued");
+    if (status === "printing") return translate(locale, "printer.verification.fileCreating");
+    return translate(locale, deriveOutcome(status, error) === "unknown" ? "printer.verification.fileUncertain" : "printer.verification.fileFailed");
+  }
   const failure = status.toLowerCase() === "failed" ? jobFailurePresentation(error, locale) : null;
   return failure?.title ?? jobLabel(status, deriveOutcome(status, error), locale);
 }

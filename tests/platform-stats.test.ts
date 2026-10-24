@@ -12,7 +12,7 @@ import { users, tenantSubscriptions } from "../src/db/schema";
 import { db } from "../src/db";
 import { eq } from "drizzle-orm";
 import { nanoid } from "../src/lib/nanoid";
-import { createPlatformSession } from "../src/lib/platform-auth";
+import { createVerifiedPlatformSession as createPlatformSession } from "./helpers/platform-session";
 import { GET } from "../src/app/api/platform/stats/route";
 
 const suite = describe.skipIf(!hasTestDatabase);

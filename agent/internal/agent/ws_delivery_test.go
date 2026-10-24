@@ -242,7 +242,7 @@ func newAgentAgainst(t *testing.T, serverURL, printerID string, p printer.Printe
 		t.Fatalf("New: %v", err)
 	}
 	ag.printers = map[string]printer.Printer{printerID: p}
-	ag.printerConfigs = map[string]config.PrinterConfig{printerID: {ID: printerID, Name: "Test", Type: "network", Endpoint: "127.0.0.1:9100", Protocol: "raw"}}
+	ag.printerConfigs = map[string]config.PrinterConfig{printerID: {ID: printerID, Name: "Test", Type: "network", Endpoint: "10.0.0.20:9100", Protocol: "raw"}}
 	allowInjectedPrintersForTest(ag)
 	t.Cleanup(func() {
 		// The test's deferred context cancel runs before Cleanup. Join every
@@ -277,7 +277,7 @@ func claimedEnvelope(jobID, printerID string) map[string]interface{} {
 			"claimToken":   "claim-" + jobID,
 			"payload":      makeJobPayload(jobID),
 			"expiresAt":    time.Now().Add(time.Hour).Format(time.RFC3339),
-			"retries":      0,
+			"retries":      0, "bindingDigest": testDefaultPrinterBinding(),
 		},
 		"id":        jobID,
 		"printerId": printerID,
@@ -329,7 +329,7 @@ func TestTerminalOutcomeOutboxReplaysWithoutPhysicalReprint(t *testing.T) {
 		"status":     "claimed",
 		"payload":    makeJobPayload("job-terminal-outbox"),
 		"expiresAt":  time.Now().Add(time.Hour).Format(time.RFC3339),
-		"claimToken": "claim-terminal-outbox",
+		"claimToken": "claim-terminal-outbox", "bindingDigest": testDefaultPrinterBinding(),
 	}
 	ag.processJob(context.Background(), job)
 	ag.waitForJobs()
@@ -398,7 +398,7 @@ func TestFailedTerminalOutboxPreservesSpoolerEvidence(t *testing.T) {
 		"status":     "claimed",
 		"payload":    makeJobPayload("job-failed-spooler-evidence"),
 		"expiresAt":  time.Now().Add(time.Hour).Format(time.RFC3339),
-		"claimToken": "claim-failed-spooler-evidence",
+		"claimToken": "claim-failed-spooler-evidence", "bindingDigest": testDefaultPrinterBinding(),
 	}
 	ag.processJob(context.Background(), job)
 	ag.waitForJobs()
@@ -547,7 +547,7 @@ func TestProcessJobRejectsMalformedDecisionFields(t *testing.T) {
 		{"wrong_status_value", func(job map[string]interface{}) { job["status"] = "success" }},
 	}
 	for _, tc := range cases {
-		job := map[string]interface{}{"id": "process_" + tc.name, "agentId": "agt_test", "printerId": "p1", "status": "claimed", "claimToken": "claim-" + tc.name, "payload": makeJobPayload(tc.name)}
+		job := map[string]interface{}{"id": "process_" + tc.name, "agentId": "agt_test", "printerId": "p1", "status": "claimed", "claimToken": "claim-" + tc.name, "payload": makeJobPayload(tc.name), "bindingDigest": testDefaultPrinterBinding()}
 		tc.mutate(job)
 		ag.processJob(context.Background(), job)
 	}
@@ -740,7 +740,7 @@ func TestTerminalJobIsNotPrintedTwice(t *testing.T) {
 		"status":     "claimed",
 		"claimToken": "claim-job-terminal",
 		"payload":    makeJobPayload("job_terminal"),
-		"expiresAt":  time.Now().Add(time.Hour).Format(time.RFC3339),
+		"expiresAt":  time.Now().Add(time.Hour).Format(time.RFC3339), "bindingDigest": testDefaultPrinterBinding(),
 	}
 	ag.processJob(ctx, job)
 	ag.processJob(ctx, job)
@@ -761,7 +761,7 @@ func TestCapabilityMismatchIsReportedToGateway(t *testing.T) {
 		"status":     "claimed",
 		"claimToken": "claim-job-pdf-mismatch",
 		"payload":    map[string]interface{}{"type": "pdf", "encoding": "base64", "data": pdf},
-		"expiresAt":  time.Now().Add(time.Hour).Format(time.RFC3339),
+		"expiresAt":  time.Now().Add(time.Hour).Format(time.RFC3339), "bindingDigest": testDefaultPrinterBinding(),
 	}
 	ag.processJob(context.Background(), job)
 	if p.calls != 0 {
@@ -834,7 +834,7 @@ func TestReprintAfterCrashPolicy(t *testing.T) {
 		"status":     "claimed",
 		"claimToken": "claim-job-crashed",
 		"payload":    makeJobPayload("job_crashed"),
-		"expiresAt":  time.Now().Add(time.Hour).Format(time.RFC3339),
+		"expiresAt":  time.Now().Add(time.Hour).Format(time.RFC3339), "bindingDigest": testDefaultPrinterBinding(),
 	}
 
 	t.Run("disabled: never reprints, reports the interruption", func(t *testing.T) {
@@ -861,34 +861,32 @@ func TestReprintAfterCrashPolicy(t *testing.T) {
 		}
 	})
 
-	t.Run("explicit opt-in: reprints once and exposes at-least-once semantics", func(t *testing.T) {
+	t.Run("legacy true: interrupted output stays unknown and is never reprinted", func(t *testing.T) {
 		gw := newRecordingGateway(t)
 		p := &fakePrinter{}
 		ag := newAgentAgainst(t, gw.server.URL, "p1", p)
 		yes := true
 		ag.cfg.Agent.ReprintAfterCrash = &yes
-
-		if !ag.cfg.ReprintAfterCrashEnabled() {
-			t.Fatal("explicit true must enable at-least-once crash reprinting")
-		}
 		if err := ag.queue.BeginPrint("job_crashed", "p1", []byte("bytes"), "claim-before-restart", false); err != nil {
 			t.Fatalf("BeginPrint: %v", err)
 		}
 		ag.recoverInterruptedJobs(context.Background())
 		updates := gw.Updates()
-		if len(updates) != 1 || updates[0].Status != "queued" || updates[0].ClaimToken == "" {
-			t.Fatalf("explicit crash-reprint opt-in must request a fenced gateway requeue, got %#v", updates)
+		if len(updates) != 1 || updates[0].Status != "failed" || updates[0].ClaimToken != "claim-before-restart" || !strings.Contains(updates[0].Error, queue.InterruptedMarker) {
+			t.Fatalf("legacy true must report the original uncertain attempt, never request a requeue: %#v", updates)
 		}
-		// A real Gateway requeue mints a fresh claim token. Model that new
-		// delivery rather than reusing the crashed attempt's token.
 		job["claimToken"] = "claim-after-restart"
 		ag.processJob(context.Background(), job)
-		if p.calls != 1 {
-			t.Fatalf("explicit crash-reprint opt-in should retry once in this test, got %d prints", p.calls)
+		if p.Calls() != 0 {
+			t.Fatalf("a fresh claim cannot authorize duplicate unknown output, got %d prints", p.Calls())
 		}
-		last := gw.Updates()[len(gw.Updates())-1]
-		if last.Status != "success" || last.ClaimToken != "claim-after-restart" {
-			t.Fatalf("expected the explicit opt-in retry to succeed under the fresh claim fence, got %#v", last)
+		if !ag.queue.WasOutcomeUnknown("job_crashed") {
+			t.Fatal("original physical uncertainty was erased")
+		}
+		for _, update := range gw.Updates() {
+			if update.Status == "queued" || update.Status == "printing" || update.Status == "success" {
+				t.Fatalf("uncertain outcome reopened execution: %#v", update)
+			}
 		}
 	})
 
@@ -957,7 +955,7 @@ func TestLedgerWriteFailureBlocksDispatch(t *testing.T) {
 		"status":     "claimed",
 		"payload":    makeJobPayload("job_no_ledger"),
 		"expiresAt":  time.Now().Add(time.Hour).Format(time.RFC3339),
-		"claimToken": "claim-ledger-x",
+		"claimToken": "claim-ledger-x", "bindingDigest": testDefaultPrinterBinding(),
 	}
 	ag.processJob(context.Background(), job)
 	ag.waitForJobs()
@@ -999,7 +997,7 @@ func TestStalePrintingFenceHaltsBeforeHardware(t *testing.T) {
 		"status":     "claimed",
 		"payload":    makeJobPayload("job_stale_fence"),
 		"expiresAt":  time.Now().Add(time.Hour).Format(time.RFC3339),
-		"claimToken": "claim-superseded-1",
+		"claimToken": "claim-superseded-1", "bindingDigest": testDefaultPrinterBinding(),
 	}
 	ag.processJob(context.Background(), job)
 	ag.waitForJobs()
@@ -1040,7 +1038,7 @@ func TestExpiredTimestampDoesNotAuthorizeLocalExpiryDecision(t *testing.T) {
 		"status":     "claimed",
 		"payload":    makeJobPayload("job_local_expiry_defense"),
 		"expiresAt":  "2000-01-01T00:00:00Z",
-		"claimToken": "claim-local-expiry",
+		"claimToken": "claim-local-expiry", "bindingDigest": testDefaultPrinterBinding(),
 	}
 	ag.processJob(context.Background(), job)
 	ag.waitForJobs()
@@ -1084,7 +1082,7 @@ func TestFailedTerminalOutcomePreservesSpoolerEvidence(t *testing.T) {
 		"status":     "claimed",
 		"payload":    makeJobPayload("job-failed-spool-evidence"),
 		"expiresAt":  time.Now().Add(time.Hour).Format(time.RFC3339),
-		"claimToken": "claim-failed-spool-evidence",
+		"claimToken": "claim-failed-spool-evidence", "bindingDigest": testDefaultPrinterBinding(),
 	}
 	ag.processJob(context.Background(), job)
 	ag.waitForJobs()
@@ -1127,7 +1125,7 @@ func TestWSEnvelopeBudgetFitsMaximumPayloadOnce(t *testing.T) {
 	job := map[string]interface{}{
 		"id": "job-budget", "agentId": "agt_test", "printerId": "p1",
 		"documentType": "document", "status": "claimed", "claimToken": "claim-budget",
-		"payload": payload, "expiresAt": time.Now().Add(time.Hour).Format(time.RFC3339), "retries": 0,
+		"payload": payload, "expiresAt": time.Now().Add(time.Hour).Format(time.RFC3339), "retries": 0, "bindingDigest": testDefaultPrinterBinding(),
 	}
 	canonical := map[string]interface{}{
 		"type": "print_job", "job": job,

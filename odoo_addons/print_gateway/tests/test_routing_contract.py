@@ -67,21 +67,32 @@ class TestPrintGatewayRoutingContract(TransactionCase):
     def test_receipt_raster_uses_authorized_runtime_geometry(self):
         """The POS capture width is linked to the selected physical device."""
         router = self.env["print_gateway.print_router"]
-        target = Mock()
-        target._validate_runtime_target.return_value = {"printableWidthDots": 384}
+        target = Mock(printer_id="routing-contract-printer")
+        geometry = {
+            "version": 1, "source": "validated_profile", "validation": "configured",
+            "observed_at": "2026-10-24T12:00:00Z", "printer_id": target.printer_id,
+            "config_fingerprint": "a" * 64, "printable_width_dots": 384,
+            "dpi_x": 203, "dpi_y": 203, "paper_width_mm": 58,
+        }
+        printer = {"id": target.printer_id, "connectionType": "spooler", "protocol": "spooler",
+                   "capabilities": {"geometry": geometry}}
+        target._validate_runtime_target.return_value = printer
         self.assertEqual(router._receipt_width_for_route({"binding": target}), 384)
         target._validate_runtime_target.assert_called_once_with(
             enforce_destination_compatibility=True,
         )
-        target._validate_runtime_target.return_value = {"printableWidthDots": 576}
+        geometry.update(printable_width_dots=576, paper_width_mm=80)
         self.assertEqual(router._receipt_width_for_route({"binding": target}), 576)
         for bad in (-50, 9999, "384", True, None):
             target._validate_runtime_target.return_value = {"printableWidthDots": bad}
-            self.assertEqual(
-                router._receipt_width_for_route({"binding": target}), 512,
-                "Unknown/invalid hardware width must use Odoo's 512px fallback",
-            )
-        self.assertEqual(router._receipt_width_for_route({"native": True}), 512)
+            with self.subTest(legacy_width=bad), self.assertRaises(ValidationError):
+                router._receipt_width_for_route({"binding": target})
+        target._validate_runtime_target.return_value = printer
+        geometry["printer_id"] = "different-printer"
+        with self.assertRaises(ValidationError):
+            router._receipt_width_for_route({"binding": target})
+        with self.assertRaises(ValidationError):
+            router._receipt_width_for_route({"native": True})
 
     def _make_config(self, enabled=True):
         self.config.write({"enabled": enabled})
@@ -407,7 +418,15 @@ class TestPrintGatewayRoutingContract(TransactionCase):
             "odoo.addons.print_gateway.models.gateway_config.requests.patch",
             return_value=SyncResponse(),
         ) as mocked_patch:
-            action = self.config.action_test_connection()
+            request_cr = self.env.registry.cursor()
+            try:
+                request_env = api.Environment(request_cr, self.env.uid, dict(self.env.context))
+                config = request_env["print_gateway.gateway_config"].browse(self.durable_config_id)
+                action = config.action_test_connection()
+                mocked_patch.assert_not_called()
+                request_cr.commit()
+            finally:
+                request_cr.close()
             self.assertEqual(
                 mocked_get.call_args.args[0],
                 "https://gateway.example.com/api/odoo/health",
@@ -423,6 +442,11 @@ class TestPrintGatewayRoutingContract(TransactionCase):
             self.assertIn("Authorization", mocked_patch.call_args.kwargs["headers"])
             self.assertEqual(action["type"], "ir.actions.client")
             self.assertEqual(action["tag"], "reload")
+            with self.env.registry.cursor() as result_cr:
+                result_env = api.Environment(result_cr, self.env.uid, dict(self.env.context))
+                persisted = result_env["print_gateway.gateway_config"].browse(self.durable_config_id)
+                self.assertEqual(persisted.last_test_status, "success")
+                self.assertEqual(persisted.last_enabled_sync_revision, persisted.enabled_sync_revision)
 
     def test_gateway_reconnect_adopts_remote_revision_without_stuck_action_needed(self):
         """A reconnected Odoo config must recover when Gateway already has a

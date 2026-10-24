@@ -14,6 +14,57 @@ func sharingDevice(id, queue string) DeviceInfo {
 	return DeviceInfo{ID: id, Name: queue, ConnectionType: "spooler", Protocol: "spooler", SpoolerName: queue, Endpoint: queue, Enabled: true, Status: "offline", PrinterType: "thermal"}
 }
 
+func TestPDFOutputSharingBindsOnlyThroughLocalProfileAuthority(t *testing.T) {
+	dir := t.TempDir()
+	pc := approvedPDFOutputConfig(t, dir)
+	public := pc
+	public.PDFOutputDirectory, public.PDFOutputAuthorized = "", false
+	cfg := &config.Config{Printers: []config.PrinterConfig{public}, PDFOutputProfiles: map[string]config.PDFOutputProfile{"approved": {Directory: dir}}}
+	device := DeviceInfo{ID: pc.ID, Name: pc.Name, ConnectionType: "pdf_output", Protocol: "pdf", PrinterType: "file", Endpoint: "pdf-output:approved", OutputProfileID: "approved", Enabled: true}
+	path := filepath.Join(t.TempDir(), "agent.yaml")
+	registry := config.RegistryPath(path)
+	encoded, _ := json.Marshal([]DeviceInfo{device})
+	if err := os.WriteFile(registry, encoded, 0600); err != nil {
+		t.Fatal(err)
+	}
+	known, err := LocalSharingBindings(cfg, registry)
+	if err != nil || len(known) != 2 {
+		t.Fatalf("local sharing bindings: %+v %v", known, err)
+	}
+	want, _ := config.PrinterBindingDigest(pc)
+	for _, candidate := range known {
+		digest, err := config.PrinterBindingDigest(candidate)
+		if err != nil || digest != want {
+			t.Fatalf("locally approved file binding was not resolved: %s %v", digest, err)
+		}
+	}
+	bare := SharingConfigForDevice(device)
+	if bare.OutputProfileID != "approved" {
+		t.Fatal("public profile selector was lost")
+	}
+	if _, err := config.PrinterBindingDigest(bare); err == nil {
+		t.Fatal("public device DTO authorized an output directory")
+	}
+	if err := config.SetPrinterSharing(path, pc, known, false); err != nil {
+		t.Fatal(err)
+	}
+	alias := device
+	alias.ID = "new-public-id"
+	rows, err := AnnotatePrinterSharing(path, cfg, registry, []DeviceInfo{alias})
+	if err != nil || len(rows) != 1 || rows[0].SharedWithGateway == nil || *rows[0].SharedWithGateway {
+		t.Fatalf("same approved output profile bypassed local deny: %+v %v", rows, err)
+	}
+}
+
+func TestPDFOutputSharingDoesNotAuthorizeBarePublicInventory(t *testing.T) {
+	device := DeviceInfo{ID: "unapproved", Name: "File", ConnectionType: "pdf_output", Protocol: "pdf", PrinterType: "file", Endpoint: "pdf-output:missing", OutputProfileID: "missing", Enabled: true}
+	path := filepath.Join(t.TempDir(), "agent.yaml")
+	rows, err := AnnotatePrinterSharing(path, &config.Config{}, config.RegistryPath(path), []DeviceInfo{device})
+	if err != nil || len(rows) != 1 || rows[0].SharedWithGateway == nil || *rows[0].SharedWithGateway {
+		t.Fatalf("unapproved file endpoint became shared: %+v %v", rows, err)
+	}
+}
+
 func TestSharingSelectionRejectsCandidatesVirtualAndAmbiguousIDs(t *testing.T) {
 	good := sharingDevice("local", "POS80 Printer")
 	selected, err := SelectSharingPrinter("local", []DeviceInfo{good})

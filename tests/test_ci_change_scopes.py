@@ -65,6 +65,38 @@ def test_docker_base_change_requires_image_rescan():
     assert not flags["agent"] and not flags["odoo"]
 
 
+def test_hardened_odoo_build_inputs_always_run_the_native_image_gate():
+    for path in (
+        "Dockerfile.odoo-hardened",
+        "scripts/odoo-hardened-entrypoint.py",
+        "scripts/odoo-healthcheck.py",
+        "scripts/verify-odoo-test-results.py",
+        "docs/runtime-hardening/requirements-python312-linux-x86_64.lock",
+        "docs/runtime-hardening/build-tools.lock",
+        "docs/runtime-hardening/apply-odoo19-pdf-bounds.py",
+        "docs/runtime-hardening/container-bases.json",
+    ):
+        flags = classify(path)
+        assert flags["app"] and flags["odoo"] and flags["docker_scan"] and flags["supply"], path
+        assert flags["codeql_py"], path
+
+
+def test_locked_native_container_inputs_run_build_compose_and_image_gates():
+    for path in (
+        "docs/runtime-hardening/gosu/go.mod",
+        "docs/runtime-hardening/gosu/go.sum",
+        "docs/runtime-hardening/gosu/dependency_security_test.go",
+        "docs/runtime-hardening/caddy/go.mod",
+        "docs/runtime-hardening/caddy/go.sum",
+        "docs/runtime-hardening/caddy/dependency_security_test.go",
+        "docs/runtime-hardening/alpine-security-artifacts.json",
+    ):
+        flags = classify(path)
+        assert flags["docker"] and flags["docker_scan"] and flags["supply"], path
+        assert flags["app"] and flags["odoo"] and flags["codeql_py"], path
+        assert flags["codeql_go"] and not flags["agent"], path
+
+
 def test_postgres_change_keeps_database_failure_injection():
     flags = classify("drizzle/0081_add_constraint.sql")
     assert flags["app"] and flags["postgres"] and flags["docker"]

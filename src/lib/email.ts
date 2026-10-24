@@ -63,9 +63,12 @@ export async function sendTransactionalEmail(message: TransactionalEmail): Promi
       }
       throw lastError;
     }
+    // Provider bodies can echo recipients, message HTML and reset links.
+    // Callers log this error for operations: keep only the HTTP status and
+    // release the unread body without buffering arbitrary provider content.
+    await res.body?.cancel().catch(() => {});
     if (res.ok) return;
-    const text = await res.text().catch(() => "");
-    lastError = new Error(`Transactional email provider rejected the request (${res.status})${text ? `: ${text.slice(0, 200)}` : ""}`);
+    lastError = new Error(`Transactional email provider rejected the request (${res.status})`);
     // Retry only on transient failures (5xx or 429 rate-limit).
     if (res.status !== 429 && res.status < 500) throw lastError;
     if (attempt < maxAttempts) {

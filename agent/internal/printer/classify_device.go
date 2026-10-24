@@ -3,6 +3,8 @@ package printer
 import (
 	"fmt"
 	"strings"
+
+	"github.com/yaseir-agent/agent/internal/config"
 )
 
 /* ============================================================
@@ -91,6 +93,9 @@ type PrinterClass string
 const (
 	// ClassPhysical is real printing hardware we can send bytes to.
 	ClassPhysical PrinterClass = "physical"
+	// ClassFile is the dedicated, noninteractive PDF artifact backend. Local
+	// allowlist and actual output verification are enforced after classification.
+	ClassFile PrinterClass = "file"
 	// ClassVirtual is a software-only queue (file writer, fax, app target).
 	ClassVirtual PrinterClass = "virtual"
 	// ClassRedirected is a queue tunnelled from another session
@@ -177,6 +182,12 @@ func FactsFromDevice(d DeviceInfo) DeviceFacts {
 
 // ClassifyDeviceInfo classifies a discovery/normalization-layer DeviceInfo.
 func ClassifyDeviceInfo(d DeviceInfo) DeviceClassification {
+	if strings.EqualFold(strings.TrimSpace(d.ConnectionType), "pdf_output") && !d.IsVirtual {
+		pc := config.PrinterConfig{Type: "pdf_output", Protocol: d.Protocol, PrinterType: d.PrinterType, Endpoint: d.Endpoint, OutputProfileID: d.OutputProfileID}
+		if config.ValidatePrinterEndpoint(pc) == nil {
+			return DeviceClassification{Class: ClassFile, Confidence: "high", Reasons: []string{"dedicated-pdf-output-backend"}}
+		}
+	}
 	// Explicit wire printer types are authoritative: a software-only
 	// capture with an unfamiliar name/driver must never be inferred as
 	// production hardware just because the registry is manually configured.
@@ -186,6 +197,8 @@ func ClassifyDeviceInfo(d DeviceInfo) DeviceClassification {
 		return DeviceClassification{Class: ClassVirtual, IsVirtual: true, Confidence: "high", Reasons: []string{"declared-virtual-printer-type"}}
 	case "redirected":
 		return DeviceClassification{Class: ClassRedirected, IsVirtual: true, IsRedirected: true, Confidence: "high", Reasons: []string{"declared-redirected-printer-type"}}
+	case "file":
+		return DeviceClassification{Class: ClassVirtual, IsVirtual: true, Confidence: "high", Reasons: []string{"file-output-requires-dedicated-backend"}}
 	}
 	c := ClassifyDevice(FactsFromDevice(d))
 	// An explicitly flagged record (persisted by this or an older version)
@@ -215,7 +228,7 @@ func IsProductionPrinter(d DeviceInfo) bool {
 	switch c.Class {
 	case ClassVirtual, ClassRedirected:
 		return false
-	case ClassPhysical:
+	case ClassPhysical, ClassFile:
 		return true
 	default:
 		// Unclassified: only operator-intent registrations are surfaced.

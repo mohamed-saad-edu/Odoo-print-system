@@ -6,7 +6,7 @@ import { requiredRuntimeSecret, runtimeSecret } from "./runtime-secret";
 import { databaseNowMs } from "./database-clock";
 import { hashPassword, verifyPassword, normalizeEmail, burnPasswordVerification } from "./password";
 import { requireActiveTenantOrNull } from "./tenant-guard";
-import { LEGACY_SESSION_MAX_AGE_SECONDS } from "./session-config";
+import { LEGACY_SESSION_MAX_AGE_SECONDS, sessionCookieName } from "./session-config";
 import {
   accessCookieHeader,
   clearAccessCookieHeader,
@@ -21,7 +21,6 @@ import {
   type SessionRequestContext,
 } from "./session-tokens";
 
-const COOKIE_NAME = "mgr_session";
 const LEGACY_MAX_AGE_SECONDS = LEGACY_SESSION_MAX_AGE_SECONDS;
 
 function getSecret(): string {
@@ -42,6 +41,7 @@ export type ManagerClaims = {
   sid?: string;
   familyId?: string;
 };
+type ValidationOptions = { propagateClockFailure?: true };
 
 function verifySignature(token: string): ManagerClaims | null {
   if (typeof token !== "string" || token.length < 40 || token.length > 4096) return null;
@@ -91,10 +91,10 @@ function verifySignature(token: string): ManagerClaims | null {
 }
 
 export function getManagerCookieName() {
-  return COOKIE_NAME;
+  return sessionCookieName("manager");
 }
 
-export async function verifyManagerToken(token: string): Promise<ManagerClaims | null> {
+export async function verifyManagerToken(token: string, options?: ValidationOptions): Promise<ManagerClaims | null> {
   const versioned = verifyAccessTokenSignature(token, "manager");
   if (versioned) {
     if (versioned.kind !== "manager") return null;
@@ -113,26 +113,27 @@ export async function verifyManagerToken(token: string): Promise<ManagerClaims |
       kind: "manager",
       sid: versioned.sid,
       familyId: versioned.familyId,
-    });
+    }, options);
   }
 
   const legacy = verifySignature(token);
-  return legacy ? validateManagerClaims(legacy) : null;
+  return legacy ? validateManagerClaims(legacy, options) : null;
 }
 
-export async function validateManagerClaims(claims: ManagerClaims | null): Promise<ManagerClaims | null> {
+export async function validateManagerClaims(claims: ManagerClaims | null, options?: ValidationOptions): Promise<ManagerClaims | null> {
   if (!claims) return null;
 
   if (claims.ver === 2 && (claims.kind === "manager" || claims.kind === "customer")) {
     let nowMs: number;
     try {
       nowMs = await databaseNowMs();
-    } catch {
+    } catch (error) {
+      if (options?.propagateClockFailure) throw error;
       return null;
     }
     const nowSec = Math.floor(nowMs / 1000);
     if (claims.exp <= nowSec || claims.iat > nowSec + 60 || claims.exp - claims.iat !== ACCESS_TOKEN_TTL_SECONDS) return null;
-    if (!claims.tenantId || !claims.role || !claims.familyId) return null;
+    if (!claims.tenantId || !claims.role || !claims.familyId || !claims.sid) return null;
 
     // Access tokens are short-lived, but logout must revoke them immediately.
     // The refresh-token family is the durable revocation authority for v2 sessions.
@@ -141,6 +142,7 @@ export async function validateManagerClaims(claims: ManagerClaims | null): Promi
       claims.kind === "customer" ? "customer" : "manager",
       claims.tenantId,
       claims.userId,
+      claims.sid,
     ))) return null;
 
     if (claims.userId) {
@@ -156,31 +158,10 @@ export async function validateManagerClaims(claims: ManagerClaims | null): Promi
     return claims;
   }
 
-  const row = await db.query.managerSessions.findFirst({
-    where: and(
-      eq(managerSessions.jti, claims.jti),
-      sql`${managerSessions.expiresAt} > clock_timestamp()`,
-      sql`${claims.iat} <= FLOOR(EXTRACT(EPOCH FROM clock_timestamp())) + 60`,
-    ),
-  });
-  if (!row || row.revokedAt) return null;
-  // The durable session row is authoritative for expiry and must agree with
-  // the signed JWT. No host-clock comparison is used for session validity.
-  if (Math.floor(row.expiresAt.getTime() / 1000) !== claims.exp) return null;
-  if (row.tenantId !== claims.tenantId || row.role !== claims.role || (row.userId ?? undefined) !== claims.userId) return null;
-  if (row.userId) {
-    const membership = await db.query.tenantUsers.findFirst({
-      where: and(eq(tenantUsers.userId, row.userId), eq(tenantUsers.tenantId, row.tenantId)),
-      columns: { role: true },
-    });
-    if (!membership || membership.role !== row.role) return null;
-  }
-  // Tenant lifecycle denials are an expected authentication outcome. Unexpected
-  // database/transport failures must propagate as operational errors rather than
-  // being misclassified as invalid credentials.
-  const tenantLifecycle = await requireActiveTenantOrNull(claims.tenantId);
-  if (!tenantLifecycle) return null;
-  return claims;
+  // Policy migration0091 requires actual fresh authentication. No v1 token
+  // carries persisted inactivity/password authority, so it cannot be upgraded
+  // from its issue time or from a background request.
+  return null;
 }
 
 function normalizeHost(host: string | null): string | null {
@@ -218,7 +199,7 @@ export async function resolveManagerTenantId(req: Request): Promise<string | nul
 
 export async function createManagerSession(
   tenantId: string,
-  identity?: { userId?: string; role?: ManagerRole; credentialVersion?: string },
+  identity?: { userId?: string; role?: ManagerRole; credentialVersion?: string; environmentCredentialVersion?: string },
   context?: SessionRequestContext & { email?: string | null },
 ): Promise<{
   token: string;
@@ -234,6 +215,7 @@ export async function createManagerSession(
     tenantId,
     userId: identity?.userId ?? null,
     credentialVersion: identity?.credentialVersion,
+    environmentCredentialVersion: identity?.environmentCredentialVersion,
     role: identity?.role ?? "owner",
     email: context?.email ?? null,
   }, context);
@@ -253,7 +235,7 @@ export async function validateManager(req: Request): Promise<ManagerClaims | nul
   return token ? verifyManagerToken(token) : null;
 }
 
-export async function verifyWorkspaceToken(token: string): Promise<ManagerClaims | null> {
+export async function verifyWorkspaceToken(token: string, options?: ValidationOptions): Promise<ManagerClaims | null> {
   const versioned = verifyAccessTokenSignature(token, ["manager", "customer"]);
   if (versioned) {
     if (!versioned.tenantId) return null;
@@ -269,17 +251,17 @@ export async function verifyWorkspaceToken(token: string): Promise<ManagerClaims
       kind: versioned.kind as "manager" | "customer",
       sid: versioned.sid,
       familyId: versioned.familyId,
-    });
+    }, options);
   }
 
   const legacy = verifySignature(token);
-  return legacy ? validateManagerClaims(legacy) : null;
+  return legacy ? validateManagerClaims(legacy, options) : null;
 }
 
-export async function validateWorkspaceManager(req: Request): Promise<ManagerClaims | null> {
+export async function validateWorkspaceManager(req: Request, options?: ValidationOptions): Promise<ManagerClaims | null> {
   const managerToken = getAccessTokenFromRequest(req, "manager");
   if (managerToken) {
-    const managerClaims = await verifyManagerToken(managerToken);
+    const managerClaims = await verifyManagerToken(managerToken, options);
     // A stale/expired manager cookie must not shadow a still-valid workspace
     // session in the same browser. Valid manager sessions retain precedence;
     // only a failed manager validation falls through to the customer session.
@@ -287,7 +269,7 @@ export async function validateWorkspaceManager(req: Request): Promise<ManagerCla
   }
 
   const customerToken = getAccessTokenFromRequest(req, "customer");
-  return customerToken ? verifyWorkspaceToken(customerToken) : null;
+  return customerToken ? verifyWorkspaceToken(customerToken, options) : null;
 }
 
 export async function verifyWorkspaceTokenFromCookieValues(

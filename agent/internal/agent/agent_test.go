@@ -153,6 +153,34 @@ func (f *fakePrinter) Status() string {
 	return "online"
 }
 
+// Tests that exercise later dispatch fences use an explicit verified fixture.
+// unverifiedPrinter deliberately does not embed this method, so negative
+// existence tests continue to exercise the production refusal boundary.
+func (f *fakePrinter) VerifyOperational(ctx context.Context, pc config.PrinterConfig) (*printer.OperationalVerification, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if f.Status() == "offline" || f.Status() == "error" {
+		return nil, fmt.Errorf("test device is not currently accessible")
+	}
+	method, strength, medium := "snmp_printer", "device", "physical"
+	switch pc.NormalizedType() {
+	case "spooler":
+		method, strength = "windows_queue", "queue"
+	case "usb":
+		method = "usb_interface"
+	case "ipp", "ipps":
+		method, strength = "ipp_attributes", "service"
+	case "pdf_output":
+		method, strength, medium = "pdf_output", "service", "file"
+	case "network":
+		if pc.NormalizedProtocolOrUnknown() == "ipp" || pc.NormalizedProtocolOrUnknown() == "ipps" {
+			method, strength = "ipp_attributes", "service"
+		}
+	}
+	return printer.NewOperationalVerification(pc, method, strength, "", medium)
+}
+
 func (f *fakePrinter) LastSpoolerJobID() string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -196,15 +224,17 @@ func newTestAgent(t *testing.T, printerID string, p printer.Printer) *Agent {
 	cfg.Agent.ID = "agt_test"
 	cfg.Agent.Secret = "secret"
 	cfg.Server.URL = server.URL
-	cfg.Printers = append([]config.PrinterConfig{{ID: printerID, Name: "Test", Type: "network", Endpoint: "127.0.0.1:9100", Protocol: "raw"}}, cfg.Printers...)
 	tmpDir := t.TempDir()
 	cfgPath := filepath.Join(tmpDir, "config.yaml")
 	ag, err := New(cfg, cfgPath)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
+	// Inject the verified fixture after construction; these lifecycle tests do
+	// not ask native startup discovery to persist a synthetic printer.
+	cfg.Printers = append([]config.PrinterConfig{{ID: printerID, Name: "Test", Type: "network", Endpoint: "10.0.0.20:9100", Protocol: "raw"}}, cfg.Printers...)
 	ag.printers = map[string]printer.Printer{printerID: p}
-	ag.printerConfigs = map[string]config.PrinterConfig{printerID: {ID: printerID, Name: "Test", Type: "network", Endpoint: "127.0.0.1:9100", Protocol: "raw"}}
+	ag.printerConfigs = map[string]config.PrinterConfig{printerID: {ID: printerID, Name: "Test", Type: "network", Endpoint: "10.0.0.20:9100", Protocol: "raw"}}
 	t.Cleanup(func() {
 		server.Close()
 		if err := ag.Close(); err != nil {
@@ -251,7 +281,7 @@ func TestPerPrinterSerialization(t *testing.T) {
 				"status":     "claimed",
 				"claimToken": fmt.Sprintf("claim-serial-%d", n),
 				"payload":    makeJobPayload(fmt.Sprintf("serial_%d", n)),
-				"expiresAt":  time.Now().Add(time.Hour).Format(time.RFC3339),
+				"expiresAt":  time.Now().Add(time.Hour).Format(time.RFC3339), "bindingDigest": testDefaultPrinterBinding(),
 			}
 			ag.processJob(ctx, job)
 		}(i)
@@ -303,8 +333,8 @@ func TestDifferentPrintersConcurrent(t *testing.T) {
 	defer func() { _ = ag.Close() }()
 	ag.printers = map[string]printer.Printer{"p1": p1, "p2": p2}
 	ag.printerConfigs = map[string]config.PrinterConfig{
-		"p1": {ID: "p1", Name: "P1", Type: "network", Endpoint: "127.0.0.1:9100", Protocol: "raw"},
-		"p2": {ID: "p2", Name: "P2", Type: "network", Endpoint: "127.0.0.1:9101", Protocol: "raw"},
+		"p1": {ID: "p1", Name: "P1", Type: "network", Endpoint: "10.0.0.20:9100", Protocol: "raw"},
+		"p2": {ID: "p2", Name: "P2", Type: "network", Endpoint: "10.0.0.21:9100", Protocol: "raw"},
 	}
 	allowInjectedPrintersForTest(ag)
 	ctx := context.Background()
@@ -314,12 +344,12 @@ func TestDifferentPrintersConcurrent(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		<-start
-		ag.processJob(ctx, map[string]interface{}{"id": "j1", "agentId": "agt_test", "printerId": "p1", "status": "claimed", "claimToken": "claim-j1", "payload": makeJobPayload("j1"), "expiresAt": time.Now().Add(time.Hour).Format(time.RFC3339)})
+		ag.processJob(ctx, map[string]interface{}{"id": "j1", "agentId": "agt_test", "printerId": "p1", "status": "claimed", "claimToken": "claim-j1", "payload": makeJobPayload("j1"), "expiresAt": time.Now().Add(time.Hour).Format(time.RFC3339), "bindingDigest": testDefaultPrinterBinding()})
 	}()
 	go func() {
 		defer wg.Done()
 		<-start
-		ag.processJob(ctx, map[string]interface{}{"id": "j2", "agentId": "agt_test", "printerId": "p2", "status": "claimed", "claimToken": "claim-j2", "payload": makeJobPayload("j2"), "expiresAt": time.Now().Add(time.Hour).Format(time.RFC3339)})
+		ag.processJob(ctx, map[string]interface{}{"id": "j2", "agentId": "agt_test", "printerId": "p2", "status": "claimed", "claimToken": "claim-j2", "payload": makeJobPayload("j2"), "expiresAt": time.Now().Add(time.Hour).Format(time.RFC3339), "bindingDigest": testPrinterBinding(ag.printerConfigs["p2"])})
 	}()
 	close(start)
 
@@ -362,7 +392,7 @@ func TestSameJobIDAcrossTenConcurrentDispatches(t *testing.T) {
 				"status":     "claimed",
 				"claimToken": "claim-same-job-10",
 				"payload":    makeJobPayload("same_job_10"),
-				"expiresAt":  time.Now().Add(time.Hour).Format(time.RFC3339),
+				"expiresAt":  time.Now().Add(time.Hour).Format(time.RFC3339), "bindingDigest": testDefaultPrinterBinding(),
 			}
 			ag.dispatchJob(ctx, job)
 		}()
@@ -395,7 +425,7 @@ func TestSameJobIDAcrossHundredConcurrentDispatches(t *testing.T) {
 				"status":     "claimed",
 				"claimToken": "claim-same-job-100",
 				"payload":    makeJobPayload("same_job_100"),
-				"expiresAt":  time.Now().Add(time.Hour).Format(time.RFC3339),
+				"expiresAt":  time.Now().Add(time.Hour).Format(time.RFC3339), "bindingDigest": testDefaultPrinterBinding(),
 			}
 			ag.dispatchJob(ctx, job)
 		}()
@@ -427,7 +457,7 @@ func TestWSAndPollingDuplicateDeliverySameJobID(t *testing.T) {
 				"status":     "claimed",
 				"claimToken": "claim-ws-poll-same-job",
 				"payload":    makeJobPayload("ws_poll_same_job"),
-				"expiresAt":  time.Now().Add(time.Hour).Format(time.RFC3339),
+				"expiresAt":  time.Now().Add(time.Hour).Format(time.RFC3339), "bindingDigest": testDefaultPrinterBinding(),
 			}
 			ag.dispatchJob(ctx, job)
 		}()
@@ -460,7 +490,7 @@ func TestDifferentJobsSamePrinterSerialized(t *testing.T) {
 				"status":     "claimed",
 				"claimToken": fmt.Sprintf("claim-same-printer-%d", i),
 				"payload":    makeJobPayload(fmt.Sprintf("same_printer_%d", i)),
-				"expiresAt":  time.Now().Add(time.Hour).Format(time.RFC3339),
+				"expiresAt":  time.Now().Add(time.Hour).Format(time.RFC3339), "bindingDigest": testDefaultPrinterBinding(),
 			}
 			ag.dispatchJob(ctx, job)
 		}(i)
@@ -498,9 +528,9 @@ func TestDifferentJobsAcrossThreePrintersConcurrent(t *testing.T) {
 	defer func() { _ = ag.Close() }()
 	ag.printers = map[string]printer.Printer{"p1": p1, "p2": p2, "p3": p3}
 	ag.printerConfigs = map[string]config.PrinterConfig{
-		"p1": {ID: "p1", Name: "P1", Type: "network", Endpoint: "127.0.0.1:9100", Protocol: "raw"},
-		"p2": {ID: "p2", Name: "P2", Type: "network", Endpoint: "127.0.0.1:9101", Protocol: "raw"},
-		"p3": {ID: "p3", Name: "P3", Type: "network", Endpoint: "127.0.0.1:9102", Protocol: "raw"},
+		"p1": {ID: "p1", Name: "P1", Type: "network", Endpoint: "10.0.0.20:9100", Protocol: "raw"},
+		"p2": {ID: "p2", Name: "P2", Type: "network", Endpoint: "10.0.0.21:9100", Protocol: "raw"},
+		"p3": {ID: "p3", Name: "P3", Type: "network", Endpoint: "10.0.0.22:9100", Protocol: "raw"},
 	}
 	allowInjectedPrintersForTest(ag)
 	ctx := context.Background()
@@ -525,7 +555,7 @@ func TestDifferentJobsAcrossThreePrintersConcurrent(t *testing.T) {
 				"status":     "claimed",
 				"claimToken": fmt.Sprintf("claim-multi-%d", i),
 				"payload":    makeJobPayload(fmt.Sprintf("multi_%d", i)),
-				"expiresAt":  time.Now().Add(time.Hour).Format(time.RFC3339),
+				"expiresAt":  time.Now().Add(time.Hour).Format(time.RFC3339), "bindingDigest": testPrinterBinding(ag.printerConfigs[printerID]),
 			}
 			ag.dispatchJob(ctx, job)
 		}(i)
@@ -553,7 +583,7 @@ func TestPrintFailureThenRetry(t *testing.T) {
 		"status":     "claimed",
 		"claimToken": "claim-retry-job",
 		"payload":    makeJobPayload("retry_job"),
-		"expiresAt":  time.Now().Add(time.Hour).Format(time.RFC3339),
+		"expiresAt":  time.Now().Add(time.Hour).Format(time.RFC3339), "bindingDigest": testDefaultPrinterBinding(),
 	}
 	ag.processJob(ctx, job)
 	if got := p.attemptsByJob["retry_job"]; got != 1 {
@@ -581,11 +611,14 @@ func TestGatewayOwnsJobExpiryEnforcement(t *testing.T) {
 		"status":     "claimed",
 		"claimToken": "claim-gateway-expiry",
 		"payload":    makeJobPayload("gateway-expiry-job"),
-		"expiresAt":  time.Now().Add(-time.Minute).Format(time.RFC3339),
+		"expiresAt":  time.Now().Add(-time.Minute).Format(time.RFC3339), "bindingDigest":
+
+		// The Agent deliberately does not enforce expiresAt using its local wall
+		// clock. Gateway time is authoritative; the Agent only applies its local
+		// claim-freshness fence when a printing transition cannot be acknowledged.
+		testDefaultPrinterBinding(),
 	}
-	// The Agent deliberately does not enforce expiresAt using its local wall
-	// clock. Gateway time is authoritative; the Agent only applies its local
-	// claim-freshness fence when a printing transition cannot be acknowledged.
+
 	ag.processJob(ctx, job)
 	if p.calls != 1 {
 		t.Fatalf("agent must not locally reject a Gateway-delivered job by wall-clock expiry, got %d calls", p.calls)
@@ -601,7 +634,7 @@ func TestDuplicateSkippedAfterSuccess(t *testing.T) {
 		"status":     "claimed",
 		"claimToken": "claim-dup-job",
 		"payload":    makeJobPayload("dup_job"),
-		"expiresAt":  time.Now().Add(time.Hour).Format(time.RFC3339),
+		"expiresAt":  time.Now().Add(time.Hour).Format(time.RFC3339), "bindingDigest": testDefaultPrinterBinding(),
 	}
 	ag.processJob(ctx, job)
 	if p.calls != 1 {
@@ -650,7 +683,7 @@ func TestKeepAliveEchoesClaimTokens(t *testing.T) {
 		"status":     "claimed",
 		"payload":    makeJobPayload("job-ka-1"),
 		"expiresAt":  time.Now().Add(time.Hour).Format(time.RFC3339),
-		"claimToken": "tok-live-9",
+		"claimToken": "tok-live-9", "bindingDigest": testDefaultPrinterBinding(),
 	}
 	go ag.dispatchJob(ctx, job)
 	select {
@@ -723,7 +756,7 @@ func TestStaleTransportFailureHaltsBeforeHardware(t *testing.T) {
 	defer func() { _ = ag.Close() }()
 	p := &fakePrinter{}
 	ag.printers = map[string]printer.Printer{"p1": p}
-	ag.printerConfigs = map[string]config.PrinterConfig{"p1": {ID: "p1", Name: "T", Type: "network", Protocol: "raw", Endpoint: "127.0.0.1:9100"}}
+	ag.printerConfigs = map[string]config.PrinterConfig{"p1": {ID: "p1", Name: "T", Type: "network", Protocol: "raw", Endpoint: "10.0.0.20:9100"}}
 	allowInjectedPrintersForTest(ag)
 	jobID := "job-stale-transport"
 	// Simulate a delivery accepted long ago: dispatch acceptance stamped
@@ -747,7 +780,7 @@ func TestStaleTransportFailureHaltsBeforeHardware(t *testing.T) {
 		"status":     "claimed",
 		"payload":    makeJobPayload(jobID),
 		"expiresAt":  time.Now().Add(time.Hour).Format(time.RFC3339),
-		"claimToken": "tok-old-1",
+		"claimToken": "tok-old-1", "bindingDigest": testDefaultPrinterBinding(),
 	})
 	if p.calls != 0 {
 		t.Fatalf("stale attempt with unreachable gateway must print nothing, got %d calls", p.calls)
@@ -776,7 +809,7 @@ func TestFreshTransportFailureRefusesUnacknowledgedDispatch(t *testing.T) {
 	defer func() { _ = ag.Close() }()
 	p := &fakePrinter{}
 	ag.printers = map[string]printer.Printer{"p1": p}
-	ag.printerConfigs = map[string]config.PrinterConfig{"p1": {ID: "p1", Name: "T", Type: "network", Protocol: "raw", Endpoint: "127.0.0.1:9100"}}
+	ag.printerConfigs = map[string]config.PrinterConfig{"p1": {ID: "p1", Name: "T", Type: "network", Protocol: "raw", Endpoint: "10.0.0.20:9100"}}
 	allowInjectedPrintersForTest(ag)
 	jobID := "job-fresh-transport"
 	ag.dispatchJob(context.Background(), map[string]interface{}{
@@ -786,7 +819,7 @@ func TestFreshTransportFailureRefusesUnacknowledgedDispatch(t *testing.T) {
 		"status":     "claimed",
 		"payload":    makeJobPayload(jobID),
 		"expiresAt":  time.Now().Add(time.Hour).Format(time.RFC3339),
-		"claimToken": "tok-fresh-1",
+		"claimToken": "tok-fresh-1", "bindingDigest": testDefaultPrinterBinding(),
 	})
 	ag.waitForJobs()
 	if p.calls != 0 {
@@ -1079,7 +1112,7 @@ func TestPollJobsRejectsMalformedBatchBeforeLocalAdmission(t *testing.T) {
 			defer func() { _ = ag.Close() }()
 			ag.printers = map[string]printer.Printer{"prt-untrusted": printed}
 			ag.printerConfigs = map[string]config.PrinterConfig{
-				"prt-untrusted": {ID: "prt-untrusted", Name: "Untrusted", Type: "network", Endpoint: "127.0.0.1:9100", Protocol: "raw"},
+				"prt-untrusted": {ID: "prt-untrusted", Name: "Untrusted", Type: "network", Endpoint: "10.0.0.20:9100", Protocol: "raw"},
 			}
 			allowInjectedPrintersForTest(ag)
 			ag.pollJobs(context.Background())
@@ -1127,7 +1160,7 @@ func TestPollJobsDispatchesBoundedBatch(t *testing.T) {
 			"printerId":  "prt-bounded",
 			"status":     "claimed",
 			"claimToken": "tok",
-			"payload":    makeJobPayload("job-bounded-1"),
+			"payload":    makeJobPayload("job-bounded-1"), "bindingDigest": testDefaultPrinterBinding(),
 		}})
 		_, _ = w.Write(job)
 	}))
@@ -1145,7 +1178,7 @@ func TestPollJobsDispatchesBoundedBatch(t *testing.T) {
 	defer func() { _ = ag.Close() }()
 
 	ag.printers = map[string]printer.Printer{"prt-bounded": &fakePrinter{startedCh: started}}
-	ag.printerConfigs = map[string]config.PrinterConfig{"prt-bounded": {ID: "prt-bounded", Name: "Bounded", Type: "network", Endpoint: "127.0.0.1:9100", Protocol: "raw"}}
+	ag.printerConfigs = map[string]config.PrinterConfig{"prt-bounded": {ID: "prt-bounded", Name: "Bounded", Type: "network", Endpoint: "10.0.0.20:9100", Protocol: "raw"}}
 	allowInjectedPrintersForTest(ag)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -1206,7 +1239,7 @@ func TestProcessJobCancellationBeforePrintingRefusesHardware(t *testing.T) {
 	p := &fakePrinter{}
 	ag.printers = map[string]printer.Printer{"p1": p}
 	ag.printerConfigs = map[string]config.PrinterConfig{
-		"p1": {ID: "p1", Name: "Test", Type: "network", Endpoint: "127.0.0.1:9100", Protocol: "raw"},
+		"p1": {ID: "p1", Name: "Test", Type: "network", Endpoint: "10.0.0.20:9100", Protocol: "raw"},
 	}
 	allowInjectedPrintersForTest(ag)
 
@@ -1220,7 +1253,7 @@ func TestProcessJobCancellationBeforePrintingRefusesHardware(t *testing.T) {
 			"status":     "claimed",
 			"payload":    makeJobPayload("job_cancel_before_print"),
 			"expiresAt":  time.Now().Add(time.Hour).Format(time.RFC3339),
-			"claimToken": "claim-cancel-1",
+			"claimToken": "claim-cancel-1", "bindingDigest": testDefaultPrinterBinding(),
 		})
 		close(done)
 	}()
@@ -1349,7 +1382,7 @@ func TestDrawerSideEffectMakesLaterPlainPrintFailureUnknown(t *testing.T) {
 	p := &fakePrinter{failOnCall: 2}
 	ag := newTestAgent(t, "p1", p)
 	ag.cfg.Printers[0].Protocol = "escpos"
-	ag.printerConfigs["p1"] = config.PrinterConfig{ID: "p1", Name: "Test", Type: "network", Endpoint: "127.0.0.1:9100", Protocol: "escpos"}
+	ag.printerConfigs["p1"] = config.PrinterConfig{ID: "p1", Name: "Test", Type: "network", Endpoint: "10.0.0.20:9100", Protocol: "escpos"}
 	job := dispatchTestJob("drawer_then_print_failure", "p1")
 	job["agentId"] = ag.cfg.Agent.ID
 	job["status"] = "claimed"

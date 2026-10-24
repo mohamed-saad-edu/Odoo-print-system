@@ -1,3 +1,6 @@
+import { operationalVerificationPresentation } from "./printer-operational-verification";
+import { printerOperationalVerificationPredicate } from "./printer-verification-sql";
+import { capabilitiesWithCurrentGeometry } from "./printer-geometry";
 import { db } from "../db";
 import { agents, printers } from "../db/schema";
 import { listPrintJobHistory } from "./job-history";
@@ -83,6 +86,7 @@ function printerFilterConditions(
     const printerCutoff = new Date(now.getTime() - printerStaleThresholdSeconds() * 1000);
     const agentCutoff = new Date(now.getTime() - agentStaleThresholdSeconds() * 1000);
     const presentation = sql`CASE
+      WHEN NOT COALESCE((${printerOperationalVerificationPredicate(sql`printers`)}), false) THEN 'unavailable'
       WHEN NOT COALESCE(${agents.lifecycle} = 'active' AND ${agents.status} = 'online'
         AND ${agents.lastSeenAt} >= ${agentCutoff} AND ${agents.lastSeenAt} <= ${now}, false) THEN 'unavailable'
       WHEN NOT COALESCE(${printers.lastSeenAt} >= ${printerCutoff} AND ${printers.lastSeenAt} <= ${now}, false) THEN 'unavailable'
@@ -168,6 +172,18 @@ export async function loadDashboardStateForTenant(
         status: printers.status,
         config: printers.config,
         capabilities: printers.capabilities,
+        verificationState: printers.verificationState,
+        verificationVerifiedAt: printers.verificationVerifiedAt,
+        verificationReceivedAt: printers.verificationReceivedAt,
+        verificationBindingDigest: printers.verificationBindingDigest,
+        verificationReason: printers.verificationReason,
+        logicalQueueKey: printers.logicalQueueKey,
+        physicalDeviceKey: printers.physicalDeviceKey,
+        outputMedium: printers.outputMedium,
+        managementSource: printers.managementSource,
+        desiredRevision: printers.desiredRevision,
+        appliedDesiredRevision: printers.appliedDesiredRevision,
+        observedDesiredRevision: printers.observedDesiredRevision,
         lastSeenAt: printers.lastSeenAt,
       })
       .from(printers)
@@ -190,7 +206,7 @@ export async function loadDashboardStateForTenant(
       .select({
         total: sql<number>`COUNT(*) FILTER (WHERE ${printers.lifecycle} = 'active' AND ${printers.inventoryPresent} = true)`,
         saved: sql<number>`COUNT(*) FILTER (WHERE ${printers.lifecycle} <> 'active' OR ${printers.inventoryPresent} = false)`,
-        online: sql<number>`COUNT(*) FILTER (WHERE ${printers.lifecycle} = 'active' AND ${printers.inventoryPresent} = true AND ${printers.status} IN ('online', 'busy') AND ${printers.lastSeenAt} >= ${new Date(now.getTime() - printerStaleThresholdSeconds() * 1000)} AND ${printers.lastSeenAt} <= ${now} AND ${agents.lifecycle} = 'active' AND ${agents.status} = 'online' AND ${agents.lastSeenAt} >= ${new Date(now.getTime() - staleThresholdSeconds * 1000)} AND ${agents.lastSeenAt} <= ${now})`,
+        online: sql<number>`COUNT(*) FILTER (WHERE ${printers.lifecycle} = 'active' AND ${printers.inventoryPresent} = true AND ${printers.status} IN ('online', 'busy') AND ${printerOperationalVerificationPredicate(sql`printers`)} AND ${printers.lastSeenAt} >= ${new Date(now.getTime() - printerStaleThresholdSeconds() * 1000)} AND ${printers.lastSeenAt} <= ${now} AND ${agents.lifecycle} = 'active' AND ${agents.status} = 'online' AND ${agents.lastSeenAt} >= ${new Date(now.getTime() - staleThresholdSeconds * 1000)} AND ${agents.lastSeenAt} <= ${now})`,
       })
       .from(printers)
       .leftJoin(agents, and(eq(agents.id, printers.agentId), eq(agents.tenantId, tenantId)))
@@ -208,6 +224,8 @@ export async function loadDashboardStateForTenant(
   }));
   const visiblePrinters = printerRows.slice(0, DASHBOARD_FLEET_PAGE_SIZE).map((printer) => ({
     ...printer,
+    capabilities: capabilitiesWithCurrentGeometry(printer),
+    ...operationalVerificationPresentation(printer, now),
     agentStaleThresholdSeconds: staleThresholdSeconds,
   }));
   const agentSummary = agentSummaryRows[0] ?? { total: 0, online: 0 };

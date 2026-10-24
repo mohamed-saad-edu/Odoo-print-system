@@ -35,6 +35,13 @@ def test_expiry_blocks_existing_inherited_vulnerabilities():
     assert len(bad) == 1 and not allowed
 
 
+def test_lower_and_unknown_severities_remain_named_blocking_findings():
+    for severity in ('UNKNOWN', 'LOW', 'MEDIUM'):
+        bad, allowed = MODULE.check(report(severity=severity), 'image@sha256:fixed', baseline(), date(2026, 10, 19))
+        assert bad == [f'CVE-A / stdlib / {severity}']
+        assert allowed == []
+
+
 def test_unknown_digest_and_missing_sarif_fail_closed():
     import pytest
     with pytest.raises(ValueError):

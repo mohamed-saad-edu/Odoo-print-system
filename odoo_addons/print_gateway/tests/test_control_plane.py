@@ -354,7 +354,7 @@ class TestControlPlane(TransactionCase):
         ConfigClass = type(self.gateway_config)
         with patch.object(ConfigClass, "_validate_gateway_host", return_value=None), \
              patch.object(type(job), "_primary_shared_for_fallback", return_value=True), \
-             patch("requests.post", side_effect=[_refused_connection(), mock_resp]):
+             patch("odoo.addons.print_gateway.models.gateway_http.post", side_effect=[_refused_connection(), mock_resp]):
             job.action_submit()
             self.assertEqual(job.printer_id, self.backup_binding.printer_id, "Job must safely failover to backup printer on pre-dispatch connection error")
             self.assertEqual(job.gateway_job_id, "gw_job_backup_123")
@@ -376,7 +376,7 @@ class TestControlPlane(TransactionCase):
         import requests
         ConfigClass = type(self.gateway_config)
         with patch.object(ConfigClass, "_validate_gateway_host", return_value=None), \
-             patch("requests.post", side_effect=requests.exceptions.Timeout("Read timeout")):
+             patch("odoo.addons.print_gateway.models.gateway_http.post", side_effect=requests.exceptions.Timeout("Read timeout")):
             job.action_submit()
             self.assertEqual(job.status, "unknown")
             self.assertFalse(job.next_retry_at, "Automated retry must be halted on unknown outcome")
@@ -403,7 +403,7 @@ class TestControlPlane(TransactionCase):
         broken.__cause__ = ConnectionResetError(104, "Connection reset by peer")
         ConfigClass = type(self.gateway_config)
         with patch.object(ConfigClass, "_validate_gateway_host", return_value=None), \
-             patch("requests.post", side_effect=broken):
+             patch("odoo.addons.print_gateway.models.gateway_http.post", side_effect=broken):
             job.action_submit()
             self.assertEqual(job.status, "unknown")
             self.assertFalse(job.next_retry_at)
@@ -462,7 +462,7 @@ class TestControlPlane(TransactionCase):
 
         with patch.object(ConfigClass, "_validate_gateway_host", return_value=None), \
              patch.object(type(job), "_primary_shared_for_fallback", return_value=True), \
-             patch("requests.post", side_effect=[_refused_connection(), _refused_connection()]), \
+             patch("odoo.addons.print_gateway.models.gateway_http.post", side_effect=[_refused_connection(), _refused_connection()]), \
              patch.object(type(job), "_persist_state", side_effect=_mock_persist_state):
             with self.assertRaises(ValidationError):
                 job._action_submit_trusted(raise_on_failure=True)
@@ -510,7 +510,7 @@ class TestControlPlane(TransactionCase):
         ConfigClass = type(self.gateway_config)
         with patch.object(ConfigClass, "_validate_gateway_host", return_value=None), \
              patch.object(type(job), "_primary_shared_for_fallback", return_value=True), \
-             patch("requests.post", side_effect=[exc, mock_resp]):
+             patch("odoo.addons.print_gateway.models.gateway_http.post", side_effect=[exc, mock_resp]):
             job.action_submit()
             self.assertEqual(job.printer_id, self.backup_binding.printer_id)
             self.assertEqual(job.gateway_job_id, "gw_job_cto_123")
@@ -797,7 +797,7 @@ class TestControlPlane(TransactionCase):
         ConfigClass = type(self.gateway_config)
         with patch.object(ConfigClass, "_validate_gateway_host", return_value=None), \
              patch.object(type(job), "_primary_shared_for_fallback", return_value=True), \
-             patch("requests.post", side_effect=refused):
+             patch("odoo.addons.print_gateway.models.gateway_http.post", side_effect=refused):
             # Must terminate gracefully, not hang in recursion
             job.action_submit()
             self.assertIn(job.status, ("failed", "queued"))
@@ -862,7 +862,7 @@ class TestControlPlane(TransactionCase):
         ConfigClass = type(self.gateway_config)
         with patch.object(ConfigClass, "_validate_gateway_host", return_value=None), \
              patch.object(type(job), "_primary_shared_for_fallback", return_value=True), \
-             patch("requests.post", side_effect=[_refused(), _refused(), _refused(), _refused()]) as mock_post:
+             patch("odoo.addons.print_gateway.models.gateway_http.post", side_effect=[_refused(), _refused(), _refused(), _refused()]) as mock_post:
             job.action_submit()
             # A->backup->C->D all engaged (3 failovers = MAX depth); a fifth
             # hop is never attempted: exactly 4 HTTP attempts happened.
@@ -1398,7 +1398,7 @@ class TestControlPlane(TransactionCase):
         mock_resp.json.return_value = {"jobId": "gw_replayed_123", "status": "success"}
         ConfigClass = type(self.gateway_config)
         with patch.object(ConfigClass, "_validate_gateway_host", return_value=None), \
-             patch("requests.post", return_value=mock_resp):
+             patch("odoo.addons.print_gateway.models.gateway_http.post", return_value=mock_resp):
             job.action_submit()
             self.assertEqual(job.status, "success")
             self.assertEqual(job.physical_outcome, "unknown")
@@ -1489,7 +1489,7 @@ class TestControlPlane(TransactionCase):
         with patch.object(RouterClass, "_persist_durable_job", side_effect=_operator_persist_job), \
              patch.object(RouterClass, "_submit_durable_job", side_effect=_operator_submit_job), \
              patch.object(PrintGatewayConfig, "_validate_gateway_host", return_value=None), \
-             patch("requests.post", return_value=mock_resp):
+             patch("odoo.addons.print_gateway.models.gateway_http.post", return_value=mock_resp):
             res = router.route_raw_command(
                 "\x1b@Operator ticket",
                 protocol="escpos",
@@ -1525,7 +1525,7 @@ class TestControlPlane(TransactionCase):
         })
 
         with patch.object(type(self.gateway_config), "_validate_gateway_host", return_value=None), \
-             patch("requests.post") as post, \
+             patch("odoo.addons.print_gateway.models.gateway_http.post") as post, \
              patch.object(type(job), "_claim_submission_lease", return_value="__precommit__"):
             # The test harness never commits, so the test-mode lease bypass
             # would grant a token and let submission proceed. Report the
@@ -1559,7 +1559,7 @@ class TestControlPlane(TransactionCase):
         mock_resp.status_code = 503
         mock_resp.json.return_value = {"error": "Printer is not executable", "code": "PRINTER_OFFLINE", "retryable": True}
         with patch.object(type(self.gateway_config), "_validate_gateway_host", return_value=None), \
-             patch("requests.post", return_value=mock_resp):
+             patch("odoo.addons.print_gateway.models.gateway_http.post", return_value=mock_resp):
             with self.assertRaises(ValidationError) as ctx:
                 job._action_submit_trusted(raise_on_failure=True)
         self.assertIn("offline", str(ctx.exception).lower())
@@ -1572,7 +1572,7 @@ class TestControlPlane(TransactionCase):
         # surrounding Odoo test transaction after the expected exception.
         persisted = self._submit_test_job("test_503_offline_persisted_%s" % uuid.uuid4().hex[:8])
         with patch.object(type(self.gateway_config), "_validate_gateway_host", return_value=None), \
-             patch("requests.post", return_value=mock_resp):
+             patch("odoo.addons.print_gateway.models.gateway_http.post", return_value=mock_resp):
             persisted._action_submit_trusted(raise_on_failure=False)
         persisted.invalidate_recordset(["status", "last_error", "next_retry_at", "gateway_job_id", "attempts"])
         self.assertEqual(persisted.status, "queued")
@@ -1584,7 +1584,7 @@ class TestControlPlane(TransactionCase):
         exhausted = self._submit_test_job("test_503_offline_cap_%s" % uuid.uuid4().hex[:8])
         exhausted.write({"attempts": 4})
         with patch.object(type(self.gateway_config), "_validate_gateway_host", return_value=None), \
-             patch("requests.post", return_value=mock_resp):
+             patch("odoo.addons.print_gateway.models.gateway_http.post", return_value=mock_resp):
             exhausted._action_submit_trusted(raise_on_failure=False)
         exhausted.invalidate_recordset(["status", "last_error", "next_retry_at", "gateway_job_id", "attempts"])
         self.assertEqual(exhausted.status, "failed")
@@ -1601,7 +1601,7 @@ class TestControlPlane(TransactionCase):
         mock_resp.status_code = 503
         mock_resp.json.return_value = {"error": "Printer is not executable", "code": "PRINTER_OFFLINE", "retryable": True}
         with patch.object(type(self.gateway_config), "_validate_gateway_host", return_value=None), \
-             patch("requests.post", return_value=mock_resp):
+             patch("odoo.addons.print_gateway.models.gateway_http.post", return_value=mock_resp):
             job._action_submit_trusted(raise_on_failure=False)
         self.assertEqual(job.status, "queued")
         self.assertIn("GATEWAY_REJECTED_503", job.last_error)
@@ -1619,14 +1619,14 @@ class TestControlPlane(TransactionCase):
         mock_resp.status_code = 503
         mock_resp.json.return_value = {"error": "AGENT_QUEUE_FULL", "code": "AGENT_QUEUE_FULL", "retryable": True}
         with patch.object(type(self.gateway_config), "_validate_gateway_host", return_value=None), \
-             patch("requests.post", return_value=mock_resp):
+             patch("odoo.addons.print_gateway.models.gateway_http.post", return_value=mock_resp):
             with self.assertRaises(ValidationError) as ctx:
                 job._action_submit_trusted(raise_on_failure=True)
         self.assertIn("re-queued", str(ctx.exception))
 
         persisted = self._submit_test_job("test_503_full_persisted_%s" % uuid.uuid4().hex[:8])
         with patch.object(type(self.gateway_config), "_validate_gateway_host", return_value=None), \
-             patch("requests.post", return_value=mock_resp):
+             patch("odoo.addons.print_gateway.models.gateway_http.post", return_value=mock_resp):
             persisted._action_submit_trusted(raise_on_failure=False)
         persisted.invalidate_recordset(["status", "last_error", "next_retry_at", "gateway_job_id", "attempts"])
         self.assertEqual(persisted.status, "queued")
@@ -1642,14 +1642,14 @@ class TestControlPlane(TransactionCase):
         mock_resp.status_code = 500
         mock_resp.json.return_value = {}
         with patch.object(type(self.gateway_config), "_validate_gateway_host", return_value=None), \
-             patch("requests.post", return_value=mock_resp):
+             patch("odoo.addons.print_gateway.models.gateway_http.post", return_value=mock_resp):
             with self.assertRaises(ValidationError) as ctx:
                 job._action_submit_trusted(raise_on_failure=True)
         self.assertIn("GATEWAY_HTTP_500", str(ctx.exception))
 
         persisted = self._submit_test_job("test_500_retry_persisted_%s" % uuid.uuid4().hex[:8])
         with patch.object(type(self.gateway_config), "_validate_gateway_host", return_value=None), \
-             patch("requests.post", return_value=mock_resp):
+             patch("odoo.addons.print_gateway.models.gateway_http.post", return_value=mock_resp):
             persisted._action_submit_trusted(raise_on_failure=False)
         persisted.invalidate_recordset(["status", "last_error", "next_retry_at", "gateway_job_id", "attempts"])
         self.assertEqual(persisted.status, "queued")
@@ -1823,7 +1823,7 @@ class TestControlPlane(TransactionCase):
         refused.__cause__ = ConnectionRefusedError(111, "Connection refused")
         ConfigClass = type(self.gateway_config)
         with patch.object(ConfigClass, "_validate_gateway_host", return_value=None), \
-             patch("requests.post", side_effect=refused):
+             patch("odoo.addons.print_gateway.models.gateway_http.post", side_effect=refused):
             job.action_submit()
             self.assertEqual(job.printer_id, self.primary_binding.printer_id,
                              "Incompatible backup must never receive the job")
@@ -1905,7 +1905,7 @@ class TestControlPlane(TransactionCase):
             "code": "TENANT_SUBSCRIPTION_REQUIRED",
         }
         ConfigClass = type(self.gateway_config)
-        with patch.object(ConfigClass, "_validate_gateway_host", return_value=None),              patch("requests.post", return_value=response) as mock_post:
+        with patch.object(ConfigClass, "_validate_gateway_host", return_value=None),              patch("odoo.addons.print_gateway.models.gateway_http.post", return_value=response) as mock_post:
             job.action_submit()
 
         mock_post.assert_called_once()
@@ -1935,7 +1935,7 @@ class TestControlPlane(TransactionCase):
         })
         corrupted.write({"payload": json.dumps({"type": "escpos", "protocol": "escpos", "encoding": "base64", "data": "!!!not-base64!!!"})})
         with patch.object(ConfigClass, "_validate_gateway_host", return_value=None), \
-             patch("requests.post") as mock_post:
+             patch("odoo.addons.print_gateway.models.gateway_http.post") as mock_post:
             corrupted.action_submit()
             mock_post.assert_not_called()
             self.assertEqual(corrupted.status, "failed")
@@ -1958,7 +1958,7 @@ class TestControlPlane(TransactionCase):
         mock_resp.status_code = 200
         mock_resp.json.return_value = {"unexpected": "shape"}
         with patch.object(ConfigClass, "_validate_gateway_host", return_value=None), \
-             patch("requests.post", return_value=mock_resp):
+             patch("odoo.addons.print_gateway.models.gateway_http.post", return_value=mock_resp):
             garbage.action_submit()
             self.assertEqual(garbage.status, "unknown")
             self.assertEqual(garbage.attempts, 1)
@@ -1966,7 +1966,7 @@ class TestControlPlane(TransactionCase):
             self.assertIn("UNKNOWN_SUBMISSION_OUTCOME", garbage.last_error or "")
             self.assertFalse(garbage.gateway_job_id)
             self.assertEqual(garbage.printer_id, self.primary_binding.printer_id)
-            with patch("requests.post") as duplicate_post:
+            with patch("odoo.addons.print_gateway.models.gateway_http.post") as duplicate_post:
                 garbage.action_submit()
                 duplicate_post.assert_not_called()
 
@@ -2213,8 +2213,10 @@ class TestControlPlane(TransactionCase):
 
         with patch.object(RouterClass, "_validate_jpeg_base64", return_value="jpeg"), \
              patch.object(RouterClass, "resolve_binding", return_value=route) as resolve_binding, \
+             patch.object(RouterClass, "_receipt_geometry_for_route", return_value={"config_fingerprint": "a" * 64}), \
+             patch.object(RouterClass, "_replay_receipt_operation", return_value=None), \
              patch.object(RouterClass, "_submit_route", return_value={"status": "queued"}) as submit_route:
-            result = router.route_pos_sale_details(session, "jpeg")
+            result = router.route_pos_sale_details(session, "jpeg", geometry_fingerprint="a" * 64)
 
         self.assertEqual(result, {"status": "queued"})
         session.ensure_one.assert_called_once_with()
@@ -2292,7 +2294,7 @@ class TestControlPlane(TransactionCase):
         ConfigClass = type(self.gateway_config)
         grace = self._mock_gateway_response(409, {"error": "API key is in its rotation grace period and is read-only.", "code": "API_KEY_READ_ONLY", "retryable": False})
         with patch.object(ConfigClass, "_validate_gateway_host", return_value=None), \
-             patch("requests.post", return_value=grace):
+             patch("odoo.addons.print_gateway.models.gateway_http.post", return_value=grace):
             job.action_submit()
         self.assertEqual(job.status, "queued")
         self.assertFalse(job.gateway_job_id)
@@ -2305,7 +2307,7 @@ class TestControlPlane(TransactionCase):
         ConfigClass = type(self.gateway_config)
         denied = self._mock_gateway_response(401, {"error": "Unauthorized"})
         with patch.object(ConfigClass, "_validate_gateway_host", return_value=None), \
-             patch("requests.post", return_value=denied):
+             patch("odoo.addons.print_gateway.models.gateway_http.post", return_value=denied):
             job.action_submit()
         self.assertEqual(job.status, "queued")
         self.assertFalse(job.gateway_job_id)
@@ -2318,7 +2320,7 @@ class TestControlPlane(TransactionCase):
         ConfigClass = type(self.gateway_config)
         suspended = self._mock_gateway_response(403, {"error": "Tenant suspended", "code": "TENANT_SUSPENDED"})
         with patch.object(ConfigClass, "_validate_gateway_host", return_value=None), \
-             patch("requests.post", return_value=suspended):
+             patch("odoo.addons.print_gateway.models.gateway_http.post", return_value=suspended):
             job.action_submit()
         self.assertEqual(job.status, "queued")
         self.assertIn("GATEWAY_BILLING_BLOCKED: TENANT_SUSPENDED", job.last_error or "")
@@ -2333,7 +2335,7 @@ class TestControlPlane(TransactionCase):
 
         ConfigClass = type(self.gateway_config)
         with patch.object(ConfigClass, "_validate_gateway_host", return_value=None), \
-             patch("requests.post", side_effect=_must_not_post):
+             patch("odoo.addons.print_gateway.models.gateway_http.post", side_effect=_must_not_post):
             job.action_submit()
         self.assertEqual(job.status, "queued")
         self.assertFalse(job.gateway_job_id)
@@ -2343,7 +2345,7 @@ class TestControlPlane(TransactionCase):
         """A 409 revision tie during deletion shutdown converges instead of blocking unlink."""
         tie = self._mock_gateway_response(409, {"error": "Conflicting Odoo gateway activation update for the same revision", "current": {"enabled": True, "revision": 5}})
         converged = self._mock_gateway_response(200, {"ok": True, "enabled": False, "revision": 6})
-        with patch("requests.patch", side_effect=[tie, converged]) as mock_patch:
+        with patch("odoo.addons.print_gateway.models.gateway_http.patch", side_effect=[tie, converged]) as mock_patch:
             result = self.gateway_config._disable_gateway_for_unlink("https://gateway.example.com", "test_api_key_control_plane", 5)
         self.assertTrue(result)
         self.assertEqual(mock_patch.call_count, 2)

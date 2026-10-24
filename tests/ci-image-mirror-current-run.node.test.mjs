@@ -40,7 +40,8 @@ test('Docker CI uses the same sha256-pinned Official Images as production', () =
   assert.ok(secure.includes('FROM ${POSTGRES_BASE} AS postgres'));
   assert.ok(secure.includes('FROM ${CADDY_BASE} AS caddy'));
   assert.ok(secure.includes('go1.26.10'));
-  assert.ok(secure.includes('golang.org/x/net@v0.61.0'));
+  assert.match(load('docs/runtime-hardening/caddy/go.mod'), /golang\.org\/x\/net v0\.61\.0(?:\s|$)/);
+  assert.ok(secure.includes('go build -mod=readonly -trimpath'));
   assert.equal(ciCompose.split(`NODE_BASE_IMAGE: ${prodNode}`).length - 1, 2);
   assert.equal((dockerfile.match(/^FROM \$\{NODE_BASE_IMAGE\} AS /gm) ?? []).length, 3);
   assert.ok(postgresHelper.includes(officialMirrorOf(prodPostgres)));
@@ -67,17 +68,39 @@ test('Compose CLI selects the CI overlay without changing default production ref
   assert.match(dockerfile, /^ARG NODE_BASE_IMAGE=node:24\.22\.1-alpine@sha256:[a-f0-9]{64}$/m);
 });
 
-test('Odoo Community CI pulls the same immutable digest and uses Docker Hub only after throttling', () => {
-  const tag = 'odoo:19.0@sha256:144175ec0039d52daff1d79f7e51c9281ca3c98b96c830feb49d09764a9f5d7c';
-  const ecr = officialMirrorOf(tag);
-  assert.ok(ci.includes(`odoo_image="${ecr}"`));
-  assert.ok(ci.includes(`odoo_image="${tag}"`));
-  // The selected image variable must be used for BOTH pull and test run.
-  assert.ok(ci.includes('docker pull "$odoo_image"'));
+test('Odoo CI tests the built hardened runtime by content ID with verified immutable inputs', () => {
+  const hardened = load('Dockerfile.odoo-hardened');
+  const provenance = JSON.parse(load('docs/runtime-hardening/container-bases.json'));
+  for (const [argument, name] of [['ODOO_BASE', 'odoo'], ['PYTHON_BUILD_BASE', 'python']]) {
+    const reference = hardened.match(new RegExp(`^ARG ${argument}=(\\S+)$`, 'm'))?.[1];
+    assert.ok(reference, `${argument} must be explicit`);
+    officialMirrorOf(reference); // Reject mutable tags and missing digests.
+    const verified = provenance.images.find(image => image.image === name);
+    assert.equal(reference.split('@')[1], verified?.manifestDigest);
+    assert.equal(verified?.platform, 'linux/amd64');
+    assert.equal(verified?.manifestAndConfigBytesSha256Verified, true);
+    assert.ok(hardened.includes(`FROM \${${argument}} AS `));
+  }
+  assert.ok(hardened.includes('git -C /opt/odoo fetch --depth=1 origin 14f9b8149d5260d92fb74404df09483fb42dd820'));
+  assert.ok(hardened.includes('--require-hashes'));
+  assert.ok(hardened.includes('apply-odoo19-pdf-bounds.py /opt/odoo'));
+  assert.ok(hardened.includes('verify-odoo19-pdf-bounds.py /opt/odoo'));
+  assert.ok(ci.includes('--file Dockerfile.odoo-hardened'));
+  assert.ok(ci.includes('--iidfile "$RUNNER_TEMP/odoo-hardened.image-id"'));
+  assert.ok(ci.includes('odoo_image="$(cat "$RUNNER_TEMP/odoo-hardened.image-id")"'));
   assert.ok(ci.includes('"$odoo_image" \\'));
-  // No registry switch after a normal error; only 429 may activate fallback.
-  assert.match(ci, /if ! grep -Eqi '[^']*toomanyrequests[^']*rate exceeded[^']*429[^']*'/);
-  assert.equal(ci.includes('docker pull odoo:19.0@'), false);
+  assert.ok(ci.includes('--addons-path=/opt/odoo/odoo/addons,/opt/odoo/addons,/opt/yaseir-addons'));
+  // Runtime code and dependencies must come from the tested image itself.
+  assert.doesNotMatch(ci, /odoo_image="(?:public\.ecr\.aws\/docker\/library\/)?odoo:/);
+  assert.doesNotMatch(ci, /-v "\$GITHUB_WORKSPACE\/odoo_addons:/);
+  assert.ok(ci.includes('python3 scripts/verify-odoo-test-results.py'));
+  assert.ok(ci.includes('--tests-dir odoo_addons/print_gateway/tests'));
+  assert.ok(ci.includes('--log /tmp/odoo19_test.log'));
+  assert.ok(!ci.includes('Expected at least 80 Odoo addon tests'));
+  assert.equal(ci.split('image-ref: ${{ steps.hardened-image.outputs.image_id }}').length - 1, 2);
+  assert.ok(ci.includes('output: odoo-hardened.cdx.json'));
+  assert.ok(ci.includes('output: odoo-hardened.sarif'));
+  assert.match(ci, /output: odoo-hardened\.sarif\n\s+severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL\n\s+limit-severities-for-sarif: true\n\s+ignore-unfixed: false\n\s+exit-code: '1'/);
 });
 
 test('Docker CI image references remain immutable and reject mutable tags', () => {

@@ -9,8 +9,8 @@ agent:
   id: ""
   secret: ""
   name: "Main Office Agent"
-  # Safe default: false prevents silent duplicate physical output after a crash.
-  # Set true only when the business accepts at-least-once reprinting.
+  # Deprecated compatibility field: both false and legacy true forbid automatic
+  # reprinting of unknown output. Reconcile, then authorize a separate new job.
   reprint_after_crash: false
 
 printers:

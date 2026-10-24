@@ -1,6 +1,7 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
 mod agent;
+mod agent_status;
 mod cleanup;
 mod commands;
 mod logging;
@@ -44,7 +45,10 @@ unsafe extern "system" {
 #[cfg(windows)]
 fn focus_existing_manager_window() {
     const SW_RESTORE: i32 = 9;
-    let title: Vec<u16> = "Yaseir Print Manager".encode_utf16().chain(Some(0)).collect();
+    let title: Vec<u16> = "Yaseir Print Manager"
+        .encode_utf16()
+        .chain(Some(0))
+        .collect();
     let window = unsafe { FindWindowW(std::ptr::null(), title.as_ptr()) };
     if !window.is_null() {
         unsafe {
@@ -106,8 +110,8 @@ fn acquire_single_instance(wait_for_previous: bool) -> Result<Option<SingleInsta
 
 fn main() {
     #[cfg(windows)]
-    let elevated_relaunch = std::env::args_os()
-        .any(|arg| arg.to_string_lossy() == "--elevated-relaunch");
+    let elevated_relaunch =
+        std::env::args_os().any(|arg| arg.to_string_lossy() == "--elevated-relaunch");
     #[cfg(windows)]
     let _single_instance_guard = match acquire_single_instance(elevated_relaunch) {
         Ok(Some(guard)) => guard,

@@ -67,7 +67,8 @@ export async function POST(req: Request) {
     });
     return NextResponse.json({ ok: true, url: portal.url });
   } catch (error) {
-    if (error instanceof ManagerMutationAuthorityChangedError || error instanceof TenantDeletedError || error instanceof TenantSuspendedError) return NextResponse.json({ error: error.message }, { status: 403 });
+    if (error instanceof ManagerMutationAuthorityChangedError) return error.response();
+    if (error instanceof TenantDeletedError || error instanceof TenantSuspendedError) return NextResponse.json({ error: error.message }, { status: 403 });
     const message = error instanceof Error ? error.message : "unknown";
     logError("billing.portal_failed", { error: message.slice(0, 200) });
     if (message === "Stripe is not configured") {

@@ -32,7 +32,9 @@ describe("strict Content-Length parser", () => {
 
 describe("request authentication budget classification", () => {
   it("recognizes all current session cookie names for mutation admission", () => {
-    for (const cookie of ["mgr_session=token", "cust_session=token", "plt_session=token"]) {
+    for (const cookie of ["mgr_session=token", "cust_session=token", "plt_session=token",
+      "__Host-mgr_session=token", "__Host-cust_session=token", "__Host-plt_session=token",
+      "__Secure-mgr_refresh=token", "__Secure-cust_refresh=token", "__Secure-plt_refresh=token", "__Host-mgr_refresh=token", "__Host-cust_refresh=token", "__Host-plt_refresh=token"]) {
       const req = { headers: { cookie } } as import("http").IncomingMessage;
       expect(isCookieAuthenticatedMutation(req)).toBe(true);
     }

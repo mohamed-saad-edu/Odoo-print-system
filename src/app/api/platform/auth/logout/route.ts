@@ -1,3 +1,4 @@
+import { clearLegacySessionCookies } from "../../../../../lib/session-config";
 import { NextResponse } from "next/server";
 import {
   clearPlatformCookieHeader,
@@ -28,6 +29,7 @@ export async function POST(req: Request) {
     });
   }
   const refreshToken = getRefreshTokenFromRequest(req, "platform");
+
 
   try {
     if (claims?.familyId) {
@@ -72,5 +74,6 @@ export async function POST(req: Request) {
     },
   );
   response.headers.append("Set-Cookie", clearPlatformRefreshCookieHeader());
+  clearLegacySessionCookies(response.headers, "platform");
   return response;
 }

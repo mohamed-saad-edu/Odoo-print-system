@@ -66,8 +66,8 @@ func TestDesiredStatePassesExplicit80mmPaperWidthSeparatelyFromObservedCapabilit
 		t.Fatalf("create backend: %v", err)
 	}
 	network, ok := backend.(*printer.NetworkPrinter)
-	if !ok || network.RasterMaxWidth != 512 {
-		t.Fatalf("80mm roll without verified DPI must use safe 512 dots, not assume 576: %#v", backend)
+	if !ok || network.RasterMaxWidth != 0 {
+		t.Fatalf("80mm nominal roll must retain unknown printable geometry: %#v", backend)
 	}
 	// The manager can provide a device's measured 203dpi printable width;
 	// observed protocols must not discard this explicit print geometry.
@@ -87,7 +87,7 @@ func TestDesiredStatePassesExplicit80mmPaperWidthSeparatelyFromObservedCapabilit
 	}
 }
 
-func TestDesiredStatePreservesDriverGeometryWithoutWideningNativeRaster(t *testing.T) {
+func TestDesiredStatePreservesExplicitMeasuredDotsAcrossTransports(t *testing.T) {
 	for _, tc := range []struct {
 		name, transport, spooler string
 		dots, dpi                int
@@ -97,8 +97,8 @@ func TestDesiredStatePreservesDriverGeometryWithoutWideningNativeRaster(t *testi
 		{"spooler300", "spooler", "Test Queue", 850, 300, true},
 		{"spooler600", "spooler", "Test Queue", 1700, 600, true},
 		{"usbWindowsQueue", "usb", "Test Queue", 850, 300, true},
-		{"nativeTCP", "network", "", 850, 300, false},
-		{"nativeUSB", "usb", "", 850, 300, false},
+		{"nativeTCP", "network", "", 850, 300, true},
+		{"nativeUSB", "usb", "", 850, 300, true},
 		{"invalid", "spooler", "Test Queue", 0, 0, false},
 		{"unbounded", "spooler", "Test Queue", printer.MaxJPEGDimension + 1, -1, false},
 	} {
@@ -369,7 +369,7 @@ func TestYAMLOwnedPrinterRemainsAvailableBeforeDesiredStateSync(t *testing.T) {
 	a := newDesiredStateTestAgent(t)
 	const id = "yaml-local"
 	a.cfg.Printers = []config.PrinterConfig{{
-		ID: id, Name: "YAML Local", Type: "network", Endpoint: "127.0.0.1:9100", Protocol: "raw",
+		ID: id, Name: "YAML Local", Type: "network", Endpoint: "10.0.0.20:9100", Protocol: "raw",
 	}}
 	a.printerConfigs[id] = a.cfg.Printers[0]
 	a.printers[id] = &fakePrinter{status: "online"}
@@ -635,7 +635,7 @@ func TestDesiredSpoolerPassthroughIsExplicitAndAdditive(t *testing.T) {
 	for _, value := range got {
 		seen[value] = true
 	}
-	for _, want := range []string{"pdf", "image", "escpos"} {
+	for _, want := range []string{"pdf", "escpos"} {
 		if !seen[want] {
 			t.Fatalf("missing %s in %v", want, got)
 		}

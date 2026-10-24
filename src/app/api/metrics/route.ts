@@ -1,20 +1,33 @@
 import { NextResponse } from "next/server";
 import { requirePlatformOwner, PlatformUnauthorizedError } from "../../../lib/platform-auth";
 import { renderPrometheusMetrics } from "../../../lib/metrics";
+import { isMetricsMachineRequest, MetricsMachineConfigurationError } from "../../../lib/metrics-machine-auth";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(req: Request) {
-  // Global telemetry is control-plane data: only the platform owner identity
-  // may read it. Platform-tenant membership alone (any role, including
-  // viewer) must never suffice, and the legacy tenant-role gate is retired.
+  // Global telemetry accepts the verified owner or an explicitly configured
+  // read-only collector credential. Tenant membership never grants access.
   try {
-    await requirePlatformOwner(req);
+    if (!isMetricsMachineRequest(req)) {
+      let ownerRequest = req;
+      if (req.headers.has("authorization")) {
+        // Explicit credentials must not downgrade to ambient browser authority
+        // when malformed or empty. Preserve legitimate owner Bearer tokens.
+        const headers = new Headers(req.headers);
+        headers.delete("cookie");
+        ownerRequest = new Request(req, { headers });
+      }
+      await requirePlatformOwner(ownerRequest);
+    }
   } catch (error) {
     if (error instanceof PlatformUnauthorizedError) {
-      return NextResponse.json({ error: "Platform Owner authentication required" }, { status: 401 });
+      return NextResponse.json({ error: "Metrics authentication required" }, { status: 401, headers: { "Cache-Control": "no-store" } });
     }
-    return NextResponse.json({ error: "Platform authentication temporarily unavailable" }, { status: 503 });
+    if (error instanceof MetricsMachineConfigurationError) {
+      return NextResponse.json({ error: "Metrics authentication temporarily unavailable" }, { status: 503, headers: { "Cache-Control": "no-store" } });
+    }
+    return NextResponse.json({ error: "Platform authentication temporarily unavailable" }, { status: 503, headers: { "Cache-Control": "no-store" } });
   }
   try {
     return new Response(await renderPrometheusMetrics(), {

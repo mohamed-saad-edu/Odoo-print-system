@@ -6,6 +6,8 @@ from unittest.mock import Mock
 
 import pytest
 import requests
+from odoo_geometry_fixture import receipt_geometry, validated_printer_geometry
+from odoo_verification_fixture import with_verification, is_verified_runtime_printer
 
 ROOT = Path(__file__).resolve().parents[1] / "odoo_addons/print_gateway"
 
@@ -25,13 +27,17 @@ def method(relative, name, namespace):
 
 
 def discovery(monkeypatch, agents=None, printers=None):
+    if isinstance(printers, list):
+        printers = [with_verification(printer) if isinstance(printer, dict)
+                    and isinstance(printer.get("capabilities", {}), dict) else printer for printer in printers]
     config = SimpleNamespace(company_id=1, _gateway_base=lambda **kw: "https://gateway.invalid",
                              _gateway_headers=lambda: {})
     responses = [Mock(status_code=200, content=b"json", json=lambda: {"agents": agents}),
                  Mock(status_code=200, content=b"json", json=lambda: {"printers": printers})]
     get = Mock(side_effect=responses)
     monkeypatch.setattr(requests, "get", get)
-    namespace = {"requests": requests, "ValidationError": ValidationError,
+    namespace = {"requests": requests, "ValidationError": ValidationError, "validated_printer_geometry": validated_printer_geometry,
+                 "is_verified_runtime_printer": is_verified_runtime_printer,
                  "Forbidden": ValidationError, "_": lambda text: text,
                  "is_gateway_shared_printer": lambda printer: printer.get("sharedWithGateway", True) is True,
                  "request": SimpleNamespace(env=SimpleNamespace(_=lambda text: text))}
@@ -54,6 +60,16 @@ def discovery(monkeypatch, agents=None, printers=None):
 AGENTS = [{"id": "agent", "lifecycle": "active"}]
 PRINTER = {"id": "printer", "lifecycle": "active", "agent": {"id": "agent"},
            "connectionType": "network", "protocol": "escpos"}
+
+
+def test_picker_preserves_selected_geometry_and_strips_another_printer_profile(monkeypatch):
+    profile = receipt_geometry()
+    controller, _, _ = discovery(monkeypatch, agents=AGENTS, printers=[dict(PRINTER, capabilities={"geometry": profile})])
+    result = controller.runtime_printers(agent_id="agent")
+    assert result["printers"][0]["capabilities"]["geometry"] == profile
+    controller, _, _ = discovery(monkeypatch, agents=AGENTS, printers=[dict(PRINTER, capabilities={"geometry": dict(profile, printer_id="another-printer")})])
+    result = controller.runtime_printers(agent_id="agent")
+    assert "geometry" not in result["printers"][0]["capabilities"]
 
 
 @pytest.mark.parametrize("malformed", [17, True, "agent", {"id": "agent"}, None])
@@ -92,8 +108,13 @@ def test_picker_inventory_preserves_absent_versus_restricted_capabilities(monkey
     controller, binding, _ = discovery(monkeypatch, agents=AGENTS,
                                  printers=[dict(PRINTER, capabilities=caps)])
     result = controller.runtime_printers(agent_id="agent")
+    if not isinstance(caps, dict):
+        assert result["printers"] == []
+        return
     assert len(result["printers"]) == 1
-    assert result["printers"][0]["capabilities"] == expected
+    actual = result["printers"][0]["capabilities"]
+    assert actual["operational_verification"]["printer_id"] == PRINTER["id"]
+    assert {key: value for key, value in actual.items() if key != "operational_verification"} == expected
     assert binding._runtime_printer_accepts_image(result["printers"][0]) == binding._runtime_printer_accepts_image(dict(PRINTER, capabilities=caps))
 
 

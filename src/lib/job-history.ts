@@ -1,6 +1,7 @@
 import { db } from "../db";
 import { sql, type SQL } from "drizzle-orm";
-import { derivePhysicalOutcome, isJobFilterStatus, PHYSICAL_OUTCOME_UNKNOWN_MARKERS } from "./job-status";
+import { printOutputPresentation } from "./print-output";
+import { isJobFilterStatus, PHYSICAL_OUTCOME_UNKNOWN_MARKERS } from "./job-status";
 
 /**
  * The live queue is intentionally transient. Terminal rows are moved to the
@@ -43,6 +44,8 @@ type HistoryRow = {
   createdAt: Date;
   updatedAt: Date;
   archived: boolean;
+  outputMedium: string;
+  outputEvidence: Record<string, unknown> | null;
 };
 
 function scopedWhere(alias: "j" | "r", tenantId: string | undefined): SQL {
@@ -104,7 +107,7 @@ export async function listPrintJobHistory(input: JobHistoryOptions = {}) {
       SELECT j.id, j.tenant_id, j.destination, j.document_type,
         j.agent_id, j.printer_id, j.requested_by, j.status, j.error,
         j.retries, j.delivery_attempts, j.claimed_at, j.delivered_at,
-        j.acked_at, j.expires_at, j.created_at, j.updated_at,
+        j.acked_at, j.expires_at, j.created_at, j.updated_at, j.output_medium, j.output_evidence,
         FALSE AS archived
       FROM print_jobs j ${scopedWhere("j", input.tenantId)}
       UNION ALL
@@ -112,7 +115,7 @@ export async function listPrintJobHistory(input: JobHistoryOptions = {}) {
         r.agent_id, r.printer_id, r.requested_by, r.status, r.error,
         NULL::integer AS retries, NULL::integer AS delivery_attempts,
         NULL::timestamp AS claimed_at, r.delivered_at,
-        r.acked_at, NULL::timestamp AS expires_at, r.created_at, r.updated_at,
+        r.acked_at, NULL::timestamp AS expires_at, r.created_at, r.updated_at, r.output_medium, r.output_evidence,
         TRUE AS archived
       FROM print_job_receipts r ${scopedWhere("r", input.tenantId)}
       AND NOT EXISTS (SELECT 1 FROM print_jobs live WHERE live.id = r.id)
@@ -125,7 +128,7 @@ export async function listPrintJobHistory(input: JobHistoryOptions = {}) {
       h.retries, h.delivery_attempts AS "deliveryAttempts",
       h.claimed_at AS "claimedAt", h.delivered_at AS "deliveredAt",
       h.acked_at AS "ackedAt", h.expires_at AS "expiresAt",
-      h.created_at AS "createdAt", h.updated_at AS "updatedAt", h.archived
+      h.created_at AS "createdAt", h.updated_at AS "updatedAt", h.archived, h.output_medium AS "outputMedium", h.output_evidence AS "outputEvidence"
     FROM history h
     LEFT JOIN tenants t ON t.id = h.tenant_id
     LEFT JOIN agents a ON a.id = h.agent_id AND a.tenant_id = h.tenant_id
@@ -135,5 +138,5 @@ export async function listPrintJobHistory(input: JobHistoryOptions = {}) {
     LIMIT ${limit} OFFSET ${offset}
   `);
   const rows = result.rows as HistoryRow[];
-  return rows.map(row => ({ ...row, physicalOutcome: derivePhysicalOutcome(row.status, row.error) }));
+  return rows.map(row => ({ ...row, ...printOutputPresentation(row) }));
 }

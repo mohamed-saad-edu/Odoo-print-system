@@ -125,7 +125,10 @@ export async function DELETE(req: Request) {
           fingerprint: idempotencyDigest({ printerId: row.printerId, documentType: row.documentType, destination: row.destination, payload: row.payload }),
           printerId: row.printerId, agentId: row.agentId, apiKeyId: row.apiKeyId,
           destination: row.destination, documentType: row.documentType, requestedBy: row.requestedBy,
-          status: row.status, error: row.error, closedClaimTokenHash: row.closedClaimTokenHash,
+          status: row.status,
+        bindingDigest: row.bindingDigest,
+        outputMedium: row.outputMedium,
+        outputEvidence: row.outputEvidence, error: row.error, closedClaimTokenHash: row.closedClaimTokenHash,
           deliveredAt: row.deliveredAt, ackedAt: row.ackedAt, createdAt: row.createdAt, updatedAt: row.updatedAt,
         })));
       }
@@ -135,7 +138,8 @@ export async function DELETE(req: Request) {
     return count;
   });
   } catch (error) {
-    if (error instanceof ManagerMutationAuthorityChangedError || error instanceof TenantDeletedError || error instanceof TenantSuspendedError) return NextResponse.json({ error: error.message }, { status: 403 });
+    if (error instanceof ManagerMutationAuthorityChangedError) return error.response();
+    if (error instanceof TenantDeletedError || error instanceof TenantSuspendedError) return NextResponse.json({ error: error.message }, { status: 403 });
     throw error;
   }
   return NextResponse.json({ deleted, before: before.toISOString(), limit: requestedLimit });

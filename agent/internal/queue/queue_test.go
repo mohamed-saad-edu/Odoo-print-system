@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"sync"
 	"testing"
@@ -473,7 +474,7 @@ func TestBeginPrintCannotReopenTerminalOrUnknownStates(t *testing.T) {
 		{name: "success never reopens even with reopen flag", id: "bp_success_flag", status: "success", allowReopen: true, wantErr: true, wantStatus: "success"},
 		{name: "unknown partial refuses normal path", id: "bp_unknown", status: "failed", lastErr: "UNKNOWN_PARTIAL_DELIVERY: write failed after 3/9 bytes", wantErr: true, wantStatus: "failed"},
 		{name: "restart interrupt refuses normal path", id: "bp_interrupt", status: "failed", lastErr: InterruptedMarker + ": process died mid-print", wantErr: true, wantStatus: "failed"},
-		{name: "unknown reopens ONLY via explicit reprint opt-in", id: "bp_unknown_optin", status: "failed", lastErr: "UNKNOWN_PARTIAL_DELIVERY: ambiguous", allowReopen: true, wantErr: false, wantStatus: "printing"},
+		{name: "unknown refuses legacy true", id: "bp_unknown_optin", status: "failed", lastErr: "UNKNOWN_PARTIAL_DELIVERY: ambiguous", allowReopen: true, wantErr: true, wantStatus: "failed"},
 	}
 
 	for _, tc := range cases {
@@ -590,25 +591,44 @@ func TestBeginPrintSuccessIsTerminalEvenWhenReprintEnabled(t *testing.T) {
 	}
 }
 
-func TestBeginPrintUnknownOutcomeRequiresExplicitReprint(t *testing.T) {
-	q := newTestQueue(t)
-	if err := q.Push("unknown-terminal", "printer-1", []byte("payload")); err != nil {
-		t.Fatalf("Push: %v", err)
-	}
-	if err := q.UpdateStatus("unknown-terminal", "printing"); err != nil {
-		t.Fatalf("UpdateStatus printing: %v", err)
-	}
-	if err := q.UpdateStatusWithError("unknown-terminal", "failed", InterruptedMarker+": physical outcome unknown"); err != nil {
-		t.Fatalf("UpdateStatusWithError: %v", err)
-	}
-	if err := q.BeginPrint("unknown-terminal", "printer-1", []byte("payload"), "token-1", false); !errors.Is(err, ErrTerminalState) {
-		t.Fatalf("unknown outcome must be closed by normal delivery, got %v", err)
-	}
-	if err := q.BeginPrint("unknown-terminal", "printer-1", []byte("payload"), "token-2", true); err != nil {
-		t.Fatalf("explicit operator reprint should reopen unknown outcome: %v", err)
-	}
-	if got := q.ClaimTokenFor("unknown-terminal"); got != "token-2" {
-		t.Fatalf("explicit reprint must persist new claim token, got %q", got)
+func TestBeginPrintUnknownOutcomeCannotReopenWithLegacyTrue(t *testing.T) {
+	for _, marker := range UnknownOutcomeMarkers {
+		for _, legacy := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/legacy=%v", marker, legacy), func(t *testing.T) {
+				q := newTestQueue(t)
+				if err := q.BeginPrint("unknown-terminal", "printer-1", []byte("original payload"), "original-token", false); err != nil {
+					t.Fatal(err)
+				}
+				if err := q.UpdateTerminalWithEvidence("unknown-terminal", "failed", marker+": physical outcome unknown", "741"); err != nil {
+					t.Fatal(err)
+				}
+				before, err := q.PendingTerminalReports(8)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := q.BeginPrint("unknown-terminal", "other-printer", []byte("replacement"), "replacement-token", legacy); !errors.Is(err, ErrTerminalState) {
+					t.Fatalf("unknown outcome must remain terminal for legacy=%v, got %v", legacy, err)
+				}
+				after, err := q.PendingTerminalReports(8)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !reflect.DeepEqual(before, after) {
+					t.Fatalf("original fenced/spooler/outcome evidence changed: before=%#v after=%#v", before, after)
+				}
+				printerID, status, found, err := q.Get("unknown-terminal")
+				if err != nil || !found || printerID != "printer-1" || status != "failed" {
+					t.Fatalf("unknown row replaced: printer=%s status=%s found=%v err=%v", printerID, status, found, err)
+				}
+				var stored []byte
+				if err := q.db.QueryRow("SELECT payload FROM print_jobs WHERE id='unknown-terminal'").Scan(&stored); err != nil {
+					t.Fatal(err)
+				}
+				if string(stored) != "original payload" {
+					t.Fatal("unknown row payload replaced")
+				}
+			})
+		}
 	}
 }
 

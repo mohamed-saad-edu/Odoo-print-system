@@ -4,9 +4,13 @@ These tests require the Odoo 19/PostgreSQL addon test runner. They do not submit
 HTTP requests or print; the runtime-independent tests live under tests/.
 """
 import json
+import os
+import tempfile
+from unittest.mock import Mock, patch
 
 from odoo.exceptions import AccessError
 from odoo.tests.common import TransactionCase
+from odoo.addons.print_gateway.idempotency_namespace import deployment_proof
 
 
 class TestDurableIdentitySecurity(TransactionCase):
@@ -63,3 +67,61 @@ class TestDurableIdentitySecurity(TransactionCase):
         job = self.jobs.sudo().create(self.job_values)
         job.with_user(self.operator).write({"last_error": "operator recovery"})
         self.assertEqual(job.last_error, "operator recovery")
+
+
+class TestStatusInstallationIsolation(TransactionCase):
+    """Real ORM/SQL polling with an isolated HTTP response boundary."""
+
+    def test_batch_status_authenticates_each_saved_installation_separately(self):
+        installation_a = "00000000-0000-4000-8000-000000000001"
+        installation_b = "00000000-0000-4000-8000-000000000002"
+        proofs = {installation_a: "a" * 43, installation_b: "b" * 43}
+        config = self.env["print_gateway.gateway_config"].create({
+            "company_id": self.env.company.id,
+            "gateway_url": "https://gateway.example.com",
+            "gateway_api_key": "status-test-credential",
+        })
+        jobs = self.env["print_gateway.print_job"].create([{
+            "company_id": self.env.company.id, "gateway_config_id": config.id,
+            "printer_id": "status-test-printer", "destination": "Status test",
+            "document_type": "invoice", "status": "submitted",
+            "gateway_job_id": "status-installation-%s" % index,
+            "idempotency_key": "status-installation-%s" % index,
+            "gateway_idempotency_version": 2 if installation else 1,
+            "gateway_installation_id": installation,
+            "payload": json.dumps({"type": "pdf", "encoding": "base64", "data": "JVBERi0xLjQKJSVFT0Y="}),
+        } for index, installation in enumerate((installation_a, installation_a, installation_b, False))])
+        jobs.flush_recordset()
+        batches = []
+
+        def status_response(_url, **request):
+            batches.append(request)
+            return Mock(status_code=200, json=lambda: {"jobs": [
+                {"jobId": job_id, "status": "submitted"}
+                for job_id in request["json"]["jobIds"]
+            ]})
+
+        with tempfile.TemporaryDirectory() as proof_dir, patch.dict(os.environ, {
+            "YASEIR_ODOO_INSTALLATION_PROOFS": json.dumps(proofs),
+        }), patch(
+            "odoo.addons.print_gateway.models.print_job.deployment_proof",
+            side_effect=lambda installation, database, origin, company_id=None:
+                deployment_proof(installation, database, origin, proof_dir, company_id),
+        ), patch.object(type(self.env["ir.cron"]), "_commit_progress", return_value=30), patch(
+            "odoo.addons.print_gateway.models.print_job.requests.post", side_effect=status_response,
+        ):
+            self.assertEqual(jobs.cron_sync_status(), 4)
+
+        self.assertEqual(len(batches), 3)
+        expected = [(["status-installation-0", "status-installation-1"], installation_a),
+                    (["status-installation-2"], installation_b),
+                    (["status-installation-3"], False)]
+        for batch, (job_ids, installation) in zip(batches, expected):
+            self.assertEqual(batch["json"]["jobIds"], job_ids)
+            headers = batch["headers"]
+            if installation:
+                self.assertEqual(headers["X-Yaseir-Odoo-Installation"], installation)
+                self.assertEqual(headers["X-Yaseir-Odoo-Proof"], proofs[installation])
+                self.assertEqual(headers["X-Yaseir-Odoo-Idempotency-Version"], "2")
+            else:
+                self.assertNotIn("X-Yaseir-Odoo-Installation", headers)

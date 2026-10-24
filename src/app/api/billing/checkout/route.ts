@@ -122,7 +122,7 @@ async function planForStripeSubscription(subscription: Record<string, unknown>) 
 
 export async function POST(req: Request) { return handleCheckout(req); }
 
-async function handleCheckout(req: Request, subscriptionVerified = false): Promise<NextResponse> {
+async function handleCheckout(req: Request, subscriptionVerified = false): Promise<Response> {
   if (hasBodyOverLimit(req, 16 * 1024)) {
     return NextResponse.json({ error: "Request body too large" }, { status: 413 });
   }
@@ -415,7 +415,7 @@ async function handleCheckout(req: Request, subscriptionVerified = false): Promi
       };
     });
   } catch (error) {
-    if (error instanceof ManagerMutationAuthorityChangedError) return NextResponse.json({ error: error.message }, { status: 403 });
+    if (error instanceof ManagerMutationAuthorityChangedError) return error.response();
     if (error instanceof Error && error.message === "PLAN_NOT_BILLABLE") return NextResponse.json({ error: "Plan is not billable", code: "PLAN_NOT_BILLABLE" }, { status: 400 });
     if (error instanceof Error && error.message === "TENANT_NOT_FOUND") {
       return NextResponse.json({ error: "Tenant not found" }, { status: 404 });
@@ -457,7 +457,8 @@ async function handleCheckout(req: Request, subscriptionVerified = false): Promi
       if (!cleared) return NextResponse.json({ error: "Checkout changed while verifying Stripe state. Retry safely.", code: "CHECKOUT_STATE_CHANGED" }, { status: 409 });
       return handleCheckout(new Request(req.url, { method: "POST", headers: req.headers, body: JSON.stringify(body) }), subscriptionVerified);
     } catch (error) {
-      if (error instanceof ManagerMutationAuthorityChangedError || error instanceof TenantDeletedError || error instanceof TenantSuspendedError) return NextResponse.json({ error: error.message }, { status: 403 });
+      if (error instanceof ManagerMutationAuthorityChangedError) return error.response();
+    if (error instanceof TenantDeletedError || error instanceof TenantSuspendedError) return NextResponse.json({ error: error.message }, { status: 403 });
       logError("billing.checkout_session_verification_failed", { tenantId: claims.tenantId, error: error instanceof Error ? error.message : "unknown" });
       return NextResponse.json({ error: "Unable to verify the previous Checkout Session. Retry safely.", code: "CHECKOUT_RECONCILIATION_BLOCKED" }, { status: 502 });
     }
@@ -504,7 +505,8 @@ async function handleCheckout(req: Request, subscriptionVerified = false): Promi
       }
       return handleCheckout(new Request(req.url, { method: "POST", headers: req.headers, body: JSON.stringify(body) }), true);
     } catch (error) {
-      if (error instanceof ManagerMutationAuthorityChangedError || error instanceof TenantDeletedError || error instanceof TenantSuspendedError) return NextResponse.json({ error: error.message }, { status: 403 });
+      if (error instanceof ManagerMutationAuthorityChangedError) return error.response();
+    if (error instanceof TenantDeletedError || error instanceof TenantSuspendedError) return NextResponse.json({ error: error.message }, { status: 403 });
       logError("billing.checkout_subscription_verification_failed", { tenantId: claims.tenantId, error: error instanceof Error ? error.message : "unknown" });
       return NextResponse.json({ error: "Unable to verify the existing Stripe subscription. Retry safely.", code: "CHECKOUT_RECONCILIATION_BLOCKED" }, { status: 502 });
     }
@@ -735,7 +737,8 @@ async function handleCheckout(req: Request, subscriptionVerified = false): Promi
     }
   }
   } catch (error) {
-    if (error instanceof ManagerMutationAuthorityChangedError || error instanceof TenantDeletedError || error instanceof TenantSuspendedError) return NextResponse.json({ error: error.message }, { status: 403 });
+    if (error instanceof ManagerMutationAuthorityChangedError) return error.response();
+    if (error instanceof TenantDeletedError || error instanceof TenantSuspendedError) return NextResponse.json({ error: error.message }, { status: 403 });
     logError("billing.checkout_reconciliation_failed", { tenantId: claims.tenantId, error: error instanceof Error ? error.message : "unknown" });
     return NextResponse.json({ error: "Checkout reconciliation is temporarily unavailable.", code: "CHECKOUT_RECONCILIATION_BLOCKED" }, { status: 502 });
   }
@@ -1013,7 +1016,8 @@ async function handleCheckout(req: Request, subscriptionVerified = false): Promi
     }
     return NextResponse.json({ ok: true, url: session.url });
   } catch (error) {
-    if (error instanceof ManagerMutationAuthorityChangedError || error instanceof TenantDeletedError || error instanceof TenantSuspendedError) return NextResponse.json({ error: error.message }, { status: 403 });
+    if (error instanceof ManagerMutationAuthorityChangedError) return error.response();
+    if (error instanceof TenantDeletedError || error instanceof TenantSuspendedError) return NextResponse.json({ error: error.message }, { status: 403 });
     // Preserve the creating intent for ambiguous/retryable Stripe failures: if
     // Stripe accepted the request but the response or local finalization was
     // lost, the next retry must replay the same idempotency key rather than

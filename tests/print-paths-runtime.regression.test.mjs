@@ -1,3 +1,4 @@
+import { receiptGeometry } from "./helpers/odoo-printer-geometry.mjs";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { readFile } from "node:fs/promises";
@@ -11,7 +12,7 @@ async function loadHooks(file = "pos_print_router.js", options = {}) {
   const state = { widths: [], nativeCalls: 0, renders: 0 };
   const controls = {
     raster: async (_element, config) => {
-      state.widths.push(config.width);
+      state.widths.push(config.geometry.printable_width_dots);
       return `JPEG-${++state.renders}`;
     },
   };
@@ -41,18 +42,15 @@ async function loadHooks(file = "pos_print_router.js", options = {}) {
     for (const [key, value] of Object.entries(mocks)) this.setExport(key, value);
   }, { context });
   const raster = new vm.SyntheticModule([
-    "DEFAULT_RECEIPT_RASTER_WIDTH", "normalizedReceiptRasterWidth", "renderGatewayReceiptJpeg",
+    "renderGatewayReceiptJpeg",
   ], function () {
-    this.setExport("DEFAULT_RECEIPT_RASTER_WIDTH", 512);
-    this.setExport("normalizedReceiptRasterWidth", (value) =>
-      Number.isInteger(Number(value)) && Number(value) >= 288 && Number(value) <= 576 ? Number(value) : 512);
     this.setExport("renderGatewayReceiptJpeg", (...args) => controls.raster(...args));
   }, { context });
   const root = new URL("../odoo_addons/print_gateway/static/src/js/", import.meta.url);
   const asyncControl = new vm.SourceTextModule(await readFile(new URL("async_control.js", root), "utf8"), { context });
   await asyncControl.link(() => { throw new Error("Unexpected async-control import"); });
   const recovery = new vm.SourceTextModule(await readFile(new URL("operation_recovery.js", root), "utf8"), { context });
-  await recovery.link(() => { throw new Error("Unexpected recovery import"); });
+  await recovery.link((name) => { assert.equal(name, "@web/core/l10n/translation"); return common; });
   const addonModule = new vm.SourceTextModule(await readFile(new URL(file, root), "utf8"), { context });
   await addonModule.link((name) => name === "./receipt_raster" ? raster : name === "./async_control" ? asyncControl : name === "./operation_recovery" ? recovery : common);
   await addonModule.evaluate();
@@ -77,7 +75,7 @@ function fixture() {
       call: async (model, method, args, kwargs) => {
         calls.push({ model, method, args, kwargs });
         if (method === "is_gateway_printing_enabled") return true;
-        if (method.endsWith("raster_width")) return 384;
+        if (method.endsWith("_geometry")) return receiptGeometry(384);
         if (method === "get_sale_details") return {};
         return { gateway_enabled: true, status: "submitted" };
       },
@@ -92,8 +90,8 @@ test("kitchen routes execute the real dispatch method with each station's printa
   const { hooks, state } = await loadHooks();
   const f = fixture();
   const routes = [
-    { pos_printer_id: 1, category_ids: [1], raster_width: 384 },
-    { pos_printer_id: 2, category_ids: [2], raster_width: 576 },
+    { pos_printer_id: 1, category_ids: [1], geometry: receiptGeometry(384) },
+    { pos_printer_id: 2, category_ids: [2], geometry: receiptGeometry(576) },
   ];
   const call = f.pos.data.call;
   f.pos.data.call = (...args) => args[1] === "get_gateway_kitchen_routes"

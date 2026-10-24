@@ -73,7 +73,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ installationId, installationProof: proof, note: "Save this 256-bit proof OUTSIDE the Odoo database in YASEIR_ODOO_INSTALLATION_PROOFS. It is shown only once. Restore/clone operations require operator re-enrollment." },
       { status: 201, headers: { "Cache-Control": "no-store" } });
   } catch (error) {
-    if (error instanceof ManagerMutationAuthorityChangedError) return NextResponse.json({ error: "Permission changed" }, { status: 403 });
+    if (error instanceof ManagerMutationAuthorityChangedError) return error.response();
     logError("odoo.installation.enrollment_failed", { error: error instanceof Error ? error.message : String(error) });
     return NextResponse.json({ error: "Enrollment unavailable" }, { status: 500 });
   }

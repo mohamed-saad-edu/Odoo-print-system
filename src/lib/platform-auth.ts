@@ -1,12 +1,13 @@
 import { db, type DbTx } from "../db";
 import { platformSessions, users } from "../db/schema";
-import { eq, and, gt, isNull, sql } from "drizzle-orm";
+import { eq, and, isNull, sql } from "drizzle-orm";
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { requiredRuntimeSecret } from "./runtime-secret";
 import { verifyPassword, normalizeEmail, burnPasswordVerification } from "./password";
 import { verifyScryptPasswordHash } from "./manager-auth";
 import { LEGACY_SESSION_MAX_AGE_SECONDS } from "./session-config";
 import { databaseNowMs } from "./database-clock";
+import { isPlatformSessionAssured } from "./platform-session-security";
 import {
   accessCookieHeader,
   clearAccessCookieHeader,
@@ -21,7 +22,6 @@ import {
   type SessionRequestContext,
 } from "./session-tokens";
 
-const COOKIE_NAME = "plt_session";
 function getSecret(): string {
   const s = requiredRuntimeSecret("GATEWAY_JWT_SECRET");
   if (s.length < 32) throw new Error("GATEWAY_JWT_SECRET must be >=32 chars");
@@ -91,28 +91,30 @@ export async function requirePlatformActorInTransaction(
   }
 
   let active;
-  if (claims.ver === 2 && claims.kind === "platform" && claims.familyId) {
+  if (claims.ver === 2 && claims.kind === "platform" && claims.familyId && claims.sid) {
     await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${claims.familyId}, 0))`);
     active = await tx.execute(sql`
       SELECT id FROM refresh_tokens
       WHERE family_id = ${claims.familyId} AND kind = 'platform'
+        AND id = ${claims.sid}
         AND user_id = ${claims.userId} AND tenant_id IS NULL
         AND email = ${claims.email} AND revoked_at IS NULL
         AND expires_at > clock_timestamp()
         AND ${claims.exp} > EXTRACT(EPOCH FROM clock_timestamp())
         AND ${claims.iat} <= EXTRACT(EPOCH FROM clock_timestamp()) + 60
+        AND EXISTS (
+          SELECT 1 FROM platform_session_security s JOIN users u ON u.id = s.user_id
+          WHERE s.family_id = refresh_tokens.family_id AND s.user_id = refresh_tokens.user_id
+            AND s.password_version = encode(sha256(convert_to(u.password_hash, 'UTF8')), 'hex') AND s.revoked_at IS NULL
+            AND s.expires_at > clock_timestamp() AND s.last_seen_at > clock_timestamp() - interval '30 minutes'
+            AND s.last_seen_at <= clock_timestamp()
+            AND s.password_verified_at > clock_timestamp() - interval '5 minutes' AND s.password_verified_at <= clock_timestamp()
+        )
       FOR SHARE
     `);
   } else if (claims.ver === undefined && claims.kind === undefined && !claims.familyId && !claims.sid) {
-    active = await tx.execute(sql`
-      SELECT jti FROM platform_sessions
-      WHERE jti = ${claims.jti} AND user_id = ${claims.userId}
-        AND revoked_at IS NULL AND expires_at > clock_timestamp()
-        AND FLOOR(EXTRACT(EPOCH FROM expires_at)) = ${claims.exp}
-        AND ${claims.exp} > EXTRACT(EPOCH FROM clock_timestamp())
-        AND ${claims.iat} <= EXTRACT(EPOCH FROM clock_timestamp()) + 60
-      FOR SHARE
-    `);
+    // Legacy sessions have no durable password policy and cannot be promoted.
+    throw new PlatformMutationAuthorityChangedError();
   } else {
     throw new PlatformMutationAuthorityChangedError();
   }
@@ -200,7 +202,8 @@ export async function createPlatformSession(
 }
 
 export async function validatePlatformClaims(
-  claims: PlatformOwnerClaims | null
+  claims: PlatformOwnerClaims | null,
+  touch = false,
 ): Promise<PlatformOwnerClaims | null> {
   if (!claims) return null;
 
@@ -209,39 +212,27 @@ export async function validatePlatformClaims(
     if (nowMs === null) return null;
     const nowSec = Math.floor(nowMs / 1000);
     if (claims.exp <= nowSec || claims.iat > nowSec + 60 || claims.exp - claims.iat !== ACCESS_TOKEN_TTL_SECONDS) return null;
-    if (!claims.familyId || !(await isSessionFamilyActive(claims.familyId, "platform", null, claims.userId))) return null;
+    if (!claims.familyId || !claims.sid || !(await isSessionFamilyActive(claims.familyId, "platform", null, claims.userId, claims.sid))) return null;
     const user = await db.query.users.findFirst({
       where: eq(users.id, claims.userId),
       columns: { id: true, email: true, isPlatformOwner: true, emailVerifiedAt: true },
     });
     if (!user || !user.isPlatformOwner || !user.emailVerifiedAt || user.email !== claims.email) return null;
+    if (touch && !(await isPlatformSessionAssured(claims.familyId, claims.userId, true))) return null;
     return claims;
   }
-  const session = await db.query.platformSessions.findFirst({
-    where: and(
-      eq(platformSessions.jti, claims.jti),
-      gt(platformSessions.expiresAt, sql`clock_timestamp()`),
-    ),
-  });
-  if (!session || session.revokedAt) return null;
-  if (Math.floor(session.expiresAt.getTime() / 1000) !== claims.exp) return null;
-  if (session.userId !== claims.userId) return null;
+  // Legacy sessions lack the durable policy required by current sessions.
+  return null;
 
-  const user = await db.query.users.findFirst({
-    where: eq(users.id, claims.userId),
-    columns: { id: true, email: true, isPlatformOwner: true, emailVerifiedAt: true },
-  });
-  // AUDIT_LOG.md [src/lib/platform-auth.ts]: enforce email match on legacy fallback tokens (parity with v2 session validation)
-  if (!user || !user.isPlatformOwner || !user.emailVerifiedAt || user.email !== claims.email) return null;
-
-  return claims;
 }
 
 export async function validatePlatformOwner(req: Request): Promise<PlatformOwnerClaims | null> {
   const token = getAccessTokenFromRequest(req, "platform");
   if (!token) return null;
   const claims = verifyPlatformTokenSignature(token);
-  return claims ? validatePlatformClaims(claims) : null;
+  const path = new URL(req.url).pathname;
+  const background = path === "/api/platform/auth/me" || path === "/api/platform/auth/refresh" || path === "/api/platform/auth/reauth";
+  return claims ? validatePlatformClaims(claims, !background) : null;
 }
 
 export async function requirePlatformOwner(req: Request): Promise<PlatformOwnerClaims> {

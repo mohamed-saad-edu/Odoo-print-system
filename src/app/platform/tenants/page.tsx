@@ -402,7 +402,6 @@ export default function PlatformTenantsPage() {
                     onChange={(e) => setSuspendReason(e.target.value.slice(0, 500))}
                     placeholder={t("platform.tenants.reasonPlaceholder")}
                     rows={4}
-                    autoFocus
                     disabled={actionLoading}
                     maxLength={500}
                   />

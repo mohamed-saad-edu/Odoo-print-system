@@ -90,7 +90,7 @@
             <form string="Connect Print Agent" class="o_pg_view o_pg_pairing_wizard">
                 <sheet>
                     <div class="o_pg_wizard_header text-center mb-4">
-                        <i class="fa fa-plug fa-3x text-primary mb-2" title="Connect Agent" role="img" aria-label="Connect Agent"/>
+                        <i class="fa fa-plug fa-3x text-primary mb-2" title="Connect Agent" role="img" aria-label="Connect Agent" t-translation="on"/>
                         <h3 class="fw-bold">Connect Print Agent</h3>
                         <p class="text-muted">Select the branch and choose an available Print Agent. A branch can use more than one agent.</p>
                     </div>
@@ -110,24 +110,29 @@
     </record>
     <template id="diagnostic_report">
         <t t-call="web.html_container">
-            <style t-if="paper_width_mm">
-                .o_pg_diagnostic_ticket { font-size: 8pt; line-height: 1.15; word-break: break-all; }
-                .o_pg_diagnostic_ticket h1 { font-size: 11pt; line-height: 1.15; margin: 0 0 1mm; }
-                .o_pg_diagnostic_ticket h2 { font-size: 10pt; line-height: 1.15; margin: 0 0 2mm; }
-                .o_pg_diagnostic_ticket p { margin: 0 0 1mm; }
-            </style>
             <t t-set="diagnostic_body">
                 <div class="page" t-att-class="'page o_pg_diagnostic_ticket' if paper_width_mm else 'page'" t-att-dir="'rtl' if env.context.get('lang', '').startswith('ar') else 'ltr'">
                     <h1>Yaseir Print Gateway</h1>
                     <h2>Printer Test Page</h2>
-                    <p><strong>Company:</strong> <span t-esc="company_name"/></p>
-                    <p><strong>Location:</strong> <span t-esc="branch_name"/></p>
-                    <p><strong>Printer:</strong> <span t-esc="printer_name"/></p>
-                    <p><strong>Time:</strong> <span t-esc="now_str"/></p>
+                    <p><strong t-translation="on">Company:</strong> <span t-esc="company_name"/></p>
+                    <p><strong t-translation="on">Location:</strong> <span t-esc="branch_name"/></p>
+                    <p><strong t-translation="on">Printer:</strong> <span t-esc="printer_name"/></p>
+                    <p><strong t-translation="on">Time:</strong> <span t-esc="now_str"/></p>
                     <p>This page tests document rendering. Inspect the physical printer to confirm output.</p>
                 </div>
             </t>
-            <t t-if="paper_width_mm" t-out="diagnostic_body"/>
+            <!-- Odoo rebuilds each article with its UTF-8/report asset wrapper.
+                 A bare page drops that wrapper and corrupts Unicode in wkhtmltopdf. -->
+            <div t-if="paper_width_mm" class="article" t-att-data-oe-lang="env.lang">
+                <style>
+                    .o_pg_diagnostic_ticket { font-size: 8pt; line-height: 1.15; word-break: normal; }
+                    .o_pg_diagnostic_ticket span { overflow-wrap: break-word; word-wrap: break-word; }
+                    .o_pg_diagnostic_ticket h1 { font-size: 11pt; line-height: 1.15; margin: 0 0 1mm; }
+                    .o_pg_diagnostic_ticket h2 { font-size: 10pt; line-height: 1.15; margin: 0 0 2mm; }
+                    .o_pg_diagnostic_ticket p { margin: 0 0 1mm; }
+                </style>
+                <t t-out="diagnostic_body"/>
+            </div>
             <t t-else="" t-call="web.external_layout"><t t-out="diagnostic_body"/></t>
         </t>
     </template>

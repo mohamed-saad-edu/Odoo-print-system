@@ -11,10 +11,11 @@ describe.skipIf(!hasTestDatabase)("queue logical payload ceiling", () => {
     const encoded = Buffer.alloc(5 * 1024 * 1024).toString("base64");
     const chars = encoded.length;
     await pool().query(`
-      INSERT INTO print_jobs (id, tenant_id, agent_id, printer_id, status, payload, expires_at)
+      INSERT INTO print_jobs (id, tenant_id, agent_id, printer_id, status, payload, expires_at, binding_digest)
       SELECT 'queue_budget_' || n::text, $1, $2, $3, 'queued',
              jsonb_build_object('type','raw','protocol','raw','encoding','base64','data',repeat('A',$4::int - 1) || '='),
-             now() + interval '1 hour'
+             now() + interval '1 hour',
+             (SELECT verification_binding_digest FROM printers WHERE tenant_id=$1 AND id=$3)
       FROM generate_series(1,19) n
     `, [f.tenantId, f.agentId, f.printerId, chars]);
     const sizes = (await pool().query(

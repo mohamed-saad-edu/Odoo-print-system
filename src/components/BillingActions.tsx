@@ -166,7 +166,7 @@ export function BillingActions({
             <Button
               variant="danger"
               disabled={busy !== ""}
-              onClick={() => setConfirmCancel(true)}
+              onClick={() => { setError(""); setConfirmCancel(true); }}
             >
               {t("billingActions.cancelAtPeriodEnd")}
             </Button>
@@ -200,9 +200,9 @@ export function BillingActions({
           </Button>
         )}
 
-        {error && (
+        {error && !confirmCancel && (
           <Callout tone="bad" title={t("billingActions.requestFailed")}>
-            <span role="alert">{error}</span>
+            {error}
           </Callout>
         )}
       </div>
@@ -227,6 +227,11 @@ export function BillingActions({
         cancelLabel={t("billingActions.keepSubscription")}
       >
         <div className="space-y-3 text-sm leading-relaxed text-ink-2">
+          {error && (
+            <Callout tone="bad" title={t("billingActions.requestFailed")}>
+              {error}
+            </Callout>
+          )}
           <p>{t("billingActions.cancelBody1")}</p>
           <p>
             {t("billingActions.cancelBody2")}{" "}

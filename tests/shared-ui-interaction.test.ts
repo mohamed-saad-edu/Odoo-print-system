@@ -189,4 +189,49 @@ describe("shared shell interactions", () => {
     expect(onClose).not.toHaveBeenCalled();
     expect(document.activeElement).toBe(trigger);
   });
+
+  it("keeps reverse keyboard navigation inside a newly opened dialog", () => {
+    render(h(Modal, {
+      open: true, title: "Device details", onClose: vi.fn(),
+      children: h("button", { id: "last-dialog-action", type: "button" }, "Done"),
+    }));
+    const dialog = document.querySelector<HTMLElement>('[role="dialog"]')!;
+    expect(document.activeElement).toBe(dialog);
+    const event = new KeyboardEvent("keydown", { key: "Tab", shiftKey: true, bubbles: true, cancelable: true });
+    act(() => { dialog.dispatchEvent(event); });
+    expect(event.defaultPrevented).toBe(true);
+    expect(document.activeElement?.id).toBe("last-dialog-action");
+  });
+
+  it("lets the keyboard focus informational dialog content and return to its close action", () => {
+    render(h(Modal, {
+      open: true, title: "Print operation details", onClose: vi.fn(),
+      children: h("p", null, "A long operation history with no interactive controls."),
+    }));
+    const dialog = document.querySelector<HTMLElement>('[role="dialog"]')!;
+    const region = dialog.querySelector<HTMLElement>('[role="region"][aria-label="Print operation details"]')!;
+    const reverseTab = new KeyboardEvent("keydown", { key: "Tab", shiftKey: true, bubbles: true, cancelable: true });
+    act(() => { dialog.dispatchEvent(reverseTab); });
+    expect(document.activeElement).toBe(region);
+    expect(reverseTab.defaultPrevented).toBe(true);
+    expect(key(region, "Tab").defaultPrevented).toBe(true);
+    expect(document.activeElement).toBe(dialog.querySelector("button"));
+  });
+
+  it("excludes hidden controls and disabled fieldsets from the dialog focus loop", () => {
+    render(h(Modal, {
+      open: true, title: "Device details", onClose: vi.fn(),
+      children: h("div", null,
+        h("button", { id: "last-visible-action", type: "button" }, "Done"),
+        h("div", { style: { display: "none" } }, h("button", { id: "hidden-action" }, "Hidden")),
+        h("fieldset", { disabled: true }, h("input", { id: "disabled-fieldset-input" })),
+      ),
+    }));
+    const first = document.querySelector<HTMLButtonElement>('[role="dialog"] button')!;
+    act(() => first.focus());
+    const event = new KeyboardEvent("keydown", { key: "Tab", shiftKey: true, bubbles: true, cancelable: true });
+    act(() => { first.dispatchEvent(event); });
+    expect(event.defaultPrevented).toBe(true);
+    expect(document.activeElement?.id).toBe("last-visible-action");
+  });
 });

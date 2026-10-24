@@ -55,7 +55,7 @@ func TestRedeliveryAdoptsLiveClaimTokenForReports(t *testing.T) {
 	defer ag.Close()
 	p := &fakePrinter{blocked: make(chan struct{}), startedCh: make(chan string, 1)}
 	ag.printers = map[string]printer.Printer{"p1": p}
-	ag.printerConfigs = map[string]config.PrinterConfig{"p1": {ID: "p1", Name: "Test", Type: "network", Endpoint: "127.0.0.1:9100", Protocol: "raw"}}
+	ag.printerConfigs = map[string]config.PrinterConfig{"p1": {ID: "p1", Name: "Test", Type: "network", Endpoint: "10.0.0.20:9100", Protocol: "raw"}}
 	allowInjectedPrintersForTest(ag)
 
 	first := dispatchTestJob("reclaim_token_race", "p1")
@@ -128,14 +128,27 @@ func dispatchTestJob(id, printerID string) map[string]interface{} {
 	// src/server/ws.ts). Tests that need other shapes override fields
 	// explicitly after calling this helper.
 	return map[string]interface{}{
-		"id":         id,
-		"agentId":    "agt_test",
-		"printerId":  printerID,
-		"status":     "claimed",
-		"claimToken": "claim-" + id,
-		"payload":    makeJobPayload(id),
-		"expiresAt":  time.Now().Add(time.Hour).Format(time.RFC3339),
+		"id":            id,
+		"agentId":       "agt_test",
+		"printerId":     printerID,
+		"status":        "claimed",
+		"claimToken":    "claim-" + id,
+		"bindingDigest": testPrinterBinding(config.PrinterConfig{ID: printerID, Type: "network", Endpoint: "10.0.0.20:9100", Protocol: "raw"}),
+		"payload":       makeJobPayload(id),
+		"expiresAt":     time.Now().Add(time.Hour).Format(time.RFC3339),
 	}
+}
+
+func testPrinterBinding(pc config.PrinterConfig) string {
+	digest, err := config.PrinterBindingDigest(pc)
+	if err != nil {
+		panic(err)
+	}
+	return digest
+}
+
+func testDefaultPrinterBinding() string {
+	return testPrinterBinding(config.PrinterConfig{Type: "network", Endpoint: "10.0.0.20:9100", Protocol: "raw"})
 }
 
 // The gateway delivers the same job over WS and the poll fallback; while the
@@ -372,8 +385,8 @@ func TestSamePrinterWaitersDoNotConsumeGlobalExecutionSlots(t *testing.T) {
 	defer func() { _ = ag.Close() }()
 	ag.printers = map[string]printer.Printer{"p1": p1, "p2": p2}
 	ag.printerConfigs = map[string]config.PrinterConfig{
-		"p1": {ID: "p1", Name: "Slow", Type: "network", Endpoint: "127.0.0.1:9100", Protocol: "raw"},
-		"p2": {ID: "p2", Name: "Fast", Type: "network", Endpoint: "127.0.0.1:9101", Protocol: "raw"},
+		"p1": {ID: "p1", Name: "Slow", Type: "network", Endpoint: "10.0.0.20:9100", Protocol: "raw"},
+		"p2": {ID: "p2", Name: "Fast", Type: "network", Endpoint: "10.0.0.21:9100", Protocol: "raw"},
 	}
 	allowInjectedPrintersForTest(ag)
 
@@ -419,7 +432,9 @@ func TestSamePrinterWaitersDoNotConsumeGlobalExecutionSlots(t *testing.T) {
 
 	// With the corrected executor, the unrelated printer can start immediately
 	// even though p1 has maxConcurrentJobs jobs in-flight at the agent level.
-	ag.dispatchJob(context.Background(), dispatchTestJob("fast_1", "p2"))
+	fastJob := dispatchTestJob("fast_1", "p2")
+	fastJob["bindingDigest"] = testPrinterBinding(ag.printerConfigs["p2"])
+	ag.dispatchJob(context.Background(), fastJob)
 	select {
 	case <-p2.startedCh:
 		// Expected: p2 was not starved by p1's per-printer waiters.

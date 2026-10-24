@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { stripTypeScriptTypes } from 'node:module';
 import test from 'node:test';
 import { SourceTextModule, SyntheticModule, createContext } from 'node:vm';
+import { printingContractModules } from './helpers/printing-contract-vm.mjs';
 
 // Executes the real Agent PATCH handler and real job-status contract. Only
 // Next, Drizzle and the unavailable PostgreSQL/Agent boundary are substituted.
@@ -20,6 +21,7 @@ async function harness({ status = 'claimed', marker = null, delivered = false, a
   const changes = [];
   const row = {
     id: 'job-c', tenantId: 'tenant-c', agentId: 'agent-c', printerId: 'printer-c', status,
+    bindingDigest: createHash('sha256').update('expiry-fixture-printer').digest('hex'), outputMedium: 'physical', outputEvidence: null,
     error: marker, claimToken: token, closedClaimTokenHash: null, claimedAt: claimed ? new Date() : null,
     deliveredAt: delivered ? new Date() : null, ackedAt: acked ? new Date() : null,
     expiresAt: new Date(Date.now() + ttlMs), updatedAt: new Date(),
@@ -83,13 +85,11 @@ async function harness({ status = 'claimed', marker = null, delivered = false, a
     '../../../../lib/entitlements': { liveTenantSubscriptionPredicate: () => 'active' },
     '../../../../lib/job-timeline': { recordJobEvent: async () => {} },
   };
-  const timestamp = new SourceTextModule(readTS('src/lib/database-timestamp.ts'), { context });
-  await timestamp.link(() => { throw Error('unexpected timestamp import'); });
-  const machine = new SourceTextModule(readTS('src/lib/job-status.ts'), { context });
-  await machine.link(() => timestamp);
+  const contracts = await printingContractModules(context, sql);
   const route = new SourceTextModule(readTS('src/app/api/agent/jobs/route.ts'), { context });
   await route.link((specifier) => {
-    if (specifier.endsWith('/job-status')) return machine;
+    const contract = specifier.startsWith('.') && contracts.get(specifier.split('/').at(-1));
+    if (contract) return contract;
     const exports = mocks[specifier];
     assert.ok(exports, `unexpected production dependency ${specifier}`);
     return new SyntheticModule(Object.keys(exports), function () {

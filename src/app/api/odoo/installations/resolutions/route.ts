@@ -4,7 +4,7 @@ import { z } from "zod";
 import { db } from "../../../../../db";
 import { validateWorkspaceManager } from "../../../../../lib/manager-auth";
 import { requireManagerPermission } from "../../../../../lib/authorization";
-import { requireManagerActorInTransaction } from "../../../../../lib/manager-mutation-authorization";
+import { requireManagerActorInTransaction, ManagerMutationAuthorityChangedError } from "../../../../../lib/manager-mutation-authorization";
 import { requireActiveTenantInTransaction } from "../../../../../lib/tenant-guard";
 import { writeAuditEvent } from "../../../../../lib/audit";
 import { idempotencyDigest } from "../../../../../lib/print-job-service";
@@ -146,6 +146,7 @@ export async function POST(req: Request) {
     if (result === "resolved" || result === "already_resolved") return NextResponse.json({ status: result, disposition, v2Key, legacyKey });
     return NextResponse.json({ error: "Legacy disposition cannot be applied", code: String(result).toUpperCase() }, { status: 409 });
   } catch (error) {
+    if (error instanceof ManagerMutationAuthorityChangedError) return error.response();
     logError("odoo.legacy_resolution_failed", { error: error instanceof Error ? error.message : String(error) });
     return NextResponse.json({ error: "Resolution unavailable" }, { status: 500 });
   }

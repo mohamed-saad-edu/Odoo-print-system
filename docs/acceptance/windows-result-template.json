@@ -1,0 +1,210 @@
+{
+  "schema": 1,
+  "scope": "Actual signed Windows x64 release and authorized physical acceptance",
+  "sourceArchiveSha256": null,
+  "signedCandidateManifestSha256": null,
+  "expectedPublisherThumbprint": null,
+  "runUtc": null,
+  "osBuild": null,
+  "operator": null,
+  "printerModelsAndFirmware": [],
+  "overall": "BLOCKED",
+  "gates": [
+    {
+      "id": "native-windows-cgo-tests",
+      "result": "BLOCKED",
+      "reason": "Not executed",
+      "evidence": [],
+      "observations": null
+    },
+    {
+      "id": "native-windows-rust-tests",
+      "result": "BLOCKED",
+      "reason": "Not executed",
+      "evidence": [],
+      "observations": null
+    },
+    {
+      "id": "public-publisher-and-artifact-identity",
+      "result": "BLOCKED",
+      "reason": "Not executed",
+      "evidence": [],
+      "observations": null
+    },
+    {
+      "id": "fresh-install-without-webview2",
+      "result": "BLOCKED",
+      "reason": "Not executed",
+      "evidence": [],
+      "observations": null
+    },
+    {
+      "id": "fresh-install-with-webview2",
+      "result": "BLOCKED",
+      "reason": "Not executed",
+      "evidence": [],
+      "observations": null
+    },
+    {
+      "id": "scm-singleton-ownership",
+      "result": "BLOCKED",
+      "reason": "Not executed",
+      "evidence": [],
+      "observations": null
+    },
+    {
+      "id": "acl-standard-user-and-reparse",
+      "result": "BLOCKED",
+      "reason": "Not executed",
+      "evidence": [],
+      "observations": null
+    },
+    {
+      "id": "dpapi-service-reboot-and-foreign-host",
+      "result": "BLOCKED",
+      "reason": "Not executed",
+      "evidence": [],
+      "observations": null
+    },
+    {
+      "id": "previous-release-upgrade",
+      "result": "BLOCKED",
+      "reason": "Not executed",
+      "evidence": [],
+      "observations": null
+    },
+    {
+      "id": "legacy-config-upgrade",
+      "result": "BLOCKED",
+      "reason": "Not executed",
+      "evidence": [],
+      "observations": null
+    },
+    {
+      "id": "crash-before-submit",
+      "result": "BLOCKED",
+      "reason": "Not executed",
+      "evidence": [],
+      "observations": null
+    },
+    {
+      "id": "crash-after-submit",
+      "result": "BLOCKED",
+      "reason": "Not executed",
+      "evidence": [],
+      "observations": null
+    },
+    {
+      "id": "gateway-outage-terminal-outbox",
+      "result": "BLOCKED",
+      "reason": "Not executed",
+      "evidence": [],
+      "observations": null
+    },
+    {
+      "id": "idle-reboot",
+      "result": "BLOCKED",
+      "reason": "Not executed",
+      "evidence": [],
+      "observations": null
+    },
+    {
+      "id": "ambiguous-operation-reboot",
+      "result": "BLOCKED",
+      "reason": "Not executed",
+      "evidence": [],
+      "observations": null
+    },
+    {
+      "id": "failed-upgrade",
+      "result": "BLOCKED",
+      "reason": "Not executed",
+      "evidence": [],
+      "observations": null
+    },
+    {
+      "id": "compatible-rollback",
+      "result": "BLOCKED",
+      "reason": "Not executed",
+      "evidence": [],
+      "observations": null
+    },
+    {
+      "id": "uninstall-purge-and-unrelated-user-preservation",
+      "result": "BLOCKED",
+      "reason": "Not executed",
+      "evidence": [],
+      "observations": null
+    },
+    {
+      "id": "locked-file-uninstall",
+      "result": "BLOCKED",
+      "reason": "Not executed",
+      "evidence": [],
+      "observations": null
+    },
+    {
+      "id": "physical-58mm",
+      "result": "BLOCKED",
+      "reason": "Not executed",
+      "evidence": [],
+      "observations": null
+    },
+    {
+      "id": "physical-80mm",
+      "result": "BLOCKED",
+      "reason": "Not executed",
+      "evidence": [],
+      "observations": null
+    },
+    {
+      "id": "physical-arabic-mixed-text",
+      "result": "BLOCKED",
+      "reason": "Not executed",
+      "evidence": [],
+      "observations": null
+    },
+    {
+      "id": "usb-spooler-dedup",
+      "result": "BLOCKED",
+      "reason": "Not executed",
+      "evidence": [],
+      "observations": null
+    },
+    {
+      "id": "ipp-ipps-dedup-and-cert-failure",
+      "result": "BLOCKED",
+      "reason": "Not executed",
+      "evidence": [],
+      "observations": null
+    },
+    {
+      "id": "physical-partial-delivery-no-replay",
+      "result": "BLOCKED",
+      "reason": "Not executed",
+      "evidence": [],
+      "observations": null
+    },
+    {
+      "id": "physical-paper-out-offline",
+      "result": "BLOCKED",
+      "reason": "Not executed",
+      "evidence": [],
+      "observations": null
+    },
+    {
+      "id": "physical-crash-reboot-duplicate",
+      "result": "BLOCKED",
+      "reason": "Not executed",
+      "evidence": [],
+      "observations": null
+    },
+    {
+      "id": "controlled-sustained-run",
+      "result": "BLOCKED",
+      "reason": "Not executed",
+      "evidence": [],
+      "observations": null
+    }
+  ]
+}

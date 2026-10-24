@@ -12,11 +12,11 @@ import (
 // printer explicitly supplies a conflicting set.
 func pwgOptionsFromIPPAttributes(attrs map[string]string) (int, pwgRasterColor, error) {
 	for _, name := range []string{"pwg-raster-document-resolution-supported", "pwg-raster-document-type-supported"} {
-		if value, present := attrs[name]; present && strings.TrimSpace(value) == "" {
+		if value, present := attrs[name]; !present || strings.TrimSpace(value) == "" {
 			return 0, pwgGray8, fmt.Errorf("printer reports no usable value for %s", name)
 		}
 	}
-	dpi := 300 // PWG Raster common default if printer omits capability
+	dpi := 0 // Missing capabilities were rejected above, never invented.
 	if raw := strings.TrimSpace(attrs["pwg-raster-document-resolution-supported"]); raw != "" {
 		resolutions := strings.Split(raw, ",")
 		best := 0

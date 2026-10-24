@@ -12,7 +12,7 @@ test("maintenance ticks cannot overlap and recover after success, failure or syn
     let calls = 0;
     let settle;
     const errors = [];
-    const context = vm.createContext({ shuttingDown: false, logError: (...args) => errors.push(args) });
+    const context = vm.createContext({ shuttingDown: false, maintenanceTasks: new Set(), logError: (...args) => errors.push(args) });
     vm.runInContext(stripTypeScriptTypes(maintenance) + "\nglobalThis.makeTask = maintenanceTask;", context);
     const tick = context.makeTask(() => {
       calls++;
@@ -63,7 +63,7 @@ test("housekeeping waits for every cleanup even when one fails before accepting 
   let settle;
   let calls = 0;
   const context = vm.createContext({
-    shuttingDown: false, logError() {},
+    shuttingDown: false, maintenanceTasks: new Set(), logError() {},
     cleanupAuthRateLimits: async () => { calls++; throw new Error("outage"); },
     cleanupExpiredManagerSessions: () => new Promise(resolve => { settle = resolve; }),
     cleanupExpiredPlatformSessions: async () => {}, cleanupExpiredRefreshTokens: async () => {},

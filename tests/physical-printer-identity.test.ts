@@ -2,10 +2,11 @@ import { describe, expect, it } from "vitest";
 import { physicalPrinterIdentityKey as key, matchingPhysicalPrinter, samePrinterProtocol } from "../src/lib/physical-printer-identity";
 
 describe("physical printer identity", () => {
-  it("converges the same Windows queue regardless of cosmetic spelling", () => {
+  it("converges the same Windows queue across outer whitespace/case while preserving internal spaces", () => {
     const a = { connectionType: "spooler", protocol: "spooler", config: { spooler_name: " ZEBRA ZD421 " } };
-    expect(key(a)).toBe(key({ ...a, config: { address: "zebra  zd421" } }));
+    expect(key(a)).toBe(key({ ...a, config: { address: "zebra zd421" } }));
     expect(key(a)).not.toBe(key({ ...a, config: { address: "zebra zd421 B" } }));
+    expect(key(a)).not.toBe(key({ ...a, config: { address: "zebra  zd421" } }));
   });
   it("protects one network endpoint even across print-language variants", () => {
     const a = { connectionType: "network", protocol: "raw", config: { ip: "PRINTER.LOCAL.", port: 9100 } };

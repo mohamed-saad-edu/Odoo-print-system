@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { verifiedPrinterState } from "./helpers/printer-verification";
 import { act, createElement as h } from "react";
 import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -6,6 +7,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { I18nProvider } from "../src/i18n/react";
 import { PrinterSharingControl } from "../src/desktop/components/PrinterSharingControl";
 import { PrintersPage } from "../src/desktop/pages/Printers";
+import { OverviewPage } from "../src/desktop/pages/Overview";
+import { AgentsPage } from "../src/desktop/pages/Agents";
+import { SettingsPage } from "../src/desktop/pages/Settings";
 import type { PrinterInfo } from "../src/desktop/lib/ipc";
 import type { DesktopState } from "../src/desktop/types";
 import { eligibleGatewayTestPrinterIds, isMainInventoryPrinter, mergePrinterInventories, printerIsStale, printerPresentation } from "../src/desktop/lib/printers";
@@ -17,9 +21,9 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke: boundary.invoke }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn() }));
 afterEach(() => { boundary.invoke.mockReset(); vi.unstubAllGlobals(); });
 const now = Date.parse("2026-10-14T12:00:00Z");
-const local: PrinterInfo = { id: "local-queue", name: "Canon المحلية", status: "online", enabled: true,
+const local: PrinterInfo = { capabilities: { operational_verification: { version: 1, verified_at: new Date(now).toISOString(), printer_id: "local-queue", binding_digest: "a".repeat(64), logical_queue_key: "a".repeat(64), method: "windows_queue", identity_strength: "queue", output_medium: "physical" } }, id: "local-queue", name: "Canon المحلية", status: "online", enabled: true,
   connectionType: "spooler", protocol: "spooler", sharedWithGateway: false, localObservedAt: now };
-const cloud: PrinterInfo = { ...local, localObservedAt: undefined, sharedWithGateway: true, agentId: "owner",
+const cloud: PrinterInfo = { ...local, ...verifiedPrinterState("local-queue", new Date(now)), localObservedAt: undefined, sharedWithGateway: true, agentId: "owner",
   agentStatus: "online", agentLifecycle: "active", agentLastSeenAt: new Date(now).toISOString(),
   lastSeenAt: new Date(now).toISOString(), inventoryPresent: true, lifecycle: "active" };
 const noop = () => {};
@@ -47,6 +51,94 @@ function state(overrides: Partial<DesktopState> = {}): DesktopState {
   };
 }
 const tree = (children: React.ReactNode, locale: "en" | "ar" = "en") => h(I18nProvider, { initialLocale: locale, children });
+
+describe("Desktop overview evidence boundaries", () => {
+  const connected = { agentStatus: { running: true }, isOnline: true, gatewayConnected: true, gatewayUrl: "https://gateway.example" };
+  const overview = (overrides: Partial<DesktopState>) => new DOMParser().parseFromString(
+    renderToStaticMarkup(tree(h(OverviewPage, { s: state({ ...connected, ...overrides }) }))), "text/html",
+  );
+
+  it("does not announce ready while job evidence is still loading", () => {
+    const doc = overview({ jobsLoading: true });
+    expect(doc.querySelector(".yw-agent-status")?.textContent).toContain("Checking");
+    expect(doc.querySelector(".yw-agent-status")?.textContent).not.toContain("All good");
+    expect(doc.querySelector(".yw-agent-stats")?.textContent).toContain("—");
+  });
+
+  it("keeps expired unknown physical outcomes in the attention summary", () => {
+    const doc = overview({ jobs: [{ id: "expired-job", status: "expired", error: "JOB_EXPIRED_DURING_PRINT", documentType: "pdf" }] });
+    expect(doc.querySelector(".yw-agent-status")?.textContent).toContain("1 job outcome unknown");
+    expect(doc.querySelector(".yw-agent-status")?.textContent).not.toContain("All good");
+  });
+
+  it("offers printer setup instead of ready when the actual inventory is empty", () => {
+    const doc = overview({ printers: [], localPrinters: [], discoveredPrinters: [] });
+    expect(doc.querySelector(".yw-agent-status")?.textContent).toContain("No physical printers found");
+    expect(doc.querySelector(".yw-agent-status")?.textContent).not.toContain("All good");
+  });
+
+  it("does not turn a failed jobs fetch into an authoritative zero", () => {
+    const doc = overview({ jobsError: "Gateway is unavailable", pendingJobs: 0 });
+    expect(doc.querySelector(".yw-agent-stats")?.textContent).toContain("—");
+    expect(doc.querySelector(".yw-agent-status")?.textContent).toContain("Gateway is unavailable");
+  });
+
+  it.each([
+    null,
+    { error: "Status request failed" },
+    { running: false, note_code: "status_check_failed" },
+    { running: false, note_code: "service_status_unavailable" },
+    { running: false, note_code: "service_ownership_unverified" },
+  ])("keeps unavailable local service evidence distinct from stopped: %j", (agentStatus) => {
+    const doc = overview({ agentStatus, isOnline: false });
+    expect(doc.querySelector(".yw-agent-status")?.textContent).toContain("Agent status unavailable");
+    expect(doc.querySelector(".yw-agent-status")?.textContent).not.toContain("Printing service is off");
+    expect(doc.querySelector(".yw-agent-stats")?.textContent).toContain("Unknown");
+    expect(doc.body.textContent).not.toContain("Stopped");
+  });
+
+  it("retains verified background running evidence even when Windows service status is unavailable", () => {
+    const doc = overview({ agentStatus: { running: true, note_code: "service_status_unavailable" } });
+    expect(doc.querySelector(".yw-agent-status")?.textContent).toContain("All good");
+    expect(doc.querySelector(".yw-agent-stats")?.textContent).toContain("Online");
+    expect(doc.querySelector(".yw-agent-stats")?.textContent).toContain("Windows service status is unavailable");
+  });
+
+  it("still offers Start for an explicitly stopped local service", () => {
+    const doc = overview({ isOnline: false, agentStatus: { running: false, note_code: "not_running" } });
+    expect(doc.querySelector(".yw-agent-status")?.textContent).toContain("Printing service is off");
+    expect([...doc.querySelectorAll(".yw-agent-status button")].map((node) => node.textContent)).toContain("Start");
+  });
+
+  it.each([AgentsPage, SettingsPage])("does not label failed status checks as stopped on management screens", (Page) => {
+    const doc = new DOMParser().parseFromString(renderToStaticMarkup(tree(h(Page, { s: state({
+      ...connected, isOnline: false, agentStatus: { running: false, note_code: "status_check_failed" },
+    }) }))), "text/html");
+    expect(doc.body.textContent).toContain("Agent status unavailable");
+    expect(doc.body.textContent).not.toContain("Agent stopped");
+    expect(doc.body.textContent).not.toContain("Agent service/process is not running");
+  });
+
+  it("reports failed diagnostic copy safely when the clipboard is unavailable", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    const previous = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: undefined });
+    const setMsg = vi.fn();
+    const host = document.createElement("div"); document.body.appendChild(host); const root = createRoot(host);
+    try {
+      await act(async () => root.render(tree(h(SettingsPage, { s: state({ setMsg }) }))));
+      const copy = [...host.querySelectorAll("button")].find((node) => node.textContent === "Copy Summary")!;
+      expect(copy).toBeDefined();
+      await act(async () => copy.click());
+      expect(setMsg).toHaveBeenCalledWith(expect.objectContaining({ type: "error" }));
+      expect(document.activeElement).toBe(copy);
+    } finally {
+      await act(async () => root.unmount()); host.remove();
+      if (previous) Object.defineProperty(navigator, "clipboard", previous);
+      else Reflect.deleteProperty(navigator, "clipboard");
+    }
+  });
+});
 
 describe("local health and sharing stay independent of cloud evidence", () => {
   it.each(["active", "disabled", "retired"] as const)("keeps private fresh local health with cloud lifecycle %s and absent inventory", (lifecycle) => {

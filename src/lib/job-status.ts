@@ -243,8 +243,7 @@ export const AGENT_REQUEUE_REASONS = [
 // never a physical UNKNOWN marker and must not spin a delivery/retry loop.
 export const PRINTER_NOT_SHARED_PAUSE = "Agent returned job before execution (printer_not_shared)";
 
-// Explicit, operator-configured at-least-once recovery after an Agent restart
-// during physical printing. This is intentionally separate from pre-execution
-// rejection reasons: the previous attempt may already have produced paper, so
-// delivery/retry budgets are NOT refunded.
+// Deprecated legacy reason retained to recognize and refuse older Agents.
+// It never authorizes printing -> queued: the prior physical outcome is unknown.
+// A deliberate new operation after reconciliation must use a new identity.
 export const AGENT_REPRINT_AFTER_CRASH_REASON = "agent_reprint_after_crash" as const;

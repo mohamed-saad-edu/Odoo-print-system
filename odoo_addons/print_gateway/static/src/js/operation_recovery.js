@@ -1,5 +1,7 @@
 /** @odoo-module **/
 
+import { _t } from "@web/core/l10n/translation";
+
 /**
  * Crash/reload fence for print operations with no reliable physical outcome.
  *
@@ -46,7 +48,7 @@ function browserStore() {
     if (typeof window === 'undefined') return null;
     const store = window.localStorage;
     if (!store || typeof store.getItem !== 'function' || typeof store.setItem !== 'function') {
-        throw new Error('Browser operation recovery storage is unavailable. Printing is paused.');
+        throw new Error(_t("Browser operation recovery storage is unavailable. Printing is paused."));
     }
     return store;
 }
@@ -57,10 +59,10 @@ function readRecord(store, key) {
     if (serialized === null) return null;
     let value;
     try { value = JSON.parse(serialized); }
-    catch (_) { throw new Error('Print recovery information is damaged. Check Print Activity before reprinting.'); }
+    catch (_) { throw new Error(_t("Print recovery information is damaged. Check Print Activity before reprinting.")); }
     if (!value || value.version !== 1 || typeof value.id !== 'string' ||
         !/^[\w:.-]{12,160}$/.test(value.id) || value.phase !== 'unresolved') {
-        throw new Error('Print recovery information is invalid. Check Print Activity before reprinting.');
+        throw new Error(_t("Print recovery information is invalid. Check Print Activity before reprinting."));
     }
     return value;
 }

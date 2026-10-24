@@ -67,8 +67,8 @@ describe("CI/runtime alignment", () => {
 
   it("pins undici to a patched release in both manifest and lockfile", () => {
     const lock = JSON.parse(readFileSync(path.join(root, "package-lock.json"), "utf8"));
-    expect(packageJson.overrides?.undici).toBe("8.10.2");
-    expect(lock.packages?.["node_modules/undici"]?.version).toBe("8.10.2");
+    expect(packageJson.overrides?.undici).toBe("8.12.2");
+    expect(lock.packages?.["node_modules/undici"]?.version).toBe("8.12.2");
   });
 
   it("keeps PR Docker preflight fast while retaining main full-stack and image gates", () => {
@@ -89,7 +89,7 @@ describe("CI/runtime alignment", () => {
     expect(readFileSync(path.join(root, "Dockerfile.secure-images"), "utf8")).toContain("sha256:");
     const image = readFileSync(path.join(root, "Dockerfile"), "utf8");
     expect(image).toContain("FROM deps AS runtime-deps");
-    expect(image).toContain("npm prune --omit=dev");
+    expect(image).toContain("npx --yes npm@12.2.1 prune --omit=dev");
   });
 
   it("keeps Docker smoke test on an HTTP-only bind without ACME", () => {

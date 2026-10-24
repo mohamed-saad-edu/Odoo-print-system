@@ -27,6 +27,7 @@ type NetworkPrinter struct {
 	Address        string
 	Protocol       string
 	RasterMaxWidth int
+	Geometry       *Geometry
 }
 
 func (p *NetworkPrinter) Print(ctx context.Context, data []byte) error {
@@ -109,13 +110,12 @@ func (p *NetworkPrinter) SupportsKind(kind string) bool {
 		return k == KindRaw || k == KindZPL || k == KindLabel
 	case "tspl":
 		return k == KindRaw || k == KindTSPL || k == KindLabel
+	case "escpos":
+		return k == KindRaw || k == KindESCPOS || (k == KindImage && rasterGeometryReady(p.Geometry))
+	case "raw":
+		return k == KindRaw
 	default:
-		switch k {
-		case KindRaw, KindESCPOS, KindImage:
-			return true
-		default:
-			return false
-		}
+		return false
 	}
 }
 
@@ -182,10 +182,7 @@ func (p *NetworkPrinter) PrintDocument(ctx context.Context, doc Document) error 
 	case KindRaw, KindESCPOS, KindZPL, KindTSPL, KindLabel:
 		return p.Print(ctx, doc.Data)
 	case KindImage:
-		if !strings.EqualFold(strings.TrimSpace(p.Protocol), "escpos") {
-			return CapabilityMismatchf("image payloads are raster-converted for ESC/POS devices only (device protocol %q)", p.Protocol)
-		}
-		data, err := JPEGToESCPOSWithMaxWidth(doc.Data, DefaultRasterSliceHeight, p.RasterMaxWidth)
+		data, err := prepareESCPOSImage(p.Protocol, p.Geometry, doc)
 		if err != nil {
 			return fmt.Errorf("render image for raw TCP printer: %w", err)
 		}
@@ -247,4 +244,11 @@ func (p *NetworkPrinter) Status() string {
 		return "error"
 	}
 	return "online"
+}
+
+func (p *NetworkPrinter) PrinterGeometry(ctx context.Context) (*Geometry, error) {
+	if err := p.Geometry.Validate(); err != nil {
+		return nil, err
+	}
+	return p.Geometry, nil
 }

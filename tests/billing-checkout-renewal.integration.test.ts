@@ -1,13 +1,16 @@
 import { beforeAll, afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { db } from "../src/db";
-import { tenants, users, tenantUsers, managerSessions, plans, tenantSubscriptions } from "../src/db/schema";
+import { tenants, users, tenantUsers, refreshTokens, plans, tenantSubscriptions } from "../src/db/schema";
 import { nanoid } from "../src/lib/nanoid";
 import { POST as checkout } from "../src/app/api/billing/checkout/route";
-import { validateWorkspaceManager } from "../src/lib/manager-auth";
+import { validateWorkspaceManager, verifyWorkspaceToken } from "../src/lib/manager-auth";
+import { hashPassword } from "../src/lib/password";
 import { applyMigrations, closePool, hasTestDatabase, truncateAll } from "./helpers/pg";
 import { gatewayTestSigningKey } from "./helpers/test-secrets";
-import { createPlatformSession, platformCookieHeader } from "../src/lib/platform-auth";
+import { createWorkspaceManagerTestSession } from "./helpers/workspace-session";
+import { platformCookieHeader } from "../src/lib/platform-auth";
+import { createVerifiedPlatformSession as createPlatformSession } from "./helpers/platform-session";
 import { POST as createPlan } from "../src/app/api/platform/plans/route";
 import { PATCH as updatePlan } from "../src/app/api/platform/plans/[id]/route";
 
@@ -39,15 +42,16 @@ function checkoutRequest(planId: string): Request {
 }
 
 suite("billing checkout renewal after expiry (D-1)", () => {
-  beforeAll(async () => { await applyMigrations(); });
+  let managerSession: Awaited<ReturnType<typeof createWorkspaceManagerTestSession>>;
+  let passwordHash: string;
+  beforeAll(async () => {
+    vi.stubEnv("GATEWAY_JWT_SECRET", gatewayTestSigningKey());
+    passwordHash = await hashPassword("synthetic-billing-renewal-fixture-password");
+    await applyMigrations();
+  });
   beforeEach(async () => {
     await truncateAll();
     vi.stubEnv("APP_BASE_URL", "https://billing.test");
-    const managerExpiry = Math.floor(Date.now() / 1000) + 3600;
-    vi.mocked(validateWorkspaceManager).mockResolvedValue({
-      jti: "test-manager-jti-d1", iat: Math.floor(Date.now() / 1000) - 10, exp: managerExpiry,
-      sub: "manager", tenantId: "tenant_d1", userId: "user_d1", role: "owner",
-    });
     const { stripeRequest, stripeList, stripeRetrieve } = await import("../src/lib/stripe");
     vi.mocked(stripeRetrieve).mockReset();
     vi.mocked(stripeRetrieve).mockImplementation(async (path) => ({
@@ -63,14 +67,14 @@ suite("billing checkout renewal after expiry (D-1)", () => {
       throw new Error(`unexpected Stripe path: ${path}`);
     });
     await db.insert(tenants).values({ id: "tenant_d1", name: "D1 Tenant" });
-    await db.insert(users).values({ id: "user_d1", email: "d1@example.test", passwordHash: "unused" });
+    await db.insert(users).values({ id: "user_d1", email: "d1@example.test", passwordHash, emailVerifiedAt: new Date() });
     await db.insert(tenantUsers).values({ userId: "user_d1", tenantId: "tenant_d1", role: "owner" });
-    await db.insert(managerSessions).values({
-      jti: "test-manager-jti-d1", tenantId: "tenant_d1", userId: "user_d1", role: "owner",
-      expiresAt: new Date(managerExpiry * 1000),
-    });
+    managerSession = await createWorkspaceManagerTestSession("tenant_d1", { userId: "user_d1", role: "owner" });
+    const claims = await verifyWorkspaceToken(managerSession.token);
+    expect(claims).toMatchObject({ ver: 2, sid: managerSession.refreshTokenId, familyId: managerSession.familyId });
+    vi.mocked(validateWorkspaceManager).mockResolvedValue(claims);
   });
-  afterAll(async () => { await closePool(); });
+  afterAll(async () => { vi.unstubAllEnvs(); await closePool(); });
 
   it("live active subscription still returns already_subscribed", async () => {
     const plan = `plan_d1_${nanoid(6)}`;
@@ -171,11 +175,12 @@ suite("billing checkout renewal after expiry (D-1)", () => {
     vi.mocked(stripeRetrieve).mockImplementationOnce(async () => {
       if (change === "revision") await db.update(tenantSubscriptions).set({ stripeStateRevision: 1 }).where(eq(tenantSubscriptions.tenantId, "tenant_d1"));
       if (change === "suspended") await db.update(tenants).set({ lifecycle: "suspended" }).where(eq(tenants.id, "tenant_d1"));
-      if (change === "revoked") await db.update(managerSessions).set({ revokedAt: new Date() }).where(eq(managerSessions.jti, "test-manager-jti-d1"));
+      if (change === "revoked") await db.update(refreshTokens).set({ revokedAt: new Date() }).where(eq(refreshTokens.familyId, managerSession.familyId));
       return { id: "sub_expired", customer: change === "identity" ? "cus_someone_else" : "cus_d1", status: "canceled" };
     });
     const res = await checkout(checkoutRequest("plan_d1_recovery"));
-    expect(res.status).toBe(change === "suspended" || change === "revoked" ? 403 : 409);
+    expect(res.status).toBe(change === "revoked" ? 401 : change === "suspended" ? 403 : 409);
+    if (change === "revoked") expect(await res.json()).toMatchObject({ code: "SESSION_EXPIRED" });
     expect(stripeRequest).not.toHaveBeenCalled();
     const row = await db.query.tenantSubscriptions.findFirst({ where: eq(tenantSubscriptions.tenantId, "tenant_d1") });
     expect(row?.status).toBe("active");
@@ -215,11 +220,12 @@ suite("billing checkout renewal after expiry (D-1)", () => {
       if (change === "revision") await db.update(tenantSubscriptions).set({ stripeStateRevision: 1 }).where(eq(tenantSubscriptions.tenantId, "tenant_d1"));
       if (change === "intent") await db.update(tenantSubscriptions).set({ checkoutIdempotencyKey: "checkout-intent-new" }).where(eq(tenantSubscriptions.tenantId, "tenant_d1"));
       if (change === "suspended") await db.update(tenants).set({ lifecycle: "suspended" }).where(eq(tenants.id, "tenant_d1"));
-      if (change === "revoked") await db.update(managerSessions).set({ revokedAt: new Date() }).where(eq(managerSessions.jti, "test-manager-jti-d1"));
+      if (change === "revoked") await db.update(refreshTokens).set({ revokedAt: new Date() }).where(eq(refreshTokens.familyId, managerSession.familyId));
       return recovered;
     });
     const res = await checkout(checkoutRequest("plan_d1_recovery"));
-    expect(res.status).toBe(change === "suspended" || change === "revoked" ? 403 : 409);
+    expect(res.status).toBe(change === "revoked" ? 401 : change === "suspended" ? 403 : 409);
+    if (change === "revoked") expect(await res.json()).toMatchObject({ code: "SESSION_EXPIRED" });
     expect(stripeRequest).not.toHaveBeenCalled();
     const row = await db.query.tenantSubscriptions.findFirst({ where: eq(tenantSubscriptions.tenantId, "tenant_d1") });
     expect(row?.stripeSubscriptionId).toBe(change === "none" ? "sub_recovered" : null);
@@ -311,11 +317,12 @@ suite("billing checkout renewal after expiry (D-1)", () => {
       if (change === "revision") await db.update(tenantSubscriptions).set({ stripeStateRevision: 1 }).where(eq(tenantSubscriptions.tenantId, "tenant_d1"));
       if (change === "intent") await db.update(tenantSubscriptions).set({ checkoutIdempotencyKey: "checkout-intent-newer" }).where(eq(tenantSubscriptions.tenantId, "tenant_d1"));
       if (change === "suspended") await db.update(tenants).set({ lifecycle: "suspended" }).where(eq(tenants.id, "tenant_d1"));
-      if (change === "revoked") await db.update(managerSessions).set({ revokedAt: new Date() }).where(eq(managerSessions.jti, "test-manager-jti-d1"));
+      if (change === "revoked") await db.update(refreshTokens).set({ revokedAt: new Date() }).where(eq(refreshTokens.familyId, managerSession.familyId));
       return { ...expiredCheckoutSnapshot(), customer: change === "customer" ? "cus_other" : "cus_d1" };
     });
     const res = await checkout(checkoutRequest("plan_d1_recovery"));
-    expect(res.status).toBe(change === "suspended" || change === "revoked" ? 403 : 409);
+    expect(res.status).toBe(change === "revoked" ? 401 : change === "suspended" ? 403 : 409);
+    if (change === "revoked") expect(await res.json()).toMatchObject({ code: "SESSION_EXPIRED" });
     expect(stripeRequest).not.toHaveBeenCalled();
   });
 

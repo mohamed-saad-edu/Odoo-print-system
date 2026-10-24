@@ -71,7 +71,8 @@ export async function createAgentForManager(name: string, manager: ManagerClaims
     });
   } catch (error) {
     if (error instanceof ManagerMutationAuthorityChangedError) {
-      throw new ActionError(error.message, 403, "MANAGER_AUTH_CHANGED");
+      throw new ActionError(error.message, error.status, error.policy?.code ?? "MANAGER_AUTH_CHANGED",
+        error.policy?.code === "WORKSPACE_REAUTHENTICATION_REQUIRED" ? { reauthenticationUrl: "/settings?reauth=1" } : undefined);
     }
     if (error instanceof TenantEntitlementError) {
       const code = error.entitlement === "max_agents" ? "MAX_AGENTS_EXCEEDED" : "TENANT_ENTITLEMENT_EXCEEDED";

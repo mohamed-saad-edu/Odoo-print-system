@@ -1,11 +1,14 @@
 import { beforeAll, afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { db } from "../src/db";
-import { tenants, users, tenantUsers, managerSessions, plans, tenantSubscriptions } from "../src/db/schema";
+import { tenants, users, tenantUsers, plans, tenantSubscriptions } from "../src/db/schema";
 import { nanoid } from "../src/lib/nanoid";
 import { POST as checkout } from "../src/app/api/billing/checkout/route";
-import { validateWorkspaceManager } from "../src/lib/manager-auth";
+import { validateWorkspaceManager, verifyWorkspaceToken } from "../src/lib/manager-auth";
+import { hashPassword } from "../src/lib/password";
 import { applyMigrations, closePool, hasTestDatabase, truncateAll } from "./helpers/pg";
+import { createWorkspaceManagerTestSession } from "./helpers/workspace-session";
+import { gatewayTestSigningKey } from "./helpers/test-secrets";
 
 vi.mock(import("../src/lib/manager-auth"), async (importOriginal) => ({
   ...(await importOriginal()),
@@ -34,20 +37,15 @@ function checkoutRequest(planId: string): Request {
 }
 
 suite("billing checkout plan-conflict fence", () => {
-  beforeAll(async () => { await applyMigrations(); });
+  let passwordHash: string;
+  beforeAll(async () => {
+    vi.stubEnv("GATEWAY_JWT_SECRET", gatewayTestSigningKey());
+    passwordHash = await hashPassword("synthetic-billing-conflict-fixture-password");
+    await applyMigrations();
+  });
   beforeEach(async () => {
     await truncateAll();
     vi.stubEnv("APP_BASE_URL", "https://billing.test");
-    const managerExpiry = Math.floor(Date.now() / 1000) + 3600;
-    vi.mocked(validateWorkspaceManager).mockResolvedValue({
-      jti: "test-manager-jti-1234567890",
-      iat: Math.floor(Date.now() / 1000) - 10,
-      exp: managerExpiry,
-      sub: "manager",
-      tenantId: "tenant_checkout_conflict",
-      userId: "user_checkout_conflict",
-      role: "owner",
-    });
     const { stripeRequest, stripeList, stripeRetrieve } = await import("../src/lib/stripe");
     vi.mocked(stripeRetrieve).mockReset();
     // Replacement requires provider evidence, not just the local deadline.
@@ -70,14 +68,14 @@ suite("billing checkout plan-conflict fence", () => {
     });
     await db.insert(tenants).values({ id: "tenant_checkout_conflict", name: "Checkout Conflict Tenant" });
     // Real mutation authority is rechecked inside the transaction, not just at the mocked login boundary.
-    await db.insert(users).values({ id: "user_checkout_conflict", email: "checkout-conflict@example.test", passwordHash: "unused" });
+    await db.insert(users).values({ id: "user_checkout_conflict", email: "checkout-conflict@example.test", passwordHash, emailVerifiedAt: new Date() });
     await db.insert(tenantUsers).values({ userId: "user_checkout_conflict", tenantId: "tenant_checkout_conflict", role: "owner" });
-    await db.insert(managerSessions).values({
-      jti: "test-manager-jti-1234567890", tenantId: "tenant_checkout_conflict",
-      userId: "user_checkout_conflict", role: "owner", expiresAt: new Date(managerExpiry * 1000),
-    });
+    const session = await createWorkspaceManagerTestSession("tenant_checkout_conflict", { userId: "user_checkout_conflict", role: "owner" });
+    const claims = await verifyWorkspaceToken(session.token);
+    expect(claims).toMatchObject({ ver: 2, sid: session.refreshTokenId, familyId: session.familyId });
+    vi.mocked(validateWorkspaceManager).mockResolvedValue(claims);
   });
-  afterAll(async () => { await closePool(); });
+  afterAll(async () => { vi.unstubAllEnvs(); await closePool(); });
 
   it("never returns another plan's checkout URL: requesting plan B while plan A has an open session is a named 409 conflict", async () => {
     const planA = `plan_a_${nanoid(6)}`;

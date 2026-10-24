@@ -134,7 +134,7 @@ export async function POST(req: Request) {
     }, tx);
     });
   } catch (error) {
-    if (error instanceof TeamAuthorizationChangedError) return NextResponse.json({ error: error.message }, { status: 403 });
+    if (error instanceof TeamAuthorizationChangedError) return error.response();
     if (error instanceof Error && error.message === "INVITATION_ALREADY_EXISTS") {
       return NextResponse.json({ error: "An active invitation already exists for this email" }, { status: 409 });
     }
@@ -192,7 +192,7 @@ export async function DELETE(req: Request) {
       await writeAuditEvent({ tenantId: claims.tenantId, actorType: "user", actorId: claims.userId, action: "team.invitation.revoked", resourceType: "tenant_invitation", resourceId: id }, tx);
     });
   } catch (error) {
-    if (error instanceof TeamAuthorizationChangedError) return NextResponse.json({ error: error.message }, { status: 403 });
+    if (error instanceof TeamAuthorizationChangedError) return error.response();
     if (error instanceof Error && error.message === "INVITATION_NOT_FOUND") {
       return NextResponse.json({ error: "Invitation not found" }, { status: 404 });
     }

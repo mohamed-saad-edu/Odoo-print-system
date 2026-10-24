@@ -1,3 +1,4 @@
+import { operationalVerificationPresentation } from "../../../lib/printer-operational-verification";
 import { NextResponse } from "next/server";
 import { db } from "../../../db";
 import { agents, printers } from "../../../db/schema";
@@ -17,6 +18,7 @@ import { gatewayNow, refreshClockSkew } from "../../../lib/database-clock";
 import { logError } from "../../../lib/log";
 import { isVirtualPrinterRecord } from "../../../lib/printer-virtual";
 import { matchingPhysicalPrinter, physicalPrinterIdentityKey, samePrinterProtocol } from "../../../lib/physical-printer-identity";
+import { capabilitiesWithCurrentGeometry } from "../../../lib/printer-geometry";
 
 export const dynamic = "force-dynamic";
 const MAX_PRINTERS_LIST = 1000;
@@ -77,6 +79,8 @@ export async function GET(req: Request) {
   const pageRows = (hasMore ? rows.slice(0, limit) : rows).filter(({ printer }) => !isVirtualPrinterRecord(printer));
   const responseRows = pageRows.map(({ printer, agent }) => ({
     ...printer,
+    capabilities: capabilitiesWithCurrentGeometry(printer),
+    ...operationalVerificationPresentation(printer, now),
     reportedStatus: printer.status,
     freshness: getPrinterObservationFreshness(printer.lastSeenAt, now),
     status: getEffectivePrinterStatus(printer, agent, now),
@@ -186,6 +190,8 @@ export async function POST(req: Request) {
           connectionType, protocol, physicalIdentityKey,
           status: "unknown", lifecycle: "active", config,
           capabilities: null,
+          outputMedium: connectionType === "pdf_output" ? "file" : "physical",
+          verificationReason: "verification_pending_agent",
           // Gateway-owned desired state is necessary for the Windows Agent
           // to receive and verify the opt-in, irrespective of who paired it.
           // "manager" here is the existing control-plane ownership type,
@@ -208,9 +214,9 @@ export async function POST(req: Request) {
         return { kind: "created" as const, row: created };
       });
       if (outcome.kind === "conflict") return NextResponse.json({ error: outcome.error, code: "PRINTER_ENDPOINT_CONFLICT" }, { status: 409 });
-      return NextResponse.json({ ...outcome.row, already: outcome.kind === "existing" }, { status: outcome.kind === "existing" ? 200 : 201 });
+      return NextResponse.json({ ...outcome.row, ...operationalVerificationPresentation(outcome.row), already: outcome.kind === "existing" }, { status: outcome.kind === "existing" ? 200 : 201 });
     } catch (error) {
-      if (error instanceof ManagerMutationAuthorityChangedError) return NextResponse.json({ error: error.message }, { status: 403 });
+      if (error instanceof ManagerMutationAuthorityChangedError) return error.response();
       if (error instanceof TenantEntitlementError) return NextResponse.json({ error: error.message, code: "MAX_PRINTERS_EXCEEDED", entitlement: error.entitlement, limit: error.limit, used: error.used, upgradeRequired: true }, { status: 429, headers: { "Retry-After": "60", "Cache-Control": "no-store" } });
       if (isTenantBillingError(error)) return NextResponse.json({ error: error.message, code: error.code }, { status: 403 });
       if (error instanceof Error && error.message === "agentId not found") return NextResponse.json({ error: "Agent is not paired with this Gateway workspace", code: "AGENT_NOT_FOUND" }, { status: 404 });

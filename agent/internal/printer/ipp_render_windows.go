@@ -21,7 +21,11 @@ import (
 // Multi-page PDF cannot be safely represented by one JPEG IPP Print-Job.
 // A Windows spooler queue with an installed driver is needed instead of
 // sending partial pages as separate jobs and risking duplicates.
-func renderIPPPDFToJPEG(ctx context.Context, pdfData []byte) ([]byte, error) {
+func renderIPPPDFToJPEG(ctx context.Context, pdfData []byte, attrs map[string]string) ([]byte, error) {
+	dpi, err := ippJPEGResolution(attrs)
+	if err != nil {
+		return nil, err
+	}
 	if err := ValidatePDF(pdfData); err != nil {
 		return nil, err
 	}
@@ -62,7 +66,7 @@ func renderIPPPDFToJPEG(ctx context.Context, pdfData []byte) ([]byte, error) {
 	if err != nil || size == nil {
 		return nil, fmt.Errorf("read PDF page dimensions: %v", err)
 	}
-	width, height, renderDPI, err := ippJPEGGeometry(size.Width, size.Height, maxPDFRenderPixels)
+	width, height, renderDPI, err := ippJPEGGeometry(size.Width, size.Height, maxPDFRenderPixels, dpi)
 	if err != nil {
 		return nil, err
 	}

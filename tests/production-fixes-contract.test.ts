@@ -44,7 +44,12 @@ describe("production fixes contracts (2026-09)", () => {
     const getSection = route.slice(route.indexOf("export async function GET"));
     expect(getSection).toContain("validateOdooKey");
     expect(getSection).toContain('params.get("id")');
-    expect(getSection).toContain("responseForRow(row ?? receipt!)");
+    expect(getSection).toContain("readOdooJobStatus(odoo, identity,");
+    expect(getSection).toContain("responseForRow(row)");
+    const scope = read("src/lib/odoo-status-scope.ts");
+    expect(scope.match(/columns: odooStatusColumns/g)).toHaveLength(2);
+    const projection = scope.slice(scope.indexOf("export const odooStatusColumns"), scope.indexOf("} as const;", scope.indexOf("export const odooStatusColumns")));
+    expect(projection).not.toContain("payload");
     expect(getSection).not.toContain("row.payload");
     expect(getSection).not.toContain('json({ payload');
   });
@@ -161,10 +166,14 @@ describe("production fixes contracts (2026-09)", () => {
     expect(source).toContain('"max_printers"');
   });
 
-  it("Go agent: interrupted jobs are reprinted, not skipped as processed", () => {
+  it("Go agent: startup recovery retains unknown output and reports the original attempt without reprinting", () => {
     const agent = read("agent/internal/agent/agent.go");
-    expect(agent).toContain("recoverInterruptedJobs");
-    expect(agent).toContain("WasInterrupted");
+    const recovery = agent.slice(agent.indexOf("func (a *Agent) recoverInterruptedJobs("), agent.indexOf("func (a *Agent) getWSConn("));
+    expect(recovery).toContain("a.queue.MarkInterrupted()");
+    expect(recovery).toContain('a.updateJobStatus(ctx, job.ID, "failed", queue.InterruptedMarker+');
+    expect(recovery).toContain("job.ClaimToken, job.SpoolerJobID");
+    expect(recovery).toContain("reprint_after_crash=true is ignored");
+    expect(recovery).not.toMatch(/\b(?:processJob|BeginPrint|RequeueInterrupted)\s*\(/);
   });
 
   it("job-maintenance: stale PRINTING jobs fail with an unknown physical outcome and are never requeued", () => {

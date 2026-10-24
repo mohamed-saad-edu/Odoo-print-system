@@ -84,7 +84,7 @@ jobs:
                   printf 'Changed file: %q\n' "$file"
                   [ -z "$file" ] && continue
                   case "$file" in
-                    agent/*|src-tauri/*|src/desktop/*|src/components/*|src/i18n/*|src/shared/*|src/lib/*|src/app/globals.css|typography/*|public/*|contracts/*|scripts/build-windows-installer.ps1|scripts/smoke-test-windows.ps1|tests/windows-release-builder-helpers.ps1|tests/test_windows_release_builder_guards.py|vite.desktop.config.mts|postcss.config.*|package.json|package-lock.json|tsconfig.json|.nvmrc|.github/workflows/build-windows.yml)
+                    agent/*|src-tauri/*|src/desktop/*|src/components/*|src/i18n/*|src/shared/*|src/lib/*|src/app/globals.css|typography/*|public/*|contracts/*|scripts/build-windows-installer.ps1|scripts/smoke-test-windows.ps1|scripts/verify-windows-release.ps1|tests/windows-release-builder-helpers.ps1|tests/windows-native-exit-guards.ps1|tests/windows-release-evidence-helpers.ps1|tests/test_windows_release_builder_guards.py|vite.desktop.config.mts|postcss.config.*|package.json|package-lock.json|tsconfig.json|.nvmrc|.github/workflows/build-windows.yml)
                       windows=true
                       ;;
                   esac
@@ -152,10 +152,13 @@ jobs:
         if: needs.changes.outputs.agent == 'true'
         working-directory: agent
         shell: pwsh
+        env:
+          CGO_ENABLED: '1'
         run: |
+          if (-not $IsWindows -or (go env CGO_ENABLED) -ne '1') { throw "Native Windows CGO execution is required" }
           go mod verify
           if ($LASTEXITCODE -ne 0) { throw "Go modules are not verified" }
-          go test -mod=readonly -vet=all ./...
+          go test -mod=readonly -vet=all ./... -count=1
           if ($LASTEXITCODE -ne 0) { throw "Windows Agent tests failed" }
       - name: Setup Rust (manifest validation only)
         if: needs.changes.outputs.rust == 'true'
@@ -212,14 +215,17 @@ jobs:
       - name: Verify and test native Windows Go Agent
         working-directory: agent
         shell: pwsh
+        env:
+          CGO_ENABLED: '1'
         run: |
+          if (-not $IsWindows -or (go env CGO_ENABLED) -ne '1') { throw "Native Windows CGO execution is required" }
           go mod verify
           if ($LASTEXITCODE -ne 0) { throw "Go module verification failed" }
           # go test can run the full vet analyzer set before the tests, avoiding
           # a second package load/compile from a separate go vet invocation.
           # -race covers the Windows-only paths (Win32 spooler sessions,
           # retired-backend fence, DPAPI handling) that Ubuntu CI compiles out.
-          go test -mod=readonly -race -vet=all ./...
+          go test -mod=readonly -race -vet=all ./... -count=1
           if ($LASTEXITCODE -ne 0) { throw "Native Windows Go vet/tests failed" }
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
@@ -231,8 +237,12 @@ jobs:
         run: |
           if (-not (Test-Path src-tauri/Cargo.lock)) { throw "src-tauri/Cargo.lock is required and must be committed" }
           Push-Location src-tauri
-          cargo metadata --locked --no-deps --format-version 1 | Out-Null
-          Pop-Location
+          try {
+            cargo metadata --locked --no-deps --format-version 1 | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw "Rust manifest/lockfile validation failed" }
+          } finally {
+            Pop-Location
+          }
           Write-Host "Cargo.lock is present and Cargo accepts the manifest in --locked mode."
       # Downloaded Cargo crates are compact; full MSVC target archives are not.
       - name: Restore Cargo dependency downloads cache
@@ -304,7 +314,10 @@ jobs:
           key: ${{ runner.os }}-tauri-cli-2.11.4
       - name: Verify Windows release helper behavior without building or signing
         shell: pwsh
-        run: ./tests/windows-release-builder-helpers.ps1
+        run: |
+          ./tests/windows-release-builder-helpers.ps1
+          ./tests/windows-native-exit-guards.ps1
+          ./tests/windows-release-evidence-helpers.ps1
       - name: Build Go Agent resources for Tauri
         working-directory: agent
         shell: pwsh
@@ -415,7 +428,7 @@ jobs:
           "TAURI_CONFIG=$tauriConfig" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding UTF8
           "YASEIR_SIGNING_THUMBPRINT=$($cert.Thumbprint)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding UTF8
       - name: Install frontend dependencies
-        run: npm ci --prefer-offline --no-audit --fund=false
+        run: npx --yes npm@12.2.1 ci --prefer-offline --no-audit --fund=false
       - name: Verify Tauri icon assets
         shell: pwsh
         run: |
@@ -440,8 +453,12 @@ jobs:
           # only adds minutes without increasing test coverage.
           New-Item -ItemType Directory -Force -Path dist-desktop | Out-Null
           Push-Location src-tauri
-          cargo test --locked --target x86_64-pc-windows-msvc
-          Pop-Location
+          try {
+            cargo test --locked --target x86_64-pc-windows-msvc
+            if ($LASTEXITCODE -ne 0) { throw "Native Windows Rust tests failed" }
+          } finally {
+            Pop-Location
+          }
       - name: Clean stale Tauri installer bundles
         shell: pwsh
         run: |
@@ -526,6 +543,20 @@ jobs:
             throw "NSIS service did not preserve the legacy config path"
           }
           Write-Host "NSIS preserved legacy Agent config path: $nsisPathName"
+
+          # Test the exact bytes built by this job, even for the explicitly
+          # untrusted internal-test signer. Existence alone can accept stale files.
+          $installedFiles = @{
+            'src-tauri\target\x86_64-pc-windows-msvc\release\yaseir-manager.exe' = 'yaseir-manager.exe'
+            'agent\YaseirAgent.exe' = 'resources\YaseirAgent.exe'
+            'agent\yaseir-agent-cli.exe' = 'resources\yaseir-agent-cli.exe'
+          }
+          foreach ($source in $installedFiles.Keys) {
+            $installed = Join-Path $installDir $installedFiles[$source]
+            $expectedHash = (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash
+            $installedHash = (Get-FileHash -LiteralPath $installed -Algorithm SHA256).Hash
+            if ($installedHash -ne $expectedHash) { throw "Installed artifact differs from this candidate: $installed" }
+          }
 
           & pwsh -NoProfile -File .\\scripts\\smoke-test-windows.ps1 -InstallDir $installDir
           if ($LASTEXITCODE -ne 0) { throw "NSIS Windows smoke test failed" }

@@ -1,3 +1,4 @@
+import { printerOperationalVerificationPredicate } from "./printer-verification-sql";
 /**
  * Agent Health — beyond ONLINE/OFFLINE
  * Statuses: ONLINE / DEGRADED / OFFLINE / STARTING / UNKNOWN
@@ -224,11 +225,11 @@ export async function getAgentHealth(tenantId: string, agentId: string): Promise
   }
   const queueDepth = queueRows[0]?.cnt ?? 0;
 
-  let printerRows: Array<{ id: string; status: string; lifecycle: string; lastSeenAt: Date | string | null }> = [];
+  let printerRows: Array<{ id: string; status: string; lifecycle: string; lastSeenAt: Date | string | null; operationallyVerified: boolean }> = [];
   let printerDataAvailable = true;
   try {
     printerRows = await queryWithTimeout(
-      () => db.select({ id: printers.id, status: printers.status, lifecycle: printers.lifecycle, lastSeenAt: printers.lastSeenAt }).from(printers).where(and(eq(printers.tenantId, tenantId), eq(printers.agentId, agentId), eq(printers.sharedWithGateway, true), eq(printers.inventoryPresent, true), eq(printers.lifecycle, "active"), nonVirtualPrinterPredicate())),
+      () => db.select({ id: printers.id, status: printers.status, lifecycle: printers.lifecycle, lastSeenAt: printers.lastSeenAt, operationallyVerified: sql<boolean>`COALESCE((${printerOperationalVerificationPredicate(sql`printers`)}), false)` }).from(printers).where(and(eq(printers.tenantId, tenantId), eq(printers.agentId, agentId), eq(printers.sharedWithGateway, true), eq(printers.inventoryPresent, true), eq(printers.lifecycle, "active"), nonVirtualPrinterPredicate())),
       3000,
       "agentPrinters"
     );
@@ -246,7 +247,7 @@ export async function getAgentHealth(tenantId: string, agentId: string): Promise
   // would reject.
   const printerFreshnessMs = printerStaleThresholdSeconds() * 1000;
   const onlinePrinterCount = printerRows.filter((p) => {
-    if (p.lifecycle !== "active") return false;
+    if (p.lifecycle !== "active" || !p.operationallyVerified) return false;
     if (p.status !== "online" && p.status !== "busy") return false;
     const seenMs = parseDbTimeMs(p.lastSeenAt);
     if (seenMs === null) return false;
@@ -317,6 +318,7 @@ export async function getAllAgentsHealth(tenantId: string, limit = 100, offset =
         onlineCnt: sql<number>`CAST(COUNT(*) FILTER (WHERE
           ${printers.lifecycle} = 'active'
           AND ${printers.status} IN ('online', 'busy')
+          AND ${printerOperationalVerificationPredicate(sql`printers`)}
           AND ${printers.lastSeenAt} >= ${earliestFresh}
           AND ${printers.lastSeenAt} <= ${now}
         ) AS INTEGER)`,

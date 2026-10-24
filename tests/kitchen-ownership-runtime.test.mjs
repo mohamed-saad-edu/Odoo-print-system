@@ -1,3 +1,4 @@
+import { receiptGeometry } from "./helpers/odoo-printer-geometry.mjs";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { readFile } from "node:fs/promises";
@@ -53,11 +54,9 @@ async function fixture({ draft = false, enabled = true, holdStage = null,
         renderToElement: (_name, value) => value,
         gatewayServerMessage: (error) => error?.data?.message || error?.message,
         showGatewayBillingLimitDialog: () => false,
-        DEFAULT_RECEIPT_RASTER_WIDTH: 512,
-        normalizedReceiptRasterWidth: (value) => value,
-        renderGatewayReceiptJpeg: async (_receipt, { width }) => {
+        renderGatewayReceiptJpeg: async (_receipt, { geometry }) => {
             await stage("render");
-            return `JPEG_${width}`;
+            return `JPEG_${geometry.printable_width_dots}`;
         },
     };
     const context = vm.createContext({ console, crypto: webcrypto, Set, Map, Uint8Array, setTimeout, clearTimeout });
@@ -68,7 +67,7 @@ async function fixture({ draft = false, enabled = true, holdStage = null,
     const controls = new vm.SourceTextModule(await readFile(new URL("async_control.js", root), "utf8"), { context });
     await controls.link(() => { throw new Error("Unexpected import"); });
     const recovery = new vm.SourceTextModule(await readFile(new URL("operation_recovery.js", root), "utf8"), { context });
-    await recovery.link(() => { throw new Error("Unexpected recovery import"); });
+    await recovery.link((name) => { assert.equal(name, "@web/core/l10n/translation"); return common; });
     const addon = new vm.SourceTextModule(await readFile(new URL("pos_print_router.js", root), "utf8"), { context });
     await addon.link((name) => name === "./async_control" ? controls : name === "./operation_recovery" ? recovery : common);
     await addon.evaluate();
@@ -93,7 +92,7 @@ async function fixture({ draft = false, enabled = true, holdStage = null,
                 if (delaySecondMetadata && metadataCalls === 2) await released.promise;
                 await stage("metadata");
                 return { routes: printers.map((p) => ({ pos_printer_id: p.id,
-                    category_ids: [1], raster_width: p.id === 1 ? 384 : 576 })), missing_routes: [] };
+                    category_ids: [1], geometry: receiptGeometry(p.id === 1 ? 384 : 576) })), missing_routes: [] };
             }
             assert.equal(method, "action_print_gateway_kitchen");
             submissions.push({ station: kwargs.pos_printer_id, operation: kwargs.operation_id, image: kwargs.image, reprint: kwargs.reprint });

@@ -11,8 +11,9 @@ import type { PoolClient } from "pg";
  */
 const SECRET = /(?:password|secret|token|credential|private|signature|salt|hash|payload|document|certificate|authorization|cookie|session_data|card_number|payment_method|refresh|recovery|otp|passcode|api_key_value|body|content|address_line|phone|email)/i;
 const SAFE_TYPES = new Set(["text","character varying","character","uuid","integer","bigint","smallint","numeric","boolean","timestamp without time zone","timestamp with time zone","date","double precision","real","USER-DEFINED"]);
-const ALWAYS_HIDDEN = new Set(["platform_sessions","refresh_tokens","auth_rate_limits","password_reset_tokens","email_verification_tokens","pg_stat_statements"]);
-export type ExploreTable = { name: string; columns: string[]; primaryKey: string | null };
+const ALWAYS_HIDDEN = new Set(["platform_sessions","refresh_tokens","auth_rate_limits","password_reset_tokens","email_verification_tokens","pg_stat_statements",
+  "platform_session_security", "workspace_session_security"]);
+export type ExploreTable = { name: string; columns: string[]; primaryKey: string | null; primaryKeys?: string[] };
 const quote = (v: string) => '"' + v.replaceAll('"', '""') + '"';
 
 export async function listExploreTables(client: PoolClient): Promise<ExploreTable[]> {
@@ -44,25 +45,26 @@ export async function listExploreTables(client: PoolClient): Promise<ExploreTabl
      ORDER BY c.table_name, c.ordinal_position`);
   const grouped = new Map<string, {
     columns: string[];
-    primary: string | null;
+    primary: string[];
   }>();
   for (const column of catalog.rows) {
     if (ALWAYS_HIDDEN.has(column.table_name)) continue;
     let table = grouped.get(column.table_name);
     if (!table) {
-      table = { columns: [], primary: null };
+      table = { columns: [], primary: [] };
       grouped.set(column.table_name, table);
     }
     if (!SAFE_TYPES.has(column.data_type) || SECRET.test(column.column_name)) continue;
     if (table.columns.length >= 40) continue;
     table.columns.push(column.column_name);
-    if (column.is_primary && !table.primary) table.primary = column.column_name;
+    if (column.is_primary) table.primary.push(column.column_name);
   }
   return [...grouped.entries()]
     .filter(([, table]) => table.columns.length > 0)
     .map(([name, table]) => ({
       name, columns: table.columns,
-      primaryKey: table.primary ?? (table.columns.includes("id") ? "id" : null),
+      primaryKey: table.primary[0] ?? (table.columns.includes("id") ? "id" : null),
+      ...(table.primary.length > 1 ? { primaryKeys: table.primary } : {}),
     }));
 }
 export async function exploreRows(client: PoolClient, table: ExploreTable, search: string, offset: number, limit: number) {
@@ -79,9 +81,16 @@ export async function exploreRows(client: PoolClient, table: ExploreTable, searc
   const args = search ? [search, limit, offset] : [limit, offset];
   const index = search ? 2 : 1;
   if (search && !searchable.length) return [];
+  // A creation timestamp is not unique, particularly for bulk inserts and
+  // memberships. Include every visible primary-key column so adjacent pages
+  // have a deterministic order for an unchanged dataset.
+  const orderColumns = [...new Set([
+    table.columns.includes("created_at") ? "created_at" : table.primaryKey ?? table.columns[0],
+    ...(table.primaryKeys ?? (table.primaryKey ? [table.primaryKey] : [])),
+  ])].filter(column => table.columns.includes(column));
   const result = await client.query<Record<string,unknown>>(
     `SELECT ${colSQL} FROM ${quote(table.name)} ${where}
-      ORDER BY ${quote(table.columns.includes("created_at") ? "created_at" : table.primaryKey ?? table.columns[0])} DESC
+      ORDER BY ${orderColumns.map(column => `${quote(column)} DESC`).join(", ")}
       LIMIT $${index} OFFSET $${index + 1}`,args);
   return result.rows.map(row=>Object.fromEntries(Object.entries(row).map(([k,v])=>[k,
      typeof v==="string" && v.length>320 ? v.slice(0,320)+"…" : v instanceof Date ? v.toISOString() : v])));
@@ -93,10 +102,11 @@ export async function readPlatformDatabase(input: { table?: string; search?: str
     await client.query("SET LOCAL statement_timeout = '4000ms'");
     const tables = await listExploreTables(client);
     const table = input.table ? tables.find(t=>t.name === input.table) : null;
-    const rows = table ? await exploreRows(client,table,input.search ?? "",input.offset ?? 0,25) : [];
+    const pageSize = 25;
+    const rows = table ? await exploreRows(client,table,input.search ?? "",input.offset ?? 0,pageSize + 1) : [];
     await client.query("COMMIT");
-    return { tables, selected: table?.name ?? null, columns: table?.columns ?? [], rows,
-      hasMore:rows.length===25 };
+    return { tables, selected: table?.name ?? null, columns: table?.columns ?? [], rows: rows.slice(0,pageSize),
+      hasMore:rows.length>pageSize };
   } catch(e) { await client.query("ROLLBACK").catch(()=>{});throw e; }
   finally { client.release(); }
 }

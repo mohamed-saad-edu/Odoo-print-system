@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { AlertCircle, ArrowUpRight, RefreshCw, Building2, Server, Printer, Clock3, CheckCheck, KeyRound, Database, ShieldCheck, ListChecks } from "lucide-react";
+import { AlertCircle, ArrowUpRight, RefreshCw, Building2, Server, Printer, Clock3, CheckCheck, KeyRound, Database, ShieldCheck } from "lucide-react";
 import { Button, Card, ErrorState, PageHeader, PageSkeleton } from "../../../components/ui";
 import { fetchWithTimeout } from "../../../lib/fetch-timeout";
 import { useI18n } from "../../../i18n/react";
@@ -81,12 +81,12 @@ export default function PlatformDashboardPage() {
       value: stats?.tenants.active ?? 0, sub: `/ ${formatNumber(stats?.tenants.total ?? 0)}`, href: "/platform/tenants", icon: Building2 },
     { label: ar ? "الأيجنت المتصلة" : "Online Agents",
       value: stats?.agents.online ?? 0, sub: `/ ${formatNumber(stats?.agents.active ?? 0)}`, href: "/platform/fleet", icon: Server },
-    { label: ar ? "الطابعات الجاهزة" : "Available printers",
+    { label: ar ? "طابعات متصلة أو مشغولة" : "Online / busy printers",
       value: (stats?.printers.online ?? 0) + (stats?.printers.busy ?? 0),
       sub: `/ ${formatNumber(stats?.printers.active ?? 0)}`, href: "/platform/fleet", icon: Printer },
     { label: ar ? "مهام في الانتظار الآن" : "Jobs waiting now",
       value: queue.queued, sub: `${formatNumber(queue.inFlight)} ${ar ? "قيد التنفيذ" : "in progress"}`, href: "/platform/jobs", icon: Clock3 },
-    { label: ar ? "مهام تمت خلال 24 ساعة" : "Jobs printed in 24h",
+    { label: ar ? "إرسال مكتمل خلال 24 ساعة" : "Submissions completed in 24h",
       value: stats?.jobs24h.success ?? 0, sub: `/ ${formatNumber(stats?.jobs24h.total ?? 0)}`, href: "/platform/jobs", icon: CheckCheck },
     { label: ar ? "مفاتيح API مصرح لها" : "Authorized API keys",
       value: stats?.integrations?.keys.active ?? 0, sub: ar ? "مفاتيح فعالة" : "active credentials", href: "/platform/integrations", icon: KeyRound },
@@ -115,10 +115,11 @@ export default function PlatformDashboardPage() {
           </div>
         </Link>)}
       </section>
+      <p className="text-xs text-ink-3">{ar ? "اكتمال الإرسال يؤكد نتيجة خدمة الطباعة فقط. خروج الورق غير مؤكد بشكل مستقل." : "Completed submissions report the print service result. Paper output is not independently verified."}</p>
       <Card className="p-5">
         <h2 className="text-base font-semibold text-ink">{ar ? "يحتاج متابعة" : "Needs attention"}</h2>
         <div className="mt-4 divide-y divide-edge-subtle">
-          {signals.map(signal => <Link href={signal.href} key={signal.href}
+          {signals.map(signal => <Link href={signal.href} key={signal.label}
             className="flex min-h-14 items-center justify-between gap-3 py-3 hover:text-brand focus-visible:outline-2 focus-visible:outline-brand">
             <span className="flex items-center gap-2 text-sm text-ink-2">
               {signal.value > 0 && <AlertCircle className="h-4 w-4 shrink-0 text-warn" aria-hidden />}{signal.label}

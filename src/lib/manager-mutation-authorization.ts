@@ -3,12 +3,19 @@ import type { DbTx } from "../db";
 import { tenantUsers } from "../db/schema";
 import type { ManagerClaims } from "./manager-auth";
 import { hasManagerPermission, type ManagerPermission } from "./authorization";
+import { requireWorkspaceSessionInTransaction, requiresWorkspaceStepUp, WorkspaceSessionExpiredError,
+  WorkspaceReauthenticationRequiredError, workspacePolicyResponse, type WorkspacePolicyError } from "./workspace-session-security";
 
 export class ManagerMutationAuthorityChangedError extends Error {
-  constructor() {
-    super("Your workspace authorization changed. Refresh your session and try again.");
+  readonly code: string;
+  readonly status: number;
+  constructor(readonly policy?: WorkspacePolicyError) {
+    super(policy?.message ?? "Your workspace authorization changed. Refresh your session and try again.");
     this.name = "ManagerMutationAuthorityChangedError";
+    this.code = policy?.code ?? "WORKSPACE_AUTHORITY_CHANGED";
+    this.status = policy?.status ?? 403;
   }
+  response(): Response { return this.policy ? workspacePolicyResponse(this.policy) : Response.json({ error: this.message }, { status: 403 }); }
 }
 
 /**
@@ -18,8 +25,8 @@ export class ManagerMutationAuthorityChangedError extends Error {
  * Callers MUST acquire any required resource locks and an active-tenant fence
  * before this guard, preserving each existing writer's lock order. Never
  * substitute `users.manage` for the permission of the actual operation.
- * This guard intentionally supports valid user-less legacy/bootstrap Manager
- * and Customer Workspace sessions for *non-team* Manager operations.
+ * User-less environment Managers require an explicitly configured, freshly
+ * password-authenticated v2 policy row. Pre-policy and v1 sessions must sign in.
  */
 export async function requireManagerActorInTransaction(
   tx: DbTx,
@@ -43,13 +50,14 @@ export async function requireManagerActorInTransaction(
   }
   let active;
   if (claims.familyId) {
+    if (claims.ver !== 2 || !claims.sid) throw new ManagerMutationAuthorityChangedError();
     // Password reset and logout use this family advisory lock; the guard
     // shares their revocation ordering. Never read an arbitrary user's family.
     await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${claims.familyId}, 0))`);
     const userPredicate = claims.userId ? sql`user_id = ${claims.userId}` : sql`user_id IS NULL`;
     const kind = claims.kind === "customer" ? "customer" : "manager";
     active = await tx.execute(sql`SELECT id FROM refresh_tokens
-      WHERE family_id = ${claims.familyId} AND tenant_id = ${claims.tenantId}
+      WHERE id = ${claims.sid} AND family_id = ${claims.familyId} AND tenant_id = ${claims.tenantId}
         AND kind = ${kind} AND ${userPredicate} AND role = ${claims.role}
         AND revoked_at IS NULL AND expires_at > clock_timestamp()
         AND ${claims.exp} > EXTRACT(EPOCH FROM clock_timestamp())
@@ -64,5 +72,11 @@ export async function requireManagerActorInTransaction(
         AND ${claims.exp} > EXTRACT(EPOCH FROM clock_timestamp())
       FOR SHARE`);
   }
-  if (active.rows.length === 0) throw new ManagerMutationAuthorityChangedError();
+  if (active.rows.length === 0) throw new ManagerMutationAuthorityChangedError(new WorkspaceSessionExpiredError());
+  try {
+    await requireWorkspaceSessionInTransaction(tx, claims, { fresh: requiresWorkspaceStepUp(permission), touch: !permission.endsWith(".read") });
+  } catch (error) {
+    if (error instanceof WorkspaceSessionExpiredError || error instanceof WorkspaceReauthenticationRequiredError) throw new ManagerMutationAuthorityChangedError(error);
+    throw error;
+  }
 }

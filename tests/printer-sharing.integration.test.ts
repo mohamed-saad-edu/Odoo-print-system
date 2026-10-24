@@ -10,9 +10,10 @@ import { loadDashboardStateForTenant } from "../src/lib/dashboard-state";
 import { getPrinterCapabilityPage, getPrinterCapabilityMatrix } from "../src/lib/printer-health";
 import { getAgentHealth, getAllAgentsHealth } from "../src/lib/agent-health";
 import { PATCH as printerPATCH } from "../src/app/api/printers/[id]/route";
-import { createManagerSession } from "../src/lib/manager-auth";
+import { createWorkspaceManagerTestSession } from "./helpers/workspace-session";
 import { gatewayTestSigningKey } from "./helpers/test-secrets";
 import { PRINTER_NOT_SHARED_PAUSE } from "../src/lib/job-status";
+import { physicalPrinterIdentityKey } from "../src/lib/physical-printer-identity";
 import { applyMigrations, closePool, hasTestDatabase, insertQueuedJob, jobRow, pool, seedFixture, truncateAll, type Fixture } from "./helpers/pg";
 
 const suite = describe.skipIf(!hasTestDatabase);
@@ -22,15 +23,37 @@ suite("local-owner printer sharing across Gateway/Odoo boundaries", () => {
   let version: number;
   const priorSigningKey = process.env.GATEWAY_JWT_SECRET;
   beforeAll(async () => { process.env.GATEWAY_JWT_SECRET = gatewayTestSigningKey(); await applyMigrations(); });
-  beforeEach(async () => { await truncateAll(); f = await seedFixture(); version = 0; });
+  beforeEach(async () => {
+    await truncateAll(); f = await seedFixture(); version = 0;
+    // Start with the same proven endpoint later sharing pages describe. An
+    // unversioned inventory observation carries no sharing-policy mutation.
+    const { sharedWithGateway: _sharing, ...observed } = sharedObservation();
+    const response = await heartbeatPOST(new Request("https://gateway.test/api/agent/heartbeat", {
+      method: "POST", headers: { Authorization: f.agentAuth, "content-type": "application/json" },
+      body: JSON.stringify({ status: "online", printers: [observed] }),
+    }));
+    expect(response.status).toBe(200);
+    expect((await response.json()).skippedPrinters ?? []).toEqual([]);
+    expect(await printerRow()).toMatchObject({ verification_state: "verified",
+      verification_binding_digest: observed.capabilities.operational_verification.binding_digest });
+  });
   afterAll(async () => {
     await closePool();
     if (priorSigningKey === undefined) delete process.env.GATEWAY_JWT_SECRET;
     else process.env.GATEWAY_JWT_SECRET = priorSigningKey;
   });
 
-  const sharedObservation = () => ({ id: f.printerId, name: "Actual Windows Queue", connectionType: "spooler", protocol: "spooler", status: "online", sharedWithGateway: true,
-    config: { spooler_name: "Actual Windows Queue", address: "Actual Windows Queue" }, capabilities: { supported_protocols: ["raw", "escpos", "pdf", "image"] } });
+  const sharedObservation = () => {
+    const printer = { id: f.printerId, name: "Actual Windows Queue", connectionType: "spooler", protocol: "spooler", status: "online", sharedWithGateway: true,
+      config: { spooler_name: "Actual Windows Queue", address: "Actual Windows Queue" } };
+    const identity = physicalPrinterIdentityKey(printer);
+    expect(identity).toMatch(/^v2:[0-9a-f]{64}$/);
+    const binding = identity!.slice(3);
+    return { ...printer, capabilities: { supported_protocols: ["raw", "escpos", "pdf", "image"], operational_verification: {
+      version: 1, verified_at: new Date().toISOString(), printer_id: printer.id, binding_digest: binding,
+      logical_queue_key: binding, method: "windows_queue", identity_strength: "queue", output_medium: "physical",
+    } } };
+  };
   const heartbeat = (body: Record<string, unknown>) => heartbeatPOST(new Request("https://gateway.test/api/agent/heartbeat", {
     method: "POST", headers: { Authorization: f.agentAuth, "content-type": "application/json" },
     body: JSON.stringify({ status: "online", heartbeatPage: 1, heartbeatPageCount: 1, inventorySnapshotId: `share-${++version}`, inventorySnapshotVersion: String(version), inventoryComplete: true, ...body }),
@@ -118,7 +141,7 @@ suite("local-owner printer sharing across Gateway/Odoo boundaries", () => {
 
   it("manager rename/lifecycle intent cannot override the local denial", async () => {
     expect((await heartbeat({ privatePrinterIds: [f.printerId] })).status).toBe(200);
-    const session = await createManagerSession(f.tenantId);
+    const session = await createWorkspaceManagerTestSession(f.tenantId);
     const patch = (body: Record<string, unknown>) => printerPATCH(new Request(`https://gateway.test/api/printers/${f.printerId}`, {
       method: "PATCH", headers: { Authorization: `Bearer ${session.token}`, "content-type": "application/json" }, body: JSON.stringify(body),
     }), { params: Promise.resolve({ id: f.printerId }) });

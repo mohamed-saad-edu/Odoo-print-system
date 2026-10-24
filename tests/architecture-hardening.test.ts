@@ -137,7 +137,7 @@ describe("architecture hardening", () => {
     const server = readFileSync("server.ts", "utf8");
     const csp = readFileSync("src/server/content-security-policy.ts", "utf8");
     const layout = readFileSync("src/app/layout.tsx", "utf8");
-    expect(csp).toContain("crypto.randomUUID()");
+    expect(csp).toContain("crypto.getRandomValues(new Uint8Array(32))");
     expect(csp).toContain("script-src 'self' 'nonce-\${nonce}' 'strict-dynamic'");
     expect(csp).toContain("'strict-dynamic'");
     expect(csp).not.toMatch(/script-src[^;]*unsafe-inline/);
@@ -151,7 +151,7 @@ describe("architecture hardening", () => {
     expect(proxy).not.toContain("createRequestContentSecurityPolicy");
     expect(proxy).not.toContain('requestHeaders.set("x-nonce", nonce)');
     expect(proxy).not.toContain('response.headers.set("Content-Security-Policy", policy)');
-    expect(csp).toContain("crypto.randomUUID()");
+    expect(csp).toContain("base-uri 'none';");
     expect(csp).toContain("script-src 'self' 'nonce-");
     expect(csp).toContain("connect-src 'self';");
     expect(layout).toContain("const THEME_INIT =");
@@ -234,9 +234,12 @@ describe("ambiguous Odoo submission recovery", () => {
     const route = readFileSync("src/app/api/print/jobs/route.ts", "utf8");
     expect(route).toContain('const idempotencyKey = params.get("idempotencyKey")?.trim();');
     expect(route).toContain("Provide exactly one lookup key");
-    expect(route).toContain("eq(printJobs.idempotencyKey, idempotencyKey!)");
-    expect(route).toContain("isNotNull(printJobs.apiKeyId)");
-    expect(route).toContain('eq(printJobs.tenantId, odoo.tenantId)');
+    expect(route).toContain("readOdooJobStatus(odoo, identity,");
+    const status = readFileSync("src/lib/odoo-status-scope.ts", "utf8");
+    expect(status).toContain("eq(printJobs.idempotencyKey, lookup.idempotencyKey!)");
+    expect(status).toContain("isNotNull(printJobs.apiKeyId)");
+    expect(status).toContain('eq(printJobs.tenantId, key.tenantId)');
+    expect(status).toContain("await requireOdooStatusAccess(tx, key, identity)");
   });
 
   it("reconciles response-lost Odoo submissions instead of retrying the physical operation", () => {

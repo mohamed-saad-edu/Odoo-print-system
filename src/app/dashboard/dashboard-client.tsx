@@ -1,6 +1,9 @@
 "use client";
 
-import { fetchWithTimeout } from "../../lib/fetch-timeout";
+import type { OperationalPrinterState } from "../../lib/printer-operational-verification";
+import { PrinterVerificationDetails, FileOutputDetails } from "../../components/PrinterVerificationDetails";
+
+import { fetchWithTimeout, WORKSPACE_REAUTHENTICATION_EVENT } from "../../lib/fetch-timeout";
 import { fetchDashboardBillingUsage } from "../../lib/dashboard-billing-usage";
 import React, { useState, useMemo, useEffect } from "react";
 import { ensureCustomerSession } from "../../lib/session-config";
@@ -93,6 +96,7 @@ import { useI18n } from "../../i18n/react";
 import { getPrinterLanguageBadges } from "../../lib/printer-capability";
 import PrintCertificationWizard from "../../components/PrintCertificationWizard";
 import JobTimeline from "../../components/JobTimeline";
+import { PrinterGeometryDetails, PrinterGeometryProfileEditor } from "../../components/PrinterGeometrySettings";
 import UpgradeLimitDialog, { type UpgradeLimitResource } from "../../components/UpgradeLimitDialog";
 import { isLimitSignalResult } from "../../lib/limit-signal";
 import { isServerActionVersionMismatch } from "../../lib/server-action-version";
@@ -112,7 +116,7 @@ export type Agent = {
   metadata?: unknown;
 };
 
-export type Printer = {
+export type Printer = OperationalPrinterState & {
   sharedWithGateway?: boolean;
   id: string;
   agentId: string;
@@ -133,10 +137,16 @@ export type Printer = {
   freshness?: "fresh" | "stale" | "missing";
   config?: Record<string, unknown> | null;
   capabilities?: Record<string, unknown> | null;
+  managementSource?: string | null;
+  desiredRevision?: number | null;
+  appliedDesiredRevision?: number | null;
+  observedDesiredRevision?: number | null;
   lastSeenAt?: Date | null;
 };
 
 export type Job = {
+  outputMedium?: string;
+  outputEvidence?: Record<string, unknown> | null;
   id: string;
   agentId: string;
   agentName?: string | null;
@@ -613,7 +623,19 @@ export default function DashboardClient({
     }
     const result = await operation();
     if (!result.ok) {
-      if (result.status === 401) router.replace("/login?next=%2Fdashboard");
+      if (result.status === 401) {
+        router.replace("/login?next=%2Fdashboard");
+        throw new Error(t("errors.sessionExpired"));
+      }
+      if (result.status === 403 && result.code === "WORKSPACE_REAUTHENTICATION_REQUIRED") {
+        // This result came from the directly invoked workspace Server Action.
+        // It has no HTTP policy header; announce the same UI-only notice and
+        // leave the failed operation for an explicit later user action.
+        try {
+          if (typeof window !== "undefined") window.dispatchEvent(new Event(WORKSPACE_REAUTHENTICATION_EVENT));
+        } catch { /* A notification failure cannot retry or change the result. */ }
+        throw new Error(t("workspaceSecurity.required"));
+      }
       throw new Error(result.error ?? t(apiMessageKey(result.code, result.status, "errors.operationFailed")));
     }
     return result.data;
@@ -1368,7 +1390,7 @@ export default function DashboardClient({
             {kpis.totalAgents > 0 && kpis.onlineAgents === kpis.totalAgents ? (
               <span className="inline-flex items-center gap-1.5 border border-ok-edge bg-ok-bg text-ok rounded-sm px-2 py-0.5 text-2xs font-[600]">
                 <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-ok-solid" />
-                {t("dashboard.fleetNominal")}
+                {t("agent.allReachable")}
               </span>
             ) : (
               <span className="inline-flex items-center gap-1.5 rounded-sm border border-warn-edge bg-warn-bg px-2 py-0.5 text-2xs font-[600] text-warn">
@@ -1558,7 +1580,7 @@ export default function DashboardClient({
             {canMutate.agentsPair && <Button
               variant="primary"
               size="sm"
-              onClick={() => setRegisterOpen(true)}
+              onClick={() => { setMessage(null); setRegisterOpen(true); }}
               icon={<Plus className="h-3.5 w-3.5" />}
               disabled={busy || databaseError !== null}
               className="shrink-0"
@@ -1573,7 +1595,7 @@ export default function DashboardClient({
               title={t("empty.agents.title")}
               description={t("agent.registerEmptyDescription")}
               action={
-                canMutate.agentsPair ? <Button variant="primary" size="sm" onClick={() => setRegisterOpen(true)} disabled={busy || databaseError !== null} icon={<Plus className="h-3.5 w-3.5" />}>
+                canMutate.agentsPair ? <Button variant="primary" size="sm" onClick={() => { setMessage(null); setRegisterOpen(true); }} disabled={busy || databaseError !== null} icon={<Plus className="h-3.5 w-3.5" />}>
                   {t("agent.register")}
                 </Button> : undefined
               }
@@ -2024,7 +2046,7 @@ export default function DashboardClient({
                           </div>
                         </td>
                         <td>
-                          <StatusBadge tone={sharedJobTone(job.status, outcome)} label={jobDisplayLabel(job.status, job.error, locale)} size="sm" />
+                          <StatusBadge tone={sharedJobTone(job.status, outcome)} label={jobDisplayLabel(job.status, job.error, locale, job)} size="sm" />
                         </td>
                         <td className="text-end text-sm text-ink-3" title={formatDateTime(job.createdAt)}>
                           {formatRelativeTime(job.createdAt)}
@@ -2066,7 +2088,7 @@ export default function DashboardClient({
                         </span>
                         <span className="mt-0.5 block truncate font-mono text-2xs text-ink-3">{shortId(job.id)}</span>
                       </button>
-                      <StatusBadge tone={sharedJobTone(job.status, outcome)} label={jobDisplayLabel(job.status, job.error, locale)} size="sm" />
+                      <StatusBadge tone={sharedJobTone(job.status, outcome)} label={jobDisplayLabel(job.status, job.error, locale, job)} size="sm" />
                     </div>
                     <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-ink-3">
                       <span>{job.printerName ?? printer?.name ?? t("job.unknownPrinter")}</span>
@@ -2141,6 +2163,7 @@ export default function DashboardClient({
           )
         }
       >
+        {message?.type === "err" && <Callout tone="bad" className="mb-4">{message.text}</Callout>}
         {activePairing ? (
           <div className="space-y-4">
             <div className="rounded-sg border border-edge-accent bg-brand-subtle px-4 py-4">
@@ -2194,7 +2217,6 @@ export default function DashboardClient({
                 onChange={(e) => setAgentName(e.target.value)}
                 placeholder={t("agent.namePlaceholder")}
                 maxLength={80}
-                autoFocus
                 disabled={busy}
               />
             </Field>
@@ -2210,7 +2232,7 @@ export default function DashboardClient({
         open={selectedJob !== null}
         onClose={() => closeJobDetails()}
         title={selectedJobView ? t("job.detailTitle", { id: selectedJobView.id.slice(0, 12) }) : t("job.job")}
-        description={selectedJobView ? `${jobDisplayLabel(selectedJobView.status, selectedJobView.error, locale)} · ${formatDateTime(selectedJobView.createdAt)}` : undefined}
+        description={selectedJobView ? `${jobDisplayLabel(selectedJobView.status, selectedJobView.error, locale, selectedJobView)} · ${formatDateTime(selectedJobView.createdAt)}` : undefined}
         wide
         footer={
           <>
@@ -2238,17 +2260,18 @@ export default function DashboardClient({
       >
         {selectedJobView && (
           <div className="space-y-5">
+            <FileOutputDetails job={selectedJobView} />
             <div className="flex flex-wrap items-center gap-2">
               <StatusBadge
                 tone={sharedJobTone(selectedJobView.status, deriveOutcome(selectedJobView.status, selectedJobView.error))}
-                label={jobDisplayLabel(selectedJobView.status, selectedJobView.error, locale)}
+                label={jobDisplayLabel(selectedJobView.status, selectedJobView.error, locale, selectedJobView)}
               />
               <span className="font-mono text-xs text-ink-4">{selectedJobView.id}</span>
               <CopyButton value={selectedJobView.id} label={t("job.copyJobId")} />
             </div>
 
             <p className="text-sm leading-relaxed text-ink-2">
-              {jobGuidance(selectedJobView.status, deriveOutcome(selectedJobView.status, selectedJobView.error), locale)}
+              {selectedJobView.outputMedium === "file" ? t("printer.verification.file") : jobGuidance(selectedJobView.status, deriveOutcome(selectedJobView.status, selectedJobView.error), locale)}
             </p>
 
             {/* Progress without paper evidence is not a terminal duplicate-print warning. */}
@@ -2350,12 +2373,27 @@ export default function DashboardClient({
               { label: t("desktop.drawer.lifecycle"), value: lifecycleLabel(t, selectedPrinterView.lifecycle) },
               { label: t("printer.connection"), value: connectionLabel(selectedPrinterView.connectionType, t) },
               { label: t("desktop.drawer.protocol"), value: selectedPrinterView.protocol ?? "—" },
-              { label: t("desktop.drawer.address"), value: <Mono>{String(selectedPrinterView.config?.spooler_name ?? selectedPrinterView.config?.address ?? selectedPrinterView.config?.ip ?? "—")}</Mono> },
+              { label: t("desktop.drawer.address"), value: <Mono>{String(selectedPrinterView.config?.output_profile_id ?? selectedPrinterView.config?.spooler_name ?? selectedPrinterView.config?.address ?? selectedPrinterView.config?.ip ?? "—")}</Mono> },
               { label: t("desktop.drawer.stableId"), value: <CopyButton value={selectedPrinterView.id} label={selectedPrinterView.id} /> },
               { label: t("agent.lastSeen"), value: formatDateTime(selectedPrinterView.lastSeenAt) },
               { label: t("desktop.drawer.observed"), value: printerStatusDetail(selectedPrinterView, locale) || "—" },
             ]} />
             <div className="space-y-2"><div className="text-xs text-ink-3">{t("printer.languages")}</div><PrinterLanguageChips printer={selectedPrinterView} /></div>
+            <PrinterVerificationDetails printer={selectedPrinterView} />
+            <PrinterGeometryDetails printer={selectedPrinterView} managerHint={!canMutate.printers} />
+            {canMutate.printers && selectedPrinterView.lifecycle !== "retired" && <PrinterGeometryProfileEditor
+              key={selectedPrinterView.id}
+              printer={selectedPrinterView}
+              onSave={async (profile) => {
+                const response = await fetchWithTimeout(`/api/printers/${encodeURIComponent(selectedPrinterView.id)}`, {
+                  method: "PATCH", headers: { "Content-Type": "application/json" }, credentials: "include",
+                  body: JSON.stringify({ config: { geometry_profile: profile } }),
+                });
+                const body = await response.json();
+                if (!response.ok) throw new Error(typeof body.error === "string" ? body.error : t("printer.geometry.saveFailed"));
+                setPrinters((current) => current.map((printer) => printer.id === selectedPrinterView.id ? { ...printer, ...body } : printer));
+                void refreshData();
+              }} />}
             {canMutate.printersTest && <Button variant="secondary" disabled={selectedPrinterView.sharedWithGateway === false} onClick={() => { setSelectedPrinter(null); setCertifyPrinter(selectedPrinterView); }} icon={<ShieldCheck className="h-4 w-4" />}>{t("printer.certify")}</Button>}
           </div>
         )}

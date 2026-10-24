@@ -12,6 +12,7 @@ import {
 import {
   DEFAULT_LOCALE,
   LOCALE_COOKIE_KEY,
+  LOCALE_COOKIE_SECURE,
   LOCALE_STORAGE_KEY,
   dirFor,
   resolveLocale,
@@ -88,7 +89,7 @@ function readStoredLocale(): Locale | null {
     // from the locale cookie so a server-rendered Arabic session does not
     // stay LTR in the client tree.
     try {
-      const match = /(?:^|;\s*)yaseir_locale=(ar|en)(?:;|$)/.exec(document.cookie || "");
+      const match = new RegExp(`(?:^|;\\s*)${LOCALE_COOKIE_KEY}=(ar|en)(?:;|$)`).exec(document.cookie || "");
       if (match) raw = match[1];
     } catch {
       /* cookies unreadable — fall through */
@@ -165,9 +166,13 @@ export function I18nProvider({ children, initialLocale = DEFAULT_LOCALE }: { chi
       sessionLocale = next;
     }
     try {
-      // One year, Lax: the server can read it on the next navigation without
-      // ever sending it cross-site.
-      document.cookie = `${LOCALE_COOKIE_KEY}=${next}; path=/; max-age=31536000; samesite=lax`;
+      // This non-sensitive preference is intentionally script-readable. The
+      // production __Host- name requires HTTPS, Path=/ and no Domain. Desktop
+      // origins may reject it; localStorage and the active preference survive.
+      if (LOCALE_COOKIE_SECURE) {
+        document.cookie = "yaseir_locale=; path=/; max-age=0; samesite=lax; secure";
+      }
+      document.cookie = `${LOCALE_COOKIE_KEY}=${next}; path=/; max-age=31536000; samesite=lax${LOCALE_COOKIE_SECURE ? "; secure" : ""}`;
     } catch {
       /* Cookie availability is independent of localStorage availability. */
     }

@@ -4,12 +4,14 @@ import { Button, Card, CopyButton, ErrorState, Field, Input, StatusBadge, Status
 import { SettingsSection } from "../ui";
 import type { DesktopState } from "../types";
 import { useI18n } from "../../i18n/react";
-import { friendlyAgentError, printerDisplayName, printerPresentation, printerDisplayStatus } from "../lib/printers";
+import { agentServiceState, friendlyAgentError, printerDisplayName, printerPresentation, printerDisplayStatus } from "../lib/printers";
+import { copyTextToClipboard } from "../../lib/clipboard";
 import { getAutostart, setAutostart } from "../lib/ipc";
 
 export function SettingsPage({ s }: { s: DesktopState }) {
   const { t, locale } = useI18n();
   const anyStatus = s.agentStatus as Record<string, unknown> | null;
+  const serviceState = agentServiceState(s.agentStatus);
   const [autostartBusy, setAutostartBusy] = React.useState(false);
   const gatewayDisplayError = s.gatewayDraftError ?? (s.gatewayDraftMatchesSaved ? s.healthError : null);
   const hasGatewayDraft = s.gatewayDraftUrl.trim().length > 0;
@@ -49,8 +51,8 @@ export function SettingsPage({ s }: { s: DesktopState }) {
 
         <SettingsSection title={t("desktop.settings.localAgentSection")} description={t("desktop.settings.localAgentSectionBody")} icon={<Server className="h-4 w-4" />}>
           <div className="flex items-center gap-3 rounded-md border border-edge bg-surface-2/45 p-4">
-            <StatusDot tone={s.isOnline ? "ok" : "bad"} pulse={s.isOnline} />
-            <div className="min-w-0 flex-1"><div className="text-sm font-semibold text-ink">{s.isOnline ? t("desktop.settings.agentOnline") : t("desktop.settings.agentStopped")}</div><div dir="auto" className="mt-0.5 truncate text-xs text-ink-3 [unicode-bidi:isolate]">{String(anyStatus?.hostname || t("desktop.settings.thisPc"))}</div></div>
+            <StatusDot tone={serviceState === "unknown" ? "neutral" : s.isOnline ? "ok" : "bad"} pulse={s.isOnline} />
+            <div className="min-w-0 flex-1"><div className="text-sm font-semibold text-ink">{serviceState === "unknown" ? t("desktop.agents.statusUnavailable") : s.isOnline ? t("desktop.settings.agentOnline") : t("desktop.settings.agentStopped")}</div><div dir="auto" className="mt-0.5 truncate text-xs text-ink-3 [unicode-bidi:isolate]">{String(anyStatus?.hostname || t("desktop.settings.thisPc"))}</div></div>
           </div>
           <div><div className="mb-2 text-xs font-semibold text-ink">{t("desktop.settings.serviceControl")}</div><div className="flex flex-wrap gap-2"><Button variant="primary" onClick={s.startAgent} disabled={s.busy} icon={<Play className="h-4 w-4" />} >{t("desktop.agents.start")}</Button><Button variant="secondary" onClick={s.requestStopAgent} disabled={s.busy} icon={<Square className="h-4 w-4" />} >{t("desktop.agents.stop")}</Button><Button variant="ghost" onClick={s.restartAgent} disabled={s.busy} icon={<RotateCcw className="h-4 w-4" />} >{t("desktop.agents.restart")}</Button></div></div>
           <div className="border-t border-edge pt-4">
@@ -95,7 +97,7 @@ export function SettingsPage({ s }: { s: DesktopState }) {
       <Card className="overflow-hidden">
         <div className="flex flex-wrap items-start justify-between gap-4 border-b border-edge-subtle px-5 py-4">
           <div className="flex items-start gap-2.5"><KeyRound className="mt-0.5 h-4 w-4 shrink-0 text-ink-3" /><div className="min-w-0"><h2 className="text-base font-semibold text-ink">{t("desktop.settings.pairTitle")}</h2><p className="mt-1 text-sm leading-snug text-ink-3">{t("desktop.settings.pairSubtitle")}</p></div></div>
-          <StatusBadge label={s.isOnline ? (s.gatewayConnected ? t("desktop.settings.pairRunning") : t("desktop.settings.pairGatewayUnreachable")) : t("desktop.settings.pairStopped")} tone={s.isOnline ? (s.gatewayConnected ? "ok" : "warn") : "neutral"} />
+          <StatusBadge label={serviceState === "unknown" ? t("desktop.agents.statusUnavailable") : s.isOnline ? (s.gatewayConnected ? t("desktop.settings.pairRunning") : t("desktop.settings.pairGatewayUnreachable")) : t("desktop.settings.pairStopped")} tone={s.isOnline ? (s.gatewayConnected ? "ok" : "warn") : "neutral"} />
         </div>
         <div className="grid gap-5 px-5 py-5 lg:grid-cols-[1fr_auto] lg:items-end">
           <ol className="space-y-2.5 text-sm text-ink-2">
@@ -114,14 +116,17 @@ export function SettingsPage({ s }: { s: DesktopState }) {
       <Card className="overflow-hidden">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-edge bg-surface-2/30 px-5 py-4">
           <div><h2 className="text-base font-semibold text-ink">{t("desktop.settings.currentStatus")}</h2><p className="mt-1 text-sm leading-snug text-ink-3">{t("desktop.settings.currentStatusBody")}</p></div>
-          <Button size="sm" variant="secondary" onClick={() => {
-            const report = [`=== Yaseir Agent Diagnostic Export ===`, `Generated: ${new Date().toISOString()}`, `Version: ${s.version || "unknown"}`, `Running: ${s.isOnline}`, `Gateway (saved): ${s.gatewayUrl || t("desktop.settings.notConfigured")}`, `Gateway (draft): ${s.gatewayDraftUrl || t("desktop.settings.notConfigured")}`, `Gateway (last observed): ${s.checkedGatewayUrl || "unknown"}`, `Reachable: ${s.gatewayConnected}`, `Printers: ${s.printers.length}`, `Pending: ${s.pendingJobs}, Failed: ${s.failedJobs}`, ``, `=== Printers ===`, ...s.printers.map((p) => ` - ${p.name} [${printerDisplayStatus(p, s.nowMs)}]`), ``, `=== Paths ===`, ...paths.map(([k, v]) => ` - ${k}: ${v}`)].join("\n");
-            navigator.clipboard.writeText(report).then(() => s.setMsg({ text: t("desktop.settings.statusCopied"), type: "success" })).catch(() => s.setMsg({ text: t("desktop.settings.copyFailed"), type: "error" }));
+          <Button size="sm" variant="secondary" onClick={async (event) => {
+            const trigger = event.currentTarget;
+            const report = [`=== Yaseir Agent Diagnostic Export ===`, `Generated: ${new Date().toISOString()}`, `Version: ${s.version || "unknown"}`, `Running: ${serviceState === "unknown" ? "unknown" : s.isOnline}`, `Gateway (saved): ${s.gatewayUrl || t("desktop.settings.notConfigured")}`, `Gateway (draft): ${s.gatewayDraftUrl || t("desktop.settings.notConfigured")}`, `Gateway (last observed): ${s.checkedGatewayUrl || "unknown"}`, `Reachable: ${s.gatewayConnected}`, `Printers: ${s.printers.length}`, `Pending: ${s.pendingJobs}, Failed: ${s.failedJobs}`, ``, `=== Printers ===`, ...s.printers.map((p) => ` - ${p.name} [${printerDisplayStatus(p, s.nowMs)}]`), ``, `=== Paths ===`, ...paths.map(([k, v]) => ` - ${k}: ${v}`)].join("\n");
+            const copied = await copyTextToClipboard(report);
+            s.setMsg({ text: t(copied ? "desktop.settings.statusCopied" : "desktop.settings.copyFailed"), type: copied ? "success" : "error" });
+            if (trigger.isConnected) trigger.focus();
           }} icon={<Copy className="h-3.5 w-3.5" />}>{t("desktop.settings.copySummary")}</Button>
         </div>
         <div className="p-5 space-y-3">
-          <div className="max-h-64 overflow-y-auto divide-y divide-edge-subtle rounded-md border border-edge-subtle bg-surface-2/35 px-3 text-sm">
-            <div className="flex min-h-10 items-center justify-between gap-4 py-2"><span className="font-medium text-ink-2">{t("desktop.settings.agentService")}</span><span className={s.isOnline ? "font-semibold text-ok" : "font-semibold text-bad"}>{s.isOnline ? t("desktop.settings.running") : t("desktop.settings.stopped")}</span></div>
+          <div role="region" aria-label={t("desktop.settings.currentStatus")} tabIndex={0} className="max-h-64 overflow-y-auto divide-y divide-edge-subtle rounded-md border border-edge-subtle bg-surface-2/35 px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/35 focus-visible:ring-offset-2 focus-visible:ring-offset-app">
+            <div className="flex min-h-10 items-center justify-between gap-4 py-2"><span className="font-medium text-ink-2">{t("desktop.settings.agentService")}</span><span className={serviceState === "unknown" ? "font-semibold text-ink-3" : s.isOnline ? "font-semibold text-ok" : "font-semibold text-bad"}>{serviceState === "unknown" ? t("desktop.status.unknown") : s.isOnline ? t("desktop.settings.running") : t("desktop.settings.stopped")}</span></div>
             <div className="flex min-h-10 items-center justify-between gap-4 py-2"><span className="font-medium text-ink-2">{t("desktop.settings.gatewaySection")}</span><span className={s.gatewayConnected ? "font-semibold text-ok" : s.gatewayUrl ? "font-semibold text-bad" : "font-semibold text-warn"}>{s.gatewayConnected ? t("desktop.settings.reachable") : s.gatewayUrl ? t("desktop.settings.failedCheck") : t("desktop.settings.notConfigured")}</span></div>
             {s.healthError && <div className="rounded-sm border border-bad-edge bg-bad-bg px-3 py-2 text-sm leading-relaxed text-bad">{s.healthError}</div>}
             <div className="flex min-h-10 items-center justify-between gap-4 py-2"><span className="font-medium text-ink-2">{t("desktop.settings.devices")}</span><span className="font-semibold text-ink tabular-nums">{s.printers.length}</span></div>

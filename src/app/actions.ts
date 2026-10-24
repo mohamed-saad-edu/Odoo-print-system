@@ -1,4 +1,5 @@
 "use server";
+import { sessionCookieName } from "../lib/session-config";
 import { logError } from "../lib/log";
 import { listPrintJobHistory } from "../lib/job-history";
 
@@ -42,7 +43,7 @@ async function requireManager() {
   const t = makeT(await getServerLocale());
   const cookieStore = await cookies();
   const claims = await verifyWorkspaceTokenFromCookieValues(
-    cookieStore.get("cust_session")?.value ?? null,
+    cookieStore.get(sessionCookieName("customer"))?.value ?? null,
     cookieStore.get(getManagerCookieName())?.value ?? null,
   );
   if (!claims) throw new ActionError(t("errors.sessionExpired"), 401);

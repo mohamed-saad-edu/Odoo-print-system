@@ -1,3 +1,4 @@
+import { sessionCookieName } from "../lib/session-config";
 import type { ReactNode } from "react";
 import Link from "next/link";
 import { cookies } from "next/headers";
@@ -47,7 +48,7 @@ export default async function Home() {
   const t = makeT(locale);
   const cookieStore = await cookies();
   const claims = await verifyWorkspaceTokenFromCookieValues(
-    cookieStore.get("cust_session")?.value ?? null,
+    cookieStore.get(sessionCookieName("customer"))?.value ?? null,
     cookieStore.get(getManagerCookieName())?.value ?? null,
   );
 

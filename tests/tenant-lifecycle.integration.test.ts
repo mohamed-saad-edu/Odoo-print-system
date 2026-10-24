@@ -1,7 +1,17 @@
+import type * as PasswordScreeningModule from "../src/lib/password-screening";
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
+
+// External breach-corpus fixture for these unrelated account/transaction tests.
+// Production always screens; password-screening*.test.ts exercise the real
+// range protocol, positive matches, privacy, limits and fail-closed behavior.
+vi.mock("../src/lib/password-screening", async (importActual) => ({
+  ...await importActual<typeof PasswordScreeningModule>(),
+  screenNewPassword: vi.fn(async () => "acceptable"),
+}));
 import { db } from "../src/db";
 import { tenants, users, tenantUsers } from "../src/db/schema";
 import { issueSessionPair, rotateRefreshToken, type RefreshResult } from "../src/lib/session-tokens";
+import { createWorkspaceManagerTestSession, issueWorkspaceTestSession } from "./helpers/workspace-session";
 import { eq } from "drizzle-orm";
 import { hasTestDatabase, applyMigrations, closePool, pool } from "./helpers/pg";
 import { transitionTenantLifecycle, TenantLifecycleError } from "../src/lib/tenant-lifecycle";
@@ -79,7 +89,9 @@ suite("Tenant Lifecycle", () => {
       const identity = await authenticateForTenant(email, ownerPassword, membership!.tenantId);
       expect(identity?.userId).toBe(userId);
       expect(await authenticateForTenant(email, oldPassword, membership!.tenantId)).toBeNull();
-      const pair = await issueSessionPair({ kind: "customer", userId, tenantId: membership!.tenantId, role: "owner", email, credentialVersion: identity!.credentialVersion });
+      const pair = await issueSessionPair({ kind: "customer", userId, tenantId: membership!.tenantId, role: "owner", email,
+        credentialVersion: identity!.credentialVersion });
+      expect((await pool().query("SELECT id FROM refresh_tokens WHERE user_id=$1 AND revoked_at IS NULL", [userId])).rows).toHaveLength(1);
       expect(pair.accessToken).toBeTruthy();
       expect((await resetPassword(resetRequest())).status).toBe(400);
       expect((await verifyEmail(new Request("http://gateway.test/api/auth/verify-email", { method: "POST", body: JSON.stringify({ token: proof }) }))).status).toBe(400);
@@ -105,11 +117,7 @@ suite("Tenant Lifecycle", () => {
     it("revokes refresh families when a tenant is suspended", async () => {
       const id = tenantId();
       await createTestTenant(id);
-      const pair = await issueSessionPair({
-        kind: "manager",
-        tenantId: id,
-        role: "admin",
-      });
+      const pair = await createWorkspaceManagerTestSession(id, { role: "admin" });
 
       await transitionTenantLifecycle(id, "suspended", "Billing overdue", { type: "platform", id: "admin1" });
 
@@ -224,7 +232,8 @@ suite("Tenant Lifecycle", () => {
       await createTestTenant(id);
       await db.insert(users).values({ id: userId, email, passwordHash: "unused", emailVerifiedAt: new Date(), isPlatformOwner: true });
       try {
-        const pair = await issueSessionPair({ kind: "platform", userId, email });
+        const { createVerifiedPlatformPair } = await import("./helpers/platform-session");
+        const pair = await createVerifiedPlatformPair(userId, email);
         const claims = verifyPlatformTokenSignature(pair.accessToken);
         expect(claims).not.toBeNull();
         if (!claims) throw new Error("Expected admitted platform claims");
@@ -244,8 +253,11 @@ suite("Tenant Lifecycle", () => {
     it.each(["initial", "rotation"] as const)("suspension revokes an in-flight %s session before reactivation", async mode => {
       const id = tenantId();
       await createTestTenant(id);
-      const principal = { kind: "manager" as const, tenantId: id, role: "admin" };
-      const previous = mode === "rotation" ? await issueSessionPair(principal) : null;
+      const userId = `lifecycle_session_${nanoid(12)}`;
+      await db.insert(users).values({ id: userId, email: `${userId}@example.test`, passwordHash: await hashPassword("lifecycle-race-fixture-password"), emailVerifiedAt: new Date() });
+      await db.insert(tenantUsers).values({ userId, tenantId: id, role: "admin" });
+      const principal = { kind: "manager" as const, tenantId: id, userId, role: "admin" };
+      const previous = mode === "rotation" ? await issueWorkspaceTestSession(principal) : null;
       const gate = await pool().connect();
       const gateKey = 1841202610;
       let operation: Promise<RefreshResult> | undefined;
@@ -263,7 +275,7 @@ suite("Tenant Lifecycle", () => {
           FOR EACH ROW EXECUTE FUNCTION auth_session_test_gate('1841202610')`);
         await gate.query("SELECT pg_advisory_lock($1::bigint)", [gateKey]);
         operation = mode === "initial"
-          ? issueSessionPair(principal).then(pair => ({ status: "rotated" as const, pair }))
+          ? issueWorkspaceTestSession(principal).then(pair => ({ status: "rotated" as const, pair }))
           : rotateRefreshToken("manager", previous!.refreshToken);
         // Own rejection immediately even if the expected gate is not reached.
         void operation.catch(() => undefined);
@@ -382,9 +394,9 @@ suite("Tenant Lifecycle", () => {
   describe("legacy platform authority boundary (C066)", () => {
     async function tenantOwnerSession(tenantId: string): Promise<{ cookie: string; userId: string }> {
       const userId = `usr_${nanoid(12)}`;
-      await db.insert(users).values({ id: userId, email: `owner_${nanoid(8)}@tenant.local`, passwordHash: "argon2id$test" });
+      await db.insert(users).values({ id: userId, email: `owner_${nanoid(8)}@tenant.local`, passwordHash: await hashPassword("tenant-boundary-fixture-password"), emailVerifiedAt: new Date() });
       await db.insert(tenantUsers).values({ userId, tenantId, role: "owner" });
-      const pair = await issueSessionPair({ kind: "manager", tenantId, userId, role: "owner" });
+      const pair = await issueWorkspaceTestSession({ kind: "manager", tenantId, userId, role: "owner" });
       return { cookie: `mgr_session=${pair.accessToken}`, userId };
     }
 

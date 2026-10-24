@@ -156,7 +156,7 @@ describe("DEFECT #4 — Odoo Agent Selection & Runtime Printer Field", () => {
     expect(widgetSource).toContain(': "unknown";');
     expect(widgetSource).toContain('connectionType === "spooler" || connectionType === "windows_spooler"');
     expect(widgetSource).toContain('(connectionType === "usb" && ["spooler", "windows_spooler"].includes(protocol))');
-    expect(widgetSource).toContain('if (connectionType !== "network" || protocol !== "escpos") return false;');
+    expect(widgetSource).toContain('if (!["network", "usb"].includes(connectionType) || protocol !== "escpos" || geometry.raster_command !== "gs_v_0") return false;');
     expect(widgetSource).not.toContain('!["laser", "inkjet"].includes');
   });
 });
@@ -166,7 +166,7 @@ describe("DEFECT #5 — Odoo POS TaxLabel & Receipt Rendering Contract", () => {
     const posRouter = fs.readFileSync(path.resolve(__dirname, "../odoo_addons/print_gateway/static/src/js/pos_print_router.js"), "utf-8");
     expect(posRouter).toContain('import { OrderReceipt } from "@point_of_sale/app/screens/receipt_screen/receipt/order_receipt"');
     expect(posRouter).toContain("renderReceiptImage");
-    expect(posRouter).toContain("elementToJpeg(element, renderer, rasterWidth)");
+    expect(posRouter).toContain("elementToJpeg(element, renderer, geometry)");
     expect(posRouter).not.toContain("renderer.toJpeg(receiptComponent");
     // Phase 13 deliberately eliminated the mocked doesAnyOrderlineHaveTaxLabel
     // shim (commit 5d245a5): the direct-template fallback must use the native
@@ -175,7 +175,7 @@ describe("DEFECT #5 — Odoo POS TaxLabel & Receipt Rendering Contract", () => {
     expect(posRouter).not.toContain("doesAnyOrderlineHaveTaxLabel");
     expect(posRouter).toContain("order: currentOrder");
     expect(posRouter).toContain("basic_receipt: Boolean(basic)");
-    expect(posRouter).toContain("renderReceiptImage(this, currentOrder, basic, rasterWidth)");
+    expect(posRouter).toContain("renderReceiptImage(this, currentOrder, basic, geometry)");
   });
 });
 

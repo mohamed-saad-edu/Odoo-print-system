@@ -1,3 +1,4 @@
+import { operationalVerificationPresentation } from "../../../../lib/printer-operational-verification";
 import { NextResponse } from "next/server";
 import { db } from "../../../../db";
 import { agents, printers } from "../../../../db/schema";
@@ -7,7 +8,8 @@ import { requireManagerActorInTransaction, ManagerMutationAuthorityChangedError 
 import { and, eq, sql, type SQL } from "drizzle-orm";
 import { z } from "zod";
 import { canTransitionLifecycle } from "../../../../lib/lifecycle";
-import { PRINTER_TYPES, CONNECTION_TYPES, PRINTER_PROTOCOLS, assertPrinterMetadataLimits, validateConnectionConfig, validatePrinterTransportProtocol } from "../../../../lib/printer-model";
+import { PRINTER_TYPES, CONNECTION_TYPES, PRINTER_PROTOCOLS, assertPrinterMetadataLimits, validateConnectionConfig, validatePrinterTransportProtocol, printerGeometryProfileSchema } from "../../../../lib/printer-model";
+import { capabilitiesWithCurrentGeometry } from "../../../../lib/printer-geometry";
 import { writeAuditEvent } from "../../../../lib/audit";
 import { logError } from "../../../../lib/log";
 import { isTenantBillingError } from "../../../../lib/entitlements";
@@ -34,10 +36,12 @@ const patchSchema = z.object({
     serial: z.string().max(255).optional(),
     address: z.string().max(512).optional(),
     spooler_name: z.string().max(255).optional(),
+    output_profile_id: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/).optional(),
     passthrough_protocols: z.array(z.enum(["raw", "escpos"])).max(2).optional(),
     paper_widths: z.array(z.number().int().min(1).max(500)).max(32).optional(),
     color_capable: z.boolean().optional(),
     duplex_capable: z.boolean().optional(),
+    geometry_profile: printerGeometryProfileSchema.nullable().optional(),
   }).strict().optional(),
 }).strict();
 
@@ -63,6 +67,8 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   const now = gatewayNow();
   return NextResponse.json({
     ...row,
+    capabilities: capabilitiesWithCurrentGeometry(row),
+    ...operationalVerificationPresentation(row, now),
     reportedStatus: row.status,
     freshness: getPrinterObservationFreshness(row.lastSeenAt, now),
     status: getEffectivePrinterStatus(row, ownerAgent ?? null, now),
@@ -131,6 +137,9 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     let connectionType = parsed.data.connectionType ?? existing.connectionType;
     let protocol = parsed.data.protocol ?? existing.protocol;
     const cfg = { ...((existing.config ?? {}) as Record<string, unknown>), ...((parsed.data.config ?? {}) as Record<string, unknown>) };
+    // Null is the explicit manager operation to remove a manual profile.
+    // Unknown observations are never filled with a guessed replacement.
+    if (cfg.geometry_profile === null) delete cfg.geometry_profile;
     if (connectionType === "usb" && typeof cfg.spooler_name === "string" && cfg.spooler_name.trim()) {
       connectionType = "spooler";
       protocol = "spooler";
@@ -140,6 +149,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       connectionType, protocol, config: cfg, capabilities: existing.capabilities })) {
       return { kind: "invalid" as const, message: "Software/virtual printers are not supported" };
     }
+    if (((parsed.data.printerType ?? existing.printerType) === "file") !== (connectionType === "pdf_output")) return { kind: "invalid" as const, message: "File output requires printerType file and pdf_output transport" };
     // passthrough_protocols is meaningful only for a Windows spooler queue.
     // Reject an explicitly invalid request, but when a manager changes an
     // existing spooler printer to another transport, scrub the old desired
@@ -190,6 +200,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       connectionType?: (typeof printers.$inferInsert)["connectionType"];
       protocol?: (typeof printers.$inferInsert)["protocol"];
       config?: (typeof printers.$inferInsert)["config"];
+      capabilities?: (typeof printers.$inferInsert)["capabilities"];
       physicalIdentityKey?: (typeof printers.$inferInsert)["physicalIdentityKey"];
       lifecycle?: (typeof printers.$inferInsert)["lifecycle"];
 } = { updatedAt: sql`now()` };
@@ -200,12 +211,25 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     if (parsed.data.protocol !== undefined || protocol !== existing.protocol) update.protocol = protocol;
     if (parsed.data.config !== undefined || scrubInheritedPassthrough) update.config = cfg;
     if (endpointChanged) update.physicalIdentityKey = updatedIdentity;
+    if (endpointChanged && existing.capabilities) {
+      const capabilities = { ...existing.capabilities };
+      delete capabilities.geometry;
+      delete capabilities.geometry_error;
+      delete capabilities.operational_verification;
+      update.capabilities = capabilities;
+    }
     if (parsed.data.lifecycle !== undefined) update.lifecycle = parsed.data.lifecycle;
 
     const setValues = desiredStateChanged
       ? {
           ...update,
           managementSource: "manager" as const,
+          verificationState: "pending",
+          verificationVerifiedAt: null,
+          verificationReceivedAt: null,
+          verificationBindingDigest: null,
+          verificationReason: "verification_configuration_changed",
+          outputMedium: connectionType === "pdf_output" ? "file" : "physical",
           desiredRevision: sql<number>`${printers.desiredRevision} + 1`,
         }
       : update;
@@ -233,7 +257,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     return { kind: "ok" as const, row };
     });
   } catch (error) {
-    if (error instanceof ManagerMutationAuthorityChangedError) return NextResponse.json({ error: error.message }, { status: 403 });
+    if (error instanceof ManagerMutationAuthorityChangedError) return error.response();
     if (isTenantBillingError(error)) {
       return NextResponse.json({ error: error.message, code: error.code }, { status: 403, headers: { "Cache-Control": "no-store" } });
     }

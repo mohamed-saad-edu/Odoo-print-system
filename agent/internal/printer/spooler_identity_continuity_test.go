@@ -112,7 +112,7 @@ func TestRegistrySpoolerContinuityCannotUseDisplayNamesOrOtherServers(t *testing
 	}
 }
 
-func TestRegistrySpoolerContradictoryDetailsCannotRebind(t *testing.T) {
+func TestRegistrySpoolerSettingsChangesKeepLogicalQueueIdentity(t *testing.T) {
 	for _, mode := range []string{"port", "driver", "share", "strong-identity"} {
 		t.Run(mode, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "printers.json")
@@ -137,8 +137,8 @@ func TestRegistrySpoolerContradictoryDetailsCannotRebind(t *testing.T) {
 				t.Fatal(err)
 			}
 			rows, err := UpsertRegistry(path, []DeviceInfo{current})
-			if err != nil || len(rows) != 2 {
-				t.Fatalf("conflicting evidence rebound durable identity: %+v %v", rows, err)
+			if err != nil || len(rows) != 1 || rows[0].ID != prior.ID || rows[0].Capabilities["operational_verification"] != nil {
+				t.Fatalf("mutable queue settings changed logical identity or reused stale proof: %+v %v", rows, err)
 			}
 		})
 	}
@@ -194,6 +194,7 @@ func TestRegistrySpoolerEnrichmentPreservesExplicitRegistration(t *testing.T) {
 func TestRegistrySpoolerStrongRenamePreservesExplicitIntent(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "printers.json")
 	prior := continuitySpooler("Receipt Printer", "USB001", "Generic Thermal")
+	prior = withPublishedQueueGUID(prior)
 	prior.ID = "legacy-explicit-binding"
 	prior.Enabled = false
 	prior.Capabilities["registration_source"] = "manual"
@@ -202,6 +203,8 @@ func TestRegistrySpoolerStrongRenamePreservesExplicitIntent(t *testing.T) {
 		t.Fatal(err)
 	}
 	current := continuitySpooler("Renamed Receipt Printer", "USB001", "Generic Thermal")
+	current = withPublishedQueueGUID(current)
+	current.ID = StableIDForDevice(current)
 	rows, err := ReconcileDiscoveryRegistry(path, []DeviceInfo{current}, map[string]bool{SourceSpooler: true})
 	if err != nil || len(rows) != 1 || rows[0].ID != prior.ID {
 		t.Fatalf("rename lost binding: %+v %v", rows, err)

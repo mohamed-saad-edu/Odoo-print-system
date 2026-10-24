@@ -26,10 +26,16 @@ import { htmlToCanvas, renderToElement, toCanvas } from "./__mocks__/odoo";
 // dependencies resolve to the shared mock module via vitest aliases.
 import { renderReceiptImage } from "../odoo_addons/print_gateway/static/src/js/pos_print_router";
 
-function makeCanvas(): HTMLCanvasElement {
+function geometry(dots = 576) {
+  return { version: 1, source: "validated_profile", validation: "configured",
+    observed_at: "2026-10-24T00:00:00Z", printer_id: "selected-printer", config_fingerprint: "a".repeat(64),
+    printable_width_dots: dots, dpi_x: 203, dpi_y: 203, paper_width_mm: 80 };
+}
+
+function makeCanvas(width = 576, height = Math.ceil(160 * 203 / 96)): HTMLCanvasElement {
   return {
-    width: 100,
-    height: 100,
+    width,
+    height,
     getContext: () => ({
       globalCompositeOperation: "",
       fillStyle: "",
@@ -52,19 +58,19 @@ function makeOrder(): never {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  toCanvas.mockResolvedValue(makeCanvas());
-  // jsdom has no CSS layout engine, so provide a simulated 512px receipt
+  toCanvas.mockImplementation(async (_node, options) => makeCanvas(options.canvasWidth, options.canvasHeight));
+  // jsdom has no CSS layout engine, so simulate the measured CSS width
   // while retaining real DOM mount/unmount behavior for the capture tests.
   vi.spyOn(HTMLElement.prototype, "getBoundingClientRect")
     .mockImplementation(function (this: HTMLElement) {
-      const width = Number.parseInt(this.style.width, 10) || 512;
+      const width = Number.parseFloat(this.style.width);
       return { width, height: 160, x: 0, y: 0, top: 0, left: 0,
         right: width, bottom: 160, toJSON: () => ({}) };
     });
   vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockReturnValue(160);
   vi.spyOn(HTMLElement.prototype, "scrollWidth", "get")
     .mockImplementation(function (this: HTMLElement) {
-      return Number.parseInt(this.style.width, 10) || 512;
+      return Number.parseFloat(this.style.width);
     });
 });
 afterEach(() => vi.restoreAllMocks());
@@ -73,10 +79,10 @@ describe("renderReceiptImage — POS receipt font 404 resilience", () => {
   it("never bypasses paper-width validation when only legacy renderer.toJpeg exists", async () => {
     const renderer = { toJpeg: vi.fn().mockResolvedValue("UNMEASURED_IMAGE") };
     renderToElement.mockReturnValue(document.createElement("div"));
-    const result = await renderReceiptImage(makePos(renderer), makeOrder(), false, 384);
+    const result = await renderReceiptImage(makePos(renderer), makeOrder(), false, geometry(384));
     expect(result).toBe("VALIDJPEG");
     expect(renderer.toJpeg).not.toHaveBeenCalled();
-    expect(toCanvas.mock.calls[0][0].style.width).toBe("384px");
+    expect(toCanvas.mock.calls[0][0].style.width).toBe(`${384 * 96 / 203}px`);
   });
 
   it("prefers the no-fonts path and never touches renderer.toJpeg on success", async () => {
@@ -85,7 +91,7 @@ describe("renderReceiptImage — POS receipt font 404 resilience", () => {
       toJpeg: vi.fn(),
       toCanvas: vi.fn(),
     };
-    const result = await renderReceiptImage(makePos(renderer), makeOrder());
+    const result = await renderReceiptImage(makePos(renderer), makeOrder(), false, geometry());
     expect(result).toBe("VALIDJPEG");
     expect(renderer.toHtml).toHaveBeenCalledTimes(1);
     expect(renderer.toJpeg).not.toHaveBeenCalled();
@@ -106,7 +112,7 @@ describe("renderReceiptImage — POS receipt font 404 resilience", () => {
     });
     try {
       const renderer = { toHtml: vi.fn().mockResolvedValue(document.createElement("div")) };
-      const result = await renderReceiptImage(makePos(renderer), makeOrder());
+      const result = await renderReceiptImage(makePos(renderer), makeOrder(), false, geometry());
       expect(result).toBe("VALIDJPEG");
       expect(seen.filter((u) => u.includes("fonts.odoocdn.com"))).toEqual([]);
       expect(seen).toEqual([]);
@@ -118,7 +124,7 @@ describe("renderReceiptImage — POS receipt font 404 resilience", () => {
   it("renders Arabic content through the no-fonts path", async () => {
     const renderer = { toHtml: vi.fn().mockResolvedValue(document.createElement("div")) };
     const order = { export_for_printing: () => ({ lines: [{ productName: "قهوة عربية" }] }) } as never;
-    const result = await renderReceiptImage(makePos(renderer), order);
+    const result = await renderReceiptImage(makePos(renderer), order, false, geometry());
     expect(result).toBe("VALIDJPEG");
     const props = renderer.toHtml.mock.calls[0][1] as { order: typeof order; basic_receipt: boolean };
     expect(props.order).toBe(order);
@@ -134,13 +140,13 @@ describe("renderReceiptImage — POS receipt font 404 resilience", () => {
       toJpeg: vi.fn().mockResolvedValue("UNMEASURED_IMAGE"),
       toCanvas: vi.fn().mockResolvedValue(makeCanvas()),
     };
-    const result = await renderReceiptImage(makePos(renderer), makeOrder(), false, 384);
+    const result = await renderReceiptImage(makePos(renderer), makeOrder(), false, geometry(384));
     expect(result).toBe("VALIDJPEG");
     expect(renderer.toHtml).toHaveBeenCalledTimes(2);
     expect(renderer.toJpeg).not.toHaveBeenCalled();
     expect(renderer.toCanvas).not.toHaveBeenCalled();
     expect(toCanvas).toHaveBeenCalledTimes(2);
-    expect(toCanvas.mock.calls[1][0].style.width).toBe("384px");
+    expect(toCanvas.mock.calls[1][0].style.width).toBe(`${384 * 96 / 203}px`);
   });
 
   it("uses a mounted template after both toHtml render attempts fail", async () => {
@@ -152,7 +158,7 @@ describe("renderReceiptImage — POS receipt font 404 resilience", () => {
       toCanvas: vi.fn().mockResolvedValue(makeCanvas()),
     };
     renderToElement.mockReturnValue(document.createElement("div"));
-    const result = await renderReceiptImage(makePos(renderer), makeOrder());
+    const result = await renderReceiptImage(makePos(renderer), makeOrder(), false, geometry());
     expect(result).toBe("VALIDJPEG");
     expect(renderer.toJpeg).not.toHaveBeenCalled();
     expect(renderer.toCanvas).not.toHaveBeenCalled();
@@ -162,18 +168,19 @@ describe("renderReceiptImage — POS receipt font 404 resilience", () => {
   it("renders the direct template when every toHtml attempt fails", async () => {
     const renderer = { toHtml: vi.fn().mockRejectedValue(new Error("renderer unavailable")) };
     renderToElement.mockReturnValue(document.createElement("div"));
-    expect(await renderReceiptImage(makePos(renderer), makeOrder())).toBe("VALIDJPEG");
+    expect(await renderReceiptImage(makePos(renderer), makeOrder(), false, geometry())).toBe("VALIDJPEG");
     expect(renderer.toHtml).toHaveBeenCalledTimes(2);
     expect(toCanvas).toHaveBeenCalledTimes(1);
   });
 
-  it("uses a custom hardware width when available and safely falls back for invalid widths", async () => {
+  it("uses measured hardware geometry and rejects invalid widths without capture", async () => {
     const renderer = { toHtml: vi.fn().mockResolvedValue(document.createElement("div")) };
-    await renderReceiptImage(makePos(renderer), makeOrder(), false, 384);
-    expect(toCanvas.mock.calls[0][0].style.width).toBe("384px");
+    await renderReceiptImage(makePos(renderer), makeOrder(), false, geometry(384));
+    expect(toCanvas.mock.calls[0][0].style.width).toBe(`${384 * 96 / 203}px`);
     toCanvas.mockClear();
-    await renderReceiptImage(makePos(renderer), makeOrder(), false, 10000);
-    expect(toCanvas.mock.calls[0][0].style.width).toBe("512px");
+    await expect(renderReceiptImage(makePos(renderer), makeOrder(), false, geometry(10000)))
+      .rejects.toMatchObject({ code: "POS_RECEIPT_GEOMETRY" });
+    expect(toCanvas).not.toHaveBeenCalled();
   });
 
   it("refuses an overflowing receipt instead of falling back to a clipped job", async () => {
@@ -182,7 +189,7 @@ describe("renderReceiptImage — POS receipt font 404 resilience", () => {
       toHtml: vi.fn().mockResolvedValue(document.createElement("div")),
       toJpeg: vi.fn().mockResolvedValue("LEGACY_CLIPPED_IMAGE"),
     };
-    await expect(renderReceiptImage(makePos(renderer), makeOrder()))
+    await expect(renderReceiptImage(makePos(renderer), makeOrder(), false, geometry()))
       .rejects.toThrow(/wider than the paper/);
     expect(renderer.toJpeg).not.toHaveBeenCalled();
     expect(toCanvas).not.toHaveBeenCalled();
@@ -195,7 +202,7 @@ describe("renderReceiptImage — POS receipt font 404 resilience", () => {
       toJpeg: vi.fn().mockResolvedValue("CLIPPED"),
       toCanvas: vi.fn().mockResolvedValue(makeCanvas()),
     };
-    await expect(renderReceiptImage(makePos(renderer), makeOrder(), false, 384))
+    await expect(renderReceiptImage(makePos(renderer), makeOrder(), false, geometry(384)))
       .rejects.toThrow(/wider than the paper/);
     expect(renderer.toHtml).toHaveBeenCalledTimes(1);
     expect(renderer.toJpeg).not.toHaveBeenCalled();
@@ -204,13 +211,13 @@ describe("renderReceiptImage — POS receipt font 404 resilience", () => {
   });
 
   it("never rasterizes a detached DOM node", async () => {
-    toCanvas.mockImplementation(async (node: HTMLElement) => {
+    toCanvas.mockImplementation(async (node: HTMLElement, options: { canvasWidth: number; canvasHeight: number }) => {
       expect(node.isConnected).toBe(true);
       expect(node.classList.contains("yaseir-gateway-receipt")).toBe(true);
-      return makeCanvas();
+      return makeCanvas(options.canvasWidth, options.canvasHeight);
     });
     const renderer = { toHtml: vi.fn().mockResolvedValue(document.createElement("div")) };
-    await renderReceiptImage(makePos(renderer), makeOrder());
+    await renderReceiptImage(makePos(renderer), makeOrder(), false, geometry());
     expect(document.querySelector(".yaseir-gateway-receipt")).toBeNull();
   });
 });
@@ -241,11 +248,11 @@ describe("renderReceiptImage — no-fonts static contract", () => {
       resolve(process.cwd(), "odoo_addons/print_gateway/static/src/js/pos_print_router.js"),
       "utf8",
     );
-    const start = source.indexOf("async function gatewayReceiptRasterWidth(");
+    const start = source.indexOf("async function gatewayReceiptGeometry(");
     const end = source.indexOf("patch(PosStore.prototype", start);
     expect(start).toBeGreaterThan(0);
     const lookup = source.slice(start, end);
-    expect(lookup).toContain('"get_gateway_receipt_raster_width"');
+    expect(lookup).toContain('"get_gateway_receipt_geometry"');
     expect(lookup).toContain("[[orderId]]");
     expect(lookup).not.toContain("gatewayReceiptRasterWidths");
     expect(lookup).not.toContain("cache.set(");

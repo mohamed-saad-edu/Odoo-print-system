@@ -4,8 +4,8 @@ ARG NODE_BASE_IMAGE=node:24.22.1-alpine@sha256:06d7adf3e0ef61a13f1d28682726366f9
 
 FROM ${NODE_BASE_IMAGE} AS deps
 WORKDIR /app
-COPY package.json package-lock.json* ./
-RUN npm ci
+COPY package.json package-lock.json .npmrc ./
+RUN npx --yes npm@12.2.1 ci
 
 FROM ${NODE_BASE_IMAGE} AS build
 ARG YASEIR_DEPLOYMENT_ID=""
@@ -20,7 +20,7 @@ RUN mkdir -p public && npm run build
 # Reuse the lockfile-verified npm install from the deps stage instead of
 # downloading/installing a second copy for the production runtime layer.
 FROM deps AS runtime-deps
-RUN npm prune --omit=dev && npm cache clean --force
+RUN npx --yes npm@12.2.1 prune --omit=dev && npm cache clean --force
 
 FROM ${NODE_BASE_IMAGE} AS runtime
 ARG YASEIR_DEPLOYMENT_ID=""
@@ -57,12 +57,17 @@ COPY --from=build /app/package-lock.json ./package-lock.json
 # and remove the entire global npm CLI from the FINAL image.
 RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
 
+# The separate administrator job keeps reversible privilege metadata in its
+# own volume. Runtime Gateway never mounts that volume or administrator keys.
+RUN mkdir -p /var/lib/yaseir-role-state \
+    && chown node:node /var/lib/yaseir-role-state \
+    && chmod 700 /var/lib/yaseir-role-state
+
 USER node
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=5 \
+    CMD node -e "fetch('http://127.0.0.1:3000/api/health',{signal:AbortSignal.timeout(4000)}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
 EXPOSE 3000
-
-HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=5 \
-  CMD wget --no-verbose --tries=1 --spider http://127.0.0.1:3000/api/health || exit 1
 
 # Migrations are a release/deployment concern and must run in a dedicated,
 # ordered migration job before application rollout. Runtime replicas must not

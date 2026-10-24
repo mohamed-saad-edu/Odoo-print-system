@@ -111,10 +111,10 @@ describe("shared typography system", () => {
 
   it("keeps the POS receipt raster geometry and its no-web-font contract", () => {
     const css = read("odoo_addons/print_gateway/static/src/css/receipt_raster.css");
-    // The receipt is a measured canvas, not a document: it declares its
-    // values once and references them, and it renders exactly as before.
+    // Physical CSS type stays stable while the output canvas uses the
+    // selected printer's dots and independent X/Y DPI.
     expect(css).toContain("--pg-receipt-font-family: Arial, \"Segoe UI\", sans-serif;");
-    expect(css).toContain("--pg-receipt-font-size: 28px;");
+    expect(css).toContain("--pg-receipt-font-size: 10.5pt;");
     expect(css).toContain("--pg-receipt-line-height: 1.27;");
     expect(css).toContain("font-family: var(--pg-receipt-font-family) !important;");
     expect(css).toContain("font-size: var(--pg-receipt-font-size) !important;");

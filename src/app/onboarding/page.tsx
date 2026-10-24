@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { codeMessageKey } from "../../lib/api-error-keys";
+import { billingIntervalLabel } from "../../lib/billing-labels";
 import {
   Button,
   Callout,
@@ -124,11 +125,13 @@ export default function Onboarding() {
       if (signal?.aborted) return;
       setWorkspaceProvisioned(provisioned);
       setPlanId((current) => {
+        if (provisioned) return existingPlanId;
         if (current && nextPlans.some((plan) => plan.id === current)) return current;
         if (existingPlanId) return existingPlanId;
         if (requestedPlanId && nextPlans.some((plan) => plan.id === requestedPlanId)) return requestedPlanId;
         return nextPlans[0]?.id ?? "";
       });
+      return provisioned;
     } catch (error) {
       if (signal?.aborted) return;
       setPlans([]);
@@ -148,6 +151,7 @@ export default function Onboarding() {
   }, [loadPlans]);
 
   async function submit(trial: boolean) {
+    if (loading || workspaceProvisioned) return;
     setErr("");
     if (!name.trim() || !planId) {
       setErr(t("onboarding.chooseNameAndPlan"));
@@ -168,7 +172,8 @@ export default function Onboarding() {
         // reconciles against current state instead of offering the trial
         // again as a generic conflict (C060).
         if (response.status === 409) {
-          await loadPlans();
+          const provisioned = await loadPlans();
+          if (provisioned) return;
         }
         throw new Error(t(codeMessageKey(code) ?? "onboarding.failed"));
       }
@@ -251,11 +256,11 @@ export default function Onboarding() {
                   placeholder={t("onboarding.namePlaceholder")}
                   required
                   autoFocus
-                  disabled={loading}
+                  disabled={loading || workspaceProvisioned}
                 />
               </Field>
 
-              <fieldset disabled={loading}>
+              <fieldset disabled={loading || workspaceProvisioned}>
                 <legend className="flex w-full items-end justify-between gap-4 pb-3">
                   <span className="text-sm font-[600] text-ink">{t("onboarding.choosePlanLegend")}</span>
                   {plans.length > 0 && (
@@ -293,25 +298,21 @@ export default function Onboarding() {
                       const selected = planId === plan.id;
                       const included = Object.entries(plan.entitlements ?? {}).slice(0, 4);
                       return (
-                        <button
+                        <label
                           key={plan.id}
-                          type="button"
-                          role="radio"
-                          aria-checked={selected}
-                          disabled={loading}
-                          onClick={() => setPlanId(plan.id)}
-                          className={`rounded-md border p-4 text-start transition-[border-color,background-color,box-shadow] duration-200 focus-visible:outline-none focus-visible:shadow-[var(--focus-ring-shadow)] ${
+                          className={`relative rounded-md border p-4 text-start transition-[border-color,background-color,box-shadow] duration-200 focus-within:shadow-[var(--focus-ring-shadow)] ${
                             selected
                               ? "border-brand bg-brand-subtle shadow-xs"
                               : "border-edge bg-surface hover:border-edge-strong hover:bg-surface-2"
                           } ${loading ? "pointer-events-none opacity-60" : ""}`}
                         >
+                          <input type="radio" name="onboarding-plan" value={plan.id} checked={selected} onChange={() => setPlanId(plan.id)} className="sr-only" />
                           <div className="flex items-start justify-between gap-4">
                             <div className="min-w-0">
                               <div className="text-md font-[620] text-ink">{plan.name}</div>
                               <div className="mt-1 text-xs font-[550] text-ink-3">
                                 {plan.currency ? plan.currency.toUpperCase() : "—"}
-                                {plan.interval ? ` / ${plan.interval}` : ""}
+                                {plan.interval ? ` / ${billingIntervalLabel(plan.interval, t)}` : ""}
                               </div>
                             </div>
                             {selected ? (
@@ -328,13 +329,13 @@ export default function Onboarding() {
                                     {t(({ max_agents: "pricing.entitlement.agents", max_printers: "pricing.entitlement.printers", max_jobs_per_minute: "pricing.entitlement.jobsPerMinute", max_concurrent_jobs: "pricing.entitlement.concurrentJobs", max_prints_per_period: "pricing.entitlement.prints" } as Record<string, import("../../i18n/messages/en").MessageKey>)[key] ?? "common.unknown")}
                                   </dt>
                                   <dd className="font-[600] tabular text-ink">
-                                    {typeof value === "boolean" ? (value ? t("onboarding.included") : t("onboarding.notIncluded")) : String(value)}
+                                    {typeof value === "boolean" ? (value ? t("onboarding.included") : t("onboarding.notIncluded")) : typeof value === "number" ? formatNumber(value) : value === "unlimited" ? t("billing.unlimited") : String(value)}
                                   </dd>
                                 </div>
                               ))}
                             </dl>
                           )}
-                        </button>
+                        </label>
                       );
                     })}
                   </div>
@@ -355,7 +356,7 @@ export default function Onboarding() {
 
             <div className="flex flex-col gap-3 border-t border-edge-subtle px-5 py-5 sm:flex-row sm:items-center sm:justify-between">
               <p className="text-sm text-ink-3">
-                {selectedPlan ? (
+                {workspaceProvisioned ? t("onboarding.alreadySetupTitle") : selectedPlan ? (
                   <>
                     {t("onboarding.selectedPrefix")} <span className="font-[600] text-ink">{selectedPlan.name}</span>{" "}
                     {t("onboarding.selectedTail")}
@@ -365,18 +366,27 @@ export default function Onboarding() {
                 )}
               </p>
               <div className="flex flex-col gap-2 sm:flex-row">
-                <Button
-                  variant="primary"
-                  disabled={!canContinue || loading}
-                  loading={loading}
-                  onClick={() => void submit(true)}
-                  icon={loading ? undefined : <ArrowRight className="h-4 w-4 rtl:-scale-x-100" />}
-                >
-                  {t("onboarding.startFreeTrial")}
-                </Button>
-                <Button variant="secondary" disabled={!canContinue || loading} onClick={() => void submit(false)}>
-                  {t("onboarding.continueToCheckout")}
-                </Button>
+                {workspaceProvisioned ? (
+                  <>
+                    <Button variant="primary" href="/dashboard" icon={<ArrowRight className="h-4 w-4 rtl:-scale-x-100" />}>{t("common.continue")}</Button>
+                    <Button variant="secondary" href="/billing">{t("billing.manageBilling")}</Button>
+                  </>
+                ) : (
+                  <>
+                    <Button
+                      variant="primary"
+                      disabled={!canContinue || loading}
+                      loading={loading}
+                      onClick={() => void submit(true)}
+                      icon={loading ? undefined : <ArrowRight className="h-4 w-4 rtl:-scale-x-100" />}
+                    >
+                      {t("onboarding.startFreeTrial")}
+                    </Button>
+                    <Button variant="secondary" disabled={!canContinue || loading} onClick={() => void submit(false)}>
+                      {t("onboarding.continueToCheckout")}
+                    </Button>
+                  </>
+                )}
               </div>
             </div>
           </Card>

@@ -1,4 +1,6 @@
+import { PrinterVerificationDetails, FileOutputDetails } from "../components/PrinterVerificationDetails";
 /* eslint-disable react-hooks/exhaustive-deps */
+import { PrinterGeometryDetails } from "../components/PrinterGeometrySettings";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
@@ -74,6 +76,7 @@ import {
   type PrinterInfo,
 } from "./lib/ipc";
 import {
+  agentServiceState,
   deriveOutcome,
   printerAgentView,
   errMsg,
@@ -926,8 +929,10 @@ export default function App() {
   // Affirmative observations only: an empty/missing health object, an agent
   // status without running:true, or a probe older than the freshness window
   // must read as unavailable — never as healthy/online (C046).
-  const isOnline =
-    !!agentStatus && !(agentStatus as Record<string, unknown>).error && (agentStatus as { running?: boolean }).running === true;
+  const serviceState = agentServiceState(agentStatus);
+  const isOnline = serviceState === "running";
+  const serviceTone = serviceState === "unknown" ? "neutral" : isOnline ? "ok" : "bad";
+  const serviceLabel = serviceState === "unknown" ? t("desktop.agents.statusUnavailable") : isOnline ? t("desktop.status.agentRunning") : t("desktop.status.agentStopped");
   const agentServiceNeedsAdmin =
     isAdmin === false &&
     agentStatus !== null &&
@@ -1210,6 +1215,7 @@ export default function App() {
         gatewayConnected={gatewayConnected}
         gatewayUrl={savedGatewayUrl}
         isOnline={isOnline}
+        serviceState={serviceState}
         version={version}
         lastStatusCheck={lastStatusCheck}
       />
@@ -1229,10 +1235,10 @@ export default function App() {
           </button>
           <h1 className="tg-desktop-header-title min-w-0 flex-1 break-words text-xl font-semibold leading-snug tracking-tight text-ink">{pageMeta[page].title}</h1>
           <div className="tg-desktop-header-actions flex shrink-0 items-center gap-1 sm:gap-2">
-            <span className="inline-flex sm:hidden" role="status" title={isOnline ? t("desktop.status.agentRunning") : t("desktop.status.agentStopped")} aria-label={isOnline ? t("desktop.status.agentRunning") : t("desktop.status.agentStopped")}>
-              <StatusDot tone={isOnline ? "ok" : "bad"} pulse={isOnline} />
+            <span className="inline-flex sm:hidden" role="status" title={serviceLabel} aria-label={serviceLabel}>
+              <StatusDot tone={serviceTone} pulse={isOnline} />
             </span>
-            <span className="hidden sm:inline-flex"><StatusBadge tone={isOnline ? "ok" : "bad"} label={isOnline ? t("desktop.status.agentRunning") : t("desktop.status.agentStopped")} /></span>
+            <span className="hidden sm:inline-flex"><StatusBadge tone={serviceTone} label={serviceLabel} /></span>
             <button type="button" onClick={() => { setNavSearchQuery(""); setNavSearchOpen(true); }}
               aria-label={t("common.search")} title={t("common.search")}
               className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-edge bg-surface text-ink-2 hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/35">
@@ -1274,7 +1280,7 @@ export default function App() {
         <Modal open={navSearchOpen} onClose={() => setNavSearchOpen(false)} title={t("common.search")}>
           <div className="space-y-3">
             <label htmlFor="desktop-nav-search" className="sr-only">{t("common.search")}</label>
-            <input id="desktop-nav-search" autoFocus value={navSearchQuery}
+            <input id="desktop-nav-search" value={navSearchQuery}
               onChange={(event) => setNavSearchQuery(event.target.value)}
               placeholder={t("common.search")}
               className="h-11 w-full rounded-lg border border-edge bg-surface-2 px-3 text-sm text-ink outline-none focus-visible:ring-2 focus-visible:ring-brand/35" />
@@ -1317,7 +1323,7 @@ export default function App() {
           </div>
         )}
 
-        {isAdmin === true && agentStartupGraceElapsed && agentStatus !== null && !isOnline && (
+        {isAdmin === true && agentStartupGraceElapsed && serviceState === "stopped" && (
           <div
             className="flex flex-col gap-3 border-b border-warn-edge bg-warn-bg px-5 py-3 text-sm text-warn sm:flex-row sm:items-center sm:justify-between lg:px-8"
             role="alert"
@@ -1436,6 +1442,8 @@ export default function App() {
             </div>
             <p className="text-sm text-ink-3">{t(selectedPrinterView.reasonKey)}</p>
             <PrinterSharingControl s={state} printer={selectedPrinter} />
+            <PrinterVerificationDetails printer={selectedPrinter} />
+            <PrinterGeometryDetails printer={selectedPrinter} managerHint />
             <details className="rounded-md border border-edge px-4 py-3">
               <summary className="cursor-pointer text-sm font-semibold text-ink-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/35">{t("printer.presentation.details")}</summary>
             <div className="mt-3 divide-y divide-edge">
@@ -1526,10 +1534,11 @@ export default function App() {
       >
         {selectedJob && (
           <div className="space-y-6">
+            <FileOutputDetails job={selectedJob} />
             <div className="space-y-4">
               <StatusBadge
                 tone={toneJob(jobStatus(selectedJob), selectedJob.error)}
-                label={labelJob(jobStatus(selectedJob), selectedJob.error, locale)}
+                label={labelJob(jobStatus(selectedJob), selectedJob.error, locale, selectedJob)}
               />
               <JobTimeline
                 status={jobStatus(selectedJob)}

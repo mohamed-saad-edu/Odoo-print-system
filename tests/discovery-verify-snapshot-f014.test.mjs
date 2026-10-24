@@ -8,23 +8,28 @@ import { createHash } from 'node:crypto';
 import vm from 'node:vm';
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { sqlIdentifier, workspaceSessionFixture } from './helpers/workspace-session-vm.mjs';
+import { authorizationFixture } from './helpers/authorization-vm.mjs';
 const require=createRequire(import.meta.url);
 let ts; try{ts=require('typescript')}catch{ts=require(join(execFileSync('npm',['root','-g'],{encoding:'utf8'}).trim(),'typescript'))}
 const transpile=(path)=>ts.transpileModule(readFileSync('src/'+path,'utf8'),{fileName:path,compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText;
 const ctx=vm.createContext({console,Request,Response,Headers,Error,Set,Map,Number,Object,JSON,String,Array});
 const mk=(exports)=>new vm.SyntheticModule(Object.keys(exports),function(){for(const [name,value] of Object.entries(exports))this.setExport(name,value);},{context:ctx});
 const sql=(parts,...params)=>({parts,params});sql.join=(items,sep)=>({items,sep});
+sql.identifier=sqlIdentifier;
 const render=(v)=>v?.parts?v.parts.map((s,i)=>s+(i<v.params.length?render(v.params[i]):'')).join(''):v?.items?v.items.map(render).join(render(v.sep)):String(v);
 const eq=(lhs,rhs)=>({op:'eq',lhs,rhs});const and=(...terms)=>({op:'and',terms});
 const matches=(predicate,row)=>!predicate||predicate.op==='and'?(!predicate||predicate.terms.every(p=>matches(p,row))):predicate.op==='eq'?(row[predicate.lhs]===predicate.rhs):true;
 const dr=mk({sql,eq,and});
 const agent={id:'agent',tenantId:'tenant',lifecycle:'active'};
 let state;
+const claims=()=>({tenantId:'tenant',userId:'actor',role:state.managerRole,jti:'jti',familyId:'family',ver:2,sid:'sid',exp:1900000000,kind:'manager'});
 const baseRow=()=>({id:'dev',tenantId:'tenant',agentId:'agent',discoveryId:'scan1',identityKey:'printer-stable',protocol:'ipp',ipAddress:'192.168.10.50',port:631,uri:'ipp://192.168.10.50/ipp/print',spoolerName:null,deviceName:'Office printer',manufacturer:null,model:'M1',hostname:null,serialNumber:null,macAddress:null,transport:'ipp',deviceClass:'laser',capabilities:{print:{color:true}},verification:'candidate',candidateStatus:'discovered'});
 function reset(changes={}){state={row:baseRow(),managerRole:'admin',memberRole:'admin',tenantActive:true,agentActive:true,familyActive:true,legacyActive:true,events:[],writes:0,preflight:undefined,...changes};}
 const tx={
   execute:async(q)=>{
     const text=render(q);state.events.push(text);
+    const policy=workspace.reply(text,claims(),state);if(policy)return policy;
     if(/FROM agents/i.test(text))return {rows:state.agentActive?[{id:'agent',lifecycle:'active'}]:[{id:'agent',lifecycle:'retired'}]};
     if(/FROM discovered_devices/i.test(text))return {rows:state.row?[{...state.row,candidate_status:state.row.candidateStatus}]:[]};
     if(/FROM tenants/i.test(text))return {rows:[{id:'tenant',lifecycle:state.tenantActive?'active':'suspended'}]};
@@ -39,15 +44,19 @@ const tx={
 };
 const db={query:{agents:{findFirst:async()=>{state.preflight?.();return state.agentActive?agent:null}},discoverySessions:{findFirst:async()=>({id:'scan1',agentId:'agent',tenantId:'tenant'})},discoveredDevices:{findFirst:async()=>state.row?{...state.row}:null,findMany:async()=>state.row?[{...state.row}]:[]}},transaction:async(fn)=>fn(tx),update:()=>tx.update()};
 const schema=mk({agents:{id:'id',tenantId:'tenantId'},discoveredDevices:{id:'id',agentId:'agentId',tenantId:'tenantId',candidateStatus:'candidateStatus',discoveryId:'discoveryId'},discoverySessions:{id:'id',agentId:'agentId',tenantId:'tenantId'},tenantUsers:{userId:'userId',tenantId:'tenantId'}});
-const auth=new vm.SourceTextModule(transpile('lib/authorization.ts'),{context:ctx});await auth.link(()=>{throw Error('auth imports unexpected')});await auth.evaluate();
-const guard=new vm.SourceTextModule(transpile('lib/manager-mutation-authorization.ts'),{context:ctx});await guard.link(n=>n==='drizzle-orm'?dr:n.endsWith('db/schema')?schema:auth);await guard.evaluate();
+const auth=await authorizationFixture(ctx);
+const workspace=await workspaceSessionFixture(ctx,dr);
+const guard=new vm.SourceTextModule(transpile('lib/manager-mutation-authorization.ts'),{context:ctx});await guard.link(n=>{
+ if(n==='drizzle-orm')return dr;if(n.endsWith('db/schema'))return schema;if(n==='./authorization')return auth;if(n==='./workspace-session-security')return workspace.policy;
+ throw Error('Unexpected guard import '+n);
+});await guard.evaluate();
 class TestTenantSuspendedError extends Error {}
 class TestTenantDeletedError extends Error {}
 const dep={
  'next/server':mk({NextResponse:{json:(value,{status=200}={})=>Response.json(value,{status})}}),
  'drizzle-orm':dr,
  'node:crypto':mk({createHash}),
- '/lib/manager-auth':mk({validateWorkspaceManager:async()=>({tenantId:'tenant',userId:'actor',role:state.managerRole,jti:'jti',familyId:'family',exp:1900000000,kind:'manager'})}),
+ '/lib/manager-auth':mk({validateWorkspaceManager:async()=>claims()}),
  '/lib/tenant-guard':mk({TenantSuspendedError:TestTenantSuspendedError,TenantDeletedError:TestTenantDeletedError,requireActiveTenantInTransaction:async(t,tenantId)=>{const rows=await t.execute(sql`SELECT lifecycle FROM tenants WHERE id = ${tenantId} FOR SHARE`);if(rows.rows[0]?.lifecycle!=='active')throw new TestTenantSuspendedError('TENANT_SUSPENDED')}}),
  '/db':mk({db}),
  '/db/schema':schema,
@@ -80,7 +89,8 @@ test('changed endpoint since operator snapshot cannot be approved',async()=>{res
 test('changed capabilities or effective spooler name requires reapproval',async()=>{reset();const selected=fp(state.row);state.row.capabilities={print:{color:false}};let r=await call(selected);assert.equal(r.status,409);assert.equal(state.writes,0);reset();const original=fp(state.row);state.row.spoolerName='new queue';r=await call(original);assert.equal(r.status,409);assert.equal(state.writes,0);});
 test('same approved snapshot can be rechecked safely without second write',async()=>{reset();const selected=fp(state.row);assert.equal((await call(selected)).status,200);assert.equal((await call(selected)).status,200);assert.equal(state.writes,1);});
 test('demotion during request is rejected by live authority guard',async()=>{reset({memberRole:'viewer'});const r=await call(fp(state.row));assert.equal(r.status,403);assert.equal(state.writes,0);});
-test('revoked manager family refuses approval',async()=>{reset({familyActive:false});const r=await call(fp(state.row));assert.equal(r.status,403);assert.equal(state.writes,0);});
+test('revoked manager family refuses approval',async()=>{reset({familyActive:false});const r=await call(fp(state.row));assert.equal(r.status,401);assert.equal((await r.json()).code,'SESSION_EXPIRED');assert.equal(state.writes,0);});
+test('stale password proof cannot approve even the exact observed printer',async()=>{reset({staleProof:true});const r=await call(fp(state.row));assert.equal(r.status,403);assert.equal((await r.json()).code,'WORKSPACE_REAUTHENTICATION_REQUIRED');assert.equal(r.headers.get('X-Yaseir-Reauthentication'),'required');assert.equal(state.writes,0);});
 test('retired Agent and suspended Tenant cannot approve',async()=>{reset({agentActive:false});assert.notEqual((await call(fp(state.row))).status,200);reset({tenantActive:false});assert.notEqual((await call(fp(state.row))).status,200);assert.equal(state.writes,0);});
 test('scope mismatch does not approve any candidate',async()=>{reset();state.row.tenantId='other';assert.notEqual((await call(fp(state.row))).status,200);assert.equal(state.writes,0);});
 

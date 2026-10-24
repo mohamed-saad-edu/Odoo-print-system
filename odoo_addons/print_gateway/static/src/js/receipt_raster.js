@@ -2,15 +2,13 @@
 
 import { toCanvas } from "@point_of_sale/app/utils/html-to-image";
 import { waitImages } from "@point_of_sale/utils";
+import { _t } from "@web/core/l10n/translation";
+import { validatedReceiptGeometry } from "./printer_geometry";
 
-// The printer's usable dot width differs across 58/80mm and 180/203dpi
-// models. 512px is Odoo 19's existing 80mm/180dpi default, NOT a universal
-// hardware assumption. Optional per-device value must be vetted by Odoo.
-export const DEFAULT_RECEIPT_RASTER_WIDTH = 512;
-export function normalizedReceiptRasterWidth(value) {
-    const width = Number(value);
-    return Number.isInteger(width) && width >= 288 && width <= 576
-        ? width : DEFAULT_RECEIPT_RASTER_WIDTH;
+function geometryError(message) {
+    const error = new Error(message);
+    error.code = "POS_RECEIPT_GEOMETRY";
+    return error;
 }
 
 function captureJpeg(canvas) {
@@ -21,8 +19,11 @@ function captureJpeg(canvas) {
         ctx.fillStyle = "#ffffff";
         ctx.fillRect(0, 0, canvas.width, canvas.height);
     }
-    return canvas.toDataURL("image/jpeg", 0.90)
-        .replace(/^data:image\/[a-z]+(?:;[^,]*)?;base64,/, "");
+    const dataUrl = canvas.toDataURL("image/jpeg", 0.90);
+    if (!dataUrl.startsWith("data:image/jpeg;base64,")) {
+        throw geometryError(_t("The receipt renderer could not encode a JPEG image. No print was sent."));
+    }
+    return dataUrl.slice("data:image/jpeg;base64,".length);
 }
 
 /**
@@ -38,21 +39,31 @@ function captureJpeg(canvas) {
  * helper is unavailable, an isolated temporary DOM mount provides the same
  * layout precondition without leaving any visible nodes behind.
  */
-export async function renderGatewayReceiptJpeg(element, { renderer, width } = {}) {
+export async function renderGatewayReceiptJpeg(element, { renderer, geometry } = {}) {
     if (!element || typeof document === "undefined") {
         throw new Error("A receipt DOM element is required for image printing.");
     }
-    const rasterWidth = normalizedReceiptRasterWidth(width);
+    const measured = validatedReceiptGeometry(geometry);
+    if (!measured) {
+        throw geometryError(_t("The selected printer has no validated receipt geometry. Sync its driver measurements or configure a validated profile with printable width and horizontal and vertical DPI; driver printing also requires the actual paper width."));
+    }
+    const rasterWidth = measured.printable_width_dots;
+    // CSS uses 96 pixels per inch. Device dots belong only to the output
+    // canvas: enlarging CSS to 1702px at 600 DPI would make physical text tiny.
+    const cssWidth = rasterWidth * 96 / measured.dpi_x;
 
     const captureMounted = async (node) => {
         node.classList.add("pos-receipt-print", "yaseir-gateway-receipt");
-        node.classList.toggle("yaseir-gateway-receipt-narrow", rasterWidth < 480);
-        node.style.setProperty("--yaseir-print-width", rasterWidth + "px");
-        node.style.width = rasterWidth + "px";
+        node.classList.toggle("yaseir-gateway-receipt-narrow", rasterWidth * 25.4 / measured.dpi_x < 60);
+        node.style.setProperty("--yaseir-print-width", cssWidth + "px");
+        node.style.width = cssWidth + "px";
 
         // All images, including QR and logos, must finish loading before
         // measuring the *new* CSS layout and snapshotting SVG foreignObject.
-        await waitImages(node);
+        const imageState = await waitImages(node);
+        if (imageState?.timedOut || Array.from(node.querySelectorAll("img")).some((image) => !image.complete || image.naturalWidth < 1)) {
+            throw geometryError(_t("A receipt image or code did not load. Wait for all images to load before printing; no print was sent."));
+        }
         // Capture after the mounted element's used fonts have settled. The
         // canvas exporter intentionally skips font embedding, so measuring
         // before FontFaceSet.ready can freeze fallback-font line heights and
@@ -60,29 +71,36 @@ export async function renderGatewayReceiptJpeg(element, { renderer, width } = {}
         if (document.fonts?.ready) {
             await document.fonts.ready;
         }
-        const measuredWidth = Math.ceil(node.getBoundingClientRect().width);
+        const measuredWidth = node.getBoundingClientRect().width;
         const measuredHeight = Math.ceil(node.scrollHeight);
-        if (measuredWidth !== rasterWidth || measuredHeight < 1 ||
-            measuredHeight > 16384 || measuredWidth > 576) {
-            const err = new Error("POS receipt dimensions are invalid; check custom receipt CSS.");
-            err.code = "POS_RECEIPT_GEOMETRY";
-            throw err;
+        const rasterHeight = Math.ceil(measuredHeight * measured.dpi_y / 96);
+        if (!Number.isFinite(measuredWidth) || Math.abs(measuredWidth - cssWidth) > 1 / 64 || measuredHeight < 1 ||
+            !Number.isSafeInteger(rasterHeight) || rasterHeight > 16384 || rasterWidth * rasterHeight > 40000000) {
+            throw geometryError(_t("POS receipt dimensions exceed the safe raster limits or do not match the selected printer. Split an oversized receipt or review its receipt CSS; no print was sent."));
         }
         // Avoid silent right-edge clipping (which can hide prices/QRs).
         if (node.scrollWidth > measuredWidth + 2) {
-            const err = new Error("POS receipt has content wider than the paper; review its receipt template.");
-            err.code = "POS_RECEIPT_GEOMETRY";
-            throw err;
+            throw geometryError(_t("POS receipt has content wider than the paper; review its receipt template."));
         }
         const canvas = await toCanvas(node, {
             backgroundColor: "#ffffff",
-            width: measuredWidth,
+            width: cssWidth,
             height: measuredHeight,
+            canvasWidth: rasterWidth,
+            canvasHeight: rasterHeight,
             pixelRatio: 1,
+            skipAutoScale: true,
             includeQueryParams: true,
             skipFonts: true,
         });
-        return captureJpeg(canvas);
+        if (canvas.width !== rasterWidth || canvas.height !== rasterHeight) {
+            throw geometryError(_t("The receipt renderer changed the printer's measured dimensions. No print was sent."));
+        }
+        const jpeg = captureJpeg(canvas);
+        if (!jpeg || jpeg.length > 4 * Math.ceil(5 * 1024 * 1024 / 3)) {
+            throw geometryError(_t("The receipt image exceeds the 5 MiB safety limit. Split the receipt before printing."));
+        }
+        return jpeg;
     };
 
     if (renderer && typeof renderer.whenMounted === "function") {

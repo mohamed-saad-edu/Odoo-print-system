@@ -75,8 +75,19 @@ func (p *IPPPrinter) printPDFWithFormatNegotiation(ctx context.Context, data []b
 	if strings.TrimSpace(attrs["document-format-supported"]) == "" {
 		return fmt.Errorf("IPP printer %s did not advertise document-format-supported; no document was submitted. Verify the IPP endpoint and printer capabilities, or configure the installed Windows spooler driver", p.URL)
 	}
+	if !containsIPPFormat(formats, ippFormatPDF) && !containsIPPFormat(formats, "image/pwg-raster") && !containsIPPFormat(formats, ippFormatJPEG) {
+		return fmt.Errorf("IPP printer %s rejects application/pdf (document-format-supported: %s). Configure the printer's installed Windows queue with the spooler transport for document conversion; no unsupported data was submitted", p.URL, strings.Join(formats, ", "))
+	}
+	pages, err := inspectIPPPDFPages(ctx, data)
+	if err != nil {
+		return fmt.Errorf("IPP document media inspection failed before submission: %w", err)
+	}
+	options, err := selectIPPMedia(attrs, pages)
+	if err != nil {
+		return err
+	}
 	if containsIPPFormat(formats, ippFormatPDF) {
-		return p.printDocument(ctx, data, ippFormatPDF)
+		return p.printDocumentWithOptions(ctx, data, ippFormatPDF, options)
 	}
 	if containsIPPFormat(formats, "image/pwg-raster") || containsIPPFormat(formats, ippFormatJPEG) {
 		// A renderer can reject an advertised PWG variant before submission.
@@ -84,12 +95,30 @@ func (p *IPPPrinter) printPDFWithFormatNegotiation(ctx context.Context, data []b
 		// Format fallback is confined to preparation: never retry a Print-Job.
 		prepared, format, err := prepareIPPRasterDocument(ctx, formats,
 			func() ([]byte, error) { return renderIPPPDFToPWG(ctx, data, attrs) },
-			func() ([]byte, error) { return renderIPPPDFToJPEG(ctx, data) },
+			func() ([]byte, error) { return renderIPPPDFToJPEG(ctx, data, attrs) },
 		)
 		if err != nil {
 			return fmt.Errorf("IPP printer %s rejects application/pdf (supported: %s); conversion failed before submission: %w. Configure the installed Windows spooler driver if no advertised format can be rendered", p.URL, strings.Join(formats, ", "), err)
 		}
-		return p.printDocument(ctx, prepared, format)
+		// A raster header/JFIF carries the actual selected render density.
+		// Request that density as a Job attribute only when the generic
+		// printer-resolution-supported independently permits the same value.
+		dpi := 0
+		if format == "image/pwg-raster" {
+			dpi, _, _ = pwgOptionsFromIPPAttributes(attrs)
+		} else {
+			dpi, _ = ippJPEGResolution(attrs)
+		}
+		options.Resolution = nil
+		for _, r := range ippResolutions(attrs["printer-resolution-supported"]) {
+			x, y := r.dpi()
+			if x == dpi && y == dpi {
+				chosen := r
+				options.Resolution = &chosen
+				break
+			}
+		}
+		return p.printDocumentWithOptions(ctx, prepared, format, options)
 	}
 	return fmt.Errorf("IPP printer %s rejects application/pdf (document-format-supported: %s). Configure the printer's installed Windows queue with the spooler transport for document conversion; no unsupported data was submitted", p.URL, strings.Join(formats, ", "))
 }

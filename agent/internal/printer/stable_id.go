@@ -97,10 +97,26 @@ func ippQueueIdentitySuffix(d DeviceInfo) string {
 	return "|ipp-resource:" + path + "?" + u.RawQuery
 }
 
-// physicalIdentityKey returns a stable, source-independent identity when the
-// discovery source exposes hardware/queue identity that survives endpoint/name
-// changes. It deliberately does not fall back to IP, endpoint or display name.
+// physicalIdentityKey is the legacy reconciliation key. For Windows it is
+// explicitly a logical queue identity, never a chassis identity: two queues
+// can share one driver and port while choosing different forms or settings.
+// A directory-service GUID can preserve a published queue across a rename.
+// Without one, only the actual queue/server tuple may establish continuity.
 func physicalIdentityKey(d DeviceInfo) (string, bool) {
+	if isSpoolerDevice(d) {
+		if guid := verifiedWindowsQueueGUID(d); guid != "" {
+			return "windows-queue-guid:" + guid, true
+		}
+		queue := strings.TrimSpace(d.SpoolerName)
+		if queue == "" {
+			queue = strings.TrimSpace(d.Endpoint)
+		}
+		if queue == "" {
+			return "", false
+		}
+		return fmt.Sprintf("windows-queue:%s|server:%s|scope:%s", normalizeIdentityValue(queue),
+			spoolerDetailValue(d, d.SpoolerServer, "server_name"), capabilityIdentityValue(d, "spooler_scope")), true
+	}
 	if uuid := capabilityIdentityValue(d, "uuid", "printer_uuid"); uuid != "" {
 		return "uuid:" + uuid + ippQueueIdentitySuffix(d), true
 	}
@@ -127,26 +143,17 @@ func physicalIdentityKey(d DeviceInfo) (string, bool) {
 		return "usb-serial:" + serial, true
 	}
 
-	spoolerPort := normalizeIdentityValue(d.SpoolerPort)
-	if !usableIdentityValue(spoolerPort) {
-		// Older registry rows stored Windows queue identity only in the
-		// capability bag. Accept that representation when matching an
-		// existing row so a queue rename can migrate forward without
-		// duplicating the physical printer. New discovery emits the
-		// first-class fields directly.
-		spoolerPort = capabilityIdentityValue(d, "port_name")
-	}
-	spoolerDriver := normalizeIdentityValue(d.SpoolerDriver)
-	if !usableIdentityValue(spoolerDriver) {
-		spoolerDriver = capabilityIdentityValue(d, "driver_name")
-	}
-	if usableIdentityValue(spoolerPort) && usableIdentityValue(spoolerDriver) {
-		server := normalizeIdentityValue(d.SpoolerServer)
-		share := normalizeIdentityValue(d.SpoolerShare)
-		return fmt.Sprintf("spooler:%s|port:%s|driver:%s|share:%s", server, spoolerPort, spoolerDriver, share), true
-	}
-
 	return "", false
+}
+
+func verifiedWindowsQueueGUID(d DeviceInfo) string {
+	if d.Capabilities["windows_queue_guid_verified"] != true {
+		return ""
+	}
+	guid, _ := d.Capabilities["windows_queue_guid"].(string)
+	guid = strings.Trim(strings.TrimSpace(guid), "{}")
+	guid = strings.TrimPrefix(strings.ToLower(guid), "urn:uuid:")
+	return normalizedIPPPrinterUUID("urn:uuid:" + guid)
 }
 
 // spoolerDetailValue accepts both current first-class fields and older
@@ -161,7 +168,8 @@ func spoolerDetailValue(d DeviceInfo, field, capability string) string {
 // sameSpoolerQueueDuringDetailLoss is a narrow continuity fallback, not a
 // display-name or physical-printer matcher. EnumPrinters' queue/server still
 // identify the same local transport when optional GetPrinter details disappear.
-// Two strong (possibly conflicting) identities use the existing strong matcher.
+// Driver and port are mutable queue settings. Their changes require fresh
+// operational verification, but cannot create a second logical queue record.
 func sameSpoolerQueueDuringDetailLoss(a, b DeviceInfo) bool {
 	isSpooler := func(d DeviceInfo) bool {
 		return strings.EqualFold(d.Protocol, "spooler") ||
@@ -186,20 +194,9 @@ func sameSpoolerQueueDuringDetailLoss(a, b DeviceInfo) bool {
 	if scopeA != "" && scopeB != "" && scopeA != scopeB {
 		return false
 	}
-	_, strongA := physicalIdentityKey(a)
-	_, strongB := physicalIdentityKey(b)
-	if strongA && strongB {
+	guidA, guidB := verifiedWindowsQueueGUID(a), verifiedWindowsQueueGUID(b)
+	if guidA != "" && guidB != "" && guidA != guidB {
 		return false
-	}
-	// Detail loss can remove evidence, never contradict evidence still present.
-	for _, pair := range [][2]string{
-		{spoolerDetailValue(a, a.SpoolerPort, "port_name"), spoolerDetailValue(b, b.SpoolerPort, "port_name")},
-		{spoolerDetailValue(a, a.SpoolerDriver, "driver_name"), spoolerDetailValue(b, b.SpoolerDriver, "driver_name")},
-		{spoolerDetailValue(a, a.SpoolerShare, "share_name"), spoolerDetailValue(b, b.SpoolerShare, "share_name")},
-	} {
-		if pair[0] != "" && pair[1] != "" && pair[0] != pair[1] {
-			return false
-		}
 	}
 	return true
 }

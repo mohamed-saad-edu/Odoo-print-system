@@ -76,6 +76,17 @@ suite("zero-touch Odoo installation enrollment (PostgreSQL)", () => {
     expect(repeat.status).toBe(200);
   });
 
+  it("does not infer permission to cut over an empty legacy workspace from absent Gateway history", async () => {
+    await pool().query("UPDATE tenants SET odoo_idempotency_mode = 'legacy' WHERE id=$1", [fixture.tenantId]);
+    const identity = credentials();
+    const response = await attempt(fixture.odooKey, identity.id, identity.proof);
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ code: "RECONCILIATION_REQUIRED" });
+    const mode = await pool().query("SELECT odoo_idempotency_mode AS mode FROM tenants WHERE id=$1", [fixture.tenantId]);
+    expect(mode.rows[0].mode).toBe("legacy");
+    expect((await pool().query("SELECT id FROM odoo_installations WHERE tenant_id=$1", [fixture.tenantId])).rows).toEqual([]);
+  });
+
   it("refuses automatic enrollment for an existing legacy tenant with prior Odoo jobs", async () => {
     await pool().query("UPDATE tenants SET odoo_idempotency_mode = 'legacy' WHERE id=$1", [fixture.tenantId]);
     const jobId = "legacy_auto_enrollment_history";

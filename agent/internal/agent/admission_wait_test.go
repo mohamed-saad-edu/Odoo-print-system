@@ -40,7 +40,7 @@ func TestPrinterWaiterRequestsFreshAdmissionBeforeHardware(t *testing.T) {
 	defer ag.Close()
 	p := &fakePrinter{blocked: make(chan struct{}), startedCh: make(chan string, 2)}
 	ag.printers = map[string]printer.Printer{"p1": p}
-	ag.printerConfigs = map[string]config.PrinterConfig{"p1": {ID: "p1", Type: "network", Protocol: "raw", Endpoint: "127.0.0.1:9100"}}
+	ag.printerConfigs = map[string]config.PrinterConfig{"p1": {ID: "p1", Type: "network", Protocol: "raw", Endpoint: "10.0.0.20:9100"}}
 	allowInjectedPrintersForTest(ag)
 	ag.dispatchJob(context.Background(), dispatchTestJob("first", "p1"))
 	select {

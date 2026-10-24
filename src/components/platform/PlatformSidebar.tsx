@@ -29,8 +29,8 @@ function PlatformNavigation({
   const groups = items.reduce<Array<{ key: string; label: string; items: TopNavItem[] }>>((all, item) => {
     const key = item.sectionKey ?? item.section ?? "workspace";
     const label = item.sectionKey ? t(item.sectionKey) : item.section ?? t("nav.section.workspace");
-    const last = all[all.length - 1];
-    if (last && last.key === key) last.items.push(item);
+    const existing = all.find((group) => group.key === key);
+    if (existing) existing.items.push(item);
     else all.push({ key, label, items: [item] });
     return all;
   }, []);

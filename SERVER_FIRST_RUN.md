@@ -85,6 +85,10 @@ Minimum production values:
 POSTGRES_DB=yasser_db
 POSTGRES_USER=odoo_print
 POSTGRES_PASSWORD=<long-random-password>
+POSTGRES_OWNER_USER=yaseir_owner
+POSTGRES_OWNER_PASSWORD=<different-generated-migration-owner-password>
+POSTGRES_RUNTIME_USER=yaseir_runtime
+POSTGRES_RUNTIME_PASSWORD=<different-generated-runtime-password>
 
 GATEWAY_DOMAIN=gw.example.com
 PLATFORM_TENANT_ID=<real-platform-workspace-id>
@@ -129,6 +133,14 @@ workspace through the existing operator workflow before starting production;
 never use the placeholder as a real ID.
 
 Do not commit `.env`.
+
+`POSTGRES_USER` is the PostgreSQL bootstrap administrator and is never the
+Gateway runtime identity. Compose first applies the dedicated-cluster role
+profile, runs migrations as the separate owner, verifies the restricted runtime
+credential, then starts Gateway. See [PostgreSQL deployment roles](docs/DATABASE_ROLES.md)
+for fresh installation, the explicit existing-volume conversion and tested
+permission rollback. Preserve an existing volume's actual bootstrap username
+and password; initialization environment variables do not alter stored accounts.
 
 ### Email is required for the real first-customer flow
 
@@ -346,7 +358,7 @@ The browser calls:
 POST /api/auth/login
 ```
 
-For one workspace, the Gateway returns `200` and sets the `cust_session` HttpOnly cookie. The customer refresh cookie is `cust_refresh` (not the Manager `mgr_refresh`); the separate Manager login flow uses `mgr_session`.
+For one workspace, the Gateway returns `200` and sets the production `__Host-cust_session` HttpOnly cookie and `__Host-cust_refresh` refresh cookie. Production Manager login uses `__Host-mgr_session` and `__Host-mgr_refresh`. All production session cookies are host-only, Secure and Path=/; access uses SameSite=Lax and refresh uses SameSite=Strict. Development uses the `cust_session` HttpOnly cookie and `cust_refresh`; the separate Manager flow uses `mgr_session` and `mgr_refresh`. Production never accepts those unprefixed names as a fallback.
 
 For multiple workspaces, login returns `409` with a short-lived selection token and workspace IDs; the UI then calls:
 

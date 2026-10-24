@@ -1,4 +1,5 @@
 import payloadContract from "../../contracts/print-payload-contract.json";
+import { currentPrinterGeometry, hasPhysicalReceiptGeometry, printerGeometryFromCapabilities } from "./printer-geometry";
 /**
  * Printer Capability Matrix — Transport/Protocol/Document/Duplex/Color/Status + IPP capabilities
  * Capability-first, not just protocol.
@@ -36,6 +37,7 @@ export interface CapabilityMatrixRow {
 }
 
 function documentTypeCandidates(protocol: ProtocolType, transport: TransportType): DocumentType[] {
+  if (transport === "pdf_output" && protocol === "pdf") return ["pdf", "image"];
   if (transport === "spooler" || protocol === "spooler") {
     // Document transports by default. Raw byte passthrough requires an
     // explicit supported_protocols declaration (enforced in routing.ts);
@@ -47,9 +49,8 @@ function documentTypeCandidates(protocol: ProtocolType, transport: TransportType
   }
   switch (protocol) {
     case "escpos":
-      // "image" via gateway raster conversion (routing.ts physicalImage):
-      // an ESC/POS device raster-converts JPEGs even though its byte sink
-      // speaks escpos. Listed so the matrix matches the enforcer.
+      // Image is only a candidate. The verified GS v 0 profile and geometry
+      // fingerprint checks below determine whether raster output is usable.
       return ["escpos", "raw", "image"];
     case "zpl":
       return ["zpl", "raw"];
@@ -67,6 +68,13 @@ export type CapabilityCheckResult = { ok: true } | { ok: false; reason: string }
 export interface PayloadSpec {
   type: string;
   protocol?: string | null;
+  geometry_fingerprint?: string;
+}
+
+export interface PrinterCapabilities {
+  supported_protocols?: unknown;
+  geometry?: unknown;
+  [key: string]: unknown;
 }
 
 const BYTE_PROTOCOLS = payloadContract.rawProtocols as readonly string[];
@@ -79,7 +87,8 @@ const BYTE_PROTOCOLS = payloadContract.rawProtocols as readonly string[];
  *
  * Precedence rules:
  *  - Physical document transports provide an immutable baseline capability:
- *    spooler queues support driver-rendered PDF/image and IPP supports PDF.
+ *    spooler queues and IPP support PDF. Images additionally require verified
+ *    geometry because they do not carry a physical document page size.
  *    An explicit `supported_protocols` list may ADD safe passthrough byte
  *    languages, but it never removes that transport baseline.
  *  - Direct byte transports remain strict: an explicit capability list is
@@ -87,15 +96,17 @@ const BYTE_PROTOCOLS = payloadContract.rawProtocols as readonly string[];
  *    does not physically implement.
  *  - Without an explicit list, the device's declared transport protocol
  *    decides (escpos/zpl/tspl/raw byte sinks; spooler/ipp/ipps document
- *    transports; escpos devices additionally raster-convert JPEGs).
+ *    transports). Raster conversion also requires an explicit GS v 0 profile.
  *  - A raw payload with NO protocol is invalid input and never becomes
  *    "generic compatible" by default — the contract requires explicitness.
  */
 export function validatePayloadForPrinter(
   payloadInput: PayloadSpec | null | undefined,
   printer: {
+    id?: string;
+    config?: Record<string, unknown> | null;
     protocol?: string | null;
-    capabilities?: { supported_protocols?: string[] } | null;
+    capabilities?: PrinterCapabilities | null;
     connectionType?: string | null;
     printerType?: string | null;
   },
@@ -140,11 +151,12 @@ export function validatePayloadForPrinter(
   // into a Windows driver. Preserve legacy USB-backed queues, whose spooler
   // configuration is normalized at registration, but reject network+spooler.
   const physicalSpooler = conn === "spooler" || (conn === "usb" && proto === "spooler");
-  const physicalPdf = physicalSpooler
+  const fileOutput = conn === "pdf_output" && proto === "pdf";
+  const physicalPdf = fileOutput || physicalSpooler
     || conn === "ipp" || conn === "ipps"
     || (conn === "network" && (proto === "ipp" || proto === "ipps"));
-  const physicalImage = physicalSpooler
-    || (conn === "network" && proto === "escpos");
+  const physicalImage = fileOutput || physicalSpooler
+    || ((conn === "network" || conn === "usb") && proto === "escpos");
   const physicalByteProtocol = (protocol: string) => {
     if (physicalSpooler) {
       return protocol === "raw" || protocol === "escpos";
@@ -166,16 +178,36 @@ export function validatePayloadForPrinter(
     return { ok: true };
   }
 
-  // Image: rendered by a driver-backed transport, or raster-converted by an
-  // explicitly ESC/POS-capable device.
+  // A receipt image was rendered against a specific measured configuration.
+  // Width equality alone cannot fence a driver/DPI/media change. Require the
+  // exact geometry revision, and a proven raster command on byte transports.
   if (pt === "image") {
     if (payloadProto) {
       return { ok: false, reason: "CAPABILITY_MISMATCH: image payloads cannot specify a printer protocol" };
     }
     if (!physicalImage) return { ok: false, reason: "CAPABILITY_MISMATCH: image payload not supported by printer" };
-    if (physicalSpooler) return { ok: true };
-    if (!hasExplicitCaps || anyCap("image", "jpeg", "escpos")) return { ok: true };
-    return { ok: false, reason: "CAPABILITY_MISMATCH: image payload not supported by printer" };
+    const geometry = printer.id
+      ? currentPrinterGeometry({ id: printer.id, capabilities, config: printer.config })
+      : printerGeometryFromCapabilities(capabilities);
+    if (!geometry) return { ok: false, reason: "GEOMETRY_REQUIRED: Refresh this printer or configure a validated geometry profile before printing images." };
+    if (!payloadInput.geometry_fingerprint || payloadInput.geometry_fingerprint !== geometry.config_fingerprint) {
+      return { ok: false, reason: "GEOMETRY_CHANGED: Refresh this printer and render the image again using its current geometry." };
+    }
+    if (fileOutput) {
+      return hasPhysicalReceiptGeometry(geometry) && geometry.paper_height_mm !== undefined && geometry.printable_height_dots !== undefined && geometry.offset_x_dots !== undefined && geometry.offset_y_dots !== undefined
+        ? { ok: true }
+        : { ok: false, reason: "GEOMETRY_REQUIRED: PDF file output requires declared page width/height, printable width/height and both axis DPI values." };
+    }
+    if (physicalSpooler) {
+      return hasPhysicalReceiptGeometry(geometry)
+        ? { ok: true }
+        : { ok: false, reason: "GEOMETRY_REQUIRED: Image document printing requires measured paper width and both axis DPI values." };
+    }
+    if (geometry.raster_command !== "gs_v_0") {
+      return { ok: false, reason: "CAPABILITY_MISMATCH: Configure a validated GS v 0 raster command profile for this ESC/POS printer." };
+    }
+    if (hasExplicitCaps && !anyCap("image", "jpeg", "escpos")) return { ok: false, reason: "CAPABILITY_MISMATCH: image payload not supported by printer" };
+    return { ok: true };
   }
 
   // ESC/POS payload types must declare the escpos protocol — explicitly.
@@ -234,7 +266,7 @@ export function hasDeclaredProtocol(
   return Array.isArray(raw) && raw.some((value) => typeof value === "string" && value.toLowerCase().trim() === token);
 }
 
-export function getSupportedDocumentTypes(protocol: ProtocolType, transport: TransportType, capabilities?: { supported_protocols?: string[] } | null): DocumentType[] {
+export function getSupportedDocumentTypes(protocol: ProtocolType, transport: TransportType, capabilities?: PrinterCapabilities | null): DocumentType[] {
   const normalizedTransport = transport === ("windows_spooler" as TransportType) ? "spooler" : transport;
   const normalized = protocol === "windows_spooler" && normalizedTransport === "spooler" ? "spooler" : protocol;
   const candidates = [...new Set<DocumentType>([...documentTypeCandidates(normalized as ProtocolType, normalizedTransport), "raw", "escpos", "zpl", "tspl", "pdf", "image"])];
@@ -242,7 +274,9 @@ export function getSupportedDocumentTypes(protocol: ProtocolType, transport: Tra
     const payload: PayloadSpec = type === "zpl" || type === "tspl"
       ? { type: "raw", protocol: type }
       : type === "raw" ? { type: "raw", protocol: BYTE_PROTOCOLS.includes(normalized) ? normalized : hasDeclaredProtocol(capabilities, "escpos") ? "escpos" : "raw" }
-      : type === "escpos" ? { type, protocol: "escpos" } : { type };
+      : type === "escpos" ? { type, protocol: "escpos" }
+      : type === "image" ? { type, geometry_fingerprint: printerGeometryFromCapabilities(capabilities)?.config_fingerprint }
+      : { type };
     return validatePayloadForPrinter(payload, { protocol: normalized, connectionType: normalizedTransport, capabilities }).ok;
   });
 }
