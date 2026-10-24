@@ -278,7 +278,7 @@ jobs:
           const suffix = process.env.PHASE0_SUFFIX;
           const agentSecret = process.env.PHASE0_AGENT_SECRET;
           const tenantId = "phase0_tenant_" + suffix;
-          const agentId = "agt_" + suffix;
+          const agentId = "agt_" + suffix.slice(0, 8);
           const jti = "phase0_jti_" + suffix;
           const exp = Math.floor(Date.now() / 1000) + 3600;
           const client = new Client({
@@ -330,19 +330,17 @@ jobs:
           const proxySecret = fs.readFileSync("/run/secrets/trust_proxy_secret", "utf8").trim();
           const suffix = process.env.PHASE0_SUFFIX;
           const tenantId = "phase0_tenant_" + suffix;
-          const agentId = "agt_" + suffix;
+          const agentId = "agt_" + suffix.slice(0, 8);
           const agentSecret = process.env.PHASE0_AGENT_SECRET;
           const jti = "phase0_jti_" + suffix;
           const now = Math.floor(Date.now() / 1000);
           const exp = now + 3600;
 
-          const managerToken = signJwt(jwtSecret, {
-            jti, iat: now, exp, sub: "manager", tenantId, role: "admin",
-          });
-
+          // V4 intentionally rejects legacy manager JWTs. Use the real
+          // tenant-bound Agent credential for this fleet read smoke test.
           const health = await fetch("http://127.0.0.1:3000/api/agents?limit=1", {
             headers: {
-              authorization: "Bearer " + managerToken,
+              authorization: "Bearer " + agentId + ":" + agentSecret,
               "x-gateway-proxy-token": proxySecret,
               origin: "https://print.example.com",
             },
