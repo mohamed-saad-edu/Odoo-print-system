@@ -102,15 +102,14 @@ jobs:
           EOF
           (cd "$fixture" && npm install --package-lock-only --ignore-scripts >/dev/null)
           set +e
-          audit_output="$(cd "$fixture" && npm audit --audit-level=high 2>&1)"
+          audit_output="$(cd "$fixture" && npm audit --json --audit-level=high 2>&1)"
           audit_status=$?
           set -e
-          printf '%s\n' "$audit_output"
-          if [ "$audit_status" -eq 0 ]; then
-            echo "Expected npm audit to fail for the known high-severity fixture."
-            exit 1
-          fi
-          echo "Known vulnerable fixture correctly caused npm audit --audit-level=high to fail."
+          # A network error, arbitrary non-zero status, unrelated advisory,
+          # or a broken JSON report does NOT prove the security policy works.
+          printf '%s\n' "$audit_output" > "$fixture/audit.json"
+          node scripts/verify-npm-audit-fixture.mjs "$fixture" "$audit_status"
+          echo "Known vulnerable fixture was rejected for the expected HIGH advisory."
 
       - name: Go vulnerability scan (pinned)
         working-directory: agent

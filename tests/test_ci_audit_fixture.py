@@ -69,6 +69,13 @@ def test_known_vulnerable_fixture_requires_the_expected_high_advisory(tmp_path, 
     assert result.returncode != 0, "A process failure without the expected advisory is not vulnerability evidence"
 
 
+def test_workflow_rejects_network_failures_and_requires_json_advisory_proof():
+    workflow = (ROOT / ".github/workflows/security-supply-chain.yml").read_text()
+    assert "npm audit --json --audit-level=high" in workflow
+    assert 'node scripts/verify-npm-audit-fixture.mjs "$fixture" "$audit_status"' in workflow
+    assert "npm audit --audit-level=high 2>&1" not in workflow
+
+
 def test_known_vulnerable_fixture_accepts_a_real_high_severity_rejection(tmp_path):
     result = run_fixture_step(tmp_path, 1, vulnerable_report())
     assert result.returncode == 0, result.stdout + result.stderr

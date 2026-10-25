@@ -376,19 +376,13 @@ jobs:
           echo "CADDY_HTTP_RESPONSE:"
           curl --silent --show-error --head --max-time 10             -H 'Host: print.example.com'             http://127.0.0.1/api/live
 
-          # Prove Caddy injects the Docker-secret proxy token end to end: a
-          # token-bearing request relayed by Caddy must NOT be rejected with
-          # TRUSTED_PROXY_REQUIRED. Auth is intentionally absent, so any other
-          # outcome (e.g. 401) still proves the proxy trust passed.
-          # shortcut: header-only probe; full WS-via-Caddy proof needs an agent credential.
+          # Verify the real Caddy-to-Gateway trust boundary with TWO HTTP
+          # requests: absent client token and forged client token. Both must
+          # reach authenticated Gateway and return its exact JSON 401. A proxy
+          # that forwards a forged token, a 502, or a generic 401 fails closed.
+          # Never send the private proxy token from the test client.
           echo "CADDY_PROXY_TOKEN_RESPONSE:"
-          proxy_secret="$(docker compose exec -T gateway cat /run/secrets/trust_proxy_secret | tr -d '[:space:]')"
-          caddy_body="$(curl --silent --show-error --max-time 10               -H 'Host: print.example.com'               -H "X-Gateway-Proxy-Token: $proxy_secret"               http://127.0.0.1/api/agents?limit=1)"
-          echo "$caddy_body"
-          if printf '%s' "$caddy_body" | grep -q 'TRUSTED_PROXY_REQUIRED'; then
-            echo "Caddy did not inject a valid proxy token (gateway answered TRUSTED_PROXY_REQUIRED)" >&2
-            exit 1
-          fi
+          python3 scripts/check-proxy-boundary.py http://127.0.0.1 print.example.com
 
       - name: Verify backup and restore round-trip
         shell: bash
