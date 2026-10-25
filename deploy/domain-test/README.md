@@ -26,6 +26,10 @@ bash deploy/domain-test/smoke-domain-test.sh
 
 The script creates the independent `POSTGRES_OWNER_PASSWORD` and `POSTGRES_RUNTIME_PASSWORD` once if missing. It never silently changes the existing bootstrap `POSTGRES_PASSWORD`; a missing or short bootstrap credential must be rotated in the actual PostgreSQL cluster **and** env by an operator before the upgrade. Preserve secrets, Caddy TLS volumes and the DB role state volume across updates.
 
+## Recovery from a post-migration Caddy permission failure
+
+If the migration log already shows `database_roles PASS`, `PostgreSQL migrations applied successfully`, and `database_verify PASS`, do **not rerun the full setup** or restore the pre-migration backup. The Gateway is stopped, but the database cutover has completed. After pulling this branch, run `bash deploy/domain-test/resume-after-migrations.sh` to verify the three completed migration jobs, repair the existing Caddy TLS volume permissions using temporary maintenance-only capabilities, and start Gateway and Caddy. The recovery script never replays migrations or deletes volumes. Inspect health and logs after it finishes.
+
 ## Subscription changes
 
 V4 retired the earlier fake Stripe trial/checkout flow. The `YASEIR_PLAN_CATALOG` sample bootstraps **manual plans only**; it **does not** grant or extend any customer subscription. Existing billing history and legacy provider metadata are kept by the V4 cutover migration. A Platform Owner must activate/renew each customer subscription using the new auditable manual subscription UI. Do not run the old `renew-expired-trial.sql`; it fails closed. The old workspace-reset command is disabled for V4 until independently reviewed.

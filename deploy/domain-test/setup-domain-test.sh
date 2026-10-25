@@ -110,9 +110,13 @@ compose up --no-deps database_verify
 compose exec -T postgres sh -c 'exec psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 "$@"' sh \
   -v "domain=$DOMAIN" -v "manager_tenant_id=$(get_env_value MANAGER_TENANT_ID)" \
   -v "platform_tenant_id=$(get_env_value PLATFORM_TENANT_ID)" < "$DEPLOY_DIR/configure-domain.sql"
-# Upgrade old named Caddy TLS volumes to main's unprivileged 10001 UID.
-compose run --rm --no-deps --user 0:0 --cap-add CHOWN --entrypoint /bin/sh caddy \
-  -ec 'chown -R 10001:10001 /data /config && chmod 0700 /data /config'
+# Convert existing Caddy TLS volumes to the unprivileged UID 10001.
+# This ONE-OFF container needs CHOWN, FOWNER and DAC_OVERRIDE because the
+# long-running Caddy service drops ALL capabilities. Never grant them to it.
+compose run --rm --no-deps --user 0:0 \
+  --cap-add CHOWN --cap-add FOWNER --cap-add DAC_OVERRIDE \
+  --entrypoint /bin/sh caddy \
+  -ec 'chmod 0700 /data /config && chown -R 10001:10001 /data /config'
 compose up -d --no-deps gateway caddy
 compose exec -T caddy caddy validate --config /etc/caddy/Caddyfile
 ready=0

@@ -44,6 +44,18 @@ describe("V4 HTTPS staging upgrade safety", () => {
     expect(s.indexOf("for service in postgres caddy gateway database_roles migrate database_verify; do")).toBeLessThan(s.indexOf("compose stop gateway"));
     expect(s).toContain("mounted_bootstrap");
     expect(s).toContain("Authenticated staging DB preflight failed");
+    for (const capability of ["CHOWN", "FOWNER", "DAC_OVERRIDE"]) expect(s).toContain("--cap-add " + capability);
+    expect(s).toContain("chmod 0700 /data /config && chown -R 10001:10001 /data /config");
+    expect(s).not.toContain("chown -R 10001:10001 /data /config && chmod");
+    expect(read("deploy/domain-test/docker-compose.yml")).toContain("cap_drop:");
+    const recovery = read("deploy/domain-test/resume-after-migrations.sh");
+    expect(spawnSync("bash", ["-n", "deploy/domain-test/resume-after-migrations.sh"]).status).toBe(0);
+    expect(recovery).toContain("database_verify");
+    expect(recovery).toContain("exited:0");
+    expect(recovery).toContain("FOWNER");
+    expect(recovery).not.toContain("compose up --no-deps migrate");
+    expect(recovery).not.toContain("pg_restore");
+
     expect(s).not.toContain("down -v");
     expect(s).not.toContain("docker volume rm");
     expect(s).not.toContain("reset-staging-workspace.sh");
