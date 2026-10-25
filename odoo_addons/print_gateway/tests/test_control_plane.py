@@ -22,6 +22,7 @@ from odoo.tests import tagged
 from odoo.tests.common import TransactionCase
 from odoo.exceptions import AccessError, ValidationError
 from odoo.addons.print_gateway.models.gateway_config import PrintGatewayConfig
+from .printer_fixtures import verified_printer
 
 
 @tagged("post_install", "-at_install")
@@ -126,6 +127,98 @@ class TestControlPlane(TransactionCase):
         })
 
         self.primary_binding.fallback_binding_id = self.backup_binding.id
+
+    def _fallback_discovery(self, url, *, bindings=None, **kwargs):
+        """Synthetic HTTP inventory; production assignment/proof checks still run."""
+        bindings = bindings if bindings is not None else self.backup_binding
+        response = MagicMock(status_code=200)
+        if url.endswith("/api/odoo/agents"):
+            response.json.return_value = {"agents": [{
+                "id": agent_id, "lifecycle": "active",
+            } for agent_id in sorted(set(bindings.mapped("runtime_agent_id")))]}
+        elif url.endswith("/api/odoo/printers"):
+            response.json.return_value = {"printers": [verified_printer({
+                "id": binding.printer_id,
+                "agent": {"id": binding.runtime_agent_id},
+                "lifecycle": "active", "protocol": binding.printer_protocol,
+                "connectionType": "network", "sharedWithGateway": True,
+            }) for binding in bindings]}
+        else:
+            self.fail("Unexpected fallback inventory URL")
+        return response
+
+    def _new_fallback_job(self):
+        return self.env["print_gateway.print_job"].create({
+            "company_id": self.branch.id,
+            "gateway_config_id": self.gateway_config.id,
+            "printer_id": self.primary_binding.printer_id,
+            "destination": self.primary_binding.destination_ref.display_name,
+            "destination_key": "%s,%s" % (
+                self.primary_binding.destination_ref._name, self.primary_binding.destination_ref.id,
+            ),
+            "report_id": self.primary_binding.report_id.id,
+            "document_type": self.primary_binding.document_type,
+            "status": "queued",
+            "payload": json.dumps({"type": "escpos", "protocol": "escpos", "encoding": "base64", "data": "dGVzdA=="}),
+            "idempotency_key": "v5-fallback-proof-%s" % uuid.uuid4().hex,
+            "fallback_binding_id": self.backup_binding.id,
+        })
+
+    def test_v5_fallback_rejects_revoked_branch_agent_assignment(self):
+        import requests
+        assignment = self.env["print_gateway.runtime_agent_assignment"].create({
+            "company_id": self.company.id, "branch_id": self.branch.id,
+            "runtime_agent_id": "agent-backup-revoked", "enabled": True,
+        })
+        self.backup_binding.runtime_agent_id = assignment.runtime_agent_id
+        job = self._new_fallback_job()
+        identity = job.idempotency_key
+        assignment.enabled = False
+        error = requests.exceptions.ConnectionError("Connection refused")
+        error.__cause__ = ConnectionRefusedError(111, "Connection refused")
+        with patch.object(type(self.gateway_config), "_validate_gateway_host", return_value=None), \
+             patch.object(type(job), "_primary_shared_for_fallback", return_value=True), \
+             patch("odoo.addons.print_gateway.models.gateway_http.get", side_effect=self._fallback_discovery) as discovery, \
+             patch("odoo.addons.print_gateway.models.gateway_http.post", side_effect=error) as submit:
+            job.action_submit()
+        self.assertEqual(submit.call_count, 1)
+        discovery.assert_not_called()
+        self.assertEqual(job.printer_id, self.primary_binding.printer_id)
+        self.assertEqual(job.status, "queued")
+        self.assertEqual(job.idempotency_key, identity)
+        self.assertEqual(job.attempts, 1)
+
+    def test_v5_fallback_rechecks_current_owner_verification_and_discovery(self):
+        import requests
+        for case in ("other-owner", "stale-proof", "unavailable"):
+            with self.subTest(case=case):
+                job = self._new_fallback_job()
+                identity = job.idempotency_key
+                error = requests.exceptions.ConnectionError("Connection refused")
+                error.__cause__ = ConnectionRefusedError(111, "Connection refused")
+
+                def discovery(url, **kwargs):
+                    if case == "unavailable":
+                        raise requests.exceptions.Timeout("Inventory unavailable")
+                    response = self._fallback_discovery(url, **kwargs)
+                    if url.endswith("/api/odoo/printers"):
+                        printer = response.json.return_value["printers"][0]
+                        if case == "other-owner":
+                            printer["agent"]["id"] = "another-branch-agent"
+                        else:
+                            printer["verificationReceivedAt"] = "2020-01-01T00:00:00Z"
+                    return response
+
+                with patch.object(type(self.gateway_config), "_validate_gateway_host", return_value=None), \
+                     patch.object(type(job), "_primary_shared_for_fallback", return_value=True), \
+                     patch("odoo.addons.print_gateway.models.gateway_http.get", side_effect=discovery), \
+                     patch("odoo.addons.print_gateway.models.gateway_http.post", side_effect=error) as submit:
+                    job.action_submit()
+                self.assertEqual(submit.call_count, 1)
+                self.assertEqual(job.printer_id, self.primary_binding.printer_id)
+                self.assertEqual(job.status, "queued")
+                self.assertEqual(job.idempotency_key, identity)
+                self.assertEqual(job.attempts, 1)
 
     def _fake_persist_job(self, values):
         durable_values = dict(values)
@@ -356,6 +449,7 @@ class TestControlPlane(TransactionCase):
         ConfigClass = type(self.gateway_config)
         with patch.object(ConfigClass, "_validate_gateway_host", return_value=None), \
              patch.object(type(job), "_primary_shared_for_fallback", return_value=True), \
+             patch("odoo.addons.print_gateway.models.gateway_http.get", side_effect=self._fallback_discovery), \
              patch("odoo.addons.print_gateway.models.gateway_http.post", side_effect=[_refused_connection(), mock_resp]):
             job.action_submit()
             self.assertEqual(job.printer_id, self.backup_binding.printer_id, "Job must safely failover to backup printer on pre-dispatch connection error")
@@ -464,6 +558,7 @@ class TestControlPlane(TransactionCase):
 
         with patch.object(ConfigClass, "_validate_gateway_host", return_value=None), \
              patch.object(type(job), "_primary_shared_for_fallback", return_value=True), \
+             patch("odoo.addons.print_gateway.models.gateway_http.get", side_effect=self._fallback_discovery), \
              patch("odoo.addons.print_gateway.models.gateway_http.post", side_effect=[_refused_connection(), _refused_connection()]), \
              patch.object(type(job), "_persist_state", side_effect=_mock_persist_state):
             with self.assertRaises(ValidationError):
@@ -512,6 +607,7 @@ class TestControlPlane(TransactionCase):
         ConfigClass = type(self.gateway_config)
         with patch.object(ConfigClass, "_validate_gateway_host", return_value=None), \
              patch.object(type(job), "_primary_shared_for_fallback", return_value=True), \
+             patch("odoo.addons.print_gateway.models.gateway_http.get", side_effect=self._fallback_discovery), \
              patch("odoo.addons.print_gateway.models.gateway_http.post", side_effect=[exc, mock_resp]):
             job.action_submit()
             self.assertEqual(job.printer_id, self.backup_binding.printer_id)
@@ -799,6 +895,7 @@ class TestControlPlane(TransactionCase):
         ConfigClass = type(self.gateway_config)
         with patch.object(ConfigClass, "_validate_gateway_host", return_value=None), \
              patch.object(type(job), "_primary_shared_for_fallback", return_value=True), \
+             patch("odoo.addons.print_gateway.models.gateway_http.get", side_effect=self._fallback_discovery), \
              patch("odoo.addons.print_gateway.models.gateway_http.post", side_effect=refused):
             # Must terminate gracefully, not hang in recursion
             job.action_submit()
@@ -862,8 +959,14 @@ class TestControlPlane(TransactionCase):
             return exc
 
         ConfigClass = type(self.gateway_config)
+        def chain_inventory(url, **kwargs):
+            return self._fallback_discovery(
+                url, bindings=self.backup_binding | chain_c | chain_d, **kwargs,
+            )
+
         with patch.object(ConfigClass, "_validate_gateway_host", return_value=None), \
              patch.object(type(job), "_primary_shared_for_fallback", return_value=True), \
+             patch("odoo.addons.print_gateway.models.gateway_http.get", side_effect=chain_inventory), \
              patch("odoo.addons.print_gateway.models.gateway_http.post", side_effect=[_refused(), _refused(), _refused(), _refused()]) as mock_post:
             job.action_submit()
             # A->backup->C->D all engaged (3 failovers = MAX depth); a fifth

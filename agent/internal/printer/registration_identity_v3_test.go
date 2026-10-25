@@ -142,13 +142,23 @@ func TestV3ExplicitEndpointChangeKeepsRegistrationAndUsesNewDestination(t *testi
 	for _, transport := range []string{"network", "ipp"} {
 		t.Run(transport, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "printers.json")
-			original := DeviceInfo{ID:"retained-registration", Name:"Operator printer",ConnectionType:transport,Protocol:"raw",Endpoint:"10.0.0.20:9100",PrinterType:"physical",Enabled:true}
-			if transport=="ipp" { original.Protocol="ipp"; original.Endpoint="ipp://10.0.0.20/ipp/print" }
-			if _,err:=RegisterManual(path,original);err!=nil {t.Fatal(err)}
-			changed:=original;changed.Endpoint="10.0.0.30:9100"
-			if transport=="ipp" {changed.Endpoint="ipp://10.0.0.30/ipp/print"}
-			rows,err:=RegisterManual(path,changed)
-			if err!=nil || len(rows)!=1 || rows[0].ID!=original.ID || rows[0].Endpoint!=changed.Endpoint || rows[0].Capabilities["operational_verification"]!=nil {t.Fatalf("explicit reconfiguration was lost or reused old proof: %+v %v",rows,err)}
+			original := DeviceInfo{ID: "retained-registration", Name: "Operator printer", ConnectionType: transport, Protocol: "raw", Endpoint: "10.0.0.20:9100", PrinterType: "physical", Enabled: true}
+			if transport == "ipp" {
+				original.Protocol = "ipp"
+				original.Endpoint = "ipp://10.0.0.20/ipp/print"
+			}
+			if _, err := RegisterManual(path, original); err != nil {
+				t.Fatal(err)
+			}
+			changed := original
+			changed.Endpoint = "10.0.0.30:9100"
+			if transport == "ipp" {
+				changed.Endpoint = "ipp://10.0.0.30/ipp/print"
+			}
+			rows, err := RegisterManual(path, changed)
+			if err != nil || len(rows) != 1 || rows[0].ID != original.ID || rows[0].Endpoint != changed.Endpoint || rows[0].Capabilities["operational_verification"] != nil {
+				t.Fatalf("explicit reconfiguration was lost or reused old proof: %+v %v", rows, err)
+			}
 		})
 	}
 }

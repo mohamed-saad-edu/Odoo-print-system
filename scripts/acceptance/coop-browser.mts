@@ -1,6 +1,6 @@
 /** Real Chromium acceptance for the production opener-policy header.
  * Uses two disposable loopback origins and synthetic cookies. This verifies
- * opener isolation and navigation, not live Stripe payment or deployed TLS.
+ * opener isolation and navigation, not payment processing or deployed TLS.
  * Set YASEIR_PLAYWRIGHT_MODULE and YASEIR_CHROMIUM_EXECUTABLE to verified tools.
  * node --import tsx scripts/acceptance/coop-browser.mts
  */
@@ -47,7 +47,7 @@ externalOrigin = await listen(external);
 const browser = await chromium.launch({ executablePath, headless: true, args: ["--no-sandbox", "--disable-dev-shm-usage"] });
 const report: Record<string, unknown> = {
   success: false, browser_version: browser.version(),
-  scope: "Real Chromium and production header/CSP generators on two loopback origins; synthetic same-tab checkout-style navigation, not live Stripe or deployed TLS; no COEP change",
+  scope: "Real Chromium and production header/CSP generators on two loopback origins; synthetic same-tab external navigation, not payment processing or deployed TLS; no COEP change",
 };
 try {
   const context = await browser.newContext();
@@ -77,8 +77,8 @@ try {
   await sameOriginPopup.close();
 
   const pageCount = context.pages().length;
-  // This is the same top-level navigation primitive used by BillingActions
-  // and onboarding; the external page stands in only for redirect behavior.
+  // Preserve the generic external-navigation check after retirement of the
+  // provider billing flow. The fixture does not exercise an active checkout.
   await Promise.all([
     gatewayPage.waitForURL(`${externalOrigin}/checkout`),
     gatewayPage.evaluate((url: string) => { window.location.href = url; }, `${externalOrigin}/checkout`),

@@ -7,9 +7,9 @@ type Outcome = { successful: boolean; gatewayOutcome?: string; canRetry?: boolea
 const methods = patch.mock.calls.at(-1)?.[1] as { printChanges: (this: unknown, order: unknown, changes: unknown[], reprint?: boolean, printers?: unknown) => Promise<boolean> };
 function fixture(outcome: Outcome) {
   const printers = [{ id: 1, config: { name: "Kitchen A" } }, { id: 2, config: { name: "Kitchen B" } }];
-  const order = { id: 21, isSynced: true, uiState: { lastPrints: [] as unknown[] } };
+  const order = { id: 21, uuid: "order-21", isSynced: true, last_order_preparation_change: { lines: {}, metadata: {} }, uiState: { lastPrints: [] as unknown[] } };
   const pos = {
-    session: { id: 5 }, unwatched: { printers }, models: {},
+    session: { id: 5 }, config: { id: 9 }, company: { id: 3 }, unwatched: { printers }, models: {},
     data: { call: vi.fn(async (_model: string, method: string) => method === "is_gateway_printing_enabled" ? true : { routes: printers.map((p) => ({ pos_printer_id: p.id, category_ids: [1] })), missing_routes: [] }) },
     notification: { add: vi.fn() }, dialog: { add: vi.fn() },
     syncAllOrders: vi.fn(), displayPrinterWarning: vi.fn(),
@@ -19,7 +19,14 @@ function fixture(outcome: Outcome) {
   };
   return { pos, order };
 }
-beforeEach(() => vi.clearAllMocks());
+beforeEach(() => {
+  vi.clearAllMocks();
+  // Each test starts a separate browser scenario. The real recovery module
+  // deliberately preserves unresolved operations across stores/reloads within
+  // a scenario; clearing mock calls must not be mistaken for clearing storage.
+  localStorage.clear();
+  Object.assign(window, { odoo: { __session_info__: { db: "audit_pos_outcomes" } } });
+});
 describe("kitchen completion and replay safety", () => {
   it("keeps a partially accepted change unconsumed and never resends accepted or unknown tickets", async () => {
     const { pos, order } = fixture({ successful: false, gatewayOutcome: "unknown", canRetry: false });

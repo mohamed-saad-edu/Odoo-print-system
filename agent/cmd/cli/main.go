@@ -150,15 +150,15 @@ func handlePrintersSubcommand(args []string, defaultConfigPath string) {
 	case "discover":
 		handlePrintersDiscover(configPath, jsonOutput)
 	case "test":
-		if len(filtered) == 0 {
-			log.Fatal("printers test requires <printer-id>")
+		if len(filtered) != 1 || strings.HasPrefix(filtered[0], "-") {
+			log.Fatal("printers test requires exactly one <printer-id> and no unsupported arguments")
 		}
 		handlePrintersTest(configPath, filtered[0])
 	case "add":
 		handlePrintersAdd(configPath, filtered)
 	case "remove":
-		if len(filtered) == 0 {
-			log.Fatal("printers remove requires <printer-id>")
+		if len(filtered) != 1 || strings.HasPrefix(filtered[0], "-") {
+			log.Fatal("printers remove requires exactly one <printer-id> and no unsupported arguments")
 		}
 		handlePrintersRemove(configPath, filtered[0])
 	default:
@@ -323,6 +323,9 @@ func handlePrintersAdd(configPath string, args []string) {
 	capsJSON := fs.String("capabilities", "", "Capabilities JSON e.g., '{\"paper_widths\":[58,80]}'")
 	connectionTypeAlias := fs.String("connection-type", "", "Alias for --type")
 	fs.Parse(args)
+	if fs.NArg() != 0 {
+		log.Fatalf("printers add received unsupported arguments: %v", fs.Args())
+	}
 
 	// Both alias flags are read from the parsed flag set. The connection-type
 	// alias used to be handled by scanning the raw argument slice for the exact
@@ -346,7 +349,11 @@ func handlePrintersAdd(configPath string, args []string) {
 	if *spoolerName != "" && effectiveEndpoint == "" {
 		effectiveEndpoint = *spoolerName
 	}
-	enabled := strings.ToLower(strings.TrimSpace(*enabledStr)) != "false"
+	enabledValue := strings.ToLower(strings.TrimSpace(*enabledStr))
+	if enabledValue != "true" && enabledValue != "false" {
+		log.Fatal("--enabled requires true or false")
+	}
+	enabled := enabledValue == "true"
 	var caps map[string]interface{}
 	if *capsJSON != "" {
 		// Parse JSON capabilities. An invalid document must not be persisted

@@ -51,7 +51,12 @@ export async function workspaceBrowserAcceptance({ page, context, db, origin, ou
   }
   async function authenticatedLogin() {
     await context.clearCookies(); await context.addCookies([{ name: "__Host-yaseir_locale", value: "en", url: origin, secure: true, sameSite: "Lax" }]);
-    await passwordLogin(); await page.locator("#workspace-confirm-password").waitFor();
+    await passwordLogin();
+    // Ordinary Settings intentionally starts with its security details closed.
+    // Open the real control as an operator would before interacting with it.
+    const securityDetails = page.locator("details").filter({ has: page.locator("#workspace-security") });
+    await securityDetails.locator("summary").click();
+    await page.locator("#workspace-confirm-password").waitFor();
     const state = (await db.query(`SELECT s.family_id FROM workspace_session_security s JOIN refresh_tokens r ON r.family_id=s.family_id
       WHERE s.user_id=$1 AND r.kind='customer' AND r.revoked_at IS NULL AND s.last_seen_at>clock_timestamp()-interval '30 minutes'
       AND s.expires_at>clock_timestamp() ORDER BY r.issued_at DESC,r.id LIMIT 1`, [userId])).rows[0];

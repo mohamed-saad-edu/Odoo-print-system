@@ -74,7 +74,7 @@ describe("windows-service-recovery", () => {
     expect(agentMain).toContain('case "uninstall":');
     expect(agentMain).toContain('case "purge":');
     expect(agentMain).toContain("stopServiceForRemoval");
-    expect(agentMain).toContain("purgeAgentData()");
+    expect(agentMain).toContain("completeAgentUninstall(purgeLegacyAgentServices, purgeAgentData)");
     expect(agentMain).toContain("purgeInstallationData()");
     expect(agentMain).toContain("acquireAgentRuntimeSingleton");
     expect(fs.readFileSync("agent/cmd/agent/runtime_singleton_windows.go", "utf8")).toContain(
@@ -115,7 +115,13 @@ describe("windows-service-recovery", () => {
     expect(windowsInstall).toContain("manager.OpenService(name)");
     expect(windowsInstall).toContain("existing.Delete()");
     expect(agentMain).toContain("purgeLegacyAgentServices()");
-    expect(agentMain.match(/purgeLegacyAgentServices\(\)/g)?.length ?? 0).toBeGreaterThanOrEqual(3);
+    // Uninstall delegates both steps to the tested coordinator. The binding
+    // above must retain the real owned-service remover and Agent-data purge;
+    // install and full purge still invoke the remover directly.
+    expect(agentMain.match(/purgeLegacyAgentServices\(\)/g)?.length ?? 0).toBeGreaterThanOrEqual(2);
+    const uninstall = agentMain.slice(agentMain.indexOf("func completeAgentUninstall("), agentMain.indexOf("func agentRuntimeInfo("));
+    expect(uninstall.indexOf("removeLegacyServices()")).toBeGreaterThanOrEqual(0);
+    expect(uninstall.indexOf("return purgeData()")).toBeGreaterThan(uninstall.indexOf("removeLegacyServices()"));
   });
 
   it("desktop Agent start requires the owned Windows service and never silently falls back", () => {

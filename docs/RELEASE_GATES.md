@@ -1,10 +1,12 @@
 # Release acceptance and recovery
 
-This document is the operational gate for the source hardening dated 2026-10-24.
+This document is the operational gate for the V5 source hardening candidate.
 The source package is a release candidate, **not an authorization to deploy**.
-Use the separately delivered `YASEIR_V4_PRODUCTION_READINESS.md` and verification
-archive for actual results. A missing Windows, hardware or staging
-result must remain blocked, even when software unit tests pass.
+The separately delivered `YASEIR_V4_PRODUCTION_READINESS.md` and its verification
+archive describe the historical V4 baseline. Repeat the applicable gates against
+the exact current candidate; historical passes do not establish a V5 pass. A
+missing Windows, hardware or staging result must remain blocked, even when
+software unit tests pass.
 
 ## Supported execution boundaries
 
@@ -13,7 +15,7 @@ result must remain blocked, even when software unit tests pass.
 | Gateway | Node version in `.nvmrc`, locked npm dependencies, Next production build, PostgreSQL 16+ | Production image, private networking, real proxy/TLS, alerting and sustained load |
 | Go agent | Go version in `agent/go.mod`, read-only module graph, durable SQLite queue | Real Windows/CGO build; SCM/GDI/spooler/USB and supported printer models |
 | Desktop | Rust version in `src-tauri/rust-toolchain.toml` where present, locked Cargo graph, Tauri/NSIS | Real MSVC/Windows SDK build, WebView2, installer/update/uninstall, signed artifact |
-| Odoo addon | Odoo 19; addon `19.0.2.21.0`; persistent data directory; deployment-managed encryption keys | Exact hardened upstream runtime, production addon upgrade, POS/report/printer acceptance |
+| Odoo addon | Odoo 19; addon `19.0.2.25.0`; persistent data directory; deployment-managed encryption keys | Exact hardened upstream runtime, production addon upgrade, POS/report/printer acceptance |
 
 Read `docs/runtime-hardening/` for the exact Odoo runtime dependency
 set and upstream PDF decompression patch. An audit of dependency metadata alone
@@ -94,13 +96,13 @@ for this candidate does not execute Win32 code.
    key versions, Odoo `data_dir/yaseir-print-installations/`, and protected agent
    configuration/SQLite/sharing state. Keep independent encrypted copies and
    restore them in recovery before release. Do not place keys inside a source ZIP.
-3. Upgrade the addon to `19.0.2.21.0` before enforcing the new Gateway status-read
+3. Upgrade the addon to `19.0.2.25.0` before enforcing the Gateway status-read
    contract. Its status batches carry each saved job's version and installation
    proof. Older addon status requests may be rejected by a strict-v2 Gateway.
    Preserve saved operation keys and proofs; do not turn reconciliation failure
    into a new print operation.
 4. Stop every older Gateway instance before applying the forward migrations
-   with `npm run db:migrate`, then start only the matching V4 Gateway. Never
+   with `npm run db:migrate`, then start only the matching V5 Gateway. Never
    rewrite existing SQL or repair hashes.
    Migration 0081 already present in the input removes virtual/redirected
    destinations/history and refuses affected active jobs; its existing backup

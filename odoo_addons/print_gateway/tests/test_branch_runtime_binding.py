@@ -97,6 +97,72 @@ class TestBranchRuntimeBinding(TransactionCase):
         self.assertEqual(set(scope), {"id", "name", "companyId", "branchId", "configId"})
         self.assertNotEqual(scope["id"], self.other_branch.id)
 
+    def test_v4_setup_context_distinguishes_colliding_company_and_branch_labels(self):
+        from odoo.addons.print_gateway.controllers.runtime_printers import PrintGatewayRuntimePrinterController
+        # Odoo enforces unique stored company names, but display normalization
+        # can still make distinct authorized records look identical. Exercise
+        # the real ORM constraint and never merge their authorization scopes.
+        shared = self.company.name
+        self.branch.name = " " + shared
+        self.other_company.name = shared + " "
+        self.other_branch.name = "  " + shared
+        controller = PrintGatewayRuntimePrinterController()
+        with patch("odoo.addons.print_gateway.controllers.runtime_printers.request",
+                   type("RequestStub", (), {"env": self.env})()):
+            result = controller.setup_context()
+        labels = {scope["id"]: scope["name"] for scope in result["scopes"]}
+        self.assertEqual(set(labels), {
+            self.company.id, self.branch.id, self.other_company.id, self.other_branch.id,
+        })
+        self.assertEqual(len(set(labels.values())), 4)
+        self.assertEqual(labels[self.company.id], "%s (#%s)" % (shared, self.company.id))
+        self.assertEqual(labels[self.other_company.id], "%s (#%s)" % (shared, self.other_company.id))
+        self.assertEqual(labels[self.branch.id], "%s / %s (#%s)" % (shared, shared, self.branch.id))
+        self.assertEqual(labels[self.other_branch.id], "%s / %s (#%s)" % (shared, shared, self.other_branch.id))
+        scopes = {scope["id"]: scope for scope in result["scopes"]}
+        self.assertEqual((scopes[self.branch.id]["companyId"], scopes[self.branch.id]["branchId"]),
+                         (self.company.id, self.branch.id))
+        self.assertEqual((scopes[self.other_branch.id]["companyId"], scopes[self.other_branch.id]["branchId"]),
+                         (self.other_company.id, self.other_branch.id))
+        self.assertEqual(scopes[self.company.id]["branchId"], False)
+        self.assertEqual(scopes[self.other_company.id]["branchId"], False)
+
+    def test_v4_setup_context_preserves_unique_company_and_branch_names(self):
+        from odoo.addons.print_gateway.controllers.runtime_printers import PrintGatewayRuntimePrinterController
+        controller = PrintGatewayRuntimePrinterController()
+        with patch("odoo.addons.print_gateway.controllers.runtime_printers.request",
+                   type("RequestStub", (), {"env": self.env})()):
+            result = controller.setup_context()
+        by_id = {scope["id"]: scope for scope in result["scopes"]}
+        self.assertEqual(by_id[self.company.id]["name"], self.company.name)
+        self.assertEqual(by_id[self.branch.id]["name"], "%s / %s" % (self.company.name, self.branch.name))
+        self.assertEqual(by_id[self.other_company.id]["name"], self.other_company.name)
+        self.assertEqual(by_id[self.other_branch.id]["name"],
+                         "%s / %s" % (self.other_company.name, self.other_branch.name))
+        self.assertEqual(len(result["scopes"]), 4)
+
+    def test_nested_branch_is_visible_but_never_selectable_for_direct_binding(self):
+        from odoo.addons.print_gateway.controllers.runtime_printers import PrintGatewayRuntimePrinterController
+        nested = self.env["res.company"].create({
+            "name": "Nested Preparation Branch", "parent_id": self.branch.id,
+        })
+        scoped = self.env(context=dict(self.env.context,
+                                       allowed_company_ids=[self.company.id, self.branch.id, nested.id]))
+        controller = PrintGatewayRuntimePrinterController()
+        with patch("odoo.addons.print_gateway.controllers.runtime_printers.request",
+                   type("RequestStub", (), {"env": scoped})()):
+            result = controller.setup_context()
+            with self.assertRaisesRegex(ValidationError, "Nested Odoo branches"):
+                controller._scope(nested.id, env=scoped)
+        by_id = {scope["id"]: scope for scope in result["scopes"]}
+        self.assertEqual(by_id[nested.id]["companyId"], self.company.id)
+        self.assertEqual(by_id[nested.id]["branchId"], nested.id)
+        self.assertFalse(by_id[nested.id]["assignable"])
+        self.assertFalse(by_id[nested.id]["configId"])
+        self.assertEqual(by_id[nested.id]["name"],
+                         "%s / %s / %s" % (self.company.name, self.branch.name, nested.name))
+        self.assertNotIn("assignable", by_id[self.branch.id])
+
     def test_v4_setup_context_rejects_non_admin_before_reading_configuration(self):
         from odoo.addons.print_gateway.controllers.runtime_printers import PrintGatewayRuntimePrinterController
         controller = PrintGatewayRuntimePrinterController()
@@ -193,6 +259,60 @@ class TestBranchRuntimeBinding(TransactionCase):
             branch = self.env["res.company"].browse(vals["branch_id"]).exists() if vals.get("branch_id") else False
             self._ensure_assignment(vals["runtime_agent_id"], branch=branch)
         return vals
+
+    def test_v5_pairing_uses_selected_agent_id_instead_of_another_agent_name(self):
+        wizard = self.env["print_gateway.pair_agent_wizard"].create({
+            "config_id": self.config.id, "branch_id": self.branch.id, "agent_id": "agent-b",
+        })
+        inventory = [
+            {"id": "agent-a", "name": "agent-b", "lifecycle": "active"},
+            {"id": "agent-b", "name": "Kitchen workstation", "lifecycle": "active"},
+        ]
+        with patch("odoo.addons.print_gateway.models.gateway_config.requests.get", return_value=Response({"agents": inventory})), \
+             patch("odoo.addons.print_gateway.models.gateway_config.PrintGatewayConfig._validate_gateway_host", return_value=None):
+            wizard.action_confirm_pairing()
+        assignments = self.env["print_gateway.runtime_agent_assignment"].search([
+            ("company_id", "=", self.company.id), ("branch_id", "=", self.branch.id),
+        ])
+        self.assertEqual(assignments.mapped("runtime_agent_id"), ["agent-b"])
+        self.assertTrue(assignments.enabled)
+
+    def test_v5_pairing_reenables_existing_assignment_only_in_the_selected_scope(self):
+        selected = self._ensure_assignment("agent-a", branch=self.branch, enabled=False)
+        root = self._ensure_assignment("agent-a", enabled=False)
+        wizard = self.env["print_gateway.pair_agent_wizard"].create({
+            "config_id": self.config.id, "branch_id": self.branch.id, "agent_id": "agent-a",
+        })
+        with patch("odoo.addons.print_gateway.models.gateway_config.requests.get", return_value=Response({"agents": self.agents})), \
+             patch("odoo.addons.print_gateway.models.gateway_config.PrintGatewayConfig._validate_gateway_host", return_value=None):
+            wizard.action_confirm_pairing()
+            wizard.action_confirm_pairing()
+        self.assertTrue(selected.enabled)
+        self.assertFalse(root.enabled)
+        self.assertEqual(self.env["print_gateway.runtime_agent_assignment"].search_count([
+            ("company_id", "=", self.company.id), ("branch_id", "=", self.branch.id),
+            ("runtime_agent_id", "=", "agent-a"),
+        ]), 1)
+
+    def test_v5_pairing_rejects_name_only_match_and_malformed_inventory(self):
+        wizard = self.env["print_gateway.pair_agent_wizard"].create({
+            "config_id": self.config.id, "branch_id": self.branch.id, "agent_id": "agent-b",
+        })
+        inventories = [
+            ([{"id": "agent-a", "name": "agent-b", "lifecycle": "active"}], "not found"),
+            ([{"id": 17, "lifecycle": "active"}, None], "not found"),
+            (None, "invalid agent discovery response"),
+            ({"id": "agent-b"}, "invalid agent discovery response"),
+        ]
+        for inventory, message in inventories:
+            with self.subTest(inventory=inventory), \
+                 patch("odoo.addons.print_gateway.models.gateway_config.requests.get", return_value=Response({"agents": inventory})), \
+                 patch("odoo.addons.print_gateway.models.gateway_config.PrintGatewayConfig._validate_gateway_host", return_value=None):
+                with self.assertRaisesRegex(ValidationError, message):
+                    wizard.action_confirm_pairing()
+        self.assertFalse(self.env["print_gateway.runtime_agent_assignment"].search([
+            ("company_id", "=", self.company.id), ("branch_id", "=", self.branch.id),
+        ]))
 
     def test_root_company_cannot_be_used_as_branch(self):
         model = self.env["print_gateway.runtime_agent_assignment"]

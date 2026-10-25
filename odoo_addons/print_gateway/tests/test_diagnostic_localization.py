@@ -4,7 +4,9 @@ from lxml import html as lxml_html
 from pathlib import Path
 
 import polib
+import re
 
+from odoo.exceptions import ValidationError
 from odoo.tests import tagged
 from odoo.tests.common import TransactionCase
 from odoo.tools.translate import code_translations, xml_translate
@@ -12,6 +14,17 @@ from odoo.tools.translate import code_translations, xml_translate
 
 @tagged("post_install", "-at_install")
 class TestDiagnosticReportEncoding(TransactionCase):
+    def test_v5_raw_template_validation_is_fully_localized_in_arabic(self):
+        self.env["res.lang"]._activate_lang("ar_001")
+        for template in ("{name:>999999999}", "{name", "{name:??}", "{name.__class__}"):
+            with self.subTest(template=template):
+                policy = self.env["print_gateway.policy"].with_context(lang="ar_001").new({
+                    "name": "قاعدة اختبار", "raw_template": template, "raw_protocol": "zpl",
+                })
+                with self.assertRaises(ValidationError) as raised:
+                    policy.render_raw_template(self.env.company)
+                self.assertFalse(re.search(r"[A-Za-z]", str(raised.exception)), str(raised.exception))
+
     def test_catalog_code_terms_are_loaded_by_odoo(self):
         catalog = polib.pofile(str(Path(__file__).resolve().parents[1] / "i18n/ar.po"))
         python_terms = code_translations.get_python_translations("print_gateway", "ar_001")
@@ -29,6 +42,11 @@ class TestDiagnosticReportEncoding(TransactionCase):
     def test_configuration_display_name_identifies_its_company(self):
         config = self.env["print_gateway.gateway_config"].new({"company_id": self.env.company.id})
         self.assertEqual(config.display_name, self.env.company.display_name)
+        for language in ("en_US", "ar_001"):
+            job = self.env["print_gateway.print_job"].with_context(lang=language).new({
+                "destination": "فاتورة المقهى / Invoice 1042",
+            })
+            self.assertEqual(job.display_name, job.destination)
 
     def test_configuration_status_uses_each_readers_language(self):
         self.env["res.lang"]._activate_lang("ar_001")

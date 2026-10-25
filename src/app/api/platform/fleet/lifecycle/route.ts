@@ -52,6 +52,10 @@ export async function POST(req: Request) {
     const result = await db.transaction(async (tx) => {
       // Activation additionally checks active tenancy and billing under locks.
       if (nextLifecycle === "active") await requireActiveTenantInTransaction(tx, tenantId);
+      // Keep tenant -> device -> actor order even when disabling. The later
+      // audit FK must not wait for a Workspace transition that holds the tenant
+      // while waiting for our actor. Disablement is allowed while suspended.
+      else await tx.execute(sql`SELECT id FROM tenants WHERE id = ${tenantId} FOR SHARE`);
 
       if (kind === "agents") {
         const existing = await tx.select({

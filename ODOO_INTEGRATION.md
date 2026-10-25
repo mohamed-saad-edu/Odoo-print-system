@@ -1,6 +1,119 @@
 # Odoo Integration Guide
 
-> Module: `print_gateway` | Version: 19.0.2.21.0 | Odoo: 19 Community Edition
+> Module: `print_gateway` | Version: 19.0.2.25.0 | Odoo: 19 Community Edition
+
+## Printer company/branch dropdown repair (19.0.2.22.0)
+
+When separate Odoo companies or branches share the name `My Company`, the
+printer selector must show each authorized scope distinctly, including its
+company or branch identifier when necessary. The backend returns stable IDs
+and explicit root/branch metadata; the OWL selector also disambiguates legacy
+duplicate labels. **No company records or printer assignments are merged.**
+
+**Important: this screen is hosted by Odoo, not by the Azure Gateway.**
+Updating `test/http-server-ready`, the Gateway container or the Windows
+Agent does NOT replace the files of an already-installed Odoo addon. To deploy
+this fix, copy the updated `odoo_addons/print_gateway` tree into the running
+Odoo 19 instance's configured `addons_path` (preserving Odoo's persistent
+data directory and database), take an Odoo database backup, restart its Odoo
+workers, and upgrade the module against the correct Odoo database with
+`-u print_gateway --stop-after-init` using that instance's normal deployment
+procedure. Rebuild/reload Odoo backend assets, then hard-refresh the browser.
+
+To verify, inspect the browser's Network response to
+`POST /print_gateway/setup-context`: each `scopes[]` entry should have
+the correct distinct `id`, `companyId` and `branchId`, with unique labels.
+If the API still returns only `My Company` for all entries, the running Odoo
+workers have not loaded this controller update. A simple Gateway restart is
+not sufficient. Do not share cookies, authentication tokens or API keys from
+the developer tools.
+
+## 19.0.2.25.0: exact RPC IDs, collision-free labels, visible selection
+
+The scope RPC now rejects fractional, boolean, padded, negative or malformed
+explicit company/branch IDs instead of coercing them to another Odoo company.
+`False`/`None` remains the Odoo convention for an omitted field. Server labels
+are checked for collisions after applying disambiguation suffixes (including
+literal company names such as `My Company (#2)`). Every option retains its
+original `id`, `companyId`, `branchId` and assignment boundary.
+
+The OWL company and agent selectors bind each option's selected state to the
+same state values passed to the print APIs. This avoids relying on a `value`
+attribute on a `<select>` (which alone does not select an HTML option).
+No default/first printer fallback was introduced. This is a source fix, **not**
+a claim of actual Odoo browser asset validation: verify the live selector and
+that `print_gateway.PrintersOverview` is present in the actual recompiled
+backend bundle after the database-specific Odoo module upgrade below.
+
+## 19.0.2.24.0: exact branch selection and fail-closed rollout
+
+The revised selector explicitly prefixes **Company** or **Branch** and adds
+Odoo record IDs only when human-readable names collide. An action opened for
+an explicit branch selects that exact authorized branch, not the parent
+company. A revoked or stale scope clears the selection and requires an
+explicit new choice; it must not silently switch to the first company.
+
+The existing binding and print-rule schemas accept **direct child branches**
+only. Nested branches (grandchildren) are displayed with their full ancestry
+but disabled, and controller requests for them fail closed instead of
+promoting an intermediate parent to a root. Supporting nested routing
+requires a separately tested data-model/authorization migration and is not
+certified in this release. Do **not** remove or merge companies to fix labels.
+
+### Non-destructive source-to-Odoo deployment checklist
+
+1. **Identify the actual Odoo database and server** that hosts the installed
+   addon, rather than assuming it is the Azure Gateway. Record the configured
+   `addons_path`, current module version, PostgreSQL credentials provisioned
+   by that instance, and the Odoo service manager. Preserve the persistent
+   filestore and encryption keys. The Odoo CLI example below runs on that
+   specific server, not on the Gateway.
+2. Stop incoming print rule changes/automatic dispatch during the maintenance
+   window, and record current queued/unknown intents for reconciliation.
+   Take a verified PostgreSQL custom-format database dump and independent
+   filestore backup. Restrict both backup files to the operator; test a
+   restore into a separate, disposable PostgreSQL database first.
+3. Copy **only** `odoo_addons/print_gateway/` from this final V5 source
+   into the instance's existing addons location. Verify the new manifest
+   version `19.0.2.25.0` there and do not overwrite other addons.
+4. With the Odoo HTTP workers stopped according to that instance's
+   deployment procedure, run the non-destructive module upgrade against
+   the correct database. Substitute real deployment values, not example
+   defaults:
+
+   ```bash
+   odoo --config "$ODOO_CONFIG" --database "$ODOO_DB" \
+     --db-filter "^${ODOO_DB}$" --update print_gateway \
+     --stop-after-init --no-http
+   ```
+
+   Do not run this command if the destination database, service account,
+   configuration or backup has not been established. A failed upgrade must
+   be investigated against its own logs before further changes.
+5. Restart that Odoo instance's workers through its service manager. Let Odoo
+   generate the backend asset bundle, open the printer screen with
+   `?debug=assets` to inspect current asset source, then reload normally in
+   a fresh browser session (bypass stale browser assets). Never delete all
+   `ir.attachment` rows or force unrelated module upgrades.
+6. Inspect the authenticated `POST /print_gateway/setup-context` response:
+   one entry per authorized record ID, explicit `companyId` / `branchId`,
+   non-selectable nested scopes, and unique visible Company/Branch labels.
+   Confirm the loaded JavaScript uses `resolvePrinterScopeSelection`, test
+   same-name root/branch records, access revocation, a branch-specific
+   document binding, and an actual test print to the **selected** device.
+   Production confirmation needs a running Odoo 19 environment and hardware;
+   static source tests alone are not evidence of rollout.
+7. Reconcile pending and unknown print outputs before resuming automatic
+   dispatch. Keep the backup and rollback decision point: after any new
+   production writes, restoring an old database can lose valid print/financial
+   events, so prefer reverting code **only if schema-compatible**, otherwise
+   perform a controlled service outage and a reconciled database restore.
+
+For Odoo.sh, deploy the addon through its supported custom-modules branch,
+run the Odoo Apps module upgrade on a staging database first, and inspect
+its built assets there. Odoo Online does not support arbitrary Python addons.
+The Azure Gateway release by itself never updates a separately installed
+Odoo addon.
 
 ## Overview
 

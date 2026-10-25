@@ -13,6 +13,15 @@ from odoo.tests.common import TransactionCase
 
 @tagged("post_install", "-at_install")
 class TestPrintGatewayIntentRecovery(TransactionCase):
+    def _cleanup_committed_policy(self, policy_id):
+        # These independent-cursor fixtures survive TransactionCase rollback.
+        # Remove only this test's policy and its intents so a later native
+        # upgrade run cannot accidentally dispatch synthetic recovery rules.
+        with self.env.registry.cursor() as cr:
+            cr.execute("DELETE FROM print_gateway_intent WHERE policy_id = %s", (policy_id,))
+            cr.execute("DELETE FROM print_gateway_policy WHERE id = %s", (policy_id,))
+            cr.commit()
+
     def test_companyless_intents_are_rejected_before_recovery_can_process_them(self):
         self.assertTrue(self.env["print_gateway.intent"]._fields["company_id"].required)
         stock_model = self.env["ir.model"].search([("model", "=", "stock.picking")], limit=1)
@@ -53,6 +62,7 @@ class TestPrintGatewayIntentRecovery(TransactionCase):
                 "raw_protocol": "zpl",
                 "raw_template": "^XA^FD{id}^FS^XZ",
             })
+            self.addCleanup(self._cleanup_committed_policy, policy.id)
             exhausted_vals = [{
                 "company_id": company.id,
                 "intent_key": "exhausted-%s-%s" % (uuid.uuid4().hex, index),
@@ -118,6 +128,7 @@ class TestPrintGatewayIntentRecovery(TransactionCase):
                 "raw_protocol": "zpl",
                 "raw_template": "^XA^FD{id}^FS^XZ",
             })
+            self.addCleanup(self._cleanup_committed_policy, policy.id)
             intent = env["print_gateway.intent"].create({
                 "company_id": company.id,
                 "intent_key": "final-attempt-recovery-%s" % uuid.uuid4().hex,
@@ -184,6 +195,7 @@ class TestPrintGatewayIntentRecovery(TransactionCase):
                 "raw_protocol": "zpl",
                 "raw_template": "^XA^FD{id}^FS^XZ",
             })
+            self.addCleanup(self._cleanup_committed_policy, policy.id)
             intent = env["print_gateway.intent"].create({
                 "company_id": env.company.id,
                 "intent_key": "setup-failure-%s" % uuid.uuid4().hex,
@@ -237,6 +249,7 @@ class TestPrintGatewayIntentRecovery(TransactionCase):
                 "raw_protocol": "zpl",
                 "raw_template": "^XA^FD{id}^FS^XZ",
             })
+            self.addCleanup(self._cleanup_committed_policy, policy.id)
             intent = env["print_gateway.intent"].create({
                 "company_id": env.company.id,
                 "intent_key": "lease-diagnostic-%s" % uuid.uuid4().hex,

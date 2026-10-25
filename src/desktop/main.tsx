@@ -246,7 +246,7 @@ export default function App() {
   const [lastStatusCheck, setLastStatusCheck] = useState<string | null>(null);
   const [showAdd, setShowAdd] = useState(false);
   const [selectedPrinterSnapshot, setSelectedPrinter] = useState<PrinterInfo | null>(null);
-  const [selectedJob, setSelectedJob] = useState<JobRecord | null>(null);
+  const [selectedJobSnapshot, setSelectedJob] = useState<JobRecord | null>(null);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [gatewayChecking, setGatewayChecking] = useState(false);
   const [checkedGatewayUrl, setCheckedGatewayUrl] = useState("");
@@ -257,6 +257,20 @@ export default function App() {
   useEffect(() => {
     const timer = setInterval(() => setNowMs(Date.now()), 15000);
     return () => clearInterval(timer);
+  }, []);
+  const invalidateGatewayInventory = useCallback((nextUrl: string) => {
+    if (savedOriginRef.current === nextUrl) return;
+    // A native save may commit even when its change event is lost. Every
+    // durable origin transition must discard the previous Gateway's rows,
+    // selections and in-flight reads before the new origin becomes active.
+    gatewayConnectivityRef.current = emptyGatewayConnectivityEvidence(nextUrl);
+    ++printersGeneration.current; ++jobsGeneration.current; ++healthGeneration.current;
+    setPrintersLoading(false); setJobsLoading(false);
+    setPrintersError(null); setJobsError(null);
+    setPrinters([]); setJobs([]);
+    setSelectedPrinter(null); setSelectedJob(null);
+    setPairedOrigin(null); setJobPrinterFilter(null);
+    setRepeatDiagnosticPrinterId(null); setShowAdd(false);
   }, []);
   const savedOriginMatches = useCallback((targetUrl: string): boolean => {
     try {
@@ -544,6 +558,7 @@ export default function App() {
             reconcile: errMsg(reconcileError),
           }));
         }
+        invalidateGatewayInventory(durable);
         savedOriginRef.current = durable;
         setSavedGatewayUrl(durable);
         let normalizedDurable = "";
@@ -554,6 +569,7 @@ export default function App() {
 
       // The candidate is now both positively observed and durably selected.
       // Update the renderer even if the native config-change event was lost.
+      invalidateGatewayInventory(target);
       savedOriginRef.current = target;
       setSavedGatewayUrl(target);
       setGw(target);
@@ -581,7 +597,7 @@ export default function App() {
       configurationFlight.current = false;
       setGatewayChecking(false);
     }
-  }, [gatewayUrl, t, locale, observeGatewayFailure, observeGatewaySuccess, savedOriginMatches]);
+  }, [gatewayUrl, t, locale, observeGatewayFailure, observeGatewaySuccess, savedOriginMatches, invalidateGatewayInventory]);
 
   const handleDiscover = useCallback(async () => {
     if (!isTauri) return;
@@ -897,15 +913,11 @@ export default function App() {
       try { canonicalUrl = normalizeGatewayUrl(url); } catch { /* preserve invalid value for visible repair */ }
       // Invalidate stale Gateway inventory on origin change. The paired CLI
       // binds all requests to the current Agent configuration.
+      invalidateGatewayInventory(canonicalUrl);
       savedOriginRef.current = canonicalUrl;
-      gatewayConnectivityRef.current = emptyGatewayConnectivityEvidence(canonicalUrl);
-      ++printersGeneration.current; ++jobsGeneration.current; ++healthGeneration.current;
-      setPrintersLoading(false); setJobsLoading(false);
-      setPrintersError(null); setJobsError(null); setSelectedPrinter(null); setSelectedJob(null); void refreshLocalPrinters();
+      void refreshLocalPrinters();
       setSavedGatewayUrl(canonicalUrl);
       setGw(canonicalUrl);
-      setJobs([]);
-      setPrinters([]);
       if (canonicalUrl) {
         void probeGateway(canonicalUrl);
       } else {
@@ -925,7 +937,7 @@ export default function App() {
       unlisten?.();
       unlisten = undefined;
     };
-  }, [probeGateway, refreshStatus, refreshLocalPrinters, t]);
+  }, [probeGateway, refreshStatus, refreshLocalPrinters, t, invalidateGatewayInventory]);
 
   // Affirmative observations only: an empty/missing health object, an agent
   // status without running:true, or a probe older than the freshness window
@@ -1112,9 +1124,10 @@ export default function App() {
     : null;
   const selectedPrinter = resolvedSelectedPrinter;
   const selectedPrinterView = selectedPrinter ? printerPresentation(selectedPrinter, undefined, nowMs) : null;
-  const resolvedSelectedJob = selectedJob
-    ? jobs.find((j) => jobId(j) === jobId(selectedJob)) ?? null
+  const resolvedSelectedJob = selectedJobSnapshot
+    ? jobs.find((j) => jobId(j) === jobId(selectedJobSnapshot)) ?? null
     : null;
+  const selectedJob = resolvedSelectedJob;
   const state: DesktopState = {
     page,
     navigate,

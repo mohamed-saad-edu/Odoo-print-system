@@ -6,6 +6,7 @@ exercise them with small record fixtures and inspect the transaction boundary.
 import ast
 import copy
 import logging
+import tracemalloc
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from types import SimpleNamespace
@@ -190,6 +191,31 @@ def test_raw_template_length_is_bounded_before_record_access():
     with pytest.raises(ValidationError, match='2 MiB'):
         _harness('X' * (2*1024*1024 + 1)).render_raw_template(record)
     assert not record.reads
+
+
+def test_repeated_legal_widths_cannot_allocate_the_whole_oversized_raw_document():
+    # Every placeholder is independently legal, but their combined expansion
+    # is 8 MiB. The renderer must reject while accumulating at its 2 MiB bound,
+    # before allocating the full result and another full UTF-8 encoding.
+    policy = _harness('{name:4096}' * 2048)
+    record = Record()
+    tracemalloc.start()
+    try:
+        with pytest.raises(ValidationError, match='Rendered raw printer template exceeds the 2 MiB'):
+            policy.render_raw_template(record)
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert peak < 6 * 1024 * 1024, f'oversized expansion allocated {peak} bytes before rejection'
+
+
+def test_raw_template_segment_rendering_preserves_escaped_braces_and_unicode_bound():
+    record = Record()
+    assert _harness('{{label}}:{name:>12}:{{end}}').render_raw_template(record) == '{label}:    testNAME:{end}'
+    at_limit = 'ص' * (1024 * 1024)
+    assert _harness(at_limit).render_raw_template(record) == at_limit
+    with pytest.raises(ValidationError, match='2 MiB'):
+        _harness(at_limit + '{name}').render_raw_template(record)
 
 
 def test_each_business_policy_hook_catches_only_after_savepoint():

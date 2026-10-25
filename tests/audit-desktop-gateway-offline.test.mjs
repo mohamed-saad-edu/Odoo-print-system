@@ -101,6 +101,7 @@ test("failed candidate check keeps configuration and presents HTTP guidance once
     observeGatewayFailure: () => false,
     observeGatewaySuccess: () => true,
     savedOriginMatches: () => false,
+    invalidateGatewayInventory: () => assert.fail("a failed candidate probe must preserve the saved Gateway inventory"),
     errMsg: (error) => error instanceof Error ? error.message : String(error),
   }, (source) => `${slice(source, "const checkHealth = useCallback", "const handleDiscover = useCallback")}\nexport { checkHealth };`);
   await api.checkHealth();

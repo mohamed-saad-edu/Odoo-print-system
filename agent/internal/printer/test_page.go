@@ -19,29 +19,42 @@ func selectLocalTestTarget(registered, configured []DeviceInfo, requested string
 	if requested == "" {
 		return nil, fmt.Errorf("printer selection requires a stable ID or unique name")
 	}
-	for _, exact := range []bool{true, false} {
-		for _, records := range [][]DeviceInfo{registered, configured} {
-			var selected *DeviceInfo
-			for _, row := range records {
-				matches := row.ID == requested
-				if !exact {
-					matches = row.SpoolerName == requested || row.Name == requested
-				}
-				if !matches {
-					continue
-				}
-				if selected != nil {
-					return nil, fmt.Errorf("printer selection %q is ambiguous; use a unique stable printer ID", requested)
-				}
+	// Stable IDs retain registry precedence. A friendly name must be unique
+	// across both sources: the same name can describe different destinations.
+	for _, records := range [][]DeviceInfo{registered, configured} {
+		var selected *DeviceInfo
+		for _, row := range records {
+			if row.ID != requested {
+				continue
+			}
+			if selected != nil {
+				return nil, fmt.Errorf("printer selection %q is ambiguous; use a unique stable printer ID", requested)
+			}
+			copy := row
+			selected = &copy
+		}
+		if selected != nil {
+			return selected, nil
+		}
+	}
+	var selected *DeviceInfo
+	for _, records := range [][]DeviceInfo{registered, configured} {
+		matchedInSource := false
+		for _, row := range records {
+			if row.SpoolerName != requested && row.Name != requested {
+				continue
+			}
+			if matchedInSource || (selected != nil && (selected.ID == "" || selected.ID != row.ID)) {
+				return nil, fmt.Errorf("printer selection %q is ambiguous; use a unique stable printer ID", requested)
+			}
+			matchedInSource = true
+			if selected == nil {
 				copy := row
 				selected = &copy
 			}
-			if selected != nil {
-				return selected, nil
-			}
 		}
 	}
-	return nil, nil
+	return selected, nil
 }
 
 // boundedDiagnosticPaper selects a short diagnostic on a narrow, long roll.

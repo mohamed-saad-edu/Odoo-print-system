@@ -1520,7 +1520,6 @@ export function Menu({
         type="button"
         aria-haspopup="menu"
         aria-expanded={open}
-        aria-label={label}
         onClick={() => {
           if (open) close(false);
           else {
@@ -1531,7 +1530,8 @@ export function Menu({
         }}
         className={`inline-flex w-full items-center ${focusRing}`}
       >
-        {trigger}
+        {trigger}{" "}
+        <span className="sr-only">{label}</span>
       </button>
       {menuNode}
     </div>

@@ -63,7 +63,9 @@ else
           else
             paths_file="$(mktemp)"
             trap 'rm -f "$paths_file"' EXIT
-            if git diff --name-only -z "$base" "$head" > "$paths_file"; then
+            # Classify both sides of a rename. A runtime file moved under
+            # docs must still run the checks for its deleted source path.
+            if git diff --no-renames --name-only -z "$base" "$head" > "$paths_file"; then
               mapfile -d '' -t files < "$paths_file"
             else
               full=true
@@ -135,6 +137,14 @@ else
           *.js|*.ts|*.mjs) mark codeql_js ;;
         esac
         ;;
+      tests/ci-image-mirror-current-run.node.test.mjs)
+        # This contract controls the native Odoo image/security gate and must
+        # not let a passing generic app check mask a cancelled Odoo scan.
+        mark app odoo docker_scan supply codeql_js codeql_py ;;
+      scripts/check-proxy-boundary.py|tests/test_ci_proxy_boundary.py)
+        mark app docker codeql_py ;;
+      tests/test_ci_audit_fixture.py)
+        mark app supply codeql_py ;;
       tests/*)
         mark app
         case "$file" in
@@ -152,7 +162,9 @@ else
         mark docker docker_scan supply
         ;;
       security/image-vulnerability-baseline.json)
-        mark docker_scan supply
+        # Includes the pinned Odoo image's reviewed vulnerability inventory.
+        # Always re-run actual native image tests and its SARIF review.
+        mark odoo docker_scan supply
         ;;
       eslint.config.mjs|.oxlintrc.json|vitest*.mts|.npmrc|typography/*)
         mark app codeql_js

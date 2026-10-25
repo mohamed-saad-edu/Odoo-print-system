@@ -457,6 +457,9 @@ const (
 	discoveryReportMaxDevices   = 250
 	discoveryReportDeviceBudget = 900 << 10
 	discoveryReportBodyLimit    = 2 << 20
+	// Successful acknowledgments include per-device rejection details. Their
+	// bounded envelope can be larger than the diagnostic text of an HTTP error.
+	discoveryReportAckBodyLimit = 2 << 20
 )
 
 func buildDiscoveryReportPayloads(discoveryID, status string, devices []map[string]interface{}, sourceErrors []string) ([][]byte, error) {
@@ -592,12 +595,26 @@ func (a *Agent) reportDiscoveryResult(ctx context.Context, discoveryID, status s
 			resp, err := a.client.Do(req)
 			if err == nil {
 				code := resp.StatusCode
-				responseBody, drainErr := io.ReadAll(io.LimitReader(resp.Body, 8<<10))
+				responseLimit := maxGatewayErrorBodyBytes
+				if code >= 200 && code < 300 {
+					responseLimit = discoveryReportAckBodyLimit
+				}
+				responseBody, drainErr := io.ReadAll(io.LimitReader(resp.Body, int64(responseLimit)+1))
 				if drainErr != nil {
 					log.Printf("[discovery] gateway response drain failed for %s: %v", discoveryID, drainErr)
 				}
 				_ = resp.Body.Close()
 				if code >= 200 && code < 300 {
+					var acknowledgment struct {
+						OK bool `json:"ok"`
+					}
+					// Only a complete positive Gateway acknowledgment permits the
+					// next page, especially the terminal completion page. A 2xx
+					// response with a truncated or invalid body proves no commit.
+					if drainErr != nil || len(responseBody) > discoveryReportAckBodyLimit || json.Unmarshal(responseBody, &acknowledgment) != nil || !acknowledgment.OK {
+						log.Printf("[discovery] %s report incomplete: page %d/%d returned no valid positive acknowledgment", discoveryID, batchIndex+1, len(batches))
+						return
+					}
 					acknowledged = true
 					break
 				}

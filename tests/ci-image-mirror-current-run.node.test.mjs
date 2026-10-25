@@ -100,7 +100,29 @@ test('Odoo CI tests the built hardened runtime by content ID with verified immut
   assert.equal(ci.split('image-ref: ${{ steps.hardened-image.outputs.image_id }}').length - 1, 2);
   assert.ok(ci.includes('output: odoo-hardened.cdx.json'));
   assert.ok(ci.includes('output: odoo-hardened.sarif'));
-  assert.match(ci, /output: odoo-hardened\.sarif\n\s+severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL\n\s+limit-severities-for-sarif: true\n\s+ignore-unfixed: false\n\s+exit-code: '1'/);
+  // Keep every finding in the exact image SARIF. A separate source-bound,
+  // expiring review must reject all new, high-risk and secret findings.
+  const scan = ci.split('      - name: Scan the exact tested Odoo image')[1]
+    ?.split('      - name: Enforce reviewed Odoo image findings')[0];
+  const gate = ci.split('      - name: Enforce reviewed Odoo image findings')[1]
+    ?.split('      - name: Retain exact Odoo image evidence')[0];
+  assert.ok(scan && gate);
+  for (const field of [
+    'output: odoo-hardened.sarif',
+    'severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL',
+    'limit-severities-for-sarif: true',
+    'ignore-unfixed: false',
+    "exit-code: '0'",
+  ]) assert.ok(scan.includes(field), field);
+  for (const file of [
+    'Dockerfile.odoo-hardened',
+    'docs/runtime-hardening/requirements-python312-linux-x86_64.lock',
+    'docs/runtime-hardening/build-tools.lock',
+  ]) assert.ok(gate.includes('git hash-object ' + file), file);
+  assert.ok(gate.includes('scripts/check-trivy-baseline.py odoo-hardened.sarif yaseir-odoo-hardened:review-20261025'));
+  const findings = JSON.parse(load('security/image-vulnerability-baseline.json')).images['yaseir-odoo-hardened:review-20261025'].findings;
+  assert.equal(findings.length, 72);
+  assert.ok(findings.every((row) => row.length === 3 && ['LOW', 'MEDIUM'].includes(row[2])));
 });
 
 test('Docker CI image references remain immutable and reject mutable tags', () => {

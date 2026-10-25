@@ -133,7 +133,7 @@ export function PlatformSidebar({
         style={{ width: "var(--nav-w)", transition: hydrated ? "width var(--dur-normal) var(--ease-out)" : undefined }}
       >
         <div className={["flex min-h-18 shrink-0 items-center gap-2 border-b border-edge-subtle py-3", collapsed ? "justify-center px-2" : "px-4"].join(" ")}>
-          <Link href="/platform/dashboard" aria-label={t("nav.home")} className="flex min-w-0 items-center rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/35">
+          <Link href="/platform/dashboard" aria-label={collapsed ? t("nav.home") : undefined} title={t("nav.home")} className="flex min-w-0 items-center rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/35">
             <BrandMark size="sm" subtitle={t("platform.brand.controlPlane")} showWordmark={!collapsed} />
           </Link>
           {!collapsed && (

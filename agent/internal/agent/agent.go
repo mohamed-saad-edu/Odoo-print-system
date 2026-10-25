@@ -618,6 +618,7 @@ func printerConfigFromDeviceInfo(di printer.DeviceInfo) config.PrinterConfig {
 	// serial) and everything the heartbeat reports (capabilities, class)
 	// must survive this translation; dropping fields here silently
 	// degrades direct-USB printers to VID 0/PID 0.
+	enabled := di.Enabled
 	return config.PrinterConfig{
 		ID:              di.ID,
 		Name:            di.Name,
@@ -631,6 +632,7 @@ func printerConfigFromDeviceInfo(di printer.DeviceInfo) config.PrinterConfig {
 		USBPID:          di.USBPID,
 		USBSerial:       di.USBSerial,
 		Capabilities:    di.Capabilities,
+		Enabled:         &enabled,
 	}
 }
 
@@ -673,13 +675,21 @@ func (a *Agent) mergeDiscoveredPrinter(di printer.DeviceInfo) (bool, error) {
 // discovered/manual printers idempotently, so repeated discovery does not
 // create duplicates and the production config does not depend on printers: [].
 func New(cfg *config.Config, configPath string) (*Agent, error) {
+	registryPath := config.RegistryPath(configPath)
+	// Saved printer authority must be readable before configured or discovered
+	// backends are admitted. An absent file is the normal first-install state;
+	// an unreadable existing file requires explicit repair and is left intact.
+	// Check before opening the durable queue so failed recovery cannot alter it.
+	registered, err := printer.LoadRegistryPrinters(registryPath)
+	if err != nil {
+		return nil, fmt.Errorf("load saved printer authority: %w", err)
+	}
+	disabled := printer.NewLocalPrinterDisablement(cfg, registered)
 	dbPath := config.QueueDBPath(configPath)
 	q, err := queue.New(dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("open local queue at %s: %w", dbPath, err)
 	}
-
-	registryPath := config.RegistryPath(configPath)
 
 	a := &Agent{
 		cfg:          cfg,
@@ -729,6 +739,9 @@ func New(cfg *config.Config, configPath string) (*Agent, error) {
 			log.Printf("WARNING: printer %q local output profile is unavailable", pc.ID)
 			continue
 		}
+		if disabled.Disabled(pc) {
+			continue
+		}
 		p, err := printer.New(pc)
 		if err != nil {
 			log.Printf("WARNING: printer %q (%s) not initialized: %v", pc.ID, pc.Name, err)
@@ -770,8 +783,9 @@ func New(cfg *config.Config, configPath string) (*Agent, error) {
 	return a, nil
 }
 
-// A persistence failure must not discard successfully observed hardware.
-// The inventory capability carries the failure until a later successful scan.
+// A failed new write retains observations with a diagnostic. An unreadable
+// saved registry is different: prior operator authority cannot be reconstructed
+// from a fresh observation, so it cannot become a runtime fallback.
 func (a *Agent) persistDiscoveredPrinters(infos []printer.DeviceInfo) ([]printer.DeviceInfo, error) {
 	merged, err := printer.UpsertRegistry(a.registryPath, infos)
 	if err == nil {
@@ -779,6 +793,10 @@ func (a *Agent) persistDiscoveredPrinters(infos []printer.DeviceInfo) ([]printer
 		// Re-apply the runtime-capability filter so an old candidate-only LPR
 		// row cannot re-enter the production inventory after a newer scan.
 		return printer.RuntimeInventoryPrinters(merged), nil
+	}
+	if errors.Is(err, printer.ErrRegistryUntrusted) {
+		log.Printf("WARNING: discovery admission blocked by unreadable saved printer authority: %v", err)
+		return nil, err
 	}
 	log.Printf("WARNING: failed to persist discovery registry; retaining %d runtime observations: %v", len(infos), err)
 	return markRegistryPersistenceError(infos, err), err
@@ -795,6 +813,10 @@ func (a *Agent) persistLiveDiscovery(result printer.DiscoveryResult) ([]printer.
 	merged, err := printer.ReconcileDiscoveryRegistry(a.registryPath, infos, result.CompleteSources)
 	if err == nil {
 		return printer.RuntimeInventoryPrinters(merged), nil
+	}
+	if errors.Is(err, printer.ErrRegistryUntrusted) {
+		log.Printf("WARNING: live discovery admission blocked by unreadable saved printer authority: %v", err)
+		return nil, err
 	}
 	log.Printf("WARNING: failed to reconcile live discovery registry; retaining %d runtime observations: %v", len(infos), err)
 	return markRegistryPersistenceError(infos, err), err
@@ -856,6 +878,15 @@ func (a *Agent) runInitialAsyncDiscovery(ctx context.Context) {
 	case <-delay.C:
 	}
 
+	a.runInitialDiscovery(ctx, defaultDiscoveryTimeout, func(scanCtx context.Context, onProgress printer.DiscoveryProgressFunc) printer.DiscoveryResult {
+		return printer.DiscoverLiveWithProgress(scanCtx, a.cfg, a.registryPath, onProgress)
+	})
+}
+
+// runInitialDiscovery owns the startup scan independently of the delay which
+// lets Gateway communication start first. The scan boundary may contain a
+// synchronous native call which outlives its context.
+func (a *Agent) runInitialDiscovery(ctx context.Context, timeout time.Duration, discover discoveryScanFunc) {
 	select {
 	case <-ctx.Done():
 		return
@@ -881,16 +912,17 @@ func (a *Agent) runInitialAsyncDiscovery(ctx context.Context) {
 	}()
 
 	log.Printf("[discovery] starting bounded async full discovery (network+USB)")
-	full, completed, finishedCh := runBoundedDiscovery(ctx, defaultDiscoveryTimeout, func(scanCtx context.Context, onProgress printer.DiscoveryProgressFunc) printer.DiscoveryResult {
-		return printer.DiscoverLiveWithProgress(scanCtx, a.cfg, a.registryPath, onProgress)
-	})
-	if !completed {
+	full, completed, finishedCh := runBoundedDiscovery(ctx, timeout, discover)
+	if !completed || full.Truncated {
 		// A synchronous Win32 call can outlive its Go context. Keep the semaphore
 		// owned until that worker actually returns, but do not attach this waiter
-		// to runtimeWG: graceful shutdown must not wait forever on OS RPC.
+		// to runtimeWG: graceful shutdown must not wait forever on OS RPC. A
+		// usable partial result does not mean that its native worker finished.
 		releaseSemaphore = false
 		a.releaseDiscoverySemaphoreWhenFinished(finishedCh)
-		log.Printf("[discovery] async full discovery exceeded %s bound; worker may still be finishing", defaultDiscoveryTimeout)
+	}
+	if !completed {
+		log.Printf("[discovery] async full discovery exceeded %s bound; worker may still be finishing", timeout)
 		return
 	}
 	if len(full.Errors) > 0 {
@@ -956,6 +988,9 @@ func (a *Agent) RegisterManual(info printer.DeviceInfo) error {
 	}
 	if _, err := printer.RegisterManual(a.registryPath, info); err != nil {
 		return err
+	}
+	if !info.Enabled {
+		return nil // successful durable registration, with no execution authority
 	}
 	pc := printerConfigFromDeviceInfo(info)
 	pc, err := a.resolveLocalPrinter(pc)
@@ -2525,12 +2560,20 @@ func (a *Agent) printerStatusPayload() []map[string]interface{} {
 }
 
 func (a *Agent) printerStatusPayloadWithSharing(sharing localPrinterSharingSnapshot) []map[string]interface{} {
+	disabled, err := printer.LoadLocalPrinterDisablement(a.cfg, a.registryPath)
+	if err != nil {
+		log.Printf("Printer inventory proof withheld: local disablement could not be read: %v", err)
+		return nil
+	}
 	// Snapshot the printer map under the read lock: the async discovery
 	// goroutine may add printers while heartbeats probe statuses.
 	a.printersMu.RLock()
 	ids := make([]string, 0, len(a.printers))
 	for id := range a.printers {
 		pc := a.printerConfigs[id]
+		if disabled.Disabled(pc) {
+			continue
+		}
 		if shared, err := sharing.shared(pc); !shared || err != nil {
 			continue
 		}
@@ -2693,11 +2736,21 @@ func (a *Agent) printerStatusPayloadWithSharing(sharing localPrinterSharingSnaps
 	}
 	// Slow helpers are single-flight per printer and self-clearing; joining
 	// them here would reintroduce the heartbeat stall this budget removes.
+	// A probe can outlive an operator change. Read once more before publishing
+	// the batch so its old positive result cannot restore disabled authority.
+	disabled, err = printer.LoadLocalPrinterDisablement(a.cfg, a.registryPath)
+	if err != nil {
+		log.Printf("Printer inventory proof withheld after probes: local disablement could not be read: %v", err)
+		return nil
+	}
 
 	observedCapabilityStateChanged := false
 	result := make([]map[string]interface{}, 0, len(ids))
 	for i, id := range ids {
 		pc := configByID[id]
+		if disabled.Disabled(pc) {
+			continue
+		}
 		nt := pc.NormalizedType()
 		// An undeclared protocol reports honestly as "unknown" (never a
 		// default "raw"); the gateway capability model will not route to it.
@@ -2979,6 +3032,7 @@ func endpointToConfig(pc config.PrinterConfig) map[string]interface{} {
 }
 
 func (a *Agent) reconcileRegistryPrinters(infos []printer.DeviceInfo) {
+	disabled := printer.NewLocalPrinterDisablement(a.cfg, infos)
 	a.printersMu.Lock()
 	a.reapRetiredPrintersLocked()
 	a.printersMu.Unlock()
@@ -2996,6 +3050,10 @@ func (a *Agent) reconcileRegistryPrinters(infos []printer.DeviceInfo) {
 	present := make(map[string]struct{}, len(infos))
 	for _, di := range infos {
 		if _, ownedByYAML := yamlOwned[di.ID]; ownedByYAML {
+			continue
+		}
+		pc, err := a.resolveLocalPrinter(printerConfigFromDeviceInfo(di))
+		if err != nil || disabled.Disabled(pc) {
 			continue
 		}
 		// A registry row only owns a runtime slot after its backend has been
@@ -3022,6 +3080,14 @@ func (a *Agent) reconcileRegistryPrinters(infos []printer.DeviceInfo) {
 		removed = append(removed, id)
 	}
 	a.registryOwned = present
+	// Local operator denial also applies to YAML and Gateway-owned aliases.
+	// Retire these through the same detached-worker fence as normal removal.
+	var disabledRuntime []string
+	for id, pc := range a.printerConfigs {
+		if disabled.Disabled(pc) {
+			disabledRuntime = append(disabledRuntime, id)
+		}
+	}
 	a.printersMu.Unlock()
 
 	// Registry removals are local lifecycle changes too. Serialize them with
@@ -3041,6 +3107,9 @@ func (a *Agent) reconcileRegistryPrinters(infos []printer.DeviceInfo) {
 		a.printersMu.Unlock()
 		lock.Unlock()
 		a.deleteProbeState(id)
+	}
+	for _, id := range disabledRuntime {
+		a.removeGatewayRuntime(id)
 	}
 }
 

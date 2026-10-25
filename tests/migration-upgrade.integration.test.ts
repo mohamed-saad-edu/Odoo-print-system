@@ -23,9 +23,11 @@ suite("production-like PostgreSQL migration upgrade", () => {
   let admin: Pool;
   let tempDb = "";
   let collisionDb = "";
+  let labelsDb = "";
   let workDir = "";
   let oldDir = "";
   let currentDir = "";
+  let labelsDir = "";
 
   beforeAll(async () => {
     const source = new URL(process.env.DATABASE_URL!);
@@ -33,26 +35,32 @@ suite("production-like PostgreSQL migration upgrade", () => {
     adminUrl.pathname = "/postgres";
     tempDb = `upgrade_${Date.now()}_${randomBytes(3).toString("hex")}`;
     collisionDb = `${tempDb}_collision`;
+    labelsDb = `${tempDb}_labels`;
     admin = new Pool({ connectionString: adminUrl.toString(), max: 2 });
     admin.on("error", () => {});
     await admin.query(`CREATE DATABASE "${tempDb}"`);
     await admin.query(`CREATE DATABASE "${collisionDb}"`);
+    await admin.query(`CREATE DATABASE "${labelsDb}"`);
 
     workDir = await mkdtemp(join(tmpdir(), "odoo-print-upgrade-"));
     oldDir = join(workDir, "old");
     currentDir = join(workDir, "current");
+    labelsDir = join(workDir, "labels");
     await mkdir(join(oldDir, "meta"), { recursive: true });
     await mkdir(join(currentDir, "meta"), { recursive: true });
+    await mkdir(join(labelsDir, "meta"), { recursive: true });
 
     const migrations = (await readdir("drizzle")).filter((f) => f.endsWith(".sql")).sort();
     const journal = JSON.parse(await readFile("drizzle/meta/_journal.json", "utf8"));
     const oldEntries = journal.entries.slice(0, 17);
     await writeFile(join(oldDir, "meta", "_journal.json"), JSON.stringify({ ...journal, entries: oldEntries }));
     await writeFile(join(currentDir, "meta", "_journal.json"), JSON.stringify(journal));
+    await writeFile(join(labelsDir, "meta", "_journal.json"), JSON.stringify({ ...journal, entries: journal.entries.slice(0, 20) }));
     for (let i = 0; i < migrations.length; i += 1) {
       const target = i < 17 ? oldDir : currentDir;
       await cp(join("drizzle", migrations[i]), join(target, migrations[i]));
       if (i < 17) await cp(join("drizzle", migrations[i]), join(currentDir, migrations[i]));
+      if (i < 20) await cp(join("drizzle", migrations[i]), join(labelsDir, migrations[i]));
     }
   });
 
@@ -63,6 +71,7 @@ suite("production-like PostgreSQL migration upgrade", () => {
       // when the database owner deliberately has no elevated role privileges.
       await admin.query(`DROP DATABASE IF EXISTS "${tempDb}"`);
       await admin.query(`DROP DATABASE IF EXISTS "${collisionDb}"`);
+      await admin.query(`DROP DATABASE IF EXISTS "${labelsDb}"`);
     }
     finally { await admin.end(); if (workDir) await rm(workDir, { recursive: true, force: true }); }
   });
@@ -298,6 +307,48 @@ suite("production-like PostgreSQL migration upgrade", () => {
       await pool.query(`INSERT INTO discovered_devices (id, tenant_id, discovery_id, agent_id, protocol) VALUES ('dev_tspl_fixture', $1, 'disc_upgrade_fixture', $2, 'tspl')`, [tenantId, agentId]);
       const devprotos = await pool.query(`SELECT protocol FROM discovered_devices WHERE id IN ('dev_zpl_fixture','dev_tspl_fixture') ORDER BY id`);
       expect(devprotos.rows.map((r) => r.protocol).sort()).toEqual(["tspl", "zpl"]);
+    } finally { await pool.end(); }
+  });
+
+  it("preserves free-form destination labels admitted after 0019 without rewriting historical migration hashes", async () => {
+    const pool = new Pool({ connectionString: databaseUrlFor(labelsDb), max: 2 });
+    pool.on("error", () => {});
+    try {
+      // A real historical ledger and schema, including 0019's removal of the
+      // destination FK: subsequent Odoo jobs legitimately stored plain labels.
+      await migrate(drizzle(pool), { migrationsFolder: labelsDir });
+      await pool.query("INSERT INTO branches(id,company_id,name,enabled) VALUES ('label-branch','label-company','Label branch',true)");
+      await pool.query("INSERT INTO agents(id,branch_id,name) VALUES ('label-agent','label-branch','Label Agent')");
+      await pool.query("INSERT INTO printers(id,agent_id,name,printer_type,device_class,connection_type,protocol) VALUES ('label-printer','label-agent','Label printer','physical','thermal','network','raw')");
+      await pool.query("INSERT INTO destinations(id,branch_id,name,type,enabled) VALUES ('mapped-label','label-branch','Mapped kitchen','kitchen',true)");
+      const freeform = "مطبخ النخيل / external-label ' original";
+      for (const [id, destination] of [["freeform", freeform], ["mapped", "mapped-label"], ["existing", "mapped-label"], ["unset", null]]) {
+        await pool.query(`INSERT INTO print_jobs(id,branch_id,destination_id,agent_id,printer_id,status,payload,expires_at)
+          VALUES ($1,'label-branch',$2,'label-agent','label-printer','queued',
+            '{"type":"raw","protocol":"raw","encoding":"base64","data":"aA=="}'::jsonb,now()+interval '1 hour')`, [id, destination]);
+      }
+      // Preserve an operator-provided destination if a staged upgrade already
+      // added the new column; neither the bridge nor historical SQL may replace it.
+      await pool.query("ALTER TABLE print_jobs ADD COLUMN destination text");
+      await pool.query("UPDATE print_jobs SET destination='Existing label' WHERE id='existing'");
+      const oldLedger = (await pool.query("SELECT id,hash,created_at FROM drizzle.__drizzle_migrations ORDER BY id")).rows;
+      const client = await pool.connect();
+      try { await migrateByHash(client, currentDir); } finally { client.release(); }
+      const expected = [
+        { id: "existing", destination: "Existing label" },
+        { id: "freeform", destination: freeform },
+        { id: "mapped", destination: "Mapped kitchen" },
+        { id: "unset", destination: null },
+      ];
+      expect((await pool.query("SELECT id,destination FROM print_jobs ORDER BY id")).rows).toEqual(expected);
+      const ledger = (await pool.query("SELECT id,hash,created_at FROM drizzle.__drizzle_migrations ORDER BY id")).rows;
+      expect(ledger.slice(0, oldLedger.length)).toEqual(oldLedger);
+      expect(ledger.map(row => row.hash)).toEqual(readMigrationFiles({ migrationsFolder: currentDir }).map(row => row.hash)
+        .concat(AUDIT_REPAIRS.map(sql => createHash("sha256").update(sql).digest("hex"))));
+      const replay = await pool.connect();
+      try { await migrateByHash(replay, currentDir); } finally { replay.release(); }
+      expect((await pool.query("SELECT id,destination FROM print_jobs ORDER BY id")).rows).toEqual(expected);
+      expect((await pool.query("SELECT id,hash,created_at FROM drizzle.__drizzle_migrations ORDER BY id")).rows).toEqual(ledger);
     } finally { await pool.end(); }
   });
 });

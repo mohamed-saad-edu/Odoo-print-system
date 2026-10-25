@@ -358,7 +358,7 @@ export function AddPrinterDialog({
                 : t("desktop.add.onlyPhysicalListed")
             }
           >
-            <Select
+            {physicalSpoolers.length > 0 ? <Select
               id="pp-spooler"
               value={spoolerName}
               onChange={(e) => setSpoolerName(e.target.value)}
@@ -369,10 +369,9 @@ export function AddPrinterDialog({
                   {printerDisplayName(p, locale)}
                 </option>
               ))}
-            </Select>
-            {physicalSpoolers.length === 0 && (
+            </Select> : (
               <Input
-                className="mt-3"
+                id="pp-spooler"
                 value={spoolerName}
                 onChange={(e) => setSpoolerName(e.target.value)}
                 placeholder={t("desktop.add.typeWindowsName")}

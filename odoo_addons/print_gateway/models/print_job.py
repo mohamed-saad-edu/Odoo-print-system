@@ -37,6 +37,7 @@ BILLING_PARK_RETRY_SECONDS = 24 * 3600
 class PrintGatewayJob(models.Model):
     _name = "print_gateway.print_job"
     _description = "Print Gateway Job"
+    _rec_name = "destination"
     _order = "create_date desc"
 
     company_id = fields.Many2one("res.company", required=True, ondelete="restrict", index=True)
@@ -1329,7 +1330,7 @@ class PrintGatewayJob(models.Model):
                 protocol_compatible = fallback_proto == job.protocol
             else:
                 protocol_compatible = False
-            if (
+            fallback_authorized = bool(
                 current_binding.enabled
                 and next_printer
                 and next_printer not in visited_bindings
@@ -1337,7 +1338,26 @@ class PrintGatewayJob(models.Model):
                 and route_compatible
                 and protocol_compatible
                 and self._primary_shared_for_fallback(job)
-            ):
+            )
+            if fallback_authorized:
+                # This is a new physical destination, not a replay of the
+                # original target. Its saved binding cannot prove that the
+                # Agent is still assigned, the printer still belongs to that
+                # Agent, or its verification/protocol is still current.
+                try:
+                    runtime_printer = current_binding._validate_runtime_target(
+                        enforce_destination_compatibility=False,
+                    )
+                    fallback_authorized = bool(runtime_printer)
+                    if fallback_authorized:
+                        current_binding._validate_binding_protocol_against_runtime(runtime_printer)
+                except ValidationError:
+                    fallback_authorized = False
+                    _logger.warning(
+                        "Fallback target proof unavailable for Odoo print job %s; retaining original printer",
+                        job.id,
+                    )
+            if fallback_authorized:
                 visited_bindings.add(next_printer)
                 failover_count += 1
                 _logger.warning(

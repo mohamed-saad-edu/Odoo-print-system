@@ -52,6 +52,28 @@ export function scopeMigrationConstraintGuards(statement: string): string {
   );
 }
 
+// 0019 admitted plain Odoo destination labels. Immutable 0020 only resolves
+// lookup IDs before dropping that column. Bridge the unmatched labels inside
+// the same migration transaction, without changing its recorded SQL hash.
+const LEGACY_DESTINATION_REMOVAL_HASH = "8dfc2b9d31edb9b0d05d81fe7a7bc0105f34c9640825f49658cc4e3128d74c2d";
+async function preserveLegacyDestinationLabels(client: PoolClient): Promise<void> {
+  await client.query(`DO $destination_labels$
+BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'print_jobs' AND column_name = 'destination_id') THEN
+    ALTER TABLE public.print_jobs ADD COLUMN IF NOT EXISTS destination text;
+    IF to_regclass('public.destinations') IS NOT NULL THEN
+      UPDATE public.print_jobs j SET destination = j.destination_id
+      WHERE j.destination IS NULL AND j.destination_id IS NOT NULL
+        AND NOT EXISTS (SELECT 1 FROM public.destinations d WHERE d.id = j.destination_id);
+    ELSE
+      UPDATE public.print_jobs SET destination = destination_id
+      WHERE destination IS NULL AND destination_id IS NOT NULL;
+    END IF;
+  END IF;
+END $destination_labels$;`);
+}
+
 /** Apply journal order by recorded content hash, including skipped older timestamps. */
 export async function migrateByHash(client: PoolClient, migrationsFolder: string): Promise<void> {
   const migrations = readMigrationFiles({ migrationsFolder });
@@ -67,6 +89,7 @@ export async function migrateByHash(client: PoolClient, migrationsFolder: string
     const applied = new Set(history.rows.map(row => row.hash));
     for (const migration of migrations) {
       if (applied.has(migration.hash)) continue;
+      if (migration.hash === LEGACY_DESTINATION_REMOVAL_HASH) await preserveLegacyDestinationLabels(client);
       for (const statement of migration.sql) {
         if (statement.trim()) await client.query(scopeMigrationConstraintGuards(statement));
       }

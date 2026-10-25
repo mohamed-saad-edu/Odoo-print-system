@@ -2346,13 +2346,18 @@ class PrintGatewayPairAgentWizard(models.TransientModel):
             if response.status_code != 200:
                 raise ValidationError(_("Gateway agent discovery failed (HTTP %s).") % response.status_code)
             body = response.json() if response.content else {}
-            agents_list = body.get("agents") if isinstance(body, dict) else []
+            agents_list = body.get("agents") if isinstance(body, dict) else None
+            if not isinstance(agents_list, list):
+                raise ValidationError(_("Gateway returned an invalid agent discovery response."))
+            # The picker submits an opaque ID. A mutable display name must
+            # never select a different workstation with the same label.
             matched = next(
-                (a for a in agents_list if isinstance(a, dict) and (a.get("id") == target or a.get("name") == target)),
+                (a for a in agents_list if isinstance(a, dict) and a.get("id") == target),
                 None,
             )
             if not matched:
-                available = [a.get("id") for a in agents_list if isinstance(a, dict) and a.get("id")]
+                available = [a["id"] for a in agents_list if isinstance(a, dict)
+                             and isinstance(a.get("id"), str) and a["id"]]
                 raise ValidationError(
                     _("Agent '%s' not found on Central Gateway. Registered active agents: %s")
                     % (target, ", ".join(available) if available else _("none"))
@@ -2386,6 +2391,8 @@ class PrintGatewayPairAgentWizard(models.TransientModel):
                     "runtime_agent_id": resolved_agent_id,
                     "enabled": True,
                 })
+            elif not existing.enabled:
+                existing.write({"enabled": True})
             target_scope = target_branch.display_name if target_branch else config.company_id.display_name
             return {
                 "type": "ir.actions.client",

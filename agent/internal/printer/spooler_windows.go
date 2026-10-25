@@ -121,6 +121,9 @@ type SpoolerPrinter struct {
 	PDFPrint          PDFPrintFunc
 	// Injected only by native-media regression tests; production keeps nil.
 	diagnosticPaper func() (float64, float64, error)
+	// Test-only seam for deterministic image-to-PDF provenance checks.
+	// Production leaves this nil and always queries the installed Windows queue.
+	testImageGeometry func(context.Context) (*Geometry, error)
 	// PDFPrintResult is an injectable result-bearing seam used by the Windows
 	// GDI/PDF path to propagate StartDocW job identity. Tests may override it.
 	PDFPrintResult PDFPrintResultFunc
@@ -1115,7 +1118,11 @@ func (p *SpoolerPrinter) PrintDocument(ctx context.Context, doc Document) error 
 		if err := runDispatchAdmission(ctx); err != nil {
 			return fmt.Errorf("image spooler admission refused: %w", err)
 		}
-		geometry, err := p.PrinterGeometry(ctx)
+		readGeometry := p.PrinterGeometry
+		if p.testImageGeometry != nil {
+			readGeometry = p.testImageGeometry
+		}
+		geometry, err := readGeometry(ctx)
 		if err != nil {
 			return CapabilityMismatchf("read Windows image geometry: %v", err)
 		}

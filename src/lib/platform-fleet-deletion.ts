@@ -36,6 +36,9 @@ async function archiveJobs(
           printerId: job.printerId, agentId: job.agentId, apiKeyId: job.apiKeyId,
           destination: job.destination, documentType: job.documentType, requestedBy: job.requestedBy,
           status: terminal ? job.status : "failed",
+          bindingDigest: job.bindingDigest,
+          outputMedium: job.outputMedium,
+          outputEvidence: job.outputEvidence,
           error: terminal ? job.error : uncertain
             ? "UNKNOWN_PARTIAL_DELIVERY: Device removed while a hardware attempt may have started; inspect the printer before reprinting."
             : reason,
@@ -61,7 +64,12 @@ export async function removeFleetItem(input: {
 }): Promise<DeletionResult> {
   const { kind, tenantId, id, reason, actor, expectedLifecycle } = input;
   return db.transaction(async tx => {
-    // All printer admissions and Agent heartbeat snapshots acquire this first.
+    // Tenant -> inventory -> actor is the lifecycle/heartbeat lock order.
+    // Receipts and audit rows also need the tenant FK lock: taking it only
+    // after the actor would deadlock with concurrent Workspace suspension.
+    // Removal remains permitted for suspended/deleted Workspaces.
+    await tx.execute(sql`SELECT id FROM tenants WHERE id = ${tenantId} FOR SHARE`);
+    // Printer admissions and Agent heartbeat snapshots use this next.
     await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('printers:' || ${tenantId}))`);
     // The same admission barrier as print-job enqueue and key deletion.
     await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`print_jobs:tenant:${tenantId}`}))`);

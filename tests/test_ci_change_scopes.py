@@ -129,6 +129,38 @@ def test_docker_workflow_edit_verifies_runtime_and_image_security():
     assert not flags["agent"] and not flags["odoo"] and not flags["postgres"]
 
 
+def test_proxy_acceptance_changes_rerun_the_docker_boundary():
+    for path in ("scripts/check-proxy-boundary.py", "tests/test_ci_proxy_boundary.py"):
+        flags = classify(path)
+        assert flags["app"] and flags["docker"] and flags["codeql_py"], path
+
+
+def test_audit_fixture_changes_rerun_the_supply_chain_gate():
+    for path in ("scripts/verify-npm-audit-fixture.mjs", "tests/test_ci_audit_fixture.py"):
+        flags = classify(path)
+        assert flags["app"] and flags["supply"], path
+
+
+def test_moving_runtime_source_into_docs_still_checks_the_deleted_source(tmp_path):
+    def git(*arguments):
+        return subprocess.run(["git", *arguments], cwd=tmp_path, check=True,
+                              capture_output=True, text=True).stdout.strip()
+
+    git("init", "-q")
+    git("config", "user.email", "ci@example.com")
+    git("config", "user.name", "CI Test")
+    (tmp_path / "src/lib").mkdir(parents=True)
+    (tmp_path / "src/lib/security.ts").write_text("export const enabled = true;\n")
+    git("add", ".")
+    git("commit", "-q", "-m", "runtime source")
+    before = git("rev-parse", "HEAD")
+    (tmp_path / "docs").mkdir()
+    git("mv", "src/lib/security.ts", "docs/retired.md")
+    git("commit", "-q", "-m", "move runtime source to documentation")
+    flags = classify(event="push", before=before, head=git("rev-parse", "HEAD"), cwd=tmp_path)
+    assert flags["app"] and flags["docker"] and flags["codeql_js"], flags
+
+
 def test_static_security_workflow_edit_rechecks_all_codeql_languages():
     flags = classify(".github/workflows/static-security.yml")
     assert flags["app"] and flags["supply"]
@@ -201,6 +233,13 @@ def test_weekly_security_scans_skip_unchanged_builds():
     assert not flags["app"] and not flags["agent"] and not flags["odoo"]
 
 
+def test_native_odoo_security_contract_change_must_rerun_the_image_gate():
+    flags = classify("tests/ci-image-mirror-current-run.node.test.mjs")
+    assert flags["app"] and flags["odoo"] and flags["docker_scan"] and flags["supply"]
+    assert flags["codeql_js"] and flags["codeql_py"]
+    assert not flags["agent"] and not flags["postgres"]
+
+
 def test_caddyfile_and_baseline_and_lint_config_scopes():
     caddy_flags = classify("Caddyfile")
     assert caddy_flags["docker"] and caddy_flags["docker_scan"] and caddy_flags["supply"]
@@ -208,7 +247,8 @@ def test_caddyfile_and_baseline_and_lint_config_scopes():
 
     baseline_flags = classify("security/image-vulnerability-baseline.json")
     assert baseline_flags["docker_scan"] and baseline_flags["supply"]
-    assert not baseline_flags["agent"] and not baseline_flags["odoo"] and not baseline_flags["postgres"]
+    assert baseline_flags["odoo"]
+    assert not baseline_flags["agent"] and not baseline_flags["postgres"]
 
     lint_flags = classify("eslint.config.mjs", "vitest.config.mts", ".npmrc", "typography/tokens.json")
     assert lint_flags["app"] and lint_flags["codeql_js"]

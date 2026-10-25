@@ -160,33 +160,20 @@ func validGatewaySharingID(id string) bool {
 }
 
 func (a *Agent) localPrinterBindingDisabled(pc config.PrinterConfig) bool {
-	if a.legacyPrinterDisabled(pc.ID) {
+	disabled, err := printer.LoadLocalPrinterDisablement(a.cfg, a.registryPath)
+	if err != nil {
+		log.Printf("Printer admission fenced: local disablement could not be read: %v", err)
 		return true
 	}
-	if a.cfg == nil {
-		return false
-	}
-	digest, err := config.PrinterBindingDigest(pc)
-	if err != nil {
-		return false
-	} // existing desired/backend validation owns unknown bindings
-	for _, local := range a.cfg.Printers {
-		if local.IsEnabled() {
-			continue
-		}
-		local, err = a.resolveLocalPrinter(local)
-		if err != nil {
-			continue
-		}
-		localDigest, err := config.PrinterBindingDigest(local)
-		if err == nil && localDigest == digest {
-			return true
-		}
-	}
-	return false
+	return disabled.Disabled(pc)
 }
 
 func (a *Agent) cloudDiscoveryPayload(result printer.DiscoveryResult) ([]map[string]interface{}, []string) {
+	disabled, disablementErr := printer.LoadLocalPrinterDisablement(a.cfg, a.registryPath)
+	if disablementErr != nil {
+		log.Printf("[discovery] cloud report fenced by unreadable local printer disablement: %v", disablementErr)
+		return nil, []string{"local printer disablement unavailable; cloud discovery metadata withheld"}
+	}
 	snapshot := a.loadLocalPrinterSharing()
 	devices := make([]map[string]interface{}, 0, len(result.Printers))
 	if snapshot.err == nil && snapshot.policy.Present {
@@ -204,7 +191,7 @@ func (a *Agent) cloudDiscoveryPayload(result printer.DiscoveryResult) ([]map[str
 	}
 	for _, device := range result.Printers {
 		pc, err := a.resolveLocalPrinter(printer.SharingConfigForDevice(device))
-		if err == nil && snapshot.view.DiscoveryShared(pc) {
+		if err == nil && !disabled.Disabled(pc) && snapshot.view.DiscoveryShared(pc) {
 			devices = append(devices, discoveryDevicePayload(a.cfg.Agent.ID, device))
 		}
 	}

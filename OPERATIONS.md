@@ -1,15 +1,25 @@
 # Operations
 
 ## Tenant configuration
-For multi-tenant Manager login, add a verified `tenant_domains` row for each customer hostname. During single-tenant bootstrap, `MANAGER_TENANT_ID` may be used.
+The current customer login (`/api/auth/login`) authenticates an email/password
+account and its active memberships. Accounts with multiple workspaces receive
+a tenant-selection token and choose an authorized workspace; hostname mapping
+does not grant membership.
+
+The compatibility Manager login (`/api/auth/manager/login`) resolves a workspace
+from verified `tenant_domains` rows or the explicit `MANAGER_TENANT_ID` fallback.
+Shared legacy-password authentication is restricted to development/test with
+`ALLOW_LEGACY_MANAGER_AUTH=1`; production still requires a real account and
+membership.
 
 `npm run platform:bootstrap` creates the first Platform Owner. Promoting an existing account or replacing its password with `--force` atomically revokes that account's earlier sessions and outstanding password-reset/email-verification links. Sign in again with the bootstrap password; other accounts remain unchanged.
 
-Resolution order for a login request: `Host` header → `tenant_domains`
+Resolution order for a compatibility Manager login: `Host` header → `tenant_domains`
 (verified rows only) → `MANAGER_TENANT_ID` fallback. When both a matching
 domain row and `MANAGER_TENANT_ID` are set, the domain row wins; `MANAGER_TENANT_ID`
-applies only when no domain matches. With neither configured, multi-tenant
-login cannot route to a workspace.
+applies only when no domain matches. With neither configured, that compatibility
+endpoint cannot resolve a workspace. This does not prevent the customer
+account/membership login flow.
 
 Verify routing rows:
 
@@ -17,11 +27,12 @@ Verify routing rows:
 SELECT domain, tenant_id, verified_at, is_primary FROM tenant_domains ORDER BY domain;
 ```
 
-Expected behavior: single-tenant mode logs into the pinned tenant;
-multi-tenant mode routes each hostname to its verified tenant; an unknown
-host is rejected rather than routed to a default workspace. There is no
-tenant-routing troubleshooting section: misrouting presents as login
-landing in the wrong workspace — check the table above first.
+Expected compatibility behavior: the fallback pins an unmatched hostname to its
+configured tenant; a verified hostname selects its mapped tenant first. If
+unknown hostnames must be rejected, leave `MANAGER_TENANT_ID` unset. Production
+login still requires account membership and active-tenant checks.
+If this login lands in an unexpected workspace, inspect the verified mapping
+and fallback before changing account memberships.
 
 ## Metrics endpoint
 `GET /api/metrics` accepts a current password-authenticated platform owner session or an

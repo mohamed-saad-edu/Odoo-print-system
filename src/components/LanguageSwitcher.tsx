@@ -33,7 +33,7 @@ export function LanguageSwitcher({
     onSelect: () => selectLocale(code),
   }));
   const nextLocale = locale === "en" ? "ar" : "en";
-  const mobileLabel = `${t("common.language")}: ${LOCALE_LABELS[nextLocale]}`;
+  const mobileLabel = `${compact ? `${nextLocale.toUpperCase()} — ` : ""}${t("common.language")}: ${LOCALE_LABELS[nextLocale]}`;
 
   return (
     <div className={`inline-flex ${className}`}>
@@ -65,7 +65,7 @@ export function LanguageSwitcher({
               title={t("common.language")}
             >
               <Globe2 className="h-4 w-4 shrink-0" aria-hidden />
-              {compact && <span>{locale.toUpperCase()}</span>}
+              {compact && <span>{locale.toUpperCase()}</span>}{" "}
               <span className="sr-only">{LOCALE_LABELS[locale]}</span>
             </span>
           }

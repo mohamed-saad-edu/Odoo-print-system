@@ -64,7 +64,9 @@ test('shell search trigger is a real accessible button and invokes its handler e
   const trigger = shell.ShellSearchButton({ label: 'Search', hint: 'Ctrl+K', onClick: () => presses++ });
   assert.equal(trigger.type, 'button');
   assert.equal(trigger.props.type, 'button');
-  assert.equal(trigger.props['aria-label'], 'Search');
+  assert.equal(trigger.props['aria-label'], 'Search Ctrl+K');
+  const compact = shell.ShellSearchButton({ label: 'Search', hint: 'Ctrl+K', compact: true, onClick: () => {} });
+  assert.equal(compact.props['aria-label'], 'Search');
   trigger.props.onClick();
   assert.equal(presses, 1);
 });

@@ -449,10 +449,10 @@ async fn read_response_body_limited(
     mut response: reqwest::Response,
     max_bytes: usize,
 ) -> Result<String, String> {
-    if let Some(len) = response.content_length() {
-        if len > max_bytes as u64 {
-            return Err(format!("Gateway response exceeds {} byte limit", max_bytes));
-        }
+    if let Some(len) = response.content_length()
+        && len > max_bytes as u64
+    {
+        return Err(format!("Gateway response exceeds {} byte limit", max_bytes));
     }
 
     let capacity = response
@@ -856,11 +856,11 @@ fn atomic_replace_file(temp_path: &Path, destination: &Path) -> Result<(), Strin
 fn atomic_replace_file(temp_path: &Path, destination: &Path) -> Result<(), String> {
     std::fs::rename(temp_path, destination)
         .map_err(|e| format!("replace settings {}: {e}", destination.display()))?;
-    if let Some(parent) = destination.parent() {
-        if let Ok(dir) = std::fs::File::open(parent) {
-            dir.sync_all()
-                .map_err(|e| format!("sync settings directory {}: {e}", parent.display()))?;
-        }
+    if let Some(parent) = destination.parent()
+        && let Ok(dir) = std::fs::File::open(parent)
+    {
+        dir.sync_all()
+            .map_err(|e| format!("sync settings directory {}: {e}", parent.display()))?;
     }
     Ok(())
 }
@@ -934,10 +934,7 @@ pub fn get_gateway_config() -> Result<GatewayConfig, String> {
             message
         })?;
     }
-    let raw = read_file_or_default(&path).map_err(|e| {
-        logging::error(&e);
-        e
-    })?;
+    let raw = read_file_or_default(&path).inspect_err(|e| logging::error(e))?;
     if raw.trim() == "{}" {
         return Ok(GatewayConfig { url: String::new() });
     }
@@ -1200,20 +1197,20 @@ fn is_virtual_printer_for_ui(p: &PrinterInfo) -> bool {
     if p.is_virtual.unwrap_or(false) {
         return true;
     }
-    if let Some(t) = p.printer_type.as_ref() {
-        if t.trim().to_lowercase() == "virtual" {
-            return true;
-        }
+    if let Some(t) = p.printer_type.as_ref()
+        && t.trim().to_lowercase() == "virtual"
+    {
+        return true;
     }
-    if let Some(c) = p.connection_type.as_ref() {
-        if c.trim().to_lowercase() == "virtual" {
-            return true;
-        }
+    if let Some(c) = p.connection_type.as_ref()
+        && c.trim().to_lowercase() == "virtual"
+    {
+        return true;
     }
-    if let Some(proto) = p.protocol.as_ref() {
-        if proto.trim().to_lowercase() == "virtual" {
-            return true;
-        }
+    if let Some(proto) = p.protocol.as_ref()
+        && proto.trim().to_lowercase() == "virtual"
+    {
+        return true;
     }
 
     let caps = p.capabilities.as_ref();
@@ -1367,7 +1364,7 @@ pub async fn get_printers(app: tauri::AppHandle) -> Result<Vec<PrinterInfo>, Str
             .map_err(|_| "invalid local printer inventory response".to_string())?;
         let filtered: Vec<PrinterInfo> = v
             .into_iter()
-            .filter(|p| is_valid_printer_for_ui(p))
+            .filter(is_valid_printer_for_ui)
             .collect();
         Ok(filtered)
     })
@@ -1441,10 +1438,10 @@ fn parse_discovery_diagnostics(stderr: &str) -> Vec<String> {
                 line.find(marker)
                     .map(|index| line[index..].trim().to_string())
             });
-        if let Some(message) = actionable {
-            if !diagnostics.iter().any(|existing| existing == &message) {
-                diagnostics.push(message);
-            }
+        if let Some(message) = actionable
+            && !diagnostics.iter().any(|existing| existing == &message)
+        {
+            diagnostics.push(message);
         }
     }
     diagnostics
@@ -1671,6 +1668,7 @@ pub async fn get_autostart(app: tauri::AppHandle) -> Result<AutostartStatus, Str
 /// when the record cannot be persisted: a silently swallowed write failure
 /// would make the next launch treat the user as "never chose" and re-apply
 /// the default-enable - silently reversing an explicit DISABLE.
+#[cfg(any(windows, test))]
 fn record_autostart_choice(marker: &Path) -> Result<(), String> {
     if let Some(parent) = marker.parent() {
         std::fs::create_dir_all(parent)
@@ -1689,6 +1687,7 @@ fn record_autostart_choice(marker: &Path) -> Result<(), String> {
 /// surfaces. No silent divergence, no false success, and no claim of true
 /// atomicity: a rollback that itself fails is reported with both errors so
 /// the operator knows the machine needs manual reconciliation.
+#[cfg(any(windows, test))]
 fn apply_autostart_choice(
     enabled: bool,
     previous: bool,

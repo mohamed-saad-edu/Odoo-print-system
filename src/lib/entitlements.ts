@@ -28,7 +28,7 @@ export class TenantSubscriptionRequiredError extends Error {
  */
 export const BILLING_ACCESS_STATUSES = ["active"] as const;
 
-/** True when a Stripe subscription status keeps the runtime provisioned. */
+/** True when the manual subscription status keeps the runtime provisioned. */
 export function isBillingAccessStatus(status: string | null | undefined): boolean {
   return typeof status === "string" && (BILLING_ACCESS_STATUSES as readonly string[]).includes(status);
 }
@@ -36,7 +36,7 @@ export function isBillingAccessStatus(status: string | null | undefined): boolea
 /**
  * Subscription period gate used by every Odoo/console entry point.
  *
- * `current_period_end` is a Stripe/DB timestamp, so it must be compared with
+ * `current_period_end` is a database timestamp, so it must be compared with
  * the Gateway's authoritative clock (database-calibrated) rather than the Node
  * host clock: a host running ahead would revoke access from a paying tenant
  * (pairing, key creation, and printing all return 403 SUBSCRIPTION_REQUIRED),
@@ -44,7 +44,7 @@ export function isBillingAccessStatus(status: string | null | undefined): boolea
  *
  * A null period end means "no period boundary recorded yet" and stays live —
  * matching the SQL predicates in `getTenantEntitlementLimit`, which treat
- * `period_end IS NULL` as live for active/trialing rows.
+ * `period_end IS NULL` as live for active rows.
  */
 export function isSubscriptionPeriodLive(
   currentPeriodEnd: Date | string | null | undefined,
@@ -174,7 +174,7 @@ export function liveTenantSubscriptionPredicate(tenantId: SQL, requireUnblocked 
 
 export async function requireTenantBillingAccess(tx: EntitlementTx, tenantId: string): Promise<void> {
   // Lock the subscription row while deciding whether to grant or re-enable
-  // runtime access. Webhook updates use the same row, so billing state cannot
+  // runtime access. Manual subscription updates lock the same row, so state cannot
   // change between this decision and the protected runtime mutation.
   const result = await tx.execute(sql`
     SELECT 1
@@ -302,7 +302,6 @@ export async function enforceTenantResourceEntitlement(tx: EntitlementTx, tenant
 type TenantPrintQuotaRow = {
   entitlements: unknown;
   periodStart: Date | string;
-  periodEnd: Date | string | null;
   entitlementBlocked?: boolean;
   monthlyQuota?: number | null;
 };
@@ -319,7 +318,7 @@ function parseEntitlementDate(value: Date | string | null): Date | null {
 async function getTenantPrintQuotaContext(tx: EntitlementTx, tenantId: string, lockRows = false): Promise<{ limit: number | "unlimited"; periodStart: Date; periodEnd: Date | null }> {
   const result = lockRows
     ? await tx.execute(sql`
-        SELECT p.entitlements, ts.monthly_quota AS "monthlyQuota", date_trunc('month', clock_timestamp() AT TIME ZONE 'UTC') AS "periodStart", date_trunc('month', clock_timestamp() AT TIME ZONE 'UTC') + interval '1 month' AS "periodEnd", ts.entitlement_blocked AS "entitlementBlocked"
+        SELECT p.entitlements, ts.monthly_quota AS "monthlyQuota", date_trunc('month', clock_timestamp() AT TIME ZONE 'UTC') AS "periodStart", ts.entitlement_blocked AS "entitlementBlocked"
         FROM tenant_subscriptions ts
         JOIN plans p ON p.id = ts.plan_id
         WHERE ${liveTenantSubscriptionWhere(sql`${tenantId}`, false)}
@@ -327,7 +326,7 @@ async function getTenantPrintQuotaContext(tx: EntitlementTx, tenantId: string, l
         FOR UPDATE OF ts
       `)
     : await tx.execute(sql`
-        SELECT p.entitlements, ts.monthly_quota AS "monthlyQuota", date_trunc('month', clock_timestamp() AT TIME ZONE 'UTC') AS "periodStart", date_trunc('month', clock_timestamp() AT TIME ZONE 'UTC') + interval '1 month' AS "periodEnd", ts.entitlement_blocked AS "entitlementBlocked"
+        SELECT p.entitlements, ts.monthly_quota AS "monthlyQuota", date_trunc('month', clock_timestamp() AT TIME ZONE 'UTC') AS "periodStart", ts.entitlement_blocked AS "entitlementBlocked"
         FROM tenant_subscriptions ts
         JOIN plans p ON p.id = ts.plan_id
         WHERE ${liveTenantSubscriptionWhere(sql`${tenantId}`, false)}
@@ -345,8 +344,10 @@ async function getTenantPrintQuotaContext(tx: EntitlementTx, tenantId: string, l
   }
   const periodStart = parseEntitlementDate(row.periodStart);
   if (!periodStart) throw new TenantEntitlementConfigError("subscription_period");
-  const periodEnd = parseEntitlementDate(row.periodEnd);
-  if (periodEnd && periodEnd <= periodStart) throw new TenantEntitlementConfigError("subscription_period");
+  // One database month determines both boundaries. Two volatile clock reads
+  // can straddle midnight and incorrectly extend a quota window by a month.
+  const periodEnd = new Date(periodStart.getTime());
+  periodEnd.setUTCMonth(periodEnd.getUTCMonth() + 1);
   return { limit: entitlements[PRINT_QUOTA_ENTITLEMENT], periodStart, periodEnd };
 }
 

@@ -439,6 +439,16 @@ msgstr ""
 #. odoo-javascript
 #: code:addons/print_gateway/static/src/js/pos_print_router.js:0
 msgid ""
+"An earlier kitchen print is unresolved. Check Print Activity and the printer "
+"before continuing. To print again, use the explicit reprint action in Print Activity."
+msgstr ""
+"توجد عملية طباعة مطبخ سابقة لم تُحسم. تحقّق من نشاط الطباعة والطابعة قبل المتابعة. "
+"للطباعة مرة أخرى، استخدم إجراء إعادة الطباعة الصريح في نشاط الطباعة."
+
+#. module: print_gateway
+#. odoo-javascript
+#: code:addons/print_gateway/static/src/js/pos_print_router.js:0
+msgid ""
 "An earlier receipt print is unresolved after this page changed. Check Print "
 "Activity and the printer. To print again, use the explicit reprint action in"
 " Print Activity; a new print is not sent automatically."
@@ -556,7 +566,9 @@ msgstr ""
 
 #. module: print_gateway
 #. odoo-python
+#. odoo-javascript
 #: code:addons/print_gateway/models/runtime_assignment.py:0
+#: code:addons/print_gateway/static/src/components/printers_overview.js:0
 #: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_binding_form
 #: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_binding_list
 #: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_pair_agent_wizard_form
@@ -779,7 +791,9 @@ msgstr "إغلاق"
 
 #. module: print_gateway
 #. odoo-python
+#. odoo-javascript
 #: code:addons/print_gateway/models/runtime_assignment.py:0
+#: code:addons/print_gateway/static/src/components/printers_overview.js:0
 #: model:ir.model.fields,field_description:print_gateway.field_print_gateway_gateway_config__company_id
 #: model:ir.model.fields,field_description:print_gateway.field_print_gateway_intent__company_id
 #: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_binding_form
@@ -1944,6 +1958,7 @@ msgstr ""
 #. module: print_gateway
 #. odoo-python
 #: code:addons/print_gateway/controllers/runtime_printers.py:0
+#: code:addons/print_gateway/models/gateway_config.py:0
 msgid "Gateway returned an invalid agent discovery response."
 msgstr "أعاد الـ Gateway استجابة غير صالحة لاكتشاف الـ Agents."
 
@@ -5963,3 +5978,81 @@ msgid ""
 msgstr ""
 "مفتاح التثبيت لم يعد نشطًا. أنشئ مفتاحًا جديدًا أو اختر مفتاحًا آخر في "
 "Yaseir Print Gateway، ثم احفظه هنا."
+
+#. module: print_gateway
+#. odoo-python
+#: code:addons/print_gateway/models/print_policy.py:0
+msgid ""
+"Attribute and index access are strictly forbidden in raw print templates."
+msgstr ""
+"يُحظر الوصول إلى الخصائص والعناصر باستخدام الفهارس في قوالب الطباعة الخام."
+
+#. module: print_gateway
+#. odoo-python
+#: code:addons/print_gateway/models/print_policy.py:0
+msgid "Format conversions (!r/!s/!a) are forbidden in raw print templates."
+msgstr "يُحظر استخدام تحويلات التنسيق في قوالب الطباعة الخام."
+
+#. module: print_gateway
+#. odoo-python
+#: code:addons/print_gateway/models/print_policy.py:0
+msgid "Raw printer template exceeds the 2 MiB safety limit."
+msgstr "يتجاوز قالب الطباعة الخام حد الأمان البالغ 2 ميبيبايت."
+
+#. module: print_gateway
+#. odoo-python
+#: code:addons/print_gateway/models/print_policy.py:0
+msgid "Only named placeholders are allowed in raw print templates."
+msgstr "لا يُسمح في قوالب الطباعة الخام إلا بالعناصر النائبة ذات الأسماء."
+
+#. module: print_gateway
+#. odoo-python
+#: code:addons/print_gateway/models/print_policy.py:0
+msgid "Printer template format specification is too long."
+msgstr "مواصفات التنسيق في قالب الطباعة أطول من الحد المسموح."
+
+#. module: print_gateway
+#. odoo-python
+#: code:addons/print_gateway/models/print_policy.py:0
+msgid "Nested replacement fields inside format specifications are forbidden."
+msgstr "يُحظر تداخل حقول الاستبدال داخل مواصفات التنسيق."
+
+#. module: print_gateway
+#. odoo-python
+#: code:addons/print_gateway/models/print_policy.py:0
+msgid "Printer template format width/precision exceeds 4096."
+msgstr "يتجاوز عرض التنسيق أو دقته في قالب الطباعة الحد المسموح البالغ 4096."
+
+#. module: print_gateway
+#. odoo-python
+#: code:addons/print_gateway/models/print_policy.py:0
+msgid "Rendered raw printer template exceeds the 2 MiB safety limit."
+msgstr "يتجاوز قالب الطباعة الخام بعد معالجته حد الأمان البالغ 2 ميبيبايت."
+
+#. module: print_gateway
+#. odoo-python
+#: code:addons/print_gateway/models/print_policy.py:0
+msgid ""
+"The raw template for rule '%s' has an invalid format. Check its named "
+"placeholders, braces, and format specifications."
+msgstr ""
+"تنسيق القالب الخام للقاعدة '%s' غير صالح. تحقّق من أسماء العناصر النائبة "
+"والأقواس ومواصفات التنسيق."
+
+#. module: print_gateway
+#. odoo-javascript
+#: code:addons/print_gateway/static/src/components/printers_overview.xml:0
+msgid "Choose a company or branch"
+msgstr "اختر شركة أو فرعًا"
+
+#. module: print_gateway
+#. odoo-javascript
+#: code:addons/print_gateway/static/src/components/printers_overview.js:0
+msgid "The selected company or branch is no longer available. Choose an authorized scope to continue."
+msgstr "لم يعد نطاق الشركة أو الفرع المحدد متاحًا. اختر شركة أو فرعًا لديك صلاحية الوصول إليه."
+
+#. module: print_gateway
+#. odoo-python
+#: code:addons/print_gateway/controllers/runtime_printers.py:0
+msgid "Nested Odoo branches are not supported for printer assignments."
+msgstr "الفروع المتداخلة في Odoo غير مدعومة لتعيين الطابعات."

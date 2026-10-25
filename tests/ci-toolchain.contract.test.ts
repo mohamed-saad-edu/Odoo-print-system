@@ -84,7 +84,7 @@ describe("CI/runtime alignment", () => {
     expect(runtime).toContain("docker compose build");
     expect(runtime).toContain("docker compose up -d gateway caddy");
     expect(workflow).toContain("Enforce reviewed upstream image vulnerability baseline");
-    expect(workflow).toContain("Scan pinned base image (Trivy)");
+    expect(workflow).toContain("Scan release image (Trivy)");
     expect(compose).not.toContain("public.ecr.aws");
     expect(readFileSync(path.join(root, "Dockerfile.secure-images"), "utf8")).toContain("sha256:");
     const image = readFileSync(path.join(root, "Dockerfile"), "utf8");

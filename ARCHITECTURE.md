@@ -1,6 +1,6 @@
 # Yaseir Cloud Printing Platform — Architecture
 
-> **Addon version**: 19.0.2.20.0 | **Node**: 24.22.1 | **Go**: 1.26.10 | **Odoo**: 19 CE
+> **Addon version**: see `odoo_addons/print_gateway/__manifest__.py` | **Node**: 24.22.1 | **Go**: 1.26.10 | **Odoo**: 19 CE
 
 ## 1. System Overview
 
@@ -50,8 +50,10 @@ The Gateway is a Next.js application (dependency versions are pinned in `package
 - `/api/print/*` — Job submission and batch status
 - `/api/printers/*` — Printer management and test operations
 - `/api/auth/*` — Customer authentication (register, login, verify-email, etc.)
-- `/api/billing/*` — Stripe integration (checkout, webhook, portal)
-- `/api/admin/*` — Platform admin (tenant lifecycle management)
+- `/api/billing/*` — Plan, subscription-status and usage reads; retired provider mutation routes return HTTP 410
+- `/api/subscription-requests` — Authenticated customer requests for manual subscription activation
+- `/api/platform/*` — Platform administration, manual subscription grants and tenant lifecycle management
+- `/api/admin/*` — Compatibility tenant-lifecycle endpoint with platform authorization
 - `/api/team/*` — Team management (invitations, members, ownership transfer)
 
 ### 2.2 Go Windows Agent
@@ -256,14 +258,13 @@ one authority per decision:
 | Clock | Authority for | Notes |
 | --- | --- | --- |
 | PostgreSQL `now()` / `clock_timestamp()` | Every durable Gateway timestamp and every lifetime comparison | The single authority for job expiry, claim staleness, presence freshness, quota periods, and subscription periods |
-| Database-calibrated Gateway clock (`src/lib/database-clock.ts`) | JavaScript decisions that mirror a SQL comparison | Stripe webhook tolerance, Checkout Session expiry, Retry-After arithmetic, agent/printer availability, subscription period gates |
-| Stripe event timestamps | Billing event ordering | Fenced monotonically per tenant via `stripe_last_event_created_at` |
+| Database-calibrated Gateway clock (`src/lib/database-clock.ts`) | JavaScript decisions that mirror a SQL comparison | Retry-After arithmetic, agent/printer availability, subscription period gates |
 | Odoo database clock (`db_now_utc`) | Odoo outbox claim/retry scheduling | `next_retry_at` deferrals are derived from the Gateway's relative `Retry-After`, never from an absolute Gateway timestamp |
 | Windows Agent monotonic clock | Local dispatch/backoff/timeouts | Ownership freshness is measured only with monotonic deltas; the Agent never compares a Gateway timestamp with its own wall clock |
 
 **Rules**
 
-1. A JS process never compares a database/Stripe timestamp with the raw host
+1. A JS process never compares a database timestamp with the raw host
    clock. `gatewayNowMs()` / `gatewayNow()` return host time plus the measured
    database offset (recalibrated at most every 30s, with the round-trip midpoint
    removed and a 2s timeout; on failure the last known offset is kept, so the
@@ -287,6 +288,12 @@ one authority per decision:
 **Enforcement**: `tests/database-clock.test.ts` (unit, behaviour and source
 contracts) and `tests/database-clock.integration.test.ts` (live calibration,
 single-reading TTL invariant, quota rollback).
+
+Manual subscriptions are changed by authorized Platform Admin operations.
+`print_monthly_usage` counts the current UTC calendar month's jobs independently
+of monthly, yearly or custom contract dates. Provider timestamps and identifiers
+remain historical evidence; retired provider routes cannot grant or renew a
+subscription or reset consumed credits.
 
 New physical dispatch requires an acknowledged, claim-fenced `printing` response (`success: true`, `status: "printing"`). Local delivery receipt age is diagnostic only; a buffered frame may already have a stale claim. An unacknowledged admission sends no hardware bytes. Printing that already crossed this boundary retains its durable outcome reporting through a later disconnect. Repeated admission for the same live printing claim is acknowledged without creating another job or physical attempt.
 

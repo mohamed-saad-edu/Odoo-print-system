@@ -22,7 +22,7 @@ def test_actual_native_gateway_pipe_helpers(tmp_path):
     if not compilers:
         pytest.skip("UNVERIFIED: pinned native rustc is not cached; no toolchain download permitted")
     source = (ROOT / "src-tauri/src/agent.rs").read_text(encoding="utf-8")
-    begin = source.index("fn join_reader_thread(")
+    begin = source.index("type JoinedCommandIo =")
     end = source.index("fn resource_dir(", begin)
     tests_begin = source.index("#[cfg(test)]\nmod command_io_tests {")
     tests_end = source.find("\n#[cfg(test)]\nmod ", tests_begin + 1)
