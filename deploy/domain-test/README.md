@@ -15,8 +15,10 @@ git fetch origin
 git switch test/http-server-ready
 git pull --ff-only origin test/http-server-ready
 bash -n deploy/domain-test/setup-domain-test.sh
-docker compose --env-file deploy/domain-test/.env.domain-test -f deploy/domain-test/docker-compose.yml config --quiet
+# The setup prepares new owner/runtime credentials and validates Compose
+# itself. Do not run Compose config against the old .env beforehand.
 bash deploy/domain-test/setup-domain-test.sh
+docker compose --env-file deploy/domain-test/.env.domain-test -f deploy/domain-test/docker-compose.yml config --quiet
 bash deploy/domain-test/smoke-domain-test.sh
 ```
 
