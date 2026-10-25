@@ -7,6 +7,7 @@ import { useService } from "@web/core/utils/hooks";
 import { _t } from "@web/core/l10n/translation";
 import { startRpcWithDeadline } from "../js/async_control";
 import { isVerifiedRuntimePrinter } from "../js/printer_verification";
+import { labelPrinterScopes } from "../js/printer_scope_labels";
 
 /** Live inventory uses exactly the same company/assignment/verification fences
  * as the existing binding picker. Navigation never silently creates a route. */
@@ -24,7 +25,12 @@ export class PrintersOverview extends Component {
             try {
                 const context = await this.call("/print_gateway/setup-context", {});
                 if (!this.alive) return;
-                this.state.scopes = context.scopes || [];
+                // Display names are presentation only: keep the exact Odoo
+                // scope IDs and authorized company/branch assignment intact.
+                // The fallback also distinguishes stale/legacy RPC labels.
+                this.state.scopes = labelPrinterScopes(context.scopes, {
+                    company: _t("Company"), branch: _t("Branch"),
+                });
                 const requested = this.props.action?.context?.default_company_id;
                 this.state.scopeId = this.state.scopes.find(scope => scope.id === requested)?.id
                     || this.state.scopes.find(scope => scope.id === context.currentCompanyId)?.id

@@ -1,6 +1,32 @@
 # Odoo Integration Guide
 
-> Module: `print_gateway` | Version: 19.0.2.21.0 | Odoo: 19 Community Edition
+> Module: `print_gateway` | Version: 19.0.2.22.0 | Odoo: 19 Community Edition
+
+## Printer company/branch dropdown repair (19.0.2.22.0)
+
+When separate Odoo companies or branches share the name `My Company`, the
+printer selector must show each authorized scope distinctly, including its
+company or branch identifier when necessary. The backend returns stable IDs
+and explicit root/branch metadata; the OWL selector also disambiguates legacy
+duplicate labels. **No company records or printer assignments are merged.**
+
+**Important: this screen is hosted by Odoo, not by the Azure Gateway.**
+Updating `test/http-server-ready`, the Gateway container or the Windows
+Agent does NOT replace the files of an already-installed Odoo addon. To deploy
+this fix, copy the updated `odoo_addons/print_gateway` tree into the running
+Odoo 19 instance's configured `addons_path` (preserving Odoo's persistent
+data directory and database), take an Odoo database backup, restart its Odoo
+workers, and upgrade the module against the correct Odoo database with
+`-u print_gateway --stop-after-init` using that instance's normal deployment
+procedure. Rebuild/reload Odoo backend assets, then hard-refresh the browser.
+
+To verify, inspect the browser's Network response to
+`POST /print_gateway/setup-context`: each `scopes[]` entry should have
+the correct distinct `id`, `companyId` and `branchId`, with unique labels.
+If the API still returns only `My Company` for all entries, the running Odoo
+workers have not loaded this controller update. A simple Gateway restart is
+not sufficient. Do not share cookies, authentication tokens or API keys from
+the developer tools.
 
 ## Overview
 
