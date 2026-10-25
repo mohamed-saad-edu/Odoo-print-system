@@ -85,7 +85,15 @@ def test_registration_does_not_disclose_existing_account_state():
     signup = read("src/app/signup/page.tsx")
     assert "ACCOUNT_EXISTS" not in route
     assert "ACCOUNT_EXISTS" not in signup
-    assert "status: 409" not in route
+    # Only staging's identity-independent single-workspace admission returns
+    # 409. It runs before any account lookup, and company invitations bypass it.
+    assert route.count("status: 409") == 1
+    staging_check = route.index("if (isSingleWorkspaceStaging() && !invitation)")
+    user_lookup = route.index("const existing = await db.query.users.findFirst")
+    assert route.index("const invitation = inviteToken ?") < staging_check
+    assert staging_check < route.index('code: "STAGING_WORKSPACE_EXISTS"') < user_lookup
+    assert "stagingWorkspaceExists(db)" in route[staging_check:user_lookup]
+    assert "invitationId: invitation?.id ?? null" in route
     assert "if (existing) return setRateLimitHeaders(NextResponse.json(GENERIC, { status: 202 }), rate);" in route
 
 

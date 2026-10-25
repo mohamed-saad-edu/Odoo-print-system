@@ -28,6 +28,9 @@ describe("V4 HTTPS staging upgrade safety", () => {
     expect(spawnSync("bash", ["-n", "deploy/domain-test/setup-domain-test.sh"]).status).toBe(0);
     for(const required of ["docker volume inspect", "pg_dump -Fc", "pg_restore --list", "sha256sum", "up --no-deps database_roles", "up --no-deps migrate", "up --no-deps database_verify"]) expect(s).toContain(required);
     expect(s.indexOf("pg_restore --list")).toBeLessThan(s.indexOf("compose stop gateway"));
+    expect(s.indexOf("compose build postgres caddy gateway database_roles migrate database_verify")).toBeLessThan(s.indexOf("compose stop gateway"));
+    expect(s).toContain("mounted_bootstrap");
+    expect(s).toContain("Authenticated staging DB preflight failed");
     expect(s).not.toContain("down -v");
     expect(s).not.toContain("docker volume rm");
     expect(s).not.toContain("reset-staging-workspace.sh");

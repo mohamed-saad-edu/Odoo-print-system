@@ -76,6 +76,12 @@ cid="$(compose ps -q postgres 2>/dev/null || true)"
 # Verify that we are talking to the SAME database before any service update.
 current_db="$(compose exec -T postgres sh -c 'psql -X -At -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -c "select current_database()"' | tr -d '\r\n')"
 [[ "$current_db" == yasser_http_test ]] || { echo "Unexpected connected database" >&2; exit 2; }
+# The current running PostgreSQL container must have the same bootstrap
+# password as the preserved env. A mismatch would strand a role cutover.
+mounted_bootstrap="$(compose exec -T postgres cat /run/secrets/postgres_password)"
+[[ "$mounted_bootstrap" == "$bootstrap" ]] || { echo "Existing DB secret differs from the staging env; correct this BEFORE upgrade" >&2; exit 2; }
+authenticated_db="$(compose exec -T postgres sh -c 'PGPASSWORD="$(cat /run/secrets/postgres_password)" exec psql -X -At -h postgres -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -c "select current_database()"' | tr -d '\r\n')"
+[[ "$authenticated_db" == yasser_http_test ]] || { echo "Authenticated staging DB preflight failed; refusing upgrade" >&2; exit 2; }
 ARCHIVE="$(mktemp "$BACKUP_DIR/before-v4-$STAMP.XXXXXX.dump")"
 echo "Backing up existing database before V4 role and schema migrations..."
 compose exec -T postgres sh -c 'exec pg_dump -Fc -U "$POSTGRES_USER" -d "$POSTGRES_DB"' > "$ARCHIVE"
@@ -83,9 +89,12 @@ compose exec -T postgres sh -c 'exec pg_dump -Fc -U "$POSTGRES_USER" -d "$POSTGR
 compose exec -T postgres sh -c 'exec pg_restore --list' < "$ARCHIVE" >/dev/null
 (cd "$BACKUP_DIR" && sha256sum "$(basename "$ARCHIVE")" > "$(basename "$ARCHIVE").sha256")
 echo "Verified private backup: $ARCHIVE"
-echo "Stopping ONLY staging Gateway before applying least-privilege database roles..."
-compose stop gateway || true
+# Prebuild images while the old Gateway is still available; only the actual
+# role/migration cutover needs a maintenance interval.
+echo "Prebuilding V4 images before stopping the existing staging Gateway..."
 compose build postgres caddy gateway database_roles migrate database_verify
+echo "Stopping ONLY staging Gateway before applying least-privilege database roles..."
+compose stop gateway
 compose up -d postgres
 compose up --no-deps database_roles
 compose up --no-deps migrate
