@@ -120,3 +120,14 @@ describe("Odoo 19 module layout contract — full-width pages", () => {
     }
   });
 });
+
+
+describe("Odoo concise connection guidance", () => {
+  it("keeps the connection and enable-printing requirements accessible on demand", () => {
+    const xml = read("odoo_addons/print_gateway/views/gateway_config_views.xml");
+    expect(xml).toContain('<details class="mb-3">');
+    expect(xml).toContain('<details class="mb-2">');
+    expect(xml).toContain('string="Enable printing"');
+    expect(xml).toContain('name="action_test_connection"');
+  });
+});

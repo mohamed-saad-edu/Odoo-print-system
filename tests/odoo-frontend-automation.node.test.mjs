@@ -71,7 +71,7 @@ const root = path.resolve("odoo_addons/print_gateway/static/src");
 async function load(relative, extra = {}, overrides = {}) {
   const registry = { category: () => ({ add() {}, contains: () => false }) };
   const stubs = {
-    "@odoo/owl": { Component: class {}, onWillUnmount() {}, onMounted() {}, useEffect() {}, useState: v => v, xml: () => "" },
+    "@odoo/owl": { Component: class {}, onWillStart() {}, onWillUnmount() {}, onMounted() {}, useEffect() {}, useState: v => v, xml: () => "" },
     "@web/core/registry": { registry },
     "@web/core/network/rpc": { rpc() {} },
     "@web/core/l10n/translation": { _t: value => value },

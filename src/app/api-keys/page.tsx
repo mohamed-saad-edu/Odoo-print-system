@@ -194,7 +194,7 @@ export default function ApiKeysPage() {
         eyebrow={t("nav.section.integration")}
         icon={<KeyRound className="h-4 w-4" />}
         title={t("v4.connection.title")}
-        description={t("v4.connection.intro")}
+        description={active === 0 ? t("v4.connection.intro") : undefined}
         meta={
           active > 0 ? (
             <StatusBadge tone={enabled > 0 ? "ok" : "warn"} label={tc("apiKeys.activeCount", active, { count: formatNumber(active) })} />
@@ -403,7 +403,7 @@ export default function ApiKeysPage() {
 
             <aside className="space-y-5">
               {enabled === 0 && <Callout tone="info" title={t("v4.connection.gatewayUrl")}><code dir="ltr" className="block break-all">{gatewayUrl || "—"}</code><p className="mt-2">{t("v4.connection.notPairing")}</p></Callout>}
-              <details className="card group overflow-hidden">
+              {enabled === 0 && <details className="card group overflow-hidden">
                 <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 px-5 py-4 outline-none transition-colors hover:bg-surface-2 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand/35">
                   <span className="min-w-0">
                     <span className="block text-md font-[600] leading-snug text-ink">{t("apiKeys.howItWorks")}</span>
@@ -429,7 +429,7 @@ export default function ApiKeysPage() {
                     </li>
                   ))}
                 </ol>
-              </details>
+              </details>}
 
 
               <div className="text-sm text-ink-3">

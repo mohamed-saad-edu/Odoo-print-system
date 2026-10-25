@@ -1,6 +1,7 @@
 import { createElement as h } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
 import { I18nProvider } from "../src/i18n/react";
 import { SetupGuide } from "../src/desktop/components/SetupGuide";
 import type { DesktopState } from "../src/desktop/types";
@@ -22,5 +23,16 @@ describe("V4 guided desktop setup", () => {
     expect(html).not.toContain('id="home-pair-code"');
     expect(html).toContain("Discover");
     expect(html).toContain("Not yet confirmed");
+  });
+});
+
+
+describe("concise desktop next-action guidance", () => {
+  it("shows only the pending step instead of all completed onboarding cards", () => {
+    const source = readFileSync("src/desktop/components/SetupGuide.tsx", "utf8");
+    expect(source).toContain("if (active === -1) return null;");
+    expect(source).toContain("steps.filter((_, index) => index === active)");
+    expect(source).toContain("active === 1 && <form");
+    expect(source).toContain("active === 2 ? s.handleDiscover : step.action");
   });
 });

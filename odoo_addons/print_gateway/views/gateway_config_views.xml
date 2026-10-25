@@ -28,7 +28,7 @@
                     <field name="gateway_sync_state" widget="statusbar"/>
                 </header>
                 <sheet>
-                    <div class="oe_title"><h1>Connect Yaseir</h1><p class="text-muted">Connect once, choose your printer, and enable the documents your business needs.</p></div>
+                    <div class="oe_title"><h1>Connect Yaseir</h1></div>
                     <div class="alert alert-info" role="status"><field name="gateway_sync_message" readonly="1" nolabel="1"/></div>
                     <group string="1. Connect your company">
                         <field name="company_id" string="Company"/>
@@ -37,7 +37,11 @@
                         <field name="last_test_status" string="Connection" widget="badge" readonly="1"
                                decoration-success="last_test_status == 'success'" decoration-danger="last_test_status in ('failed', 'revoked')"/>
                     </group>
-                    <p class="text-muted">Use your Odoo connection key here. The Windows pairing code connects a computer and cannot be used in this field.</p>
+                    <details class="mb-3">
+                        <summary>Connection</summary>
+                        <p class="text-muted">Connect once, choose your printer, and enable the documents your business needs.</p>
+                        <p class="text-muted">Use your Odoo connection key here. The Windows pairing code connects a computer and cannot be used in this field.</p>
+                    </details>
                     <group string="2. Choose printers and documents">
                         <div class="d-flex flex-wrap gap-2">
                             <button name="action_open_printers" type="object" string="Choose printers" class="btn btn-outline-primary"/>
@@ -46,7 +50,10 @@
                     </group>
                     <group string="3. Start printing">
                         <field name="enabled" widget="boolean_toggle" string="Enable printing"/>
-                        <p class="text-muted">Printing starts only after the connection is confirmed and a verified printer is assigned to the document.</p>
+                        <details class="mb-2">
+                            <summary>Enable printing</summary>
+                            <p class="text-muted">Printing starts only after the connection is confirmed and a verified printer is assigned to the document.</p>
+                        </details>
                     </group>
                     <notebook>
                         <page string="Advanced connection settings">

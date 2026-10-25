@@ -106,7 +106,7 @@ export default function SettingsPage() {
         icon={<SettingsIcon className="h-4 w-4" />}
         title={t("nav.settings")}
         width="narrow"
-        description={t("v4.experience.settings.body")}
+        
       />
 
       <PageContainer width="narrow">

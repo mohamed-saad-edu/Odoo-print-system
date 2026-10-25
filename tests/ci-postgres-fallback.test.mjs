@@ -22,6 +22,10 @@ if [ "$1" = pull ]; then
     echo 'toomanyrequests: Data limit exceeded' >&2
     exit 1
   fi
+  if [ "$CI_PG_MOCK_MODE" = quota ] && [[ "$2" == public.ecr.aws/* ]]; then
+    echo 'Error response from daemon: error from registry: Data limit exceeded' >&2
+    exit 1
+  fi
   if [ "$CI_PG_MOCK_MODE" = invalid ] && [[ "$2" == public.ecr.aws/* ]]; then
     echo 'denied: invalid content digest' >&2
     exit 1
@@ -88,4 +92,13 @@ test("CI postgres fails rather than hiding fallback download errors", () => {
   assert.notEqual(result.status, 0);
   assert.ok(result.calls.includes("pull " + hub));
   assert.ok(!result.calls.includes("run --rm"));
+});
+
+
+test("CI postgres also recognizes ECR Public's exact data-quota refusal and retains the pinned digest", () => {
+  const result = runWithFakeDocker("quota");
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(result.calls.includes("pull " + ecr));
+  assert.ok(result.calls.includes("pull " + hub));
+  assert.ok(result.calls.indexOf("pull " + ecr) < result.calls.indexOf("pull " + hub));
 });
