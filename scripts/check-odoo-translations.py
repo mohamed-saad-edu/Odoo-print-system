@@ -106,6 +106,17 @@ def extract_occurrences(addon: Path = ADDON) -> dict[str, set[str]]:
             return ast.literal_eval(node)
         except (ValueError, TypeError, SyntaxError):
             return None
+    # Odoo 19 module metadata is translated through ir.module.module.
+    # Dropping static/description/index.html allows description_html to use
+    # the translated manifest description instead of English-only markup.
+    manifest_path = addon / "__manifest__.py"
+    if manifest_path.exists():
+        manifest_tree = ast.parse(manifest_path.read_text(encoding="utf-8"))
+        manifest = ast.literal_eval(manifest_tree.body[0].value)
+        for manifest_key, model_field in (
+            ("name", "shortdesc"), ("summary", "summary"), ("description", "description"),
+        ):
+            add(manifest.get(manifest_key), f"model:ir.module.module,{model_field}:base.module_{addon.name}")
     for path in sorted(addon.rglob("*.py")):
         if "tests" in path.relative_to(addon).parts:
             continue
