@@ -87,6 +87,15 @@ test('Odoo CI tests the built hardened runtime by content ID with verified immut
   assert.ok(hardened.includes('verify-odoo19-pdf-bounds.py /opt/odoo'));
   assert.ok(ci.includes('--file Dockerfile.odoo-hardened'));
   assert.ok(ci.includes('--iidfile "$RUNNER_TEMP/odoo-hardened.image-id"'));
+  // Production Odoo keeps its real HTTP healthcheck, but 284 DB-intensive
+  // tests must not accumulate blocked /web/health threads in the CI runner.
+  // Do not skip, mock, or reduce the native addon test suite itself.
+  assert.match(hardened, /^HEALTHCHECK --interval=30s/m);
+  assert.ok(ci.includes('docker run --rm --no-healthcheck --network host --name odoo19_test_run'));
+  assert.ok(ci.includes('--test-tags=/print_gateway'));
+  assert.ok(ci.includes('--init=print_gateway'));
+  assert.ok(ci.includes('--stop-after-init'));
+
   assert.ok(ci.includes('odoo_image="$(cat "$RUNNER_TEMP/odoo-hardened.image-id")"'));
   assert.ok(ci.includes('"$odoo_image" \\'));
   assert.ok(ci.includes('--addons-path=/opt/odoo/odoo/addons,/opt/odoo/addons,/opt/yaseir-addons'));

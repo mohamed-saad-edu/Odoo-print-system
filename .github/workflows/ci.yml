@@ -448,8 +448,14 @@ jobs:
           # Test the built image by immutable local content ID. Its source,
           # Python environment and addon are carried in the image itself.
           rm -f /tmp/odoo19_test.log
+          # The released Odoo image retains a real HTTP HEALTHCHECK.
+          # During native tests, the database/registry is deliberately held
+          # by long transactions. Background /web/health requests then block
+          # for up to ~190s, pile up Odoo HTTP threads on a shared CI runner
+          # and starve the test's lock-observer thread. Disable the probe
+          # ONLY on this ephemeral test container; do not omit a single test.
           timeout --signal=TERM --kill-after=30s 12m \
-            docker run --rm --network host --name odoo19_test_run \
+            docker run --rm --no-healthcheck --network host --name odoo19_test_run \
               -e PGHOST=127.0.0.1 \
               -e PGPORT=5432 \
               -e PGUSER=odoo \
