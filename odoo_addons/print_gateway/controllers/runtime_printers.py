@@ -13,19 +13,43 @@ from ..printer_verification import is_verified_runtime_printer
 class PrintGatewayRuntimePrinterController(http.Controller):
     @http.route('/print_gateway/setup-context', type='jsonrpc', auth='user', methods=['POST'])
     def setup_context(self):
-        """Only enabled company scopes; no credentials or implicit assignments."""
+        """Expose authorized company scopes with unambiguous, stable labels."""
         self._require_runtime_admin()
         scopes = []
+        seen_company_ids = set()
         for company in request.env.companies:
+            # A repeated allowed_company_ids entry must not render twice in OWL.
+            # Never collapse different Odoo company/branch records by name:
+            # their IDs and printer assignments are independent.
+            if company.id in seen_company_ids:
+                continue
+            seen_company_ids.add(company.id)
             root, branch = self._scope(company.id)
             config, _root = self._get_config(root)
+            root_name = (root.name or root.display_name or "").strip() or str(root.id)
+            if branch:
+                branch_name = (branch.name or branch.display_name or "").strip() or str(branch.id)
+                label = "%s / %s" % (root_name, branch_name)
+            else:
+                label = root_name
             scopes.append({
                 'id': company.id,
-                'name': company.display_name,
+                'name': label,
                 'companyId': root.id,
                 'branchId': branch.id if branch else False,
                 'configId': config.id if config else False,
             })
+
+        # Odoo permits different company/branch records with identical names.
+        # Keep all their distinct authorization scopes; suffix only ambiguous
+        # labels with the immutable Odoo company ID to prevent misrouting.
+        counts = {}
+        for scope in scopes:
+            key = scope['name'].casefold()
+            counts[key] = counts.get(key, 0) + 1
+        for scope in scopes:
+            if counts[scope['name'].casefold()] > 1:
+                scope['name'] = "%s (#%s)" % (scope['name'], scope['id'])
         return {'scopes': scopes, 'currentCompanyId': request.env.company.id}
 
     @staticmethod
