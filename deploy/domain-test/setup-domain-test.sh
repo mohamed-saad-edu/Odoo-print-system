@@ -11,6 +11,16 @@ DOMAIN=print.yaseir.cloud
 command -v docker >/dev/null && docker compose version >/dev/null || { echo "Docker Compose v2 is required" >&2; exit 2; }
 for utility in openssl sha256sum curl git; do command -v "$utility" >/dev/null || { echo "Missing $utility" >&2; exit 2; }; done
 [[ -f "$ENV_FILE" ]] || { echo "Missing existing HTTPS staging env: $ENV_FILE (refusing new database)" >&2; exit 2; }
+# Preserve the ORIGINAL configuration before this script mutates any key.
+# An operator can restore it if a later preflight or migration stops safely.
+BACKUP_DIR="$HOME/.local/share/yaseir-staging-backups"
+mkdir -p "$BACKUP_DIR"
+chmod 700 "$BACKUP_DIR"
+STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+ENV_BACKUP="$(mktemp "$BACKUP_DIR/before-v4-original-env-$STAMP.XXXXXX")"
+cp "$ENV_FILE" "$ENV_BACKUP"
+chmod 600 "$ENV_BACKUP"
+echo "Original staging environment saved securely: $ENV_BACKUP"
 get_env_value() { grep -m1 "^$1=" "$ENV_FILE" | cut -d= -f2- || true; }
 upsert_env() {
   local key="$1" value="$2"
@@ -66,14 +76,7 @@ cid="$(compose ps -q postgres 2>/dev/null || true)"
 # Verify that we are talking to the SAME database before any service update.
 current_db="$(compose exec -T postgres sh -c 'psql -X -At -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -c "select current_database()"' | tr -d '\r\n')"
 [[ "$current_db" == yasser_http_test ]] || { echo "Unexpected connected database" >&2; exit 2; }
-BACKUP_DIR="$HOME/.local/share/yaseir-staging-backups"
-mkdir -p "$BACKUP_DIR"
-chmod 700 "$BACKUP_DIR"
-STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 ARCHIVE="$(mktemp "$BACKUP_DIR/before-v4-$STAMP.XXXXXX.dump")"
-ENV_BACKUP="$(mktemp "$BACKUP_DIR/before-v4-env-$STAMP.XXXXXX")"
-cp "$ENV_FILE" "$ENV_BACKUP"
-chmod 600 "$ENV_BACKUP"
 echo "Backing up existing database before V4 role and schema migrations..."
 compose exec -T postgres sh -c 'exec pg_dump -Fc -U "$POSTGRES_USER" -d "$POSTGRES_DB"' > "$ARCHIVE"
 [[ -s "$ARCHIVE" ]] || { echo "Backup empty; refusing upgrade" >&2; exit 1; }

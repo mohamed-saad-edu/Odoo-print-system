@@ -6,7 +6,7 @@ The staging deployment carries the same V4 application, migrations, DB role isol
 
 ## Existing server upgrade (no data reset)
 
-Never overwrite the existing `deploy/domain-test/.env.domain-test` or remove its external `STAGING_PG_VOLUME`. The setup script refuses an absent volume, changed database name, or missing running PostgreSQL. It creates a private verified PostgreSQL backup and protected env backup **before** role/migration changes. It stops only the old staging Gateway for the DB-role cutover, then rebuilds V4 Gateway, migrator, verifier and Caddy. It does not invoke reset or remove Docker volumes.
+Never overwrite the existing `deploy/domain-test/.env.domain-test` or remove its external `STAGING_PG_VOLUME`. The setup script refuses an absent volume, changed database name, or missing running PostgreSQL. It creates a protected **original environment backup before changing any key**, then a private verified PostgreSQL backup before role/migration changes. It stops only the old staging Gateway for the DB-role cutover, then rebuilds V4 Gateway, migrator, verifier and Caddy. It does not invoke reset or remove Docker volumes.
 
 ```bash
 cd /opt/yasser
