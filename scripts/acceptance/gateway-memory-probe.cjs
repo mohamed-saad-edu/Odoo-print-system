@@ -2,6 +2,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const v8 = require("node:v8");
+const { readCgroupMemoryBytes } = require("./cgroup-memory.cjs");
 const { PerformanceObserver, performance, monitorEventLoopDelay } = require("node:perf_hooks");
 
 const output = process.env.YASEIR_PROBE_OUTPUT;
@@ -32,7 +33,7 @@ function sample(kind = "sample") {
     activeResources: process.getActiveResourcesInfo().reduce((a, n) => (a[n] = (a[n] || 0) + 1, a), {}),
     eventLoopDelay: { meanMs: delay.mean / 1e6, maxMs: delay.max / 1e6, p99Ms: delay.percentile(99) / 1e6 },
     cpu: process.cpuUsage(), fileDescriptors: fs.readdirSync(`/proc/${process.pid}/fd`).length,
-    host: { loadavg: fs.readFileSync("/proc/loadavg", "utf8").trim(), cgroupMemoryBytes: Number(fs.readFileSync("/sys/fs/cgroup/memory.current", "utf8")) } };
+    host: { loadavg: fs.readFileSync("/proc/loadavg", "utf8").trim(), cgroupMemoryBytes: readCgroupMemoryBytes() } };
   fs.appendFileSync(output, JSON.stringify(row) + "\n", { mode: 0o600 });
   delay.reset();
   return row;

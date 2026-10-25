@@ -125,6 +125,19 @@ test('Odoo CI tests the built hardened runtime by content ID with verified immut
   assert.ok(findings.every((row) => row.length === 3 && ['LOW', 'MEDIUM'].includes(row[2])));
 });
 
+test('Docker scans the shipped npm-free Gateway runtime and retains upstream advisory evidence', () => {
+  assert.ok(workflow.includes('docker build --file Dockerfile --target runtime --tag yaseir-gateway:ci-node24.22.1 .'));
+  assert.ok(workflow.includes("test ! -e /usr/local/lib/node_modules/npm"));
+  assert.ok(workflow.includes('Scan release image (Trivy)'));
+  assert.ok(workflow.includes('trivy-upstream-node.sarif'));
+  assert.ok(workflow.includes("image='yaseir-gateway:ci-node24.22.1'"));
+  assert.ok(workflow.includes('scripts/check-trivy-baseline.py trivy.sarif "$image"'));
+  assert.ok(workflow.includes('POSTGRES_RUNTIME_PASSWORD: ci-only-runtime-'));
+  assert.ok(workflow.includes('POSTGRES_OWNER_PASSWORD: ci-only-owner-'));
+  assert.ok(workflow.includes('fs.readFileSync("/run/secrets/postgres_runtime_password"'));
+  assert.ok(!workflow.includes('const pgPassword = fs.readFileSync("/run/secrets/postgres_password"'));
+});
+
 test('Docker CI image references remain immutable and reject mutable tags', () => {
   const ciRefs = [...ciCompose.matchAll(/^\s*NODE_BASE_IMAGE:\s*(\S+)/gm)].map(m => m[1]);
   assert.equal(ciRefs.length, 2);

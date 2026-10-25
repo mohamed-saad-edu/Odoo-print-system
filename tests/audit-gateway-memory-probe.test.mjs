@@ -3,8 +3,22 @@ import { fork } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { createRequire } from "node:module";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+
+const require = createRequire(import.meta.url);
+const { readCgroupMemoryBytes } = require("../scripts/acceptance/cgroup-memory.cjs");
+
+test("memory probe handles cgroup v2, cgroup v1 and hosts without a memory cgroup", () => {
+  const missing = () => { throw Object.assign(new Error("missing cgroup"), { code: "ENOENT" }); };
+  assert.equal(readCgroupMemoryBytes((file) => file.endsWith("memory.current") ? "1024\n" : missing()), 1024);
+  assert.equal(readCgroupMemoryBytes((file) => file.endsWith("memory.current") ? missing() : "4096\n"), 4096);
+  assert.equal(readCgroupMemoryBytes(missing), null);
+  assert.equal(readCgroupMemoryBytes(() => "max"), null);
+  assert.equal(readCgroupMemoryBytes(() => { throw Object.assign(new Error("not permitted"), { code: "EACCES" }); }), null);
+  assert.throws(() => readCgroupMemoryBytes(() => { throw Object.assign(new Error("I/O failure"), { code: "EIO" }); }), /I\/O failure/);
+});
 
 test("checkpoint IPC preserves the GC snapshots already recorded in JSONL", {
   timeout: 15_000,

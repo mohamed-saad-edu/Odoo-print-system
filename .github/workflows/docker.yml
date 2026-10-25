@@ -17,6 +17,9 @@ permissions:
 
 env:
   POSTGRES_PASSWORD: ci-only-password
+  # Isolated ephemeral CI fixtures only. Production secrets are independent.
+  POSTGRES_OWNER_PASSWORD: ci-only-owner-0123456789abcdef0123456789abcdef
+  POSTGRES_RUNTIME_PASSWORD: ci-only-runtime-fedcba9876543210fedcba9876543210
   GATEWAY_JWT_SECRET: ci-only-jwt-secret-012345678901234567890123456789
   MANAGER_PASSWORD_HASH: ci-salt:0123456789012345678901234567890123456789012345678901234567890123
   TRUST_PROXY_SECRET: ci-only-proxy-secret-012345678901234567890123456789
@@ -84,10 +87,34 @@ jobs:
             docker run --rm --entrypoint caddy yaseir-caddy:ci-go1.26.10 version
           fi
 
-      - name: Scan pinned base image (Trivy)
+      - name: Build exact released Gateway image
+        if: matrix.variant == 'node'
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The pinned Node parent contains npm-bundled vulnerabilities.
+          # Production removes npm entirely; scan the actual final runtime,
+          # NOT a parent image that is never shipped as-is.
+          docker build --file Dockerfile --target runtime --tag yaseir-gateway:ci-node24.22.1 .
+          docker run --rm --entrypoint /bin/sh yaseir-gateway:ci-node24.22.1 -ec \
+            'test ! -e /usr/local/lib/node_modules/npm && test ! -e /usr/local/bin/npm && test ! -e /usr/local/bin/npx && node --version'
+
+      - name: Scan upstream Node parent for retained advisory evidence
+        if: matrix.variant == 'node'
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
-          image-ref: ${{ matrix.variant == 'node' && 'node:24.22.1-alpine@sha256:06d7adf3e0ef61a13f1d28682726366f97a15aa1888c934d3ecec86c33918b53' || format('yaseir-{0}:ci-go1.26.10', matrix.variant) }}
+          image-ref: node:24.22.1-alpine@sha256:06d7adf3e0ef61a13f1d28682726366f97a15aa1888c934d3ecec86c33918b53
+          format: 'sarif'
+          output: 'trivy-upstream-node.sarif'
+          severity: 'UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL'
+          limit-severities-for-sarif: true
+          ignore-unfixed: false
+          exit-code: '0'
+
+      - name: Scan release image (Trivy)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ matrix.variant == 'node' && 'yaseir-gateway:ci-node24.22.1' || format('yaseir-{0}:ci-go1.26.10', matrix.variant) }}
           format: 'sarif'
           output: 'trivy.sarif'
           severity: 'UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL'
@@ -97,7 +124,7 @@ jobs:
           # expiring review gate rejects every unreviewed finding.
           exit-code: '0'
 
-      - name: Enforce reviewed upstream image vulnerability baseline
+      - name: Enforce reviewed release image vulnerability baseline
         shell: bash
         env:
           PATCHED_VARIANT: ${{ matrix.variant }}
@@ -106,7 +133,7 @@ jobs:
             exit 1
           fi
           if [ "$PATCHED_VARIANT" = node ]; then
-            image='node:24.22.1-alpine@sha256:06d7adf3e0ef61a13f1d28682726366f97a15aa1888c934d3ecec86c33918b53'
+            image='yaseir-gateway:ci-node24.22.1'
           else
             image="yaseir-${PATCHED_VARIANT}:ci-go1.26.10"
           fi
@@ -119,7 +146,9 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: trivy-image-${{ matrix.variant }}
-          path: trivy.sarif
+          path: |
+            trivy.sarif
+            trivy-upstream-node.sarif
           if-no-files-found: error
           retention-days: 14
 
@@ -262,7 +291,9 @@ jobs:
             return data + "." + sig;
           };
 
-          const pgPassword = fs.readFileSync("/run/secrets/postgres_password", "utf8").trim();
+          // Only the restricted runtime secret is mounted in Gateway.
+          // Never grant administrator/bootstrap DB credentials to the app.
+          const pgPassword = fs.readFileSync("/run/secrets/postgres_runtime_password", "utf8").trim();
           const jwtSecret = fs.readFileSync("/run/secrets/gateway_jwt_secret", "utf8").trim();
           const proxySecret = fs.readFileSync("/run/secrets/trust_proxy_secret", "utf8").trim();
           const suffix = crypto.randomBytes(8).toString("hex");
