@@ -1,5 +1,6 @@
+import { issueWorkspaceTestSession } from "./helpers/workspace-session";
 import { describe, it, expect, beforeAll, beforeEach, afterAll } from "vitest";
-import { issueSessionPair, rotateRefreshToken } from "../src/lib/session-tokens";
+import { rotateRefreshToken } from "../src/lib/session-tokens";
 import { POST as managerLogout } from "../src/app/api/auth/manager/logout/route";
 import { POST as customerLogout } from "../src/app/api/auth/logout/route";
 import { POST as platformLogout } from "../src/app/api/platform/auth/logout/route";
@@ -46,7 +47,7 @@ suite("refresh-family logout", () => {
   });
 
   it("manager logout revokes the entire refresh family", async () => {
-    const first = await issueSessionPair({
+    const first = await issueWorkspaceTestSession({
       kind: "manager",
       tenantId: "tenant_logout_test",
       userId: "user_logout_test",
@@ -68,7 +69,7 @@ suite("refresh-family logout", () => {
   });
 
   it("customer logout revokes the family using only the refresh cookie", async () => {
-    const first = await issueSessionPair({
+    const first = await issueWorkspaceTestSession({
       kind: "customer",
       tenantId: "tenant_logout_test",
       userId: "user_logout_test",
@@ -94,7 +95,7 @@ suite("refresh-family logout", () => {
   });
 
   it("generic logout revokes a manager family even without a customer cookie", async () => {
-    const first = await issueSessionPair({
+    const first = await issueWorkspaceTestSession({
       kind: "manager",
       tenantId: "tenant_logout_test",
       userId: "user_logout_test",
@@ -116,14 +117,14 @@ suite("refresh-family logout", () => {
   });
 
   it("generic logout revokes both workspace and manager families when both cookies exist", async () => {
-    const customer = await issueSessionPair({
+    const customer = await issueWorkspaceTestSession({
       kind: "customer",
       tenantId: "tenant_logout_test",
       userId: "user_logout_test",
       role: "admin",
       email: "logout@example.test",
     });
-    const manager = await issueSessionPair({
+    const manager = await issueWorkspaceTestSession({
       kind: "manager",
       tenantId: "tenant_logout_test",
       userId: "user_logout_test",
@@ -151,7 +152,7 @@ suite("refresh-family logout", () => {
   });
 
   it("customer logout revokes the entire customer refresh family", async () => {
-    const first = await issueSessionPair({
+    const first = await issueWorkspaceTestSession({
       kind: "customer",
       tenantId: "tenant_logout_test",
       userId: "user_logout_test",
@@ -173,13 +174,8 @@ suite("refresh-family logout", () => {
   });
 
   it("platform logout revokes the entire platform refresh family", async () => {
-    const first = await issueSessionPair({
-      kind: "platform",
-      userId: "platform_logout_test",
-      email: "platform-logout@example.test",
-      tenantId: null,
-      role: null,
-    });
+    const { createVerifiedPlatformPair } = await import("./helpers/platform-session");
+    const first = await createVerifiedPlatformPair("platform_logout_test", "platform-logout@example.test");
     const second = await rotateRefreshToken("platform", first.refreshToken);
     expect(second.status).toBe("rotated");
 

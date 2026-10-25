@@ -39,8 +39,8 @@
                 </header>
                 <sheet>
                     <div class="alert alert-warning" role="alert" invisible="status != 'failed'">
-                        <b>Automatic printing could not be completed.</b>
-                        Check the issue below, correct the print rule or printer, then select <i>Retry Print</i>.
+                        <b t-translation="on">Automatic printing could not be completed.</b>
+                        Check the issue below, correct the print rule or printer, then select <i t-translation="on">Retry Print</i>.
                     </div>
                     <div class="alert alert-info" role="alert" invisible="status != 'pending' or attempts != 0">
                         Waiting for the business transaction to finish. Printing will continue afterwards.
@@ -66,7 +66,8 @@
                         </group>
                     </group>
                     <group string="Issue" invisible="not last_error">
-                        <field name="last_error" readonly="1" nolabel="1" class="o_pg_mono text-danger"/>
+                        <field name="last_error" invisible="1"/>
+                        <field name="customer_issue" readonly="1" nolabel="1"/>
                     </group>
                 </sheet>
             </form>

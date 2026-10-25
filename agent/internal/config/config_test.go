@@ -22,6 +22,31 @@ func TestValidatePrinterConfigRejectsUnsafePrinterDestinations(t *testing.T) {
 	}
 }
 
+func TestOperatorYAMLMarksOnlyExplicitLegacyDotSettings(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	c := &Config{Printers: []PrinterConfig{
+		{ID: "legacy", Type: "network", Protocol: "escpos", Endpoint: "192.168.1.50:9100", Capabilities: map[string]interface{}{"max_paper_width": 576}},
+		{ID: "nominal", Type: "network", Protocol: "escpos", Endpoint: "192.168.1.51:9100", PaperWidthMM: 80},
+	}}
+	if err := c.Save(path); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !loaded.Printers[0].ExplicitLegacyGeometry || loaded.Printers[1].ExplicitLegacyGeometry {
+		t.Fatal("operator provenance was not tied to explicit legacy dot settings")
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(raw, []byte("ExplicitLegacyGeometry")) || bytes.Contains(raw, []byte("explicit_legacy_geometry")) {
+		t.Fatal("internal observation provenance became serializable")
+	}
+}
+
 func TestValidatePrinterConfig(t *testing.T) {
 	ok := PrinterConfig{ID: "printer_kitchen", Name: "Kitchen", Type: "network", Endpoint: "192.168.1.50:9100", Protocol: "escpos"}
 	if err := ValidatePrinterConfig(ok); err != nil {

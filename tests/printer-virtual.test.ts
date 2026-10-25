@@ -1,3 +1,4 @@
+import { verifiedPrinterState } from "./helpers/printer-verification";
 import { describe, expect, it } from "vitest";
 import { isPrinterAvailableForJob } from "../src/lib/routing";
 import { isVirtualPrinterRecord } from "../src/lib/printer-virtual";
@@ -88,18 +89,18 @@ describe("routing availability", () => {
 
   it("keeps a physical printer available only with positive online telemetry", () => {
     expect(
-      isPrinterAvailableForJob({ lifecycle: "active", status: "online", printerType: "physical", deviceClass: "laser" })
+      isPrinterAvailableForJob({ ...verifiedPrinterState(), lifecycle: "active", status: "online", printerType: "physical", deviceClass: "laser" })
     ).toBe(true);
     // Unknown telemetry is intentionally unavailable: routing must not send a
     // job to a printer whose current health state has not been positively reported.
     expect(
-      isPrinterAvailableForJob({ lifecycle: "active", status: "unknown", printerType: "physical", deviceClass: "laser" })
+      isPrinterAvailableForJob({ ...verifiedPrinterState(), lifecycle: "active", status: "unknown", printerType: "physical", deviceClass: "laser" })
     ).toBe(false);
     expect(
-      isPrinterAvailableForJob({ lifecycle: "active", status: "offline", printerType: "physical", deviceClass: "laser" })
+      isPrinterAvailableForJob({ ...verifiedPrinterState(), lifecycle: "active", status: "offline", printerType: "physical", deviceClass: "laser" })
     ).toBe(false);
     expect(
-      isPrinterAvailableForJob({ lifecycle: "disabled", status: "online", printerType: "physical", deviceClass: "laser" })
+      isPrinterAvailableForJob({ ...verifiedPrinterState(), lifecycle: "disabled", status: "online", printerType: "physical", deviceClass: "laser" })
     ).toBe(false);
   });
 });
@@ -136,7 +137,7 @@ describe("friendly labels cannot mask actual Windows queue identity", () => {
     ]) {
       const row = { ...physical, ...identity };
       expect(isVirtualPrinterRecord(row)).toBe(true);
-      expect(isPrinterAvailableForJob({ ...row, lifecycle: "active", status: "unknown" })).toBe(false);
+      expect(isPrinterAvailableForJob({ ...verifiedPrinterState(), ...row, lifecycle: "active", status: "unknown" })).toBe(false);
       expect(isProductionPrinter({ ...row, id: "alias", status: "unknown", enabled: true })).toBe(false);
     }
   });
@@ -148,7 +149,7 @@ describe("friendly labels cannot mask actual Windows queue identity", () => {
     ]) {
       const row = { ...physical, ...identity };
       expect(isVirtualPrinterRecord(row)).toBe(false);
-      expect(isPrinterAvailableForJob({ ...row, lifecycle: "active", status: "unknown" })).toBe(true);
+      expect(isPrinterAvailableForJob({ ...verifiedPrinterState(), ...row, lifecycle: "active", status: "unknown" })).toBe(true);
     }
     expect(isVirtualPrinterRecord({ name: "Real printer", printerType: "physical", connectionType: "network", protocol: "raw", endpoint: "Microsoft Print to PDF", config: { address: "Microsoft Print to PDF" } })).toBe(false);
   });

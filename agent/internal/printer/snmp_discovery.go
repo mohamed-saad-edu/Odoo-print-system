@@ -131,10 +131,11 @@ func probeSNMPPrinterWithPort(ctx context.Context, ip string, snmpPort int, prin
 	// assigning an endpoint/protocol that the print pipeline could use.
 	printEndpointVerified := verifyTCPPrintEndpoint(ctx, ip, printerPort)
 	caps := map[string]interface{}{
-		"discovered_via": SourceSNMP,
-		"sysDescr":       sysDescr,
-		"serial":         prtSerial,
-		"snmp_detected":  true,
+		"discovered_via":   SourceSNMP,
+		"sysDescr":         sysDescr,
+		"printer_mib_name": prtPrinterName,
+		"serial":           prtSerial,
+		"snmp_detected":    true,
 	}
 	protocol := ""
 	endpoint := ip

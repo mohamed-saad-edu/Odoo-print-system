@@ -2,7 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 import { db } from "../src/db";
 import { POST as testPrint } from "../src/app/api/printers/[id]/test-print/route";
 import { POST as ordinaryPrint } from "../src/app/api/print/jobs/route";
-import { createManagerSession } from "../src/lib/manager-auth";
+import { createWorkspaceManagerTestSession } from "./helpers/workspace-session";
 import { idempotencyDigest } from "../src/lib/print-job-service";
 import { gatewayTestSigningKey } from "./helpers/test-secrets";
 import { applyMigrations, closePool, hasTestDatabase, jobRow, pool, seedFixture, truncateAll, type Fixture } from "./helpers/pg";
@@ -11,7 +11,7 @@ const suite = describe.skipIf(!hasTestDatabase);
 
 suite("diagnostic retry identity and live-Agent admission", () => {
   let f: Fixture;
-  let manager: Awaited<ReturnType<typeof createManagerSession>>;
+  let manager: Awaited<ReturnType<typeof createWorkspaceManagerTestSession>>;
   let userId: string;
 
   beforeAll(async () => {
@@ -25,7 +25,7 @@ suite("diagnostic retry identity and live-Agent admission", () => {
     userId = `user_${f.tenantId}`;
     await pool().query("INSERT INTO users (id, email, password_hash, email_verified_at) VALUES ($1, $2, 'unused', clock_timestamp())", [userId, `${userId}@example.test`]);
     await pool().query("INSERT INTO tenant_users (user_id, tenant_id, role) VALUES ($1, $2, 'owner')", [userId, f.tenantId]);
-    manager = await createManagerSession(f.tenantId, { userId, role: "owner" });
+    manager = await createWorkspaceManagerTestSession(f.tenantId, { userId, role: "owner" });
   });
   afterAll(async () => {
     vi.restoreAllMocks();

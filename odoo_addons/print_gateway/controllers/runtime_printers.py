@@ -1,14 +1,33 @@
 # -*- coding: utf-8 -*-
-import requests
+from ..models import gateway_http as requests
 from werkzeug.exceptions import Forbidden
 
 from odoo import http
 from odoo.http import request
 from odoo.exceptions import ValidationError
 from ..runtime_policy import is_gateway_shared_printer
+from ..printer_geometry import validated_printer_geometry
+from ..printer_verification import is_verified_runtime_printer
 
 
 class PrintGatewayRuntimePrinterController(http.Controller):
+    @http.route('/print_gateway/setup-context', type='jsonrpc', auth='user', methods=['POST'])
+    def setup_context(self):
+        """Only enabled company scopes; no credentials or implicit assignments."""
+        self._require_runtime_admin()
+        scopes = []
+        for company in request.env.companies:
+            root, branch = self._scope(company.id)
+            config, _root = self._get_config(root)
+            scopes.append({
+                'id': company.id,
+                'name': company.display_name,
+                'companyId': root.id,
+                'branchId': branch.id if branch else False,
+                'configId': config.id if config else False,
+            })
+        return {'scopes': scopes, 'currentCompanyId': request.env.company.id}
+
     @staticmethod
     def _require_runtime_admin():
         if not request.env.user.has_group("base.group_system"):
@@ -223,6 +242,8 @@ class PrintGatewayRuntimePrinterController(http.Controller):
             returned_agent_id = agent.get('id') if isinstance(agent.get('id'), str) else ''
             if lifecycle != 'active' or returned_agent_id != selected_agent_id or not is_gateway_shared_printer(printer):
                 continue
+            if not is_verified_runtime_printer(printer):
+                continue
             capabilities = printer.get('capabilities') if isinstance(printer.get('capabilities'), dict) else {}
             raw_supported = capabilities.get('supported_protocols')
             supported_protocols = []
@@ -235,9 +256,12 @@ class PrintGatewayRuntimePrinterController(http.Controller):
                     if normalized in allowed_protocols and normalized not in supported_protocols:
                         supported_protocols.append(normalized)
             # Preserve absent legacy metadata versus an explicit capability restriction.
-            sanitized_capabilities = {}
+            sanitized_capabilities = {'operational_verification': dict(capabilities['operational_verification'])}
             if 'supported_protocols' in capabilities:
                 sanitized_capabilities['supported_protocols'] = supported_protocols
+            geometry = validated_printer_geometry(capabilities.get('geometry'), printer_id)
+            if geometry:
+                sanitized_capabilities['geometry'] = geometry
             paper_width = capabilities.get('paper_width_mm')
             if type(paper_width) is int and paper_width in (58, 80):
                 sanitized_capabilities['paper_width_mm'] = paper_width
@@ -253,6 +277,12 @@ class PrintGatewayRuntimePrinterController(http.Controller):
                 'deviceClass': printer.get('deviceClass') if isinstance(printer.get('deviceClass'), str) else 'unknown',
                 'connectionType': printer.get('connectionType') if isinstance(printer.get('connectionType'), str) else 'unknown',
                 'protocol': printer.get('protocol') if isinstance(printer.get('protocol'), str) else 'unknown',
+                'printerType': 'file' if printer.get('outputMedium') == 'file' else 'physical',
+                'outputMedium': printer['outputMedium'],
+                'verificationState': 'verified',
+                'verificationVerifiedAt': printer['verificationVerifiedAt'],
+                'verificationReceivedAt': printer['verificationReceivedAt'],
+                'verificationReason': None,
                 'capabilities': sanitized_capabilities,
                 'agentId': returned_agent_id,
                 'agentName': agent.get('name') if isinstance(agent.get('name'), str) else selected_agent_id,

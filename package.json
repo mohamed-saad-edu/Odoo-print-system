@@ -1,17 +1,18 @@
 {
   "name": "yaseir-gateway",
   "version": "1.0.0",
-  "description": "Yaseir — Cloud Printing Platform (Next.js + PostgreSQL + Drizzle), Windows Go agent, and Tauri desktop manager",
+  "description": "Yaseir \u2014 Cloud Printing Platform (Next.js + PostgreSQL + Drizzle), Windows Go agent, and Tauri desktop manager",
   "license": "MIT",
   "private": true,
   "engines": {
-    "node": ">=24.15.0"
+    "node": ">=24.15.0",
+    "npm": ">=12.2.1"
   },
   "scripts": {
     "dev": "tsx server.ts",
     "dev:next": "next dev",
     "start": "NODE_ENV=production tsx server.ts",
-    "lint": "eslint .",
+    "lint": "eslint . && oxlint --threads 2 -c .oxlintrc.json .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --config vitest.config.mts",
     "test:watch": "vitest --config vitest.config.mts",
@@ -53,6 +54,7 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "4.3.3",
+    "@tauri-apps/api": "2.12.4",
     "@types/node": "^26.6.5",
     "@types/pg": "8.23.1",
     "@types/react": "19.3.0",
@@ -62,8 +64,7 @@
     "@vitest/coverage-v8": "^5.0.3",
     "axe-core": "^4.14.0",
     "drizzle-kit": "0.31.11",
-    "eslint": "^10.13.0",
-    "eslint-config-next": "16.4.2",
+    "eslint": "10.13.0",
     "jsdom": "^30.1.3",
     "postcss": "^8.5.30",
     "react-style-singleton": "2.2.3",
@@ -71,23 +72,24 @@
     "typescript": "^5.7.2",
     "vite": "^8.3.4",
     "vitest": "5.0.5",
-    "@tauri-apps/api": "2.12.4"
+    "@next/eslint-plugin-next": "16.4.2",
+    "@typescript-eslint/parser": "8.70.0",
+    "eslint-plugin-react-hooks": "7.1.1",
+    "globals": "17.13.0",
+    "oxlint": "1.87.0"
   },
   "overrides": {
-    "minimatch@3.1.5": {
-      "brace-expansion": "1.1.21"
-    },
-    "minimatch@10.2.6": {
-      "brace-expansion": "5.0.12"
-    },
+    "brace-expansion@1.x": "1.1.21",
+    "brace-expansion@5.x": "5.0.12",
     "esbuild": "0.28.2",
     "source-map-js": "1.2.2",
-    "undici": "8.10.2",
+    "undici": "8.12.2",
     "sharp": "0.35.5"
   },
   "allowScripts": {
     "esbuild@0.28.2": true,
     "unrs-resolver@1.12.2": true,
     "fsevents@2.3.3": true
-  }
+  },
+  "packageManager": "npm@12.2.1"
 }

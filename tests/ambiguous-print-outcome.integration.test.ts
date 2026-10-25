@@ -9,6 +9,7 @@ import {
   markJobDeliveryUnknown,
   releaseUndeliveredClaim,
 } from "../src/lib/job-delivery";
+import { PATCH as patchAgentJob } from "../src/app/api/agent/jobs/route";
 import { sweepPrintJobs } from "../src/lib/job-maintenance";
 import { agentStaleThresholdSeconds } from "../src/lib/stale-threshold";
 
@@ -30,8 +31,8 @@ suite("ambiguous print outcomes never duplicate paper", () => {
 
   async function queuedJob(id: string) {
     await pool().query(
-      `INSERT INTO print_jobs (id, tenant_id, agent_id, printer_id, status, payload, expires_at)
-       VALUES ($1, $2, $3, $4, 'queued', $5::jsonb, now() + interval '1 hour')`,
+      `INSERT INTO print_jobs (id, tenant_id, agent_id, printer_id, status, payload, expires_at, binding_digest)
+       VALUES ($1, $2, $3, $4, 'queued', $5::jsonb, now() + interval '1 hour', (SELECT verification_binding_digest FROM printers WHERE tenant_id=$2 AND id=$4))`,
       [id, f.tenantId, f.agentId, f.printerId, JSON.stringify({ type: "raw", protocol: "raw", encoding: "base64", data: "aGVsbG8=" })],
     );
   }
@@ -41,6 +42,23 @@ suite("ambiguous print outcomes never duplicate paper", () => {
   beforeEach(async () => {
     await truncateAll();
     f = await seedFixture();
+  });
+
+  it("legacy crash-reprint cannot turn a printing attempt into another delivery", async () => {
+    await queuedJob("job_legacy_crash_reprint");
+    await pool().query("UPDATE print_jobs SET status='printing',claim_token='original-claim',claimed_at=now(),delivered_at=now(),acked_at=now(),delivery_attempts=2,retries=1,spooler_job_id='741' WHERE id='job_legacy_crash_reprint'");
+    const before = (await pool().query("SELECT * FROM print_jobs WHERE id='job_legacy_crash_reprint'")).rows[0];
+    const response = await patchAgentJob(new Request("https://gateway.test/api/agent/jobs", { method: "PATCH", headers: { Authorization: f.agentAuth, "content-type": "application/json" },
+      body: JSON.stringify({ jobId: "job_legacy_crash_reprint", claimToken: "original-claim", status: "queued", reason: "agent_reprint_after_crash", error: "AGENT_RESTART_DURING_PRINT: legacy operator setting" }) }));
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ code: "UNKNOWN_OUTCOME_REPRINT_FORBIDDEN", physicalOutcome: "unknown" });
+    const after = (await pool().query("SELECT * FROM print_jobs WHERE id='job_legacy_crash_reprint'")).rows[0];
+    expect(after).toEqual(before);
+    const report = await patchAgentJob(new Request("https://gateway.test/api/agent/jobs", { method: "PATCH", headers: { Authorization: f.agentAuth, "content-type": "application/json" },
+      body: JSON.stringify({ jobId: "job_legacy_crash_reprint", claimToken: "original-claim", status: "failed", error: "AGENT_RESTART_DURING_PRINT: outcome unknown" }) }));
+    expect(report.status).toBe(200);
+    expect(await report.json()).toMatchObject({ status: "failed", physicalOutcome: "unknown" });
+    expect((await pool().query("SELECT delivery_attempts,retries,spooler_job_id FROM print_jobs WHERE id='job_legacy_crash_reprint'")).rows[0]).toEqual({ delivery_attempts: 2, retries: 1, spooler_job_id: "741" });
   });
 
   it("an ambiguous outcome stays ambiguous and is never requeued", async () => {

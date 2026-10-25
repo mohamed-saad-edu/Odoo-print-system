@@ -35,7 +35,13 @@ describe("HTTPS staging email capture and secure-origin policy", () => {
     const file = join(dir, "verification-email.txt");
     const previousMode = process.env.YASEIR_STAGING_FIXTURES_ENABLED;
     const previousFile = process.env.YASEIR_TEST_EMAIL_CAPTURE_FILE;
+    const previousBaseUrl = process.env.APP_BASE_URL;
+    const previousSingle = process.env.YASEIR_STAGING_SINGLE_WORKSPACE;
+    const previousResend = process.env.RESEND_API_KEY;
     try {
+      delete process.env.RESEND_API_KEY;
+      process.env.APP_BASE_URL = "https://print.yaseir.cloud";
+      process.env.YASEIR_STAGING_SINGLE_WORKSPACE = "1";
       process.env.YASEIR_STAGING_FIXTURES_ENABLED = "1";
       process.env.YASEIR_TEST_EMAIL_CAPTURE_FILE = file;
 
@@ -55,6 +61,9 @@ describe("HTTPS staging email capture and secure-origin policy", () => {
       else process.env.YASEIR_STAGING_FIXTURES_ENABLED = previousMode;
       if (previousFile === undefined) delete process.env.YASEIR_TEST_EMAIL_CAPTURE_FILE;
       else process.env.YASEIR_TEST_EMAIL_CAPTURE_FILE = previousFile;
+      for (const [key, previous] of [["APP_BASE_URL", previousBaseUrl], ["YASEIR_STAGING_SINGLE_WORKSPACE", previousSingle], ["RESEND_API_KEY", previousResend]] as const) {
+        if (previous === undefined) delete process.env[key]; else process.env[key] = previous;
+      }
       rmSync(dir, { recursive: true, force: true });
     }
   });

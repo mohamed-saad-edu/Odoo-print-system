@@ -9,7 +9,7 @@ import {
   pool,
   type Fixture,
 } from "./helpers/pg";
-import { createManagerSession } from "../src/lib/manager-auth";
+import { createWorkspaceManagerTestSession } from "./helpers/workspace-session";
 import { POST as discoveryReportPOST } from "../src/app/api/agent/discovery/route";
 import { POST as discoveryStartPOST } from "../src/app/api/agents/[id]/discovery/route";
 import { POST as discoveryCancelPOST } from "../src/app/api/agents/[id]/discovery/[discoveryId]/cancel/route";
@@ -77,7 +77,7 @@ suite("discovery trust and approval flow", () => {
   it("expires an abandoned empty discovery before admitting a new scan", async () => {
     const priorId = await createDiscoverySession("disc-abandoned-empty");
     await pool().query("UPDATE discovery_sessions SET updated_at = now() - interval '11 minutes' WHERE id = $1", [priorId]);
-    const manager = await createManagerSession(f.tenantId);
+    const manager = await createWorkspaceManagerTestSession(f.tenantId);
     const nextScan = await discoveryStartPOST(new Request(`http://gateway.test/api/agents/${f.agentId}/discovery`, {
       method: "POST",
       headers: { Authorization: `Bearer ${manager.token}`, "content-type": "application/json" },
@@ -102,7 +102,7 @@ suite("discovery trust and approval flow", () => {
     }));
     expect(firstPage.status).toBe(200);
     await pool().query("UPDATE discovery_sessions SET updated_at = now() - interval '11 minutes' WHERE id = $1", [discoveryId]);
-    const manager = await createManagerSession(f.tenantId);
+    const manager = await createWorkspaceManagerTestSession(f.tenantId);
     const view = await discoverySessionGET(new Request(`http://gateway.test/api/agents/${f.agentId}/discovery/${discoveryId}`, {
       method: "GET", headers: { Authorization: `Bearer ${manager.token}` },
     }), { params: Promise.resolve({ id: f.agentId, discoveryId }) });
@@ -257,7 +257,7 @@ suite("discovery trust and approval flow", () => {
       uri: "ipp://192.168.10.50/ipp/print", deviceName: "Approved Printer",
     }]);
 
-    const manager = await createManagerSession(f.tenantId);
+    const manager = await createWorkspaceManagerTestSession(f.tenantId);
     const unapproved = await provisionPOST(
       await managerRequest(manager.token, `/api/agents/${f.agentId}/discovered-printers/device-provision-1/provision`),
       { params: Promise.resolve({ id: f.agentId, deviceId: "device-provision-1" }) } as any,
@@ -296,7 +296,7 @@ suite("discovery trust and approval flow", () => {
       deviceName: "HP LaserJet Enterprise", verification: "verified", confidence: "high",
     }]);
 
-    const manager = await createManagerSession(f.tenantId);
+    const manager = await createWorkspaceManagerTestSession(f.tenantId);
     const verify = await verifyPOST(
       await observationApprovalRequest(manager.token, discoveryId, "device-spooler-1"),
       { params: Promise.resolve({ id: f.agentId, deviceId: "device-spooler-1" }) } as any,
@@ -314,7 +314,7 @@ suite("discovery trust and approval flow", () => {
     expect(printer.rows[0].config).toMatchObject({ spooler_name: "HP LaserJet Enterprise", address: "HP LaserJet Enterprise" });
   });
 
-  it("reuses a reviewed Windows queue at capacity while still denying a new queue", async () => {
+  it("reuses a reviewed Windows queue and admits another despite a historical commercial device cap", async () => {
     const discoveryId = await createDiscoverySession("disc-spooler-at-capacity");
     await pool().query(`UPDATE printers SET config = $2::jsonb WHERE id = $1`,
       [f.printerId, JSON.stringify({ spooler_name: "Existing Queue", address: "Existing Queue" })]);
@@ -325,7 +325,7 @@ suite("discovery trust and approval flow", () => {
       { id: "spooler-new-at-cap", source: ["windows_spooler"], transport: "spooler", protocol: "spooler", spoolerName: "New Queue", deviceName: "New Queue" },
     ]);
     expect(reported.status).toBe(200);
-    const manager = await createManagerSession(f.tenantId);
+    const manager = await createWorkspaceManagerTestSession(f.tenantId);
     for (const deviceId of ["spooler-existing-at-cap", "spooler-new-at-cap"]) {
       const approved = await verifyPOST(await observationApprovalRequest(manager.token, discoveryId, deviceId),
         { params: Promise.resolve({ id: f.agentId, deviceId }) });
@@ -337,12 +337,15 @@ suite("discovery trust and approval flow", () => {
     expect(await existing.json()).toEqual({ printerId: f.printerId, already: true });
     const fresh = await provisionPOST(await managerRequest(manager.token, "/api/provision"),
       { params: Promise.resolve({ id: f.agentId, deviceId: "spooler-new-at-cap" }) });
-    expect(fresh.status).toBe(429);
-    expect((await fresh.json()).code).toBe("MAX_PRINTERS_EXCEEDED");
+    expect(fresh.status).toBe(201);
+    const created = await fresh.json();
+    expect(created).toMatchObject({ already: false, printerId: expect.any(String) });
+    expect(created.printerId).not.toBe(f.printerId);
     const printers = await pool().query("SELECT id FROM printers WHERE tenant_id = $1", [f.tenantId]);
-    expect(printers.rows).toEqual([{ id: f.printerId }]);
-    const unprovisioned = await pool().query("SELECT candidate_status FROM discovered_devices WHERE id = $1", ["spooler-new-at-cap"]);
-    expect(unprovisioned.rows[0].candidate_status).toBe("verified");
+    expect(printers.rows).toHaveLength(2);
+    expect(printers.rows).toEqual(expect.arrayContaining([{ id: f.printerId }, { id: created.printerId }]));
+    const provisioned = await pool().query("SELECT candidate_status FROM discovered_devices WHERE id = $1", ["spooler-new-at-cap"]);
+    expect(provisioned.rows[0].candidate_status).toBe("provisioned");
   });
 
   it("refuses to provision an LPR-only candidate as raw (LAW: no heuristic protocol inference)", async () => {
@@ -358,7 +361,7 @@ suite("discovery trust and approval flow", () => {
       uri: "lpd://192.168.10.77", deviceName: "LPR Printer",
     }]);
 
-    const manager = await createManagerSession(f.tenantId);
+    const manager = await createWorkspaceManagerTestSession(f.tenantId);
     const verify = await verifyPOST(
       await observationApprovalRequest(manager.token, discoveryId, "device-lpr-1"),
       { params: Promise.resolve({ id: f.agentId, deviceId: "device-lpr-1" }) } as any,
@@ -395,7 +398,7 @@ suite("discovery trust and approval flow", () => {
         '{"ip":"192.168.10.78","port":9100}'::jsonb, '{}'::jsonb)
     `, [f.tenantId, f.agentId]);
 
-    const manager = await createManagerSession(f.tenantId);
+    const manager = await createWorkspaceManagerTestSession(f.tenantId);
     const approved = await verifyPOST(
       await observationApprovalRequest(manager.token, discoveryId, "device-zpl-on-shared-socket"),
       { params: Promise.resolve({ id: f.agentId, deviceId: "device-zpl-on-shared-socket" }) } as any,
@@ -422,7 +425,7 @@ suite("discovery trust and approval flow", () => {
       ipAddress: "192.168.10.79", port: 9100, deviceName: "Not a Windows queue",
     }]);
     expect(reported.status).toBe(200);
-    const manager = await createManagerSession(f.tenantId);
+    const manager = await createWorkspaceManagerTestSession(f.tenantId);
     const approved = await verifyPOST(
       await observationApprovalRequest(manager.token, discoveryId, "network-spooler-conflict"),
       { params: Promise.resolve({ id: f.agentId, deviceId: "network-spooler-conflict" }) } as any,
@@ -447,7 +450,7 @@ suite("discovery trust and approval flow", () => {
     }]);
     expect(report.status).toBe(200);
 
-    const manager = await createManagerSession(f.tenantId);
+    const manager = await createWorkspaceManagerTestSession(f.tenantId);
     const cancel = await discoveryCancelPOST(
       await managerRequest(manager.token, `/api/agents/${f.agentId}/discovery/${discoveryId}/cancel`),
       { params: Promise.resolve({ id: f.agentId, discoveryId }) } as any,
@@ -462,7 +465,7 @@ suite("discovery trust and approval flow", () => {
 
   it("cancellation wins over a later report without accepting late devices", async () => {
     const discoveryId = await createDiscoverySession("disc-cancel-before-report");
-    const manager = await createManagerSession(f.tenantId);
+    const manager = await createWorkspaceManagerTestSession(f.tenantId);
     const cancel = await discoveryCancelPOST(
       await managerRequest(manager.token, `/api/agents/${f.agentId}/discovery/${discoveryId}/cancel`),
       { params: Promise.resolve({ id: f.agentId, discoveryId }) } as any,
@@ -599,7 +602,7 @@ suite("discovery trust and approval flow", () => {
       uri: "ipp://192.168.10.51/ipp/print", deviceName: "Concurrent Printer",
     }]);
 
-    const manager = await createManagerSession(f.tenantId);
+    const manager = await createWorkspaceManagerTestSession(f.tenantId);
     const verify = await verifyPOST(
       await observationApprovalRequest(manager.token, discoveryId, "device-concurrent-1"),
       { params: Promise.resolve({ id: f.agentId, deviceId: "device-concurrent-1" }) } as any,

@@ -5,6 +5,7 @@ import ast
 from pathlib import Path
 from types import SimpleNamespace, MethodType
 import pytest
+from odoo_geometry_fixture import receipt_geometry, validated_printer_geometry
 
 SRC = Path(__file__).resolve().parents[1] / 'odoo_addons/print_gateway/models/binding.py'
 TREE = ast.parse(SRC.read_text())
@@ -22,7 +23,7 @@ assert len(selected) == len(NAMES)
 class ValidationError(Exception):
     pass
 
-scope = {'ValidationError': ValidationError, '_': lambda text: text}
+scope = {'ValidationError': ValidationError, '_': lambda text: text, 'validated_printer_geometry': validated_printer_geometry}
 exec(compile(ast.fix_missing_locations(ast.Module(body=selected, type_ignores=[])), str(SRC), 'exec'), scope)
 
 def binding(selected_protocol='spooler'):
@@ -51,11 +52,14 @@ def test_canonical_physical_transport(conn, protocol, expected):
     ({'connectionType':'usb','protocol':'spooler'},True),
     ({'connectionType':'ipp','protocol':'ipp'},False),
     ({'connectionType':'network','protocol':'ipp'},False),
-    ({'connectionType':'network','protocol':'escpos'},True),
+    ({'connectionType':'network','protocol':'escpos'},False),
     ({'connectionType':'network','protocol':'escpos','capabilities':{'supported_protocols':[]}},False),
-    ({'connectionType':'network','protocol':'escpos','capabilities':{'supported_protocols':['jpeg']}},True),
+    ({'connectionType':'network','protocol':'escpos','capabilities':{'supported_protocols':['jpeg']}},False),
     ({'connectionType':'network','protocol':'escpos','capabilities':{'supported_protocols':'escpos'}},False),
     ({'connectionType':'usb','protocol':'escpos'},False),
+    ({'id':'printer','connectionType':'network','protocol':'escpos','capabilities':{'geometry':receipt_geometry()}},True),
+    ({'id':'printer','connectionType':'usb','protocol':'escpos','capabilities':{'geometry':receipt_geometry(),'supported_protocols':['jpeg']}},True),
+    ({'id':'printer','connectionType':'usb','protocol':'escpos','capabilities':{'geometry':receipt_geometry(),'supported_protocols':[]}},False),
 ])
 def test_pos_image_transport_matches_gateway(printer, should_accept):
     assert binding()._runtime_printer_accepts_image(printer) == should_accept

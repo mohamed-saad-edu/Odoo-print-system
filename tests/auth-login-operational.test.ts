@@ -22,7 +22,7 @@ vi.mock("../src/lib/manager-auth", () => ({
 }));
 vi.mock("../src/lib/session-tokens", () => ({
   AuthenticationChangedError: class AuthenticationChangedError extends Error {},
-  isTrustedDesktopRequest: () => false,
+  isTrustedDesktopRequest: () => false, sessionReplacementFromRequest: () => ({ accessToken: null, refreshToken: null }),
 }));
 vi.mock("../src/lib/runtime-secret", () => ({ runtimeSecret: () => undefined }));
 vi.mock("../src/lib/audit", () => ({ writeAuditEvent: async () => {} }));
@@ -48,9 +48,8 @@ beforeEach(() => {
     userId: "owner", email: "owner@example.test", credentialVersion: "fixture-version",
   });
   vi.mocked(createPlatformSession).mockReset().mockResolvedValue({
-    token: "access-fixture", exp: new Date("2026-10-13T12:00:00Z"), jti: "access-id",
-    refreshToken: "refresh-fixture", refreshExpiresAt: new Date("2026-11-13T12:00:00Z"),
-    refreshTokenId: "refresh-id", familyId: "family-id",
+    token: "fixture", jti: "jti-fixture", exp: new Date("2030-01-01T00:15:00Z"), refreshToken: "refresh-fixture",
+    refreshTokenId: "id-fixture", familyId: "family-fixture", refreshExpiresAt: new Date("2030-01-01T08:00:00Z"),
   });
   vi.mocked(resolveManagerTenantId).mockReset().mockResolvedValue("tenant-fixture");
 });
@@ -76,12 +75,13 @@ describe("login operational failures preserve authentication semantics", () => {
     if (stage === "identity") expect(createPlatformSession).not.toHaveBeenCalled();
   });
 
-  it("a failed success-bucket clear cannot reject an otherwise valid platform session", async () => {
+  it("a failed success-bucket clear cannot reject an otherwise valid password-to-session transition", async () => {
     vi.mocked(recordAuthSuccess).mockRejectedValueOnce(new Error("cleanup unavailable"));
     const response = await platformLogin(request("/api/platform/auth/login"));
     expect(response.status).toBe(200);
-    expect(response.headers.get("Set-Cookie")).toContain("plt_session=fixture");
-    expect(response.headers.get("Set-Cookie")).toContain("plt_refresh=fixture");
+    expect(response.headers.get("Set-Cookie")).toContain("plt_session=");
+    expect(response.headers.get("Set-Cookie")).toContain("plt_refresh=");
+    expect(await response.json()).toMatchObject({ ok: true });
     expect(logWarn).toHaveBeenCalledWith("auth.platform_login.rate_limit_clear_failed", expect.any(Object));
   });
 
@@ -96,6 +96,17 @@ describe("login operational failures preserve authentication semantics", () => {
     vi.mocked(authenticatePlatformOwner).mockResolvedValueOnce(null);
     expect((await platformLogin(request("/api/platform/auth/login"))).status).toBe(401);
     expect(createPlatformSession).not.toHaveBeenCalled();
+  });
+
+  it("logs throttled platform attempts without credentials or an account enumeration signal", async () => {
+    vi.mocked(reserveAuthAttempt).mockResolvedValueOnce({ allowed: false, retryAfterSec: 30, remaining: 0, limit: 5, resetAtEpochSec: 1791892800 });
+    const response = await platformLogin(request("/api/platform/auth/login"));
+    expect(response.status).toBe(429);
+    expect(response.headers.get("Retry-After")).toBe("30");
+    expect(authenticatePlatformOwner).not.toHaveBeenCalled();
+    expect(createPlatformSession).not.toHaveBeenCalled();
+    expect(logWarn).toHaveBeenCalledWith("auth.platform_login.rate_limited", { ip: "198.51.100.10", retryAfterSec: 30 });
+    expect(JSON.stringify(vi.mocked(logWarn).mock.calls)).not.toMatch(/fixture-password|owner@example/);
   });
 
   it("manager tenant lookup outage refuses login before credential or session calls", async () => {

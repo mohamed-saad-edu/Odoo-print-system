@@ -5,6 +5,7 @@ import { StatusDot } from "../../components/ui";
 import { BrandMarkIcon } from "../../components/brand";
 import { NavIconFrame } from "../../components/visual-system";
 import type { Page } from "../types";
+import type { AgentServiceState } from "../lib/printers";
 import { useI18n } from "../../i18n/react";
 
 // A rail can be icon-only on desktop, but a phone-width drawer must never
@@ -49,15 +50,17 @@ function StatusLine({ tone, title, detail, pulse }: { tone: "ok" | "bad" | "neut
 
 export function Sidebar({
   page, navigate, items, collapsed, setCollapsed, sidebarOpen, setSidebarOpen,
-  gatewayConnected, gatewayUrl, isOnline, version, lastStatusCheck,
+  gatewayConnected, gatewayUrl, isOnline, serviceState = isOnline ? "running" : "unknown", version, lastStatusCheck,
 }: {
   page: Page; navigate: (p: Page) => void; items: NavItem[]; collapsed: boolean; setCollapsed: (v: boolean) => void;
   sidebarOpen: boolean; setSidebarOpen: (v: boolean) => void; gatewayConnected: boolean; gatewayUrl: string;
-  isOnline: boolean; version: string; lastStatusCheck: string | null;
+  isOnline: boolean; serviceState?: AgentServiceState; version: string; lastStatusCheck: string | null;
 }) {
   const { t, formatTime } = useI18n();
   const isNarrow = React.useSyncExternalStore(subscribeNarrowNavigation, isNarrowNavigation, () => false);
   const compact = collapsed && !isNarrow;
+  const serviceTone = serviceState === "unknown" ? "neutral" : isOnline ? "ok" : "bad";
+  const serviceLabel = serviceState === "unknown" ? t("desktop.agents.statusUnavailable") : isOnline ? t("desktop.status.agentRunning") : t("desktop.status.agentStopped");
   const renderAside = () => (
     <aside id={isNarrow ? "desktop-mobile-nav" : undefined} tabIndex={-1} className={`tg-desktop-rail fixed inset-y-0 start-0 z-40 flex w-[min(320px,90vw)] flex-col border-e border-edge bg-surface shadow-sm transition-[width,transform] duration-200 ease-out lg:inset-y-3 lg:start-3 ${compact ? "lg:w-[var(--sidebar-collapsed)]" : "lg:w-[var(--sidebar-width)]"} ${sidebarOpen ? "translate-x-0" : "max-lg:ltr:-translate-x-full max-lg:rtl:translate-x-full"} lg:translate-x-0`}>
       {isNarrow && <Dialog.Title className="sr-only">{t("nav.consoleNavigation")}</Dialog.Title>}
@@ -105,14 +108,14 @@ export function Sidebar({
         {compact ? (
           <div className="flex flex-col items-center gap-3 py-2" aria-label={t("desktop.sidebar.systemStatus")}>
             <span title={gatewayConnected ? t("desktop.status.gatewayConnected") : t("desktop.status.gatewayOffline")}><StatusDot tone={gatewayConnected ? "ok" : "bad"} pulse={gatewayConnected} /></span>
-            <span title={isOnline ? t("desktop.status.agentRunning") : t("desktop.status.agentStopped")}><StatusDot tone={isOnline ? "ok" : "bad"} pulse={isOnline} /></span>
+            <span title={serviceLabel}><StatusDot tone={serviceTone} pulse={isOnline} /></span>
           </div>
         ) : (
           <div className="space-y-2.5">
             <div className="space-y-3 rounded-md border border-edge bg-surface-2 p-3.5">
               <StatusLine tone={gatewayConnected ? "ok" : "bad"} title={gatewayConnected ? t("desktop.status.gatewayConnected") : gatewayUrl ? t("desktop.status.gatewayUnavailable") : t("desktop.status.gatewayNotConfigured")} detail={gatewayUrl || t("desktop.status.configureGatewayUrl")} pulse={gatewayConnected} />
               <div className="h-px bg-edge" />
-              <StatusLine tone={isOnline ? "ok" : "bad"} title={isOnline ? t("desktop.status.agentRunning") : t("desktop.status.agentStopped")} detail={`v${version || "—"} · ${lastStatusCheck ? formatTime(lastStatusCheck) : "—"}`} pulse={isOnline} />
+              <StatusLine tone={serviceTone} title={serviceLabel} detail={`v${version || "—"} · ${lastStatusCheck ? formatTime(lastStatusCheck) : "—"}`} pulse={isOnline} />
             </div>
             <div className="flex items-center gap-2 rounded-md border border-ok-edge bg-ok-bg px-3 py-2.5 text-xs font-medium text-ok">
               <ShieldCheck className="h-4 w-4 shrink-0" /> {t("desktop.sidebar.localSecured")}

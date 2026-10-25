@@ -1,7 +1,10 @@
+import { printOutputPresentation } from "../../../../../lib/print-output";
 import { NextResponse } from "next/server";
 import { db } from "../../../../../db";
 import { printJobs, printJobReceipts } from "../../../../../db/schema";
 import { validateOdooKey } from "../../../../../lib/odoo-auth";
+import { OdooNamespaceError } from "../../../../../lib/odoo-v2-admission";
+import { odooStatusIdentity, odooStatusJobScope, odooStatusColumns, requireOdooStatusAccess } from "../../../../../lib/odoo-status-scope";
 import { hasBodyOverLimit } from "../../../../../lib/request-limits";
 import { and, inArray, eq, isNotNull } from "drizzle-orm";
 import { z } from "zod";
@@ -14,8 +17,9 @@ const batchQuerySchema = z.object({
   jobIds: z.array(z.string().trim().min(1).max(120)).min(1).max(100),
 }).strict();
 
-function responseForRow(row: Pick<typeof printJobs.$inferSelect, "id" | "status" | "printerId" | "agentId" | "destination" | "documentType" | "error" | "deliveredAt" | "ackedAt" | "updatedAt">) {
+function responseForRow(row: Pick<typeof printJobs.$inferSelect, "id" | "status" | "printerId" | "agentId" | "destination" | "documentType" | "error" | "deliveredAt" | "ackedAt" | "updatedAt" | "outputMedium" | "outputEvidence">) {
   return {
+    ...printOutputPresentation(row),
     jobId: row.id,
     status: row.status,
     printerId: row.printerId,
@@ -33,6 +37,13 @@ export async function POST(req: Request) {
   if (hasBodyOverLimit(req, MAX_BODY)) return NextResponse.json({ error: "Request body too large" }, { status: 413 });
   const odoo = await validateOdooKey(req);
   if (!odoo) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  let identity: Awaited<ReturnType<typeof odooStatusIdentity>>;
+  try {
+    identity = await odooStatusIdentity(req, odoo.tenantId);
+  } catch (error) {
+    if (error instanceof OdooNamespaceError) return NextResponse.json({ error: error.code, code: error.code }, { status: error.status, headers: { "Cache-Control": "no-store" } });
+    throw error;
+  }
 
   let body: unknown;
   try {
@@ -47,18 +58,34 @@ export async function POST(req: Request) {
   }
 
   const uniqueIds = Array.from(new Set(parsed.data.jobIds));
-  const rows = await db.query.printJobs.findMany({
-    where: and(
-      inArray(printJobs.id, uniqueIds),
-      eq(printJobs.tenantId, odoo.tenantId),
-      isNotNull(printJobs.apiKeyId),
-    ),
-  });
-
-  const found = new Set(rows.map(row => row.id));
-  const missing = uniqueIds.filter(id => !found.has(id));
-  const receipts = missing.length ? await db.query.printJobReceipts.findMany({ where: and(inArray(printJobReceipts.id, missing), eq(printJobReceipts.tenantId, odoo.tenantId), isNotNull(printJobReceipts.apiKeyId)) }) : [];
-  const jobs = [...rows.map(responseForRow), ...receipts.map(responseForRow)];
-
-  return NextResponse.json({ jobs }, { status: 200 });
+  try {
+    const jobs = await db.transaction(async (tx) => {
+      await requireOdooStatusAccess(tx, odoo, identity);
+      const rows = await tx.query.printJobs.findMany({
+        columns: odooStatusColumns,
+        where: and(
+          inArray(printJobs.id, uniqueIds),
+          eq(printJobs.tenantId, odoo.tenantId),
+          isNotNull(printJobs.apiKeyId),
+          odooStatusJobScope(printJobs.id, odoo.tenantId, identity),
+        ),
+      });
+      const found = new Set(rows.map(row => row.id));
+      const missing = uniqueIds.filter(id => !found.has(id));
+      const receipts = missing.length ? await tx.query.printJobReceipts.findMany({
+        columns: odooStatusColumns,
+        where: and(
+          inArray(printJobReceipts.id, missing),
+          eq(printJobReceipts.tenantId, odoo.tenantId),
+          isNotNull(printJobReceipts.apiKeyId),
+          odooStatusJobScope(printJobReceipts.id, odoo.tenantId, identity),
+        ),
+      }) : [];
+      return [...rows.map(responseForRow), ...receipts.map(responseForRow)];
+    });
+    return NextResponse.json({ jobs }, { status: 200, headers: { "Cache-Control": "no-store" } });
+  } catch (error) {
+    if (error instanceof OdooNamespaceError) return NextResponse.json({ error: error.code, code: error.code }, { status: error.status, headers: { "Cache-Control": "no-store" } });
+    throw error;
+  }
 }

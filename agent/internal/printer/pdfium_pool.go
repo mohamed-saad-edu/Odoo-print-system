@@ -2,6 +2,7 @@ package printer
 
 import (
 	"io"
+	"sync"
 
 	pdfium "github.com/klippa-app/go-pdfium"
 	"github.com/klippa-app/go-pdfium/webassembly"
@@ -24,11 +25,28 @@ import (
 // renderer state. Job-level admission is enforced by embeddedPDFPrintSlot;
 // this constant only governs the WASM worker pool beneath it.
 const (
+	maxPDFPages        = 500
 	pdfiumMinIdle      = 0
 	pdfiumMaxIdle      = 1
 	pdfiumMaxTotal     = 1
 	pdfiumReuseWorkers = true
 )
+
+var (
+	pdfiumOnce sync.Once
+	pdfiumPool pdfium.Pool
+	pdfiumErr  error
+	// Shared by native GDI and portable IPP preflight/rendering. Acquisition
+	// must use a context-aware select; never wait indefinitely on a mutex.
+	embeddedPDFPrintSlot = make(chan struct{}, 1)
+)
+
+func getPDFiumPool() (pdfium.Pool, error) {
+	pdfiumOnce.Do(func() {
+		pdfiumPool, pdfiumErr = webassembly.Init(newPDFiumPoolConfig())
+	})
+	return pdfiumPool, pdfiumErr
+}
 
 // pdfiumRuntimeConfig returns the wazero runtime configuration required by
 // the bundled PDFium module.

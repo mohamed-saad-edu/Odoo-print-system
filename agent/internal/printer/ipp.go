@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"maps"
+	"math"
 	"mime"
 	"net"
 	"net/http"
@@ -15,15 +17,18 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/yaseir-agent/agent/internal/config"
 )
 
 // IPPPrinter implements IPP/IPPS printing via HTTP POST to the printer URI.
 // Supports ipp://, ipps://, http://, https:// with path /ipp/print etc.
 //
 // IPP is a document transport, not a raw spooler. The Agent queries
-// document-format-supported to select native PDF or a Windows one-page
-// PDF -> JPEG fallback. Raw ESC/POS/ZPL data are never disguised as IPP
-// documents. Raster-only printers require a Windows spooler driver.
+// actual formats, media and resolution to select native PDF or an advertised
+// Windows PDF -> PWG Raster / one-page JPEG conversion before submission.
+// Raw ESC/POS/ZPL data and POS JPEG input are not accepted by this backend.
+// Devices outside the supported advertised formats require a compatible driver.
 // IPP printers are local network peers, not cloud services. Go's default HTTP
 // transport honors HTTP_PROXY/HTTPS_PROXY; routing receipt documents through
 // a host-level proxy would leak print data and can break local connectivity.
@@ -40,13 +45,18 @@ var ippDirectTransport = &http.Transport{
 }
 
 type IPPPrinter struct {
-	URL              string // normalized http(s) transport URL, always credential-free
-	PrinterURI       string // credential-free URI carried in the IPP printer-uri attribute
-	Name             string
-	testPaperMM      int           // explicitly selected 58/80mm diagnostic stock only
-	creds            *url.Userinfo // optional basic-auth from the configured URL
-	statusMu         sync.RWMutex
-	lastStatusDetail string
+	URL                  string // normalized http(s) transport URL, always credential-free
+	PrinterURI           string // credential-free URI carried in the IPP printer-uri attribute
+	Name                 string
+	testPaperMM          int           // explicitly selected 58/80mm diagnostic stock only
+	creds                *url.Userinfo // optional basic-auth from the configured URL
+	statusMu             sync.RWMutex
+	lastStatusDetail     string
+	geometryConfig       config.PrinterConfig
+	lastAttributes       map[string]string
+	attributesGeneration uint64
+	boundUUID            string
+	identityPersistence  func(string) error
 }
 
 func (p *IPPPrinter) setStatusDetail(detail string) {
@@ -221,7 +231,11 @@ func preDispatchIRErr(err error) bool {
 	return errors.As(err, &dnsErr)
 }
 
-func (p *IPPPrinter) printDocument(ctx context.Context, data []byte, documentFormat string) (retErr error) {
+func (p *IPPPrinter) printDocument(ctx context.Context, data []byte, documentFormat string) error {
+	return p.printDocumentWithOptions(ctx, data, documentFormat, nil)
+}
+
+func (p *IPPPrinter) printDocumentWithOptions(ctx context.Context, data []byte, documentFormat string, options *ippJobOptions) (retErr error) {
 	// Capture the complete Print-Job request/response time; success here is
 	// verified IPP submission evidence, not confirmation of paper output.
 	startedAt := time.Now()
@@ -233,7 +247,7 @@ func (p *IPPPrinter) printDocument(ctx context.Context, data []byte, documentFor
 		return ctx.Err()
 	default:
 	}
-	ippReq := buildIPPPrintJobWithFormat(p.PrinterURI, data, documentFormat)
+	ippReq := buildIPPPrintJobWithOptions(p.PrinterURI, data, documentFormat, options)
 	req, err := http.NewRequestWithContext(ctx, "POST", p.requestURL(), bytes.NewReader(ippReq))
 	if err != nil {
 		return fmt.Errorf("IPP create request for %s: %w", p.URL, err)
@@ -330,6 +344,9 @@ func (p *IPPPrinter) printDocument(ctx context.Context, data []byte, documentFor
 		// canceled or aborted Job evidence is never a safely retryable refusal.
 		return MarkUnknown("IPP response from %s has unusable submitted Job evidence: %v", p.URL, evidenceErr)
 	}
+	if options != nil && (status == 0x0001 || status == 0x0002) {
+		return MarkUnknown("IPP printer %s substituted or ignored requested attributes despite fidelity; job %d may exist, do not automatically reprint", p.URL, job.ID)
+	}
 	log.Printf("IPP accepted %d bytes (%s) at %s (IPP 0x%04x, job-id %d, state %d; physical output not confirmed)", len(data), documentFormat, p.URL, status, job.ID, job.State)
 	return nil
 }
@@ -339,10 +356,30 @@ func (p *IPPPrinter) Test(ctx context.Context) error {
 }
 
 func (p *IPPPrinter) PrintTestPage(ctx context.Context) error {
-	width, height := 612.0, 792.0
-	if p.testPaperMM == 58 || p.testPaperMM == 80 {
-		width, height = float64(p.testPaperMM)*72/25.4, 100*72/25.4
+	attrs, err := p.getPrinterAttributes(ctx)
+	if err != nil {
+		return fmt.Errorf("IPP diagnostic needs actual media: %w", err)
 	}
+	media, err := ippAdvertisedMedia(attrs, true)
+	if err != nil {
+		return err
+	}
+	var selected *ippMedia
+	for _, m := range media {
+		if m.Width.Min != m.Width.Max || m.Height.Min != m.Height.Max {
+			continue
+		}
+		if p.testPaperMM > 0 && math.Abs(float64(m.Width.Min)/100-float64(p.testPaperMM)) > 0.25 {
+			continue
+		}
+		copy := m
+		selected = &copy
+		break
+	}
+	if selected == nil {
+		return fmt.Errorf("IPP diagnostic requires an advertised ready/default media matching the configured paper; no assumed paper was submitted")
+	}
+	width, height := float64(selected.Width.Min)*72/2540, float64(selected.Height.Min)*72/2540
 	data, err := diagnosticTestPDF(width, height)
 	if err != nil {
 		return err
@@ -451,7 +488,23 @@ func interpretIPPPrinterStatus(attrs map[string]string) (status, detail string) 
 
 var errIPPStatusUnsupported = errors.New("get-printer-attributes unsupported")
 
-func (p *IPPPrinter) getPrinterAttributes(ctx context.Context) (map[string]string, error) {
+func (p *IPPPrinter) getPrinterAttributes(ctx context.Context) (attributes map[string]string, resultErr error) {
+	p.statusMu.Lock()
+	p.attributesGeneration++
+	generation := p.attributesGeneration
+	p.lastAttributes = nil
+	p.statusMu.Unlock()
+	defer func() {
+		p.statusMu.Lock()
+		defer p.statusMu.Unlock()
+		if generation != p.attributesGeneration {
+			return
+		}
+		p.lastAttributes = nil
+		if resultErr == nil {
+			p.lastAttributes = maps.Clone(attributes)
+		}
+	}()
 	ippReq := buildIPPGetPrinterAttributes(p.PrinterURI)
 	req, err := http.NewRequestWithContext(ctx, "POST", p.requestURL(), bytes.NewReader(ippReq))
 	if err != nil {
@@ -501,7 +554,17 @@ func (p *IPPPrinter) getPrinterAttributes(ctx context.Context) (map[string]strin
 	if len(body) > maxIPPAttributesBytes {
 		return nil, fmt.Errorf("IPP printer attributes response exceeds %d-byte limit", maxIPPAttributesBytes)
 	}
-	return parseIPPPrinterAttributes(body, binary.BigEndian.Uint32(ippReq[4:8]))
+	attributes, err = parseIPPPrinterAttributes(body, binary.BigEndian.Uint32(ippReq[4:8]))
+	if err != nil {
+		return nil, err
+	}
+	if err = p.checkIPPIdentity(attributes); err != nil {
+		return nil, err
+	}
+	if err = p.PersistVerifiedIdentity(normalizedIPPPrinterUUID(attributes["printer-uuid"])); err != nil {
+		return nil, err
+	}
+	return attributes, nil
 }
 
 const (
@@ -509,6 +572,10 @@ const (
 )
 
 func buildIPPPrintJobWithFormat(printerURI string, document []byte, documentFormat string) []byte {
+	return buildIPPPrintJobWithOptions(printerURI, document, documentFormat, nil)
+}
+
+func buildIPPPrintJobWithOptions(printerURI string, document []byte, documentFormat string, options *ippJobOptions) []byte {
 	var buf bytes.Buffer
 	buf.Write([]byte{0x02, 0x00})
 	binary.Write(&buf, binary.BigEndian, uint16(0x0002))
@@ -520,6 +587,10 @@ func buildIPPPrintJobWithFormat(printerURI string, document []byte, documentForm
 	writeIPPAttribute(&buf, 0x42, "requesting-user-name", "odoo-agent")
 	writeIPPAttribute(&buf, 0x49, "document-format", documentFormat)
 	writeIPPAttribute(&buf, 0x42, "job-name", "Yaseir Print Job")
+	if options != nil {
+		writeIPPBinary(&buf, 0x22, "ipp-attribute-fidelity", []byte{1})
+		writeIPPJobOptions(&buf, options)
+	}
 	buf.WriteByte(0x03)
 	buf.Write(document)
 	return buf.Bytes()
@@ -542,6 +613,9 @@ func buildIPPGetPrinterAttributes(printerURI string) []byte {
 	writeIPPAttribute(&buf, 0x44, "", "document-format-default")
 	writeIPPAttribute(&buf, 0x44, "", "pwg-raster-document-type-supported")
 	writeIPPAttribute(&buf, 0x44, "", "pwg-raster-document-resolution-supported")
+	for _, name := range []string{"media-supported", "media-ready", "media-default", "media-col-default", "media-col-ready", "media-col-database", "printer-resolution-supported", "printer-resolution-default", "print-scaling-supported", "orientation-requested-supported", "printer-uuid"} {
+		writeIPPAttribute(&buf, 0x44, "", name)
+	}
 	buf.WriteByte(0x03)
 	return buf.Bytes()
 }

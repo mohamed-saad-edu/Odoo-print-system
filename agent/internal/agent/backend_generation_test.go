@@ -34,7 +34,7 @@ func TestAddPrinterDefersReplacementWhileSessionLive(t *testing.T) {
 	if kept != printer.Printer(old) {
 		t.Fatal("deferred replacement must keep the old backend object")
 	}
-	if keptCfg.Endpoint != "127.0.0.1:9100" {
+	if keptCfg.Endpoint != "10.0.0.20:9100" {
 		t.Fatalf("deferred replacement must keep old facts, got endpoint %q", keptCfg.Endpoint)
 	}
 	old.live = false

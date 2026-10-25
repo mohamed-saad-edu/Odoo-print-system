@@ -105,10 +105,6 @@ func TestPDFiumLongReceiptRetainsAllImageBoundaries(t *testing.T) {
 		t.Fatal(err)
 	}
 	pageW, pageH, imageW, imageH, imageX, imageY := pdfImageGeometry(t, data)
-	_, _, targetW, targetH, err := pdfPrintableDestination(pageW, pageH, 640, 4000, 576, 3976, 203, 203, 32, 12)
-	if err != nil {
-		t.Fatal(err)
-	}
 	pool, err := webassembly.Init(newPDFiumPoolConfig())
 	if err != nil {
 		t.Fatal(err)
@@ -126,52 +122,66 @@ func TestPDFiumLongReceiptRetainsAllImageBoundaries(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer worker.FPDF_CloseDocument(&requests.FPDF_CloseDocument{Document: doc.Document})
-	size, err := worker.FPDF_GetPageSizeByIndex(&requests.FPDF_GetPageSizeByIndex{Document: doc.Document, Index: 0})
-	if err != nil || size == nil || math.Abs(size.Width-pageW) > .01 || math.Abs(size.Height-pageH) > .01 {
-		t.Fatalf("PDFium changed receipt dimensions %.2fx%.2fpt: %+v %v", pageW, pageH, size, err)
-	}
-	rendered, err := worker.RenderPageInPixels(&requests.RenderPageInPixels{
-		Page:  requests.Page{ByIndex: &requests.PageByIndex{Document: doc.Document, Index: 0}},
-		Width: targetW, Height: targetH,
-	})
+	page := requests.Page{ByIndex: &requests.PageByIndex{Document: doc.Document, Index: 0}}
+	crop, err := receiptPDFCrop(worker, page, pageW, pageH)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer rendered.Cleanup()
-	img := rendered.Result.Image
-	if img == nil {
-		t.Fatal("PDFium returned no receipt bitmap")
+	parts, err := (pdfPagePlan{width: pageW, height: pageH, crop: crop}).paginate(640, 4000, 576, 3976, 203, 203, 32, 12)
+	if err != nil || len(parts) < 2 {
+		t.Fatalf("long image was not paginated: pages=%d error=%v", len(parts), err)
 	}
-	if img.Rect.Dx() <= 0 || img.Rect.Dy() <= 0 || img.Rect.Dx() > targetW || img.Rect.Dy() > targetH || len(img.Pix) > targetW*targetH*4 {
-		t.Fatalf("PDFium escaped bounded render %dx%d: bounds=%v bytes=%d", targetW, targetH, img.Rect, len(img.Pix))
-	}
-	// Inspect the original image's four border bands after real PDF decoding.
-	for _, mark := range []struct {
-		name string
-		x, y float64
-	}{
-		{"left", imageX + imageW*4/288, imageY + imageH/2},
-		{"right", imageX + imageW*(1-4.0/288), imageY + imageH/2},
-		{"top", imageX + imageW/2, imageY + imageH*(1-4.0/16384)},
-		{"bottom", imageX + imageW/2, imageY + imageH*4/16384},
-	} {
-		x := int(mark.x / pageW * float64(img.Rect.Dx()))
-		y := int((pageH - mark.y) / pageH * float64(img.Rect.Dy()))
-		found := false
-		for sy := max(0, y-1); sy <= min(img.Rect.Dy()-1, y+1); sy++ {
-			for sx := max(0, x-1); sx <= min(img.Rect.Dx()-1, x+1); sx++ {
-				pixel := img.RGBAAt(sx, sy)
-				found = found || (pixel.R < 64 && pixel.G < 64 && pixel.B < 64 && pixel.A == 255)
+	coverage := 0.0
+	for index, part := range parts {
+		_, _, width, height, err := part.printableDestination(640, 4000, 576, 3976, 203, 203, 32, 12)
+		if err != nil || width != 576 {
+			t.Fatalf("segment %d shrank receipt width: %dx%d %v", index, width, height, err)
+		}
+		if math.Abs(part.crop.Y-coverage) > 1e-6 {
+			t.Fatalf("gap/duplicate before segment %d", index)
+		}
+		coverage += part.crop.Height
+		rendered, err := worker.RenderPageInPixels(&requests.RenderPageInPixels{Page: page, Width: width, Height: height, Crop: part.crop})
+		if err != nil {
+			t.Fatal(err)
+		}
+		img := rendered.Result.Image
+		if img == nil || img.Rect.Dx() < 575 || img.Rect.Dx() > 576 || img.Rect.Dy() > height {
+			rendered.Cleanup()
+			t.Fatalf("segment %d raster lost width or escaped budget", index)
+		}
+		// Inspect each source border in the appropriate real cropped bitmap.
+		for _, mark := range []struct{ x, y float64 }{
+			{imageX + imageW*4/288, pageH - (imageY + imageH/2)},
+			{imageX + imageW*(1-4.0/288), pageH - (imageY + imageH/2)},
+			{imageX + imageW/2, pageH - (imageY + imageH*(1-4.0/16384))},
+			{imageX + imageW/2, pageH - (imageY + imageH*4/16384)},
+		} {
+			if mark.y < part.crop.Y || mark.y >= part.crop.Y+part.crop.Height {
+				continue
+			}
+			x := int((mark.x - part.crop.X) / part.crop.Width * float64(img.Rect.Dx()))
+			y := int((mark.y - part.crop.Y) / part.crop.Height * float64(img.Rect.Dy()))
+			pixel := img.RGBAAt(x, y)
+			if pixel.R > 64 || pixel.G > 64 || pixel.B > 64 || pixel.A != 255 {
+				rendered.Cleanup()
+				t.Fatalf("segment %d lost source border at %d,%d", index, x, y)
 			}
 		}
-		if !found {
-			t.Fatalf("receipt %s boundary missing near rendered pixel %d,%d", mark.name, x, y)
+		// The left and right continuous borders must survive every interior tile.
+		for _, x := range []int{8, img.Rect.Dx() - 9} {
+			pixel := img.RGBAAt(x, img.Rect.Dy()/2)
+			if pixel.R > 64 || pixel.G > 64 || pixel.B > 64 {
+				rendered.Cleanup()
+				t.Fatalf("segment %d lost continuous vertical border", index)
+			}
 		}
+		rendered.Cleanup()
 	}
-	if pixel := img.RGBAAt(img.Rect.Dx()/2, img.Rect.Dy()/2); pixel.R < 240 || pixel.G < 240 || pixel.B < 240 || pixel.A != 255 {
-		t.Fatalf("receipt white interior changed: %v", pixel)
+	if math.Abs(coverage-pageH) > 1e-6 {
+		t.Fatalf("receipt coverage %.8f != %.8f", coverage, pageH)
 	}
-	t.Logf("source=288x16384px PDFium=%.2fx%.2fpt target=%dx%d rendered=%dx%d bytes=%d; all four image boundaries retained", size.Width, size.Height, targetW, targetH, img.Rect.Dx(), img.Rect.Dy(), len(img.Pix))
+	t.Logf("real PDFium rendered %d contiguous pages at576 dots; %.2fmm source height retained without height-fit shrinking", len(parts), pageH*25.4/72)
 }
 
 // headlessPDFiumChild reproduces the service's invalid standard handles and

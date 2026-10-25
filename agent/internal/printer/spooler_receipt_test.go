@@ -46,7 +46,7 @@ func TestReceiptPaperPreservesDriverGeometry(t *testing.T) {
 				t.Fatal("source JPEG was cropped or re-encoded")
 			}
 			pw, ph, iw, ih, ix, iy := pdfImageGeometry(t, pdf)
-			if math.Abs(pw-mm*72/25.4) > .01 || math.Abs(iw-math.Min(float64(dots)*72/float64(dpi), (mm-4)*72/25.4)) > .01 ||
+			if math.Abs(pw-mm*72/25.4) > .01 || math.Abs(iw-float64(dots)*72/float64(dpi)) > .01 ||
 				math.Abs(ih/iw-float64(image.Height)/float64(image.Width)) > .001 || ix < 0 || iy < 0 || ix+iw > pw+.01 || iy+ih > ph+.01 {
 				t.Fatal("receipt geometry lost the source aspect ratio or escaped the PDF page")
 			}

@@ -27,6 +27,32 @@ Odoo Gateway authentication is based on the Odoo installation API key. The Odoo 
 
 The raw Odoo key is returned only when generated. Gateway persists only its cryptographic hash plus lifecycle metadata; rotated keys use a bounded read-only grace window before full invalidation.
 
+### Odoo status read authority
+
+Status reads on `GET /api/print/jobs`, `GET /api/print/jobs/v2`, and
+`POST /api/print/jobs/batch-status` require the saved installation identity for
+v2 operations, in addition to the authenticated Odoo API key:
+
+```text
+X-Yaseir-Odoo-Idempotency-Version: 2
+X-Yaseir-Odoo-Installation: <saved-installation-uuid>
+X-Yaseir-Odoo-Proof: <saved-installation-proof>
+```
+
+The proof must belong to an enabled installation enrolled for the credential
+and workspace. Both live jobs and durable receipts are restricted to that
+installation's accepted-operation mapping. A valid proof for another
+installation does not reveal the job, even when both installations share an
+API key. Key rotation can preserve access within the same installation; the
+historical job's API-key ID records provenance rather than requiring equality
+with the current key.
+
+Omitting the headers is allowed only while the workspace remains `legacy`,
+and never grants access to an operation already mapped to v2. Strict-v2
+workspaces reject missing proof with `403 INSTALLATION_NOT_ENROLLED`;
+partial or unsupported version headers are rejected. Status responses are
+`no-store` and project bounded metadata without fetching document payloads.
+
 ## `GET /api/odoo/health`
 
 Authenticated with the Odoo installation key. Returns the authenticated integration health, including its replicated Odoo activation state (`enabled`). This endpoint is used by the Odoo **Test Connection** button.
@@ -71,7 +97,7 @@ Request:
 
 No Gateway branch ID, Gateway destination ID, Gateway document-type ID, agent provisioning data, or printer-creation data is accepted.
 
-The Gateway validates the Odoo key, payload, expiration and idempotency before queueing the runtime job. The Odoo installation key is a credential for the Odoo integration API surface documented here. It is not a Manager or Platform credential and is not accepted by generic console endpoints. It is not restricted by document type. A created Odoo-originated job is stamped with the authenticated API-key identity. Status lookup is scoped to Odoo-originated jobs in the authenticated tenant after successful API-key authentication; `apiKeyId` must be present but is treated as credential provenance rather than an equality check against the current key, so credential rotation does not strand historical jobs. Internal Manager-created jobs without an Odoo API-key provenance remain outside the Odoo integration flow.
+The Gateway validates the Odoo key, payload, expiration and idempotency before queueing the runtime job. The Odoo installation key is a credential for the Odoo integration API surface documented here. It is not a Manager or Platform credential and is not accepted by generic console endpoints. It is not restricted by document type. A created Odoo-originated job is stamped with the authenticated API-key identity. Status lookup follows the installation proof and legacy restrictions in **Odoo status read authority** above. Internal Manager-created jobs without Odoo API-key provenance remain outside the Odoo integration flow.
 
 `201` means a new job was accepted. `200` means an idempotent retry matched an existing job and returns that job identity. A reused key with different routing/payload data returns `409 IDEMPOTENCY_CONFLICT`. Idempotent replay is checked within the same transaction as the integration's **current credential and workspace authorization**; a key revoked, rotated to read-only, or disabled after initial HTTP authentication cannot reuse an old receipt to bypass authorization. A historical terminal receipt can still be reconciled if its original printer or Agent record has been removed, using a separately fenced **read-only recovery** path that never submits a new print or consumes another quota credit. This receipt replay is not evidence that paper came out.
 
@@ -83,7 +109,7 @@ Typical failures include `400` invalid input, `401` authentication failure, `404
 
 ## `GET /api/print/jobs?id=<jobId>`
 
-Authenticated with the Odoo installation key. Returns the runtime status and routing identifiers for Odoo-originated jobs belonging to the authenticated tenant. Internal Manager-created jobs are outside this integration surface. A job belonging to another tenant, or a non-Odoo job in the same tenant, is returned as `404 Not found`. API-key rotation does not hide Odoo jobs created with the previous credential.
+Authenticated with the Odoo API key and the saved v2 installation proof where applicable. Returns runtime status and routing metadata for an authorized Odoo operation. A job belonging to another tenant or installation, or a non-Odoo job, is returned as `404 Not found`. The same authority applies to the `/v2` route and idempotency-key lookups. See **Odoo status read authority** for legacy behavior and rotation.
 
 ## Agent heartbeat pagination
 
@@ -137,7 +163,7 @@ Gateway APIs for Branches, business destinations, business document catalogs and
 
 ## Reliability contract
 
-The Odoo addon commits a durable outbox row before making the HTTP submission. The same logical operation key is reused for retry attempts, but the value sent to Gateway is a deterministic company-namespaced digest because Odoo uniqueness is company-scoped while Gateway uniqueness is tenant-scoped. This prevents two Odoo companies under one Gateway tenant from colliding on the same caller-supplied idempotency key. Network timeouts are recorded as an unknown physical outcome instead of a definite failure. Gateway-side Odoo idempotency is tenant-scoped so credential rotation does not strand retries; Odoo status reads remain tenant-scoped after installation-key authentication so API-key rotation does not strand historical jobs.
+The Odoo addon commits a durable outbox row before making the HTTP submission. The same logical operation key is reused for retries. Legacy v1 operations retain their company-namespaced digest; v2 operations additionally use an independently enrolled installation namespace. Identical source IDs in different installations remain independent. Network timeouts are recorded as an unknown physical outcome instead of a definite failure. Credential rotation preserves the operation namespace. Status reads use each durable job's saved version and installation proof, including historical receipts, rather than the current configuration's identity.
 
 ## Agent expiry and uncertain delivery receipts
 
@@ -155,15 +181,24 @@ The Odoo addon commits a durable outbox row before making the HTTP submission. T
 
 Customer authentication uses `POST /api/auth/register`, `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/me`, `POST /api/auth/verify-email`, `POST /api/auth/forgot-password`, `POST /api/auth/reset-password`, and `POST /api/auth/select-tenant`. The `/api/auth/me` browser probe also accepts Manager workspace sessions; their refresh stays at `/api/auth/manager/refresh`. Legacy manager bootstrap endpoints remain under `/api/auth/manager/*`.
 
+When valid customer credentials have multiple active workspace memberships,
+login returns `409` with a short-lived `selectionToken`, the existing
+`workspaces: string[]`, and additive `workspaceOptions: [{ id, name }]` display
+metadata. Unrelated, suspended and erased workspaces are excluded. No session
+is issued until the selected active membership is revalidated. These responses
+are `no-store`; names never replace membership IDs as authorization input.
+
 Workspace lifecycle uses `POST /api/onboarding`. Team lifecycle uses `GET/POST/DELETE /api/team/invitations`, `POST /api/team/invitations/accept`, `GET/PATCH/DELETE /api/team/members`, and `POST /api/team/ownership`. Team collection reads are bounded and paginated: both GET routes accept `limit`/`offset` (default 50, maximum 100) and return `hasMore`, `offset`, `limit`, and the tenant-scoped `total` alongside the collection.
 
-Billing uses `GET /api/billing/plans`, `POST /api/billing/checkout`, `POST /api/billing/portal`, `POST /api/billing/cancel`, `POST /api/billing/resume`, and `POST /api/billing/webhook`. Stripe webhook events are signature-verified and persisted by provider event ID before processing; the application database remains the local subscription/entitlement source of truth.
+V4 manual subscriptions use `GET /api/billing/plans`, `GET /api/billing/status`, `GET /api/billing/usage` and `GET/POST /api/subscription-requests`. Only a verified, live Workspace Owner can submit an activation/change/renewal request; its workspace and requester are derived from the authenticated session. A request records intent and never grants entitlements. The optional WhatsApp link contains only its opaque reference.
 
-The public plan catalog is provisioned with `npm run db:provision-plans` using operator-supplied `STRIPE_PLAN_CATALOG` JSON. No Stripe Price IDs or commercial limits are hardcoded in the repository.
+The Platform Owner manages plans in the UI or provisions missing public plans with `npm run db:provision-plans` using `YASEIR_PLAN_CATALOG` JSON. Monthly logical print jobs are the commercial allowance; Agents, printers and members have no commercial count cap. Technical resource and request limits remain enforced. `POST /api/billing/checkout`, `/portal`, `/cancel`, `/resume` and `/webhook` are retired and return `410 MANUAL_BILLING_REQUIRED` without external provider calls or subscription writes. Historical provider records remain retained.
+
+`POST /api/platform/tenants/:id/subscription` accepts the supported save, renew, extend, suspend, reactivate, cancel-at-end and revoke actions. It requires Platform Owner authority, recent password proof, a UUID idempotency key, expected revision and an administrative reason. Save/renew include plan, free/paid type, monthly quota, term, dates and target status; an optional request ID links approval to its original requester. The transaction preserves before/after history and rejects stale or incompatible replay with 409. Platform request rejection and workspace suspension/reactivation carry corresponding actor-bound idempotency and stale-state fences. New team invitations expose only Full Access (`admin`), are owner-controlled, and do not elevate historical lower roles.
 
 ## `POST /api/print/jobs/batch-status`
 
-Authenticated with the Odoo installation key. Request a batch of print job statuses. Max 100 job IDs per request.
+Authenticated with the Odoo API key and saved v2 installation proof where applicable. Request at most 100 job statuses using the authority described above. The addon groups batches by each job's saved identity version and installation.
 
 Request:
 
@@ -193,11 +228,11 @@ Response:
   ]
 }
 ```
-Only Odoo-originated jobs in the authenticated tenant are returned. The current installation key does not have to equal the key recorded on a historical job, so rotation does not strand status synchronization.
+Only Odoo-originated jobs authorized by the installation scope (or unmapped v1 jobs in a legacy workspace) are returned. Unknown or unauthorized IDs are omitted. The current API key need not equal the historical provenance key, so valid rotation within the same installation does not strand synchronization. Document payloads and credentials are never included.
 
 Discovery reports use the additive `errors: string[]` contract in `contracts/print-payload-contract.json` (maximum 64 messages, 2048 UTF-16 units each). The Gateway returns these in session `stats.errors`; optional unavailable device fields are omitted, and protocol defaults to `unknown`. Odoo consumes approved runtime printers, not discovery candidates or source diagnostics; no addon producer emits discovery reports.
 
-Stripe subscription normalization supports both pre-Basil subscription-level periods and Basil+ `items.data[0].current_period_start/current_period_end`. Gateway checkout creates one plan item; its price and billing period come from the same item. Existing Gateway billing response/database field names are unchanged.
+Historical provider-normalization helpers and database fields are retained for evidence and compatibility inspection. They are not active V4 billing routes and cannot activate or renew a workspace through the retired provider endpoints.
 
 New physical dispatch requires an acknowledged, claim-fenced `printing` response (`success: true`, `status: "printing"`). Local delivery receipt age is diagnostic only; a buffered frame may already have a stale claim. An unacknowledged admission sends no hardware bytes. Printing that already crossed this boundary retains its durable outcome reporting through a later disconnect. Repeated admission for the same live printing claim is acknowledged without creating another job or physical attempt.
 
@@ -215,15 +250,13 @@ Refresh rotation, password reset, membership edits, ownership transfers and work
 
 Cached test-connection responses retain `live:false` and expose `printerLastSeenAt`/`printerObservationFresh`. Reachability requires fresh printer observation as well as a fresh online active Agent; a new Agent heartbeat alone cannot revive an old printer observation.
 
-Billing status includes `entitlementBlocked`; `hasSubscription` matches current enforcement: active/trialing need a non-expired period **when a period end is recorded**; a null `current_period_end` currently permits access for legacy/incompletely reconciled active/trialing subscriptions. `past_due` retains payment-recovery access, and an entitlement block disables all three. Null-period grace is a deliberate compatibility behavior requiring a separate billing-policy decision before it can be tightened.
+Billing status includes `entitlementBlocked` and the canonical customer state: awaiting_activation, active, expired or suspended. Effective access requires an active tenant, unblocked manual subscription, reached start date and an unexpired end where one is recorded. Retained legacy open-ended contracts remain explicit; new manual save/renew operations require valid dates. UI status uses database time and the same lifecycle/date semantics; recorded status alone is not proof of active access. Optional plan metadata still requires `billing.read`.
 
-Checkout intents persist `checkout_request_params` with their Stripe idempotency key before any external request. Recovery replays the original price, URLs and metadata, even after catalog/origin changes; the separately fenced tenant customer remains stable. Legacy creating intents without a snapshot return CHECKOUT_RECONCILIATION_REQUIRED and need Stripe/operator reconciliation, because their original accepted parameters cannot safely be reconstructed.
+Quota admission atomically increments `print_monthly_usage` for the authoritative UTC calendar month, once per newly accepted logical job. Pages/copies do not multiply this charge; rejected admission and exact replay cost zero. Failure, cancellation or unknown physical outcome after acceptance does not refund the admission. Renewal, quota edits and plan changes do not reset usage. Annual contract end and next monthly quota reset are separate values.
 
-Checkout recovery also requires its PostgreSQL `checkout_intent_created_at` age to be under 23 hours. Stripe may prune idempotency keys after 24 hours; older or undated unresolved intents require reconciliation and are never automatically replayed or replaced.
+Today/month/year operational totals deduplicate retained live jobs and completion receipts. Monthly allowance history uses its durable admission ledger. Migration 0095 preserves historical usage conservatively where old non-calendar periods cannot be reconstructed precisely; this can make cutover quota usage larger than reconstructed current-month reporting. See `MIGRATION.md` before upgrading.
 
-Stripe subscription snapshots capture `stripe_state_revision` before retrieval and compare it under the authoritative row lock before applying. Concurrent commits force rollback and a bounded refetch outside the transaction; exhausted contention returns retryable 503. Lifecycle/checkout commits and explicit cancellation/resume advance the revision. A canceled identity remains terminal; replacement subscriptions retain their separate binding rules.
-
-Changing a plan price affects future checkout while its retired Price IDs remain bound to that same plan for existing subscriptions. Catalog creation/update/provisioning share the historical uniqueness guard. Unknown or ambiguous price mappings remain entitlement-blocked.
+Migration and route retirement do not contact any previous payment provider or cancel an external recurring charge. The release operator must reconcile prior external subscriptions separately. V4 accepts only explicit audited Platform Owner grants; payment screenshots, WhatsApp messages and browser query parameters are never settlement evidence or activation authority.
 
 Terminal history cleanup removes document payloads and timeline events, retaining compact completion receipts. Accepted operation keys remain reserved for the tenant lifetime: identical retries return the original terminal job; mismatched requests return 409. Integration lookups by job ID/key and batch status remain available after cleanup. Closed Agent status replays require the original owner and hashed claim token. Manager job detail reports archived=true when only the receipt remains; archived jobs cannot be reprinted without resubmitting document content as a new explicit operation.
 

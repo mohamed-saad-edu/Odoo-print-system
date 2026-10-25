@@ -60,5 +60,32 @@ func OutcomeUnknown(err error) bool {
 	if errors.Is(err, ErrOutcomeUnknown) {
 		return true
 	}
-	return HasUnknownOutcomeMarker(err.Error())
+	return hasUnknownOutcomeInTree(err)
+}
+
+// Some native/legacy boundaries return the wire marker as message text rather
+// than the Go sentinel. Check every wrapped cause, including errors.Join, so
+// adding PDF/transport context cannot make that evidence safely retryable.
+// Keep the prefix contract at each node: incidental marker text in a printer
+// name or diagnostic must not manufacture an unknown physical outcome.
+func hasUnknownOutcomeInTree(err error) bool {
+	for err != nil {
+		if HasUnknownOutcomeMarker(err.Error()) {
+			return true
+		}
+		switch wrapped := err.(type) {
+		case interface{ Unwrap() error }:
+			err = wrapped.Unwrap()
+		case interface{ Unwrap() []error }:
+			for _, cause := range wrapped.Unwrap() {
+				if hasUnknownOutcomeInTree(cause) {
+					return true
+				}
+			}
+			return false
+		default:
+			return false
+		}
+	}
+	return false
 }

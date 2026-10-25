@@ -32,8 +32,8 @@ suite("server-side print job maintenance", () => {
 
   async function insertJob(id: string, status: string, retries = 0, ageSeconds = 120, expiresOffsetSeconds = 3600) {
     await pool().query(
-      `INSERT INTO print_jobs (id, tenant_id, destination, document_type, agent_id, printer_id, status, payload, retries, claimed_at, delivered_at, acked_at, expires_at, created_at, updated_at)
-       VALUES ($1, $2, $3, 'receipt', $4, $5, $6, '{"type":"raw","protocol":"raw","encoding":"base64","data":"aGVsbG8="}'::jsonb, $7, now() - make_interval(secs => $8), NULL, NULL, now() + make_interval(secs => $9), now() - make_interval(secs => $8), now() - make_interval(secs => $8))`,
+      `INSERT INTO print_jobs (id, tenant_id, destination, document_type, agent_id, printer_id, status, payload, retries, claimed_at, delivered_at, acked_at, expires_at, created_at, updated_at, binding_digest)
+       VALUES ($1, $2, $3, 'receipt', $4, $5, $6, '{"type":"raw","protocol":"raw","encoding":"base64","data":"aGVsbG8="}'::jsonb, $7, now() - make_interval(secs => $8), NULL, NULL, now() + make_interval(secs => $9), now() - make_interval(secs => $8), now() - make_interval(secs => $8), (SELECT verification_binding_digest FROM printers WHERE tenant_id=$2 AND id=$5))`,
       [id, f.tenantId, f.destination, f.agentId, f.printerId, status, retries, ageSeconds, expiresOffsetSeconds],
     );
   }
@@ -181,5 +181,58 @@ suite("server-side print job maintenance", () => {
     expect(row.rows[0].status).toBe("failed");
     expect(Number(row.rows[0].retries)).toBe(MAX_RETRIES);
     expect(row.rows[0].error).toContain("AGENT_EXECUTION_TIMEOUT");
+  });
+
+  it("concurrent maintenance workers requeue a safe claim once and preserve an uncertain delivered attempt", async () => {
+    await insertJob("automation-safe-claim", "claimed", 1, 120, 3600);
+    await insertJob("automation-unknown-claim", "claimed", 0, 120, 3600);
+    await pool().query(`UPDATE print_jobs SET claim_token='automation-original-attempt',
+      delivered_at=updated_at, delivery_attempts=1 WHERE id='automation-unknown-claim'`);
+    const results = await Promise.all([sweepPrintJobs(), sweepPrintJobs(), sweepPrintJobs()]);
+    expect(results.reduce((sum, result) => sum + result.requeuedClaims, 0)).toBe(1);
+    expect(results.reduce((sum, result) => sum + result.silentDeliveries, 0)).toBe(1);
+    const rows = await pool().query(`SELECT id,status,retries,delivery_attempts,claim_token,error
+      FROM print_jobs WHERE id LIKE 'automation-%' ORDER BY id`);
+    expect(rows.rows[0]).toMatchObject({ id: "automation-safe-claim", status: "queued", retries: 2, claim_token: null });
+    expect(rows.rows[1]).toMatchObject({ id: "automation-unknown-claim", status: "failed", retries: 0,
+      delivery_attempts: 1, claim_token: "automation-original-attempt" });
+    expect(rows.rows[1].error).toContain("UNKNOWN_PARTIAL_DELIVERY");
+  });
+
+  it("maintenance skips another transaction's locked oldest claim and recovers it after release", async () => {
+    await insertJob("automation-locked-claim", "claimed", 0, 180, 3600);
+    await insertJob("automation-ready-claim", "claimed", 0, 120, 3600);
+    const blocker = await pool().connect();
+    try {
+      await blocker.query("BEGIN");
+      await blocker.query("SELECT id FROM print_jobs WHERE id='automation-locked-claim' FOR UPDATE");
+      const result = await sweepPrintJobs();
+      expect(result.requeuedClaims).toBe(1);
+      const during = await pool().query("SELECT id,status,retries FROM print_jobs WHERE id LIKE 'automation-%' ORDER BY id");
+      expect(during.rows).toEqual([
+        { id: "automation-locked-claim", status: "claimed", retries: 0 },
+        { id: "automation-ready-claim", status: "queued", retries: 1 },
+      ]);
+    } finally {
+      await blocker.query("ROLLBACK");
+      blocker.release();
+    }
+    expect((await sweepPrintJobs()).requeuedClaims).toBe(1);
+    const recovered = await pool().query("SELECT status,retries FROM print_jobs WHERE id='automation-locked-claim'");
+    expect(recovered.rows).toEqual([{ status: "queued", retries: 1 }]);
+  });
+
+  it("concurrent retention workers preserve exactly one receipt per terminal job and retain unresolved claims", async () => {
+    await insertJob("automation-retain-success", "success", 0, 49 * 60 * 60, 3600);
+    await insertJob("automation-retain-failed", "failed", 0, 49 * 60 * 60, 3600);
+    await insertJob("automation-retain-unresolved", "failed", 0, 49 * 60 * 60, 3600);
+    await pool().query(`UPDATE print_jobs SET claim_token='automation-unresolved-attempt',
+      error='UNKNOWN_PARTIAL_DELIVERY: awaiting reconciliation' WHERE id='automation-retain-unresolved'`);
+    const results = await Promise.all([cleanupTerminalPrintJobs(), cleanupTerminalPrintJobs()]);
+    expect(results.reduce((sum, count) => sum + count, 0)).toBe(2);
+    const receipts = await pool().query("SELECT id FROM print_job_receipts WHERE id LIKE 'automation-retain-%' ORDER BY id");
+    expect(receipts.rows).toEqual([{ id: "automation-retain-failed" }, { id: "automation-retain-success" }]);
+    const remaining = await pool().query("SELECT id,claim_token FROM print_jobs WHERE id LIKE 'automation-retain-%'");
+    expect(remaining.rows).toEqual([{ id: "automation-retain-unresolved", claim_token: "automation-unresolved-attempt" }]);
   });
 });

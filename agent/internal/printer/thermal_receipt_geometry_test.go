@@ -90,7 +90,7 @@ func TestThermalReceiptPDFUsesActualPhysicalPaper(t *testing.T) {
 func TestThermalReceiptRejectsUnknownOrUnsafeProfile(t *testing.T) {
 	pdf := testReceiptJPEG(t, 384, 512)
 	for _, profile := range []struct{ paper, dots, dpi int }{
-		{210, 576, 203}, {80, 90000, 203}, {58, 100, 203}, {80, 1700, 0},
+		{0, 576, 203}, {80, 90000, 203}, {58, 1000, 203}, {80, 1700, 0},
 	} {
 		if _, err := JPEGToPDFReceipt(pdf, profile.paper, profile.dots, profile.dpi); err == nil {
 			t.Fatalf("invalid dimensions accepted: %+v", profile)
@@ -195,17 +195,21 @@ func TestSpoolerProfilePrefersExplicitDotsAndDPI(t *testing.T) {
 	}{
 		{map[string]interface{}{"max_paper_width": 512, "print_dpi": 180}, 80, 512, 180},
 		{map[string]interface{}{"max_paper_width": 576, "print_dpi": 203}, 80, 576, 203},
-		{map[string]interface{}{"print_dpi": 203}, 58, 384, 203},
-		{map[string]interface{}{"print_dpi": 180}, 58, 360, 180},
 		{map[string]interface{}{"max_paper_width": 512, "print_dpi": 300}, 80, 512, 300},
 		{map[string]interface{}{"max_paper_width": 512, "dpi": 200}, 80, 512, 200},
 		{map[string]interface{}{"max_paper_width": 850, "print_dpi": 300}, 80, 850, 300},
 		{map[string]interface{}{"max_paper_width": 1700, "print_dpi": 600}, 80, 1700, 600},
 	} {
-		pc := config.PrinterConfig{PaperWidthMM: tc.mm, Capabilities: tc.caps}
+		pc := config.PrinterConfig{ID: "receipt", Type: "spooler", Protocol: "spooler", SpoolerName: "Receipt queue", PaperWidthMM: tc.mm, Capabilities: tc.caps, ExplicitLegacyGeometry: true}
 		mm, dots, dpi := receiptPaperProfile(pc)
 		if mm != tc.mm || dots != tc.dots || dpi != tc.dpi {
 			t.Errorf("profile=%+v -> %d/%d/%d, want %d/%d/%d", tc.caps, mm, dots, dpi, tc.mm, tc.dots, tc.dpi)
+		}
+	}
+	for _, dpi := range []int{180, 203, 300, 600} {
+		pc := config.PrinterConfig{ID: "receipt", Type: "spooler", Protocol: "spooler", SpoolerName: "Receipt queue", PaperWidthMM: 58, Capabilities: map[string]interface{}{"print_dpi": dpi}, ExplicitLegacyGeometry: true}
+		if mm, dots, dpi := receiptPaperProfile(pc); mm != 0 || dots != 0 || dpi != 0 {
+			t.Fatal("DPI and nominal paper invented printable dots")
 		}
 	}
 	// Never claim an A4 or unknown printer is an 80mm receipt printer.

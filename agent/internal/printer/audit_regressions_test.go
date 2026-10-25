@@ -123,7 +123,7 @@ func auditAutoSpoolerDevice(id, name string) DeviceInfo {
 	}
 }
 
-func TestAuditCompleteSpoolerInventoryRemovesAbsentAutoQueue(t *testing.T) {
+func TestAuditCompleteSpoolerInventoryRetainsAbsentAutoQueueHistory(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "printers.json")
 	stale := auditAutoSpoolerDevice("spooler-stale", "Removed Queue")
 	if _, err := UpsertRegistry(path, []DeviceInfo{stale}); err != nil {
@@ -134,8 +134,8 @@ func TestAuditCompleteSpoolerInventoryRemovesAbsentAutoQueue(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rows) != 0 {
-		t.Fatalf("complete spooler inventory retained absent auto queue: %#v", rows)
+	if len(rows) != 1 || rows[0].ID != stale.ID || IsRuntimeDiscoveryPrinter(rows[0]) {
+		t.Fatalf("complete spooler absence lost history or remained executable: %#v", rows)
 	}
 }
 
@@ -160,8 +160,7 @@ func TestAuditCompleteSpoolerInventoryPreservesManualAndConfigRows(t *testing.T)
 	manual := auditAutoSpoolerDevice("manual-spooler", "Manual Queue")
 	manual.Capabilities["registration_source"] = "manual"
 	configRow := auditAutoSpoolerDevice("config-spooler", "Configured Queue")
-	// Distinct physical queue: registry identity intentionally deduplicates
-	// rows that share the same spooler port + driver tuple.
+	// Distinct logical queues remain separate even when their port/driver match.
 	configRow.SpoolerPort = "USB002"
 	configRow.Capabilities["registration_source"] = "config"
 	if _, err := UpsertRegistry(path, []DeviceInfo{manual, configRow}); err != nil {
@@ -212,8 +211,8 @@ func TestAuditAutoSpoolerQueueCanReappearAfterConfirmedRemoval(t *testing.T) {
 	if _, err := UpsertRegistry(path, []DeviceInfo{queue}); err != nil {
 		t.Fatal(err)
 	}
-	if rows, err := ReconcileDiscoveryRegistry(path, nil, map[string]bool{SourceSpooler: true}); err != nil || len(rows) != 0 {
-		t.Fatalf("failed to remove absent queue: rows=%#v err=%v", rows, err)
+	if rows, err := ReconcileDiscoveryRegistry(path, nil, map[string]bool{SourceSpooler: true}); err != nil || len(rows) != 1 || IsRuntimeDiscoveryPrinter(rows[0]) {
+		t.Fatalf("failed to retain unavailable queue history: rows=%#v err=%v", rows, err)
 	}
 
 	rows, err := ReconcileDiscoveryRegistry(path, []DeviceInfo{queue}, map[string]bool{SourceSpooler: true})
@@ -238,8 +237,8 @@ func TestAuditLegacyAutoSpoolerMetadataCanBeReconciled(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rows) != 0 {
-		t.Fatalf("legacy auto spooler row could never age out: %#v", rows)
+	if len(rows) != 1 || rows[0].ID != legacy.ID || IsRuntimeDiscoveryPrinter(rows[0]) {
+		t.Fatalf("legacy queue absence lost its history or remained executable: %#v", rows)
 	}
 }
 

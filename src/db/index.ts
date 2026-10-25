@@ -76,9 +76,26 @@ function createPool(): Pool {
   poolConfig.connectionTimeoutMillis = 10_000;
   poolConfig.statement_timeout = 30_000;
   poolConfig.lock_timeout = 5_000;
+  // A statement deadline does not cover time spent waiting in application
+  // code after BEGIN. Reap stalled transactions so their row/advisory locks
+  // and pool slot cannot survive indefinitely when a request is interrupted.
+  poolConfig.idle_in_transaction_session_timeout = 30_000;
   poolConfig.maxUses = 10_000;
 
-  return new Pool(poolConfig);
+  const configuredPool = new Pool(poolConfig);
+  // The Pool's own error event only covers idle clients. A server-side idle
+  // transaction deadline (or a DB restart) can also close a checked-out client
+  // while application code is awaiting something other than a query. Keep a
+  // listener for that client's lifetime so the EventEmitter does not crash
+  // the process; the transaction's next query still rejects normally. Attach
+  // once at connection creation, never per checkout (which would retain one
+  // listener on every reuse of the same client).
+  configuredPool.on("connect", (client) => {
+    client.on("error", (error: Error) => {
+      logError("pg.client_connection_error", { error: error.message });
+    });
+  });
+  return configuredPool;
 }
 
 export const pool =

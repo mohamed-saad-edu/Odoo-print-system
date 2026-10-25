@@ -44,23 +44,19 @@ A transport interruption is represented as an unknown physical outcome until Gat
 
 Managers can generate an Odoo API key, copy the raw value once, and revoke it. Gateway stores only the cryptographic hash and never returns raw secrets from list/read endpoints.
 
-## Platform plans and entitlements
+## Platform plans and manual subscriptions
 
-The Platform Control Plane manages the commercial plan catalog at `/platform/plans`.
-A plan contains the Yaseir-side entitlements `max_agents`, `max_printers`, `max_jobs_per_minute`, `max_concurrent_jobs`, and `max_prints_per_period`.
-These limits are enforced server-side from the tenant's current subscription plan; they are not UI-only values.
+The platform owner manages plans at `/platform/plans` and reviews traceable activation requests at `/platform/subscription-requests`. Public plans expose a monthly logical print-job allowance. Commercial computer, printer and user counts are unlimited; request size, discovery, queue, rate and concurrency safeguards remain enforced separately.
 
-Stripe remains the source of truth for money and recurring billing. Create the Stripe Product/Price in Stripe, then bind its `price_...` (and optional `prod_...`) ID to the Yaseir plan. Gateway validates a licensed recurring Price billed once per selected day/week/month/year, matching the plan currency/interval; metered and multi-interval Prices need catalog support before they can be offered. Existing subscriptions continue using their current Stripe subscription price even when the plan's current price reference is changed for future checkout.
+A new workspace starts pending. Its verified owner chooses a plan and monthly/yearly term, then creates an authenticated, idempotent request. The optional WhatsApp link includes only the saved request reference. Neither that link, a signup, nor a provider callback activates the workspace. After external business settlement (or an explicit free grant), the platform owner confirms a dated manual subscription with recent password proof, a reason, a stale-record fence and an immutable before/after history.
 
-Plan `Active` controls whether new customer checkout can use the plan. `Public` controls whether it appears in the public pricing/onboarding catalog. Archiving or hiding a plan does not remove entitlements from existing subscriptions, and archiving alone does not require a Stripe API call. During Stripe `past_due` recovery, printing remains available; `unpaid`, `paused`, and canceled states do not provision runtime entitlements. A paused subscription resumes through Stripe's subscription resume API after a valid payment method is available. A locally expired or entitlement-blocked active subscription must be verified as terminal at Stripe before checkout can replace it; provider outages preserve the existing identity and direct the customer to retry or manage billing, preventing duplicate charges.
+Monthly usage uses a UTC calendar-month bucket independent of the subscription term. A yearly term does not provide a year-long quota bucket, and editing or renewing a subscription does not reset current-month usage. Accepted duplicate logical requests are counted once. Expired, pending, canceled, suspended or blocked workspaces cannot admit new print jobs; historical records and uncertain-output evidence are retained.
 
-Customer Portal must be configured in Stripe with the Yaseir subscription Prices you intend to offer for upgrades/downgrades. Portal changes are synchronized back through `customer.subscription.updated` webhooks.
-
-The legacy `STRIPE_PLAN_CATALOG` / `npm run db:provision-plans` path remains available for first-boot/operator provisioning; Platform Admin changes to the managed catalog fields are preserved across subsequent provisioning runs.
+Plans have active/public catalog flags and no provider price requirement. Use `YASEIR_PLAN_CATALOG` with `npm run db:provision-plans` for an optional initial catalog; existing managed plans are preserved. The legacy checkout, portal, webhook, cancel and resume endpoints return HTTP 410 and perform no payment or subscription mutation. Retained provider metadata is historical evidence. An operator must separately reconcile any external recurring charges when migrating a real deployment.
 
 ## Account activation
 
-Email verification establishes mailbox ownership before password setup. `POST /api/auth/verify-email` consumes the email proof, invalidates any password chosen before that proof, revokes existing sessions/reset links, and returns `{ ok: true, next, requiresPasswordSetup }` with `Cache-Control: no-store` and no session cookies. A new verification's `next` points to the existing single-use, 20-minute password reset page in setup mode; after choosing a password, the owner signs in and continues onboarding or an invitation. Already verified accounts return `/login` without changing their password. Registration and resend preserve optional plan/invitation context; those values grant no access. This prevents an earlier registrant from retaining a password for somebody else's email address.
+Email verification establishes mailbox ownership before password setup. `POST /api/auth/verify-email` consumes the email proof, invalidates any password chosen before that proof, revokes existing sessions/reset links, and returns `{ ok: true, next, requiresPasswordSetup }` with `Cache-Control: no-store` and no session cookies. A new verification's `next` points to the existing single-use, 10-minute password reset page in setup mode; after choosing a password, the owner signs in and continues onboarding or an invitation. Already verified accounts return `/login` without changing their password. Registration and resend preserve optional plan/invitation context; those values grant no access. This prevents an earlier registrant from retaining a password for somebody else's email address.
 
 ## Development
 

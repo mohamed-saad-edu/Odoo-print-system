@@ -1,10 +1,10 @@
-import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from "vitest";
+import { issueWorkspaceTestSession } from "./helpers/workspace-session";
+import { describe, it, expect, beforeAll, beforeEach, afterEach, afterAll, vi } from "vitest";
 import {
   ACCESS_TOKEN_TTL_SECONDS,
   REFRESH_FAMILY_TTL_MS,
   REFRESH_ROTATION_GRACE_MS,
   hashRefreshToken,
-  issueSessionPair,
   rotateRefreshToken,
   accessCookieHeader,
   refreshCookieHeader,
@@ -48,9 +48,10 @@ suite("shared refresh-token session rotation", () => {
   afterAll(async () => {
     await closePool();
   });
+  afterEach(() => { vi.unstubAllEnvs(); });
 
   it("keeps manager and customer v2 access-token kinds isolated", async () => {
-    const customer = await issueSessionPair({
+    const customer = await issueWorkspaceTestSession({
       kind: "customer",
       tenantId: "tenant_session_test",
       userId: "user_session_test",
@@ -75,7 +76,7 @@ suite("shared refresh-token session rotation", () => {
     const managerClaims = await validateManager(request);
     expect(managerClaims).toBeNull();
 
-    const customerPair = await issueSessionPair({
+    const customerPair = await issueWorkspaceTestSession({
       kind: "manager",
       tenantId: "tenant_session_test",
       userId: "user_session_test",
@@ -100,7 +101,10 @@ suite("shared refresh-token session rotation", () => {
   });
 
   it("issues a 15-minute access token and hashed 30-day refresh family", async () => {
-    const pair = await issueSessionPair({
+    // Session issuance persists its supplied request metadata alongside the
+    // hash-only refresh authority.
+    vi.stubEnv("TRUST_PROXY", "1");
+    const pair = await issueWorkspaceTestSession({
       kind: "manager",
       tenantId: "tenant_session_test",
       userId: "user_session_test",
@@ -161,7 +165,7 @@ suite("shared refresh-token session rotation", () => {
   });
 
   it("rejects refresh after the tenant role changes and revokes the family", async () => {
-    const first = await issueSessionPair({
+    const first = await issueWorkspaceTestSession({
       kind: "manager",
       tenantId: "tenant_session_test",
       userId: "user_session_test",
@@ -186,7 +190,7 @@ suite("shared refresh-token session rotation", () => {
   });
 
   it("rejects refresh after tenant membership is removed and revokes the family", async () => {
-    const first = await issueSessionPair({
+    const first = await issueWorkspaceTestSession({
       kind: "customer",
       tenantId: "tenant_session_test",
       userId: "user_session_test",
@@ -211,7 +215,7 @@ suite("shared refresh-token session rotation", () => {
   });
 
   it("rotates normally and keeps the family absolute expiry fixed", async () => {
-    const first = await issueSessionPair({
+    const first = await issueWorkspaceTestSession({
       kind: "manager",
       tenantId: "tenant_session_test",
       userId: "user_session_test",
@@ -240,7 +244,7 @@ suite("shared refresh-token session rotation", () => {
   });
 
   it("accepts the replaced refresh token inside the 5-second grace window", async () => {
-    const first = await issueSessionPair({
+    const first = await issueWorkspaceTestSession({
       kind: "manager",
       tenantId: "tenant_session_test",
       userId: "user_session_test",
@@ -270,7 +274,7 @@ suite("shared refresh-token session rotation", () => {
   });
 
   it("serializes concurrent post-grace reuse so one request revokes the whole family before the next can rotate", async () => {
-    const first = await issueSessionPair({
+    const first = await issueWorkspaceTestSession({
       kind: "manager",
       tenantId: "tenant_session_test",
       userId: "user_session_test",
@@ -301,7 +305,7 @@ suite("shared refresh-token session rotation", () => {
   });
 
   it("treats an old refresh token after grace as family reuse and sends a security notification", async () => {
-    const first = await issueSessionPair({
+    const first = await issueWorkspaceTestSession({
       kind: "manager",
       tenantId: "tenant_session_test",
       userId: "user_session_test",
@@ -359,26 +363,29 @@ suite("shared refresh-token session rotation", () => {
     // failure. PostgreSQL aborts the whole transaction on a failed
     // statement, so the audit write runs isolated behind a savepoint.
     const auditModule = await import("../src/lib/audit");
+    const first = await issueWorkspaceTestSession({
+      kind: "manager",
+      tenantId: "tenant_session_test",
+      userId: "user_session_test",
+      role: "admin",
+    });
+
+    const rotated = await rotateRefreshToken("manager", first.refreshToken);
+    expect(rotated.status).toBe("rotated");
+
+    await pool().query(
+      "UPDATE refresh_tokens SET replaced_at = clock_timestamp() - interval '6 seconds' WHERE id = $1",
+      [first.refreshTokenId],
+    );
+
+    // Inject this failure only at the optional reuse-telemetry write whose
+    // savepoint behavior is under test, after creating the live family.
     const spy = vi.spyOn(auditModule, "writeAuditEvent").mockRejectedValueOnce(new Error("audit store unavailable"));
     try {
-      const first = await issueSessionPair({
-        kind: "manager",
-        tenantId: "tenant_session_test",
-        userId: "user_session_test",
-        role: "admin",
-      });
-
-      const rotated = await rotateRefreshToken("manager", first.refreshToken);
-      expect(rotated.status).toBe("rotated");
-
-      await pool().query(
-        "UPDATE refresh_tokens SET replaced_at = clock_timestamp() - interval '6 seconds' WHERE id = $1",
-        [first.refreshTokenId],
-      );
-
       const replay = await rotateRefreshToken("manager", first.refreshToken);
       expect(replay.status).toBe("reused");
       expect(spy).toHaveBeenCalled();
+      expect(spy).toHaveBeenCalledTimes(1);
 
       const family = await pool().query(
         "SELECT id, revoked_at, revoked_reason FROM refresh_tokens WHERE family_id = $1 ORDER BY issued_at",

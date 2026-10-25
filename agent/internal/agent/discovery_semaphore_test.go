@@ -10,28 +10,22 @@ func TestDiscoverySemaphoreReleasedOnNormalFinish(t *testing.T) {
 	a.discoverySem <- struct{}{}
 	finished := make(chan struct{})
 	a.releaseDiscoverySemaphoreWhenFinished(finished, time.Minute)
-
-	// The buffered token represents the ACTIVE scan. A successor must not
-	// acquire a slot while that scan's worker is still running.
 	select {
 	case a.discoverySem <- struct{}{}:
-		t.Fatal("discovery semaphore released before the worker finished")
+		t.Fatal("unfinished scan must retain its discovery slot")
 	default:
 	}
-
 	close(finished)
-
-	// Release removes the token; a successful send proves the slot became
-	// available. Receiving from the channel here would race the release
-	// waiter and could incorrectly pass or fail based on scheduling.
+	// A successor acquires by sending only after cleanup drains the held slot.
 	select {
 	case a.discoverySem <- struct{}{}:
-		if a.discoveryWedged.Load() {
-			t.Fatal("normal finish must not mark the scan wedged")
-		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("semaphore was not released after normal finish")
 	}
+	if a.discoveryWedged.Load() {
+		t.Fatal("normal finish must not mark the scan wedged")
+	}
+	<-a.discoverySem // Drain the successor slot acquired by this test.
 }
 
 func TestDiscoverySemaphoreForceReleasedWhenScanWedges(t *testing.T) {

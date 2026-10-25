@@ -97,6 +97,14 @@ else
         mark app supply codeql_js codeql_py codeql_go ;;
       .github/workflows/*)
         mark_all ;;
+      # This directory contains executable runtime patches and hash-locked
+      # dependency inputs, so it cannot take the ordinary docs-only shortcut.
+      docs/runtime-hardening/gosu/*|docs/runtime-hardening/caddy/*|docs/runtime-hardening/alpine-security-artifacts.json)
+        # These inputs also rebuild PostgreSQL/Caddy, so run their Compose
+        # behavior gates as well as image scanning and the carried Odoo profile.
+        mark app odoo docker docker_scan supply codeql_py codeql_go ;;
+      Dockerfile.odoo-hardened|scripts/odoo-hardened-entrypoint.py|scripts/odoo-healthcheck.py|scripts/verify-odoo-test-results.py|docs/runtime-hardening/*)
+        mark app odoo docker_scan supply codeql_py ;;
       *.md|docs/*|LICENSE|LICENSE.*|CHANGELOG*|.github/ISSUE_TEMPLATE/*)
         ;;
       src/*)
@@ -127,6 +135,10 @@ else
           *.js|*.ts|*.mjs) mark codeql_js ;;
         esac
         ;;
+      tests/ci-image-mirror-current-run.node.test.mjs)
+        # This contract controls the native Odoo image/security gate and must
+        # not let a passing generic app check mask a cancelled Odoo scan.
+        mark app odoo docker_scan supply codeql_js codeql_py ;;
       tests/*)
         mark app
         case "$file" in
@@ -144,9 +156,11 @@ else
         mark docker docker_scan supply
         ;;
       security/image-vulnerability-baseline.json)
-        mark docker_scan supply
+        # Includes the pinned Odoo image's reviewed vulnerability inventory.
+        # Always re-run actual native image tests and its SARIF review.
+        mark odoo docker_scan supply
         ;;
-      eslint.config.mjs|vitest*.mts|.npmrc|typography/*)
+      eslint.config.mjs|.oxlintrc.json|vitest*.mts|.npmrc|typography/*)
         mark app codeql_js
         ;;
       contracts/*)

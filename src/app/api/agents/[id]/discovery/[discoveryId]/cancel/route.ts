@@ -47,7 +47,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       .where(and(eq(discoverySessions.id, discoveryId), eq(discoverySessions.agentId, agentId), eq(discoverySessions.tenantId, claims.tenantId)));
     return { kind: "cancelled" as const };
   }); } catch (error) {
-    if (error instanceof ManagerMutationAuthorityChangedError || error instanceof TenantSuspendedError || error instanceof TenantDeletedError) return NextResponse.json({ error: error.message }, { status: 403 });
+    if (error instanceof ManagerMutationAuthorityChangedError) return error.response();
+    if (error instanceof TenantSuspendedError || error instanceof TenantDeletedError) return NextResponse.json({ error: error.message }, { status: 403 });
     throw error;
   }
   if (result.kind === "not_found") return NextResponse.json({ error: "Not found" }, { status: 404 });

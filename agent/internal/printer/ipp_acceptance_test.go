@@ -124,6 +124,8 @@ func ippEvidenceTestProbe() []byte {
 		{4, 0x49, "", []byte("image/jpeg")},
 		{4, 0x23, "printer-state", ippEvidenceTestInt(3)},
 		{4, 0x22, "printer-is-accepting-jobs", []byte{1}},
+		{4, 0x44, "media-supported", []byte("iso_a4_210x297mm")},
+		{4, 0x44, "print-scaling-supported", []byte("none")},
 	}
 	return r.bytes()
 }
@@ -405,7 +407,7 @@ func TestIPPPrintJobValidReturnedEvidenceIsAcceptedOnce(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			r := ippEvidenceTestJob(3)
 			change(&r)
-			testIPPPrintJobResponse(t, r.bytes(), false)
+			testIPPPrintJobResponse(t, r.bytes(), r.status == 1 || r.status == 2)
 		})
 	}
 }

@@ -1,3 +1,5 @@
+import type * as PrintJobServiceModule from "../src/lib/print-job-service";
+import type * as DatabaseClockModule from "../src/lib/database-clock";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({ select: vi.fn(), createJob: vi.fn(), event: vi.fn(), now: vi.fn() }));
@@ -6,10 +8,10 @@ vi.mock("../src/lib/manager-auth", () => ({ validateWorkspaceManager: async () =
 vi.mock("../src/lib/authorization", () => ({ requireManagerPermission: () => {} }));
 vi.mock("../src/lib/printer-health", () => ({ getPrinterCapabilityMatrix: async () => ({ documentTypes: ["pdf"] }) }));
 vi.mock("../src/lib/print-job-service", async (original) => ({
-  ...(await original<typeof import("../src/lib/print-job-service")>()), createPrintJobForPrinter: mocks.createJob,
+  ...(await original<typeof PrintJobServiceModule>()), createPrintJobForPrinter: mocks.createJob,
 }));
 vi.mock("../src/lib/database-clock", async (original) => ({
-  ...(await original<typeof import("../src/lib/database-clock")>()), databaseNowMs: mocks.now,
+  ...(await original<typeof DatabaseClockModule>()), databaseNowMs: mocks.now,
 }));
 vi.mock("../src/lib/job-timeline", () => ({ recordJobEvent: mocks.event }));
 

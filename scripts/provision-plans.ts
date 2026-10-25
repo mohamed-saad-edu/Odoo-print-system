@@ -1,48 +1,16 @@
-import { eq, sql } from "drizzle-orm";
-import { db, pool } from "../src/db";
+import { db,pool } from "../src/db";
 import { plans } from "../src/db/schema";
-import { normalizePlanEntitlements } from "../src/lib/entitlements";
-import { validateStripePriceBinding, lockStripePlanCatalog } from "../src/lib/stripe";
-
-/* Provision the public plan catalog from operator-supplied Stripe Price IDs and canonical entitlement limits. */
-async function main() {
-  const raw = process.env.STRIPE_PLAN_CATALOG;
-  if (!raw) throw new Error("STRIPE_PLAN_CATALOG is required");
-  const parsed = JSON.parse(raw) as Array<{ id: string; name: string; priceId: string; currency?: string; interval?: string; entitlements: Record<string, unknown> }>;
-  if (!Array.isArray(parsed) || parsed.length === 0) throw new Error("STRIPE_PLAN_CATALOG must be a non-empty JSON array");
-  for (const plan of parsed) {
-    if (!plan?.id || !plan.name || !plan.priceId || !plan.entitlements || typeof plan.entitlements !== "object" || Array.isArray(plan.entitlements)) throw new Error("Each plan requires id, name, priceId and entitlements");
-    const entitlements = normalizePlanEntitlements(plan.entitlements);
-    const currency = plan.currency ?? "usd";
-    const interval = plan.interval ?? "month";
-    const stripePrice = await validateStripePriceBinding({
-      priceId: plan.priceId,
-      currency,
-      interval,
-      requireActive: true,
-    });
-    await db.transaction(async tx => {
-    await lockStripePlanCatalog(tx, plan.id, plan.priceId);
-    const current = await tx.query.plans.findFirst({ where: eq(plans.id, plan.id), columns: { stripePriceHistory: true, stripePriceId: true } });
-    const priceHistory = [...new Set([...(current?.stripePriceHistory ?? []), current?.stripePriceId, plan.priceId].filter((value): value is string => typeof value === "string" && !!value))];
-    await tx.insert(plans).values({
-      id: plan.id,
-      name: plan.name,
-      stripePriceId: plan.priceId,
-      stripePriceHistory: priceHistory,
-      currency,
-      interval,
-      entitlements,
-      description: "",
-      isActive: true,
-      isPublic: true,
-      displayOrder: 0,
-      stripeProductId: stripePrice.productId,
-    })
-      .onConflictDoUpdate({ target: plans.id, set: { name: plan.name, stripePriceId: plan.priceId, stripeProductId: stripePrice.productId, stripePriceHistory: priceHistory, currency: plan.currency ?? "usd", interval: plan.interval ?? "month", entitlements, updatedAt: sql`clock_timestamp()` } });
-    });
-  }
-  console.log(`Provisioned ${parsed.length} Stripe-backed plan(s).`);
+import { parseManualPlan } from "../src/lib/manual-plans";
+import { writeAuditEvent } from "../src/lib/audit";
+/** Bootstrap catalog only; never creates or activates a customer subscription. */
+async function main(){
+ const raw=process.env.YASEIR_PLAN_CATALOG;
+ if(!raw)throw new Error('YASEIR_PLAN_CATALOG must be a JSON array of {id,name,description,monthlyQuota}');
+ const parsed=JSON.parse(raw);if(!Array.isArray(parsed)||!parsed.length)throw new Error('Invalid catalog');
+ for(const input of parsed){const plan=parseManualPlan(input);await db.transaction(async tx=>{
+  const inserted=await tx.insert(plans).values(plan).onConflictDoNothing().returning({id:plans.id});
+  if(inserted.length)await writeAuditEvent({tenantId:null,actorType:'platform',action:'plan.bootstrap',resourceType:'plan',resourceId:plan.id,metadata:{after:plan}},tx);
+ });}
+ console.log(`Processed ${parsed.length} manual plans; existing plans preserved.`);
 }
-
-main().catch((error) => { console.error(error); process.exitCode = 1; }).finally(() => pool.end());
+main().catch(error=>{console.error(error);process.exitCode=1;}).finally(()=>pool.end());

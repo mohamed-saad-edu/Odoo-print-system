@@ -32,14 +32,19 @@ def test_forward_migration_registered_in_immutable_drizzle_journal():
     import json
     doc = json.loads((ROOT / "drizzle/meta/_journal.json").read_text())
     tags = [row["tag"] for row in doc["entries"]]
-    assert tags[-5] == "0085_odoo_installation_idempotency"
-    assert tags[-4] == "0086_printer_identity_and_api_key_deletion"
-    assert tags[-3] == "0087_odoo_auto_enrollment"
-    assert tags[-2] == "0088_retire_e2e_capture"
-    assert tags[-1] == "0089_invitation_verification_binding"
+    assert tags[85] == "0085_odoo_installation_idempotency"
+    assert tags[86] == "0086_printer_identity_and_api_key_deletion"
+    assert tags[87] == "0087_odoo_auto_enrollment"
+    assert tags[88] == "0088_retire_e2e_capture"
+    assert tags[89] == "0089_invitation_verification_binding"
+    assert tags[90] == "0090_platform_mfa_sessions"
+    assert tags[91] == "0091_workspace_session_security"
+    assert tags[92] == "0092_workspace_mfa"
     assert len(tags) == len(list((ROOT / "drizzle").glob("*.sql")))
     assert tags == [p.stem for p in sorted((ROOT / "drizzle").glob("*.sql"))]
-    assert len(tags) == 90
+    assert len(tags) == 96
+    assert tags[93] == "0093_password_only_authentication"
+    assert tags[94] == "0094_printer_operational_verification"
 
 
 def test_rotation_preserves_installation_ownership():
@@ -56,14 +61,16 @@ def test_reuse_approval_immediately_maps_receipt_without_second_post():
     assert "found.id" in source
 
 
-def test_auto_cutover_is_history_fenced_and_api_keys_can_be_shared():
+def test_auto_enrollment_requires_explicit_legacy_cutover_and_api_keys_can_be_shared():
     migration = (ROOT / "drizzle/0087_odoo_auto_enrollment.sql").read_text()
     schema = (ROOT / "src/db/schema.ts").read_text()
     endpoint = (ROOT / "src/app/api/odoo/installations/auto/route.ts").read_text()
     assert "SET DEFAULT 'strict_v2'" not in migration
-    assert "FROM print_jobs" in endpoint and "FROM print_job_receipts" in endpoint
+    assert 'tenant.rows[0].mode !== "strict_v2"' in endpoint
+    assert 'return "legacy_workspace" as const' in endpoint
+    assert 'code: "RECONCILIATION_REQUIRED"' in endpoint
     assert "FOR UPDATE" in endpoint
-    assert "UPDATE tenants SET odoo_idempotency_mode = 'strict_v2'" in endpoint
+    assert "UPDATE tenants SET odoo_idempotency_mode" not in endpoint
     assert "DROP CONSTRAINT IF EXISTS" in migration
     assert "CREATE INDEX IF NOT EXISTS" in migration
     assert 'odooIdempotencyMode: text("odoo_idempotency_mode").notNull().default("strict_v2")' in schema
@@ -71,3 +78,9 @@ def test_auto_cutover_is_history_fenced_and_api_keys_can_be_shared():
     assert "DROP TABLE IF EXISTS" in retirement
     assert "SET DEFAULT 'strict_v2'" in retirement
     assert 'odoo_installation_credentials_tenant_api_key_idx' in schema
+
+
+def test_manual_subscription_migration_registered():
+    import json
+    journal=json.loads((ROOT/"drizzle/meta/_journal.json").read_text())["entries"]
+    assert journal[95]["tag"]=="0095_manual_subscriptions"

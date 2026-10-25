@@ -34,3 +34,11 @@ debug = false
 # Preserve useful source line tables without generating huge full test PDBs.
 [profile.test]
 debug = 1
+
+# GTK 3 requires the GLib 0.18 API. These exact, verified backports retain that
+# API while fixing RUSTSEC-2024-0429 and replacing proc-macro-error.
+# Provenance, patch scope, verification and removal policy: vendor/README.md.
+[patch.crates-io]
+glib = { path = "vendor/glib" }
+glib-macros = { path = "vendor/glib-macros" }
+gtk3-macros = { path = "vendor/gtk3-macros" }

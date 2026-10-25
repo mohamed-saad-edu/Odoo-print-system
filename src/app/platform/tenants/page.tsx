@@ -1,4 +1,5 @@
 "use client";
+import Link from "next/link";
 
 import { useEffect, useState } from "react";
 import { Building2, RefreshCw, Search, X, MoreHorizontal, AlertOctagon, RotateCcw, Ban } from "lucide-react";
@@ -31,6 +32,7 @@ type Tenant = {
   lifecycleReason: string | null;
   suspendedAt: string | null;
   createdAt: string;
+  updatedAt: string;
   subscriptionStatus: string | null;
   planName: string | null;
   memberCount: number;
@@ -60,6 +62,7 @@ export default function PlatformTenantsPage() {
   const [dialogMode, setDialogMode] = useState<DialogMode>("suspend");
   const [suspendReason, setSuspendReason] = useState("");
   
+  const [operationKey,setOperationKey] = useState("");
   const [actionLoading, setActionLoading] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
@@ -98,9 +101,9 @@ export default function PlatformTenantsPage() {
   }
 
   function handleRefresh() { setError(null); setReloadKey((k) => k + 1); }
-  function openSuspend(tenant: Tenant) { setSelectedTenant(tenant); setDialogMode("suspend"); setSuspendReason(""); setActionError(null); }
-  function openReactivate(tenant: Tenant) { setSelectedTenant(tenant); setDialogMode("reactivate"); setSuspendReason(""); setActionError(null); }
-  function openDelete(tenant: Tenant) { setSelectedTenant(tenant); setDialogMode("delete"); setSuspendReason("");  setActionError(null); }
+  function openSuspend(tenant: Tenant) { setOperationKey(crypto.randomUUID()); setSelectedTenant(tenant); setDialogMode("suspend"); setSuspendReason(""); setActionError(null); }
+  function openReactivate(tenant: Tenant) { setOperationKey(crypto.randomUUID()); setSelectedTenant(tenant); setDialogMode("reactivate"); setSuspendReason(""); setActionError(null); }
+  function openDelete(tenant: Tenant) { setOperationKey(crypto.randomUUID()); setSelectedTenant(tenant); setDialogMode("delete"); setSuspendReason("");  setActionError(null); }
 
   async function handleLifecycleAction() {
     if (!selectedTenant) return;
@@ -112,7 +115,8 @@ export default function PlatformTenantsPage() {
     try {
       const endpoint = `/api/platform/tenants/${encodeURIComponent(selectedTenant.id)}/${dialogMode === "delete" ? "delete" : dialogMode === "suspend" ? "suspend" : "reactivate"}`;
       const options: RequestInit = { method: "POST", headers: { "Content-Type": "application/json" } };
-      if (dialogMode !== "reactivate") options.body = JSON.stringify(dialogMode === "delete" ? { reason, confirmed: true } : { reason });
+      if(dialogMode !== "delete") options.headers = { "Content-Type":"application/json", "Idempotency-Key":operationKey };
+      options.body = JSON.stringify(dialogMode === "delete" ? {reason,confirmed:true} : {reason:reason||t(dialogMode==='reactivate'?"v4.admin.reactivateWorkspace":"v4.admin.suspendWorkspace"),expectedLifecycle:selectedTenant.lifecycle,expectedUpdatedAt:selectedTenant.updatedAt});
       const res = await fetchWithTimeout(endpoint, options);
       if (!res.ok) throw new Error(t("platform.tenants.actionFailedBody"));
       const tenantName = selectedTenant.name;
@@ -243,7 +247,7 @@ export default function PlatformTenantsPage() {
                 <li key={tenant.id} className="min-w-0 px-4 py-4 sm:px-5 sm:py-5">
                   <div className="flex min-w-0 items-start justify-between gap-3">
                     <div className="min-w-0 flex-1">
-                      <h3 className="break-words text-base font-[650] leading-snug text-ink">{tenant.name}</h3>
+                      <h3 className="break-words text-base font-[650] leading-snug text-ink">{<Link className="underline decoration-brand/40 underline-offset-4" href={`/platform/tenants/${encodeURIComponent(tenant.id)}`}>{tenant.name}</Link>}</h3>
                       <div dir="ltr" className="mt-1 break-all font-mono text-xs text-ink-4 [unicode-bidi:plaintext]">{tenant.id}</div>
                     </div>
                     {items.length > 0 && (
@@ -311,7 +315,7 @@ export default function PlatformTenantsPage() {
                   return (
                     <tr key={tenant.id}>
                       <td>
-                        <div className="text-sm font-[550] text-ink">{tenant.name}</div>
+                        <div className="text-sm font-[550] text-ink">{<Link className="underline decoration-brand/40 underline-offset-4" href={`/platform/tenants/${encodeURIComponent(tenant.id)}`}>{tenant.name}</Link>}</div>
                         <div dir="ltr" className="mt-0.5 font-mono text-xs text-ink-4 [unicode-bidi:plaintext]">{tenant.id}</div>
                       </td>
                       <td>
@@ -402,7 +406,6 @@ export default function PlatformTenantsPage() {
                     onChange={(e) => setSuspendReason(e.target.value.slice(0, 500))}
                     placeholder={t("platform.tenants.reasonPlaceholder")}
                     rows={4}
-                    autoFocus
                     disabled={actionLoading}
                     maxLength={500}
                   />

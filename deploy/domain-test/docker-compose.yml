@@ -1,14 +1,14 @@
 services:
   postgres:
     build:
-      context: ../..
+      context: .
       dockerfile: Dockerfile.secure-images
       target: postgres
     restart: unless-stopped
     environment:
       TZ: UTC
-      POSTGRES_DB: ${POSTGRES_DB}
-      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB must equal existing yasser_http_test}
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER must equal the existing bootstrap user}
       POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
     secrets:
       - postgres_password
@@ -23,9 +23,9 @@ services:
     networks:
       - yasser_domain_test
 
-  migrate:
+  database_roles:
     build:
-      context: ../..
+      context: .
       dockerfile: Dockerfile
     restart: "no"
     depends_on:
@@ -36,77 +36,155 @@ services:
       TZ: UTC
       PGHOST: postgres
       PGPORT: 5432
-      PGDATABASE: ${POSTGRES_DB}
-      PGUSER: ${POSTGRES_USER}
+      PGDATABASE: ${POSTGRES_DB:?POSTGRES_DB must equal existing yasser_http_test}
+      PGUSER: ${POSTGRES_USER:?POSTGRES_USER must equal the existing bootstrap user}
       PGPASSWORD_FILE: /run/secrets/postgres_password
+      POSTGRES_OWNER_USER: ${POSTGRES_OWNER_USER:-yaseir_owner}
+      POSTGRES_RUNTIME_USER: ${POSTGRES_RUNTIME_USER:-yaseir_runtime}
+      POSTGRES_OWNER_PASSWORD_FILE: /run/secrets/postgres_owner_password
+      POSTGRES_RUNTIME_PASSWORD_FILE: /run/secrets/postgres_runtime_password
+      YASEIR_DB_PROFILE_CONFIRM: ${POSTGRES_DB:?POSTGRES_DB must equal existing yasser_http_test}
+      YASEIR_DB_ROLE_STATE_DIR: /var/lib/yaseir-role-state
     secrets:
       - postgres_password
+      - postgres_owner_password
+      - postgres_runtime_password
+    volumes:
+      - role_state:/var/lib/yaseir-role-state
+    command: ["node", "scripts/postgres-role-profile.mjs", "apply"]
+    networks:
+      - yasser_domain_test
+
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: "no"
+    depends_on:
+      database_roles:
+        condition: service_completed_successfully
+    environment:
+      NODE_ENV: production
+      TZ: UTC
+      PGHOST: postgres
+      PGPORT: 5432
+      PGDATABASE: ${POSTGRES_DB:?POSTGRES_DB must equal existing yasser_http_test}
+      PGUSER: ${POSTGRES_OWNER_USER:-yaseir_owner}
+      PGPASSWORD_FILE: /run/secrets/postgres_owner_password
+    secrets:
+      - postgres_owner_password
     command: ["node", "--import", "tsx", "scripts/db-migrate.ts"]
+    networks:
+      - yasser_domain_test
+
+  database_verify:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: "no"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      PGHOST: postgres
+      PGPORT: 5432
+      PGDATABASE: ${POSTGRES_DB:?POSTGRES_DB must equal existing yasser_http_test}
+      PGUSER: ${POSTGRES_RUNTIME_USER:-yaseir_runtime}
+      PGPASSWORD_FILE: /run/secrets/postgres_runtime_password
+      POSTGRES_RUNTIME_USER: ${POSTGRES_RUNTIME_USER:-yaseir_runtime}
+    secrets:
+      - postgres_runtime_password
+    command: ["node", "scripts/postgres-role-profile.mjs", "verify-runtime"]
     networks:
       - yasser_domain_test
 
   gateway:
     build:
-      context: ../..
+      context: .
       dockerfile: Dockerfile
+      args:
+        # Public release identifier only, NEVER a secret. Supply the same
+        # immutable SHA at build and runtime for Next.js version-skew recovery.
+        YASEIR_DEPLOYMENT_ID: ${YASEIR_DEPLOYMENT_ID:-}
     restart: unless-stopped
+    stop_grace_period: 60s
     depends_on:
-      migrate:
+      database_verify:
         condition: service_completed_successfully
     environment:
       NODE_ENV: production
       TZ: UTC
       HOSTNAME: 0.0.0.0
       PORT: 3000
-      # Test data/email capture only; HTTPS and authentication follow main.
+      # Fixture mode is additionally fenced to this exact HTTPS hostname.
       YASEIR_STAGING_FIXTURES_ENABLED: "1"
-      # First owner provisions one test workspace; further signups are blocked.
       YASEIR_STAGING_SINGLE_WORKSPACE: "1"
-      APP_BASE_URL: ${APP_BASE_URL}
-      COOKIE_SECURE: "1"
-      TRUST_PROXY: "1"
-      STALE_AGENT_THRESHOLD_SECONDS: "90"
+      YASEIR_TEST_EMAIL_CAPTURE_FILE: /tmp/yaseir-domain-test-verification-email.txt
+      MANAGER_TENANT_ID: ${MANAGER_TENANT_ID:-}
+      YASEIR_DEPLOYMENT_ID: ${YASEIR_DEPLOYMENT_ID:-}
+      # Production rejects keyless retries by default to prevent duplicate printing.
+      # Explicit 0 is a temporary legacy opt-out requiring operator acceptance.
+      YASEIR_REQUIRE_IDEMPOTENCY_KEY: ${YASEIR_REQUIRE_IDEMPOTENCY_KEY:-1}
+      APP_BASE_URL: ${APP_BASE_URL:?APP_BASE_URL must be set to the public Gateway URL}
+      # Optional providers stay disabled when unset; their absence must not
+      # prevent the core Gateway from starting.
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      EMAIL_FROM: ${EMAIL_FROM:-}
+      YASEIR_PLAN_CATALOG: ${YASEIR_PLAN_CATALOG:-}
+      YASEIR_ACTIVATION_WHATSAPP: ${YASEIR_ACTIVATION_WHATSAPP:-}
+      YASEIR_AGENT_DOWNLOAD_URL: ${YASEIR_AGENT_DOWNLOAD_URL:-}
       PGHOST: postgres
       PGPORT: 5432
-      PGDATABASE: ${POSTGRES_DB}
-      PGUSER: ${POSTGRES_USER}
-      PGPASSWORD_FILE: /run/secrets/postgres_password
+      PGDATABASE: ${POSTGRES_DB:?POSTGRES_DB must equal existing yasser_http_test}
+      PGUSER: ${POSTGRES_RUNTIME_USER:-yaseir_runtime}
+      PGPASSWORD_FILE: /run/secrets/postgres_runtime_password
       GATEWAY_JWT_SECRET_FILE: /run/secrets/gateway_jwt_secret
-      MANAGER_USERNAME: ${MANAGER_USERNAME}
-      MANAGER_TENANT_ID: ${MANAGER_TENANT_ID:-}
+      MANAGER_USERNAME: ${MANAGER_USERNAME:-admin}
       MANAGER_PASSWORD_HASH_FILE: /run/secrets/manager_password_hash
       ALLOW_PLAINTEXT_MANAGER_PASSWORD:
+      # Keep Secure enabled for HTTPS. Set COOKIE_SECURE=0 only for an
+      # intentionally HTTP-only test deployment.
+      COOKIE_SECURE: ${COOKIE_SECURE:-1}
+      STALE_AGENT_THRESHOLD_SECONDS: ${STALE_AGENT_THRESHOLD_SECONDS:-90}
+      TRUST_PROXY: ${TRUST_PROXY:-1}
       TRUST_PROXY_SECRET_FILE: /run/secrets/trust_proxy_secret
-      PLATFORM_TENANT_ID: ${PLATFORM_TENANT_ID}
-      STRIPE_PLAN_CATALOG: ${STRIPE_PLAN_CATALOG}
-      YASEIR_TEST_EMAIL_CAPTURE_FILE: /tmp/yaseir-domain-test-verification-email.txt
+      PLATFORM_TENANT_ID: ${PLATFORM_TENANT_ID:-}
     secrets:
-      - postgres_password
+      - postgres_runtime_password
       - gateway_jwt_secret
       - manager_password_hash
       - trust_proxy_secret
     expose:
       - "3000"
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/live').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
-      interval: 15s
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
       timeout: 5s
-      retries: 10
+      retries: 5
       start_period: 30s
     networks:
       - yasser_domain_test
 
   caddy:
     build:
-      context: ../..
+      context: .
       dockerfile: Dockerfile.secure-images
       target: caddy
     restart: unless-stopped
+    user: "10001:10001"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    # Per-container network namespace only. Permit the unprivileged UID to
+    # bind 80/443 without root, file capabilities or CAP_NET_BIND_SERVICE.
+    sysctls:
+      net.ipv4.ip_unprivileged_port_start: "0"
     depends_on:
       gateway:
         condition: service_healthy
     environment:
-      GATEWAY_DOMAIN: ${GATEWAY_DOMAIN}
+      GATEWAY_DOMAIN: ${GATEWAY_DOMAIN:?GATEWAY_DOMAIN must be set to a DNS name for production TLS}
     secrets:
       - trust_proxy_secret
     ports:
@@ -120,15 +198,22 @@ services:
       - yasser_domain_test
 
 volumes:
+  # The existing external volume is mandatory; NEVER initialize a new DB.
   staging_pg_data:
     external: true
-    name: ${STAGING_PG_VOLUME:?STAGING_PG_VOLUME must be set}
+    name: ${STAGING_PG_VOLUME:?STAGING_PG_VOLUME must name the existing staging PostgreSQL volume}
+  role_state:
+    name: ${STAGING_ROLE_STATE_VOLUME:-yaseir_domain_test_role_state}
   yasser_domain_caddy_data:
   yasser_domain_caddy_config:
 
 secrets:
   postgres_password:
     environment: POSTGRES_PASSWORD
+  postgres_owner_password:
+    environment: POSTGRES_OWNER_PASSWORD
+  postgres_runtime_password:
+    environment: POSTGRES_RUNTIME_PASSWORD
   gateway_jwt_secret:
     environment: GATEWAY_JWT_SECRET
   manager_password_hash:

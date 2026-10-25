@@ -1,440 +1,69 @@
 import { cookies } from "next/headers";
-import { getServerLocale, makeT } from "../../i18n/server";
-import { formatDate as formatDateI18n, formatNumber } from "../../i18n/format";
-import type { Locale } from "../../i18n/config";
 import { redirect } from "next/navigation";
+import { and, asc, desc, eq, sql } from "drizzle-orm";
+import { CalendarDays, CreditCard } from "lucide-react";
 import { db } from "../../db";
-import { plans, tenantSubscriptions } from "../../db/schema";
-import { and, asc, eq } from "drizzle-orm";
+import { plans, tenantSubscriptions, tenants, subscriptionRequests } from "../../db/schema";
+import { sessionCookieName } from "../../lib/session-config";
 import { getManagerCookieName, verifyWorkspaceTokenFromCookieValues } from "../../lib/manager-auth";
 import { hasManagerPermission } from "../../lib/authorization";
-import { billingIntervalLabel } from "../../lib/billing-labels";
+import { customerSubscriptionState } from "../../lib/manual-subscriptions";
+import { databaseNowMs } from "../../lib/database-clock";
+import { effectiveManualEntitlements } from "../../lib/entitlements";
+import { activationWhatsAppUrl } from "../../lib/activation-contact";
+import { getServerLocale, makeT } from "../../i18n/server";
+import { formatNumber } from "../../i18n/format";
+import { formatManualCalendarDate } from "../../lib/manual-calendar-date";
 import { BillingActions } from "../../components/BillingActions";
-import { AlertTriangle, ArrowRight, CalendarDays, Check, CreditCard, Receipt } from "lucide-react";
-import Link from "next/link";
-import {
-  Button,
-  Callout,
-  Card,
-  CardHeader,
-  PageContainer,
-  PageHeader,
-  Progress,
-  StatusBadge,
-  type Tone,
-} from "../../components/ui";
-import { getTenantPrintUsage, isBillingAccessStatus, isSubscriptionPeriodLive } from "../../lib/entitlements";
-import { refreshClockSkew } from "../../lib/database-clock";
+import { Button, Callout, Card, CardHeader, PageContainer, PageHeader, Progress, StatusBadge, type Tone } from "../../components/ui";
 import { logWarn } from "../../lib/log";
-import type { Translator } from "../../i18n/translate";
 
 export const dynamic = "force-dynamic";
-
-type SearchParams = Promise<{ checkout?: string | string[]; plan?: string | string[] }>;
-type SubscriptionRow = typeof tenantSubscriptions.$inferSelect;
-
-
-function entitlementLabel(value: string, t: Translator) {
-  if (value === "max_prints_per_period") return t("billing.printJobsPerPeriod");
-  // Every PLAN_ENTITLEMENT_KEYS member has an explicit catalog entry (pinned
-  // by tests/entitlement-labels.test.ts). Unknown future keys keep the
-  // prettified-English fallback so the UI never renders a raw snake_case key.
-  if (value === "max_agents") return t("billing.entitlement.max_agents");
-  if (value === "max_printers") return t("billing.entitlement.max_printers");
-  if (value === "max_jobs_per_minute") return t("billing.entitlement.max_jobs_per_minute");
-  if (value === "max_concurrent_jobs") return t("billing.entitlement.max_concurrent_jobs");
-  return value.replace(/^max_/, "").replace(/_/g, " ");
-}
-
-function entitlementValue(value: unknown, t: Translator, locale: Locale) {
-  if (value === "unlimited") return t("billing.unlimited");
-  if (typeof value === "boolean") return value ? t("billing.included") : "—";
-  if (typeof value === "number") return formatNumber(value, locale);
-  return String(value);
-}
-
-/** Localized billing interval. Unknown values fall back to the raw enum
- * (safe: display-only, never a billing decision) instead of crashing. */
-function intervalLabel(value: string | null | undefined, t: Translator): string {
-  return billingIntervalLabel(value, t);
-}
-
-function planStatus(
-  sub: SubscriptionRow,
-  t: Translator,
-  formatDate: (value: Date) => string,
-) {
-  const end = sub.currentPeriodEnd ? formatDate(sub.currentPeriodEnd) : null;
-  if (sub.status === "trialing") {
-    return {
-      tone: "brand" as const,
-      label: t("billing.trial"),
-      message: end
-        ? sub.stripeSubscriptionId
-          ? t("billing.trialEnds", { date: end })
-          : t("billing.trialEndsNoSubscription", { date: end })
-        : t("billing.trialBody"),
-    };
-  }
-  if (sub.status === "active") {
-    return {
-      tone: "ok" as const,
-      label: t("billing.active"),
-      message: sub.cancelAtPeriodEnd && end ? t("billing.cancelScheduled", { date: end }) : end ? t("billing.renewsOn", { date: end }) : t("billing.activeBody"),
-    };
-  }
-  if (sub.status === "past_due") {
-    return {
-      tone: "warn" as const,
-      label: t("billing.paymentAttention"),
-      message: t("billing.stripeRetrying"),
-    };
-  }
-  if (sub.status === "unpaid") {
-    return { tone: "bad" as const, label: t("billing.paymentRequired"), message: t("billing.unpaidBody") };
-  }
-  if (sub.status === "paused") {
-    return { tone: "warn" as const, label: t("billing.paused"), message: t("billing.pausedBody") };
-  }
-  if (sub.status === "incomplete") {
-    return { tone: "warn" as const, label: t("billing.paymentRequired"), message: t("billing.incompleteBody") };
-  }
-  if (sub.status === "incomplete_expired") {
-    return { tone: "bad" as const, label: t("billing.checkoutExpired"), message: t("billing.incompleteExpiredBody") };
-  }
-  return { tone: "neutral" as const, label: t("billing.canceled"), message: t("billing.canceledBody") };
-}
-
-export default async function BillingPage({ searchParams }: { searchParams: SearchParams }) {
-  const cookieStore = await cookies();
-  const claims = await verifyWorkspaceTokenFromCookieValues(
-    cookieStore.get("cust_session")?.value ?? null,
-    cookieStore.get(getManagerCookieName())?.value ?? null,
-  );
-  if (!claims) redirect("/login");
+export default async function BillingPage({ searchParams }: { searchParams: Promise<{ plan?: string | string[] }> }) {
+  const jar = await cookies();
+  const claims = await verifyWorkspaceTokenFromCookieValues(jar.get(sessionCookieName("customer"))?.value ?? null, jar.get(getManagerCookieName())?.value ?? null);
+  if (!claims) redirect("/login?next=%2Fbilling");
   if (!hasManagerPermission(claims, "billing.read")) redirect("/dashboard");
-
-  const locale = await getServerLocale();
-  const t = makeT(locale);
-  const formatDate = (value: Date) => formatDateI18n(value, locale);
+  const locale = await getServerLocale(); const t = makeT(locale);
   const params = await searchParams;
-  const checkoutState = typeof params.checkout === "string" ? params.checkout : undefined;
-  const selectedPlanId = typeof params.plan === "string" ? params.plan : undefined;
-
-  const sub = await db.query.tenantSubscriptions.findFirst({
-    where: eq(tenantSubscriptions.tenantId, claims.tenantId),
-  });
-
-  const currentPlan = sub
-    ? await db.query.plans.findFirst({
-        where: eq(plans.id, sub.planId),
-        columns: { id: true, name: true, description: true, currency: true, interval: true, entitlements: true },
-      })
-    : null;
-
-  await refreshClockSkew();
-  const hasActivePlan = !!sub && !sub.entitlementBlocked && isBillingAccessStatus(sub.status)
-    && (sub.status === "past_due" || isSubscriptionPeriodLive(sub.currentPeriodEnd));
-  const trialExpired = !!sub && sub.status === "trialing" && sub.currentPeriodEnd != null
-    && !isSubscriptionPeriodLive(sub.currentPeriodEnd);
-
-  let printUsage: Awaited<ReturnType<typeof getTenantPrintUsage>> | null = null;
-  let printUsageUnavailable = false;
-  // Expected expiry is not a backend outage. Never probe an expired quota.
-  if (hasActivePlan) {
-    try {
-      printUsage = await getTenantPrintUsage(db, claims.tenantId);
-    } catch (error) {
-      printUsageUnavailable = true;
-      // Never pass a live Error: JSON.stringify(Error) → {} loses the message.
-      logWarn("billing.print_usage_unavailable", { error: error instanceof Error ? error.message : String(error) });
+  const [sub, tenant, availablePlans, requests, now] = await Promise.all([
+    db.query.tenantSubscriptions.findFirst({ where: eq(tenantSubscriptions.tenantId, claims.tenantId) }),
+    db.query.tenants.findFirst({ where: eq(tenants.id, claims.tenantId), columns: { lifecycle: true } }),
+    db.select({ id: plans.id, name: plans.name, entitlements: plans.entitlements }).from(plans).where(and(eq(plans.isActive, true), eq(plans.isPublic, true))).orderBy(asc(plans.displayOrder), asc(plans.name)),
+    claims.role === "owner" ? db.query.subscriptionRequests.findMany({ where: and(eq(subscriptionRequests.tenantId, claims.tenantId), eq(subscriptionRequests.status, "pending")), orderBy: desc(subscriptionRequests.createdAt), limit: 1 }) : Promise.resolve([]),
+    databaseNowMs(),
+  ]);
+  const plan = sub ? await db.query.plans.findFirst({ where: eq(plans.id, sub.planId), columns: { name: true, entitlements: true } }) : null;
+  const status = customerSubscriptionState(sub, tenant?.lifecycle, now);
+  const statusKey = { active: "v4.onboarding.active", awaiting_activation: "v4.onboarding.pending", expired: "v4.onboarding.expired", suspended: "v4.onboarding.suspended" } as const;
+  const tone: Tone = status === "active" ? "ok" : status === "suspended" ? "bad" : "warn";
+  let usage: { used: number; limit: number | "unlimited"; remaining: number | "unlimited"; reset: Date } | null = null;
+  try {
+    if (sub && plan) {
+      const quota = effectiveManualEntitlements(plan.entitlements, sub.monthlyQuota).max_prints_per_period;
+      // Read the same transactional monthly admission ledger used by quota enforcement,
+      // even after expiry. Contract dates never determine this reporting window.
+      const row = await db.execute(sql`SELECT coalesce((SELECT used_prints FROM print_monthly_usage WHERE tenant_id=${claims.tenantId} AND period_start=date_trunc('month',clock_timestamp() AT TIME ZONE 'UTC')),0)::int AS used, (date_trunc('month',clock_timestamp() AT TIME ZONE 'UTC')+interval '1 month') AT TIME ZONE 'UTC' AS reset`);
+      const used = Number(row.rows[0]?.used);
+      const reset = new Date(String(row.rows[0]?.reset));
+      if (!Number.isSafeInteger(used) || used < 0 || !Number.isFinite(reset.getTime())) throw new Error("Usage unavailable");
+      usage = { used, limit: quota, remaining: quota === "unlimited" ? "unlimited" : Math.max(0, quota - used), reset };
     }
-  }
-
-  const availablePlans = await db
-    .select({
-      id: plans.id,
-      name: plans.name,
-      description: plans.description,
-      entitlements: plans.entitlements,
-      currency: plans.currency,
-      interval: plans.interval,
-      displayOrder: plans.displayOrder,
-    })
-    .from(plans)
-    .where(and(eq(plans.isActive, true), eq(plans.isPublic, true)))
-    .orderBy(asc(plans.displayOrder), asc(plans.name));
-
-  const selectedPlan = selectedPlanId ? availablePlans.find((item) => item.id === selectedPlanId) ?? null : null;
-  const hasStripeSubscription = !!sub?.stripeCustomerId && !!sub.stripeSubscriptionId;
-  // The stored plan row is history, not state: a cancelled/expired
-  // subscription must not present its plan as current (C055).
-  const effectivePlan = hasActivePlan ? currentPlan : null;
-  const status = trialExpired
-    ? { tone: "warn" as const, label: t("billing.trialExpired"), message: t("billing.trialExpiredBody") }
-    : sub && (sub.entitlementBlocked || (isBillingAccessStatus(sub.status) && !hasActivePlan))
-      ? { tone: "warn" as const, label: t("billing.paymentAttention"), message: t("errors.billingBlocked") }
-      : sub ? planStatus(sub, t, formatDate) : null;
-  const entitlements = effectivePlan?.entitlements
-    ? Object.entries(effectivePlan.entitlements)
-        .filter(([, value]) => value !== false)
-        .slice(0, 8)
-        .map(([key, value]) => ({ label: entitlementLabel(key, t), value: entitlementValue(value, t, locale) }))
-    : [];
-
-  const renewalLabel = !sub
-    ? t("billing.noRenewalDate")
-    : trialExpired && sub.currentPeriodEnd
-      ? t("billing.periodEndsOn", { date: formatDate(sub.currentPeriodEnd) })
-      : sub.status === "cancelled"
-      ? sub.currentPeriodEnd
-        ? t("billing.periodEndsOn", { date: formatDate(sub.currentPeriodEnd) })
-        : t("billing.ended")
-      : sub.cancelAtPeriodEnd && sub.currentPeriodEnd
-        ? t("billing.cancelScheduled", { date: formatDate(sub.currentPeriodEnd) })
-        : sub.currentPeriodEnd
-          ? t("billing.renewsOn", { date: formatDate(sub.currentPeriodEnd) })
-          : t("billing.noRenewalDate");
-
-  const usagePct =
-    printUsage && printUsage.limit !== "unlimited"
-      ? Math.min(100, Math.max(0, (printUsage.used / Math.max(1, printUsage.limit)) * 100))
-      : 0;
-  const usageTone: Tone = printUsage && printUsage.limit !== "unlimited"
-    ? printUsage.remaining === 0
-      ? "bad"
-      : usagePct >= 85
-        ? "warn"
-        : "brand"
-    : "brand";
-
-  const attentionStatuses = ["unpaid", "paused", "incomplete"];
-
-  return (
-    <>
-      <PageHeader
-        eyebrow={t("billing.eyebrow")}
-        icon={<CreditCard className="h-4 w-4" />}
-        title={t("nav.billing")}
-        description={t("billing.pageDescription")}
-        meta={status ? <StatusBadge tone={status.tone} label={status.label} /> : <StatusBadge tone="neutral" label={t("billing.noPlan")} />}
-        actions={
-          <>
-            {hasStripeSubscription && (
-              <Button variant="ghost" size="sm" href="#billing-actions" icon={<Receipt className="h-4 w-4" />}>
-                {t("billing.manageBilling")}
-              </Button>
-            )}
-            <Button variant="primary" size="sm" href="/pricing" icon={<ArrowRight className="h-4 w-4 rtl:-scale-x-100" />}>
-              {hasActivePlan ? t("billing.upgradePlan") : t("billing.viewPlans")}
-            </Button>
-          </>
-        }
-      />
-
-      <PageContainer>
-        <div className="space-y-5">
-          {checkoutState === "success" && hasActivePlan && hasStripeSubscription && (
-            <Callout tone="ok" title={t("billing.checkoutCompleted")}>
-              {t("billing.paymentReceivedBody")}
-            </Callout>
-          )}
-          {checkoutState === "success" && !(hasActivePlan && hasStripeSubscription) && (
-            <Callout tone="info" title={t("billing.checkoutInProgress")}>
-              {t("billing.paymentPendingBody")}
-            </Callout>
-          )}
-          {checkoutState === "cancelled" && (
-            <Callout tone="neutral" title={t("billing.checkoutCancelled")}>
-              {t("billing.checkoutCancelledBody")}
-            </Callout>
-          )}
-          {sub && (sub.checkoutStatus === "creating" || sub.checkoutStatus === "open") && checkoutState !== "success" && checkoutState !== "cancelled" && (
-            <Callout tone="info" title={t("billing.checkoutInProgress")}>
-              {t("billing.paymentPendingBody")}
-            </Callout>
-          )}
-          {printUsageUnavailable && (
-            <Callout tone="warn" title={t("billing.usageUnavailable")}>
-              {t("billing.usageUnavailableBody")}
-            </Callout>
-          )}
-
-          {selectedPlan && selectedPlan.id !== effectivePlan?.id && (
-            <BillingActions
-              hasSubscription={hasActivePlan && hasStripeSubscription}
-              cancelAtPeriodEnd={!!sub?.cancelAtPeriodEnd}
-              subscriptionStatus={sub?.status}
-              canOpenPortal={hasStripeSubscription}
-              checkoutUrl={sub?.checkoutSessionUrl}
-              selectedPlan={selectedPlan}
-            />
-          )}
-
-          <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(300px,320px)]">
-            <div className="space-y-5">
-              <section className="card overflow-hidden">
-                <div className="flex flex-wrap items-start justify-between gap-4 px-5 py-5">
-                  <div className="min-w-0">
-                    <div className="label-caps">{t("billing.currentPlan")}</div>
-                    <h2 className="mt-2 text-3xl font-[660] tracking-[-0.035em] text-ink">
-                      {effectivePlan?.name ?? (currentPlan
-                        ? `${currentPlan.name} · ${trialExpired ? t("billing.trialExpired") : t("billing.ended")}`
-                        : t("billing.noPlanSelected"))}
-                    </h2>
-                    <p className="mt-2 max-w-[62ch] text-sm leading-relaxed text-ink-3">
-                      {effectivePlan?.description || status?.message || t("billing.choosePlanToActivate")}
-                    </p>
-                  </div>
-                  <div className="flex shrink-0 flex-col gap-2 sm:flex-row">
-                    <Button variant="primary" href="/pricing" icon={<ArrowRight className="h-4 w-4 rtl:-scale-x-100" />}>
-                      {hasActivePlan ? t("billing.upgradePlan") : t("billing.choosePlan")}
-                    </Button>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 divide-y divide-edge-subtle border-y border-edge-subtle sm:grid-cols-3 sm:divide-x sm:divide-y-0">
-                  <div className="px-5 py-4">
-                    <div className="label-caps">{t("billing.subscriptionStatus")}</div>
-                    <div className="mt-1.5 text-sm font-[600] text-ink">
-                      {status ? status.label : t("billing.notConfigured")}
-                    </div>
-                  </div>
-                  <div className="px-5 py-4">
-                    <div className="label-caps">{t("billing.billingCycle")}</div>
-                    <div className="mt-1.5 flex items-center gap-2 text-sm font-[600] capitalize text-ink">
-                      <CalendarDays className="h-4 w-4 text-ink-4" aria-hidden />
-                      {intervalLabel(effectivePlan?.interval, t)}
-                    </div>
-                  </div>
-                  <div className="px-5 py-4">
-                    <div className="label-caps">{t("billing.renewal")}</div>
-                    <div className="mt-1.5 text-sm font-[600] text-ink">{renewalLabel}</div>
-                  </div>
-                </div>
-
-                <div className="px-5 py-5">
-                  <div className="flex flex-wrap items-end justify-between gap-2">
-                    <h3 className="text-md font-[600] tracking-[-0.015em] text-ink">
-                      {t("billing.whatThisPlanCovers")}
-                    </h3>
-                    <Link
-                      href="/pricing"
-                      className="inline-flex items-center gap-1.5 text-sm font-[550] text-brand transition-colors hover:text-brand-hover"
-                    >
-                      {t("billing.comparePlans")} <ArrowRight className="h-3.5 w-3.5 rtl:-scale-x-100" aria-hidden />
-                    </Link>
-                  </div>
-
-                  {entitlements.length > 0 ? (
-                    <ul className="mt-4 grid gap-px overflow-hidden rounded-md border border-edge-subtle bg-edge-subtle sm:grid-cols-2 lg:grid-cols-4">
-                      {entitlements.map((entry) => (
-                        <li key={entry.label} className="bg-surface-2 px-4 py-3.5">
-                          <div className="flex items-start gap-2">
-                            <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-xs bg-ok-bg text-ok" aria-hidden>
-                              <Check className="h-3 w-3" />
-                            </span>
-                            <div className="min-w-0">
-                              <div className="text-xs capitalize text-ink-3">{entry.label}</div>
-                              <div className="mt-0.5 text-base font-[620] tabular text-ink">{entry.value}</div>
-                            </div>
-                          </div>
-                        </li>
-                      ))}
-                    </ul>
-                  ) : (
-                    <p className="mt-4 rounded-md border border-dashed border-edge-strong bg-surface-2 px-4 py-5 text-sm text-ink-3">
-                      {t("billing.capacityManagedBody")}
-                    </p>
-                  )}
-                </div>
-              </section>
-
-              {printUsage && (
-                <Card>
-                  <CardHeader
-                    title={t("billing.printUsage")}
-                    subtitle={t("billing.printUsageSubtitle")}
-                    icon={<CreditCard className="h-4 w-4" />}
-                    actions={
-                      printUsage.limit !== "unlimited" ? (
-                        <StatusBadge
-                          tone={usageTone}
-                          label={printUsage.remaining === 0 ? t("billing.limitReached") : typeof printUsage.remaining === "number" ? t("billing.remaining", { count: formatNumber(printUsage.remaining, locale) }) : t("billing.unlimited")}
-                        />
-                      ) : (
-                        <StatusBadge tone="ok" label={t("billing.unlimited")} />
-                      )
-                    }
-                  />
-                  <div className="px-5 py-5">
-                    <div className="flex flex-wrap items-end justify-between gap-2">
-                      <div className="text-2xl font-[640] leading-none tracking-[-0.02em] text-ink tabular">
-                        {formatNumber(printUsage.used, locale)}
-                        {printUsage.limit !== "unlimited" && (
-                          <span className="text-ink-4"> / {formatNumber(printUsage.limit, locale)}</span>
-                        )}
-                      </div>
-                      <div className="text-xs text-ink-3">
-                        {printUsage.periodEnd ? t("billing.periodEndsOn", { date: formatDate(printUsage.periodEnd) }) : t("billing.currentPeriod")}
-                      </div>
-                    </div>
-                    {printUsage.limit !== "unlimited" && (
-                      <Progress
-                        className="mt-3"
-                        value={usagePct}
-                        tone={usageTone}
-                        label={t("billing.usageAria", { used: formatNumber(printUsage.used, locale), limit: formatNumber(printUsage.limit, locale) })}
-                      />
-                    )}
-                    {printUsage.remaining === 0 && (
-                      <p className="mt-3 text-sm font-[550] text-bad">{t("billing.creditsExhausted")}</p>
-                    )}
-                  </div>
-                </Card>
-              )}
-
-              {sub && (attentionStatuses.includes(sub.status) || sub.status === "past_due" || (sub.cancelAtPeriodEnd && sub.status === "active" && sub.currentPeriodEnd)) && (
-                <div className="space-y-3">
-                  {sub.status === "past_due" && <WarnLine text={t("billing.warnPastDue")} />}
-                  {sub.status === "unpaid" && <WarnLine text={t("billing.warnUnpaid")} />}
-                  {sub.status === "paused" && <WarnLine text={t("billing.warnPaused")} />}
-                  {sub.status === "incomplete" && <WarnLine text={t("billing.warnIncomplete")} />}
-                  {sub.cancelAtPeriodEnd && sub.status === "active" && sub.currentPeriodEnd && <WarnLine text={t("billing.warnCancelScheduled", { date: formatDate(sub.currentPeriodEnd) })} />}
-                </div>
-              )}
-            </div>
-
-            <aside className="space-y-5">
-              <Card id="billing-actions">
-                <CardHeader
-                  title={t("billing.controls")}
-                  subtitle={t("billing.controlsSubtitle")}
-                  icon={<Receipt className="h-4 w-4" />}
-                />
-                <div className="px-5 py-5">
-                  <BillingActions
-                    hasSubscription={hasActivePlan && hasStripeSubscription}
-                    cancelAtPeriodEnd={!!sub?.cancelAtPeriodEnd}
-                    subscriptionStatus={sub?.status}
-                    canOpenPortal={hasStripeSubscription}
-                    checkoutUrl={sub?.checkoutSessionUrl}
-                  />
-                </div>
-              </Card>
-
-            </aside>
-          </div>
-        </div>
-      </PageContainer>
-    </>
-  );
-}
-
-function WarnLine({ text }: { text: string }) {
-  return (
-    <Callout tone="warn" icon={<AlertTriangle className="h-4 w-4" />}>
-      {text}
-    </Callout>
-  );
+  } catch { logWarn("billing.monthly_usage_unavailable", { tenantId: claims.tenantId }); }
+  const date = (value: Date | null | undefined) => formatManualCalendarDate(value, locale) ?? t("v4.subscription.notSet");
+  const request = requests[0];
+  const selectedPlanId = typeof params.plan === "string" ? params.plan : undefined;
+  return <>
+    <PageHeader title={t("v4.subscription.title")} description={t("v4.subscription.intro")} icon={<CreditCard className="h-4 w-4" />} meta={<StatusBadge tone={tone} label={t(statusKey[status])} />} actions={<Button href="/pricing" variant="secondary">{t("billing.comparePlans")}</Button>} />
+    <PageContainer><div className="space-y-5">
+      <Callout tone={tone} title={t(statusKey[status])}>{t(status === "active" ? "v4.subscription.activeBody" : status === "expired" ? "v4.subscription.expiredBody" : status === "suspended" ? "v4.subscription.suspendedBody" : "v4.subscription.pendingBody")}</Callout>
+      <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1.4fr)_minmax(280px,1fr)]"><div className="space-y-5">
+        <Card><CardHeader title={plan?.name ?? t("billing.noPlanSelected")} subtitle={t(status === "active" ? "v4.subscription.currentContract" : "v4.subscription.recordedContract")} icon={<CalendarDays className="h-4 w-4" />} /><dl className="grid gap-5 p-5 sm:grid-cols-2">
+          {[[t("v4.subscription.type"), t(sub?.subscriptionType === "free" ? "v4.subscription.free" : sub?.subscriptionType === "paid" ? "v4.subscription.paid" : "v4.subscription.notSet")], [t("v4.onboarding.term"), t(sub?.term === "yearly" ? "v4.onboarding.yearly" : sub?.term === "custom" ? "v4.subscription.custom" : sub?.term === "monthly" ? "v4.onboarding.monthly" : "v4.subscription.notSet")], [t("v4.subscription.start"), date(sub?.currentPeriodStart)], [t("v4.subscription.end"), date(sub?.currentPeriodEnd)]].map(([label,value]) => <div key={label}><dt className="text-sm text-ink-3">{label}</dt><dd className="mt-1 font-semibold">{value}</dd></div>)}
+        </dl><p className="border-t border-edge-subtle p-5 text-sm text-ink-3">{t(sub?.cancelAtPeriodEnd ? "v4.subscription.endsAtTerm" : "v4.subscription.manualRenewal")}</p></Card>
+        <Card><CardHeader title={t("v4.subscription.monthlyUsage")} subtitle={t("v4.onboarding.monthlyReset")} />{usage ? <div className="space-y-4 p-5"><dl className="grid gap-4 sm:grid-cols-3">{[[t("v4.subscription.used"),formatNumber(usage.used,locale)],[t("v4.subscription.allowance"),usage.limit === "unlimited" ? t("billing.unlimited") : formatNumber(usage.limit,locale)],[t("v4.subscription.remaining"),usage.remaining === "unlimited" ? t("billing.unlimited") : formatNumber(usage.remaining,locale)]].map(([label,value]) => <div key={label}><dt className="text-sm text-ink-3">{label}</dt><dd className="mt-1 text-2xl font-semibold tabular">{value}</dd></div>)}</dl>{usage.limit !== "unlimited" && <Progress value={Math.min(100,usage.used / Math.max(1,usage.limit)*100)} tone={usage.remaining === 0 ? "bad" : "brand"} label={t("billing.usageAria", { used: formatNumber(usage.used,locale), limit: formatNumber(usage.limit,locale) })} />}<p className="text-sm text-ink-3">{t("v4.subscription.nextReset", { date: date(usage.reset) })}</p>{status !== "active" && <p className="text-sm text-ink-3">{t("v4.subscription.balanceNotAccess")}</p>}</div> : <p className="p-5 text-sm text-ink-3">{t(sub ? "billing.usageUnavailableBody" : "v4.subscription.noAllowance")}</p>}</Card>
+        <Callout tone="info" title={t("v4.subscription.unlimitedTitle")}>{t("v4.subscription.unlimitedBody")}</Callout>
+      </div><Card><div className="p-5"><BillingActions key={`${selectedPlanId ?? ""}:${request?.id ?? "none"}`} plans={availablePlans} selectedPlanId={selectedPlanId} currentPlanId={sub?.planId} currentTerm={sub?.term} isOwner={claims.role === "owner"} status={status} initialRequest={request ? { id:request.id,reference:request.id,status:request.status,planId:request.planId,term:request.term,createdAt:request.createdAt.toISOString(),whatsappUrl:activationWhatsAppUrl(request.id) } : null} /></div></Card></div>
+    </div></PageContainer>
+  </>;
 }

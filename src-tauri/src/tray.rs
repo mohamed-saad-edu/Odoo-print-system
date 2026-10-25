@@ -100,7 +100,11 @@ fn reveal_main_window(app: &tauri::AppHandle) {
 /// health screens inside the Manager.
 #[tauri::command]
 pub fn set_tray_locale(locale: String, app: tauri::AppHandle) -> Result<(), String> {
-    let normalized = if locale.eq_ignore_ascii_case("ar") { "ar" } else { "en" };
+    let normalized = if locale.eq_ignore_ascii_case("ar") {
+        "ar"
+    } else {
+        "en"
+    };
     let copy = tray_copy(normalized);
     let menu = build_menu(&app, normalized).map_err(|e| format!("build tray menu: {e}"))?;
     let tray = app

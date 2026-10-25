@@ -2,6 +2,7 @@ package printer
 
 import (
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"mime"
 	"strings"
@@ -95,6 +96,9 @@ func parseIPPPrinterAttributes(data []byte, requestID uint32) (map[string]string
 					return nil, fmt.Errorf("invalid IPP collection start")
 				}
 				collectionDepth++
+				if collectionDepth > 8 {
+					return nil, fmt.Errorf("IPP collection nesting exceeds limit")
+				}
 			case 0x37:
 				if valueLen != 0 {
 					return nil, fmt.Errorf("invalid IPP collection end")
@@ -152,6 +156,34 @@ func parseIPPPrinterAttributes(data []byte, requestID uint32) (map[string]string
 					out[currentName] = ""
 					continue // Security-filtered or unknown capabilities are not permission.
 				}
+				if known == 0x34 {
+					if tag != 0x34 || valueLen != 0 {
+						return nil, fmt.Errorf("invalid IPP media collection")
+					}
+					collection, err := readIPPCollection(data, &i, 1)
+					if err != nil {
+						return nil, err
+					}
+					media, err := ippMediaFromCollection(collection)
+					if err != nil {
+						return nil, err
+					}
+					var entries []ippMedia
+					if existing := out[currentName]; existing != "" {
+						if err := json.Unmarshal([]byte(existing), &entries); err != nil {
+							return nil, err
+						}
+					}
+					if len(entries) >= 256 {
+						return nil, fmt.Errorf("IPP media collection count exceeds limit")
+					}
+					encoded, err := json.Marshal(append(entries, media))
+					if err != nil {
+						return nil, err
+					}
+					out[currentName] = string(encoded)
+					continue
+				}
 				decoded, err := decodeIPPPrinterAttribute(currentName, tag, known, value)
 				if err != nil {
 					return nil, err
@@ -180,16 +212,28 @@ func ippPrinterAttributeType(name string) (tag byte, single bool) {
 	switch name {
 	case "printer-state":
 		return 0x23, true
+	case "orientation-requested-supported":
+		return 0x23, false
 	case "printer-is-accepting-jobs":
 		return 0x22, true
 	case "document-format-default":
 		return 0x49, true
 	case "document-format-supported":
 		return 0x49, false
-	case "printer-state-reasons", "pwg-raster-document-type-supported":
+	case "printer-state-reasons", "pwg-raster-document-type-supported", "media-supported", "media-ready", "print-scaling-supported":
 		return 0x44, false
-	case "pwg-raster-document-resolution-supported":
+	case "media-default":
+		return 0x44, true
+	case "media-col-default":
+		return 0x34, true
+	case "media-col-ready", "media-col-database":
+		return 0x34, false
+	case "pwg-raster-document-resolution-supported", "printer-resolution-supported":
 		return 0x32, false
+	case "printer-resolution-default":
+		return 0x32, true
+	case "printer-uuid":
+		return 0x45, true
 	default:
 		return 0, false
 	}
@@ -197,7 +241,8 @@ func ippPrinterAttributeType(name string) (tag byte, single bool) {
 
 func decodeIPPPrinterAttribute(name string, tag, want byte, value []byte) (string, error) {
 	invalid := func() (string, error) { return "", fmt.Errorf("invalid IPP printer attribute %s", name) }
-	if tag != want {
+	mediaName := name == "media-supported" || name == "media-ready" || name == "media-default"
+	if tag != want && !(mediaName && tag == 0x42) {
 		return invalid()
 	}
 	switch tag {
@@ -205,17 +250,26 @@ func decodeIPPPrinterAttribute(name string, tag, want byte, value []byte) (strin
 		if len(value) != 4 {
 			return invalid()
 		}
-		if state := binary.BigEndian.Uint32(value); state < 3 || state > 5 {
+		maxValue := uint32(5)
+		if name == "orientation-requested-supported" {
+			maxValue = 6
+		}
+		if state := binary.BigEndian.Uint32(value); state < 3 || state > maxValue {
 			return invalid()
 		}
 	case 0x22:
 		if len(value) != 1 || value[0] > 1 {
 			return invalid()
 		}
-	case 0x44:
+	case 0x44, 0x42:
 		if !validIPPKeyword(value) {
 			return invalid()
 		}
+	case 0x45:
+		if normalizedIPPPrinterUUID(string(value)) == "" {
+			return invalid()
+		}
+		return normalizedIPPPrinterUUID(string(value)), nil
 	case 0x49:
 		if len(value) == 0 || len(value) > 255 {
 			return invalid()

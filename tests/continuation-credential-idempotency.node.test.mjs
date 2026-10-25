@@ -4,6 +4,7 @@ import { stripTypeScriptTypes } from 'node:module';
 import { SourceTextModule, SyntheticModule, createContext } from 'node:vm';
 import { createHash } from 'node:crypto';
 import test from 'node:test';
+import { printingContractModules } from './helpers/printing-contract-vm.mjs';
 
 // Exercise the real production service and HTTP handler. Only unavailable
 // database/Next/Drizzle dependencies are substituted. The credential check
@@ -16,8 +17,11 @@ const fingerprint = (value) => JSON.stringify(value);
 
 async function evaluate(path, deps) {
   const context = createContext({ Buffer, Date, Error, console, Request, Response, URL, process });
+  const contracts = await printingContractModules(context, sql);
   const mod = new SourceTextModule(source(path), { context });
   await mod.link((specifier) => {
+    const contract = specifier.startsWith('.') && contracts.get(specifier.split('/').at(-1));
+    if (contract) return contract;
     assert.ok(Object.hasOwn(deps, specifier), `missing mock for ${specifier}`);
     const exports = deps[specifier];
     return new SyntheticModule(Object.keys(exports), function () {
@@ -37,12 +41,14 @@ async function serviceFixture({ keyActive = true, tenantActive = true, printerPr
   const printer = { id: 'printer-c', agentId: 'agent-c', tenantId };
   const agent = { id: 'agent-c', tenantId };
   const idempotencyKey = 'receipt-request-c';
+  const bindingDigest = createHash('sha256').update('continuation-fixture-printer').digest('hex');
   const expectedFingerprint = JSON.stringify({ printerId: printer.id, documentType: 'receipt', destination: null, payload });
   const receipt = { id: 'job-reused', tenantId, printerId: printer.id, agentId: agent.id, apiKeyId: credential.id,
     fingerprint: fingerprintValid ? createHash('sha256').update(expectedFingerprint).digest('hex') : 'mismatched',
-    idempotencyKey, status: 'success' };
+    idempotencyKey, status: 'success', bindingDigest, outputMedium: 'physical', outputEvidence: null };
   const existing = { id: 'job-reused', printer_id: printer.id, agent_id: agent.id,
-    api_key_id: credential.id, document_type: 'receipt', destination: null, payload, status: 'success' };
+    api_key_id: credential.id, document_type: 'receipt', destination: null, payload, status: 'success',
+    binding_digest: bindingDigest, output_medium: 'physical', output_evidence: null };
   const tx = {
     query: { printJobReceipts: { findFirst: async () => { events.push('transaction.receipt_lookup'); return resultFrom === 'receipt' ? receipt : null; } } },
     execute: async (query) => {
@@ -155,7 +161,8 @@ test('active credential cannot reuse the same key for a different payload', asyn
 async function httpFixture({ reused, revokedAfterAuthentication = false, conflictAfterAuthentication = false } = {}) {
   const calls = [];
   const existing = { id: 'job-old', status: 'success', printerId: 'printer-c', agentId: 'agent-c', destination: null,
-    documentType: 'receipt', error: null, apiKeyId: 'key-c' };
+    documentType: 'receipt', error: null, apiKeyId: 'key-c',
+    bindingDigest: createHash('sha256').update('continuation-fixture-printer').digest('hex'), outputMedium: 'physical', outputEvidence: null };
   const receipt = { ...existing, fingerprint: 'digest' };
   const db = { query: {
     printJobs: { findFirst: async () => { calls.push('early-job-lookup'); return existing; } },
@@ -167,6 +174,10 @@ async function httpFixture({ reused, revokedAfterAuthentication = false, conflic
     '../../../../db': { db }, '../../../../db/schema': { printJobs: table('jobs'), printJobReceipts: table('receipts') },
     '../../../../lib/odoo-auth': { validateOdooKey: async () => ({ id: 'key-c', tenantId: 'tenant-c', readOnly: false }) },
     '../../../../lib/odoo-idempotency': { parseOdooIdentity: () => null },
+    '../../../../lib/odoo-status-scope': {
+      odooStatusIdentity: () => { throw Error('unexpected status read in POST test'); },
+      readOdooJobStatus: () => { throw Error('unexpected status read in POST test'); },
+    },
     '../../../../lib/odoo-v2-admission': { OdooNamespaceError: class extends Error {}, verifyOdooInstallation: () => { throw Error('unexpected v2 admission in legacy test'); } },
     '../../../../lib/payload': { validatePrintJobPayload: (value) => value },
     '../../../../lib/print-job-service': {
@@ -176,7 +187,8 @@ async function httpFixture({ reused, revokedAfterAuthentication = false, conflic
         calls.push('transactional-service');
         if (revokedAfterAuthentication) throw new PrintJobInputError('Credential was revoked', 'UNAUTHORIZED', 401);
         if (conflictAfterAuthentication) throw Object.assign(new Error('Conflicting replay'), { code: 'IDEMPOTENCY_CONFLICT' });
-        return { id: 'job-old', printerId: 'printer-c', agentId: 'agent-c', status: 'success', isReused: reused ?? true };
+        return { id: 'job-old', printerId: 'printer-c', agentId: 'agent-c', status: 'success',
+          bindingDigest: existing.bindingDigest, outputMedium: 'physical', outputEvidence: null, isReused: reused ?? true };
       },
     },
     '../../../../lib/entitlements': { TenantEntitlementError: class extends Error {}, TenantPrintQuotaExceededError: class extends Error {}, isTenantBillingError: () => false },

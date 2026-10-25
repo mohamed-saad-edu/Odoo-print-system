@@ -1,60 +1,36 @@
 import { beforeAll, afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { db } from "../src/db";
-import { tenants, users, tenantInvitations, tenantUsers, managerSessions, plans, tenantSubscriptions, agents, discoverySessions } from "../src/db/schema";
+import { tenants, users, tenantInvitations, tenantUsers, plans, tenantSubscriptions, agents, discoverySessions } from "../src/db/schema";
 import { eq, and } from "drizzle-orm";
-import { hashToken } from "../src/lib/password";
+import { hashPassword, hashToken } from "../src/lib/password";
+import { randomBytes } from "node:crypto";
 import { nanoid } from "../src/lib/nanoid";
 import { transitionTenantLifecycle, TenantLifecycleError } from "../src/lib/tenant-lifecycle";
 import { POST as acceptInvitation } from "../src/app/api/team/invitations/accept/route";
 import { POST as onboarding } from "../src/app/api/onboarding/route";
 import { POST as checkout } from "../src/app/api/billing/checkout/route";
 import { POST as startDiscovery } from "../src/app/api/agents/[id]/discovery/route";
-import { validateManager, validateWorkspaceManager } from "../src/lib/manager-auth";
-import { requireManagerPermission } from "../src/lib/authorization";
+import { sessionCookieName } from "../src/lib/session-config";
+import { issueWorkspaceTestSession } from "./helpers/workspace-session";
 import { stripeRequest } from "../src/lib/stripe";
 import { applyMigrations, closePool, hasTestDatabase, truncateAll } from "./helpers/pg";
 
-vi.mock(import("../src/lib/manager-auth"), async (importOriginal) => ({
-  ...(await importOriginal()),
-  validateManager: vi.fn(),
-  validateWorkspaceManager: vi.fn(),
-}));
-vi.mock("../src/lib/authorization", () => ({
-  requireManagerPermission: vi.fn(),
-  hasManagerPermission: vi.fn(() => true),
-}));
 vi.mock("../src/lib/stripe", () => ({
   stripeRequest: vi.fn(),
 }));
 
 const suite = describe.skipIf(!hasTestDatabase);
+let passwordHash: string;
+let managerCookie: string;
+const jwtSecret = randomBytes(32).toString("base64url");
 
 suite("control-plane concurrency invariants", () => {
-  beforeAll(async () => { await applyMigrations(); });
+  beforeAll(async () => { await applyMigrations(); passwordHash = await hashPassword(randomBytes(32).toString("base64url")); });
   beforeEach(async () => {
     await truncateAll();
+    vi.clearAllMocks();
     vi.stubEnv("APP_BASE_URL", "https://billing.test");
-    const managerExpiry = Math.floor(Date.now() / 1000) + 3600;
-    vi.mocked(validateManager).mockResolvedValue({
-
-      jti: "test-manager-jti-1234567890",
-      iat: Math.floor(Date.now() / 1000) - 10,
-      exp: managerExpiry,
-      sub: "manager",
-      tenantId: "tenant_control_plane",
-      userId: "user_control_plane",
-      role: "owner",
-    });
-    vi.mocked(validateWorkspaceManager).mockResolvedValue({
-      jti: "test-manager-jti-1234567890",
-      iat: Math.floor(Date.now() / 1000) - 10,
-      exp: managerExpiry,
-      sub: "manager",
-      tenantId: "tenant_control_plane",
-      userId: "user_control_plane",
-      role: "owner",
-    });
-    vi.mocked(requireManagerPermission).mockReturnValue(undefined);
+    vi.stubEnv("GATEWAY_JWT_SECRET", jwtSecret);
     vi.mocked(stripeRequest).mockImplementation(async (path: string, _form: URLSearchParams, idempotencyKey?: string) => {
       await new Promise((resolve) => setTimeout(resolve, 50));
       if (path === "customers") return { id: "cus_control_plane" };
@@ -62,12 +38,10 @@ suite("control-plane concurrency invariants", () => {
       throw new Error(`unexpected Stripe path: ${path}`);
     });
     await db.insert(tenants).values({ id: "tenant_control_plane", name: "Control Plane Tenant" });
-    await db.insert(users).values({ id: "user_control_plane", email: "control-plane@example.test", passwordHash: "unused" });
+    await db.insert(users).values({ id: "user_control_plane", email: "control-plane@example.test", passwordHash, emailVerifiedAt: new Date() });
     await db.insert(tenantUsers).values({ userId: "user_control_plane", tenantId: "tenant_control_plane", role: "owner" });
-    await db.insert(managerSessions).values({
-      jti: "test-manager-jti-1234567890", tenantId: "tenant_control_plane",
-      userId: "user_control_plane", role: "owner", expiresAt: new Date(managerExpiry * 1000),
-    });
+    const pair = await issueWorkspaceTestSession({ kind: "manager", tenantId: "tenant_control_plane", userId: "user_control_plane", role: "owner" });
+    managerCookie = `${sessionCookieName("manager")}=${pair.accessToken}`;
   });
   afterAll(async () => { await closePool(); });
 
@@ -132,46 +106,40 @@ suite("control-plane concurrency invariants", () => {
     ).rejects.toThrow();
   });
 
-  it("allows only one concurrent onboarding trial for a tenant", async () => {
+  it("persists one pending manual subscription during concurrent onboarding without self-activation", async () => {
     const planId = `plan_trial_${nanoid(8)}`;
     await db.insert(plans).values({
       id: planId, name: `Trial ${nanoid(6)}`, stripePriceId: `price_${nanoid(8)}`,
       entitlements: { max_agents: 5, max_printers: 5, max_jobs_per_minute: 60, max_concurrent_jobs: 8, max_prints_per_period: 100 }, currency: "usd", interval: "month",
     });
     const request = () => onboarding(new Request("http://localhost/api/onboarding", {
-      method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ workspaceName: "Control Plane Tenant", planId, trial: true }),
+      method: "POST", headers: { "content-type": "application/json", cookie: managerCookie },
+      body: JSON.stringify({ workspaceName: "Control Plane Tenant", planId }),
     }));
     const [a, b] = await Promise.all([request(), request()]);
-    expect([a.status, b.status].sort()).toEqual([200, 409]);
+    expect([a.status, b.status].sort()).toEqual([200, 200]);
     const subscription = await db.query.tenantSubscriptions.findFirst({ where: eq(tenantSubscriptions.tenantId, "tenant_control_plane") });
-    expect(subscription?.status).toBe("trialing");
-    expect(subscription?.trialStartedAt).toBeInstanceOf(Date);
+    expect(subscription?.status).toBe("awaiting_activation");
+    expect(subscription?.trialStartedAt).toBeNull();
   });
 
-  it("serializes concurrent checkout requests and creates one Stripe customer/session per tenant+plan", async () => {
+  it("rejects concurrent retired checkout requests without creating a provider customer or subscription", async () => {
     const planId = `plan_checkout_${nanoid(8)}`;
     await db.insert(plans).values({
       id: planId, name: `Checkout ${nanoid(6)}`, stripePriceId: `price_${nanoid(8)}`,
       entitlements: { max_agents: 5, max_printers: 5, max_jobs_per_minute: 60, max_concurrent_jobs: 8, max_prints_per_period: 100 }, currency: "usd", interval: "month",
     });
     const request = () => checkout(new Request("http://localhost/api/billing/checkout", {
-      method: "POST", headers: { "content-type": "application/json" },
+      method: "POST", headers: { "content-type": "application/json", cookie: managerCookie },
       body: JSON.stringify({ planId }),
     }));
     const [a, b] = await Promise.all([request(), request()]);
-    expect([a.status, b.status].sort()).toEqual([200, 200]);
-    const stripeCalls = vi.mocked(stripeRequest).mock.calls;
-    const customerCalls = stripeCalls.filter(([path]) => path === "customers");
-    const checkoutCalls = stripeCalls.filter(([path]) => path === "checkout/sessions");
-    expect(customerCalls).toHaveLength(2);
-    expect(customerCalls.map((call) => call[2])).toEqual([`tenant-customer-${"tenant_control_plane"}`, `tenant-customer-${"tenant_control_plane"}`]);
-    expect(checkoutCalls).toHaveLength(2);
-    expect(checkoutCalls[0]?.[2]).toMatch(/^checkout-intent-chk_/);
-    expect(checkoutCalls[1]?.[2]).toBe(checkoutCalls[0]?.[2]);
+    expect([a.status, b.status].sort()).toEqual([410, 410]);
+    expect(await a.json()).toMatchObject({ code: "MANUAL_BILLING_REQUIRED" });
+    expect(await b.json()).toMatchObject({ code: "MANUAL_BILLING_REQUIRED" });
+    expect(stripeRequest).not.toHaveBeenCalled();
     const subscription = await db.query.tenantSubscriptions.findFirst({ where: eq(tenantSubscriptions.tenantId, "tenant_control_plane") });
-    expect(subscription?.stripeCustomerId).toBe("cus_control_plane");
-    expect(subscription?.stripeSubscriptionId).toBeNull();
+    expect(subscription).toBeUndefined();
   });
 
   it("allows at most one running discovery session per agent", async () => {
@@ -181,7 +149,7 @@ suite("control-plane concurrency invariants", () => {
     });
     const request = () => startDiscovery(
       new Request(`http://localhost/api/agents/${agentId}/discovery`, {
-        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({}),
+        method: "POST", headers: { "content-type": "application/json", cookie: managerCookie }, body: JSON.stringify({}),
       }),
       { params: Promise.resolve({ id: agentId }) },
     );

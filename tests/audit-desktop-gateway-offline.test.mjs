@@ -8,7 +8,7 @@ import vm from "node:vm";
 // Exercise the production functions and real catalogs with Node's bundled
 // parser. This suite also runs in the existing dependency-free CI lane.
 async function load(file, globals = {}, select = (source) => source) {
-  const context = vm.createContext({ console, URL, Error, ...globals });
+  const context = vm.createContext({ console, URL, Error, process: { env: { NODE_ENV: "test" } }, ...globals });
   const modules = new Map();
   async function get(path) {
     if (modules.has(path)) return modules.get(path);

@@ -993,8 +993,8 @@ func TestSpoolerDeviceInfoPromotesPortAndDriverIdentity(t *testing.T) {
 	}
 
 	renamed := spoolerDeviceInfo("Receipt Front Renamed", "USB001", "Generic Thermal", "online", PRINTER_ATTRIBUTE_LOCAL)
-	if got, want := StableIDForDevice(renamed), StableIDForDevice(info); got != want {
-		t.Fatalf("queue rename changed physical spooler identity: got %s want %s", got, want)
+	if got, prior := StableIDForDevice(renamed), StableIDForDevice(info); got == prior {
+		t.Fatalf("different queue name without a published GUID inherited another logical queue: %s", got)
 	}
 }
 

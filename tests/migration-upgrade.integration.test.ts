@@ -58,8 +58,11 @@ suite("production-like PostgreSQL migration upgrade", () => {
 
   afterAll(async () => {
     try {
-      await admin.query(`DROP DATABASE IF EXISTS "${tempDb}" WITH (FORCE)`);
-      await admin.query(`DROP DATABASE IF EXISTS "${collisionDb}" WITH (FORCE)`);
+      // Each test awaits pool.end(). Ordinary DROP also handles autovacuum
+      // workers; FORCE can require pg_signal_backend even for those workers
+      // when the database owner deliberately has no elevated role privileges.
+      await admin.query(`DROP DATABASE IF EXISTS "${tempDb}"`);
+      await admin.query(`DROP DATABASE IF EXISTS "${collisionDb}"`);
     }
     finally { await admin.end(); if (workDir) await rm(workDir, { recursive: true, force: true }); }
   });
@@ -172,10 +175,35 @@ suite("production-like PostgreSQL migration upgrade", () => {
       }]);
 
       const pairingAgent = await pool.query(`SELECT id, pairing_code_hash FROM agents WHERE id=$1`, [pairingAgentId]);
+      const legacyPairingHash = createHash("sha256").update("AB22CD").digest("hex");
       expect(pairingAgent.rows).toEqual([{
         id: pairingAgentId,
-        pairing_code_hash: hashPairingCode("AB22CD"),
+        // Immutable migration 0022 predates the runtime JWT-derived pepper.
+        // Assert its exact normalized historical representation independently
+        // of whether this test process has a deployment signing key. Pending
+        // legacy pairing codes must be regenerated for the current runtime;
+        // established agent bearer identities and print history survive.
+        pairing_code_hash: legacyPairingHash,
       }]);
+      const previousSecret = process.env.GATEWAY_JWT_SECRET;
+      const previousSecretFile = process.env.GATEWAY_JWT_SECRET_FILE;
+      try {
+        // The live registration lookup uses only the current keyed digest.
+        // A migrated pending legacy digest must not gain an unkeyed fallback.
+        delete process.env.GATEWAY_JWT_SECRET_FILE;
+        process.env.GATEWAY_JWT_SECRET = randomBytes(32).toString("hex");
+        const currentPairingHash = hashPairingCode("AB22CD");
+        expect(currentPairingHash).not.toBe(legacyPairingHash);
+        expect((await pool.query("SELECT id FROM agents WHERE pairing_code_hash=$1", [currentPairingHash])).rows).toEqual([]);
+      } finally {
+        if (previousSecret === undefined) delete process.env.GATEWAY_JWT_SECRET;
+        else process.env.GATEWAY_JWT_SECRET = previousSecret;
+        if (previousSecretFile === undefined) delete process.env.GATEWAY_JWT_SECRET_FILE;
+        else process.env.GATEWAY_JWT_SECRET_FILE = previousSecretFile;
+      }
+      expect((await pool.query("SELECT id,secret,lifecycle FROM agents WHERE id=$1", [agentId])).rows).toEqual([
+        { id: agentId, secret: "upgrade-secret-hash", lifecycle: "active" },
+      ]);
 
       // 0029 guarded backfill (legacy DBs carry zero tenants): exactly one
       // tenant must exist and own all of the legacy rows before any new

@@ -10,9 +10,13 @@ import { logError } from "../../../../../lib/log";
 import { appBaseUrl, sendTransactionalEmail } from "../../../../../lib/email";
 import { getServerLocale, makeT } from "../../../../../i18n/server";
 import { findActiveInvitation, joinWorkspaceByInvitation } from "../../../../../lib/invitation-join";
-import { validateCustomer, issueCustomerSession, customerSessionCookie, customerRefreshCookie } from "../../../../../lib/customer-auth";
+import { validateCustomer, customerSessionCookie, customerRefreshCookie } from "../../../../../lib/customer-auth";
 import type { ManagerRole } from "../../../../../lib/manager-auth";
-import { credentialVersionFor } from "../../../../../lib/session-tokens";
+import { issueSessionPairInTransaction, revokeSessionFamilyInTransaction, AuthenticationChangedError, type SessionPair } from "../../../../../lib/session-tokens";
+import { requireManagerActorInTransaction, ManagerMutationAuthorityChangedError } from "../../../../../lib/manager-mutation-authorization";
+import { WorkspaceSessionExpiredError, workspacePolicyResponse } from "../../../../../lib/workspace-session-security";
+import { clearLegacySessionCookies } from "../../../../../lib/session-config";
+import { emailAuthTokenTimes } from "../../../../../lib/email-auth-token-policy";
 
 const headers = { "Cache-Control": "private, no-store", "Referrer-Policy": "no-referrer" };
 
@@ -68,7 +72,7 @@ export async function POST(req: Request) {
 
   const account = await db.query.users.findFirst({
     where: eq(users.email, invitation.email),
-    columns: { id: true, email: true, emailVerifiedAt: true, passwordHash: true },
+    columns: { id: true, email: true, emailVerifiedAt: true },
   });
   if (!account) {
     // No password is collected or chosen by the inviter. The random verifier
@@ -99,7 +103,7 @@ export async function POST(req: Request) {
           id: `evt_${nanoid(18)}`, userId,
           tokenHash: await hashToken(rawVerification),
           invitationId: invitation.id,
-          expiresAt: sql`clock_timestamp() + interval '30 minutes'`,
+          ...emailAuthTokenTimes(),
         });
         return true;
       });
@@ -137,11 +141,32 @@ export async function POST(req: Request) {
   if (!principal?.userId || principal.userId !== account.id)
     return respond({ code: "SIGN_IN_REQUIRED" }, 401);
 
-  let membership: { tenantId: string; role: string };
+  let result: { membership: { tenantId: string; role: string }; session: SessionPair };
   try {
-    membership = await db.transaction(async tx =>
-      joinWorkspaceByInvitation(tx, invitation, account.id, account.email));
+    result = await db.transaction(async tx => {
+      // Invitation acceptance continues an existing login; possession of an
+      // invitation and a stored password hash is not a new password check.
+      // Lock both tenant fences before user/family state. The invited tenant
+      // is locked FOR UPDATE here because membership admission needs that
+      // lock later, and upgrading after user locks could invert writer order.
+      const tenantIds = [...new Set([principal.tenantId, invitation.tenantId])].sort();
+      const locked = await tx.execute(sql`SELECT id,lifecycle FROM tenants
+        WHERE id IN (${sql.join(tenantIds.map(id => sql`${id}`), sql`, `)}) ORDER BY id FOR UPDATE`);
+      if (!locked.rows.some(row => row.id === principal.tenantId && row.lifecycle === "active")) throw new WorkspaceSessionExpiredError();
+      if (!locked.rows.some(row => row.id === invitation.tenantId && row.lifecycle === "active")) throw new Error("INVITATION_WORKSPACE_UNAVAILABLE");
+      await requireManagerActorInTransaction(tx, principal, "tenant.read");
+      const membership = await joinWorkspaceByInvitation(tx, invitation, account.id, account.email);
+      const session = await issueSessionPairInTransaction(tx, {
+        kind: "customer", userId: account.id, tenantId: membership.tenantId,
+        role: membership.role as ManagerRole, email: account.email,
+      }, { ipAddress: ip, userAgent: req.headers.get("user-agent"), continueWorkspace: principal });
+      await revokeSessionFamilyInTransaction(tx, principal.familyId!, "invitation_acceptance");
+      return { membership, session };
+    });
   } catch (error) {
+    if (error instanceof ManagerMutationAuthorityChangedError) return error.response();
+    if (error instanceof WorkspaceSessionExpiredError) return workspacePolicyResponse(error);
+    if (error instanceof AuthenticationChangedError) return respond({ code: "SIGN_IN_REQUIRED" }, 401);
     const code = error instanceof Error ? error.message : "INVITATION_FAILED";
     if (code === "INVITATION_ALREADY_MEMBER") return respond({ code: "ALREADY_MEMBER" }, 409);
     if (code === "INVITATION_WORKSPACE_UNAVAILABLE" || code === "INVITATION_INVALID" || code === "INVITATION_IDENTITY_MISMATCH")
@@ -149,21 +174,10 @@ export async function POST(req: Request) {
     logError("team.invitation_accept_failed", { error: code });
     return respond({ error: "Invitation temporarily unavailable" }, 503);
   }
-  // Issue a session scoped to the *invited workspace*, not the tenant the
-  // user happened to be using before the invitation.
-  let session: Awaited<ReturnType<typeof issueCustomerSession>> | null = null;
-  try {
-    session = await issueCustomerSession(account.id, membership.tenantId,
-      membership.role as ManagerRole, { ipAddress: ip, userAgent: req.headers.get("user-agent") },
-      account.email, credentialVersionFor(account.id, account.passwordHash));
-  } catch (error) {
-    logError("team.invitation_session_issue_failed", { error: error instanceof Error ? error.message : "unknown" });
-  }
   const res = respond({ ok: true, code: "INVITATION_ACCEPTED",
-    tenantId: membership.tenantId, sessionEstablished: Boolean(session) }, 200);
-  if (session) {
-    res.headers.set("Set-Cookie", customerSessionCookie(session));
-    res.headers.append("Set-Cookie", customerRefreshCookie(session));
-  }
+    tenantId: result.membership.tenantId, sessionEstablished: true }, 200);
+  res.headers.set("Set-Cookie", customerSessionCookie(result.session));
+  res.headers.append("Set-Cookie", customerRefreshCookie(result.session));
+  clearLegacySessionCookies(res.headers, "customer");
   return res;
 }

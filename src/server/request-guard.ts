@@ -3,6 +3,7 @@ import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { parseStrictContentLength } from "../lib/request-limits";
 import { runtimeSecret } from "../lib/runtime-secret";
 import { requestPath } from "./request-path";
+export { observeAuthorizationDenials, recordAuthorizationDenial, flushAuthorizationDenials } from "./authorization-monitor";
 
 /**
  * API body limit. The custom Next server must never consume the IncomingMessage
@@ -15,22 +16,23 @@ export const MAX_UNAUTHENTICATED_CONCURRENT_BYTES = 8 * 1024 * 1024;
 export const MAX_CONCURRENT_CHUNKED_BYTES = MAX_AUTHENTICATED_CONCURRENT_BYTES;
 
 /**
- * Enforce the smaller Agent route contracts before Next parses any JSON.
+ * Enforce smaller route contracts before Next parses any JSON.
  * A route-level Content-Length check runs too late to protect the global
  * upload/read budget. The route still repeats validation for other hosting
  * modes that bypass this custom server.
  */
-const AGENT_ROUTE_BODY_LIMITS: Readonly<Record<string, number>> = {
+const ROUTE_BODY_LIMITS: Readonly<Record<string, number>> = {
   "/api/agent/register": 64 * 1024,
   "/api/agent/heartbeat": 512 * 1024,
   "/api/agent/discovery": 2 * 1024 * 1024,
   "/api/agent/jobs": 64 * 1024,
+  "/api/security/csp-report": 16 * 1024,
 };
 
 export function maxApiBodyBytesForRequest(url: string | undefined, method: string, ceiling = MAX_API_BODY_BYTES): number {
   if (!url || (method !== "POST" && method !== "PATCH")) return ceiling;
   const path = requestPath(url).replace(/\/$/, "");
-  return Math.min(ceiling, AGENT_ROUTE_BODY_LIMITS[path] ?? ceiling);
+  return Math.min(ceiling, ROUTE_BODY_LIMITS[path] ?? ceiling);
 }
 
 const MUTATING_METHODS = ["POST", "PUT", "PATCH", "DELETE"];
@@ -38,7 +40,7 @@ const MUTATING_METHODS = ["POST", "PUT", "PATCH", "DELETE"];
 // requests (expired access cookie, live refresh family) must face the same
 // Origin/Referer proof: SameSite=Strict neither covers legacy browsers nor
 // mutually same-site subdomains.
-const SESSION_COOKIE_RE = /(?:^|;\s*)(?:(?:mgr_session|cust_session|plt_session|mgr_refresh|cust_refresh|plt_refresh))=/;
+const SESSION_COOKIE_RE = /(?:^|;\s*)(?:(?:__Host-)?(?:mgr_session|cust_session|plt_session)|(?:(?:__Host-|__Secure-))?(?:mgr_refresh|cust_refresh|plt_refresh))=/;
 let reservedAuthBytes = 0;
 let reservedUnauthBytes = 0;
 
@@ -61,6 +63,17 @@ export interface ApiBodyGuardOptions {
  */
 const REJECT_DRAIN_MAX_BYTES = 16 * 1024 * 1024;
 const REJECT_DRAIN_TIMEOUT_MS = 5_000;
+
+const HTTP_METHODS = ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"];
+
+/** Refuse unsupported methods before routing, without reflecting request data. */
+export function guardHttpMethod(req: IncomingMessage, res: ServerResponse): boolean {
+  if (HTTP_METHODS.includes(req.method ?? "")) return true;
+  res.setHeader("Allow", HTTP_METHODS.join(", "));
+  res.setHeader("Cache-Control", "no-store");
+  rejectRequest(req, res, 405, "METHOD_NOT_ALLOWED");
+  return false;
+}
 
 function rejectRequest(req: IncomingMessage, res: ServerResponse, status: number, code: string): void {
   if (res.headersSent || res.writableEnded) return;
@@ -252,7 +265,10 @@ export function isLikelyAuthenticated(req: IncomingMessage): boolean {
   const cookie = headers["cookie"];
   const cookieHeader = typeof cookie === "string" ? cookie : Array.isArray(cookie) ? cookie[0] : "";
   if (cookieHeader) {
-    const match = /(?:(?:mgr_session|cust_session|plt_session))=([^;]+)/.exec(cookieHeader);
+    const cookiePattern = process.env.NODE_ENV === "production"
+      ? /(?:^|;\s*)__Host-(?:mgr_session|cust_session|plt_session)=([^;]+)/
+      : /(?:^|;\s*)(?:mgr_session|cust_session|plt_session)=([^;]+)/;
+    const match = cookiePattern.exec(cookieHeader);
     if (match && match[1] && verifyJwtQuick(match[1].trim())) {
       return true;
     }

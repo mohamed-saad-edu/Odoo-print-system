@@ -1,4 +1,11 @@
+import type * as NextServerModule from "next/server";
 import { describe, it, expect, vi, beforeEach } from "vitest";
+
+const afterCallbacks = vi.hoisted(() => [] as Array<() => Promise<void>>);
+vi.mock("next/server", async importActual => ({
+  ...await importActual<typeof NextServerModule>(),
+  after: (callback: () => Promise<void>) => { afterCallbacks.push(callback); },
+}));
 
 const userFindFirst = vi.fn();
 const executeMock = vi.fn();
@@ -38,6 +45,7 @@ import { POST } from "../src/app/api/auth/resend-verification/route";
 describe("Resend Email Verification API", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    afterCallbacks.length = 0;
   });
 
   it("returns 400 for invalid email", async () => {
@@ -128,6 +136,9 @@ describe("Resend Email Verification API", () => {
     expect(res.status).toBe(202);
     expect(txUpdate).toHaveBeenCalled();
     expect(txInsert).toHaveBeenCalled();
+    expect(sendEmailMock.mock.calls).toHaveLength(0);
+    expect(afterCallbacks).toHaveLength(1);
+    await afterCallbacks[0]();
     expect(sendEmailMock).toHaveBeenCalledWith(
       expect.objectContaining({
         to: "user@example.com",

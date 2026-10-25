@@ -1,3 +1,4 @@
+import { clearLegacySessionCookies } from "../../../../lib/session-config";
 import { NextResponse } from "next/server";
 import {
   clearCustomerRefreshCookie,
@@ -20,6 +21,7 @@ export async function POST(req: Request) {
     response.headers.set("Set-Cookie", clearCustomerSessionCookie());
     response.headers.append("Set-Cookie", clearCustomerRefreshCookie());
     response.headers.set("Cache-Control", "no-store");
+    clearLegacySessionCookies(response.headers, "customer");
     return response;
   }
 
@@ -40,6 +42,7 @@ export async function POST(req: Request) {
     response.headers.set("Set-Cookie", clearCustomerSessionCookie());
     response.headers.append("Set-Cookie", clearCustomerRefreshCookie());
     response.headers.set("Cache-Control", "no-store");
+    clearLegacySessionCookies(response.headers, "customer");
     return response;
   }
 
@@ -50,5 +53,6 @@ export async function POST(req: Request) {
   response.headers.set("Set-Cookie", customerSessionCookie(outcome.pair));
   response.headers.append("Set-Cookie", customerRefreshCookie(outcome.pair));
   response.headers.set("Cache-Control", "no-store");
+  clearLegacySessionCookies(response.headers, "customer");
   return response;
 }

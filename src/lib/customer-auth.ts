@@ -1,6 +1,6 @@
 import { db } from "../db";
-import { tenantUsers } from "../db/schema";
-import { and, eq, sql } from "drizzle-orm";
+import { tenants, tenantUsers } from "../db/schema";
+import { and, asc, eq, sql } from "drizzle-orm";
 import { authenticateCustomer, validateManager, validateManagerClaims, type ManagerRole, type ManagerClaims } from "./manager-auth";
 import { createHmac, createHash, timingSafeEqual } from "node:crypto";
 import { requiredRuntimeSecret } from "./runtime-secret";
@@ -196,11 +196,13 @@ export async function authenticateForTenant(email: string, password: string, ten
     return { ...identity, tenantId: membership.tenantId, role: membership.role as ManagerRole };
   }
   // Do not silently truncate workspace memberships. The chooser must expose
-  // every workspace the authenticated user belongs to; an arbitrary cap would
+  // every active workspace the authenticated user belongs to; an arbitrary cap would
   // make valid memberships unreachable from the normal tenant-selection flow.
-  const memberships = await db.select({ tenantId: tenantUsers.tenantId, role: tenantUsers.role })
+  const memberships = await db.select({ tenantId: tenantUsers.tenantId, role: tenantUsers.role, name: tenants.name })
     .from(tenantUsers)
-    .where(eq(tenantUsers.userId, identity.userId));
+    .innerJoin(tenants, eq(tenants.id, tenantUsers.tenantId))
+    .where(and(eq(tenantUsers.userId, identity.userId), eq(tenants.lifecycle, "active")))
+    .orderBy(asc(tenants.name), asc(tenants.id));
   if (memberships.length === 0) {
     return { ...identity, multipleTenants: false, memberships: [] };
   }

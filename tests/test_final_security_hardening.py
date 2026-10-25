@@ -1,4 +1,5 @@
 import base64
+import re
 from pathlib import Path
 
 import pytest
@@ -267,14 +268,19 @@ def test_odoo_activation_can_always_disable_but_enable_is_subscription_gated():
     assert 'const updated = await db.transaction(async (tx) =>' in route
 
 
-def test_settings_does_not_duplicate_first_class_operational_pages():
+def test_settings_links_to_operational_pages_without_embedding_their_controls():
     page = read("src/app/settings/page.tsx")
     assert 'id: "members"' not in page
     assert 'id: "billing"' not in page
     assert 'id: "integrations"' not in page
-    assert 'href="/team"' not in page
-    assert 'href="/billing"' not in page
-    assert 'href="/api-keys"' not in page
+    # V4 groups secondary destinations under Settings; navigation must not
+    # duplicate credential, subscription or member mutation forms here.
+    assert 'href="/team"' in page
+    assert 'href="/billing"' in page
+    assert 'href="/api-keys"' in page
+    assert '"/api/team"' not in page
+    assert '"/api/billing/checkout"' not in page
+    assert '"/api/keys"' not in page
 
 
 def test_agent_http_transport_has_one_yaseir_opt_in_and_no_legacy_odoo_alias():
@@ -498,8 +504,10 @@ def test_odoo_status_and_idempotency_surfaces_exclude_internal_manager_jobs_but_
     assert "eq(printJobs.apiKeyId, odoo.id)" not in route
     # The reused-job lookup must retain the Odoo-originated boundary as well.
     reused_start = route.index("if (result.isReused)")
-    reused_end = route.index("return NextResponse.json({\n      jobId:", reused_start)
+    reused_end = route.index("const responseHeaders:", reused_start)
     assert "isNotNull(printJobs.apiKeyId)" in route[reused_start:reused_end]
+    assert "eq(printJobReceipts.tenantId, odoo.tenantId)" in route[reused_start:reused_end]
+    assert "isNotNull(printJobReceipts.apiKeyId)" in route[reused_start:reused_end]
 
 
 def test_odoo_force_reprint_includes_failed_unknown_outcomes():
@@ -576,9 +584,10 @@ def test_agent_terminal_physical_result_is_fenced_when_sqlite_terminalization_fa
     assert "terminalExecution map[string]terminalExecutionResult" in agent
     # A failed attempt can still have crossed the Windows StartDoc* side-effect boundary;
     # preserve that spooler identity so reconnect/reconciliation never loses the evidence.
-    assert "rememberTerminalExecution(jobID, \"failed\", failureMsg, claimToken, spoolerJobID)" in agent
-    assert "rememberTerminalExecution(jobID, \"success\", \"\", claimToken, spoolerJobID)" in agent
-    assert "spoolerJobID string" in agent
+    assert 'rememberTerminalOutput(jobID, "failed", failureMsg, claimToken, spoolerJobID, statusTransport, nil)' in agent
+    assert 'rememberTerminalOutput(jobID, "success", "", claimToken, spoolerJobID, statusTransport, outputEvidence)' in agent
+    assert re.search(r"spoolerJobID\s+string", agent)
+    assert "outputEvidence: cloneOutputEvidence(output)" in agent
     assert "already has a process-local terminal physical result; refusing duplicate dispatch" in agent
     assert "TestPhysicalSuccessWithTerminalLedgerWriteFailureCannotReprint" in tests
 

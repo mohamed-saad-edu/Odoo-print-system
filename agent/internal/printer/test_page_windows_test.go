@@ -108,7 +108,7 @@ func TestWindowsGeneratedDiagnosticIsRenderedByRealPDFium(t *testing.T) {
 		}
 		// Exercise the retained production PDFium rasterizer, not the retired
 		// E2E capture API. Decode the complete image to catch broken bitmaps.
-		rendered, err := renderIPPPDFToJPEG(ctx, data)
+		rendered, err := renderIPPPDFToJPEG(ctx, data, map[string]string{"printer-resolution-supported": "200x200dpi"})
 		if err != nil {
 			t.Fatalf("generated diagnostic could not render: width=%g err=%v", width, err)
 		}

@@ -17,31 +17,77 @@ RUN set -eux; \
 ENV PATH="/usr/local/go/bin:${PATH}" GOPATH=/go GOTOOLCHAIN=local CGO_ENABLED=0
 RUN go version | grep -F 'go1.26.10'
 
-# Official gosu 1.19, rebuilt using a patched Go toolchain.
+# Official gosu 1.19 source commit6456aaa0f3c854d199d0f037f068eb97515b7513.
+# The checked-in graph pins moby/sys/user0.4.1 and x/sys0.44.0 with checksums.
 FROM go-toolchain AS gosu-build
-RUN go install -trimpath github.com/tianon/gosu@6456aaa0f3c854d199d0f037f068eb97515b7513 \
+WORKDIR /tmp/yaseir-gosu
+COPY docs/runtime-hardening/gosu/go.mod docs/runtime-hardening/gosu/go.sum ./
+RUN go mod download && go mod verify \
+    && go build -mod=readonly -trimpath -o /go/bin/gosu github.com/tianon/gosu \
     && go version -m /go/bin/gosu | grep -F 'go1.26.10'
 
 FROM ${POSTGRES_BASE} AS postgres
+
+# Exact signed security artifacts for both supported architectures; never resolve a range.
+ADD --checksum=sha256:2e17864102278d9049c3a56f1bceed9e8cf287065617e579325123443daed8a5 https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/musl-1.2.6-r3.apk /os-security/postgres/aarch64/musl-1.2.6-r3.apk
+ADD --checksum=sha256:bb460bdc009e88989bd5adca8a7c8298c339cba99da11c6196c818e042fbaf49 https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/musl-utils-1.2.6-r3.apk /os-security/postgres/aarch64/musl-utils-1.2.6-r3.apk
+ADD --checksum=sha256:1f77a542ac6634761b9fe38d8bdca19b154071dcfa25432e73f2bc8a0740a33f https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/zlib-1.3.2-r1.apk /os-security/postgres/aarch64/zlib-1.3.2-r1.apk
+ADD --checksum=sha256:e142255d0fa397f14318996bc10378093dcc069dc3dd1b6818c8f28a789c21da https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/musl-1.2.6-r3.apk /os-security/postgres/x86_64/musl-1.2.6-r3.apk
+ADD --checksum=sha256:47263d05842c5e12d01e0369e5b5bea51733323501c00ca21968a5102de137ca https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/musl-utils-1.2.6-r3.apk /os-security/postgres/x86_64/musl-utils-1.2.6-r3.apk
+ADD --checksum=sha256:63aeea03c15a2f9018f81805cfc8aa926bdf5cd68921f22149c2fbb5d0ee9f47 https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/zlib-1.3.2-r1.apk /os-security/postgres/x86_64/zlib-1.3.2-r1.apk
+RUN set -eu; \
+    test "$(cat /etc/alpine-release)" = '3.24.2'; \
+    apk_arch="$(apk --print-arch)"; \
+    case "$apk_arch" in x86_64|aarch64) ;; *) exit 1 ;; esac; \
+    apk add --no-network --no-cache "/os-security/postgres/${apk_arch}/musl-1.2.6-r3.apk" "/os-security/postgres/${apk_arch}/musl-utils-1.2.6-r3.apk" "/os-security/postgres/${apk_arch}/zlib-1.3.2-r1.apk"; \
+    apk info --exists 'musl=1.2.6-r3' 'musl-utils=1.2.6-r3' 'zlib=1.3.2-r1'; \
+    rm -rf /os-security
 COPY --from=gosu-build /go/bin/gosu /usr/local/bin/gosu
 RUN gosu --version | grep -F 'go1.26.10' \
     && gosu postgres id -u | grep -Fx "$(id -u postgres)"
+# Keep the official root bootstrap/gosu transition for existing data volumes.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=5 \
+    CMD pg_isready -q -U "${POSTGRES_USER:-postgres}" -d "${POSTGRES_DB:-postgres}" || exit 1
 
 # Caddy release stays fixed; replace the vulnerable binary using Go 1.26.10
 # and the security-fixed golang.org/x/net v0.61.0.
 FROM go-toolchain AS caddy-build
 WORKDIR /tmp/yaseir-caddy
-RUN go mod init example.com/yaseir-caddy-build \
-    && go get github.com/caddyserver/caddy/v2/cmd/caddy@v2.11.7 \
-    && go get golang.org/x/net@v0.61.0 \
-    && go mod verify \
-    && go build -trimpath -o /tmp/caddy-patched github.com/caddyserver/caddy/v2/cmd/caddy \
+# Fixed x/net and chi versions are resolved in these complete checksum locks.
+COPY docs/runtime-hardening/caddy/go.mod docs/runtime-hardening/caddy/go.sum ./
+RUN go mod download && go mod verify \
+    && go build -mod=readonly -trimpath -o /tmp/caddy-patched github.com/caddyserver/caddy/v2/cmd/caddy \
     && go version -m /tmp/caddy-patched | grep -F 'go1.26.10' \
-    && go version -m /tmp/caddy-patched | grep -F 'golang.org/x/net' | grep -F 'v0.61.0'
+    && go version -m /tmp/caddy-patched | grep -F 'golang.org/x/net' | grep -F 'v0.61.0' \
+    && go version -m /tmp/caddy-patched | grep -F 'github.com/go-chi/chi/v5' | grep -F 'v5.4.0'
 
 FROM ${CADDY_BASE} AS caddy
-# Upgrade the SHA-pinned base's Brotli decoder to a CVE-2026-111497-fixed release.
-# The constrained apk install fails the image build if no fixed package exists.
-RUN apk add --no-cache 'brotli-libs>=1.2.1-r0'
+
+# Exact signed security artifacts for both supported architectures; never resolve a range.
+ADD --checksum=sha256:bec9ee522095e9fd01113d8732119847944e3152f228034246a33e2ab82e4195 https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/brotli-libs-1.2.1-r0.apk /os-security/caddy/aarch64/brotli-libs-1.2.1-r0.apk
+ADD --checksum=sha256:d7043c549029c98d438e9bc94213b006e5c88540eb58d1f5b0f0d1d56dbf9c98 https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/musl-1.2.5-r24.apk /os-security/caddy/aarch64/musl-1.2.5-r24.apk
+ADD --checksum=sha256:df4a9a4bb81a76af36779d2c5ef28ac5a1778670788bb4cd152def522904df8f https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/musl-utils-1.2.5-r24.apk /os-security/caddy/aarch64/musl-utils-1.2.5-r24.apk
+ADD --checksum=sha256:82d52fa82a46c73aae8b9f95d7f31a196137f3ce4a000980cdbbfc05c245e7bf https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/zlib-1.3.2-r1.apk /os-security/caddy/aarch64/zlib-1.3.2-r1.apk
+ADD --checksum=sha256:cf3dc08928958bb42fe71c07a179ca33adb9e2c341daa29d88777061956d84f5 https://dl-cdn.alpinelinux.org/alpine/v3.23/main/x86_64/brotli-libs-1.2.1-r0.apk /os-security/caddy/x86_64/brotli-libs-1.2.1-r0.apk
+ADD --checksum=sha256:d49d703392f1a6d2fe822db1b57e61735063077e1ad846d5f40d79fe507ec727 https://dl-cdn.alpinelinux.org/alpine/v3.23/main/x86_64/musl-1.2.5-r24.apk /os-security/caddy/x86_64/musl-1.2.5-r24.apk
+ADD --checksum=sha256:ee9a8106067ead36b8930f5ccdb3e515574871ac8e07f88cc7bab7049effc945 https://dl-cdn.alpinelinux.org/alpine/v3.23/main/x86_64/musl-utils-1.2.5-r24.apk /os-security/caddy/x86_64/musl-utils-1.2.5-r24.apk
+ADD --checksum=sha256:ee62e1864c235901e2aa4d1868c7ae8f7cc5d0740a98c48a2525332eb4bfda73 https://dl-cdn.alpinelinux.org/alpine/v3.23/main/x86_64/zlib-1.3.2-r1.apk /os-security/caddy/x86_64/zlib-1.3.2-r1.apk
+RUN set -eu; \
+    test "$(cat /etc/alpine-release)" = '3.23.6'; \
+    apk_arch="$(apk --print-arch)"; \
+    case "$apk_arch" in x86_64|aarch64) ;; *) exit 1 ;; esac; \
+    apk add --no-network --no-cache "/os-security/caddy/${apk_arch}/brotli-libs-1.2.1-r0.apk" "/os-security/caddy/${apk_arch}/musl-1.2.5-r24.apk" "/os-security/caddy/${apk_arch}/musl-utils-1.2.5-r24.apk" "/os-security/caddy/${apk_arch}/zlib-1.3.2-r1.apk"; \
+    apk info --exists 'brotli-libs=1.2.1-r0' 'musl=1.2.5-r24' 'musl-utils=1.2.5-r24' 'zlib=1.3.2-r1'; \
+    rm -rf /os-security
 COPY --from=caddy-build /tmp/caddy-patched /usr/bin/caddy
-RUN caddy version
+RUN caddy version \
+    && addgroup -S -g 10001 yaseir-caddy \
+    && adduser -S -D -H -u 10001 -G yaseir-caddy -h /config -s /sbin/nologin yaseir-caddy \
+    && mkdir -p /data /config \
+    && chown -R 10001:10001 /data /config \
+    && chmod 0700 /data /config
+USER 10001:10001
+# The loopback-only admin endpoint proves the configured HTTP application is
+# responding. TLS/upstream readiness is checked separately by acceptance.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD wget -q -T 4 -O /dev/null http://127.0.0.1:2019/config/apps/http/servers/ || exit 1

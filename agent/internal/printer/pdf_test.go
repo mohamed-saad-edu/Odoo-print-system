@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -238,7 +239,7 @@ func TestRawPayloadUsesRawTransport(t *testing.T) {
 		received <- append([]byte(nil), buf[:n]...)
 	}()
 
-	p := &NetworkPrinter{Address: ln.Addr().String()}
+	p := &NetworkPrinter{Address: ln.Addr().String(), Protocol: "raw"}
 	raw := []byte("RAW-BYTES-1234")
 	if err := PrintDocument(context.Background(), p, Document{Kind: KindRaw, Data: raw, JobID: "job_raw"}); err != nil {
 		t.Fatalf("raw print failed: %v", err)
@@ -269,13 +270,22 @@ func TestESCPOSPayloadUsesByteStreamPathNotPDFPath(t *testing.T) {
 			return
 		}
 		defer conn.Close()
+		for i := 0; i < 3; i++ {
+			query := make([]byte, 3)
+			if _, err := io.ReadFull(conn, query); err != nil {
+				return
+			}
+			if _, err := conn.Write([]byte{0x12}); err != nil {
+				return
+			}
+		}
 		buf := make([]byte, 256)
 		n, _ := conn.Read(buf)
 		received <- append([]byte(nil), buf[:n]...)
 	}()
 
 	escpos := []byte("\x1b\x40Receipt line\n\x1d\x56\x01")
-	p := &NetworkPrinter{Address: ln.Addr().String()}
+	p := &NetworkPrinter{Address: ln.Addr().String(), Protocol: "escpos"}
 	if err := PrintDocument(context.Background(), p, Document{Kind: KindESCPOS, Data: escpos, JobID: "job_escpos"}); err != nil {
 		t.Fatalf("escpos print failed: %v", err)
 	}
@@ -434,7 +444,8 @@ func TestSupportedKindsPerBackend(t *testing.T) {
 		p     Printer
 		kinds []string
 	}{
-		{"raw tcp", &NetworkPrinter{Address: "127.0.0.1:9100"}, []string{KindRaw, KindESCPOS, KindImage}},
+		{"raw tcp", &NetworkPrinter{Address: "127.0.0.1:9100", Protocol: "raw"}, []string{KindRaw}},
+		{"escpos tcp with geometry", &NetworkPrinter{Address: "127.0.0.1:9100", Protocol: "escpos", Geometry: testRasterGeometry(576)}, []string{KindRaw, KindESCPOS, KindImage}},
 		{"zpl tcp", &NetworkPrinter{Address: "127.0.0.1:9100", Protocol: "zpl"}, []string{KindRaw, KindZPL, KindLabel}},
 		{"tspl tcp", &NetworkPrinter{Address: "127.0.0.1:9100", Protocol: "tspl"}, []string{KindRaw, KindTSPL, KindLabel}},
 		{"mock spooler", newMockSpoolerPrinter("Test"), []string{KindRaw, KindESCPOS, KindPDF}},

@@ -236,23 +236,7 @@ pub async fn get_agent_status(app: tauri::AppHandle) -> AgentStatus {
     .await
     {
         Ok((running, service_running, note, version)) => {
-            let note_code = if note.starts_with("service state unavailable:") {
-                "service_status_unavailable"
-            } else if service_running {
-                "service_running"
-            } else if note.contains("service not detected") && running {
-                "background_running_service_missing"
-            } else if note.contains("service not detected") {
-                "service_missing"
-            } else if note.contains("owned but stopped/transitioning") && running {
-                "background_running_service_stopped"
-            } else if note.contains("owned but not running") {
-                "service_stopped"
-            } else if running {
-                "background_running"
-            } else {
-                "not_running"
-            };
+            let note_code = crate::agent_status::note_code(running, service_running, &note);
             AgentStatus {
                 running,
                 version,
@@ -379,7 +363,11 @@ fn run_pairing(app: tauri::AppHandle, code: &str, gateway_url: &str) -> Result<S
     agent::with_control(|| run_pairing_inner(app, code, gateway_url))
 }
 
-fn run_pairing_inner(app: tauri::AppHandle, code: &str, gateway_url: &str) -> Result<String, String> {
+fn run_pairing_inner(
+    app: tauri::AppHandle,
+    code: &str,
+    gateway_url: &str,
+) -> Result<String, String> {
     let cli = agent::cli_path(&app)?;
     let config = paths::agent_config_path();
     paths::ensure_agent_data_root().map_err(|e| format!("create agent data dir: {e}"))?;
@@ -695,11 +683,7 @@ fn allowed_agent_gateway_path(path: &str, method: &str) -> bool {
         // (gatewayAgentPathRe also permits /api/agents/<id>): the desktop
         // console proxy exposes only the agent list, while the operator CLI
         // needs single-agent fetch for diagnostics. Both are read-only.
-        "GET" => {
-            valid_fleet_query(path)
-                || valid_jobs_query(path)
-
-        }
+        "GET" => valid_fleet_query(path) || valid_jobs_query(path),
         "POST" => {
             path == "/api/printers"
                 || gateway_printer_action_path(path, "test-connection")
@@ -2078,8 +2062,14 @@ mod agent_console_path_tests {
         assert!(!allowed_agent_gateway_path("/api/printers/p1", "PATCH"));
         // Removed customer E2E capture paths must stay denied.
         for method in ["GET", "POST", "PATCH", "DELETE"] {
-            assert!(!allowed_agent_gateway_path("/api/agent/test-captures/status", method));
-            assert!(!allowed_agent_gateway_path("/api/agent/test-captures/preview?id=cap_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", method));
+            assert!(!allowed_agent_gateway_path(
+                "/api/agent/test-captures/status",
+                method
+            ));
+            assert!(!allowed_agent_gateway_path(
+                "/api/agent/test-captures/preview?id=cap_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                method
+            ));
         }
     }
 }

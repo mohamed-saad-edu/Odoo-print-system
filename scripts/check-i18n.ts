@@ -22,6 +22,15 @@ type Catalog = Record<string, string>;
 
 const CATEGORIES = ["zero", "one", "two", "few", "many", "other"] as const;
 
+// Exact technical identifiers, email examples, key captions and product names
+// may stay unchanged. Ordinary English prose must never enter Arabic silently.
+const LANGUAGE_NEUTRAL_KEYS = new Set([
+  "common.notAvailable", "auth.emailPlaceholder", "platform.login.emailPlaceholder",
+  "printer.connection.usb", "printer.connection.ipp", "desktop.connection.usb",
+  "desktop.connection.ipp", "desktop.admin.step2b", "command.esc",
+  "platform.subs.segmentTitle", "platform.plans.field.planIdPlaceholder",
+]);
+
 /** Every `.ts`/`.tsx` file under `src/`, so `tc()` call sites can be audited. */
 function sourceFiles(dir: string): string[] {
   const out: string[] = [];
@@ -73,6 +82,9 @@ for (const locale of LOCALES) {
     if (typeof value !== "string" || value.trim() === "") fail(`${locale}: "${key}" is empty`);
     const source = (en as unknown as Catalog)[key];
     if (typeof source !== "string") continue;
+    if (locale === "ar" && value === source && !LANGUAGE_NEUTRAL_KEYS.has(key)) {
+      fail(`${locale}: "${key}" repeats English without an approved technical-identifier exception`);
+    }
     const wanted = placeholders(source);
     const got = placeholders(value);
     // Singular and dual forms write the number as a word in Arabic

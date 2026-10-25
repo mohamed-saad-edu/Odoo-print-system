@@ -4,6 +4,7 @@ import { validatePayloadForPrinter, getSupportedDocumentTypes } from "../src/lib
 import { buildTestPrintPayloadForPrinter } from "../src/lib/payload";
 import { parsePrinterInput, validateConnectionConfig } from "../src/lib/printer-model";
 import { getEffectivePrinterStatus } from "../src/lib/agent-availability";
+import { fixtureImagePayload, fixturePrinterGeometry } from "./helpers/printer-geometry";
 
 describe("print end-to-end regressions", () => {
   const spooler = { protocol: "spooler", connectionType: "spooler" };
@@ -23,11 +24,11 @@ describe("print end-to-end regressions", () => {
 
   it("D/E: explicitly declared spooler ESC/POS and RAW passthrough succeed without losing documents", () => {
     const escpos = { ...spooler, capabilities: { supported_protocols: ["escpos"] } };
-    const raw = { ...spooler, capabilities: { supported_protocols: ["raw"] } };
+    const raw = { ...spooler, capabilities: { geometry: fixturePrinterGeometry(), supported_protocols: ["raw"] } };
     expect(validatePayloadForPrinter({ type: "escpos", protocol: "escpos" }, escpos).ok).toBe(true);
     expect(validatePayloadForPrinter({ type: "raw", protocol: "raw" }, raw).ok).toBe(true);
     expect(validatePayloadForPrinter({ type: "pdf" }, escpos).ok).toBe(true);
-    expect(validatePayloadForPrinter({ type: "image" }, raw).ok).toBe(true);
+    expect(validatePayloadForPrinter(fixtureImagePayload, raw).ok).toBe(true);
   });
 
   it("H: capability mismatch is independent from online/offline health", () => {
@@ -72,7 +73,9 @@ describe("print end-to-end regressions", () => {
   });
 
   it("spooler capability list stays document-first and passthrough is additive", () => {
-    expect(getSupportedDocumentTypes("spooler", "spooler", { supported_protocols: ["escpos", "raw"] }))
+    expect(getSupportedDocumentTypes("spooler", "spooler", { geometry: fixturePrinterGeometry(), supported_protocols: ["escpos", "raw"] }))
       .toEqual(["pdf", "image", "raw", "escpos"]);
+    expect(getSupportedDocumentTypes("spooler", "spooler", { supported_protocols: ["escpos", "raw"] }))
+      .toEqual(["pdf", "raw", "escpos"]);
   });
 });

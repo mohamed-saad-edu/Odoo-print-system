@@ -1,3 +1,4 @@
+import { receiptGeometry } from "./helpers/odoo-printer-geometry.mjs";
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { readFile } from 'node:fs/promises';
@@ -17,7 +18,8 @@ function createStorage() {
 }
 const root = new URL('../odoo_addons/print_gateway/static/src/js/', import.meta.url);
 
-async function loadHook(file, { storage, clock = { now: 1000 }, storageThrows = false, infoThrows = false } = {}) {
+async function loadHook(file, { storage, clock = { now: 1000 }, storageThrows = false, infoThrows = false,
+    translate = (phrase) => phrase } = {}) {
     let hook;
     const f = {
         calls: [], notices: [], renders: 0,
@@ -33,7 +35,7 @@ async function loadHook(file, { storage, clock = { now: 1000 }, storageThrows = 
             f.calls.push(args);
             const method = args[1];
             if (method === 'is_gateway_printing_enabled') return true;
-            if (method.endsWith('raster_width')) return 384;
+            if (method.endsWith('_geometry')) return receiptGeometry(384);
             if (method === 'get_sale_details') return {};
             if (f.onSubmit) return f.onSubmit(...args);
             return { gateway_enabled: true, status: 'submitted', dispatched: true };
@@ -59,7 +61,7 @@ async function loadHook(file, { storage, clock = { now: 1000 }, storageThrows = 
     };
     const mocks = {
         patch: (_proto, impl) => { Object.setPrototypeOf(impl, native); hook = impl; },
-        _t: (phrase, ...args) => { let n = 0; return phrase.replace(/%s/g, () => String(args[n++])); },
+        _t: (phrase, ...args) => { let n = 0; return translate(phrase).replace(/%s/g, () => String(args[n++])); },
         registry: { category: () => ({ add: (_name, handler) => { hook = handler; } }) },
         PosStore: class {}, SaleDetailsButton: class {}, OrderReceipt: { template: 'receipt' },
         RetryPrintPopup: class {}, changesToOrder: () => ({}),
@@ -80,14 +82,14 @@ async function loadHook(file, { storage, clock = { now: 1000 }, storageThrows = 
     const common = new vm.SyntheticModule(Object.keys(mocks), function () {
         for (const [key, value] of Object.entries(mocks)) this.setExport(key, value);
     }, { context });
-    const raster = new vm.SyntheticModule(['DEFAULT_RECEIPT_RASTER_WIDTH', 'normalizedReceiptRasterWidth', 'renderGatewayReceiptJpeg'], function () {
-        this.setExport('DEFAULT_RECEIPT_RASTER_WIDTH', 512);
-        this.setExport('normalizedReceiptRasterWidth', val => Number(val) || 512);
+    const raster = new vm.SyntheticModule(['renderGatewayReceiptJpeg'], function () {
         this.setExport('renderGatewayReceiptJpeg', async () => `JPEG-SNAPSHOT-${++f.renders}`);
     }, { context });
     const asyncModule = new vm.SourceTextModule(await readFile(new URL('async_control.js', root), 'utf8'), { context });
     const recoveryModule = new vm.SourceTextModule(await readFile(new URL('operation_recovery.js', root), 'utf8').catch(() => 'export const notImplemented = true;'), { context });
-    await Promise.all([asyncModule.link(() => { throw Error('Unexpected import'); }), recoveryModule.link(() => { throw Error('Unexpected import'); })]);
+    await Promise.all([asyncModule.link(() => { throw Error('Unexpected import'); }), recoveryModule.link((name) => {
+        assert.equal(name, '@web/core/l10n/translation'); return common;
+    })]);
     const addon = new vm.SourceTextModule(await readFile(new URL(file, root), 'utf8'), { context });
     await addon.link(name => name === './receipt_raster' ? raster : name === './async_control' ? asyncModule : name === './operation_recovery' ? recoveryModule : common);
     await addon.evaluate();
@@ -143,5 +145,32 @@ test('receipt: missing or throwing optional performance logger cannot cancel dis
         await current.hook.printReceipt.call(current.f.pos);
         assert.equal(submitCalls(current.f).length, 1, 'POS must submit once despite failed diagnostic logging');
         assert.equal(current.f.renders, 1, 'receipt must retain the exact captured JPEG snapshot');
+    }
+});
+
+test('receipt: operation recovery failures use the active Odoo language', async () => {
+    const translations = {
+        'Browser operation recovery storage is unavailable. Printing is paused.': 'تعذر الوصول إلى سجل استرداد عمليات الطباعة في المتصفح. الطباعة متوقفة مؤقتًا.',
+        'Print recovery information is damaged. Check Print Activity before reprinting.': 'بيانات استرداد الطباعة تالفة. راجع نشاط الطباعة قبل إعادة الطباعة.',
+        'Print recovery information is invalid. Check Print Activity before reprinting.': 'بيانات استرداد الطباعة غير صالحة. راجع نشاط الطباعة قبل إعادة الطباعة.',
+    };
+    const translate = (phrase) => translations[phrase] || phrase;
+    for (const kind of ['missing', 'damaged', 'invalid']) {
+        const storage = createStorage();
+        if (kind !== 'missing') {
+            const previous = await loadHook('pos_print_router.js', { storage });
+            previous.f.onSubmit = () => { throw new Error('Reply lost after commit'); };
+            await previous.hook.printReceipt.call(previous.f.pos);
+            const key = [...storage.records.keys()][0];
+            assert.ok(key);
+            storage.setItem(key, kind === 'damaged' ? '{' : '{}');
+        }
+        const current = await loadHook('pos_print_router.js', {
+            storage: kind === 'missing' ? {} : storage, translate,
+        });
+        assert.equal(await current.hook.printReceipt.call(current.f.pos), false);
+        assert.equal(submitCalls(current.f).length, 0);
+        assert.ok(current.f.notices.some(([message]) => Object.values(translations).includes(message)),
+            `${kind} recovery error bypassed Odoo translation`);
     }
 });

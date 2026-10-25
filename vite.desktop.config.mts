@@ -38,7 +38,12 @@ export default defineConfig({
   root: "src/desktop",
   plugins: [react(), previewHarness],
   base: "./",
-  resolve: { alias: { "@": path.resolve(import.meta.dirname, "src") } },
+  resolve: { alias: {
+    "@": path.resolve(import.meta.dirname, "src"),
+    // Shared controls also serve Next pages, but the desktop target must not
+    // import Next's router runtime or its server-injected process.env values.
+    "next/link": path.resolve(import.meta.dirname, "src/desktop/components/DesktopLink.tsx"),
+  } },
   // Pin the production entry: `preview.html` is a browser-only harness and
   // must never end up inside the Windows installer.
   build: {

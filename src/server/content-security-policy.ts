@@ -1,14 +1,13 @@
 function createContentSecurityPolicyNonce(): string {
-  // Global `crypto` (not a node:crypto import): the architecture-hardening
-  // contract test pins this exact `crypto.randomUUID()` form, and the global
-  // also keeps the module importable outside Node if ever shared.
-  return Buffer.from(crypto.randomUUID()).toString("base64");
+  // A nonce is a secret random value, not an identifier. Generate 256 random
+  // bits directly rather than encoding a UUID's fixed-format characters.
+  return Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("base64");
 }
 
 function buildContentSecurityPolicy(nonce: string, isDevelopment: boolean): string {
   const cspHeader = `
     default-src 'self';
-    base-uri 'self';
+    base-uri 'none';
     object-src 'none';
     frame-ancestors 'none';
     form-action 'self';
@@ -21,6 +20,7 @@ function buildContentSecurityPolicy(nonce: string, isDevelopment: boolean): stri
     connect-src 'self';
     worker-src 'self' blob:;
     manifest-src 'self';
+    report-uri /api/security/csp-report;
   `;
 
   return cspHeader.replace(/\s{2,}/g, " ").trim();

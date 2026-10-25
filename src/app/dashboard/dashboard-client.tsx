@@ -1,7 +1,12 @@
 "use client";
 
-import { fetchWithTimeout } from "../../lib/fetch-timeout";
-import { fetchDashboardBillingUsage } from "../../lib/dashboard-billing-usage";
+import { formatManualCalendarDate } from "../../lib/manual-calendar-date";
+import { documentTypeLabel } from "../../shared/document-label";
+import type { OperationalPrinterState } from "../../lib/printer-operational-verification";
+import { PrinterVerificationDetails, FileOutputDetails } from "../../components/PrinterVerificationDetails";
+
+import { fetchWithTimeout, WORKSPACE_REAUTHENTICATION_EVENT } from "../../lib/fetch-timeout";
+import { fetchDashboardBillingUsage, type DashboardSubscriptionSummary } from "../../lib/dashboard-billing-usage";
 import React, { useState, useMemo, useEffect } from "react";
 import { ensureCustomerSession } from "../../lib/session-config";
 import { useRouter } from "next/navigation";
@@ -93,6 +98,7 @@ import { useI18n } from "../../i18n/react";
 import { getPrinterLanguageBadges } from "../../lib/printer-capability";
 import PrintCertificationWizard from "../../components/PrintCertificationWizard";
 import JobTimeline from "../../components/JobTimeline";
+import { PrinterGeometryDetails, PrinterGeometryProfileEditor } from "../../components/PrinterGeometrySettings";
 import UpgradeLimitDialog, { type UpgradeLimitResource } from "../../components/UpgradeLimitDialog";
 import { isLimitSignalResult } from "../../lib/limit-signal";
 import { isServerActionVersionMismatch } from "../../lib/server-action-version";
@@ -112,7 +118,7 @@ export type Agent = {
   metadata?: unknown;
 };
 
-export type Printer = {
+export type Printer = OperationalPrinterState & {
   sharedWithGateway?: boolean;
   id: string;
   agentId: string;
@@ -133,10 +139,16 @@ export type Printer = {
   freshness?: "fresh" | "stale" | "missing";
   config?: Record<string, unknown> | null;
   capabilities?: Record<string, unknown> | null;
+  managementSource?: string | null;
+  desiredRevision?: number | null;
+  appliedDesiredRevision?: number | null;
+  observedDesiredRevision?: number | null;
   lastSeenAt?: Date | null;
 };
 
 export type Job = {
+  outputMedium?: string;
+  outputEvidence?: Record<string, unknown> | null;
   id: string;
   agentId: string;
   agentName?: string | null;
@@ -203,6 +215,19 @@ type BillingUsage = {
     };
   };
 };
+
+// Hash links preserve the existing dashboard API and keep every operation
+// addressable without treating a saved printer as a live device.
+const DASHBOARD_VIEWS = ["home", "printers", "agents", "jobs"] as const;
+export type DashboardView = typeof DASHBOARD_VIEWS[number];
+function dashboardViewSnapshot(fallback: DashboardView): DashboardView {
+  const hash = window.location.hash.slice(1);
+  return DASHBOARD_VIEWS.includes(hash as DashboardView) ? hash as DashboardView : fallback;
+}
+function subscribeDashboardView(onChange: () => void) {
+  window.addEventListener("hashchange", onChange);
+  return () => window.removeEventListener("hashchange", onChange);
+}
 
 const MAX_DIAGNOSTIC_PREVIEW_CHARS = 64 * 1024;
 
@@ -408,6 +433,7 @@ function connectionLabel(connectionType: string, t: Translator): string {
 }
 
 export default function DashboardClient({
+  initialView = "home",
   initialAgents,
   initialPrinters,
   initialJobs,
@@ -417,6 +443,7 @@ export default function DashboardClient({
   canReadBillingUsage,
   diagnosticActorScope,
 }: {
+  initialView?: DashboardView;
   initialAgents: Agent[];
   initialPrinters: Printer[];
   initialJobs: Job[];
@@ -437,7 +464,7 @@ export default function DashboardClient({
   const [jobsError, setJobsError] = useState<string | null>(null);
   const [jobsRetryTick, setJobsRetryTick] = useState(0);
   const router = useRouter();
-  const { t, tc, locale, formatNumber, formatDate, formatRelativeTime, formatDateTime } = useI18n();
+  const { t, tc, locale, formatNumber, formatRelativeTime, formatDateTime } = useI18n();
 
 
   const [prevAgents, setPrevAgents] = useState(initialAgents);
@@ -498,15 +525,23 @@ export default function DashboardClient({
   const [billingState, setBillingState] = useState(() => ({
     authority: { canReadBillingUsage, diagnosticActorScope },
     usage: null as BillingUsage | null,
+    subscription: null as DashboardSubscriptionSummary | null,
     error: false,
   }));
   const billingAuthority = billingState.authority;
   const billingScopeMatches = billingAuthority.canReadBillingUsage === canReadBillingUsage && billingAuthority.diagnosticActorScope === diagnosticActorScope;
   if (!billingScopeMatches) {
-    setBillingState({ authority: { canReadBillingUsage, diagnosticActorScope }, usage: null, error: false });
+    setBillingState({ authority: { canReadBillingUsage, diagnosticActorScope }, usage: null, subscription: null, error: false });
   }
+  const view = React.useSyncExternalStore(subscribeDashboardView, () => dashboardViewSnapshot(initialView), () => initialView);
+  const subscription = canReadBillingUsage && billingScopeMatches ? billingState.subscription : null;
   const billingUsage = canReadBillingUsage && billingScopeMatches ? billingState.usage : null;
   const billingUsageError = canReadBillingUsage && billingScopeMatches && billingState.error;
+  useEffect(() => {
+    // Only the authoritative manual lifecycle redirects. An absent/failed
+    // response or an active invited membership never starts onboarding.
+    if (subscription && subscription.customerState !== "active") router.replace("/onboarding");
+  }, [subscription, router]);
   // Start with a first read on mount; no synchronous setState inside an effect.
   const [billingRefreshTick, setBillingRefreshTick] = useState(1);
   const billingForbiddenScopeRef = React.useRef<string | null>(null);
@@ -613,7 +648,19 @@ export default function DashboardClient({
     }
     const result = await operation();
     if (!result.ok) {
-      if (result.status === 401) router.replace("/login?next=%2Fdashboard");
+      if (result.status === 401) {
+        router.replace("/login?next=%2Fdashboard");
+        throw new Error(t("errors.sessionExpired"));
+      }
+      if (result.status === 403 && result.code === "WORKSPACE_REAUTHENTICATION_REQUIRED") {
+        // This result came from the directly invoked workspace Server Action.
+        // It has no HTTP policy header; announce the same UI-only notice and
+        // leave the failed operation for an explicit later user action.
+        try {
+          if (typeof window !== "undefined") window.dispatchEvent(new Event(WORKSPACE_REAUTHENTICATION_EVENT));
+        } catch { /* A notification failure cannot retry or change the result. */ }
+        throw new Error(t("workspaceSecurity.required"));
+      }
       throw new Error(result.error ?? t(apiMessageKey(result.code, result.status, "errors.operationFailed")));
     }
     return result.data;
@@ -738,7 +785,10 @@ export default function DashboardClient({
       try {
         // The subscription-status endpoint returns 200 even when no plan is
         // configured. Never request restricted quota usage without a plan.
-        const result = await fetchDashboardBillingUsage<BillingUsage>(fetchWithTimeout, controller.signal);
+        const result = await fetchDashboardBillingUsage<BillingUsage>(fetchWithTimeout, controller.signal, (subscription) => {
+          if (controller.signal.aborted) return;
+          setBillingState((current) => current.authority === billingAuthority ? { ...current, subscription } : current);
+        });
         if (result.kind === "unsubscribed") {
           update(null, false);
         } else if (result.kind === "forbidden") {
@@ -1180,10 +1230,10 @@ export default function DashboardClient({
   const jobTabLabels: Record<string, string> = {
     all: t("job.filter.all"),
     active: t("job.filter.inFlight"),
-    queued: t("job.filter.queued"),
-    success: t("job.filter.delivered"),
+    queued: t("v4.experience.job.waiting"),
+    success: t("v4.experience.job.sent"),
     failed: t("job.filter.failed"),
-    unknown: t("job.filter.unknown"),
+    unknown: t("v4.experience.job.review"),
     expired: t("job.filter.expired"),
   };
 
@@ -1355,8 +1405,35 @@ export default function DashboardClient({
 
   return (
     <div className="yw-gateway-dashboard space-y-6">
+      <nav aria-label={t("nav.consoleNavigation")} className="flex flex-wrap gap-2 rounded-xl border border-edge bg-surface p-2">
+        {DASHBOARD_VIEWS.map((item) => <a key={item} href={`#${item}`} aria-current={view === item ? "page" : undefined}
+          className={`inline-flex min-h-11 items-center rounded-lg px-4 text-sm font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/35 ${view === item ? "bg-brand-subtle text-brand-subtle-text" : "text-ink-2 hover:bg-surface-2"}`}>
+          {t(item === "home" ? "v4.experience.home" : item === "printers" ? "desktop.nav.printers" : item === "agents" ? "dashboard.tab.agents" : "v4.experience.activity")}
+        </a>)}
+      </nav>
+      {view === "home" && <Card className="space-y-5 p-5 sm:p-6">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="min-w-0"><h2 className="text-xl font-semibold text-ink">{t("v4.experience.health.title")}</h2><p className="mt-2 text-sm leading-relaxed text-ink-3">{t("v4.experience.health.body")}</p></div>
+          {canReadBillingUsage && <StatusBadge tone={subscription?.customerState === "active" ? "ok" : "warn"} label={subscription ? t(`v4.experience.subscription.${subscription.customerState}`) : t("v4.experience.health.unknown")} />}
+        </div>
+        {subscription?.currentPeriodEnd && <p className="text-sm text-ink-3">{t("v4.experience.subscription.ends", { date: formatManualCalendarDate(subscription.currentPeriodEnd, locale) ?? t("common.notAvailable") })}</p>}
+        <div className="flex flex-wrap gap-3">
+          {subscription && subscription.customerState !== "active" ? <Button href="/onboarding" variant="primary">{t("v4.experience.health.manage")}</Button> : kpis.totalAgents === 0 && canMutate.agentsPair ? <Button variant="primary" onClick={() => { setMessage(null); setRegisterOpen(true); }}>{t("v4.experience.health.none")}</Button> : <Button href="#printers" variant="primary">{t(kpis.onlinePrinters > 0 ? "v4.experience.health.ready" : "v4.experience.health.review")}</Button>}
+          <Button href="/api-keys" variant="secondary">{t("v4.experience.connection")}</Button>
+          <Button href="#jobs" variant="secondary">{t("v4.experience.activity")}</Button>
+        </div>
+        <details className="rounded-lg border border-edge p-4" open={kpis.totalAgents === 0}>
+          <summary className="min-h-8 cursor-pointer font-semibold text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/35">{t("v4.experience.setup.title")}</summary>
+          <p className="mt-2 text-sm text-ink-3">{t("v4.experience.setup.body")}</p>
+          <ol className="mt-4 grid gap-3 sm:grid-cols-3">
+            <li className="rounded-lg bg-surface-2 p-3"><a href="#agents" className="inline-flex min-h-11 items-center font-semibold text-brand underline">1. {t("v4.experience.setup.pair")}</a><p className="text-sm text-ink-3">{t("v4.experience.setup.pairBody")}</p></li>
+            <li className="rounded-lg bg-surface-2 p-3"><a href="#printers" className="inline-flex min-h-11 items-center font-semibold text-brand underline">2. {t("v4.experience.setup.verify")}</a><p className="text-sm text-ink-3">{t("v4.experience.setup.verifyBody")}</p></li>
+            <li className="rounded-lg bg-surface-2 p-3"><Button href="/api-keys" variant="ghost">3. {t("v4.experience.connection")}</Button><p className="text-sm text-ink-3">{t("v4.experience.setup.odooBody")}</p></li>
+          </ol>
+        </details>
+      </Card>}
       {/* ── Fleet summary ─────────────────────────────────────────── */}
-      <section
+      {view === "home" && <section
         aria-label={t("dashboard.fleetSummary")}
         className="yw-fleet-board rounded-2xl border border-edge bg-surface shadow-card"
       >
@@ -1368,7 +1445,7 @@ export default function DashboardClient({
             {kpis.totalAgents > 0 && kpis.onlineAgents === kpis.totalAgents ? (
               <span className="inline-flex items-center gap-1.5 border border-ok-edge bg-ok-bg text-ok rounded-sm px-2 py-0.5 text-2xs font-[600]">
                 <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-ok-solid" />
-                {t("dashboard.fleetNominal")}
+                {t("agent.allReachable")}
               </span>
             ) : (
               <span className="inline-flex items-center gap-1.5 rounded-sm border border-warn-edge bg-warn-bg px-2 py-0.5 text-2xs font-[600] text-warn">
@@ -1415,14 +1492,10 @@ export default function DashboardClient({
             meta={t("dashboard.jobsInFlightMeta")}
           />
           <KpiCell
-            label={t("dashboard.deliveryRate")}
-            value={kpis.successRate === null ? "—" : `${kpis.successRate}%`}
-            tone={kpis.successRate === null ? "neutral" : kpis.successRate >= 95 ? "ok" : kpis.successRate >= 80 ? "warn" : "bad"}
-            meta={t("dashboard.deliveredOf", {
-                completed: formatNumber(kpis.completedJobs),
-                total: formatNumber(kpis.resolvedJobs),
-              })}
-            progress={kpis.successRate ?? undefined}
+            label={t("v4.experience.health.attention")}
+            value={jobsError ? "—" : jobs.filter((job) => job.status === "failed" || job.status === "expired").length}
+            tone={jobs.some((job) => job.status === "failed" || job.status === "expired") ? "warn" : "neutral"}
+            meta={t("v4.experience.health.sample")}
           />
         </div>
         </div>
@@ -1431,9 +1504,9 @@ export default function DashboardClient({
           <div className="flex flex-col gap-3 border-t border-edge-subtle px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
-                <span className="label-caps">{t("dashboard.printCredits")}</span>
+                <span className="label-caps">{t("v4.experience.health.monthly")}</span>
                 <span className="text-sm font-[600] tabular text-ink">
-                  {formatNumber(prints.used)}
+                  {prints.remaining === "unlimited" ? t("billing.unlimited") : formatNumber(prints.remaining)}
                   {prints.limit !== "unlimited" && (
                     <span className="font-[500] text-ink-3"> / {formatNumber(prints.limit)}</span>
                   )}
@@ -1441,9 +1514,10 @@ export default function DashboardClient({
                 {prints.limit === "unlimited" && <StatusBadge tone="ok" label={t("billing.unlimited")} size="sm" />}
                 {printsLimitReached && <StatusBadge tone="bad" label={t("billing.limitReached")} size="sm" />}
               </div>
+              <p className="mt-1 text-xs text-ink-3">{t("v4.experience.health.monthlyBody")}</p>
               <p className="mt-0.5 text-xs text-ink-3">
                 {billingUsage?.plan?.name ? `${billingUsage.plan.name} · ` : ""}
-                {prints.periodEnd ? t("billing.resetsOnDate", { date: formatDate(prints.periodEnd) }) : t("billing.currentPeriod")}
+                {prints.periodEnd ? t("billing.resetsOnDate", { date: formatManualCalendarDate(prints.periodEnd, locale) ?? t("common.notAvailable") }) : t("billing.currentPeriod")}
               </p>
             </div>
             <div className="flex items-center gap-3 sm:shrink-0">
@@ -1456,12 +1530,12 @@ export default function DashboardClient({
                 />
               )}
               <Button variant="ghost" size="sm" href="/billing" icon={<ArrowUpRight className="h-3.5 w-3.5" />}>
-                {t("billing.manageBilling")}
+                {t("v4.experience.health.manage")}
               </Button>
             </div>
           </div>
         )}
-      </section>
+      </section>}
 
       {/* ── Notices ───────────────────────────────────────────────── */}
       {message && (
@@ -1506,7 +1580,7 @@ export default function DashboardClient({
           title={t("billing.limitReachedTitle")}
           action={
             <Button variant="primary" size="sm" href="/billing">
-              {t("limit.upgradePlan")}
+              {t("v4.experience.health.manage")}
             </Button>
           }
         >
@@ -1536,8 +1610,8 @@ export default function DashboardClient({
       )}
 
       {/* ── Fleet ─────────────────────────────────────────────────── */}
-      <div className="grid min-w-0 grid-cols-1 items-start gap-5 xl:grid-cols-12">
-        <Card className="overflow-hidden xl:col-span-4">
+      {(view === "agents" || view === "printers") && <div className="grid min-w-0 grid-cols-1 items-start gap-5">
+        {view === "agents" && <Card className="overflow-hidden">
           {/* Heading literals ("Agents" / "Printers" / "Recent Print Jobs") are part of the
               operator vocabulary contracts asserted by the integration suite. */}
           <div className="flex flex-col gap-3 border-b border-edge-subtle px-4 py-3.5 sm:flex-row sm:items-center sm:justify-between">
@@ -1558,7 +1632,7 @@ export default function DashboardClient({
             {canMutate.agentsPair && <Button
               variant="primary"
               size="sm"
-              onClick={() => setRegisterOpen(true)}
+              onClick={() => { setMessage(null); setRegisterOpen(true); }}
               icon={<Plus className="h-3.5 w-3.5" />}
               disabled={busy || databaseError !== null}
               className="shrink-0"
@@ -1573,7 +1647,7 @@ export default function DashboardClient({
               title={t("empty.agents.title")}
               description={t("agent.registerEmptyDescription")}
               action={
-                canMutate.agentsPair ? <Button variant="primary" size="sm" onClick={() => setRegisterOpen(true)} disabled={busy || databaseError !== null} icon={<Plus className="h-3.5 w-3.5" />}>
+                canMutate.agentsPair ? <Button variant="primary" size="sm" onClick={() => { setMessage(null); setRegisterOpen(true); }} disabled={busy || databaseError !== null} icon={<Plus className="h-3.5 w-3.5" />}>
                   {t("agent.register")}
                 </Button> : undefined
               }
@@ -1618,7 +1692,7 @@ export default function DashboardClient({
                         {agent.lifecycle !== "active" && (
                           <>
                             <span aria-hidden>·</span>
-                            <span className="font-[550] capitalize text-warn">{agent.lifecycle}</span>
+                            <span className="font-[550] capitalize text-warn">{lifecycleLabel(t, agent.lifecycle)}</span>
                           </>
                         )}
                       </div>
@@ -1669,9 +1743,9 @@ export default function DashboardClient({
               </div>
             </div>
           )}
-        </Card>
+        </Card>}
 
-        <Card className="overflow-hidden xl:col-span-8">
+        {view === "printers" && <Card className="overflow-hidden">
           <div className="flex flex-col gap-3 border-b border-edge-subtle px-4 py-3.5 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex min-w-0 items-start gap-2.5">
               <PrinterIcon className="mt-0.5 h-4 w-4 shrink-0 text-ink-3" aria-hidden />
@@ -1898,11 +1972,11 @@ export default function DashboardClient({
               </Button>
             </div>
           )}
-        </Card>
-      </div>
+        </Card>}
+      </div>}
 
       {/* ── Recent print jobs ─────────────────────────────────────── */}
-      <Card className="overflow-hidden">
+      {view === "jobs" && <Card className="overflow-hidden">
         <CardHeader
           title={t("dashboard.tab.jobs")}
           subtitle={t("job.subtitle")}
@@ -2020,11 +2094,11 @@ export default function DashboardClient({
                             {job.destination ?? "—"}
                           </div>
                           <div className="mt-0.5 text-2xs text-ink-4">
-                            {job.documentType?.replace(/_/g, " ") ?? t("job.unknownType")}
+                            {documentTypeLabel(job.documentType, locale)}
                           </div>
                         </td>
                         <td>
-                          <StatusBadge tone={sharedJobTone(job.status, outcome)} label={jobDisplayLabel(job.status, job.error, locale)} size="sm" />
+                          <StatusBadge tone={sharedJobTone(job.status, outcome)} label={jobDisplayLabel(job.status, job.error, locale, job)} size="sm" />
                         </td>
                         <td className="text-end text-sm text-ink-3" title={formatDateTime(job.createdAt)}>
                           {formatRelativeTime(job.createdAt)}
@@ -2066,14 +2140,14 @@ export default function DashboardClient({
                         </span>
                         <span className="mt-0.5 block truncate font-mono text-2xs text-ink-3">{shortId(job.id)}</span>
                       </button>
-                      <StatusBadge tone={sharedJobTone(job.status, outcome)} label={jobDisplayLabel(job.status, job.error, locale)} size="sm" />
+                      <StatusBadge tone={sharedJobTone(job.status, outcome)} label={jobDisplayLabel(job.status, job.error, locale, job)} size="sm" />
                     </div>
                     <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-ink-3">
                       <span>{job.printerName ?? printer?.name ?? t("job.unknownPrinter")}</span>
                       <span aria-hidden>·</span>
                       <span title={formatDateTime(job.createdAt)}>{formatRelativeTime(job.createdAt)}</span>
                       <span aria-hidden>·</span>
-                      <span>{job.documentType?.replace(/_/g, " ") ?? t("job.unknownType")}</span>
+                      <span>{documentTypeLabel(job.documentType, locale)}</span>
                     </div>
                     <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
                       <Button size="sm" variant="secondary" onClick={() => openJobDetails(job)} icon={<Eye className="h-3.5 w-3.5" />}>
@@ -2103,7 +2177,7 @@ export default function DashboardClient({
             {t("job.refreshing")}
           </div>
         )}
-      </Card>
+      </Card>}
 
       {/* ── Register agent ────────────────────────────────────────── */}
       <Modal
@@ -2141,6 +2215,7 @@ export default function DashboardClient({
           )
         }
       >
+        {message?.type === "err" && <Callout tone="bad" className="mb-4">{message.text}</Callout>}
         {activePairing ? (
           <div className="space-y-4">
             <div className="rounded-sg border border-edge-accent bg-brand-subtle px-4 py-4">
@@ -2194,7 +2269,6 @@ export default function DashboardClient({
                 onChange={(e) => setAgentName(e.target.value)}
                 placeholder={t("agent.namePlaceholder")}
                 maxLength={80}
-                autoFocus
                 disabled={busy}
               />
             </Field>
@@ -2210,7 +2284,7 @@ export default function DashboardClient({
         open={selectedJob !== null}
         onClose={() => closeJobDetails()}
         title={selectedJobView ? t("job.detailTitle", { id: selectedJobView.id.slice(0, 12) }) : t("job.job")}
-        description={selectedJobView ? `${jobDisplayLabel(selectedJobView.status, selectedJobView.error, locale)} · ${formatDateTime(selectedJobView.createdAt)}` : undefined}
+        description={selectedJobView ? `${jobDisplayLabel(selectedJobView.status, selectedJobView.error, locale, selectedJobView)} · ${formatDateTime(selectedJobView.createdAt)}` : undefined}
         wide
         footer={
           <>
@@ -2238,17 +2312,18 @@ export default function DashboardClient({
       >
         {selectedJobView && (
           <div className="space-y-5">
+            <FileOutputDetails job={selectedJobView} />
             <div className="flex flex-wrap items-center gap-2">
               <StatusBadge
                 tone={sharedJobTone(selectedJobView.status, deriveOutcome(selectedJobView.status, selectedJobView.error))}
-                label={jobDisplayLabel(selectedJobView.status, selectedJobView.error, locale)}
+                label={jobDisplayLabel(selectedJobView.status, selectedJobView.error, locale, selectedJobView)}
               />
               <span className="font-mono text-xs text-ink-4">{selectedJobView.id}</span>
               <CopyButton value={selectedJobView.id} label={t("job.copyJobId")} />
             </div>
 
             <p className="text-sm leading-relaxed text-ink-2">
-              {jobGuidance(selectedJobView.status, deriveOutcome(selectedJobView.status, selectedJobView.error), locale)}
+              {selectedJobView.outputMedium === "file" ? t("printer.verification.file") : jobGuidance(selectedJobView.status, deriveOutcome(selectedJobView.status, selectedJobView.error), locale)}
             </p>
 
             {/* Progress without paper evidence is not a terminal duplicate-print warning. */}
@@ -2264,7 +2339,7 @@ export default function DashboardClient({
               const classified = jobFailurePresentation(selectedJobView.error, locale);
               return (
                 <Callout tone="bad" title={classified?.title ?? t("job.reportedError")}>
-                  <span className="break-words text-sm">{classified?.guidance ?? selectedJobView.error}</span>
+                  <span className="break-words text-sm">{classified?.guidance ?? jobGuidance(selectedJobView.status, deriveOutcome(selectedJobView.status, selectedJobView.error), locale)}</span>
                 </Callout>
               );
             })()}
@@ -2273,7 +2348,7 @@ export default function DashboardClient({
               rows={[
                 { label: t("job.printer"), value: selectedJobView.printerName ?? printerById.get(selectedJobView.printerId)?.name ?? selectedJobView.printerId },
                 { label: t("printer.agent"), value: selectedJobView.agentName ?? agentById.get(selectedJobView.agentId)?.name ?? selectedJobView.agentId },
-                { label: t("job.document"), value: selectedJobView.documentType?.replace(/_/g, " ") ?? "—" },
+                { label: t("job.document"), value: documentTypeLabel(selectedJobView.documentType, locale) },
                 { label: t("job.destination"), value: selectedJobView.destination ?? "—" },
                 { label: t("job.deliveryAttempts"), value: String(selectedJobView.deliveryAttempts ?? 0) },
                 { label: t("job.retries"), value: String(selectedJobView.retries ?? 0) },
@@ -2297,6 +2372,7 @@ export default function DashboardClient({
                 <ChevronRight className="h-4 w-4 text-ink-4 transition-transform duration-200 rtl:-scale-x-100 group-open:rotate-90 rtl:group-open:-rotate-90" aria-hidden />
               </summary>
               <div className="border-t border-edge-subtle p-3">
+                {selectedJobView.error && <pre dir="ltr" className="mb-3 whitespace-pre-wrap break-words text-xs text-ink-3">{selectedJobView.error}</pre>}
                 {!selectedJobPayloadLoading && !selectedJobPayloadError && (
                   <div className="mb-2 flex justify-end">
                     <CopyButton
@@ -2350,12 +2426,27 @@ export default function DashboardClient({
               { label: t("desktop.drawer.lifecycle"), value: lifecycleLabel(t, selectedPrinterView.lifecycle) },
               { label: t("printer.connection"), value: connectionLabel(selectedPrinterView.connectionType, t) },
               { label: t("desktop.drawer.protocol"), value: selectedPrinterView.protocol ?? "—" },
-              { label: t("desktop.drawer.address"), value: <Mono>{String(selectedPrinterView.config?.spooler_name ?? selectedPrinterView.config?.address ?? selectedPrinterView.config?.ip ?? "—")}</Mono> },
+              { label: t("desktop.drawer.address"), value: <Mono>{String(selectedPrinterView.config?.output_profile_id ?? selectedPrinterView.config?.spooler_name ?? selectedPrinterView.config?.address ?? selectedPrinterView.config?.ip ?? "—")}</Mono> },
               { label: t("desktop.drawer.stableId"), value: <CopyButton value={selectedPrinterView.id} label={selectedPrinterView.id} /> },
               { label: t("agent.lastSeen"), value: formatDateTime(selectedPrinterView.lastSeenAt) },
               { label: t("desktop.drawer.observed"), value: printerStatusDetail(selectedPrinterView, locale) || "—" },
             ]} />
             <div className="space-y-2"><div className="text-xs text-ink-3">{t("printer.languages")}</div><PrinterLanguageChips printer={selectedPrinterView} /></div>
+            <PrinterVerificationDetails printer={selectedPrinterView} />
+            <PrinterGeometryDetails printer={selectedPrinterView} managerHint={!canMutate.printers} />
+            {canMutate.printers && selectedPrinterView.lifecycle !== "retired" && <PrinterGeometryProfileEditor
+              key={selectedPrinterView.id}
+              printer={selectedPrinterView}
+              onSave={async (profile) => {
+                const response = await fetchWithTimeout(`/api/printers/${encodeURIComponent(selectedPrinterView.id)}`, {
+                  method: "PATCH", headers: { "Content-Type": "application/json" }, credentials: "include",
+                  body: JSON.stringify({ config: { geometry_profile: profile } }),
+                });
+                const body = await response.json();
+                if (!response.ok) throw new Error(typeof body.error === "string" ? body.error : t("printer.geometry.saveFailed"));
+                setPrinters((current) => current.map((printer) => printer.id === selectedPrinterView.id ? { ...printer, ...body } : printer));
+                void refreshData();
+              }} />}
             {canMutate.printersTest && <Button variant="secondary" disabled={selectedPrinterView.sharedWithGateway === false} onClick={() => { setSelectedPrinter(null); setCertifyPrinter(selectedPrinterView); }} icon={<ShieldCheck className="h-4 w-4" />}>{t("printer.certify")}</Button>}
           </div>
         )}

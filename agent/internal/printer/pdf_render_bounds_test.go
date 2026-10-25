@@ -18,3 +18,15 @@ func TestPDFRenderBoundsRejectInvalidSizes(t *testing.T) {
 		}
 	}
 }
+
+func TestRenderBoundsPreserveDenserDriverAxis(t *testing.T) {
+	for _, tc := range [][6]int{{576, 3976, 203, 203, 576, 3976}, {850, 3470, 300, 300, 850, 3470}, {1700, 3470, 600, 300, 1700, 6940}, {1700, 6940, 600, 600, 1700, 6940}} {
+		w, h, err := renderBoundsForDPI(tc[0], tc[1], tc[2], tc[3])
+		if err != nil || w != tc[4] || h != tc[5] {
+			t.Fatalf("driver %v produced %dx%d: %v", tc, w, h, err)
+		}
+	}
+	if _, _, err := renderBoundsForDPI(576, 3000, 0, 203); err == nil {
+		t.Fatal("unknown DPI accepted")
+	}
+}

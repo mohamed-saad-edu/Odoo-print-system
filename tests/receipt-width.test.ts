@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import fixtures from "../contracts/printer-geometry-fixtures.json";
 import { receiptPaperWidthMM, receiptRasterWidthDots } from "../src/lib/receipt-width";
 
 describe("receipt raster print width comes from the actual device rather than browser DPI", () => {
@@ -11,49 +12,31 @@ describe("receipt raster print width comes from the actual device rather than br
       expect(receiptPaperWidthMM(caps)).toBeNull();
     }
   });
-  it("prefers true printable dots over nominal millimetres", () => {
-    expect(receiptRasterWidthDots({ max_paper_width: 512, paper_width_mm: 80, dpi: 203 })).toBe(512);
-    expect(receiptRasterWidthDots({ max_paper_width: 576, paper_width_mm: 80, dpi: 180 })).toBe(576);
-    expect(receiptRasterWidthDots({ max_paper_width: "384" })).toBe(384);
-  });
-  it("understands 180dpi vs 203dpi 58/80mm paper without claiming the same width", () => {
-    expect(receiptRasterWidthDots({ paper_width_mm: 80, dpi: 180 })).toBe(512);
-    expect(receiptRasterWidthDots({ paper_width_mm: 80, dpi: 203 })).toBe(576);
-    expect(receiptRasterWidthDots({ paper_width_mm: 58, dpi: 180 })).toBe(360);
-    expect(receiptRasterWidthDots({ paper_width_mm: 58, dpi: 203 })).toBe(384);
-  });
-  it("does not guess from unknown widths, malicious strings, or unsupported resolution", () => {
-    for (const v of [{ max_paper_width: 999999 }, { max_paper_width: "-1" },
-      { paper_width_mm: 77 }, {}, null, { paper_widths: [58, "bad"] }]) {
-      expect(receiptRasterWidthDots(v)).toBeNull();
+  it("reads each verified fixture without a 576-dot ceiling", () => {
+    for (const fixture of fixtures.geometryCases.filter((entry) => entry.valid)) {
+      expect(receiptRasterWidthDots({ geometry: fixture.geometry })).toBe(fixture.rasterWidth);
     }
   });
-  it("chooses the smallest advertised paper when no roll is actively selected", () => {
-    expect(receiptRasterWidthDots({ paper_widths: [80, 58], dpi: 203 })).toBe(384);
-    expect(receiptRasterWidthDots({ paper_widths: [80, 58], dpi: 180 })).toBe(360);
-  });
-  it("rejects absent or malformed roll dimensions rather than treating null as zero", () => {
-    expect(receiptRasterWidthDots({ paper_width_mm: null, paper_widths: [80], dpi: 203 })).toBe(576);
-    expect(receiptRasterWidthDots({ paper_width_mm: "", paper_widths: [58], dpi: 203 })).toBe(384);
-    expect(receiptRasterWidthDots({ paper_widths: [null, 80], dpi: 203 })).toBeNull();
-    expect(receiptRasterWidthDots({ max_paper_width: " 384 " })).toBe(384);
-    expect(receiptRasterWidthDots({ max_paper_width: "3.84e2" })).toBeNull();
+
+  it("requires deliberate Agent migration of legacy dot labels", () => {
+    for (const value of [58, 80, 128, 384, 512, 576, 832, 850, 1664, 1700, "384"]) {
+      expect(receiptRasterWidthDots({ max_paper_width: value })).toBeNull();
+    }
   });
 
-  it.each(["dpi", "print_dpi"])("ignores non-numeric %s metadata without invoking object coercion", (field) => {
+  it("does not guess from nominal rolls, advertised media or DPI", () => {
+    for (const caps of [{ paper_width_mm: 80, dpi: 180 }, { paper_width_mm: 58, dpi: 203 },
+      { paper_widths: [80, 58], dpi: 600 }, { paper_widths: [80], dpi: 203 },
+      { paper_width_mm: "80", dpi: "203" }, {}, null]) {
+      expect(receiptRasterWidthDots(caps)).toBeNull();
+    }
+  });
+
+  it("never invokes object coercion on untrusted observation bags", () => {
     const invalid = JSON.parse('{"toString":false,"valueOf":false}');
-    expect(receiptRasterWidthDots({ paper_width_mm: 80, [field]: invalid })).toBe(512);
-  });
-
-  it.each(["paper_width_mm", "paper_widths"])("rejects non-numeric %s metadata without throwing", (field) => {
-    const invalid = JSON.parse('{"toString":false,"valueOf":false}');
-    const value = field === "paper_widths" ? [80, invalid] : invalid;
-    expect(receiptRasterWidthDots({ dpi: 203, [field]: value })).toBeNull();
-  });
-
-  it("does not manufacture a paper width from an array-valued observation", () => {
-    expect(receiptRasterWidthDots({ paper_width_mm: [80], dpi: 203 })).toBeNull();
-    expect(receiptRasterWidthDots({ paper_widths: [[58]], dpi: 203 })).toBeNull();
-    expect(receiptRasterWidthDots({ paper_width_mm: "80", dpi: "203" })).toBe(576);
+    for (const caps of [{ dpi: invalid, paper_width_mm: 80 }, { paper_width_mm: invalid },
+      { paper_widths: [invalid] }, { geometry: invalid }, { geometry: [] }, { paper_width_mm: [80] }]) {
+      expect(receiptRasterWidthDots(caps)).toBeNull();
+    }
   });
 });

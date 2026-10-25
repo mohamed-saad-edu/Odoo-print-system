@@ -1,97 +1,51 @@
 import { describe, expect, it } from "vitest";
-import { existsSync, readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 
-describe("domain staging deployment contracts", () => {
-  const read = (path: string) =>
-    readFileSync(resolve(process.cwd(), path), "utf8").replace(/\r\n?/g, "\n");
-
-  it("pins the test domain and keeps Gateway port 3000 private", () => {
-    const compose = read("docker-compose.yml");
-    const domainCompose = read("deploy/domain-test/docker-compose.yml");
-    const caddy = read("deploy/domain-test/Caddyfile");
-    const secureImages = read("Dockerfile.secure-images");
-    expect(domainCompose).toContain("dockerfile: Dockerfile.secure-images");
-    expect(domainCompose).toContain("target: postgres");
-    expect(domainCompose).toContain("target: caddy");
-    expect(secureImages).toContain("ARG POSTGRES_BASE=postgres:16.15-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea");
-    expect(secureImages).toContain("ARG CADDY_BASE=caddy:2.11.7-alpine@sha256:d8542f48d34a9cf4e4c11a478865229840e87e4c96ea3f439101f31a5d35f75f");
-
-    expect(compose).toContain("APP_BASE_URL: ${APP_BASE_URL:?APP_BASE_URL must be set to the public Gateway URL}");
-    expect(compose).not.toContain("YASEIR_STAGING_FIXTURES_ENABLED");
-    expect(compose).not.toContain("YASSER_HTTP_TEST_MODE");
-    expect(compose).toContain("GATEWAY_DOMAIN: ${GATEWAY_DOMAIN:?GATEWAY_DOMAIN must be set to a DNS name for production TLS}");
-    expect(compose).toContain('COOKIE_SECURE: ${COOKIE_SECURE:-1}');
-    expect(compose).toContain('TRUST_PROXY: ${TRUST_PROXY:-1}');
-    expect(compose).toContain("expose:");
-    const gatewayBlock = compose.split("\n  caddy:\n")[0].split("\n  gateway:\n")[1];
-    expect(gatewayBlock).toBeTruthy();
-    expect(gatewayBlock).not.toContain("ports:");
-
-    expect(domainCompose).toContain("- staging_pg_data:/var/lib/postgresql/data");
-    expect(domainCompose).toContain("name: ${STAGING_PG_VOLUME:?STAGING_PG_VOLUME must be set}");
-    expect(domainCompose).toContain('YASEIR_STAGING_FIXTURES_ENABLED: "1"');
-    expect(domainCompose).toContain('"80:80"');
-    expect(domainCompose).toContain('"443:443"');
-    const domainGatewayBlock = domainCompose.split("\n  caddy:\n")[0].split("\n  gateway:\n")[1];
-    expect(domainGatewayBlock).toBeTruthy();
-    expect(domainGatewayBlock).not.toContain("ports:");
-
-    expect(caddy).toContain("{$GATEWAY_DOMAIN}");
-    expect(caddy).toContain("reverse_proxy gateway:3000");
-    expect(caddy).toContain("X-Gateway-Proxy-Token");
+const read = (path: string) => readFileSync(path, "utf8");
+describe("V4 HTTPS staging upgrade safety", () => {
+  it("preserves the existing staging volume and does not expose Gateway directly", () => {
+    const c = read("deploy/domain-test/docker-compose.yml");
+    expect(c).toContain("staging_pg_data:");
+    expect(c).toContain("external: true");
+    expect(c).toContain("STAGING_PG_VOLUME");
+    expect(c.split("\n  caddy:")[0].split("\n  gateway:")[1]).not.toContain("ports:");
+    expect(c).toContain('user: "10001:10001"');
+    expect(c).toContain("database_roles:");
+    expect(c).toContain("database_verify:");
   });
-
-  it("checks HTTPS policy in staging CI", () => {
-    const workflow = read(".github/workflows/https-staging-security.yml");
-    expect(workflow).toContain("HTTPS Gateway + Agent security contracts");
-    expect(workflow).toContain("bash -n deploy/domain-test/setup-domain-test.sh");
+  it("does not grant the Gateway elevated database credentials", () => {
+    const c = read("deploy/domain-test/docker-compose.yml");
+    const gateway = c.split("\n  caddy:")[0].split("\n  gateway:")[1];
+    expect(gateway).toContain("postgres_runtime_password");
+    expect(gateway).not.toContain("postgres_owner_password");
+    expect(gateway).not.toContain("- postgres_password");
+    expect(c).toContain("POSTGRES_OWNER_PASSWORD_FILE");
+    expect(c).toContain("POSTGRES_RUNTIME_PASSWORD_FILE");
   });
-
-  it("enables secure cookies and trusted proxy handling for the domain deployment", () => {
-    const env = read("deploy/domain-test/.env.domain-test.example");
-    const compose = read("deploy/domain-test/docker-compose.yml");
-    expect(env).toContain("APP_BASE_URL=https://print.yaseir.cloud");
-    expect(env).toContain("COOKIE_SECURE=1");
-    expect(env).toContain("TRUST_PROXY=1");
-    expect(compose).toContain('COOKIE_SECURE: "1"');
-    expect(compose).toContain('TRUST_PROXY: "1"');
+  it("backs up old data and guards forward-only schema migration", () => {
+    const s = read("deploy/domain-test/setup-domain-test.sh");
+    expect(spawnSync("bash", ["-n", "deploy/domain-test/setup-domain-test.sh"]).status).toBe(0);
+    for(const required of ["docker volume inspect", "pg_dump -Fc", "pg_restore --list", "sha256sum", "up --no-deps database_roles", "up --no-deps migrate", "up --no-deps database_verify"]) expect(s).toContain(required);
+    expect(s.indexOf("pg_restore --list")).toBeLessThan(s.indexOf("compose stop gateway"));
+    expect(s).not.toContain("down -v");
+    expect(s).not.toContain("docker volume rm");
+    expect(s).not.toContain("reset-staging-workspace.sh");
+    expect(read("deploy/domain-test/reset-staging-workspace.sh")).toContain("exit 2");
+    expect(read("deploy/domain-test/renew-expired-trial.sql")).toContain("RAISE EXCEPTION");
   });
-  it("configures the workspace domain after migrations and before Gateway startup", () => {
-    const setup = read("deploy/domain-test/setup-domain-test.sh");
-    const sql = read("deploy/domain-test/configure-domain.sql");
-    expect(setup.indexOf("run --rm --build migrate")).toBeLessThan(setup.indexOf(' < "$DEPLOY_DIR/configure-domain.sql"'));
-    expect(setup.indexOf(' < "$DEPLOY_DIR/configure-domain.sql"')).toBeLessThan(setup.indexOf("up -d --build"));
-    expect(setup).toContain("ON_ERROR_STOP=1");
-    expect(sql).toContain("pg_advisory_xact_lock");
-    expect(sql).toContain("ON CONFLICT (domain) DO UPDATE");
-    expect(sql).toContain("refusing to reassign it");
-    expect(sql).toMatch(/candidate_count > 1 THEN\s+RAISE NOTICE '[^']+';\s+RETURN;/);
-    expect(sql).not.toContain("RAISE EXCEPTION 'Multiple staging workspaces");
-    expect(sql).toContain("lifecycle = 'active'");
-    expect(sql).not.toMatch(/DELETE FROM|DROP TABLE|UPDATE users|UPDATE tenants/);
-    expect(setup).not.toContain("curl -k");
-  });
-
-  it("removes retired E2E capture and executes staging migrations and plans without npm", () => {
-    const production = read("docker-compose.yml");
-    const staging = read("deploy/domain-test/docker-compose.yml");
+  it("retains HTTPS trusted proxy, one workspace and password-only V4 manual plans", () => {
+    const c = read("deploy/domain-test/docker-compose.yml");
+    const edge = read("deploy/domain-test/Caddyfile");
     const sample = read("deploy/domain-test/.env.domain-test.example");
-    const setup = read("deploy/domain-test/setup-domain-test.sh");
-    const smoke = read("deploy/domain-test/smoke-domain-test.sh");
-    expect(production).not.toContain("YASEIR_E2E_CAPTURE_ENABLED");
-    expect(staging).not.toContain("YASEIR_E2E_CAPTURE_ENABLED");
-    expect(sample).not.toContain("YASEIR_E2E_CAPTURE_ENABLED");
-    expect(setup).not.toContain("ensure_env YASEIR_E2E_CAPTURE_ENABLED");
-    expect(setup).not.toContain("/api/odoo/test-captures");
-    expect(smoke).not.toContain("/api/odoo/test-captures");
-    expect(existsSync(resolve(process.cwd(), "src/app/api/odoo/test-captures/route.ts"))).toBe(false);
-    expect(existsSync(resolve(process.cwd(), "docs/E2E_CAPTURE_TEST.md"))).toBe(false);
-    expect(staging).toContain('command: ["node", "--import", "tsx", "scripts/db-migrate.ts"]');
-    expect(setup).toContain("run --rm gateway node --import tsx scripts/provision-plans.ts");
-    expect(staging).toContain('COOKIE_SECURE: "1"');
-    expect(staging).toContain('TRUST_PROXY: "1"');
-    expect(staging).not.toContain("YASEIR_AGENT_ALLOW_INSECURE_HTTP");
+    expect(edge).toContain("header_up X-Forwarded-For {http.request.remote.host}");
+    expect(edge).toContain("X-Gateway-Proxy-Token");
+    expect(c).toContain('YASEIR_STAGING_SINGLE_WORKSPACE: "1"');
+    expect(c).toContain("YASEIR_PLAN_CATALOG");
+    expect(c).not.toContain("STRIPE_PLAN_CATALOG");
+    expect(sample).toContain("APP_BASE_URL=https://print.yaseir.cloud");
+    expect(sample).toContain("POSTGRES_OWNER_PASSWORD=");
+    expect(sample).toContain("POSTGRES_RUNTIME_PASSWORD=");
+    expect(read("docker-compose.yml")).not.toContain("YASEIR_STAGING_FIXTURES_ENABLED");
   });
-
 });

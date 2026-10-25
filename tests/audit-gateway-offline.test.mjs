@@ -9,7 +9,7 @@ import { EventEmitter } from "node:events";
 // Strip types from actual source, using only Node's bundled parser. Framework
 // typechecking still needs the project's dependencies and is a separate check.
 async function loadModule(file, globals = {}, select = (source) => source) {
-  const context = vm.createContext({ console, Date, Set, ...globals });
+  const context = vm.createContext({ console, Date, Set, process: { env: { NODE_ENV: "test" } }, ...globals });
   const modules = new Map();
   async function get(path) {
     if (modules.has(path)) return modules.get(path);
@@ -21,10 +21,18 @@ async function loadModule(file, globals = {}, select = (source) => source) {
       modules.set(path, loadedModule);
       return loadedModule;
     }
+    if (path.endsWith(".json")) {
+      const value = JSON.parse(await readFile(path, "utf8"));
+      const loadedModule = new vm.SyntheticModule(["default"], function () {
+        this.setExport("default", value);
+      }, { context, identifier: path });
+      modules.set(path, loadedModule);
+      return loadedModule;
+    }
     const source = select(await readFile(path, "utf8"), path);
     const loadedModule = new vm.SourceTextModule(stripTypeScriptTypes(source), { context, identifier: path });
     modules.set(path, loadedModule);
-    await loadedModule.link((name) => get(name.startsWith("node:") ? name : resolve(dirname(path), `${name}.ts`)));
+    await loadedModule.link((name) => get(name.startsWith("node:") ? name : resolve(dirname(path), name.endsWith(".json") ? name : `${name}.ts`)));
     return loadedModule;
   }
   const loadedModule = await get(resolve(file));
@@ -92,7 +100,7 @@ test("existing Gateway i18n checker passes against both real catalogs", async ()
   const logs = [];
   await loadModule("scripts/check-i18n.ts", {
     console: { log: (...args) => logs.push(args.join(" ")), error: (...args) => logs.push(args.join(" ")) },
-    process: { exit: (code) => { throw new Error(`i18n checker exited ${code}: ${logs.join("\n")}`); } },
+    process: { env: { NODE_ENV: "test" }, exit: (code) => { throw new Error(`i18n checker exited ${code}: ${logs.join("\n")}`); } },
   });
   assert.ok(logs.some((line) => line.includes("all catalogs are complete and consistent")), logs.join("\n"));
   console.log(logs.join("\n"));
@@ -121,14 +129,20 @@ test("desktop discovery preserves a failed Gateway refresh and uses translated o
   assert.equal(messages[0].text, "desktop.app.discoveryFound:1");
 });
 
-test("failed WebSocket handshake releases capacity and pending registration", async () => {
+test("failed WebSocket handshake releases capacity and pending registration", { timeout: 5000 }, async () => {
   const source = await readFile("src/server/ws.ts", "utf8");
   const start = source.indexOf("export function attachAgentWSS(");
   assert.ok(start >= 0);
   let reservations = 0, pending = 0, failures = 0;
+  let rejected;
+  const handshakeRejected = new Promise(resolve => { rejected = resolve; });
   class WSS extends EventEmitter {
     clients = new Set();
-    handleUpgrade() { throw new Error("invalid handshake"); }
+    handleUpgrade() {
+      assert.equal(reservations, 1);
+      assert.equal(pending, 1);
+      throw new Error("invalid handshake");
+    }
     close() { this.emit("close"); }
   }
   const api = await loadModule("src/server/ws.ts", {
@@ -144,13 +158,15 @@ test("failed WebSocket handshake releases capacity and pending registration", as
     markAgentSocketRegistrationPending: () => { pending++; },
     finishAgentSocketRegistrationPending: (_agent, ready) => { assert.equal(ready, false); pending--; },
     logUpgradeError: () => {}, logDebug: () => {},
-    writeWsHttpError: () => { failures++; },
+    writeWsHttpError: () => { failures++; rejected(); },
   }, () => source.slice(start));
   const server = new EventEmitter(), socket = new EventEmitter();
   const wss = api.attachAgentWSS(server, { enableJobNotifications: false });
   try {
-    const upgrade = server.listeners("upgrade")[0];
-    await upgrade({ url: "/api/agent/ws", headers: { authorization: "Bearer valid" } }, socket, Buffer.alloc(0));
+    // Node's event listener does not return an admission-completion promise.
+    // Wait for the actual rejection after authentication and reservation.
+    server.emit("upgrade", { url: "/api/agent/ws", headers: { authorization: "Bearer valid" } }, socket, Buffer.alloc(0));
+    await handshakeRejected;
     assert.equal(reservations, 0);
     assert.equal(pending, 0);
     assert.equal(failures, 1);
@@ -239,24 +255,27 @@ test("Odoo spooler and IPP diagnostics preserve the selected binding document ty
 });
 
 test("spooler document baseline and explicit byte passthrough stay separate", async () => {
-  const api = await loadModule("src/lib/printer-capability.ts", {}, (source) =>
-    source.replace(
-      'import payloadContract from "../../contracts/print-payload-contract.json";',
-      'const payloadContract = { rawProtocols: ["raw", "escpos", "zpl", "tspl"] };',
-    )
-  );
-  const spooler = { protocol: "spooler", connectionType: "spooler" };
+  const api = await loadModule("src/lib/printer-capability.ts");
+  const geometry = {
+    version: 1, source: "windows_driver", validation: "observed",
+    observed_at: "2026-10-24T12:00:00Z", printer_id: "office",
+    config_fingerprint: "a".repeat(64), printable_width_dots: 2400,
+    paper_width_mm: 210, dpi_x: 300, dpi_y: 300,
+  };
+  const image = { type: "image", geometry_fingerprint: geometry.config_fingerprint };
+  const spooler = { id: "office", protocol: "spooler", connectionType: "spooler", capabilities: { geometry } };
   assert.equal(api.validatePayloadForPrinter({ type: "pdf" }, spooler).ok, true);
-  assert.equal(api.validatePayloadForPrinter({ type: "image" }, spooler).ok, true);
+  assert.equal(api.validatePayloadForPrinter(image, spooler).ok, true);
+  assert.equal(api.validatePayloadForPrinter(image, { ...spooler, capabilities: null }).ok, false);
   const rejectedEscpos = api.validatePayloadForPrinter({ type: "escpos", protocol: "escpos" }, spooler);
   assert.equal(rejectedEscpos.ok, false);
   assert.match(rejectedEscpos.reason, /has not been declared as ESC\/POS-capable/);
 
-  const escpos = { ...spooler, capabilities: { supported_protocols: ["escpos"] } };
+  const escpos = { ...spooler, capabilities: { geometry, supported_protocols: ["escpos"] } };
   assert.equal(api.validatePayloadForPrinter({ type: "escpos", protocol: "escpos" }, escpos).ok, true);
   assert.equal(api.validatePayloadForPrinter({ type: "raw", protocol: "raw" }, escpos).ok, false);
   assert.equal(api.validatePayloadForPrinter({ type: "pdf" }, escpos).ok, true);
-  assert.equal(api.validatePayloadForPrinter({ type: "image" }, escpos).ok, true);
+  assert.equal(api.validatePayloadForPrinter(image, escpos).ok, true);
 
   const raw = { ...spooler, capabilities: { supported_protocols: ["raw"] } };
   assert.equal(api.validatePayloadForPrinter({ type: "raw", protocol: "raw" }, raw).ok, true);

@@ -15,7 +15,7 @@ import { isVirtualPrinterRecord, type PrinterLike } from "../src/lib/printer-vir
 import { nonVirtualPrinterPredicate } from "../src/lib/printer-virtual-sql";
 import { db } from "../src/db";
 import { sql } from "drizzle-orm";
-import { createManagerSession } from "../src/lib/manager-auth";
+import { createWorkspaceManagerTestSession } from "./helpers/workspace-session";
 import type { Fixture } from "./helpers/pg";
 
 let currentManagerToken: string | null = null;
@@ -71,7 +71,7 @@ suite("dashboard list queries never carry full job payloads", () => {
   beforeEach(async () => {
     await truncateAll();
     fixture = await seedFixture();
-    const session = await createManagerSession(fixture.tenantId);
+    const session = await createWorkspaceManagerTestSession(fixture.tenantId);
     currentManagerToken = session.token;
   });
 
@@ -130,6 +130,9 @@ suite("dashboard list queries never carry full job payloads", () => {
         [id, fixture.tenantId, fixture.agentId, status, age],
       );
     }
+    // These rows deliberately represent successful current Agent probes;
+    // missing proof is tested by the operational eligibility suite.
+    await pool().query("UPDATE printers SET verification_state='verified',verification_verified_at=clock_timestamp(),verification_received_at=clock_timestamp(),verification_binding_digest=encode(sha256(convert_to(id,'UTF8')),'hex'),logical_queue_key=encode(sha256(convert_to(id,'UTF8')),'hex') WHERE tenant_id=$1", [fixture.tenantId]);
     const expected = { ready: [fixture.printerId], printing: ["busy"], attention: ["error", "offline"], unavailable: ["stale", "unknown"] };
     for (const [filter, ids] of Object.entries(expected)) {
       const state = await getDashboardState({ printerStatus: filter });

@@ -111,7 +111,7 @@ export async function PATCH(req: Request) {
       }, tx);
     });
   } catch (error) {
-    if (error instanceof TeamAuthorizationChangedError) return NextResponse.json({ error: error.message }, { status: 403 });
+    if (error instanceof TeamAuthorizationChangedError) return error.response();
     if (error instanceof TeamMemberConflict) return NextResponse.json({ error: error.message }, { status: error.status });
     throw error;
   }
@@ -162,7 +162,7 @@ export async function DELETE(req: Request) {
       }, tx);
     });
   } catch (error) {
-    if (error instanceof TeamAuthorizationChangedError) return NextResponse.json({ error: error.message }, { status: 403 });
+    if (error instanceof TeamAuthorizationChangedError) return error.response();
     if (error instanceof TeamMemberConflict) return NextResponse.json({ error: error.message }, { status: error.status });
     throw error;
   }

@@ -13,7 +13,7 @@ suite("billing entitlement access policy", () => {
   beforeEach(async () => { await truncateAll(); });
   afterAll(async () => { await closePool(); });
 
-  it("keeps entitlements available during past_due recovery even after the nominal period end", async () => {
+  it("requires explicit manual activation instead of admitting a legacy past_due recovery state", async () => {
     const tenantId = `tenant_${nanoid(8)}`;
     const planId = `plan_${nanoid(8)}`;
     await db.insert(tenants).values({ id: tenantId, name: "Past Due Tenant" });
@@ -32,7 +32,7 @@ suite("billing entitlement access policy", () => {
       currentPeriodEnd: new Date(Date.now() - 60_000),
     });
 
-    await expect(getTenantEntitlementLimit(db, tenantId, "max_printers")).resolves.toBe(5);
+    await expect(getTenantEntitlementLimit(db, tenantId, "max_printers")).rejects.toBeInstanceOf(TenantSubscriptionRequiredError);
   });
 
   it("builds the live-subscription predicate as a reusable correlated expression", async () => {

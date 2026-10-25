@@ -106,6 +106,9 @@ export async function truncateAll(): Promise<void> {
       await client.query("BEGIN");
       // Use DELETE instead of TRUNCATE CASCADE to avoid heavy DataFileImmediateSync I/O stalls on test environments
       const orderedTables = [
+        "subscription_requests",
+        "subscription_changes",
+        "print_monthly_usage",
         // Automatic v2 enrollment adds retained installation associations.
         // Delete children first, or future fixture resets will hit FK errors.
         "odoo_v2_operations",
@@ -192,6 +195,12 @@ export async function seedFixture(opts?: {
       );
       await client.query(`INSERT INTO agents (id, tenant_id, name, secret, status, lifecycle, last_seen_at) VALUES ($1, $2, $3, $4, 'online', 'active', now())`, [agentId, tenantId, `Agent ${suffix}`, sha256(agentSecret)]);
       await client.query(`INSERT INTO printers (id, tenant_id, agent_id, name, printer_type, device_class, connection_type, protocol, status, lifecycle, config, capabilities, last_seen_at) VALUES ($1, $2, $3, $4, 'physical', 'other', 'spooler', 'spooler', 'online', 'active', '{}'::jsonb, $5::jsonb, now())`, [printerId, tenantId, agentId, `Printer ${suffix}`, JSON.stringify(opts?.printerCapabilities ?? { supported_protocols: ["raw", "escpos", "pdf", "image"] })]);
+      // This shared fixture explicitly represents an already verified live test
+      // queue. Registration/probe tests create or clear their own pending rows.
+      const binding = sha256(`fixture-queue:${printerId}`);
+      const verification = { version: 1, verified_at: new Date().toISOString(), printer_id: printerId,
+        binding_digest: binding, logical_queue_key: binding, method: "windows_queue", identity_strength: "queue", output_medium: "physical" };
+      await client.query(`UPDATE printers SET verification_state='verified', verification_verified_at=clock_timestamp(), verification_received_at=clock_timestamp(), verification_binding_digest=$1, logical_queue_key=$1, capabilities=COALESCE(capabilities,'{}'::jsonb) || $2::jsonb WHERE tenant_id=$3 AND id=$4`, [binding, JSON.stringify({ operational_verification: verification }), tenantId, printerId]);
       await client.query(`INSERT INTO api_keys (id, tenant_id, name, hashed_key, odoo_enabled, odoo_enabled_revision) VALUES ($1, $2, 'test key', $3, true, 0)`, [`key_${suffix}`, tenantId, sha256(odooKey)]);
       await client.query("COMMIT");
     } catch (error) { try { await client.query("ROLLBACK"); } catch {} throw error; }
@@ -208,7 +217,7 @@ export async function insertQueuedJob(f: Fixture, jobId: string, opts?: { expire
       const schema = getOrCreateWorkerSchema();
       if (schema) await client.query(`SET search_path TO ${quoteIdent(schema)}, public`);
       await client.query("BEGIN");
-      await client.query(`INSERT INTO print_jobs (id, tenant_id, destination, document_type, agent_id, printer_id, status, payload, expires_at) VALUES ($1, $2, $3, 'receipt', $4, $5, 'queued', '{"type":"raw","protocol":"raw","encoding":"base64","data":"aGVsbG8="}'::jsonb, now() + ($6 || ' milliseconds')::interval)`, [jobId, f.tenantId, f.destination, f.agentId, f.printerId, String(opts?.expiresInMs ?? 3600_000)]);
+      await client.query(`INSERT INTO print_jobs (id, tenant_id, destination, document_type, agent_id, printer_id, status, payload, expires_at, binding_digest) VALUES ($1, $2, $3, 'receipt', $4, $5, 'queued', '{"type":"raw","protocol":"raw","encoding":"base64","data":"aGVsbG8="}'::jsonb, now() + ($6 || ' milliseconds')::interval, (SELECT verification_binding_digest FROM printers WHERE tenant_id=$2 AND id=$5))`, [jobId, f.tenantId, f.destination, f.agentId, f.printerId, String(opts?.expiresInMs ?? 3600_000)]);
       await client.query("COMMIT");
     } catch (error) { try { await client.query("ROLLBACK"); } catch {} throw error; }
     finally { try { await client.query("SELECT pg_advisory_unlock($1)", [GLOBAL_PG_LOCK]); } catch {} }

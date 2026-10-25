@@ -35,9 +35,7 @@ function verifyOnce(token: string, inviteToken: string) {
   return request;
 }
 
-type OutcomeState =
-  | { kind: "code"; code?: string }
-  | { kind: "message"; message: string };
+type OutcomeState = { kind: "code"; code?: string };
 
 function VerifyEmailContent() {
   const params = useSearchParams();
@@ -94,13 +92,9 @@ function VerifyEmailContent() {
           if (cancelled) return;
           router.replace(destination.pathname + destination.search);
         }, 500);
-      } catch (error) {
+      } catch {
         if (cancelled) return;
-        setVerifyError(
-          error instanceof Error && error.message
-            ? { kind: "message", message: error.message }
-            : { kind: "code" },
-        );
+        setVerifyError({ kind: "code" });
         setState("error");
       }
     })();
@@ -131,13 +125,10 @@ function VerifyEmailContent() {
         return;
       }
       setResendOutcome({ kind: "sent" });
-    } catch (error) {
+    } catch {
       setResendOutcome({
         kind: "error",
-        outcome:
-          error instanceof Error && error.message
-            ? { kind: "message", message: error.message }
-            : { kind: "code" },
+        outcome: { kind: "code" },
       });
     } finally {
       setResending(false);
@@ -153,17 +144,13 @@ function VerifyEmailContent() {
           ? t("auth.verify.verifiedBody")
           : !token
             ? t("auth.verify.missingLink")
-            : verifyError?.kind === "code"
-              ? t(codeMessageKey(verifyError.code) ?? "auth.verify.failed")
-              : verifyError?.message || t("auth.verify.failed");
+            : t(codeMessageKey(verifyError?.code) ?? "auth.verify.failed");
 
   const resendMsg = !resendOutcome
     ? ""
     : resendOutcome.kind === "sent"
       ? t("auth.verify.resendSent")
-      : resendOutcome.outcome.kind === "code"
-        ? t(codeMessageKey(resendOutcome.outcome.code) ?? "auth.verify.resendFailed")
-        : resendOutcome.outcome.message || t("auth.verify.resendFailed");
+      : t(codeMessageKey(resendOutcome.outcome.code) ?? "auth.verify.resendFailed");
 
   const title =
     state === "loading" || state === "pending"

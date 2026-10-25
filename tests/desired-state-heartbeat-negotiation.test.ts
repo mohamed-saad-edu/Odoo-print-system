@@ -1,10 +1,20 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { SQL } from "drizzle-orm";
+import { PgDialect } from "drizzle-orm/pg-core";
+import type * as TenantGuardModule from "../src/lib/tenant-guard";
+import type * as LogModule from "../src/lib/log";
 
-const mocks = vi.hoisted(() => ({ execute: vi.fn(), transaction: vi.fn(), update: vi.fn(), desiredPage: vi.fn() }));
+const mocks = vi.hoisted(() => ({ execute: vi.fn(), transaction: vi.fn(), update: vi.fn(), desiredPage: vi.fn(), verificationClock: vi.fn(), logError: vi.fn() }));
 vi.mock("../src/db", () => ({ db: { transaction: mocks.transaction } }));
 vi.mock("../src/lib/agent-auth", () => ({ validateAgent: async () => ({ id: "agent-a", tenantId: "tenant-a", lifecycle: "active" }) }));
-vi.mock("../src/lib/tenant-guard", () => ({ requireActiveTenantInTransaction: async () => {} }));
+vi.mock("../src/lib/tenant-guard", async (importOriginal) => ({
+  ...await importOriginal<typeof TenantGuardModule>(),
+  requireActiveTenantInTransaction: async () => {},
+}));
 vi.mock("../src/lib/desired-state-page", () => ({ getDesiredPrinterPage: mocks.desiredPage }));
+vi.mock("../src/lib/log", async (importOriginal) => ({
+  ...await importOriginal<typeof LogModule>(), logError: mocks.logError,
+}));
 import { POST } from "../src/app/api/agent/heartbeat/route";
 
 describe("heartbeat desired-state paging negotiation", () => {
@@ -15,8 +25,15 @@ describe("heartbeat desired-state paging negotiation", () => {
     update.where.mockResolvedValue([]);
     mocks.update.mockReturnValue(update);
     mocks.transaction.mockImplementation(async callback => callback({ execute: mocks.execute, update: mocks.update }));
-    mocks.execute.mockResolvedValue({ rows: [] });
-    mocks.execute.mockResolvedValueOnce({ rows: [] }).mockResolvedValueOnce({ rows: [{ id: "agent-a", lifecycle: "active", inventory_snapshot_version: "0" }] });
+    mocks.verificationClock.mockResolvedValue({ rows: [{ verification_now: new Date().toISOString() }] });
+    const dialect = new PgDialect();
+    mocks.execute.mockImplementation(async (statement: SQL) => {
+      const text = dialect.sqlToQuery(statement).sql;
+      if (text.includes("SELECT pg_advisory_xact_lock(")) return { rows: [] };
+      if (/\bFROM agents\b/.test(text)) return { rows: [{ id: "agent-a", lifecycle: "active", inventory_snapshot_version: "0" }] };
+      if (text === "SELECT clock_timestamp() AS verification_now") return mocks.verificationClock();
+      throw new Error(`Unexpected SQL in desired-state fixture: ${text}`);
+    });
     mocks.desiredPage.mockResolvedValue({ items: [], nextCursor: null });
   });
 
@@ -32,6 +49,8 @@ describe("heartbeat desired-state paging negotiation", () => {
     expect(body.success).toBe(true);
     expect(body.desiredStateUpgradeRequired).toBe(true);
     expect(body).not.toHaveProperty("desiredState");
+    expect(mocks.verificationClock).toHaveBeenCalledOnce();
+    expect(mocks.logError).not.toHaveBeenCalled();
   });
 
   it("preserves the complete small-snapshot legacy response", async () => {
@@ -49,5 +68,16 @@ describe("heartbeat desired-state paging negotiation", () => {
   it("rejects an invalid negotiation flag before transaction writes", async () => {
     expect((await heartbeat("true")).status).toBe(400);
     expect(mocks.transaction).not.toHaveBeenCalled();
+  });
+
+  it("fails closed before desired-state publication when the verification clock is unavailable", async () => {
+    mocks.verificationClock.mockResolvedValue({ rows: [] });
+    const response = await heartbeat(true);
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({ error: "Internal server error" });
+    expect(mocks.desiredPage).not.toHaveBeenCalled();
+    expect(mocks.logError).toHaveBeenCalledWith("agent.heartbeat.failed", {
+      agentId: "agent-a", error: "Database verification clock unavailable",
+    });
   });
 });

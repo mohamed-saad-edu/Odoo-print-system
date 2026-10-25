@@ -23,13 +23,16 @@ const PLACEHOLDER = /\{(\w+)\}/g;
 /**
  * Resolve one key.
  *
- * Fallback order is locale → English → the key itself. A missing Arabic string
- * must never render a raw `printer.status.offline` in front of a customer, and
- * it must never throw: the console keeps working while a translation lands.
+ * Arabic never falls back to an English sentence or an internal message key.
+ * Catalog completeness is a release gate; the localized unavailable label is
+ * a defensive runtime boundary for unexpected or missing keys.
  */
 export function translate(locale: Locale, key: MessageKey, vars?: MessageVars): string {
   const catalog = Object.prototype.hasOwnProperty.call(catalogs, locale) ? catalogs[locale] : en;
-  const template = Object.prototype.hasOwnProperty.call(catalog, key) ? catalog[key] : Object.prototype.hasOwnProperty.call(en, key) ? en[key] : key;
+  const candidate = Object.prototype.hasOwnProperty.call(catalog, key) ? catalog[key] : undefined;
+  const template = typeof candidate === "string" && candidate.trim()
+    ? candidate
+    : locale === "ar" ? "النص غير متاح" : Object.prototype.hasOwnProperty.call(en, key) ? en[key] : key;
   if (!vars) return template;
   return template.replace(PLACEHOLDER, (match, name: string) =>
     Object.prototype.hasOwnProperty.call(vars, name) ? String(vars[name]) : match,

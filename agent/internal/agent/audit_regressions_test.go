@@ -137,7 +137,7 @@ func TestAuditIPPPortAloneIsNotVerification(t *testing.T) {
 
 func TestAuditPersistenceFailureRetainsObservedHardware(t *testing.T) {
 	a := &Agent{registryPath: ""}
-	original := printer.DeviceInfo{ID: "observed", Name: "Receipt", ConnectionType: "network", Protocol: "raw", Endpoint: "127.0.0.1:9100", Capabilities: map[string]interface{}{"discovered_via": "snmp"}}
+	original := printer.DeviceInfo{ID: "observed", Name: "Receipt", ConnectionType: "network", Protocol: "raw", Endpoint: "10.0.0.20:9100", Capabilities: map[string]interface{}{"discovered_via": "snmp"}}
 	got, err := a.persistDiscoveredPrinters([]printer.DeviceInfo{original})
 	if err == nil {
 		t.Fatal("expected persistence failure for missing path")

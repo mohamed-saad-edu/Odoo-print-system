@@ -111,6 +111,29 @@ run("multi-instance Gateway runtime delivery", () => {
   beforeEach(async () => { await pool().query("DELETE FROM print_jobs"); });
   afterAll(async () => { await Promise.all([stop(gatewayA), stop(gatewayB)]); await closePool(); });
 
+  it("drains active WebSockets before ending the database pool", async () => {
+    const gateway = startGateway(schema);
+    const connections: WebSocket[] = [];
+    try {
+      const port = await waitHealthy(gateway);
+      const before = Number((await pool().query("SELECT COALESCE((SELECT value FROM gateway_metrics WHERE name='websocket_connections_opened_total'),0) AS n")).rows[0].n);
+      for (let i = 0; i < 6; i++) connections.push(await openWs(port, fixture.agentAuth));
+      const deadline = Date.now() + 5000;
+      while (Number((await pool().query("SELECT COALESCE((SELECT value FROM gateway_metrics WHERE name='websocket_connections_opened_total'),0) AS n")).rows[0].n) < before + 6) {
+        if (Date.now() > deadline) throw new Error("WebSocket registration did not finish");
+        await new Promise(resolve => setTimeout(resolve, 20));
+      }
+      const closed = connections.map(ws => new Promise<number>(resolve => ws.once("close", code => resolve(code))));
+      await stop(gateway);
+      expect(await Promise.all(closed)).toEqual(Array(6).fill(1001));
+      expect(gateway.child.exitCode).toBe(0);
+      expect(gateway.output()).not.toContain("Cannot use a pool after calling end on the pool");
+    } finally {
+      for (const ws of connections) ws.terminate();
+      await stop(gateway);
+    }
+  });
+
   it("delivers a queued job to an agent connected to the other Gateway instance", async () => {
     const ws = await openWs(portB, fixture.agentAuth); const messages: Record<string, unknown>[] = [];
     ws.on("message", (data) => messages.push(JSON.parse(String(data))));

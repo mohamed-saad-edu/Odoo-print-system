@@ -231,6 +231,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         return NextResponse.json({ error: e.message, code: e.code, steps, capability }, { status: 422, headers: { "x-request-id": requestId } });
       }
       if (e instanceof PrintJobInputError) {
+      if (e.authorityError?.policy) return e.authorityError.response();
         setStep("queue", "error", e.message, `code=${e.code}`);
         return NextResponse.json({ error: e.message, code: e.code, steps, capability }, { status: e.status, headers: { "x-request-id": requestId } });
       }

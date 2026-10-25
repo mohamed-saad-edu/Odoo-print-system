@@ -3,6 +3,7 @@
 package printer
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"strings"
@@ -12,6 +13,34 @@ import (
 
 	"golang.org/x/sys/windows"
 )
+
+func TestUSBImageConversionFeedsRasterToOwnedWriteHandle(t *testing.T) {
+	p := nativeUSBPrintFixture("image-usb", "USB raster fixture", "NUL")
+	p.Protocol, p.SupportsESCPOS, p.Geometry = "escpos", true, testRasterGeometry(576)
+	var opened, closed atomic.Int32
+	p.openDevice = func(_ *uint16, _ uint32) (windows.Handle, error) { opened.Add(1); return windows.Handle(123), nil }
+	p.closeHandle = func(windows.Handle) error { closed.Add(1); return nil }
+	var received bytes.Buffer
+	p.writeChunk = func(_ windows.Handle, chunk []byte) (uint32, error) {
+		received.Write(chunk)
+		return uint32(len(chunk)), nil
+	}
+	doc := Document{Kind: KindImage, Data: createTestJPEG(576, 600), GeometryFingerprint: p.Geometry.ConfigFingerprint}
+	if err := p.PrintDocument(context.Background(), doc); err != nil {
+		t.Fatal(err)
+	}
+	if opened.Load() != 1 || closed.Load() != 1 || rasterWidthFromESCPOS(received.Bytes()) != 72 || bytes.HasPrefix(received.Bytes(), []byte{0xff, 0xd8}) {
+		t.Fatalf("USB did not send converted raster once: opens=%d closes=%d bytes=%d", opened.Load(), closed.Load(), received.Len())
+	}
+	before := received.Len()
+	doc.GeometryFingerprint = strings.Repeat("b", 64)
+	if err := p.PrintDocument(context.Background(), doc); err == nil || HasUnknownOutcomeMarker(err.Error()) {
+		t.Fatalf("stale image was not rejected before submission: %v", err)
+	}
+	if opened.Load() != 1 || received.Len() != before {
+		t.Fatal("stale geometry touched the USB handle")
+	}
+}
 
 // The synchronous Win32 WriteFile has no deadline: once the call is in the
 // kernel, context cancellation cannot interrupt it (documented Windows

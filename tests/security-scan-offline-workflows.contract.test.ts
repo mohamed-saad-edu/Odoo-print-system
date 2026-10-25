@@ -7,10 +7,11 @@ const dockerScan = docker.split("  docker-image-scan:")[1]?.split("\n  docker-bu
 const codeql = security.split("  codeql:")[1]?.split("\n  dependency-review:")[0] ?? "";
 
 describe("private repository security scanning workflow", () => {
-  it("runs Trivy for every pinned base image, retains reports and fails on fixable high/critical issues", () => {
+  it("runs Trivy for every pinned base image and retains all severities including unfixed issues", () => {
     expect(dockerScan).toContain("aquasecurity/trivy-action@");
-    expect(dockerScan).toContain("severity: 'CRITICAL,HIGH'");
-    expect(dockerScan).toContain("ignore-unfixed: true");
+    expect(dockerScan).toContain("severity: 'UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL'");
+    expect(dockerScan).toContain("ignore-unfixed: false");
+    expect(dockerScan).not.toContain("ignore-unfixed: true");
     expect(dockerScan).toContain("limit-severities-for-sarif: true");
     expect(dockerScan).toContain("exit-code: '0'");
     expect(dockerScan).toContain("scripts/check-trivy-baseline.py");

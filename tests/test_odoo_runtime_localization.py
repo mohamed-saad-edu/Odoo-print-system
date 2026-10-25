@@ -35,14 +35,19 @@ def test_runtime_picker_statuses_classes_and_ids_are_presentation_safe():
     assert "deviceClassLabel(printer.deviceClass)" in printer
 
 
-def test_arabic_catalog_keeps_canonical_product_terms_and_translates_picker_vocab():
+def test_arabic_catalog_keeps_brand_identity_and_translates_picker_vocab():
     catalog = load_catalog()
     for msgid, msgstr in catalog.items():
-        for token in ("Gateway", "Agent", "Yaseir"):
+        # V4 translates ordinary infrastructure nouns in customer navigation;
+        # only the Yaseir brand must remain stable across the two languages.
+        for token in ("Yaseir",):
             if token in msgid:
                 assert token in msgstr, f"{token} was translated in {msgid!r}: {msgstr!r}"
 
     expected = {
+        "Yaseir Print Gateway": "طباعة Yaseir",
+        "Connection": "الاتصال",
+        "Print Rules": "قواعد الطباعة",
         "online": "متصل",
         "offline": "غير متصل",
         "unknown": "غير معروف",

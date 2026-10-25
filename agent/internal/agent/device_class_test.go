@@ -54,7 +54,7 @@ func TestHeartbeatPrinterStatusEmitsGatewayClassEnums(t *testing.T) {
 			ID:             id,
 			Name:           id,
 			Type:           "network",
-			Endpoint:       "127.0.0.1:9100",
+			Endpoint:       "10.0.0.20:9100",
 			Protocol:       "raw",
 			ConnectionType: "network",
 			PrinterType:    pt,

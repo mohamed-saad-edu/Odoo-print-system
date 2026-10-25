@@ -1,4 +1,6 @@
-import { AuthenticationChangedError } from "../../../../../lib/session-tokens";
+import { PlatformSessionExpiredError } from "../../../../../lib/platform-session-security";
+import { clearLegacySessionCookies } from "../../../../../lib/session-config";
+import { AuthenticationChangedError, sessionReplacementFromRequest } from "../../../../../lib/session-tokens";
 import { NextResponse } from "next/server";
 import { hasBodyOverLimit } from "../../../../../lib/request-limits";
 import { authenticatePlatformOwner, createPlatformSession, platformCookieHeader, platformRefreshCookieHeader } from "../../../../../lib/platform-auth";
@@ -21,7 +23,7 @@ export async function POST(req: Request) {
   const email = typeof body.email === "string" ? body.email.trim() : "";
   const password = typeof body.password === "string" ? body.password : "";
 
-  if (!email || !password) {
+  if (!email || email.length > 320 || !password || password.length > 4096) {
     return NextResponse.json({ error: "Email and password are required" }, { status: 400 });
   }
 
@@ -35,6 +37,7 @@ export async function POST(req: Request) {
   }
 
   if (!decision.allowed) {
+    logWarn("auth.platform_login.rate_limited", { ip: clientIp, retryAfterSec: decision.retryAfterSec });
     const res = NextResponse.json(
       { error: "Too many failed attempts. Please try again later." },
       { status: 429, headers: { "Retry-After": String(decision.retryAfterSec) } }
@@ -50,6 +53,7 @@ export async function POST(req: Request) {
     return setRateLimitHeaders(NextResponse.json({ error: "Authentication temporarily unavailable" }, { status: 503 }), decision);
   }
   if (!user) {
+    logWarn("auth.platform_login.failed", { ip: clientIp });
     return setRateLimitHeaders(
       NextResponse.json({ error: "Invalid Platform Owner credentials or unverified account" }, { status: 401 }),
       decision
@@ -65,11 +69,10 @@ export async function POST(req: Request) {
   let session;
   try {
     session = await createPlatformSession(user.userId, user.email, {
-    ipAddress: clientIp,
-    userAgent: req.headers.get("user-agent"),
+      ipAddress: clientIp, userAgent: req.headers.get("user-agent"), replaceCurrent: sessionReplacementFromRequest(req, "platform"),
     }, user.credentialVersion);
   } catch (error) {
-    if (error instanceof AuthenticationChangedError) return setRateLimitHeaders(NextResponse.json({ error: "Invalid Platform Owner credentials or unverified account" }, { status: 401 }), decision);
+    if (error instanceof AuthenticationChangedError || error instanceof PlatformSessionExpiredError) return setRateLimitHeaders(NextResponse.json({ error: "Invalid Platform Owner credentials or unverified account" }, { status: 401 }), decision);
     logError("auth.platform_login.session_failed", { error: error instanceof Error ? error.message : "unknown" });
     return setRateLimitHeaders(NextResponse.json({ error: "Sign-in is temporarily unavailable. Try again in a moment." }, { status: 503 }), decision);
   }
@@ -84,8 +87,9 @@ export async function POST(req: Request) {
   }).catch((err) => logError("audit_write_failed", { error: err?.message ?? String(err) }));
 
   const response = NextResponse.json(
-    { ok: true, user: { id: user.userId, email: user.email } },
+    { ok: true, expiresAt: session.exp.toISOString() },
     {
+      status: 200,
       headers: {
         "Set-Cookie": platformCookieHeader(session.token, session.exp),
       },
@@ -93,5 +97,6 @@ export async function POST(req: Request) {
   );
   response.headers.append("Set-Cookie", platformRefreshCookieHeader(session.refreshToken, session.refreshExpiresAt));
   response.headers.set("Cache-Control", "no-store");
+  clearLegacySessionCookies(response.headers, "platform");
   return setRateLimitHeaders(response, decision);
 }

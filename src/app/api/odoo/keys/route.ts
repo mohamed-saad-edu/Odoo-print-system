@@ -101,7 +101,8 @@ export async function POST(req: Request) {
       }, tx);
     });
   } catch (error) {
-    if (error instanceof ManagerMutationAuthorityChangedError || error instanceof TenantSuspendedError || error instanceof TenantDeletedError) return NextResponse.json({ error: error.message }, { status: 403 });
+    if (error instanceof ManagerMutationAuthorityChangedError) return error.response();
+    if (error instanceof TenantSuspendedError || error instanceof TenantDeletedError) return NextResponse.json({ error: error.message }, { status: 403 });
     if (isTenantBillingError(error)) {
       return NextResponse.json(
         { error: error.message, code: error.code },
@@ -174,7 +175,8 @@ export async function DELETE(req: Request) {
   if (!revoked) return NextResponse.json({ error: "API key not found" }, { status: 404 });
   return NextResponse.json(revoked, { status: 200 });
   } catch (error) {
-    if (error instanceof ManagerMutationAuthorityChangedError || error instanceof TenantSuspendedError || error instanceof TenantDeletedError) return NextResponse.json({ error: error.message }, { status: 403 });
+    if (error instanceof ManagerMutationAuthorityChangedError) return error.response();
+    if (error instanceof TenantSuspendedError || error instanceof TenantDeletedError) return NextResponse.json({ error: error.message }, { status: 403 });
     throw error;
   }
 }

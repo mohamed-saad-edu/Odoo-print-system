@@ -1,4 +1,13 @@
+import type * as PasswordScreeningModule from "../src/lib/password-screening";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+
+// External breach-corpus fixture for these unrelated account/transaction tests.
+// Production always screens; password-screening*.test.ts exercise the real
+// range protocol, positive matches, privacy, limits and fail-closed behavior.
+vi.mock("../src/lib/password-screening", async (importActual) => ({
+  ...await importActual<typeof PasswordScreeningModule>(),
+  screenNewPassword: vi.fn(async () => "acceptable"),
+}));
 import { getTableName, type SQL } from "drizzle-orm";
 import { PgDialect } from "drizzle-orm/pg-core";
 
@@ -7,7 +16,7 @@ import { PgDialect } from "drizzle-orm/pg-core";
 type Row = Record<string, any>;
 const state = vi.hoisted(() => ({
   user: {} as Row, memberships: [] as Row[], tenants: [] as Row[],
-  proofs: [] as Row[], resets: [] as Row[], sessions: [] as Row[], statements: [] as string[],
+  proofs: [] as Row[], resets: [] as Row[], sessions: [] as Row[], policies: [] as Row[], statements: [] as string[],
 }));
 const dialect = new PgDialect();
 const compile = (query: SQL) => dialect.sqlToQuery(query);
@@ -23,12 +32,18 @@ const tx = {
   execute: async (query: SQL) => {
     const compiled = compile(query);
     state.statements.push(compiled.sql);
+    if (/SELECT role FROM tenant_users/.test(compiled.sql)) return { rows: state.memberships.filter(row => row.userId === compiled.params[0] && row.tenantId === compiled.params[1]) };
+    if (/INSERT INTO workspace_session_security/.test(compiled.sql)) {
+      const [familyId,kind,tenantId,userId,credentialVersion] = compiled.params;
+      state.policies.push({ familyId,kind,tenantId,userId,credentialVersion });
+      return { rows: [] };
+    }
     if (/UPDATE refresh_tokens/i.test(compiled.sql)) {
       state.sessions.forEach(row => { row.revokedAt = new Date(); });
       return { rows: [] };
     }
     if (/FROM tenants/i.test(compiled.sql)) return { rows: state.tenants };
-    if (/FROM users/i.test(compiled.sql)) return { rows: [{ ...state.user }] };
+    if (/FROM users/i.test(compiled.sql)) return { rows: [{ ...state.user, password_hash: state.user.passwordHash, email_verified_at: state.user.emailVerifiedAt }] };
     if (/UPDATE (?:manager|platform)_sessions/i.test(compiled.sql)) return { rows: [] };
     if (/EXTRACT\(EPOCH FROM clock_timestamp\(\)\)/i.test(compiled.sql)) return { rows: [{ now_ms: Date.now(), now_sec: Math.floor(Date.now() / 1000) }] };
     throw Error(`Unexpected setup SQL: ${compiled.sql}`);
@@ -48,18 +63,25 @@ const tx = {
     const promise = Promise.resolve(selected.map(row => ({ id: row.id })));
     return Object.assign(promise, { returning: async () => selected.map(row => ({ id: row.id })) });
   } }) }),
-  insert: (table: Parameters<typeof getTableName>[0]) => ({ values: async (values: Row) => {
+  insert: (table: Parameters<typeof getTableName>[0]) => ({ values: async (values: Row | Row[]) => {
     const name = getTableName(table);
+    if (Array.isArray(values)) throw Error("Unexpected bulk fixture insert");
     if (name === "tenants") state.tenants.push({ ...values, lifecycle: "active" });
     else if (name === "tenant_users") state.memberships.push({ ...values });
-    else if (name === "password_reset_tokens") state.resets.push({ ...values, consumedAt: null, expiresAt: new Date(Date.now() + 1_200_000) });
+    else if (name === "password_reset_tokens") state.resets.push({ ...values, consumedAt: null, expiresAt: new Date(Date.now() + 600_000) });
     else if (name === "refresh_tokens") state.sessions.push({ ...values, revokedAt: null });
     else throw Error(`Unexpected setup insert: ${name}`);
   } }),
-  select: () => ({ from: () => ({ where: () => ({ limit: async () => state.memberships }) }) }),
+  select: () => ({ from: () => ({ where: () => {
+    const rows = state.memberships;
+    const snapshot = rows.map(row => ({ ...row }));
+    return Object.assign(Promise.resolve(snapshot), { for: async () => snapshot, limit: async () => snapshot });
+  } }) }),
 };
 vi.mock("../src/db", () => ({ db: {
   get query() { return query; },
+  execute: (query: SQL) => tx.execute(query),
+  update: (table: Parameters<typeof getTableName>[0]) => tx.update(table),
   transaction: async (callback: (transaction: typeof tx) => Promise<unknown>) => callback(tx),
 } }));
 vi.mock("../src/lib/auth-rate-limit", () => ({
@@ -74,13 +96,14 @@ import { POST as verifyEmail } from "../src/app/api/auth/verify-email/route";
 import { POST as resetPassword } from "../src/app/api/auth/reset-password/route";
 import { POST as login } from "../src/app/api/auth/login/route";
 
-const post = (path: string, body: Row) => new Request(`https://gateway.test/api/auth/${path}`, { method: "POST", body: JSON.stringify(body) });
+const post = (path: string, body: Row) => new Request(`https://gateway.test/api/auth/${path}`, { method: "POST", headers: { origin: "https://gateway.test" }, body: JSON.stringify(body) });
 
 describe("mailbox-owner password setup production routes", () => {
   beforeEach(async () => {
     process.env.GATEWAY_JWT_SECRET = "mailbox-owner-setup-test-secret-at-least-32-characters";
+    process.env.APP_BASE_URL = "https://gateway.test";
     state.user = { id: "user_setup", email: "owner@example.test", passwordHash: await hashPassword("preregistrant_password_123"), emailVerifiedAt: null };
-    for (const rows of [state.memberships, state.tenants, state.proofs, state.resets, state.sessions, state.statements]) rows.length = 0;
+    for (const rows of [state.memberships, state.tenants, state.proofs, state.resets, state.sessions, state.policies, state.statements]) rows.length = 0;
   });
 
   async function issueProof() {
@@ -117,7 +140,8 @@ describe("mailbox-owner password setup production routes", () => {
     expect(state.statements[0]).toMatch(/FROM tenants.*FOR SHARE/s);
     expect(state.statements[1]).toMatch(/FROM users.*FOR UPDATE/s);
     expect(state.sessions).toHaveLength(0);
-    const signedIn = await login(post("login", { email: state.user.email, password: "mailbox_owner_password_456", tenantId }));
+    const loginRequest = post("login", { email: state.user.email, password: "mailbox_owner_password_456", tenantId });
+    const signedIn = await login(loginRequest);
     expect(signedIn.status).toBe(200);
     expect(signedIn.headers.get("set-cookie")).toContain("cust_session=");
     expect(state.sessions).toHaveLength(1);

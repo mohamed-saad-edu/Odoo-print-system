@@ -1,7 +1,9 @@
 import { db, pool } from "../src/db";
 import { users, auditEvents, emailVerificationTokens, passwordResetTokens } from "../src/db/schema";
 import { and, eq, isNull, sql } from "drizzle-orm";
-import { hashPassword, normalizeEmail } from "../src/lib/password";
+import { hashPassword, normalizeEmail, validEmail } from "../src/lib/password";
+import { passwordScreeningFailure, screenNewPassword } from "../src/lib/password-screening";
+import { isValidNewPasswordLength } from "../src/lib/new-password-policy";
 import { nanoid } from "../src/lib/nanoid";
 import { revokeLegacyManagerSessionsForUserInTransaction } from "../src/lib/manager-auth";
 import { revokeLegacyPlatformSessionsForUserInTransaction } from "../src/lib/platform-auth";
@@ -27,7 +29,7 @@ async function promptPasswordInteractive(promptText: string): Promise<string> {
     process.stdout.write(promptText);
     rl.question("", (answer) => {
       rl.close();
-      resolve(answer.trim());
+      resolve(answer);
     });
   });
 }
@@ -35,14 +37,16 @@ async function promptPasswordInteractive(promptText: string): Promise<string> {
 export async function main() {
   const args = process.argv.slice(2);
   let email = process.env.PLATFORM_OWNER_EMAIL?.trim() ?? "";
-  let password = process.env.PLATFORM_OWNER_PASSWORD?.trim() ?? "";
+  let password = process.env.PLATFORM_OWNER_PASSWORD ?? "";
   let force = process.env.ALLOW_PLATFORM_BOOTSTRAP_FORCE === "1";
   let passedViaCli = false;
 
   const passwordFile = process.env.PLATFORM_OWNER_PASSWORD_FILE?.trim();
   if (!password && passwordFile && fs.existsSync(passwordFile)) {
     try {
-      password = fs.readFileSync(passwordFile, "utf8").trim();
+      // A secret file may have one line terminator, but spaces are password
+      // data and must match subsequent login verification byte-for-byte.
+      password = fs.readFileSync(passwordFile, "utf8").replace(/\r?\n$/, "");
     } catch (err) {
       console.error(`Error reading PLATFORM_OWNER_PASSWORD_FILE at ${passwordFile}:`, err);
       process.exit(1);
@@ -54,7 +58,7 @@ export async function main() {
       email = args[i + 1].trim();
       i++;
     } else if (args[i] === "--password" && args[i + 1]) {
-      password = args[i + 1].trim();
+      password = args[i + 1];
       passedViaCli = true;
       i++;
     } else if (args[i] === "--force") {
@@ -88,16 +92,18 @@ export async function main() {
   }
 
   const normalized = normalizeEmail(email);
-  if (!normalized) {
+  if (!validEmail(normalized)) {
     console.error("Error: Invalid email address provided.");
     process.exit(1);
   }
 
-  if (password.length < 10) {
-    console.error("Error: Platform Owner password must be at least 10 characters.");
+  if (!isValidNewPasswordLength(password)) {
+    console.error("Error: Platform Owner password must contain at least 12 Unicode characters and at most 4096 UTF-16 code units.");
     process.exit(1);
   }
 
+  const passwordFailure = passwordScreeningFailure(await screenNewPassword(password));
+  if (passwordFailure) throw new Error(passwordFailure.body.error);
   const passwordHash = await hashPassword(password);
 
   const success = await db.transaction(async (tx) => {

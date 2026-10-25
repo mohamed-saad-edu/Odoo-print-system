@@ -10,11 +10,6 @@ import (
 )
 
 const (
-	// SafeRasterMaxWidth is the conservative default when printer paper
-	// capability is unknown. 384 dots fits common 58mm thermal media; an
-	// explicitly configured max_paper_width can raise this to the actual limit.
-	SafeRasterMaxWidth         = 384
-	maxRasterWidth             = 576
 	DefaultRasterSliceHeight   = 256
 	LowBufferRasterSliceHeight = 128
 	MaxJPEGDimension           = 16384
@@ -22,35 +17,24 @@ const (
 	MaxRasterOutputBytes       = 32 * 1024 * 1024
 )
 
-// JPEGToESCPOS converts an Odoo POS raster (JPEG) into an ESC/POS raster image.
-// Breaking large thermal prints into discrete vertical bands (default 256px) prevents
-// printer buffer overflows and ensures 100% Arabic text and QR code compatibility on budget printers.
-func JPEGToESCPOS(data []byte) ([]byte, error) {
-	return JPEGToESCPOSWithMaxWidth(data, DefaultRasterSliceHeight, SafeRasterMaxWidth)
-}
-
 // JPEGToESCPOSWithMaxWidth converts a JPEG raster while respecting the
-// configured printer width. A non-positive maxWidth uses SafeRasterMaxWidth.
+// configured printer width. Unknown or excessive widths fail before allocation.
 func JPEGToESCPOSWithMaxWidth(data []byte, sliceHeight, maxWidth int) ([]byte, error) {
-	if maxWidth <= 0 {
-		maxWidth = SafeRasterMaxWidth
+	if maxWidth < 1 || maxWidth > MaxJPEGDimension {
+		return nil, fmt.Errorf("raster width must be explicitly measured in dots (1..%d)", MaxJPEGDimension)
 	}
 	return jpegToESCPOS(data, sliceHeight, maxWidth)
-}
-
-// JPEGToESCPOSWithBanding slices the raster into chunks of at most sliceHeight pixels.
-// Note: Hardcoded cuts have been removed from this function so cutting is governed solely
-// by peripheral profile configurations in WrapPeripheralCommands.
-func JPEGToESCPOSWithBanding(data []byte, sliceHeight int) ([]byte, error) {
-	return jpegToESCPOS(data, sliceHeight, maxRasterWidth)
 }
 
 func jpegToESCPOS(data []byte, sliceHeight, maxWidth int) ([]byte, error) {
 	if sliceHeight <= 0 {
 		sliceHeight = DefaultRasterSliceHeight
 	}
-	if maxWidth <= 0 {
-		maxWidth = SafeRasterMaxWidth
+	if sliceHeight > 65535 {
+		return nil, fmt.Errorf("raster band height exceeds GS v 0 field limit")
+	}
+	if maxWidth < 1 || maxWidth > MaxJPEGDimension {
+		return nil, fmt.Errorf("raster width must be explicitly measured in dots (1..%d)", MaxJPEGDimension)
 	}
 	cfg, err := decodeJPEGConfig(data)
 	if err != nil {
@@ -194,38 +178,38 @@ func JPEGToPDF(data []byte) ([]byte, error) {
 //
 // The native Windows queue remains authoritative for paper form support:
 // the PDF backend verifies it accepts this *physical* page before StartDoc.
-// Use only for an explicitly configured/detected 58/80mm thermal printer.
+// Requires an explicitly configured physical width, printable dots and DPI.
 func JPEGToPDFReceipt(data []byte, paperWidthMM, printableDots, dpi int) ([]byte, error) {
-	if paperWidthMM != 58 && paperWidthMM != 80 {
-		return nil, fmt.Errorf("thermal receipt needs a verified 58mm or 80mm paper width (got %dmm)", paperWidthMM)
+	if paperWidthMM <= 0 || paperWidthMM > 10000 || printableDots < 1 || printableDots > MaxJPEGDimension || dpi < 1 || dpi > 9600 {
+		return nil, fmt.Errorf("receipt PDF requires explicit physical paper width, printable dots and DPI")
 	}
-	if printableDots <= 0 {
-		if paperWidthMM == 58 {
-			printableDots = 384
-		} else {
-			printableDots = 512 // conservative 80mm/180dpi baseline
-		}
-	}
-	// Windows document rendering has its own bounded bitmap path; the direct
-	// ESC/POS 576-dot software ceiling is not a printer-driver capability.
-	if printableDots < 288 || printableDots > MaxJPEGDimension {
-		return nil, fmt.Errorf("invalid thermal printable width %d dots", printableDots)
-	}
-	if dpi <= 0 {
-		if printableDots > maxRasterWidth {
-			return nil, fmt.Errorf("receipt widths above legacy profiles require explicit printer DPI")
-		}
-		switch printableDots {
-		case 360, 512:
-			dpi = 180
-		default:
-			dpi = 203
-		}
+	if float64(printableDots)*25.4/float64(dpi) > float64(paperWidthMM)+25.4/float64(dpi) {
+		return nil, fmt.Errorf("printable dots exceed physical paper width at configured DPI")
 	}
 	return jpegToPDFWithReceiptPaper(data, float64(paperWidthMM), printableDots, dpi)
 }
 
+// JPEGToPDFGeometry uses the image's measured printer dots independently on
+// each axis. It adds no invented physical margins or assumed browser DPI.
+func JPEGToPDFGeometry(data []byte, geometry *Geometry) ([]byte, error) {
+	if !geometry.PhysicalImageReady() {
+		return nil, CapabilityMismatchf("image PDF requires measured paper_width_mm, dpi_x and dpi_y")
+	}
+	cfg, err := decodeJPEGConfig(data)
+	if err != nil {
+		return nil, err
+	}
+	if cfg.Width > geometry.PrintableWidthDots {
+		return nil, CapabilityMismatchf("image exceeds measured printable width; render again with current geometry")
+	}
+	return jpegToPDF(data, 0, 0, 0, geometry)
+}
+
 func jpegToPDFWithReceiptPaper(data []byte, paperWidthMM float64, printableDots, dpi int) ([]byte, error) {
+	return jpegToPDF(data, paperWidthMM, printableDots, dpi, nil)
+}
+
+func jpegToPDF(data []byte, paperWidthMM float64, printableDots, dpi int, geometry *Geometry) ([]byte, error) {
 	cfg, err := decodeJPEGConfig(data)
 	if err != nil {
 		return nil, err
@@ -264,17 +248,32 @@ func jpegToPDFWithReceiptPaper(data []byte, paperWidthMM float64, printableDots,
 			return nil, fmt.Errorf("invalid receipt media geometry")
 		}
 		pageW = paperWidthMM * 72.0 / 25.4
-		// A roll is wider than its *printable* image. Use the smaller of
-		// actual configured dots / real device DPI and paper minus margins.
-		contentMM := math.Min(float64(printableDots)*25.4/float64(dpi), paperWidthMM-4)
-		if contentMM < 30 {
-			return nil, fmt.Errorf("thermal printer has insufficient printable area %.2fmm", contentMM)
+		// Explicit dot count and DPI define printable content width. Nominal
+		// roll millimetres do not imply an extra hardware margin.
+		contentMM := float64(printableDots) * 25.4 / float64(dpi)
+		if contentMM <= 0 || contentMM > paperWidthMM+25.4/float64(dpi) {
+			return nil, fmt.Errorf("printable width exceeds selected physical paper")
 		}
 		imageW = contentMM * 72.0 / 25.4
 		imageH = imageW * float64(h) / float64(w)
 		imageX = (pageW - imageW) / 2.0
 		imageY = 2.0 * 72.0 / 25.4 // paper-feed margin at bottom
 		pageH = imageH + 2.0*imageY
+	}
+
+	if geometry != nil {
+		pageW = *geometry.PaperWidthMM * 72 / 25.4
+		imageW = float64(w) * 72 / float64(*geometry.DPIX)
+		imageH = float64(h) * 72 / float64(*geometry.DPIY)
+		imageX = (pageW - imageW) / 2
+		if geometry.OffsetXDots != nil {
+			imageX = (float64(*geometry.OffsetXDots) + float64(geometry.PrintableWidthDots-w)/2) * 72 / float64(*geometry.DPIX)
+		}
+		imageY = 0
+		pageH = imageH
+		if imageX < 0 || imageX+imageW > pageW+1e-7 {
+			return nil, fmt.Errorf("image lies outside measured physical paper")
+		}
 	}
 
 	var b bytes.Buffer
@@ -289,7 +288,7 @@ func jpegToPDFWithReceiptPaper(data []byte, paperWidthMM float64, printableDots,
 
 	writeObj(1, []byte("<< /Type /Catalog /Pages 2 0 R >>"))
 	writeObj(2, []byte("<< /Type /Pages /Kids [3 0 R] /Count 1 >>"))
-	pageBody := fmt.Sprintf("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 %.2f %.2f] /Resources << /XObject << /Im0 4 0 R >> >> /Contents 5 0 R >>", pageW, pageH)
+	pageBody := fmt.Sprintf("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 %.6f %.6f] /Resources << /XObject << /Im0 4 0 R >> >> /Contents 5 0 R >>", pageW, pageH)
 	writeObj(3, []byte(pageBody))
 
 	imageHeader := fmt.Sprintf("<< /Type /XObject /Subtype /Image /Width %d /Height %d /ColorSpace %s%s /BitsPerComponent 8 /Filter /DCTDecode /Length %d >>\nstream\n", w, h, colorSpace, imageDecode, len(data))
@@ -298,7 +297,7 @@ func jpegToPDFWithReceiptPaper(data []byte, paperWidthMM float64, printableDots,
 	b.Write(data)
 	b.WriteString("\nendstream\nendobj\n")
 
-	content := fmt.Sprintf("q\n%.2f 0 0 %.2f %.2f %.2f cm\n/Im0 Do\nQ\n", imageW, imageH, imageX, imageY)
+	content := fmt.Sprintf("q\n%.6f 0 0 %.6f %.6f %.6f cm\n/Im0 Do\nQ\n", imageW, imageH, imageX, imageY)
 	contentBody := fmt.Sprintf("<< /Length %d >>\nstream\n%sendstream", len(content), content)
 	writeObj(5, []byte(contentBody))
 

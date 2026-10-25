@@ -60,5 +60,5 @@ export function nonVirtualPrinterPredicate(): SQL {
     const value = field(caps, key);
     forbidden.push(sql`coalesce(${value} = 'true'::jsonb, false) OR ${string(value)} = 'true'`);
   }
-  return sql`NOT (${or(...forbidden)})`;
+  return sql`((${printers.printerType} = 'file' AND ${connection} = 'pdf_output' AND ${protocol} = 'pdf') OR NOT (${or(...forbidden)}))`;
 }

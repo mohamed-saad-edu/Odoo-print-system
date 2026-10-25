@@ -18,6 +18,8 @@ import {
   type ClaimedJobRow,
 } from "../lib/job-delivery";
 import { logDebug, logError, logInfo, logWarn } from "../lib/log";
+import { recordAuthorizationDenial } from "./authorization-monitor";
+import { securityHeaders } from "./api-defaults";
 
 type AgentSocket = WebSocket & {
   agentId?: string;
@@ -319,7 +321,8 @@ function websocketClientKey(req: IncomingMessage): string {
   return (req.socket.remoteAddress ?? "unknown").replace(/^::ffff:/, "").slice(0, 128) || "unknown";
 }
 
-function writeWsHttpError(socket: WritableSocket, status: number, body: string, retryAfterSec?: number) {
+function writeWsHttpError(socket: WritableSocket, status: number, body: string, retryAfterSec?: number, extraHeaders: Record<string, string> = {}) {
+  recordAuthorizationDenial("websocket", status);
   const retry = retryAfterSec !== undefined ? `Retry-After: ${retryAfterSec}\r\n` : "";
   const statusText = status === 429 ? "Too Many Requests" : status === 503 ? "Service Unavailable" : status === 404 ? "Not Found" : status === 401 ? "Unauthorized" : "Bad Request";
   const payload = JSON.stringify({ error: body });
@@ -327,6 +330,7 @@ function writeWsHttpError(socket: WritableSocket, status: number, body: string, 
     `HTTP/1.1 ${status} ${statusText}\r\n` +
     `Content-Type: application/json; charset=utf-8\r\n` +
     `Content-Length: ${Buffer.byteLength(payload)}\r\n` +
+    Object.entries({ ...securityHeaders(), "Cache-Control": "no-store", ...extraHeaders }).map(([name, value]) => `${name}: ${value}\r\n`).join("") +
     retry +
     `Connection: close\r\n\r\n` +
     payload;
@@ -528,6 +532,7 @@ export type JobDeliveryEnvelope = {
     expiresAt: string;
     retries: number;
     claimToken: string | null;
+    bindingDigest?: string | null;
     requestId: string | null;
   };
   // Flat aliases for legacy parsers that read the envelope without the
@@ -574,6 +579,7 @@ export function buildJobEnvelope(job: ClaimedJobRow): JobDeliveryEnvelope {
       expiresAt,
       retries: job.retries,
       claimToken: job.claimToken ?? null,
+      bindingDigest: job.bindingDigest ?? null,
       requestId: job.requestId ?? null,
     },
     id: job.id,
@@ -736,6 +742,14 @@ async function startJobNotificationListener(): Promise<() => Promise<void>> {
   // Jobs beyond this opportunistic push budget remain durable for Agent polling.
   const activeJobNotifications = new Set<string>();
   const MAX_ACTIVE_JOB_NOTIFICATIONS = 16;
+  const notificationTasks = new Set<Promise<unknown>>();
+  const trackNotificationTask = (task: Promise<unknown>): void => {
+    notificationTasks.add(task);
+    void task.then(
+      () => notificationTasks.delete(task),
+      () => notificationTasks.delete(task),
+    );
+  };
 
   const pushNotifiedJob = (notice: JobNotice, retryCount = 0): void => {
     if (stopped || (!hasOpenAgentSocket(notice.agentId)
@@ -743,7 +757,7 @@ async function startJobNotificationListener(): Promise<() => Promise<void>> {
     const key = `${notice.agentId}:${notice.jobId}`;
     if (activeJobNotifications.has(key) || activeJobNotifications.size >= MAX_ACTIVE_JOB_NOTIFICATIONS) return;
     activeJobNotifications.add(key);
-    void (async () => {
+    trackNotificationTask((async () => {
       if (!hasOpenAgentSocket(notice.agentId)) await waitForAgentSocketReady(notice.agentId);
       if (stopped) return;
       const socketTenant = agentSockets.get(notice.agentId)?.values().next().value?.tenantId;
@@ -778,11 +792,11 @@ async function startJobNotificationListener(): Promise<() => Promise<void>> {
         agentId: notice.agentId,
         error: error instanceof Error ? error.message : String(error),
       });
-    }).finally(() => activeJobNotifications.delete(key));
+    }).finally(() => activeJobNotifications.delete(key)));
   };
 
   const handleNotification = (notification: { channel?: string; payload?: string }) => {
-    if (!notification.payload) return;
+    if (stopped || !notification.payload) return;
     if (notification.channel === PG_SESSIONS_CHANNEL) {
       try {
         const message = JSON.parse(notification.payload) as {
@@ -802,7 +816,7 @@ async function startJobNotificationListener(): Promise<() => Promise<void>> {
           // legacy notification against the durable current revision instead
           // of closing every socket blindly. This keeps rolling deployments
           // safe against the same stale-notification race.
-          void (async () => {
+          trackNotificationTask((async () => {
             const current = await currentAgentLifecycleState(message.agentId as string);
             // A missing identity is durably deleted. A supplied revision must
             // never manufacture a newer lifecycle than PostgreSQL records.
@@ -817,14 +831,14 @@ async function startJobNotificationListener(): Promise<() => Promise<void>> {
             closeAgentSockets(message.agentId as string, revision ?? current.lifecycleRevision);
           })().catch((error) => {
             logWarn("[ws] failed to fence agent sockets from lifecycle notification:", { error: error });
-          });
+          }));
         }
         if (typeof message.tenantId === "string" && message.tenantId) {
           const tenantId = message.tenantId;
           // Verify against the durable lifecycle before disconnecting: the
           // NOTIFY channel is unauthenticated transport and must never close
           // live tenants' sockets on a spoofed payload.
-          void (async () => {
+          trackNotificationTask((async () => {
             try {
               const current = await pool.query<{ lifecycle: string }>(
                 "SELECT lifecycle FROM tenants WHERE id = $1",
@@ -840,7 +854,7 @@ async function startJobNotificationListener(): Promise<() => Promise<void>> {
             }
           })().catch((error) => {
             logWarn("[ws] failed to fence tenant sockets from lifecycle notification:", { error: error });
-          });
+          }));
         }
       } catch {
         logWarn("[ws] ignored malformed agent/tenant-session notification");
@@ -896,7 +910,7 @@ async function startJobNotificationListener(): Promise<() => Promise<void>> {
     reconnectAttempt = Math.min(reconnectAttempt + 1, 10);
     reconnectTimer = setTimeout(() => {
       reconnectTimer = null;
-      void connect();
+      trackNotificationTask(connect());
     }, delay);
     void incrementMetric("postgres_notification_reconnects_total");
     logWarn(`[ws] PostgreSQL notification listener reconnecting in ${delay}ms`);
@@ -980,11 +994,16 @@ async function startJobNotificationListener(): Promise<() => Promise<void>> {
     const client = activeClient;
     activeClient = null;
     notificationListenerPid = null;
-    if (!client) return;
-    try { await client.query(`UNLISTEN ${PG_NOTIFY_CHANNEL}`); } catch (error) { logDebug("[ws] UNLISTEN jobs cleanup failed", { error: error instanceof Error ? error.message : String(error) }); }
-    try { await client.query(`UNLISTEN ${PG_SESSIONS_CHANNEL}`); } catch (error) { logDebug("[ws] UNLISTEN sessions cleanup failed", { error: error instanceof Error ? error.message : String(error) }); }
-    try { await client.query(`UNLISTEN ${PG_DISCOVERY_CHANNEL}`); } catch (error) { logDebug("[ws] UNLISTEN discovery cleanup failed", { error: error instanceof Error ? error.message : String(error) }); }
-    try { client.release(); } catch (error) { logDebug("[ws] pool client release failed", { error: error instanceof Error ? error.message : String(error) }); }
+    if (client) {
+      try { await client.query(`UNLISTEN ${PG_NOTIFY_CHANNEL}`); } catch (error) { logDebug("[ws] UNLISTEN jobs cleanup failed", { error: error instanceof Error ? error.message : String(error) }); }
+      try { await client.query(`UNLISTEN ${PG_SESSIONS_CHANNEL}`); } catch (error) { logDebug("[ws] UNLISTEN sessions cleanup failed", { error: error instanceof Error ? error.message : String(error) }); }
+      try { await client.query(`UNLISTEN ${PG_DISCOVERY_CHANNEL}`); } catch (error) { logDebug("[ws] UNLISTEN discovery cleanup failed", { error: error instanceof Error ? error.message : String(error) }); }
+      try { client.release(); } catch (error) { logDebug("[ws] pool client release failed", { error: error instanceof Error ? error.message : String(error) }); }
+    }
+    // Releasing LISTEN does not finish claims already accepted from its
+    // notifications. Wait for their evidence/release transactions before the
+    // application is permitted to close PostgreSQL or exit successfully.
+    while (notificationTasks.size) await Promise.allSettled([...notificationTasks]);
   };
 }
 
@@ -992,9 +1011,31 @@ export type AgentWSSOptions = {
   enableJobNotifications?: boolean;
 };
 
+export type AgentWebSocketServer = WebSocketServer & {
+  /** Close admission and wait for accepted asynchronous database work. */
+  drain: () => Promise<void>;
+};
+
 export function attachAgentWSS(server: HttpServer, options: AgentWSSOptions = {}) {
   const { enableJobNotifications = true } = options;
-  const wss = new WebSocketServer({ noServer: true, path: "/api/agent/ws", maxPayload: MAX_WS_MESSAGE_BYTES });
+  const wss = new WebSocketServer({ noServer: true, path: "/api/agent/ws", maxPayload: MAX_WS_MESSAGE_BYTES }) as AgentWebSocketServer;
+  // These documented ws hooks cover both the101 response and protocol
+  // refusals which bypass the ordinary Node request/response callback.
+  wss.on("headers", (headers) => {
+    for (const [name, value] of Object.entries(securityHeaders())) headers.push(`${name}: ${value}`);
+  });
+  wss.on("wsClientError", (_error, socket, req) => {
+    const version = Number(req.headers["sec-websocket-version"]);
+    writeWsHttpError(socket, req.method === "GET" ? 400 : 405, "Invalid WebSocket upgrade", undefined,
+      version === 8 || version === 13 ? {} : { "Sec-WebSocket-Version": "13, 8" });
+  });
+  const acceptedTasks = new Set<Promise<unknown>>();
+  const trackAcceptedTask = (task: Promise<unknown>): void => {
+    acceptedTasks.add(task);
+    void task.finally(() => acceptedTasks.delete(task)).catch((error) => {
+      logWarn("[ws] asynchronous task failed during drain", { error });
+    });
+  };
 
   const interval = setInterval(() => {
     wss.clients.forEach((ws: WebSocket) => {
@@ -1008,21 +1049,32 @@ export function attachAgentWSS(server: HttpServer, options: AgentWSSOptions = {}
 
   let stopped = false;
   let stopNotificationListener: (() => Promise<void>) | null = null;
+  let notificationStartup = Promise.resolve();
+  let notificationStop: Promise<void> | null = null;
+  const stopNotifications = (): Promise<void> => {
+    notificationStop ??= notificationStartup.then(async () => { await stopNotificationListener?.(); });
+    return notificationStop;
+  };
   if (enableJobNotifications) {
-    void startJobNotificationListener().then((stop) => {
-      if (stopped) {
-        void stop();
-      } else {
-        stopNotificationListener = stop;
-      }
+    notificationStartup = startJobNotificationListener().then((stop) => {
+      stopNotificationListener = stop;
+      if (stopped) void stopNotifications();
     }).catch((error) => {
       logWarn("[ws] failed to initialize PostgreSQL notification listener:", { error: error });
     });
-    wss.on("close", () => {
-      stopped = true;
-      void stopNotificationListener?.();
-    });
   }
+  wss.on("close", () => { stopped = true; void stopNotifications(); });
+
+  let draining: Promise<void> | null = null;
+  wss.drain = () => draining ??= (async () => {
+    stopped = true;
+    for (const ws of wss.clients) ws.close(1001, "gateway shutting down");
+    await new Promise<void>(resolve => { wss.close(() => resolve()); });
+    await stopNotifications();
+    // Socket close only acknowledges the transport lifecycle. ACK handlers
+    // and registration transactions can still be waiting on PostgreSQL.
+    while (acceptedTasks.size) await Promise.allSettled([...acceptedTasks]);
+  })();
 
   // The WebSocket server is attached to the HTTP server but is not owned by
   // server.close(). Explicitly tear it down with the HTTP lifecycle so tests
@@ -1034,10 +1086,10 @@ export function attachAgentWSS(server: HttpServer, options: AgentWSSOptions = {}
       try { ws.terminate(); } catch (error) { logDebug("[ws] socket terminate cleanup failed", { error: error instanceof Error ? error.message : String(error) }); }
     }
     try { wss.close(); } catch (error) { logDebug("[ws] WSS close cleanup failed", { error: error instanceof Error ? error.message : String(error) }); }
-    void stopNotificationListener?.();
+    void stopNotifications();
   });
 
-  server.on("upgrade", async (req: IncomingMessage, socket, head) => {
+  const handleUpgrade = async (req: IncomingMessage, socket: Duplex, head: Buffer): Promise<void> => {
     let reservationActive = false;
     let completeRegistration: (ready: boolean) => void = () => {};
     const releaseReservation = () => {
@@ -1047,6 +1099,10 @@ export function attachAgentWSS(server: HttpServer, options: AgentWSSOptions = {}
     };
 
     try {
+      if (stopped) {
+        writeWsHttpError(socket, 503, "Gateway shutting down", 1);
+        return;
+      }
       const url = req.url ?? "";
       if (!url.startsWith("/api/agent/ws")) {
         writeWsHttpError(socket, 404, "Not Found");
@@ -1107,6 +1163,16 @@ export function attachAgentWSS(server: HttpServer, options: AgentWSSOptions = {}
         return;
       }
 
+      if (stopped) {
+        writeWsHttpError(socket, 503, "Gateway shutting down", 1);
+        return;
+      }
+      // Keep the existing400 for an authenticated near-match path, but own
+      // its response instead of the library's separate bare error serializer.
+      if (url.split("?", 1)[0] !== "/api/agent/ws") {
+        writeWsHttpError(socket, 400, "Bad Request");
+        return;
+      }
       if (!reserveAgentSocketSlot()) {
         writeWsHttpError(socket, 503, "WebSocket connection capacity reached", 1);
         return;
@@ -1161,7 +1227,7 @@ export function attachAgentWSS(server: HttpServer, options: AgentWSSOptions = {}
           // Register only under a shared lifecycle lock: tracking first would
           // expose an unverified socket to sendToAgent(), while checking first
           // without a lock lets a disable commit between check and registration.
-          void (async () => {
+          trackAcceptedTask((async () => {
             try {
               const accepted = await verifyAndTrackAgentSocket(
                 agent!.id,
@@ -1198,7 +1264,7 @@ export function attachAgentWSS(server: HttpServer, options: AgentWSSOptions = {}
                 try { ws.terminate(); } catch (terminateError) { logDebug("[ws] lifecycle-verification terminate cleanup failed", { error: terminateError instanceof Error ? terminateError.message : String(terminateError) }); }
               }
             }
-          })();
+          })());
 
           // A client can disconnect while lifecycle verification waits on PostgreSQL.
           // Release only the reservation; readyState is checked before registration.
@@ -1218,6 +1284,9 @@ export function attachAgentWSS(server: HttpServer, options: AgentWSSOptions = {}
           try { socket.destroy(); } catch (error) { logDebug("[ws] HTTP socket destroy cleanup failed", { error: error instanceof Error ? error.message : String(error) }); }
         }
       }
+  };
+  server.on("upgrade", (req, socket, head) => {
+    trackAcceptedTask(handleUpgrade(req, socket, head));
   });
 
   wss.on("connection", (ws: AgentSocket) => {
@@ -1247,13 +1316,13 @@ export function attachAgentWSS(server: HttpServer, options: AgentWSSOptions = {}
         else wsMessageInFlightByAgentId.set(agentId, remaining);
         return;
       }
-      void handleAgentMessage(agentId, tenantId, raw)
+      trackAcceptedTask(handleAgentMessage(agentId, tenantId, raw)
         .catch((e) => logWarn(`[ws] failed to handle message from agent ${agentId}:`, { error: e }))
         .finally(() => {
           const remaining = (wsMessageInFlightByAgentId.get(agentId) ?? 1) - 1;
           if (remaining <= 0) wsMessageInFlightByAgentId.delete(agentId);
           else wsMessageInFlightByAgentId.set(agentId, remaining);
-        });
+        }));
     });
     ws.on("error", () => { try { ws.close(); } catch (error) { logDebug("[ws] error-handler close cleanup failed", { error: error instanceof Error ? error.message : String(error) }); } });
   });

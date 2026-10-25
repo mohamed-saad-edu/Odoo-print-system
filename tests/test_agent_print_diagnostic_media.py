@@ -12,6 +12,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from odoo_geometry_fixture import validated_printer_geometry
+from odoo_verification_fixture import is_verified_runtime_printer, with_verification
 from test_f010_report_binding_identity import ValidationError, production_methods
 
 
@@ -21,7 +23,12 @@ RouterProduction = production_methods("print_router.py", [
     "_diagnostic_paper_width_for_binding",
 ])
 RouterProduction._generate_test_pdf.__globals__.update(base64=base64, textwrap=textwrap)
+RouterProduction.env = SimpleNamespace(lang="en_US")
 ReportProduction = production_methods("ir_actions_report.py", ["get_paperformat"])
+
+
+class Environment(dict):
+    lang = "en_US"
 
 
 def dimensions(pdf):
@@ -247,7 +254,7 @@ def test_known_thermal_receipt_keeps_exact_media_for_unicode_renderer(method_nam
             return b"%PDF-1.4\nexternal shaped diagnostic", "pdf"
 
     class Router(RouterProduction):
-        env = {"ir.actions.report": Report()}
+        env = Environment({"ir.actions.report": Report()})
 
         def resolve_binding(self, **kwargs):
             assert kwargs["explicit_binding"] is selected
@@ -280,7 +287,7 @@ def test_unicode_uses_shaping_report_with_local_bounded_media(width):
             return b"%PDF-1.4\nshaped by external renderer", "pdf"
 
     router = RouterProduction()
-    router.env = {"ir.actions.report": Report()}
+    router.env = Environment({"ir.actions.report": Report()})
     name = "شركة" * 30
     pdf = router._generate_test_pdf(
         company_name=name, branch_name="فرع", printer_name="طابعة",
@@ -345,6 +352,8 @@ def runtime_controller(printer):
         return SimpleNamespace(status_code=200, content=b"json", json=lambda: body)
 
     namespace = {"ValidationError": ValidationError, "Forbidden": PermissionError,
+                 "validated_printer_geometry": validated_printer_geometry,
+                 "is_verified_runtime_printer": is_verified_runtime_printer,
                  "request": SimpleNamespace(env=SimpleNamespace(_=lambda value: value)),
                  "requests": SimpleNamespace(get=get, RequestException=OSError)}
     policy_path = ROOT / "runtime_policy.py"
@@ -367,10 +376,12 @@ def test_picker_preserves_only_declared_integer_receipt_width(width):
     printer = {"id": "printer-a", "name": "POS80", "lifecycle": "active", "agent": {"id": "agent-a"},
                "capabilities": {"supported_protocols": [" PDF ", "pdf", "spooler", "bad"],
                                 "paper_width_mm": width, "private": "do not expose"}}
+    printer = with_verification(printer)
     result = runtime_controller(printer)
     assert result["selectedAgentId"] == "agent-a"
     capabilities = result["printers"][0]["capabilities"]
-    expected = {"supported_protocols": ["pdf", "spooler"]}
+    expected = {"supported_protocols": ["pdf", "spooler"],
+                "operational_verification": printer["capabilities"]["operational_verification"]}
     if type(width) is int and width in (58, 80):
         expected["paper_width_mm"] = width
     assert capabilities == expected

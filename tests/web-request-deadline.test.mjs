@@ -11,6 +11,7 @@ async function loadFetchHelper(fetchImpl) {
     AbortSignal,
     Error,
     Promise,
+    Request,
     URL,
     clearTimeout,
     fetch: fetchImpl,

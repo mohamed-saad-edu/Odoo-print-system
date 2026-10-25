@@ -228,7 +228,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       config: printerConfig,
       physicalIdentityKey: physicalPrinterIdentityKey({ connectionType: transport.connectionType, protocol: transport.protocol, config: printerConfig }),
       capabilities: {
-        ...(device.capabilities as Record<string, unknown> | null ?? {}),
+        ...Object.fromEntries(Object.entries(device.capabilities ?? {}).filter(([key]) => key !== "operational_verification")),
       },
     });
     await tx.update(discoveredDevices)
@@ -238,7 +238,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     return { kind: "created" as const, printerId };
     });
   } catch (error) {
-    if (error instanceof ManagerMutationAuthorityChangedError || error instanceof TenantSuspendedError || error instanceof TenantDeletedError) return NextResponse.json({ error: error.message }, { status: 403 });
+    if (error instanceof ManagerMutationAuthorityChangedError) return error.response();
+    if (error instanceof TenantSuspendedError || error instanceof TenantDeletedError) return NextResponse.json({ error: error.message }, { status: 403 });
     if (error instanceof TenantEntitlementError) {
       const headers = new Headers({ "Retry-After": "60", "Cache-Control": "no-store" });
       return NextResponse.json({

@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yaseir-agent/agent/internal/config"
 	"github.com/yaseir-agent/agent/internal/printer"
 )
 
@@ -15,7 +16,11 @@ type attemptEvidencePrinter struct{ run func(context.Context) error }
 func (p *attemptEvidencePrinter) Print(ctx context.Context, _ []byte) error { return p.run(ctx) }
 func (*attemptEvidencePrinter) Test(context.Context) error                  { return nil }
 func (*attemptEvidencePrinter) Status() string                              { return "unknown" }
-func (*attemptEvidencePrinter) LastSpoolerJobID() string                    { return "654" }
+
+func (*attemptEvidencePrinter) VerifyOperational(ctx context.Context, pc config.PrinterConfig) (*printer.OperationalVerification, error) {
+	return (&fakePrinter{}).VerifyOperational(ctx, pc)
+}
+func (*attemptEvidencePrinter) LastSpoolerJobID() string { return "654" }
 
 func newEvidenceTestAgent(t *testing.T, p printer.Printer, id string) *Agent {
 	t.Helper()

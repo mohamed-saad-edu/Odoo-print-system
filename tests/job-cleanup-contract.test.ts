@@ -17,7 +17,12 @@ describe("print-job cleanup contract", () => {
     const history = read("src/lib/job-history.ts");
     expect(history).toContain("PHYSICAL_OUTCOME_UNKNOWN_MARKERS.map");
     expect(src).toContain("tx.insert(printJobReceipts)");
-    expect(src).toContain("status: row.status, error: row.error, closedClaimTokenHash: row.closedClaimTokenHash");
+    const receiptMapping = src.slice(src.indexOf("tx.insert(printJobReceipts)"), src.indexOf("tx.delete(printJobs)"));
+    for (const field of ["id", "tenantId", "idempotencyKey", "printerId", "agentId", "apiKeyId", "destination", "documentType", "requestedBy",
+      "status", "bindingDigest", "outputMedium", "outputEvidence", "error", "closedClaimTokenHash", "deliveredAt", "ackedAt", "createdAt", "updatedAt"]) {
+      expect(receiptMapping, `receipt preserves ${field}`).toMatch(new RegExp(`\\b${field}\\s*:\\s*row\\.${field}\\b`));
+    }
+    expect(receiptMapping).toContain("fingerprint: idempotencyDigest(");
     expect(src.indexOf("tx.insert(printJobReceipts)")).toBeLessThan(src.indexOf("tx.delete(printJobs)"));
     expect(src).toContain("isNull(printJobs.claimToken)");
     expect(src).toContain("lt(printJobs.updatedAt, before)");

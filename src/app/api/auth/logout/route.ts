@@ -1,3 +1,4 @@
+import { clearLegacySessionCookies } from "../../../../lib/session-config";
 import { NextResponse } from "next/server";
 import { validateCustomer } from "../../../../lib/customer-auth";
 import { validateManager } from "../../../../lib/manager-auth";
@@ -127,5 +128,6 @@ export async function POST(req: Request) {
   response.headers.append("Set-Cookie", clearManagerRefreshCookieHeader());
 
   response.headers.set("Cache-Control", "no-store");
+  clearLegacySessionCookies(response.headers, "customer");
   return response;
 }

@@ -16,6 +16,10 @@ class PosSessionGatewayPrinting(models.Model):
         return bool(self.env["print_gateway.print_router"]._gateway_config(self.env.company))
 
     def get_gateway_sale_details_raster_width(self):
+        """Compatibility dot-width accessor; unknown geometry fails closed."""
+        return self.get_gateway_sale_details_geometry()["printable_width_dots"]
+
+    def get_gateway_sale_details_geometry(self):
         """Sale Details shares the same POS receipt printer binding."""
         self.ensure_one()
         self.check_access("read")
@@ -28,11 +32,13 @@ class PosSessionGatewayPrinting(models.Model):
             explicit_destination=self.config_id,
             raise_if_not_found=False,
         )
-        return router._receipt_width_for_route(route)
+        return router._receipt_geometry_for_route(route)
 
-    def action_print_gateway_sale_details(self, image, operation_id=None):
+    def action_print_gateway_sale_details(self, image, operation_id=None, geometry_fingerprint=None):
         self.ensure_one()
         self.check_access("read")
         if not image:
             raise ValidationError(_("The rendered Sale Details image is required."))
-        return self.env["print_gateway.print_router"].route_pos_sale_details(self, image, idempotency_key=operation_id)
+        return self.env["print_gateway.print_router"].route_pos_sale_details(
+            self, image, idempotency_key=operation_id, geometry_fingerprint=geometry_fingerprint,
+        )

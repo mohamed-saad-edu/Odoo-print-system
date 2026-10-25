@@ -183,7 +183,15 @@ func TestIPPLocalDiagnosticNegotiatesAndSubmitsOneRealPDF(t *testing.T) {
 					return
 				}
 				if binary.BigEndian.Uint16(data[2:4]) == 0x000b {
-					_, _ = w.Write(ippAttrResponse("application/pdf"))
+					attrs := bytes.NewBuffer(ippNoMediaFixture())
+					attrs.Truncate(attrs.Len() - 1)
+					media := "na_letter_8.5x11in"
+					if mm > 0 {
+						media = fmt.Sprintf("custom_receipt_%dx100mm", mm)
+					}
+					writeIPPAttribute(attrs, 0x44, "media-default", media)
+					attrs.WriteByte(3)
+					_, _ = w.Write(attrs.Bytes())
 					return
 				}
 				submitted.Add(1)

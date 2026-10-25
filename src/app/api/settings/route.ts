@@ -38,7 +38,7 @@ export async function PATCH(req: Request) {
     await writeAuditEvent({ tenantId: claims.tenantId, actorType: "user", actorId: claims.userId, action: "tenant.updated", resourceType: "tenant", resourceId: claims.tenantId }, tx);
   });
   } catch (error) {
-    if (error instanceof ManagerMutationAuthorityChangedError) return NextResponse.json({ error: error.message }, { status: 403 });
+    if (error instanceof ManagerMutationAuthorityChangedError) return error.response();
     if (error instanceof Error && error.message === "TENANT_NOT_ACTIVE") return NextResponse.json({ error: "Workspace unavailable" }, { status: 403 });
     throw error;
   }

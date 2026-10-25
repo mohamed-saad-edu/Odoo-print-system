@@ -47,6 +47,8 @@ func normalizePrinterType(raw string) string {
 		return "redirected"
 	case "physical":
 		return "physical"
+	case "file":
+		return "file"
 	default:
 		if normalized != "" {
 			log.Printf("normalizePrinterType: unclassified printer type %q coerced to physical", raw)

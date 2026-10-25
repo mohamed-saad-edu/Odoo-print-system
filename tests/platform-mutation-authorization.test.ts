@@ -44,7 +44,7 @@ describe("fresh transactional platform authority", () => {
     expect(session.sql).toContain("revoked_at IS NULL");
     expect(session.sql).toContain("expires_at > clock_timestamp()");
     expect(session.sql).toContain("FOR SHARE");
-    expect(session.params).toEqual([actor.familyId, actor.userId, actor.email, actor.exp, actor.iat]);
+    expect(session.params).toEqual([actor.familyId, actor.sid, actor.userId, actor.email, actor.exp, actor.iat]);
   });
 
   it.each([
@@ -63,13 +63,11 @@ describe("fresh transactional platform authority", () => {
       .rejects.toBeInstanceOf(PlatformMutationAuthorityChangedError);
   });
 
-  it("retains exact legacy session expiry binding and rejects revoked legacy sessions", async () => {
+  it("rejects legacy platform sessions because they have no persisted password/session policy", async () => {
     const legacy: PlatformOwnerClaims = { ...actor, ver: undefined, kind: undefined, sid: undefined, familyId: undefined };
     const { tx, statements } = database();
-    await expect(requirePlatformActorInTransaction(tx, legacy)).resolves.toBeUndefined();
-    expect(statements[1].sql).toContain("FROM platform_sessions");
-    expect(statements[1].sql).toContain("FLOOR(EXTRACT(EPOCH FROM expires_at))");
-    expect(statements[1].params).toEqual([actor.jti, actor.userId, actor.exp, actor.exp, actor.iat]);
+    await expect(requirePlatformActorInTransaction(tx, legacy)).rejects.toBeInstanceOf(PlatformMutationAuthorityChangedError);
+    expect(statements).toHaveLength(1);
     await expect(requirePlatformActorInTransaction(database({}, false).tx, legacy))
       .rejects.toBeInstanceOf(PlatformMutationAuthorityChangedError);
   });

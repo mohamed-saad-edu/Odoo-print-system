@@ -9,6 +9,7 @@ from unittest.mock import patch
 # only to avoid restructuring the cursor-visibility test they guard.)
 from odoo import api, fields
 from odoo.exceptions import ValidationError
+from odoo.tests import tagged
 from odoo.tests.common import TransactionCase
 from odoo.addons.print_gateway.models.print_policy import sanitize_raw_value
 
@@ -19,6 +20,7 @@ VIEWS = ADDON / "views"
 CONTROLLERS = ADDON / "controllers"
 
 
+@tagged("post_install", "-at_install")
 class TestPrintGatewayArchitectureContract(TransactionCase):
     def test_final_integration_models_include_only_ollama_owned_binding_layer(self):
         allowed = {
@@ -27,6 +29,7 @@ class TestPrintGatewayArchitectureContract(TransactionCase):
             "crypto.py",
             "gateway_config.py",
             "gateway_destination.py",
+            "gateway_http.py",
             "runtime_assignment.py",
             "ir_actions_report.py",
             "pos_order.py",
@@ -681,7 +684,7 @@ class TestPrintGatewayArchitectureContract(TransactionCase):
                 router = exec_env["print_gateway.print_router"].with_user(branch_user).with_context(allowed_company_ids=[branch.id])
                 with patch("odoo.addons.print_gateway.models.gateway_config.PrintGatewayConfig._validate_gateway_host", return_value=None), \
                      patch("odoo.addons.print_gateway.models.gateway_config.PrintGatewayConfig._register_auto_installation", return_value="test-auto-enrollment"), \
-                     patch("requests.post", return_value=mock_resp):
+                     patch("odoo.addons.print_gateway.models.gateway_http.post", return_value=mock_resp):
                     res = router.route_raw_command(
                         "\x1b@Branch submit ticket",
                         protocol="escpos",
@@ -811,7 +814,7 @@ class TestPrintGatewayArchitectureContract(TransactionCase):
         retry on the same order cannot create a second physical print job."""
         source = (MODELS / "print_router.py").read_text(encoding="utf-8")
         # The method must accept the idempotency_key kwarg.
-        self.assertIn("def route_pos_receipt(self, order, image_base64, *, idempotency_key=None)", source)
+        self.assertIn("def route_pos_receipt(self, order, image_base64, *, idempotency_key=None, geometry_fingerprint=None)", source)
         # It must compute a sha256 token from the order id and binding id.
         self.assertIn("hashlib.sha256", source)
         self.assertIn("receipt:{order.id}:{binding_id}", source)
@@ -825,7 +828,7 @@ class TestPrintGatewayArchitectureContract(TransactionCase):
     def test_route_pos_sale_details_produces_deterministic_idempotency_key(self):
         """route_pos_sale_details() must produce a stable SHA-256 key."""
         source = (MODELS / "print_router.py").read_text(encoding="utf-8")
-        self.assertIn("def route_pos_sale_details(self, session, image_base64, *, idempotency_key=None)", source)
+        self.assertIn("def route_pos_sale_details(self, session, image_base64, *, idempotency_key=None, geometry_fingerprint=None)", source)
         self.assertIn("sale_details:{session.id}:{binding_id}", source)
         route_start = source.index("def route_pos_sale_details")
         route_end = source.index("def route_intent", route_start)

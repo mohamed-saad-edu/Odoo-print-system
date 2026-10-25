@@ -5,8 +5,8 @@ import type { MessageKey } from "../src/i18n/messages/en";
 
 describe("translation prototype boundaries", () => {
   it.each(["constructor", "toString", "__proto__", "hasOwnProperty"])("renders unknown %s safely", key => {
-    expect(translate("ar", key as MessageKey, { count: 2 })).toBe(key);
-    expect(translateCount("ar", key, 2)).toBe(key);
+    expect(translate("ar", key as MessageKey, { count: 2 })).toBe("النص غير متاح");
+    expect(translateCount("ar", key, 2)).toBe("النص غير متاح");
     expect(lifecycleLabel(k => k, key)).toBe("lifecycle.active");
   });
   it("keeps real locale plural categories and interpolation", () => {

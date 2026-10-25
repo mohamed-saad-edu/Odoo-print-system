@@ -1,240 +1,68 @@
 "use client";
 
-import { fetchWithTimeout } from "../lib/fetch-timeout";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowRight, CreditCard, ExternalLink, RotateCcw } from "lucide-react";
-import { Button, Callout, ConfirmDialog, StatusBadge } from "./ui";
+import { Button, Callout, Field, Select } from "./ui";
 import { useI18n } from "../i18n/react";
-import { billingIntervalLabel } from "../lib/billing-labels";
-import type { Translator } from "../i18n/translate";
+import { fetchWithTimeout } from "../lib/fetch-timeout";
+import { codeMessageKey } from "../lib/api-error-keys";
 
-type PlanOption = {
-  id: string;
-  name: string;
-  currency: string | null;
-  interval: string | null;
-  entitlements?: Record<string, unknown> | null;
-};
+export type SubscriptionPlanOption = { id: string; name: string; entitlements: Record<string, unknown> };
+export type CustomerSubscriptionRequest = { id: string; reference: string; status: string; planId: string; term: string; createdAt: string; whatsappUrl?: string | null };
 
-
-async function post(path: string, body: Record<string, unknown> | undefined, t: Translator) {
-  const res = await fetchWithTimeout(path, {
-    method: "POST",
-    credentials: "include",
-    cache: "no-store",
-    headers: body ? { "Content-Type": "application/json" } : undefined,
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    // Keep raw server text out of the interface: the operator sees a plain
-    // explanation, the detail stays in the console for support.
-    if (typeof data?.error === "string" && data.error) console.warn("billing_request_failed:", data.error);
-    throw new Error(
-      data?.code === "STRIPE_NOT_CONFIGURED" ? t("billingActions.stripeNotConfigured") : t("billingActions.requestFailed"),
-    );
-  }
-  return data;
-}
-
-/**
- * Billing lifecycle actions (portal, checkout, resume, cancel).
- *
- * Behaviour is unchanged from the original implementation — same endpoints,
- * same request bodies, same navigation semantics — but the controls now follow
- * the shared button hierarchy and destructive actions are confirmed in a real
- * dialog instead of a bare modal footer.
- */
-export function BillingActions({
-  hasSubscription,
-  cancelAtPeriodEnd,
-  subscriptionStatus,
-  canOpenPortal = false,
-  checkoutUrl,
-  selectedPlan,
-}: {
-  hasSubscription: boolean;
-  cancelAtPeriodEnd: boolean;
-  subscriptionStatus?: string | null;
-  canOpenPortal?: boolean;
-  checkoutUrl?: string | null;
-  selectedPlan?: PlanOption | null;
+/** A request records customer intent; only the Platform Owner changes entitlements. */
+export function BillingActions({ plans, selectedPlanId, currentPlanId, isOwner, status, initialRequest, currentTerm }: {
+  plans: SubscriptionPlanOption[];
+  selectedPlanId?: string;
+  currentPlanId?: string | null;
+  isOwner: boolean;
+  status: "awaiting_activation" | "active" | "expired" | "suspended";
+  initialRequest?: CustomerSubscriptionRequest | null;
+  currentTerm?: string | null;
 }) {
+  const { t, formatNumber, formatDateTime } = useI18n();
   const router = useRouter();
-  const { t } = useI18n();
-  const [busy, setBusy] = useState("");
+  const [planId, setPlanId] = useState(() => plans.some(plan => plan.id === selectedPlanId) ? selectedPlanId! : plans.some(plan => plan.id === currentPlanId) ? currentPlanId! : plans[0]?.id ?? "");
+  const [term, setTerm] = useState(currentTerm === "yearly" ? "yearly" : "monthly");
+  const [request, setRequest] = useState(initialRequest ?? null);
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [confirmCancel, setConfirmCancel] = useState(false);
+  const flight = useRef(false);
+  const idempotency = useRef<{ fingerprint: string; key: string } | null>(null);
+  const selectedPlan = plans.find(plan => plan.id === planId);
+  const pending = request?.status === "pending";
 
-  const run = async (name: string, fn: () => Promise<void>) => {
-    setBusy(name);
-    setError("");
+  async function submit(event: React.FormEvent) {
+    event.preventDefault();
+    if (!isOwner || flight.current || pending || !selectedPlan) return;
+    flight.current = true; setBusy(true); setError("");
     try {
-      await fn();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : t("billingActions.requestFailed"));
-    } finally {
-      setBusy("");
-    }
-  };
+      const fingerprint = `${planId}:${term}`;
+      if (idempotency.current?.fingerprint !== fingerprint) idempotency.current = { fingerprint, key: crypto.randomUUID() };
+      const response = await fetchWithTimeout("/api/subscription-requests", { method: "POST", credentials: "include", cache: "no-store", headers: { "Content-Type": "application/json", "Idempotency-Key": idempotency.current.key }, body: JSON.stringify({ planId, term }) });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) { setError(t(codeMessageKey(body.code) ?? "v4.onboarding.failed")); return; }
+      if (!body.request?.reference) { setError(t("v4.onboarding.failed")); return; }
+      setRequest(body.request);
+      router.refresh();
+    } catch { setError(t("v4.onboarding.failed")); }
+    finally { flight.current = false; setBusy(false); }
+  }
 
-  const continueWithSelectedPlan = () => {
-    if (!selectedPlan) return;
-
-    void run("selected-plan", async () => {
-      if (
-        hasSubscription ||
-        subscriptionStatus === "paused" ||
-        subscriptionStatus === "unpaid" ||
-        (subscriptionStatus === "incomplete" && !checkoutUrl && canOpenPortal)
-      ) {
-        const data = await post("/api/billing/portal", undefined, t);
-        if (typeof data.url !== "string" || !data.url) throw new Error(t("billingActions.portalUrlMissing"));
-        window.location.href = data.url;
-        return;
-      }
-
-      if (subscriptionStatus === "incomplete" && checkoutUrl) {
-        window.location.href = checkoutUrl;
-        return;
-      }
-
-      const data = await post("/api/billing/checkout", { planId: selectedPlan.id }, t);
-      if (typeof data.url !== "string" || !data.url) throw new Error(t("billingActions.checkoutUrlMissing"));
-      window.location.href = data.url;
-    });
-  };
-
-  const openPortal = () =>
-    run("portal", async () => {
-      const data = await post("/api/billing/portal", undefined, t);
-      if (typeof data.url !== "string" || !data.url) throw new Error(t("billingActions.portalUrlMissing"));
-      window.location.href = data.url;
-    });
-
-  return (
-    <>
-      <div className="space-y-4">
-        {selectedPlan && (
-          <section className="rounded-md border border-edge bg-surface-2 px-4 py-4">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <div className="min-w-0">
-                <div className="label-caps text-ink-3">{t("billingActions.selectedPlan")}</div>
-                <div className="mt-1 flex flex-wrap items-center gap-2">
-                  <span className="text-md font-[600] text-ink">{selectedPlan.name}</span>
-                  <StatusBadge size="sm" tone="brand" label={hasSubscription ? t("billingActions.changePlan") : t("billingActions.newSubscription")} />
-                </div>
-                <div className="mt-1 text-sm text-ink-3">
-                  {t("billingActions.perInterval", { currency: selectedPlan.currency?.toUpperCase() ?? "USD", interval: billingIntervalLabel(selectedPlan.interval, t) })}
-                </div>
-              </div>
-              <Button
-                variant="primary"
-                onClick={continueWithSelectedPlan}
-                disabled={busy !== ""}
-                loading={busy === "selected-plan"}
-                icon={<ArrowRight className="h-4 w-4 rtl:-scale-x-100" aria-hidden />}
-                className="shrink-0"
-              >
-                {busy === "selected-plan"
-                  ? t("billingActions.opening")
-                  : hasSubscription
-                    ? t("billingActions.continueToBilling")
-                    : t("billingActions.continueToCheckout")}
-              </Button>
-            </div>
-          </section>
-        )}
-
-        <div className="flex flex-wrap gap-2.5">
-          <Button
-            variant="secondary"
-            disabled={!canOpenPortal || busy !== ""}
-            loading={busy === "portal"}
-            onClick={openPortal}
-            icon={<CreditCard className="h-4 w-4" aria-hidden />}
-            title={canOpenPortal ? t("billingActions.portalTitle") : t("billingActions.portalUnavailableTitle")}
-          >
-            {busy === "portal" ? t("billingActions.opening") : t("billingActions.customerPortal")}
-            {canOpenPortal && busy !== "portal" && (
-              <ExternalLink className="ms-1 h-3.5 w-3.5 text-ink-4" aria-hidden />
-            )}
-          </Button>
-
-          {hasSubscription && subscriptionStatus !== "paused" && !cancelAtPeriodEnd && (
-            <Button
-              variant="danger"
-              disabled={busy !== ""}
-              onClick={() => setConfirmCancel(true)}
-            >
-              {t("billingActions.cancelAtPeriodEnd")}
-            </Button>
-          )}
-
-          {((hasSubscription && cancelAtPeriodEnd) || (canOpenPortal && subscriptionStatus === "paused")) && (
-            <Button
-              variant="primary"
-              disabled={busy !== ""}
-              loading={busy === "resume"}
-              onClick={() =>
-                run("resume", async () => {
-                  await post("/api/billing/resume", undefined, t);
-                  router.refresh();
-                })
-              }
-              icon={<RotateCcw className="h-4 w-4" aria-hidden />}
-            >
-              {busy === "resume" ? t("billingActions.updating") : t("billingActions.resumeSubscription")}
-            </Button>
-          )}
-        </div>
-
-        {!selectedPlan && subscriptionStatus === "incomplete" && checkoutUrl && (
-          <Button
-            variant="primary"
-            href={checkoutUrl}
-            icon={<ArrowRight className="h-4 w-4 rtl:-scale-x-100" aria-hidden />}
-          >
-            {t("billingActions.continueExistingCheckout")}
-          </Button>
-        )}
-
-        {error && (
-          <Callout tone="bad" title={t("billingActions.requestFailed")}>
-            <span role="alert">{error}</span>
-          </Callout>
-        )}
-      </div>
-
-      <ConfirmDialog
-        open={confirmCancel}
-        onClose={() => {
-          if (!busy) setConfirmCancel(false);
-        }}
-        onConfirm={() =>
-          run("cancel", async () => {
-            await post("/api/billing/cancel", undefined, t);
-            setConfirmCancel(false);
-            router.refresh();
-          })
-        }
-        busy={busy === "cancel"}
-        tone="danger"
-        title={t("billingActions.cancelTitle")}
-        description={t("billingActions.cancelDescription")}
-        confirmLabel={t("billingActions.cancelAtPeriodEnd")}
-        cancelLabel={t("billingActions.keepSubscription")}
-      >
-        <div className="space-y-3 text-sm leading-relaxed text-ink-2">
-          <p>{t("billingActions.cancelBody1")}</p>
-          <p>
-            {t("billingActions.cancelBody2")}{" "}
-            <span className="font-[600] text-ink">{t("billingActions.resumeSubscription")}</span>{" "}
-            {t("billingActions.hint")}
-          </p>
-        </div>
-      </ConfirmDialog>
-    </>
-  );
+  return <div className="space-y-4" id="billing-actions">
+    {!isOwner ? <Callout tone="info" title={t("v4.subscription.ownerTitle")}>{t("v4.subscription.ownerBody")}</Callout> : pending ? <Callout tone="info" title={t("v4.onboarding.requestReceived")}>
+      <p>{t("v4.subscription.requestPending")}</p>
+      <dl className="mt-3 space-y-2 text-sm"><div><dt>{t("v4.onboarding.reference")}</dt><dd dir="ltr" className="break-all font-mono">{request.reference}</dd></div><div><dt>{t("v4.onboarding.requestedAt")}</dt><dd>{formatDateTime(request.createdAt)}</dd></div><div><dt>{t("v4.subscription.requestedPlan")}</dt><dd>{plans.find(plan => plan.id === request.planId)?.name ?? t("common.unknown")}</dd></div></dl>
+      <div className="mt-4 flex flex-wrap gap-3">{request.whatsappUrl && <Button href={request.whatsappUrl} target="_blank" rel="noopener noreferrer" variant="primary">{t("v4.onboarding.whatsapp")}</Button>}<Button variant="secondary" onClick={() => router.refresh()}>{t("v4.onboarding.refresh")}</Button></div>
+    </Callout> : <form onSubmit={submit} className="space-y-4">
+      <h2 className="text-lg font-semibold">{t(status === "active" ? "v4.subscription.changeRenew" : status === "suspended" ? "v4.subscription.reviewAccess" : "v4.onboarding.request")}</h2>
+      <p className="text-sm leading-relaxed text-ink-3">{t("v4.subscription.requestBody")}</p>
+      <Field label={t("onboarding.choosePlanLegend")} htmlFor="request-plan"><Select id="request-plan" value={planId} onChange={event => setPlanId(event.target.value)} disabled={busy || plans.length === 0} required>{plans.map(plan => <option key={plan.id} value={plan.id}>{plan.name}</option>)}</Select></Field>
+      {selectedPlan && <p className="text-sm text-ink-3">{t("v4.onboarding.monthlyJobs", { count: typeof selectedPlan.entitlements.max_prints_per_period === "number" ? formatNumber(selectedPlan.entitlements.max_prints_per_period) : t("billing.unlimited") })}</p>}
+      <Field label={t("v4.onboarding.term")} htmlFor="request-term"><Select id="request-term" value={term} onChange={event => setTerm(event.target.value)} disabled={busy}><option value="monthly">{t("v4.onboarding.monthly")}</option><option value="yearly">{t("v4.onboarding.yearly")}</option></Select></Field>
+      <Button type="submit" variant="primary" disabled={busy || !selectedPlan} loading={busy}>{t("v4.subscription.submitRequest")}</Button>
+      {plans.length === 0 && <p className="text-sm text-ink-3">{t("onboarding.noPlansBody")}</p>}
+    </form>}
+    {error && <Callout tone="bad" title={t("errors.operationFailed")}>{error}</Callout>}
+  </div>;
 }

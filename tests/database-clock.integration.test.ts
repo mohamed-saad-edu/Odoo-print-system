@@ -89,7 +89,7 @@ suite("gateway clock authority against PostgreSQL", () => {
       }),
     ).rejects.toThrow("enqueue failed");
 
-    expect(Number((await pool().query("SELECT COALESCE(SUM(used_prints), 0)::int AS n FROM print_usage_periods WHERE tenant_id = $1", [f.tenantId])).rows[0].n)).toBe(0);
+    expect(Number((await pool().query("SELECT COALESCE(SUM(used_prints), 0)::int AS n FROM print_monthly_usage WHERE tenant_id = $1", [f.tenantId])).rows[0].n)).toBe(0);
 
     const usage = await getTenantPrintUsage(db, f.tenantId);
     expect(usage.used).toBe(0);
@@ -118,7 +118,7 @@ suite("gateway clock authority against PostgreSQL", () => {
 
     const usage = await getTenantPrintUsage(db, f.tenantId);
     expect(usage.used).toBe(3);
-    const stored = await db.execute(sql`SELECT used_prints FROM print_usage_periods WHERE tenant_id = ${f.tenantId}`);
+    const stored = await db.execute(sql`SELECT used_prints FROM print_monthly_usage WHERE tenant_id = ${f.tenantId}`);
     expect(stored.rows.map((r) => Number((r as { used_prints: number | string }).used_prints))).toEqual([3]);
   });
 });

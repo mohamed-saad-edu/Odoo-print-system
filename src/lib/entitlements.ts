@@ -23,11 +23,10 @@ export class TenantSubscriptionRequiredError extends Error {
 }
 
 /**
- * Stripe subscription states that keep the Yaseir runtime provisioned.
- * past_due remains usable while Stripe performs recovery/retry; access is
- * revoked for unpaid/canceled/paused states by the entitlement query.
+ * Only explicit manual activation keeps the runtime provisioned. Provider
+ * callbacks and legacy recovery states cannot grant access.
  */
-export const BILLING_ACCESS_STATUSES = ["trialing", "active", "past_due"] as const;
+export const BILLING_ACCESS_STATUSES = ["active"] as const;
 
 /** True when a Stripe subscription status keeps the runtime provisioned. */
 export function isBillingAccessStatus(status: string | null | undefined): boolean {
@@ -102,6 +101,20 @@ export function normalizePlanEntitlements(input: unknown): TenantEntitlements {
   }
   return result;
 }
+
+/** Device counts are not commercial entitlements. Existing request, discovery,
+ * queue and concurrency safety limits remain independently enforced. */
+export function effectiveManualEntitlements(input: unknown, monthlyQuota?: unknown): TenantEntitlements {
+  const values = normalizePlanEntitlements(input);
+  values.max_agents = "unlimited";
+  values.max_printers = "unlimited";
+  if (monthlyQuota !== null && monthlyQuota !== undefined) {
+    if (typeof monthlyQuota !== "number" || !Number.isSafeInteger(monthlyQuota) || monthlyQuota < 1) throw new TenantEntitlementConfigError(PRINT_QUOTA_ENTITLEMENT);
+    values.max_prints_per_period = monthlyQuota;
+  }
+  return values;
+}
+
 export class TenantEntitlementConfigError extends Error {
   readonly code = "TENANT_ENTITLEMENT_UNAVAILABLE" as const;
   constructor(public readonly entitlement: string) {
@@ -131,10 +144,9 @@ export function liveTenantSubscriptionWhere(tenantId: SQL, requireUnblocked = tr
     : sql``;
   return sql`
     ts.tenant_id = ${tenantId}
-    AND ts.status IN ('trialing', 'active', 'past_due')
+    AND ts.status = 'active' AND ts.billing_mode = 'manual' AND ts.current_period_start <= clock_timestamp()
     AND (
-      ts.status = 'past_due'
-      OR ts.current_period_end IS NULL
+      ts.current_period_end IS NULL
       OR ts.current_period_end > clock_timestamp()
     )
     ${unblocked}
@@ -150,10 +162,9 @@ export function liveTenantSubscriptionPredicate(tenantId: SQL, requireUnblocked 
       SELECT 1
       FROM tenant_subscriptions ts
       WHERE ts.tenant_id = ${tenantId}
-        AND ts.status IN ('trialing', 'active', 'past_due')
+        AND ts.status = 'active' AND ts.billing_mode = 'manual' AND ts.current_period_start <= clock_timestamp()
         AND (
-          ts.status = 'past_due'
-          OR ts.current_period_end IS NULL
+          ts.current_period_end IS NULL
           OR ts.current_period_end > clock_timestamp()
         )
         ${unblocked}
@@ -178,7 +189,7 @@ export async function requireTenantBillingAccess(tx: EntitlementTx, tenantId: st
 export async function getTenantEntitlementLimit(tx: EntitlementTx, tenantId: string, key: string, lockRows = false): Promise<number | null> {
   const result = lockRows
     ? await tx.execute(sql`
-    SELECT p.entitlements, ts.entitlement_blocked AS "entitlementBlocked"
+    SELECT p.entitlements, ts.monthly_quota AS "monthlyQuota", ts.entitlement_blocked AS "entitlementBlocked"
     FROM tenant_subscriptions ts
     JOIN plans p ON p.id = ts.plan_id
     WHERE ${liveTenantSubscriptionWhere(sql`${tenantId}`, false)}
@@ -186,7 +197,7 @@ export async function getTenantEntitlementLimit(tx: EntitlementTx, tenantId: str
     FOR UPDATE OF ts
   `)
     : await tx.execute(sql`
-    SELECT p.entitlements, ts.entitlement_blocked AS "entitlementBlocked"
+    SELECT p.entitlements, ts.monthly_quota AS "monthlyQuota", ts.entitlement_blocked AS "entitlementBlocked"
     FROM tenant_subscriptions ts
     JOIN plans p ON p.id = ts.plan_id
     WHERE ${liveTenantSubscriptionWhere(sql`${tenantId}`, false)}
@@ -197,7 +208,7 @@ export async function getTenantEntitlementLimit(tx: EntitlementTx, tenantId: str
   if (result.rows[0].entitlementBlocked === true) throw new TenantEntitlementConfigError(key);
   let entitlements: TenantEntitlements;
   try {
-    entitlements = normalizePlanEntitlements(result.rows[0].entitlements);
+    entitlements = effectiveManualEntitlements(result.rows[0].entitlements, result.rows[0].monthlyQuota);
   } catch (err) {
     logError("entitlements.plan_malformed", {
       tenantId,
@@ -214,7 +225,7 @@ export async function getTenantEntitlementLimit(tx: EntitlementTx, tenantId: str
 
 export async function getTenantEntitlements(tx: EntitlementTx, tenantId: string): Promise<TenantEntitlements> {
   const result = await tx.execute(sql`
-    SELECT p.entitlements, ts.entitlement_blocked AS "entitlementBlocked"
+    SELECT p.entitlements, ts.monthly_quota AS "monthlyQuota", ts.entitlement_blocked AS "entitlementBlocked"
     FROM tenant_subscriptions ts
     JOIN plans p ON p.id = ts.plan_id
     WHERE ${liveTenantSubscriptionWhere(sql`${tenantId}`, false)}
@@ -223,7 +234,7 @@ export async function getTenantEntitlements(tx: EntitlementTx, tenantId: string)
   if (!result.rows[0]) throw new TenantSubscriptionRequiredError();
   if (result.rows[0].entitlementBlocked === true) throw new TenantEntitlementConfigError("plan_entitlements");
   try {
-    return normalizePlanEntitlements(result.rows[0].entitlements);
+    return effectiveManualEntitlements(result.rows[0].entitlements, result.rows[0].monthlyQuota);
   } catch (err) {
     logError("entitlements.plan_malformed", {
       tenantId,
@@ -293,6 +304,7 @@ type TenantPrintQuotaRow = {
   periodStart: Date | string;
   periodEnd: Date | string | null;
   entitlementBlocked?: boolean;
+  monthlyQuota?: number | null;
 };
 
 function parseEntitlementDate(value: Date | string | null): Date | null {
@@ -307,7 +319,7 @@ function parseEntitlementDate(value: Date | string | null): Date | null {
 async function getTenantPrintQuotaContext(tx: EntitlementTx, tenantId: string, lockRows = false): Promise<{ limit: number | "unlimited"; periodStart: Date; periodEnd: Date | null }> {
   const result = lockRows
     ? await tx.execute(sql`
-        SELECT p.entitlements, ts.current_period_start AS "periodStart", ts.current_period_end AS "periodEnd", ts.entitlement_blocked AS "entitlementBlocked"
+        SELECT p.entitlements, ts.monthly_quota AS "monthlyQuota", date_trunc('month', clock_timestamp() AT TIME ZONE 'UTC') AS "periodStart", date_trunc('month', clock_timestamp() AT TIME ZONE 'UTC') + interval '1 month' AS "periodEnd", ts.entitlement_blocked AS "entitlementBlocked"
         FROM tenant_subscriptions ts
         JOIN plans p ON p.id = ts.plan_id
         WHERE ${liveTenantSubscriptionWhere(sql`${tenantId}`, false)}
@@ -315,7 +327,7 @@ async function getTenantPrintQuotaContext(tx: EntitlementTx, tenantId: string, l
         FOR UPDATE OF ts
       `)
     : await tx.execute(sql`
-        SELECT p.entitlements, ts.current_period_start AS "periodStart", ts.current_period_end AS "periodEnd", ts.entitlement_blocked AS "entitlementBlocked"
+        SELECT p.entitlements, ts.monthly_quota AS "monthlyQuota", date_trunc('month', clock_timestamp() AT TIME ZONE 'UTC') AS "periodStart", date_trunc('month', clock_timestamp() AT TIME ZONE 'UTC') + interval '1 month' AS "periodEnd", ts.entitlement_blocked AS "entitlementBlocked"
         FROM tenant_subscriptions ts
         JOIN plans p ON p.id = ts.plan_id
         WHERE ${liveTenantSubscriptionWhere(sql`${tenantId}`, false)}
@@ -326,7 +338,7 @@ async function getTenantPrintQuotaContext(tx: EntitlementTx, tenantId: string, l
   if (row.entitlementBlocked === true) throw new TenantEntitlementConfigError(PRINT_QUOTA_ENTITLEMENT);
   let entitlements: TenantEntitlements;
   try {
-    entitlements = normalizePlanEntitlements(row.entitlements);
+    entitlements = effectiveManualEntitlements(row.entitlements, row.monthlyQuota);
   } catch (err) {
     logError("entitlements.plan_malformed", { tenantId, key: PRINT_QUOTA_ENTITLEMENT, error: err instanceof Error ? err.message : String(err) });
     throw new TenantEntitlementConfigError(PRINT_QUOTA_ENTITLEMENT);
@@ -344,14 +356,14 @@ export async function reserveTenantPrintCredit(tx: EntitlementTx, tenantId: stri
   const limit = context.limit;
   const predicate = limit === "unlimited"
     ? sql`TRUE`
-    : sql`print_usage_periods.used_prints < ${limit}`;
+    : sql`print_monthly_usage.used_prints < ${limit}`;
   const upsert = await tx.execute(sql`
-    INSERT INTO print_usage_periods (tenant_id, period_start, period_end, used_prints, created_at, updated_at)
+    INSERT INTO print_monthly_usage (tenant_id, period_start, period_end, used_prints, created_at, updated_at)
     VALUES (${tenantId}, ${context.periodStart}, ${context.periodEnd}, 1, now(), now())
     ON CONFLICT (tenant_id, period_start)
     DO UPDATE SET
       period_end = EXCLUDED.period_end,
-      used_prints = print_usage_periods.used_prints + 1,
+      used_prints = print_monthly_usage.used_prints + 1,
       updated_at = now()
     WHERE ${predicate}
     RETURNING used_prints
@@ -359,7 +371,7 @@ export async function reserveTenantPrintCredit(tx: EntitlementTx, tenantId: stri
   if (upsert.rows.length === 0) {
     const current = await tx.execute(sql`
       SELECT used_prints AS "usedPrints"
-      FROM print_usage_periods
+      FROM print_monthly_usage
       WHERE tenant_id = ${tenantId} AND period_start = ${context.periodStart}
       LIMIT 1
     `);
@@ -374,7 +386,7 @@ export async function getTenantPrintUsage(tx: EntitlementTx, tenantId: string): 
   const context = await getTenantPrintQuotaContext(tx, tenantId);
   const current = await tx.execute(sql`
     SELECT used_prints AS "usedPrints"
-    FROM print_usage_periods
+    FROM print_monthly_usage
     WHERE tenant_id = ${tenantId} AND period_start = ${context.periodStart}
     LIMIT 1
   `);

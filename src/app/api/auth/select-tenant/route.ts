@@ -1,3 +1,4 @@
+import { clearLegacySessionCookies } from "../../../../lib/session-config";
 import { logError } from "../../../../lib/log";
 import { NextResponse } from "next/server";
 import { db } from "../../../../db";
@@ -5,11 +6,12 @@ import { tenantUsers, tenants, authRateLimits } from "../../../../db/schema";
 import { and, eq, sql } from "drizzle-orm";
 import { validateWorkspaceManager, revokeLegacyManagerSessionInTransaction } from "../../../../lib/manager-auth";
 import { verifyTenantSelectionToken, customerSessionCookie, customerRefreshCookie } from "../../../../lib/customer-auth";
-import { issueSessionPairInTransaction, revokeSessionFamilyInTransaction, AuthenticationChangedError } from "../../../../lib/session-tokens";
+import { issueSessionPairInTransaction, revokeSessionFamilyInTransaction, AuthenticationChangedError, sessionReplacementFromRequest } from "../../../../lib/session-tokens";
 import { writeAuditEvent } from "../../../../lib/audit";
 import { hasBodyOverLimit } from "../../../../lib/request-limits";
 import { clientIpFrom } from "../../../../lib/auth-rate-limit";
 import { requireActiveTenantInTransaction, TenantDeletedError, TenantSuspendedError } from "../../../../lib/tenant-guard";
+import { WorkspaceSessionExpiredError, workspacePolicyResponse } from "../../../../lib/workspace-session-security";
 
 export async function POST(req: Request) {
   if (hasBodyOverLimit(req, 16 * 1024)) return NextResponse.json({ error: "Request body too large" }, { status: 413 });
@@ -25,6 +27,7 @@ export async function POST(req: Request) {
   let isSelectionToken = false;
   let tokenJti: string | null = null;
   let credentialVersion: string | undefined;
+  let passwordVerifiedAtMs: number | undefined;
 
   if (selectionToken) {
     const verified = await verifyTenantSelectionToken(selectionToken);
@@ -33,6 +36,7 @@ export async function POST(req: Request) {
     isSelectionToken = true;
     tokenJti = verified.jti;
     credentialVersion = verified.credentialVersion;
+    passwordVerifiedAtMs = verified.iat * 1000;
   } else if (claims?.userId) {
     userId = claims.userId;
   } else {
@@ -43,18 +47,22 @@ export async function POST(req: Request) {
     const result = await db.transaction(async (tx) => {
       // Pair insertion holds this same lifecycle fence; take it before the
       // user/family locks to preserve tenant -> principal -> session order.
-      await requireActiveTenantInTransaction(tx, tenantId);
+      for (const id of [...new Set([tenantId, ...(!isSelectionToken && claims ? [claims.tenantId] : [])])].sort()) {
+        await requireActiveTenantInTransaction(tx, id);
+      }
       await tx.execute(sql`SELECT id FROM users WHERE id = ${userId} FOR UPDATE`);
       if (!isSelectionToken && claims) {
         // User lock serializes reset; family lock serializes logout/rotation.
         // Do not mint a replacement from a session revoked after preflight.
         if (claims.familyId) {
+          if (claims.ver !== 2 || !claims.sid) throw new AuthenticationChangedError();
           await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${claims.familyId}, 0))`);
           const source = await tx.execute(sql`
             SELECT id FROM refresh_tokens
-            WHERE family_id = ${claims.familyId} AND user_id = ${userId}
+            WHERE id = ${claims.sid} AND family_id = ${claims.familyId} AND user_id = ${userId}
               AND tenant_id = ${claims.tenantId} AND kind = ${claims.kind ?? "manager"}
               AND revoked_at IS NULL AND expires_at > clock_timestamp()
+              AND ${claims.exp}>EXTRACT(EPOCH FROM clock_timestamp())
             FOR UPDATE
           `);
           if (source.rows.length === 0) throw new AuthenticationChangedError();
@@ -91,11 +99,6 @@ export async function POST(req: Request) {
       });
       if (!tenant || tenant.lifecycle !== "active") throw new Error("Workspace is suspended or unavailable");
 
-      if (claims?.familyId) {
-        await revokeSessionFamilyInTransaction(tx, claims.familyId, "tenant_selection");
-      } else if (claims?.jti) {
-        await revokeLegacyManagerSessionInTransaction(tx, claims.jti);
-      }
 
       const session = await issueSessionPairInTransaction(
         tx,
@@ -104,13 +107,24 @@ export async function POST(req: Request) {
           tenantId: membership.tenantId,
           userId: userId!,
           credentialVersion,
+          passwordVerifiedAtMs,
           role: membership.role as "owner" | "admin" | "operator" | "viewer" | "integration_admin" | "billing_admin",
         },
         {
           ipAddress: clientIpFrom(req),
           userAgent: req.headers.get("user-agent"),
+          ...(isSelectionToken ? { replaceCurrent: sessionReplacementFromRequest(req, "customer") } : { continueWorkspace: claims! }),
         },
       );
+
+      // A workspace switch inherits the admitted source's password proof and
+      // absolute deadline. Revoke it only after the successor is prepared,
+      // within this same transaction, so failure cannot strand the browser.
+      if (!isSelectionToken && claims?.familyId) {
+        await revokeSessionFamilyInTransaction(tx, claims.familyId, "tenant_selection");
+      } else if (!isSelectionToken && claims?.jti) {
+        await revokeLegacyManagerSessionInTransaction(tx, claims.jti);
+      }
 
       await writeAuditEvent({
         tenantId: membership.tenantId,
@@ -126,8 +140,10 @@ export async function POST(req: Request) {
     res.headers.set("Set-Cookie", customerSessionCookie(result.session));
     res.headers.append("Set-Cookie", customerRefreshCookie(result.session));
     res.headers.set("Cache-Control", "no-store");
+    clearLegacySessionCookies(res.headers, "customer");
     return res;
   } catch (error) {
+    if (error instanceof WorkspaceSessionExpiredError) return workspacePolicyResponse(error);
     if (error instanceof TenantSuspendedError || error instanceof TenantDeletedError) return NextResponse.json({ error: "Workspace is suspended or unavailable" }, { status: 403 });
     if (error instanceof AuthenticationChangedError) return NextResponse.json({ error: "Invalid or expired workspace selection token" }, { status: 401 });
     const message = error instanceof Error ? error.message : "Workspace selection failed";

@@ -69,8 +69,12 @@ test('Agent status reports preserve the original claim fence and ambiguous submi
   const status=src.slice(src.indexOf('func (a *Agent) updateJobStatus('),src.indexOf('func (a *Agent) doAuthorizedRequest('));
   assert.match(status, /body\["claimToken"\] = claimToken/);
   assert.match(status, /body\["spoolerJobId"\] = spoolerJobID/);
-  assert.match(src, /UpdateTerminalWithEvidence\(jobID, "success"/);
-  assert.match(src, /UpdateTerminalWithEvidence\(jobID, "failed"/);
+  assert.match(src, /UpdateTerminalResult\(jobID, "success", "", spoolerJobID, statusTransport, encodedOutput\)/);
+  assert.match(src, /UpdateTerminalResult\(jobID, "failed", failureMsg, spoolerJobID, statusTransport, ""\)/);
+  assert.match(src, /reportDurableTerminalResult\(ctx, result\)/);
+  const evidence=read('agent/internal/agent/output_evidence.go');
+  assert.match(evidence, /report\.ClaimToken/);
+  assert.match(evidence, /report\.OutputEvidence/);
   const route=read('src/app/api/agent/jobs/route.ts');
   assert.match(route, /derivePhysicalOutcome\(requestedStatus, nextError\)/);
 });

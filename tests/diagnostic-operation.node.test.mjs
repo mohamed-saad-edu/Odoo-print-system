@@ -8,6 +8,8 @@ import vm from 'node:vm';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import * as model from '../src/shared/diagnostic-test.ts';
+import { parseDbTimeMs } from '../src/lib/database-timestamp.ts';
+import { verifiedPrinterState } from './helpers/printer-verification.ts';
 const require = createRequire(import.meta.url);
 const ts = require('typescript');
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -28,6 +30,19 @@ const dashHandler = between(dashboard, '  const handleGatewayTestPrint = async',
 const desktopHandler = between(desktop, '  const handleTest = useCallback(', '  const startAgent = useCallback');
 const ipcSource = between(ipc, 'export async function testGatewayPrinter(', 'export function cleanupLocalJobs');
 const desktopEligibility = between(read('src/desktop/lib/printers.ts'), 'export function eligibleGatewayTestPrinterIds(', '/** Single advancing-clock').replace(/^export /, '');
+const verificationExports = {};
+vm.runInNewContext(ts.transpileModule(read('src/lib/printer-operational-verification.ts'), { compilerOptions: {
+  target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS,
+}}).outputText, {
+  exports: verificationExports,
+  require: specifier => {
+    if (specifier === './database-timestamp') return { parseDbTimeMs };
+    if (specifier === '../../contracts/printer-operational-verification-contract.json') {
+      return { default: JSON.parse(read('contracts/printer-operational-verification-contract.json')) };
+    }
+    throw new Error(`Unexpected verification dependency ${specifier}`);
+  },
+});
 function makeDashboard(send, { actor = 'tenant1:user1:owner', printers = [{ id:'printer1', sharedWithGateway:true }, { id:'printer2', sharedWithGateway:true }] } = {}) {
   let serial=0;
   const messages=[]; const requests=[]; const busy=[];
@@ -61,11 +76,12 @@ function gatewayResponse(body, status=201) {
   return {ok:status>=200&&status<300,status,json:async()=>body};
 }
 const good = (status='queued', id='printer1', extras={})=>({ok:true,jobId:`job-${id}`,printerId:id,status,...extras});
-function makeDesktop(send,{url='https://gateway.example.com',sharedWithGateway=true,ready=true}={}) {
+function makeDesktop(send,{url='https://gateway.example.com',sharedWithGateway=true,ready=true,verification='fresh'}={}) {
   let serial=0;
   const messages=[]; const requests=[];
   const ops=new model.DiagnosticOperations(()=>`desktop-operation-${++serial}`);
-  const printer=id=>({id,sharedWithGateway,inventoryPresent:true,agentId:"agent1",lastSeenAt:new Date().toISOString()});
+  const printer=id=>({id,sharedWithGateway,inventoryPresent:true,agentId:"agent1",lastSeenAt:new Date().toISOString(),
+    ...(verification === 'missing' ? {} : verifiedPrinterState(id, new Date(verification === 'stale' ? 0 : Date.now())))});
   let pendingRepeat=null;
   const ipcContext=vm.createContext({
     ...model, normalizeGatewayUrl:value=>value,
@@ -77,7 +93,8 @@ function makeDesktop(send,{url='https://gateway.example.com',sharedWithGateway=t
   });
   vm.runInContext(compile(`${ipcSource.replace(/^export /m, "")}\nglobalThis.send = testGatewayPrinter;`), ipcContext);
   const context=vm.createContext({
-    ...model, useCallback:fn=>fn, diagnosticOps:{current:ops},savedGatewayUrl:url,
+    ...model, isPrinterOperationallyVerified: verificationExports.isPrinterOperationallyVerified,
+    useCallback:fn=>fn, diagnosticOps:{current:ops},savedGatewayUrl:url,
     printers:[printer("printer1"),printer("printer2")],localPrinters:[],localInventoryReadyRef:{current:ready},
     health:{ok:true},healthError:null,checkedGatewayUrl:url,normalizeGatewayUrl:v=>v,
     isMainInventoryPrinter:p=>p.inventoryPresent===true,printerAgentView:()=>({tone:"ok"}),printerObservationFreshness:()=>"fresh",
@@ -106,8 +123,8 @@ test('dashboard refuses diagnostics to explicitly private printers',async()=>{
   assert.equal(fixture.messages.at(-1).text,'printer.presentation.notSharedReason');
 });
 
-test('desktop refuses diagnostics before local inventory proof or cloud sharing',async()=>{
-  for(const settings of [{ready:false},{sharedWithGateway:false}]){
+test('desktop refuses diagnostics before local inventory proof, cloud sharing or fresh operational verification',async()=>{
+  for(const settings of [{ready:false},{sharedWithGateway:false},{verification:'missing'},{verification:'stale'}]){
     const fixture=makeDesktop(async()=>({status:200,body:JSON.stringify(good())}),settings);
     await fixture.run();
     assert.equal(fixture.requests.length,0);

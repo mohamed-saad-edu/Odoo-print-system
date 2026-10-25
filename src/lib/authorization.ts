@@ -1,4 +1,5 @@
 import type { ManagerClaims, ManagerRole } from "./manager-auth";
+import { recordAuthorizationDenial } from "../server/authorization-monitor";
 
 export type ManagerPermission =
   | "tenant.read" | "tenant.update"
@@ -19,11 +20,11 @@ const permissionsByRole: Record<ManagerRole, ReadonlySet<ManagerPermission>> = {
     "integrations.read", "integrations.manage", "billing.read", "billing.manage",
   ]),
   admin: new Set<ManagerPermission>([
-    "tenant.read", "users.read", "users.manage",
+    "tenant.read", "tenant.update", "users.read",
     "agents.read", "agents.pair", "agents.disable", "agents.retire",
     "printers.read", "printers.manage", "printers.test",
     "jobs.read", "jobs.payload.read", "jobs.create", "jobs.retry", "jobs.cancel", "bindings.read", "bindings.manage",
-    "integrations.read", "integrations.manage", "billing.read", "billing.manage",
+    "integrations.read", "integrations.manage", "billing.read",
   ]),
   operator: new Set<ManagerPermission>([
     "tenant.read", "agents.read", "printers.read", "printers.test",
@@ -47,6 +48,9 @@ export function hasManagerPermission(claims: ManagerClaims, permission: ManagerP
 
 export function requireManagerPermission(claims: ManagerClaims, permission: ManagerPermission): void {
   if (!hasManagerPermission(claims, permission)) {
+    recordAuthorizationDenial("manager", 403, {
+      permission, role: claims.role, actorId: claims.userId, tenantId: claims.tenantId,
+    });
     const error = new Error(`Missing permission: ${permission}`);
     Object.assign(error, { code: "FORBIDDEN", status: 403 });
     throw error;

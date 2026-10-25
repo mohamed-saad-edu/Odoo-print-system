@@ -7,9 +7,11 @@ from psycopg2 import IntegrityError
 
 from odoo import api, fields
 from odoo.exceptions import ValidationError
+from odoo.tests import tagged
 from odoo.tests.common import TransactionCase
 
 
+@tagged("post_install", "-at_install")
 class TestPrintGatewayIntentRecovery(TransactionCase):
     def test_companyless_intents_are_rejected_before_recovery_can_process_them(self):
         self.assertTrue(self.env["print_gateway.intent"]._fields["company_id"].required)

@@ -4,6 +4,7 @@
 import base64
 import binascii
 import hashlib
+import json
 import logging
 import time
 import textwrap
@@ -13,6 +14,7 @@ from odoo import api, fields, models, _
 from odoo.exceptions import ValidationError
 
 from .binding import _assert_report_usage_access
+from ..printer_geometry import validated_receipt_geometry
 
 REPORT_DOCUMENT_TYPES = {
     "sale.order": "order",
@@ -419,6 +421,7 @@ class PrintGatewayRouter(models.AbstractModel):
     def _durable_submission_outcome(self, job, message=None):
         """Expose persisted evidence, never infer safe retry from an RPC error."""
         status = job.status
+        file_output = getattr(job, "output_medium", False) == "file"
         uncertain = (
             status not in ("queued", "submitted", "claimed", "printing", "success", "failed")
             # An admitted job can fail after delivering bytes without a
@@ -437,6 +440,15 @@ class PrintGatewayRouter(models.AbstractModel):
             message = message or _("Queued")
         else:
             message = message or self._submission_message(job.id, status)
+        if file_output:
+            if getattr(job, "output_outcome", False) == "file_created":
+                message = _("PDF file created and verified by the approved output backend.")
+            elif uncertain:
+                message = _("PDF file output is unconfirmed. Check Print Activity and the approved output destination before retrying.")
+            elif status == "failed":
+                message = _("PDF file output failed. See Print Activity before retrying.")
+            else:
+                message = _("PDF file output accepted; file creation is not yet verified.")
         return {
             "status": status,
             "outcome": (
@@ -446,6 +458,8 @@ class PrintGatewayRouter(models.AbstractModel):
             "can_retry": status == "failed" and not uncertain,
             "gateway_job_id": job.gateway_job_id or False,
             "message": message,
+            **({"outputMedium": "file", "outputOutcome": job.output_outcome or "unknown",
+                "outputEvidence": job.output_evidence or None} if file_output else {}),
         }
 
     @api.model
@@ -463,9 +477,14 @@ class PrintGatewayRouter(models.AbstractModel):
                 # for the print operator (see _action_submit_trusted); the
                 # guarded public action_submit() would AccessError here.
                 job._action_submit_trusted(raise_on_failure=True)
-                result = self._durable_submission_outcome(job) if structured_outcome else job.status
+                # Submission finalization commits on an independent cursor.
+                # Odoo uses repeatable read: invalidating the ORM cache alone
+                # still sees this cursor's earlier queued/no-receipt snapshot.
+                # End this dedicated transaction before describing durable
+                # acceptance, then discard its cached status evidence.
                 cr.commit()
-                return result
+                job.invalidate_recordset(["status", "last_error", "next_retry_at", "gateway_job_id"])
+                return self._durable_submission_outcome(job) if structured_outcome else job.status
             except Exception as error:
                 cr.rollback()
                 if structured_outcome:
@@ -629,26 +648,109 @@ class PrintGatewayRouter(models.AbstractModel):
 
     @api.model
     @api.private
-    def _receipt_width_for_route(self, route):
-        """Return a hardware-informed canvas width, not an arbitrary 96-DPI size.
-
-        The target is the very same company/branch/agent/printer binding used
-        by dispatch. The Gateway exposes only a bounded numeric printable
-        width to authorized Odoo integrations. No guessing from printer
-        names or from CSS screen pixels.
-        """
+    def _receipt_geometry_for_route(self, route):
+        """Read the selected binding's current, identity-bound measurements."""
         binding = route.get("binding") if isinstance(route, dict) else None
         if not binding:
-            return 512  # Odoo 19's default 80mm / 180dpi snapshot width
+            raise ValidationError(_("A Gateway Receipt or Kitchen binding with validated printer geometry is required."))
         printer = binding._validate_runtime_target(enforce_destination_compatibility=True)
-        width = (printer or {}).get("printableWidthDots")
-        if type(width) is int and 288 <= width <= 576:
-            return width
-        return 512
+        capabilities = printer.get("capabilities") if isinstance(printer, dict) else None
+        geometry = validated_receipt_geometry(
+            capabilities.get("geometry") if isinstance(capabilities, dict) else None,
+            binding.printer_id,
+        )
+        connection = str((printer or {}).get("connectionType") or "").lower()
+        protocol = str((printer or {}).get("protocol") or "").lower()
+        driver_managed = connection in ("spooler", "windows_spooler") or (
+            connection == "usb" and protocol in ("spooler", "windows_spooler")
+        )
+        if geometry and driver_managed and "paper_width_mm" not in geometry:
+            geometry = None
+        if not geometry:
+            raise ValidationError(_(
+                "The selected printer has no validated receipt geometry. Sync its driver measurements or configure a validated profile with printable width and horizontal and vertical DPI; driver printing also requires the actual paper width."
+            ))
+        return geometry
 
     @api.model
     @api.private
-    def route_pos_receipt(self, order, image_base64, *, idempotency_key=None):
+    def _receipt_width_for_route(self, route):
+        # Compatibility for callers that display dots only. Never substitute
+        # a nominal roll width when the full receipt profile is unavailable.
+        return self._receipt_geometry_for_route(route)["printable_width_dots"]
+
+    @api.model
+    @api.private
+    def _receipt_image_payload(self, route, image_base64, geometry_fingerprint):
+        geometry = self._receipt_geometry_for_route(route)
+        if not isinstance(geometry_fingerprint, str) or geometry_fingerprint != geometry["config_fingerprint"]:
+            raise ValidationError(_(
+                "The selected printer geometry changed or the receipt has no geometry reference. Refresh the printer measurements and render a new receipt before printing; do not automatically retry an unresolved print."
+            ))
+        return {"type": "image", "encoding": "base64", "data": image_base64,
+                "geometry_fingerprint": geometry_fingerprint}
+
+    @api.model
+    @api.private
+    def _replay_receipt_operation(self, route, record, image_base64, geometry_fingerprint, idempotency_key):
+        """Return an authorized, exact durable operation without new admission.
+
+        Geometry belongs to new work. An operation already owned by the outbox
+        keeps its original payload even if the printer changed meanwhile. This
+        read-only path cannot create a job, reset its state, or send more bytes.
+        The normal outbox/status worker remains responsible for reconciliation.
+        """
+        company = self._assert_current_company(record.company_id, record=record)
+        if not isinstance(idempotency_key, str) or not idempotency_key.strip():
+            return None
+        payload = {"type": "image", "encoding": "base64", "data": image_base64}
+        if geometry_fingerprint is not None:
+            payload["geometry_fingerprint"] = geometry_fingerprint
+        cr = self.env.registry.cursor()
+        try:
+            env = api.Environment(cr, self.env.uid, dict(self.env.context))
+            # Do not sudo this lookup: ordinary outbox read ACLs and record
+            # rules remain an independent boundary, including company scope.
+            job = env["print_gateway.print_job"].search([
+                ("company_id", "=", company.id),
+                ("idempotency_key", "=", idempotency_key.strip()),
+            ], limit=1)
+            if not job:
+                return None
+            source = env[record._name].browse(record.id).exists()
+            if not source:
+                raise ValidationError(_("The durable print operation references a record that is no longer available."))
+            source.check_access("read")
+            self._assert_current_company(source.company_id, record=source)
+            destination = route["destination"]
+            try:
+                # The caller-UID lookup and source/company checks above must
+                # authorize the operation before reading its protected bytes.
+                # Elevate only this internal equality comparison; the payload
+                # remains administrator-only and is never returned to the caller.
+                stored_payload = json.loads(job.sudo().payload)
+            except (TypeError, ValueError):
+                stored_payload = None
+            exact = (
+                job.gateway_config_id.id == route["config"].id
+                and job.printer_id == str(route["binding"].printer_id).strip()
+                and job.destination == str(destination.display_name).strip()
+                and job.destination_key == "%s,%s" % (destination._name, destination.id)
+                and job.document_type == str(route["document_type"]).strip().lower()
+                and job.source_model == record._name
+                and job.source_record_id == record.id
+                and stored_payload == payload
+            )
+            if not exact:
+                raise ValidationError(_("The idempotency key is already used for a different print operation."))
+            return {"gateway_enabled": True, "native": False, "job_id": job.id,
+                    **self._durable_submission_outcome(job)}
+        finally:
+            cr.close()
+
+    @api.model
+    @api.private
+    def route_pos_receipt(self, order, image_base64, *, idempotency_key=None, geometry_fingerprint=None):
         order.ensure_one()
         self._assert_current_company(order.company_id, record=order)
         self._validate_jpeg_base64(image_base64)
@@ -666,8 +768,11 @@ class PrintGatewayRouter(models.AbstractModel):
             binding_id = route.get("binding") and route["binding"].id or 0
             raw_token = f"receipt:{order.id}:{binding_id}:{getattr(order, 'write_date', '')}"
             idempotency_key = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+        replayed = self._replay_receipt_operation(route, order, image_base64, geometry_fingerprint, idempotency_key)
+        if replayed is not None:
+            return replayed
         return self._submit_route(
-            route=route, payload={"type": "image", "encoding": "base64", "data": image_base64},
+            route=route, payload=self._receipt_image_payload(route, image_base64, geometry_fingerprint),
             company=self.env.company, source_model=order._name, source_record_id=order.id,
             idempotency_key=idempotency_key,
             # Preserve unknown physical-outcome markers from the durable Odoo
@@ -677,7 +782,7 @@ class PrintGatewayRouter(models.AbstractModel):
 
     @api.model
     @api.private
-    def route_kitchen_print(self, order, image_base64, *, reprint=False, idempotency_key=None, pos_printer=None):
+    def route_kitchen_print(self, order, image_base64, *, reprint=False, idempotency_key=None, pos_printer=None, geometry_fingerprint=None):
         order.ensure_one()
         self._assert_current_company(order.company_id, record=order)
         company = self.env.company
@@ -723,15 +828,18 @@ class PrintGatewayRouter(models.AbstractModel):
                 getattr(order, "write_date", ""),
             )
             idempotency_key = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+        replayed = self._replay_receipt_operation(route, order, image_base64, geometry_fingerprint, idempotency_key)
+        if replayed is not None:
+            return replayed
         return self._submit_route(
-            route=route, payload={"type": "image", "encoding": "base64", "data": image_base64},
+            route=route, payload=self._receipt_image_payload(route, image_base64, geometry_fingerprint),
             company=company, source_model=order._name, source_record_id=order.id, idempotency_key=idempotency_key,
             structured_outcome=True,
         )
 
     @api.model
     @api.private
-    def route_pos_sale_details(self, session, image_base64, *, idempotency_key=None):
+    def route_pos_sale_details(self, session, image_base64, *, idempotency_key=None, geometry_fingerprint=None):
         # Odoo 19 renders Sale Details inside the POS and submits the rendered
         # element through the same receipt-printer path used for POS receipts.
         # Therefore the in-session Gateway path is a receipt job addressed to
@@ -755,8 +863,11 @@ class PrintGatewayRouter(models.AbstractModel):
             binding_id = route.get("binding") and route["binding"].id or 0
             raw_token = f"sale_details:{session.id}:{binding_id}:{getattr(session, 'write_date', '')}"
             idempotency_key = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+        replayed = self._replay_receipt_operation(route, session, image_base64, geometry_fingerprint, idempotency_key)
+        if replayed is not None:
+            return replayed
         return self._submit_route(
-            route=route, payload={"type": "image", "encoding": "base64", "data": image_base64},
+            route=route, payload=self._receipt_image_payload(route, image_base64, geometry_fingerprint),
             company=self.env.company, source_model=session._name, source_record_id=session.id,
             idempotency_key=idempotency_key,
             # Preserve unknown physical-outcome markers from the durable Odoo
@@ -1144,9 +1255,12 @@ class PrintGatewayRouter(models.AbstractModel):
         """
         if paper_width_mm is not None and (type(paper_width_mm) not in (int, float) or paper_width_mm not in (58, 80)):
             raise ValidationError(_("Diagnostic paper width must be 58 or 80 mm."))
-        if any(not str(value or "").isascii() for value in (company_name, branch_name, printer_name)):
-            # Unicode names require font shaping; the ASCII diagnostic writer
-            # cannot represent Arabic using its built-in Type1 font.
+        language = self.env.lang or "en_US"
+        if not language.startswith("en_") or any(
+            not str(value or "").isascii() for value in (company_name, branch_name, printer_name)
+        ):
+            # Translated labels and Unicode names need QWeb's locale and font
+            # shaping even when an Arabic user's printer names are Latin text.
             pdf, report_type = self.env["ir.actions.report"].with_context(
                 force_report_rendering=True,
                 print_gateway_diagnostic_paper_width_mm=paper_width_mm,

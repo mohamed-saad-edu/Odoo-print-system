@@ -4,8 +4,10 @@ package printer
 
 import (
 	"context"
+
 	"errors"
 	"fmt"
+	"github.com/yaseir-agent/agent/internal/config"
 	"log"
 	"os"
 	"runtime"
@@ -110,6 +112,7 @@ const printerOptionNoCache = 1 << 0
 // session — never other printers'. Cross-printer burst protection comes from
 // the agent's job executor cap, which the spooler routinely absorbs.
 type SpoolerPrinter struct {
+	Config            config.PrinterConfig
 	Name              string
 	SpoolerName       string
 	ReceiptPaperMM    int
@@ -118,6 +121,9 @@ type SpoolerPrinter struct {
 	PDFPrint          PDFPrintFunc
 	// Injected only by native-media regression tests; production keeps nil.
 	diagnosticPaper func() (float64, float64, error)
+	// Test-only seam for deterministic image-to-PDF provenance checks.
+	// Production leaves this nil and always queries the installed Windows queue.
+	testImageGeometry func(context.Context) (*Geometry, error)
 	// PDFPrintResult is an injectable result-bearing seam used by the Windows
 	// GDI/PDF path to propagate StartDocW job identity. Tests may override it.
 	PDFPrintResult PDFPrintResultFunc
@@ -1112,24 +1118,24 @@ func (p *SpoolerPrinter) PrintDocument(ctx context.Context, doc Document) error 
 		if err := runDispatchAdmission(ctx); err != nil {
 			return fmt.Errorf("image spooler admission refused: %w", err)
 		}
-		var pdf []byte
-		var err error
-		receipt := p.ReceiptPaperMM == 58 || p.ReceiptPaperMM == 80
-		if receipt {
-			pdf, err = JPEGToPDFReceipt(doc.Data, p.ReceiptPaperMM, p.ReceiptRasterDots, p.ReceiptDPI)
-		} else {
-			// Preserve the selected narrow form and DPI exactly. A4/Letter
-			// and unknown media return zero and keep generic image sizing.
-			paperMM, dots, dpi := spoolerDetectedReceiptPaper(ctx, p.SpoolerName)
-			pdf, err = jpegToPDFWithReceiptPaper(doc.Data, paperMM, dots, dpi)
-			receipt = paperMM > 0
+		readGeometry := p.PrinterGeometry
+		if p.testImageGeometry != nil {
+			readGeometry = p.testImageGeometry
 		}
+		geometry, err := readGeometry(ctx)
+		if err != nil {
+			return CapabilityMismatchf("read Windows image geometry: %v", err)
+		}
+		if err := geometry.CheckImageFingerprint(doc.GeometryFingerprint); err != nil {
+			return err
+		}
+		pdf, err := JPEGToPDFGeometry(doc.Data, geometry)
 		if err != nil {
 			return fmt.Errorf("render image for Windows spooler: %w", err)
 		}
-		if receipt {
-			ctx = context.WithValue(ctx, generatedReceiptPDFKey{}, true)
-		}
+		ctx = context.WithValue(ctx, generatedReceiptPDFKey{}, true)
+		ctx = context.WithValue(ctx, imageGeometryKey{}, geometry)
+		ctx = context.WithValue(ctx, generatedReceiptJPEGKey{}, doc.Data)
 		return p.printPDFDocument(ctx, Document{Kind: KindPDF, Data: pdf, JobID: doc.JobID})
 	case KindRaw, KindESCPOS:
 		return p.Print(ctx, doc.Data)
@@ -1434,12 +1440,13 @@ func fallbackRegistryPrinters() ([]DeviceInfo, error) {
 
 // queueDetails is the PRINTER_INFO_2 evidence discovery needs for one queue.
 type queueDetails struct {
-	portName   string
-	driverName string
-	serverName string
-	shareName  string
-	status     uint32
-	attributes uint32
+	portName      string
+	driverName    string
+	serverName    string
+	shareName     string
+	status        uint32
+	attributes    uint32
+	publishedGUID string
 }
 
 const (
@@ -1632,8 +1639,12 @@ func enumPrinterQueues() ([]printerQueueRef, error) {
 // runs on a helper goroutine the caller abandons on timeout; the handle is
 // opened and closed inside that helper, so nothing is left dangling.
 func queueDetail(name string) (queueDetails, error) {
+	return queueDetailContext(context.Background(), name)
+}
+
+func queueDetailContext(ctx context.Context, name string) (queueDetails, error) {
 	var detail queueDetails
-	err := runPreflightBounded(name, queueDetailTimeout, context.Background(), func() error {
+	err := runPreflightBounded(name, queueDetailTimeout, ctx, func() error {
 		namePtr, err := syscall.UTF16PtrFromString(name)
 		if err != nil {
 			return fmt.Errorf("encode queue name %q: %w", name, err)
@@ -1652,12 +1663,13 @@ func queueDetail(name string) (queueDetails, error) {
 			return err
 		}
 		detail = queueDetails{
-			portName:   utf16PtrToString(pi.pPortName),
-			driverName: utf16PtrToString(pi.pDriverName),
-			serverName: utf16PtrToString(pi.pServerName),
-			shareName:  utf16PtrToString(pi.pShareName),
-			status:     pi.Status,
-			attributes: pi.Attributes,
+			portName:      utf16PtrToString(pi.pPortName),
+			driverName:    utf16PtrToString(pi.pDriverName),
+			serverName:    utf16PtrToString(pi.pServerName),
+			shareName:     utf16PtrToString(pi.pShareName),
+			status:        pi.Status,
+			attributes:    pi.Attributes,
+			publishedGUID: publishedQueueGUID(hPrinter),
 		}
 		runtime.KeepAlive(keep)
 		return nil
@@ -1771,9 +1783,9 @@ func enumerateSpoolerPrintersWindows() ([]DeviceInfo, error) {
 		}
 
 		var (
-			portName, driverName, serverName, shareName string
-			status, attributes                          uint32
-			statusText                                  string
+			portName, driverName, serverName, shareName, publishedGUID string
+			status, attributes                                         uint32
+			statusText                                                 string
 		)
 		switch {
 		case !time.Now().Before(deadline):
@@ -1798,6 +1810,7 @@ func enumerateSpoolerPrintersWindows() ([]DeviceInfo, error) {
 					serverName = q.server
 				}
 				status, attributes = detail.status, detail.attributes
+				publishedGUID = detail.publishedGUID
 				statusText = mapWindowsStatus(status, attributes)
 			}
 		}
@@ -1808,6 +1821,10 @@ func enumerateSpoolerPrintersWindows() ([]DeviceInfo, error) {
 		}
 		info := spoolerQueueDeviceInfo(name, portName, driverName, serverName, shareName, statusText, attributes)
 		info.Capabilities["spooler_scope"] = q.scope
+		if publishedGUID != "" {
+			info.Capabilities["windows_queue_guid"] = publishedGUID
+			info.Capabilities["windows_queue_guid_verified"] = true
+		}
 		out = append(out, info)
 	}
 	log.Printf("[discovery] spooler discovery completed: %d queues (%d with unreadable details)", len(out), unreadable)

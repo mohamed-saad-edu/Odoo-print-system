@@ -22,33 +22,43 @@
         <field name="name">print_gateway.gateway_config.form</field>
         <field name="model">print_gateway.gateway_config</field>
         <field name="arch" type="xml">
-            <form string="Connection &amp; Printing" create="1" class="o_pg_view o_pg_form">
+            <form string="Connection" create="1" class="o_pg_view o_pg_form">
                 <header>
-                    <button name="action_test_connection" type="object" string="Test Connection" class="oe_highlight"/>
-                    <button name="action_retry_enabled_sync" type="object" string="Retry Synchronization"/>
-                    <button name="action_reset_stale_sync_state" type="object" string="Recover Stale Synchronization" confirm="Recover synchronization state only after checking the previous Gateway endpoint."/>
+                    <button name="action_test_connection" type="object" string="Check connection" class="oe_highlight"/>
                     <field name="gateway_sync_state" widget="statusbar"/>
                 </header>
                 <sheet>
-                    <group>
+                    <div class="oe_title"><h1>Connect Yaseir</h1><p class="text-muted">Connect once, choose your printer, and enable the documents your business needs.</p></div>
+                    <div class="alert alert-info" role="status"><field name="gateway_sync_message" readonly="1" nolabel="1"/></div>
+                    <group string="1. Connect your company">
                         <field name="company_id" string="Company"/>
-                        <field name="enabled" widget="boolean_toggle" string="Enable Printing Service"/>
-                        <field name="gateway_url" placeholder="https://print.example.com"/>
-                        <field name="gateway_api_key" password="True" placeholder="Enter the installation API key"/>
-                        <field name="last_test_status"
-                               string="Connection"
-                               widget="badge"
-                               decoration-success="last_test_status == 'success'"
-                               decoration-danger="last_test_status in ('failed', 'revoked')"
-                               decoration-muted="last_test_status == 'draft'"
-                               readonly="1"/>
+                        <field name="gateway_url" string="Connection address" placeholder="https://print.example.com"/>
+                        <field name="gateway_api_key" string="Connection key" password="True" placeholder="Copy the key from Connect Odoo in Yaseir"/>
+                        <field name="last_test_status" string="Connection" widget="badge" readonly="1"
+                               decoration-success="last_test_status == 'success'" decoration-danger="last_test_status in ('failed', 'revoked')"/>
                     </group>
-                    <group string="Synchronization Details">
-                        <field name="gateway_sync_message" readonly="1"/>
-                        <field name="last_enabled_sync_error" readonly="1"/>
-                        <field name="last_test_at" readonly="1"/>
-                        <field name="last_test_error" readonly="1"/>
+                    <p class="text-muted">Use your Odoo connection key here. The Windows pairing code connects a computer and cannot be used in this field.</p>
+                    <group string="2. Choose printers and documents">
+                        <div class="d-flex flex-wrap gap-2">
+                            <button name="action_open_printers" type="object" string="Choose printers" class="btn btn-outline-primary"/>
+                            <button name="action_open_print_rules" type="object" string="Configure automatic printing" class="btn btn-outline-primary"/>
+                        </div>
                     </group>
+                    <group string="3. Start printing">
+                        <field name="enabled" widget="boolean_toggle" string="Enable printing"/>
+                        <p class="text-muted">Printing starts only after the connection is confirmed and a verified printer is assigned to the document.</p>
+                    </group>
+                    <notebook>
+                        <page string="Advanced connection settings">
+                            <group><field name="last_test_at" readonly="1"/><field name="last_enabled_sync_at" readonly="1"/></group>
+                            <div class="d-flex flex-wrap gap-2">
+                                <button name="action_retry_enabled_sync" type="object" string="Retry Synchronization" class="btn btn-secondary"/>
+                                <button name="action_open_runtime_assignments" type="object" string="Manage branch computers" class="btn btn-secondary"/>
+                                <button name="action_reset_stale_sync_state" type="object" string="Recover Stale Synchronization" class="btn btn-outline-warning" confirm="Recover synchronization state only after checking the previous Gateway endpoint."/>
+                            </div>
+                            <p class="text-muted mt-3">Recovery is for an administrator resolving a previous connection. It does not reprint documents.</p>
+                        </page>
+                    </notebook>
                 </sheet>
             </form>
         </field>
@@ -77,7 +87,7 @@
     </record>
 
     <record id="action_print_gateway_config" model="ir.actions.act_window">
-        <field name="name">Gateway Configuration</field>
+        <field name="name">Connection</field>
         <field name="res_model">print_gateway.gateway_config</field>
         <field name="view_mode">list,form</field>
         <field name="search_view_id" ref="view_print_gateway_config_search"/>
@@ -90,7 +100,7 @@
             <form string="Connect Print Agent" class="o_pg_view o_pg_pairing_wizard">
                 <sheet>
                     <div class="o_pg_wizard_header text-center mb-4">
-                        <i class="fa fa-plug fa-3x text-primary mb-2" title="Connect Agent" role="img" aria-label="Connect Agent"/>
+                        <i class="fa fa-plug fa-3x text-primary mb-2" title="Connect Agent" role="img" aria-label="Connect Agent" t-translation="on"/>
                         <h3 class="fw-bold">Connect Print Agent</h3>
                         <p class="text-muted">Select the branch and choose an available Print Agent. A branch can use more than one agent.</p>
                     </div>
@@ -110,24 +120,29 @@
     </record>
     <template id="diagnostic_report">
         <t t-call="web.html_container">
-            <style t-if="paper_width_mm">
-                .o_pg_diagnostic_ticket { font-size: 8pt; line-height: 1.15; word-break: break-all; }
-                .o_pg_diagnostic_ticket h1 { font-size: 11pt; line-height: 1.15; margin: 0 0 1mm; }
-                .o_pg_diagnostic_ticket h2 { font-size: 10pt; line-height: 1.15; margin: 0 0 2mm; }
-                .o_pg_diagnostic_ticket p { margin: 0 0 1mm; }
-            </style>
             <t t-set="diagnostic_body">
                 <div class="page" t-att-class="'page o_pg_diagnostic_ticket' if paper_width_mm else 'page'" t-att-dir="'rtl' if env.context.get('lang', '').startswith('ar') else 'ltr'">
                     <h1>Yaseir Print Gateway</h1>
                     <h2>Printer Test Page</h2>
-                    <p><strong>Company:</strong> <span t-esc="company_name"/></p>
-                    <p><strong>Location:</strong> <span t-esc="branch_name"/></p>
-                    <p><strong>Printer:</strong> <span t-esc="printer_name"/></p>
-                    <p><strong>Time:</strong> <span t-esc="now_str"/></p>
+                    <p><strong t-translation="on">Company:</strong> <span t-esc="company_name"/></p>
+                    <p><strong t-translation="on">Location:</strong> <span t-esc="branch_name"/></p>
+                    <p><strong t-translation="on">Printer:</strong> <span t-esc="printer_name"/></p>
+                    <p><strong t-translation="on">Time:</strong> <span t-esc="now_str"/></p>
                     <p>This page tests document rendering. Inspect the physical printer to confirm output.</p>
                 </div>
             </t>
-            <t t-if="paper_width_mm" t-out="diagnostic_body"/>
+            <!-- Odoo rebuilds each article with its UTF-8/report asset wrapper.
+                 A bare page drops that wrapper and corrupts Unicode in wkhtmltopdf. -->
+            <div t-if="paper_width_mm" class="article" t-att-data-oe-lang="env.lang">
+                <style>
+                    .o_pg_diagnostic_ticket { font-size: 8pt; line-height: 1.15; word-break: normal; }
+                    .o_pg_diagnostic_ticket span { overflow-wrap: break-word; word-wrap: break-word; }
+                    .o_pg_diagnostic_ticket h1 { font-size: 11pt; line-height: 1.15; margin: 0 0 1mm; }
+                    .o_pg_diagnostic_ticket h2 { font-size: 10pt; line-height: 1.15; margin: 0 0 2mm; }
+                    .o_pg_diagnostic_ticket p { margin: 0 0 1mm; }
+                </style>
+                <t t-out="diagnostic_body"/>
+            </div>
             <t t-else="" t-call="web.external_layout"><t t-out="diagnostic_body"/></t>
         </t>
     </template>

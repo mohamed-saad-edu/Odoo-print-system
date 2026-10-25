@@ -4,9 +4,10 @@ import { POST as registerPrinter } from "../src/app/api/printers/route";
 import { POST as agentHeartbeat } from "../src/app/api/agent/heartbeat/route";
 import { POST as deleteFleet } from "../src/app/api/platform/fleet/delete/route";
 import { POST as deleteWorkspace } from "../src/app/api/platform/tenants/[id]/delete/route";
-import { createManagerSession } from "../src/lib/manager-auth";
-import { createPlatformSession } from "../src/lib/platform-auth";
+import { createWorkspaceManagerTestSession } from "./helpers/workspace-session";
+import { createVerifiedPlatformSession as createPlatformSession } from "./helpers/platform-session";
 import { gatewayTestSigningKey } from "./helpers/test-secrets";
+import { physicalPrinterIdentityKey } from "../src/lib/physical-printer-identity";
 import { applyMigrations, closePool, hasTestDatabase, pool, seedFixture, truncateAll } from "./helpers/pg";
 
 const suite = describe.skipIf(!hasTestDatabase);
@@ -39,7 +40,7 @@ suite("Platform Owner destructive actions preserve evidence and authorization", 
 
   it("removes a printer without losing accepted job history or allowing automatic resurrection", async () => {
     const f = await seedFixture();
-    const manager = await createManagerSession(f.tenantId);
+    const manager = await createWorkspaceManagerTestSession(f.tenantId);
     const platform = await platformToken();
     const submitted = await registerPrinter(post("/api/printers", manager.token, {
       agentId: f.agentId, name: "Thermal sales", printerType: "physical",
@@ -65,7 +66,10 @@ suite("Platform Owner destructive actions preserve evidence and authorization", 
     const dbRow = (await pool().query("SELECT lifecycle,shared_with_gateway,physical_identity_key FROM printers WHERE tenant_id=$1 AND id=$2",
       [f.tenantId, printer.id])).rows[0];
     expect(dbRow).toMatchObject({ lifecycle: "retired", shared_with_gateway: false });
-    expect(dbRow.physical_identity_key).toMatch(/^v1:[0-9a-f]{64}$/);
+    expect(dbRow.physical_identity_key).toMatch(/^v2:[0-9a-f]{64}$/);
+    expect(dbRow.physical_identity_key).toBe(physicalPrinterIdentityKey({
+      connectionType: "spooler", protocol: "spooler", config: { spooler_name: "Owner Sales Queue" },
+    }));
     expect((await pool().query("SELECT id FROM print_jobs WHERE id=$1", [jobId])).rows).toHaveLength(0);
     const receipt = (await pool().query("SELECT status,error,printer_id FROM print_job_receipts WHERE id=$1", [jobId])).rows[0];
     expect(receipt.status).toBe("failed");

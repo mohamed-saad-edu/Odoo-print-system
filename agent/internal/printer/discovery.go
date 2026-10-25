@@ -22,6 +22,9 @@ import (
 // remain useful to manager discovery but must not be persisted/count as local
 // runnable printers until an execution backend exists.
 func IsRuntimeDiscoveryPrinter(d DeviceInfo) bool {
+	if d.Capabilities["inventory_present"] == false || d.Capabilities["identity_collision"] != nil {
+		return false
+	}
 	// No discovered or persisted software writer may become executable.
 	// Check before any manual/registry transport fallbacks.
 	if ClassifyDeviceInfo(d).IsVirtual {
@@ -33,6 +36,7 @@ func IsRuntimeDiscoveryPrinter(d DeviceInfo) bool {
 	pc := config.PrinterConfig{
 		ID: d.ID, Type: d.Type, ConnectionType: d.ConnectionType,
 		Protocol: d.Protocol, Endpoint: d.Endpoint, SpoolerName: d.SpoolerName,
+		OutputProfileID: d.OutputProfileID, PrinterType: d.PrinterType,
 	}
 	if err := config.ValidatePrinterEndpoint(pc); err != nil {
 		return false
@@ -886,6 +890,13 @@ func discoverFromConfig(cfg *config.Config) []DeviceInfo {
 		return out
 	}
 	for _, pc := range cfg.Printers {
+		if pc.NormalizedType() == "pdf_output" {
+			resolved, err := cfg.ResolvePDFOutput(pc)
+			if err != nil {
+				continue
+			}
+			pc = resolved
+		}
 		// Propagate the declared class (heartbeat normalizes it for the
 		// Gateway); fall back to "unknown" exactly as before when unset.
 		declaredType := pc.PrinterType
@@ -909,27 +920,27 @@ func discoverFromConfig(cfg *config.Config) []DeviceInfo {
 			// Top-level office widths also override conflicting thermal hints.
 			caps["paper_width_mm"] = pc.PaperWidthMM
 		}
-		if pc.PaperWidthMM > 0 {
-			if _, ok := caps["max_paper_width"]; !ok {
-				caps["max_paper_width"] = RasterMaxWidthForConfiguredPaper(pc.PaperWidthMM, pc.Capabilities)
-			}
+		delete(caps, "geometry")
+		if geometry, err := ConfiguredGeometry(pc); err == nil {
+			caps["geometry"] = geometry
 		}
 		caps["registration_source"] = "config"
 		di := DeviceInfo{
-			ID:             pc.ID,
-			Name:           pc.Name,
-			DisplayName:    pc.Name,
-			PrinterType:    declaredType,
-			ConnectionType: pc.NormalizedType(),
-			Protocol:       pc.NormalizedProtocolOrUnknown(),
-			Endpoint:       pc.Endpoint,
-			SpoolerName:    pc.SpoolerName,
-			USBVID:         pc.USBVID,
-			USBPID:         pc.USBPID,
-			USBSerial:      pc.USBSerial,
-			Status:         "unknown",
-			Enabled:        pc.IsEnabled(),
-			Type:           pc.NormalizedType(),
+			ID:              pc.ID,
+			Name:            pc.Name,
+			DisplayName:     pc.Name,
+			PrinterType:     declaredType,
+			ConnectionType:  pc.NormalizedType(),
+			Protocol:        pc.NormalizedProtocolOrUnknown(),
+			Endpoint:        pc.Endpoint,
+			OutputProfileID: pc.OutputProfileID,
+			SpoolerName:     pc.SpoolerName,
+			USBVID:          pc.USBVID,
+			USBPID:          pc.USBPID,
+			USBSerial:       pc.USBSerial,
+			Status:          "unknown",
+			Enabled:         pc.IsEnabled(),
+			Type:            pc.NormalizedType(),
 			// Printers declared in config.yaml are explicit operator intent:
 			// they stay visible even when no transport can be proven, because
 			// the operator typed the endpoint by hand.
@@ -976,10 +987,8 @@ func discoverSpoolerPrinters() ([]DeviceInfo, error) {
 		}
 		infos[i] = markAutomaticDiscoveryRegistration(infos[i])
 		if infos[i].ID == "" {
-			// Prefer the strongest physical queue identity (port + driver, with
-			// server/share when available) before falling back to the queue name.
-			// StableIDForDevice retains the legacy name fallback when stronger
-			// identity is unavailable.
+			// Queue identity is independent of driver/port association. Multiple
+			// legitimate queues may target the same physical output device.
 			infos[i].ID = StableIDForDevice(infos[i])
 		}
 		// Enumeration already provides a bounded status snapshot. Reopening
@@ -1048,6 +1057,9 @@ func sameNetworkEndpoint(a, b DeviceInfo) bool {
 }
 
 func mergeDeviceInfo(existing, incoming DeviceInfo) DeviceInfo {
+	if conflictingVerifiedIPPUUID(existing.Capabilities, incoming.Capabilities) {
+		return retainedIPPIdentityConflict(existing)
+	}
 	merged := existing
 	// Earlier progress snapshots may still be consumed after the scan times out.
 	merged.Capabilities = maps.Clone(existing.Capabilities)
@@ -1135,6 +1147,12 @@ func mergeDeviceInfo(existing, incoming DeviceInfo) DeviceInfo {
 		}
 		merged.Capabilities["registration_source"] = registrationSource
 	}
+	if uuid := verifiedIPPUUIDFromCapabilities(existing.Capabilities); uuid != "" {
+		if merged.Capabilities == nil {
+			merged.Capabilities = make(map[string]interface{})
+		}
+		preserveVerifiedIPPUUID(merged.Capabilities, uuid)
+	}
 	if incoming.Endpoint != "" && merged.Endpoint == "" {
 		merged.Endpoint = incoming.Endpoint
 	}
@@ -1168,6 +1186,9 @@ func TestPrinter(cfg *config.Config, registryPath, printerID string) error {
 	prt, err := New(pc)
 	if err != nil {
 		return fmt.Errorf("printer %s backend not available: %w", printerID, err)
+	}
+	if ipp, ok := prt.(*IPPPrinter); ok {
+		ipp.SetIdentityPersistence(func(uuid string) error { return PersistVerifiedIPPIdentity(registryPath, pc, uuid) })
 	}
 	timeout := 15 * time.Second
 	if _, physical := prt.(interface{ PrintTestPage(context.Context) error }); physical {
@@ -1225,6 +1246,13 @@ func printerConfigForTest(cfg *config.Config, target *DeviceInfo) config.Printer
 		if pc.Endpoint == "" {
 			pc.Endpoint = target.SpoolerName
 		}
+	}
+	if uuid := verifiedIPPUUIDFromCapabilities(target.Capabilities); uuid != "" && verifiedIPPUUIDFromCapabilities(pc.Capabilities) == "" {
+		pc.Capabilities = maps.Clone(pc.Capabilities)
+		if pc.Capabilities == nil {
+			pc.Capabilities = make(map[string]interface{})
+		}
+		pc.Capabilities["ipp_printer_uuid"] = uuid
 	}
 	return pc
 }

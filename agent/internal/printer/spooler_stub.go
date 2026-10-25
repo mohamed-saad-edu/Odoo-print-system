@@ -4,7 +4,9 @@ package printer
 
 import (
 	"context"
+
 	"fmt"
+	"github.com/yaseir-agent/agent/internal/config"
 	"os"
 	"path/filepath"
 	"time"
@@ -16,6 +18,7 @@ import (
 // sets ODOO_PRINT_AGENT_ALLOW_SIMULATED_TRANSPORT=1 (development/diagnostic
 // mode); by default nothing pretends to have printed.
 type SpoolerPrinter struct {
+	Config            config.PrinterConfig
 	Name              string
 	SpoolerName       string
 	ReceiptPaperMM    int
@@ -99,17 +102,7 @@ func (p *SpoolerPrinter) PrintDocument(ctx context.Context, doc Document) error 
 		}
 		return fmt.Errorf("SIMULATED_TRANSPORT: spooler PDF diagnostic file written; no physical printer submission occurred")
 	case KindImage:
-		var pdf []byte
-		var err error
-		if p.ReceiptPaperMM == 58 || p.ReceiptPaperMM == 80 {
-			pdf, err = JPEGToPDFReceipt(doc.Data, p.ReceiptPaperMM, p.ReceiptRasterDots, p.ReceiptDPI)
-		} else {
-			pdf, err = JPEGToPDF(doc.Data)
-		}
-		if err != nil {
-			return fmt.Errorf("render image for Windows spooler: %w", err)
-		}
-		return p.PrintDocument(ctx, Document{Kind: KindPDF, Data: pdf, JobID: doc.JobID})
+		return fmt.Errorf("ERR_UNSUPPORTED_TRANSPORT: Windows image geometry cannot be observed on this OS; no bytes submitted")
 	case KindRaw, KindESCPOS:
 		return p.Print(ctx, doc.Data)
 	default:
@@ -222,4 +215,8 @@ func rejectVirtualWindowsSpooler(name string) error {
 		return fmt.Errorf("software printer %q is not supported", name)
 	}
 	return nil
+}
+
+func (p *SpoolerPrinter) PrinterGeometry(ctx context.Context) (*Geometry, error) {
+	return nil, fmt.Errorf("ERR_UNSUPPORTED_TRANSPORT: Windows driver geometry is unavailable on this OS")
 }

@@ -7,15 +7,18 @@ import json
 import logging
 import uuid
 
-import requests
+from . import gateway_http as requests
 from psycopg2 import IntegrityError, sql as psycopg2_sql
 
 from odoo import api, fields, models, _
+from ..customer_presentation import customer_error_message
+
 from odoo.exceptions import AccessError, ValidationError
 
 from ..runtime_clock import db_now_utc
 from ..idempotency_namespace import wire_key, deployment_proof
 from ..runtime_policy import inventory_has_shared_printer
+from ..print_output import gateway_output_values, validated_file_output
 
 
 _logger = logging.getLogger(__name__)
@@ -72,6 +75,12 @@ class PrintGatewayJob(models.Model):
         ("printed", "Physically verified printed"),
         ("unknown", "Physical output not verified"),
     ], compute="_compute_physical_outcome")
+    output_medium = fields.Selection([("physical", "Physical printer"), ("file", "PDF file")], readonly=True, copy=False)
+    output_outcome = fields.Selection([
+        ("pending", "File output pending"), ("file_created", "PDF file created and verified"),
+        ("not_created", "File not created"), ("unknown", "File output not verified"),
+    ], readonly=True, copy=False)
+    output_evidence = fields.Json(string="Verified file artifact", readonly=True, copy=False)
     # Full document bytes (rendered PDF/JPEG, native command streams).
     # Restricted to system administrators: the job list/form never displays
     # payload content, and every server-side reader (submit/sync/retry runs
@@ -110,12 +119,31 @@ class PrintGatewayJob(models.Model):
     # eligible rows a turn before already-inspected unresolved rows.
     last_status_polled_at = fields.Datetime(index=True, readonly=True, copy=False)
     last_error = fields.Text(readonly=True)
+    customer_issue = fields.Text(string="What to do next", compute="_compute_customer_presentation", compute_sudo=False)
+    customer_status = fields.Selection([
+        ("waiting", "Waiting"), ("processing", "Processing"),
+        ("sent_to_printer", "Sent to printer"), ("needs_review", "Needs review"),
+        ("failed_before_output", "Failed before output"), ("file_created", "File created"),
+    ], string="Print status", compute="_compute_customer_presentation", compute_sudo=False)
     source_model = fields.Char(readonly=True)
     source_record_id = fields.Integer(readonly=True)
     report_id = fields.Many2one("ir.actions.report", readonly=True, ondelete="set null")
     create_date = fields.Datetime(readonly=True)
     write_date = fields.Datetime(readonly=True)
     completed_at = fields.Datetime(readonly=True)
+
+    @api.depends("status", "physical_outcome", "output_medium", "output_outcome", "last_error")
+    @api.depends_context("lang")
+    def _compute_customer_presentation(self):
+        from ..customer_presentation import customer_error_message, job_customer_state
+        for job in self:
+            job.customer_status = job_customer_state(
+                job.status, job.physical_outcome, job.output_medium, job.output_outcome,
+            )
+            job.customer_issue = customer_error_message(
+                job.env._,
+                "UNKNOWN_PRINT_OUTCOME" if job.customer_status == "needs_review" else job.last_error,
+            )
 
     _idempotency_unique = models.Constraint(
         "UNIQUE(company_id, idempotency_key)",
@@ -170,7 +198,7 @@ class PrintGatewayJob(models.Model):
         )
         if not self.env.cr.fetchone():
             raise ValidationError(_("Print job no longer exists."))
-        job.invalidate_recordset(["status", "gateway_job_id", "last_error", "completed_at"])
+        job.invalidate_recordset(["status", "gateway_job_id", "last_error", "completed_at", "output_medium", "output_outcome", "output_evidence"])
 
     def _mark_gateway_job_missing(self, job, message):
         """Mark a missing Gateway job unknown without clobbering a newer state."""
@@ -408,9 +436,22 @@ class PrintGatewayJob(models.Model):
             "idempotency_key", "gateway_idempotency_version", "gateway_wire_idempotency_key", "gateway_installation_id",
             "source_model", "source_record_id", "report_id",
             "gateway_job_id",
+            "output_medium", "output_outcome", "output_evidence",
         }
         if routing_fields.intersection(vals) and not self.env.is_superuser():
             raise AccessError(_("Print job routing and content may only be changed by the trusted print service."))
+        if "output_evidence" in vals:
+            candidate = validated_file_output(vals["output_evidence"])
+            if vals["output_evidence"] and not candidate:
+                raise ValidationError(_("The file output evidence is invalid."))
+            for job in self:
+                if job.output_evidence and job.output_evidence != candidate:
+                    raise ValidationError(_("A verified file artifact is immutable for its original operation."))
+        for job in self:
+            if "output_medium" in vals and job.output_medium and vals["output_medium"] != job.output_medium:
+                raise ValidationError(_("A print operation's output medium cannot change."))
+            if "output_outcome" in vals and job.output_outcome == "file_created" and vals["output_outcome"] != "file_created":
+                raise ValidationError(_("A verified file artifact is immutable for its original operation."))
         # Even sudo cannot silently remap an already accepted business intent
         # into a fresh namespace; clone/restore requires operator reconciliation.
         snapshots = {"gateway_idempotency_version", "gateway_wire_idempotency_key", "gateway_installation_id"}
@@ -932,7 +973,7 @@ class PrintGatewayJob(models.Model):
             job.invalidate_recordset([
                 "status", "gateway_job_id", "attempts", "last_error",
                 "next_retry_at", "completed_at", "submit_claim_token",
-                "submit_claimed_at",
+                "submit_claimed_at", "output_medium", "output_outcome", "output_evidence",
             ])
             return True
         finally:
@@ -1050,7 +1091,7 @@ class PrintGatewayJob(models.Model):
                     gateway_config._gateway_base(for_request=True),
                     company_id=gateway_config.company_id.id,
                 )
-            except ValueError:
+            except (ValueError, OSError):
                 raise ValidationError("GATEWAY_INSTALLATION_PROOF_MISSING: No externally enrolled proof; no print was sent.") from None
             headers["X-Yaseir-Odoo-Proof"] = proof
             headers["X-Yaseir-Odoo-Installation"] = self.gateway_installation_id
@@ -1136,6 +1177,7 @@ class PrintGatewayJob(models.Model):
                 "NewConnectionError",
                 "ConnectTimeoutError",
                 "NameResolutionError",
+                "GatewayResolutionError",
             ):
                 return True
             if name in (
@@ -1340,7 +1382,7 @@ class PrintGatewayJob(models.Model):
             job.write(values)
         _logger.warning("Gateway connection failed for job %s (attempt %s/5)", job.idempotency_key[:8], next_attempt)
         if raise_on_failure:
-            raise ValidationError(_("Gateway connection failed: %s") % str(exc)[:500]) from exc
+            raise ValidationError(customer_error_message(self.env._, "CONNECTION_ERROR")) from None
         return current_binding, failover_count, "break"
 
     def _require_outbox_write(self):
@@ -1554,12 +1596,15 @@ class PrintGatewayJob(models.Model):
                                 raise ValidationError(marker_message)
                             break
 
-                        values = {
-                            "status": "queued",
-                            "attempts": job.attempts + 1,
-                            "last_error": "GATEWAY_RATE_LIMITED: Gateway returned HTTP 429",
-                            "next_retry_at": db_now_utc(self.env.cr) + datetime.timedelta(seconds=retry_after),
-                        }
+                        # A persistent proxy/tenant rate limit must respect
+                        # the same bounded recovery budget as billing/auth
+                        # refusals. Otherwise this branch polls every minute
+                        # forever while all other recoverable blocks park.
+                        values = self._billing_retry_values(
+                            job,
+                            "GATEWAY_RATE_LIMITED: Gateway returned HTTP 429",
+                            retry_after,
+                        )
                         persist_submit_state(values)
                         if raise_on_failure:
                             raise ValidationError(_("Gateway is temporarily rate-limiting print submissions. The job was safely re-queued for retry."))
@@ -1833,6 +1878,7 @@ class PrintGatewayJob(models.Model):
                             "last_error": expired_error,
                             "next_retry_at": False,
                             "completed_at": db_now_utc(self.env.cr),
+                            **gateway_output_values(job, body, expired_status),
                         }):
                             _logger.info("Submission lease lost while finalizing expired Odoo print job %s.", job.id)
                             break
@@ -1849,6 +1895,7 @@ class PrintGatewayJob(models.Model):
                         "gateway_job_id": str(remote_id),
                         "attempts": job.attempts + 1, "last_error": False, "next_retry_at": False,
                     }
+                    values.update(gateway_output_values(job, body, remote_status))
                     if remote_status == "failed" and remote_error:
                         values["last_error"] = str(remote_error)[:4000]
                     if remote_status in {"success", "failed", "unknown"}:
@@ -1965,7 +2012,7 @@ class PrintGatewayJob(models.Model):
                         persist_submit_state(values)
                         _logger.warning("Gateway submission failed deterministically for job %s: %s", job.idempotency_key[:8], str(exc)[:300])
                         if raise_on_failure:
-                            raise ValidationError(_("Gateway submission failed: %s") % str(exc)[:500]) from exc
+                            raise ValidationError(customer_error_message(self.env._, str(exc))) from None
                         break
                     next_attempt = job.attempts + 1
                     terminal = next_attempt >= 5
@@ -1977,7 +2024,7 @@ class PrintGatewayJob(models.Model):
                     }
                     persist_submit_state(values)
                     if raise_on_failure:
-                        raise ValidationError(_("Gateway submission failed: %s") % str(exc)[:500]) from exc
+                        raise ValidationError(customer_error_message(self.env._, str(exc))) from None
                     break
         return True
 
@@ -2132,6 +2179,7 @@ class PrintGatewayJob(models.Model):
         ):
             status = "unknown"
         values = {"last_error": err_msg}
+        output_values = gateway_output_values(job, body, status)
         if status in self._TERMINAL:
             values["completed_at"] = db_now_utc(self.env.cr)
         if status == "submitted" and job.status in ("claimed", "printing"):
@@ -2147,6 +2195,10 @@ class PrintGatewayJob(models.Model):
             self._apply_gateway_late_success(job, values)
         else:
             self._advance_status(job, status, values)
+        if output_values:
+            # The public action already checked the caller's record access;
+            # only this private authenticated response path may store evidence.
+            job.sudo().write(output_values)
         if status == "success":
             job._post_source_audit(_("Print Job #%s completed by Gateway agent on '%s'") % (job.gateway_job_id or job.id, job.printer_id))
         elif status in ("partial", "unknown"):
@@ -2407,18 +2459,33 @@ class PrintGatewayJob(models.Model):
             WHERE status = 'queued' AND (next_retry_at IS NULL OR next_retry_at <= %s)
             ORDER BY id ASC
             LIMIT 25
+            FOR UPDATE SKIP LOCKED
         """, (now,))
         job_ids = [row[0] for row in self.env.cr.fetchall()]
         if not job_ids:
             return 0
 
         cron = self.env["ir.cron"]
+        # Release selection locks before any submission HTTP. Locked older
+        # rows must not fill this bounded batch and starve unrelated work.
         remaining_time = cron._commit_progress(remaining=len(job_ids))
         processed = 0
         for job in self.browse(job_ids):
             if remaining_time <= 0:
                 break
-            job.action_submit()
+            try:
+                # A lease contention/error or a failed SQL statement on one
+                # item must not abort the rest of the scheduler wave. The
+                # submission service persists its own exact claim/outcome;
+                # never reset that durable state or create a new operation.
+                with self.env.cr.savepoint():
+                    job.action_submit()
+            except Exception as exc:
+                _logger.warning(
+                    "Print Gateway submission worker failed for outbox job %s (%s); "
+                    "durable state is preserved for recovery.",
+                    job.id, type(exc).__name__,
+                )
             processed += 1
             remaining_time = cron._commit_progress(1)
         return processed
@@ -2490,8 +2557,14 @@ class PrintGatewayJob(models.Model):
         for job in jobs:
             config = job.gateway_config_id.sudo()
             if config:
-                config_jobs.setdefault(config, self.env["print_gateway.print_job"])
-                config_jobs[config] |= job
+                # Jobs retain their original installation through config
+                # edits and clone/restore. Never poll two installations (or
+                # legacy and v2 work) with the same credential-bearing batch.
+                namespace_version = int(getattr(job, "gateway_idempotency_version", 1) or 1)
+                installation_id = getattr(job, "gateway_installation_id", False) if namespace_version == 2 else False
+                scope = (config, namespace_version, installation_id)
+                config_jobs.setdefault(scope, self.env["print_gateway.print_job"])
+                config_jobs[scope] |= job
 
         total_synced = 0
 
@@ -2504,7 +2577,7 @@ class PrintGatewayJob(models.Model):
             })
             return cron._commit_progress(processed)
 
-        for config, c_jobs in config_jobs.items():
+        for (config, namespace_version, _installation_id), c_jobs in config_jobs.items():
             job_list = list(c_jobs)
             for i in range(0, len(job_list), 50):
                 chunk = job_list[i:i + 50]
@@ -2520,7 +2593,8 @@ class PrintGatewayJob(models.Model):
                         response = requests.post(
                             "%s/api/print/jobs/batch-status" % config._gateway_base(for_request=True),
                             json={"jobIds": job_ids},
-                            headers=config._gateway_headers(),
+                            headers=(known_jobs[0]._gateway_headers_for_job(config)
+                                     if namespace_version == 2 else config._gateway_headers()),
                             timeout=15,
                             allow_redirects=False,
                         )

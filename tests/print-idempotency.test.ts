@@ -1,5 +1,5 @@
 import { DELETE as cleanupJobs } from "../src/app/api/jobs/route";
-import { createManagerSession } from "../src/lib/manager-auth";
+import { createWorkspaceManagerTestSession } from "./helpers/workspace-session";
 import { gatewayTestSigningKey } from "./helpers/test-secrets";
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vitest";
 import {
@@ -134,7 +134,7 @@ suite("print idempotency (Odoo → Gateway)", () => {
     // not the original enqueue time. Model a terminal job older than the
     // retention window so manual cleanup matches the automatic sweeper.
     await pool().query("UPDATE print_jobs SET status = 'success', created_at = clock_timestamp() - interval '49 hours', updated_at = clock_timestamp() - interval '49 hours' WHERE id = $1", [jobId]);
-    const manager = await createManagerSession(f.tenantId);
+    const manager = await createWorkspaceManagerTestSession(f.tenantId);
     const cleaned = await cleanupJobs(new Request(`http://gateway.test/api/jobs?before=${encodeURIComponent(new Date(Date.now() - 86400000).toISOString())}&confirm=1`, { method: "DELETE", headers: { Authorization: `Bearer ${manager.token}` } }));
     expect(cleaned.status).toBe(200);
     expect(await jobCount()).toBe(0);

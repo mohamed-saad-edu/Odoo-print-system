@@ -2,100 +2,28 @@ package printer
 
 import (
 	"fmt"
-	"reflect"
 	"strconv"
 	"strings"
 )
 
-// RasterMaxWidthFromCapabilities resolves the execution-safe raster width.
-// max_paper_width is expressed in dots/pixels; paper_widths is accepted as a
-// legacy capability in millimetres (58/80). Unknown or malformed values use
-// SafeRasterMaxWidth so a narrow printer is never overrun by inference.
-func RasterMaxWidthFromPaperWidthMM(mm int) int {
-	if mm <= 0 {
-		return SafeRasterMaxWidth
-	}
-	// Execution-safe ceiling: paperMillimetresToDots scales linearly, so a
-	// huge mm value must not become a raster width the hardware cannot take.
-	return min(paperMillimetresToDots(mm), maxRasterWidth)
-}
+// Nominal paper millimetres do not establish an execution-safe dot budget.
+func RasterMaxWidthFromPaperWidthMM(mm int) int { return 0 }
 
-// RasterMaxWidthForConfiguredPaper prefers real operator-provided printer
-// dots over nominal paper width. At 80mm, a 180dpi printer has 512 dots,
-// while a 203dpi device can expose 576. Nominal 80mm alone cannot prove
-// 576: default conservatively to 512 to prevent silent right-edge clipping.
-// The optional max_paper_width in dots always overrides an approximate DPI.
 func RasterMaxWidthForConfiguredPaper(mm int, caps map[string]interface{}) int {
-	if caps != nil {
-		if v, ok := capabilityInt(caps["max_paper_width"]); ok {
-			if v >= 288 && v <= 576 {
-				return v
-			}
-			if v == 58 || v == 80 {
-				return paperMillimetresToDots(v)
-			}
-		}
-		dpi, _ := capabilityInt(caps["print_dpi"])
-		if dpi == 0 {
-			dpi, _ = capabilityInt(caps["dpi"])
-		}
-		if mm == 80 && dpi == 203 {
-			return 576
-		}
-		if mm == 58 && dpi == 180 {
-			return 360
-		}
-	}
-	return RasterMaxWidthFromPaperWidthMM(mm)
+	return RasterMaxWidthFromCapabilities(caps)
 }
 
+// RasterMaxWidthFromCapabilities accepts a validated snapshot or explicit legacy
+// dot measurement. Legacy millimetre values and absent geometry remain unknown.
+// The upper bound is a software allocation limit, not a printer-head claim.
 func RasterMaxWidthFromCapabilities(caps map[string]interface{}) int {
-	if caps == nil {
-		return SafeRasterMaxWidth
+	if g := GeometryFromCapabilities(caps); g != nil {
+		return g.PrintableWidthDots
 	}
-	if v, ok := capabilityInt(caps["max_paper_width"]); ok && v > 0 {
-		if v <= 128 { // backwards-compatible millimetre representation
-			return min(paperMillimetresToDots(v), maxRasterWidth)
-		}
-		// An explicit dot width above the thermal ceiling (e.g. a unit
-		// typo like 5000) would overrun the 576-dot hardware path and
-		// clip or overflow the printer buffer. Clamp to hardware.
-		return min(v, maxRasterWidth)
+	if v, ok := capabilityInt(caps["max_paper_width"]); ok && v > 128 && v <= MaxJPEGDimension {
+		return v
 	}
-	if widths, ok := capabilityInts(caps["paper_widths"]); ok && len(widths) > 0 {
-		// A printer may support several roll widths. Without a per-job roll
-		// selection contract, choose the narrowest advertised width. This is
-		// safe across the complete supported set; operators can set
-		// max_paper_width when a single wider width is guaranteed.
-		minDots := 0
-		for _, mm := range widths {
-			dots := paperMillimetresToDots(mm)
-			if dots <= 0 {
-				continue
-			}
-			if minDots == 0 || dots < minDots {
-				minDots = dots
-			}
-		}
-		if minDots > 0 {
-			// Clamp the narrowest advertised width to hardware: an absurd
-			// entry (e.g. 500mm) must not become an execution width.
-			return min(minDots, maxRasterWidth)
-		}
-	}
-	return SafeRasterMaxWidth
-}
-
-func paperMillimetresToDots(mm int) int {
-	switch {
-	case mm <= 58:
-		return 384
-	case mm <= 80:
-		return 512 // safe for 80mm/180dpi; 576 requires explicit 203dpi evidence
-	default:
-		// Scale conservatively from the standard 80mm 576-dot reference.
-		return int(float64(mm) * 576.0 / 80.0)
-	}
+	return 0
 }
 
 func capabilityInt(v interface{}) (int, bool) {
@@ -148,32 +76,4 @@ func capabilityInt(v interface{}) (int, bool) {
 		return n, true
 	}
 	return 0, false
-}
-
-func capabilityInts(v interface{}) ([]int, bool) {
-	switch x := v.(type) {
-	case []int:
-		return append([]int(nil), x...), true
-	case []interface{}:
-		out := make([]int, 0, len(x))
-		for _, item := range x {
-			if n, ok := capabilityInt(item); ok {
-				out = append(out, n)
-			}
-		}
-		return out, len(out) == len(x)
-	}
-	rv := reflect.ValueOf(v)
-	if rv.IsValid() && rv.Kind() == reflect.Slice {
-		out := make([]int, 0, rv.Len())
-		for i := 0; i < rv.Len(); i++ {
-			n, ok := capabilityInt(rv.Index(i).Interface())
-			if !ok {
-				return nil, false
-			}
-			out = append(out, n)
-		}
-		return out, true
-	}
-	return nil, false
 }

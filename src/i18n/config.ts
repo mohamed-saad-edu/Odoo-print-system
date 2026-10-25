@@ -16,8 +16,9 @@ export const DEFAULT_LOCALE: Locale = "en";
 /** Browser storage key — mirrors the theme key convention (`yaseir:theme`). */
 export const LOCALE_STORAGE_KEY = "yaseir:locale";
 
-/** Server-readable cookie so a future SSR pass can render the right `dir`. */
-export const LOCALE_COOKIE_KEY = "yaseir_locale";
+/** Keep browser, prepaint and SSR readers on one intentional cookie cutover. */
+export const LOCALE_COOKIE_SECURE = process.env.NODE_ENV === "production";
+export const LOCALE_COOKIE_KEY = LOCALE_COOKIE_SECURE ? "__Host-yaseir_locale" : "yaseir_locale";
 
 /**
  * Language names are always written in their own language: an Arabic speaker

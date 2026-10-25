@@ -95,6 +95,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     if (error instanceof TenantSubscriptionRequiredError || error instanceof TenantEntitlementConfigError) {
       return NextResponse.json({ error: error.message, code: error.code }, { status: 403 });
     }
+    if (error instanceof PrintJobInputError && error.authorityError?.policy) return error.authorityError.response();
     if (error instanceof PrintJobInputError) return NextResponse.json({ error: error.message, code: error.code, retryable: error.status >= 500 }, { status: error.status });
     if (error instanceof PrintJobCapabilityError) return NextResponse.json({ error: error.message, code: error.code, retryable: false }, { status: 422 });
     if (error instanceof AgentQueueFullError || error instanceof AgentQueuedJobsFullError) return NextResponse.json({ error: error.message, code: error.code, retryable: true }, { status: 503, headers: { "Retry-After": "5" } });

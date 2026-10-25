@@ -12,16 +12,6 @@ async function loadEmailHandler(fetchStub) {
   const sourceModule = new vm.SourceTextModule(stripTypeScriptTypes(source, {mode: 'transform'}), {context});
   await sourceModule.link((specifier) => {
     if (specifier === 'node:crypto') return new vm.SyntheticModule(['randomUUID'],function(){this.setExport('randomUUID',randomUUID)},{context});
-    // Staging adds a capture-only branch to the email module. Keep the Resend
-    // retry VM hermetic: file writes must never occur in these production-path tests.
-    if (specifier === 'node:fs') return new vm.SyntheticModule(['appendFileSync', 'mkdirSync'], function() {
-      const unexpectedCapture = () => { throw new Error('Staging email capture unexpectedly invoked in Resend retry test'); };
-      this.setExport('appendFileSync', unexpectedCapture);
-      this.setExport('mkdirSync', unexpectedCapture);
-    }, {context});
-    if (specifier === 'node:path') return new vm.SyntheticModule(['dirname'], function() {
-      this.setExport('dirname', () => { throw new Error('Staging email capture unexpectedly invoked in Resend retry test'); });
-    }, {context});
     if (specifier === './runtime-secret') return new vm.SyntheticModule(['runtimeSecret'],function(){this.setExport('runtimeSecret',name => ({RESEND_API_KEY:'fixture',EMAIL_FROM:'print@example.test'})[name])},{context});
     throw new Error(`Unexpected import ${specifier}`);
   });
@@ -68,4 +58,30 @@ test('a timeout after an ambiguous POST is retried with the identical email key'
   await send(mail);
   assert.equal(keys.length, 2);
   assert.equal(keys[0], keys[1]);
+});
+
+test('provider rejection bodies cannot disclose recipients or reset links in caller logs', async () => {
+  let reads = 0;
+  let cancellations = 0;
+  const send = await loadEmailHandler(async () => ({
+    ok: false, status: 422,
+    text: async () => { reads++; return 'Rejected operator@example.test https://gateway.test/reset-password?token=private-proof'; },
+    body: { cancel: async () => { cancellations++; } },
+  }));
+  await assert.rejects(send(mail), error => {
+    assert.equal(error.message, 'Transactional email provider rejected the request (422)');
+    assert.doesNotMatch(error.message, /operator@|private-proof|reset-password/);
+    return true;
+  });
+  assert.equal(reads, 0, 'an arbitrary provider body is neither parsed nor logged');
+  assert.equal(cancellations, 1, 'the rejected response body is released');
+});
+
+test('successful email responses release the unread provider body', async () => {
+  let cancellations = 0;
+  const send = await loadEmailHandler(async () => ({
+    ok: true, status: 200, body: { cancel: async () => { cancellations++; } },
+  }));
+  await send(mail);
+  assert.equal(cancellations, 1);
 });

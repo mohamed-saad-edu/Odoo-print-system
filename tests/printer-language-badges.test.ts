@@ -64,7 +64,7 @@ describe("ApiKeysPage resilience", () => {
       // The page performs the shared session admission first (A164/A167). Answer
       // it as authenticated so the assertion below still exercises the keys load.
       if (String(input) === "/api/auth/me") {
-        return new Response(JSON.stringify({ exp: Math.floor(Date.now() / 1000) + 3600 }), {
+        return new Response(JSON.stringify({ exp: Math.floor(Date.now() / 1000) + 3600, permissions: ["integrations.manage"] }), {
           status: 200,
           headers: { "content-type": "application/json" },
         });
@@ -84,7 +84,7 @@ describe("ApiKeysPage resilience", () => {
     });
 
     // No render crash; the page shows its error banner for the keys load.
-    expect(host.textContent ?? "").toMatch(/Failed to load keys|Unauthorized/i);
+    expect(host.textContent ?? "").toMatch(/Credential operation failed|Failed to load keys/i);
     expect(fetchMock).toHaveBeenCalled();
   });
 });
@@ -118,7 +118,7 @@ describe("ApiKeysPage API-key authoring", () => {
     const fetchMock = vi.fn(async (input: unknown, init?: RequestInit) => {
       const url = String(input);
       if (url === "/api/auth/me") {
-        return new Response(JSON.stringify({ exp: Math.floor(Date.now() / 1000) + 3600 }), {
+        return new Response(JSON.stringify({ exp: Math.floor(Date.now() / 1000) + 3600, permissions: ["integrations.manage"] }), {
           status: 200,
           headers: { "content-type": "application/json" },
         });
@@ -126,8 +126,9 @@ describe("ApiKeysPage API-key authoring", () => {
       if (url === "/api/odoo/keys" && (!init?.method || init.method === "GET")) {
         return new Response(JSON.stringify(list), { status: 200, headers: { "content-type": "application/json" } });
       }
-      if (url === "/api/billing/status") {
-        return new Response(JSON.stringify({ hasSubscription: true }), { status: 200, headers: { "content-type": "application/json" } });
+      if (url === "/api/odoo/installations") return new Response(JSON.stringify([]), { status: 200 });
+      if (url === "/api/subscription-requests") {
+        return new Response(JSON.stringify({ hasSubscription: true, status: "active" }), { status: 200, headers: { "content-type": "application/json" } });
       }
       if (url === "/api/odoo/keys" && init?.method === "POST") {
         const body = JSON.parse(String(init.body));
@@ -162,9 +163,9 @@ describe("ApiKeysPage API-key authoring", () => {
 
     expect(posted[0]).toEqual({ name: "Odoo Production" });
     // The Odoo credential is full read/write over every supported document type.
-    // The badge must therefore state that scope plainly and must never imply a
-    // read-only or document-restricted credential.
-    expect(host!.textContent ?? "").toContain("Can send all document types");
+    // V4 explains permissions in Advanced and must not imply a read-only or
+    // document-restricted credential. The authoring payload remains name only.
+    expect(host!.textContent ?? "").toContain("Every credential is restricted to this workspace and Odoo permissions");
     expect(host!.textContent ?? "").not.toContain("Read only");
     expect(host!.textContent ?? "").not.toContain("Selected document types");
   });
@@ -175,8 +176,8 @@ describe("getSupportedDocumentTypes", () => {
   it("matches the real routing contract for document transports and byte protocols", () => {
     expect(getSupportedDocumentTypes("ipp", "ipp")).toEqual(["pdf"]);
     expect(getSupportedDocumentTypes("ipps", "ipps")).toEqual(["pdf"]);
-    // Spooler is document-default: raw passthrough needs explicit declaration.
-    expect(getSupportedDocumentTypes("spooler", "spooler")).toEqual(["pdf", "image"]);
+    // PDF carries physical geometry; unmeasured JPEG cannot be advertised.
+    expect(getSupportedDocumentTypes("spooler", "spooler")).toEqual(["pdf"]);
     expect(getSupportedDocumentTypes("raw", "network")).toEqual(["raw"]);
     expect(getSupportedDocumentTypes("zpl", "network")).toEqual(["zpl", "raw"]);
     expect(getSupportedDocumentTypes("tspl", "network")).toEqual(["tspl", "raw"]);

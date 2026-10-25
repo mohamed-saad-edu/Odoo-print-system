@@ -8,7 +8,7 @@ import {
   seedFixture,
   truncateAll,
 } from "./helpers/pg";
-import { createManagerSession } from "../src/lib/manager-auth";
+import { createWorkspaceManagerTestSession } from "./helpers/workspace-session";
 import { POST as printersPOST } from "../src/app/api/printers/route";
 import { PATCH as printerPATCH } from "../src/app/api/printers/[id]/route";
 
@@ -30,7 +30,7 @@ suite("printer desired-state authority", () => {
 
   it("returns 400 for invalid printer input instead of misclassifying it as an internal error", async () => {
     const f = await seedFixture();
-    const session = await createManagerSession(f.tenantId);
+    const session = await createWorkspaceManagerTestSession(f.tenantId);
 
     const response = await printersPOST(new Request("http://gateway.test/api/printers", {
       method: "POST",
@@ -55,7 +55,7 @@ suite("printer desired-state authority", () => {
 
   it("canonicalizes USB registrations with a spooler queue to the spooler transport", async () => {
     const f = await seedFixture();
-    const session = await createManagerSession(f.tenantId);
+    const session = await createWorkspaceManagerTestSession(f.tenantId);
 
     const response = await printersPOST(new Request("http://gateway.test/api/printers", {
       method: "POST",
@@ -85,7 +85,7 @@ suite("printer desired-state authority", () => {
 
   it("persists manager-owned desired state and increments its revision atomically", async () => {
     const f = await seedFixture();
-    const session = await createManagerSession(f.tenantId);
+    const session = await createWorkspaceManagerTestSession(f.tenantId);
 
     const createdResponse = await printersPOST(new Request("http://gateway.test/api/printers", {
       method: "POST",
@@ -161,7 +161,7 @@ suite("printer desired-state authority", () => {
       "UPDATE printers SET connection_type = 'network', protocol = 'raw', config = $2::jsonb WHERE id = $1",
       [f.printerId, JSON.stringify({ ip: "192.168.1.50", port: 9100 })],
     );
-    const session = await createManagerSession(f.tenantId);
+    const session = await createWorkspaceManagerTestSession(f.tenantId);
     const response = await printerPATCH(
       new Request("http://gateway.test/api/printers/" + encodeURIComponent(f.printerId), {
         method: "PATCH",
@@ -188,7 +188,7 @@ suite("printer desired-state authority", () => {
       "UPDATE printers SET connection_type = 'network', protocol = 'raw', config = $2::jsonb WHERE id = $1",
       [f.printerId, JSON.stringify({ ip: "192.168.1.50", port: 9100 })],
     );
-    const session = await createManagerSession(f.tenantId);
+    const session = await createWorkspaceManagerTestSession(f.tenantId);
 
     const response = await printerPATCH(
       new Request("http://gateway.test/api/printers/" + encodeURIComponent(f.printerId), {
@@ -214,7 +214,7 @@ suite("printer desired-state authority", () => {
 
   it("accepts a network IPP patch with the matching port contract", async () => {
     const f = await seedFixture();
-    const session = await createManagerSession(f.tenantId);
+    const session = await createWorkspaceManagerTestSession(f.tenantId);
 
     const response = await printerPATCH(
       new Request("http://gateway.test/api/printers/" + encodeURIComponent(f.printerId), {
@@ -244,7 +244,7 @@ suite("printer desired-state authority", () => {
   it("never exposes one tenant's desired printer through another manager token", async () => {
     const first = await seedFixture();
     const second = await seedFixture();
-    const session = await createManagerSession(second.tenantId);
+    const session = await createWorkspaceManagerTestSession(second.tenantId);
 
     const response = await printerPATCH(
       new Request("http://gateway.test/api/printers/" + encodeURIComponent(first.printerId), {

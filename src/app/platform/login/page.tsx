@@ -1,7 +1,7 @@
 "use client";
 
 import { fetchWithTimeout } from "../../../lib/fetch-timeout";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowRight, ShieldCheck } from "lucide-react";
 import { AuthShell } from "../../../components/AuthShell";
@@ -17,11 +17,15 @@ export default function PlatformLoginPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [checkingSession, setCheckingSession] = useState(true);
+  const mounted = useRef(false);
+  const flight = useRef<AbortController | null>(null);
 
   useEffect(() => {
     let cancelled = false;
+    mounted.current = true;
+    const startup = new AbortController();
 
-    fetchWithTimeout("/api/platform/auth/me", { credentials: "include", cache: "no-store" })
+    fetchWithTimeout("/api/platform/auth/me", { credentials: "include", cache: "no-store", signal: startup.signal })
       .then(async (res) => {
         if (cancelled) return;
         if (res.ok) {
@@ -32,6 +36,7 @@ export default function PlatformLoginPage() {
           method: "POST",
           credentials: "include",
           cache: "no-store",
+          signal: startup.signal,
         });
         if (!cancelled && refresh.ok) router.replace("/platform/dashboard");
       })
@@ -42,22 +47,33 @@ export default function PlatformLoginPage() {
 
     return () => {
       cancelled = true;
+      mounted.current = false;
+      startup.abort();
+      flight.current?.abort();
+      flight.current = null;
     };
   }, [router]);
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
+    if (!mounted.current || flight.current) return;
+    const controller = new AbortController();
+    flight.current = controller;
     setError("");
     setLoading(true);
+    const exactPassword = password;
+    setPassword("");
 
     try {
       const res = await fetchWithTimeout("/api/platform/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ email, password: exactPassword }),
+        signal: controller.signal,
       });
       const data = await res.json().catch(() => ({}));
+      if (!mounted.current || controller.signal.aborted || flight.current !== controller) return;
 
       if (!res.ok) {
         throw new Error(t(codeMessageKey(typeof data.code === "string" ? data.code : undefined)
@@ -67,9 +83,14 @@ export default function PlatformLoginPage() {
       router.replace("/platform/dashboard");
       router.refresh();
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : t("auth.signIn.failed"));
+      if (mounted.current && !controller.signal.aborted && flight.current === controller) {
+        setError(err instanceof Error ? err.message : t("auth.signIn.failed"));
+      }
     } finally {
-      setLoading(false);
+      if (flight.current === controller) {
+        flight.current = null;
+        if (mounted.current) setLoading(false);
+      }
     }
   }
 
@@ -117,6 +138,8 @@ export default function PlatformLoginPage() {
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             autoComplete="current-password"
+            maxLength={4096}
+            disabled={loading}
             required
           />
         </Field>

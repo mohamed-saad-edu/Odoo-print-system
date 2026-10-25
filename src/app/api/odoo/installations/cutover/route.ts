@@ -4,7 +4,7 @@ import { z } from "zod";
 import { db } from "../../../../../db";
 import { validateWorkspaceManager } from "../../../../../lib/manager-auth";
 import { requireManagerPermission } from "../../../../../lib/authorization";
-import { requireManagerActorInTransaction } from "../../../../../lib/manager-mutation-authorization";
+import { requireManagerActorInTransaction, ManagerMutationAuthorityChangedError } from "../../../../../lib/manager-mutation-authorization";
 import { requireActiveTenantInTransaction } from "../../../../../lib/tenant-guard";
 import { writeAuditEvent } from "../../../../../lib/audit";
 import { logError } from "../../../../../lib/log";
@@ -59,6 +59,7 @@ export async function POST(req: Request) {
     }
     return NextResponse.json({ mode: "strict_v2", state }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
+    if (error instanceof ManagerMutationAuthorityChangedError) return error.response();
     logError("odoo.idempotency.cutover_failed", { error: error instanceof Error ? error.message : String(error) });
     return NextResponse.json({ error: "Cutover unavailable" }, { status: 500 });
   }

@@ -55,11 +55,12 @@ type DeviceInfo struct {
 	ID                string                 `json:"id"`
 	Name              string                 `json:"name"`
 	DisplayName       string                 `json:"displayName,omitempty"`
-	PrinterType       string                 `json:"printerType,omitempty"` // thermal/laser/inkjet/other/unknown/virtual
-	ConnectionType    string                 `json:"connectionType"`        // tcp/usb/spooler/ipp/virtual
-	Protocol          string                 `json:"protocol"`              // raw/escpos/ipp/spooler/windows_spooler
-	Endpoint          string                 `json:"endpoint,omitempty"`    // ip:port or device path
-	SpoolerName       string                 `json:"spoolerName,omitempty"` // Windows spooler name
+	PrinterType       string                 `json:"printerType,omitempty"`     // thermal/laser/inkjet/other/unknown/virtual
+	ConnectionType    string                 `json:"connectionType"`            // tcp/usb/spooler/ipp/virtual
+	Protocol          string                 `json:"protocol"`                  // raw/escpos/ipp/spooler/windows_spooler
+	Endpoint          string                 `json:"endpoint,omitempty"`        // ip:port or device path
+	OutputProfileID   string                 `json:"outputProfileId,omitempty"` // opaque locally authorized PDF profile
+	SpoolerName       string                 `json:"spoolerName,omitempty"`     // Windows spooler name
 	SpoolerServer     string                 `json:"spoolerServer,omitempty"`
 	SpoolerPort       string                 `json:"spoolerPort,omitempty"`
 	SpoolerDriver     string                 `json:"spoolerDriver,omitempty"`

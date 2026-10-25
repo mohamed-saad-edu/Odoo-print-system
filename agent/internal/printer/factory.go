@@ -31,23 +31,32 @@ func New(cfg config.PrinterConfig) (Printer, error) {
 	if err := config.ValidatePrinterEndpoint(cfg); err != nil {
 		return nil, err
 	}
+	if cfg.GeometryProfile != nil {
+		if err := ValidateGeometryProfile(*cfg.GeometryProfile); err != nil {
+			return nil, fmt.Errorf("printer %s: %w", cfg.ID, err)
+		}
+	}
+	geometry, _ := ConfiguredGeometry(cfg)
 	t := cfg.NormalizedType()
 	proto, protoErr := cfg.NormalizedProtocol()
 
 	switch t {
+	case "pdf_output":
+		if proto != "pdf" || !cfg.PDFOutputAuthorized || cfg.PDFOutputDirectory == "" {
+			return nil, fmt.Errorf("printer %s: PDF output requires a locally resolved authorized profile", cfg.ID)
+		}
+		return &PDFOutputPrinter{Config: cfg}, nil
 	case "network":
 		if cfg.Endpoint == "" {
 			return nil, fmt.Errorf("printer %s: network printer requires an endpoint (ip:port)", cfg.ID)
 		}
 		switch proto {
 		case "raw", "escpos", "zpl", "tspl":
-			rasterWidth := RasterMaxWidthFromCapabilities(cfg.Capabilities)
-			if cfg.PaperWidthMM > 0 {
-				// The paper roll alone cannot justify 576 dots on an 80mm
-				// 180dpi printer. Keep the operator's exact dot width/DPI.
-				rasterWidth = RasterMaxWidthForConfiguredPaper(cfg.PaperWidthMM, cfg.Capabilities)
+			width := 0
+			if geometry != nil {
+				width = geometry.PrintableWidthDots
 			}
-			return &NetworkPrinter{Address: cfg.Endpoint, Protocol: proto, RasterMaxWidth: rasterWidth}, nil
+			return &NetworkPrinter{Address: cfg.Endpoint, Protocol: proto, RasterMaxWidth: width, Geometry: geometry}, nil
 		case "ipp", "ipps":
 			// Network printer explicitly using IPP protocol -> treat as IPP
 			return newConfiguredIPPPrinter(cfg)
@@ -75,6 +84,7 @@ func New(cfg config.PrinterConfig) (Printer, error) {
 			return nil, fmt.Errorf("printer %s: %w", cfg.ID, err)
 		}
 		result := NewSpooler(spoolerName, cfg.Name)
+		result.Config = cfg
 		result.ReceiptPaperMM, result.ReceiptRasterDots, result.ReceiptDPI = receiptPaperProfile(cfg)
 		return result, nil
 
@@ -108,7 +118,8 @@ func New(cfg config.PrinterConfig) (Printer, error) {
 			SerialNumber:   cfg.USBSerial,
 			DevicePath:     endpoint,
 			Protocol:       proto,
-			SupportsESCPOS: proto == "escpos" || capabilityProtocolListed(cfg.Capabilities, "escpos"),
+			SupportsESCPOS: proto == "escpos",
+			Geometry:       geometry,
 		}, nil
 
 	case "ipp", "ipps":
@@ -131,67 +142,17 @@ func newConfiguredIPPPrinter(cfg config.PrinterConfig) (*IPPPrinter, error) {
 	if err != nil {
 		return nil, err
 	}
-	p.testPaperMM, _, _ = receiptPaperProfile(cfg)
+	p.testPaperMM = cfg.PaperWidthMM // explicit diagnostic stock selection, never a dot-width inference
+	p.geometryConfig = cfg
 	return p, nil
 }
 
-// receiptPaperProfile returns an operator-selected 58/80mm roll and its
-// configured dimensions; missing dimensions retain legacy estimates.
-// Unconfigured Windows queues are inspected from the driver's default form
-// immediately before a receipt image is dispatched.
+// receiptPaperProfile retains explicit legacy measurements for compatibility.
+// It never fills in missing dots, DPI or media from a nominal roll label.
 func receiptPaperProfile(cfg config.PrinterConfig) (paperMM, dots, dpi int) {
-	paperMM = cfg.PaperWidthMM
-	if paperMM == 0 {
-		if v, ok := capabilityInt(cfg.Capabilities["paper_width_mm"]); ok {
-			paperMM = v
-		}
-	}
-	if paperMM != 58 && paperMM != 80 {
+	g, err := ConfiguredGeometry(cfg)
+	if err != nil || g.PaperWidthMM == nil || g.DPIX == nil {
 		return 0, 0, 0
 	}
-	if v, ok := capabilityInt(cfg.Capabilities["print_dpi"]); ok && v > 0 {
-		dpi = v
-	} else if v, ok := capabilityInt(cfg.Capabilities["dpi"]); ok && v > 0 {
-		dpi = v
-	}
-	if v, ok := capabilityInt(cfg.Capabilities["max_paper_width"]); ok && v >= 288 && v <= MaxJPEGDimension {
-		dots = v
-	} else if paperMM == 58 {
-		if dpi == 180 {
-			dots = 360
-		} else {
-			dots = 384
-		}
-	} else if dpi == 203 {
-		dots = 576
-	} else {
-		dots = 512
-	}
-	return paperMM, dots, dpi
-}
-
-func capabilityProtocolListed(capabilities map[string]interface{}, protocol string) bool {
-	protocol = strings.ToLower(strings.TrimSpace(protocol))
-	if protocol == "" || capabilities == nil {
-		return false
-	}
-	value, ok := capabilities["supported_protocols"]
-	if !ok {
-		return false
-	}
-	switch list := value.(type) {
-	case []string:
-		for _, item := range list {
-			if strings.EqualFold(strings.TrimSpace(item), protocol) {
-				return true
-			}
-		}
-	case []interface{}:
-		for _, item := range list {
-			if text, ok := item.(string); ok && strings.EqualFold(strings.TrimSpace(text), protocol) {
-				return true
-			}
-		}
-	}
-	return false
+	return int(*g.PaperWidthMM), g.PrintableWidthDots, *g.DPIX
 }

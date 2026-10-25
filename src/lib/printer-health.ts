@@ -1,3 +1,4 @@
+import { capabilitiesWithCurrentGeometry } from "./printer-geometry";
 /**
  * Printer Health + Capability Matrix — EVIDENCE-BASED
  * Statuses: ONLINE / IDLE / PRINTING / PAPER_OUT / OFFLINE / ERROR / DRIVER_ERROR / SPOOLER_ERROR / UNREACHABLE / UNKNOWN
@@ -53,8 +54,8 @@ export interface PrinterCapabilityMatrix {
   tenantId: string;
   name: string;
   sharedWithGateway: boolean;
-  transport: "network" | "usb" | "spooler" | "ipp" | "ipps" | "unknown";
-  protocol: "raw" | "escpos" | "zpl" | "tspl" | "ipp" | "ipps" | "spooler" | "windows_spooler" | "unknown";
+  transport: TransportType;
+  protocol: ProtocolType;
   deviceClass: "thermal" | "laser" | "inkjet" | "label" | "other" | "unknown";
   documentTypes: string[];
   duplexCapable: boolean | null;
@@ -173,7 +174,7 @@ export function buildPrinterCapabilityMatrix(p: typeof printers.$inferSelect, ag
   const documentTypes = getSupportedDocumentTypes(
     p.protocol as ProtocolType,
     p.connectionType as TransportType,
-    p.capabilities,
+    capabilitiesWithCurrentGeometry(p),
   );
 
   const statusInfo = normalizePrinterStatus(p.status, {

@@ -11,6 +11,8 @@ const catalog = [
   { table_name: "printers", column_name: "secret_hash", data_type: "text", is_primary: false },
   { table_name: "printers", column_name: "payload", data_type: "jsonb", is_primary: false },
   { table_name: "refresh_tokens", column_name: "id", data_type: "text", is_primary: true },
+  ...["platform_session_security", "workspace_session_security"]
+    .map(table_name => ({ table_name, column_name: "id", data_type: "text", is_primary: true })),
 ];
 const client = (query: ReturnType<typeof vi.fn>) =>
   ({ query, release: vi.fn() }) as unknown as PoolClient;
@@ -61,5 +63,26 @@ describe("read-only Platform Owner catalog and search", () => {
     await expect(readPlatformDatabase({})).rejects.toThrow("database unavailable");
     expect(failure.mock.calls.at(-1)?.[0]).toBe("ROLLBACK");
     expect(failed.release).toHaveBeenCalledOnce();
+  });
+
+  it.each([0, 24, 25, 26])("reports pagination from an extra row, with %i available rows", async (count) => {
+    const rows = Array.from({ length: count }, (_, i) => ({ id: `printer_${i}`, name: `Printer ${i}` }));
+    const query = vi.fn(async (statement: string, params?: unknown[]) => {
+      if (statement.includes("information_schema.columns")) return { rows: catalog };
+      if (statement.includes('FROM "printers"')) return { rows: rows.slice(0, Number(params?.[0])) };
+      return { rows: [] };
+    });
+    db.connect.mockResolvedValueOnce(client(query));
+    const result = await readPlatformDatabase({ table: "printers" });
+    expect(result.rows).toEqual(rows.slice(0, 25));
+    expect(result.hasMore).toBe(count > 25);
+  });
+
+  it("uses the primary key to break ties in creation timestamps", async () => {
+    const query = vi.fn().mockResolvedValue({ rows: [] });
+    await exploreRows(client(query), {
+      name: "printers", columns: ["id", "name", "created_at"], primaryKey: "id",
+    }, "", 25, 26);
+    expect(query.mock.calls[0][0]).toContain('ORDER BY "created_at" DESC, "id" DESC');
   });
 });

@@ -66,10 +66,10 @@ describe("gateway clock calibration", () => {
 });
 
 describe("subscription period gate", () => {
-  it("treats only trialing/active/past_due as access-granting statuses", () => {
+  it("treats only explicit active manual subscriptions as access-granting statuses", () => {
     expect(isBillingAccessStatus("active")).toBe(true);
-    expect(isBillingAccessStatus("trialing")).toBe(true);
-    expect(isBillingAccessStatus("past_due")).toBe(true);
+    expect(isBillingAccessStatus("trialing")).toBe(false);
+    expect(isBillingAccessStatus("past_due")).toBe(false);
     for (const status of ["cancelled", "unpaid", "paused", "incomplete", "", null, undefined]) {
       expect(isBillingAccessStatus(status)).toBe(false);
     }
@@ -191,15 +191,21 @@ describe("clock authority is enforced in the source", () => {
     const resend = read("src/app/api/auth/resend-verification/route.ts");
     const reset = read("src/app/api/auth/reset-password/route.ts");
     const verifyEmail = read("src/app/api/auth/verify-email/route.ts");
+    const policy = read("src/lib/email-auth-token-policy.ts");
 
-    expect(forgot).toContain("clock_timestamp() + interval '20 minutes'");
-    expect(resend).toContain("clock_timestamp() + interval '30 minutes'");
-    expect(reset).toContain("gt(passwordResetTokens.expiresAt, sql`clock_timestamp()`)");
+    expect(forgot).toContain("...emailAuthTokenTimes()");
+    expect(resend).toContain("...emailAuthTokenTimes()");
+    expect(policy).toContain("createdAt: sql`clock_timestamp()`");
+    expect(policy).toContain("clock_timestamp() + interval '10 minutes'");
+    expect(policy).toContain("${table.createdAt} <= clock_timestamp()");
+    expect(policy).toContain("${table.createdAt} > clock_timestamp() - interval '10 minutes'");
+    expect(policy).toContain("${table.expiresAt} > clock_timestamp()");
+    expect(policy).not.toContain("Date.now()");
+    // Both the optimistic read and the atomic write retain the same fence.
+    expect(reset.split("emailAuthTokenIsLive(passwordResetTokens)")).toHaveLength(3);
     expect(reset).toContain("isNull(passwordResetTokens.consumedAt)");
-    expect(reset).toContain("gt(passwordResetTokens.expiresAt, sql`clock_timestamp()`)");
-    expect(verifyEmail).toContain("gt(emailVerificationTokens.expiresAt, sql`clock_timestamp()`)");
+    expect(verifyEmail.split("emailAuthTokenIsLive(emailVerificationTokens)")).toHaveLength(3);
     expect(verifyEmail).toContain("isNull(emailVerificationTokens.consumedAt)");
-    expect(verifyEmail).toContain("gt(emailVerificationTokens.expiresAt, sql`clock_timestamp()`)");
   });
 
   it("writes tenant lifecycle transition timestamps on the database clock", () => {
@@ -243,9 +249,8 @@ describe("clock authority is enforced in the source", () => {
     expect(signature.slice(0, 1200)).not.toContain("Date.now()");
 
     const checkout = read("src/app/api/billing/checkout/route.ts");
-    const expiry = checkout.slice(checkout.indexOf("function checkoutIntentExpired"), checkout.indexOf("export async function POST"));
-    expect(expiry).toContain("gatewayNowMs()");
-    expect(expiry).not.toContain("Date.now()");
+    expect(checkout).toContain("MANUAL_BILLING_REQUIRED");
+    expect(checkout).not.toContain("stripeRequest");
   });
 
   it("uses the database-authoritative subscription gate before calibrated-clock presentation", () => {
@@ -261,8 +266,8 @@ describe("clock authority is enforced in the source", () => {
 
   it("routes subscription access through the intended billing contract for each entry point", () => {
     const billingStatus = read("src/app/api/billing/status/route.ts");
-    expect(billingStatus).toContain("isBillingAccessStatus");
-    expect(billingStatus).toContain("isSubscriptionPeriodLive");
+    expect(billingStatus).toContain("customerSubscriptionState");
+    expect(billingStatus).toContain("await databaseNowMs()");
     expect(billingStatus).not.toContain("currentPeriodEnd) > new Date()");
 
     for (const path of [

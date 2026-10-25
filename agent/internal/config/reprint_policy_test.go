@@ -1,6 +1,7 @@
 package config
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -22,11 +23,28 @@ func TestLoadMissingConfigUsesSafeCrashPolicy(t *testing.T) {
 	}
 }
 
-func TestExplicitCrashReprintOptIn(t *testing.T) {
+func TestLegacyCrashReprintFlagCannotEnableUnknownReprint(t *testing.T) {
 	cfg := defaultConfig()
 	yes := true
 	cfg.Agent.ReprintAfterCrash = &yes
-	if !cfg.ReprintAfterCrashEnabled() {
-		t.Fatal("explicit true must enable at-least-once crash reprinting")
+	if cfg.ReprintAfterCrashEnabled() {
+		t.Fatal("legacy true must never authorize another uncertain physical attempt")
+	}
+}
+
+func TestLegacyCrashReprintYAMLStillLoadsWithoutAuthorizingReprint(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("server:\n  url: https://gateway.example.test\nagent:\n  reprint_after_crash: true\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("legacy configuration must remain readable: %v", err)
+	}
+	if cfg.Agent.ReprintAfterCrash == nil || !*cfg.Agent.ReprintAfterCrash {
+		t.Fatal("legacy parsed value was silently rewritten")
+	}
+	if cfg.ReprintAfterCrashEnabled() {
+		t.Fatal("legacy YAML must not authorize reprinting unknown output")
 	}
 }

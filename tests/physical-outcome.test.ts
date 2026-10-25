@@ -14,8 +14,8 @@ describe("physical print outcome semantics", () => {
 
   it("does not treat transport success as proof of physical paper output", () => {
     expect(derivePhysicalOutcome("success", null)).toBe("unknown");
-    expect(jobLabel("success", "unknown", "en")).toBe("Submission completed · paper unverified");
-    expect(jobLabel("success", "unknown", "ar")).toBe("اكتمل الإرسال · الورق غير مؤكد");
+    expect(jobLabel("success", "unknown", "en")).toBe("Sent to printer");
+    expect(jobLabel("success", "unknown", "ar")).toBe("أُرسلت إلى الطابعة");
     expect(jobTone("success", "unknown")).toBe("info");
     expect(jobTone("success")).toBe("info");
     expect(jobTone("success", "printed")).toBe("ok");

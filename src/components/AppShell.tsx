@@ -9,7 +9,6 @@ import { usePathname, useRouter } from "next/navigation";
 import {
   LayoutDashboard,
   KeyRound,
-  Users,
   CreditCard,
   Settings as SettingsIcon,
   LogOut,
@@ -30,12 +29,11 @@ import { BrandMark } from "./brand";
 import { NavIconFrame, ShellSearchButton } from "./visual-system";
 import { useI18n } from "../i18n/react";
 import type { Translator } from "../i18n/translate";
+import { WorkspaceSecurityNotice } from "./WorkspaceSecurity";
 
 const NAV_ITEMS: TopNavItem[] = [
-  { href: "/dashboard", labelKey: "nav.console", icon: LayoutDashboard, sectionKey: "nav.section.operations", keywords: "console dashboard overview printers jobs" },
-  { href: "/api-keys", labelKey: "nav.odooIntegration", icon: KeyRound, sectionKey: "nav.section.integration", keywords: "odoo integration api keys credentials" },
-  { href: "/team", labelKey: "nav.team", icon: Users, sectionKey: "nav.section.administration", keywords: "team members roles invitations" },
-  { href: "/billing", labelKey: "nav.billing", icon: CreditCard, sectionKey: "nav.section.administration", keywords: "billing plan subscription invoices" },
+  { href: "/dashboard", labelKey: "v4.experience.home", icon: LayoutDashboard, sectionKey: "nav.section.operations", keywords: "console dashboard overview printers jobs" },
+  { href: "/api-keys", labelKey: "v4.experience.connection", icon: KeyRound, sectionKey: "nav.section.integration", keywords: "odoo integration api keys credentials" },
   { href: "/settings", labelKey: "nav.settings", icon: SettingsIcon, sectionKey: "nav.section.administration", keywords: "settings preferences workspace" },
 ];
 
@@ -44,12 +42,12 @@ type WorkspaceInfo = {
   email?: string;
   role?: string;
   plan?: string;
-  planExpired?: boolean;
 };
 
 const COLLAPSE_KEY = "yaseir:console-nav";
 
 function isActive(pathname: string, href: string) {
+  if (href === "/settings" && ["/team", "/billing"].some((path) => pathname === path || pathname.startsWith(`${path}/`))) return true;
   return pathname === href || pathname.startsWith(`${href}/`);
 }
 
@@ -192,9 +190,7 @@ function WorkspaceMenu({
             <span className="flex min-w-0 flex-1 flex-col items-start leading-tight">
               <span className="w-full break-words text-sm font-[600] leading-snug text-ink">{displayName}</span>
               <span className="mt-0.5 w-full break-words text-xs leading-snug text-ink-3">
-                {workspace.plan
-                  ? (workspace.planExpired ? `${workspace.plan} · ${t("billing.ended")}` : workspace.plan)
-                  : (workspace.role ?? t("nav.signedIn"))}
+                {workspace.plan ?? workspace.role ?? t("nav.signedIn")}
               </span>
             </span>
           )}
@@ -277,14 +273,13 @@ function ConsoleShell({
     fetchWithTimeout("/api/billing/status?includePlanName=1", { credentials: "include", cache: "no-store" })
       .then(async (response) => {
         if (!response.ok) return null;
-        return (await response.json()) as { hasSubscription?: boolean; periodExpired?: boolean; planName?: string | null };
+        return (await response.json()) as { hasSubscription?: boolean; planName?: string | null };
       })
       .then((data) => {
         if (cancelled || !data) return;
         setWorkspace((current) => ({
           ...current,
-          plan: typeof data.planName === "string" ? data.planName : undefined,
-          planExpired: data.periodExpired === true,
+          plan: data.hasSubscription && typeof data.planName === "string" ? data.planName : undefined,
         }));
       })
       .catch(() => undefined);
@@ -419,7 +414,7 @@ function ConsoleShell({
           onOpenNavigation={() => setMobileOpen(true)}
           onSearch={() => setPaletteOpen(true)}
         />
-        <main className="page-transition min-w-0 max-w-full">{children}</main>
+        <main className="page-transition min-w-0 max-w-full"><WorkspaceSecurityNotice />{children}</main>
       </div>
 
       {/* Radix manages Escape, focus trapping and return-to-trigger. */}

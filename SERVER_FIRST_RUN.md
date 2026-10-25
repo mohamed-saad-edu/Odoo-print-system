@@ -85,6 +85,10 @@ Minimum production values:
 POSTGRES_DB=yasser_db
 POSTGRES_USER=odoo_print
 POSTGRES_PASSWORD=<long-random-password>
+POSTGRES_OWNER_USER=yaseir_owner
+POSTGRES_OWNER_PASSWORD=<different-generated-migration-owner-password>
+POSTGRES_RUNTIME_USER=yaseir_runtime
+POSTGRES_RUNTIME_PASSWORD=<different-generated-runtime-password>
 
 GATEWAY_DOMAIN=gw.example.com
 PLATFORM_TENANT_ID=<real-platform-workspace-id>
@@ -130,6 +134,14 @@ never use the placeholder as a real ID.
 
 Do not commit `.env`.
 
+`POSTGRES_USER` is the PostgreSQL bootstrap administrator and is never the
+Gateway runtime identity. Compose first applies the dedicated-cluster role
+profile, runs migrations as the separate owner, verifies the restricted runtime
+credential, then starts Gateway. See [PostgreSQL deployment roles](docs/DATABASE_ROLES.md)
+for fresh installation, the explicit existing-volume conversion and tested
+permission rollback. Preserve an existing volume's actual bootstrap username
+and password; initialization environment variables do not alter stored accounts.
+
 ### Email is required for the real first-customer flow
 
 Set:
@@ -141,41 +153,17 @@ EMAIL_FROM=Yaseir <no-reply@example.com>
 
 The registration endpoint deliberately keeps its response generic and suppresses provider errors to avoid account enumeration. Therefore a missing/broken email provider can look like a successful signup while leaving the user unable to verify the account. Treat transactional email as a required production dependency, not an optional first-run component.
 
-## 4. Billing plan catalog must exist before onboarding
+## 4. Configure the manual plan catalog and contact
 
-The customer onboarding UI only shows plans with a valid `stripePriceId`.
-
-For a real deployment, provision at least one Stripe Price in the correct Stripe mode and provide the catalog as `STRIPE_PLAN_CATALOG`.
-
-Example shape:
+Public onboarding plans require an active, public plan with a monthly job allowance. No provider price identifier is required. Create the catalog in Platform Admin, or bootstrap it once with:
 
 ```bash
-export STRIPE_PLAN_CATALOG='[
-  {
-    "id": "starter",
-    "name": "Starter",
-    "priceId": "price_XXXXXXXX",
-    "currency": "usd",
-    "interval": "month",
-    "entitlements": {
-      "max_agents": 2,
-      "max_printers": 5,
-      "max_jobs_per_minute": 60,
-      "max_concurrent_jobs": 8
-    }
-  }
-]'
+export YASEIR_PLAN_CATALOG='[{"id":"starter","name":"Starter","description":"Monthly printing allowance","monthlyQuota":1000}]'
 ```
 
-For paid checkout, also configure:
+Set `YASEIR_ACTIVATION_WHATSAPP` to the official contact in E.164 digits and `YASEIR_AGENT_DOWNLOAD_URL` to the verified signed Windows installer's HTTPS URL. Missing settings leave those actions unavailable; the application does not guess a phone number or download location.
 
-```dotenv
-STRIPE_SECRET_KEY=<stripe-secret>
-STRIPE_WEBHOOK_SECRET=<stripe-webhook-secret>
-STRIPE_PUBLISHABLE_KEY=<stripe-publishable-key>
-```
-
-Do not put monetary amounts in source; the plan catalog is tied to the Stripe Price IDs.
+Activation is manual, including free plans. The platform owner records external settlement if relevant, reviews the saved request and activates the chosen dates and allowance. V4 does not process payments. Reconcile any historical recurring charges outside Yaseir before a real migration.
 
 ## 5. First deployment
 
@@ -252,13 +240,13 @@ set -a
 . ./.env
 set +a
 
-sudo -E docker compose run --rm   -e STRIPE_PLAN_CATALOG="$STRIPE_PLAN_CATALOG"   gateway node --import tsx scripts/provision-plans.ts
+sudo -E docker compose run --rm -e YASEIR_PLAN_CATALOG="$YASEIR_PLAN_CATALOG" gateway node --import tsx scripts/provision-plans.ts
 ```
 
 Verify that the command ends with:
 
 ```text
-Provisioned N Stripe-backed plan(s).
+Processed N manual plans; existing plans preserved.
 ```
 
 Then confirm the public plan endpoint:
@@ -321,14 +309,14 @@ The verification token expires after 30 minutes.
 On `/onboarding`:
 
 1. Enter the workspace name.
-2. Select a provisioned plan.
-3. Choose **Start trial** or **Continue to checkout**.
+2. Select a public plan and a monthly or yearly term.
+3. Submit the activation request and retain its reference.
+4. The platform owner reviews the request, records the business reason and dates, and activates it manually.
+5. Refresh the pending screen to obtain the actual active state, then connect a Windows computer, discover and verify its printer, and use **Connect Odoo**.
 
-For a trial, the server creates a 30-day `trialing` subscription for that workspace.
+The subscription term and monthly quota reset are separate. A request or email verification never grants print access. Invited users join their intended existing workspace without creating another workspace or subscription. New invitations grant Full Access for ordinary work; only the workspace owner can invite people or change ownership/billing.
 
-For checkout, the browser is redirected to Stripe after the Gateway validates the selected plan.
-
-Do not skip plan provisioning; an empty plan catalog means onboarding cannot complete.
+Do not skip plan provisioning; an empty catalog prevents a meaningful request.
 
 ## 11. Customer login
 
@@ -346,7 +334,7 @@ The browser calls:
 POST /api/auth/login
 ```
 
-For one workspace, the Gateway returns `200` and sets the `cust_session` HttpOnly cookie. The customer refresh cookie is `cust_refresh` (not the Manager `mgr_refresh`); the separate Manager login flow uses `mgr_session`.
+For one workspace, the Gateway returns `200` and sets the production `__Host-cust_session` HttpOnly cookie and `__Host-cust_refresh` refresh cookie. Production Manager login uses `__Host-mgr_session` and `__Host-mgr_refresh`. All production session cookies are host-only, Secure and Path=/; access uses SameSite=Lax and refresh uses SameSite=Strict. Development uses the `cust_session` HttpOnly cookie and `cust_refresh`; the separate Manager flow uses `mgr_session` and `mgr_refresh`. Production never accepts those unprefixed names as a fallback.
 
 For multiple workspaces, login returns `409` with a short-lived selection token and workspace IDs; the UI then calls:
 

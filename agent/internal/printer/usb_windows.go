@@ -34,6 +34,7 @@ type USBPrinter struct {
 	USBLocation    string
 	Protocol       string
 	SupportsESCPOS bool
+	Geometry       *Geometry
 	// writeChunk performs one synchronous kernel write; injected in tests.
 	writeChunk func(h windows.Handle, chunk []byte) (uint32, error)
 	// closeHandle releases the Windows device handle; injected in tests so
@@ -923,31 +924,7 @@ func getDeviceRegistryProperty(handle uintptr, devInfo *spDevInfoData, property 
 		}
 		return nil, err
 	}
-	if dataType == 1 {
-		u16 := (*[4096]uint16)(unsafe.Pointer(&buf[0]))[:requiredSize/2]
-		n := 0
-		for n < len(u16) && u16[n] != 0 {
-			n++
-		}
-		return []string{syscall.UTF16ToString(u16[:n])}, nil
-	} else if dataType == 7 {
-		u16 := (*[4096]uint16)(unsafe.Pointer(&buf[0]))[:requiredSize/2]
-		var out []string
-		start := 0
-		for i := 0; i < len(u16); i++ {
-			if u16[i] == 0 {
-				if i > start {
-					out = append(out, syscall.UTF16ToString(u16[start:i]))
-				}
-				start = i + 1
-				if i+1 < len(u16) && u16[i+1] == 0 {
-					break
-				}
-			}
-		}
-		return out, nil
-	}
-	return nil, fmt.Errorf("unknown type %d", dataType)
+	return decodeUSBRegistryStrings(buf, dataType)
 }
 
 func getDeviceRegistryPropertySingle(handle uintptr, devInfo *spDevInfoData, property uint32) (string, error) {
@@ -991,7 +968,9 @@ func (p *USBPrinter) SupportsKind(kind string) bool {
 			strings.EqualFold(p.Protocol, "zpl") ||
 			strings.EqualFold(p.Protocol, "tspl")
 	case KindESCPOS:
-		return p.SupportsESCPOS
+		return p.Protocol == "escpos" && p.SupportsESCPOS
+	case KindImage:
+		return p.Protocol == "escpos" && rasterGeometryReady(p.Geometry)
 	default:
 		return false
 	}
@@ -1000,8 +979,22 @@ func (p *USBPrinter) SupportsKind(kind string) bool {
 // PrintDocument refuses non byte-stream documents instead of writing
 // unrenderable bytes to the device.
 func (p *USBPrinter) PrintDocument(ctx context.Context, doc Document) error {
+	if NormalizeKind(doc.Kind) == KindImage {
+		data, err := prepareESCPOSImage(p.Protocol, p.Geometry, doc)
+		if err != nil {
+			return fmt.Errorf("render image for USB printer: %w", err)
+		}
+		return p.Print(ctx, data)
+	}
 	if !p.SupportsKind(doc.Kind) {
-		return CapabilityMismatchf("USB printer %s cannot render %s payloads; install it as a Windows printer and route the job to the spooler queue", p.Name, NormalizeKind(doc.Kind))
+		return CapabilityMismatchf("USB printer %s cannot render %s payloads", p.Name, NormalizeKind(doc.Kind))
 	}
 	return p.Print(ctx, doc.Data)
+}
+
+func (p *USBPrinter) PrinterGeometry(ctx context.Context) (*Geometry, error) {
+	if err := p.Geometry.Validate(); err != nil {
+		return nil, err
+	}
+	return p.Geometry, nil
 }

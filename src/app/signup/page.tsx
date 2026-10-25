@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useI18n } from "../../i18n/react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -14,14 +14,18 @@ export default function Signup() {
   const params = typeof window === "undefined" ? null : new URLSearchParams(window.location.search);
   const [email, setEmail] = useState(params?.get("email") ?? "");
   const { t } = useI18n();
+  const [displayName, setDisplayName] = useState("");
   const [password, setPassword] = useState("");
   const [err, setErr] = useState("");
   const [done, setDone] = useState(false);
   const [loading, setLoading] = useState(false);
+  const submitting = useRef(false);
   const router = useRouter();
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
+    if (submitting.current) return;
+    submitting.current = true;
     setLoading(true);
     setErr("");
     try {
@@ -31,12 +35,13 @@ export default function Signup() {
         body: JSON.stringify({
           email,
           password,
+          displayName,
           planId: new URLSearchParams(window.location.search).get("plan") ?? "",
           inviteToken: new URLSearchParams(window.location.search).get("invite") ?? "",
         }),
       });
       const data = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(t(codeMessageKey(typeof data.code === "string" ? data.code : undefined) ?? "auth.signup.failed"));
+      if (!response.ok) { setErr(t(codeMessageKey(typeof data.code === "string" ? data.code : undefined) ?? "auth.signup.failed")); return; }
       setDone(true);
       const planId = new URLSearchParams(window.location.search).get("plan") ?? "";
       const inviteToken = new URLSearchParams(window.location.search).get("invite") ?? "";
@@ -44,9 +49,10 @@ export default function Signup() {
       if (planId) next.set("plan", planId);
       if (inviteToken) next.set("invite", inviteToken);
       router.push(`/verify-email?${next.toString()}`);
-    } catch (error) {
-      setErr(error instanceof Error ? error.message : t("auth.signup.failed"));
+    } catch {
+      setErr(t("auth.signup.failed"));
     } finally {
+      submitting.current = false;
       setLoading(false);
     }
   }
@@ -77,6 +83,9 @@ export default function Signup() {
         </Callout>
       ) : (
         <form className="space-y-4" onSubmit={submit}>
+          <Field label={t("v4.signup.name")} htmlFor="display-name" required>
+            <Input id="display-name" value={displayName} onChange={event => setDisplayName(event.target.value)} autoComplete="name" minLength={2} maxLength={120} required />
+          </Field>
           <Field label={t("auth.email")} htmlFor="email" required>
             <Input
               id="email"

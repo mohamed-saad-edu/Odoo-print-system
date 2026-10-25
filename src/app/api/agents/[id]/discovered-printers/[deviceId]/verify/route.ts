@@ -76,7 +76,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       return updated.length === 1 ? { kind: "verified" as const } : { kind: "state_changed" as const };
     });
   } catch (error) {
-    if (error instanceof ManagerMutationAuthorityChangedError || error instanceof TenantSuspendedError || error instanceof TenantDeletedError) {
+    if (error instanceof ManagerMutationAuthorityChangedError) return error.response();
+    if (error instanceof TenantSuspendedError || error instanceof TenantDeletedError) {
       return NextResponse.json({ error: error.message }, { status: 403 });
     }
     throw error;

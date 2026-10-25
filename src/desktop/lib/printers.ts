@@ -1,3 +1,5 @@
+import { documentTypeLabel } from "../../shared/document-label";
+import { isPrinterOperationallyVerified, validatePrinterOperationalVerification } from "../../lib/printer-operational-verification";
 import type { PrinterInfo } from "./ipc";
 import type { Tone } from "../../shared/job-vocabulary";
 import { isVirtualPrinterRecord } from "../../lib/printer-virtual";
@@ -46,14 +48,29 @@ function tr(locale: Locale, key: MessageKey): string {
    ============================================================ */
 
 
-export function agentStatusNoteKey(status: { note_code?: unknown; running?: unknown } | null | undefined): MessageKey {
+type AgentStatusEvidence = { note_code?: unknown; running?: unknown; error?: unknown } | null | undefined;
+export type AgentServiceState = "running" | "stopped" | "unknown";
+
+/** A failed SCM query is not proof of a stopped service. A verified owned
+ * background process can still establish running independently of SCM. */
+export function agentServiceState(status: AgentStatusEvidence): AgentServiceState {
+  if (!status || status.error || status.note_code === "status_check_failed") return "unknown";
+  if (status.running === true) return "running";
+  if (status.note_code === "service_status_unavailable" || status.note_code === "service_ownership_unverified") return "unknown";
+  return status.running === false ? "stopped" : "unknown";
+}
+
+export function agentStatusNoteKey(status: AgentStatusEvidence): MessageKey {
+  if (status?.error) return "desktop.agents.note.statusCheckFailed";
   switch (status?.note_code) {
     case "service_running": return "desktop.agents.note.serviceRunning";
     case "background_running": return "desktop.agents.note.backgroundRunning";
     case "service_status_unavailable": return "desktop.agents.note.serviceStatusUnavailable";
+    case "service_ownership_unverified": return "desktop.agents.note.serviceStatusUnavailable";
     case "status_check_failed": return "desktop.agents.note.statusCheckFailed";
     case "not_running": return "desktop.agents.note.notRunning";
-    default: return status?.running ? "desktop.agents.note.running" : "desktop.agents.note.notRunning";
+    default: return agentServiceState(status) === "running" ? "desktop.agents.note.running"
+      : agentServiceState(status) === "stopped" ? "desktop.agents.note.notRunning" : "desktop.agents.note.statusCheckFailed";
   }
 }
 
@@ -131,6 +148,7 @@ export function printerPresentation(p: PrinterInfo, agent?: Parameters<typeof ga
   if (p.enabled === false) {
     return { state: "attention", tone: "warn", labelKey: "printer.presentation.attention", reasonKey: "printer.presentation.inactiveReason" };
   }
+  if (!validatePrinterOperationalVerification(p.capabilities?.operational_verification, { id: p.id, connectionType: p.connectionType ?? p.connection_type, protocol: p.protocol }, new Date(nowMs)).ok) return { state: "unavailable", tone: "warn", labelKey: "printer.verification.pending", reasonKey: "printer.verification.pendingHelp" };
   switch (p.status.trim().toLowerCase()) {
     case "online": case "idle": return { state: "ready", tone: "ok", labelKey: "printer.presentation.ready", reasonKey: "printer.presentation.readyReason" };
     case "busy": case "printing": return { state: "printing", tone: "info", labelKey: "printer.presentation.printing", reasonKey: "printer.presentation.printingReason" };
@@ -153,6 +171,7 @@ export function eligibleGatewayTestPrinterIds(cloud: PrinterInfo[], local: Print
   return new Set(connected ? cloud.filter((p) => !privateIds.has(p.id) && p.sharedWithGateway !== false
     && isMainInventoryPrinter(p) && p.inventoryPresent === true && !!p.agentId && p.configurationConverged !== false
     && p.agentFreshness !== "stale" && p.agentFreshness !== "missing" && p.freshness !== "stale" && p.freshness !== "missing"
+    && isPrinterOperationallyVerified(p, new Date(nowMs))
     && printerAgentView(p, nowMs).tone === "ok"
     && printerObservationFreshness(p.lastSeenAt, nowMs) === "fresh").map((p) => p.id) : []);
 }
@@ -206,8 +225,8 @@ export function labelPrinter(status: string, locale: Locale = DEFAULT_LOCALE): s
   return printerLabelImpl(status, locale);
 }
 
-export function labelJob(status: string, error?: unknown, locale: Locale = DEFAULT_LOCALE): string {
-  return jobDisplayLabelImpl(status, error == null ? "" : String(error), locale);
+export function labelJob(status: string, error?: unknown, locale: Locale = DEFAULT_LOCALE, output?: { outputMedium?: unknown; outputEvidence?: unknown }): string {
+  return jobDisplayLabelImpl(status, error == null ? "" : String(error), locale, output);
 }
 
 export function toneJob(status: string, error?: unknown): Tone {
@@ -232,6 +251,7 @@ export function humanType(p: PrinterInfo, locale: Locale = DEFAULT_LOCALE): stri
 export function humanConnection(p: PrinterInfo, locale: Locale = DEFAULT_LOCALE): string {
   const c = (p.connection_type || p.connectionType || "").toLowerCase();
   const proto = (p.protocol || "").toLowerCase();
+  if (c === "pdf_output" && proto === "pdf") return tr(locale, "printer.verification.file");
   if (c === "spooler" || proto === "spooler") return tr(locale, "desktop.connection.spooler");
   if (c === "usb") return tr(locale, "desktop.connection.usb");
   if (c === "ipp" || c === "ipps" || proto === "ipp" || proto === "ipps") return tr(locale, "desktop.connection.ipp");
@@ -412,7 +432,7 @@ export function friendlyPrinterError(raw: string, locale: Locale = DEFAULT_LOCAL
     return tr(locale, "desktop.printer.operationFailed");
   }
 
-  return raw.length > 140 ? raw.slice(0, 140) + "…" : raw;
+  return tr(locale, "desktop.printer.operationFailed");
 }
 
 /* ---------- Job field accessors (gateway payloads are loosely typed) ---------- */
@@ -422,7 +442,7 @@ export function jobId(j: Record<string, unknown>): string {
 }
 export function jobDocType(j: Record<string, unknown>, locale: Locale = DEFAULT_LOCALE): string {
   const raw = j.documentType ?? j.document_type;
-  return raw ? String(raw) : tr(locale, "desktop.job.document");
+  return documentTypeLabel(raw, locale);
 }
 export function jobPrinterId(j: Record<string, unknown>): string {
   return String(j.printerId ?? "");

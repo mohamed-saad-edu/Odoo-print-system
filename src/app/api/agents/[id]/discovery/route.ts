@@ -80,7 +80,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       await tx.execute(sql`SELECT pg_notify('print_gateway_discovery', ${JSON.stringify({ agentId, discoveryId })}::text)`);
     });
   } catch (error) {
-    if (error instanceof ManagerMutationAuthorityChangedError || error instanceof TenantSuspendedError || error instanceof TenantDeletedError) {
+    if (error instanceof ManagerMutationAuthorityChangedError) return error.response();
+    if (error instanceof TenantSuspendedError || error instanceof TenantDeletedError) {
       return NextResponse.json({ error: error.message }, { status: 403 });
     }
     if (error instanceof Error && error.message === "AGENT_NOT_FOUND") {

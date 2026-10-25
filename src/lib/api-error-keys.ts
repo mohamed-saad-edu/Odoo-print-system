@@ -16,6 +16,9 @@ import type { MessageKey } from "../i18n/messages/en";
 
 /** Gateway error code → the message the operator should read. */
 const CODE_KEYS: Record<string, MessageKey> = {
+  WORKSPACE_REAUTHENTICATION_REQUIRED: "workspaceSecurity.required",
+  PASSWORD_CONFIRMATION_FAILED: "workspaceSecurity.passwordIncorrect",
+  SESSION_EXPIRED: "errors.sessionExpired",
   // Jobs
   JOB_NOT_FOUND: "errors.jobNotFound",
   JOB_NOT_TERMINAL: "errors.jobStillInProgress",

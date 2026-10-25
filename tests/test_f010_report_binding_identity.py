@@ -45,6 +45,11 @@ def production_methods(file, names):
     policy_ns = {}
     exec(compile(policy_path.read_text(), str(policy_path), 'exec'), policy_ns)
     ns['inventory_has_shared_printer'] = policy_ns['inventory_has_shared_printer']
+    output_path = ROOT.parent / 'print_output.py'
+    output_ns = {}
+    exec(compile(output_path.read_text(), str(output_path), 'exec'), output_ns)
+    ns['gateway_output_values'] = output_ns['gateway_output_values']
+    ns['validated_file_output'] = output_ns['validated_file_output']
     exec(compile(ast.fix_missing_locations(ast.Module(body=[expression], type_ignores=[])), str(path), 'exec'), ns)
     return ns['Production']
 

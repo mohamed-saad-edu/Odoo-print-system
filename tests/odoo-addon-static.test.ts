@@ -57,7 +57,9 @@ describe("Odoo addon static contracts", () => {
     // physical outcome is still unknown) - never transport-level success.
     expect(jobs).toContain('row.status in ("partial", "unknown")');
     expect(jobs).toContain('row.physical_outcome == "unknown"');
-    expect(views).toContain('invisible="status not in (\'partial\', \'unknown\')"');
+    expect(views).toContain('invisible="status not in (\'partial\', \'unknown\') or output_medium == \'file\'"');
+    expect(views).toContain('invisible="output_medium != \'file\' or status not in (\'partial\', \'unknown\')"');
+    expect(views).toContain("File output is unconfirmed. Check the approved output destination");
     expect(views).toContain("Print status is unknown - the printer may have received part or all of the document");
     expect(views).toContain("Automatic retry is paused to prevent duplicate printing.");
   });

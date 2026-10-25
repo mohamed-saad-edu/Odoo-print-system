@@ -1,14 +1,26 @@
 # Odoo Integration Guide
 
-> Module: `print_gateway` | Version: 19.0.2.17.0 | Odoo: 19 Community Edition
+> Module: `print_gateway` | Version: 19.0.2.21.0 | Odoo: 19 Community Edition
 
 ## Overview
 
 The Yaseir Print Gateway Odoo addon enables silent, hardware-level printing from Odoo ERP to physical printers through the central Gateway. Odoo owns all business context (what to print, where to print); the Gateway owns runtime infrastructure (agents, printers, job queue).
 
+## V4 operator workflow
+
+The primary Yaseir navigation is **Connection → Printers → Print Rules → Print Activity**. Connection uses three steps: enter the company connection address and the key from Gateway's **Connect Odoo**, choose verified printers and document rules, then enable printing. Checking a connection never proves physical paper output. The Windows computer pairing code is separate from the Odoo connection key.
+
+The Printers screen reads actual assigned computers and approved printer inventory. Its authenticated `/print_gateway/setup-context` endpoint returns only the user's activated company scopes and connection record identifiers; it returns no credentials and creates no assignments. A system administrator must explicitly assign a computer to the exact company or branch. A printer becomes selectable only when its existing verification and availability checks pass. Existing server-side branch authorization remains the authority when a rule is saved.
+
+Advanced connection settings retain guarded synchronization recovery and branch-computer management. Document destinations, branch computers and automation activity remain available under Advanced. Saved historical lifecycle, diagnostic, output and idempotency evidence is retained. Print Activity uses a separate customer presentation: **Waiting**, **Processing**, **Sent to printer**, **Failed before output**, or **Needs review**. Verified file output remains **File created**. Neither accepted submission nor `success` claims that paper physically emerged.
+
+Customer errors are classified into localized next steps without interpolating raw backend exception text. Arabic translations are evaluated in the current reader's language; raw diagnostic evidence remains available to authorized technical workflows. An uncertain output warns the operator to check before retrying.
+
+Gateway subscriptions are activated manually by the platform owner. A monthly job allowance is independent of the subscription's monthly, yearly or custom contractual term. A quota refusal blocks the current admission and asks the operator to review earlier attempts; it never asserts that previous paper output did not occur.
+
 Document test pages use the selected runtime printer's optional `capabilities.paper_width_mm` (58 or 80) to generate a matching 100mm-long source ticket. The Gateway inventory and Odoo picker retain this physical-media field separately from `printableWidthDots`. Windows spooler tests can use the selected driver's validated paper when roll metadata is unavailable: the Agent tries the document form, then fits the complete page proportionally inside that same driver's printable area before submission. A direct IPP POS/kitchen binding (`pos`/`pos_printer`) with exact `deviceClass=thermal` still requires declared integer58/80mm; no Windows driver is available on that direct path. Other source formats remain: ASCII uses Letter with bounded wrapped metadata, Unicode uses the Odoo report/company paperformat. Names and `document_type` do not establish media. Actual report files retain their layout, while their Windows output uses the same complete-page fit. No global paperformat or installed-printer defaults are modified; submission remains informational until paper is observed.
 
-TSPL Test Print sends the firmware's documented `SELFTEST` command rather than imposing75×50mm stock or a2mm gap. ZPL Test Print sends one compact buffered `TEST` label without changing stock, gap or calibration. Actual application label programs are unchanged and still require the printer's real language and configured media. Check Setup/Test Connection remain control-plane checks, and E2E Capture remains rendering-only; Test Print uses the exact binding and durable physical-job outbox.
+TSPL Test Print sends the firmware's documented `SELFTEST` command rather than imposing 75×50mm stock or a 2mm gap. ZPL Test Print sends one compact buffered `TEST` label without changing stock, gap or calibration. Actual application label programs are unchanged and still require the printer's real language and configured media. Check Setup/Test Connection remain control-plane checks; Test Print uses the exact binding and durable physical-job outbox.
 
 ## Architecture
 
@@ -271,3 +283,72 @@ Starting with forward migration `0085_odoo_installation_idempotency`, independen
 For a pre-existing legacy workspace, follow a reviewed manual cutover procedure: secure enrollment, external 256-bit installation proofs, API-key rotation, verification of old receipts, operator-controlled `reuse`/`distinct` decisions, and clone/restore restrictions. Never regenerate a key for a pre-existing Odoo outbox job. A pending historical operation requires reconciliation, not a new physical print.
 
 The Gateway installation-management endpoints are `/api/odoo/installations`, `/api/odoo/installations/resolutions`, and `/api/odoo/installations/cutover` (workspace-manager permissions required). Versioned Odoo job submission and status reads continue through the existing `/api/print/jobs` and `/api/print/jobs/v2` routes, with an additional independently enrolled installation identity and proof. Older Agents continue to receive the existing print job and acknowledgment schema; they do not interpret the Odoo source-key version.
+
+### Status reconciliation and identity preservation (19.0.2.18.0)
+
+Status batches are grouped by the **saved** identity version and installation of
+each durable job, not by the configuration's current identity. A v2 status read
+requires `X-Yaseir-Odoo-Idempotency-Version: 2`, `X-Yaseir-Odoo-Installation`, and
+`X-Yaseir-Odoo-Proof`. Missing historical proof stops reconciliation with an
+actionable error; it never downgrades the request to tenant-wide authority or
+submits a replacement print. Live jobs and retained receipts use the same
+installation boundary. Headerless v1 reads remain available only for unmapped
+legacy operations while the workspace is still in legacy mode.
+
+Equivalent Gateway URL edits (host case, default HTTPS port or trailing slash)
+preserve the stored URL bytes and the external identity-file namespace. A real
+endpoint change still follows the existing migration safeguards. Back up the
+identity files before upgrades and verify historical pending jobs with the
+original proof after a restore. POS activation must resolve to an explicit
+boolean before dispatch; an unavailable or malformed activation response must
+not trigger browser/native fallback.
+
+
+### Measured receipt rendering (19.0.2.19.0)
+
+The addon uses the selected printer's versioned geometry and fingerprints image payloads. Unknown widths no longer fall back to 512 dots; physical CSS layout and raster DPI remain separate. Update all application components together and reconcile old operations with their original identity and payload. See `docs/ODOO_RECEIPT_GEOMETRY.md` and `ARCHITECTURE.md` for actual measurement requirements, safe bounds and the supported transport matrix.
+
+### Verified runtime targets and approved PDF file output (19.0.2.20.0)
+
+New work requires a current, identity-bound operational verification from the
+Agent. Registration, an `online` label, an open port and configured paper geometry
+are not evidence that a destination exists. The Gateway filters its runtime list;
+the Odoo controller, cached picker and binding boundary also validate the proof's
+printer ID, transport/method, medium and timestamps. A proof and its Gateway
+receipt expire after 300 seconds; the source timestamp permits at most 60 seconds
+of future clock skew. Cached inventory therefore cannot authorize new work
+indefinitely. Keep the hosts' clocks synchronized. This proof establishes the
+available execution endpoint, not a successful physical print.
+
+The approved file destination is `connectionType=pdf_output`, `protocol=pdf`,
+`printerType=file`, with `outputMedium=file`. Its public configuration contains an
+opaque `output_profile_id`; only the Agent administrator maps that ID to an
+approved local directory. Odoo receives neither a filesystem path nor a customer
+chosen filename. A generic Windows “Print to PDF” queue is not this backend and
+remains ineligible for unattended routing.
+
+Sales, refunds, Sale Details and kitchen receipts can select this backend, a
+compatible Windows driver, or an explicitly capable direct raster device. They
+are not restricted by a thermal/laser/inkjet marketing label. An image sent to file
+output needs complete current page geometry: paper width and height, printable
+width and height, both DPI values and both imageable offsets, including explicit
+zero offsets when appropriate. Ordinary QWeb PDF reports keep their native PDF
+representation. The Agent preserves valid PDF input and paginates a receipt
+image at its declared physical size; it does not shrink a receipt into a page.
+See `docs/ODOO_RECEIPT_GEOMETRY.md` for bounds and the precise transport matrix.
+
+The durable job now stores nullable `output_medium`, `output_outcome` and
+`output_evidence` fields. Perform the ordinary `-u print_gateway` update before
+activating these assets/workers. No historical payload, idempotency key,
+installation proof or accepted operation is rewritten. A status of `file_created`
+requires canonical artifact ID, SHA-256, byte count and page count from the
+Gateway's verified result. The artifact identity is immutable once accepted.
+The Odoo activity view presents file output separately and never converts it to
+physical-print success. Missing, malformed or ambiguous file evidence remains
+unconfirmed; the existing conservative retry protections remain in force.
+
+Exact authorized replay of an already persisted operation returns that original
+payload/job/status before checking new-work eligibility. It cannot reformat the
+receipt, create another job or replace its fingerprint. Current company, source
+record, route identity and read permissions still apply. New operations require
+a fresh operational proof and the current geometry fingerprint.

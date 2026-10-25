@@ -1,9 +1,10 @@
+import { sessionCookieName } from "../../lib/session-config";
 import { logError } from "../../lib/log";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { getManagerCookieName, verifyWorkspaceTokenFromCookieValues } from "../../lib/manager-auth";
 import { hasManagerPermission } from "../../lib/authorization";
-import DashboardClient from "./dashboard-client";
+import DashboardClient, { type DashboardView } from "./dashboard-client";
 import { JobCleanupButton } from "../../components/JobCleanupButton";
 import { Activity, Database } from "lucide-react";
 import { Callout, PageContainer, PageHeader, StatusBadge } from "../../components/ui";
@@ -12,11 +13,13 @@ import { loadDashboardStateForTenant } from "../../lib/dashboard-state";
 
 export const dynamic = "force-dynamic";
 
-export default async function DashboardPage() {
+export default async function DashboardPage({ searchParams }: { searchParams: Promise<{ view?: string }> }) {
+  const requestedView = (await searchParams).view;
+  const initialView: DashboardView = ["printers", "agents", "jobs"].includes(requestedView ?? "") ? requestedView as DashboardView : "home";
   const t = makeT(await getServerLocale());
   const cookieStore = await cookies();
   const claims = await verifyWorkspaceTokenFromCookieValues(
-    cookieStore.get("cust_session")?.value ?? null,
+    cookieStore.get(sessionCookieName("customer"))?.value ?? null,
     cookieStore.get(getManagerCookieName())?.value ?? null,
   );
   if (!claims) redirect("/login");
@@ -59,8 +62,8 @@ export default async function DashboardPage() {
         width="wide"
         eyebrow={t("dashboard.page.eyebrow")}
         icon={<Activity className="h-4 w-4" />}
-        title={t("dashboard.page.title")}
-        description={t("dashboard.page.description")}
+        title={t("v4.experience.home")}
+        description={t("v4.experience.health.body")}
         meta={
           <StatusBadge
             tone={databaseError ? "bad" : "ok"}
@@ -68,7 +71,7 @@ export default async function DashboardPage() {
             label={databaseError ? t("dashboard.page.dbUnavailableBadge") : t("dashboard.page.snapshotLoaded")}
           />
         }
-        actions={!databaseError && canMutate.jobsCancel ? <JobCleanupButton /> : undefined}
+        actions={!databaseError && canMutate.jobsCancel ? <details className="rounded-lg border border-edge px-3 py-2"><summary className="cursor-pointer text-sm text-ink-2">{t("v4.experience.advanced")}</summary><div className="mt-3"><JobCleanupButton /></div></details> : undefined}
       />
 
       <PageContainer width="wide">
@@ -82,6 +85,7 @@ export default async function DashboardPage() {
           </Callout>
         ) : (
           <DashboardClient
+            initialView={initialView}
             diagnosticActorScope={`${claims.tenantId}:${claims.userId ?? "legacy"}:${claims.role}`}
             initialAgents={dashboardState!.agents}
             initialPrinters={dashboardState!.printers}

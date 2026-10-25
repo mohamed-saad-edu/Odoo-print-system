@@ -1,3 +1,4 @@
+import { isPrinterOperationallyVerified, type OperationalPrinterState } from "../lib/printer-operational-verification";
 import { DEFAULT_LOCALE, type Locale } from "../i18n/config";
 import { translate, type MessageKey } from "../i18n/translate";
 import { agentLiveView, printerObservationFreshness, type Tone } from "./job-vocabulary";
@@ -10,7 +11,7 @@ type Owner = {
   freshness?: string | null;
   staleThresholdSeconds?: number | null;
 };
-type PrinterView = {
+type PrinterView = OperationalPrinterState & {
   id?: string;
   name?: string | null;
   displayName?: string | null;
@@ -58,6 +59,9 @@ export function printerPresentation(printer: PrinterView, agent?: Owner | null, 
   }
   if (printer.freshness === "stale" || printer.freshness === "missing" || printerObservationFreshness(printer.lastSeenAt, nowMs) !== "fresh") {
     return unavailable("printer.presentation.statusUnavailableReason");
+  }
+  if (!isPrinterOperationallyVerified(printer, new Date(nowMs))) {
+    return { state: "unavailable", tone: "warn", labelKey: "printer.verification.pending", reasonKey: "printer.verification.pendingHelp" };
   }
   switch ((printer.status ?? "").trim().toLowerCase()) {
     case "online": case "idle":

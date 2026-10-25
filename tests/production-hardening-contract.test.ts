@@ -7,13 +7,11 @@ import { isDefinitiveStripeMutationError, isRetryableStripeMutationStatus, Strip
 const read = (file: string) => readFileSync(resolve(process.cwd(), file), "utf8");
 
 describe("production hardening contracts", () => {
-  it("checkout releases definitively rejected Stripe intents but keeps ambiguous ones retryable", async () => {
-    const route = read("src/app/api/billing/checkout/route.ts");
-    expect(route).toContain("isDefinitiveStripeMutationError");
-    expect(route).toContain('checkoutStatus: "none"');
-    expect(route).toContain("eq(tenantSubscriptions.checkoutIdempotencyKey, state.idempotencyKey)");
-    expect(route).toContain('eq(tenantSubscriptions.checkoutStatus, "creating")');
-    expect(route).toContain('Checkout could not be created right now. Please retry.');
+  it("retired checkout cannot create or recover provider activation intents", async () => {
+    const route=read("src/app/api/billing/checkout/route.ts");
+    expect(route).toContain("MANUAL_BILLING_REQUIRED");
+    expect(route).toContain("status:410");
+    expect(route).not.toContain("stripeRequest");
   });
 
   it("uses the transactional tenant lifecycle fence on runtime/control writes", () => {
@@ -143,7 +141,8 @@ describe("production hardening contracts", () => {
     expect(compose).toContain("service_completed_successfully");
     expect(compose).toContain("condition: service_healthy");
     expect(compose).toContain("PGHOST: postgres");
-    expect(compose).toContain("PGPASSWORD_FILE: /run/secrets/postgres_password");
+    expect(compose).toContain("PGPASSWORD_FILE: /run/secrets/postgres_runtime_password");
+    expect(compose).toContain("PGPASSWORD_FILE: /run/secrets/postgres_owner_password");
     expect(compose).not.toContain("PGPASSWORD: ${POSTGRES_PASSWORD");
     expect(compose).not.toContain("DATABASE_URL: postgresql://");
     expect(read("src/db/index.ts")).toContain("runtimeSecret(\"PGPASSWORD\")");
@@ -346,20 +345,14 @@ describe("production hardening contracts", () => {
 
     const onboarding = read("src/app/api/onboarding/route.ts");
     expect(onboarding).toContain("await tx.update(tenants)");
-    const trialLock = onboarding.indexOf("await tx.update(tenants)");
-    const trialRead = onboarding.indexOf("const existing = await tx.query.tenantSubscriptions.findFirst");
-    expect(trialLock).toBeGreaterThanOrEqual(0);
-    expect(trialRead).toBeGreaterThan(trialLock);
-    expect(onboarding).toContain("Trial has already been used for this workspace");
-
-    const checkout = read("src/app/api/billing/checkout/route.ts");
-    expect(checkout).toContain("FROM tenants");
-    expect(checkout).toContain("FOR UPDATE");
-    expect(checkout).toContain("tenant-customer-");
-    expect(checkout).toContain("checkout-intent-");
-    expect(checkout).toContain('checkoutStatus: "creating"');
-    expect(checkout).toContain("checkoutIdempotencyKey");
-    expect(checkout).toContain("billingOperationId");
+    expect(onboarding).toContain("FOR UPDATE");
+    expect(onboarding).toContain("ensurePendingManualSubscription(tx, claims.tenantId, plan.id)");
+    expect(onboarding).toContain("MANUAL_ACTIVATION_REQUIRED");
+    const manual=read("src/lib/manual-subscriptions.ts");
+    expect(manual).toContain("requirePlatformActorInTransaction(tx,actor)");
+    expect(manual).toContain("SUBSCRIPTION_REVISION_CONFLICT");
+    expect(manual).toContain("IDEMPOTENCY_CONFLICT");
+    expect(manual).toContain("FOR UPDATE");
 
     const lifecycle = read("src/lib/tenant-lifecycle.ts");
     expect(lifecycle).toContain('PLATFORM_TENANT_PROTECTED');
@@ -393,9 +386,15 @@ describe("production hardening contracts", () => {
     expect(printRoute).toContain("rateLimitKeyId: odoo.id,");
     expect(printRoute).toContain("tenantId: odoo.tenantId,");
     expect(printRoute).not.toContain("eq(printJobs.idempotencyKey, parsed.data.idempotencyKey)");
-    expect(printRoute).toContain("eq(printJobs.tenantId, odoo.tenantId)");
-    expect(printRoute).toContain("eq(printJobs.idempotencyKey, idempotencyKey!)");
-    expect(printRoute).toContain("isNotNull(printJobs.apiKeyId)");
+    expect(printRoute).toContain("readOdooJobStatus(odoo, identity,");
+    const statusScope = read("src/lib/odoo-status-scope.ts");
+    expect(statusScope).toContain("eq(printJobs.tenantId, key.tenantId)");
+    expect(statusScope).toContain("eq(printJobs.idempotencyKey, lookup.idempotencyKey!)");
+    expect(statusScope).toContain("isNotNull(printJobs.apiKeyId)");
+    const statusGuard = statusScope.indexOf("await requireOdooStatusAccess(tx, key, identity)");
+    expect(statusGuard).toBeGreaterThan(-1);
+    expect(statusScope.indexOf("await tx.query.printJobs.findFirst")).toBeGreaterThan(statusGuard);
+    expect(statusScope.indexOf("await tx.query.printJobReceipts.findFirst")).toBeGreaterThan(statusGuard);
     const keyFence = printService.indexOf("WHERE id = ${rateLimitKeyId} AND tenant_id = ${tenantId}");
     const firstReceiptRead = printService.indexOf("const receipt = await tx.query.printJobReceipts.findFirst");
     const firstJobRead = printService.indexOf("const existing = await tx.execute(sql`SELECT id, printer_id");
@@ -435,28 +434,26 @@ describe("production hardening contracts", () => {
     expect(billingOp).toContain("stripeRequest(");
     expect(billingOp).toContain("billingOperationId");
     expect(billingOp).toContain('`billing-${operation.type}-${operationId}`');
-    for (const [path, type] of [
+    for (const [path] of [
       ["src/app/api/billing/cancel/route.ts", "cancel"],
       ["src/app/api/billing/resume/route.ts", "resume"],
     ] as const) {
       const billingRoute = read(path);
-      expect(billingRoute).toContain("runBillingOperation(");
-      expect(billingRoute).toContain(`type: "${type}"`);
-      expect(billingRoute).toContain(`cancel_at_period_end: "${type === "cancel" ? "true" : "false"}"`);
-      expect(billingRoute).toContain(`cancelAtPeriodEnd: ${type === "cancel"}`);
+      expect(billingRoute).toContain("MANUAL_BILLING_REQUIRED");
+      expect(billingRoute).toContain("status:410");
+      expect(billingRoute).not.toContain("runBillingOperation(");
     }
   });
 
 });
 
-it("agent crash reprint is a fenced printing->queued transition, separate from pre-execution rejection", () => {
+it("legacy crash reprint is refused separately from safe pre-execution rejection", () => {
   const source = read("src/app/api/agent/jobs/route.ts");
   const status = read("src/lib/job-status.ts");
   expect(status).toContain('AGENT_REPRINT_AFTER_CRASH_REASON = "agent_reprint_after_crash"');
-  expect(source).toContain('requestedStatus === "queued" && currentStatus === "printing"');
-  expect(source).toContain('reason !== AGENT_REPRINT_AFTER_CRASH_REASON');
-  expect(source).toContain('printJobs.expiresAt} > now()');
-  expect(source).toContain('printJobs.retries} < ${MAX_RETRIES}');
+  const refusal = source.slice(source.indexOf('if (requestedStatus === "queued" && currentStatus === "printing")'), source.indexOf('if (requestedStatus === "queued" && currentStatus === "claimed")'));
+  expect(refusal).toContain('UNKNOWN_OUTCOME_REPRINT_FORBIDDEN');
+  expect(refusal).toContain('physicalOutcome: "unknown"');
+  expect(refusal).not.toContain('db.update');
   expect(source).toContain('retries: sql`${printJobs.retries} + 1`');
-  expect(source).not.toMatch(/agent_reprint_after_crash[\s\S]{0,500}deliveryAttempts: sql`GREATEST/);
 });

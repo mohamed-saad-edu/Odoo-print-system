@@ -631,6 +631,48 @@
       "when": 1792822000000,
       "tag": "0089_invitation_verification_binding",
       "breakpoints": true
+    },
+    {
+      "idx": 90,
+      "version": "7",
+      "when": 1792822000001,
+      "tag": "0090_platform_mfa_sessions",
+      "breakpoints": true
+    },
+    {
+      "idx": 91,
+      "version": "7",
+      "when": 1792822000002,
+      "tag": "0091_workspace_session_security",
+      "breakpoints": true
+    },
+    {
+      "idx": 92,
+      "version": "7",
+      "when": 1792822000003,
+      "tag": "0092_workspace_mfa",
+      "breakpoints": true
+    },
+    {
+      "idx": 93,
+      "version": "7",
+      "when": 1792822000004,
+      "tag": "0093_password_only_authentication",
+      "breakpoints": true
+    },
+    {
+      "idx": 94,
+      "version": "7",
+      "when": 1792847804479,
+      "tag": "0094_printer_operational_verification",
+      "breakpoints": true
+    },
+    {
+      "idx": 95,
+      "version": "7",
+      "when": 1792880000000,
+      "tag": "0095_manual_subscriptions",
+      "breakpoints": true
     }
   ]
 }

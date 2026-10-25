@@ -4,6 +4,7 @@ import { stripTypeScriptTypes } from "node:module";
 import { SourceTextModule, SyntheticModule, createContext } from "node:vm";
 import { createHash } from "node:crypto";
 import test from "node:test";
+import { printingContractModules } from "./helpers/printing-contract-vm.mjs";
 
 // Execute the actual handler. Only unavailable infrastructure (Next/Drizzle,
 // authentication, telemetry) is replaced; the status machine is real source.
@@ -14,11 +15,24 @@ const sql = (strings, ...values) => strings.reduce((out, part, i) => out + part 
 
 async function harness({ status = "claimed", lifecycle = {}, updatedRows = 1, token = "claim-current" } = {}) {
   const context = createContext({ Buffer, Date, console, Request, Response, URL });
+  const contracts = await printingContractModules(context, sql);
+  const verification = contracts.get("printer-operational-verification").namespace;
+  const bindingDigest = createHash("sha256").update("fresh-admission-fixture-printer").digest("hex");
+  const now = new Date();
+  const printer = { id: "printer-1", connectionType: "spooler", protocol: "spooler" };
+  const proof = verification.operationalVerificationProjection({ version: 1, printer_id: printer.id,
+    verified_at: now.toISOString(), binding_digest: bindingDigest, logical_queue_key: bindingDigest,
+    method: "windows_queue", identity_strength: "queue", output_medium: "physical" }, printer, now);
+  assert.equal(proof.verificationState, "verified", "fresh admission fixture must satisfy the real operational proof contract");
   const statements = [], writes = [], events = [];
   const job = { id: "job-1", tenantId: "tenant-1", agentId: "agt-1", printerId: "printer-1", status,
+    bindingDigest, outputMedium: "physical", outputEvidence: null,
     claimToken: "claim-current", error: null, expiresAt: new Date(Date.now() + 60000), updatedAt: new Date() };
   const active = { agent_lifecycle: "active", tenant_lifecycle: "active", printer_lifecycle: "active",
     inventory_present: true, management_source: "manager", desired_revision: 3,
+    verification_state: proof.verificationState, verification_binding_digest: proof.verificationBindingDigest,
+    verification_verified_at: proof.verificationVerifiedAt, verification_received_at: proof.verificationReceivedAt,
+    logical_queue_key: proof.logicalQueueKey, output_medium: proof.outputMedium,
     applied_desired_revision: 3, observed_desired_revision: 3, ...lifecycle };
   const update = () => {
     let values, fence;
@@ -33,7 +47,16 @@ async function harness({ status = "claimed", lifecycle = {}, updatedRows = 1, to
       if (statement.includes("SELECT id FROM tenants")) {
         return { rows: active.tenant_lifecycle === "active" ? [{ id: "tenant-1" }] : [] };
       }
-      return { rows: statement.includes("FROM print_jobs") ? [{ id: job.id }] : [active] };
+      if (statement.includes("FROM print_jobs")) return { rows: [{ id: job.id }] };
+      assert.match(statement, /FROM agents a/);
+      const verified = verification.isPrinterOperationallyVerified({ ...printer,
+        verificationState: active.verification_state, verificationBindingDigest: active.verification_binding_digest,
+        verificationVerifiedAt: active.verification_verified_at, verificationReceivedAt: active.verification_received_at,
+        logicalQueueKey: active.logical_queue_key, managementSource: active.management_source,
+        desiredRevision: active.desired_revision, appliedDesiredRevision: active.applied_desired_revision,
+        observedDesiredRevision: active.observed_desired_revision }, now);
+      return { rows: verified && job.bindingDigest === active.verification_binding_digest
+        && job.outputMedium === active.output_medium ? [active] : [] };
     } }) };
   const mocks = {
     "node:crypto": { createHash },
@@ -53,13 +76,10 @@ async function harness({ status = "claimed", lifecycle = {}, updatedRows = 1, to
     "../../../../lib/entitlements": { liveTenantSubscriptionPredicate: () => "LIVE_SUBSCRIPTION" },
     "../../../../lib/job-timeline": { recordJobEvent: async (event) => events.push(event) },
   };
-  const timestamp = new SourceTextModule(readTS("src/lib/database-timestamp.ts"), { context });
-  await timestamp.link(() => { throw new Error("unexpected timestamp import"); });
-  const machine = new SourceTextModule(readTS("src/lib/job-status.ts"), { context });
-  await machine.link(() => timestamp);
   const route = new SourceTextModule(readTS("src/app/api/agent/jobs/route.ts"), { context });
   await route.link((specifier) => {
-    if (specifier.endsWith("/job-status")) return machine;
+    const contract = specifier.startsWith(".") && contracts.get(specifier.split("/").at(-1));
+    if (contract) return contract;
     const exports = mocks[specifier];
     assert.ok(exports, `unexpected handler import: ${specifier}`);
     return new SyntheticModule(Object.keys(exports), function () {
@@ -101,6 +121,12 @@ for (const status of ["claimed", "printing"]) {
     assert.match(h.statements[1], /pr\.status = 'online'/);
     assert.match(h.statements[1], /pr\.last_seen_at <= now\(\)/);
     assert.match(h.statements[1], /pr\.management_source = 'agent'/);
+    assert.match(h.statements[1], /[a-f0-9]{64}::text IS NOT NULL AND pr\.verification_binding_digest = [a-f0-9]{64}/);
+    assert.match(h.statements[1], /pr\.output_medium = physical/);
+    assert.match(h.statements[1], /pr\.verification_state = 'verified'/);
+    assert.match(h.statements[1], /pr\.logical_queue_key = pr\.verification_binding_digest/);
+    assert.match(h.statements[1], /pr\.verification_verified_at >= clock_timestamp\(\)/);
+    assert.match(h.statements[1], /pr\.verification_received_at <= clock_timestamp\(\)/);
     assert.match(h.statements[1], /LIVE_SUBSCRIPTION/);
     assert.match(h.statements[1], /FOR SHARE OF a, t, pr/);
     assert.match(h.statements[2], /SELECT id FROM print_jobs/);

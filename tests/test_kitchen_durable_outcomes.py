@@ -76,6 +76,10 @@ def fixture(response=None, transport_error=None, unrecorded_error=None, lease_av
         "MAX_BILLING_PARK_ATTEMPTS": _const("MAX_BILLING_PARK_ATTEMPTS"),
         "BILLING_PARK_RETRY_SECONDS": _const("BILLING_PARK_RETRY_SECONDS"),
         "_logger": logging.getLogger(__name__)}
+    output_namespace = {}
+    output_path = ROOT.parent / "print_output.py"
+    exec(compile(output_path.read_text(), str(output_path), "exec"), output_namespace)
+    namespace["gateway_output_values"] = output_namespace["gateway_output_values"]
     job_methods = methods("print_job.py", ["_action_submit_trusted", "_record_ambiguous_submission", "_is_deterministic_failure", "_persist_state", "_billing_retry_values", "_compute_physical_outcome"], namespace)
     class Job:
         _TERMINAL = {"success", "failed", "unknown", "partial"}
@@ -136,7 +140,7 @@ def fixture(response=None, transport_error=None, unrecorded_error=None, lease_av
     env.company = company
     job.env = env
     namespace.update({"api": SimpleNamespace(Environment=lambda *_args: env), "time": time, "uuid": uuid})
-    route_methods = methods("print_router.py", ["_submit_durable_job", "_durable_submission_outcome", "_submission_message", "_submit_route", "route_kitchen_print"], namespace)
+    route_methods = methods("print_router.py", ["_submit_durable_job", "_durable_submission_outcome", "_submission_message", "_submit_route", "route_kitchen_print", "_receipt_image_payload"], namespace)
     class Router:
         def _assert_current_company(self, _company, **_kwargs): pass
         def _persist_durable_job(self, values):
@@ -147,6 +151,8 @@ def fixture(response=None, transport_error=None, unrecorded_error=None, lease_av
                 "config": config, "document_type": "kitchen",
                 "destination": SimpleNamespace(display_name="Kitchen Station 2", _name="pos.config", id=5)}
         def _validate_jpeg_base64(self, _image): pass
+        def _receipt_geometry_for_route(self, route): return {"config_fingerprint": "a" * 64}
+        def _replay_receipt_operation(self, *_args): return None
     for name, method in route_methods.items(): setattr(Router, name, method)
     router = Router()
     router.env = env
@@ -165,7 +171,7 @@ def test_kitchen_definite_gateway_refusal_is_structured_after_real_submit_loop()
     # Terminalization happens only after 5 attempts (see the offline attempt
     # terminalization test below).
     router, job, cursor, sent, order = fixture(reply(503, {"code": "PRINTER_OFFLINE", "error": "offline"}))
-    result = router.route_kitchen_print(order, "JPEG_BASE64", idempotency_key="kitchen-operation")
+    result = router.route_kitchen_print(order, "JPEG_BASE64", idempotency_key="kitchen-operation", geometry_fingerprint="a" * 64)
     assert result["status"] == "queued"
     assert result["can_retry"] is False
     assert result["outcome"] == "queued"
@@ -181,7 +187,7 @@ def test_kitchen_definite_gateway_refusal_is_structured_after_real_submit_loop()
 def test_kitchen_offline_terminalizes_after_five_attempts():
     router, job, cursor, sent, order = fixture(reply(503, {"code": "PRINTER_OFFLINE", "error": "offline"}))
     job.attempts = 4
-    result = router.route_kitchen_print(order, "JPEG_BASE64", idempotency_key="kitchen-operation")
+    result = router.route_kitchen_print(order, "JPEG_BASE64", idempotency_key="kitchen-operation", geometry_fingerprint="a" * 64)
     assert result["status"] == "failed"
     assert "offline or unavailable" in result["message"]
     assert job.status == "failed"
@@ -269,3 +275,31 @@ def test_missing_external_v2_proof_parks_outbox_without_sending_or_terminalizing
     assert "GATEWAY_INSTALLATION_PROOF_MISSING" in str(job.last_error)
     assert job.next_retry_at
     assert cursor.closed
+
+
+@pytest.mark.parametrize("structured", [False, True])
+def test_durable_response_observes_the_independently_committed_submission(structured):
+    """The native SQL companion reproduces this repeatable-read boundary."""
+    router, job, cursor, sent, _order = fixture()
+    durable = {"status": "queued", "gateway_job_id": False}
+
+    def independently_accept(**_kwargs):
+        durable.update(status="submitted", gateway_job_id="accepted-durable-receipt")
+
+    def refresh_after_transaction_boundary(_fields):
+        if cursor.commits:
+            job.status = durable["status"]
+            job.gateway_job_id = durable["gateway_job_id"]
+
+    job._action_submit_trusted = independently_accept
+    job.invalidate_recordset = refresh_after_transaction_boundary
+    outcome = router._submit_durable_job(job.id, structured_outcome=structured)
+    if structured:
+        assert outcome["status"] == "submitted"
+        assert outcome["gateway_job_id"] == "accepted-durable-receipt"
+        assert outcome["outcome"] == "accepted"
+        assert outcome["can_retry"] is False
+    else:
+        assert outcome == "submitted"
+    assert cursor.commits == 1 and cursor.closed
+    assert sent == []

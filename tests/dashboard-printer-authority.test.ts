@@ -1,3 +1,4 @@
+import { verifiedPrinterState } from "./helpers/printer-verification";
 // @vitest-environment jsdom
 import { readFileSync } from "node:fs";
 import { act, createElement as h } from "react";
@@ -25,19 +26,21 @@ const agent = {
   lastSeenAt: seen, createdAt: seen, printerCount: 1,
 } as const satisfies Agent;
 const printer = {
+  ...verifiedPrinterState("test-printer", seen),
   id: "physical", agentId: agent.id, name: "Canon", printerType: "physical",
   connectionType: "spooler", protocol: "spooler", lifecycle: "active", status: "online", lastSeenAt: seen,
   sharedWithGateway: true,
+  managementSource: "agent", desiredRevision: 0, appliedDesiredRevision: 0, observedDesiredRevision: 0,
 } as const satisfies Printer;
 const fleet = { pageSize: 100, agentOffset: 0, agentHasMore: false, printerOffset: 0,
   printerHasMore: false, totalAgents: 1, onlineAgents: 1, totalPrinters: 1, onlinePrinters: 1, savedPrinters: 0 };
 
-async function renderTree(role: ManagerRole, lifecycle = "active", diagnosticActorScope = `test-workspace:${role}`, printerOverrides: Partial<Printer> = {}) {
+async function renderTree(role: ManagerRole, lifecycle = "active", diagnosticActorScope = `test-workspace:${role}`, printerOverrides: Partial<Printer> = {}, initialView: "home" | "printers" | "agents" = "printers") {
   const { default: DashboardClient } = await import("../src/app/dashboard/dashboard-client");
   const claims: ManagerClaims = { sub: "manager", tenantId: "test-workspace", role, jti: "audit", iat: 1, exp: 2 };
   return h(I18nProvider, { initialLocale: "en", children: h(DashboardClient, {
     initialAgents: [{ ...agent, lifecycle }], initialPrinters: [{ ...printer, ...printerOverrides }], initialJobs: [], databaseError: null,
-    initialFleet: fleet,
+    initialFleet: fleet, initialView,
     canReadBillingUsage: hasManagerPermission(claims, "billing.read"),
     canMutate: { printers: hasManagerPermission(claims, "printers.manage"), printersTest: hasManagerPermission(claims, "printers.test"),
       agentsPair: hasManagerPermission(claims, "agents.pair"), agentsLifecycle: hasManagerPermission(claims, "agents.disable") || hasManagerPermission(claims, "agents.retire"),
@@ -45,7 +48,7 @@ async function renderTree(role: ManagerRole, lifecycle = "active", diagnosticAct
     diagnosticActorScope,
   }) });
 }
-const render = async (role: ManagerRole, lifecycle = "active") => renderToStaticMarkup(await renderTree(role, lifecycle));
+const render = async (role: ManagerRole, lifecycle = "active") => renderToStaticMarkup(await renderTree(role, lifecycle, `test-workspace:${role}`, {}, lifecycle === "disabled" ? "agents" : "printers"));
 
 describe("dashboard printer action authority", () => {
   it("retains a by-ID local-only printer with its raw health while blocking cloud diagnostic controls", async () => {
@@ -199,7 +202,7 @@ async function withMountedDashboard(
   document.body.appendChild(host);
   const root = createRoot(host);
   const rerender = async (nextRole: ManagerRole, scope = `test-workspace:${nextRole}`) => {
-    const tree = await renderTree(nextRole, "active", scope);
+    const tree = await renderTree(nextRole, "active", scope, {}, "home");
     await act(async () => { root.render(tree); });
   };
   try {
@@ -222,11 +225,11 @@ async function refreshDashboard(host: HTMLDivElement) {
 describe("dashboard billing read authority", () => {
   it.each(["viewer", "operator", "integration_admin"] as const)("does not poll forbidden billing or show an outage for %s", async (role) => {
     await withMountedDashboard(role, async () => new Response(JSON.stringify({ error: "Forbidden" }), { status: 403 }), async (host, fetchMock) => {
-      expect(host.textContent).toContain("Canon");
+      expect(host.textContent).toContain("Printers available");
       await refreshDashboard(host);
       expect(usageRequests(fetchMock)).toHaveLength(0);
       expect(host.textContent).not.toContain(usageWarning);
-      expect(host.textContent).not.toContain("Print credits");
+      expect(host.textContent).not.toContain("Jobs remaining this month");
     });
   });
 
@@ -235,7 +238,7 @@ describe("dashboard billing read authority", () => {
       expect(fetchMock.mock.calls.filter(([url]) => url === "/api/billing/status")).toHaveLength(1);
       expect(usageRequests(fetchMock)).toHaveLength(0);
       expect(host.textContent).not.toContain(usageWarning);
-      expect(host.textContent).not.toContain("Print credits");
+      expect(host.textContent).not.toContain("Jobs remaining this month");
       await refreshDashboard(host);
       expect(usageRequests(fetchMock)).toHaveLength(0);
     }, false);
@@ -245,7 +248,7 @@ describe("dashboard billing read authority", () => {
     await withMountedDashboard(role, async () => usageResponse(), async (host, fetchMock) => {
       expect(usageRequests(fetchMock).length).toBeGreaterThan(0);
       expect(host.textContent).toContain("Audit subscription");
-      expect(host.textContent).toContain("Print credits");
+      expect(host.textContent).toContain("Jobs remaining this month");
       expect(host.textContent).not.toContain(usageWarning);
     });
   });
@@ -274,7 +277,7 @@ describe("dashboard billing read authority", () => {
       expect(usageRequests(fetchMock)).toHaveLength(before);
       expect(host.textContent).not.toContain("Audit subscription");
       expect(host.textContent).not.toContain(usageWarning);
-      expect(host.textContent).not.toContain("Print credits");
+      expect(host.textContent).not.toContain("Jobs remaining this month");
     });
   });
 
@@ -307,7 +310,7 @@ describe("dashboard billing read authority", () => {
       expect(host.textContent).toContain("Audit subscription");
       await rerender("admin", "other-workspace:other-user:admin");
       expect(host.textContent).not.toContain("Audit subscription");
-      expect(host.textContent).not.toContain("Print credits");
+      expect(host.textContent).not.toContain("Jobs remaining this month");
       await act(async () => { resolveCurrent(new Response(JSON.stringify({ ...billingUsage, plan: { id: "new", name: "Current subscription" } }), { status: 200 })); });
       expect(host.textContent).toContain("Current subscription");
     });

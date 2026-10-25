@@ -8,15 +8,19 @@ import { join } from 'node:path';
 import vm from 'node:vm';
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { sqlIdentifier, workspaceSessionFixture } from './helpers/workspace-session-vm.mjs';
+import { authorizationFixture } from './helpers/authorization-vm.mjs';
 const require = createRequire(import.meta.url);
 let ts;try{ts=require('typescript')}catch{ts=require(join(execFileSync('npm',['root','-g'],{encoding:'utf8'}).trim(),'typescript'))}
 const from=(file)=>ts.transpileModule(readFileSync('src/'+file,'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText;
 const ctx=vm.createContext({console,Set,Map,Error,Number,Object,Request,Response,URL,Headers,URLSearchParams});
 const stub=(exports)=>new vm.SyntheticModule(Object.keys(exports),function(){for(const [k,v] of Object.entries(exports))this.setExport(k,v)},{context:ctx});
 const sql=(parts,...params)=>({parts,params});sql.join=(items,sep)=>({items,sep});
+sql.identifier=sqlIdentifier;
 const repr=(v)=>v?.parts?v.parts.map((p,i)=>p+(i<v.params.length?repr(v.params[i]):'')).join(''):v?.items?v.items.map(repr).join(repr(v.sep)):String(v);
 const dr=stub({sql,and:(...args)=>args,eq:(...args)=>args,desc:(x)=>x});
 let state;
+const claims=()=>({tenantId:'tenant',jti:'jti',exp:1900000000,ver:state.legacy?1:2,sid:state.legacy?undefined:'sid',role:state.role,userId:'actor',kind:'manager',familyId:state.legacy?undefined:'family'});
 const db={
  query:{tenants:{findFirst:async()=>({id:'tenant'})},plans:{findFirst:async()=>({id:'plan',stripePriceId:'price'})},tenantSubscriptions:{findFirst:async()=>null}},
  transaction:async(fn)=>fn(tx),
@@ -24,6 +28,7 @@ const db={
 const tx={
  execute:async(q)=>{
   const text=repr(q);state.events.push(text);
+  const policy=workspace.reply(text,claims(),state);if(policy)return policy;
   if(/FROM tenants/i.test(text))return {rows:[{id:'tenant',lifecycle:state.tenantActive?'active':'suspended'}]};
   if(/FROM users/i.test(text))return {rows:[{id:'actor'}]};
   if(/FROM tenant_subscriptions/i.test(text))return {rows:[]};
@@ -32,14 +37,18 @@ const tx={
   if(/manager_sessions/i.test(text))return {rows:state.legacyActive?[{jti:'signed'}]:[]};
   throw Error('Unexpected tx.execute: '+text);
  },
- query:{tenantUsers:{findFirst:async()=>state.memberRole?{role:state.memberRole}:null},tenantSubscriptions:{findFirst:async()=>null}},
+ query:{tenantUsers:{findFirst:async()=>state.memberRole?{role:state.memberRole}:null},tenantSubscriptions:{findFirst:async()=>null},plans:{findFirst:async()=>({id:'plan'})}},
  update:()=>({set:(data)=>({where:async()=>{state.writes.push(data);return []}})}),
  insert:()=>({values:async(data)=>{state.writes.push(data)}}),
  select:()=>({from:()=>({where:()=>({for:async()=>[{id:'api-key'}]})})}),
 };
 const schema=stub({tenantUsers:{userId:'userId',tenantId:'tenantId'},users:{id:'id'},tenants:{id:'id',name:'name'},apiKeys:{id:'id',tenantId:'tenantId',hashedKey:'hashed_key',revokedAt:'revokedAt',odooEnabledRevision:'odooEnabledRevision'},plans:{id:'id',isActive:'isActive',isPublic:'isPublic'},tenantSubscriptions:{tenantId:'tenantId'}});
-const auth=new vm.SourceTextModule(from('lib/authorization.ts'),{context:ctx});await auth.link(()=>{throw Error('unexpected authorization import')});await auth.evaluate();
-const guard=new vm.SourceTextModule(from('lib/manager-mutation-authorization.ts'),{context:ctx});await guard.link((name)=>name==='drizzle-orm'?dr:name.endsWith('db/schema')?schema:auth);await guard.evaluate();
+const auth=await authorizationFixture(ctx);
+const workspace=await workspaceSessionFixture(ctx,dr);
+const guard=new vm.SourceTextModule(from('lib/manager-mutation-authorization.ts'),{context:ctx});await guard.link((name)=>{
+ if(name==='drizzle-orm')return dr;if(name.endsWith('db/schema'))return schema;if(name==='./authorization')return auth;if(name==='./workspace-session-security')return workspace.policy;
+ throw Error('Unexpected guard import '+name);
+});await guard.evaluate();
 class TenantSuspendedError extends Error {}
 class TenantDeletedError extends Error {}
 const deps={
@@ -50,13 +59,16 @@ const lib={
  '/lib/authorization':auth,
  '/lib/manager-mutation-authorization':guard,
  '/lib/manager-auth':stub({validateWorkspaceManager:async()=>{
-  state.preflight?.();return {tenantId:'tenant',jti:'jti',exp:1900000000,role:state.role,userId:'actor',kind:'manager',familyId:state.legacy?undefined:'family'};
+  state.preflight?.();return claims();
  }}),
  '/lib/tenant-guard':stub({TenantSuspendedError,TenantDeletedError,requireActiveTenantInTransaction:async(t,tid)=>{
    const v=await t.execute(sql`SELECT lifecycle FROM tenants WHERE id = ${tid} FOR SHARE`);
    if(v.rows[0]?.lifecycle!=='active')throw new TenantSuspendedError('TENANT_SUSPENDED');return 'active';
  }}),
  '/lib/entitlements':stub({requireTenantBillingAccess:async(t,id)=>{state.events.push('billing entitlement '+id)},isTenantBillingError:()=>false}),
+ '/lib/manual-subscriptions':stub({ensurePendingManualSubscription:async(t,tenantId,planId)=>{
+   assert.equal(t,tx);state.writes.push({tenantId,planId,status:'awaiting_activation'});
+ }}),
  '/lib/odoo-auth':stub({generateOdooApiKey:()=>({raw:'secret',hashed:'hash',id:'key1'})}),
  '/lib/api-key-deletion':stub({deleteApiKeyInTransaction:async()=>{throw Error('Unexpected credential deletion in creation test')}}),
  '/lib/audit':stub({writeAuditEvent:async()=>{state.audit++}}),
@@ -86,23 +98,32 @@ test('actual settings route rejects actor demoted after preflight without writes
  reset({role:'owner',memberRole:'viewer'});const response=await setting.PATCH(patch({name:'New workspace'}));assert.equal(response.status,403);assert.equal(state.writes.length,0);assert.equal(state.audit,0);
 });
 test('actual settings route rejects family revocation without writes',async()=>{
- reset({role:'owner',memberRole:'owner',familyActive:false});const response=await setting.PATCH(patch({name:'New workspace'}));assert.equal(response.status,403);assert.equal(state.writes.length,0);
+ reset({role:'owner',memberRole:'owner',familyActive:false});const response=await setting.PATCH(patch({name:'New workspace'}));assert.equal(response.status,401);assert.equal((await response.json()).code,'SESSION_EXPIRED');assert.equal(state.writes.length,0);assert.equal(state.audit,0);
 });
 test('actual Odoo credential route inserts only after matching live Manager authority',async()=>{
  reset();const response=await keys.POST(req('/api/odoo/keys',{name:'Printer key'}));assert.equal(response.status,201);assert.equal(state.writes.length,1);assert.equal(state.audit,1);
 });
 test('actual Odoo credential route refuses revoked family before issuing key',async()=>{
- reset({familyActive:false});const response=await keys.POST(req('/api/odoo/keys',{name:'Printer key'}));assert.equal(response.status,403);assert.equal(state.writes.length,0);assert.equal(state.audit,0);
+ reset({familyActive:false});const response=await keys.POST(req('/api/odoo/keys',{name:'Printer key'}));assert.equal(response.status,401);assert.equal((await response.json()).code,'SESSION_EXPIRED');assert.equal(state.writes.length,0);assert.equal(state.audit,0);
 });
 test('actual Odoo credential route refuses demoted actor before issuing key',async()=>{
  reset({memberRole:'viewer'});const response=await keys.POST(req('/api/odoo/keys',{name:'Printer key'}));assert.equal(response.status,403);assert.equal(state.writes.length,0);
 });
-test('actual onboarding route protects trial and workspace name together',async()=>{
- reset({role:'owner',memberRole:'owner'});const response=await onboarding.POST(req('/api/onboarding',{workspaceName:'New workspace',planId:'plan',trial:true}));assert.equal(response.status,200);assert.equal(state.writes.length,2);assert.equal(state.audit,0);
+test('actual onboarding route saves workspace and pending request only after live owner authority',async()=>{
+ reset({role:'owner',memberRole:'owner'});const response=await onboarding.POST(req('/api/onboarding',{workspaceName:'New workspace',planId:'plan'}));assert.equal(response.status,200);assert.equal(state.writes.length,2);assert.equal(state.audit,1);
+ assert.equal(state.writes[0].name,'New workspace');assert.deepEqual(state.writes[1],{tenantId:'tenant',planId:'plan',status:'awaiting_activation'});
 });
-test('actual onboarding route rejects stale session before trial or workspace write',async()=>{
- reset({role:'owner',memberRole:'owner',familyActive:false});const response=await onboarding.POST(req('/api/onboarding',{workspaceName:'New workspace',planId:'plan',trial:true}));assert.equal(response.status,403);assert.equal(state.writes.length,0);
+test('actual onboarding route refuses legacy self-activation without workspace or entitlement writes',async()=>{
+ reset({role:'owner',memberRole:'owner'});const response=await onboarding.POST(req('/api/onboarding',{workspaceName:'New workspace',planId:'plan',trial:true}));assert.equal(response.status,400);assert.equal((await response.json()).code,'MANUAL_ACTIVATION_REQUIRED');assert.equal(state.writes.length,0);assert.equal(state.audit,0);
 });
-test('actual onboarding route rejects suspended Tenant before trial or workspace write',async()=>{
- reset({role:'owner',memberRole:'owner',tenantActive:false});const response=await onboarding.POST(req('/api/onboarding',{workspaceName:'New workspace',planId:'plan',trial:true}));assert.equal(response.status,403);assert.equal(state.writes.length,0);
+test('actual onboarding route rejects stale session before pending subscription or workspace write',async()=>{
+ reset({role:'owner',memberRole:'owner',familyActive:false});const response=await onboarding.POST(req('/api/onboarding',{workspaceName:'New workspace',planId:'plan'}));assert.equal(response.status,401);assert.equal((await response.json()).code,'SESSION_EXPIRED');assert.equal(state.writes.length,0);assert.equal(state.audit,0);
+});
+test('stale password proof blocks settings, credential issuance and manual onboarding side effects',async()=>{
+ const operations=[()=>setting.PATCH(patch({name:'New workspace'})),()=>keys.POST(req('/api/odoo/keys',{name:'Printer key'})),()=>onboarding.POST(req('/api/onboarding',{workspaceName:'New workspace',planId:'plan'}))];
+ for(const operation of operations){reset({role:'owner',memberRole:'owner',staleProof:true});const response=await operation();
+  assert.equal(response.status,403);assert.equal((await response.json()).code,'WORKSPACE_REAUTHENTICATION_REQUIRED');assert.equal(response.headers.get('X-Yaseir-Reauthentication'),'required');assert.equal(state.writes.length,0);assert.equal(state.audit,0);}
+});
+test('actual onboarding route rejects suspended Tenant before pending subscription or workspace write',async()=>{
+ reset({role:'owner',memberRole:'owner',tenantActive:false});const response=await onboarding.POST(req('/api/onboarding',{workspaceName:'New workspace',planId:'plan'}));assert.equal(response.status,403);assert.equal(state.writes.length,0);assert.equal(state.audit,0);
 });

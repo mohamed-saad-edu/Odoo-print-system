@@ -149,11 +149,11 @@ function InviteContent() {
             <div ref={feedbackRef} role={step === "error" ? "alert" : "status"}
               tabIndex={-1} className="outline-none">
               <Callout
-                tone={step === "error" ? "bad" : "ok"}
-                icon={step === "error" ? undefined : step === "verification"
+                tone={step === "error" ? "bad" : step === "joined" ? "ok" : "info"}
+                icon={step === "error" || step === "sign-in" ? undefined : step === "verification"
                   ? <MailCheck className="h-4 w-4" /> : <ShieldCheck className="h-4 w-4" />}
                 title={step === "error" ? t("invite.rejectedTitle") :
-                  step === "verification" ? t("invite.checkInboxTitle") : t("invite.acceptedTitle")}>
+                  step === "verification" ? t("invite.checkInboxTitle") : step === "sign-in" ? t("invite.signIn") : t("invite.acceptedTitle")}>
                 {message}
                 {step === "sign-in" && (
                   <Link href={signInUrl} className="mt-3 block font-semibold text-brand hover:underline">

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { appendFileSync, mkdirSync } from "node:fs";
+import { closeSync, constants, fchmodSync, mkdirSync, openSync, writeSync } from "node:fs";
 import { dirname } from "node:path";
+import { isSingleWorkspaceStaging } from "./staging-single-workspace";
 import { runtimeSecret } from "./runtime-secret";
 
 export type TransactionalEmail = { to: string; subject: string; html: string; text: string };
@@ -31,20 +32,19 @@ export function appBaseUrl(req: Request): string {
   throw new Error("APP_BASE_URL is not configured; set it or opt into host-derived URLs with ALLOW_HOST_FALLBACK=1 for local development only");
 }
 
-// Explicit staging-only email capture; the live provider takes priority if configured.
+// Capture links ONLY for the HTTPS staging origin, never for production.
 function captureStagingEmail(message: TransactionalEmail): boolean {
-  if (process.env.YASEIR_STAGING_FIXTURES_ENABLED !== "1" || runtimeSecret("RESEND_API_KEY")) return false;
-  const captureFile = process.env.YASEIR_TEST_EMAIL_CAPTURE_FILE?.trim();
-  if (!captureFile) return false;
-  mkdirSync(dirname(captureFile), { recursive: true });
-  appendFileSync(
-    captureFile,
-    `TO: ${message.to}\nSUBJECT: ${message.subject}\n${message.text}\n---\n`,
-    { encoding: "utf8", mode: 0o600 },
-  );
+  if (!isSingleWorkspaceStaging() || runtimeSecret("RESEND_API_KEY")) return false;
+  const file = process.env.YASEIR_TEST_EMAIL_CAPTURE_FILE?.trim();
+  if (!file || !file.startsWith("/tmp/") || file.includes("..")) return false;
+  mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
+  const fd = openSync(file, constants.O_CREAT | constants.O_WRONLY | constants.O_APPEND | constants.O_NOFOLLOW, 0o600);
+  try {
+    fchmodSync(fd, 0o600);
+    writeSync(fd, `TO: ${message.to}\nSUBJECT: ${message.subject}\n${message.text}\n---\n`);
+  } finally { closeSync(fd); }
   return true;
 }
-
 export async function sendTransactionalEmail(message: TransactionalEmail): Promise<void> {
   if (captureStagingEmail(message)) return;
   const apiKey = runtimeSecret("RESEND_API_KEY");
@@ -80,9 +80,12 @@ export async function sendTransactionalEmail(message: TransactionalEmail): Promi
       }
       throw lastError;
     }
+    // Provider bodies can echo recipients, message HTML and reset links.
+    // Callers log this error for operations: keep only the HTTP status and
+    // release the unread body without buffering arbitrary provider content.
+    await res.body?.cancel().catch(() => {});
     if (res.ok) return;
-    const text = await res.text().catch(() => "");
-    lastError = new Error(`Transactional email provider rejected the request (${res.status})${text ? `: ${text.slice(0, 200)}` : ""}`);
+    lastError = new Error(`Transactional email provider rejected the request (${res.status})`);
     // Retry only on transient failures (5xx or 429 rate-limit).
     if (res.status !== 429 && res.status < 500) throw lastError;
     if (attempt < maxAttempts) {

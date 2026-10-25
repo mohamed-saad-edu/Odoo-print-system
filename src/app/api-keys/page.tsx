@@ -13,6 +13,7 @@ import {
   Plus,
   Trash2,
   Ban,
+  RefreshCw,
 } from "lucide-react";
 import {
   Button,
@@ -32,7 +33,10 @@ import {
   type Tone,
 } from "../../components/ui";
 import { ensureCustomerSession } from "../../lib/session-config";
+import { codeMessageKey } from "../../lib/api-error-keys";
 import { copyTextToClipboard } from "../../lib/clipboard";
+
+type Installation = { id: string; name: string; enabled: boolean; api_key_ids: string[] };
 
 type ApiKey = {
   id: string;
@@ -59,6 +63,9 @@ export default function ApiKeysPage() {
   const refreshEpoch = useRef(0);
   const mutationInFlight = useRef(false);
   const [keys, setKeys] = useState<ApiKey[]>([]);
+  const [installations, setInstallations] = useState<Installation[]>([]);
+  const [canManage, setCanManage] = useState(false);
+  const [gatewayUrl, setGatewayUrl] = useState("");
   const { t, tc, formatDate, formatDateTime, formatNumber } = useI18n();
   const [name, setName] = useState(t("apiKeys.defaultName"));
   const [rawKeyId, setRawKeyId] = useState<string | null>(null);
@@ -67,7 +74,7 @@ export default function ApiKeysPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
-  const [pending, setPending] = useState<{ kind: "revoke" | "remove"; id: string; name: string } | null>(null);
+  const [pending, setPending] = useState<{ kind: "revoke" | "remove" | "rotate"; id: string; name: string } | null>(null);
   const [hasSubscription, setHasSubscription] = useState<boolean | null>(null);
 
   const loadKeys = useCallback(async () => {
@@ -85,9 +92,9 @@ export default function ApiKeysPage() {
       try {
         const d = await loadKeys();
         if (!cancel && epoch === refreshEpoch.current) setKeys(d);
-      } catch (e) {
+      } catch {
         if (!cancel && reportError) {
-          setError(e instanceof Error ? e.message : String(e));
+          setError(t("apiKeys.operationFailed"));
         }
       } finally {
         if (!cancel && reportError) setLoading(false);
@@ -99,20 +106,39 @@ export default function ApiKeysPage() {
     void tick(true);
     const id = setInterval(() => void tick(false), 5000);
     return () => { cancel = true; clearInterval(id); };
-  }, [loadKeys]);
+  }, [loadKeys, t]);
 
   useEffect(() => {
-    fetchWithTimeout("/api/billing/status", { cache: "no-store", credentials: "include" })
+    fetchWithTimeout("/api/subscription-requests", { cache: "no-store", credentials: "include" })
       .then(async (r) => {
         if (!r.ok) return;
-        const b = (await r.json()) as { hasSubscription?: boolean };
-        setHasSubscription(b.hasSubscription ?? null);
+        const b = (await r.json()) as { hasSubscription?: boolean; status?: string };
+        setHasSubscription(b.status ? b.status === "active" : b.hasSubscription ?? null);
       })
       .catch(() => {});
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([
+      fetchWithTimeout("/api/odoo/installations", { credentials: "include", cache: "no-store" }),
+      fetchWithTimeout("/api/auth/me", { credentials: "include", cache: "no-store" }),
+    ]).then(async ([installationsResponse, meResponse]) => {
+      const [items, principal] = await Promise.all([
+        installationsResponse.ok ? installationsResponse.json() : [],
+        meResponse.ok ? meResponse.json() as Promise<{ permissions?: string[] }> : {} as { permissions?: string[] },
+      ]);
+      if (!cancelled) {
+        setInstallations(Array.isArray(items) ? items : []);
+        setCanManage(principal.permissions?.includes("integrations.manage") === true);
+        setGatewayUrl(window.location.origin);
+      }
+    }).catch(() => { if (!cancelled) setError(t("apiKeys.loadFailed")); });
+    return () => { cancelled = true; };
+  }, [t]);
+
   async function generate() {
-    if (mutationInFlight.current) return;
+    if (mutationInFlight.current || !canManage) return;
     mutationInFlight.current = true;
     ++refreshEpoch.current;
     setBusy(true); setError(null); setRawKey(null); setRawKeyId(null); setCopied(false);
@@ -127,33 +153,39 @@ export default function ApiKeysPage() {
         }),
       });
       const b = await r.json();
-      if (!r.ok) throw new Error(b.error);
+      if (!r.ok) { setError(t(codeMessageKey(b.code) ?? "apiKeys.operationFailed")); return; }
       setRawKey(b.apiKey);
       setRawKeyId(b.id);
       setKeys(await loadKeys());
-    } catch (e) { setError(e instanceof Error ? e.message : String(e)); } finally { mutationInFlight.current = false; setBusy(false); }
+    } catch { setError(t("apiKeys.operationFailed")); } finally { mutationInFlight.current = false; setBusy(false); }
   }
 
   async function confirm() {
-    if (!pending || mutationInFlight.current) return;
+    if (!pending || mutationInFlight.current || !canManage) return;
     mutationInFlight.current = true;
     ++refreshEpoch.current;
     const cur = pending; setBusy(true); setError(null);
     try {
       if (!(await ensureCustomerSession()).authenticated) throw new Error(t("errors.sessionExpired"));
-      const r = await fetchWithTimeout("/api/odoo/keys", { method: "DELETE", headers: { "content-type": "application/json" }, credentials: "include", body: JSON.stringify(cur.kind === "revoke" ? { id: cur.id } : { id: cur.id, remove: true }) });
+      const r = cur.kind === "rotate"
+        ? await fetchWithTimeout(`/api/odoo/keys/${encodeURIComponent(cur.id)}/rotate`, { method: "POST", credentials: "include" })
+        : await fetchWithTimeout("/api/odoo/keys", { method: "DELETE", headers: { "content-type": "application/json" }, credentials: "include", body: JSON.stringify(cur.kind === "revoke" ? { id: cur.id } : { id: cur.id, remove: true }) });
       const b = await r.json();
-      if (!r.ok) throw new Error(b.error);
+      if (!r.ok) { setError(t(codeMessageKey(b.code) ?? "apiKeys.operationFailed")); return; }
       setPending(null);
+      if (cur.kind === "rotate") {
+        setRawKey(b.apiKey); setRawKeyId(b.id); setCopied(false);
+        try { setKeys(await loadKeys()); } catch { setError(t("apiKeys.loadFailed")); }
+        return;
+      }
       if (rawKeyId === cur.id) { setRawKey(null); setRawKeyId(null); setCopied(false); }
       setKeys(current => cur.kind === "remove" ? current.filter(key => key.id !== cur.id) : current.map(key => key.id === cur.id ? { ...key, revokedAt: b.revokedAt, rotationState: "revoked", odooEnabled: false } : key));
       try { setKeys(await loadKeys()); } catch { setError(t("apiKeys.loadFailed")); }
-    } catch (e) { setError(e instanceof Error ? e.message : String(e)); } finally { mutationInFlight.current = false; setBusy(false); }
+    } catch { setError(t("apiKeys.operationFailed")); } finally { mutationInFlight.current = false; setBusy(false); }
   }
 
   const active = keys.filter(k => !k.revokedAt).length;
   const enabled = keys.filter(k => !k.revokedAt && k.odooEnabled).length;
-  const disabled = Math.max(0, active - enabled);
 
 
   return (
@@ -161,8 +193,8 @@ export default function ApiKeysPage() {
       <PageHeader
         eyebrow={t("nav.section.integration")}
         icon={<KeyRound className="h-4 w-4" />}
-        title={t("apiKeys.title")}
-        description={t("apiKeys.pageDescription")}
+        title={t("v4.connection.title")}
+        description={t("v4.connection.intro")}
         meta={
           active > 0 ? (
             <StatusBadge tone={enabled > 0 ? "ok" : "warn"} label={tc("apiKeys.activeCount", active, { count: formatNumber(active) })} />
@@ -190,7 +222,7 @@ export default function ApiKeysPage() {
               tone="warn"
               title={t("apiKeys.choosePlanBeforeConnect")}
               action={
-                <Button variant="primary" size="sm" href="/billing">
+                <Button variant="primary" size="sm" href="/onboarding">
                   {t("apiKeys.choosePlanCta")}
                 </Button>
               }
@@ -208,7 +240,7 @@ export default function ApiKeysPage() {
                 <Button
                   variant="secondary"
                   size="sm"
-                  onClick={async () => { if (await copyTextToClipboard(rawKey)) setCopied(true); }}
+                  onClick={async () => { if (await copyTextToClipboard(rawKey)) setCopied(true); else setError(t("v4.connection.copyFailed")); }}
                   icon={<Copy className="h-3.5 w-3.5" />}
                 >
                   {copied ? t("success.copied") : t("apiKeys.copyKey")}
@@ -217,72 +249,28 @@ export default function ApiKeysPage() {
             >
               <div className="space-y-2">
                 <p>{t("apiKeys.shownOnceBody")}</p>
-                <code className="block select-all break-all rounded-md border border-edge bg-surface px-3 py-2 font-mono text-xs text-ink">
+                <code dir="ltr" className="block select-all break-all rounded-md border border-edge bg-surface px-3 py-2 font-mono text-xs text-ink">
                   {rawKey}
                 </code>
+                <Button variant="ghost" onClick={() => { setRawKey(null); setRawKeyId(null); setCopied(false); }}>{t("v4.connection.hideSecret")}</Button>
               </div>
             </Callout>
           )}
 
-          {/* The connection state is derived from data the Gateway already
-              has: an active key plus the Odoo-side activation flag that Odoo
-              itself replicated. "Connected" is only claimed when a live key is
-              enabled at the source. */}
-          <section
-            aria-label={t("apiKeys.connectionState")}
-            className="card flex flex-col gap-4 px-5 py-4 sm:flex-row sm:items-center sm:justify-between"
-          >
-            <div className="flex min-w-0 items-start gap-3">
-              <StatusDot
-                tone={loading ? "neutral" : active === 0 ? "neutral" : enabled > 0 ? "ok" : "warn"}
-                className="mt-1.5"
-              />
-              <div className="min-w-0">
-                <div className="text-sm font-[600] text-ink">
-                  {loading
-                    ? t("common.loading")
-                    : active === 0
-                      ? t("apiKeys.stateNotConfigured")
-                      : enabled > 0
-                        ? t("apiKeys.stateConnected")
-                        : t("apiKeys.stateWaitingOdoo")}
-                </div>
-                <p className="mt-0.5 text-sm leading-snug text-ink-3">
-                  {!loading && disabled > 0
-                    ? tc("apiKeys.disabledAtSource", disabled, { count: formatNumber(disabled) })
-                    : t("apiKeys.workspaceScopeOnly")}
-                </p>
-              </div>
+          <Card>
+            <CardHeader title={t("v4.connection.status")} icon={<StatusDot tone={loading ? "neutral" : enabled > 0 ? "ok" : "warn"} />} />
+            <div className="space-y-4 p-5">
+              <h2 className="text-lg font-semibold">{t(loading ? "common.loading" : enabled > 0 ? "v4.connection.enabled" : active > 0 ? "v4.connection.waiting" : "v4.connection.start")}</h2>
+              <p className="text-sm text-ink-3">{t(enabled > 0 ? "v4.connection.enabledBody" : active > 0 ? "v4.connection.waitingBody" : "v4.connection.startBody")}</p>
+              {installations.length > 0 && <ul className="space-y-2">{installations.map(item => <li key={item.id} className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-edge p-3"><span className="font-semibold">{item.name}</span><StatusBadge tone={item.enabled && item.api_key_ids.some(id => keys.some(key => key.id === id && !key.revokedAt && key.odooEnabled)) ? "ok" : "warn"} label={t(item.enabled ? "v4.connection.enrolled" : "v4.connection.disabled")} /></li>)}</ul>}
+              {enabled > 0 && <Button href="/dashboard#printers" variant="primary">{t("v4.connection.selectPrinters")}</Button>}
+              {!canManage && !loading && <p className="text-sm text-ink-3">{t("v4.connection.readOnly")}</p>}
             </div>
-            <dl className="flex flex-wrap items-center gap-x-6 gap-y-3">
-              <div>
-                <dt className="label-caps">{t("apiKeys.activeKeys")}</dt>
-                <dd className="mt-1 text-md font-[620] tabular text-ink">{loading ? "—" : active}</dd>
-              </div>
-              <div>
-                <dt className="label-caps">{t("apiKeys.odooConnections")}</dt>
-                <dd className="mt-1 text-md font-[620] tabular text-ink">{loading ? "—" : enabled}</dd>
-              </div>
-              <div>
-                <dt className="label-caps">{t("apiKeys.accessLevel")}</dt>
-                <dd className="mt-1">
-                  {loading ? (
-                    <Skeleton className="h-6 w-28" />
-                  ) : active === 0 ? (
-                    <StatusBadge tone="neutral" label={t("apiKeys.notConnected")} />
-                  ) : enabled === active ? (
-                    <StatusBadge tone="ok" label={t("apiKeys.scope")} />
-                  ) : (
-                    <StatusBadge tone="warn" label={t("apiKeys.disabledInOdoo")} />
-                  )}
-                </dd>
-              </div>
-            </dl>
-          </section>
+          </Card>
 
           <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1.55fr)_minmax(300px,0.85fr)]">
             <div className="space-y-5">
-              <Card>
+              {active === 0 && <Card>
                 <CardHeader
                   title={t("apiKeys.connectOdoo")}
                   subtitle={t("apiKeys.connectDescription")}
@@ -302,7 +290,7 @@ export default function ApiKeysPage() {
                       value={name}
                       onChange={e => setName(e.target.value)}
                       placeholder={t("apiKeys.defaultName")}
-                      disabled={busy}
+                      disabled={busy || !canManage}
                     />
                   </Field>
                   <div className="flex flex-wrap items-center justify-between gap-3">
@@ -313,7 +301,7 @@ export default function ApiKeysPage() {
                       type="submit"
                       variant="primary"
                       loading={busy}
-                      disabled={busy || hasSubscription === false}
+                      disabled={busy || !canManage || hasSubscription !== true}
                       icon={busy ? undefined : <Plus className="h-4 w-4" />}
                       title={hasSubscription === false ? t("apiKeys.choosePlanFirstCta") : undefined}
                     >
@@ -321,8 +309,15 @@ export default function ApiKeysPage() {
                     </Button>
                   </div>
                 </form>
-              </Card>
+              </Card>}
 
+              <details className="card group overflow-hidden">
+                <summary className="flex min-h-11 cursor-pointer items-center justify-between gap-3 p-5 font-semibold focus-visible:ring-2 focus-visible:ring-brand">{t("v4.connection.advanced")}<ChevronDown className="h-4 w-4" aria-hidden /></summary>
+                <div className="border-t border-edge-subtle p-5 space-y-3">
+                  <p className="text-sm text-ink-3">{t("v4.connection.advancedBody")}</p>
+                  <Field label={t("apiKeys.credentialName")} htmlFor="advanced-key-name"><Input id="advanced-key-name" value={name} maxLength={120} onChange={event => setName(event.target.value)} disabled={busy || !canManage} /></Field>
+                  <Button variant="secondary" onClick={() => void generate()} disabled={busy || !canManage || hasSubscription !== true}>{t("apiKeys.generateKey")}</Button>
+                </div>
               <Card className="overflow-hidden">
                 <CardHeader
                   title={t("apiKeys.credentials")}
@@ -389,10 +384,11 @@ export default function ApiKeysPage() {
                             <Button variant="ghost" size="sm" aria-label={t("apiKeys.copyKeyId")} title={t("apiKeys.copyKeyId")} onClick={() => void copyTextToClipboard(k.id)} icon={<Copy className="h-3.5 w-3.5" />}>
                               <span className="sr-only">{t("apiKeys.copyKeyId")}</span>
                             </Button>
-                            {!k.revokedAt && <Button variant="secondary" size="sm" disabled={busy} icon={<Ban className="h-3.5 w-3.5" />} onClick={() => setPending({ kind: "revoke", id: k.id, name: k.name })}>
+                            {!k.revokedAt && <Button variant="secondary" size="sm" disabled={busy || !canManage} icon={<RefreshCw className="h-3.5 w-3.5" />} onClick={() => setPending({ kind: "rotate", id: k.id, name: k.name })}>{t("v4.connection.rotate")}</Button>}
+                            {!k.revokedAt && <Button variant="secondary" size="sm" disabled={busy || !canManage} icon={<Ban className="h-3.5 w-3.5" />} onClick={() => setPending({ kind: "revoke", id: k.id, name: k.name })}>
                               {t("apiKeys.revokeKey")}
                             </Button>}
-                            <Button variant="danger" size="sm" disabled={busy} icon={<Trash2 className="h-3.5 w-3.5" />} onClick={() => setPending({ kind: "remove", id: k.id, name: k.name })}>
+                            <Button variant="danger" size="sm" disabled={busy || !canManage} icon={<Trash2 className="h-3.5 w-3.5" />} onClick={() => setPending({ kind: "remove", id: k.id, name: k.name })}>
                               {t("apiKeys.removeKey")}
                             </Button>
                           </div>
@@ -402,10 +398,12 @@ export default function ApiKeysPage() {
                   </ul>
                 )}
               </Card>
+              </details>
             </div>
 
             <aside className="space-y-5">
-              <details className="card group overflow-hidden">
+              <Callout tone="info" title={t("v4.connection.gatewayUrl")}><code dir="ltr" className="block break-all">{gatewayUrl || "—"}</code><p className="mt-2">{t("v4.connection.notPairing")}</p></Callout>
+              <details open className="card group overflow-hidden">
                 <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 px-5 py-4 outline-none transition-colors hover:bg-surface-2 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand/35">
                   <span className="min-w-0">
                     <span className="block text-md font-[600] leading-snug text-ink">{t("apiKeys.howItWorks")}</span>
@@ -415,10 +413,10 @@ export default function ApiKeysPage() {
                 </summary>
                 <ol className="space-y-4 border-t border-edge-subtle px-5 py-5">
                   {[
-                    [t("apiKeys.step1"), t("apiKeys.step1Text")],
-                    [t("apiKeys.step2"), t("apiKeys.step2Text")],
-                    [t("apiKeys.step3"), t("apiKeys.step3Text")],
-                    [t("apiKeys.step4"), t("apiKeys.step4Text")],
+                    [t("v4.connection.step1"), t("v4.connection.step1Body")],
+                    [t("v4.connection.step2"), t("v4.connection.step2Body")],
+                    [t("v4.connection.step3"), t("v4.connection.step3Body")],
+                    [t("v4.connection.step4"), t("v4.connection.step4Body")],
                   ].map(([title, body], index) => (
                     <li key={title} className="flex gap-3">
                       <span className="mt-px flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-edge bg-surface-2 text-2xs font-[650] tabular text-ink-3">
@@ -449,26 +447,26 @@ export default function ApiKeysPage() {
       <Modal
         open={!!pending}
         onClose={() => { if (!busy) setPending(null); }}
-        title={pending?.kind === "revoke" ? t("apiKeys.revokeCredentialTitle") : t("apiKeys.removeCredentialTitle")}
+        title={pending?.kind === "rotate" ? t("v4.connection.rotateTitle") : pending?.kind === "revoke" ? t("apiKeys.revokeCredentialTitle") : t("apiKeys.removeCredentialTitle")}
         description={pending?.name}
         footer={
           <>
-            <Button variant="secondary" onClick={() => setPending(null)} disabled={busy}>
+            <Button variant="secondary" onClick={() => setPending(null)} disabled={busy || !canManage}>
               {t("common.cancel")}
             </Button>
             <Button
               variant="danger"
               onClick={() => void confirm()}
               loading={busy}
-              disabled={busy}
+              disabled={busy || !canManage}
             >
-              {pending?.kind === "revoke" ? t("apiKeys.revokeConfirm") : t("apiKeys.removeConfirm")}
+              {pending?.kind === "rotate" ? t("v4.connection.rotate") : pending?.kind === "revoke" ? t("apiKeys.revokeConfirm") : t("apiKeys.removeConfirm")}
             </Button>
           </>
         }
       >
         {error && <ErrorState title={t("errors.operationFailed")} message={error} />}
-        {pending?.kind === "revoke" ? (
+        {pending?.kind === "rotate" ? <Callout tone="warn" title={t("v4.connection.rotateTitle")}>{t("v4.connection.rotateBody")}</Callout> : pending?.kind === "revoke" ? (
           <Callout tone="warn" title={t("apiKeys.odooLosesAccess")}>
             {t("apiKeys.revokeBody")}
           </Callout>

@@ -40,7 +40,7 @@ def check(report: dict, image: str, baseline: dict, today: date) -> tuple[list[s
             rule = result.get('ruleId')
             msg = result.get('message', {}).get('text', '')
             pkg_match = PACKAGE.search(msg)
-            severity_match = re.search(r'^Severity: (HIGH|CRITICAL)\s*$', msg, re.MULTILINE)
+            severity_match = re.search(r'^Severity: (UNKNOWN|LOW|MEDIUM|HIGH|CRITICAL)\s*$', msg, re.MULTILINE)
             if not isinstance(rule, str) or not pkg_match or not severity_match:
                 unreviewed.append(f'unrecognized SARIF result: {rule}')
                 continue

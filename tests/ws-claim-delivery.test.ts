@@ -1,3 +1,4 @@
+import type * as JobDeliveryModule from "../src/lib/job-delivery";
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vitest";
 import { createServer, type Server } from "http";
 import { AddressInfo } from "net";
@@ -18,7 +19,7 @@ import { GET as agentJobsGET, PATCH as agentJobsPATCH } from "../src/app/api/age
 // static import resolves through the mock below.)
 type MarkFn = (jobId: string, tenantId: string, agentId: string, claimToken: string | null) => Promise<boolean>;
 vi.mock("../src/lib/job-delivery", async (importOriginal) => {
-  const mod = await importOriginal<typeof import("../src/lib/job-delivery")>();
+  const mod = await importOriginal<typeof JobDeliveryModule>();
   (globalThis as unknown as { __realMarkJobDelivered: MarkFn }).__realMarkJobDelivered = mod.markJobDelivered;
   return {
     ...mod,
@@ -723,10 +724,11 @@ suite("WS claim-before-delivery", () => {
     // delivery path. With exactly one slot left, two simultaneous polls must
     // serialize so only one can claim the next job.
     await pool().query(
-      `INSERT INTO print_jobs (id, tenant_id, destination, document_type, agent_id, printer_id, status, payload, expires_at)
+      `INSERT INTO print_jobs (id, tenant_id, destination, document_type, agent_id, printer_id, status, payload, expires_at, binding_digest)
        SELECT 'poll_cap_fill_' || g, $1, $2, 'receipt', $3, $4, 'claimed',
               '{"type":"raw","protocol":"raw","encoding":"base64","data":"aGVsbG8="}'::jsonb,
-              now() + interval '1 hour'
+              now() + interval '1 hour',
+              (SELECT verification_binding_digest FROM printers WHERE tenant_id=$1 AND id=$4)
        FROM generate_series(1, $5) g`,
       [f.tenantId, f.destination, f.agentId, f.printerId, MAX_AGENT_IN_FLIGHT_JOBS - 1],
     );
@@ -1084,11 +1086,21 @@ suite("WS claim-before-delivery", () => {
        FROM printers WHERE id = $2`,
       [freshPrinterId, f.printerId],
     );
+    // The fresh comparison queue has its own exact verified identity; leaving
+    // it pending would make the capacity refusal pass for the wrong reason.
+    const freshBinding = "b".repeat(64);
+    const freshProof = { version: 1, verified_at: new Date().toISOString(), printer_id: freshPrinterId,
+      binding_digest: freshBinding, logical_queue_key: freshBinding, method: "windows_queue", identity_strength: "queue", output_medium: "physical" };
+    await pool().query(`UPDATE printers SET config=jsonb_set(config,'{spooler_name}','"Capacity Fresh Queue"'::jsonb),
+      capabilities=capabilities || $1::jsonb, verification_state='verified', verification_verified_at=clock_timestamp(),
+      verification_received_at=clock_timestamp(), verification_binding_digest=$2, logical_queue_key=$2
+      WHERE tenant_id=$3 AND id=$4`, [JSON.stringify({ operational_verification: freshProof }), freshBinding, f.tenantId, freshPrinterId]);
     await pool().query(
-      `INSERT INTO print_jobs (id, tenant_id, destination, document_type, agent_id, printer_id, status, payload, expires_at)
+      `INSERT INTO print_jobs (id, tenant_id, destination, document_type, agent_id, printer_id, status, payload, expires_at, binding_digest)
        SELECT 'cap_cross_printer_' || g, $1, $2, 'receipt', $3, $4, 'claimed',
               '{"type":"raw","protocol":"raw","encoding":"base64","data":"aGVsbG8="}'::jsonb,
-              now() + interval '1 hour'
+              now() + interval '1 hour',
+              (SELECT verification_binding_digest FROM printers WHERE tenant_id=$1 AND id=$4)
        FROM generate_series(1, $5) g`,
       [f.tenantId, f.destination, f.agentId, stalePrinterId, MAX_AGENT_IN_FLIGHT_JOBS],
     );
@@ -1100,10 +1112,10 @@ suite("WS claim-before-delivery", () => {
 
     const jobId = "job_capacity_cross_printer";
     await pool().query(
-      `INSERT INTO print_jobs (id, tenant_id, destination, document_type, agent_id, printer_id, status, payload, expires_at)
+      `INSERT INTO print_jobs (id, tenant_id, destination, document_type, agent_id, printer_id, status, payload, expires_at, binding_digest)
        VALUES ($1, $2, $3, 'receipt', $4, $5, 'queued',
                '{"type":"raw","protocol":"raw","encoding":"base64","data":"aGVsbG8="}'::jsonb,
-               now() + interval '1 hour')`,
+               now() + interval '1 hour', (SELECT verification_binding_digest FROM printers WHERE tenant_id=$2 AND id=$5))`,
       [jobId, f.tenantId, f.destination, f.agentId, freshPrinterId],
     );
 
@@ -1119,18 +1131,19 @@ suite("WS claim-before-delivery", () => {
   });
   it("polling returns no more than the remaining Agent capacity across stale and queued candidates", async () => {
     await pool().query(
-      `INSERT INTO print_jobs (id, tenant_id, destination, document_type, agent_id, printer_id, status, payload, expires_at, delivery_attempts, claimed_at, updated_at)
+      `INSERT INTO print_jobs (id, tenant_id, destination, document_type, agent_id, printer_id, status, payload, expires_at, delivery_attempts, claimed_at, updated_at, binding_digest)
        SELECT 'poll_total_cap_fill_' || g, $1, $2, 'receipt', $3, $4, 'claimed',
               '{"type":"raw","protocol":"raw","encoding":"base64","data":"aGVsbG8="}'::jsonb,
-              now() + interval '1 hour', 1, now(), now()
+              now() + interval '1 hour', 1, now(), now(),
+              (SELECT verification_binding_digest FROM printers WHERE tenant_id=$1 AND id=$4)
        FROM generate_series(1, $5) g`,
       [f.tenantId, f.destination, f.agentId, f.printerId, MAX_AGENT_IN_FLIGHT_JOBS - 1],
     );
     await pool().query(
-      `INSERT INTO print_jobs (id, tenant_id, destination, document_type, agent_id, printer_id, status, payload, expires_at, delivery_attempts, claimed_at, updated_at)
+      `INSERT INTO print_jobs (id, tenant_id, destination, document_type, agent_id, printer_id, status, payload, expires_at, delivery_attempts, claimed_at, updated_at, binding_digest)
        VALUES ('poll_total_cap_stale', $1, $2, 'receipt', $3, $4, 'claimed',
                '{"type":"raw","protocol":"raw","encoding":"base64","data":"aGVsbG8="}'::jsonb,
-               now() + interval '1 hour', 1, now() - interval '2 minutes', now() - interval '2 minutes')`,
+               now() + interval '1 hour', 1, now() - interval '2 minutes', now() - interval '2 minutes', (SELECT verification_binding_digest FROM printers WHERE tenant_id=$1 AND id=$4))`,
       [f.tenantId, f.destination, f.agentId, f.printerId],
     );
     await insertQueuedJob(f, "poll_total_cap_queued");
@@ -1150,10 +1163,11 @@ suite("WS claim-before-delivery", () => {
     // bound. Fill the agent to exactly the ceiling with live claimed rows,
     // then prove the next WS claim is refused without touching the row.
     await pool().query(
-      `INSERT INTO print_jobs (id, tenant_id, destination, document_type, agent_id, printer_id, status, payload, expires_at)
+      `INSERT INTO print_jobs (id, tenant_id, destination, document_type, agent_id, printer_id, status, payload, expires_at, binding_digest)
        SELECT 'cap_fill_' || g, $1, $2, 'receipt', $3, $4, 'claimed',
               '{"type":"raw","protocol":"raw","encoding":"base64","data":"aGVsbG8="}'::jsonb,
-              now() + interval '1 hour'
+              now() + interval '1 hour',
+              (SELECT verification_binding_digest FROM printers WHERE tenant_id=$1 AND id=$4)
        FROM generate_series(1, $5) g`,
       [f.tenantId, f.destination, f.agentId, f.printerId, MAX_AGENT_IN_FLIGHT_JOBS],
     );
@@ -1167,18 +1181,19 @@ suite("WS claim-before-delivery", () => {
 
   it("polling cannot reclaim stale claims when the agent is already at capacity", async () => {
     await pool().query(
-      `INSERT INTO print_jobs (id, tenant_id, destination, document_type, agent_id, printer_id, status, payload, expires_at, delivery_attempts, claimed_at, updated_at)
+      `INSERT INTO print_jobs (id, tenant_id, destination, document_type, agent_id, printer_id, status, payload, expires_at, delivery_attempts, claimed_at, updated_at, binding_digest)
        SELECT 'poll_cap_fill_' || g, $1, $2, 'receipt', $3, $4, 'claimed',
               '{"type":"raw","protocol":"raw","encoding":"base64","data":"aGVsbG8="}'::jsonb,
-              now() + interval '1 hour', 1, now(), now()
+              now() + interval '1 hour', 1, now(), now(),
+              (SELECT verification_binding_digest FROM printers WHERE tenant_id=$1 AND id=$4)
        FROM generate_series(1, $5) g`,
       [f.tenantId, f.destination, f.agentId, f.printerId, MAX_AGENT_IN_FLIGHT_JOBS],
     );
     await pool().query(
-      `INSERT INTO print_jobs (id, tenant_id, destination, document_type, agent_id, printer_id, status, payload, expires_at, delivery_attempts, claimed_at, updated_at)
+      `INSERT INTO print_jobs (id, tenant_id, destination, document_type, agent_id, printer_id, status, payload, expires_at, delivery_attempts, claimed_at, updated_at, binding_digest)
        VALUES ('poll_cap_stale', $1, $2, 'receipt', $3, $4, 'claimed',
                '{"type":"raw","protocol":"raw","encoding":"base64","data":"aGVsbG8="}'::jsonb,
-               now() + interval '1 hour', 1, now() - interval '2 minutes', now() - interval '2 minutes')`,
+               now() + interval '1 hour', 1, now() - interval '2 minutes', now() - interval '2 minutes', (SELECT verification_binding_digest FROM printers WHERE tenant_id=$1 AND id=$4))`,
       [f.tenantId, f.destination, f.agentId, f.printerId],
     );
 
@@ -1198,10 +1213,11 @@ suite("WS claim-before-delivery", () => {
     // exactly one claim lands and delivery_attempts increments exactly once
     // across both rows. Against the old uncapped code both would claim.
     await pool().query(
-      `INSERT INTO print_jobs (id, tenant_id, destination, document_type, agent_id, printer_id, status, payload, expires_at)
+      `INSERT INTO print_jobs (id, tenant_id, destination, document_type, agent_id, printer_id, status, payload, expires_at, binding_digest)
        SELECT 'cap_race_' || g, $1, $2, 'receipt', $3, $4, 'claimed',
               '{"type":"raw","protocol":"raw","encoding":"base64","data":"aGVsbG8="}'::jsonb,
-              now() + interval '1 hour'
+              now() + interval '1 hour',
+              (SELECT verification_binding_digest FROM printers WHERE tenant_id=$1 AND id=$4)
        FROM generate_series(1, $5) g`,
       [f.tenantId, f.destination, f.agentId, f.printerId, MAX_AGENT_IN_FLIGHT_JOBS - 1],
     );

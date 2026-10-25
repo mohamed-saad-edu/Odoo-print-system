@@ -185,6 +185,8 @@ export function isVirtualPrinterRecord(printer: PrinterLike | null | undefined):
 
   const type = lower(printer.printerType);
   const connection = lower(printer.connectionType);
+  // Approved file output is its own backend; it never opens a software spooler queue.
+  if (connection === "pdf_output" && lower(printer.protocol) === "pdf" && lower(printer.printerType) === "file") return false;
   const protocol = lower(printer.protocol);
   if (type === "virtual" || type === "redirected" || connection === "virtual" || protocol === "virtual") return true;
 

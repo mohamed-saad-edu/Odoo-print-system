@@ -1,11 +1,21 @@
 import { z } from "zod";
 import { isPrivateNetworkAddress } from "./network-address";
+import { validatePrinterGeometryProfile, type PrinterGeometryProfile } from "./printer-geometry";
 
-export const PRINTER_TYPES = ["physical"] as const;
+export const printerGeometryProfileSchema = z.unknown().transform((value, ctx): PrinterGeometryProfile => {
+  const result = validatePrinterGeometryProfile(value);
+  if (!result.ok) {
+    ctx.addIssue({ code: "custom", message: result.reason });
+    return z.NEVER;
+  }
+  return result.value;
+});
+
+export const PRINTER_TYPES = ["physical", "file"] as const;
 export const DEVICE_CLASSES = ["thermal", "laser", "inkjet", "label", "other", "unknown"] as const;
-export const CONNECTION_TYPES = ["network", "usb", "spooler", "ipp", "ipps"] as const;
+export const CONNECTION_TYPES = ["network", "usb", "spooler", "ipp", "ipps", "pdf_output"] as const;
 // "unknown" means "not declared": the capability model never routes to it.
-export const PRINTER_PROTOCOLS = ["raw", "escpos", "zpl", "tspl", "ipp", "ipps", "spooler", "windows_spooler", "unknown"] as const;
+export const PRINTER_PROTOCOLS = ["raw", "escpos", "zpl", "tspl", "ipp", "ipps", "spooler", "windows_spooler", "unknown", "pdf"] as const;
 
 export const printerInputSchema = z.object({
   id: z.string().regex(/^[a-z0-9_][a-z0-9_-]*$/).max(120).optional(),
@@ -23,6 +33,7 @@ export const printerInputSchema = z.object({
     serial: z.string().max(255).optional(),
     address: z.string().max(512).optional(),
     spooler_name: z.string().max(255).optional(),
+    output_profile_id: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/).optional(),
     paper_widths: z.array(z.number().finite().positive().max(1000)).max(32).optional(),
     color_capable: z.boolean().optional(),
     duplex_capable: z.boolean().optional(),
@@ -30,6 +41,7 @@ export const printerInputSchema = z.object({
     // passthrough is an explicit operator opt-in, never inferred from model
     // class or the presence of a local Windows queue.
     passthrough_protocols: z.array(z.enum(["raw", "escpos"])).max(2).optional(),
+    geometry_profile: printerGeometryProfileSchema.optional(),
   }).strict().default({}),
   capabilities: z.record(z.string(), z.unknown()).optional(),
 }).strict();
@@ -38,7 +50,7 @@ export type CanonicalPrinterInput = z.infer<typeof printerInputSchema>;
 export const PRINTER_CONFIG_MAX_BYTES = 16 * 1024;
 export const PRINTER_CAPABILITIES_MAX_BYTES = 32 * 1024;
 
-export function assertPrinterMetadataLimits(input: Pick<CanonicalPrinterInput, "config" | "capabilities">): void {
+export function assertPrinterMetadataLimits(input: { config: Record<string, unknown>; capabilities?: Record<string, unknown> | null }): void {
   const configJson = JSON.stringify(input.config ?? {});
   if (Buffer.byteLength(configJson, "utf8") > PRINTER_CONFIG_MAX_BYTES) throw new Error("printer config exceeds 16KB");
   if (input.capabilities) {
@@ -153,6 +165,16 @@ function validatePrinterPort(connectionType: string, port: number, protocol = ""
 }
 
 export function validateConnectionConfig(connectionType: string, cfg: Record<string, unknown>, protocol = ""): string | null {
+  if (cfg.geometry_profile !== undefined) {
+    const profile = validatePrinterGeometryProfile(cfg.geometry_profile);
+    if (!profile.ok) return `Invalid geometry_profile: ${profile.reason}`;
+  }
+  if (connectionType === "pdf_output") {
+    if (typeof cfg.output_profile_id !== "string" || cfg.output_profile_id !== cfg.output_profile_id.trim() || !/^[A-Za-z0-9_-]{1,64}$/.test(cfg.output_profile_id)) return "pdf_output requires an approved output_profile_id";
+    if (Object.keys(cfg).some(key => !["output_profile_id", "geometry_profile"].includes(key))) return "pdf_output accepts only output_profile_id and geometry_profile; output paths are Agent-local";
+    return null;
+  }
+  if (cfg.output_profile_id !== undefined) return "output_profile_id is only valid for pdf_output";
   const passthrough = cfg.passthrough_protocols;
   if (passthrough !== undefined) {
     if (connectionType !== "spooler") return "passthrough_protocols is only valid for Windows spooler printers";
@@ -226,6 +248,8 @@ export function validatePrinterTransportProtocol(connectionType: string, protoco
   const connection = connectionType.trim().toLowerCase();
   const declared = protocol.trim().toLowerCase();
   if (!declared) return "printer protocol is required";
+  if (connection === "pdf_output") return declared === "pdf" ? null : "pdf_output requires pdf protocol";
+  if (declared === "pdf") return "pdf protocol requires pdf_output transport";
   if (declared === "unknown") return null;
   if (connection === "network" && declared === "ipps") {
     return "network printers do not support IPPS protocol without a URL; use connection type ipps";
@@ -261,6 +285,7 @@ export function parsePrinterInput(value: unknown): CanonicalPrinterInput {
     protocolNormalized.connectionType === "usb" && typeof protocolNormalized.config.spooler_name === "string" && protocolNormalized.config.spooler_name.trim()
       ? { ...protocolNormalized, connectionType: "spooler" as const, protocol: "spooler" as const }
       : protocolNormalized;
+  if ((normalized.printerType === "file") !== (normalized.connectionType === "pdf_output")) throw new Error("File output requires printerType file and pdf_output transport");
   assertPrinterMetadataLimits(normalized);
   const transportProtocolError = validatePrinterTransportProtocol(normalized.connectionType, normalized.protocol);
   if (transportProtocolError) throw new Error(transportProtocolError);

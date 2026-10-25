@@ -10,7 +10,7 @@ from test_f010_report_binding_identity import production_methods, BRANCH, POS_CO
 
 Production = production_methods('print_router.py', [
     'route_pos_receipt', 'route_pos_sale_details', '_submit_route',
-    '_durable_submission_outcome', '_submission_message',
+    '_durable_submission_outcome', '_submission_message', '_receipt_image_payload',
 ])
 
 class SimulatedRouter(Production):
@@ -22,6 +22,12 @@ class SimulatedRouter(Production):
 
     def _assert_current_company(self, company, **_kwargs):
         assert company == BRANCH
+
+    def _receipt_geometry_for_route(self, route):
+        return {"config_fingerprint": "a" * 64}
+
+    def _replay_receipt_operation(self, *_args):
+        return None
 
     def _validate_jpeg_base64(self, data):
         assert data == 'JPEG_DATA_FROM_POS'
@@ -57,7 +63,7 @@ def test_pos_route_preserves_uncertain_physical_outcome_in_explicit_status(metho
         record = ref('pos.order', 221, company_id=BRANCH)
     else:
         record = ref('pos.session', 11, company_id=BRANCH, config_id=POS_CONFIG)
-    result = getattr(router,method)(record, 'JPEG_DATA_FROM_POS', idempotency_key='operation-original')
+    result = getattr(router,method)(record, 'JPEG_DATA_FROM_POS', idempotency_key='operation-original', geometry_fingerprint='a' * 64)
     assert router.outcome_calls == [True], 'must decode the durable physical outcome, not just job.status'
     assert result['status'] == 'unknown'
     assert result['outcome'] == 'unknown'
@@ -78,7 +84,7 @@ def test_pos_route_preserves_definite_failure_without_fabricating_unknown(method
     router._persist_durable_job = definite
     record = ref('pos.order' if method == 'route_pos_receipt' else 'pos.session', 221,
                  company_id=BRANCH, config_id=POS_CONFIG)
-    result = getattr(router,method)(record, 'JPEG_DATA_FROM_POS', idempotency_key='operation-original')
+    result = getattr(router,method)(record, 'JPEG_DATA_FROM_POS', idempotency_key='operation-original', geometry_fingerprint='a' * 64)
     assert router.outcome_calls == [True]
     assert result['status'] == 'failed'
     assert result['outcome'] == 'failed'

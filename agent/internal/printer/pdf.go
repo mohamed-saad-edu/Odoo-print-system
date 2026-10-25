@@ -44,11 +44,15 @@ type PDFPrintFunc func(ctx context.Context, printerName, pdfPath string) error
 type PDFPrintResultFunc func(ctx context.Context, printerName, pdfPath string) (string, error)
 
 func ValidatePDF(data []byte) error {
+	return validatePDFBounded(data, maxPrintBytes)
+}
+
+func validatePDFBounded(data []byte, byteLimit int) error {
 	if len(data) == 0 {
 		return fmt.Errorf("refusing to print empty PDF payload")
 	}
-	if len(data) > maxPrintBytes {
-		return fmt.Errorf("PDF payload %d bytes exceeds %d limit", len(data), maxPrintBytes)
+	if byteLimit < 1 || byteLimit > MaxPDFOutputBytes || len(data) > byteLimit {
+		return fmt.Errorf("PDF payload %d bytes exceeds %d limit", len(data), byteLimit)
 	}
 	if !bytes.HasPrefix(data, []byte(pdfHeaderMarker)) {
 		return fmt.Errorf("payload is not a PDF document (missing %s header)", pdfHeaderMarker)

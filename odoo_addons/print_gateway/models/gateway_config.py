@@ -4,6 +4,8 @@
 from urllib.parse import urlparse
 
 from .gateway_destination import (
+    GatewayResolutionError,
+    canonical_origin,
     is_loopback_host,
     origin_is_allowlisted,
     validate_gateway_host,
@@ -12,12 +14,13 @@ from .gateway_destination import (
 import hmac
 import logging
 import os
-import requests
+from . import gateway_http as requests
 
 from psycopg2 import sql
 
 from ..runtime_clock import db_now_utc
 from ..idempotency_namespace import local_identity, deployment_proof
+from ..customer_presentation import customer_error_message
 
 from .crypto import (
     CredentialDecryptError,
@@ -76,16 +79,12 @@ def _friendly_gateway_request_error(exc, gateway_url):
 
 
 def _same_gateway_endpoint(url_a, url_b):
-    """Compare two Gateway origins, tolerating case/trailing-slash noise."""
-    def _canon(value):
-        if not value or not isinstance(value, str):
-            return ""
-        try:
-            return PrintGatewayConfig._validate_gateway_url(value)
-        except Exception:
-            return value.strip().lower().rstrip("/")
-    left, right = _canon(url_a), _canon(url_b)
-    return bool(left) and left == right
+    """Compare clean origins by scheme, DNS name and effective port."""
+    try:
+        return canonical_origin(url_a) == canonical_origin(url_b)
+    except (TypeError, ValueError):
+        # Invalid URLs must not bypass endpoint shutdown or credential fences.
+        return False
 
 
 class _OldEndpointUnauthorized(ValidationError):
@@ -151,6 +150,7 @@ class PrintGatewayConfig(models.Model):
     _name = "print_gateway.gateway_config"
     _description = "Print Gateway Configuration"
     _order = "company_id"
+    _rec_name = "company_id"
 
     company_id = fields.Many2one(
         "res.company", string="Company", required=True,
@@ -248,9 +248,8 @@ class PrintGatewayConfig(models.Model):
     )
     gateway_sync_message = fields.Char(
         string="Status details",
-        compute="_compute_gateway_sync_state",
+        compute="_compute_gateway_sync_message",
         compute_sudo=False,
-        store=True,
         readonly=True,
     )
 
@@ -320,6 +319,8 @@ class PrintGatewayConfig(models.Model):
             cls._validate_gateway_host(
                 hostname, resolve=resolve_host, allow_private=explicitly_allowed
             )
+        except GatewayResolutionError as exc:
+            raise requests.exceptions.ConnectionError("Gateway DNS lookup failed before connection") from exc
         except ValueError as exc:
             raise ValidationError(_("Gateway destination was refused: %s") % exc) from exc
         return raw.rstrip("/")
@@ -338,81 +339,60 @@ class PrintGatewayConfig(models.Model):
     )
     def _compute_gateway_sync_state(self):
         for record in self:
-            if not record.gateway_api_key:
-                record.gateway_sync_state = "not_configured"
-                record.gateway_sync_message = _(
-                    "Enter the installation API key from your Yaseir Print Gateway account to connect this company."
-                )
-                continue
-            if record.last_test_status == "revoked":
-                record.gateway_sync_state = "attention"
-                record.gateway_sync_message = _(
-                    "The installation key is no longer active. Create or select a new key in Yaseir Print Gateway, then save it here."
-                )
-                continue
-            if record.last_test_status == "failed":
-                record.gateway_sync_state = "attention"
-                record.gateway_sync_message = (
-                    record.last_test_error
-                    or _("The Gateway could not be reached. Check the Gateway URL and network connection.")
-                )
-                continue
-            if record.last_enabled_sync_error:
-                record.gateway_sync_state = "attention"
-                record.gateway_sync_message = _(
-                    "Your printing settings are being updated in the printing service."
-                )
-                continue
-            if record.pending_disable_gateway_url and record.last_gateway_migration_sync_error:
-                # The old-endpoint shutdown fence is blocking the current
-                # revision: every retry dies on the previous endpoint, so the
-                # new endpoint is never attempted. Previously this error was
-                # only visible in logs/columns while the form showed a generic
-                # stale message. Surface the real cause with its recovery path.
-                record.gateway_sync_state = "attention"
-                record.gateway_sync_message = _(
-                    "The previous Gateway endpoint (%(url)s) could not be disabled: %(error)s "
-                    "Fix the previous endpoint or replace the Gateway key, then save again."
-                ) % {
-                    "url": record.pending_disable_gateway_url,
-                    "error": (record.last_gateway_migration_sync_error or "")[:500],
-                }
-                continue
-            if int(record.last_enabled_sync_revision) != int(record.enabled_sync_revision or 0):
-                # The Gateway has not confirmed the current revision yet. The
-                # staleness fence is bound to the pending revision's own start
-                # timestamp, never to write_date: any unrelated write would
-                # otherwise postpone stale detection while the same revision
-                # stays unconfirmed.
-                # A fresh revision bump always stamps the start time, so a
-                # pending row without one predates the fence (legacy row or
-                # anomalous state) and is already past any staleness window:
-                # escalate instead of spinning.
-                started_at = record.pending_sync_started_at
-                pending_seconds = (
-                    (db_now_utc(self.env.cr) - started_at).total_seconds()
-                    if started_at
-                    else float("inf")
-                )
-                if pending_seconds > self._SYNC_PENDING_STALE_AFTER_SECONDS:
-                    record.gateway_sync_state = "attention"
-                    record.gateway_sync_message = self._pending_stale_message()
-                    continue
-                record.gateway_sync_state = "syncing"
-                record.gateway_sync_message = _(
-                    "Saving your current printing settings."
-                )
-                continue
-            if record.enabled:
-                record.gateway_sync_state = "active"
-                record.gateway_sync_message = _(
-                    "Printing is enabled and the service is connected."
-                )
-            else:
-                record.gateway_sync_state = "disabled"
-                record.gateway_sync_message = _(
-                    "Printing is disabled and the service is connected."
-                )
+            record.gateway_sync_state = record._gateway_sync_status_values()[0]
+
+    @api.depends(
+        "enabled", "gateway_api_key", "last_test_status", "last_test_error",
+        "last_enabled_sync_error", "enabled_sync_revision", "last_enabled_sync_revision",
+        "pending_sync_started_at", "pending_disable_gateway_url", "last_gateway_migration_sync_error",
+    )
+    @api.depends_context("lang")
+    def _compute_gateway_sync_message(self):
+        # Persist only the language-independent state. A translated sentence
+        # stored by the last writer would otherwise leak that writer's locale
+        # to every reader and survive subsequent language switches.
+        for record in self:
+            record.gateway_sync_message = record._gateway_sync_status_values()[1]
+
+    def _gateway_sync_status_values(self):
+        self.ensure_one()
+        if not self.gateway_api_key:
+            return "not_configured", _(
+                "Copy the connection key from Connect Odoo in Yaseir to connect this company."
+            )
+        if self.last_test_status == "revoked":
+            return "attention", _(
+                "The connection key is no longer active. Create a replacement in Connect Odoo, then save it here."
+            )
+        if self.last_test_status == "failed":
+            return "attention", customer_error_message(
+                self.env._, self.last_test_error or "CONNECTION_ERROR"
+            )
+        if self.last_enabled_sync_error:
+            return "attention", _(
+                "Your printing settings are being updated in the printing service."
+            )
+        if self.pending_disable_gateway_url and self.last_gateway_migration_sync_error:
+            # Old-endpoint shutdown blocks the current revision. Keep the
+            # actual cause and recovery path visible to the current reader.
+            return "attention", self.env._(
+                "The previous connection could not be safely disconnected. Ask your administrator to review it before changing the connection again."
+            )
+        if int(self.last_enabled_sync_revision) != int(self.enabled_sync_revision or 0):
+            # The pending revision's start, never write_date, bounds the wait.
+            # A missing timestamp is a legacy/anomalous pending state and is
+            # already stale; unrelated writes must not postpone escalation.
+            started_at = self.pending_sync_started_at
+            pending_seconds = (
+                (db_now_utc(self.env.cr) - started_at).total_seconds()
+                if started_at else float("inf")
+            )
+            if pending_seconds > self._SYNC_PENDING_STALE_AFTER_SECONDS:
+                return "attention", self._pending_stale_message()
+            return "syncing", _("Saving your current printing settings.")
+        if self.enabled:
+            return "active", _("Printing is enabled and the service is connected.")
+        return "disabled", _("Printing is disabled and the service is connected.")
 
     @api.constrains("company_id")
     def _check_company_id(self):
@@ -1221,14 +1201,17 @@ class PrintGatewayConfig(models.Model):
             if override:
                 gateway_url, api_key = override
             else:
-                if not record.gateway_api_key:
+                if not record.gateway_api_key and not record.pending_disable_gateway_url:
                     continue
                 # Never let a malformed URL/credential crash the write RPC.
                 # Persist it as a visible sync error so the form shows
                 # "Action needed" instead of an Oops RPC_ERROR dialog.
                 try:
-                    gateway_url = record._gateway_base(for_request=True)
-                    api_key = record._gateway_api_key_plaintext()
+                    # A removed current key can still require shutdown of
+                    # its old endpoint. Keep that credential in the separate
+                    # pending fence; never substitute it as a current key.
+                    gateway_url = record._gateway_base(for_request=True) if record.gateway_api_key else None
+                    api_key = record._gateway_api_key_plaintext() if record.gateway_api_key else None
                 except (ValidationError, ValueError) as exc:
                     # This path runs INSIDE the current write/create transaction.
                     # _persist_enabled_sync_result() opens a second cursor and
@@ -1298,26 +1281,13 @@ class PrintGatewayConfig(models.Model):
             self._check_admin()
 
         vals = dict(vals)
-        if ("gateway_url" in vals or "gateway_api_key" in vals) and "installation_id" not in vals:
-            # Re-enroll under an updated Gateway or API key on the next use.
-            # Saved print-job identities remain unchanged.
-            vals["installation_id"] = False
-            vals["idempotency_v2_enabled"] = False
-        if vals.get("idempotency_v2_enabled"):
-            from ..idempotency_namespace import deployment_proof
+        if "gateway_url" in vals and len(self.ids) > 1:
+            # Each row may already use a different spelling of this origin.
+            # Preserve its own identity path while applying actual migrations
+            # to the other rows in the same enclosing transaction.
             for record in self:
-                chosen_installation = vals.get("installation_id") or record.installation_id
-                try:
-                    deployment_proof(
-                        chosen_installation,
-                        self.env.cr.dbname,
-                        vals.get("gateway_url") or record.gateway_url,
-                        company_id=record.company_id.id,
-                    )
-                except ValueError:
-                    raise ValidationError(_(
-                        "Versioned printing requires a Gateway-enrolled installation ID and out-of-database proof."
-                    )) from None
+                record.write(vals)
+            return True
 
         # URL migration is a durable state machine. Serialize concurrent writes
         # per configuration row before reading the previous endpoint/revision;
@@ -1341,6 +1311,37 @@ class PrintGatewayConfig(models.Model):
                 "pending_disable_gateway_api_key",
                 "pending_disable_revision",
             ])
+
+        if "gateway_url" in vals:
+            requested_url = self._validate_gateway_url(vals.get("gateway_url"))
+            if self.ids and all(_same_gateway_endpoint(record.gateway_url, requested_url) for record in self):
+                # External identity files are historically keyed by the stored
+                # origin bytes. A case/default-port/trailing-slash edit must
+                # not mint a new installation or strand already queued jobs.
+                # Retain those bytes instead of migrating historical proofs.
+                vals.pop("gateway_url")
+        if not vals:
+            return True
+        if ("gateway_url" in vals or "gateway_api_key" in vals) and "installation_id" not in vals:
+            # Re-enroll under an updated Gateway or API key on the next use.
+            # Saved print-job identities remain unchanged.
+            vals["installation_id"] = False
+            vals["idempotency_v2_enabled"] = False
+        if vals.get("idempotency_v2_enabled"):
+            from ..idempotency_namespace import deployment_proof
+            for record in self:
+                chosen_installation = vals.get("installation_id") or record.installation_id
+                try:
+                    deployment_proof(
+                        chosen_installation,
+                        self.env.cr.dbname,
+                        vals.get("gateway_url") or record.gateway_url,
+                        company_id=record.company_id.id,
+                    )
+                except ValueError:
+                    raise ValidationError(_(
+                        "Versioned printing requires a Gateway-enrolled installation ID and out-of-database proof."
+                    )) from None
 
         before_enabled = {record.id: bool(record.enabled) for record in self}
         before_gateway_url = {record.id: record.gateway_url for record in self}
@@ -2030,68 +2031,19 @@ class PrintGatewayConfig(models.Model):
         return True
 
     def action_retry_enabled_sync(self):
-        """Run the pending activation synchronization immediately.
+        """Queue the authorized revision after the request transaction commits.
 
-        The post-commit hook and the retry cron already converge automatically;
-        this is the operator's explicit recovery path when the staleness fence
-        has escalated the form to "attention". The shared runner persists the
-        outcome (success or error) on a fresh cursor either way.
+        Reading legacy current/pending credentials can re-protect them and
+        acquire this transaction's configuration-row lock. The existing sync
+        runner persists through independent cursors, so it must run only after
+        that lock is released. Rollback discards the callback automatically.
         """
         self.ensure_one()
         self._check_admin()
-        dbname = self.env.cr.dbname
         if not self.gateway_api_key and not self.pending_disable_gateway_url:
             raise ValidationError(_("Add an installation API key before synchronizing."))
-        # Never replay a revision the fence has already moved past: read the
-        # desired revision/state fresh at trigger time, exactly like the retry
-        # cron does. If a concurrent write bumps the revision between this
-        # read and the PATCH, the Gateway-side reconciliation cursor
-        # (_reconcile_remote_enabled_revision) re-locks the row, detects the
-        # mismatch, and aborts this older attempt so the newer local
-        # transaction stays authoritative. Like every caller of the shared
-        # runner, no manual commit happens inside this RPC transaction;
-        # outcome persistence uses its own dedicated cursor.
         self.invalidate_recordset(["enabled_sync_revision", "enabled"])
-        revision = int(self.enabled_sync_revision or 0)
-        enabled = bool(self.enabled)
-        gateway_url = None
-        api_key = None
-        if self.gateway_api_key:
-            try:
-                gateway_url = self._gateway_base(for_request=True)
-                api_key = self._gateway_api_key_plaintext()
-            except (ValidationError, ValueError, CredentialKeyUnavailable, CredentialDecryptError) as exc:
-                self._persist_enabled_sync_result(
-                    dbname,
-                    success=False,
-                    revision=None,
-                    error=str(exc)[:4000],
-                    expected_revision=revision,
-                )
-                return {"type": "ir.actions.client", "tag": "reload"}
-        pending_disable_error = None
-        try:
-            pending_disable = self._pending_disable_credentials()
-        except (ValidationError, ValueError, CredentialKeyUnavailable, CredentialDecryptError) as exc:
-            # Same fence as the queued sync: a broken pending shutdown must
-            # block new-endpoint synchronization, not be dropped.
-            pending_disable = None
-            pending_disable_error = (str(exc) or "pending old-endpoint shutdown state is unreadable")[:4000]
-        self._run_postcommit_enabled_sync(
-            gateway_url=gateway_url,
-            api_key=api_key,
-            dbname=dbname,
-            revision=revision,
-            enabled=enabled,
-            pending_disable=pending_disable,
-            pending_disable_error=pending_disable_error,
-        )
-        self.invalidate_recordset([
-            "gateway_sync_state",
-            "gateway_sync_message",
-            "last_enabled_sync_revision",
-            "last_enabled_sync_error",
-        ])
+        self._queue_enabled_state_sync()
         return {"type": "ir.actions.client", "tag": "reload"}
 
     def _write_test_result_if_current(self, expected_revision, values):
@@ -2145,15 +2097,30 @@ class PrintGatewayConfig(models.Model):
         finally:
             cr.close()
 
+    def _queue_test_result_if_current(self, expected_revision, values):
+        """Persist a health observation after any local credential write commits.
+
+        The existing independent writer retains its revision/NOWAIT fence. A
+        rollback must discard the observation instead of publishing a result
+        for configuration changes which never became durable.
+        """
+        self.ensure_one()
+        self.env.cr.postcommit.add(
+            lambda record_id=self.id, revision=int(expected_revision), values=dict(values):
+                self.browse(record_id)._write_test_result_if_current(revision, values)
+        )
+
     def action_test_connection(self):
         self.ensure_one()
         self._check_admin()
-        # A connection test is bound to the activation revision it started
-        # against. If a newer save/revision lands while the network request is
-        # in flight, this request becomes observationally stale and must not
-        # overwrite the newer credential/activation state.
         self.invalidate_recordset(["enabled_sync_revision", "enabled"])
         expected_revision = int(self.enabled_sync_revision or 0)
+        reload_action = {"type": "ir.actions.client", "tag": "reload"}
+
+        def record_health_result(values):
+            self._queue_test_result_if_current(expected_revision, values)
+            return reload_action
+
         try:
             response = requests.get(
                 "%s/api/odoo/health" % self._gateway_base(for_request=True),
@@ -2161,37 +2128,17 @@ class PrintGatewayConfig(models.Model):
                 timeout=10,
                 allow_redirects=False,
             )
-            # Authentication failure semantics are deterministic and must not
-            # depend on the Gateway returning a JSON body. Check 401 before
-            # parsing the response so malformed/error HTML cannot erase the
-            # explicit revoked state.
             redirect_message = _gateway_redirect_message(response, self.gateway_url)
             if redirect_message:
-                if not self._write_test_result_if_current(expected_revision, {
-                    "last_test_at": fields.Datetime.now(),
-                    "last_test_status": "failed",
-                    "last_test_error": redirect_message,
-                }):
-                    return {"type": "ir.actions.client", "tag": "reload"}
-                return {
-                    "type": "ir.actions.client",
-                    "tag": "display_notification",
-                    "params": {"title": _("Gateway Connection"), "message": redirect_message, "type": "warning", "sticky": True},
-                }
+                raise ValidationError(redirect_message)
+            # Authentication failure must not depend on a JSON error body.
             if response.status_code == 401:
-                message = _("The Gateway rejected the API key. Replace the key and test the connection again.")
-                if not self._write_test_result_if_current(expected_revision, {
+                return record_health_result({
                     "last_test_at": fields.Datetime.now(),
                     "last_test_status": "revoked",
-                    "last_test_error": message,
+                    "last_test_error": _("The Gateway rejected the API key. Replace the key and test the connection again."),
                     "enabled": False,
-                }):
-                    return {"type": "ir.actions.client", "tag": "reload"}
-                return {
-                    "type": "ir.actions.client",
-                    "tag": "display_notification",
-                    "params": {"title": _("Gateway Connection"), "message": message, "type": "warning", "sticky": True},
-                }
+                })
             if response.status_code == 403:
                 body = response.json() if response.content else {}
                 message = (
@@ -2199,141 +2146,50 @@ class PrintGatewayConfig(models.Model):
                     if isinstance(body, dict) and body.get("error")
                     else _("The Gateway workspace is not available for printing.")
                 )
-                if not self._write_test_result_if_current(expected_revision, {
+                return record_health_result({
                     "last_test_at": fields.Datetime.now(),
                     "last_test_status": "failed",
                     "last_test_error": message,
-                }):
-                    return {"type": "ir.actions.client", "tag": "reload"}
-                return {
-                    "type": "ir.actions.client",
-                    "tag": "display_notification",
-                    "params": {"title": _("Gateway Connection"), "message": message, "type": "warning", "sticky": True},
-                }
-
-            # Only successful/other non-auth responses need JSON decoding.
-            # A malformed success response is handled by the ValueError path.
+                })
             body = response.json() if response.content else {}
             if response.status_code != 200 or not isinstance(body, dict) or body.get("ok") is not True:
                 raise ValidationError(_("Gateway connection test failed (HTTP %s).") % response.status_code)
 
+            # Enrollment may write installation identity; reading a legacy key
+            # above may also write its protected replacement. Never invoke the
+            # independent result writer while this request holds either lock.
             self._register_auto_installation()
-
-            # Re-read the persisted identity and revision after the network
-            # health check. A newer key/activation save may have committed while
-            # the request was in flight; the older test must not send its stale
-            # credential or desired state to the Gateway.
             self.invalidate_recordset([
-                "gateway_url",
-                "gateway_api_key",
-                "enabled",
-                "enabled_sync_revision",
+                "gateway_url", "gateway_api_key", "enabled", "enabled_sync_revision",
             ])
-            current_revision = int(self.enabled_sync_revision or 0)
-            if current_revision != expected_revision:
-                return {"type": "ir.actions.client", "tag": "reload"}
-
-            # A connection test is an explicit operator action, so finish the
-            # activation reconciliation in this request instead of leaving the
-            # form displaying a stale "Syncing" state until the next manual
-            # refresh. The same fenced revision/idempotent Gateway endpoint is
-            # used by the normal post-commit sync path. A broken pending
-            # shutdown blocks here exactly like everywhere else instead of
-            # raising out of the test action.
-            pending_disable_error = None
-            try:
-                pending_disable = self._pending_disable_credentials()
-            except (ValidationError, ValueError, CredentialKeyUnavailable, CredentialDecryptError) as exc:
-                pending_disable = None
-                pending_disable_error = (str(exc) or "pending old-endpoint shutdown state is unreadable")[:4000]
-            sync_succeeded = self._run_postcommit_enabled_sync(
-                gateway_url=self._gateway_base(for_request=True),
-                api_key=self._gateway_api_key_plaintext(),
-                dbname=self.env.cr.dbname,
-                revision=current_revision,
-                enabled=bool(self.enabled),
-                pending_disable=pending_disable,
-                pending_disable_error=pending_disable_error,
-            )
-            if not sync_succeeded:
-                self.invalidate_recordset([
-                    "gateway_sync_state",
-                    "gateway_sync_message",
-                    "last_enabled_sync_error",
-                    "last_enabled_sync_revision",
-                ])
-                return {
-                    "type": "ir.actions.client",
-                    "tag": "reload",
-                }
-
-            # _sync_enabled_state_to_gateway persists the authoritative state
-            # through a fresh cursor. Record the connection-test success only
-            # when the same revision is still current; an overlapping newer
-            # save must retain ownership of the record state.
-            self.invalidate_recordset([
-                "enabled_sync_revision",
-                "last_enabled_sync_revision",
-                "last_enabled_sync_error",
-            ])
-            current_revision = int(self.enabled_sync_revision or 0)
-            if not self._write_test_result_if_current(expected_revision, {
-                "last_test_at": fields.Datetime.now(),
-                "last_test_status": "success",
-                "last_test_error": False,
-            }):
-                return {"type": "ir.actions.client", "tag": "reload"}
-
-            # The save hook intentionally ignores the server "reload" action
-            # and performs a record-level model.load, so the Gateway status
-            # becomes Active immediately after the persisted sync result lands.
-            return {
-                "type": "ir.actions.client",
-                "tag": "reload",
-            }
+            if int(self.enabled_sync_revision or 0) != expected_revision:
+                return reload_action
+            self._queue_enabled_state_sync()
+            # Activation success/error is authoritative only after the existing
+            # post-commit runner persists the same-revision Gateway response.
+            return reload_action
         except ValidationError as exc:
-            if not self._write_test_result_if_current(expected_revision, {
+            return record_health_result({
                 "last_test_at": fields.Datetime.now(),
                 "last_test_status": "failed",
                 "last_test_error": str(exc)[:4000],
-            }):
-                return {"type": "ir.actions.client", "tag": "reload"}
-            return {
-                "type": "ir.actions.client",
-                "tag": "display_notification",
-                "params": {"title": _("Gateway Connection"), "message": str(exc), "type": "danger", "sticky": True},
-            }
+            })
         except requests.RequestException as exc:
             try:
                 failed_url = self._gateway_base(for_request=False)
             except ValidationError:
                 failed_url = self.gateway_url
-            msg = _friendly_gateway_request_error(exc, failed_url)
-            if not self._write_test_result_if_current(expected_revision, {
+            return record_health_result({
                 "last_test_at": fields.Datetime.now(),
                 "last_test_status": "failed",
-                "last_test_error": msg,
-            }):
-                return {"type": "ir.actions.client", "tag": "reload"}
-            return {
-                "type": "ir.actions.client",
-                "tag": "display_notification",
-                "params": {"title": _("Gateway Connection"), "message": msg, "type": "danger", "sticky": True},
-            }
+                "last_test_error": _friendly_gateway_request_error(exc, failed_url),
+            })
         except ValueError:
-            msg = _("Gateway returned an invalid health response.")
-            if not self._write_test_result_if_current(expected_revision, {
+            return record_health_result({
                 "last_test_at": fields.Datetime.now(),
                 "last_test_status": "failed",
-                "last_test_error": msg,
-            }):
-                return {"type": "ir.actions.client", "tag": "reload"}
-            return {
-                "type": "ir.actions.client",
-                "tag": "display_notification",
-                "params": {"title": _("Gateway Connection"), "message": msg, "type": "danger", "sticky": True},
-            }
-
+                "last_test_error": _("Gateway returned an invalid health response."),
+            })
 
     def action_reset_stale_sync_state(self):
         """Recover from a removed/reconfigured Gateway without an RPC error.
@@ -2398,6 +2254,28 @@ class PrintGatewayConfig(models.Model):
             "type": "ir.actions.act_window",
             "name": _("Branch Agent Assignments"),
             "res_model": "print_gateway.runtime_agent_assignment",
+            "view_mode": "list,form",
+            "domain": [("company_id", "=", self.company_id.id)],
+            "context": {"default_company_id": self.company_id.id},
+        }
+
+    def action_open_printers(self):
+        """Open live, company-scoped inventory without granting new assignments."""
+        self.ensure_one()
+        self._check_admin()
+        return {
+            "type": "ir.actions.client",
+            "tag": "print_gateway.printers",
+            "context": {"default_company_id": self.company_id.id},
+        }
+
+    def action_open_print_rules(self):
+        self.ensure_one()
+        self._check_admin()
+        return {
+            "type": "ir.actions.act_window",
+            "name": self.env._("Print Rules"),
+            "res_model": "print_gateway.policy",
             "view_mode": "list,form",
             "domain": [("company_id", "=", self.company_id.id)],
             "context": {"default_company_id": self.company_id.id},

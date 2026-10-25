@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 
 const ROLE_KEYS = [
   "team.role.owner",
-  "team.role.admin",
+  "v4.team.fullAccess",
   "team.role.operator",
   "team.role.viewer",
   "team.role.integrationAdmin",
@@ -13,17 +13,16 @@ const ROLE_KEYS = [
 describe("team role labels follow the active language", () => {
   it("maps every role through the shared translator helper", () => {
     const helper = readFileSync("src/lib/roles.ts", "utf8");
-    const en = readFileSync("src/i18n/messages/en.ts", "utf8");
-    const ar = readFileSync("src/i18n/messages/ar.ts", "utf8");
+    const en = readFileSync("src/i18n/messages/en.ts", "utf8") + readFileSync("src/i18n/messages/v4-onboarding.ts", "utf8");
+    const ar = readFileSync("src/i18n/messages/ar.ts", "utf8") + readFileSync("src/i18n/messages/v4-onboarding.ts", "utf8");
 
     for (const key of ROLE_KEYS) {
       expect(helper).toContain(`t("${key}")`);
       expect(en).toContain(`"${key}":`);
       expect(ar).toContain(`"${key}":`);
     }
-    // Unknown future roles keep a readable English fallback, but only in the
-    // default branch — every known role goes through the translator.
-    expect(helper).toMatch(/default:\s*\n\s*return role\.replace/);
+    // Unknown future roles must also respect the selected locale.
+    expect(helper).toMatch(/default:\s*\n\s*return t\("common.unknown"\)/);
   });
 
   it("team table and settings both use the shared helper with the translator", () => {

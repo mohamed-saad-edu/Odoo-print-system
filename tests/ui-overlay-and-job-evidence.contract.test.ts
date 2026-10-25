@@ -40,7 +40,7 @@ describe("overlay and job evidence contracts", () => {
 
   it("keeps fleet cards aligned to content instead of stretching to the tallest sibling", () => {
     const dashboard = read("src/app/dashboard/dashboard-client.tsx");
-    expect(dashboard).toContain('className="grid min-w-0 grid-cols-1 items-start gap-5 xl:grid-cols-12"');
+    expect(dashboard).toContain('className="grid min-w-0 grid-cols-1 items-start gap-5"');
   });
 
 
@@ -58,10 +58,10 @@ describe("overlay and job evidence contracts", () => {
 
     expect(ui).toContain('className={option.icon ? "hidden sm:inline" : "inline"}');
     expect(ui).toContain("inline-flex max-w-full items-center");
-    expect(plans).toContain('className="divide-y divide-edge-subtle lg:hidden"');
-    expect(plans).toContain('className="hidden lg:block"');
-    expect(subscriptions).toContain('className="divide-y divide-edge-subtle sm:hidden"');
-    expect(subscriptions).toContain('className="hidden overflow-x-auto sm:block"');
+    expect(plans).toContain('grid gap-4 sm:grid-cols-2 lg:grid-cols-3');
+    expect(plans).toContain("a('preview')");
+    expect(subscriptions).toContain('grid gap-4 lg:grid-cols-2');
+    expect(subscriptions).toContain("a('manage')");
   });
 
   it("loads an authoritative job snapshot before rendering job evidence", () => {

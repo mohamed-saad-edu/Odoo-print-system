@@ -5,13 +5,33 @@ The origin allowlist comes from the server environment, not from editable Odoo
 rows. Without it, public HTTPS hosts remain compatible, while loopback, link
 local, metadata and RFC1918/ULA destinations are forbidden. A configured
 allowlist is exact (scheme, hostname, port) and can permit a known private
-Gateway. Deploy firewall egress restrictions as well: DNS can change between
-validation and the subsequent requests connection.
+Gateway. The HTTP transport consumes the validated addresses directly rather
+than resolving the hostname again when it connects.
 """
 
 import ipaddress
 import socket
 from urllib.parse import urlparse
+
+import idna
+
+
+class GatewayResolutionError(ValueError):
+    """Name resolution failed before any socket or request could be created."""
+
+
+def canonical_hostname(hostname):
+    """Use the same UTS46/IDNA2008 spelling as Requests' PreparedRequest."""
+    host = (hostname or "").lower().rstrip(".")
+    if not host or "%" in host:
+        raise ValueError("Gateway hostname is invalid")
+    try:
+        return str(ipaddress.ip_address(host))
+    except ValueError:
+        try:
+            return idna.encode(host, uts46=True).decode("ascii").rstrip(".")
+        except idna.IDNAError as exc:
+            raise ValueError("Gateway hostname is invalid") from exc
 
 
 def canonical_origin(value):
@@ -37,7 +57,7 @@ def canonical_origin(value):
     if port is not None and not 1 <= port <= 65535:
         raise ValueError("Gateway origin has an invalid port")
     scheme = parsed.scheme.lower()
-    return (scheme, parsed.hostname.lower().rstrip("."), port or (443 if scheme == "https" else 80))
+    return (scheme, canonical_hostname(parsed.hostname), port or (443 if scheme == "https" else 80))
 
 
 def origin_is_allowlisted(value, allowlist):
@@ -74,8 +94,8 @@ def validate_gateway_host(hostname, *, resolve=False, allow_private=False):
     """Reject sensitive network destinations before any bearer credential is sent.
 
     Exact allowlisting grants an explicit exception for intentionally private
-    deployments. Normal DNS is checked at request time; OS/network egress
-    restrictions remain necessary against DNS rebinding during connect.
+    deployments. With ``resolve=True``, return the validated numeric addresses
+    so the request-local HTTP transport can pin its connection to an answer.
     """
     host = (hostname or "").strip().lower().rstrip(".")
     if not host or any(c in host for c in "/\\@?#%"):
@@ -93,14 +113,15 @@ def validate_gateway_host(hostname, *, resolve=False, allow_private=False):
             raise ValueError("Gateway hostname is not a connectable destination")
         if not effective_ip.is_global and not allow_private:
             raise ValueError("Gateway address is not publicly routable")
-        return
+        return (str(literal),)
+    host = canonical_hostname(host)
     if (
         host == "localhost"
         or host.endswith((".localhost", ".local", ".internal"))
     ) and not allow_private:
         raise ValueError("Gateway hostname is a local or internal destination")
     try:
-        ascii_name = host.encode("idna").decode("ascii")
+        ascii_name = host
         labels = ascii_name.split(".")
         if (
             len(ascii_name) > 253
@@ -117,11 +138,14 @@ def validate_gateway_host(hostname, *, resolve=False, allow_private=False):
     if not resolve:
         return
     try:
-        answers = socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)
+        answers = socket.getaddrinfo(ascii_name, None, type=socket.SOCK_STREAM)
     except OSError as exc:
-        raise ValueError("Gateway hostname could not be resolved") from exc
+        raise GatewayResolutionError("Gateway hostname could not be resolved") from exc
     if not answers:
         raise ValueError("Gateway hostname has no network addresses")
+    if len(answers) > 64:
+        raise ValueError("Gateway hostname returned too many network addresses")
+    addresses = []
     for answer in answers:
         try:
             address = ipaddress.ip_address(answer[4][0])
@@ -134,3 +158,19 @@ def validate_gateway_host(hostname, *, resolve=False, allow_private=False):
             raise ValueError("Gateway hostname resolved to an unusable address")
         if not effective_ip.is_global and not allow_private:
             raise ValueError("Gateway hostname resolved to an internal network address")
+        target = str(address)
+        if answer[0] == socket.AF_INET6:
+            try:
+                scope = answer[4][3]
+            except (IndexError, TypeError) as exc:
+                raise ValueError("Gateway hostname returned an invalid IPv6 scope") from exc
+            if type(scope) is not int or not 0 <= scope <= 0xFFFFFFFF:
+                raise ValueError("Gateway hostname returned an invalid IPv6 scope")
+            if scope:
+                # The zone is a numeric OS resolver scope, never URL input.
+                # Keep it only after the underlying IP passes all admission
+                # rules, including the explicit private-origin allowlist.
+                target += "%%%d" % scope
+        if target not in addresses:
+            addresses.append(target)
+    return tuple(addresses)

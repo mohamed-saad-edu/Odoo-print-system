@@ -35,6 +35,7 @@ import "strings"
 
 // DeviceFacts are the declared transport properties of one printer entry.
 type TransportFacts struct {
+	Geometry                  *Geometry
 	Protocol                  string
 	Connection                string
 	SupportedProtocol         []string
@@ -63,9 +64,10 @@ func PayloadCompatibleForDevice(plType, plProtocol string, d TransportFacts) (bo
 	// driver-backed Windows queue. Legacy USB-backed spooler records stay
 	// valid (normally normalized to connection=spooler at registration).
 	physicalSpooler := conn == "spooler" || (conn == "usb" && proto == "spooler")
+	filePDF := conn == "pdf_output" && proto == "pdf"
 	physicalPDF := physicalSpooler || conn == "ipp" || conn == "ipps" ||
-		(conn == "network" && (proto == "ipp" || proto == "ipps"))
-	physicalImage := physicalSpooler || (conn == "network" && proto == "escpos")
+		(conn == "network" && (proto == "ipp" || proto == "ipps")) || filePDF
+	physicalImage := physicalSpooler || ((conn == "network" || conn == "usb") && proto == "escpos") || filePDF
 	physicalByteProtocol := func(protocol string) bool {
 		if physicalSpooler {
 			return protocol == "raw" || protocol == "escpos"
@@ -107,7 +109,7 @@ func PayloadCompatibleForDevice(plType, plProtocol string, d TransportFacts) (bo
 			return false, "pdf payloads cannot specify a printer protocol"
 		}
 		if !physicalPDF {
-			return false, "pdf requires spooler or IPP transport"
+			return false, "pdf requires spooler, IPP, or approved PDF output transport"
 		}
 		// Spooler/IPP is itself a document-capable transport. An explicit
 		// capability list is additive here and must not remove that baseline.
@@ -119,16 +121,25 @@ func PayloadCompatibleForDevice(plType, plProtocol string, d TransportFacts) (bo
 		if !physicalImage {
 			return false, "image payload not supported by printer"
 		}
+		if filePDF {
+			if !d.Geometry.PhysicalPageImageReady() {
+				return false, "file image output requires full measured page geometry and both DPI axes"
+			}
+			return true, ""
+		}
 		if physicalSpooler {
+			if !d.Geometry.PhysicalImageReady() {
+				return false, "image requires measured physical geometry and both DPI axes"
+			}
 			return true, ""
 		}
-		if hasCaps && capabilityListed("image", "jpeg", "escpos") {
-			return true, ""
+		if !rasterGeometryReady(d.Geometry) {
+			return false, "image requires measured printable dots and explicit gs_v_0 raster command"
 		}
-		if !hasCaps {
-			return true, ""
+		if hasCaps && !capabilityListed("image", "jpeg", "escpos") {
+			return false, "image payload conflicts with declared printer protocols"
 		}
-		return false, "image payload not supported by printer"
+		return true, ""
 	case "escpos":
 		if pp != "" && pp != "escpos" {
 			return false, "escpos payload cannot use protocol " + pp
@@ -201,11 +212,19 @@ func SupportedProtocolsForDevice(d TransportFacts) []string {
 		return []string{}
 	}
 	switch family {
-	case "escpos":
-		if strings.ToLower(strings.TrimSpace(d.Connection)) == "usb" {
-			return []string{"escpos"}
+	case "pdf":
+		if conn != "pdf_output" {
+			return []string{}
 		}
-		return []string{"escpos", "image"}
+		if d.Geometry.PhysicalPageImageReady() {
+			return []string{"pdf", "image"}
+		}
+		return []string{"pdf"}
+	case "escpos":
+		if rasterGeometryReady(d.Geometry) {
+			return []string{"escpos", "image"}
+		}
+		return []string{"escpos"}
 	case "zpl":
 		return []string{"zpl"}
 	case "tspl":
@@ -219,7 +238,10 @@ func SupportedProtocolsForDevice(d TransportFacts) []string {
 		// Document transports by default. Raw byte passthrough (raw/escpos)
 		// requires an explicit operator-declared supported_protocols list;
 		// it is never inferred, so office printers are never sent raw bytes.
-		return []string{"pdf", "image"}
+		if d.Geometry.PhysicalImageReady() {
+			return []string{"pdf", "image"}
+		}
+		return []string{"pdf"}
 	case "ipp", "ipps":
 		return []string{"pdf"}
 	default:

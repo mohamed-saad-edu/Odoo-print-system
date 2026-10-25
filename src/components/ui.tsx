@@ -1767,9 +1767,20 @@ export function useDialog(
       const nodes = panel.querySelectorAll<HTMLElement>(
         'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
       );
-      const tabbable = [...nodes].filter((el) => el.tabIndex >= 0 && !el.closest("[inert]"));
-      const visible = tabbable.filter((el) => el.offsetParent !== null);
-      return visible.length > 0 ? visible : tabbable;
+      return [...nodes].filter((el) => {
+        if (el.tabIndex < 0 || el.matches(":disabled") || el.closest("[inert], [hidden]")) return false;
+        // offsetParent is also null for visible fixed-position controls, and
+        // falls back to hidden controls in layout-less test environments.
+        // Check computed styles, including ancestors, instead of assuming
+        // every control is visible when none has an offset parent.
+        let current: HTMLElement | null = el;
+        while (current && current !== panel) {
+          const style = window.getComputedStyle(current);
+          if (style.display === "none" || style.visibility === "hidden" || style.visibility === "collapse") return false;
+          current = current.parentElement;
+        }
+        return true;
+      });
     };
     const onKey = (e: KeyboardEvent) => {
       if (dialogStack[dialogStack.length - 1] !== panel) return;
@@ -1787,8 +1798,9 @@ export function useDialog(
       }
       const first = items[0];
       const last = items[items.length - 1];
-      if (!panel.contains(document.activeElement)) {
-        e.preventDefault(); first.focus();
+      if (document.activeElement === panel || !panel.contains(document.activeElement)) {
+        e.preventDefault();
+        (e.shiftKey ? last : first).focus();
       } else if (e.shiftKey && document.activeElement === first) {
         e.preventDefault();
         last.focus();
@@ -1798,6 +1810,9 @@ export function useDialog(
       }
     };
     document.addEventListener("keydown", onKey);
+    // This hook owns initial focus. Dialog descendants must not use React
+    // autoFocus: that runs before this effect and replaces the live opener
+    // with an input that will disappear when the dialog closes.
     const prev = document.activeElement as HTMLElement | null;
     panelRef.current?.focus();
     return () => {
@@ -1875,7 +1890,7 @@ export function Modal({
             <X className="h-4 w-4" />
           </IconButton>
         </div>
-        <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-5 py-5 sm:px-6">
+        <div role="region" aria-label={title} tabIndex={0} className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-5 py-5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand/35 sm:px-6">
           {children}
         </div>
         {footer && (

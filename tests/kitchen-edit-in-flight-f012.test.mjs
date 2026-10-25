@@ -1,3 +1,4 @@
+import { receiptGeometry } from "./helpers/odoo-printer-geometry.mjs";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { webcrypto, createHash } from "node:crypto";
@@ -38,7 +39,6 @@ const mocks = {
     changesToOrder: nativeChange.namespace.changesToOrder,
     renderToElement: (_name, value) => value,
     gatewayServerMessage: (error) => error?.message, showGatewayBillingLimitDialog: () => false,
-    DEFAULT_RECEIPT_RASTER_WIDTH: 512, normalizedReceiptRasterWidth: (value) => value,
     renderGatewayReceiptJpeg: async (element) => {
         printed.push(JSON.parse(JSON.stringify(element.data.changes)));
         return "JPEG_SNAPSHOT_ONE";
@@ -50,7 +50,7 @@ const common = new vm.SyntheticModule(Object.keys(mocks), function () {
 const controls = new vm.SourceTextModule(await readFile(new URL("odoo_addons/print_gateway/static/src/js/async_control.js", repo), "utf8"), { context });
 await controls.link(() => { throw new Error("Unexpected import"); });
 const recovery = new vm.SourceTextModule(await readFile(new URL("odoo_addons/print_gateway/static/src/js/operation_recovery.js", repo), "utf8"), { context });
-await recovery.link(() => { throw new Error("Unexpected recovery import"); });
+await recovery.link((name) => { assert.equal(name, "@web/core/l10n/translation"); return common; });
 const addon = new vm.SourceTextModule(addonSource, { context });
 await addon.link((name) => name === "./async_control" ? controls : name === "./operation_recovery" ? recovery : common);
 await addon.evaluate();
@@ -73,7 +73,7 @@ const pos = { session: { id: 5 }, config: { printerCategories: new Set([1]) },
     updateLastOrderChangeIfNoDevice() {}, syncAllOrders: async () => {},
     data: { call: async (_model, method) => {
         if (method === "is_gateway_printing_enabled") return true;
-        if (method === "get_gateway_kitchen_routes") return { routes: [{ pos_printer_id: 1, category_ids: [1], raster_width: 384 }], missing_routes: [] };
+        if (method === "get_gateway_kitchen_routes") return { routes: [{ pos_printer_id: 1, category_ids: [1], geometry: receiptGeometry(384) }], missing_routes: [] };
         assert.equal(method, "action_print_gateway_kitchen");
         signalSubmitted();
         await released;

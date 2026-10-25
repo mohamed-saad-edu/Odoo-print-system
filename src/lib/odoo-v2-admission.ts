@@ -104,10 +104,11 @@ export type S06Reuse = {
 };
 
 /**
- * Called INSIDE print admission transaction AFTER tenant / Agent / API key
- * fences. All matching legacy live rows and lifetime receipts are considered;
- * content similarity never establishes installation ownership. An operator
- * must make and audit any reuse-vs-distinct decision.
+ * Called INSIDE a transaction AFTER tenant / Agent / API key fences. Accepted
+ * reconciliation can return only an existing namespace mapping. Normal
+ * admission also considers legacy live rows and lifetime receipts; content
+ * similarity never establishes installation ownership. An operator must make
+ * and audit any reuse-vs-distinct decision.
  */
 export async function reserveV2Operation(
   tx: Pick<DbTx,"execute">,
@@ -118,6 +119,8 @@ export async function reserveV2Operation(
     requestedFingerprint: string;
     digest: Digest;
     newJobId: string | null;
+    /** Never create a namespace, including an approved legacy-reuse alias. */
+    acceptedOnly?: true;
   },
 ): Promise<S06Reuse | null> {
   const { tenantId, identity, apiKeyId } = args;
@@ -137,6 +140,11 @@ export async function reserveV2Operation(
     return { jobId: found.id, printerId: found.printer_id, agentId: found.agent_id,
       status: found.status, isReused: true };
   }
+
+  // A lookup miss must leave this transaction without any reservation. In
+  // particular, newJobId:null alone is insufficient: legacy reuse below can
+  // publish a namespace even when it does not create a new print job.
+  if (args.acceptedOnly) return null;
 
   const legacy = await historicalByKey(tx, tenantId, identity.legacyKey, args.digest);
   const resolution = await tx.execute(sql`

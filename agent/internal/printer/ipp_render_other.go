@@ -9,7 +9,7 @@ import (
 
 // Production PDFium rasterization is built into the Windows Agent only.
 // Do not pretend the original PDF bytes are JPEG on another OS.
-func renderIPPPDFToJPEG(ctx context.Context, data []byte) ([]byte, error) {
+func renderIPPPDFToJPEG(ctx context.Context, data []byte, attrs map[string]string) ([]byte, error) {
 	_ = ctx
 	_ = data
 	return nil, fmt.Errorf("PDF-to-JPEG IPP rendering requires the Windows Agent PDFium runtime")

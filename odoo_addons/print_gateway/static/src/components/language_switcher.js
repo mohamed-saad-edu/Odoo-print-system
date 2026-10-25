@@ -5,6 +5,7 @@ import { browser } from "@web/core/browser/browser";
 import { Dropdown } from "@web/core/dropdown/dropdown";
 import { DropdownItem } from "@web/core/dropdown/dropdown_item";
 import { _t } from "@web/core/l10n/translation";
+import { rpc } from "@web/core/network/rpc";
 import { registry } from "@web/core/registry";
 import { user } from "@web/core/user";
 import { useService } from "@web/core/utils/hooks";
@@ -93,7 +94,17 @@ export class PrintGatewayLanguageSwitcher extends Component {
 
         try {
             await withGatewayDeadline(
-                () => this.orm.write("res.users", [user.userId], { lang: code }),
+                async () => {
+                    await this.orm.write("res.users", [user.userId], { lang: code });
+                    if (!this.alive) return;
+                    // Odoo builds direction-specific assets using the HTTP
+                    // session's language. Refresh that session before reload,
+                    // otherwise the first page keeps the previous LTR/RTL CSS.
+                    const session = await rpc("/web/session/get_session_info", {});
+                    if (session?.user_context?.lang !== code) {
+                        throw new Error("The requested language is not active in the session.");
+                    }
+                },
                 15000,
                 _t("Changing language timed out. Reload the page before trying again."),
             );

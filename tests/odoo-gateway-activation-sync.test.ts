@@ -168,17 +168,17 @@ describe("Odoo Gateway activation synchronization", () => {
       expect(page).toContain("setInterval");
       // The page identity is localized now: the stable contract is the title
       // key plus its English value, not a literal sentence in the JSX.
-      expect(page).toContain('t("apiKeys.title")');
-      expect(read("src/i18n/messages/en.ts")).toContain('"apiKeys.title": "Odoo integration"');
+      expect(page).toContain('t("v4.connection.title")');
+      expect(read("src/i18n/messages/v4-onboarding.ts")).toContain('"v4.connection.title": "Connect Odoo"');
       // Localized at render time; assert the key, which is the stable contract.
       // Localized at render time; the key is the stable contract, not the copy.
       expect(page).toContain('t("apiKeys.connectOdoo")');
       expect(page).toContain("odooEnabledRevision");
-      expect(page).toContain('t("apiKeys.scope")');
+      expect(page).toContain('t("apiKeys.scopeNote")');
       expect(page).not.toContain("Document types");
       expect(page).toContain('t("apiKeys.retiring")');
       expect(page).toContain("readOnlyUntil");
-      expect(page).toContain('t("apiKeys.accessLevel")');
+      expect(page).toContain('t("v4.connection.advanced")');
     });
   });
 
@@ -235,7 +235,9 @@ describe("Odoo Gateway activation synchronization", () => {
     expect(view).toContain('name="filter_enabled"');
     expect(view).not.toContain('name="filter_attention"');
     expect(view).not.toContain('name="last_enabled_sync_revision"');
-    expect(view).toContain('name="last_enabled_sync_error" readonly="1"');
+    expect(view).toContain('name="gateway_sync_message" readonly="1"');
+    expect(view).not.toContain('name="last_enabled_sync_error" readonly="1"');
+    expect(model).toContain("customer_error_message");
 
     expect(model).toContain("def _disable_gateway_for_unlink");
     expect(model).toContain('json={"enabled": False, "revision": target_revision}');

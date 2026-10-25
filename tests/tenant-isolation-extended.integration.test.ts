@@ -1,8 +1,11 @@
 import { beforeAll, afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { db } from "../src/db";
-import { tenants, users, tenantUsers, managerSessions, printJobs } from "../src/db/schema";
-import { eq } from "drizzle-orm";
-import { validateWorkspaceManager } from "../src/lib/manager-auth";
+import { users, tenantUsers } from "../src/db/schema";
+import { validateWorkspaceManager, verifyWorkspaceToken, type ManagerClaims } from "../src/lib/manager-auth";
+import { hashPassword } from "../src/lib/password";
+import { randomBytes } from "node:crypto";
+import { createWorkspaceManagerTestSession } from "./helpers/workspace-session";
+import { gatewayTestSigningKey } from "./helpers/test-secrets";
 import { GET as timelineGET } from "../src/app/api/jobs/[id]/timeline/route";
 import { GET as teamMembersGET } from "../src/app/api/team/members/route";
 import { GET as billingStatusGET } from "../src/app/api/billing/status/route";
@@ -21,11 +24,8 @@ vi.mock("../src/lib/authorization", () => ({
 const suite = describe.skipIf(!hasTestDatabase);
 
 let currentTenant = "";
-vi.mocked(validateWorkspaceManager).mockImplementation(async () => ({
-  jti: "test-manager-jti-xiso", iat: Math.floor(Date.now() / 1000) - 10,
-  exp: Math.floor(Date.now() / 1000) + 3600, sub: "manager",
-  tenantId: currentTenant, userId: "user_xiso", role: "owner",
-}) as never);
+const currentClaims = new Map<string, ManagerClaims>();
+vi.mocked(validateWorkspaceManager).mockImplementation(async () => currentClaims.get(currentTenant) ?? null);
 
 function authed(url: string, init?: RequestInit): Request {
   return new Request(url, { ...init, headers: { ...(init?.headers ?? {}), cookie: "mgr_session=x" } });
@@ -35,16 +35,22 @@ suite("Tenant isolation extended vectors (J-6)", () => {
   beforeAll(async () => { await applyMigrations(); });
   beforeEach(async () => {
     await truncateAll();
+    currentClaims.clear();
     vi.stubEnv("APP_BASE_URL", "https://xiso.test");
+    vi.stubEnv("GATEWAY_JWT_SECRET", gatewayTestSigningKey());
   });
-  afterAll(async () => { await closePool(); });
+  afterAll(async () => { await closePool(); vi.unstubAllEnvs(); });
 
   async function twoTenants() {
     const a = await seedFixture();
     const b = await seedFixture();
-    await db.insert(users).values({ id: "user_xiso", email: "xiso@example.test", passwordHash: "unused" });
+    await db.insert(users).values({ id: "user_xiso", email: "xiso@example.test", passwordHash: await hashPassword(randomBytes(32).toString("base64url")), emailVerifiedAt: new Date() });
     for (const f of [a, b]) {
       await db.insert(tenantUsers).values({ userId: "user_xiso", tenantId: f.tenantId, role: "owner" });
+      const session = await createWorkspaceManagerTestSession(f.tenantId, { userId: "user_xiso", role: "owner" });
+      const claims = await verifyWorkspaceToken(session.token);
+      expect(claims).toMatchObject({ ver: 2, kind: "manager", tenantId: f.tenantId, role: "owner" });
+      currentClaims.set(f.tenantId, claims!);
     }
     return { a, b };
   }

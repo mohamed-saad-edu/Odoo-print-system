@@ -5,23 +5,32 @@ import { join } from 'node:path';
 import vm from 'node:vm';
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { sqlIdentifier, workspaceSessionFixture } from './helpers/workspace-session-vm.mjs';
+import { authorizationFixture } from './helpers/authorization-vm.mjs';
 const require = createRequire(import.meta.url);
 let ts;try{ts=require('typescript');}catch{ts=require(join(execFileSync('npm',['root','-g'],{encoding:'utf8'}).trim(),'typescript'));}
 const js=(path)=>ts.transpileModule(readFileSync(path,'utf8'),{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022},fileName:path}).outputText;
 const R='src/';
 let state;
 const frag=(strings,...args)=>({strings:[...strings],args});frag.join=(list,sep)=>({list,sep});
+frag.identifier=sqlIdentifier;
 const queryText=(e)=>!e||typeof e!=='object'?String(e):e.strings?e.strings.map((part,i)=>part+(i<e.args.length?queryText(e.args[i]):'')).join(''):e.list?e.list.map(queryText).join(queryText(e.sep)):String(e);
 const ctx=vm.createContext({console,Set,Map,Error,Request,Response,ReadableStream,TextEncoder,Number,Object});
 const mk=(mapping)=>new vm.SyntheticModule(Object.keys(mapping),function(){for(const [k,v] of Object.entries(mapping))this.setExport(k,v);},{context:ctx});
 const drizzle=mk({sql:frag,eq:(...args)=>args,and:(...args)=>args,desc:x=>x});
 const schema=mk({agents:{id:'id',tenantId:'tenantId'},discoverySessions:{agentId:'agentId',tenantId:'tenantId',status:'status',createdAt:'createdAt'},tenantUsers:{userId:'userId',tenantId:'tenantId'}});
-const auth=new vm.SourceTextModule(js(R+'lib/authorization.ts'),{context:ctx});await auth.link(()=>{throw Error('unexpected auth import')});await auth.evaluate();
-const guard=new vm.SourceTextModule(js(R+'lib/manager-mutation-authorization.ts'),{context:ctx});await guard.link((id)=>id==='drizzle-orm'?drizzle:id.endsWith('db/schema')?schema:auth);await guard.evaluate();
+const auth=await authorizationFixture(ctx);
+const workspace=await workspaceSessionFixture(ctx,drizzle);
+const claims=()=>({tenantId:'tenant',jti:'jti',exp:1900000000,ver:state.legacy?1:2,sid:state.legacy?undefined:'sid',role:state.role,userId:state.userless?undefined:'actor',familyId:state.legacy?undefined:'family',kind:state.customer?'customer':'manager'});
+const guard=new vm.SourceTextModule(js(R+'lib/manager-mutation-authorization.ts'),{context:ctx});await guard.link((id)=>{
+ if(id==='drizzle-orm')return drizzle;if(id.endsWith('db/schema'))return schema;if(id==='./authorization')return auth;if(id==='./workspace-session-security')return workspace.policy;
+ throw Error('Unexpected guard import '+id);
+});await guard.evaluate();
 const expiry=new vm.SourceTextModule(js(R+'lib/discovery-session-expiry.ts'),{context:ctx});await expiry.link(()=>drizzle);await expiry.evaluate();
 const tx={
  execute:async(q)=>{
   const t=queryText(q);state.events.push(t);
+  const policy=workspace.reply(t,claims(),state);if(policy)return policy;
   if(/FROM agents/i.test(t))return {rows:[{id:'agent',lifecycle:'active'}]};
   if(/FROM tenants/i.test(t))return {rows:[{lifecycle:state.activeTenant?'active':'suspended'}]};
   if(/FROM users/i.test(t))return {rows:[{id:'actor'}]};
@@ -51,7 +60,7 @@ const supports={
  'drizzle-orm':drizzle,
  '/db':mk({db:database}),
  '/db/schema':schema,
- '/lib/manager-auth':mk({validateWorkspaceManager:async()=>({tenantId:'tenant',jti:'jti',exp:1900000000,role:state.role,userId:state.userless?undefined:'actor',familyId:state.legacy?undefined:'family',kind:state.customer?'customer':'manager'})}),
+ '/lib/manager-auth':mk({validateWorkspaceManager:async()=>claims()}),
  '/lib/nanoid':mk({nanoid:()=> 'random'}),
  '/lib/discovery':mk({validateDiscoveryRequest:(payload)=>payload?.cidr?{ok:true,data:payload}:{ok:false,error:'invalid request'}}),
  '/lib/log':mk({logError:()=>{}}),
@@ -78,12 +87,21 @@ test('demotion after preflight, before body arrives rejects without write or NOT
 });
 test('revoked family after preflight also rejects without writes',async()=>{
  reset({familyActive:false});const r=await call({cidr:'192.168.10.0/24'});
- assert.equal(r.status,403);assert.equal(state.inserted.length,0);assert.equal(state.notifies,0);
+ assert.equal(r.status,401);assert.equal((await r.json()).code,'SESSION_EXPIRED');assert.equal(state.inserted.length,0);assert.equal(state.notifies,0);
 });
 test('operator forbidden before insertion',async()=>{reset({role:'operator',memberRole:'operator'});const r=await call({cidr:'192.168.10.0/24'});assert.equal(r.status,403);assert.equal(state.notifies,0);});
 test('malformed request does not insert even for admin',async()=>{reset();const r=await call({bad:true});assert.equal(r.status,400);assert.equal(state.inserted.length,0);});
-test('userless bootstrap session is admitted for supported agent pairing operation',async()=>{reset({userless:true});const r=await call({cidr:'192.168.10.0/24'});assert.equal(r.status,201);});
-test('legacy session revocation rejects when token lacks family',async()=>{reset({legacy:true,legacySessionActive:false});const r=await call({cidr:'192.168.10.0/24'});assert.equal(r.status,403);assert.equal(state.inserted.length,0);});
+test('configured userless environment owner with bound fresh v2 proof is admitted for pairing',async()=>{reset({userless:true,role:'owner',memberRole:'owner'});const r=await call({cidr:'192.168.10.0/24'});assert.equal(r.status,201);assert.equal(state.inserted.length,1);assert.equal(state.notifies,1);});
+test('legacy session revocation rejects when token lacks family',async()=>{reset({legacy:true,legacySessionActive:false});const r=await call({cidr:'192.168.10.0/24'});assert.equal(r.status,401);assert.equal((await r.json()).code,'SESSION_EXPIRED');assert.equal(state.inserted.length,0);assert.equal(state.notifies,0);});
+test('stale password proof requires confirmation before insertion or NOTIFY',async()=>{
+ reset({staleProof:true});const r=await call({cidr:'192.168.10.0/24'});
+ assert.equal(r.status,403);assert.equal((await r.json()).code,'WORKSPACE_REAUTHENTICATION_REQUIRED');assert.equal(r.headers.get('X-Yaseir-Reauthentication'),'required');
+ assert.equal(state.inserted.length,0);assert.equal(state.notifies,0);assert.equal(state.expiries,0);
+});
+test('missing or changed credential proof refuses discovery without writes',async()=>{
+ for(const changes of [{missingProof:true},{changedCredential:true}]){reset(changes);const r=await call({cidr:'192.168.10.0/24'});
+  assert.equal(r.status,401);assert.equal((await r.json()).code,'SESSION_EXPIRED');assert.equal(state.inserted.length,0);assert.equal(state.notifies,0);}
+});
 test('suspension rejects before Agent lock, discovery insert or NOTIFY',async()=>{
  reset({activeTenant:false});const r=await call({cidr:'192.168.10.0/24'});assert.equal(r.status,403);
  assert.equal(state.events.length,1);assert.match(state.events[0],/FROM tenants.*FOR SHARE/s);

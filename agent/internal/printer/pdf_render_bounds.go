@@ -8,6 +8,21 @@ import (
 // Bound one rendered page independently of backend, paper form and source size.
 const maxPDFRenderPixels = 16_000_000 // <= 64 MiB of 32-bit pixel storage.
 
+// PDFium preserves the PDF's square-pixel aspect ratio. Render at the denser
+// driver axis before GDI maps it to independent device axes; a 600x300 driver
+// otherwise loses half of its horizontal image detail.
+func renderBoundsForDPI(width, height, dpiX, dpiY int) (int, int, error) {
+	if width < 1 || height < 1 || dpiX < 1 || dpiY < 1 {
+		return 0, 0, fmt.Errorf("invalid PDF render geometry or DPI")
+	}
+	density := float64(max(dpiX, dpiY))
+	w, h := math.Ceil(float64(width)*density/float64(dpiX)), math.Ceil(float64(height)*density/float64(dpiY))
+	if math.IsInf(w, 0) || math.IsInf(h, 0) || w > math.MaxInt32 || h > math.MaxInt32 {
+		return 0, 0, fmt.Errorf("PDF render dimensions exceed software limits")
+	}
+	return renderBounds(int(w), int(h))
+}
+
 func renderBounds(printableWidth, printableHeight int) (int, int, error) {
 	if printableWidth <= 0 || printableHeight <= 0 {
 		return 0, 0, fmt.Errorf("printer reported invalid printable area %dx%d", printableWidth, printableHeight)

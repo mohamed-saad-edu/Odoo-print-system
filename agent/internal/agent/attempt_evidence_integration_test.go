@@ -31,7 +31,7 @@ func TestProcessJobDoesNotAttributePreviousSpoolerIdentity(t *testing.T) {
 			id := "job-attempt-" + mode
 			ag.processJob(context.Background(), map[string]interface{}{
 				"id": id, "agentId": "agt_test", "printerId": "p1", "status": "claimed",
-				"payload": makeJobPayload(id), "expiresAt": time.Now().Add(time.Hour).Format(time.RFC3339), "claimToken": "claim-" + id,
+				"payload": makeJobPayload(id), "expiresAt": time.Now().Add(time.Hour).Format(time.RFC3339), "claimToken": "claim-" + id, "bindingDigest": testDefaultPrinterBinding(),
 			})
 			ag.waitForJobs()
 			reports, err := ag.queue.PendingTerminalReports(8)

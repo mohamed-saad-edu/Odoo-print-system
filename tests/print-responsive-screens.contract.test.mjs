@@ -11,7 +11,8 @@ test("Gateway printer cards remain available on phones for both view preferences
   assert.match(dashboard, /printerViewMode === "table" \? "xl:hidden" : ""/);
   assert.match(dashboard, /className="hidden min-w-0 overflow-x-auto xl:block"/);
   assert.match(dashboard, /className="hidden xl:block"/);
-  assert.match(dashboard, /grid-cols-1 items-start gap-5 xl:grid-cols-12/);
+  assert.match(dashboard, /className="grid min-w-0 grid-cols-1 items-start gap-5"/);
+  assert.match(dashboard, /grid min-w-0 gap-3 p-3 sm:grid-cols-2 sm:p-4/);
 });
 
 test("Gateway console constrains mobile width and keeps overlays usable", () => {

@@ -1,3 +1,4 @@
+import { validateFileOutputEvidence } from "../lib/print-output";
 // ============================================================
 // Single source of truth for operator-facing status vocabulary.
 // Web console, desktop app and the Odoo screens must render the
@@ -47,6 +48,7 @@ export type JobFailureKind = "capability_mismatch" | "unsupported_transport" | "
 
 export function classifyJobFailure(error?: string | null): JobFailureKind | null {
   const value = (error ?? "").toUpperCase();
+  if (UNKNOWN_OUTCOME_MARKERS.some((marker) => value.startsWith(marker))) return null;
   if (value.includes("CAPABILITY_MISMATCH")) return "capability_mismatch";
   if (value.includes("ERR_UNSUPPORTED_TRANSPORT") || value.includes("UNSUPPORTED_TRANSPORT")) return "unsupported_transport";
   if (value.includes("UNSUPPORTED_PROTOCOL") || value.includes("UNSUPPORTED PROTOCOL")) return "unsupported_protocol";
@@ -185,21 +187,20 @@ export function jobLabel(status: string, outcome?: PhysicalOutcome, locale: Loca
   const word = (key: MessageKey) => translate(locale, key);
   switch (status.toLowerCase()) {
     case "queued":
-      return word("job.queued");
+      return word("v4.experience.job.waiting");
     case "claimed":
-      return word("job.claimed");
+      return word("v4.experience.job.processing");
     case "printing":
-      return word("job.printing");
+      return word("v4.experience.job.processing");
     case "success":
-      return word(outcome === "printed" ? "job.success" : "job.successUnverified");
+      return word(outcome === "printed" ? "job.success" : "v4.experience.job.sent");
     case "failed":
-      return outcome === "unknown" ? word("job.failedUnknown") : word("job.failed");
+      return outcome === "unknown" ? word("v4.experience.job.review") : word("v4.experience.job.failed");
     case "expired":
-      return outcome === "unknown" ? word("job.expiredUnknown") : word("job.expired");
+      return outcome === "unknown" ? word("v4.experience.job.review") : word("v4.experience.job.expired");
     default:
-      // An unrecognised backend state is shown verbatim: inventing a friendly
-      // word for a state we do not model would misreport the job.
-      return status;
+      // Keep unknown internal states out of customer copy without claiming success.
+      return word("v4.experience.job.unknown");
   }
 }
 
@@ -207,9 +208,22 @@ export function jobDisplayLabel(
   status: string,
   error?: string | null,
   locale: Locale = DEFAULT_LOCALE,
+  output?: { outputMedium?: unknown; outputEvidence?: unknown },
 ): string {
-  const failure = status.toLowerCase() === "failed" ? jobFailurePresentation(error, locale) : null;
-  return failure?.title ?? jobLabel(status, deriveOutcome(status, error), locale);
+  if (output?.outputMedium === "file") {
+    if (status === "success") return translate(locale, validateFileOutputEvidence(output.outputEvidence) ? "printer.verification.fileCreated" : "printer.verification.fileUncertain");
+    if (status === "queued" || status === "claimed") return translate(locale, "printer.verification.fileQueued");
+    if (status === "printing") return translate(locale, "printer.verification.fileCreating");
+    return translate(locale, deriveOutcome(status, error) === "unknown" ? "printer.verification.fileUncertain" : "printer.verification.fileFailed");
+  }
+  // Unknown-outcome markers always win over any secondary failure text.
+  // Specific technical failure guidance belongs in details, not status badges.
+  const outcome = deriveOutcome(status, error);
+  if (status === "failed" && outcome === "not_printed" &&
+      /^(AGENT_DELETED|PRINTER_REMOVED): Cancelled before delivery/.test(error ?? "")) {
+    return translate(locale, "v4.experience.job.canceled");
+  }
+  return jobLabel(status, outcome, locale);
 }
 
 /** One-sentence operator guidance for the current job state. */

@@ -33,7 +33,11 @@ pub fn ensure_manager_data_root() -> std::io::Result<PathBuf> {
         return Err(admin_required_error("manager data dir", &primary, &e));
     }
     if let Err(e) = ensure_manager_directory_security(&primary) {
-        return Err(admin_required_error("secure manager data dir", &primary, &e));
+        return Err(admin_required_error(
+            "secure manager data dir",
+            &primary,
+            &e,
+        ));
     }
     let _ = MANAGER_DATA_ROOT.set(primary.clone());
     Ok(primary)
@@ -59,7 +63,7 @@ fn development_data_override(names: &[&str]) -> Option<PathBuf> {
 
 #[cfg(windows)]
 fn windows_known_folder_root(folder_id: Guid) -> Option<PathBuf> {
-    use std::ffi::{c_void, OsString};
+    use std::ffi::{OsString, c_void};
     use std::os::windows::ffi::OsStringExt;
 
     #[link(name = "shell32")]
@@ -251,13 +255,21 @@ pub fn autostart_choice_path() -> Result<PathBuf, String> {
         if let Some(root) = windows_known_folder_root(FOLDERID_LOCAL_APPDATA) {
             return Ok(root.join("YaseirManager").join("autostart-user-choice"));
         }
-        return Err("LocalAppData is unavailable; cannot persist a per-user autostart choice".into());
+        return Err(
+            "LocalAppData is unavailable; cannot persist a per-user autostart choice".into(),
+        );
     }
     #[cfg(not(windows))]
     {
-        let root = std::env::var("LOCALAPPDATA").map_err(|_| "LOCALAPPDATA is unavailable; cannot persist a per-user autostart choice")?;
-        if root.trim().is_empty() { return Err("LOCALAPPDATA is empty".into()); }
-        Ok(PathBuf::from(root).join("YaseirManager").join("autostart-user-choice"))
+        let root = std::env::var("LOCALAPPDATA").map_err(
+            |_| "LOCALAPPDATA is unavailable; cannot persist a per-user autostart choice",
+        )?;
+        if root.trim().is_empty() {
+            return Err("LOCALAPPDATA is empty".into());
+        }
+        Ok(PathBuf::from(root)
+            .join("YaseirManager")
+            .join("autostart-user-choice"))
     }
 }
 
@@ -461,7 +473,10 @@ fn manager_file_is_writable(path: &Path) -> std::io::Result<bool> {
 }
 
 #[cfg(windows)]
-fn verify_windows_manager_readonly_security(path: &Path, is_directory: bool) -> std::io::Result<()> {
+fn verify_windows_manager_readonly_security(
+    path: &Path,
+    is_directory: bool,
+) -> std::io::Result<()> {
     reject_windows_reparse_point(path)?;
     if !manager_path_owned_by_administrators(path)? {
         return Err(std::io::Error::new(
@@ -517,7 +532,12 @@ fn well_known_manager_trustee(sid: &[u8]) -> ManagerTrustee {
         return ManagerTrustee::Other;
     }
     let sub = |i: usize| {
-        u32::from_le_bytes([sid[8 + 4 * i], sid[8 + 4 * i + 1], sid[8 + 4 * i + 2], sid[8 + 4 * i + 3]])
+        u32::from_le_bytes([
+            sid[8 + 4 * i],
+            sid[8 + 4 * i + 1],
+            sid[8 + 4 * i + 2],
+            sid[8 + 4 * i + 3],
+        ])
     };
     if count == 1 && sub(0) == 18 {
         return ManagerTrustee::System;
@@ -552,7 +572,9 @@ fn decode_manager_ace(bytes: &[u8]) -> Result<(ManagerTrustee, u32, u8), String>
         return Ok((ManagerTrustee::Other, 0, ace_type));
     }
     if ace_type != ACCESS_ALLOWED_ACE_TYPE {
-        return Err(format!("unsupported granting or unknown ACE type {ace_type:#04x}"));
+        return Err(format!(
+            "unsupported granting or unknown ACE type {ace_type:#04x}"
+        ));
     }
     // ACCESS_ALLOWED_ACE: header4 + mask4 + SID header8 + subauthorities.
     if bytes.len() < 20 {
@@ -596,7 +618,9 @@ fn verify_manager_dacl_entries(
             continue;
         }
         if *ace_type != ACCESS_ALLOWED_ACE_TYPE {
-            return Err(format!("unsupported granting or unknown ACE type {ace_type:#04x} on {context}"));
+            return Err(format!(
+                "unsupported granting or unknown ACE type {ace_type:#04x} on {context}"
+            ));
         }
         match trustee {
             ManagerTrustee::System | ManagerTrustee::Administrators => {}
@@ -707,7 +731,9 @@ fn read_manager_dacl_entries(path: &Path) -> std::io::Result<Vec<(ManagerTrustee
             }
             let used = size_info.acl_bytes_in_use as usize;
             let offset = (ace as usize).checked_sub(dacl as usize);
-            if offset.is_none_or(|start| start < 8 || start.checked_add(4).is_none_or(|end| end > used)) {
+            if offset
+                .is_none_or(|start| start < 8 || start.checked_add(4).is_none_or(|end| end > used))
+            {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
                     "Manager runtime path has an ACE outside its ACL buffer",
@@ -717,7 +743,11 @@ fn read_manager_dacl_entries(path: &Path) -> std::io::Result<Vec<(ManagerTrustee
             // declared, ACL-contained ACE reaches the safe layout decoder.
             let header = unsafe { std::slice::from_raw_parts(ace as *const u8, 4) };
             let ace_size = u16::from_le_bytes([header[2], header[3]]) as usize;
-            if ace_size < 4 || offset.and_then(|start| start.checked_add(ace_size)).is_none_or(|end| end > used) {
+            if ace_size < 4
+                || offset
+                    .and_then(|start| start.checked_add(ace_size))
+                    .is_none_or(|end| end > used)
+            {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
                     "Manager runtime path has an ACE size outside its ACL buffer",
@@ -743,7 +773,11 @@ fn verify_windows_manager_dacl_exact(path: &Path, is_directory: bool) -> std::io
     verify_manager_dacl_entries(&entries, kind).map_err(|detail| {
         std::io::Error::new(
             std::io::ErrorKind::PermissionDenied,
-            format!("Manager runtime {} has an unexpected DACL ({}): {detail}", kind, path.display()),
+            format!(
+                "Manager runtime {} has an unexpected DACL ({}): {detail}",
+                kind,
+                path.display()
+            ),
         )
     })
 }
@@ -862,7 +896,9 @@ pub fn ensure_runtime_dirs() -> std::io::Result<()> {
 
 #[cfg(test)]
 mod manager_dacl_tests {
-    use super::{decode_manager_ace, well_known_manager_trustee, verify_manager_dacl_entries, ManagerTrustee};
+    use super::{
+        ManagerTrustee, decode_manager_ace, verify_manager_dacl_entries, well_known_manager_trustee,
+    };
 
     fn sid(subauthorities: &[u32]) -> Vec<u8> {
         let mut out = vec![1u8, subauthorities.len() as u8, 0, 0, 0, 0, 0, 5];
@@ -874,7 +910,10 @@ mod manager_dacl_tests {
 
     #[test]
     fn well_known_sids_classify_by_value() {
-        assert_eq!(well_known_manager_trustee(&sid(&[18])), ManagerTrustee::System);
+        assert_eq!(
+            well_known_manager_trustee(&sid(&[18])),
+            ManagerTrustee::System
+        );
         assert_eq!(
             well_known_manager_trustee(&sid(&[32, 544])),
             ManagerTrustee::Administrators
@@ -884,8 +923,14 @@ mod manager_dacl_tests {
             ManagerTrustee::Users
         );
         // Everyone, malformed headers and truncated buffers are Other.
-        assert_eq!(well_known_manager_trustee(&sid(&[0])), ManagerTrustee::Other);
-        assert_eq!(well_known_manager_trustee(&[1, 1, 0]), ManagerTrustee::Other);
+        assert_eq!(
+            well_known_manager_trustee(&sid(&[0])),
+            ManagerTrustee::Other
+        );
+        assert_eq!(
+            well_known_manager_trustee(&[1, 1, 0]),
+            ManagerTrustee::Other
+        );
         assert_eq!(well_known_manager_trustee(&[]), ManagerTrustee::Other);
         assert_eq!(
             well_known_manager_trustee(&sid(&[32, 544])[..15]),
@@ -897,9 +942,21 @@ mod manager_dacl_tests {
     fn intended_manager_dacl_passes() {
         use super::ACCESS_ALLOWED_ACE_TYPE;
         let entries = [
-            (ManagerTrustee::System, 0x001F_01FFu32, ACCESS_ALLOWED_ACE_TYPE),
-            (ManagerTrustee::Administrators, 0x001F_01FFu32, ACCESS_ALLOWED_ACE_TYPE),
-            (ManagerTrustee::Users, 0x0012_00A9u32, ACCESS_ALLOWED_ACE_TYPE),
+            (
+                ManagerTrustee::System,
+                0x001F_01FFu32,
+                ACCESS_ALLOWED_ACE_TYPE,
+            ),
+            (
+                ManagerTrustee::Administrators,
+                0x001F_01FFu32,
+                ACCESS_ALLOWED_ACE_TYPE,
+            ),
+            (
+                ManagerTrustee::Users,
+                0x0012_00A9u32,
+                ACCESS_ALLOWED_ACE_TYPE,
+            ),
         ];
         assert!(verify_manager_dacl_entries(&entries, "directory").is_ok());
     }
@@ -908,12 +965,28 @@ mod manager_dacl_tests {
     fn third_party_full_control_grant_fails() {
         use super::ACCESS_ALLOWED_ACE_TYPE;
         let entries = [
-            (ManagerTrustee::System, 0x001F_01FFu32, ACCESS_ALLOWED_ACE_TYPE),
-            (ManagerTrustee::Administrators, 0x001F_01FFu32, ACCESS_ALLOWED_ACE_TYPE),
-            (ManagerTrustee::Users, 0x0012_00A9u32, ACCESS_ALLOWED_ACE_TYPE),
+            (
+                ManagerTrustee::System,
+                0x001F_01FFu32,
+                ACCESS_ALLOWED_ACE_TYPE,
+            ),
+            (
+                ManagerTrustee::Administrators,
+                0x001F_01FFu32,
+                ACCESS_ALLOWED_ACE_TYPE,
+            ),
+            (
+                ManagerTrustee::Users,
+                0x0012_00A9u32,
+                ACCESS_ALLOWED_ACE_TYPE,
+            ),
             // Pre-created explicit grant for an unrelated trustee: this is
             // exactly what /grant:r leaves behind, and it must fail.
-            (ManagerTrustee::Other, 0x001F_01FFu32, ACCESS_ALLOWED_ACE_TYPE),
+            (
+                ManagerTrustee::Other,
+                0x001F_01FFu32,
+                ACCESS_ALLOWED_ACE_TYPE,
+            ),
         ];
         assert!(verify_manager_dacl_entries(&entries, "directory").is_err());
     }
@@ -964,7 +1037,10 @@ mod manager_dacl_tests {
         let mut ace = vec![0, 0, (8 + trustee.len()) as u8, 0];
         ace.extend_from_slice(&0x0012_00a9u32.to_le_bytes());
         ace.extend_from_slice(&trustee);
-        assert_eq!(decode_manager_ace(&ace).unwrap(), (ManagerTrustee::Users, 0x0012_00a9, 0));
+        assert_eq!(
+            decode_manager_ace(&ace).unwrap(),
+            (ManagerTrustee::Users, 0x0012_00a9, 0)
+        );
         assert!(verify_manager_dacl_entries(&[decode_manager_ace(&ace).unwrap()], "file").is_ok());
         for end in 0..ace.len() {
             assert!(decode_manager_ace(&ace[..end]).is_err(), "truncation {end}");
@@ -1005,9 +1081,12 @@ mod manager_dacl_tests {
             .arg("*S-1-1-0:(OI)(CI)F")
             .output()
             .expect("icacls grant");
-        assert!(grant.status.success(), "test setup: pre-grant Everyone FullControl");
-        let verify_err =
-            verify_windows_manager_dacl_exact(&dir, true).expect_err("foreign FullControl grant must fail exact-DACL verification");
+        assert!(
+            grant.status.success(),
+            "test setup: pre-grant Everyone FullControl"
+        );
+        let verify_err = verify_windows_manager_dacl_exact(&dir, true)
+            .expect_err("foreign FullControl grant must fail exact-DACL verification");
         assert!(
             verify_err.to_string().contains("unexpected trustee"),
             "unexpected error (wanted trustee rejection): {verify_err}"

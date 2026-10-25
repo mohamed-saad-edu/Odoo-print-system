@@ -12,9 +12,9 @@ describe("printer-capability-matrix", () => {
     expect(isIppTransport("network", "ipp")).toBe(true);
   });
 
-  it("Spooler transport supports pdf/image by default (raw passthrough needs explicit declaration)", () => {
+  it("Spooler transport retains PDF while images require verified geometry", () => {
     expect(getSupportedDocumentTypes("spooler", "spooler")).toContain("pdf");
-    expect(getSupportedDocumentTypes("spooler", "spooler")).toContain("image");
+    expect(getSupportedDocumentTypes("spooler", "spooler")).not.toContain("image");
     expect(getSupportedDocumentTypes("spooler", "spooler")).not.toContain("raw");
     expect(getSupportedDocumentTypes("windows_spooler", "spooler")).not.toContain("escpos");
     expect(isSpoolerTransport("spooler", "spooler")).toBe(true);
@@ -23,7 +23,7 @@ describe("printer-capability-matrix", () => {
   });
 
   it("keeps legacy windows_spooler protocol scoped to a spooler transport", () => {
-    expect(getSupportedDocumentTypes("windows_spooler", "spooler")).toEqual(["pdf", "image"]);
+    expect(getSupportedDocumentTypes("windows_spooler", "spooler")).toEqual(["pdf"]);
     expect(getSupportedDocumentTypes("windows_spooler", "network")).toEqual([]);
     expect(getSupportedDocumentTypes("ipps", "network")).toEqual(["pdf"]);
   });
@@ -167,9 +167,9 @@ describe("printer-capability-matrix", () => {
   });
 
   it("keeps document-transport baseline while explicit byte capabilities stay additive", () => {
-    expect(getSupportedDocumentTypes("spooler", "spooler", { supported_protocols: [] })).toEqual(["pdf", "image"]);
-    expect(getSupportedDocumentTypes("spooler", "spooler", { supported_protocols: ["escpos"] })).toEqual(["pdf", "image", "raw", "escpos"]);
-    expect(getSupportedDocumentTypes("spooler", "spooler", { supported_protocols: ["raw"] })).toEqual(["pdf", "image", "raw"]);
+    expect(getSupportedDocumentTypes("spooler", "spooler", { supported_protocols: [] })).toEqual(["pdf"]);
+    expect(getSupportedDocumentTypes("spooler", "spooler", { supported_protocols: ["escpos"] })).toEqual(["pdf", "raw", "escpos"]);
+    expect(getSupportedDocumentTypes("spooler", "spooler", { supported_protocols: ["raw"] })).toEqual(["pdf", "raw"]);
     expect(getSupportedDocumentTypes("escpos", "usb", { supported_protocols: ["image", "escpos"] })).not.toContain("image");
     expect(getSupportedDocumentTypes("raw", "network", { supported_protocols: ["pdf"] })).toEqual([]);
     expect(getSupportedDocumentTypes("ipp", "ipp", { supported_protocols: ["image"] })).toEqual(["pdf"]);
@@ -186,8 +186,8 @@ describe("physical IPP transport must not be inferred from a bare protocol label
 it("uses the same declared capability tokens for binding, matrix and admission", () => {
   const capabilities = { supported_protocols: [" ESCPOS "] };
   expect(validatePayloadForPrinter({ type: "escpos", protocol: "escpos" }, { connectionType: "network", protocol: "escpos", capabilities }).ok).toBe(true);
-  expect(getSupportedDocumentTypes("escpos", "network", capabilities)).toEqual(["escpos", "raw", "image"]);
-  expect(getSupportedDocumentTypes("spooler", "spooler", capabilities)).toEqual(["pdf", "image", "raw", "escpos"]);
+  expect(getSupportedDocumentTypes("escpos", "network", capabilities)).toEqual(["escpos", "raw"]);
+  expect(getSupportedDocumentTypes("spooler", "spooler", capabilities)).toEqual(["pdf", "raw", "escpos"]);
   expect(validatePayloadForPrinter({ type: "escpos", protocol: "escpos" }, { connectionType: "network", protocol: "raw", capabilities }).ok).toBe(false);
 });
 
@@ -205,5 +205,5 @@ it("never coerces malformed capability values into printer language permissions"
   expect(validatePayloadForPrinter({ type: "escpos", protocol: "escpos" }, { connectionType: "network", protocol: "escpos", capabilities }).ok).toBe(false);
   expect(getSupportedDocumentTypes("escpos", "network", capabilities)).toEqual([]);
   expect(() => buildTestPrintPayloadForPrinter("Receipt", "Agent", { connectionType: "network", protocol: "escpos", capabilities })).toThrow(/no supported test ticket/);
-  expect(getSupportedDocumentTypes("spooler", "spooler", capabilities)).toEqual(["pdf", "image"]);
+  expect(getSupportedDocumentTypes("spooler", "spooler", capabilities)).toEqual(["pdf"]);
 });

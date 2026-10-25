@@ -1,3 +1,4 @@
+import { verifiedPrinterState } from "./helpers/printer-verification";
 import { describe, expect, it } from "vitest";
 import { validatePrintJobPayload, buildTestPrintPayloadForPrinter } from "../src/lib/payload";
 import { validatePayloadForPrinter, isPrinterAvailableForJob } from "../src/lib/routing";
@@ -93,7 +94,7 @@ describe("System Interface Contracts (Section 36)", () => {
     it("verifies routing availability gating for active printers", () => {
       const now = new Date();
       const freshAgent = { lifecycle: "active", status: "online", lastSeenAt: now };
-      const onlinePrinter = { lifecycle: "active", status: "online", lastSeenAt: now };
+      const onlinePrinter = { ...verifiedPrinterState("verified-system", now), lifecycle: "active", status: "online", lastSeenAt: now };
 
       expect(isPrinterAvailableForJob(onlinePrinter, freshAgent, now)).toBe(true);
 

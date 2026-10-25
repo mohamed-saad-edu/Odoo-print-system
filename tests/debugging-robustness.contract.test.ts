@@ -21,7 +21,6 @@ describe("debugging / robustness contracts", () => {
     for (const path of [
       "src/components/JobTimeline.tsx",
       "src/components/PrintCertificationWizard.tsx",
-      "src/app/api-keys/page.tsx",
     ]) {
       const source = read(path);
       expect(source).not.toMatch(/catch\s*\([^)]*:\s*any\)/);
@@ -30,6 +29,12 @@ describe("debugging / robustness contracts", () => {
       // keeps the same guarantee without surfacing "[object Object]" copy.
       expect(source).toMatch(/e instanceof Error \? e\.message : (String\(e\)|t\(")/);
     }
+    // V4 connection errors deliberately discard raw backend exception text.
+    const connection = read("src/app/api-keys/page.tsx");
+    expect(connection).not.toMatch(/catch\s*\([^)]*:\s*any\)/);
+    expect(connection).toContain('catch { setError(t("apiKeys.operationFailed")); }');
+    expect(connection).toContain('t(codeMessageKey(b.code) ?? "apiKeys.operationFailed")');
+    expect(connection).not.toMatch(/setError\((?:e|error)\.message\)/);
   });
 
   it("keeps verification-email role handling fail-closed and typed", () => {

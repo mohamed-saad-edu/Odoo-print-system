@@ -35,6 +35,7 @@ type desiredPrinterRecord struct {
 	ObservedDesiredRevision         int64              `json:"observedDesiredRevision"`
 	ObservedSupportedProtocols      []string           `json:"observedSupportedProtocols,omitempty"`
 	ObservedSupportedProtocolsKnown bool               `json:"observedSupportedProtocolsKnown,omitempty"`
+	ObservedIPPUUID                 string             `json:"observedIPPUUID,omitempty"`
 	ApplyError                      string             `json:"applyError,omitempty"`
 }
 
@@ -181,7 +182,11 @@ func (a *Agent) markGatewayOwned(id string) {
 func (a *Agent) persistDesiredState() error {
 	a.desiredStatePersistMu.Lock()
 	defer a.desiredStatePersistMu.Unlock()
+	return a.persistDesiredStateLocked()
+}
 
+// Caller holds desiredStatePersistMu, including identity-before-print writes.
+func (a *Agent) persistDesiredStateLocked() error {
 	a.desiredStateMu.Lock()
 	rows := make([]desiredPrinterRecord, 0, len(a.desiredStates))
 	for _, row := range a.desiredStates {
@@ -486,42 +491,57 @@ func desiredPrinterConfig(row desiredPrinterRecord) config.PrinterConfig {
 			"supported_protocols": append([]string(nil), row.ObservedSupportedProtocols...),
 		}
 	}
-	// Observed capabilities must not override configured paper geometry.
-	// Conversely, a nominal 80mm roll does not establish 576 printable dots:
-	// 180dpi devices can have 512. Apply only explicitly configured hardware
-	// dot width/DPI, independent of discovered or inferred protocols.
-	transport := (config.PrinterConfig{Type: p.ConnectionType, SpoolerName: desiredStringValue(p.Config, "spooler_name")}).NormalizedType()
-	maxDots := 576
-	if transport == "spooler" {
-		maxDots = printer.MaxJPEGDimension
+	if uuid := printer.VerifiedIPPUUIDFromCapabilities(map[string]interface{}{"ipp_printer_uuid": row.ObservedIPPUUID}); uuid != "" {
+		if capabilities == nil {
+			capabilities = make(map[string]interface{})
+		}
+		capabilities["ipp_printer_uuid"] = uuid
 	}
-	if dots := desiredNumberValue(p.Config, "max_paper_width"); dots >= 288 && dots <= maxDots {
+	// Explicit profiles carry units and optional measurements; never infer a
+	// printable width from nominal media or restrict measured widths to 576.
+	var geometryProfile *config.GeometryProfile
+	if raw, present := p.Config["geometry_profile"]; present {
+		geometryProfile, _ = printer.ParseGeometryProfile(raw)
+		if geometryProfile == nil {
+			geometryProfile = &config.GeometryProfile{}
+		}
+	}
+	if dots := desiredNumberValue(p.Config, "max_paper_width"); dots > 128 && dots <= printer.MaxJPEGDimension {
 		if capabilities == nil {
 			capabilities = make(map[string]interface{})
 		}
 		capabilities["max_paper_width"] = dots
 	}
-	if dpi := desiredNumberValue(p.Config, "print_dpi"); dpi > 0 && (transport == "spooler" || dpi == 180 || dpi == 203) {
+	if dpi := desiredNumberValue(p.Config, "print_dpi"); dpi > 0 && dpi <= 9600 {
 		if capabilities == nil {
 			capabilities = make(map[string]interface{})
 		}
 		capabilities["print_dpi"] = dpi
 	}
+	if command, ok := p.Config["raster_command"].(string); ok {
+		if capabilities == nil {
+			capabilities = make(map[string]interface{})
+		}
+		capabilities["raster_command"] = command
+	}
 	return config.PrinterConfig{
-		ID:             p.ID,
-		Name:           p.Name,
-		Type:           p.ConnectionType,
-		Endpoint:       desiredEndpoint(p.Config, p.ConnectionType),
-		Protocol:       p.Protocol,
-		SpoolerName:    desiredStringValue(p.Config, "spooler_name"),
-		ConnectionType: p.ConnectionType,
-		PrinterType:    p.PrinterType,
-		USBVID:         desiredUSBIdentity(p.Config, "vid"),
-		USBPID:         desiredUSBIdentity(p.Config, "pid"),
-		USBSerial:      desiredStringValue(p.Config, "serial"),
-		Capabilities:   capabilities,
-		PaperWidthMM:   desiredPaperWidthMM(p.Config),
-		Enabled:        &enabled,
+		ID:                     p.ID,
+		Name:                   p.Name,
+		Type:                   p.ConnectionType,
+		Endpoint:               desiredEndpoint(p.Config, p.ConnectionType),
+		Protocol:               p.Protocol,
+		OutputProfileID:        desiredStringValue(p.Config, "output_profile_id"),
+		SpoolerName:            desiredStringValue(p.Config, "spooler_name"),
+		ConnectionType:         p.ConnectionType,
+		PrinterType:            p.PrinterType,
+		USBVID:                 desiredUSBIdentity(p.Config, "vid"),
+		USBPID:                 desiredUSBIdentity(p.Config, "pid"),
+		USBSerial:              desiredStringValue(p.Config, "serial"),
+		Capabilities:           capabilities,
+		PaperWidthMM:           desiredPaperWidthMM(p.Config),
+		GeometryProfile:        geometryProfile,
+		ExplicitLegacyGeometry: p.Config["max_paper_width"] != nil,
+		Enabled:                &enabled,
 	}
 }
 
@@ -553,7 +573,15 @@ func (a *Agent) applyDesiredPrinter(row desiredPrinterRecord) error {
 			return fmt.Errorf("initialize printer %s at desired revision %d: %w", row.Desired.ID, row.Desired.DesiredRevision, err)
 		}
 	}
-	pc := desiredPrinterConfig(row)
+	if raw, present := row.Desired.Config["geometry_profile"]; present {
+		if _, err := printer.ParseGeometryProfile(raw); err != nil {
+			return fmt.Errorf("invalid printer geometry profile: %w", err)
+		}
+	}
+	pc, err := a.resolvedDesiredPrinterConfig(row)
+	if err != nil {
+		return err
+	}
 	if a.localPrinterBindingDisabled(pc) {
 		return fmt.Errorf("printer %s execution binding is disabled by local operator configuration", pc.ID)
 	}
@@ -587,6 +615,7 @@ func (a *Agent) applyDesiredPrinter(row desiredPrinterRecord) error {
 		a.printersMu.Unlock()
 		return fmt.Errorf("defer printer %s desired revision %d: a prior print session may still own the transport", pc.ID, row.Desired.DesiredRevision)
 	}
+	a.attachPrinterIdentityPersistence(backend, pc)
 	a.printers[pc.ID] = backend
 	a.printerConfigs[pc.ID] = pc
 	a.setProbeLastStatus(pc.ID, "unknown")
@@ -600,6 +629,7 @@ func samePrinterTransportBinding(left, right config.PrinterConfig) bool {
 	return left.NormalizedType() == right.NormalizedType() &&
 		left.NormalizedProtocolOrUnknown() == right.NormalizedProtocolOrUnknown() &&
 		left.Endpoint == right.Endpoint && left.SpoolerName == right.SpoolerName &&
+		left.OutputProfileID == right.OutputProfileID && left.PDFOutputDirectory == right.PDFOutputDirectory &&
 		strings.EqualFold(left.USBVID, right.USBVID) && strings.EqualFold(left.USBPID, right.USBPID) &&
 		left.USBSerial == right.USBSerial
 }
@@ -611,6 +641,11 @@ func desiredRecordForUpdate(current desiredPrinterRecord, desired desiredPrinter
 	if !samePrinterTransportBinding(desiredPrinterConfig(current), desiredPrinterConfig(row)) {
 		row.ObservedSupportedProtocols = nil
 		row.ObservedSupportedProtocolsKnown = false
+		// Equivalent IPP URI spellings still select the established physical
+		// destination; changing display syntax is not an identity reset.
+		if !sameIPPIdentityBinding(desiredPrinterConfig(current), desiredPrinterConfig(row)) {
+			row.ObservedIPPUUID = ""
+		}
 	}
 	return row
 }
@@ -722,7 +757,7 @@ func (a *Agent) reconcileGatewayDesiredState(rows []desiredPrinterWire) bool {
 
 		a.printersMu.RLock()
 		_, initialized := a.printers[id]
-		runtimeUnchanged := initialized && reflect.DeepEqual(a.printerConfigs[id], desiredPrinterConfig(row))
+		runtimeUnchanged := initialized && a.matchesDesiredRuntime(a.printerConfigs[id], row)
 		a.printersMu.RUnlock()
 		if desired.Lifecycle == "active" &&
 			runtimeUnchanged && exists &&

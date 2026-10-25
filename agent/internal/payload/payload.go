@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"fmt"
+	"regexp"
 )
 
 type Type string
@@ -20,6 +21,8 @@ const (
 const EncodingBase64 = "base64"
 const MaxPayloadBytes = 5 * 1024 * 1024
 
+var geometryFingerprintPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
+
 type Peripherals struct {
 	Drawer string
 	Cutter string
@@ -27,10 +30,11 @@ type Peripherals struct {
 }
 
 type Payload struct {
-	Type        Type
-	Protocol    string
-	Data        []byte
-	Peripherals Peripherals
+	GeometryFingerprint string
+	Type                Type
+	Protocol            string
+	Data                []byte
+	Peripherals         Peripherals
 }
 
 func requiredStringField(m map[string]interface{}, key string) (string, error) {
@@ -105,6 +109,18 @@ func Parse(raw interface{}) (*Payload, error) {
 		if protocol != "" {
 			return nil, fmt.Errorf("protocol is not applicable for %s payloads", typ)
 		}
+	}
+
+	geometryFingerprint, err := optionalStringField(m, "geometry_fingerprint")
+	if err != nil {
+		return nil, err
+	}
+	_, geometryPresent := m["geometry_fingerprint"]
+	if Type(typ) == TypeImage && geometryPresent && !geometryFingerprintPattern.MatchString(geometryFingerprint) {
+		return nil, fmt.Errorf("image payload.geometry_fingerprint must identify the current measured printer geometry")
+	}
+	if Type(typ) != TypeImage && geometryPresent {
+		return nil, fmt.Errorf("geometry_fingerprint is only applicable to image payloads")
 	}
 
 	encoding, err := requiredStringField(m, "encoding")
@@ -213,9 +229,10 @@ func Parse(raw interface{}) (*Payload, error) {
 	}
 
 	return &Payload{
-		Type:        Type(typ),
-		Protocol:    protocol,
-		Data:        decoded,
-		Peripherals: periph,
+		GeometryFingerprint: geometryFingerprint,
+		Type:                Type(typ),
+		Protocol:            protocol,
+		Data:                decoded,
+		Peripherals:         periph,
 	}, nil
 }

@@ -1,16 +1,19 @@
+import { printOutputPresentation } from "../../../../lib/print-output";
 import { NextResponse } from "next/server";
 import { db } from "../../../../db";
 import { printJobs, printJobReceipts } from "../../../../db/schema";
 import { validateOdooKey } from "../../../../lib/odoo-auth";
 import { parseOdooIdentity } from "../../../../lib/odoo-idempotency";
-import { OdooNamespaceError, verifyOdooInstallation } from "../../../../lib/odoo-v2-admission";
+import { OdooNamespaceError } from "../../../../lib/odoo-v2-admission";
+import { odooStatusIdentity, readOdooJobStatus } from "../../../../lib/odoo-status-scope";
 import { validatePrintJobPayload, type PrintJobPayload } from "../../../../lib/payload";
 import { createPrintJobForPrinter, AgentQueueFullError, AgentQueuedJobsFullError, PrintJobCapabilityError, PrintJobInputError } from "../../../../lib/print-job-service";
 import { TenantEntitlementError, TenantPrintQuotaExceededError, isTenantBillingError } from "../../../../lib/entitlements";
 import { hasBodyOverLimit } from "../../../../lib/request-limits";
 import { logError, logWarn, requestIdFrom } from "../../../../lib/log";
 import { databaseNowMs } from "../../../../lib/database-clock";
-import { and, eq, isNotNull, sql } from "drizzle-orm";
+import { databaseErrorLogFields } from "../../../../lib/database-error-log";
+import { and, eq, isNotNull } from "drizzle-orm";
 import { z } from "zod";
 
 export const dynamic = "force-dynamic";
@@ -56,8 +59,9 @@ function parseExpiresAt(value?: string) {
   return parsed;
 }
 
-function responseForRow(row: Pick<typeof printJobs.$inferSelect, "id" | "status" | "printerId" | "agentId" | "destination" | "documentType" | "error">) {
+function responseForRow(row: Pick<typeof printJobs.$inferSelect, "id" | "status" | "printerId" | "agentId" | "destination" | "documentType" | "error" | "outputMedium" | "outputEvidence">) {
   return {
+    ...printOutputPresentation(row),
     jobId: row.id,
     status: row.status,
     printerId: row.printerId,
@@ -176,6 +180,8 @@ export async function POST(req: Request) {
       responseHeaders["X-Idempotency-Warning"] = "missing-key; retry deduplication disabled";
     }
     return NextResponse.json({
+      outputMedium: result.outputMedium,
+      ...(result.outputMedium === "file" ? { outputOutcome: "pending" } : {}),
       jobId: result.id,
       status: result.status,
       printerId: result.printerId,
@@ -230,6 +236,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: error.code, code: error.code, retryable: false }, { status: error.status, headers: { "Cache-Control": "no-store" } });
     }
     if (error instanceof PrintJobInputError) {
+      if (error.authorityError?.policy) return error.authorityError.response();
       return NextResponse.json({ error: error.message, code: error.code, retryable: error.status >= 500 }, { status: error.status });
     }
     if (error instanceof z.ZodError) {
@@ -241,10 +248,9 @@ export async function POST(req: Request) {
       // never turn that explicit refusal into HTTP 200 with a racy read.
       return idempotencyConflict();
     }
-    // Anything else is an internal failure: log the detail, return a generic
-    // sanitized error. Database constraint names, driver messages, and
-    // stack traces never leave the server.
-    logError("print.job.create_failed", { operationIdentityProvided: Boolean(parsed.data.idempotencyKey), error: error instanceof Error ? error.message : String(error) });
+    // Preserve a bounded classification without logging Drizzle's SQL,
+    // parameters or driver detail. The HTTP response remains generic.
+    logError("print.job.create_failed", { operationIdentityProvided: Boolean(parsed.data.idempotencyKey), ...databaseErrorLogFields(error) });
     return NextResponse.json({ error: "Internal server error", code: "INTERNAL_ERROR", retryable: true }, { status: 500 });
   }
 }
@@ -252,13 +258,17 @@ export async function POST(req: Request) {
 export async function GET(req: Request) {
   const odoo = await validateOdooKey(req);
   if (!odoo) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  const namespaceVersion = req.headers.get("x-yaseir-odoo-idempotency-version");
-  if (namespaceVersion && namespaceVersion !== "2") return NextResponse.json({ error: "Unsupported namespace version" }, { status: 400 });
-  const installationId = req.headers.get("x-yaseir-odoo-installation") ?? "";
-  const installationProof = req.headers.get("x-yaseir-odoo-proof") ?? "";
+  let identity: Awaited<ReturnType<typeof odooStatusIdentity>>;
+  try {
+    identity = await odooStatusIdentity(req, odoo.tenantId);
+  } catch (error) {
+    if (error instanceof OdooNamespaceError) return NextResponse.json({ error: error.code, code: error.code }, { status: error.status, headers: { "Cache-Control": "no-store" } });
+    throw error;
+  }
   const params = new URL(req.url).searchParams;
   const id = params.get("id")?.trim();
   const idempotencyKey = params.get("idempotencyKey")?.trim();
+  if (id && id.length > 120) return NextResponse.json({ error: "id is too long" }, { status: 400 });
   if (idempotencyKey && idempotencyKey.length > 200) {
     return NextResponse.json({ error: "idempotencyKey is too long" }, { status: 400 });
   }
@@ -268,46 +278,12 @@ export async function GET(req: Request) {
   if (!id && !idempotencyKey) {
     return NextResponse.json({ error: "id or idempotencyKey query param required" }, { status: 400 });
   }
-  // v2 receipt lookup is installation-scoped: never allow one installation to
-  // retrieve another's job by guessing its key or ID. v1 lookups remain
-  // available for historical, pre-cutover Odoo clients.
-  let resolvedJobId: string | null = null;
-  if (namespaceVersion === "2") {
-    if (!installationId || !installationProof) return NextResponse.json({ error: "Installation proof required", code: "INSTALLATION_NOT_ENROLLED" }, { status: 403 });
-    try {
-      const mapped = await db.transaction(async (tx) => {
-        await verifyOdooInstallation(tx, odoo.tenantId, odoo.id, { installationId, installationProof });
-        return tx.execute(sql`
-          SELECT accepted_job_id FROM odoo_v2_operations
-          WHERE tenant_id = ${odoo.tenantId} AND installation_id = ${installationId}
-            AND ${id ? sql`accepted_job_id = ${id}` : sql`idempotency_key = ${idempotencyKey}`}
-          LIMIT 1
-        `);
-      });
-      resolvedJobId = (mapped.rows[0] as { accepted_job_id?: string } | undefined)?.accepted_job_id ?? null;
-      if (!resolvedJobId) return NextResponse.json({ error: "Not found" }, { status: 404 });
-    } catch (error) {
-      if (error instanceof OdooNamespaceError) return NextResponse.json({ error: error.code, code: error.code }, { status: error.status });
-      throw error;
-    }
+  try {
+    const row = await readOdooJobStatus(odoo, identity, id ? { id } : { idempotencyKey: idempotencyKey! });
+    if (!row) return NextResponse.json({ error: "Not found" }, { status: 404, headers: { "Cache-Control": "no-store" } });
+    return NextResponse.json(responseForRow(row), { status: 200, headers: { "Cache-Control": "no-store" } });
+  } catch (error) {
+    if (error instanceof OdooNamespaceError) return NextResponse.json({ error: error.code, code: error.code }, { status: error.status, headers: { "Cache-Control": "no-store" } });
+    throw error;
   }
-  // Odoo API-key authentication establishes the integration tenant. Only
-  // Odoo-originated jobs belong to this API surface; `apiKeyId` must be present
-  // but must not equal the current credential so rotated keys can still read
-  // historical jobs. The idempotency-key lookup closes the ambiguous-POST
-  // recovery gap: Odoo may know the durable operation key while having lost the
-  // Gateway job id because the response timed out after Gateway acceptance.
-  const row = await db.query.printJobs.findFirst({
-    where: and(
-      ...(resolvedJobId ? [eq(printJobs.id, resolvedJobId)] : id ? [eq(printJobs.id, id)] : [eq(printJobs.idempotencyKey, idempotencyKey!)]),
-      eq(printJobs.tenantId, odoo.tenantId),
-      isNotNull(printJobs.apiKeyId),
-    ),
-  });
-  const receipt = row ? null : await db.query.printJobReceipts.findFirst({ where: and(
-    ...(resolvedJobId ? [eq(printJobReceipts.id, resolvedJobId)] : id ? [eq(printJobReceipts.id, id)] : [eq(printJobReceipts.idempotencyKey, idempotencyKey!)]),
-    eq(printJobReceipts.tenantId, odoo.tenantId), isNotNull(printJobReceipts.apiKeyId),
-  ) });
-  if (!row && !receipt) return NextResponse.json({ error: "Not found" }, { status: 404 });
-  return NextResponse.json(responseForRow(row ?? receipt!), { status: 200 });
 }

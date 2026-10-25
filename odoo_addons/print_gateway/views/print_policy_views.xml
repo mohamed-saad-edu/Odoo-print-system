@@ -72,11 +72,11 @@
                         <field name="raw_template" nolabel="1" placeholder="e.g. ^XA^FO50,50^ADN,36,20^FD{name}^FS^XZ" class="font-monospace" style="min-height: 120px;"/>
                     </group>
 
-                    <group string="Conditions">
+                    <notebook><page string="Advanced conditions"><group string="Conditions">
                         <field name="warehouse_id" invisible="model_name != 'stock.picking'" options="{'no_create': True}"/>
                         <field name="picking_type_id" invisible="model_name != 'stock.picking'" options="{'no_create': True}"/>
                         <field name="domain_filter" widget="domain" options="{'model': 'model_name'}" placeholder="e.g. [('state', '=', 'done')]"/>
-                    </group>
+                    </group></page></notebook>
                 </sheet>
             </form>
         </field>

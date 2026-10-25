@@ -35,6 +35,7 @@ export async function GET(req: Request) {
         lifecycleReason: tenants.lifecycleReason,
         suspendedAt: tenants.suspendedAt,
         createdAt: tenants.createdAt,
+        updatedAt: tenants.updatedAt,
         subscriptionStatus: tenantSubscriptions.status,
         planName: plans.name,
         memberCount: sql<number>`(SELECT count(*)::int FROM ${tenantUsers} WHERE ${tenantUsers.tenantId} = ${tenants.id})`,

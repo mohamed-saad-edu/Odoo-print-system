@@ -51,7 +51,8 @@ test('integrations are real navigable operational controls, not sample UI action
   assert.ok(existsSync(path), 'platform integration operations page is missing');
   const ui = read(path);
   const nav = read('src/app/platform/layout.tsx');
-  assert.match(nav, /\/platform\/integrations/);
+  assert.match(nav, /\/platform\/operations/);
+  assert.match(read('src/app/platform/operations/page.tsx'), /integrations/);
   assert.match(ui, /\/api\/platform\/integrations/);
   assert.match(ui, /reason/);
   assert.match(ui, /endpoint = selected\.kind === "keys" \? "revoke"/);
@@ -60,9 +61,9 @@ test('integrations are real navigable operational controls, not sample UI action
 
 test('platform overview displays live API-backed operational metrics, not retired charts', () => {
   const code = read('src/app/platform/dashboard/page.tsx');
-  assert.match(code, /fetchWithTimeout\("\/api\/platform\/stats"/);
-  assert.match(code, /stats\?\.jobs24h\.success/);
-  assert.match(code, /stats\?\.printers\.online/);
+  assert.match(code, /adminJson\('\/api\/platform\/stats'\)/);
+  assert.match(code, /data\.logicalUsage\[k\]/);
+  assert.match(code, /data\.verifiedPrinters/);
   assert.doesNotMatch(code, /overview-charts/);
 });
 

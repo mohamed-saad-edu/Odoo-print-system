@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
 import { db } from "../../../../db";
 import { passwordResetTokens, users } from "../../../../db/schema";
 import { and, eq, isNull, sql } from "drizzle-orm";
@@ -9,6 +9,7 @@ import { hasBodyOverLimit } from "../../../../lib/request-limits";
 import { sendTransactionalEmail, appBaseUrl } from "../../../../lib/email";
 import { getServerLocale, makeT } from "../../../../i18n/server";
 import { nanoid } from "../../../../lib/nanoid";
+import { emailAuthTokenTimes } from "../../../../lib/email-auth-token-policy";
 export async function POST(req: Request) {
   const t = makeT(await getServerLocale());
   if (hasBodyOverLimit(req, 32 * 1024)) return NextResponse.json({ error: "Request body too large" }, { status: 413 });
@@ -33,6 +34,7 @@ export async function POST(req: Request) {
   }
   if (!user) return setRateLimitHeaders(NextResponse.json(generic, { status: 202 }), rate);
   const userId = user.id;
+  const recipientEmail = user.email;
   const raw=generateOpaqueToken();
   try {
     await db.transaction(async (tx) => {
@@ -44,28 +46,35 @@ export async function POST(req: Request) {
         id: `prt_${nanoid(18)}`,
         userId,
         tokenHash: await hashToken(raw),
-        expiresAt: sql`clock_timestamp() + interval '20 minutes'`,
+        ...emailAuthTokenTimes(),
       });
     });
   } catch (error) {
     logError("auth.forgot_password.persistence_failed", { error: error instanceof Error ? error.message : "unknown" });
     return setRateLimitHeaders(NextResponse.json(generic, { status: 202 }), rate);
   }
-  try {
-    const url = `${appBaseUrl(req)}/reset-password?token=${encodeURIComponent(raw)}`;
-    await sendTransactionalEmail({
-      to: user.email,
-      subject: t("mail.reset.subject"),
-      html: `<p><a href="${url}">${t("mail.reset.cta")}</a></p>`,
-      text: t("mail.reset.text", { url }),
-    });
-  } catch (error) {
-    // Keep the response enumeration-safe, but retain an operational signal so
-    // failed email delivery is diagnosable without exposing the recipient.
-    logError("auth.forgot_password.reset_email_failed", {
-      error: error instanceof Error ? error.message : String(error),
-    });
-  }
+  // Provider latency must not disclose whether this address has an account.
+  // The proof is already committed. Next tracks delivery after the generic
+  // response and the custom server drains accepted work during shutdown.
+  // This is not a durable outbox: an outage or abrupt process loss requires
+  // another reset request, which still has the existing attempt budget.
+  after(async () => {
+    try {
+      const url = `${appBaseUrl(req)}/reset-password?token=${encodeURIComponent(raw)}`;
+      await sendTransactionalEmail({
+        to: recipientEmail,
+        subject: t("mail.reset.subject"),
+        html: `<p><a href="${url}">${t("mail.reset.cta")}</a></p>`,
+        text: t("mail.reset.text", { url }),
+      });
+    } catch (error) {
+      // Delivery failure remains observable without changing the accepted
+      // response or exposing account existence to its caller.
+      logError("auth.forgot_password.reset_email_failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  });
   // Do not clear the limiter here: a password-reset request is not a successful
   // authentication event. Clearing it would let an attacker repeatedly trigger
   // reset emails and bypass the abuse budget after every delivery.

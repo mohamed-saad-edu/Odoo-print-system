@@ -1,22 +1,44 @@
+import type * as PasswordScreeningModule from "../src/lib/password-screening";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+
+// External breach-corpus fixture for these unrelated account/transaction tests.
+// Production always screens; password-screening*.test.ts exercise the real
+// range protocol, positive matches, privacy, limits and fail-closed behavior.
+vi.mock("../src/lib/password-screening", async (importActual) => ({
+  ...await importActual<typeof PasswordScreeningModule>(),
+  screenNewPassword: vi.fn(async () => "acceptable"),
+}));
 import { getTableName } from "drizzle-orm";
 import { PgDialect } from "drizzle-orm/pg-core";
 
 // Database/external boundaries only are simulated. Authentication, password
 // hashing, password-reset handler, JWT issuance/verification, workspace
 // selection handler and session validation execute their production code.
-const state = vi.hoisted(() => ({ user: {} as Record<string, any>, sessions: [] as Array<Record<string, any>>, consumedSelections: new Set<string>(), revokeAtTransaction: false }));
+const state = vi.hoisted(() => ({ user: {} as Record<string, any>, sessions: [] as Array<Record<string, any>>, policies: [] as Array<Record<string, any>>, consumedSelections: new Set<string>(), revokeAtTransaction: false }));
 const dialect = new PgDialect();
 const clock = () => ({ rows: [{ now_ms: Date.now(), now_sec: Math.floor(Date.now() / 1000) }] });
 const execute = async (query: any) => {
   const compiled = dialect.sqlToQuery(query);
+  if (/INSERT INTO workspace_session_security/.test(compiled.sql)) {
+    const [familyId,kind,tenantId,userId,credentialVersion,createdAt,passwordVerifiedAt,lastSeenAt,expiresAt] = compiled.params;
+    state.policies.push({ familyId,kind,tenantId,userId,credentialVersion,
+      createdAtMs: new Date(createdAt as Date).getTime(), passwordVerifiedAtMs: new Date(passwordVerifiedAt as Date).getTime(),
+      lastSeenAtMs: new Date(lastSeenAt as Date).getTime(), expiresAtMs: new Date(expiresAt as Date).getTime() });
+    return { rows: [] };
+  }
+  if (/FROM workspace_session_security/.test(compiled.sql)) {
+    const policy = state.policies.find(row => row.familyId === compiled.params[0]);
+    const live = state.sessions.find(row => row.familyId === compiled.params[0] && !row.revokedAt);
+    return { rows: policy && live ? [{ ...policy, passwordHash: state.user.passwordHash, verified: !!state.user.emailVerifiedAt, nowMs: Date.now() }] : [] };
+  }
+  if (/SELECT role FROM tenant_users/.test(compiled.sql)) return { rows: [{ role: "admin" }] };
   if (/UPDATE refresh_tokens/i.test(compiled.sql)) {
     for (const row of state.sessions) row.revokedAt = new Date();
     return { rows: [] };
   }
   if (/SELECT id FROM refresh_tokens/i.test(compiled.sql)) return { rows: state.sessions.filter(row => !row.revokedAt) };
   if (/FROM tenants/i.test(compiled.sql)) return { rows: [{ id: "tenant_repro", lifecycle: "active" }] };
-  if (/FROM users/i.test(compiled.sql)) return { rows: [{ ...state.user }] };
+  if (/FROM users/i.test(compiled.sql)) return { rows: [{ ...state.user, password_hash: state.user.passwordHash, email_verified_at: state.user.emailVerifiedAt, is_platform_owner: state.user.isPlatformOwner }] };
   return clock();
 };
 const query = {
@@ -77,8 +99,10 @@ import { POST as selectTenant } from "../src/app/api/auth/select-tenant/route";
 describe("credential snapshots across password-reset cutover", () => {
   beforeEach(async () => {
     process.env.GATEWAY_JWT_SECRET = "audit-only-test-secret-with-at-least-32-characters";
+    process.env.APP_BASE_URL = "http://localhost:3000";
     state.user = { id: "user_repro", email: "audit@example.test", emailVerifiedAt: new Date(), isPlatformOwner: true, passwordHash: await hashPassword("previous_password_123") };
     state.sessions.length = 0;
+    state.policies.length = 0;
     state.consumedSelections.clear();
     state.revokeAtTransaction = false;
   });
@@ -119,10 +143,11 @@ describe("credential snapshots across password-reset cutover", () => {
   });
 
   it("rejects a source session revoked after selection preflight", async () => {
-    const source = await issueSessionPair({ kind: "customer", userId: "user_repro", tenantId: "tenant_repro", role: "admin", email: "audit@example.test" });
+    const source = await issueSessionPair({ kind: "customer", userId: "user_repro", tenantId: "tenant_repro", role: "admin", email: "audit@example.test",
+      credentialVersion: credentialVersionFor("user_repro", String(state.user.passwordHash)) });
     state.revokeAtTransaction = true;
     const response = await selectTenant(new Request("http://gateway.test/api/auth/select-tenant", {
-      method: "POST", headers: { cookie: "cust_session=" + source.accessToken },
+      method: "POST", headers: { origin: "http://localhost:3000", cookie: "cust_session=" + source.accessToken },
       body: JSON.stringify({ tenantId: "tenant_repro" }),
     }));
     expect(response.status).toBe(401);
@@ -134,7 +159,7 @@ describe("credential snapshots across password-reset cutover", () => {
     const token = await createTenantSelectionToken("user_repro", "audit@example.test", credentialVersionFor("user_repro", String(state.user.passwordHash)));
     await reset();
     expect(await verifyTenantSelectionToken(token)).not.toBeNull();
-    const response = await selectTenant(new Request("http://gateway.test/api/auth/select-tenant", { method: "POST", body: JSON.stringify({ tenantId: "tenant_repro", selectionToken: token }) }));
+    const response = await selectTenant(new Request("http://gateway.test/api/auth/select-tenant", { method: "POST", headers: { origin: "http://localhost:3000" }, body: JSON.stringify({ tenantId: "tenant_repro", selectionToken: token }) }));
     expect(response.status).toBe(401);
     expect(response.headers.get("set-cookie")).toBeNull();
     expect(state.sessions).toHaveLength(0);

@@ -42,6 +42,7 @@ func TestIPPWindowsPWGOnlyPrinterGetsRealRaster(t *testing.T) {
 			binary.Write(&response, binary.BigEndian, uint32(150))
 			binary.Write(&response, binary.BigEndian, uint32(150))
 			response.WriteByte(3)
+			writeIPPTestA4Media(&response)
 			response.WriteByte(3)
 			_, _ = w.Write(response.Bytes())
 		case 0x0002:

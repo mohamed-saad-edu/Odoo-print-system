@@ -1067,6 +1067,49 @@
       padding: 12px;
     }
   }
+
+  /* Operational records retain their headers/table semantics while each row
+     becomes a labeled stack on phones. Outcomes and controls stay in view. */
+  .data-table-label { display: none; }
+  @media (max-width: 767.98px) {
+    .operational-table,
+    .operational-table tbody {
+      display: block;
+      min-width: 0;
+      width: 100%;
+    }
+    .operational-table thead {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip-path: inset(50%);
+      white-space: nowrap;
+    }
+    .operational-table tbody tr {
+      display: block;
+      padding: 16px;
+      border-block-end: 1px solid var(--border);
+    }
+    .operational-table tbody tr:last-child { border-block-end: 0; }
+    .operational-table tbody td {
+      display: block;
+      width: 100%;
+      max-width: none;
+      padding: 0;
+      border: 0;
+      white-space: normal;
+    }
+    .operational-table tbody td + td { margin-block-start: 12px; }
+    .operational-table .data-table-label {
+      display: block;
+      margin-block-end: 4px;
+      color: var(--text-3);
+      font-size: var(--fs-xs);
+      font-weight: 600;
+    }
+    .operational-table button { min-height: 44px; }
+  }
 }
 
 /* ==========================================================================

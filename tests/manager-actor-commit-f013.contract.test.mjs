@@ -5,19 +5,21 @@ import { resolve, join } from 'node:path';
 import vm from 'node:vm';
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { sqlIdentifier, workspaceSessionFixture } from './helpers/workspace-session-vm.mjs';
+import { authorizationFixture } from './helpers/authorization-vm.mjs';
 const require = createRequire(import.meta.url);
 let ts;
 try { ts = require('typescript'); }
 catch { ts = require(join(execFileSync('npm', ['root', '-g'], { encoding: 'utf8' }).trim(), 'typescript')); }
 const source = resolve('src/lib/manager-mutation-authorization.ts');
-const authSource = resolve('src/lib/authorization.ts');
 const compile = (path) => ts.transpileModule(readFileSync(path, 'utf8'), {
-  compilerOptions: { testModule: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 }, fileName: path,
+  compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 }, fileName: path,
 }).outputText;
 const events = [];
 let state;
 const fragment = (strings, ...values) => ({ strings: [...strings], values });
 fragment.join = (values, separator) => ({ values, separator });
+fragment.identifier = sqlIdentifier;
 const valuesOf = (item) => typeof item === 'object' && item && 'values' in item
   ? item.values.flatMap(valuesOf) : [item];
 const sqlText = (item) => typeof item === 'object' && item && 'strings' in item
@@ -34,11 +36,10 @@ const drizzle = new vm.SyntheticModule(['sql', 'and', 'eq'], function() {
   this.setExport('eq', (a,b) => [a,b]);
 }, { context });
 const schema = new vm.SyntheticModule(['tenantUsers'], function() { this.setExport('tenantUsers', schemas.tenantUsers); }, { context });
-const auth = new vm.SourceTextModule(compile(authSource), { context });
-await auth.link(() => { throw new Error('Unexpected runtime auth import'); });
-await auth.evaluate();
+const auth = await authorizationFixture(context);
+const workspace = await workspaceSessionFixture(context, drizzle);
 const testModule = new vm.SourceTextModule(compile(source), { context });
-await testModule.link((name) => name === 'drizzle-orm' ? drizzle : name.endsWith('db/schema') ? schema : name.endsWith('/authorization') ? auth : (() => { throw new Error('Unexpected '+name); })());
+await testModule.link((name) => name === 'drizzle-orm' ? drizzle : name.endsWith('db/schema') ? schema : name.endsWith('/authorization') ? auth : name === './workspace-session-security' ? workspace.policy : (() => { throw new Error('Unexpected '+name); })());
 await testModule.evaluate();
 const { requireManagerActorInTransaction, ManagerMutationAuthorityChangedError } = testModule.namespace;
 const tx = {
@@ -46,6 +47,8 @@ const tx = {
   execute: async (query) => {
     const text = sqlText(query), args = sqlValues(query);
     events.push(text);
+    const policy = workspace.reply(text, state.claims, { ...state, onTouch: () => { state.touches++; } });
+    if (policy) return policy;
     if (/users\s+WHERE/.test(text)) return { rows: state.userExists ? [{id:'actor'}] : [] };
     if (/pg_advisory_xact_lock/.test(text)) return { rows: [{}] };
     if (/refresh_tokens/.test(text)) {
@@ -54,6 +57,7 @@ const tx = {
       assert.match(text,/expires_at > clock_timestamp\(\)/);
       assert.match(text,/revoked_at IS NULL/);
       assert.ok(args.includes(state.claims.familyId));
+      assert.ok(args.includes(state.claims.sid));
       assert.ok(args.includes(state.claims.tenantId));
       assert.ok(args.includes(state.claims.role));
       return {rows: state.familyActive ? [{id: 'active'}] : []};
@@ -70,11 +74,13 @@ const tx = {
 };
 function setup(patch={}) {
   events.length = 0;
-  state = { memberRole:'admin',familyActive:true,sessionActive:true,userExists:true,
-    claims:{role:'admin',userId:'actor',tenantId:'tenant',jti:'jti',exp:1781012345,familyId:'family',kind:'manager'},...patch };
-  state.claims = {role:'admin',userId:'actor',tenantId:'tenant',jti:'jti',exp:1781012345,familyId:'family',kind:'manager',...patch.claims};
+  state = { memberRole:'admin',familyActive:true,sessionActive:true,userExists:true,touches:0,...patch };
+  state.claims = {role:'admin',userId:'actor',tenantId:'tenant',jti:'jti',exp:1900000000,ver:2,sid:'sid',familyId:'family',kind:'manager',...patch.claims};
 }
 const denied = async (permission) => assert.rejects(() => requireManagerActorInTransaction(tx,state.claims,permission),ManagerMutationAuthorityChangedError);
+const expired = async () => assert.rejects(() => requireManagerActorInTransaction(tx,state.claims,'agents.pair'), error => {
+  assert.ok(error instanceof ManagerMutationAuthorityChangedError);assert.equal(error.status,401);assert.equal(error.code,'SESSION_EXPIRED');assert.equal(state.touches,0);return true;
+});
 
 test('same admin family is accepted with user->membership->family ordering', async () => {
   setup(); await requireManagerActorInTransaction(tx,state.claims,'agents.pair');
@@ -82,12 +88,17 @@ test('same admin family is accepted with user->membership->family ordering', asy
   assert.equal(events[1],'membership');
   assert.match(events[2],/pg_advisory_xact_lock/);
   assert.match(events[3],/refresh_tokens/);
+  assert.match(events[4],/FROM workspace_session_security s/);
+  assert.equal(state.touches,1);
 });
 test('demoted membership is denied before session read', async () => {setup({memberRole:'viewer'});await denied('agents.pair');assert.equal(events.length,2);});
 test('deleted membership denied', async () => {setup({memberRole:null});await denied('agents.pair');});
-test('revoked refresh family denied',async()=>{setup({familyActive:false});await denied('agents.pair');});
+test('revoked refresh family denied',async()=>{setup({familyActive:false});await expired();});
 test('operator cannot start scans even with live session',async()=>{setup({claims:{role:'operator'},memberRole:'operator'});await denied('agents.pair');assert.equal(events.length,0);});
-test('non-team userless customer workspace family remains admitted',async()=>{setup({claims:{userId:undefined,kind:'customer'}});await requireManagerActorInTransaction(tx,state.claims,'agents.pair');assert.equal(events[0].includes('pg_advisory_xact_lock'),true);assert.ok(events.at(-1).includes('user_id IS NULL'));});
-test('legacy manager session is checked with signed expiry and null-user predicate',async()=>{setup({claims:{familyId:undefined,userId:undefined}});await requireManagerActorInTransaction(tx,state.claims,'agents.pair');assert.match(events[0],/manager_sessions/);assert.match(events[0],/user_id IS NULL/);});
-test('revoked legacy session is denied',async()=>{setup({sessionActive:false,claims:{familyId:undefined}});await denied('agents.pair');});
+test('userless customer family cannot inherit environment-manager proof',async()=>{setup({claims:{userId:undefined,kind:'customer'}});await expired();assert.equal(events[0].includes('pg_advisory_xact_lock'),true);assert.ok(events.at(-1).includes('s.user_id IS NULL'));});
+test('configured environment owner with exact v2 session and fresh proof remains admitted',async()=>{setup({claims:{role:'owner',userId:undefined}});await requireManagerActorInTransaction(tx,state.claims,'agents.pair');assert.equal(events[0].includes('pg_advisory_xact_lock'),true);assert.match(events[1],/user_id IS NULL/);assert.equal(state.touches,1);});
+test('legacy manager session checks signed expiry and null-user predicate but cannot bypass missing v2 proof',async()=>{setup({claims:{familyId:undefined,userId:undefined,ver:1,sid:undefined}});await expired();assert.match(events[0],/manager_sessions/);assert.match(events[0],/user_id IS NULL/);assert.equal(events.length,1);});
+test('revoked legacy session is denied',async()=>{setup({sessionActive:false,claims:{familyId:undefined}});await expired();});
+test('stale password proof is denied without extending activity',async()=>{setup({staleProof:true});await assert.rejects(()=>requireManagerActorInTransaction(tx,state.claims,'agents.pair'),error=>{assert.ok(error instanceof ManagerMutationAuthorityChangedError);assert.equal(error.status,403);assert.equal(error.code,'WORKSPACE_REAUTHENTICATION_REQUIRED');assert.equal(state.touches,0);return true;});});
+test('missing or changed credential proof expires the exact session',async()=>{for(const patch of [{missingProof:true},{changedCredential:true},{idleExpired:true}]){setup(patch);await expired();}});
 test('related users lock ordered deterministically',async()=>{setup();await requireManagerActorInTransaction(tx,state.claims,'agents.pair',['z','a','a']);assert.match(events[0],/ORDER BY id FOR UPDATE/);const p=sqlValues(fragment`${'a'} ${'actor'} ${'z'}`);assert.ok(p);});

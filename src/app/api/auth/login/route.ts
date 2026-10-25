@@ -1,10 +1,12 @@
-import { AuthenticationChangedError } from "../../../../lib/session-tokens";
 import { logError, logWarn } from "../../../../lib/log";
 import { NextResponse } from "next/server";
 import { authenticateForTenant, issueCustomerSession, customerSessionCookie, customerRefreshCookie } from "../../../../lib/customer-auth";
 import { reserveAuthAttempt, clientIpFrom, recordAuthSuccess, setRateLimitHeaders } from "../../../../lib/auth-rate-limit";
 import { hasBodyOverLimit } from "../../../../lib/request-limits";
+import { sessionReplacementFromRequest } from "../../../../lib/session-tokens";
+import { clearLegacySessionCookies } from "../../../../lib/session-config";
 import { writeAuditEvent } from "../../../../lib/audit";
+import { workspaceSecurityErrorResponse } from "../../../../lib/workspace-session-http";
 
 export async function POST(req: Request) {
   if (hasBodyOverLimit(req, 64 * 1024)) return NextResponse.json({ error: "Request body too large" }, { status: 413 });
@@ -37,6 +39,7 @@ export async function POST(req: Request) {
     return setRateLimitHeaders(NextResponse.json({ error: "Authentication temporarily unavailable" }, { status: 503 }), pre);
   }
   if (!identity) {
+    logWarn("auth.login.failed", { ip });
     const status = pre.allowed && pre.retryAfterSec ? 429 : 401;
     const res = NextResponse.json({ error: "Invalid email or password" }, { status });
     if (status === 429 && pre.retryAfterSec) res.headers.set("Retry-After", String(pre.retryAfterSec));
@@ -48,33 +51,25 @@ export async function POST(req: Request) {
       error: "Choose a workspace",
       selectionToken: identity.selectionToken,
       workspaces: identity.memberships.map((m) => m.tenantId),
-    }, { status: 409 }), pre);
+      workspaceOptions: identity.memberships.map((m) => ({ id: m.tenantId, name: m.name })),
+    }, { status: 409, headers: { "Cache-Control": "no-store" } }), pre);
   }
   if (!("tenantId" in identity) || !identity.tenantId || !identity.role) return setRateLimitHeaders(NextResponse.json({ error: "Workspace setup is incomplete" }, { status: 409 }), pre);
-  let session;
   try {
-    session = await issueCustomerSession(
-    identity.userId,
-    identity.tenantId,
-    identity.role,
-    {
-      ipAddress: ip,
-      userAgent: req.headers.get("user-agent"),
-    },
-    identity.email,
-    identity.credentialVersion,
-    );
+    const session = await issueCustomerSession(identity.userId, identity.tenantId, identity.role, {
+      ipAddress: ip, userAgent: req.headers.get("user-agent"), replaceCurrent: sessionReplacementFromRequest(req, "customer"),
+    }, identity.email, identity.credentialVersion);
+    if (!session) return setRateLimitHeaders(NextResponse.json({ error: "Invalid email or password" }, { status: 401 }), pre);
+    await writeAuditEvent({ tenantId: identity.tenantId, actorType: "user", actorId: identity.userId,
+      action: "user.login.success", resourceType: "session", resourceId: session.familyId }).catch(error =>
+      logError("audit_write_failed", { error: error instanceof Error ? error.message : "unknown" }));
+    const response = NextResponse.json({ ok: true, tenantId: identity.tenantId, role: identity.role, expiresAt: session.accessExpiresAt.toISOString() }, {
+      headers: { "Cache-Control": "private, no-store", "Set-Cookie": customerSessionCookie(session) },
+    });
+    response.headers.append("Set-Cookie", customerRefreshCookie(session));
+    clearLegacySessionCookies(response.headers, "customer");
+    return setRateLimitHeaders(response, pre);
   } catch (error) {
-    if (error instanceof AuthenticationChangedError) return setRateLimitHeaders(NextResponse.json({ error: "Invalid email or password" }, { status: 401 }), pre);
-    throw error;
+    return workspaceSecurityErrorResponse(error);
   }
-  if (!session) {
-    return setRateLimitHeaders(NextResponse.json({ error: "Workspace is unavailable" }, { status: 403 }), pre);
-  }
-  const res = NextResponse.json({ ok: true, expiresAt: session.accessExpiresAt.toISOString(), tenantId: identity.tenantId, role: identity.role });
-  res.headers.set("Set-Cookie", customerSessionCookie(session));
-  res.headers.append("Set-Cookie", customerRefreshCookie(session));
-  await writeAuditEvent({ tenantId: identity.tenantId, actorType: "user", actorId: identity.userId, action: "user.login.success" }).catch((err) => logError('audit_write_failed', { error: err?.message ?? String(err) }));
-  res.headers.set("Cache-Control", "no-store");
-  return setRateLimitHeaders(res, pre);
 }

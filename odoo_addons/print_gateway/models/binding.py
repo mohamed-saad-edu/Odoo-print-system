@@ -4,11 +4,13 @@
 import json
 import logging
 
-import requests
+from . import gateway_http as requests
 
 from odoo import api, fields, models, _
 from odoo.exceptions import AccessError, ValidationError
 from ..runtime_policy import is_gateway_shared_printer
+from ..printer_geometry import validated_printer_geometry, validated_page_geometry
+from ..printer_verification import is_verified_runtime_printer
 
 _logger = logging.getLogger(__name__)
 
@@ -23,14 +25,14 @@ def _assert_report_usage_access(env, report):
     """
     report = report.sudo().exists()
     if not report:
-        raise ValidationError(_("The requested report is unavailable."))
+        raise ValidationError(env._("The requested report is unavailable."))
     if str(report.report_type or "").strip() != "qweb-pdf":
-        raise ValidationError(_("Only QWeb PDF reports can be sent to the Print Gateway."))
+        raise ValidationError(env._("Only QWeb PDF reports can be sent to the Print Gateway."))
     if env.is_superuser():
         return report
     allowed_group_ids = set(report.group_ids.ids)
     if allowed_group_ids and not allowed_group_ids.intersection(env.user.all_group_ids.ids):
-        raise AccessError(_("You are not allowed to view or use this report."))
+        raise AccessError(env._("You are not allowed to view or use this report."))
     return report
 
 
@@ -130,6 +132,7 @@ class PrintGatewayBinding(models.Model):
         ("spooler", "Windows/macOS Document Spool (driver-rendered)"),
         ("ipp", "IPP"),
         ("ipps", "IPP over TLS"),
+        ("pdf", "Approved PDF file output"),
         ("unknown", "Not declared (not routable)"),
     ], string="Printer Protocol", required=True,
        help="Hardware control language the printer ACTUALLY understands. "
@@ -268,11 +271,28 @@ class PrintGatewayBinding(models.Model):
     @api.depends("company_id", "branch_id", "destination_ref", "document_type", "runtime_agent_id", "printer_id")
     def _compute_name(self):
         for record in self:
-            destination = record.destination_ref.display_name if record.destination_ref else _("Destination")
-            scope = record.branch_id.display_name if record.branch_id else record.company_id.display_name
-            agent = record.runtime_agent_id or _("Agent")
-            printer = record.printer_id or _("Printer")
-            record.name = "%s / %s / %s → %s / %s" % (scope or _("Odoo Context"), destination, record.document_type or _("document"), agent, printer)
+            record.name = record._formatted_binding_name()
+
+    @api.depends("name", "company_id", "branch_id", "destination_ref", "document_type", "runtime_agent_id", "printer_id")
+    @api.depends_context("lang")
+    def _compute_display_name(self):
+        for record in self:
+            record.display_name = record._formatted_binding_name(localized=True)
+
+    def _formatted_binding_name(self, *, localized=False):
+        self.ensure_one()
+        destination = self.destination_ref.display_name if self.destination_ref else _("Destination")
+        scope = self.branch_id.display_name if self.branch_id else self.company_id.display_name
+        document = self.document_type or _("document")
+        if localized:
+            document = {
+                "order": _("Order"), "invoice": _("Invoice"), "delivery": _("Delivery"),
+                "purchase_order": _("Purchase Order"), "receipt": _("Receipt"), "label": _("Label"),
+            }.get(self.document_type, document)
+        return "%s / %s / %s → %s / %s" % (
+            scope or _("Odoo Context"), destination, document,
+            self.runtime_agent_id or _("Agent"), self.printer_id or _("Printer"),
+        )
 
     @api.onchange("destination_type")
     def _onchange_destination_type(self):
@@ -358,6 +378,8 @@ class PrintGatewayBinding(models.Model):
             protocol = "spooler"
         if connection_type == "spooler":
             return "spooler"
+        if connection_type == "pdf_output" and protocol == "pdf" and printer.get("printerType") == "file":
+            return "pdf"
         if connection_type in ("ipp", "ipps"):
             return connection_type
         if connection_type not in ("network", "usb"):
@@ -377,13 +399,23 @@ class PrintGatewayBinding(models.Model):
         conn = str(printer.get("connectionType") or "").strip().lower()
         proto = self._canonical_runtime_printer_protocol(printer)
         if proto == "spooler":
+            # Native PDFs may use this same business binding and let the
+            # Windows driver choose document media. The client-rendered JPEG
+            # route separately requires a full physical geometry snapshot.
             return conn in ("spooler", "windows_spooler", "usb")
-        if conn != "network" or proto != "escpos":
-            return False
         caps = printer.get("capabilities")
+        if conn == "pdf_output" and proto == "pdf":
+            return bool(validated_page_geometry(
+                caps.get("geometry") if isinstance(caps, dict) else None, printer.get("id"),
+            ))
+        geometry = validated_printer_geometry(
+            caps.get("geometry") if isinstance(caps, dict) else None, printer.get("id"),
+        )
+        if conn not in ("network", "usb") or proto != "escpos" or not geometry or geometry.get("raster_command") != "gs_v_0":
+            return False
         raw = caps.get("supported_protocols") if isinstance(caps, dict) else None
-        # Matches Gateway validatePayloadForPrinter: missing metadata allows
-        # the declared ESC/POS raster converter, but an explicit list limits it.
+        # The measured profile explicitly declares the supported raster
+        # command. An optional format list may further restrict this path.
         if raw is None and (not isinstance(caps, dict) or "supported_protocols" not in caps):
             return True
         if not isinstance(raw, list):
@@ -492,10 +524,12 @@ class PrintGatewayBinding(models.Model):
         agent = selected_printer.get("agent") if isinstance(selected_printer.get("agent"), dict) else {}
         if agent.get("id") != self.runtime_agent_id:
             raise ValidationError(_("Gateway Runtime Printer does not belong to the selected Runtime Agent."))
+        if not is_verified_runtime_printer(selected_printer):
+            raise ValidationError(_("The selected destination has no current operational verification. Refresh the Agent connection and verify the printer or approved PDF output before creating a new job."))
         if enforce_destination_compatibility:
             if self.destination_type in ("pos", "pos_printer") and not self._runtime_printer_accepts_image(selected_printer):
                 raise ValidationError(_(
-                    "POS receipt/kitchen printing requires a printer transport that accepts rendered images. Windows-installed printers should use the spooler connection; supported ESC/POS network printers are also accepted."
+                    "POS receipt/kitchen printing requires a compatible image transport. Use a verified Windows printer or approved PDF output with complete page geometry, or a validated ESC/POS profile with the GS v 0 raster command for USB or network printing."
                 ))
             device_class = str(selected_printer.get("deviceClass") or "").strip().lower()
             if self.destination_type == "picking_type" and device_class in ("laser", "inkjet") and not self.report_id:
@@ -728,9 +762,9 @@ class PrintGatewayBinding(models.Model):
         # mirroring the Gateway physicalImage rule in src/lib/routing.ts and
         # the pre-dispatch failover parity in print_job (raster_jpeg allows
         # spooler/escpos). Direct stream protocols (raw) remain excluded.
-        if payload_type == "pdf" and binding.printer_protocol not in ("spooler", "ipp", "ipps"):
+        if payload_type == "pdf" and binding.printer_protocol not in ("spooler", "ipp", "ipps", "pdf"):
             raise ValidationError(_("The explicitly selected print binding is not capable of document printing."))
-        if payload_type == "raster_jpeg" and binding.printer_protocol not in ("spooler", "escpos"):
+        if payload_type == "raster_jpeg" and binding.printer_protocol not in ("spooler", "escpos", "pdf"):
             raise ValidationError(_("The explicitly selected print binding is not capable of document printing."))
         return binding
 

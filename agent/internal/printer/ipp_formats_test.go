@@ -24,8 +24,17 @@ func ippAttrResponse(formats ...string) []byte {
 		}
 		writeIPPAttribute(&buf, 0x49, name, format)
 	}
+	writeIPPTestA4Media(&buf)
 	buf.WriteByte(0x03)
 	return buf.Bytes()
+}
+
+func writeIPPTestA4Media(buf *bytes.Buffer) {
+	writeIPPAttribute(buf, 0x44, "media-supported", "iso_a4_210x297mm")
+	writeIPPAttribute(buf, 0x44, "media-default", "iso_a4_210x297mm")
+	writeIPPAttribute(buf, 0x44, "print-scaling-supported", "none")
+	resolution := append(ippEvidenceTestInt(300), ippEvidenceTestInt(300)...)
+	writeIPPBinary(buf, 0x32, "printer-resolution-supported", append(resolution, 3))
 }
 
 func TestIPPAdvertisedFormatsAndPreflightRequest(t *testing.T) {

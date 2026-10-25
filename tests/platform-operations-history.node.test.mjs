@@ -39,8 +39,10 @@ test('platform operations are owner-only, read models do not disclose print docu
 test('platform operations appear as real navigable pages and do not offer silent destructive actions', () => {
   for (const page of ['src/app/platform/jobs/page.tsx','src/app/platform/fleet/page.tsx']) assert.ok(existsSync(page), page);
   const nav = read('src/app/platform/layout.tsx');
-  assert.match(nav, /\/platform\/jobs/);
-  assert.match(nav, /\/platform\/fleet/);
+  assert.match(nav, /\/platform\/operations/);
+  const hub=read('src/app/platform/operations/page.tsx');
+  assert.match(hub, /'jobs'|\"jobs\"/);
+  assert.match(hub, /'fleet'|\"fleet\"/);
   const action = read('src/app/api/platform/fleet/lifecycle/route.ts');
   assert.match(action, /requirePlatformActorInTransaction/);
   assert.match(action, /writeAuditEvent/);

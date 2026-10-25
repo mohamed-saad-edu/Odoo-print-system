@@ -6,7 +6,7 @@ export function roleLabel(role: string, t: Translator): string {
     case "owner":
       return t("team.role.owner");
     case "admin":
-      return t("team.role.admin");
+      return t("v4.team.fullAccess");
     case "operator":
       return t("team.role.operator");
     case "viewer":
@@ -16,6 +16,6 @@ export function roleLabel(role: string, t: Translator): string {
     case "billing_admin":
       return t("team.role.billingAdmin");
     default:
-      return role.replace(/_/g, " ");
+      return t("common.unknown");
   }
 }

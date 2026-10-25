@@ -1,3 +1,4 @@
+import { receiptGeometry } from "./helpers/odoo-printer-geometry.mjs";
 /**
  * Dependency-free execution of the REAL Odoo POS modules in an isolated Node
  * module realm. Odoo imports and the printer/DOM are explicit external
@@ -18,11 +19,12 @@ const addon = resolve(root, 'odoo_addons/print_gateway/static/src/js');
 function harness({ fontReady = Promise.resolve(), writeResponses = [] } = {}) {
   const seen = { canvasCalls: 0, imageWaits: 0, submissions: [], writes: [], rasterizedFontState: [], notifications: [] };
   const node = {
+    querySelectorAll() { return []; },
     classList: { add() {}, toggle() {} },
     style: { setProperty() {}, set width(value) { this._width = value; }, get width() { return this._width; } },
-    getBoundingClientRect() { return { width: parseInt(this.style.width || '512', 10) }; },
+    getBoundingClientRect() { return { width: parseFloat(this.style.width) }; },
     get scrollHeight() { return 280; },
-    get scrollWidth() { return parseInt(this.style.width || '512', 10); },
+    get scrollWidth() { return parseFloat(this.style.width); },
   };
   const document = { fonts: { ready: fontReady, status: 'loading' } };
   class PosStore {
@@ -54,10 +56,10 @@ function harness({ fontReady = Promise.resolve(), writeResponses = [] } = {}) {
     '@web/core/utils/render': { renderToElement: () => node },
     '@point_of_sale/app/screens/receipt_screen/receipt/order_receipt': { OrderReceipt: { template: 'OrderReceipt' } },
     '@point_of_sale/app/components/popups/retry_print_popup/retry_print_popup': { RetryPrintPopup: class {} },
-    '@point_of_sale/app/utils/html-to-image': { toCanvas: async () => {
+    '@point_of_sale/app/utils/html-to-image': { toCanvas: async (_node, options) => {
       seen.canvasCalls += 1;
       seen.rasterizedFontState.push(document.fonts.status);
-      return { width: 384, height: 280, getContext: () => ({ fillRect() {} }), toDataURL: () => 'data:image/jpeg;base64,VALIDJPEG' };
+      return { width: options.canvasWidth, height: options.canvasHeight, getContext: () => ({ fillRect() {} }), toDataURL: () => 'data:image/jpeg;base64,VALIDJPEG' };
     } },
     '@point_of_sale/utils': { waitImages: async () => { seen.imageWaits += 1; } },
   };
@@ -103,7 +105,7 @@ function harness({ fontReady = Promise.resolve(), writeResponses = [] } = {}) {
   store.data = {
     call: async (_, method, __, kwargs) => {
       if (method === 'is_gateway_printing_enabled') return true;
-      if (method === 'get_gateway_receipt_raster_width') return 384;
+      if (method === 'get_gateway_receipt_geometry') return receiptGeometry(384);
       if (method === 'action_print_gateway_receipt') {
         seen.submissions.push(kwargs);
         return { status: 'queued', gateway_enabled: true };
@@ -125,7 +127,7 @@ test('receipt image waits for mounted-layout font readiness before measuring/ras
   const h = harness({ fontReady });
   const { renderGatewayReceiptJpeg } = await h.init('receipt_raster.js');
   let settled = false;
-  const raster = renderGatewayReceiptJpeg(h.node, { renderer: h.store.env.services.renderer, width: 384 });
+  const raster = renderGatewayReceiptJpeg(h.node, { renderer: h.store.env.services.renderer, geometry: receiptGeometry(384) });
   raster.then(() => { settled = true; });
   await new Promise((resolveTick) => setImmediate(resolveTick));
   assert.equal(h.seen.canvasCalls, 0, 'image must not rasterize before fonts.ready completes');
@@ -147,6 +149,41 @@ test('receipt retry after failed silent counter write repairs bookkeeping withou
   assert.equal(h.seen.submissions.length, 2);
   assert.equal(h.seen.submissions[0].operation_id, h.seen.submissions[1].operation_id);
   assert.equal(h.seen.submissions[0].image, h.seen.submissions[1].image);
+  assert.equal(h.seen.submissions[0].geometry_fingerprint, receiptGeometry().config_fingerprint);
+  assert.equal(h.seen.submissions[0].geometry_fingerprint, h.seen.submissions[1].geometry_fingerprint);
+});
+
+test('unknown selected geometry and a failed metadata request never enqueue or invoke native printing', async () => {
+  for (const candidate of [undefined, null, {}, 512, new Error('measurement service unavailable')]) {
+    const h = harness();
+    const original = h.store.data.call;
+    h.store.data.call = async (...args) => {
+      if (args[1] !== 'get_gateway_receipt_geometry') return original(...args);
+      if (candidate instanceof Error) throw candidate;
+      return candidate;
+    };
+    await h.init('pos_print_router.js');
+    assert.equal(await h.store.printReceipt(), false);
+    assert.equal(h.seen.submissions.length, 0);
+    assert.equal(h.seen.canvasCalls, 0);
+    assert.equal(h.store.gatewayReceiptPending.size, 0);
+    assert.ok(h.seen.notifications.some(({ options }) => options.type === 'danger'));
+  }
+});
+
+test('an unresolved receipt replays original bytes and geometry even after current printer metadata changes', async () => {
+  const h = harness();
+  await h.init('pos_print_router.js');
+  assert.equal(await h.store.printReceipt(), true); // queued, not terminal
+  const original = h.store.data.call;
+  h.store.data.call = async (...args) => {
+    assert.notEqual(args[1], 'get_gateway_receipt_geometry', 'do not reformat an unresolved operation');
+    return original(...args);
+  };
+  assert.equal(await h.store.printReceipt(), true);
+  assert.equal(h.seen.canvasCalls, 1);
+  assert.deepEqual(h.seen.submissions[0], h.seen.submissions[1]);
+  assert.equal(h.seen.submissions[1].geometry_fingerprint, receiptGeometry().config_fingerprint);
 });
 
 test('accepted receipt statuses report submission information without claiming paper output', async () => {
@@ -177,8 +214,8 @@ test('two kitchen stations retain accepted ticket while retrying only a definite
   const oldCall = h.store.data.call;
   h.store.data.call = async (model, method, args, kwargs) => {
     if (method === 'get_gateway_kitchen_routes') return {
-      routes: [{ pos_printer_id: 10, category_ids: [1], raster_width: 384 },
-               { pos_printer_id: 20, category_ids: [1], raster_width: 576 }],
+      routes: [{ pos_printer_id: 10, category_ids: [1], geometry: receiptGeometry(384) },
+               { pos_printer_id: 20, category_ids: [1], geometry: receiptGeometry(576) }],
       missing_routes: [],
     };
     if (method === 'action_print_gateway_kitchen') {
@@ -196,7 +233,7 @@ test('two kitchen stations retain accepted ticket while retrying only a definite
   const changes = [{ new: [{ product_id: 1 }], cancelled: [], noteUpdate: [] }];
   assert.equal(await h.store.printChanges(order, changes, false, h.store.unwatched.printers), false);
   assert.equal(kitchenCalls.length, 2);
-  assert.deepEqual(widths, ['384px', '576px']);
+  assert.deepEqual(widths, [`${384 * 96 / 203}px`, `${576 * 96 / 203}px`]);
   assert.equal(order.uiState.lastPrints.length, 0);
   assert.equal(typeof h.seen.retryDialog?.retry, 'function');
   assert.equal(await h.seen.retryDialog.retry(), true);
@@ -215,8 +252,8 @@ test('unknown kitchen station outcome must not trigger a second physical submiss
   h.store.unwatched.printers = [{ id: 10, config: { name: 'Kitchen' } }, { id: 20, config: { name: 'Bar' } }];
   h.store.data.call = async (model, method, args, kwargs) => {
     if (method === 'get_gateway_kitchen_routes') return { routes: [
-      { pos_printer_id: 10, category_ids: [], raster_width: 384 },
-      { pos_printer_id: 20, category_ids: [], raster_width: 576 },
+      { pos_printer_id: 10, category_ids: [], geometry: receiptGeometry(384) },
+      { pos_printer_id: 20, category_ids: [], geometry: receiptGeometry(576) },
     ], missing_routes: [] };
     if (method === 'action_print_gateway_kitchen') {
       kitchenCalls.push({ ...kwargs });
@@ -267,7 +304,7 @@ test('kitchen gateway rejects accepted-looking status with invalid gateway owner
       : original(model, method, args, kwargs);
   const response = await h.store.printOrderChanges({ orderData: {
     __gateway_order_id: 101, __gateway_session_id: 11, __gateway_print_id: 'kitchen-operation-77',
-  } }, {}, 10, 384);
+  } }, {}, 10, receiptGeometry(384));
   assert.equal(response.successful, false);
   assert.equal(response.gatewayOutcome, 'unknown');
   assert.equal(response.canRetry, false);

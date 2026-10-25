@@ -5,10 +5,6 @@ import { describe, expect, it } from "vitest";
 // never 403 (permission failure on a valid session). The desktop refresh and
 // dashboard redirect contracts key only on 401.
 const ROUTES = [
-  "src/app/api/billing/cancel/route.ts",
-  "src/app/api/billing/resume/route.ts",
-  "src/app/api/billing/portal/route.ts",
-  "src/app/api/billing/checkout/route.ts",
   "src/app/api/team/ownership/route.ts",
 ];
 
@@ -27,3 +23,12 @@ describe("unauthenticated callers receive 401, not 403", () => {
     });
   }
 });
+
+for (const route of ["cancel","resume","portal","checkout","webhook"]) {
+  it(`retired ${route} returns 410 without authenticating or changing any customer`, async()=>{
+    const {POST}=await import(`../src/app/api/billing/${route}/route`);
+    const response=await POST(new Request(`https://example.test/api/billing/${route}`,{method:"POST"}));
+    expect(response.status).toBe(410);
+    expect(await response.json()).toMatchObject({code:"MANUAL_BILLING_REQUIRED"});
+  });
+}

@@ -84,10 +84,10 @@ func TestCancelledScanReportsTruncationNotCompletion(t *testing.T) {
 	// deterministic case; both scanners share the dispatched-count rule.
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := discoverNetworkPrinters(ctx); err == nil {
-		t.Fatal("cancelled network scan must report truncation, got nil error")
+	if _, err := discoverNetworkPrinters(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled network scan must preserve the cancellation cause, got %v", err)
 	}
-	if _, err := discoverIPPviaTCP(ctx); err == nil {
-		t.Fatal("cancelled IPP scan must report truncation, got nil error")
+	if _, err := discoverIPPviaTCP(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled IPP scan must preserve cancellation even without private interfaces, got %v", err)
 	}
 }

@@ -1,34 +1,35 @@
+import { verifiedPrinterState } from "./helpers/printer-verification";
 import { describe, it, expect } from "vitest";
 import { isPrinterClaimable, isPrinterStatusExecutable } from "../src/lib/routing";
 
 /**
  * Eligibility matrix: health/telemetry (online/unknown/offline/error) is
  * separate from execution eligibility (declared transport + no positive
- * evidence against). Claim == executable: one canonical predicate.
+ * evidence against). With current Agent proof, claim health eligibility matches the status predicate.
  */
 describe("printer eligibility matrix", () => {
   it("A. spooler + online -> executable", () => {
     expect(isPrinterStatusExecutable({ status: "online", connectionType: "spooler", protocol: "spooler" })).toBe(true);
-    expect(isPrinterClaimable({ status: "online", connectionType: "spooler", protocol: "spooler" })).toBe(true);
+    expect(isPrinterClaimable({ ...verifiedPrinterState(), status: "online", connectionType: "spooler", protocol: "spooler" })).toBe(true);
   });
   it("B. spooler + unknown + valid queue -> eligible to attempt", () => {
     expect(isPrinterStatusExecutable({ status: "unknown", connectionType: "spooler", protocol: "spooler" })).toBe(true);
-    expect(isPrinterClaimable({ status: "unknown", connectionType: "spooler", protocol: "spooler" })).toBe(true);
+    expect(isPrinterClaimable({ ...verifiedPrinterState(), status: "unknown", connectionType: "spooler", protocol: "spooler" })).toBe(true);
   });
   it("C. spooler + confirmed offline -> blocked", () => {
     expect(isPrinterStatusExecutable({ status: "offline", connectionType: "spooler", protocol: "spooler" })).toBe(false);
-    expect(isPrinterClaimable({ status: "offline", connectionType: "spooler", protocol: "spooler" })).toBe(false);
+    expect(isPrinterClaimable({ ...verifiedPrinterState(), status: "offline", connectionType: "spooler", protocol: "spooler" })).toBe(false);
   });
   it("D. spooler + paper out -> blocked", () => {
     // Paper-out surfaces as "error" in the gateway vocabulary.
     expect(isPrinterStatusExecutable({ status: "error", connectionType: "spooler", protocol: "spooler" })).toBe(false);
   });
   it("E. spooler + paper jam -> blocked", () => {
-    expect(isPrinterClaimable({ status: "error", connectionType: "spooler", protocol: "spooler" })).toBe(false);
+    expect(isPrinterClaimable({ ...verifiedPrinterState(), status: "error", connectionType: "spooler", protocol: "spooler" })).toBe(false);
   });
   it("G. network RAW + unknown + declared protocol -> eligible", () => {
     expect(isPrinterStatusExecutable({ status: "unknown", connectionType: "network", protocol: "raw" })).toBe(true);
-    expect(isPrinterClaimable({ status: "unknown", connectionType: "network", protocol: "raw" })).toBe(true);
+    expect(isPrinterClaimable({ ...verifiedPrinterState(), status: "unknown", connectionType: "network", protocol: "raw" })).toBe(true);
   });
   it("H. network ESC/POS + unknown + declared protocol -> eligible", () => {
     expect(isPrinterStatusExecutable({ status: "unknown", connectionType: "network", protocol: "escpos" })).toBe(true);
@@ -64,7 +65,7 @@ describe("printer eligibility matrix", () => {
       { status: "offline", connectionType: "ipp", protocol: "ipp" },
     ];
     for (const tc of cases) {
-      expect(isPrinterClaimable(tc), JSON.stringify(tc)).toBe(isPrinterStatusExecutable(tc));
+      expect(isPrinterClaimable({ ...verifiedPrinterState(), ...tc }), JSON.stringify(tc)).toBe(isPrinterStatusExecutable(tc));
     }
   });
   it("unknown is not online: offline/error still fail closed", () => {

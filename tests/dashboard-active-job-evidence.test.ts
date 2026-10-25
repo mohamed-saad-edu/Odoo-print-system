@@ -42,7 +42,7 @@ async function inspect(status: string, error?: string) {
   document.body.appendChild(host);
   root = createRoot(host);
   await act(async () => root!.render(createElement(DashboardClient, {
-    initialAgents: [], initialPrinters: [], initialJobs: jobs, initialFleet: fleet, databaseError: null,
+    initialView: "jobs", initialAgents: [], initialPrinters: [], initialJobs: jobs, initialFleet: fleet, databaseError: null,
     canReadBillingUsage: false, diagnosticActorScope: "fixture",
     canMutate: { printers: false, printersTest: false, agentsPair: false, agentsLifecycle: false, jobsCancel: false, jobsRetry: true },
   })));
@@ -56,7 +56,7 @@ describe("dashboard active job evidence", () => {
   for (const status of ["claimed", "printing"]) {
     it(`does not present terminal reprint warnings for ${status}`, async () => {
       const text = await inspect(status);
-      expect(text).toContain(status === "claimed" ? "Assigned to agent" : "Processing print");
+      expect(text).toContain("Processing");
       expect(text).not.toContain("Verify the printer before reprinting");
       expect(text).not.toContain("This job may already have printed");
     });

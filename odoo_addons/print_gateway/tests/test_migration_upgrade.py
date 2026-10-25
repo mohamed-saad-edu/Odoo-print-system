@@ -4,9 +4,11 @@ from unittest.mock import MagicMock
 
 # Hard imports: this module only runs under the Odoo test runner; a fallback
 # previously degraded the whole file into silent skips with a green exit.
+from odoo.tests import tagged
 from odoo.tests.common import TransactionCase
 
 
+@tagged("post_install", "-at_install")
 class TestPrintGatewayMigrationUpgrade(TransactionCase):
     """Automated upgrade migration test validating schema evolution and preventing UndefinedColumn exceptions."""
 

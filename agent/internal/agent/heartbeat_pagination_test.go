@@ -64,7 +64,7 @@ func TestHeartbeatStatusProbesUseBoundedConcurrency(t *testing.T) {
 			ID:       id,
 			Name:     id,
 			Type:     "network",
-			Endpoint: "127.0.0.1:9100",
+			Endpoint: "10.0.0.20:9100",
 			Protocol: "raw",
 		}
 		probes = append(probes, p)
@@ -153,7 +153,7 @@ func TestHeartbeatPaginationPreservesFullInventoryAndOwnershipFence(t *testing.T
 			ID:       id,
 			Name:     id,
 			Type:     "network",
-			Endpoint: "127.0.0.1:9100",
+			Endpoint: "10.0.0.20:9100",
 			Protocol: "raw",
 		}
 	}
@@ -169,8 +169,11 @@ func TestHeartbeatPaginationPreservesFullInventoryAndOwnershipFence(t *testing.T
 
 	ag.sendHeartbeatContext(context.Background())
 
-	if got, want := len(received), 3; got != want {
-		t.Fatalf("heartbeat should paginate %d printers into %d pages, got %d", printerCount, want, got)
+	// Operational proof adds real bytes to each entry. Pagination must honor
+	// both the record ceiling and the transport budget, so a verified fleet
+	// can require more pages than the record count alone would require.
+	if got, minimum := len(received), (printerCount+maxHeartbeatPrintersPerPage-1)/maxHeartbeatPrintersPerPage; got < minimum {
+		t.Fatalf("heartbeat sent too few pages for %d printers: got %d, minimum %d", printerCount, got, minimum)
 	}
 
 	seenPrinters := make(map[string]struct{}, printerCount)
@@ -204,6 +207,14 @@ func TestHeartbeatPaginationPreservesFullInventoryAndOwnershipFence(t *testing.T
 		}
 		if len(entries) > maxHeartbeatPrintersPerPage {
 			t.Fatalf("page %d exceeds the Gateway per-page printer ceiling: %d", i+1, len(entries))
+		}
+		encodedEntries, err := json.Marshal(entries)
+		if err != nil || len(encodedEntries) > maxHeartbeatPrinterBytes {
+			t.Fatalf("page %d exceeds the printer byte budget: bytes=%d, err=%v", i+1, len(encodedEntries), err)
+		}
+		encodedPage, err := json.Marshal(page)
+		if err != nil || len(encodedPage) > maxHeartbeatEnvelopeBytes {
+			t.Fatalf("page %d exceeds the heartbeat envelope budget: bytes=%d, err=%v", i+1, len(encodedPage), err)
 		}
 		for _, raw := range entries {
 			entry, ok := raw.(map[string]interface{})
@@ -399,7 +410,7 @@ func TestHeartbeatResponseBodyIsReadBeforeContextCancel(t *testing.T) {
 			ID:       "printer-1",
 			Name:     "printer-1",
 			Type:     "network",
-			Endpoint: "127.0.0.1:9100",
+			Endpoint: "10.0.0.20:9100",
 			Protocol: "raw",
 		},
 	}
@@ -461,7 +472,7 @@ func TestHeartbeatRejectsUnacknowledgedIntermediatePage(t *testing.T) {
 				id := "printer-" + formatTestIndex(i)
 				ag.printers[id] = &fakePrinter{}
 				ag.printerConfigs[id] = config.PrinterConfig{
-					ID: id, Name: id, Type: "network", Endpoint: "127.0.0.1:9100", Protocol: "raw",
+					ID: id, Name: id, Type: "network", Endpoint: "10.0.0.20:9100", Protocol: "raw",
 				}
 			}
 			ag.sendHeartbeatContext(context.Background())

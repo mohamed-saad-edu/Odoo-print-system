@@ -1,3 +1,5 @@
+import { printOutputPresentation, validateFileOutputEvidence, sameFileOutputEvidence } from "../../../../lib/print-output";
+import { printerOperationalVerificationPredicate } from "../../../../lib/printer-verification-sql";
 import { createHash } from "node:crypto";
 import { db } from "../../../../db";
 import { printJobs, printJobReceipts } from "../../../../db/schema";
@@ -19,7 +21,8 @@ import { PRINTER_NOT_SHARED_PAUSE } from "../../../../lib/job-status";
 
 export const dynamic = "force-dynamic";
 const printerEligibilityPredicate = (tenantId: SQL) => sql`
-  pr.lifecycle = 'active'
+  ${printerOperationalVerificationPredicate(sql`pr`)}
+  AND pr.lifecycle = 'active'
   AND pr.inventory_present = true
   AND pr.shared_with_gateway = true
   AND (
@@ -28,7 +31,7 @@ const printerEligibilityPredicate = (tenantId: SQL) => sql`
     OR (
       pr.status = 'unknown'
       AND (
-        pr.connection_type = 'spooler'
+        pr.connection_type = 'spooler' OR (pr.connection_type = 'pdf_output' AND pr.protocol = 'pdf')
         OR pr.connection_type IN ('ipp','ipps')
         OR (pr.connection_type = 'network' AND pr.protocol IN ('ipp','ipps'))
         OR (pr.connection_type IN ('network','usb') AND pr.protocol IN ('raw','escpos','zpl','tspl'))
@@ -172,6 +175,8 @@ export async function GET(req: Request) {
         AND a.last_seen_at IS NOT NULL
         AND a.last_seen_at <= now()
         AND a.last_seen_at >= now() - make_interval(secs => ${agentStaleThresholdSeconds()})
+          AND p.binding_digest IS NOT NULL AND p.binding_digest = pr.verification_binding_digest
+          AND p.output_medium = pr.output_medium
           AND ${printerEligibilityPredicate(sql`p.tenant_id`)}
           AND t.lifecycle = 'active'
         ORDER BY p.created_at ASC
@@ -195,6 +200,8 @@ export async function GET(req: Request) {
         AND a.last_seen_at IS NOT NULL
         AND a.last_seen_at <= now()
         AND a.last_seen_at >= now() - make_interval(secs => ${agentStaleThresholdSeconds()})
+          AND p.binding_digest IS NOT NULL AND p.binding_digest = pr.verification_binding_digest
+          AND p.output_medium = pr.output_medium
           AND ${printerEligibilityPredicate(sql`p.tenant_id`)}
           AND t.lifecycle = 'active'
         ORDER BY p.created_at ASC
@@ -217,6 +224,8 @@ export async function GET(req: Request) {
         AND a.last_seen_at IS NOT NULL
         AND a.last_seen_at <= now()
         AND a.last_seen_at >= now() - make_interval(secs => ${agentStaleThresholdSeconds()})
+          AND p.binding_digest IS NOT NULL AND p.binding_digest = pr.verification_binding_digest
+          AND p.output_medium = pr.output_medium
           AND ${printerEligibilityPredicate(sql`p.tenant_id`)}
           AND t.lifecycle = 'active'
         ORDER BY c.priority ASC, c.created_at ASC
@@ -300,7 +309,7 @@ export async function PATCH(req: Request) {
   }
   if (hasBodyOverLimit(req, 64 * 1024)) return NextResponse.json({ error: "Request body too large" }, { status: 413 });
 
-  let body: { jobId?: unknown; status?: unknown; error?: unknown; reason?: unknown; claimToken?: unknown; spoolerJobId?: unknown; attemptId?: unknown; transport?: unknown };
+  let body: { jobId?: unknown; status?: unknown; error?: unknown; reason?: unknown; claimToken?: unknown; spoolerJobId?: unknown; attemptId?: unknown; transport?: unknown; outputEvidence?: unknown };
   try { const parsedBody = await req.json(); if (!parsedBody || typeof parsedBody !== "object" || Array.isArray(parsedBody)) throw new Error("JSON object required"); body = parsedBody; } catch { return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 }); }
 
   const { jobId, status: requestedStatus, error: rawError, reason: rawReason, claimToken: rawClaimToken, spoolerJobId: rawSpoolerJobId, attemptId: rawAttemptId, transport: rawTransport } = body;
@@ -313,19 +322,28 @@ export async function PATCH(req: Request) {
   const incomingAttemptId = typeof rawAttemptId === "string" && rawAttemptId.length > 0 && rawAttemptId.length <= 64 ? rawAttemptId.trim() : null;
   const transport = typeof rawTransport === "string" ? rawTransport.trim().slice(0,32) : null;
 
+  const outputEvidence = body.outputEvidence === undefined ? null : validateFileOutputEvidence(body.outputEvidence);
+  if (body.outputEvidence !== undefined && !outputEvidence) return NextResponse.json({ error: "Invalid file output evidence", code: "INVALID_OUTPUT_EVIDENCE" }, { status: 400 });
+
   const whereClause = and(eq(printJobs.id, jobId), eq(printJobs.tenantId, agent.tenantId), eq(printJobs.agentId, agent.id));
   const job = await db.query.printJobs.findFirst({ where: whereClause });
   if (!job) {
     const receipt = await db.query.printJobReceipts.findFirst({ where: and(eq(printJobReceipts.id, jobId), eq(printJobReceipts.tenantId, agent.tenantId), eq(printJobReceipts.agentId, agent.id)) });
     if (receipt && claimToken && receipt.status === requestedStatus && receipt.closedClaimTokenHash === createHash("sha256").update(claimToken).digest("hex")) {
-      return NextResponse.json({ success: true, status: receipt.status, physicalOutcome: derivePhysicalOutcome(receipt.status, receipt.error) });
+      if (receipt.outputMedium === "file" && requestedStatus === "success" ? !sameFileOutputEvidence(receipt.outputEvidence, outputEvidence) : outputEvidence !== null) {
+        return NextResponse.json({ error: "Terminal output evidence differs from the accepted execution", code: "OUTPUT_EVIDENCE_CONFLICT" }, { status: 409 });
+      }
+      return NextResponse.json({ success: true, status: receipt.status, ...printOutputPresentation(receipt) });
     }
     return NextResponse.json({ error: "Job not found" }, { status: 404 });
   }
 
+  if (job.outputMedium === "file" && requestedStatus === "success" && !outputEvidence) return NextResponse.json({ error: "Verified PDF file creation evidence is required", code: "OUTPUT_EVIDENCE_REQUIRED" }, { status: 422 });
+  if (outputEvidence && (job.outputMedium !== "file" || requestedStatus !== "success")) return NextResponse.json({ error: "File evidence is only valid for a successful file-output job", code: "OUTPUT_EVIDENCE_MISMATCH" }, { status: 422 });
   const currentStatus = job.status as JobStatus;
   const closedClaimTokenHash = claimToken ? createHash("sha256").update(claimToken).digest("hex") : null;
   if (claimToken && closedClaimTokenHash && isTerminal(currentStatus) && requestedStatus === currentStatus) {
+    if (job.outputMedium === "file" && requestedStatus === "success" && !sameFileOutputEvidence(job.outputEvidence, outputEvidence)) return NextResponse.json({ error: "Terminal output evidence differs from the accepted execution", code: "OUTPUT_EVIDENCE_CONFLICT" }, { status: 409 });
     // Replay acknowledges durable evidence only. It cannot reopen execution,
     // replace an outcome, extend the late-success window, or alter spooler data.
     const acknowledged = await db.update(printJobs)
@@ -333,7 +351,7 @@ export async function PATCH(req: Request) {
       .where(and(whereClause, eq(printJobs.status, currentStatus), eq(printJobs.closedClaimTokenHash, closedClaimTokenHash)))
       .returning({ status: printJobs.status, error: printJobs.error });
     if (acknowledged.length === 1) {
-      return NextResponse.json({ success: true, status: acknowledged[0].status, physicalOutcome: derivePhysicalOutcome(acknowledged[0].status, acknowledged[0].error) });
+      return NextResponse.json({ success: true, status: acknowledged[0].status, ...printOutputPresentation({ ...job, status: acknowledged[0].status, error: acknowledged[0].error }) });
     }
   }
   if (requestedStatus !== "expired") {
@@ -428,58 +446,16 @@ export async function PATCH(req: Request) {
   }
 
   if (requestedStatus === "queued" && currentStatus === "printing") {
-    if (reason !== AGENT_REPRINT_AFTER_CRASH_REASON) {
-      return NextResponse.json({ error: "Invalid status transition: printing -> queued is reserved for explicit crash-reprint recovery" }, { status: 409 });
-    }
-
-    // This is an explicit opt-in at-least-once recovery policy. The prior
-    // attempt already crossed the physical boundary, so never refund
-    // deliveryAttempts and never allow this path after the business TTL.
-    const updated = await db.update(printJobs)
-      .set({
-        status: "queued",
-        claimToken: null,
-        closedClaimTokenHash: null,
-        claimedAt: null,
-        deliveredAt: null,
-        ackedAt: null,
-        error: "AGENT_RESTART_DURING_PRINT: operator-enabled at-least-once crash recovery; prior physical outcome is unknown and a new delivery may duplicate output",
-        retries: sql`${printJobs.retries} + 1`,
-        updatedAt: sql`clock_timestamp()`,
-      })
-      .where(and(
-        fencedJobWrite(jobId, agent.tenantId, agent.id, currentStatus, claimToken),
-        sql`${printJobs.expiresAt} > now()`,
-        sql`${printJobs.retries} < ${MAX_RETRIES}`,
-      ))
-      .returning({ status: printJobs.status, retries: printJobs.retries });
-
-    if (updated.length !== 1) {
-      return NextResponse.json({ error: "Crash requeue rejected: claim is stale, job expired, or retry budget is exhausted", code: "CRASH_REQUEUE_REJECTED" }, { status: 409 });
-    }
-
-    incrementMetric("print_jobs_requeued_total");
-    logWarn("print.job.crash_requeued_at_least_once", { requestId, jobId, agentId: agent.id });
-    try {
-      await recordJobEvent({
-        jobId,
-        tenantId: agent.tenantId,
-        stage: "queued",
-        status: "error",
-        message: "Agent restart recovery requeued a physically ambiguous attempt under explicit at-least-once policy",
-        agentId: agent.id,
-        printerId: job.printerId,
-        requestId,
-        metadata: {
-          reason: AGENT_REPRINT_AFTER_CRASH_REASON,
-          priorDeliveredAt: job.deliveredAt ? String(job.deliveredAt) : null,
-          priorAckedAt: job.ackedAt ? String(job.ackedAt) : null,
-        },
-      });
-    } catch (error) {
-      logWarn("print.job.event_persist_failed", { requestId, jobId, stage: "queued", error: error instanceof Error ? error.message : "unknown" });
-    }
-    return NextResponse.json({ success: true, status: "queued", physicalOutcome: "unknown", requeuedAfterCrash: true });
+    // A legacy global setting is not authorization for a second physical
+    // operation. Preserve the original claim, counters and submission evidence;
+    // its Agent may still reconcile an outcome for that exact attempt.
+    logWarn("print.job.unknown_reprint_refused", { requestId, jobId, agentId: agent.id, legacyPolicy: reason === AGENT_REPRINT_AFTER_CRASH_REASON });
+    return NextResponse.json({
+      error: "Physical output is unknown. Reconcile the original attempt before explicitly authorizing a separate new operation.",
+      code: "UNKNOWN_OUTCOME_REPRINT_FORBIDDEN",
+      status: currentStatus,
+      physicalOutcome: "unknown",
+    }, { status: 409 });
   }
 
   if (requestedStatus === "queued" && currentStatus === "claimed") {
@@ -588,6 +564,7 @@ export async function PATCH(req: Request) {
       .set({
         status: "success",
         error: postExpiryError,
+        ...(outputEvidence ? { outputEvidence: { ...outputEvidence } } : {}),
         // Invalidate the claim token on terminal success: completed jobs must
         // not retain a live token that could confuse future status checks.
         claimToken: sql`NULL`,
@@ -612,7 +589,7 @@ export async function PATCH(req: Request) {
     incrementMetric("print_jobs_success_total");
     incrementMetric("print_jobs_late_success_total");
     logInfo("print.job.success_post_expiration", { requestId, jobId, agentId: agent.id, physicalOutcome: LATE_SUCCESS_POST_EXPIRATION_MARKER });
-    return NextResponse.json({ success: true, status: "success", physicalOutcome, physicalDetail: LATE_SUCCESS_POST_EXPIRATION_MARKER });
+    return NextResponse.json({ success: true, status: "success", ...printOutputPresentation({ ...job, status: "success", error: postExpiryError, outputEvidence }), physicalDetail: LATE_SUCCESS_POST_EXPIRATION_MARKER });
   }
 
   if (!printingAdmissionReplay && !canTransition(currentStatus, requestedStatus, { allowLateSuccess: lateSuccess })) {
@@ -626,6 +603,7 @@ export async function PATCH(req: Request) {
     .set({
       status: requestedStatus,
       error: nextError,
+      ...(outputEvidence ? { outputEvidence: { ...outputEvidence } } : {}),
       ...(isTerminal(requestedStatus) ? { closedClaimTokenHash } : {}),
       ...(isTerminal(requestedStatus) && !retainsLateSuccessFence ? { claimToken: sql`NULL` } : {}),
       updatedAt: sql`clock_timestamp()`,
@@ -675,6 +653,8 @@ export async function PATCH(req: Request) {
         JOIN printers pr ON pr.tenant_id = a.tenant_id AND pr.agent_id = a.id
         WHERE a.id = ${agent.id} AND a.tenant_id = ${agent.tenantId}
           AND pr.id = ${job.printerId}
+          AND ${job.bindingDigest}::text IS NOT NULL AND pr.verification_binding_digest = ${job.bindingDigest}
+          AND pr.output_medium = ${job.outputMedium}
           AND ${printerEligibilityPredicate(sql`a.tenant_id`)}
         FOR SHARE OF a, t, pr
       `);
@@ -733,7 +713,7 @@ export async function PATCH(req: Request) {
       // Admission means this attempt has a live claim, NOT that the printer
       // has accepted data. Do not show a green success state for this event.
       status: requestedStatus === "printing" ? "pending" : requestedStatus === "success" ? "ok" : "error",
-      message: requestedStatus === "printing" ? `Agent admitted attempt for dispatch (configured transport=${transport ?? "unspecified"}; physical output not confirmed)` : requestedStatus === "success" ? `Print submission acknowledged (spoolerJobId=${spoolerJobId ?? "n/a"}; physical output not confirmed)` : nextError ?? requestedStatus,
+      message: requestedStatus === "success" && outputEvidence ? `PDF file created and verified (${outputEvidence.page_count} pages, ${outputEvidence.bytes} bytes)` : requestedStatus === "printing" ? `Agent admitted attempt for dispatch (configured transport=${transport ?? "unspecified"}; physical output not confirmed)` : requestedStatus === "success" ? `Print submission acknowledged (spoolerJobId=${spoolerJobId ?? "n/a"}; physical output not confirmed)` : nextError ?? requestedStatus,
       errorCode: requestedStatus === "failed" ? nextError ?? undefined : undefined,
       spoolerJobId: spoolerJobId ?? undefined,
       attemptId: incomingAttemptId ?? job.attemptId ?? undefined,
@@ -741,9 +721,9 @@ export async function PATCH(req: Request) {
       agentId: agent.id,
       printerId: job.printerId,
       requestId,
-      metadata: { transport, physicalOutcome, lateSuccess },
+      metadata: { transport, physicalOutcome, lateSuccess, ...(outputEvidence ? { outputEvidence } : {}) },
     });
   } catch (e) { logWarn("print.job.event_persist_failed", { requestId, jobId, stage: stageForStatus(requestedStatus), error: e instanceof Error ? e.message : "unknown" }); }
 
-  return NextResponse.json({ success: true, status: requestedStatus, physicalOutcome, spoolerJobId });
+  return NextResponse.json({ success: true, status: requestedStatus, ...printOutputPresentation({ ...job, status: requestedStatus, error: nextError, outputEvidence }), spoolerJobId });
 }

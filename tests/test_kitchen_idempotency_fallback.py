@@ -77,7 +77,7 @@ def production_methods(file, names):
     return ns['Production']
 
 
-Router = production_methods('print_router.py', ['route_kitchen_print'])
+Router = production_methods('print_router.py', ['route_kitchen_print', '_receipt_image_payload'])
 
 
 class FakeOrder(SimpleNamespace):
@@ -93,6 +93,12 @@ class FakeRouter(Router):
 
     def _assert_current_company(self, company, **_kw):
         assert company == BRANCH
+
+    def _receipt_geometry_for_route(self, route):
+        return {"config_fingerprint": "a" * 64}
+
+    def _replay_receipt_operation(self, *_args):
+        return None
 
     def _validate_jpeg_base64(self, data):
         assert data == 'KITCHEN_JPEG'
@@ -120,7 +126,7 @@ def make_order(**kw):
 
 
 def route(router, order, **kw):
-    return router.route_kitchen_print(order, 'KITCHEN_JPEG', **kw)
+    return router.route_kitchen_print(order, 'KITCHEN_JPEG', geometry_fingerprint='a' * 64, **kw)
 
 
 def test_kitchen_without_key_is_deterministic():

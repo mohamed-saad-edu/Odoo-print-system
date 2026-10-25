@@ -54,8 +54,8 @@ suite("agent identity and socket isolation across tenants", () => {
     const b = await seedFixture();
     const jobId = `job_adv_${nanoid(8)}`;
     await pool().query(
-      `INSERT INTO print_jobs (id, tenant_id, agent_id, printer_id, status, payload, expires_at)
-       VALUES ($1, $2, $3, $4, 'queued', $5::jsonb, now() + interval '1 hour')`,
+      `INSERT INTO print_jobs (id, tenant_id, agent_id, printer_id, status, payload, expires_at, binding_digest)
+       VALUES ($1, $2, $3, $4, 'queued', $5::jsonb, now() + interval '1 hour', (SELECT verification_binding_digest FROM printers WHERE tenant_id=$2 AND id=$4))`,
       [jobId, a.tenantId, a.agentId, a.printerId, JSON.stringify({ type: "raw", protocol: "raw", encoding: "base64", data: "aGVsbG8=" })],
     );
 

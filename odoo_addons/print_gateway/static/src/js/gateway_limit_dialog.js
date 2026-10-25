@@ -12,14 +12,15 @@ const ALLOWED_ENTITLEMENTS = new Set([
     "max_prints_per_period",
 ]);
 
-const COPY = {
+// Resolve on each use: a module-import-time _t cache keeps the previous locale.
+function billingCopy() { return {
     max_agents: {
-        title: _t("Agent limit reached"),
-        reason: _t("You've reached the computer limit on your plan."),
+        title: _t("Computer safety limit reached"),
+        reason: _t("Contact your administrator to review the platform's technical capacity."),
     },
     max_printers: {
-        title: _t("Printer limit reached"),
-        reason: _t("You've reached the printer limit on your plan."),
+        title: _t("Printer safety limit reached"),
+        reason: _t("Contact your administrator to review the platform's technical capacity."),
     },
     max_jobs_per_minute: {
         title: _t("Print rate limit reached"),
@@ -31,9 +32,9 @@ const COPY = {
     },
     max_prints_per_period: {
         title: _t("Print allowance reached"),
-        reason: _t("You've used all prints for this period."),
+        reason: _t("You have used this month's print-job allowance."),
     },
-};
+}; }
 
 function candidateMessages(error) {
     const candidates = [];
@@ -69,7 +70,7 @@ const GENERIC_RPC_TITLES = new Set(["Odoo Server Error", "RPC_ERROR", "RPC Error
  * generic server-error alert. Prefer the server message, then string
  * arguments, then the local message unless it is itself the generic title.
  */
-export function gatewayServerMessage(error) {
+export function gatewayDiagnosticMessage(error) {
     const fallbacks = [];
     if (error && typeof error === "object") {
         if (typeof error.data?.message === "string" && error.data.message.trim()) {
@@ -99,6 +100,35 @@ export function gatewayServerMessage(error) {
     return "";
 }
 
+/** Customer boundary: remote/native exceptions are evidence, never UI copy. */
+export function gatewayServerMessage(error) {
+    const raw = gatewayDiagnosticMessage(error);
+    if (!raw) return "";
+    const code = raw.slice(0, 4096).toUpperCase();
+    if (/UNKNOWN_|UNCERTAIN|PARTIAL_DELIVERY|AMBIGUOUS/.test(code)) {
+        return _t("The print result needs review. Check the printer before starting another print to avoid duplicate output.");
+    }
+    if (/PRINT_QUOTA_EXCEEDED|MAX_PRINTS_PER_PERIOD/.test(code)) {
+        return _t("You have used this month's print-job allowance. Wait for the monthly reset or contact the workspace owner.");
+    }
+    if (/SUBSCRIPTION|TENANT_SUSPENDED|TENANT_DELETED/.test(code)) {
+        return _t("Printing is not active for this workspace. Ask the workspace owner to review its subscription in Yaseir.");
+    }
+    if (/PRINTER_OFFLINE|PRINTER_UNAVAILABLE|AGENT_OFFLINE|PRINTER_NOT_FOUND|PRINTER_NOT_SHARED/.test(code)) {
+        return _t("The selected printer is unavailable. Check its computer, power and connection before trying again.");
+    }
+    if (/VERIFICATION|UNVERIFIED|DEVICE_NOT_APPROVED/.test(code)) {
+        return _t("Verify this printer in the Windows printing app before selecting it in Odoo.");
+    }
+    if (/GATEWAY_INSTALLATION_|API_KEY|CREDENTIAL|UNAUTHORIZED/.test(code)) {
+        return _t("The Odoo connection needs attention. Ask your administrator to review Connect Odoo and its connection key.");
+    }
+    if (/NO_BINDING|NO PRINT RULE|NOT ASSIGNED|BINDING_NOT_FOUND/.test(code)) {
+        return _t("Choose a verified printer for this document and company in the printer settings.");
+    }
+    return _t("This printing action could not be completed. Check the connection and Print Activity before retrying. Contact your administrator if the problem continues.");
+}
+
 export function parseGatewayBillingLimit(error) {    for (const candidate of candidateMessages(error)) {
         const markerIndex = candidate.indexOf(PREFIX);
         if (markerIndex < 0) continue;
@@ -112,9 +142,7 @@ export function parseGatewayBillingLimit(error) {    for (const candidate of can
                 entitlement,
                 limit: Number.isInteger(details.limit) && details.limit > 0 ? details.limit : null,
                 used: Number.isInteger(details.used) && details.used >= 0 ? details.used : null,
-                message: typeof details.message === "string" && details.message.trim()
-                    ? details.message
-                    : COPY[entitlement].reason,
+                message: billingCopy()[entitlement].reason,
                 retryAfterSeconds:
                     Number.isFinite(details.retryAfterSeconds) && details.retryAfterSeconds > 0
                         ? Math.round(details.retryAfterSeconds)
@@ -151,30 +179,31 @@ export function showGatewayBillingLimitDialog(env, errorOrDetails) {
         : parseGatewayBillingLimit(errorOrDetails);
     if (!details) return false;
 
-    const copy = COPY[details.entitlement];
+    const copy = billingCopy()[details.entitlement];
+    if (!copy) return false;
     const facts = [];
     if (details.used !== null) {
         facts.push(_t("Used: %s", details.used.toLocaleString()));
     }
     if (details.limit !== null) {
-        facts.push(_t("Plan limit: %s", details.limit.toLocaleString()));
+        facts.push(_t("Allowance: %s", details.limit.toLocaleString()));
     }
 
     if (details.entitlement === "max_prints_per_period") {
         const periodEnd = formatPeriodEnd(details.periodEnd);
-        if (periodEnd) facts.push(_t("Billing period ends: %s", periodEnd));
+        if (periodEnd) facts.push(_t("Monthly allowance resets: %s", periodEnd));
     }
 
     const retryText = formatRetryAfter(details.retryAfterSeconds);
     if (retryText) facts.push(retryText);
 
     const body = [
-        details.message || copy.reason,
-        _t("Nothing was printed."),
+        copy.reason,
+        _t("This request was not accepted for printing. Check Print Activity for any earlier attempts."),
         facts.join("  •  "),
         details.entitlement === "max_prints_per_period"
-            ? _t("Upgrade your plan to keep printing.")
-            : _t("Upgrade your plan or try again shortly."),
+            ? _t("Wait for the monthly reset or contact the workspace owner to request a different allowance.")
+            : _t("Wait for current work to finish. Contact your administrator if the limit continues."),
     ].filter(Boolean).join("\n\n");
 
     env.services.dialog.add(ConfirmationDialog, {

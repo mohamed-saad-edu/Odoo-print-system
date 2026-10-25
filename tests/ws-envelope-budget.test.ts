@@ -24,6 +24,7 @@ function maxClaimedRow(): ClaimedJobRow {
     retries: 0,
     deliveryAttempts: 1,
     claimToken: "claim-budget",
+    bindingDigest: "a".repeat(64),
     createdAt: new Date("2026-10-07T00:00:00.000Z"),
     requestId: "req-budget",
   };
@@ -44,6 +45,18 @@ describe("WS job envelope wire budget", () => {
     expect(wireBytes).toBe(Buffer.byteLength(payload, "utf8"));
     expect(wireBytes).toBeLessThanOrEqual(MAX_WS_JOB_ENVELOPE_BYTES);
     expect(wireBytes).toBeLessThan(AGENT_FRAME_LIMIT);
+  });
+
+  it("preserves the immutable admitted binding in the serialized claim", () => {
+    const { payload } = serializeJobEnvelope(buildJobEnvelope(maxClaimedRow()));
+    expect(JSON.parse(payload).job.bindingDigest).toBe("a".repeat(64));
+  });
+
+  it("does not fabricate a binding for a historical job", () => {
+    const job = maxClaimedRow();
+    delete job.bindingDigest;
+    const { payload } = serializeJobEnvelope(buildJobEnvelope(job));
+    expect(JSON.parse(payload).job.bindingDigest).toBeNull();
   });
 
   it("would exceed the agent read limit with the duplicated representation", () => {

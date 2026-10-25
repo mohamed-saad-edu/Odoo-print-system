@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -173,6 +174,7 @@ func TestCloudDiscoverySharingUsesFreshNativeShareGroupsBeforeRegistryPersistenc
 	separate := printer.DeviceInfo{ID: "separate", Name: "Independent queue", ConnectionType: "spooler", Protocol: "spooler", SpoolerName: "Other POS80", Endpoint: "Other POS80", Capabilities: map[string]interface{}{"discovered_via": printer.SourceSpooler}}
 	candidate := printer.DeviceInfo{ID: "candidate", Name: "Setup session", ConnectionType: "spooler", Protocol: "spooler", SpoolerName: "Session POS80", Endpoint: "Session POS80", Capabilities: map[string]interface{}{"verification": "candidate_only"}}
 	result := printer.DiscoveryResult{Printers: []printer.DeviceInfo{private, separate, candidate}}
+	registryBefore, registryBeforeErr := os.ReadFile(ag.registryPath)
 	devices, sourceErrors := ag.cloudDiscoveryPayload(result)
 	if len(sourceErrors) != 0 || len(devices) != 2 || devices[0]["stableId"] != separate.ID || devices[1]["stableId"] != candidate.ID {
 		t.Fatalf("fresh local native group privacy projection: %+v %+v", devices, sourceErrors)
@@ -180,8 +182,9 @@ func TestCloudDiscoverySharingUsesFreshNativeShareGroupsBeforeRegistryPersistenc
 	if ag.isPrinterSharedWithGateway(separate.ID) {
 		t.Fatal("cloud scan projection itself installed local execution permission")
 	}
-	if _, err := os.Stat(ag.registryPath); !os.IsNotExist(err) {
-		t.Fatalf("cloud privacy projection persisted local registry: %v", err)
+	registryAfter, registryAfterErr := os.ReadFile(ag.registryPath)
+	if !bytes.Equal(registryBefore, registryAfter) || os.IsNotExist(registryBeforeErr) != os.IsNotExist(registryAfterErr) {
+		t.Fatalf("cloud privacy projection changed local registry: before=%v after=%v", registryBeforeErr, registryAfterErr)
 	}
 	private.SpoolerShare = `bad\share`
 	result.Printers = []printer.DeviceInfo{separate, private}
@@ -318,7 +321,7 @@ func TestAgentSharingRejectsClaimBeforePrintingAndAllowsStoredResultReplay(t *te
 	if err := config.SetPrinterSharing(ag.configPath, local, nil, false); err != nil {
 		t.Fatal(err)
 	}
-	ag.processJob(context.Background(), dispatchTestJob("private-job", "local~aaaaaaaa"))
+	ag.processJob(context.Background(), sharingDispatchTestJob(ag, "private-job", "local~aaaaaaaa"))
 	if p.Calls() != 0 {
 		t.Fatal("unshared alias reached printer")
 	}
@@ -332,7 +335,7 @@ func TestAgentSharingRejectsClaimBeforePrintingAndAllowsStoredResultReplay(t *te
 	if err := ag.queue.UpdateTerminalWithEvidence("already-completed", "success", "", "native-id"); err != nil {
 		t.Fatal(err)
 	}
-	ag.processJob(context.Background(), dispatchTestJob("already-completed", "local"))
+	ag.processJob(context.Background(), sharingDispatchTestJob(ag, "already-completed", "local"))
 	if p.Calls() != 0 || !ag.queue.IsProcessed("already-completed") {
 		t.Fatal("unshare changed success or replayed printer I/O")
 	}
@@ -392,9 +395,9 @@ func TestAgentSharingUnshareAfterInitialClaimACKRefusesActualTCPBytes(t *testing
 			agentRef.Store(ag)
 			// Actual transport uses a local test server; config still declares the
 			// selected private printer destination for the independent policy check.
-			ag.printers = map[string]printer.Printer{"local": &printer.NetworkPrinter{Address: listener.Addr().String(), Protocol: "raw"}}
+			ag.printers = map[string]printer.Printer{"local": &verifiedNetworkSharingFixture{NetworkPrinter: &printer.NetworkPrinter{Address: listener.Addr().String(), Protocol: "raw"}}}
 			ag.printerConfigs = map[string]config.PrinterConfig{"local": local}
-			ag.processJob(context.Background(), dispatchTestJob("late-unshare", "local"))
+			ag.processJob(context.Background(), sharingDispatchTestJob(ag, "late-unshare", "local"))
 			if err := policyError.Load(); err != nil {
 				t.Fatal(*err)
 			}
@@ -411,6 +414,21 @@ func TestAgentSharingUnshareAfterInitialClaimACKRefusesActualTCPBytes(t *testing
 			}
 		})
 	}
+}
+
+// The verification boundary is supplied explicitly here; the production TCP
+// writer, admission callback and zero-byte observations remain real. Separate
+// native protocol tests exercise proof establishment instead of this fixture.
+type verifiedNetworkSharingFixture struct{ *printer.NetworkPrinter }
+
+func (*verifiedNetworkSharingFixture) VerifyOperational(ctx context.Context, pc config.PrinterConfig) (*printer.OperationalVerification, error) {
+	return (&fakePrinter{}).VerifyOperational(ctx, pc)
+}
+
+func sharingDispatchTestJob(a *Agent, id, printerID string) map[string]interface{} {
+	job := dispatchTestJob(id, printerID)
+	job["bindingDigest"] = testPrinterBinding(a.printerConfigs[a.resolvePrinterAlias(printerID)])
+	return job
 }
 
 func TestDesiredStateCannotOverrideLocallyDisabledIDOrBinding(t *testing.T) {
@@ -447,13 +465,13 @@ func TestAgentSharingAdmittedJobFinishesWhileMutexWaiterIsReturned(t *testing.T)
 	}()
 	p := &fakePrinter{blocked: release, startedCh: make(chan string, 1)}
 	ag, local := prepareSharingTestAgent(t, p)
-	ag.dispatchJob(context.Background(), dispatchTestJob("already-admitted", "local"))
+	ag.dispatchJob(context.Background(), sharingDispatchTestJob(ag, "already-admitted", "local"))
 	select {
 	case <-p.startedCh:
 	case <-time.After(5 * time.Second):
 		t.Fatal("initial physical attempt never admitted")
 	}
-	ag.dispatchJob(context.Background(), dispatchTestJob("waiting-private", "local~aaaaaaaa"))
+	ag.dispatchJob(context.Background(), sharingDispatchTestJob(ag, "waiting-private", "local~aaaaaaaa"))
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		_, status, found, err := ag.queue.Get("waiting-private")
@@ -522,7 +540,7 @@ func TestAgentSharingDurablePredispatchReturnRetainsPrivateReasonAndToken(t *tes
 	if err := config.SetPrinterSharing(path, local, nil, false); err != nil {
 		t.Fatal(err)
 	}
-	ag.processJob(context.Background(), dispatchTestJob("private-outbox", "local"))
+	ag.processJob(context.Background(), sharingDispatchTestJob(ag, "private-outbox", "local"))
 	if ag.queue.ClaimTokenFor("private-outbox") != "claim-private-outbox" || validRequests.Load() == 0 {
 		t.Fatal("failed private return lost durable original claim")
 	}

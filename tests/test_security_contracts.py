@@ -1,4 +1,5 @@
 import ast
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -55,8 +56,10 @@ def test_windows_system_utilities_are_not_path_resolved():
     assert 'OpenSCManagerW' in source
     assert 'OpenServiceW' in source
     assert 'QueryServiceStatusEx' in source
-    assert 'if error == 1060 { Ok(None) }' in source
-    assert 'AGENT_CONTROL.lock()' in source
+    # Keep this guard scoped to the SCM query while accepting rustfmt's
+    # multiline form; formatting must not change the missing-service contract.
+    assert 'if error == 1060 { Ok(None) }' in " ".join(function_body("sc_query").split())
+    assert 'AGENT_CONTROL.lock()' in "".join(source.split())
     assert "run_net(" not in source
     assert "run_agent_service_command" in source
     assert "verify_installed_service_ownership" in source
@@ -82,19 +85,7 @@ def test_registration_does_not_disclose_existing_account_state():
     signup = read("src/app/signup/page.tsx")
     assert "ACCOUNT_EXISTS" not in route
     assert "ACCOUNT_EXISTS" not in signup
-    # Signup stays account-enumeration safe. The ONE exception is the
-    # staging-only, identity-independent 409 when the sole workspace slot is
-    # occupied. It is tested before ANY user-email lookup, so new and existing
-    # emails have the identical response in that staging state.
-    assert route.count("status: 409") == 1
-    staging_check = route.index("if (isSingleWorkspaceStaging() && !invitation)")
-    user_lookup = route.index("const existing = await db.query.users.findFirst")
-    # The invitation is verified before the public-signup-only fence:
-    # invited employees join the existing company, never claim a tenant slot.
-    assert route.index("const invitation = inviteToken ?") < staging_check
-    assert staging_check < route.index('code: "STAGING_WORKSPACE_EXISTS"') < user_lookup
-    assert "stagingWorkspaceExists(db)" in route[staging_check:user_lookup]
-    assert "invitationId: invitation?.id ?? null" in route
+    assert "status: 409" not in route
     assert "if (existing) return setRateLimitHeaders(NextResponse.json(GENERIC, { status: 202 }), rate);" in route
 
 
@@ -123,18 +114,31 @@ def test_platform_owner_routes_distinguish_invalid_auth_from_platform_dependency
     assert routes
     for route in routes:
         source = route.read_text(encoding="utf-8")
-        assert "PlatformUnauthorizedError" in source, route
-        assert "Platform authentication temporarily unavailable" in source, route
-        assert "status: 503" in source, route
+        if "manualApiError" in source:
+            # Shared responder must keep invalid identity distinct from outage.
+            handler = read("src/lib/manual-api-error.ts")
+            assert "error instanceof PlatformUnauthorizedError" in handler
+            assert "status:401" in handler
+            assert "status:503" in handler
+        else:
+            assert "PlatformUnauthorizedError" in source, route
+            assert "Platform authentication temporarily unavailable" in source, route
+            assert "status: 503" in source, route
 
 def test_billing_page_surfaces_print_usage_lookup_failures():
     source = read("src/app/billing/page.tsx")
-    assert "billing.print_usage_unavailable" in source
-    assert "printUsageUnavailable = true" in source
-    # User-facing copy is keyed (i18n contract): the title and body resolve
-    # through the catalog, never as inline English.
-    assert 't("billing.usageUnavailable")' in source
-    assert 't("billing.usageUnavailableBody")' in source
+    assert "billing.monthly_usage_unavailable" in source
+    assert re.search(r"let usage: .*\| null = null;", source)
+    failure = re.search(r"catch\s*\{(.*?)\}\s*\n\s*const date", source, re.S)
+    assert failure
+    assert "billing.monthly_usage_unavailable" in failure.group(1)
+    assert not re.search(r"usage\s*=", failure.group(1))
+    # Missing usage remains unavailable, never a fabricated zero. A successful
+    # read alone renders numbers; the failure branch resolves localized copy.
+    assert "{usage ? <div" in source
+    assert "formatNumber(usage.used,locale)" in source
+    assert 't(sub ? "billing.usageUnavailableBody" : "v4.subscription.noAllowance")' in source
+    assert not re.search(r"usage\?\.(used|remaining)\s*\?\?\s*0", source)
 
 def test_health_metrics_do_not_turn_database_lookup_failures_into_zero_values():
     source = read("src/lib/agent-health.ts")
@@ -283,14 +287,13 @@ def test_production_startup_fails_closed_on_secrets_and_proxy_boundary():
     assert "assertRealSecret(" in source
 
 
-def test_billing_webhook_binds_identity_before_metadata_tenant_mutation():
+def test_retired_billing_webhook_cannot_grant_or_mutate_entitlements():
     source = read("src/app/api/billing/webhook/route.ts")
-    assert "billingIdentityConflict" in source
-    assert "stripeSubscriptionId" in source
-    assert "stripeCustomerId" in source
-    assert 'return NextResponse.json({ received: true, ignored: true })' in source
-    assert "if (billingIdentityConflict)" in source
-    assert "processedAt: sql`clock_timestamp()`" in source
+    assert 'code:"MANUAL_BILLING_REQUIRED"' in source
+    assert 'status:410' in source
+    assert 'db' not in source
+    assert 'stripeRequest' not in source
+    assert 'update(' not in source
 
 
 def test_tenant_entitlements_fail_closed_without_active_subscription():
@@ -304,7 +307,8 @@ def test_tenant_entitlements_fail_closed_without_active_subscription():
 
 def test_plan_catalog_uses_shared_canonical_entitlement_normalizer():
     source = read("scripts/provision-plans.ts")
-    assert 'normalizePlanEntitlements(plan.entitlements)' in source
+    assert 'parseManualPlan(input)' in source
+    assert 'normalizePlanEntitlements({' in read('src/lib/manual-plans.ts')
     helper = read("src/lib/entitlements.ts")
     assert '"max_agents"' in helper
     assert '"max_printers"' in helper
@@ -370,8 +374,12 @@ def test_odoo_sql_identifiers_never_use_raw_table_name_formatting():
 
 def test_shared_session_tokens_use_short_access_and_long_refresh_lifetimes():
     source = read("src/lib/session-tokens.ts")
+    workspace_policy = read("src/lib/workspace-session-security.ts")
     assert "ACCESS_TOKEN_TTL_SECONDS = 15 * 60" in source
-    assert "REFRESH_FAMILY_TTL_MS = 30 * 24 * 60 * 60 * 1000" in source
+    # Refresh issuance now shares the persisted workspace policy; keep the
+    # exact 30-day contract across the alias and its authoritative definition.
+    assert "REFRESH_FAMILY_TTL_MS = WORKSPACE_ABSOLUTE_MS" in source
+    assert "WORKSPACE_ABSOLUTE_MS = 30 * 24 * 60 * 60 * 1000" in workspace_policy
     assert 'createHash("sha256").update(token' in source
     assert 'tokenHash: hashRefreshToken(refreshToken)' in source
     assert "REFRESH_ROTATION_GRACE_MS = 5_000" in source
@@ -465,11 +473,19 @@ def test_auth_login_paths_do_not_send_refresh_tokens_to_browser_renderers():
     assert '"Cache-Control", "no-store"' in manager
     assert 'if (!desktopClient)' in manager
     platform = read("src/app/api/platform/auth/login/route.ts")
-    assert "platformRefreshCookieHeader" in platform
+    assert "createPlatformSession" in platform
+    assert "platformCookieHeader(session.token" in platform
+    assert "platformRefreshCookieHeader(session.refreshToken" in platform
+    assert "{ ok: true, expiresAt: session.exp.toISOString() }" in platform
     assert '"Cache-Control", "no-store"' in platform
+    assert "accessToken:" not in platform and "refreshToken:" not in platform
     customer = read("src/app/api/auth/login/route.ts")
+    assert "issueCustomerSession" in customer
+    assert "customerSessionCookie(session)" in customer
     assert "customerRefreshCookie(session)" in customer
-    assert '"Cache-Control", "no-store"' in customer
+    assert "accessToken:" not in customer and "refreshToken:" not in customer
+    assert '"Cache-Control": "private, no-store"' in customer
+    assert '"Cache-Control": "private, no-store"' in read("src/lib/workspace-session-http.ts")
 
 
 def test_password_reset_revokes_shared_refresh_families():
@@ -541,16 +557,18 @@ def test_legacy_session_tables_are_isolated_to_compatibility_adapters():
     for path in Path("src").rglob("*.ts"):
         relative = path.as_posix()
         source = path.read_text(encoding="utf-8")
-        if "managerSessions" in source:
+        # Match the storage identifier, not UI translation keys such as
+        # security.platformSessionsHint that do not import a legacy table.
+        if re.search(r"\bmanagerSessions\b", source):
             assert relative in allowed_manager, f"managerSessions leaked outside legacy adapter: {relative}"
-        if "platformSessions" in source:
+        if re.search(r"\bplatformSessions\b", source):
             assert relative in allowed_platform, f"platformSessions leaked outside legacy adapter: {relative}"
 
     for path in Path("src").rglob("*.tsx"):
         relative = path.as_posix()
         source = path.read_text(encoding="utf-8")
-        assert "managerSessions" not in source, f"legacy manager session dependency in page: {relative}"
-        assert "platformSessions" not in source, f"legacy platform session dependency in page: {relative}"
+        assert not re.search(r"\bmanagerSessions\b", source), f"legacy manager session dependency in page: {relative}"
+        assert not re.search(r"\bplatformSessions\b", source), f"legacy platform session dependency in page: {relative}"
 
     source = Path("src/lib/session-tokens.ts").read_text(encoding="utf-8")
     assert "Date.now(" not in source

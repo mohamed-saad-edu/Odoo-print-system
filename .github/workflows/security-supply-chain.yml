@@ -193,7 +193,7 @@ jobs:
           grep -RInE 'go (mod verify|build.*-mod=readonly|vet.*-mod=readonly|test -mod=readonly)' .github/workflows/ci.yml .github/workflows/build-windows.yml
           grep -RInE 'cargo (build|check|test).*--locked' .github/workflows/build-windows.yml
           echo "package-lock.json, agent/go.sum, and src-tauri/Cargo.lock are present."
-          echo "Build pipelines use npm ci, Go module verification/read-only mode, and Cargo --locked."
+          echo "Build pipelines use npx --yes npm@12.2.1 ci, Go module verification/read-only mode, and Cargo --locked."
 
       - name: Verify all third-party GitHub Actions are SHA pinned
         shell: bash
@@ -235,7 +235,7 @@ jobs:
           cache: npm
           cache-dependency-path: package-lock.json
       - name: Install dependencies
-        run: npm ci --prefer-offline --no-audit --fund=false
+        run: npx --yes npm@12.2.1 ci --prefer-offline --no-audit --fund=false
       - name: Run migrations
         run: npm run db:migrate
       - name: PostgreSQL LISTEN reconnect failure injection

@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { getTableName } from "drizzle-orm";
 import { PgDialect } from "drizzle-orm/pg-core";
 
-const state = vi.hoisted(() => ({ targetRole: "admin", callerRole: "admin", statements: [] as string[], sessionRevoked: false }));
+const state = vi.hoisted(() => ({ targetRole: "admin", callerRole: "owner", statements: [] as string[], sessionRevoked: false }));
 const dialect = new PgDialect();
 const tx = {
   execute: async (query: any) => {
@@ -33,8 +33,8 @@ vi.mock("../src/db/client", () => ({ queryWithTimeout: async (fn: any) => fn() }
 import { PATCH } from "../src/app/api/team/members/route";
 
 describe("team actor authority at mutation commit", () => {
-  beforeEach(() => { state.targetRole = "admin"; state.callerRole = "admin"; state.statements.length = 0; state.sessionRevoked = false; });
-  it("rejects a pending self-role PATCH after owner demotion and family revocation", async () => {
+  beforeEach(() => { state.targetRole = "admin"; state.callerRole = "owner"; state.statements.length = 0; state.sessionRevoked = false; });
+  it("rejects a pending self-role PATCH after ownership loss and family revocation", async () => {
     const response = await PATCH(new Request("http://gateway.test/api/team/members", { method: "PATCH", body: JSON.stringify({ userId: "admin_repro", role: "admin" }) }));
     expect(state.sessionRevoked).toBe(true);
     expect(response.status).toBe(403);

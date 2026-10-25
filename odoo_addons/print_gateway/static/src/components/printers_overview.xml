@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8"?>
+<templates xml:space="preserve">
+    <t t-name="print_gateway.PrintersOverview">
+        <main class="o_pg_view o_pg_inventory p-3 p-md-4 overflow-auto h-100">
+            <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-4">
+                <div><h1>Printers</h1><p class="text-muted mb-0">Choose a company, find its verified printer, then choose which documents to print.</p></div>
+                <button type="button" class="btn btn-outline-primary" t-on-click="refresh" t-att-disabled="state.loading">Refresh</button>
+            </div>
+            <div class="o_pg_setup_steps mb-4" aria-label="Printing setup">
+                <button type="button" class="btn btn-light" t-on-click="connect">1. Connect Yaseir</button>
+                <span class="fw-bold">2. Choose a printer</span>
+                <button type="button" class="btn btn-light" t-on-click="mappings">3. Set document destinations</button>
+            </div>
+            <div class="row g-3 mb-4">
+                <div class="col-md-6"><label for="pg_inventory_scope" class="form-label">Company or branch</label>
+                    <select id="pg_inventory_scope" class="form-select" t-on-change="changeScope" t-att-value="state.scopeId">
+                        <option t-foreach="state.scopes" t-as="scope" t-key="scope.id" t-att-value="scope.id" t-esc="scope.name"/>
+                    </select>
+                </div>
+                <div class="col-md-6"><label for="pg_inventory_agent" class="form-label">Printing computer</label>
+                    <select id="pg_inventory_agent" class="form-select" t-on-change="changeAgent" t-att-value="state.agentId" t-att-disabled="state.loading">
+                        <option value="">Select a computer</option>
+                        <option t-foreach="state.agents" t-as="agent" t-key="agent.id" t-att-value="agent.id" t-esc="agent.name"/>
+                    </select>
+                </div>
+            </div>
+            <div t-if="state.error" class="alert alert-warning" role="alert"><t t-esc="state.error"/></div>
+            <p t-if="state.loading" role="status">Checking available printers…</p>
+            <div t-elif="!state.agents.length" class="card p-4 text-center">
+                <h2>Connect a printing computer first</h2>
+                <p>Install and pair the Windows printing app in Yaseir. Assign that computer to this company or branch to see its printers here.</p>
+                <div><button type="button" class="btn btn-primary" t-on-click="assignments">Assign a computer</button></div>
+            </div>
+            <div t-elif="state.agentId &amp;&amp; !state.printers.length" class="card p-4">
+                <h2>No verified printers available</h2>
+                <p class="mb-0">Open the Windows printing app, discover the printer, verify it and enable sharing. Then refresh this page.</p>
+            </div>
+            <div t-elif="state.agentId" class="row g-3">
+                <div t-foreach="state.printers" t-as="printer" t-key="printer.id" class="col-md-6 col-xl-4">
+                    <section class="card h-100 p-3">
+                        <div class="d-flex justify-content-between align-items-start gap-2"><h2 class="h5"><bdi t-esc="printer.name"/></h2><span class="badge rounded-pill" t-att-class="isReady(printer) ? 'text-bg-success' : 'text-bg-warning'" t-esc="status(printer)"/></div>
+                        <p t-if="printer.outputMedium === 'file'" class="text-muted">Verified PDF file output</p>
+                        <p t-else="" class="text-muted">Physical printer</p>
+                        <button type="button" class="btn btn-primary mt-auto" t-att-disabled="!isReady(printer)" t-on-click="() => this.choose(printer)">Choose documents for this printer</button>
+                    </section>
+                </div>
+            </div>
+            <details class="mt-4"><summary>Advanced device assignments</summary><p class="text-muted mt-2">Use these settings to change which computers serve each company or branch. Existing print rules still need to match their assigned printer.</p><button type="button" class="btn btn-outline-secondary" t-on-click="assignments">Manage assignments</button></details>
+        </main>
+    </t>
+</templates>

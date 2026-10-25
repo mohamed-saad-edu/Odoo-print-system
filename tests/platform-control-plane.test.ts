@@ -4,7 +4,6 @@ import { describe, it, expect, beforeAll, beforeEach, afterAll } from "vitest";
 import { sql } from "drizzle-orm";
 import { LEGACY_SESSION_MAX_AGE_SECONDS } from "../src/lib/session-config";
 import {
-  createPlatformSession,
   verifyPlatformTokenSignature,
   validatePlatformClaims,
   requirePlatformOwner,
@@ -12,6 +11,7 @@ import {
   authenticatePlatformOwner,
   revokePlatformSession,
 } from "../src/lib/platform-auth";
+import { createVerifiedPlatformSession as createPlatformSession } from "./helpers/platform-session";
 import {
   hasTestDatabase,
   applyMigrations,
@@ -86,8 +86,9 @@ suite("Platform Control Plane & Authorization Boundaries", () => {
   });
 
   it("refuses platform claims for users where is_platform_owner is false", async () => {
-    const user = await createTestUser({ isPlatformOwner: false });
+    const user = await createTestUser({ isPlatformOwner: true });
     const session = await createPlatformSession(user.userId, user.email);
+    await db.update(users).set({ isPlatformOwner: false }).where(eq(users.id, user.userId));
     const validated = await validatePlatformClaims(verifyPlatformTokenSignature(session.token));
     expect(validated).toBeNull();
   });
@@ -161,8 +162,8 @@ suite("Platform Control Plane & Authorization Boundaries", () => {
     const token = `${data}.${signature}`;
 
     let validated = await validatePlatformClaims(verifyPlatformTokenSignature(token));
-    expect(validated).not.toBeNull();
-
+    // Durable session policy refuses historical platform sessions.
+    expect(validated).toBeNull();
     await revokePlatformSession(jti);
     validated = await validatePlatformClaims(verifyPlatformTokenSignature(token));
     expect(validated).toBeNull();

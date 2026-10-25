@@ -66,7 +66,7 @@ func TestRegistrySpoolerCandidateKeepsNameWithoutPreventingConfirmedRemoval(t *t
 		t.Fatal("registry diagnostic invalidated the complete native inventory")
 	}
 	rows, err := ReconcileDiscoveryRegistry(path, runtime, map[string]bool{SourceSpooler: true})
-	if err != nil || len(rows) != 0 {
-		t.Fatalf("registry residue prevented confirmed native queue removal: rows=%#v err=%v", rows, err)
+	if err != nil || len(rows) != 1 || IsRuntimeDiscoveryPrinter(rows[0]) {
+		t.Fatalf("confirmed native queue absence lost history or remained executable: rows=%#v err=%v", rows, err)
 	}
 }

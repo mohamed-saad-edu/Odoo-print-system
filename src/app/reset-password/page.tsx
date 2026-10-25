@@ -111,6 +111,15 @@ function ResetPasswordContent() {
           </Button>
         </form>
       )}
+      {!done && (
+        <Link
+          id="request-new-reset-link"
+          href="/forgot-password"
+          className="mt-6 inline-flex text-sm font-[550] text-brand hover:underline"
+        >
+          {t("auth.reset.requestNewLink")}
+        </Link>
+      )}
     </AuthShell>
   );
 }

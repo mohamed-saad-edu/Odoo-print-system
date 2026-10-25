@@ -14,7 +14,7 @@ import { clampListLimit, hasBodyOverLimit } from "../../../../lib/request-limits
 import { logError } from "../../../../lib/log";
 import { queryWithTimeout } from "../../../../db/client";
 
-const ROLES = ["admin", "operator", "viewer", "integration_admin", "billing_admin"] as const;
+const ROLES = ["admin"] as const; // Full Access; historical invitation roles remain unchanged.
 
 export async function GET(req: Request) {
   const claims = await validateWorkspaceManager(req);
@@ -76,12 +76,12 @@ export async function POST(req: Request) {
   if (hasBodyOverLimit(req, 32 * 1024)) return NextResponse.json({ error: "Request body too large" }, { status: 413 });
   const claims = await validateWorkspaceManager(req);
   if (!claims) return NextResponse.json({ error: "Unauthorized", code: "UNAUTHORIZED" }, { status: 401 });
-  if (!claims?.userId || !hasManagerPermission(claims, "users.manage")) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  if (!claims?.userId || (claims.role !== "owner" || !hasManagerPermission(claims, "users.manage"))) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   const inviterUserId = claims.userId;
   let body: { email?: unknown; role?: unknown };
   try { const parsedBody = await req.json(); if (!parsedBody || typeof parsedBody !== "object" || Array.isArray(parsedBody)) throw new Error("JSON object required"); body = parsedBody; } catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); }
   const email = typeof body.email === "string" ? normalizeEmail(body.email) : "";
-  const role = typeof body.role === "string" ? body.role : "viewer";
+  const role = typeof body.role === "string" ? body.role : "admin";
   if (!validEmail(email) || !ROLES.includes(role as (typeof ROLES)[number])) return NextResponse.json({ error: "Invalid invitation" }, { status: 400 });
   const raw = generateOpaqueToken();
   const id = `inv_${nanoid(18)}`;
@@ -134,7 +134,7 @@ export async function POST(req: Request) {
     }, tx);
     });
   } catch (error) {
-    if (error instanceof TeamAuthorizationChangedError) return NextResponse.json({ error: error.message }, { status: 403 });
+    if (error instanceof TeamAuthorizationChangedError) return error.response();
     if (error instanceof Error && error.message === "INVITATION_ALREADY_EXISTS") {
       return NextResponse.json({ error: "An active invitation already exists for this email" }, { status: 409 });
     }
@@ -181,7 +181,7 @@ export async function POST(req: Request) {
 export async function DELETE(req: Request) {
   const claims = await validateWorkspaceManager(req);
   if (!claims) return NextResponse.json({ error: "Unauthorized", code: "UNAUTHORIZED" }, { status: 401 });
-  if (!claims?.userId || !hasManagerPermission(claims, "users.manage")) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  if (!claims?.userId || (claims.role !== "owner" || !hasManagerPermission(claims, "users.manage"))) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   const id = new URL(req.url).searchParams.get("id") ?? "";
   if (!id) return NextResponse.json({ error: "id is required" }, { status: 400 });
   try {
@@ -192,7 +192,7 @@ export async function DELETE(req: Request) {
       await writeAuditEvent({ tenantId: claims.tenantId, actorType: "user", actorId: claims.userId, action: "team.invitation.revoked", resourceType: "tenant_invitation", resourceId: id }, tx);
     });
   } catch (error) {
-    if (error instanceof TeamAuthorizationChangedError) return NextResponse.json({ error: error.message }, { status: 403 });
+    if (error instanceof TeamAuthorizationChangedError) return error.response();
     if (error instanceof Error && error.message === "INVITATION_NOT_FOUND") {
       return NextResponse.json({ error: "Invitation not found" }, { status: 404 });
     }

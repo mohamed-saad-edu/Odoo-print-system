@@ -66,8 +66,8 @@ describe("deep production review contracts", () => {
     expect(checkout).not.toContain("updatedAt: new Date()");
     expect(webhook).not.toContain("processedAt: new Date()");
     expect(webhook).not.toContain("updatedAt: new Date()");
-    expect(webhook).toContain("processedAt: sql`clock_timestamp()`");
-    expect(webhook).toContain("updatedAt: sql`clock_timestamp()`");
+    expect(webhook).toContain("status:410");
+    expect(webhook).not.toContain("db.");
     expect(jobs).toContain("const databaseNow = await databaseNowMs()");
     expect(jobs).not.toContain("before.getTime() > Date.now()");
   });
@@ -147,8 +147,8 @@ describe("deep production review contracts", () => {
       expect(source).toContain("liveTenantSubscriptionPredicate");
     }
     const entitlementSource = read("src/lib/entitlements.ts");
-    expect(entitlementSource).toContain("ts.status IN ('trialing', 'active', 'past_due')");
-    expect(entitlementSource).toContain("ts.status = 'past_due'");
+    expect(entitlementSource).toContain("ts.status = 'active' AND ts.billing_mode = 'manual'");
+    expect(entitlementSource).toContain("ts.current_period_start <= clock_timestamp()");
     expect(entitlementSource).toContain("COALESCE(ts.entitlement_blocked, false) = false");
     expect(entitlementSource).toContain("ts.current_period_end > clock_timestamp()");
 
@@ -275,7 +275,7 @@ describe("deep production review contracts", () => {
     expect(register).toContain("liveTenantSubscriptionWhere");
     expect(lifecycle).toContain("requireTenantBillingAccess(tx, tenantId)");
     expect(entitlements).toContain("requireTenantBillingAccess");
-    expect(entitlements).toContain("status IN ('trialing', 'active', 'past_due')");
+    expect(entitlements).toContain("ts.status = 'active' AND ts.billing_mode = 'manual'");
     expect(entitlements).toContain("current_period_end > clock_timestamp()");
     expect(entitlements).toContain("COALESCE(ts.entitlement_blocked, false) = false");
     expect(entitlements).toContain("TenantSubscriptionRequiredError");

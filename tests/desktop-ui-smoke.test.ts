@@ -205,7 +205,7 @@ describe("desktop manager", () => {
     await waitUntil(() => text().includes("HP LaserJet Pro M404"));
 
     expect(text()).toContain("Yaseir Print Manager");
-    for (const label of ["Overview", "Printers", "Print Jobs", "Agents", "Settings"]) {
+    for (const label of ["Home", "Printers", "Print activity", "Settings"]) {
       expect(text()).toContain(label);
     }
     expect(text()).toContain("HP LaserJet Pro M404");
@@ -230,7 +230,7 @@ describe("desktop manager", () => {
     window.dispatchEvent(new Event("hashchange"));
     await waitUntil(() => !!document.querySelector('[role="tab"]'));
     const unknownTab = [...document.querySelectorAll<HTMLButtonElement>('[role="tab"]')]
-      .find((tab) => tab.textContent?.startsWith("Unknown"))!;
+      .find((tab) => tab.textContent?.startsWith("Needs review"))!;
     unknownTab.click();
     await waitUntil(() => unknownTab.getAttribute("aria-selected") === "true");
     expect(document.querySelector("main")?.textContent).not.toContain("job_1");

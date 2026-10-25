@@ -46,7 +46,7 @@ def test_gateway_pos_receipt_and_kitchen_use_native_business_destinations():
     assert 'getattr(config, "preparation_printer_ids", None)' in binding
     assert "config.printer_ids" in binding
     assert "Odoo Preparation Printer must belong to an Odoo POS Preparation Printer configuration." in binding
-    assert 'action_print_gateway_kitchen(self, image, reprint=False, operation_id=None, pos_printer_id=None)' in pos
+    assert 'action_print_gateway_kitchen(self, image, reprint=False, operation_id=None, pos_printer_id=None, geometry_fingerprint=None)' in pos
     assert "def get_gateway_kitchen_routes(self):" in pos
     assert 'getattr(self.config_id, "preparation_printer_ids", None)' in pos
     assert "self.config_id.printer_ids" in pos
@@ -135,14 +135,22 @@ def test_company_gateway_secret_is_server_side_only_in_runtime_controllers():
 
 def test_gateway_config_preserves_revoked_status_on_401():
     source = read("models/gateway_config.py")
-    assert '"last_test_status": "revoked"' in source
-    assert 'message = _("The Gateway rejected the API key.' in source
-    revoked_at = source.index('"last_test_status": "revoked"')
-    return_at = source.index('"tag": "display_notification"', revoked_at)
-    assert '"type": "warning"' in source[revoked_at:return_at + 1000]
-    assert 'raise ValidationError(message)' not in source[revoked_at:return_at + 1000]
-    assert 'if response.status_code == 403:' in source
-    assert 'Gateway workspace is not available for printing.' in source
+    action_at = source.index("def action_test_connection(self):")
+    action = source[action_at:source.index("\n    def ", action_at + 5)]
+    revoked = action[action.index("if response.status_code == 401:"):action.index("if response.status_code == 403:")]
+    assert '"last_test_status": "revoked"' in revoked
+    assert 'The Gateway rejected the API key.' in revoked
+    assert '"enabled": False' in revoked
+    assert 'return record_health_result({' in revoked
+    assert 'raise ' not in revoked
+    # The reload reads the post-commit fenced result. Do not report success or
+    # perform an independent write while a migrated key holds the request lock.
+    assert 'self._queue_test_result_if_current(expected_revision, values)' in action
+    assert 'reload_action = {"type": "ir.actions.client", "tag": "reload"}' in action
+    helper = source[source.index("def _queue_test_result_if_current"):action_at]
+    assert 'self.env.cr.postcommit.add(' in helper
+    assert '._write_test_result_if_current(revision, values)' in helper
+    assert 'Gateway workspace is not available for printing.' in action
 
 
 def test_gateway_api_key_is_admin_only_and_not_exportable():
@@ -260,10 +268,16 @@ def test_gateway_config_form_exposes_guarded_connection_and_recovery_actions():
     assert 'confirm="Recover synchronization state' in form
     for action in (
         'name="action_open_pairing_wizard"',
-        'name="action_open_runtime_assignments"',
         'name="action_clear_api_key"',
     ):
         assert action not in form
+    # V4 exposes explicit branch administration only inside Advanced, while
+    # keeping guarded recovery and credential deletion out of the main flow.
+    advanced = form[form.index('<page string="Advanced connection settings"'):]
+    assert 'name="action_open_runtime_assignments"' in advanced
+    assert 'name="action_reset_stale_sync_state"' in advanced
+    assert 'name="action_open_printers"' in form
+    assert 'name="action_open_print_rules"' in form
     assert 'field name="gateway_url"' in form
     assert 'field name="gateway_api_key"' in form
     assert 'field name="enabled" widget="boolean_toggle"' in form
@@ -288,10 +302,11 @@ def test_gateway_sync_state_does_not_report_active_after_health_failure():
     compute_idx = source.index("def _compute_gateway_sync_state")
     compute_end = source.index("@api.constrains", compute_idx)
     compute = source[compute_idx:compute_end]
-    failed_idx = compute.index('if record.last_test_status == "failed":')
-    active_idx = compute.index('if record.enabled:', failed_idx)
-    assert 'record.gateway_sync_state = "attention"' in compute[failed_idx:active_idx]
-    assert 'record.gateway_sync_state = "active"' in compute[active_idx:]
+    assert 'record.gateway_sync_state = record._gateway_sync_status_values()[0]' in compute
+    failed_idx = compute.index('if self.last_test_status == "failed":')
+    active_idx = compute.index('if self.enabled:', failed_idx)
+    assert 'return "attention",' in compute[failed_idx:active_idx]
+    assert 'return "active",' in compute[active_idx:]
 
 
 def test_gateway_report_group_check_uses_odoo19_effective_groups():
@@ -657,11 +672,11 @@ def test_pos_operation_identity_chain_receipt_and_sale_details():
     receipt_js = (ADDON / "static/src/js/pos_print_router.js").read_text(encoding="utf-8")
     details_js = (ADDON / "static/src/js/pos_sale_details_router.js").read_text(encoding="utf-8")
     # Server accepts caller operation identity on every POS path.
-    assert "def route_pos_receipt(self, order, image_base64, *, idempotency_key=None)" in router
-    assert "def route_pos_sale_details(self, session, image_base64, *, idempotency_key=None)" in router
-    assert "def action_print_gateway_receipt(self, image, operation_id=None)" in order
+    assert "def route_pos_receipt(self, order, image_base64, *, idempotency_key=None, geometry_fingerprint=None)" in router
+    assert "def route_pos_sale_details(self, session, image_base64, *, idempotency_key=None, geometry_fingerprint=None)" in router
+    assert "def action_print_gateway_receipt(self, image, operation_id=None, geometry_fingerprint=None)" in order
     assert "idempotency_key=operation_id" in order
-    assert "def action_print_gateway_sale_details(self, image, operation_id=None)" in session
+    assert "def action_print_gateway_sale_details(self, image, operation_id=None, geometry_fingerprint=None)" in session
     assert "idempotency_key=operation_id" in session
     # Clients mint one id per click, coalesce in-flight duplicates, and keep
     # uncertain operations retryable with the same id.

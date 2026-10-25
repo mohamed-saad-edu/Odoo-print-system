@@ -193,7 +193,9 @@ test('workspace probe accepts Manager sessions without exposing credentials',asy
   assert.equal(body.accessToken,undefined);assert.equal(body.refreshToken,undefined);
 });
 test('expired workspace probe provides only refresh routing and team reads return 401',async()=>{
-  const globals={validateWorkspaceManager:async()=>null,managerPermissions:()=>[],NextResponse:{json:(body,opts)=>response(opts?.status??200,body)}};
+  const cookieHelpers=await actual('src/lib/session-tokens.ts',{},s=>s.slice(s.indexOf('export function readCookie'),s.indexOf('export function isTrustedDesktopRequest')));
+  const cookieConfig=await actual(sessionFile,{process:{env:{NODE_ENV:'test'}}});
+  const globals={readCookie:cookieHelpers.readCookie,sessionCookieName:cookieConfig.sessionCookieName,validateWorkspaceManager:async()=>null,managerPermissions:()=>[],NextResponse:{json:(body,opts)=>response(opts?.status??200,body)}};
   const probe=await actual('src/app/api/auth/me/route.ts',globals,s=>s.slice(s.indexOf('export async function GET')));
   const result=await probe.GET(new Request('https://gateway/api/auth/me',{headers:{cookie:'mgr_session=expired'}}));
   assert.equal(result.status,401);assert.equal((await result.json()).refreshKind,'manager');

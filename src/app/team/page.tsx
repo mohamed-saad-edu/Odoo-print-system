@@ -51,11 +51,7 @@ const TEAM_PAGE_SIZE = 50;
 /** Built per render so role names follow the active language. */
 function roleOptions(t: Translator) {
   return [
-    { value: "viewer", label: t("team.role.viewer"), desc: t("team.role.viewerDesc") },
-    { value: "operator", label: t("team.role.operator"), desc: t("team.role.operatorDesc") },
-    { value: "admin", label: t("team.role.admin"), desc: t("team.role.adminDesc") },
-    { value: "integration_admin", label: t("team.role.integrationAdmin"), desc: t("team.role.integrationAdminDesc") },
-    { value: "billing_admin", label: t("team.role.billingAdmin"), desc: t("team.role.billingAdminDesc") },
+    { value: "admin", label: t("v4.team.fullAccess"), desc: t("v4.team.fullAccessBody") },
   ];
 }
 
@@ -95,9 +91,10 @@ export default function TeamPage() {
   const [listLoading, setListLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [email, setEmail] = useState("");
-  const [role, setRole] = useState("viewer");
+  const [role, setRole] = useState("admin");
   const [message, setMessage] = useState<{ text: string; type: "ok" | "err" } | null>(null);
   const [busy, setBusy] = useState(false);
+  const [isOwner, setIsOwner] = useState(false);
   const [transferTarget, setTransferTarget] = useState<Member | null>(null);
   const [removeTarget, setRemoveTarget] = useState<Member | null>(null);
 
@@ -124,6 +121,7 @@ export default function TeamPage() {
       const probe = await fetchWithTimeout("/api/auth/me", { credentials: "include", cache: "no-store" });
       if (!probe.ok) throw new Error("Session unavailable");
       const principal = await probe.json();
+      setIsOwner(principal.role === "owner");
       if (!current()) return;
       if (!principal.userId || !principal.permissions?.includes("users.read")) {
         if (!current()) return;
@@ -299,7 +297,7 @@ export default function TeamPage() {
         key: "transfer",
         label: t("team.transferOwnership"),
         icon: <ArrowRightLeft className="h-4 w-4" />,
-        disabled: busy,
+        disabled: busy || !isOwner,
         onSelect: () => setTransferTarget(member),
       },
       {
@@ -308,7 +306,7 @@ export default function TeamPage() {
         icon: <UserMinus className="h-4 w-4" />,
         tone: "danger",
         separatorBefore: true,
-        disabled: busy,
+        disabled: busy || !isOwner,
         onSelect: () => setRemoveTarget(member),
       },
     ];
@@ -434,7 +432,7 @@ export default function TeamPage() {
                                 ) : (
                                   <Select
                                     aria-label={`${t("team.roleFor")} ${member.email}`}
-                                    disabled={busy}
+                                    disabled={busy || !isOwner}
                                     value={member.role}
                                     onChange={(e) => void updateRole(member.userId, e.target.value)}
                                     className="w-[168px] text-sm"
@@ -449,7 +447,7 @@ export default function TeamPage() {
                               </div>
                             </td>
                             <td className="text-end">
-                              {member.role !== "owner" && (
+                              {isOwner && member.role !== "owner" && (
                                 <Menu
                                   label={t("team.actionsFor", { name: member.email })}
                                   items={memberMenu(member)}
@@ -485,11 +483,11 @@ export default function TeamPage() {
                             <StatusBadge tone={ROLE_TONE[member.role] ?? "neutral"} label={roleLabel(member.role, t)} />
                           )}
                         </div>
-                        {member.role !== "owner" && (
+                        {isOwner && member.role !== "owner" && (
                           <div className="mt-3 flex items-center gap-2">
                             <Select
                               aria-label={`${t("team.roleFor")} ${member.email}`}
-                              disabled={busy}
+                              disabled={busy || !isOwner}
                               value={member.role}
                               onChange={(e) => void updateRole(member.userId, e.target.value)}
                               className="h-9 flex-1 text-sm"
@@ -594,7 +592,7 @@ export default function TeamPage() {
                         <Button
                           variant="ghost"
                           size="sm"
-                          disabled={busy}
+                          disabled={busy || !isOwner}
                           onClick={() => void revokeInvitation(invitation.id)}
                         >
                           {t("team.revoke")}
@@ -644,13 +642,14 @@ export default function TeamPage() {
                 subtitle={t("team.inviteHint")}
                 icon={<Mail className="h-4 w-4" />}
               />
+              {!isOwner && <p className="px-5 py-4 text-sm text-ink-3">{t("v4.team.ownerOnly")}</p>}
               <form onSubmit={invite} className="space-y-4 px-5 py-5">
                 <Field label={t("team.inviteEmail")} htmlFor="invite-email" required>
                   <Input
                     id="invite-email"
                     type="email"
                     required
-                    disabled={busy}
+                    disabled={busy || !isOwner}
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     placeholder={t("auth.emailPlaceholder")}
@@ -665,7 +664,7 @@ export default function TeamPage() {
                   <Select
                     id="invite-role"
                     value={role}
-                    disabled={busy}
+                    disabled={busy || !isOwner}
                     onChange={(e) => setRole(e.target.value)}
                     className="w-full"
                   >
@@ -674,7 +673,7 @@ export default function TeamPage() {
                     ))}
                   </Select>
                 </Field>
-                <Button type="submit" variant="primary" disabled={busy} loading={busy} className="w-full">
+                <Button type="submit" variant="primary" disabled={busy || !isOwner} loading={busy} className="w-full">
                   {busy ? t("team.inviteSending") : t("team.inviteSubmit")}
                 </Button>
               </form>
@@ -715,12 +714,12 @@ export default function TeamPage() {
         description={t("team.transferCannotUndo")}
         footer={
           <>
-            <Button variant="secondary" disabled={busy} onClick={() => setTransferTarget(null)}>
+            <Button variant="secondary" disabled={busy || !isOwner} onClick={() => setTransferTarget(null)}>
               {t("common.cancel")}
             </Button>
             <Button
               variant="danger"
-              disabled={busy}
+              disabled={busy || !isOwner}
               loading={busy}
               onClick={transferTarget ? () => void transfer(transferTarget.userId) : undefined}
             >
@@ -747,12 +746,12 @@ export default function TeamPage() {
         description={removeTarget?.email}
         footer={
           <>
-            <Button variant="secondary" disabled={busy} onClick={() => setRemoveTarget(null)}>
+            <Button variant="secondary" disabled={busy || !isOwner} onClick={() => setRemoveTarget(null)}>
               {t("common.cancel")}
             </Button>
             <Button
               variant="danger"
-              disabled={busy}
+              disabled={busy || !isOwner}
               loading={busy}
               onClick={removeTarget ? () => void remove(removeTarget.userId) : undefined}
             >

@@ -1,4 +1,6 @@
 import { gatewayTestSigningKey } from "./helpers/test-secrets";
+import { issueWorkspaceTestSession } from "./helpers/workspace-session";
+import { environmentManagerCredentialVersion } from "../src/lib/session-credentials";
 import { createHmac, scryptSync } from "node:crypto";
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from "vitest";
 import {
@@ -17,6 +19,13 @@ import {
 } from "../src/lib/manager-auth";
 
 const suite = describe.skipIf(!hasTestDatabase);
+const environmentPassword = "verified-environment-manager-fixture";
+async function createVerifiedEnvironmentSession() {
+  expect(await verifyManagerPassword("manager", environmentPassword)).toBe(true);
+  const proof = environmentManagerCredentialVersion("tenant_manager_test");
+  if (!proof) throw new Error("Expected a verified environment-manager credential snapshot");
+  return createManagerSession("tenant_manager_test", { environmentCredentialVersion: proof });
+}
 
 suite("manager authentication hardening", () => {
   beforeAll(async () => {
@@ -35,6 +44,9 @@ suite("manager authentication hardening", () => {
     await truncateAll();
     await pool().query(`INSERT INTO tenants (id, name) VALUES ($1, $2)`, ["tenant_manager_test", "Manager Test Tenant"]);
     vi.stubEnv("NODE_ENV", "test");
+    vi.stubEnv("ALLOW_LEGACY_MANAGER_AUTH", "1");
+    vi.stubEnv("MANAGER_TENANT_ID", "tenant_manager_test");
+    vi.stubEnv("MANAGER_PASSWORD_HASH", "manager-fixture-salt:" + scryptSync(environmentPassword, "manager-fixture-salt", 32).toString("hex"));
   });
 
   afterEach(() => {
@@ -43,7 +55,7 @@ suite("manager authentication hardening", () => {
   });
 
   it("creates a v2 session pair that verifies against the refresh-token ledger", async () => {
-    const created = await createManagerSession("tenant_manager_test");
+    const created = await createVerifiedEnvironmentSession();
     const claims = await verifyManagerToken(created.token);
     expect(claims).not.toBeNull();
     expect(claims?.jti).toBe(created.jti);
@@ -72,9 +84,9 @@ suite("manager authentication hardening", () => {
       ["user_workspace_fallback", "tenant_manager_test", "admin"],
     );
 
-    const manager = await createManagerSession("tenant_manager_test");
+    const manager = await createVerifiedEnvironmentSession();
     await pool().query("UPDATE refresh_tokens SET revoked_at = clock_timestamp() WHERE family_id = $1", [manager.familyId]);
-    const customer = await (await import("../src/lib/session-tokens")).issueSessionPair({
+    const customer = await issueWorkspaceTestSession({
       kind: "customer",
       tenantId: "tenant_manager_test",
       userId: "user_workspace_fallback",
@@ -104,7 +116,7 @@ suite("manager authentication hardening", () => {
       ["user_workspace_test", "tenant_manager_test", "admin"],
     );
 
-    const session = await (await import("../src/lib/session-tokens")).issueSessionPair({
+    const session = await issueWorkspaceTestSession({
       kind: "customer",
       tenantId: "tenant_manager_test",
       userId: "user_workspace_test",
@@ -123,7 +135,7 @@ suite("manager authentication hardening", () => {
   });
 
   it("rejects a token signed with a different JWT header", async () => {
-    const created = await createManagerSession("tenant_manager_test");
+    const created = await createVerifiedEnvironmentSession();
     const parts = created.token.split(".");
     const alteredHeader = Buffer.from(JSON.stringify({ alg: "none", typ: "JWT" })).toString("base64url");
     const tampered = `${alteredHeader}.${parts[1]}.${parts[2]}`;
@@ -131,7 +143,7 @@ suite("manager authentication hardening", () => {
   });
 
   it("rejects a correctly signed token whose iat is too far in the future", async () => {
-    const created = await createManagerSession("tenant_manager_test");
+    const created = await createVerifiedEnvironmentSession();
     const parts = created.token.split(".");
     const header = parts[0];
     const payload = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf8"));
@@ -151,7 +163,7 @@ suite("manager authentication hardening", () => {
 
     vi.useFakeTimers();
     vi.setSystemTime(new Date((dbNow + 24 * 60 * 60) * 1000));
-    const created = await createManagerSession("tenant_manager_test");
+    const created = await createVerifiedEnvironmentSession();
 
     expect(Math.floor(created.exp.getTime() / 1000)).toBe(dbNow + 15 * 60);
     await expect(verifyManagerToken(created.token)).resolves.toMatchObject({ jti: created.jti });

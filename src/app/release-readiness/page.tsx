@@ -1,3 +1,4 @@
+import { sessionCookieName } from "../../lib/session-config";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { getManagerCookieName, verifyWorkspaceTokenFromCookieValues } from "../../lib/manager-auth";
@@ -15,7 +16,7 @@ export default async function ReleaseReadinessPage() {
   // Customer-facing System Health diagnostics have been retired.
   const cookieStore = await cookies();
   const claims = await verifyWorkspaceTokenFromCookieValues(
-    cookieStore.get("cust_session")?.value ?? null,
+    cookieStore.get(sessionCookieName("customer"))?.value ?? null,
     cookieStore.get(getManagerCookieName())?.value ?? null,
   );
   if (!claims) redirect("/login");
