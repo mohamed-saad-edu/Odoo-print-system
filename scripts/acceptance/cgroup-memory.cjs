@@ -11,7 +11,7 @@ function readCgroupMemoryBytes(readFile = fs.readFileSync) {
   for (const file of MEMORY_PATHS) {
     try {
       const raw = readFile(file, "utf8").trim();
-      if (!/^\\d+$/.test(raw)) continue;
+      if (!/^\d+$/.test(raw)) continue;
       const bytes = Number(raw);
       if (Number.isSafeInteger(bytes) && bytes >= 0) return bytes;
     } catch (error) {
