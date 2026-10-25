@@ -4,6 +4,16 @@ import { spawnSync } from "node:child_process";
 
 const read = (path: string) => readFileSync(path, "utf8");
 describe("V4 HTTPS staging upgrade safety", () => {
+  it("resolves every service build to the repository root, including hardened Caddy/PostgreSQL", () => {
+    const c = read("deploy/domain-test/docker-compose.yml");
+    const builds = c.match(/^    build:$/gm) ?? [];
+    const contexts = c.match(/^      context: \.\.\/\.\.$/gm) ?? [];
+    expect(builds).toHaveLength(6);
+    expect(contexts).toHaveLength(builds.length);
+    expect(c).not.toMatch(/^      context: \.$/m);
+    expect(readFileSync("Dockerfile", "utf8")).toContain("FROM");
+    expect(readFileSync("Dockerfile.secure-images", "utf8")).toContain("FROM");
+  });
   it("preserves the existing staging volume and does not expose Gateway directly", () => {
     const c = read("deploy/domain-test/docker-compose.yml");
     expect(c).toContain("staging_pg_data:");

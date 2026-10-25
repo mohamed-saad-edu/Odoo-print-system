@@ -1,7 +1,7 @@
 services:
   postgres:
     build:
-      context: .
+      context: ../..
       dockerfile: Dockerfile.secure-images
       target: postgres
     restart: unless-stopped
@@ -25,7 +25,7 @@ services:
 
   database_roles:
     build:
-      context: .
+      context: ../..
       dockerfile: Dockerfile
     restart: "no"
     depends_on:
@@ -57,7 +57,7 @@ services:
 
   migrate:
     build:
-      context: .
+      context: ../..
       dockerfile: Dockerfile
     restart: "no"
     depends_on:
@@ -79,7 +79,7 @@ services:
 
   database_verify:
     build:
-      context: .
+      context: ../..
       dockerfile: Dockerfile
     restart: "no"
     depends_on:
@@ -100,7 +100,7 @@ services:
 
   gateway:
     build:
-      context: .
+      context: ../..
       dockerfile: Dockerfile
       args:
         # Public release identifier only, NEVER a secret. Supply the same
@@ -167,7 +167,7 @@ services:
 
   caddy:
     build:
-      context: .
+      context: ../..
       dockerfile: Dockerfile.secure-images
       target: caddy
     restart: unless-stopped
