@@ -24,6 +24,29 @@ class PrintGatewayRuntimePrinterController(http.Controller):
             if company.id in seen_company_ids:
                 continue
             seen_company_ids.add(company.id)
+            # Routing/binding schemas intentionally accept only direct child
+            # branches. A nested branch must NEVER be presented as a usable
+            # printer assignment for its intermediate parent. Still show the
+            # full path so the operator can understand why it is unavailable.
+            nested = bool(company.parent_id and company.parent_id.parent_id)
+            if nested:
+                ancestry = []
+                ancestor = company
+                while ancestor:
+                    ancestry.append((ancestor.name or ancestor.display_name or "").strip() or str(ancestor.id))
+                    ancestor = ancestor.parent_id
+                root = company
+                while root.parent_id:
+                    root = root.parent_id
+                scopes.append({
+                    'id': company.id,
+                    'name': " / ".join(reversed(ancestry)),
+                    'companyId': root.id,
+                    'branchId': company.id,
+                    'configId': False,
+                    'assignable': False,
+                })
+                continue
             root, branch = self._scope(company.id)
             config, _root = self._get_config(root)
             root_name = (root.name or root.display_name or "").strip() or str(root.id)
@@ -40,16 +63,27 @@ class PrintGatewayRuntimePrinterController(http.Controller):
                 'configId': config.id if config else False,
             })
 
-        # Odoo permits different company/branch records with identical names.
+        # Distinct stored names may collide after display normalization.
         # Keep all their distinct authorization scopes; suffix only ambiguous
         # labels with the immutable Odoo company ID to prevent misrouting.
         counts = {}
         for scope in scopes:
             key = scope['name'].casefold()
             counts[key] = counts.get(key, 0) + 1
+        # A user can literally name a company "My Company (#2)". If another
+        # company called "My Company" has ID 2, a one-pass suffix operation
+        # creates two identical displayed labels. Resolve collisions across
+        # the *final* labels as well, without ever changing or merging IDs.
+        used_labels = set()
         for scope in scopes:
-            if counts[scope['name'].casefold()] > 1:
-                scope['name'] = "%s (#%s)" % (scope['name'], scope['id'])
+            raw_name = scope['name']
+            label = raw_name
+            if counts[raw_name.casefold()] > 1 or label.casefold() in used_labels:
+                label = "%s (#%s)" % (raw_name, scope['id'])
+            while label.casefold() in used_labels:
+                label = "%s (#%s)" % (label, scope['id'])
+            scope['name'] = label
+            used_labels.add(label.casefold())
         return {'scopes': scopes, 'currentCompanyId': request.env.company.id}
 
     @staticmethod
@@ -59,11 +93,31 @@ class PrintGatewayRuntimePrinterController(http.Controller):
 
     def _scope(self, company_id=None, branch_id=None, env=None):
         env = env if env is not None else request.env
-        if company_id:
-            try:
-                company = env["res.company"].browse(int(company_id)).exists()
-            except (TypeError, ValueError):
-                raise Forbidden(env._("Access Denied: Invalid Odoo Company."))
+
+        def exact_record_id(value, translated_error):
+            # int(True), int(1.9), int(" 1") and int(1.0) all silently select
+            # the wrong record. A printer assignment must never be coerced to
+            # a different Odoo company/branch, even for an admin RPC caller.
+            if type(value) is int:
+                record_id = value
+            elif (isinstance(value, str) and value.isascii()
+                  and value.isdecimal() and len(value) <= 19):
+                try:
+                    record_id = int(value)
+                except ValueError:
+                    raise Forbidden(translated_error)
+            else:
+                raise Forbidden(translated_error)
+            if not 0 < record_id <= 2**63 - 1:
+                raise Forbidden(translated_error)
+            return record_id
+
+        # False is Odoo's standard 'no field value' sentinel. Any *other*
+        # explicitly supplied value, including 0/empty strings, must be a
+        # valid and exact ID rather than selecting the active company.
+        if company_id is not None and company_id is not False:
+            record_id = exact_record_id(company_id, env._("Access Denied: Invalid Odoo Company."))
+            company = env["res.company"].browse(record_id).exists()
             if not company:
                 raise Forbidden(env._("Access Denied: The selected Odoo Company is not available to the current user."))
         else:
@@ -72,17 +126,21 @@ class PrintGatewayRuntimePrinterController(http.Controller):
                 raise Forbidden(env._("Access Denied: The active Odoo Company is not available to the current user."))
 
         branch = False
-        if branch_id:
-            try:
-                branch = env["res.company"].browse(int(branch_id)).exists()
-            except (TypeError, ValueError):
-                raise Forbidden(env._("Access Denied: Invalid Odoo Branch."))
+        if branch_id is not None and branch_id is not False:
+            record_id = exact_record_id(branch_id, env._("Access Denied: Invalid Odoo Branch."))
+            branch = env["res.company"].browse(record_id).exists()
             if not branch or branch not in env.companies:
                 raise Forbidden(env._("Access Denied: The selected Odoo Branch is not available to the current user."))
 
         # A branch's parent is metadata; authority comes from the exact allowed branch.
         if company not in env.companies and not (branch and branch.parent_id == company):
             raise Forbidden(env._("Access Denied: The selected Odoo Company is not available to the current user."))
+
+        if company.parent_id and company.parent_id.parent_id:
+            # A parent-of-parent is not a valid root for direct-child printer
+            # bindings. Do not silently promote a nested company and route a
+            # document to an unrelated/default printer.
+            raise ValidationError(env._("Nested Odoo branches are not supported for printer assignments."))
 
         if company.parent_id:
             # Tolerate branch-scoped callers (e.g. a branch cashier whose

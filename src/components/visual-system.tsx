@@ -42,14 +42,14 @@ export function ShellSearchButton({
     <button
       type="button"
       onClick={onClick}
-      aria-label={label}
+      aria-label={compact ? label : `${label} ${hint}`}
       title={hint}
       className={`tg-search-trigger inline-flex min-w-0 items-center gap-2 rounded-xl border border-edge bg-surface text-ink-3 transition-[background-color,border-color,box-shadow] duration-200 hover:border-edge-accent hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/35 ${compact ? "h-11 w-11 justify-center" : "min-h-11 px-3 py-2"}`}
     >
       <Search className="h-4 w-4 shrink-0" aria-hidden />
       {!compact && (
         <>
-          <span className="min-w-0 truncate text-sm">{label}</span>
+          <span className="min-w-0 truncate text-sm">{label}</span>{" "}
           <kbd className="ms-auto hidden shrink-0 rounded-md border border-edge bg-surface-2 px-1.5 py-0.5 text-2xs font-medium text-ink-3 sm:inline">{hint}</kbd>
         </>
       )}

@@ -52,10 +52,10 @@ fn development_data_override(names: &[&str]) -> Option<PathBuf> {
         return None;
     }
     for name in names {
-        if let Ok(value) = std::env::var(name) {
-            if !value.trim().is_empty() {
-                return Some(PathBuf::from(value));
-            }
+        if let Ok(value) = std::env::var(name)
+            && !value.trim().is_empty()
+        {
+            return Some(PathBuf::from(value));
         }
     }
     None
@@ -237,40 +237,24 @@ fn agent_data_root_candidate() -> PathBuf {
 }
 
 /// Autostart belongs to the logged-in user, independently of shared service data.
+#[cfg(windows)]
 pub fn autostart_choice_path() -> Result<PathBuf, String> {
-    #[cfg(windows)]
-    {
-        // Never inherit LOCALAPPDATA from the parent environment: an
-        // elevated relaunch inherits the unelevated caller's variables, so a
-        // caller-controlled value would redirect the first-launch marker and
-        // the explicit-disable record. Resolve the real per-user profile path
-        // through the Known Folder API like every other privileged root.
-        // FOLDERID_LocalAppData = {F1B32785-6FBA-4FCF-9D55-7B8E7F157091}
-        const FOLDERID_LOCAL_APPDATA: Guid = Guid {
-            data1: 0xf1b32785,
-            data2: 0x6fba,
-            data3: 0x4fcf,
-            data4: [0x9d, 0x55, 0x7b, 0x8e, 0x7f, 0x15, 0x70, 0x91],
-        };
-        if let Some(root) = windows_known_folder_root(FOLDERID_LOCAL_APPDATA) {
-            return Ok(root.join("YaseirManager").join("autostart-user-choice"));
-        }
-        return Err(
-            "LocalAppData is unavailable; cannot persist a per-user autostart choice".into(),
-        );
+    // Never inherit LOCALAPPDATA from the parent environment: an
+    // elevated relaunch inherits the unelevated caller's variables, so a
+    // caller-controlled value would redirect the first-launch marker and
+    // the explicit-disable record. Resolve the real per-user profile path
+    // through the Known Folder API like every other privileged root.
+    // FOLDERID_LocalAppData = {F1B32785-6FBA-4FCF-9D55-7B8E7F157091}
+    const FOLDERID_LOCAL_APPDATA: Guid = Guid {
+        data1: 0xf1b32785,
+        data2: 0x6fba,
+        data3: 0x4fcf,
+        data4: [0x9d, 0x55, 0x7b, 0x8e, 0x7f, 0x15, 0x70, 0x91],
+    };
+    if let Some(root) = windows_known_folder_root(FOLDERID_LOCAL_APPDATA) {
+        return Ok(root.join("YaseirManager").join("autostart-user-choice"));
     }
-    #[cfg(not(windows))]
-    {
-        let root = std::env::var("LOCALAPPDATA").map_err(
-            |_| "LOCALAPPDATA is unavailable; cannot persist a per-user autostart choice",
-        )?;
-        if root.trim().is_empty() {
-            return Err("LOCALAPPDATA is empty".into());
-        }
-        Ok(PathBuf::from(root)
-            .join("YaseirManager")
-            .join("autostart-user-choice"))
-    }
+    Err("LocalAppData is unavailable; cannot persist a per-user autostart choice".into())
 }
 
 pub fn settings_path() -> PathBuf {
@@ -512,6 +496,7 @@ fn verify_windows_manager_readonly_security(
 /// an allow ACE is an unexpected grant (for example a pre-created explicit
 /// FullControl ACE that `/grant:r` never touches, since it only replaces
 /// grants for the SIDs it names).
+#[cfg(any(windows, test))]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum ManagerTrustee {
     System,
@@ -523,6 +508,7 @@ enum ManagerTrustee {
 /// Classify a raw SID by value: S-1-5-18 (SYSTEM), S-1-5-32-544
 /// (Administrators), S-1-5-32-545 (Users). Pure byte logic, no OS calls, so
 /// the classification itself is unit-testable on any platform.
+#[cfg(any(windows, test))]
 fn well_known_manager_trustee(sid: &[u8]) -> ManagerTrustee {
     if sid.len() < 8 || sid[0] != 1 || sid[2..8] != [0, 0, 0, 0, 0, 5] {
         return ManagerTrustee::Other;
@@ -551,14 +537,17 @@ fn well_known_manager_trustee(sid: &[u8]) -> ManagerTrustee {
     ManagerTrustee::Other
 }
 
+#[cfg(any(windows, test))]
 const ACCESS_ALLOWED_ACE_TYPE: u8 = 0x00;
 // Exact WinSDK ACE_HEADER types; only these entries can be ignored because
 // they restrict access. Other nonzero types may still GRANT access.
+#[cfg(any(windows, test))]
 const MANAGER_DENY_ACE_TYPES: [u8; 4] = [0x01, 0x06, 0x0a, 0x0c];
 
 /// Decode only the ordinary allow layout emitted by our ACL policy. Object
 /// and callback allow ACEs have different semantics/layouts and fail closed;
 /// known deny ACEs grant no rights and need no trustee/SID decoding.
+#[cfg(any(windows, test))]
 fn decode_manager_ace(bytes: &[u8]) -> Result<(ManagerTrustee, u32, u8), String> {
     if bytes.len() < 4 {
         return Err("Manager runtime path has a truncated ACE header".into());
@@ -593,6 +582,7 @@ fn decode_manager_ace(bytes: &[u8]) -> Result<(ManagerTrustee, u32, u8), String>
 /// SYSTEM/Administrators on a Manager trust root, regardless of how the
 /// granting ACE encodes them (generic, standard or object-specific bits).
 /// Note 0x8 is FILE_READ_EA (harmless read); the write bit is 0x10.
+#[cfg(any(windows, test))]
 const MANAGER_WRITE_MASK: u32 = 0x4000_0000 // GENERIC_WRITE
     | 0x1000_0000 // GENERIC_ALL
     | 0x0100_0000 // ACCESS_SYSTEM_SECURITY
@@ -609,6 +599,7 @@ const MANAGER_WRITE_MASK: u32 = 0x4000_0000 // GENERIC_WRITE
 /// intended trustee set with safe rights. Deny ACEs restrict access and grant
 /// nothing, so they are ignored here. Pure logic over already-read entries,
 /// unit-testable on any platform.
+#[cfg(any(windows, test))]
 fn verify_manager_dacl_entries(
     entries: &[(ManagerTrustee, u32, u8)],
     context: &str,

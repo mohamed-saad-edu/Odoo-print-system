@@ -63,20 +63,15 @@ func TestAuditEnhancedPointAndPrintIsPhysical(t *testing.T) {
 	}
 }
 
-func TestAuditRegistryQuarantineFailurePreservesOriginal(t *testing.T) {
+func TestAuditUnreadableRegistryPreservesOriginal(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "printers.json")
 	original := []byte("{damaged registry")
 	if err := os.WriteFile(path, original, 0600); err != nil {
 		t.Fatal(err)
 	}
-	for delta := int64(-2); delta <= 2; delta++ {
-		if err := os.Mkdir(fmt.Sprintf("%s.corrupt-%d", path, time.Now().Unix()+delta), 0700); err != nil {
-			t.Fatal(err)
-		}
-	}
 	if _, err := UpsertRegistry(path, nil); err == nil {
-		t.Fatal("failed quarantine must refuse overwrite")
+		t.Fatal("unreadable saved authority must refuse overwrite")
 	}
 	got, err := os.ReadFile(path)
 	if err != nil || string(got) != string(original) {

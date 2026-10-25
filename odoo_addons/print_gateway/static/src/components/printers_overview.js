@@ -7,7 +7,7 @@ import { useService } from "@web/core/utils/hooks";
 import { _t } from "@web/core/l10n/translation";
 import { startRpcWithDeadline } from "../js/async_control";
 import { isVerifiedRuntimePrinter } from "../js/printer_verification";
-import { labelPrinterScopes } from "../js/printer_scope_labels";
+import { labelPrinterScopes, resolvePrinterScopeSelection } from "../js/printer_scope_labels";
 
 /** Live inventory uses exactly the same company/assignment/verification fences
  * as the existing binding picker. Navigation never silently creates a route. */
@@ -29,13 +29,18 @@ export class PrintersOverview extends Component {
                 // scope IDs and authorized company/branch assignment intact.
                 // The fallback also distinguishes stale/legacy RPC labels.
                 this.state.scopes = labelPrinterScopes(context.scopes, {
-                    company: _t("Company"), branch: _t("Branch"),
+                    company: _t("Company"), branch: _t("Branch"), unavailable: _t("Unavailable"),
                 });
-                const requested = this.props.action?.context?.default_company_id;
-                this.state.scopeId = this.state.scopes.find(scope => scope.id === requested)?.id
-                    || this.state.scopes.find(scope => scope.id === context.currentCompanyId)?.id
-                    || this.state.scopes[0]?.id || 0;
+                const selected = resolvePrinterScopeSelection(this.state.scopes, {
+                    requestedBranchId: this.props.action?.context?.default_branch_id,
+                    requestedCompanyId: this.props.action?.context?.default_company_id,
+                    currentCompanyId: context.currentCompanyId,
+                });
+                this.state.scopeId = selected.id;
                 await this.refresh();
+                if (this.alive && selected.invalidated) {
+                    this.state.error = _t("The selected company or branch is no longer available. Choose an authorized scope to continue.");
+                }
             } catch {
                 if (this.alive) {
                     this.state.error = _t("Printer setup could not be loaded. Check your company access and try again.");
@@ -57,7 +62,8 @@ export class PrintersOverview extends Component {
     }
 
     async changeScope(event) {
-        this.state.scopeId = Number(event.target.value);
+        const id = Number(event.target.value);
+        this.state.scopeId = this.state.scopes.some(scope => scope.id === id && scope.assignable !== false) ? id : 0;
         this.state.agentId = "";
         await this.refresh();
     }
@@ -74,7 +80,7 @@ export class PrintersOverview extends Component {
         this.state.error = "";
         this.state.printers = [];
         this.state.agents = [];
-        if (!scope) { this.state.loading = false; return; }
+        if (!scope || scope.assignable === false) { this.state.loading = false; return; }
         const params = { company_id: scope.companyId, branch_id: scope.branchId };
         try {
             const result = await this.call("/print_gateway/runtime-agents", { ...params, assignment_only: true });
@@ -118,7 +124,7 @@ export class PrintersOverview extends Component {
     }
     mappings() { return this.action.doAction("print_gateway.action_print_gateway_binding"); }
     choose(printer) {
-        if (!this.isReady(printer) || !this.scope || !this.state.agentId) return;
+        if (!this.isReady(printer) || !this.scope || this.scope.assignable === false || !this.state.agentId) return;
         return this.action.doAction({
             type: "ir.actions.act_window", res_model: "print_gateway.binding", views: [[false, "form"]], target: "current",
             context: { default_company_id: this.scope.companyId, default_branch_id: this.scope.branchId || false,

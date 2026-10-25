@@ -52,7 +52,8 @@ class TestPrintGatewayRoutingContract(TransactionCase):
             setup_env = api.Environment(cr, self.env.uid, dict(self.env.context))
             durable_company = setup_env["res.company"].create({"name": durable_company_name})
             other_company = setup_env["res.company"].create({"name": other_company_name})
-            with patch.object(PrintGatewayConfig, "_validate_gateway_host"):
+            with patch.object(PrintGatewayConfig, "_validate_gateway_host"), \
+                 patch.object(PrintGatewayConfig, "_queue_enabled_state_sync", return_value=None):
                 durable_config = setup_env["print_gateway.gateway_config"].create(
                     {
                         "company_id": durable_company.id,
@@ -63,8 +64,21 @@ class TestPrintGatewayRoutingContract(TransactionCase):
             self.durable_config_id = durable_config.id
             self.other_company_id = other_company.id
             cr.commit()
+            self.addCleanup(self._cleanup_durable_fixtures)
         finally:
             cr.close()
+
+    def _cleanup_durable_fixtures(self):
+        # Independent transactions intentionally exercise the real outbox but
+        # are outside TransactionCase's rollback. Keep their executable rows
+        # out of subsequent native install/upgrade runs and global cron tests.
+        with self.env.registry.cursor() as cr:
+            cr.execute("DELETE FROM print_gateway_print_job WHERE gateway_config_id = %s", (self.durable_config_id,))
+            cr.execute("DELETE FROM print_gateway_gateway_config WHERE id = %s", (self.durable_config_id,))
+            cr.execute("UPDATE res_company SET active = false WHERE id IN %s", (
+                (self.durable_company_id, self.other_company_id),
+            ))
+            cr.commit()
 
     def test_receipt_raster_uses_authorized_runtime_geometry(self):
         """The POS capture width is linked to the selected physical device."""

@@ -94,6 +94,15 @@ def binding(pk, report=None, destination=PICKING_TYPE, company=ROOT_COMPANY, bra
             company_id=company, branch_id=branch or False, document_type=document_type,
             priority=priority, enabled=enabled, runtime_agent_id='runtime-a', printer_id=printer,
             printer_protocol=protocol, fallback_binding_id=fallback)
+    # These tests isolate immutable route identity and primary sharing. A
+    # valid candidate must now also pass current Agent assignment/ownership
+    # and verification, just like primary routing. Model that external proof
+    # explicitly; its actual validator is exercised by the fallback authority
+    # regression suite and native ORM tests, not bypassed in production.
+    b._validate_runtime_target = lambda **kwargs: {
+        'id': b.printer_id, 'agent': {'id': b.runtime_agent_id}, 'protocol': b.printer_protocol,
+    }
+    b._validate_binding_protocol_against_runtime = lambda printer: True
     return b
 
 

@@ -1,6 +1,7 @@
 """Compile and execute the actual dependency-free Rust helpers offline."""
 from pathlib import Path
 import subprocess
+import tomllib
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -24,7 +25,8 @@ def test_actual_rust_logging_and_process_identity(tmp_path):
     rust_file = tmp_path / "actual_helpers.rs"
     binary = tmp_path / "actual_helpers"
     rust_file.write_text(source)
-    built = subprocess.run(["rustc", "--edition=2021", "--test", str(rust_file), "-o", str(binary)], capture_output=True, text=True)
+    edition = tomllib.loads((ROOT / "src-tauri/Cargo.toml").read_text())["package"]["edition"]
+    built = subprocess.run(["rustc", f"--edition={edition}", "--test", str(rust_file), "-o", str(binary)], capture_output=True, text=True)
     assert built.returncode == 0, built.stderr
     ran = subprocess.run([str(binary)], capture_output=True, text=True)
     assert ran.returncode == 0, ran.stdout + ran.stderr

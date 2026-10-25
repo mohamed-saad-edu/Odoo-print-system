@@ -14,13 +14,14 @@
             <div class="row g-3 mb-4">
                 <div class="col-md-6"><label for="pg_inventory_scope" class="form-label">Company or branch</label>
                     <select id="pg_inventory_scope" class="form-select" t-on-change="changeScope" t-att-value="state.scopeId">
-                        <option t-foreach="state.scopes" t-as="scope" t-key="scope.id" t-att-value="scope.id" t-esc="scope.label"/>
+                        <option value="0" disabled="disabled" t-att-selected="state.scopeId === 0">Choose a company or branch</option>
+                        <option t-foreach="state.scopes" t-as="scope" t-key="scope.id" t-att-selected="scope.id === state.scopeId" t-att-value="scope.id" t-att-disabled="scope.assignable === false" t-esc="scope.label"/>
                     </select>
                 </div>
                 <div class="col-md-6"><label for="pg_inventory_agent" class="form-label">Printing computer</label>
                     <select id="pg_inventory_agent" class="form-select" t-on-change="changeAgent" t-att-value="state.agentId" t-att-disabled="state.loading">
-                        <option value="">Select a computer</option>
-                        <option t-foreach="state.agents" t-as="agent" t-key="agent.id" t-att-value="agent.id" t-esc="agent.name"/>
+                        <option value="" t-att-selected="!state.agentId">Select a computer</option>
+                        <option t-foreach="state.agents" t-as="agent" t-key="agent.id" t-att-selected="agent.id === state.agentId" t-att-value="agent.id" t-esc="agent.name"/>
                     </select>
                 </div>
             </div>

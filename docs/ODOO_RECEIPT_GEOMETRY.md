@@ -1,6 +1,6 @@
 # Odoo receipt geometry in V3
 
-Addon version: `19.0.2.22.0` (V4 preserves the V3 receipt-geometry contract).
+Current addon version: `19.0.2.25.0` (V5 preserves the V3 receipt-geometry contract).
 
 POS receipts, kitchen tickets and the in-session Sale Details receipt use the
 geometry reported for their selected execution destination. Unknown geometry produces
@@ -161,10 +161,11 @@ outcome before deliberately creating new paper output.
    unresolved-operation records. Use the normal backup and upgrade procedure.
 2. Deploy the matching Agent and Gateway geometry contract and obtain a converged
    observation or a validated measurement profile for each receipt printer.
-3. Upgrade `print_gateway` to `19.0.2.22.0` using the ordinary Odoo module update.
-   This increment adds nullable output-medium, output-outcome and canonical
-   artifact-evidence columns through Odoo's normal schema update. Existing
-   jobs, credentials, identities and payloads are preserved.
+3. Upgrade `print_gateway` to `19.0.2.25.0` using the ordinary Odoo module update.
+   The `19.0.2.22.0` schema increment added nullable output-medium, output-outcome
+   and canonical artifact-evidence columns through Odoo's normal schema update;
+   V5 preserves those columns and existing jobs, credentials, identities and
+   payloads while applying the current authorization and recovery fixes.
 4. Reload the POS/backend asset bundles. An older open POS client has no geometry
    fingerprint and cannot create a new receipt through the V3 admission path.
 5. Check the selected binding and actual measurements before restoring new
@@ -179,7 +180,7 @@ request limits, pinned HTTP/TLS transport checks and retry lifetimes are retaine
 
 ## Verification and its limits
 
-The lane evidence is in `evidence-v3/printer/odoo/` in the verification package.
+The historical V3 lane evidence is in `evidence-v3/printer/odoo/` in its verification package.
 Its execution manifest binds commands and raw results to source hashes. It retains
 the failing baseline demonstrations as well as successful reruns. The native
 Odoo gate uses the recorded Odoo 19 source revision

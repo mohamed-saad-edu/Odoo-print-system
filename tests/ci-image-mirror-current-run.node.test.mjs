@@ -87,6 +87,15 @@ test('Odoo CI tests the built hardened runtime by content ID with verified immut
   assert.ok(hardened.includes('verify-odoo19-pdf-bounds.py /opt/odoo'));
   assert.ok(ci.includes('--file Dockerfile.odoo-hardened'));
   assert.ok(ci.includes('--iidfile "$RUNNER_TEMP/odoo-hardened.image-id"'));
+  // Production Odoo keeps its real HTTP healthcheck, but 284 DB-intensive
+  // tests must not accumulate blocked /web/health threads in the CI runner.
+  // Do not skip, mock, or reduce the native addon test suite itself.
+  assert.match(hardened, /^HEALTHCHECK --interval=30s/m);
+  assert.ok(ci.includes('docker run --rm --no-healthcheck --network host --name odoo19_test_run'));
+  assert.ok(ci.includes('--test-tags=/print_gateway'));
+  assert.ok(ci.includes('--init=print_gateway'));
+  assert.ok(ci.includes('--stop-after-init'));
+
   assert.ok(ci.includes('odoo_image="$(cat "$RUNNER_TEMP/odoo-hardened.image-id")"'));
   assert.ok(ci.includes('"$odoo_image" \\'));
   assert.ok(ci.includes('--addons-path=/opt/odoo/odoo/addons,/opt/odoo/addons,/opt/yaseir-addons'));
@@ -123,6 +132,32 @@ test('Odoo CI tests the built hardened runtime by content ID with verified immut
   const findings = JSON.parse(load('security/image-vulnerability-baseline.json')).images['yaseir-odoo-hardened:review-20261025'].findings;
   assert.equal(findings.length, 72);
   assert.ok(findings.every((row) => row.length === 3 && ['LOW', 'MEDIUM'].includes(row[2])));
+});
+
+test('Docker scans the shipped npm-free Gateway runtime and retains upstream advisory evidence', () => {
+  assert.ok(workflow.includes('docker build --file Dockerfile --target runtime --tag yaseir-gateway:ci-node24.22.1 .'));
+  assert.ok(workflow.includes("test ! -e /usr/local/lib/node_modules/npm"));
+  assert.ok(workflow.includes('Scan release image (Trivy)'));
+  assert.ok(workflow.includes('trivy-upstream-node.sarif'));
+  assert.ok(workflow.includes("image='yaseir-gateway:ci-node24.22.1'"));
+  assert.ok(workflow.includes('scripts/check-trivy-baseline.py trivy.sarif "$image"'));
+  assert.ok(workflow.includes('POSTGRES_RUNTIME_PASSWORD: ci-only-runtime-'));
+  assert.ok(workflow.includes('POSTGRES_OWNER_PASSWORD: ci-only-owner-'));
+  const rolePasswords = ["POSTGRES_PASSWORD", "POSTGRES_OWNER_PASSWORD", "POSTGRES_RUNTIME_PASSWORD"]
+    .map(key => {
+      const match = workflow.match(new RegExp("^  " + key + ": ([^\\s]+)$", "m"));
+      assert.ok(match, key + " must be explicit for disposable CI, never inherited from production secrets");
+      assert.ok(match[1].length >= 32, key + " must satisfy V4 independent role secret length");
+      return match[1];
+    });
+  assert.equal(new Set(rolePasswords).size, 3, "CI role credentials must be independent");
+  assert.ok(workflow.includes('fs.readFileSync("/run/secrets/postgres_runtime_password"'));
+  assert.ok(workflow.includes('LEGACY_MANAGER_HTTP_STATUS='));
+  assert.ok(workflow.includes('legacy.status !== 401'));
+  assert.ok(workflow.includes('authorization: "Bearer " + agentId + ":" + agentSecret'));
+  assert.ok(workflow.includes('fleetBody.length !== 1 || fleetBody[0]?.id !== agentId'));
+  assert.ok(!workflow.includes('MANAGER_FLEET_HTTP_STATUS='));
+  assert.ok(!workflow.includes('const pgPassword = fs.readFileSync("/run/secrets/postgres_password"'));
 });
 
 test('Docker CI image references remain immutable and reject mutable tags', () => {

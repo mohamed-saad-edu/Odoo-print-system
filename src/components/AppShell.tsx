@@ -345,7 +345,8 @@ function ConsoleShell({
         <div className={`flex min-h-18 shrink-0 items-center gap-2 border-b border-edge-subtle py-3 ${collapsed ? "justify-center px-2" : "px-4"}`}>
           <Link
             href="/dashboard"
-            aria-label={t("nav.home")}
+            aria-label={collapsed ? t("nav.home") : undefined}
+            title={t("nav.home")}
             className="flex min-w-0 items-center rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/35"
           >
             <ConsoleBrand brandSubtitle={t("brand.tagline")} showWordmark={!collapsed} />

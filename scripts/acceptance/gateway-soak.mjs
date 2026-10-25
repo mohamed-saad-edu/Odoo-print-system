@@ -25,6 +25,10 @@ import { createWorkloadCorpus, syntheticPrinterProfile, workloadAsset, workloadP
 import { physicalPrinterIdentityKey } from "../../src/lib/physical-printer-identity.ts";
 import { validatePrinterOperationalVerification } from "../../src/lib/printer-operational-verification.ts";
 
+// Raw pg evidence reads must interpret the schema's UTC-naive timestamps in
+// the same timezone as the Gateway child, regardless of the invoking host.
+process.env.TZ = "UTC";
+
 const root = process.cwd(), out = path.resolve(process.argv[2] || "");
 const maxDeliveryAttempts = readDeliveryAttemptBudget(fs.readFileSync(path.join(root, "src/lib/job-maintenance.ts"), "utf8"));
 assert(process.argv[2] && !fs.existsSync(path.join(out, "summary.json")), "Supply a new evidence output directory");
@@ -485,7 +489,7 @@ try {
   await Promise.all(queuedRestart.map(item => waitTerminal(item.jobId)));
   summary.queueRestart = { queuedBefore,terminalAfter:queuedRestart.length,drainMilliseconds:performance.now()-drainStarted,
     perAgent:consumers.map(f => ({agentId:f.agentId,jobs:queuedRestart.filter(item => consumers[item.fixtureIndex].agentId === f.agentId).length})),
-    scope:"Eight durable queued jobs for every one of six agents across three tenants survive a Gateway restart and drain through authenticated polling without changing identity" };
+    scope:"Eight durable queued jobs for each of six agents across three tenants survive a Gateway restart and reach synthetic terminal outcomes through reconnected authenticated WebSocket consumers and an explicit polling pass. drainMilliseconds starts after all heartbeat and WebSocket reconnections finish; it excludes Gateway startup and those reconnections." };
   for (const item of accepted.filter((_, i) => i % Math.max(1, Math.floor(accepted.length / 30)) === 0)) {
     const f = consumers[item.fixtureIndex], body = jobBody(f, item.operation, item.index);
     const replay = expectStatus(await request("/api/print/jobs/v2", { method: "POST", body, headers: odooHeaders(f) }), 200, "post-restart replay"); assert.equal(replay.json.jobId, item.jobId);

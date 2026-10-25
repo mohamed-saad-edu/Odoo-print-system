@@ -11,12 +11,12 @@ Internet → Caddy (TLS + reverse proxy) → Gateway (Node.js) → PostgreSQL 16
 
 ## Prerequisites
 
-| Component | Minimum Version |
+| Component | Release profile |
 |-----------|----------------|
-| Node.js | ≥ 24.15.0 |
-| PostgreSQL | 16+ |
-| Go | 1.26 (agent build) |
-| Caddy | 2.x (or any reverse proxy) |
+| Node.js / npm | Node 24.22.1 (`.nvmrc`), npm 12.2.1 (`packageManager`) |
+| PostgreSQL | 16+; use the pinned image/profile in `Dockerfile.secure-images` for bundled deployment |
+| Go | 1.26.10 (`agent/go.mod`) for the Agent build |
+| Caddy | Pinned dependency/source profile in `Dockerfile.secure-images` and `docs/runtime-hardening/` |
 
 ## Environment Variables
 
@@ -24,7 +24,7 @@ Internet → Caddy (TLS + reverse proxy) → Gateway (Node.js) → PostgreSQL 16
 
 | Variable | Description |
 |----------|-------------|
-| `DATABASE_URL` | PostgreSQL connection string |
+| PostgreSQL runtime identity | Either `DATABASE_URL` / `DATABASE_URL_FILE`, or complete `PGHOST`, `PGUSER`, `PGDATABASE` plus the runtime password (`PGPASSWORD_FILE` preferred). The Gateway must use the restricted runtime role, not the bootstrap or owner identity. |
 | `GATEWAY_JWT_SECRET` | ≥ 32 chars, random, for manager/customer session signing |
 | `TRUST_PROXY_SECRET` | ≥ 32 chars, shared with reverse proxy; required when `TRUST_PROXY=1` |
 | `APP_BASE_URL` | Public-facing HTTPS origin used by authentication links and application navigation |
@@ -54,10 +54,17 @@ V4 uses manual platform-owner activation. Payment-provider credentials are not r
 
 ### 1. Database Setup
 
-```bash
-createdb print_gateway
-DATABASE_URL="postgresql://user:pass@host:5432/print_gateway" npm run db:migrate
-```
+Follow [PostgreSQL deployment roles](docs/DATABASE_ROLES.md) to create distinct
+bootstrap, migration-owner and runtime identities. The bundled profile is for
+a dedicated PostgreSQL cluster; an existing shared service needs its own
+reviewed role policy. Keep the bootstrap and owner credentials out of the
+Gateway runtime.
+
+For Compose, the role, migration and runtime-verification jobs enforce this
+order automatically. For a managed service or host deployment, run migrations
+with the migration-owner environment, check the runtime privileges, then
+start Gateway with a separate runtime-only environment. Do not carry the
+owner's `DATABASE_URL` or `PGUSER` into the application process.
 
 ### 2. Build & Start Gateway
 
@@ -83,6 +90,9 @@ gateway.example.com {
         # Match the repo's secret-file pattern (see Caddyfile and
         # docker-compose.yml); avoid inlining the raw secret in configs.
         header_up X-Gateway-Proxy-Token {file./run/secrets/trust_proxy_secret}
+        # Replace client-supplied addresses before Gateway IP rate limiting.
+        header_up X-Forwarded-For {http.request.remote.host}
+        header_up -X-Real-Ip
     }
 }
 ```
@@ -91,12 +101,21 @@ gateway.example.com {
 
 Upgrade Agents along with the Gateway inventory/desired-state contract. Migration `0080` must precede the Gateway that reads its retained inventory version. Versionless observations are additive before upgrade and cannot downgrade an established versioned writer. Manager fleets that exceed one desired-state page (64 rows or 512 KiB of array data) require an Agent with negotiated continuation support; older Agents stay fenced with `desiredStateUpgradeRequired` instead of applying a truncated list. Review the [heartbeat and desired-state contract](API.md#agent-heartbeat-pagination) for metadata budgets and recovery behavior.
 
-```bash
-cd agent
-GOOS=windows GOARCH=amd64 go build -o print-agent.exe ./cmd/agent
+Build the supported NSIS installer on a Windows host with the pinned Go, Node,
+Rust/MSVC and CGO toolchains described in
+[Windows toolchain acceptance](docs/WINDOWS_TOOLCHAIN_ACCEPTANCE.md):
+
+```powershell
+pwsh -File scripts/build-windows-installer.ps1 -Bundles nsis
 ```
 
-Deploy `print-agent.exe` with a YAML config file pointing to the Gateway URL.
+Distribute only the installer that passes
+[Windows release acceptance](docs/WINDOWS_RELEASE_ACCEPTANCE.md), including
+the required signing and native install/upgrade/service/removal checks. The
+Agent's SQLite runtime needs CGO; a plain cross-compiled executable does not
+establish a working queue, service or installer. The customer installer bundles
+the Agent and Desktop Manager. Pair the installed Agent to the Gateway through
+the supported setup flow.
 
 Use the Gateway origin root, such as `https://print.example.com` or `https://[2001:db8::1]:8443`. A trailing root slash and surrounding whitespace are normalized for all Agent HTTP and WebSocket endpoints; `/api`, other base paths, embedded credentials, queries and fragments are rejected with an explicit configuration error. The Desktop Manager also requires the origin root. Deploy a dedicated Gateway origin when a reverse proxy needs routing; a subpath deployment is not supported by the current Gateway/UI contract. Agent service configs and CLI pairing require an explicit HTTP(S) scheme; the Desktop Manager can add HTTPS to a bare hostname.
 
@@ -105,10 +124,18 @@ TLS verification and redirect refusal remain enabled. The Agent **never** sends 
 ## Docker Deployment
 
 ```bash
-docker-compose up -d
+docker compose up -d --build
 ```
 
-The `docker-compose.yml` includes Gateway, PostgreSQL, and Caddy services. Compose requires `APP_BASE_URL` and forwards the email and manual-activation settings listed above; production secrets remain supplied through Compose secrets (`POSTGRES_PASSWORD`, `GATEWAY_JWT_SECRET`, `MANAGER_PASSWORD_HASH`, and `TRUST_PROXY_SECRET`).
+The `docker-compose.yml` includes Gateway, PostgreSQL, Caddy and the one-shot
+`database_roles`, `migrate` and `database_verify` jobs. Compose requires
+`APP_BASE_URL` and forwards the email and manual-activation settings listed
+above. Set three independent PostgreSQL secrets (`POSTGRES_PASSWORD`,
+`POSTGRES_OWNER_PASSWORD`, `POSTGRES_RUNTIME_PASSWORD`) as described in the
+role guide, together with `GATEWAY_JWT_SECRET`, `MANAGER_PASSWORD_HASH` and
+`TRUST_PROXY_SECRET`. Compose mounts the secrets per service; Gateway receives
+only the runtime database credential. Existing-volume conversion requires the
+role guide's backup and maintenance procedure before ordinary startup.
 
 ## Health Checks
 
@@ -133,7 +160,8 @@ This proves that HTTPS is publicly trusted and the WebSocket route is reachable 
 
 - [ ] `GATEWAY_JWT_SECRET` is random, ≥ 32 chars, not a placeholder
 - [ ] `TRUST_PROXY_SECRET` is random, ≥ 32 chars, not a placeholder
-- [ ] `DATABASE_URL` uses SSL in production (`?sslmode=require`)
+- [ ] Remote PostgreSQL connections use the deployment's verified TLS configuration; the bundled PostgreSQL port remains unpublished on the private container network
+- [ ] Gateway uses the restricted runtime database identity; bootstrap and owner credentials are confined to their jobs
 - [ ] Caddy/proxy terminates TLS with a publicly trusted certificate; `node scripts/check-public-gateway.mjs https://print.example.com` passes from outside the VPS
 - [ ] Manual plans, official activation contact and a verified Windows download URL are configured
 - [ ] Any historical external recurring charges have been reconciled by the business operator
@@ -146,10 +174,15 @@ This proves that HTTPS is publicly trusted and the WebSocket route is reachable 
 ## Graceful Shutdown
 
 The Gateway handles `SIGTERM` and `SIGINT`:
-1. Closes WebSocket connections (1001 Going Away)
-2. Stops accepting new requests
-3. Drains in-flight requests (10s timeout)
-4. Closes database pool
+
+1. Marks admission as shutting down and closes Agent WebSockets with 1001 Going Away.
+2. Drains accepted WebSocket work, closes the HTTP listener and drains HTTP requests.
+3. Waits for accepted Next.js background work and tracked maintenance tasks.
+4. Flushes bounded authorization-denial summaries and closes the database pool.
+
+`server.ts` enforces a 45-second overall drain deadline. Compose allows 60 seconds
+before forcibly stopping the container. An interrupted delivery retains its
+claim and uncertainty evidence; shutdown does not authorize automatic reprinting.
 
 ## Backup and Disaster Recovery
 
@@ -191,9 +224,9 @@ replacement additionally requires `RESTORE_ALLOW_NONEMPTY=1`.
 
 After every restore, before enabling traffic:
 
-1. run `npm run db:migrate` using the restored database;
-2. run `python3 scripts/check-db-docs.py` and the PostgreSQL integration gates;
-3. verify `/api/health`, authenticated `/api/health`, Agent reconnects,
+1. run `npm run db:migrate` against the restored database using the migration owner;
+2. verify the restricted runtime role, then run `python3 scripts/check-db-docs.py` and the PostgreSQL integration gates;
+3. verify `/api/health`, an authenticated protected API request, Agent reconnects,
    and a controlled non-production print path;
 4. keep the pre-restore database/volume isolated until reconciliation is complete.
 
@@ -227,6 +260,10 @@ Persistent=true
 WantedBy=timers.target
 ```
 
-CI exercises the round trip on every run (see the Docker workflow's backup
-and restore verification step): backup → restore into a scratch database →
-row-count comparison → scratch database dropped.
+The Docker workflow's eligible stack jobs exercise a backup/restore round trip:
+backup, restore into a scratch database, compare the `tenants` row count and
+drop that scratch database. This limited CI check does not establish complete
+data equivalence or a deployment RPO/RTO. Run the broader
+`scripts/acceptance/postgres-restore-drill.mjs` against an isolated recovery
+environment, and rehearse the deployment's actual independent-backup recovery
+procedure before approving production.

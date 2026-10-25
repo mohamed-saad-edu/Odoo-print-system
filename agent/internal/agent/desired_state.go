@@ -281,7 +281,7 @@ func (a *Agent) isPrinterExecutionAllowed(id string) bool {
 	_, tombstoned := a.gatewayTombstones[id]
 	pc, configured := a.printerConfigs[id]
 	a.printersMu.RUnlock()
-	if configured && a.localPrinterBindingDisabled(pc) {
+	if !configured || a.localPrinterBindingDisabled(pc) {
 		return false
 	}
 	if tombstoned {
@@ -559,13 +559,18 @@ func (a *Agent) removeGatewayRuntime(id string) {
 }
 
 func (a *Agent) applyDesiredPrinter(row desiredPrinterRecord) error {
+	disabled, err := printer.LoadLocalPrinterDisablement(a.cfg, a.registryPath)
+	return a.applyDesiredPrinterWithDisablement(row, disabled, err)
+}
+
+func (a *Agent) applyDesiredPrinterWithDisablement(row desiredPrinterRecord, disabled printer.LocalPrinterDisablement, disablementErr error) error {
 	a.markGatewayOwned(row.Desired.ID)
 	if row.Desired.Lifecycle != "active" {
 		a.removeGatewayRuntime(row.Desired.ID)
 		return nil
 	}
-	if a.legacyPrinterDisabled(row.Desired.ID) {
-		return fmt.Errorf("printer %s is disabled by local operator configuration", row.Desired.ID)
+	if disablementErr != nil {
+		return fmt.Errorf("read local printer disablement: %w", disablementErr)
 	}
 
 	if row.Desired.ConnectionType == "network" {
@@ -582,7 +587,8 @@ func (a *Agent) applyDesiredPrinter(row desiredPrinterRecord) error {
 	if err != nil {
 		return err
 	}
-	if a.localPrinterBindingDisabled(pc) {
+	if disabled.Disabled(pc) {
+		a.removeGatewayRuntime(pc.ID)
 		return fmt.Errorf("printer %s execution binding is disabled by local operator configuration", pc.ID)
 	}
 	lock := a.getPrinterLock(pc.ID)
@@ -713,6 +719,9 @@ func (a *Agent) validateDesiredStateCapacity(incoming map[string]desiredPrinterW
 }
 
 func (a *Agent) reconcileGatewayDesiredState(rows []desiredPrinterWire) bool {
+	// One coherent local authority snapshot for the complete desired batch.
+	// Physical admission independently reads it again immediately before output.
+	disabled, disablementErr := printer.LoadLocalPrinterDisablement(a.cfg, a.registryPath)
 	incoming := make(map[string]desiredPrinterWire, len(rows))
 	for _, desired := range rows {
 		if desired.ID == "" || desired.DesiredRevision < 0 {
@@ -757,7 +766,7 @@ func (a *Agent) reconcileGatewayDesiredState(rows []desiredPrinterWire) bool {
 
 		a.printersMu.RLock()
 		_, initialized := a.printers[id]
-		runtimeUnchanged := initialized && a.matchesDesiredRuntime(a.printerConfigs[id], row)
+		runtimeUnchanged := initialized && disablementErr == nil && !disabled.Disabled(a.printerConfigs[id]) && a.matchesDesiredRuntime(a.printerConfigs[id], row)
 		a.printersMu.RUnlock()
 		if desired.Lifecycle == "active" &&
 			runtimeUnchanged && exists &&
@@ -766,7 +775,7 @@ func (a *Agent) reconcileGatewayDesiredState(rows []desiredPrinterWire) bool {
 			continue
 		}
 
-		if err := a.applyDesiredPrinter(row); err != nil {
+		if err := a.applyDesiredPrinterWithDisablement(row, disabled, disablementErr); err != nil {
 			if recordErr := a.recordDesiredError(id, err); recordErr != nil {
 				log.Printf("failed to persist desired-state error for %s: %v", id, recordErr)
 			}
@@ -842,7 +851,7 @@ func (a *Agent) reconcileGatewayDesiredState(rows []desiredPrinterWire) bool {
 	sort.Strings(tombstones)
 	cleanedRuntime := false
 	for _, id := range tombstones {
-		if err := printer.RemoveFromRegistry(a.registryPath, id); err != nil {
+		if err := printer.RemoveGatewayPrinterFromRegistry(a.registryPath, id); err != nil {
 			log.Printf("[desired-state] warning: failed to remove deleted Gateway printer %s from local registry: %v", id, err)
 			continue
 		}

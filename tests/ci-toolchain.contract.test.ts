@@ -18,8 +18,15 @@ describe("CI/runtime alignment", () => {
     expect(nodeVersion).toBe("24.22.1");
     expect(dockerfile).toContain(`node:${nodeVersion}-alpine`);
     for (const workflow of workflows()) {
-      if (/\bnpm (ci|install|run|test|audit)\b|\bnpx\b/.test(workflow)) {
+      const hasHostNodeProvisioning = /uses:\s*actions\/setup-node@[0-9a-f]{40}/.test(workflow);
+      if (hasHostNodeProvisioning) {
+        // npm on the GitHub runner must use the repository's pinned Node.
         expect(workflow).toContain("node-version-file: .nvmrc");
+      } else if (/\bnpm (ci|install|run|test|audit)\b|\bnpx\b/.test(workflow)) {
+        // Docker smoke/build executes npm INSIDE a digest-pinned Node base,
+        // not on an unconfigured runner. The built image must pin the same
+        // declared Node version rather than adding a decorative setup-node.
+        expect(workflow).toContain(`node:${nodeVersion}-alpine@sha256:`);
       }
     }
   });
@@ -83,7 +90,7 @@ describe("CI/runtime alignment", () => {
     expect(runtime).toContain("github.event_name != 'pull_request'");
     expect(runtime).toContain("docker compose build");
     expect(runtime).toContain("docker compose up -d gateway caddy");
-    expect(workflow).toContain("Enforce reviewed upstream image vulnerability baseline");
+    expect(workflow).toContain("Enforce reviewed release image vulnerability baseline");
     expect(workflow).toContain("Scan release image (Trivy)");
     expect(compose).not.toContain("public.ecr.aws");
     expect(readFileSync(path.join(root, "Dockerfile.secure-images"), "utf8")).toContain("sha256:");

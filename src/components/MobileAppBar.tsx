@@ -49,7 +49,7 @@ export function MobileAppBar({
           <div className="min-w-0 flex-1 text-start leading-tight">
             <div className="flex min-w-0 items-center gap-1.5 text-xs font-semibold leading-snug text-ink-3">
               <span className="shrink-0" dir="ltr">Yaseir</span>
-              {section && <span className="min-w-0 truncate opacity-80" aria-hidden>· {section}</span>}
+              {section && <span className="min-w-0 truncate" aria-hidden>· {section}</span>}
             </div>
             <div className="truncate text-base font-bold leading-snug text-ink" title={title}>
               {title}

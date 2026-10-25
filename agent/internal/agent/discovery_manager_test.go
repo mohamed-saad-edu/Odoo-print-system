@@ -45,7 +45,7 @@ func TestReportDiscoveryResultRetriesTransientGatewayFailures(t *testing.T) {
 			w.WriteHeader(http.StatusServiceUnavailable)
 			return
 		}
-		w.WriteHeader(http.StatusNoContent)
+		_, _ = w.Write([]byte(`{"ok":true}`))
 	}))
 	defer server.Close()
 
@@ -285,7 +285,7 @@ func TestReportDiscoveryResultResendsSamePageAfterLostAcknowledgment(t *testing.
 			w.WriteHeader(http.StatusServiceUnavailable)
 			return
 		}
-		w.WriteHeader(http.StatusNoContent)
+		_, _ = w.Write([]byte(`{"ok":true}`))
 	}))
 	defer server.Close()
 	cfg := &config.Config{}

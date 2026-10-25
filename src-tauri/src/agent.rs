@@ -10,10 +10,14 @@ use crate::logging;
 use crate::paths;
 
 const SERVICE_NAME: &str = "YaseirAgent";
+#[cfg(windows)]
 const BACKGROUND_PID_FILE: &str = "agent.pid";
+#[cfg(windows)]
 const BACKGROUND_PID_META_FILE: &str = "agent.pid.meta";
 const COMMAND_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 const MAX_COMMAND_OUTPUT_BYTES: usize = 64 * 1024;
+
+type JoinedCommandIo = (Vec<u8>, Vec<u8>, Option<String>);
 
 /// Execute a short-lived bundled helper with a hard wall-clock deadline and
 /// per-stream output budget. On timeout/output overflow the owned direct child
@@ -47,7 +51,7 @@ fn join_command_io(
     out_thread: std::thread::JoinHandle<Result<Vec<u8>, String>>,
     err_thread: std::thread::JoinHandle<Result<Vec<u8>, String>>,
     input_thread: Option<std::thread::JoinHandle<Result<Vec<u8>, String>>>,
-) -> Result<(Vec<u8>, Vec<u8>, Option<String>), String> {
+) -> Result<JoinedCommandIo, String> {
     // Join every owned pipe even when one worker failed; otherwise returning
     // early from a write/read error could leave another worker unobserved.
     let input = input_thread.map(|handle| join_reader_thread(handle, "stdin"));
@@ -741,6 +745,7 @@ fn terminate_owned_background_process(
     result
 }
 
+#[cfg(any(windows, test))]
 fn normalized_process_image(image: &str) -> String {
     let path = image.replace('/', "\\");
     if path
@@ -749,14 +754,15 @@ fn normalized_process_image(image: &str) -> String {
     {
         return format!(r"\\{}", &path[8..]);
     }
-    if let Some(drive) = path.strip_prefix(r"\\?\") {
-        if drive.as_bytes().get(1) == Some(&b':') {
-            return drive.to_string();
-        }
+    if let Some(drive) = path.strip_prefix(r"\\?\")
+        && drive.as_bytes().get(1) == Some(&b':')
+    {
+        return drive.to_string();
     }
     path
 }
 
+#[cfg(any(windows, test))]
 fn process_images_match(actual: &str, expected: &str) -> bool {
     normalized_process_image(actual).eq_ignore_ascii_case(&normalized_process_image(expected))
 }
@@ -921,11 +927,6 @@ fn spawn_background(app: &tauri::AppHandle) -> Result<u32, String> {
         config.display()
     ));
     Ok(pid)
-}
-
-#[cfg(not(windows))]
-fn spawn_background(_app: &tauri::AppHandle) -> Result<u32, String> {
-    Err("YaseirAgent.exe can only be launched on Windows".into())
 }
 
 #[cfg(windows)]
@@ -1183,7 +1184,7 @@ pub fn control_service(action: &str, app: &tauri::AppHandle) -> Result<String, S
                 wait_service_state(1)?;
             }
             logging::info(&format!("service control {action}: {message}"));
-            return Ok(message);
+            Ok(message)
         }
         _ => Err(format!("invalid service action {:?}", action)),
     }

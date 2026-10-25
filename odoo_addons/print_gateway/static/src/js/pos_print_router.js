@@ -103,6 +103,48 @@ function consumeAcceptedKitchenSnapshot(order, snapshot) {
     order._markDirty();
 }
 
+function kitchenStateFingerprint(value) {
+    // Server JSON serialization may reorder object keys. A reload must still
+    // find the same fence; only this opaque digest reaches browser storage.
+    // Native pos.order._ensure_to_keep_last_preparation_change also rebases
+    // metadata.serverDate on ordinary sync without consuming any kitchen
+    // change. That bookkeeping timestamp cannot identify a new print intent.
+    let state = value;
+    if (value?.metadata && typeof value.metadata === "object" && !Array.isArray(value.metadata)) {
+        state = { ...value, metadata: { ...value.metadata } };
+        delete state.metadata.serverDate;
+    }
+    const canonical = JSON.stringify(state ?? null, (key, item) => {
+        if (key === "__gateway_print_id") return undefined;
+        if (item && typeof item === "object" && !Array.isArray(item)) {
+            return Object.fromEntries(Object.keys(item).sort().map(name => [name, item[name]]));
+        }
+        return item;
+    });
+    return printRecoveryKey("kitchen-state", canonical);
+}
+
+function recordKitchenConsumption(store, order) {
+    const consumed = kitchenStateFingerprint(order.last_order_preparation_change);
+    for (const operation of store.gatewayKitchenRecoveryOperations?.values() || []) {
+        if (operation.orderId === order.id && operation.orderUuid === order.uuid &&
+            operation.accepted && !operation.consumed) {
+            operation.consumed = consumed;
+        }
+    }
+    return consumed;
+}
+
+function finishAcknowledgedKitchenOperations(store, orderId, orderUuid, consumed) {
+    for (const [key, operation] of store.gatewayKitchenRecoveryOperations || []) {
+        if (operation.orderId === orderId && operation.orderUuid === orderUuid &&
+            operation.accepted && operation.consumed === consumed) {
+            finishPrintOperation(key, operation.id);
+            store.gatewayKitchenRecoveryOperations.delete(key);
+        }
+    }
+}
+
 // Ownership covers the whole preparation operation, including metadata,
 // rendering, change consumption and synchronization. Nested calls may borrow
 // only the exact owner token; unrelated sends/retries are coalesced.
@@ -268,6 +310,23 @@ async function gatewayReceiptGeometry(pos, orderId) {
 }
 
 patch(PosStore.prototype, {
+    async postSyncAllOrders(orders) {
+        // Odoo calls this hook with records from a successful sync_from_ui
+        // response. Capture its confirmation before another hook can mutate
+        // the local models, and await the native hook before releasing fences.
+        // This also covers later synchronization owned by preparation displays.
+        const acknowledged = Array.isArray(orders) ? orders.map(order => ({
+            id: order.id,
+            uuid: order.uuid,
+            consumed: kitchenStateFingerprint(order.last_order_preparation_change),
+        })) : [];
+        const result = await super.postSyncAllOrders(orders);
+        for (const { id, uuid, consumed } of acknowledged) {
+            finishAcknowledgedKitchenOperations(this, id, uuid, consumed);
+        }
+        return result;
+    },
+
     async printReceipt({ order, basic = false, printBillActionTriggered = false } = {}) {
         const currentOrder = order || this.getOrder();
         if (!currentOrder) {
@@ -616,6 +675,7 @@ patch(PosStore.prototype, {
                 // accepted, or when there is no preparation printer to print to.
                 if (isPrinted && !reprint && hasChanges) {
                     consumeAcceptedKitchenSnapshot(order, preparationSnapshot);
+                    recordKitchenConsumption(this, order);
                     order.uiState.gatewayKitchenAttempts = {};
                     order.uiState.gatewayKitchenPendingKeys = [];
                     order.uiState.gatewayKitchenOperationIds = {};
@@ -632,6 +692,9 @@ patch(PosStore.prototype, {
             // submit the kitchen ticket again.
             if (!this.models["pos.prep.display"]?.length) {
                 try {
+                    // Only postSyncAllOrders owns the immutable server
+                    // acknowledgement. Returned model objects can already
+                    // have been changed by another native synchronization hook.
                     await gatewaySync(this, { orders: [order] });
                 } catch (error) {
                     // Accepted tickets stay accepted even if their bookkeeping
@@ -688,6 +751,8 @@ patch(PosStore.prototype, {
                 return false;
             }
 
+            let activeKitchenClaim = null;
+            let kitchenDispatchStarted = false;
             try {
                 const kitchenRoutes = await gatewayDataCall(
                     this,
@@ -750,12 +815,43 @@ patch(PosStore.prototype, {
                     return false;
                 }
 
+                // uiState is only written to IndexedDB later by Odoo. Persist
+                // an opaque fence BEFORE any station can submit a ticket.
+                // After reload, missing live attempt results cannot authorize
+                // a fresh operation, including when another station succeeded.
+                const recoveryKey = printRecoveryKey("kitchen", [
+                    this.company?.id || this.env?.services?.company?.currentCompany?.id || 0,
+                    sessionId, this.config?.id || 0, orderId, order.uuid || "",
+                    kitchenStateFingerprint(preparationSnapshot?.last_order_preparation_change ||
+                        order.last_order_preparation_change),
+                ]);
+                const signature = kitchenStateFingerprint({ reprint: Boolean(reprint), orderChange,
+                    routes: kitchenRoutes.routes.map(route => ({
+                        id: route.pos_printer_id, categories: route.category_ids,
+                    })),
+                });
+                const recoveryOperations = this.gatewayKitchenRecoveryOperations ||= new Map();
+                const priorOperation = recoveryOperations.get(recoveryKey);
+                const claim = claimPrintOperation(recoveryKey, priorOperation?.id,
+                    priorOperation?.signature === signature, gatewayUuid);
+                if (claim.blocked) {
+                    this.notification.add(
+                        _t("An earlier kitchen print is unresolved. Check Print Activity and the printer before continuing. To print again, use the explicit reprint action in Print Activity."),
+                        { type: "warning", sticky: true },
+                    );
+                    return false;
+                }
+                activeKitchenClaim = { ...priorOperation, ...claim, recoveryKey, signature,
+                    orderId, orderUuid: order.uuid, accepted: false };
+                recoveryOperations.set(recoveryKey, activeKitchenClaim);
+
                 let isPrinted = false;
                 let allAccepted = true;
                 const unsuccessfulPrints = [];
                 const retryPrinters = new Set();
                 const attempts = order.uiState.gatewayKitchenAttempts ||= {};
                 const pendingKeys = order.uiState.gatewayKitchenPendingKeys ||= [];
+                const reprintResults = [];
                 const printerById = new Map(
                     Array.from(printers || [])
                         .filter((printer) => printer?.id)
@@ -805,6 +901,7 @@ patch(PosStore.prototype, {
                                 data.orderData.__gateway_print_id = identities[attemptKey];
                             }
                             const reusable = prior?.successful || ["unknown", "partial"].includes(prior?.gatewayOutcome);
+                            if (!reusable) kitchenDispatchStarted = true;
                             const result = (reusable ? prior : null) || await this.printOrderChanges(
                                 data,
                                 printer,
@@ -812,6 +909,7 @@ patch(PosStore.prototype, {
                                 route.geometry
                             );
                             if (!reprint) attempts[attemptKey] = result;
+                            else reprintResults.push(result);
 
                             if (result?.gatewayOutcome === "unknown" || result?.gatewayOutcome === "partial") {
                                 this.notification.add(
@@ -851,6 +949,18 @@ patch(PosStore.prototype, {
                 }
 
                 const batchAccepted = reprint || pendingKeys.every((key) => attempts[key]?.successful);
+                activeKitchenClaim.accepted = Boolean(isPrinted && allAccepted && batchAccepted);
+                const outcomes = reprint ? reprintResults : pendingKeys.map(key => attempts[key]);
+                const noOutput = outcomes.length
+                    ? outcomes.every(result => !result?.successful && result?.gatewayOutcome === "failed" && result?.canRetry !== false)
+                    : !kitchenDispatchStarted;
+                if (noOutput || (reprint && activeKitchenClaim.accepted)) {
+                    // A reprint is already an explicit physical action and has
+                    // no new preparation change to synchronize. Uncertain
+                    // reprints remain fenced exactly like uncertain batches.
+                    finishPrintOperation(recoveryKey, activeKitchenClaim.id);
+                    recoveryOperations.delete(recoveryKey);
+                }
                 if (!reprint && isPrinted && allAccepted && batchAccepted && orderChange.length) {
                     order.uiState.lastPrints.push(orderChange[0]);
                 }
@@ -864,6 +974,7 @@ patch(PosStore.prototype, {
                             const accepted = await this.printChanges(order, orderChange, reprint, retryPrinters, retryOwner, preparationSnapshot);
                             if (accepted && !reprint) {
                                 consumeAcceptedKitchenSnapshot(order, preparationSnapshot);
+                                recordKitchenConsumption(this, order);
                                 order.uiState.gatewayKitchenAttempts = {};
                                 order.uiState.gatewayKitchenPendingKeys = [];
                                 order.uiState.gatewayKitchenOperationIds = {};
@@ -888,6 +999,10 @@ patch(PosStore.prototype, {
 
                 return isPrinted && allAccepted && batchAccepted;
             } catch (error) {
+                if (activeKitchenClaim?.newIntent && !kitchenDispatchStarted) {
+                    finishPrintOperation(activeKitchenClaim.recoveryKey, activeKitchenClaim.id);
+                    this.gatewayKitchenRecoveryOperations.delete(activeKitchenClaim.recoveryKey);
+                }
                 if (showGatewayBillingLimitDialog(this.env, error)) {
                     return false;
                 }

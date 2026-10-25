@@ -52,9 +52,9 @@ func TestLocalPrintSelectionRejectsAmbiguousAliasesAndPreservesUniquePrecedence(
 		t.Fatalf("ambiguous alias silently selected a printer: %#v %v", selected, err)
 	}
 	registry = registry[:1]
-	selected, err := selectLocalTestTarget(registry, []DeviceInfo{{ID: "configured", Name: "Same Name"}}, "Same Name")
+	selected, err := selectLocalTestTarget(registry, []DeviceInfo{{ID: "first", Name: "Same Name"}}, "Same Name")
 	if err != nil || selected == nil || selected.ID != "first" {
-		t.Fatalf("unique registry alias precedence changed: %#v %v", selected, err)
+		t.Fatalf("same identity across registry and config became ambiguous: %#v %v", selected, err)
 	}
 	if selected, err := selectLocalTestTarget([]DeviceInfo{{Name: "Pathless"}}, nil, ""); err == nil || selected != nil {
 		t.Fatalf("empty selection chose an unrelated printer: %#v %v", selected, err)

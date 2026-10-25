@@ -4,7 +4,7 @@
 
 Gateway's PostgreSQL pool now sets a 30-second `idle_in_transaction_session_timeout` in addition to the existing 30-second statement timeout and 5-second lock timeout. A real integration regression holds an advisory transaction lock, waits for PostgreSQL to terminate the stalled transaction, verifies the lock becomes available and verifies a replacement pool connection. Each newly created client has one lifetime error listener, so a checked-out client closed by the server cannot crash Node through an unhandled EventEmitter error. The listener is not added again on every checkout.
 
-Graceful shutdown first rejects new HTTP work, sends WebSocket close code 1001, awaits completion of WebSocket close hooks, drains ordinary HTTP requests, awaits Next's `after()`/`waitUntil` close hook, then ends the database pool. The application hard deadline is 45 seconds and Compose grants 60 seconds before forcing termination, covering the mail delivery service's three bounded ten-second attempts and one-/two-second retry waits. A real six-socket regression reproduced writes racing `pool.end()` before this change and passes after it; multi-instance delivery tests remain part of the same integration suite. A source-extracted asynchronous shutdown regression verifies delayed Next work completes before pool closure and that a failed Next cleanup produces a failing exit.
+Graceful shutdown first rejects new HTTP work, sends WebSocket close code 1001, awaits completion of WebSocket close hooks, drains ordinary HTTP requests, awaits Next's `after()`/`waitUntil` close hook and tracked maintenance tasks, then ends the database pool. The application hard deadline is 45 seconds and Compose grants 60 seconds before forcing termination, covering the mail delivery service's three bounded ten-second attempts and one-/two-second retry waits. A real six-socket regression reproduced writes racing `pool.end()` before this change and passes after it; multi-instance delivery tests remain part of the same integration suite. A source-extracted asynchronous shutdown regression verifies delayed Next work completes before pool closure and that a failed Next cleanup produces a failing exit.
 
 ## Synthetic sustained Gateway check
 
@@ -26,7 +26,7 @@ removed. It drops the new database and roles during cleanup. The caller owns
 cluster startup/teardown and must record both; never use these flags with an
 existing shared or real cluster.
 
-Default load is 60 seconds of warmup and three continuous five-minute windows, with a prescribed maximum of two new jobs/second, one exact replay per job and a status read every ten jobs. Payloads are a declared synthetic mix: 85% 4 KiB, 10% 64 KiB, 4% 256 KiB and 1% 1 MiB. Each agent maintains heartbeat, WebSocket reconnect and polling fallback paths. Existing entitlement limits remain enabled. After the memory measurement, eight additional jobs per agent are deliberately left queued, the Gateway restarts, all six agents drain their durable jobs, and operation/status identities are checked again.
+Default load is 60 seconds of warmup and three continuous five-minute windows, with a prescribed maximum of two new jobs/second, one exact replay per job and a status read every ten jobs. The current valid-document corpus is 50% RAW receipts, 30% JPEG receipts, 15% ordinary PDF documents, 4% long JPEG receipts and 1% image-rich PDFs. `payload-corpus.json` records actual encoded/decoded sizes, hashes and compression ratios; there are no fixed-size placeholder payloads. Synthetic geometry profiles cover 58/80 mm paper and 203/300/600 DPI. Each delivered document's bytes, type, protocol and geometry binding are verified before its synthetic pre-execution outcome. Each agent maintains heartbeat, WebSocket reconnect and polling fallback paths. Existing entitlement limits remain enabled. After the memory measurement, eight additional jobs per agent are deliberately left queued, the Gateway restarts, all six agents drain their durable jobs, and operation/status identities are checked again.
 
 Resource evidence includes per-second RSS, used/total heap, V8 heap spaces, external/ArrayBuffer memory, GC counts/duration, event-loop delay, CPU, file descriptors, active resource types and the custom-server pool's total/idle/waiting counts. Database samples include tenant queue state, oldest queue age, backend/wait states, rollback, temporary-file and deadlock counters. Latency samples, exact build ID, compiled server-tree hash and source hashes remain in the output. The script fails if the compiled build changes while it runs.
 
@@ -58,7 +58,8 @@ Polling prioritizes eligible stale, never-delivered claims, then queued jobs ord
 ## Database and session recovery
 
 The dedicated Compose cluster now uses separate bootstrap, migration-owner and
-runtime identities. Runtime gets public-table DML and sequence usage, while
+runtime identities. Runtime gets public-table DML and sequence usage, with
+`audit_events` limited to SELECT/INSERT, while
 schema changes and migration-ledger access belong to the owner. Startup verifies
 the actual restricted role before Gateway serves requests. See
 [DATABASE_ROLES.md](DATABASE_ROLES.md) for explicit existing-volume conversion,

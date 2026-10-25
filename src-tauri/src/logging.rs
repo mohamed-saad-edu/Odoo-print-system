@@ -38,14 +38,14 @@ pub fn init() -> Option<PathBuf> {
         return None;
     }
     let path = dir.join("yaseir-manager.log");
-    if path.exists() {
-        if let Err(e) = paths::ensure_manager_file_security(&path) {
-            eprintln!(
-                "[yaseir-manager] refusing insecure log file {}: {e}",
-                path.display()
-            );
-            return None;
-        }
+    if path.exists()
+        && let Err(e) = paths::ensure_manager_file_security(&path)
+    {
+        eprintln!(
+            "[yaseir-manager] refusing insecure log file {}: {e}",
+            path.display()
+        );
+        return None;
     }
     rotate_if_full(&path);
     let file = match OpenOptions::new().create(true).append(true).open(&path) {
@@ -165,6 +165,46 @@ fn format_utc_iso8601(secs: u64, millis: u32) -> String {
     )
 }
 
+fn write_line(level: &str, msg: &str) {
+    let line = format!("[{}] [{}] {}\n", timestamp(), level, msg);
+    {
+        if let Some(m) = LOG_FILE.get()
+            && let Ok(mut logger) = m.lock()
+        {
+            let full = logger
+                .file
+                .as_ref()
+                .and_then(|file| file.metadata().ok())
+                .is_some_and(|meta| meta.len() > MAX_LOG_BYTES);
+            if full {
+                // Close the handle before rename, including on Windows.
+                drop(logger.file.take());
+                rotate_if_full(&logger.path);
+                logger.file = OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(&logger.path)
+                    .ok();
+                if logger.file.is_some()
+                    && paths::ensure_manager_file_security(&logger.path).is_err()
+                {
+                    logger.file = None;
+                }
+            }
+            if let Some(file) = logger.file.as_mut()
+                && file
+                    .write_all(line.as_bytes())
+                    .and_then(|_| file.flush())
+                    .is_ok()
+            {
+                return;
+            }
+        }
+    }
+    // Fallback only for startup failures before the logger is initialized.
+    let _ = std::io::stderr().write_all(line.as_bytes());
+}
+
 #[cfg(test)]
 mod tests {
     use super::format_utc_iso8601;
@@ -186,45 +226,4 @@ mod tests {
             "2026-09-27T00:00:00.005Z"
         );
     }
-}
-
-fn write_line(level: &str, msg: &str) {
-    let line = format!("[{}] [{}] {}\n", timestamp(), level, msg);
-    {
-        if let Some(m) = LOG_FILE.get() {
-            if let Ok(mut logger) = m.lock() {
-                let full = logger
-                    .file
-                    .as_ref()
-                    .and_then(|file| file.metadata().ok())
-                    .is_some_and(|meta| meta.len() > MAX_LOG_BYTES);
-                if full {
-                    // Close the handle before rename, including on Windows.
-                    drop(logger.file.take());
-                    rotate_if_full(&logger.path);
-                    logger.file = OpenOptions::new()
-                        .create(true)
-                        .append(true)
-                        .open(&logger.path)
-                        .ok();
-                    if logger.file.is_some()
-                        && paths::ensure_manager_file_security(&logger.path).is_err()
-                    {
-                        logger.file = None;
-                    }
-                }
-                if let Some(file) = logger.file.as_mut() {
-                    if file
-                        .write_all(line.as_bytes())
-                        .and_then(|_| file.flush())
-                        .is_ok()
-                    {
-                        return;
-                    }
-                }
-            }
-        }
-    }
-    // Fallback only for startup failures before the logger is initialized.
-    let _ = std::io::stderr().write_all(line.as_bytes());
 }

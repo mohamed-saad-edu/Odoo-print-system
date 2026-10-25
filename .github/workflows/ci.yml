@@ -451,8 +451,14 @@ jobs:
           # test suite needs more room for 275 cases and large PDF fixtures.
           # Increase only this disposable test container's memory ceiling.
           rm -f /tmp/odoo19_test.log
+          # The released Odoo image retains a real HTTP HEALTHCHECK.
+          # During native tests, the database/registry is deliberately held
+          # by long transactions. Background /web/health requests then block
+          # for up to ~190s, pile up Odoo HTTP threads on a shared CI runner
+          # and starve the test's lock-observer thread. Disable the probe
+          # ONLY on this ephemeral test container; do not omit a single test.
           timeout --signal=TERM --kill-after=30s 12m \
-            docker run --rm --network host --name odoo19_test_run \
+            docker run --rm --no-healthcheck --network host --name odoo19_test_run \
               -e PGHOST=127.0.0.1 \
               -e PGPORT=5432 \
               -e PGUSER=odoo \
@@ -500,16 +506,17 @@ jobs:
           severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
           limit-severities-for-sarif: true
           ignore-unfixed: false
-          # Trivy retains every issue in SARIF; the next step is the
-          # fail-closed, exact-finding, expiring reviewed-risk gate.
+          # Preserve the full SARIF; the next fail-closed step permits only
+          # individually reviewed, time-bound findings for this exact image.
           exit-code: '0'
-      - name: Enforce reviewed Odoo image findings (no new or high-risk issues)
+      - name: Enforce reviewed Odoo image findings
         if: ${{ !cancelled() && steps.hardened-image.outcome == 'success' }}
         shell: bash
         run: |
           set -euo pipefail
-          # A reviewed exception applies to THIS exact, immutable runtime
-          # profile only; a Dockerfile or Python lockfile change invalidates it.
+          # The exception list is bound to the immutable Dockerfile and
+          # Python dependency locks that were reviewed. Any change requires
+          # a new security review rather than silently inheriting exceptions.
           test "$(git hash-object Dockerfile.odoo-hardened)" = "30e0b31668a342c5de4211252789c0be9668e91e"
           test "$(git hash-object docs/runtime-hardening/requirements-python312-linux-x86_64.lock)" = "0213f5552156b3d81f2515ee3f6bc786aca475ab"
           test "$(git hash-object docs/runtime-hardening/build-tools.lock)" = "96b65dba00600b2c78b4af0ff5eaf2c83365c672"

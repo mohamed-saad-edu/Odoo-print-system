@@ -122,13 +122,13 @@ class PrintGatewayPolicy(models.Model):
         # chains, no subscripts, no dunders (record.env, record._fields,
         # __class__ traversal are all impossible by construction).
         if "." in field_name or "[" in field_name or "__" in field_name:
-            raise ValueError("Attribute and index access are strictly forbidden in raw print templates.")
+            raise ValidationError(_("Attribute and index access are strictly forbidden in raw print templates."))
         # Conversions (!r/!s/!a) run AFTER value sanitization during
         # str.format, so {name!r} would re-add quotes that sanitize_raw_value
         # deliberately stripped for TSPL (and reshape values for ZPL/ESC-POS).
         # Templates must use plain {} placeholders only.
         if conversion:
-            raise ValueError("Format conversions (!r/!s/!a) are forbidden in raw print templates.")
+            raise ValidationError(_("Format conversions (!r/!s/!a) are forbidden in raw print templates."))
 
     def render_raw_template(self, record, protocol=None):
         """Deterministically render a raw template while keeping field values inert.
@@ -152,7 +152,7 @@ class PrintGatewayPolicy(models.Model):
             # computed/relational fields is expensive and can trigger unrelated
             # access errors during a business print operation.
             if len(template.encode("utf-8")) > 2 * 1024 * 1024:
-                raise ValueError("Raw printer template exceeds the 2 MiB safety limit.")
+                raise ValidationError(_("Raw printer template exceeds the 2 MiB safety limit."))
             formatter = string.Formatter()
             referenced = set()
             for _literal, field_name, format_spec, conversion in formatter.parse(template):
@@ -160,20 +160,20 @@ class PrintGatewayPolicy(models.Model):
                 if field_name is None:
                     continue
                 if not field_name:
-                    raise ValueError("Only named placeholders are allowed in raw print templates.")
+                    raise ValidationError(_("Only named placeholders are allowed in raw print templates."))
                 if len(format_spec) > 32:
-                    raise ValueError("Printer template format specification is too long.")
+                    raise ValidationError(_("Printer template format specification is too long."))
                 # str.format accepts nested names in format specifications
                 # (e.g. {name:{other.__class__}}). They must never be evaluated.
                 for _sub_lit, nested, _sub_spec, _sub_conv in formatter.parse(format_spec):
                     if nested is not None:
-                        raise ValueError("Nested replacement fields inside format specifications are forbidden.")
+                        raise ValidationError(_("Nested replacement fields inside format specifications are forbidden."))
                 # Python's string formatting can allocate gigabytes for a width
                 # such as :>999999999, even if the substituted value is tiny.
                 import re
                 for number in re.findall(r"[0-9]+", format_spec):
                     if int(number) > 4096:
-                        raise ValueError("Printer template format width/precision exceeds 4096.")
+                        raise ValidationError(_("Printer template format width/precision exceeds 4096."))
                 referenced.add(field_name)
 
             values = {}
@@ -200,10 +200,20 @@ class PrintGatewayPolicy(models.Model):
                     raise KeyError(placeholder)
                 values[placeholder] = sanitize_raw_value(value, protocol)
 
-            rendered = template.format(**values)
-            if len(rendered.encode("utf-8")) > 2 * 1024 * 1024:
-                raise ValueError("Rendered raw printer template exceeds the 2 MiB safety limit.")
-            return rendered
+            # Bound the cumulative expansion before allocating the complete
+            # document. Individually legal widths repeated thousands of times
+            # can otherwise create hundreds of MiB before a final size check.
+            rendered = bytearray()
+            for literal, field_name, format_spec, _conversion in formatter.parse(template):
+                segments = (literal,) if field_name is None else (
+                    literal, formatter.format_field(values[field_name], format_spec),
+                )
+                for segment in segments:
+                    encoded = segment.encode("utf-8")
+                    if len(rendered) + len(encoded) > 2 * 1024 * 1024:
+                        raise ValidationError(_("Rendered raw printer template exceeds the 2 MiB safety limit."))
+                    rendered.extend(encoded)
+            return rendered.decode("utf-8")
         except KeyError as exc:
             # The by-far most common failure: the template asks for a field the
             # document does not have. Say which placeholder, so the fix is
@@ -212,15 +222,21 @@ class PrintGatewayPolicy(models.Model):
                 _("The raw template for rule '%s' uses the placeholder {%s}, but this document does not provide it. Remove the placeholder or replace it with a field this record has.")
                 % (self.name, exc.args[0] if exc.args else "?")
             ) from exc
-        except ValueError as exc:
-            # The template sanitizer rejected a forbidden construct
-            # (attribute/index access, nested replacement fields). Surface
-            # the reason to the operator instead of the generic build
-            # failure below: a template that *cannot* render must be told
-            # apart from one that merely references a missing field.
+        except ValidationError as exc:
+            # Controlled rejection reasons use Odoo translations too. Mixing
+            # an English sanitizer reason into a translated wrapper leaves the
+            # most useful part of an Arabic operator's diagnostic untranslated.
             raise ValidationError(
                 _("The raw template for rule '%s' uses a forbidden construct: %s")
                 % (self.name, exc)
+            ) from exc
+        except ValueError as exc:
+            # Python's parser/formatter errors are not translated and may echo
+            # internal type names. Keep that detail in the chained exception;
+            # give the operator a complete, actionable localized diagnostic.
+            raise ValidationError(
+                _("The raw template for rule '%s' has an invalid format. Check its named placeholders, braces, and format specifications.")
+                % self.name
             ) from exc
         except Exception as exc:
             _logger.debug("raw template render failed for rule '%s'", self.name, exc_info=True)

@@ -11,14 +11,38 @@ test("printer scope choices remain unique when legacy Odoo returns identical com
   const result = Array.from(labelPrinterScopes(raw, { company: "Company", branch: "Branch" }));
   assert.deepEqual(result.map(x => x.id), [11, 12, 24, 27]);
   assert.deepEqual(result.map(x => x.label), [
-    "My Company — Company #11",
-    "My Company — Branch #12",
-    "MY COMPANY — Company #24",
-    "Alexandria",
+    "Company: My Company (#11)",
+    "Branch: My Company",
+    "Company: MY COMPANY (#24)",
+    "Branch: Alexandria",
   ]);
   assert.equal(new Set(result.map(x => x.label.toLowerCase())).size, result.length);
   assert.deepEqual(result.map(x => [x.companyId, x.branchId]), [[11, false], [11, 12], [24, false], [11, 27]]);
   assert.deepEqual(raw[0], { id: 11, name: "My Company", companyId: 11, branchId: false }, "must not mutate server scopes");
+});
+
+test("legacy server suffix-shaped names never collide after client disambiguation", async () => {
+  const { labelPrinterScopes } = await load("js/printer_scope_labels.js");
+  const input = [
+    { id: 1, name: "My Company", companyId: 1, branchId: false },
+    { id: 2, name: "My Company", companyId: 2, branchId: false },
+    { id: 3, name: "My Company (#2)", companyId: 3, branchId: false },
+  ];
+  const results = Array.from(labelPrinterScopes(input));
+  assert.equal(new Set(results.map(scope => scope.label.toLocaleLowerCase())).size, results.length,
+    "even a literal suffix in the original company name must not duplicate the final visible labels");
+  assert.deepEqual(results.map(scope => scope.id), [1, 2, 3]);
+});
+
+test("disabled scope status suffix cannot mimic an assignable company name", async () => {
+  const { labelPrinterScopes } = await load("js/printer_scope_labels.js");
+  const input = [
+    { id: 1, name: "My Company", companyId: 1, branchId: false, assignable: false },
+    { id: 2, name: "My Company (Unavailable)", companyId: 2, branchId: false },
+  ];
+  const labels = Array.from(labelPrinterScopes(input), scope => scope.label.toLocaleLowerCase());
+  assert.equal(new Set(labels).size, labels.length,
+    "the appended unavailable status must not create an ambiguous final option label");
 });
 
 test("already disambiguated Odoo scopes keep server labels and do not gain extra suffixes", async () => {
@@ -28,7 +52,9 @@ test("already disambiguated Odoo scopes keep server labels and do not gain extra
     { id: 2, name: "My Company (#2)", companyId: 2, branchId: false },
     { id: 3, name: "My Company / Branch", companyId: 1, branchId: 3 },
   ];
-  assert.deepEqual(Array.from(labelPrinterScopes(scopes), x => x.label), scopes.map(x => x.name));
+  assert.deepEqual(Array.from(labelPrinterScopes(scopes), x => x.label), [
+    "Company: My Company (#1)", "Company: My Company (#2)", "Branch: My Company / Branch",
+  ]);
   assert.deepEqual(Array.from(labelPrinterScopes([])), []);
   assert.deepEqual(Array.from(labelPrinterScopes(null)), []);
 });
@@ -75,6 +101,67 @@ async function load(relative, extra = {}, overrides = {}) {
   await entryModule.evaluate();
   return entryModule.namespace;
 }
+
+
+
+test("printer selector prioritizes explicit branch, never falls through revoked scopes", async () => {
+  const { resolvePrinterScopeSelection } = await load("js/printer_scope_labels.js");
+  const normalizedSelection = (...args) => {
+    const result = resolvePrinterScopeSelection(...args);
+    return { id: result.id, invalidated: result.invalidated };
+  };
+  const scopes = [
+    { id: 5, name: "My Company", companyId: 5, branchId: false },
+    { id: 6, name: "My Company / My Company", companyId: 5, branchId: 6 },
+    { id: 8, name: "Other Company", companyId: 8, branchId: false },
+    { id: 9, name: "Unsupported nested", companyId: 5, branchId: 9, assignable: false },
+  ];
+  assert.deepEqual(normalizedSelection(scopes, {
+    requestedCompanyId: "5", requestedBranchId: "6", currentCompanyId: 5,
+  }), { id: 6, invalidated: false });
+  assert.deepEqual(normalizedSelection(scopes, {
+    requestedCompanyId: "5", requestedBranchId: "7", currentCompanyId: 5,
+  }), { id: 0, invalidated: true });
+  assert.deepEqual(normalizedSelection(scopes, {
+    requestedCompanyId: "8", currentCompanyId: 5,
+  }), { id: 8, invalidated: false });
+  assert.deepEqual(normalizedSelection(scopes, {
+    currentCompanyId: 11,
+  }), { id: 0, invalidated: true });
+  assert.deepEqual(normalizedSelection(scopes, {
+    currentCompanyId: 9,
+  }), { id: 0, invalidated: true });
+  assert.deepEqual(normalizedSelection(scopes, {
+    currentCompanyId: 5,
+  }), { id: 5, invalidated: false });
+  assert.deepEqual(normalizedSelection([], { currentCompanyId: 5 }),
+    { id: 0, invalidated: true });
+});
+
+test("monthly allowance reset shows the exact UTC boundary from Saudi and western browser timezones", async () => {
+  for (const browserZone of ["Asia/Riyadh", "America/Los_Angeles"]) {
+    const dialogs = [];
+    const { showGatewayBillingLimitDialog } = await load("js/gateway_limit_dialog.js", {
+      Intl: { DateTimeFormat: function (_locale, options) {
+        return new Intl.DateTimeFormat("en-US", { timeZone: browserZone, ...options });
+      } },
+    }, {
+      "@web/core/confirmation_dialog/confirmation_dialog": { ConfirmationDialog: class {} },
+      "@web/core/l10n/translation": { _t: (message, ...values) => {
+        let index = 0;
+        return message.replace(/%s/g, () => String(values[index++]));
+      } },
+    });
+    assert.equal(showGatewayBillingLimitDialog({ services: {
+      dialog: { add: (_component, props) => dialogs.push(props) }, action: {},
+    } }, {
+      entitlement: "max_prints_per_period", message: "Allowance reached",
+      used: 100, limit: 100, retryAfterSeconds: null, periodEnd: "2026-11-01T00:00:00Z",
+    }), true);
+    assert.match(dialogs[0].body, /Monthly allowance resets: Nov 1, 2026, 12:00 AM UTC/,
+      `The commercial boundary must not shift with browser timezone ${browserZone}`);
+  }
+});
 
 test("POS picker offers only physical JPEG transports and declared ESC/POS raster capability", async () => {
   const { RuntimePrinterField } = await load("components/runtime_printer_field.js");

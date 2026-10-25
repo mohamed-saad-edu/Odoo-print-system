@@ -21,11 +21,6 @@ func TestRegistryPersistUsesAtomicReplace(t *testing.T) {
 	if !strings.Contains(source, "config.ReplaceFile(tmpName, registryPath)") {
 		t.Fatal("the registry must be persisted with config.ReplaceFile so the write is atomic and retries transient locks")
 	}
-	// The quarantine rename is a move to a NEW path, not a replace, so it
-	// must stay a plain rename.
-	if !strings.Contains(source, "os.Rename(registryPath, quarantine)") {
-		t.Fatal("the corrupt-registry quarantine must remain a plain rename to a new path")
-	}
 }
 
 // TestRegistryPersistReplacesExistingFile proves the atomic replace actually

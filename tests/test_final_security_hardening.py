@@ -231,7 +231,9 @@ def test_credential_key_file_provider_and_deployment_template_are_safe(monkeypat
 
 def test_deployment_document_matches_declared_toolchain_contract():
     deployment = (ROOT / "DEPLOYMENT.md").read_text(encoding="utf-8")
-    assert "| Go | 1.26 (agent build) |" in deployment
+    toolchain = re.search(r"^toolchain go(\S+)$", read("agent/go.mod"), re.M)
+    assert toolchain is not None, "The Agent build must declare its exact Go toolchain"
+    assert f"| Go | {toolchain.group(1)} (`agent/go.mod`) for the Agent build |" in deployment
     assert "`GATEWAY_JWT_SECRET`" in deployment
     assert "`APP_BASE_URL`" in deployment
     assert "`SESSION_SECRET`" not in deployment

@@ -1,7 +1,9 @@
 package printer
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -10,7 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"time"
+	"syscall"
 
 	"github.com/yaseir-agent/agent/internal/config"
 )
@@ -22,6 +24,11 @@ import (
 // and a lost update that later parses as valid JSON deletes working hardware.
 var registryMu sync.Mutex
 
+// ErrRegistryUntrusted distinguishes loss of saved operator authority from a
+// failed write of a new observation. Discovery cannot reconstruct prior
+// disablement or verified identity from a device that happens to answer now.
+var ErrRegistryUntrusted = errors.New("printer registry requires explicit repair or restoration")
+
 // registryMu covers goroutines; this stable sidecar lock covers the service,
 // desktop CLI and other Agent processes through the complete read/write.
 func lockRegistryFile(path string) (func(), error) {
@@ -30,6 +37,12 @@ func lockRegistryFile(path string) (func(), error) {
 	}
 	unlock, err := config.LockLocalFile(path + ".lock")
 	if err != nil {
+		// A failed lock cannot discard existing (or unreadable) authority.
+		// A definitely absent destination still allows callers to retain a new
+		// observation with a write diagnostic, as before; it grants no proof.
+		if _, statErr := os.Lstat(path); statErr == nil || (!os.IsNotExist(statErr) && !errors.Is(statErr, syscall.ENOTDIR)) {
+			return nil, fmt.Errorf("%w: acquire registry lock: %w", ErrRegistryUntrusted, err)
+		}
 		return nil, err
 	}
 	return func() {
@@ -80,6 +93,11 @@ func loadRegistryPartitioned(registryPath string) (production, hidden []DeviceIn
 const maxRegistryBytes = 16 << 20
 
 func loadRegistryPartitionedLocked(registryPath string) (production, hidden []DeviceInfo, removed int, err error) {
+	defer func() {
+		if err != nil {
+			err = fmt.Errorf("%w: %w", ErrRegistryUntrusted, err)
+		}
+	}()
 	info, err := os.Lstat(registryPath)
 	if err != nil {
 		// An absent registry is the normal first-run state. Do not turn
@@ -126,15 +144,30 @@ func loadRegistryPartitionedLocked(registryPath string) (production, hidden []De
 	if len(data) > maxRegistryBytes {
 		return nil, nil, 0, fmt.Errorf("registry %s exceeds %d bytes", registryPath, maxRegistryBytes)
 	}
-	if len(data) == 0 {
-		return nil, nil, 0, nil
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) == 0 || trimmed[0] != '[' {
+		return nil, nil, 0, fmt.Errorf("registry %s must contain an inventory array", registryPath)
 	}
-	var infos []DeviceInfo
+	// Legacy registries may omit enabled. Preserve their historical enabled
+	// default while retaining an explicitly persisted false as operator policy.
+	var infos []struct {
+		DeviceInfo
+		Enabled json.RawMessage `json:"enabled"`
+	}
 	if err := json.Unmarshal(data, &infos); err != nil {
 		return nil, nil, 0, fmt.Errorf("parse registry %s: %w", registryPath, err)
 	}
 	production = make([]DeviceInfo, 0, len(infos))
-	for _, d := range infos {
+	for _, row := range infos {
+		d := row.DeviceInfo
+		switch string(bytes.TrimSpace(row.Enabled)) {
+		case "", "true":
+			d.Enabled = true
+		case "false":
+			d.Enabled = false
+		default:
+			return nil, nil, 0, fmt.Errorf("registry %s printer %s enabled must be a boolean when present", registryPath, d.ID)
+		}
 		d = discoveredDeviceNames(d)
 		if !isValidDiscoveredPrinter(d) {
 			// Not a printer at all — drop the stale entry.
@@ -277,7 +310,7 @@ func saveRegistryLocked(registryPath string, printers []DeviceInfo) error {
 // paths use this function because absence from an incomplete probe must never
 // delete a healthy printer.
 func UpsertRegistry(registryPath string, discovered []DeviceInfo) ([]DeviceInfo, error) {
-	return mutateRegistryFromDiscovery(registryPath, discovered, nil)
+	return mutateRegistry(registryPath, discovered, nil, "")
 }
 
 // ReconcileDiscoveryRegistry retains identity/history through absence. A
@@ -294,10 +327,10 @@ func UpsertRegistry(registryPath string, discovered []DeviceInfo) ([]DeviceInfo,
 // failed, timed out, or returned a hard partial error, that source is false or
 // absent and no row owned by it can be pruned.
 func ReconcileDiscoveryRegistry(registryPath string, discovered []DeviceInfo, completeSources map[string]bool) ([]DeviceInfo, error) {
-	return mutateRegistryFromDiscovery(registryPath, discovered, completeSources)
+	return mutateRegistry(registryPath, discovered, completeSources, "")
 }
 
-func mutateRegistryFromDiscovery(registryPath string, discovered []DeviceInfo, completeSources map[string]bool) ([]DeviceInfo, error) {
+func mutateRegistry(registryPath string, discovered []DeviceInfo, completeSources map[string]bool, operatorTargetID string) ([]DeviceInfo, error) {
 	registryMu.Lock()
 	defer registryMu.Unlock()
 	unlock, lockErr := lockRegistryFile(registryPath)
@@ -308,19 +341,10 @@ func mutateRegistryFromDiscovery(registryPath string, discovered []DeviceInfo, c
 
 	existing, hidden, _, err := loadRegistryPartitionedLocked(registryPath)
 	if err != nil {
-		if os.IsNotExist(err) {
-			existing, hidden = nil, nil
-		} else {
-			// A corrupt registry must never be silently replaced by an empty
-			// one: quarantine the file first so the data is recoverable.
-			quarantine := fmt.Sprintf("%s.corrupt-%d", registryPath, time.Now().Unix())
-			if rerr := os.Rename(registryPath, quarantine); rerr == nil {
-				log.Printf("[registry] WARNING: %s failed to parse; the damaged file was preserved at %s", registryPath, quarantine)
-			} else {
-				return nil, fmt.Errorf("refusing to overwrite unreadable registry: %v; quarantine failed: %w", err, rerr)
-			}
-			existing, hidden = nil, nil
-		}
+		// Keep the original at its authoritative path. Moving it aside would
+		// make the next scan look like a first install and silently replace
+		// disabled decisions or a pinned IPP identity with current observations.
+		return nil, err
 	}
 
 	byID := make(map[string]int)
@@ -445,6 +469,12 @@ func mutateRegistryFromDiscovery(registryPath string, discovered []DeviceInfo, c
 			// conservatively keeps the stored name for the live-discovery
 			// path where cross-transport flapping is noise.
 			merged := mergeDeviceInfo(existing[idx], d)
+			if operatorTargetID != "" && operatorTargetID == existing[idx].ID {
+				// Only an explicit manual update of this established ID may
+				// change policy. Alias/auto-ID continuity and discovery source
+				// strings cannot silently enable a different saved registration.
+				merged.Enabled = d.Enabled
+			}
 			if d.Name != "" {
 				merged.Name = d.Name
 			}
@@ -646,6 +676,7 @@ func isAutoDiscoveredSpoolerRow(d DeviceInfo) bool {
 // require an explicit protocol; only transports with their own identity
 // (spooler queues, IPP URLs) may derive it.
 func RegisterManual(registryPath string, info DeviceInfo) ([]DeviceInfo, error) {
+	operatorTargetID := info.ID
 	// Manual registration is an executable configuration boundary, not merely
 	// an inventory hint. Canonicalize aliases here so the local registry,
 	// runtime factory, heartbeat contract and Gateway all see the same
@@ -756,7 +787,7 @@ func RegisterManual(registryPath string, info DeviceInfo) ([]DeviceInfo, error) 
 	}
 	info.Capabilities["verification"] = "pending"
 	info.Capabilities["registration_source"] = "manual"
-	return UpsertRegistry(registryPath, []DeviceInfo{info})
+	return mutateRegistry(registryPath, []DeviceInfo{info}, nil, operatorTargetID)
 }
 
 func registryMayUseObservedIdentity(device DeviceInfo) bool {
@@ -777,6 +808,17 @@ func withRegistryIdentityCollision(device DeviceInfo, reason string) DeviceInfo 
 
 // RemoveFromRegistry removes a printer by ID.
 func RemoveFromRegistry(registryPath, printerID string) error {
+	return removeFromRegistry(registryPath, printerID, false)
+}
+
+// RemoveGatewayPrinterFromRegistry removes stale cloud-owned inventory, while
+// preserving explicit local disablement. A remote delete/recreate must never
+// erase the operator's saved denial. Test the flag under the mutation lock.
+func RemoveGatewayPrinterFromRegistry(registryPath, printerID string) error {
+	return removeFromRegistry(registryPath, printerID, true)
+}
+
+func removeFromRegistry(registryPath, printerID string, preserveDisabled bool) error {
 	registryMu.Lock()
 	defer registryMu.Unlock()
 	unlock, lockErr := lockRegistryFile(registryPath)
@@ -790,9 +832,12 @@ func RemoveFromRegistry(registryPath, printerID string) error {
 	}
 	out := make([]DeviceInfo, 0, len(existing))
 	for _, p := range existing {
-		if p.ID != printerID {
+		if p.ID != printerID || (preserveDisabled && !p.Enabled) {
 			out = append(out, p)
 		}
+	}
+	if preserveDisabled && len(out) == len(existing) {
+		return nil
 	}
 	// Hidden records survive an unrelated removal.
 	return saveRegistryLocked(registryPath, concatDevices(out, hidden))

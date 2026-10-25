@@ -178,7 +178,7 @@ describe("shared shell interactions", () => {
         label: "Actions", trigger: "Actions", items: [{ key: "one", label: "One", onSelect: vi.fn() }],
       }),
     }));
-    const trigger = document.querySelector<HTMLButtonElement>('button[aria-label="Actions"]')!;
+    const trigger = document.querySelector<HTMLButtonElement>('button[aria-haspopup="menu"]')!;
     act(() => trigger.click());
     act(() => vi.advanceTimersByTime(20));
     const item = document.querySelector<HTMLButtonElement>('[role="menuitem"]')!;

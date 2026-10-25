@@ -401,11 +401,8 @@ func handleServiceControl(rawAction, configPath string) error {
 		if err != nil {
 			return err
 		}
-		if err := purgeAgentData(); err != nil {
+		if err := completeAgentUninstall(purgeLegacyAgentServices, purgeAgentData); err != nil {
 			return err
-		}
-		if err := purgeLegacyAgentServices(); err != nil {
-			return fmt.Errorf("remove legacy Agent services during uninstall: %w", err)
 		}
 		if removed {
 			fmt.Println("YaseirAgent service uninstalled and all local Agent data purged successfully")
@@ -458,6 +455,15 @@ func handleServiceControl(rawAction, configPath string) error {
 	default:
 		return fmt.Errorf("unknown service action: %q (expected install, uninstall, purge, start, stop, restart, status)", rawAction)
 	}
+}
+
+// completeAgentUninstall coordinates owned legacy service removal and the
+// deletion of data that those service processes may still be using.
+func completeAgentUninstall(removeLegacyServices, purgeData func() error) error {
+	if err := removeLegacyServices(); err != nil {
+		return fmt.Errorf("remove legacy Agent services during uninstall: %w", err)
+	}
+	return purgeData()
 }
 
 // The headless PDFium capability marker makes it possible to distinguish an

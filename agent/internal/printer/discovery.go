@@ -1183,6 +1183,13 @@ func TestPrinter(cfg *config.Config, registryPath, printerID string) error {
 	}
 
 	pc := printerConfigForTest(cfg, target)
+	pc, err = cfg.ResolvePDFOutput(pc)
+	if err != nil {
+		return fmt.Errorf("printer %s local output profile unavailable: %w", printerID, err)
+	}
+	if NewLocalPrinterDisablement(cfg, registered).Disabled(pc) {
+		return fmt.Errorf("printer %s is disabled by local operator configuration", printerID)
+	}
 	prt, err := New(pc)
 	if err != nil {
 		return fmt.Errorf("printer %s backend not available: %w", printerID, err)
@@ -1196,6 +1203,16 @@ func TestPrinter(cfg *config.Config, registryPath, printerID string) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
+	ctx = WithDispatchAdmission(ctx, func(context.Context) error {
+		disabled, err := LoadLocalPrinterDisablement(cfg, registryPath)
+		if err != nil {
+			return fmt.Errorf("read local printer disablement before diagnostic output: %w", err)
+		}
+		if disabled.Disabled(pc) {
+			return fmt.Errorf("printer %s is disabled by local operator configuration", printerID)
+		}
+		return nil
+	})
 	return runLocalPrinterTest(ctx, prt)
 }
 
@@ -1227,18 +1244,21 @@ func printerConfigForTest(cfg *config.Config, target *DeviceInfo) config.Printer
 		for k, v := range target.Capabilities {
 			caps[k] = v
 		}
+		enabled := target.Enabled
 		pc = config.PrinterConfig{
-			ID:           target.ID,
-			Name:         target.Name,
-			Type:         target.ConnectionType,
-			Endpoint:     target.Endpoint,
-			Protocol:     target.Protocol,
-			SpoolerName:  target.SpoolerName,
-			PrinterType:  target.PrinterType,
-			USBVID:       target.USBVID,
-			USBPID:       target.USBPID,
-			USBSerial:    target.USBSerial,
-			Capabilities: caps,
+			ID:              target.ID,
+			Name:            target.Name,
+			Type:            target.ConnectionType,
+			Endpoint:        target.Endpoint,
+			OutputProfileID: target.OutputProfileID,
+			Protocol:        target.Protocol,
+			SpoolerName:     target.SpoolerName,
+			PrinterType:     target.PrinterType,
+			USBVID:          target.USBVID,
+			USBPID:          target.USBPID,
+			USBSerial:       target.USBSerial,
+			Capabilities:    caps,
+			Enabled:         &enabled,
 		}
 	}
 	if target.ConnectionType == "spooler" && pc.SpoolerName == "" {
