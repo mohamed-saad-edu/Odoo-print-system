@@ -261,7 +261,7 @@ export default function ApiKeysPage() {
             <CardHeader title={t("v4.connection.status")} icon={<StatusDot tone={loading ? "neutral" : enabled > 0 ? "ok" : "warn"} />} />
             <div className="space-y-4 p-5">
               <h2 className="text-lg font-semibold">{t(loading ? "common.loading" : enabled > 0 ? "v4.connection.enabled" : active > 0 ? "v4.connection.waiting" : "v4.connection.start")}</h2>
-              <p className="text-sm text-ink-3">{t(enabled > 0 ? "v4.connection.enabledBody" : active > 0 ? "v4.connection.waitingBody" : "v4.connection.startBody")}</p>
+              {enabled === 0 && <p className="text-sm text-ink-3">{t(active > 0 ? "v4.connection.waitingBody" : "v4.connection.startBody")}</p>}
               {installations.length > 0 && <ul className="space-y-2">{installations.map(item => <li key={item.id} className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-edge p-3"><span className="font-semibold">{item.name}</span><StatusBadge tone={item.enabled && item.api_key_ids.some(id => keys.some(key => key.id === id && !key.revokedAt && key.odooEnabled)) ? "ok" : "warn"} label={t(item.enabled ? "v4.connection.enrolled" : "v4.connection.disabled")} /></li>)}</ul>}
               {enabled > 0 && <Button href="/dashboard#printers" variant="primary">{t("v4.connection.selectPrinters")}</Button>}
               {!canManage && !loading && <p className="text-sm text-ink-3">{t("v4.connection.readOnly")}</p>}
@@ -402,8 +402,8 @@ export default function ApiKeysPage() {
             </div>
 
             <aside className="space-y-5">
-              <Callout tone="info" title={t("v4.connection.gatewayUrl")}><code dir="ltr" className="block break-all">{gatewayUrl || "—"}</code><p className="mt-2">{t("v4.connection.notPairing")}</p></Callout>
-              <details open className="card group overflow-hidden">
+              {enabled === 0 && <Callout tone="info" title={t("v4.connection.gatewayUrl")}><code dir="ltr" className="block break-all">{gatewayUrl || "—"}</code><p className="mt-2">{t("v4.connection.notPairing")}</p></Callout>}
+              <details className="card group overflow-hidden">
                 <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 px-5 py-4 outline-none transition-colors hover:bg-surface-2 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand/35">
                   <span className="min-w-0">
                     <span className="block text-md font-[600] leading-snug text-ink">{t("apiKeys.howItWorks")}</span>
