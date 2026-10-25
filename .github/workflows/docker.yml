@@ -16,7 +16,7 @@ permissions:
   contents: read
 
 env:
-  POSTGRES_PASSWORD: ci-only-password
+  POSTGRES_PASSWORD: ci-only-bootstrap-0123456789abcdef0123456789abcdef
   # Isolated ephemeral CI fixtures only. Production secrets are independent.
   POSTGRES_OWNER_PASSWORD: ci-only-owner-0123456789abcdef0123456789abcdef
   POSTGRES_RUNTIME_PASSWORD: ci-only-runtime-fedcba9876543210fedcba9876543210

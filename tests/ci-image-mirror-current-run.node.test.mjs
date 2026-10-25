@@ -134,6 +134,14 @@ test('Docker scans the shipped npm-free Gateway runtime and retains upstream adv
   assert.ok(workflow.includes('scripts/check-trivy-baseline.py trivy.sarif "$image"'));
   assert.ok(workflow.includes('POSTGRES_RUNTIME_PASSWORD: ci-only-runtime-'));
   assert.ok(workflow.includes('POSTGRES_OWNER_PASSWORD: ci-only-owner-'));
+  const rolePasswords = ["POSTGRES_PASSWORD", "POSTGRES_OWNER_PASSWORD", "POSTGRES_RUNTIME_PASSWORD"]
+    .map(key => {
+      const match = workflow.match(new RegExp("^  " + key + ": ([^\\s]+)$", "m"));
+      assert.ok(match, key + " must be explicit for disposable CI, never inherited from production secrets");
+      assert.ok(match[1].length >= 32, key + " must satisfy V4 independent role secret length");
+      return match[1];
+    });
+  assert.equal(new Set(rolePasswords).size, 3, "CI role credentials must be independent");
   assert.ok(workflow.includes('fs.readFileSync("/run/secrets/postgres_runtime_password"'));
   assert.ok(!workflow.includes('const pgPassword = fs.readFileSync("/run/secrets/postgres_password"'));
 });
