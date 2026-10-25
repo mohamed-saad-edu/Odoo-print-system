@@ -556,7 +556,9 @@ msgstr ""
 
 #. module: print_gateway
 #. odoo-python
+#. odoo-javascript
 #: code:addons/print_gateway/models/runtime_assignment.py:0
+#: code:addons/print_gateway/static/src/components/printers_overview.js:0
 #: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_binding_form
 #: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_binding_list
 #: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_pair_agent_wizard_form
@@ -779,7 +781,9 @@ msgstr "إغلاق"
 
 #. module: print_gateway
 #. odoo-python
+#. odoo-javascript
 #: code:addons/print_gateway/models/runtime_assignment.py:0
+#: code:addons/print_gateway/static/src/components/printers_overview.js:0
 #: model:ir.model.fields,field_description:print_gateway.field_print_gateway_gateway_config__company_id
 #: model:ir.model.fields,field_description:print_gateway.field_print_gateway_intent__company_id
 #: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_binding_form
