@@ -91,8 +91,15 @@ compose exec -T postgres sh -c 'exec pg_restore --list' < "$ARCHIVE" >/dev/null
 echo "Verified private backup: $ARCHIVE"
 # Prebuild images while the old Gateway is still available; only the actual
 # role/migration cutover needs a maintenance interval.
-echo "Prebuilding V4 images before stopping the existing staging Gateway..."
-compose build postgres caddy gateway database_roles migrate database_verify
+echo "Prebuilding V4 images one service at a time before stopping the existing staging Gateway..."
+# Never run six heavyweight BuildKit builds in parallel on the small Azure VM.
+# Each build must finish successfully before the next begins. The existing
+# containers, DB and volumes remain untouched until every image is ready.
+export COMPOSE_PARALLEL_LIMIT=1
+for service in postgres caddy gateway database_roles migrate database_verify; do
+  echo "Building staging image: $service (parallelism=1)"
+  compose build "$service"
+done
 echo "Stopping ONLY staging Gateway before applying least-privilege database roles..."
 compose stop gateway
 compose up -d postgres

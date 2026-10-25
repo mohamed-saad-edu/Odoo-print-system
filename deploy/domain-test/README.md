@@ -6,7 +6,7 @@ The staging deployment carries the same V4 application, migrations, DB role isol
 
 ## Existing server upgrade (no data reset)
 
-Never overwrite the existing `deploy/domain-test/.env.domain-test` or remove its external `STAGING_PG_VOLUME`. The setup script refuses an absent volume, changed database name, or missing running PostgreSQL. It creates a protected **original environment backup before changing any key**, then a private verified PostgreSQL backup before role/migration changes. It stops only the old staging Gateway for the DB-role cutover, then rebuilds V4 Gateway, migrator, verifier and Caddy. It does not invoke reset or remove Docker volumes.
+Never overwrite the existing `deploy/domain-test/.env.domain-test` or remove its external `STAGING_PG_VOLUME`. The setup script refuses an absent volume, changed database name, or missing running PostgreSQL. It creates a protected **original environment backup before changing any key**, then a private verified PostgreSQL backup before role/migration changes. It builds the V4 PostgreSQL, Caddy, Gateway and migration images **sequentially** (one service at a time) while the existing Gateway stays online. Only after every build succeeds does it stop the old staging Gateway for the DB-role cutover. It does not invoke reset or remove Docker volumes.
 
 ```bash
 cd /opt/yasser
@@ -22,7 +22,7 @@ docker compose --env-file deploy/domain-test/.env.domain-test -f deploy/domain-t
 bash deploy/domain-test/smoke-domain-test.sh
 ```
 
-**Before the setup:** verify free disk for a verified PG dump and Docker builds; preserve a separate VM/snapshot backup; confirm that no unrelated databases/roles live in the staging PostgreSQL cluster. The V4 role-profile intentionally refuses shared database clusters or live Gateway clients. Only the existing staging DB/volume is targeted. No automatic rollback of forward-only migrations is promised.
+**Before the setup:** check `free -h`, `swapon --show`, `nproc`, `df -h /` and verify free disk for a verified PG dump and Docker builds. Do NOT manually run `docker compose ... build postgres caddy gateway database_roles migrate database_verify` as one concurrent multi-service build on a small VM. The setup script deliberately builds sequentially; preserve a separate VM/snapshot backup; confirm that no unrelated databases/roles live in the staging PostgreSQL cluster. The V4 role-profile intentionally refuses shared database clusters or live Gateway clients. Only the existing staging DB/volume is targeted. No automatic rollback of forward-only migrations is promised.
 
 The script creates the independent `POSTGRES_OWNER_PASSWORD` and `POSTGRES_RUNTIME_PASSWORD` once if missing. It never silently changes the existing bootstrap `POSTGRES_PASSWORD`; a missing or short bootstrap credential must be rotated in the actual PostgreSQL cluster **and** env by an operator before the upgrade. Preserve secrets, Caddy TLS volumes and the DB role state volume across updates.
 
