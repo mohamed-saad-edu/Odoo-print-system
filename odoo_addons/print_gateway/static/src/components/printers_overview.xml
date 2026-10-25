@@ -14,7 +14,7 @@
             <div class="row g-3 mb-4">
                 <div class="col-md-6"><label for="pg_inventory_scope" class="form-label">Company or branch</label>
                     <select id="pg_inventory_scope" class="form-select" t-on-change="changeScope" t-att-value="state.scopeId">
-                        <option t-foreach="state.scopes" t-as="scope" t-key="scope.id" t-att-value="scope.id" t-esc="scope.name"/>
+                        <option t-foreach="state.scopes" t-as="scope" t-key="scope.id" t-att-value="scope.id" t-esc="scope.label"/>
                     </select>
                 </div>
                 <div class="col-md-6"><label for="pg_inventory_agent" class="form-label">Printing computer</label>

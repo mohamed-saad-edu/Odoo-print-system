@@ -1,3 +1,38 @@
+test("printer scope choices remain unique when legacy Odoo returns identical company names", async () => {
+  const { labelPrinterScopes } = await load("js/printer_scope_labels.js");
+  const raw = [
+    { id: 11, name: "My Company", companyId: 11, branchId: false },
+    { id: 12, name: "My Company", companyId: 11, branchId: 12 },
+    { id: 24, name: " MY COMPANY ", companyId: 24, branchId: false },
+    { id: 27, name: "Alexandria", companyId: 11, branchId: 27 },
+    { id: 12, name: "My Company", companyId: 11, branchId: 12 },
+    { id: "bad", name: "Invalid", companyId: 11, branchId: false },
+  ];
+  const result = Array.from(labelPrinterScopes(raw, { company: "Company", branch: "Branch" }));
+  assert.deepEqual(result.map(x => x.id), [11, 12, 24, 27]);
+  assert.deepEqual(result.map(x => x.label), [
+    "My Company — Company #11",
+    "My Company — Branch #12",
+    "MY COMPANY — Company #24",
+    "Alexandria",
+  ]);
+  assert.equal(new Set(result.map(x => x.label.toLowerCase())).size, result.length);
+  assert.deepEqual(result.map(x => [x.companyId, x.branchId]), [[11, false], [11, 12], [24, false], [11, 27]]);
+  assert.deepEqual(raw[0], { id: 11, name: "My Company", companyId: 11, branchId: false }, "must not mutate server scopes");
+});
+
+test("already disambiguated Odoo scopes keep server labels and do not gain extra suffixes", async () => {
+  const { labelPrinterScopes } = await load("js/printer_scope_labels.js");
+  const scopes = [
+    { id: 1, name: "My Company (#1)", companyId: 1, branchId: false },
+    { id: 2, name: "My Company (#2)", companyId: 2, branchId: false },
+    { id: 3, name: "My Company / Branch", companyId: 1, branchId: 3 },
+  ];
+  assert.deepEqual(Array.from(labelPrinterScopes(scopes), x => x.label), scopes.map(x => x.name));
+  assert.deepEqual(Array.from(labelPrinterScopes([])), []);
+  assert.deepEqual(Array.from(labelPrinterScopes(null)), []);
+});
+
 import { receiptGeometry, verifiedPrinter } from "./helpers/odoo-printer-geometry.mjs";
 import assert from "node:assert/strict";
 import fs from "node:fs";
