@@ -338,16 +338,35 @@ jobs:
             jti, iat: now, exp, sub: "manager", tenantId, role: "admin",
           });
 
-          const health = await fetch("http://127.0.0.1:3000/api/agents?limit=1", {
+          // V5 deliberately rejects legacy V1 manager JWTs after the session
+          // migration. A 200 here would be a real authentication regression.
+          const legacy = await fetch("http://127.0.0.1:3000/api/agents?limit=1", {
             headers: {
               authorization: "Bearer " + managerToken,
               "x-gateway-proxy-token": proxySecret,
               origin: "https://print.example.com",
             },
           });
-          console.log("MANAGER_FLEET_HTTP_STATUS=" + health.status);
-          console.log(await health.text());
-          if (!health.ok) process.exit(10);
+          console.log("LEGACY_MANAGER_HTTP_STATUS=" + legacy.status);
+          if (legacy.status !== 401) throw new Error("Legacy V1 manager session was unexpectedly accepted");
+
+          // Exercise real V5 credentials and the tenant/agent-scoped console
+          // read path. This is not a substitute for a password-authenticated
+          // owner session; it verifies that the authenticated Agent can read
+          // ONLY its own fleet entry without restoring obsolete v1 sessions.
+          const fleet = await fetch("http://127.0.0.1:3000/api/agents?limit=1", {
+            headers: {
+              authorization: "Bearer " + agentId + ":" + agentSecret,
+              "x-gateway-proxy-token": proxySecret,
+              origin: "https://print.example.com",
+            },
+          });
+          const fleetBody = await fleet.json();
+          console.log("AGENT_SCOPED_FLEET_HTTP_STATUS=" + fleet.status);
+          if (!fleet.ok || !Array.isArray(fleetBody) ||
+              fleetBody.length !== 1 || fleetBody[0]?.id !== agentId) {
+            throw new Error("Agent-scoped fleet read failed to return its exact authorized record");
+          }
 
           await new Promise((resolve, reject) => {
             const ws = new WebSocket("ws://127.0.0.1:3000/api/agent/ws", {

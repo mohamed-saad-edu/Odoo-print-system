@@ -143,6 +143,11 @@ test('Docker scans the shipped npm-free Gateway runtime and retains upstream adv
     });
   assert.equal(new Set(rolePasswords).size, 3, "CI role credentials must be independent");
   assert.ok(workflow.includes('fs.readFileSync("/run/secrets/postgres_runtime_password"'));
+  assert.ok(workflow.includes('LEGACY_MANAGER_HTTP_STATUS='));
+  assert.ok(workflow.includes('legacy.status !== 401'));
+  assert.ok(workflow.includes('authorization: "Bearer " + agentId + ":" + agentSecret'));
+  assert.ok(workflow.includes('fleetBody.length !== 1 || fleetBody[0]?.id !== agentId'));
+  assert.ok(!workflow.includes('MANAGER_FLEET_HTTP_STATUS='));
   assert.ok(!workflow.includes('const pgPassword = fs.readFileSync("/run/secrets/postgres_password"'));
 });
 
