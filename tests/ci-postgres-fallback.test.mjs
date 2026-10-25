@@ -22,6 +22,10 @@ if [ "$1" = pull ]; then
     echo 'toomanyrequests: Data limit exceeded' >&2
     exit 1
   fi
+  if [ "$CI_PG_MOCK_MODE" = quota ] && [[ "$2" == public.ecr.aws/* ]]; then
+    echo 'Error response from daemon: error from registry: Data limit exceeded' >&2
+    exit 1
+  fi
   if [ "$CI_PG_MOCK_MODE" = invalid ] && [[ "$2" == public.ecr.aws/* ]]; then
     echo 'denied: invalid content digest' >&2
     exit 1
@@ -73,6 +77,15 @@ test("CI postgres switches to identical pinned digest only when ECR returns 429"
   assert.ok(result.calls.includes("pull " + hub));
   assert.ok(result.calls.includes('"' + hub + '"') || result.calls.includes(" " + hub));
   assert.ok(result.calls.indexOf("pull " + ecr) < result.calls.indexOf("pull " + hub));
+});
+
+test("CI postgres accepts an ECR data-quota refusal only for the exact same pinned digest", () => {
+  const result = runWithFakeDocker("quota");
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(result.calls.includes("pull " + ecr));
+  assert.ok(result.calls.includes("pull " + hub));
+  assert.ok(result.calls.indexOf("pull " + ecr) < result.calls.indexOf("pull " + hub));
+  assert.ok(result.calls.includes("run --rm -d --name yaseir-ci-postgres"));
 });
 
 test("CI postgres rejects non-throttling image errors without changing registries", () => {

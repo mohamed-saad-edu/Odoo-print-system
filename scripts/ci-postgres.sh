@@ -32,9 +32,11 @@ if docker pull "$postgres_ecr" >"$pull_log" 2>&1; then
   echo "Verified pinned CI PostgreSQL image from ECR Public."
 else
   cat "$pull_log" >&2
-  # Switch registries on an explicit rate-limit only. All other errors
-  # (bad digest, permission, TLS, network, etc.) fail closed.
-  if ! grep -Eqi 'toomanyrequests|rate exceeded|(^|[^0-9])429([^0-9]|$)' "$pull_log"; then
+  # Switch registries on an explicit rate-limit or ECR data-quota error
+  # (including ECR's bare "Data limit exceeded" response). We still fetch
+  # the EXACT same digest; bad digest, permissions, TLS and network errors
+  # must fail closed and may not fall back.
+  if ! grep -Eqi 'toomanyrequests|rate exceeded|(^|[^0-9])429([^0-9]|$)|data limit exceeded' "$pull_log"; then
     echo "ECR failure was not a rate limit; refusing registry fallback." >&2
     exit 1
   fi

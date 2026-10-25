@@ -58,7 +58,7 @@ test('Docker CI uses the same sha256-pinned Official Images as production', () =
   assert.ok(ci.includes('CI_PG_USER: postgres'));
   assert.ok(resilience.includes('CI_PG_USER: postgres'));
   assert.ok(postgresHelper.includes("127.0.0.1:5432:5432"));
-  assert.match(postgresHelper, /if ! grep -Eqi '[^']*toomanyrequests[^']*rate exceeded[^']*429[^']*'/);
+  assert.match(postgresHelper, /if ! grep -Eqi '[^']*toomanyrequests[^']*rate exceeded[^']*429[^']*data limit exceeded[^']*'/);
 });
 
 test('Compose CLI selects the CI overlay without changing default production references', () => {
@@ -151,7 +151,16 @@ test('Docker scans the shipped npm-free Gateway runtime and retains upstream adv
       return match[1];
     });
   assert.equal(new Set(rolePasswords).size, 3, "CI role credentials must be independent");
-  assert.ok(workflow.includes('fs.readFileSync("/run/secrets/postgres_runtime_password"'));
+  // The staging Docker smoke seeds fixtures from a one-shot owner-only
+  // migration container; production Gateway still has NO owner secret.
+  // Keep the security boundary and verify the intended authorization mode.
+  assert.ok(workflow.includes('docker compose run -T --rm --no-deps'));
+  assert.ok(workflow.includes('migrate node --input-type=module'));
+  assert.ok(workflow.includes('fs.readFileSync("/run/secrets/postgres_owner_password"'));
+  assert.ok(workflow.includes('const managerToken = signJwt(jwtSecret'));
+  assert.ok(workflow.includes('authorization: "Bearer " + managerToken'));
+  assert.ok(!workflow.includes('docker compose exec -T gateway node <<'));
+  assert.ok(!workflow.includes('const pgPassword = fs.readFileSync("/run/secrets/postgres_password"'));
   assert.ok(workflow.includes('LEGACY_MANAGER_HTTP_STATUS='));
   assert.ok(workflow.includes('legacy.status !== 401'));
   assert.ok(workflow.includes('authorization: "Bearer " + agentId + ":" + agentSecret'));

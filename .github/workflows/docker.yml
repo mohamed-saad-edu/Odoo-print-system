@@ -358,13 +358,16 @@ jobs:
           const now = Math.floor(Date.now() / 1000);
           const exp = now + 3600;
 
-          // V4 intentionally rejects legacy manager JWTs. Use the real
-          // tenant-bound Agent credential for this fleet read smoke test.
-          // V5 deliberately rejects legacy V1 manager JWTs after the session
-          // migration. A 200 here would be a real authentication regression.
+          // A historical V1 manager JWT must be rejected even if its
+          // legacy session fixture exists; only modern sessions are accepted.
+          // The independent Agent credential is tested against the fleet
+          // endpoint below, not used as the supposedly invalid legacy token.
+          const managerToken = signJwt(jwtSecret, {
+            jti, iat: now, exp, sub: "manager", tenantId, role: "admin",
+          });
           const legacy = await fetch("http://127.0.0.1:3000/api/agents?limit=1", {
             headers: {
-              authorization: "Bearer " + agentId + ":" + agentSecret,
+              authorization: "Bearer " + managerToken,
               "x-gateway-proxy-token": proxySecret,
               origin: "https://print.example.com",
             },
