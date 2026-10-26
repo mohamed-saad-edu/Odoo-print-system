@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import InvitePage from "../src/app/invite/page";
 import OnboardingPage from "../src/app/onboarding/page";
 import { I18nProvider } from "../src/i18n/react";
+import { translate } from "../src/i18n/translate";
 import { fetchWithTimeout } from "../src/lib/fetch-timeout";
 
 const navigation = vi.hoisted(() => ({ replace: vi.fn(), refresh: vi.fn(), push: vi.fn() }));
@@ -90,7 +91,13 @@ describe("manual onboarding recovery", () => {
   it.each(["en", "ar"] as const)("shows the activated checklist without starting another subscription (%s)", async locale => {
     onboardingFixture("active");
     await render(h(OnboardingPage), locale);
-    expect(host.textContent).toContain(locale === "en" ? "Your workspace is ready" : "مساحة عملك جاهزة");
+    expect(host.textContent).toContain(translate(locale, "v4.onboarding.ready"));
+    // Active entitlement is not evidence that a Windows computer or printer is ready.
+    expect(host.textContent).not.toContain(locale === "en" ? "Your workspace is ready" : "مساحة عملك جاهزة");
+    const checklist = host.querySelector("details");
+    expect(checklist).not.toBeNull();
+    expect(checklist?.open).toBe(false);
+    expect(checklist?.querySelectorAll("li")).toHaveLength(4);
     expect(host.querySelector('a[href="/dashboard"]')).not.toBeNull();
     expect(host.querySelector('a[href="/api-keys"]')).not.toBeNull();
     expect(host.querySelector('form')).toBeNull();
@@ -106,7 +113,9 @@ describe("manual onboarding recovery", () => {
     expect(host.querySelector('a[href="/dashboard"]')).toBeNull();
     state.status = "active";
     await act(async () => button("Check activation status").click());
-    expect(host.textContent).toContain("Your workspace is ready");
+    expect(host.textContent).toContain(translate("en", "v4.onboarding.ready"));
+    expect(host.querySelector('a[href="/dashboard"]')).not.toBeNull();
+    expect(host.querySelector('form')).toBeNull();
     expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(0);
   });
 
