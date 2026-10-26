@@ -36,15 +36,17 @@ describe("one operational Full Access for every workspace membership", () => {
     for (const permission of allowed) expect(hasManagerPermission(unknown, permission)).toBe(false);
   });
   it("workspace mutation routes deny direct HTTP bypass for all logged-in members", async () => {
+    vi.stubEnv("APP_BASE_URL", "https://gateway.example.test");
     const { PATCH: changeRole, DELETE: removeMember } = await import("../src/app/api/team/members/route");
     const { POST: transfer } = await import("../src/app/api/team/ownership/route");
     const { POST: subscribe, GET: billingRequests } = await import("../src/app/api/subscription-requests/route");
-    const request = new Request("https://gateway.example.test/api/team/invitations", { method: "POST" });
+    const request = new Request("https://gateway.example.test/api/team/invitations", { method: "POST", headers: { Origin: "https://gateway.example.test" } });
     expect((await changeRole(request)).status).toBe(403);
     expect((await removeMember(request)).status).toBe(403);
     expect((await transfer(request)).status).toBe(403);
     expect((await subscribe(request)).status).toBe(403);
     expect((await billingRequests(request)).status).toBe(403);
+    vi.unstubAllEnvs();
   });
   it("removes legacy roles while granting invitations only to verified owner sessions", () => {
     const page = readFileSync(join(process.cwd(), "src/app/team/page.tsx"), "utf8");
