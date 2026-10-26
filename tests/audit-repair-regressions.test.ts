@@ -12,10 +12,3 @@ describe("audit repair regressions", () => {
     expect(isVirtualPrinterRecord({ name: "Office", driverName: "Microsoft Print to PDF", port: "PORTPROMPT:" })).toBe(true);
   });
 });
-    const legacy = stripeSubscriptionPeriod({ current_period_start: first, current_period_end: last });
-    expect(modern).toEqual(legacy);
-    expect(modern.start?.getTime()).toBe(first * 1000);
-    expect(modern.end?.getTime()).toBe(last * 1000);
-    expect(stripeSubscriptionPeriod({ current_period_start: NaN, current_period_end: -1 })).toEqual({ start: null, end: null });
-  });
-});

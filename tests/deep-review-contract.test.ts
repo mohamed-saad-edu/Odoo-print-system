@@ -193,7 +193,7 @@ describe("deep production review contracts", () => {
     expect(source).toContain("WHERE claim_id ~");
   });
 
-  it("keeps Odoo configuration timestamps on PostgreSQL" () => {
+  it("keeps Odoo configuration timestamps on PostgreSQL", () => {
     const configuration = read("src/app/api/odoo/configuration/route.ts");
     expect(configuration).toContain("odooEnabledUpdatedAt: sql`clock_timestamp()`");
     expect(configuration).not.toContain("const now = new Date()");

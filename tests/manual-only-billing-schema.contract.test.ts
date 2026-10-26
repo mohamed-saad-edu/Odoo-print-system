@@ -25,7 +25,7 @@ describe("forward-only manual billing schema", () => {
     for (const route of ["checkout", "webhook", "cancel", "resume", "portal"]) {
       const source = read(`src/app/api/billing/${route}/route.ts`);
       expect(source).toContain("MANUAL_BILLING_REQUIRED");
-      expect(source).toContain("status: 410");
+      expect(source).toMatch(/status:\s*410/);
     }
   });
 });
