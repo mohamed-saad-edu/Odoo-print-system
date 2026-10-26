@@ -319,6 +319,12 @@ if (!registry.category("fields").contains("gateway_runtime_printer")) {
             { name: "branch_id", type: "many2one" },
             { name: "runtime_agent_id", type: "char" },
             { name: "destination_type", type: "selection" },
+            // The picker reads these record values to filter destination
+            // capability and to update the saved printer protocol.
+            { name: "report_id", type: "many2one" },
+            { name: "destination_report_id", type: "many2one" },
+            { name: "document_type", type: "char" },
+            { name: "printer_protocol", type: "selection" },
         ],
     });
 }

@@ -187,3 +187,16 @@ describe("Odoo UX localization contract", () => {
     expect(xml).not.toContain('name="action_open_printers"');
   });
 });
+
+describe("Odoo 19 single-company automation view dependencies", () => {
+  it("preserves company_id for branch and route domains when multi-company UI is hidden", () => {
+    const source = read("odoo_addons/print_gateway/views/print_policy_views.xml");
+    const begin = source.indexOf('<group name="scope_trigger"');
+    const end = source.indexOf("</group>", begin);
+    const scope = source.slice(begin, end);
+    expect(scope).toContain('<field name="company_id" invisible="1"/>');
+    expect(scope).toContain('groups="base.group_multi_company"');
+    expect(scope).toContain('name="branch_id" domain="[(\'parent_id\', \'=\', company_id)]"');
+    expect(source).toContain('name="binding_id" string="Print Route"');
+  });
+});

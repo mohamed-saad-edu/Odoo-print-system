@@ -259,3 +259,49 @@ test("native runtime printer picker is tied to the selected Agent and Odoo branc
   assert.equal(view.reportId, 60);
   assert.equal(view.scopeKey(10, 21, "agent-123"), "10|21|agent-123|report|60|invoice");
 });
+
+test("Odoo 19 binding-only Agent field loads printer_id while generic Branch Devices remains valid", async () => {
+  const fields = new Map();
+  const registry = { category: name => {
+    assert.equal(name, "fields");
+    return { add(key, value) { fields.set(key, value); }, contains: key => fields.has(key) };
+  } };
+  await load("components/runtime_agent_field.js", {}, { "@web/core/registry": { registry } });
+  const generic = fields.get("gateway_runtime_agent");
+  const binding = fields.get("gateway_runtime_agent_binding");
+  assert.ok(generic);
+  assert.ok(binding);
+  assert.ok(generic.fieldDependencies.some(field => field.name === "company_id" && field.type === "many2one"));
+  assert.ok(generic.fieldDependencies.some(field => field.name === "branch_id" && field.type === "many2one"));
+  assert.ok(!generic.fieldDependencies.some(field => field.name === "printer_id"),
+    "Branch Devices and the pairing wizard have no printer_id and must remain usable");
+  assert.ok(binding.fieldDependencies.some(field => field.name === "printer_id" && field.type === "char"),
+    "the binding-only field must have the old printer in record.fields to clear it when changing Agent");
+  assert.equal(binding.extractProps().assignmentOnly, true,
+    "binding discovery must still enforce exact company/branch assignment");
+});
+
+test("Odoo 19 printer widget declares all cross-field routing dependencies in compact forms", async () => {
+  const fields = new Map();
+  const registry = { category: name => {
+    assert.equal(name, "fields");
+    return { add(key, value) { fields.set(key, value); }, contains: key => fields.has(key) };
+  } };
+  await load("components/runtime_printer_field.js", {}, { "@web/core/registry": { registry } });
+  const descriptor = fields.get("gateway_runtime_printer");
+  assert.ok(descriptor);
+  assert.deepEqual(Array.from(descriptor.supportedTypes), ["char"]);
+  for (const [name, type] of [
+    ["company_id", "many2one"],
+    ["branch_id", "many2one"],
+    ["runtime_agent_id", "char"],
+    ["destination_type", "selection"],
+    ["report_id", "many2one"],
+    ["destination_report_id", "many2one"],
+    ["document_type", "char"],
+    ["printer_protocol", "selection"],
+  ]) {
+    assert.ok(descriptor.fieldDependencies.some(field => field.name === name && field.type === type),
+      "missing routing field dependency: " + name + " (" + type + ")");
+  }
+});
