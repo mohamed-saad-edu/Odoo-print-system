@@ -13,6 +13,7 @@ export function documentTypeLabel(value: unknown, locale: Locale = DEFAULT_LOCAL
     label: "v4.experience.document.label",
     "label 4x6": "v4.experience.document.label4x6",
   } as const;
-  const key = keys[normalized as keyof typeof keys];
+  const key = Object.prototype.hasOwnProperty.call(keys, normalized)
+    ? keys[normalized as keyof typeof keys] : undefined;
   return key ? translate(locale, key) : value;
 }

@@ -8,6 +8,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import vm from "node:vm";
 import { receiptGeometry } from "./helpers/odoo-printer-geometry.mjs";
+import { recoveryIndexedDB } from "./helpers/odoo-recovery-indexeddb.mjs";
 
 const clone = value => JSON.parse(JSON.stringify(value));
 const change = { new: [{ product_id: 1, quantity: 1, name: "Private customer item" }], cancelled: [], noteUpdate: [] };
@@ -47,7 +48,7 @@ async function fixture({ storage = new Map(), db = "kitchen_test", sessionId = 5
     },
   };
   const context = vm.createContext({ console, crypto: webcrypto, setTimeout, clearTimeout, Set, Map, Uint8Array,
-    window: { odoo: { __session_info__: { db } }, localStorage: {
+    window: { odoo: { __session_info__: { db } }, indexedDB: recoveryIndexedDB(), localStorage: {
       getItem: key => storage.get(key) ?? null,
       setItem: (key, value) => storage.set(key, value),
       removeItem: key => storage.delete(key),

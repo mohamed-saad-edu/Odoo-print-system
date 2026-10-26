@@ -13,8 +13,20 @@ type Result = { tables: TableMeta[]; selected: string | null; columns: string[];
 const PAGE_SIZE = 25;
 
 export default function PlatformDatabasePage() {
-  const { locale, formatNumber } = useI18n();
+  const { locale, formatNumber, formatDateTime } = useI18n();
   const ar = locale === "ar";
+  const names: Record<string, [string, string]> = {
+    id: ["المعرّف", "ID"], name: ["الاسم", "Name"], description: ["الوصف", "Description"],
+    is_active: ["الحالة", "Status"], is_public: ["ظهور الباقة", "Visibility"],
+    created_at: ["تاريخ الإنشاء", "Created"], updated_at: ["آخر تحديث", "Updated"],
+  };
+  const label = (key: string) => names[key]?.[ar ? 0 : 1] ?? key.replaceAll("_", " ");
+  const display = (key: string, val: unknown): string => {
+    if (val == null || val === "") return "—";
+    if (typeof val === "boolean") return val ? (ar ? "نعم" : "Yes") : (ar ? "لا" : "No");
+    if ((key === "created_at" || key === "updated_at") && typeof val === "string") return formatDateTime(val);
+    return String(val);
+  };
   const [tableFilter, setTableFilter] = useState("");
   // Capture the record and query, never its position in a mutable result set.
   const [expanded, setExpanded] = useState<{ requestKey: string; row: RecordRow } | null>(null);
@@ -82,11 +94,9 @@ export default function PlatformDatabasePage() {
 
   return (
     <div className="space-y-5 pb-10">
-      <PageHeader
-        title={ar ? "مستكشف قاعدة البيانات" : "Database Explorer"}
-        eyebrow={ar ? "المنصة / البيانات" : "Platform / Data"}
-        icon={<Database className="h-5 w-5" />}
-        description={ar ? "ابحث باسم السجل أو حالته أو جزء من ID، واعرض التفاصيل وانسخ المعرّف بضغطة واحدة." : "Find records by name, status or partial ID. Inspect details and copy IDs with one click."}
+      <PageHeader variant="inline"
+        title={ar ? "مستكشف قاعدة البيانات" : "Database Explorer"} 
+        icon={<Database className="h-5 w-5" />} 
         actions={<Button variant="secondary" size="sm" loading={loading} onClick={refresh} icon={<RefreshCw className="h-4 w-4" />}>{ar ? "تحديث" : "Refresh"}</Button>}
       />
       <div className="flex items-center gap-2 rounded-xl border border-edge bg-surface p-4 text-sm text-ink-3">
@@ -131,9 +141,9 @@ export default function PlatformDatabasePage() {
         <div className="overflow-x-auto" aria-busy={loading}>
           <table role="table" className="data-table operational-table md:min-w-[720px]">
             <caption className="sr-only">{ar ? `سجلات ${table}` : `${table} records`}</caption>
-            <thead><tr>{columns.map((column) => <th scope="col" key={column}>{column}</th>)}<th scope="col">{ar ? "الإجراءات" : "Actions"}</th></tr></thead>
+            <thead><tr>{columns.map((column) => <th scope="col" key={column}>{label(column)}</th>)}<th scope="col">{ar ? "الإجراءات" : "Actions"}</th></tr></thead>
             <tbody>{loading ? <tr><td colSpan={columns.length + 1}><TableSkeleton rows={5} /></td></tr> : (visibleData?.rows ?? []).map((row, index) => <tr key={selectedMeta?.primaryKey ? String(row[selectedMeta.primaryKey]) : index}>
-              {columns.map((column) => <td key={column} className="max-w-72 break-all font-mono text-xs" dir="auto"><span className="data-table-label font-sans" aria-hidden>{column}</span>{row[column] === null ? "—" : String(row[column] ?? "")}</td>)}
+              {columns.map((column) => <td key={column} className="max-w-72 break-all font-mono text-xs" dir="auto"><span className="data-table-label font-sans" aria-hidden>{label(column)}</span>{display(column, row[column])}</td>)}
               <td className="whitespace-nowrap"><span className="data-table-label" aria-hidden>{ar ? "الإجراءات" : "Actions"}</span><div className="flex gap-2">
                 <Button size="xs" variant="secondary" aria-expanded={visibleRecord === row} aria-controls={visibleRecord === row ? "database-record-details" : undefined} onClick={() => setExpanded(visibleRecord === row ? null : { requestKey, row })}>{ar ? "تفاصيل" : "Details"}</Button>
                 {selectedMeta?.primaryKey && <Button size="xs" variant="secondary" icon={<Copy className="h-3 w-3" />} onClick={(event) => void copyRecordId(row[selectedMeta.primaryKey!], event.currentTarget)}>{ar ? "نسخ ID" : "Copy ID"}</Button>}
@@ -144,7 +154,7 @@ export default function PlatformDatabasePage() {
 
         {visibleRecord && <section id="database-record-details" aria-label={ar ? "تفاصيل السجل" : "Record details"} className="mt-4 rounded-xl border border-edge bg-surface-2 p-4">
           <div className="mb-3 flex items-center justify-between gap-3"><h3 className="text-sm font-semibold text-ink">{ar ? "تفاصيل السجل" : "Record details"}</h3><Button size="xs" variant="secondary" onClick={() => setExpanded(null)} icon={<X className="h-4 w-4" />}>{ar ? "إغلاق" : "Close"}</Button></div>
-          <dl className="grid gap-3 sm:grid-cols-2">{Object.entries(visibleRecord).map(([key, value]) => <div key={key} className="min-w-0"><dt className="text-xs text-ink-3">{key}</dt><dd className="mt-1 break-all font-mono text-sm text-ink" dir="auto">{value === null ? "—" : String(value)}</dd></div>)}</dl>
+          <dl className="grid gap-3 sm:grid-cols-2">{Object.entries(visibleRecord).map(([key, value]) => <div key={key} className="min-w-0"><dt className="text-xs text-ink-3">{label(key)}</dt><dd className="mt-1 break-all text-sm text-ink" dir="auto">{display(key, value)}</dd></div>)}</dl>
         </section>}
         {copyResult && <p role={copyResult.ok ? "status" : "alert"} className={`mt-3 flex flex-wrap items-center gap-2 text-xs ${copyResult.ok ? "text-ok" : "text-bad"}`}>
           {copyResult.ok && <Check className="h-4 w-4" aria-hidden />}

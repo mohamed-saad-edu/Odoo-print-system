@@ -6,10 +6,8 @@ use tauri::{
 
 /// Menu ids emitted to the frontend as `tray:navigate` payloads. The values
 /// MUST be entries of the desktop `Page` union (src/desktop/types.ts):
-/// `dashboard | printers | jobs | agents | settings`.
+/// `dashboard | printers | jobs | settings`.
 const NAV_GATEWAY: &str = "#dashboard";
-const NAV_AGENT: &str = "#agents";
-const NAV_PAIR: &str = "#settings";
 const NAV_SETTINGS: &str = "#settings";
 const TRAY_ID: &str = "main-tray";
 
@@ -18,8 +16,6 @@ struct TrayCopy {
     status_header: &'static str,
     open: &'static str,
     gateway: &'static str,
-    agent: &'static str,
-    pair: &'static str,
     settings: &'static str,
     restart: &'static str,
     quit: &'static str,
@@ -34,8 +30,6 @@ fn tray_copy(locale: &str) -> TrayCopy {
             status_header: "Yaseir Print Manager",
             open: "فتح Print Manager",
             gateway: "لوحة الـ Gateway",
-            agent: "الـ Agent المحلي والطابعات",
-            pair: "ربط Agent...",
             settings: "الإعدادات والتشخيص",
             restart: "إعادة تشغيل خدمة الـ Agent",
             quit: "خروج",
@@ -46,8 +40,6 @@ fn tray_copy(locale: &str) -> TrayCopy {
             status_header: "Yaseir Print Manager",
             open: "Open Manager",
             gateway: "Gateway Dashboard",
-            agent: "Local Agent & Printers",
-            pair: "Pair Agent...",
             settings: "Settings & Diagnostics",
             restart: "Restart Agent Service",
             quit: "Exit",
@@ -67,24 +59,13 @@ fn build_menu(app: &tauri::AppHandle, locale: &str) -> tauri::Result<Menu<tauri:
     )?;
     let open = MenuItem::with_id(app, "open", copy.open, true, None::<&str>)?;
     let gateway = MenuItem::with_id(app, NAV_GATEWAY, copy.gateway, true, None::<&str>)?;
-    let agent = MenuItem::with_id(app, NAV_AGENT, copy.agent, true, None::<&str>)?;
-    let pair = MenuItem::with_id(app, NAV_PAIR, copy.pair, true, None::<&str>)?;
     let settings = MenuItem::with_id(app, NAV_SETTINGS, copy.settings, true, None::<&str>)?;
     let restart = MenuItem::with_id(app, "restart_agent", copy.restart, true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", copy.quit, true, None::<&str>)?;
 
     Menu::with_items(
         app,
-        &[
-            &status_header,
-            &open,
-            &gateway,
-            &agent,
-            &pair,
-            &settings,
-            &restart,
-            &quit,
-        ],
+        &[&status_header, &open, &gateway, &settings, &restart, &quit],
     )
 }
 

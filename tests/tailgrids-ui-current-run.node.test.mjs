@@ -209,7 +209,7 @@ test('dashboard titles merge with the web canvas instead of a full-width tinted 
   assert.equal(headerLayout.length, 1);
   assert.match(headerLayout[0].props.className, /flex-wrap items-start/);
   const headerContent = walk(header, node =>
-    typeof node.props?.className === 'string' && node.props.className.includes('lg:pt-7')
+    typeof node.props?.className === 'string' && node.props.className.includes('lg:pt-6')
   );
   assert.equal(headerContent.length, 1);
   assert.match(headerContent[0].props.className, /pb-0/);

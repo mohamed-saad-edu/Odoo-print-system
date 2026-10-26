@@ -73,6 +73,17 @@ try {
   await close(owner);
   const runtime = await client(config.runtime, config.runtimePassword);
   await verifyRuntime(runtime, config.runtime);
+  for (const archived of ["billing_events", "print_usage_periods", "plan_provider_history", "subscription_provider_history"]) {
+    await denied(runtime, `SELECT * FROM legacy_billing.${archived}`);
+  }
+  checked("runtime-legacy-archive-access-denied", { archivedTables: 4 });
+  const printingArchives = (await runtime.query("SELECT tablename FROM pg_tables WHERE schemaname='legacy_printing' ORDER BY tablename")).rows;
+  assert(printingArchives.length >= 4, "Fresh migration must retain the retired printing history tables");
+  for (const { tablename } of printingArchives) {
+    assert(["printers", "print_jobs", "job_events", "print_job_receipts", "discovered_devices"].includes(tablename));
+    await denied(runtime, `SELECT * FROM legacy_printing.${tablename}`);
+  }
+  checked("runtime-retired-printing-archive-access-denied", { archivedTables: printingArchives.length });
   await runtime.query("INSERT INTO public.future_migration_table(value) VALUES ('new-table-default-grant')");
   await runtime.query("UPDATE public.future_migration_table SET value='updated' WHERE id=1");
   assert.equal((await runtime.query("SELECT value FROM public.future_migration_table WHERE id=1")).rows[0].value, "updated");
@@ -166,6 +177,25 @@ try {
   await privilegeAdmin.query("ALTER TABLE public.future_migration_table OWNER TO yaseir_owner");
   await privilegeAdmin.query("GRANT SELECT,INSERT,UPDATE,DELETE ON public.future_migration_table TO yaseir_runtime");
   await privilegeAdmin.query("GRANT USAGE,SELECT ON ALL SEQUENCES IN SCHEMA public TO yaseir_runtime");
+  await verifyRuntime(runtime, config.runtime);
+  await privilegeAdmin.query("GRANT USAGE ON SCHEMA legacy_billing TO yaseir_runtime");
+  await assert.rejects(verifyRuntime(runtime, config.runtime), /forbidden schema/);
+  await privilegeAdmin.query("REVOKE USAGE ON SCHEMA legacy_billing FROM yaseir_runtime");
+  await privilegeAdmin.query("GRANT SELECT ON legacy_billing.billing_events TO yaseir_runtime");
+  await assert.rejects(verifyRuntime(runtime, config.runtime), /forbidden object ownership, table or routine authority/);
+  await privilegeAdmin.query("REVOKE SELECT ON legacy_billing.billing_events FROM yaseir_runtime");
+  await privilegeAdmin.query("GRANT USAGE ON SCHEMA legacy_printing TO yaseir_runtime");
+  await assert.rejects(verifyRuntime(runtime, config.runtime), /forbidden schema/);
+  await privilegeAdmin.query("REVOKE USAGE ON SCHEMA legacy_printing FROM yaseir_runtime");
+  await privilegeAdmin.query("GRANT SELECT ON legacy_printing.printers TO yaseir_runtime");
+  await assert.rejects(verifyRuntime(runtime, config.runtime), /forbidden object ownership, table or routine authority/);
+  await privilegeAdmin.query("REVOKE SELECT ON legacy_printing.printers FROM yaseir_runtime");
+  await privilegeAdmin.query("GRANT USAGE ON SCHEMA legacy_printing TO yaseir_runtime");
+  await privilegeAdmin.query("GRANT SELECT ON legacy_printing.printers TO yaseir_runtime");
+  const archiveRepairOwner = await client(config.owner, config.ownerPassword);
+  await migrateByHash(archiveRepairOwner, path.join(process.cwd(), "drizzle"));
+  await close(archiveRepairOwner);
+  await denied(runtime, "SELECT * FROM legacy_printing.printers");
   await verifyRuntime(runtime, config.runtime);
   await close(privilegeAdmin);
   checked("runtime-startup-verifier-rejects-grant-or-object-ownership-drift");

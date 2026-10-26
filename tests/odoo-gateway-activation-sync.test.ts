@@ -178,7 +178,8 @@ describe("Odoo Gateway activation synchronization", () => {
       expect(page).not.toContain("Document types");
       expect(page).toContain('t("apiKeys.retiring")');
       expect(page).toContain("readOnlyUntil");
-      expect(page).toContain('t("v4.connection.advanced")');
+      expect(page).not.toContain('t("v4.connection.advanced")');
+      expect(page).toContain("if (loading || !initialLoaded)");
     });
   });
 

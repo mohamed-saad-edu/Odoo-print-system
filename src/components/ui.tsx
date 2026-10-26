@@ -512,7 +512,7 @@ export function BillingPremiumCard({
   const { t } = useI18n();
   return (
     <div className="billing-premium p-5 sm:p-6">
-      <div className="flex flex-wrap items-start justify-between gap-4">
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-3">
         <div className="min-w-0">
           <div className="inline-flex items-center gap-1.5 rounded-sm border border-edge-accent bg-brand-subtle px-2 py-0.5 text-2xs font-[600] tracking-[0.02em] text-brand-subtle-text">
             <span className="h-1.5 w-1.5 rounded-full bg-brand" aria-hidden />
@@ -1440,7 +1440,8 @@ export function Menu({
       event.preventDefault();
       nodes[nodes.length - 1]?.focus();
     } else if (event.key === "Tab") {
-      close(false);
+      // Continue the browser's Tab order from the opener after the portal closes.
+      close();
     }
   };
 
@@ -1497,7 +1498,7 @@ export function Menu({
                     data-variant={item.tone === "danger" ? "danger" : undefined}
                     className="menu-item disabled:pointer-events-none disabled:opacity-45"
                     onClick={() => {
-                      close(false);
+                      close();
                       item.onSelect?.();
                     }}
                   >
@@ -2048,7 +2049,6 @@ export function PageHeader({
   description,
   actions,
   breadcrumbs,
-  eyebrow,
   meta,
   icon,
   className = "",
@@ -2060,7 +2060,6 @@ export function PageHeader({
   description?: React.ReactNode;
   actions?: React.ReactNode;
   breadcrumbs?: React.ReactNode;
-  eyebrow?: React.ReactNode;
   meta?: React.ReactNode;
   icon?: React.ReactNode;
   className?: string;
@@ -2084,25 +2083,24 @@ export function PageHeader({
         className,
       ].join(" ")}
     >
-      <div className={variant === "band" ? `mx-auto w-full min-w-0 max-w-full ${max} px-3 pt-5 pb-0 sm:px-6 sm:pt-6 lg:px-8 lg:pt-7` : ""}>
+      <div className={variant === "band" ? `mx-auto w-full min-w-0 max-w-full ${max} px-3 pt-4 pb-0 sm:px-6 sm:pt-5 lg:px-8 lg:pt-6` : ""}>
         {breadcrumbs && <div className="mb-2 text-sm text-ink-3">{breadcrumbs}</div>}
         <div className="flex flex-wrap items-start justify-between gap-4">
-          <div className="flex min-w-0 flex-1 basis-72 items-start gap-3">
+          <div className="flex min-w-0 flex-1 basis-60 items-center gap-3">
             {icon && (
-              <span className="tg-page-icon mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-edge bg-surface text-ink-3 shadow-xs">
+              <span className="tg-page-icon flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-edge bg-surface text-ink-3" aria-hidden="true">
                 {icon}
               </span>
             )}
             <div className="min-w-0">
-              {eyebrow && <div className="tg-page-eyebrow text-eyebrow mb-1.5">{eyebrow}</div>}
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-                <h1 className="tg-page-title min-w-0 break-words text-2xl font-[640] leading-tight tracking-[-0.024em] text-ink sm:text-3xl">
+                <h1 className="tg-page-title min-w-0 break-words text-xl font-[640] leading-tight tracking-[-0.02em] text-ink sm:text-2xl">
                   {title}
                 </h1>
                 {meta}
               </div>
               {description && (
-                <p className="tg-page-description mt-1.5 max-w-3xl text-base leading-relaxed text-ink-3">{description}</p>
+                <p className="tg-page-description mt-1 max-w-2xl text-sm leading-relaxed text-ink-3">{description}</p>
               )}
             </div>
           </div>

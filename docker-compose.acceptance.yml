@@ -13,9 +13,6 @@ services:
     image: ${YASEIR_ACCEPTANCE_GATEWAY_IMAGE:?exact Gateway image ID required}
     environment:
       RESEND_API_KEY: ""
-      STRIPE_SECRET_KEY: ""
-      STRIPE_WEBHOOK_SECRET: ""
-      STRIPE_PUBLISHABLE_KEY: ""
   caddy:
     image: ${YASEIR_ACCEPTANCE_CADDY_IMAGE:?exact Caddy image ID required}
     volumes:

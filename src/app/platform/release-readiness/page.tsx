@@ -19,12 +19,10 @@ export default async function ReleaseReadinessPage() {
 
   return (
     <>
-      <PageHeader
-        width="wide"
-        eyebrow={t("release.page.eyebrow")}
+      <PageHeader variant="inline"
+        width="wide" 
         icon={<ClipboardCheck className="h-4 w-4" />}
-        title={t("release.page.title")}
-        description={t("release.page.description")}
+        title={t("release.page.title")} 
       />
       <PageContainer width="wide">
         <ReleaseReadinessClient />

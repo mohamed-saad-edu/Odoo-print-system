@@ -80,6 +80,15 @@ RUN set -eu; \
     apk info --exists 'brotli-libs=1.2.1-r0' 'musl=1.2.5-r24' 'musl-utils=1.2.5-r24' 'zlib=1.3.2-r1'; \
     rm -rf /os-security
 COPY --from=caddy-build /tmp/caddy-patched /usr/bin/caddy
+# The Caddy runtime is a static Go binary and health checks use BusyBox wget.
+# Remove the Alpine curl/libcurl CLI and shared library inherited from the
+# digest-pinned parent: they are not needed to proxy traffic or manage TLS.
+# Do not suppress their unreviewed CVEs in the scanner baseline.
+RUN set -eu; \
+    apk del --no-network curl libcurl; \
+    ! apk info --exists curl; \
+    ! apk info --exists libcurl; \
+    test -s /etc/ssl/certs/ca-certificates.crt
 RUN caddy version \
     && addgroup -S -g 10001 yaseir-caddy \
     && adduser -S -D -H -u 10001 -G yaseir-caddy -h /config -s /sbin/nologin yaseir-caddy \

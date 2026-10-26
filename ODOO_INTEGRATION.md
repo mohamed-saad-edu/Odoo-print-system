@@ -1,6 +1,6 @@
 # Odoo Integration Guide
 
-> Module: `print_gateway` | Version: 19.0.2.34.0 | Odoo: 19 Community Edition
+> Module: `print_gateway` | Version: 19.0.2.35.0 | Odoo: 19 Community Edition
 
 
 ## 19.0.2.33.0: one Branch Devices navigation path

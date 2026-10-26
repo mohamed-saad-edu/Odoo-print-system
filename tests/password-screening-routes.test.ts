@@ -26,7 +26,6 @@ vi.mock("../src/lib/platform-auth", () => ({ revokeLegacyPlatformSessionsForUser
 vi.mock("../src/lib/session-tokens", () => ({ revokeUserRefreshFamiliesInTransaction: vi.fn() }));
 vi.mock("../src/lib/audit", () => ({ writeAuditEvent: vi.fn() }));
 
-import { POST as register } from "../src/app/api/auth/register/route";
 import { POST as resetPassword } from "../src/app/api/auth/reset-password/route";
 
 const candidate = "yaseir-breached-fixture-2026";
@@ -50,23 +49,6 @@ describe("compromised-password policy at credential creation boundaries", () => 
   });
   afterEach(() => vi.unstubAllGlobals());
 
-  it("rejects a breached registration password before persisting the user or performing the KDF", async () => {
-    const response = await register(request("register"));
-    expect(response.status).toBe(400);
-    expect(await response.json()).toMatchObject({ code: "PASSWORD_COMPROMISED" });
-    expect(state.hashPassword).not.toHaveBeenCalled();
-    expect(state.transaction).not.toHaveBeenCalled();
-  });
-
-  it("applies the identical breached-password response for existing and new account names", async () => {
-    const first = await register(request("register"));
-    state.user.mockResolvedValue({ id: "existing", emailVerifiedAt: new Date() });
-    const second = await register(request("register"));
-    expect(first.status).toBe(400);
-    expect(second.status).toBe(first.status);
-    expect(await second.json()).toEqual(await first.json());
-  });
-
   it("rejects a breached reset password without consuming the reset proof or changing sessions", async () => {
     const response = await resetPassword(request("reset-password"));
     expect(response.status).toBe(400);
@@ -75,7 +57,7 @@ describe("compromised-password policy at credential creation boundaries", () => 
     expect(state.transaction).not.toHaveBeenCalled();
   });
 
-  it.each([register, resetPassword])("fails closed when the breach service is unavailable without exposing provider errors", async (handler) => {
+  it.each([resetPassword])("fails closed when the breach service is unavailable without exposing provider errors", async (handler) => {
     vi.stubGlobal("fetch", vi.fn(async () => { throw new Error(`provider-secret-${candidate}`); }));
     const response = await handler(request("register"));
     expect(response.status).toBe(503);
@@ -84,7 +66,7 @@ describe("compromised-password policy at credential creation boundaries", () => 
     expect(state.transaction).not.toHaveBeenCalled();
   });
 
-  it.each([register, resetPassword])("rejects fewer than twelve Unicode code points before screening or mutation", async (handler) => {
+  it.each([resetPassword])("rejects fewer than twelve Unicode code points before screening or mutation", async (handler) => {
     state.user.mockResolvedValue({ id: "existing", emailVerifiedAt: new Date() });
     for (const password of ["😀".repeat(6), "Ab9!?xyZ😃🧪🔐"]) {
       const response = await handler(new Request("https://gateway.test/api/auth/credential", {

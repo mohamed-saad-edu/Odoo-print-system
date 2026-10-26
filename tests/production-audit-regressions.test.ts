@@ -46,9 +46,9 @@ describe("production audit regressions", () => {
     expect(evaluateAudit(moderate, 0, lock, {}, allowed).join()).toContain("Stale");
   });
 
-  it("locks the subscription row scoped by the canonical tenant row predicate", () => {
+  it("checks pairing billing through the shared tenant-scoped locking guard", () => {
     const route = readFileSync("src/app/api/agent/register/route.ts", "utf8");
-    expect(route).toContain("WHERE ${liveTenantSubscriptionWhere(sql`${agent.tenantId}`)}");
+    expect(route).toContain("requireTenantBillingAccess(tx, agent.tenantId)");
     expect(route).not.toContain("liveTenantSubscriptionPredicate");
   });
 });

@@ -21,7 +21,7 @@ import {
 import { LanguageSwitcher } from "./LanguageSwitcher";
 import { TopNavbar, type TopNavItem } from "./TopNavbar";
 import { MobileAppBar } from "./MobileAppBar";
-import { Avatar, Button, Callout, Menu, type MenuItemSpec } from "./ui";
+import { Avatar, Button, Callout, Menu, PageSkeleton, type MenuItemSpec } from "./ui";
 import { CommandPalette, type CommandItem } from "./CommandPalette";
 import { ThemeToggle, toggleTheme } from "./ThemeToggle";
 import { ensureCustomerSession } from "../lib/session-config";
@@ -42,6 +42,7 @@ type WorkspaceInfo = {
   email?: string;
   role?: string;
   plan?: string;
+  platformOwner?: boolean;
 };
 
 const COLLAPSE_KEY = "yaseir:console-nav";
@@ -148,7 +149,7 @@ function WorkspaceMenu({
       ? [{ key: "identity", label: workspace.email, meta: workspace.role, disabled: true }]
       : []),
     { key: "settings", label: t("nav.workspaceSettings"), icon: <SettingsIcon className="h-4 w-4" />, href: "/settings" },
-    { key: "billing", label: t("nav.planAndBilling"), icon: <CreditCard className="h-4 w-4" />, href: "/billing", separatorBefore: true },
+    ...(workspace.platformOwner ? [{ key: "billing", label: t("nav.planAndBilling"), icon: <CreditCard className="h-4 w-4" />, href: "/platform/subscriptions", separatorBefore: true }] : []),
     {
       key: "theme",
       label: t("nav.toggleTheme"),
@@ -254,7 +255,7 @@ function ConsoleShell({
     fetchWithTimeout("/api/settings", { credentials: "include", cache: "no-store" })
       .then(async (response) => {
         if (!response.ok) return null;
-        return (await response.json()) as { tenant?: { name?: string }; email?: string; role?: string };
+        return (await response.json()) as { tenant?: { name?: string }; email?: string; role?: string; platformOwner?: boolean };
       })
       .then((data) => {
         if (cancelled || !data) return;
@@ -263,6 +264,7 @@ function ConsoleShell({
           name: data.tenant?.name,
           email: data.email,
           role: data.role,
+          platformOwner: data.platformOwner === true,
         }));
       })
       .catch(() => undefined);
@@ -560,19 +562,19 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   // Platform control plane keeps its own layout (src/app/platform/layout.tsx).
   if (isPlatformScreen) {
-    return <main className="tg-shell-root min-h-screen min-w-0 max-w-full bg-app text-ink">{children}</main>;
+    return <div className="tg-shell-root min-h-screen min-w-0 max-w-full bg-app text-ink">{children}</div>;
   }
 
   // Auth screens render their own centered card — no shell chrome.
   if (isAuthScreen) {
-    return <main className="min-h-screen bg-app">{children}</main>;
+    return <div className="min-h-screen bg-app">{children}</div>;
   }
 
   // Marketing home / pricing must never inherit authenticated console chrome.
   // This check intentionally precedes the authenticated branch because auth state
   // can remain true for one client render while sign-out navigates to "/".
   if (isPublicScreen) {
-    return <main className="tg-shell-root min-h-screen min-w-0 max-w-full bg-app text-ink">{children}</main>;
+    return <div className="tg-shell-root min-h-screen min-w-0 max-w-full bg-app text-ink">{children}</div>;
   }
 
   // Authenticated console: sidebar shell + full-width content.
@@ -587,8 +589,9 @@ export function AppShell({ children }: { children: ReactNode }) {
     );
   }
 
-  // Brief loading state while the session check resolves, render without navigation chrome.
-  return <main className="tg-shell-root min-h-screen min-w-0 max-w-full bg-app text-ink">{children}</main>;
+  // The protected page must not flash unauthenticated data or its initial
+  // empty state before the session check has settled.
+  return <main className="tg-shell-root min-h-screen min-w-0 max-w-full bg-app p-5" aria-busy="true"><PageSkeleton /></main>;
 }
 
 export { TopNavbar };

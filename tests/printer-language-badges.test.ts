@@ -127,7 +127,7 @@ describe("ApiKeysPage API-key authoring", () => {
         return new Response(JSON.stringify(list), { status: 200, headers: { "content-type": "application/json" } });
       }
       if (url === "/api/odoo/installations") return new Response(JSON.stringify([]), { status: 200 });
-      if (url === "/api/subscription-requests") {
+      if (url === "/api/billing/status") {
         return new Response(JSON.stringify({ hasSubscription: true, status: "active" }), { status: 200, headers: { "content-type": "application/json" } });
       }
       if (url === "/api/odoo/keys" && init?.method === "POST") {
@@ -163,9 +163,9 @@ describe("ApiKeysPage API-key authoring", () => {
 
     expect(posted[0]).toEqual({ name: "Odoo Production" });
     // The Odoo credential is full read/write over every supported document type.
-    // V4 explains permissions in Advanced and must not imply a read-only or
-    // document-restricted credential. The authoring payload remains name only.
-    expect(host!.textContent ?? "").toContain("Every credential is restricted to this workspace and Odoo permissions");
+    // Credentials are no longer buried under Advanced; keep the concise
+    // document coverage note without implying a read-only or scoped key.
+    expect(host!.textContent ?? "").toContain("Each key can submit every supported document type.");
     expect(host!.textContent ?? "").not.toContain("Read only");
     expect(host!.textContent ?? "").not.toContain("Selected document types");
   });

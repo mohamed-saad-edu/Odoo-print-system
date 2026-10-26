@@ -71,7 +71,7 @@ describe("Register API existing-account handling", () => {
     const response = await POST(new Request("http://localhost/api/auth/register", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email: "existing@example.com", password: "correct-horse-battery-staple" }),
+      body: JSON.stringify({ email: "existing@example.com" }),
     }));
 
     expect(response.status).toBe(202);
@@ -79,7 +79,7 @@ describe("Register API existing-account handling", () => {
       ok: true,
       message: "If the account can be created, a verification email will be sent.",
     });
-    expect(hashPassword).toHaveBeenCalledExactlyOnceWith("correct-horse-battery-staple");
+    expect(hashPassword).toHaveBeenCalledExactlyOnceWith("token");
     expect(afterCallbacks).toHaveLength(0);
     expect(sendEmail).not.toHaveBeenCalled();
   });
@@ -89,7 +89,7 @@ describe("Register API existing-account handling", () => {
     insertValues.mockResolvedValue(undefined);
     sendEmail.mockResolvedValue(undefined);
     const response = await POST(new Request("https://gateway.test/api/auth/register", {
-      method: "POST", body: JSON.stringify({ email: "new@example.test", password: "correct-horse-battery-staple", planId: "selected-plan", inviteToken: "invitation-proof-token" }),
+      method: "POST", body: JSON.stringify({ email: "new@example.test", displayName: "Owner", planId: "selected-plan", inviteToken: "invitation-proof-token" }),
     }));
     expect(response.status).toBe(202);
     expect(response.headers.get("set-cookie")).toBeNull();
@@ -104,6 +104,7 @@ describe("Register API existing-account handling", () => {
     expect(link.searchParams.get("plan")).toBe("selected-plan");
     expect(link.searchParams.get("invite")).toBe("invitation-proof-token");
     expect(JSON.stringify(message)).not.toContain("correct-horse-battery-staple");
+    expect(insertValues.mock.calls[0][0].passwordHash).toBe("argon2id$fixture");
   });
 
   it("returns accepted before provider delivery and keeps later delivery failure generic", async () => {
@@ -111,10 +112,10 @@ describe("Register API existing-account handling", () => {
     insertValues.mockResolvedValue(undefined);
     sendEmail.mockRejectedValueOnce(new Error("Synthetic provider unavailable"));
     const response = await POST(new Request("https://gateway.test/api/auth/register", {
-      method: "POST", body: JSON.stringify({ email: "new@example.test", password: "correct-horse-battery-staple" }),
+      method: "POST", body: JSON.stringify({ email: "new@example.test" }),
     }));
     expect(response.status).toBe(202);
-    expect(hashPassword).toHaveBeenCalledExactlyOnceWith("correct-horse-battery-staple");
+    expect(hashPassword).toHaveBeenCalledExactlyOnceWith("token");
     expect(sendEmail).not.toHaveBeenCalled();
     expect(afterCallbacks).toHaveLength(1);
     await expect(afterCallbacks[0]()).resolves.toBeUndefined();

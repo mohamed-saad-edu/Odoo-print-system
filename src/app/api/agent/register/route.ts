@@ -1,4 +1,4 @@
-import { isTenantBillingError, liveTenantSubscriptionWhere } from "../../../../lib/entitlements";
+import { isTenantBillingError, requireTenantBillingAccess, TenantSubscriptionRequiredError } from "../../../../lib/entitlements";
 import { requireActiveTenantInTransaction } from "../../../../lib/tenant-guard";
 import { logError } from "../../../../lib/log";
 import { NextResponse } from "next/server";
@@ -136,18 +136,12 @@ export async function POST(req: Request) {
 
       // Pairing grants a fresh runtime credential, so subscription entitlement
       // must be checked at the same database boundary as consuming the
-      // one-time code. Past-due remains usable; active/trialing require a live
-      // current period unless Stripe has not recorded an end yet.
-      const billingResult = await tx.execute(sql`
-        SELECT 1
-        FROM tenant_subscriptions ts
-        WHERE ${liveTenantSubscriptionWhere(sql`${agent.tenantId}`)}
-        FOR UPDATE
-      `);
-      // The canonical row predicate scopes the lock to this tenant's live
-      // subscription. An EXISTS predicate here would lock unrelated rows.
-      if (billingResult.rows.length === 0) {
-        return { kind: "billing_required" as const };
+      // one-time code, after any subscription-row lock wait.
+      try {
+        await requireTenantBillingAccess(tx, agent.tenantId);
+      } catch (error) {
+        if (error instanceof TenantSubscriptionRequiredError) return { kind: "billing_required" as const };
+        throw error;
       }
 
       const meta: Record<string, unknown> = {

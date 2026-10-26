@@ -11,8 +11,6 @@ import { hasBodyOverLimit } from "../../../../lib/request-limits";
 import { clientIpFrom, reserveAuthAttempt, setRateLimitHeaders } from "../../../../lib/auth-rate-limit";
 import { emailAuthTokenTimes } from "../../../../lib/email-auth-token-policy";
 import { findActiveInvitation } from "../../../../lib/invitation-join";
-import { passwordScreeningFailure, screenNewPassword } from "../../../../lib/password-screening";
-import { isValidNewPasswordLength } from "../../../../lib/new-password-policy";
 import { isSingleWorkspaceStaging, stagingWorkspaceExists, STAGING_WORKSPACE_EXISTS_MESSAGE } from "../../../../lib/staging-single-workspace";
 
 const GENERIC = { ok: true, message: "If the account can be created, a verification email will be sent." };
@@ -23,10 +21,9 @@ export async function POST(req: Request) {
   let body: { email?: unknown; password?: unknown; planId?: unknown; inviteToken?: unknown; displayName?: unknown };
   try { const parsedBody = await req.json(); if (!parsedBody || typeof parsedBody !== "object" || Array.isArray(parsedBody)) throw new Error("JSON object required"); body = parsedBody; } catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); }
   const email = typeof body.email === "string" ? normalizeEmail(body.email) : "";
-  const password = typeof body.password === "string" ? body.password : "";
   const planId = typeof body.planId === "string" && body.planId.length <= 128 ? body.planId : "";
   const inviteToken = typeof body.inviteToken === "string" && body.inviteToken.length <= 256 ? body.inviteToken : "";
-  if (!validEmail(email) || !isValidNewPasswordLength(password)) return NextResponse.json({ error: "Enter a valid email and a password of at least 12 characters." }, { status: 400 });
+  if (!validEmail(email)) return NextResponse.json({ error: "Enter a valid email address.", code: "INVALID_INPUT" }, { status: 400 });
   const displayName = typeof body.displayName === "string" ? body.displayName.trim() : "";
   if (displayName.length > 120 || /[\u0000-\u001f\u007f]/.test(displayName)) return NextResponse.json({ error: "Invalid name", code: "INVALID_INPUT" }, { status: 400 });
   const ip = clientIpFrom(req);
@@ -38,10 +35,6 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Registration temporarily unavailable" }, { status: 503 });
   }
   if (!rate.allowed) { const res = NextResponse.json({ error: "Too many attempts. Try again later." }, { status: 429 }); res.headers.set("Retry-After", String(rate.retryAfterSec)); return setRateLimitHeaders(res, rate); }
-  // Apply before checking account existence so the same submitted password
-  // produces the same policy response for known and unknown addresses.
-  const passwordFailure = passwordScreeningFailure(await screenNewPassword(password));
-  if (passwordFailure) return setRateLimitHeaders(NextResponse.json(passwordFailure.body, { status: passwordFailure.status }), rate);
   // Compatibility for older invitation links that still navigate via
   // /signup: bind the verified address to the invitation on the SERVER.
   // Never create a default owner workspace because the browser dropped a
@@ -59,11 +52,12 @@ export async function POST(req: Request) {
       return setRateLimitHeaders(NextResponse.json({ error: "Registration temporarily unavailable" }, { status: 503 }), rate);
     }
   }
-  // Perform the same expensive KDF before the account-existence branch.
-  // Generic response text alone does not hide an account-dependent KDF delay.
+  // No user-chosen password is accepted before mailbox ownership is proven.
+  // Persist only a random, unusable provisional password. Preserve equivalent
+  // KDF cost for existing/new addresses to limit registration enumeration.
   let passwordHash: string;
   try {
-    passwordHash = await hashPassword(password);
+    passwordHash = await hashPassword(generateOpaqueToken());
   } catch {
     return setRateLimitHeaders(NextResponse.json({ error: "Registration temporarily unavailable" }, { status: 503 }), rate);
   }

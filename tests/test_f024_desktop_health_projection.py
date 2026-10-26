@@ -15,14 +15,14 @@ def test_shared_projection_requires_advancing_clock_for_all_counts():
     assert 'export function printerHealthCounts(' in h
     assert 'export function printerDisplayStatus(p: PrinterInfo, nowMs = Date.now())' in h
     assert 'effectivePrinterStatus(p, undefined, nowMs)' in h
-    for page in ('pages/Overview.tsx', 'pages/Agents.tsx', 'main.tsx'):
+    for page in ('pages/Overview.tsx', 'main.tsx'):
         content = read(page)
         assert 'printerHealthCounts(' in content, page
         assert 's.nowMs' in content if page != 'main.tsx' else 'printerHealthCounts(physicalPrinters, nowMs)' in content
 
 
 def test_no_raw_online_comparison_in_consumer_pages():
-    for name in ('pages/Overview.tsx', 'pages/Agents.tsx', 'pages/Printers.tsx', 'pages/Settings.tsx'):
+    for name in ('pages/Overview.tsx', 'pages/Printers.tsx', 'pages/Settings.tsx'):
         content = read(name)
         assert 'p.status === "online"' not in content, name
         assert 'p.status === "offline"' not in content, name
@@ -33,10 +33,12 @@ def test_no_raw_online_comparison_in_consumer_pages():
 
 
 def test_status_badges_and_exports_honor_snapshot_expiry():
-    for name in ('pages/Overview.tsx','pages/Printers.tsx','pages/Settings.tsx'):
+    for name in ('pages/Overview.tsx','pages/Printers.tsx'):
         source = read(name)
         assert 'printerPresentation(p, undefined, ' in source, name
+    # Status from Settings is exported as a compact diagnostic, not repeated as a printer list.
     assert 'printerDisplayStatus(p, s.nowMs)' in read('pages/Settings.tsx')
+    assert 'printerPresentation(p, undefined, ' not in read('pages/Settings.tsx')
     assert 'printerHealthCounts(s.printers.filter(isProductionPrinter), nowMs)' in read('pages/Printers.tsx')
     helper = (ROOT / 'src/shared/printer-presentation.ts').read_text(encoding='utf-8')
     assert 'printerObservationFreshness(printer.lastSeenAt, nowMs)' in helper

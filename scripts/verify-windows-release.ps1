@@ -3,7 +3,7 @@
 .SYNOPSIS
   Bind a signed Windows release and installed files to exact SHA-256 evidence.
 .DESCRIPTION
-  Record validates the explicit candidate installer and the three build outputs.
+  Record validates the explicit installer, its packaged Manager and Go outputs.
   Installed validates the same installed bytes, public publisher trust, SCM
   executable ownership and WebView2 presence. Uninstalled checks removal.
   This script never installs, uninstalls, reboots, changes trust, or prints.
@@ -17,12 +17,27 @@ param(
   [string]$ExpectedManifestSha256,
   [string]$SourceArchiveSha256,
   [string]$InstallerPath,
+  [string]$PackagedManagerPath,
   [string]$InstallDir,
   [string]$OutputPath,
   [string]$Target = "x86_64-pc-windows-msvc"
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+
+function Get-PackagedManagerPath([string]$CandidatePath, [string]$PrebundlePath) {
+  if ([string]::IsNullOrWhiteSpace($CandidatePath)) {
+    throw "Record requires -PackagedManagerPath from the exact candidate installer"
+  }
+  $resolved = [IO.Path]::GetFullPath($CandidatePath)
+  if ([string]::Equals($resolved, [IO.Path]::GetFullPath($PrebundlePath), [StringComparison]::OrdinalIgnoreCase)) {
+    throw "The pre-bundle Manager is not the patched executable packaged by Tauri"
+  }
+  if (-not (Test-Path -LiteralPath $resolved -PathType Leaf)) {
+    throw "The exact packaged Manager is missing: $resolved"
+  }
+  return $resolved
+}
 
 function Assert-ExactFileHash([string]$Path, [string]$ExpectedSha256) {
   if ($ExpectedSha256 -notmatch '^[a-fA-F0-9]{64}$') { throw "A complete expected SHA-256 is required" }
@@ -77,9 +92,16 @@ if (-not $IsWindows) { throw "BLOCKED: this acceptance stage requires an actual 
 if ($Target -ne "x86_64-pc-windows-msvc") { throw "This acceptance profile verifies the supported Windows x64 release" }
 $ExpectedPublisherThumbprint = $ExpectedPublisherThumbprint.Trim()
 $repoRoot = Split-Path -Parent $PSScriptRoot
+$managerBuildPath = $null
+if ($Mode -eq "Record") {
+  # Tauri patches and re-signs the Manager embedded in NSIS, then restores the
+  # pre-bundle release executable. Record the actual candidate payload bytes.
+  $prebundleManager = Join-Path $repoRoot "src-tauri/target/$Target/release/yaseir-manager.exe"
+  $managerBuildPath = Get-PackagedManagerPath $PackagedManagerPath $prebundleManager
+}
 $artifacts = @(
   @{ id = "installer"; buildPath = $InstallerPath; installedPath = $null },
-  @{ id = "manager"; buildPath = (Join-Path $repoRoot "src-tauri/target/$Target/release/yaseir-manager.exe"); installedPath = "yaseir-manager.exe" },
+  @{ id = "manager"; buildPath = $managerBuildPath; installedPath = "yaseir-manager.exe" },
   @{ id = "agent"; buildPath = (Join-Path $repoRoot "agent/YaseirAgent.exe"); installedPath = "resources/YaseirAgent.exe" },
   @{ id = "cli"; buildPath = (Join-Path $repoRoot "agent/yaseir-agent-cli.exe"); installedPath = "resources/yaseir-agent-cli.exe" }
 )

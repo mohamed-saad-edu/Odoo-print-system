@@ -78,24 +78,6 @@ test("physical shared v4 printers stay selectable while software writers are rej
   assert.equal(api.isVirtualPrinterRecord({ name: "Office", driverName: "Microsoft Print to PDF", port: "PORTPROMPT:" }), true);
 });
 
-test("actual Stripe normalization accepts item periods and bounds corrupt values", async () => {
-  const api = await loadModule("src/lib/stripe.ts", {}, (source) => {
-    const index = source.indexOf("export function stripeSubscriptionPeriod(");
-    assert.ok(index >= 0);
-    return source.slice(index);
-  });
-  const start = 1_700_000_000, end = start + 2_592_000;
-  const modern = api.stripeSubscriptionPeriod({ items: { data: [{ current_period_start: start, current_period_end: end }] } });
-  const legacy = api.stripeSubscriptionPeriod({ current_period_start: start, current_period_end: end });
-  assert.equal(modern.start.getTime(), legacy.start.getTime());
-  assert.equal(modern.end.getTime(), end * 1000);
-  for (const value of [NaN, -1, "1700000000", 8_640_000_000_001, 1.5]) {
-    const result = api.stripeSubscriptionPeriod({ current_period_start: value, current_period_end: value });
-    assert.equal(result.start, null);
-    assert.equal(result.end, null);
-  }
-});
-
 test("existing Gateway i18n checker passes against both real catalogs", async () => {
   const logs = [];
   await loadModule("scripts/check-i18n.ts", {

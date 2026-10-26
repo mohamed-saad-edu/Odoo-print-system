@@ -75,7 +75,7 @@ describe("subscription period gate", () => {
     }
   });
 
-  it("compares a Stripe period end against the calibrated clock", () => {
+  it("compares manual subscription expiry against the calibrated clock", () => {
     expect(isSubscriptionPeriodLive(null)).toBe(true);
     expect(isSubscriptionPeriodLive(undefined)).toBe(true);
     expect(isSubscriptionPeriodLive(new Date(Date.now() + 60_000))).toBe(true);
@@ -240,17 +240,6 @@ describe("clock authority is enforced in the source", () => {
     expect(service.slice(insert)).toContain("updatedAt: dbNow");
     expect(read("src/db/schema.ts")).toContain('timestamp("created_at").default(sql`clock_timestamp()`)');
     expect(read("drizzle/0067_print_job_wall_clock.sql")).toContain('ALTER COLUMN "created_at" SET DEFAULT clock_timestamp()');
-  });
-
-  it("verifies Stripe signatures and Checkout expiry on the calibrated clock", () => {
-    const stripe = read("src/lib/stripe.ts");
-    const signature = stripe.slice(stripe.indexOf("export function verifyStripeSignature"));
-    expect(signature.slice(0, 1200)).toContain("gatewayNowMs()");
-    expect(signature.slice(0, 1200)).not.toContain("Date.now()");
-
-    const checkout = read("src/app/api/billing/checkout/route.ts");
-    expect(checkout).toContain("MANUAL_BILLING_REQUIRED");
-    expect(checkout).not.toContain("stripeRequest");
   });
 
   it("uses the database-authoritative subscription gate before calibrated-clock presentation", () => {

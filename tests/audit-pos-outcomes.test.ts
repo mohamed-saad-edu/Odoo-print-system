@@ -1,6 +1,8 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { patch } from "./__mocks__/odoo";
+// @ts-expect-error Native Node boundary fixture has no declaration file.
+import { recoveryIndexedDB } from "./helpers/odoo-recovery-indexeddb.mjs";
 import "../odoo_addons/print_gateway/static/src/js/pos_print_router";
 
 type Outcome = { successful: boolean; gatewayOutcome?: string; canRetry?: boolean };
@@ -25,7 +27,7 @@ beforeEach(() => {
   // deliberately preserves unresolved operations across stores/reloads within
   // a scenario; clearing mock calls must not be mistaken for clearing storage.
   localStorage.clear();
-  Object.assign(window, { odoo: { __session_info__: { db: "audit_pos_outcomes" } } });
+  Object.assign(window, { indexedDB: recoveryIndexedDB(), odoo: { __session_info__: { db: "audit_pos_outcomes" } } });
 });
 describe("kitchen completion and replay safety", () => {
   it("keeps a partially accepted change unconsumed and never resends accepted or unknown tickets", async () => {

@@ -74,9 +74,75 @@ BEGIN
 END $destination_labels$;`);
 }
 
+// Immutable0081 identifies the victims in its first temporary-table statement.
+// Preserve exact row snapshots before its deletes and cascades remove evidence.
+const PHYSICAL_ONLY_CUTOVER_HASH = "9a432a7ddb1816649961a309fadaf12dedb054f7edd7b047addd6c03de798410";
+async function preserveLegacyPrintHistory(client: PoolClient): Promise<void> {
+  await client.query("CREATE SCHEMA IF NOT EXISTS legacy_printing; REVOKE ALL ON SCHEMA legacy_printing FROM PUBLIC");
+  const sources = [
+    ["printers", "r.id", "NULL::text", "JOIN _removed_virtual_printers v ON v.tenant_id=r.tenant_id AND v.id=r.id"],
+    ["print_jobs", "r.printer_id", "r.id", "JOIN _removed_virtual_printers v ON v.tenant_id=r.tenant_id AND v.id=r.printer_id"],
+    ["job_events", "j.printer_id", "r.job_id", "JOIN print_jobs j ON j.tenant_id=r.tenant_id AND j.id=r.job_id JOIN _removed_virtual_printers v ON v.tenant_id=j.tenant_id AND v.id=j.printer_id"],
+    ["print_job_receipts", "r.printer_id", "r.id", "JOIN _removed_virtual_printers v ON v.tenant_id=r.tenant_id AND v.id=r.printer_id"],
+    ["discovered_devices", "r.provisioned_printer_id", "NULL::text", `WHERE EXISTS (SELECT 1 FROM _removed_virtual_printers v WHERE v.tenant_id=r.tenant_id AND v.id=r.provisioned_printer_id)
+      OR lower(COALESCE(r.spooler_name,r.device_name,'')) ~ '(microsoft print to pdf|onenote|xps document writer|pdf24|pdfcreator|virtual printer|print to pdf|remote desktop easy print|redirected)'
+      OR r.capabilities @> '{"virtual": true}'::jsonb OR r.capabilities @> '{"is_virtual": true}'::jsonb
+      OR lower(COALESCE(r.capabilities->>'printer_class','')) IN ('virtual','redirected')
+      OR lower(COALESCE(r.capabilities->>'port_name','')) ~ '^(portprompt:|xpsport:|file:|nul:|null:|shrfax:|fax:)'`],
+  ];
+  // All interpolated identifiers/projections are fixed owner code, never input.
+  for (const [table, printer, job, scope] of sources) {
+    if (!(await client.query("SELECT to_regclass($1) AS relation", [table])).rows[0].relation) continue;
+    await client.query(`CREATE TABLE IF NOT EXISTS legacy_printing.${table} (
+      tenant_id text NOT NULL, entity_id text NOT NULL, printer_id text, job_id text,
+      record jsonb NOT NULL, archived_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+      PRIMARY KEY(tenant_id,entity_id)
+    );
+    REVOKE ALL ON TABLE legacy_printing.${table} FROM PUBLIC;
+    INSERT INTO legacy_printing.${table}(tenant_id,entity_id,printer_id,job_id,record)
+      SELECT r.tenant_id,r.id,${printer},${job},to_jsonb(r) FROM ${table} r ${scope}
+      ON CONFLICT(tenant_id,entity_id) DO NOTHING`);
+  }
+}
+
+/** Complete provider evidence before immutable0098 drops the old columns. */
+async function preserveLegacyProviderBilling(client: PoolClient): Promise<void> {
+  await client.query(`
+    CREATE SCHEMA IF NOT EXISTS legacy_billing;
+    REVOKE ALL ON SCHEMA legacy_billing FROM PUBLIC;
+    CREATE TABLE IF NOT EXISTS legacy_billing.plan_provider_history (
+      plan_id text PRIMARY KEY, provider_metadata jsonb NOT NULL,
+      archived_at timestamptz NOT NULL DEFAULT clock_timestamp()
+    );
+    CREATE TABLE IF NOT EXISTS legacy_billing.subscription_provider_history (
+      tenant_id text PRIMARY KEY, provider_metadata jsonb NOT NULL,
+      archived_at timestamptz NOT NULL DEFAULT clock_timestamp()
+    );
+    INSERT INTO legacy_billing.plan_provider_history AS history (plan_id, provider_metadata)
+    SELECT p.id, (SELECT jsonb_object_agg(key,value) FROM jsonb_each(to_jsonb(p))
+      WHERE key IN ('stripe_price_id','stripe_price_history','stripe_product_id','currency','interval'))
+    FROM plans p
+    ON CONFLICT(plan_id) DO UPDATE SET provider_metadata=history.provider_metadata || EXCLUDED.provider_metadata;
+    INSERT INTO legacy_billing.subscription_provider_history AS history (tenant_id, provider_metadata)
+    SELECT s.tenant_id, (SELECT jsonb_object_agg(key,value) FROM jsonb_each(to_jsonb(s))
+      WHERE key IN ('stripe_customer_id','stripe_subscription_id','billing_mode','trial_started_at',
+        'stripe_last_event_created_at','stripe_state_revision','checkout_status','checkout_plan_id',
+        'checkout_idempotency_key','checkout_request_params','checkout_intent_created_at',
+        'checkout_session_id','checkout_session_url','checkout_session_expires_at',
+        'billing_operation_id','billing_operation_type','billing_operation_idempotency_key',
+        'billing_operation_subscription_id'))
+    FROM tenant_subscriptions s
+    ON CONFLICT(tenant_id) DO UPDATE SET provider_metadata=history.provider_metadata || EXCLUDED.provider_metadata;
+  `);
+}
+
 /** Apply journal order by recorded content hash, including skipped older timestamps. */
 export async function migrateByHash(client: PoolClient, migrationsFolder: string): Promise<void> {
   const migrations = readMigrationFiles({ migrationsFolder });
+  // Immutable legacy repair hashes remain recorded for migration-ledger parity.
+  // Once the manual-only cutover is present, do not re-create retired provider
+  // columns after the forward-only cleanup migration drops them.
+  const manualOnly = migrations.some(m => m.sql.some(statement => statement.includes("PROVIDER_BILLING_RETIREMENT_V1")));
   await client.query("BEGIN");
   try {
     // Historical DDL explicitly references public; keep unqualified tables and
@@ -90,8 +156,18 @@ export async function migrateByHash(client: PoolClient, migrationsFolder: string
     for (const migration of migrations) {
       if (applied.has(migration.hash)) continue;
       if (migration.hash === LEGACY_DESTINATION_REMOVAL_HASH) await preserveLegacyDestinationLabels(client);
-      for (const statement of migration.sql) {
+      if (migration.sql.some(statement => statement.includes("PROVIDER_BILLING_RETIREMENT_V1"))) await preserveLegacyProviderBilling(client);
+      const preservePrintHistory = migration.hash === PHYSICAL_ONLY_CUTOVER_HASH;
+      if (preservePrintHistory) {
+        // Prevent writes between selecting victims, archiving and deleting them.
+        await client.query("LOCK TABLE printers, print_jobs, job_events, discovered_devices IN SHARE ROW EXCLUSIVE MODE");
+        if ((await client.query("SELECT to_regclass('print_job_receipts') AS relation")).rows[0].relation) {
+          await client.query("LOCK TABLE print_job_receipts IN SHARE ROW EXCLUSIVE MODE");
+        }
+      }
+      for (const [index, statement] of migration.sql.entries()) {
         if (statement.trim()) await client.query(scopeMigrationConstraintGuards(statement));
+        if (preservePrintHistory && index === 0) await preserveLegacyPrintHistory(client);
       }
       await client.query('INSERT INTO drizzle.__drizzle_migrations (hash, created_at) VALUES ($1, $2)', [migration.hash, migration.folderMillis]);
       applied.add(migration.hash);
@@ -99,7 +175,8 @@ export async function migrateByHash(client: PoolClient, migrationsFolder: string
     for (const repair of AUDIT_REPAIRS) {
       const hash = createHash("sha256").update(repair).digest("hex");
       if (applied.has(hash)) continue;
-      await client.query(repair);
+      const retiredRepair = /^-- audit A(?:98 v1|96 v1|97 v[12]):/.test(repair);
+      if (!manualOnly || !retiredRepair) await client.query(repair);
       await client.query('INSERT INTO drizzle.__drizzle_migrations (hash, created_at) VALUES ($1, $2)', [hash, Math.max(...migrations.map(m => m.folderMillis))]);
       applied.add(hash);
     }

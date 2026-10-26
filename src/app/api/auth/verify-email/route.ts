@@ -140,7 +140,9 @@ export async function POST(req: Request) {
         .set({ consumedAt: sql`clock_timestamp()` })
         .where(and(eq(passwordResetTokens.userId, currentUser.id), isNull(passwordResetTokens.consumedAt)));
       await tx.insert(passwordResetTokens).values({
-        id: `prt_${nanoid(18)}`,
+        // A server-issued setup token is distinct from ordinary account recovery.
+        // Its persisted id is the trusted purpose marker (not the browser setup query).
+        id: `psu_${nanoid(18)}`,
         userId: currentUser.id,
         tokenHash: await hashToken(resetToken),
         ...emailAuthTokenTimes(),

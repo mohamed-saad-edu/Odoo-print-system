@@ -9,5 +9,5 @@ export function parseManualPlan(input: unknown) {
   if(!Number.isSafeInteger(quota)||quota<1||quota>2147483647)throw new ManualSubscriptionError('PLAN_INVALID');
   const displayOrder=Number(b.displayOrder??0);
   if(!Number.isSafeInteger(displayOrder)||displayOrder<0||displayOrder>1000000)throw new ManualSubscriptionError('PLAN_INVALID');
-  return {id:b.id,name:b.name.trim(),description:b.description,displayOrder,isActive:b.isActive!==false,isPublic:b.isPublic!==false,entitlements:normalizePlanEntitlements({max_agents:'unlimited',max_printers:'unlimited',max_prints_per_period:quota,max_jobs_per_minute:120,max_concurrent_jobs:100}),currency:'sar',interval:'month'};
+  return {id:b.id,name:b.name.trim(),description:b.description,displayOrder,isActive:b.isActive!==false,isPublic:b.isPublic!==false,entitlements:normalizePlanEntitlements({max_agents:'unlimited',max_printers:'unlimited',max_prints_per_period:quota,max_jobs_per_minute:120,max_concurrent_jobs:100})};
 }

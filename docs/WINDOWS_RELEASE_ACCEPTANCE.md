@@ -117,15 +117,23 @@ style/deprecation diagnostics are absent. Local Cargo backports need the
 separate source-integrity and optimized GLib checks described in
 `src-tauri/vendor/README.md`; Cargo audit may omit local path crates.
 
-Select the single newly built NSIS installer by exact path, then record its
-signed bytes and the three signed build outputs. The script rejects unsigned,
+Select the single newly built NSIS installer by exact path. Obtain its packaged
+`yaseir-manager.exe` with an already reviewed extraction tool, or copy it from an
+isolated installation of that exact candidate on the build VM. Tauri patches and
+re-signs this payload, then restores the pre-bundle release executable; those
+two files can have different hashes. Set `YASEIR_PACKAGED_MANAGER_PATH` to the
+exact extracted/copied payload. The verifier requires it and rejects the
+canonical pre-bundle path; it cannot prove extraction provenance by itself.
+Record the installer, packaged Manager and two signed Go build outputs. The script rejects unsigned,
 untrusted, self-signed, changed or unexpected-publisher files.
 
 ```powershell
 $Installer = [IO.Path]::GetFullPath('src-tauri\target\x86_64-pc-windows-msvc\release\bundle\nsis\Yaseir Print Manager_1.0.0_x64-setup.exe')
+$PackagedManager = $env:YASEIR_PACKAGED_MANAGER_PATH
+if ([string]::IsNullOrWhiteSpace($PackagedManager)) { throw 'Set the Manager payload path from this exact candidate installer' }
 $Manifest = Join-Path $ReleaseEvidence 'signed-candidate.json'
 .\scripts\verify-windows-release.ps1 -Mode Record -Target $Target `
-  -ManifestPath $Manifest -InstallerPath $Installer `
+  -ManifestPath $Manifest -InstallerPath $Installer -PackagedManagerPath $PackagedManager `
   -ExpectedPublisherThumbprint $Publisher -SourceArchiveSha256 $SourceArchiveSha256
 $ManifestSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $Manifest).Hash
 ```

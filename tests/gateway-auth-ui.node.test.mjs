@@ -210,8 +210,8 @@ test("email proof refuses a cross-origin account continuation", async () => {
   cleanup();
 });
 
-test("password setup returns to normal sign-in with invitation context and cancels an abandoned redirect", async () => {
-  const harness = component("src/app/reset-password/page.tsx", async () => ({ ok: true, json: async () => ({ ok: true }) }), undefined,
+test("verified signup sets one password then continues to its workspace without another sign-in", async () => {
+  const harness = component("src/app/reset-password/page.tsx", async () => ({ ok: true, json: async () => ({ ok: true, authenticated: true }) }), undefined,
     { search: "token=owner-proof&setup=1&invite=invitation-proof" });
   find(harness.tree, node => node.props?.id === "password").props.onChange({ target: { value: "owner-new-password-123" } });
   harness.render();
@@ -220,9 +220,9 @@ test("password setup returns to normal sign-in with invitation context and cance
   const cleanup = harness.effects.at(-1)();
   assert.equal(harness.timers.size, 1);
   const link = find(harness.tree, node => typeof node.props?.href === "string");
-  const signIn = new URL(link.props.href, "https://gateway.test");
-  assert.equal(signIn.pathname, "/login");
-  assert.equal(signIn.searchParams.get("next"), "/invite?token=invitation-proof");
+  const destination = new URL(link.props.href, "https://gateway.test");
+  assert.equal(destination.pathname, "/invite");
+  assert.equal(destination.searchParams.get("token"), "invitation-proof");
   cleanup();
   assert.equal(harness.timers.size, 0);
   assert.deepEqual(harness.redirects, []);

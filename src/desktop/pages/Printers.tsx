@@ -24,7 +24,6 @@ export function PrintersPage({ s }: { s: DesktopState }) {
 
   return (
     <div className="space-y-5">
-      <Card className="p-5"><h2 className="text-base font-semibold text-ink">{t("v4.experience.printers.guide")}</h2><p className="mt-2 text-sm leading-relaxed text-ink-3">{t("v4.experience.printers.guideBody")}</p></Card>
       <Toolbar>
         <div className="relative min-w-0 flex-1">
           <Search className="pointer-events-none absolute start-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-3" aria-hidden />

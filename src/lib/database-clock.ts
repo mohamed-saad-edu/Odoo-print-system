@@ -24,7 +24,7 @@ export async function databaseNowMs(): Promise<number> {
  * The database is the authority: every durable timestamp is written with
  * PostgreSQL `now()` and every SQL freshness gate compares against it. Node
  * code that evaluates the *same* facts in JS (agent/printer availability,
- * Stripe webhook tolerance, Retry-After arithmetic) must therefore not use the
+ * subscription expiry, Retry-After arithmetic) must therefore not use the
  * host wall clock, which can drift from the database.
  *
  * `databaseNowMs()` measures the offset once per TTL; JS callers then read

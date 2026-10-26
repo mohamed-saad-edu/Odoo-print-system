@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, createElement as h, useEffect, type ReactNode } from "react";
+import { act, createElement as h, Fragment, useEffect, useState, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CommandPalette, type CommandItem } from "../src/components/CommandPalette";
@@ -187,6 +187,46 @@ describe("shared shell interactions", () => {
     expect(document.querySelector('[role="menu"]')).toBeNull();
     expect(document.querySelector('[role="dialog"]')).not.toBeNull();
     expect(onClose).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(trigger);
+  });
+
+  it.each([false, true])("keeps a live focus origin when leaving a menu with Tab (reverse=%s)", (shiftKey) => {
+    render(h(Menu, {
+      label: "Actions", trigger: "Actions", items: [{ key: "one", label: "One", onSelect: vi.fn() }],
+    }));
+    const trigger = document.querySelector<HTMLButtonElement>('button[aria-haspopup="menu"]')!;
+    act(() => trigger.click());
+    act(() => vi.advanceTimersByTime(20));
+    const item = document.querySelector<HTMLButtonElement>('[role="menuitem"]')!;
+    act(() => item.focus());
+    const event = new KeyboardEvent("keydown", { key: "Tab", shiftKey, bubbles: true, cancelable: true });
+    act(() => { item.dispatchEvent(event); });
+    expect(document.querySelector('[role="menu"]')).toBeNull();
+    expect(event.defaultPrevented).toBe(false);
+    // The browser continues its normal Tab order from the trigger, not from
+    // a removed portaled item at the end of document.body.
+    expect(document.activeElement).toBe(trigger);
+  });
+
+  it("restores the menu opener after an action dialog closes", () => {
+    function Actions() {
+      const [open, setOpen] = useState(false);
+      return h(Fragment, null,
+        h(Menu, { label: "Actions", trigger: "Actions", items: [{ key: "edit", label: "Edit", onSelect: () => setOpen(true) }] }),
+        h(Modal, { open, title: "Edit device", onClose: () => setOpen(false), children: "Device settings" }),
+      );
+    }
+    render(h(Actions));
+    const trigger = document.querySelector<HTMLButtonElement>('button[aria-haspopup="menu"]')!;
+    act(() => trigger.click());
+    act(() => vi.advanceTimersByTime(20));
+    const item = document.querySelector<HTMLButtonElement>('[role="menuitem"]')!;
+    act(() => item.focus());
+    act(() => item.click());
+    const dialog = document.querySelector<HTMLElement>('[role="dialog"]')!;
+    expect(document.activeElement).toBe(dialog);
+    key(dialog, "Escape");
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
     expect(document.activeElement).toBe(trigger);
   });
 

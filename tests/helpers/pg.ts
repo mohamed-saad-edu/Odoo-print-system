@@ -45,10 +45,19 @@ export function pool(): Pool {
 }
 
 const GLOBAL_PG_LOCK = 727727;
+// Integration workers share a PostgreSQL database, not a historical archive.
+// Keep a separate archive for each worker to prevent a second 0098 migration
+// from trying to move its billing_events onto another worker's archived table.
+export function billingArchiveSchema(): string {
+  const schema = getOrCreateWorkerSchema();
+  if (!schema) return "legacy_billing";
+  return `test_billing_archive_${createHash("sha256").update(schema).digest("hex").slice(0, 20)}`;
+}
 function rewriteMigrationForSchema(sql: string, schema: string | null): string {
   if (!schema) return sql;
   const quotedSchema = quoteIdent(schema);
   return sql
+    .replaceAll(/\blegacy_billing\b/g, quoteIdent(billingArchiveSchema()))
     .replaceAll('"public".', `${quotedSchema}.`)
     .replaceAll(/\bpublic\./g, `${schema}.`)
     .replaceAll(
@@ -64,6 +73,9 @@ async function applyMigrationsOnce(): Promise<void> {
     await client.query("SELECT pg_advisory_lock($1)", [GLOBAL_PG_LOCK]);
     try {
       if (schema) {
+        // An archived table can retain an FK to the worker schema. Remove the
+        // worker's own archive first, not another worker's historical records.
+        await client.query(`DROP SCHEMA IF EXISTS ${quoteIdent(billingArchiveSchema())} CASCADE`);
         await client.query(`DROP SCHEMA IF EXISTS ${quoteIdent(schema)} CASCADE`);
         await client.query(`CREATE SCHEMA ${quoteIdent(schema)}`);
         await client.query(`SET search_path TO ${quoteIdent(schema)}, public`);
@@ -77,7 +89,13 @@ async function applyMigrationsOnce(): Promise<void> {
           await client.query(statement);
         }
       }
-      for (const repair of AUDIT_REPAIRS) await client.query(rewriteMigrationForSchema(repair, schema));
+      // Match scripts/db-migrate.ts: retired provider repairs retain ledger
+      // hashes but must not recreate checkout columns after manual-only 0098.
+      const manualOnly = files.includes("0098_manual_only_billing.sql");
+      for (const repair of AUDIT_REPAIRS) {
+        if (manualOnly && /^-- audit A(?:98 v1|96 v1|97 v[12]):/.test(repair)) continue;
+        await client.query(rewriteMigrationForSchema(repair, schema));
+      }
       const columns = await client.query(`SELECT column_name FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'print_jobs'`);
       const names = new Set(columns.rows.map((row: { column_name: string }) => row.column_name));
       for (const required of ["destination", "agent_id", "printer_id", "idempotency_key", "delivery_attempts"]) {
@@ -131,8 +149,6 @@ export async function truncateAll(): Promise<void> {
         "tenant_invitations",
         "platform_sessions",
         "tenant_subscriptions",
-        "print_usage_periods",
-        "billing_events",
         "audit_events",
         "api_keys",
         "tenant_users",

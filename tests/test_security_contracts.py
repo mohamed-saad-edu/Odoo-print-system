@@ -135,7 +135,7 @@ def test_platform_owner_routes_distinguish_invalid_auth_from_platform_dependency
 
 def test_workspace_billing_page_never_discloses_commercial_contract_or_invents_quota():
     page = read("src/app/billing/page.tsx")
-    assert 'redirect("/dashboard")' in page
+    assert 'redirect("/platform/subscriptions")' in page
     assert '/api/billing' not in page
     assert 'usage' not in page.lower()
     status = read("src/app/api/billing/status/route.ts")

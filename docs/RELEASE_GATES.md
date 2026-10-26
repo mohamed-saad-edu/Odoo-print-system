@@ -20,7 +20,7 @@ destination. Automated release checks remain available independently of this UI.
 | Gateway | Node version in `.nvmrc`, locked npm dependencies, Next production build, PostgreSQL 16+ | Production image, private networking, real proxy/TLS, alerting and sustained load |
 | Go agent | Go version in `agent/go.mod`, read-only module graph, durable SQLite queue | Real Windows/CGO build; SCM/GDI/spooler/USB and supported printer models |
 | Desktop | Rust version in `src-tauri/rust-toolchain.toml` where present, locked Cargo graph, Tauri/NSIS | Real MSVC/Windows SDK build, WebView2, installer/update/uninstall, signed artifact |
-| Odoo addon | Odoo 19; addon `19.0.2.25.0`; persistent data directory; deployment-managed encryption keys | Exact hardened upstream runtime, production addon upgrade, POS/report/printer acceptance |
+| Odoo addon | Odoo 19; addon `19.0.2.35.0`; persistent data directory; deployment-managed encryption keys | Exact hardened upstream runtime, production addon upgrade, POS/report/printer acceptance |
 
 Read `docs/runtime-hardening/` for the exact Odoo runtime dependency
 set and upstream PDF decompression patch. An audit of dependency metadata alone
@@ -101,7 +101,7 @@ for this candidate does not execute Win32 code.
    key versions, Odoo `data_dir/yaseir-print-installations/`, and protected agent
    configuration/SQLite/sharing state. Keep independent encrypted copies and
    restore them in recovery before release. Do not place keys inside a source ZIP.
-3. Upgrade the addon to `19.0.2.25.0` before enforcing the Gateway status-read
+3. Upgrade the addon to `19.0.2.35.0` before enforcing the Gateway status-read
    contract. Its status batches carry each saved job's version and installation
    proof. Older addon status requests may be rejected by a strict-v2 Gateway.
    Preserve saved operation keys and proofs; do not turn reconciliation failure

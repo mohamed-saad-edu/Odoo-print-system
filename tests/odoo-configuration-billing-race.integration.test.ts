@@ -24,7 +24,7 @@ suite("Odoo Gateway configuration billing race", () => {
     );
   });
 
-  it("does not enable Gateway printing after a concurrent subscription cancellation wins the billing row lock", async () => {
+  it("does not enable Gateway printing after a concurrent manual subscription suspension wins the billing row lock", async () => {
     const locker = await pool().connect();
     try {
       await locker.query("BEGIN");
@@ -58,7 +58,7 @@ suite("Odoo Gateway configuration billing race", () => {
       });
 
       await locker.query(
-        "UPDATE tenant_subscriptions SET status = 'cancelled', current_period_end = now() - interval '1 second' WHERE tenant_id = $1",
+        "UPDATE tenant_subscriptions SET status = 'suspended', current_period_end = now() - interval '1 second' WHERE tenant_id = $1",
         [fixture.tenantId],
       );
       await locker.query("COMMIT");
@@ -85,13 +85,13 @@ suite("Odoo Gateway configuration billing race", () => {
     }
   });
 
-  it("still allows disabling the replicated Odoo activation state after subscription cancellation", async () => {
+  it("still allows disabling the replicated Odoo activation state after manual subscription suspension", async () => {
     await pool().query(
       "UPDATE api_keys SET odoo_enabled = true, odoo_enabled_revision = 1 WHERE tenant_id = $1",
       [fixture.tenantId],
     );
     await pool().query(
-      "UPDATE tenant_subscriptions SET status = 'cancelled', current_period_end = now() - interval '1 second' WHERE tenant_id = $1",
+      "UPDATE tenant_subscriptions SET status = 'suspended', current_period_end = now() - interval '1 second' WHERE tenant_id = $1",
       [fixture.tenantId],
     );
 

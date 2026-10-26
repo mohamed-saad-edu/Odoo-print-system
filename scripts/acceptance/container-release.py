@@ -108,7 +108,7 @@ def main():
             "POSTGRES_RUNTIME_USER": "yaseir_runtime", "POSTGRES_RUNTIME_PASSWORD": secrets.token_hex(32),
             "GATEWAY_JWT_SECRET": secrets.token_hex(32), "TRUST_PROXY_SECRET": secrets.token_hex(32),
             "MANAGER_PASSWORD_HASH": "synthetic-disabled-legacy-login-" + secrets.token_hex(32), "PLATFORM_TENANT_ID": "synthetic-platform-only",
-            "TRUST_PROXY": "1", "COOKIE_SECURE": "1", "RESEND_API_KEY": "", "STRIPE_SECRET_KEY": "", "STRIPE_WEBHOOK_SECRET": "", "STRIPE_PUBLISHABLE_KEY": "",
+            "TRUST_PROXY": "1", "COOKIE_SECURE": "1", "RESEND_API_KEY": "",
             "YASEIR_ACCEPTANCE_GATEWAY_IMAGE": report["images"]["gateway"], "YASEIR_ACCEPTANCE_POSTGRES_IMAGE": report["images"]["postgres"], "YASEIR_ACCEPTANCE_CADDY_IMAGE": report["images"]["caddy"]})
         code, _ = run("compose-config", compose + ["config", "--quiet"], timeout=30)
         if code:

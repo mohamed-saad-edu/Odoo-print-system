@@ -14,6 +14,9 @@ agent:
   reprint_after_crash: false
 
 printers:
+  # Direct TCP jobs and local test prints require live SNMP Printer-MIB identity;
+  # an open TCP 9100 port alone does not authorize output. Use an installed
+  # Windows spooler queue when the printer cannot provide that identity.
   - id: "printer_kitchen"
     name: "Kitchen Printer"
     type: "network"

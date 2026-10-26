@@ -235,7 +235,7 @@ describe("desktop manager", () => {
     await waitUntil(() => unknownTab.getAttribute("aria-selected") === "true");
     expect(document.querySelector("main")?.textContent).not.toContain("job_1");
 
-    for (const page of ["printers", "jobs", "agents", "settings"] as const) {
+    for (const page of ["printers", "jobs", "settings"] as const) {
       window.location.hash = page;
       window.dispatchEvent(new Event("hashchange"));
       await new Promise((r) => setTimeout(r, 80));

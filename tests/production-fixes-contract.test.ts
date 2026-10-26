@@ -154,7 +154,7 @@ describe("production fixes contracts (2026-09)", () => {
     expect(route).toContain("TenantPrintQuotaExceededError");
     expect(testPrint).toContain("TenantPrintQuotaExceededError");
     expect(testPrint).toContain("upgradeRequired: true");
-    expect(schema).toContain('printUsagePeriods = pgTable("print_usage_periods"');
+    expect(schema).toContain('printMonthlyUsage = pgTable("print_monthly_usage"');
     expect(migration).toContain("print_usage_periods");
     expect(migration).toContain("current_period_start");
   });

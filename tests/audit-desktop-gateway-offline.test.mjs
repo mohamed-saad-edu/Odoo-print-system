@@ -31,6 +31,62 @@ function slice(source, start, end) {
   return source.slice(offset, stop);
 }
 
+test("late native status success cannot replace a newer stopped observation", async () => {
+  const pending = [], statuses = [], checks = [];
+  const api = await load("src/desktop/main.tsx", {
+    useCallback: (fn) => fn, isTauri: true, locale: "en",
+    agentStatusGeneration: { current: 0 },
+    getAgentStatus: () => new Promise((resolve, reject) => pending.push({ resolve, reject })),
+    setAgentStatus: (status) => statuses.push(status),
+    setLastStatusCheck: (value) => checks.push(value),
+    friendlyAgentError: (value) => value, errMsg: String,
+  }, (source) => `${slice(source, "const refreshStatus = useCallback", "const refreshLocalPrinters = useCallback")}\nexport { refreshStatus };`);
+  const older = api.refreshStatus(), newer = api.refreshStatus();
+  pending[1].resolve({ running: false, note_code: "not_running" });
+  await newer;
+  pending[0].resolve({ running: true, note_code: "service_running" });
+  await older;
+  assert.equal(statuses.length, 1);
+  assert.equal(statuses[0].running, false);
+  assert.equal(checks.length, 1);
+});
+
+test("late native status failure cannot replace newer verified service evidence", async () => {
+  const pending = [], statuses = [];
+  const api = await load("src/desktop/main.tsx", {
+    useCallback: (fn) => fn, isTauri: true, locale: "en",
+    agentStatusGeneration: { current: 0 },
+    getAgentStatus: () => new Promise((resolve, reject) => pending.push({ resolve, reject })),
+    setAgentStatus: (status) => statuses.push(status), setLastStatusCheck: () => {},
+    friendlyAgentError: (value) => value, errMsg: String,
+  }, (source) => `${slice(source, "const refreshStatus = useCallback", "const refreshLocalPrinters = useCallback")}\nexport { refreshStatus };`);
+  const older = api.refreshStatus(), newer = api.refreshStatus();
+  pending[1].resolve({ running: true, note_code: "service_running" });
+  await newer;
+  pending[0].reject(new Error("stale SCM failure"));
+  await older;
+  assert.equal(statuses.length, 1);
+  assert.equal(statuses[0].note_code, "service_running");
+});
+
+test("current native status failure remains visible after a successful observation", async () => {
+  const pending = [], statuses = [];
+  const api = await load("src/desktop/main.tsx", {
+    useCallback: (fn) => fn, isTauri: true, locale: "en",
+    agentStatusGeneration: { current: 0 },
+    getAgentStatus: () => new Promise((resolve, reject) => pending.push({ resolve, reject })),
+    setAgentStatus: (status) => statuses.push(status), setLastStatusCheck: () => {},
+    friendlyAgentError: () => "Current status unavailable", errMsg: String,
+  }, (source) => `${slice(source, "const refreshStatus = useCallback", "const refreshLocalPrinters = useCallback")}\nexport { refreshStatus };`);
+  const older = api.refreshStatus();
+  pending[0].resolve({ running: true, note_code: "service_running" });
+  await older;
+  const current = api.refreshStatus();
+  pending[1].reject(new Error("current SCM failure"));
+  await current;
+  assert.equal(statuses.at(-1).error, "Current status unavailable");
+});
+
 async function presentation() {
   return load("src/desktop/lib/printers.ts", {}, (source, path) => path.endsWith("/printers.ts")
     ? `import { DEFAULT_LOCALE } from "../../i18n/config";
@@ -108,10 +164,10 @@ test("failed candidate check keeps configuration and presents HTTP guidance once
   assert.equal(changes.length, 0);
   assert.equal(drafts.at(-1), translate("ar", "desktop.gateway.serverError"));
   assert.equal(messages.at(-1).text, drafts.at(-1));
-  for (const page of ["Settings", "Agents"]) {
-    const source = await readFile(`src/desktop/pages/${page}.tsx`, "utf8");
-    assert.doesNotMatch(source, /friendlyGatewayError\(/);
-  }
+  const settings = await readFile("src/desktop/pages/Settings.tsx", "utf8");
+  assert.doesNotMatch(settings, /friendlyGatewayError\(/);
+  const shell = await readFile("src/desktop/main.tsx", "utf8");
+  assert.doesNotMatch(shell, /AgentsPage|page === "agents"/);
 });
 
 test("native probe records bounded diagnostics without response bodies or credentials", async () => {

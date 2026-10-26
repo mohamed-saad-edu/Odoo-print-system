@@ -103,8 +103,8 @@ suite("zero-touch Odoo installation enrollment (PostgreSQL)", () => {
     expect(associations.rows).toHaveLength(0);
   });
 
-  it("does not activate a workspace with a cancelled subscription", async () => {
-    await pool().query("UPDATE tenant_subscriptions SET status='cancelled' WHERE tenant_id=$1", [fixture.tenantId]);
+  it("does not activate a workspace with a suspended manual subscription", async () => {
+    await pool().query("UPDATE tenant_subscriptions SET status='suspended' WHERE tenant_id=$1", [fixture.tenantId]);
     const a = credentials();
     const response = await attempt(fixture.odooKey, a.id, a.proof);
     expect(response.status).toBe(403);

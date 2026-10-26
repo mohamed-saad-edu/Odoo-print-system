@@ -79,10 +79,10 @@ func probeSNMPPrinterWithPort(ctx context.Context, ip string, snmpPort int, prin
 
 	oids := []string{oidSysDescr, oidPrtGeneralPrinterName, oidPrtGeneralSerialNumber}
 	result, err := params.Get(oids)
-	if err != nil || result == nil || len(result.Variables) == 0 {
+	if err != nil || result == nil || result.Error != gosnmp.NoError || len(result.Variables) == 0 {
 		// Fallback: try querying sysDescr alone in case device errors on printer MIB OIDs
 		result, err = params.Get([]string{oidSysDescr})
-		if err != nil || result == nil || len(result.Variables) == 0 {
+		if err != nil || result == nil || result.Error != gosnmp.NoError || len(result.Variables) == 0 {
 			return DeviceInfo{}, false
 		}
 	}
@@ -91,12 +91,12 @@ func probeSNMPPrinterWithPort(ctx context.Context, ip string, snmpPort int, prin
 	for _, pdu := range result.Variables {
 		name := strings.TrimPrefix(pdu.Name, ".")
 		val := extractSNMPPDUString(pdu)
-		switch {
-		case strings.HasPrefix(name, "1.3.6.1.2.1.1.1.0"):
+		switch name {
+		case oidSysDescr:
 			sysDescr = val
-		case strings.HasPrefix(name, "1.3.6.1.2.1.43.5.1.1.16"):
+		case oidPrtGeneralPrinterName:
 			prtPrinterName = val
-		case strings.HasPrefix(name, "1.3.6.1.2.1.43.5.1.1.17"):
+		case oidPrtGeneralSerialNumber:
 			prtSerial = val
 		}
 	}
@@ -206,15 +206,17 @@ func verifyTCPPrintEndpoint(ctx context.Context, ip string, port int) bool {
 }
 
 func extractSNMPPDUString(pdu gosnmp.SnmpPDU) string {
+	// Identity objects are OCTET STRINGs; coercing another BER type invents evidence.
+	if pdu.Type != gosnmp.OctetString {
+		return ""
+	}
 	switch val := pdu.Value.(type) {
 	case string:
 		return strings.TrimSpace(val)
 	case []byte:
 		return strings.TrimSpace(string(val))
-	case nil:
-		return ""
 	default:
-		return strings.TrimSpace(fmt.Sprint(val))
+		return ""
 	}
 }
 

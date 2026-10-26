@@ -137,9 +137,9 @@ export default function TeamPage() {
 
   return (
     <>
-      <PageHeader width="wide" eyebrow={t("nav.section.administration")}
+      <PageHeader width="wide" 
         icon={<Users className="h-4 w-4" />}
-        title={t("nav.team")} description={t("team.membersDescription")} />
+        title={t("nav.team")}  />
       <PageContainer width="wide">
         <div className="space-y-5">
           {notice && <p role={notice.kind === "err" ? "alert" : "status"}

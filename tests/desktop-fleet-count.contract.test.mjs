@@ -2,8 +2,12 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import test from "node:test";
 
-const source = fs.readFileSync(new URL("../src/desktop/pages/Agents.tsx", import.meta.url), "utf8");
+const main = fs.readFileSync(new URL("../src/desktop/main.tsx", import.meta.url), "utf8");
+const types = fs.readFileSync(new URL("../src/desktop/types.ts", import.meta.url), "utf8");
+const tray = fs.readFileSync(new URL("../src-tauri/src/tray.rs", import.meta.url), "utf8");
 
-test("desktop fleet detail includes online numerator before localized total", () => {
-  assert.match(source, /\{s\.fleetOnline \?\? 0\}<\/span>[\s\S]*desktop\.agents\.ofTotal/);
+test("retired Agent fleet screen is absent from desktop navigation and tray", () => {
+  assert.doesNotMatch(main, /AgentsPage|page === "agents"/);
+  assert.doesNotMatch(types, /"agents"/);
+  assert.doesNotMatch(tray, /NAV_AGENT|#agents/);
 });

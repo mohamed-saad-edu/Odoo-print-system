@@ -15,7 +15,6 @@ export default function Signup() {
   const [email, setEmail] = useState(params?.get("email") ?? "");
   const { t } = useI18n();
   const [displayName, setDisplayName] = useState("");
-  const [password, setPassword] = useState("");
   const [err, setErr] = useState("");
   const [done, setDone] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -34,7 +33,6 @@ export default function Signup() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           email,
-          password,
           displayName,
           planId: new URLSearchParams(window.location.search).get("plan") ?? "",
           inviteToken: new URLSearchParams(window.location.search).get("invite") ?? "",
@@ -100,22 +98,6 @@ export default function Signup() {
             />
           </Field>
 
-          <Field
-            label={t("auth.password")}
-            htmlFor="password"
-            hint={t("auth.passwordHint")}
-            required
-          >
-            <Input
-              id="password"
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              autoComplete="new-password"
-              minLength={12}
-              required
-            />
-          </Field>
 
           {err ? (
             <ErrorState title={t("auth.signup.failed")} message={err} />

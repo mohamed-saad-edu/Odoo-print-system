@@ -1,10 +1,10 @@
 import React from "react";
-import { Activity, ChevronRight, KeyRound, Link2, Play, Power, RotateCcw, Server, ShieldCheck, Square, Copy, Lock } from "lucide-react";
-import { Button, Card, CopyButton, ErrorState, Field, Input, StatusBadge, StatusDot } from "../../components/ui";
+import { Activity, KeyRound, Link2, Play, Power, RotateCcw, Server, ShieldCheck, Square, Copy } from "lucide-react";
+import { Button, Card, ErrorState, Field, Input, StatusBadge, StatusDot } from "../../components/ui";
 import { SettingsSection } from "../ui";
 import type { DesktopState } from "../types";
 import { useI18n } from "../../i18n/react";
-import { agentServiceState, friendlyAgentError, printerDisplayName, printerPresentation, printerDisplayStatus } from "../lib/printers";
+import { agentServiceState, friendlyAgentError, printerDisplayName, printerDisplayStatus } from "../lib/printers";
 import { copyTextToClipboard } from "../../lib/clipboard";
 import { getAutostart, setAutostart } from "../lib/ipc";
 
@@ -99,7 +99,6 @@ export function SettingsPage({ s }: { s: DesktopState }) {
             )}
           </div>
         </SettingsSection>
-        <Button variant="secondary" onClick={() => s.navigate("agents")}>{t("desktop.agents.cardThisPc")}</Button>
         </div></details>
       </div>
 
@@ -120,43 +119,16 @@ export function SettingsPage({ s }: { s: DesktopState }) {
         </details>
       </Card>
 
-      <Card className="overflow-hidden">
-        <details><summary className="cursor-pointer px-5 py-4 text-base font-semibold text-ink">{t("desktop.settings.currentStatus")}</summary>
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-edge bg-surface-2/30 px-5 py-4">
-          <div><h2 className="text-base font-semibold text-ink">{t("desktop.settings.currentStatus")}</h2><p className="mt-1 text-sm leading-snug text-ink-3">{t("desktop.settings.currentStatusBody")}</p></div>
-          <Button size="sm" variant="secondary" onClick={async (event) => {
+      <div className="flex justify-end">
+        <Button size="sm" variant="secondary" onClick={async (event) => {
             const trigger = event.currentTarget;
             const report = [`=== Yaseir Agent Diagnostic Export ===`, `Generated: ${new Date().toISOString()}`, `Version: ${s.version || "unknown"}`, `Running: ${serviceState === "unknown" ? "unknown" : s.isOnline}`, `Gateway (saved): ${s.gatewayUrl || t("desktop.settings.notConfigured")}`, `Gateway (draft): ${s.gatewayDraftUrl || t("desktop.settings.notConfigured")}`, `Gateway (last observed): ${s.checkedGatewayUrl || "unknown"}`, `Reachable: ${s.gatewayConnected}`, `Printers: ${s.printers.length}`, `Pending: ${s.pendingJobs}, Failed: ${s.failedJobs}`, ``, `=== Printers ===`, ...s.printers.map((p) => ` - ${p.name} [${printerDisplayStatus(p, s.nowMs)}]`), ``, `=== Paths ===`, ...paths.map(([k, v]) => ` - ${k}: ${v}`)].join("\n");
             const copied = await copyTextToClipboard(report);
             s.setMsg({ text: t(copied ? "desktop.settings.statusCopied" : "desktop.settings.copyFailed"), type: copied ? "success" : "error" });
             if (trigger.isConnected) trigger.focus();
           }} icon={<Copy className="h-3.5 w-3.5" />}>{t("desktop.settings.copySummary")}</Button>
-        </div>
-        <div className="p-5 space-y-3">
-          <div role="region" aria-label={t("desktop.settings.currentStatus")} tabIndex={0} className="max-h-64 overflow-y-auto divide-y divide-edge-subtle rounded-md border border-edge-subtle bg-surface-2/35 px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/35 focus-visible:ring-offset-2 focus-visible:ring-offset-app">
-            <div className="flex min-h-10 items-center justify-between gap-4 py-2"><span className="font-medium text-ink-2">{t("desktop.settings.agentService")}</span><span className={serviceState === "unknown" ? "font-semibold text-ink-3" : s.isOnline ? "font-semibold text-ok" : "font-semibold text-bad"}>{serviceState === "unknown" ? t("desktop.status.unknown") : s.isOnline ? t("desktop.settings.running") : t("desktop.settings.stopped")}</span></div>
-            <div className="flex min-h-10 items-center justify-between gap-4 py-2"><span className="font-medium text-ink-2">{t("desktop.settings.gatewaySection")}</span><span className={s.gatewayConnected ? "font-semibold text-ok" : s.gatewayUrl ? "font-semibold text-bad" : "font-semibold text-warn"}>{s.gatewayConnected ? t("desktop.settings.reachable") : s.gatewayUrl ? t("desktop.settings.failedCheck") : t("desktop.settings.notConfigured")}</span></div>
-            {s.healthError && <div className="rounded-sm border border-bad-edge bg-bad-bg px-3 py-2 text-sm leading-relaxed text-bad">{s.healthError}</div>}
-            <div className="flex min-h-10 items-center justify-between gap-4 py-2"><span className="font-medium text-ink-2">{t("desktop.settings.devices")}</span><span className="font-semibold text-ink tabular-nums">{s.printers.length}</span></div>
-            {s.printers.map((p) => {
-              const view = printerPresentation(p, undefined, s.nowMs);
-              return <div key={p.id} className="flex min-h-11 min-w-0 flex-wrap items-center justify-between gap-3 py-3"><span className="min-w-0 flex-1 break-words text-ink-2">{printerDisplayName(p, locale)}</span><StatusBadge tone={view.tone} label={t(view.labelKey)} /></div>;
-            })}
-            {s.printers.length === 0 && <p className="py-3 text-sm text-ink-3">{t("desktop.settings.noDevices")}</p>}
-          </div>
-        </div>
-        </details>
-      </Card>
+      </div>
 
-      <Card className="overflow-hidden">
-        <button onClick={() => s.setAdvancedOpen(!s.advancedOpen)} aria-expanded={s.advancedOpen} className="flex min-h-11 w-full items-center justify-between px-5 py-4 text-start transition-colors hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand/35"><span className="text-base font-semibold text-ink">{t("desktop.settings.advanced")}</span><ChevronRight className={`h-4 w-4 text-ink-3 transition-transform rtl:-scale-x-100 ${s.advancedOpen ? "rotate-90 rtl:-rotate-90" : ""}`} /></button>
-        {s.advancedOpen && (
-          <div className="grid gap-5 border-t border-edge px-5 py-5 lg:grid-cols-2">
-            <div><div className="mb-2 text-sm font-[600] text-ink">{t("desktop.settings.security")}</div><p className="text-sm text-ink-2 leading-relaxed">{t("desktop.settings.securityBody")}</p><div className="mt-3 inline-flex items-center gap-2 rounded-md border border-ok-edge bg-ok-bg px-3 py-2 text-xs font-medium text-ok"><Lock className="h-4 w-4" />{t("desktop.settings.credentialsLocal")}</div></div>
-            <div className="min-w-0"><div className="mb-2 text-sm font-[600] text-ink">{t("desktop.settings.dataLocations")}</div>{paths.length > 0 ? <div className="space-y-2">{paths.map(([label, path]) => (<div key={label} className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-start gap-x-3 gap-y-2 rounded-md border border-edge bg-surface-2 px-3 py-3"><span className="min-w-0 break-words text-xs font-semibold leading-normal text-ink-2">{label}</span><span dir="ltr" className="col-span-2 row-start-2 min-w-0 break-all font-mono text-xs leading-normal text-ink-3 [unicode-bidi:isolate]">{path}</span><div className="col-start-2 row-start-1"><CopyButton value={path} label={t("desktop.agents.copy")} onCopied={() => s.setMsg({ text: t("desktop.settings.copied"), type: "success" })} /></div></div>))}</div> : <p className="text-xs text-ink-3">{t("desktop.settings.loadingPaths")}</p>}<p className="mt-4 text-xs text-ink-3">{t("desktop.settings.footer", { version: s.version || "—" })}</p></div>
-          </div>
-        )}
-      </Card>
     </div>
   );
 }

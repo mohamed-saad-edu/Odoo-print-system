@@ -42,7 +42,6 @@ import { PrinterSharingControl } from "./components/PrinterSharingControl";
 import { OverviewPage } from "./pages/Overview";
 import { PrintersPage } from "./pages/Printers";
 import { JobsPage } from "./pages/Jobs";
-import { AgentsPage } from "./pages/Agents";
 import { SettingsPage } from "./pages/Settings";
 import {
   probeGatewayHealth,
@@ -56,7 +55,6 @@ import {
   getPrinters,
   setPrinterSharing,
   fetchGatewayPrinters,
-  fetchGatewayAgents,
   registerGatewayPrinter,
   getRuntimePaths,
   isTauri,
@@ -133,7 +131,7 @@ import {
 /* Desktop Manager uses the shared light/dark theme tokens. */
 import "./theme-light.css";
 
-const PAGES: Page[] = ["dashboard", "printers", "jobs", "agents", "settings"];
+const PAGES: Page[] = ["dashboard", "printers", "jobs", "settings"];
 const GATEWAY_AUTO_PROBE_INTERVAL_MS = 10_000;
 const LOCAL_AGENT_STATUS_INTERVAL_MS = 10_000;
 
@@ -193,6 +191,7 @@ export default function App() {
   const sharingFlights = useRef(new Set<string>());
   const jobsGeneration = useRef(0);
   const healthGeneration = useRef(0);
+  const agentStatusGeneration = useRef(0);
   const gatewayProbeFlightRef = useRef<string | null>(null);
   const gatewayConnectivityRef = useRef<GatewayConnectivityEvidence>(emptyGatewayConnectivityEvidence());
   const configurationFlight = useRef(false);
@@ -337,11 +336,14 @@ export default function App() {
 
   const refreshStatus = useCallback(async () => {
     if (!isTauri) return;
+    const generation = ++agentStatusGeneration.current;
     try {
       const s = await getAgentStatus();
+      if (generation !== agentStatusGeneration.current) return;
       setAgentStatus(s);
       setLastStatusCheck(new Date().toISOString());
     } catch (e) {
+      if (generation !== agentStatusGeneration.current) return;
       setAgentStatus({ error: friendlyAgentError(errMsg(e), locale) });
     }
   }, [locale]);
@@ -1108,7 +1110,6 @@ export default function App() {
     dashboard: { title: t("v4.experience.home") },
     printers: { title: t("desktop.nav.printers") },
     jobs: { title: t("v4.experience.activity") },
-    agents: { title: t("desktop.nav.agents"), subtitle: t("desktop.page.agentsSubtitle") },
     settings: { title: t("desktop.nav.settings"), subtitle: t("desktop.page.settingsSubtitle") },
   };
 
@@ -1373,7 +1374,6 @@ export default function App() {
           {page === "dashboard" && <OverviewPage s={state} />}
           {page === "printers" && <PrintersPage s={state} />}
           {page === "jobs" && <JobsPage s={state} />}
-          {page === "agents" && <AgentsPage s={state} />}
           {page === "settings" && <SettingsPage s={state} />}
           </div>
         </main>
@@ -1564,13 +1564,13 @@ export default function App() {
                 tone={toneJob(jobStatus(selectedJob), selectedJob.error)}
                 label={labelJob(jobStatus(selectedJob), selectedJob.error, locale, selectedJob)}
               />
-              <JobTimeline
+              {selectedJob.outputMedium !== "file" && <JobTimeline
                 status={jobStatus(selectedJob)}
                 error={selectedJob.error ? String(selectedJob.error) : null}
                 claimedAt={selectedJob.claimedAt ? String(selectedJob.claimedAt) : null}
                 deliveredAt={selectedJob.deliveredAt ? String(selectedJob.deliveredAt) : null}
                 ackedAt={selectedJob.ackedAt ? String(selectedJob.ackedAt) : null}
-              />
+              />}
             </div>
             <div className="divide-y divide-edge">
               <MetaRow label={t("desktop.drawer.jobId")}>
@@ -1596,11 +1596,12 @@ export default function App() {
                 {formatDateTime(jobTimestamp(selectedJob, "updatedAt"))}
               </MetaRow>
             </div>
-            {selectedJob.error ? (
+            {selectedJob.outputMedium !== "file" && (selectedJob.error ? (
               <div className={`rounded-md border p-4 ${jobStatus(selectedJob) === "success" ? "border-info-edge bg-info-bg" : "border-bad-edge bg-bad-bg"}`}>
                 {(() => {
                   const outcome = deriveOutcome(jobStatus(selectedJob), String(selectedJob.error));
                   const succeeded = jobStatus(selectedJob) === "success";
+                  const reconciledSuccess = succeeded && /^LATE_SUCCESS(?:_POST_EXPIRATION)?:/.test(String(selectedJob.error));
                   // A success row can still carry a residual error (for example
                   // the Gateway's "LATE_SUCCESS: ..." note). Its physical outcome
                   // is still unverified, but it is NOT an ambiguous failure, so
@@ -1612,12 +1613,12 @@ export default function App() {
                     <>
                       <div className={`flex items-center gap-2 text-md font-semibold ${succeeded ? "text-info" : unknown ? "text-warn" : "text-bad"}`}>
                         <AlertTriangle className="h-5 w-5" aria-hidden />
-                        {succeeded
+                        {reconciledSuccess ? labelJob(jobStatus(selectedJob), selectedJob.error, locale, selectedJob) : succeeded
                           ? (classified?.title ?? t("desktop.drawer.printSucceeded"))
                           : (classified?.title ?? (unknown ? t("desktop.drawer.outcomeUnknown") : t("desktop.drawer.printFailed")))}
                       </div>
                       <p className="mt-2 text-base leading-relaxed text-ink-2">
-                        {classified?.guidance ?? friendlyPrinterError(String(selectedJob.error), locale)}
+                        {reconciledSuccess ? jobGuidance(jobStatus(selectedJob), outcome, locale) : classified?.guidance ?? friendlyPrinterError(String(selectedJob.error), locale)}
                       </p>
                       {!unknown && !succeeded && (
                         <p className="mt-3 text-sm text-ink-3">
@@ -1634,7 +1635,7 @@ export default function App() {
                 {jobGuidance(jobStatus(selectedJob), deriveOutcome(jobStatus(selectedJob), null), locale) ||
                   t("desktop.drawer.noErrorRecorded")}
               </div>
-            )}
+            ))}
           </div>
         )}
       </Drawer>

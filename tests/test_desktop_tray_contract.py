@@ -33,5 +33,6 @@ def test_tray_locale_is_runtime_synchronized_from_desktop():
 def test_arabic_tray_copy_preserves_canonical_product_terms():
     tray = read("src-tauri/src/tray.rs")
     assert 'gateway: "لوحة الـ Gateway"' in tray
-    assert 'agent: "الـ Agent المحلي والطابعات"' in tray
+    assert 'settings: "الإعدادات والتشخيص"' in tray
+    assert "NAV_AGENT" not in tray
     assert 'restart: "إعادة تشغيل خدمة الـ Agent"' in tray

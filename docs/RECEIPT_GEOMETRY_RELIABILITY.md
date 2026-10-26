@@ -11,11 +11,12 @@ driver margins and the selected form. Do not infer that an 80 mm roll exposes
 80 mm of printable pixels. Do not fix cropping by globally changing the
 Windows printer's defaults or blindly stretching the document.
 
-The network ESC/POS image path uses explicit dot-width/DPI evidence when present.
-Its compatibility defaults are documented in `../PRINTERS.md`: a 384-dot default,
-an 80 mm legacy estimate and an explicit 203-DPI profile are separate cases.
-Unknown or ambiguous media configuration must not silently widen a raster.
-JPEG dimensions and projected raster memory are bounded before full decode.
+The network ESC/POS image path requires current validated printable-dot geometry,
+its explicit raster command and the matching image geometry fingerprint. It does
+not infer 384/512/576 dots from a 58/80 mm roll, model name or default DPI. Physical
+media and X/Y DPI remain independent measured fields. Unknown or ambiguous
+geometry fails before transmission. JPEG dimensions and projected raster memory
+are bounded before full decode.
 
 The Windows document path uses the selected driver's physical form and printable
 bounds. PDF/image content is fitted proportionally inside valid printable bounds,

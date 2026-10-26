@@ -217,7 +217,7 @@ func sameUSBDevice(a, b DeviceInfo) bool {
 	}
 	normalize := func(value string) string {
 		value = strings.ToLower(strings.TrimSpace(value))
-		if value == "" || value == "0" || value == "00000000" {
+		if !usableIdentityValue(value) || value == "00000000" {
 			return ""
 		}
 		return value
@@ -226,8 +226,8 @@ func sameUSBDevice(a, b DeviceInfo) bool {
 		if d.Capabilities == nil {
 			return ""
 		}
-		if value, ok := d.Capabilities[key]; ok {
-			return normalize(fmt.Sprint(value))
+		if value, ok := d.Capabilities[key].(string); ok {
+			return normalize(value)
 		}
 		return ""
 	}
@@ -1203,7 +1203,7 @@ func TestPrinter(cfg *config.Config, registryPath, printerID string) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	ctx = WithDispatchAdmission(ctx, func(context.Context) error {
+	ctx = WithDispatchAdmission(ctx, func(admissionCtx context.Context) error {
 		disabled, err := LoadLocalPrinterDisablement(cfg, registryPath)
 		if err != nil {
 			return fmt.Errorf("read local printer disablement before diagnostic output: %w", err)
@@ -1211,7 +1211,9 @@ func TestPrinter(cfg *config.Config, registryPath, printerID string) error {
 		if disabled.Disabled(pc) {
 			return fmt.Errorf("printer %s is disabled by local operator configuration", printerID)
 		}
-		return nil
+		// Local diagnostics require the same current identity proof as Gateway output.
+		_, err = ProbeOperationalVerification(admissionCtx, prt, pc)
+		return err
 	})
 	return runLocalPrinterTest(ctx, prt)
 }

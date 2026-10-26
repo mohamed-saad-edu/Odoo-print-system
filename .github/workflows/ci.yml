@@ -266,7 +266,7 @@ jobs:
             ) THEN RAISE EXCEPTION 'api_keys.read_only_until is missing'; END IF;
             IF NOT EXISTS (
               SELECT 1 FROM pg_constraint
-              WHERE conname='api_keys_read_only_until_check'
+              WHERE conname='api_keys_read_only_until_check' AND conrelid = 'public.api_keys'::regclass
             ) THEN RAISE EXCEPTION 'Odoo key rotation state constraint is missing'; END IF;
             IF NOT EXISTS (
               SELECT 1 FROM information_schema.columns
@@ -287,17 +287,22 @@ jobs:
               WHERE schemaname='public' AND tablename='printers'
                 AND indexname='printers_gateway_id_global_unique'
             ) THEN RAISE EXCEPTION 'global printer id uniqueness must not exist after tenant-scoped identity'; END IF;
+            -- Historical tables in legacy_printing intentionally retain
+            -- identically named *_pkey constraints. Only public runtime
+            -- relations are subject to the tenant-scope identity invariant.
             IF EXISTS (
               SELECT 1 FROM pg_constraint
               WHERE conname='printers_pkey'
+                AND conrelid = 'public.printers'::regclass
             ) THEN RAISE EXCEPTION 'printers must not have a global primary key on id'; END IF;
             IF EXISTS (
               SELECT 1 FROM pg_constraint
               WHERE conname='discovered_devices_pkey'
+                AND conrelid = 'public.discovered_devices'::regclass
             ) THEN RAISE EXCEPTION 'discovered_devices must not have a global primary key on id'; END IF;
             IF NOT EXISTS (
               SELECT 1 FROM pg_constraint
-              WHERE conname='printers_tenant_id_unique'
+              WHERE conname='printers_tenant_id_unique' AND conrelid = 'public.printers'::regclass
             ) THEN RAISE EXCEPTION 'printers tenant-scoped identity unique constraint is missing'; END IF;
             IF NOT EXISTS (
               SELECT 1 FROM pg_indexes
@@ -306,7 +311,7 @@ jobs:
             ) THEN RAISE EXCEPTION 'desired-state printer index is missing'; END IF;
             IF NOT EXISTS (
               SELECT 1 FROM pg_constraint
-              WHERE conname='printers_desired_revision_check'
+              WHERE conname='printers_desired_revision_check' AND conrelid = 'public.printers'::regclass
             ) THEN RAISE EXCEPTION 'desired-state printer revision constraint is missing'; END IF;
             IF NOT EXISTS (
               SELECT 1 FROM pg_indexes
@@ -379,10 +384,10 @@ jobs:
                   array_to_string(expected.parent_columns, ',');
               END IF;
             END LOOP;
-            IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'print_jobs_tenant_id_api_key_id_api_keys_fk') THEN
+            IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'print_jobs_tenant_id_api_key_id_api_keys_fk' AND conrelid = 'public.print_jobs'::regclass) THEN
               RAISE EXCEPTION 'historical print_jobs.api_key_id must not block API key removal';
             END IF;
-            IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'print_jobs_api_key_tenant_insert_guard' AND NOT tgisinternal) THEN
+            IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'print_jobs_api_key_tenant_insert_guard' AND tgrelid = 'public.print_jobs'::regclass AND NOT tgisinternal) THEN
               RAISE EXCEPTION 'new job API-key tenant guard missing';
             END IF;
           END $$;

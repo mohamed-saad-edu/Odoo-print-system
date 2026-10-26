@@ -15,7 +15,8 @@ function guide(pairingConfirmed: boolean) {
 }
 describe("V4 guided desktop setup", () => {
   it("keeps the pairing action available until authenticated evidence confirms it", () => {
-    expect(guide(false)).toContain('id="home-pair-code"');
+    expect(guide(false)).toContain("Continue setup");
+    expect(guide(false)).not.toContain('id="home-pair-code"');
     expect(guide(false)).toContain("A running service alone does not confirm pairing.");
   });
   it("advances to discovery after authenticated pairing without claiming a printer is ready", () => {
@@ -32,7 +33,8 @@ describe("concise desktop next-action guidance", () => {
     const source = readFileSync("src/desktop/components/SetupGuide.tsx", "utf8");
     expect(source).toContain("if (active === -1) return null;");
     expect(source).toContain("steps.filter((_, index) => index === active)");
-    expect(source).toContain("active === 1 && <form");
+    expect(source).toContain('action: () => s.navigate("settings")');
+    expect(source).not.toContain('active === 1 && <form');
     expect(source).toContain("active === 2 ? s.handleDiscover : step.action");
   });
 });

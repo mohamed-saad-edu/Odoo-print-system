@@ -25,13 +25,14 @@ function ResetPasswordContent() {
   const { t } = useI18n();
   const [err, setErr] = useState("");
   const [done, setDone] = useState(false);
+  const [nextRoute, setNextRoute] = useState(signInDestination);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     if (!done) return;
-    const timer = setTimeout(() => router.replace(signInDestination), 700);
+    const timer = setTimeout(() => router.replace(nextRoute), 500);
     return () => clearTimeout(timer);
-  }, [done, router, signInDestination]);
+  }, [done, router, nextRoute]);
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
@@ -54,6 +55,8 @@ function ResetPasswordContent() {
         setErr(t(codeMessageKey(typeof data.code === "string" ? data.code : undefined) ?? "auth.reset.failed"));
         return;
       }
+      setPw("");
+      setNextRoute(setup && data.authenticated === true ? continuation : signInDestination);
       setDone(true);
     } catch {
       setErr(t("auth.reset.failedBody"));
@@ -71,8 +74,8 @@ function ResetPasswordContent() {
     >
       {done ? (
         <Callout tone="ok" icon={<CheckCircle2 className="h-4 w-4" aria-hidden />} title={t("auth.reset.updatedTitle")}>
-          {t("auth.reset.takingYou")}{" "}
-          <Link href={signInDestination} className="font-[600] underline">
+          {t(setup && nextRoute === continuation ? "auth.setup.takingYou" : "auth.reset.takingYou")}{" "}
+          <Link href={nextRoute} className="font-[600] underline">
             {t("auth.reset.continueNow")}
           </Link>
           .

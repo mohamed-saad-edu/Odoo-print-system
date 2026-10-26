@@ -108,6 +108,26 @@ class TestPrintGatewayBranchActivityVisibility(TransactionCase):
         operator = self._root_operator()
         self.assertNotIn(foreign_job.id, self._visible_job_ids(operator, [self.root.id]))
 
+    def test_extra_group_rule_cannot_bypass_company_or_branch_isolation(self):
+        """A role may grant records, but cannot widen the company perimeter."""
+        branch_job = self._create_job(self.branch, "activity_global_own_branch")
+        root_job = self._create_job(self.root, "activity_global_root")
+        foreign_job = self._create_job(self.other_branch, "activity_global_foreign")
+        self.env["ir.rule"].create({
+            "name": "Additional role permits print activity",
+            "model_id": self.env["ir.model"]._get("print_gateway.print_job").id,
+            "domain_force": "[(1, '=', 1)]",
+            "groups": [(4, self.env.ref("base.group_user").id)],
+        })
+        root_visible = self._visible_job_ids(self._root_operator(), [self.root.id])
+        self.assertIn(root_job.id, root_visible)
+        self.assertIn(branch_job.id, root_visible)
+        self.assertNotIn(foreign_job.id, root_visible)
+        branch_visible = self._visible_job_ids(self._branch_operator(), [self.branch.id])
+        self.assertIn(branch_job.id, branch_visible)
+        self.assertNotIn(root_job.id, branch_visible)
+        self.assertNotIn(foreign_job.id, branch_visible)
+
     def test_branch_intent_is_visible_to_the_root_operator(self):
         """A permanently failed Branch intent must be findable and re-armable."""
         model = self.env["ir.model"].search([("model", "=", "pos.order")], limit=1)

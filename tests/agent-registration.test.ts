@@ -34,7 +34,7 @@ suite("agent registration contract", () => {
     );
     await pool().query(
       `UPDATE tenant_subscriptions
-       SET status = 'cancelled', current_period_end = now() - interval '1 minute'
+       SET status = 'suspended', current_period_end = now() - interval '1 minute'
        WHERE tenant_id = $1`,
       [f.tenantId],
     );

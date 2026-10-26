@@ -95,7 +95,7 @@ again. The following maintenance procedure preserves table data and identities:
    the new Gateway has passed the intended acceptance checks.
 
 The helper deliberately refuses unrelated databases, unrelated non-system
-roles, unexpected application schemas/object owners, custom enum/domain/range
+roles, unexpected application schemas/object owners except the known owner-managed `legacy_billing` and `legacy_printing` archives, custom enum/domain/range
 types, security-definer functions and unsupported routines. It also refuses
 preexisting owner/runtime roles without the exact profile identity and safe
 attributes. A shared or customized PostgreSQL service needs an explicitly
@@ -144,6 +144,6 @@ deletes private permission-state files after verification. The caller must stop
 and remove that fresh cluster and treat cleanup failure as a failing result.
 
 This role profile does not create per-tenant PostgreSQL identities or RLS.
-Runtime DML spans application tables; the application's tenant/authorization
+Runtime DML spans the `public` application tables only. Archived provider data in `legacy_billing` and retired printer/job evidence in `legacy_printing` are owned by the migration owner and denied to the runtime role, with explicit startup checks preventing reintroduced schema or table grants. The application's tenant/authorization
 checks remain necessary. It is separate from image-build/scan acceptance and
 from the wider workload capacity, backup storage and production recovery gates.

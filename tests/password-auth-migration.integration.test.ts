@@ -23,9 +23,19 @@ describe.skipIf(!hasTestDatabase)("populated V2 to password-only migration", () 
     const client = await target.connect(); try { await migrateByHash(client, folder); } finally { client.release(); }
   }
   async function snapshot() {
-    const tables = (await target.query("SELECT tablename FROM pg_tables WHERE schemaname='public' ORDER BY tablename")).rows;
+    // A forward migration moves historical provider tables out of public,
+    // but their rows must still be compared with the pre-migration snapshot.
+    const tables = (await target.query(`
+      SELECT schemaname, tablename FROM pg_tables
+      WHERE schemaname = 'public'
+         OR (schemaname = 'legacy_billing' AND tablename IN ('billing_events', 'print_usage_periods'))
+      ORDER BY schemaname, tablename
+    `)).rows as Array<{ schemaname: string; tablename: string }>;
+    const quote = (identifier: string) => '"' + identifier.replaceAll('"', '""') + '"';
     const rows: Record<string, unknown> = {};
-    for (const { tablename } of tables) rows[tablename] = (await target.query(`SELECT to_jsonb(t) row FROM "${tablename}" t ORDER BY to_jsonb(t)::text`)).rows;
+    for (const { schemaname, tablename } of tables) {
+      rows[tablename] = (await target.query(`SELECT to_jsonb(t) row FROM ${quote(schemaname)}.${quote(tablename)} t ORDER BY to_jsonb(t)::text`)).rows;
+    }
     rows.ledger = (await target.query("SELECT id,hash,created_at FROM drizzle.__drizzle_migrations ORDER BY id")).rows;
     return rows;
   }
@@ -123,20 +133,30 @@ describe.skipIf(!hasTestDatabase)("populated V2 to password-only migration", () 
         .toEqual(canonical(expected));
     }
     expect(after.ledger).toEqual(expect.arrayContaining(before.ledger as unknown[]));
-    // Forward migrations 0093 to 0097; 0096 intentionally forces new workspace logins.
-    // Preserve the hashes of all historical migrations.
-    expect((after.ledger as unknown[]).length).toBe((before.ledger as unknown[]).length+5);
+    // Compare against the current append-only journal rather than a frozen
+    // migration count. Historical 0093–0097 and manual-only 0098 must all run.
+    const journal = JSON.parse(await readFile("drizzle/meta/_journal.json", "utf8")) as {
+      entries: Array<{ idx: number; tag: string }>;
+    };
+    const forwardTags = journal.entries.filter(entry => entry.idx >= 93).map(entry => entry.tag);
+    expect(forwardTags).toContain("0098_manual_only_billing");
+    expect((after.ledger as unknown[]).length).toBe((before.ledger as unknown[]).length + forwardTags.length);
     const priorHashes = new Set((before.ledger as Array<{hash:string}>).map(row=>row.hash));
     const addedHashes = (after.ledger as Array<{hash:string}>).filter(row=>!priorHashes.has(row.hash)).map(row=>row.hash).sort();
-    const expectedHashes = await Promise.all(["0093_password_only_authentication.sql", "0094_printer_operational_verification.sql", "0095_manual_subscriptions.sql", "0096_retire_limited_workspace_roles.sql", "0097_agent_scoped_discovery_identity.sql"]
-      .map(async name=>digest(await readFile(join("drizzle",name),"utf8"))));
+    const expectedHashes = await Promise.all(forwardTags.map(async tag =>
+      digest(await readFile(join("drizzle", `${tag}.sql`), "utf8"))));
     expect(addedHashes).toEqual(expectedHashes.sort());
+    const archivedTables = await target.query(`
+      SELECT tablename FROM pg_tables WHERE schemaname='legacy_billing'
+        AND tablename IN ('billing_events','print_usage_periods') ORDER BY tablename
+    `);
+    expect(archivedTables.rows.map(row => row.tablename)).toEqual(['billing_events','print_usage_periods']);
     expect((await target.query("SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_name=ANY($1::text[])",[factorTables])).rows).toEqual([]);
     const connection = drizzle(target) as unknown as DbTx;
     expect(await isPlatformSessionAssured("platform-family","owner",false,connection)).toBe(true);
     expect(await isPlatformSessionAssured("revoked-family","owner",false,connection)).toBe(false);
     for (const kind of ["customer","manager"] as const) expect(await readWorkspaceSessionState({ familyId:`${kind}-family`,kind,tenantId:"upgrade-tenant",userId:"owner",sid:`${kind}-sid`,role:"owner" },connection)).toBeNull();
     const baseline = await snapshot(); await apply(join(process.cwd(),"drizzle")); expect(await snapshot()).toEqual(baseline);
-    expect((await readdir("drizzle")).filter(n=>n.endsWith(".sql"))).toHaveLength(98);
+    expect((await readdir("drizzle")).filter(n=>n.endsWith(".sql"))).toHaveLength(journal.entries.length);
   });
 });

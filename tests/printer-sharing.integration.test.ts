@@ -56,7 +56,7 @@ suite("local-owner printer sharing across Gateway/Odoo boundaries", () => {
   };
   const heartbeat = (body: Record<string, unknown>) => heartbeatPOST(new Request("https://gateway.test/api/agent/heartbeat", {
     method: "POST", headers: { Authorization: f.agentAuth, "content-type": "application/json" },
-    body: JSON.stringify({ status: "online", heartbeatPage: 1, heartbeatPageCount: 1, inventorySnapshotId: `share-${++version}`, inventorySnapshotVersion: String(version), inventoryComplete: true, ...body }),
+    body: JSON.stringify({ status: "online", printers: [], heartbeatPage: 1, heartbeatPageCount: 1, inventorySnapshotId: `share-${++version}`, inventorySnapshotVersion: String(version), inventoryComplete: true, ...body }),
   }));
   const setPrivate = () => pool().query("UPDATE printers SET shared_with_gateway = false WHERE tenant_id = $1 AND id = $2", [f.tenantId, f.printerId]);
   const printerRow = async () => (await pool().query("SELECT * FROM printers WHERE tenant_id = $1 AND id = $2", [f.tenantId, f.printerId])).rows[0];
@@ -178,7 +178,7 @@ suite("local-owner printer sharing across Gateway/Odoo boundaries", () => {
   });
 
   it("withdraws private policy even when billing access blocks inventory admission", async () => {
-    await pool().query("UPDATE tenant_subscriptions SET status='cancelled' WHERE tenant_id=$1", [f.tenantId]);
+    await pool().query("UPDATE tenant_subscriptions SET status='suspended' WHERE tenant_id=$1", [f.tenantId]);
     expect((await heartbeat({ privatePrinterIds: [f.printerId], printers: [] })).status).toBe(200);
     expect((await printerRow()).shared_with_gateway).toBe(false);
   });

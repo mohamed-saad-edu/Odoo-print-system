@@ -414,18 +414,6 @@ export const tenantInvitations = pgTable("tenant_invitations", {
   roleCheck: check("tenant_invitations_role_check", sql`${table.role} = 'admin'`),
 }));
 
-export const billingEvents = pgTable("billing_events", {
-  eventId: text("event_id").primaryKey(),
-  eventType: text("event_type").notNull(),
-  tenantId: text("tenant_id").references(() => tenants.id),
-  payload: jsonb("payload").default({}).notNull(),
-  receivedAt: timestamp("received_at").defaultNow().notNull(),
-  processedAt: timestamp("processed_at"),
-}, (table) => ({
-  tenantIdx: index("billing_events_tenant_idx").on(table.tenantId, table.receivedAt),
-  typeIdx: index("billing_events_type_idx").on(table.eventType),
-}));
-
 export const authRateLimits = pgTable("auth_rate_limits", {
   key: text("key").primaryKey(),
   failures: integer("failures").notNull().default(0),
@@ -658,11 +646,6 @@ export const plans = pgTable("plans", {
   name: text("name").notNull().unique(),
   description: text("description").notNull().default(""),
   entitlements: jsonb("entitlements").$type<Record<string, number | boolean | string>>().default({}).notNull(),
-  stripePriceId: text("stripe_price_id"),
-  stripePriceHistory: text("stripe_price_history").array().notNull().default(sql`ARRAY[]::text[]`),
-  stripeProductId: text("stripe_product_id"),
-  currency: text("currency"),
-  interval: text("interval"),
   isActive: boolean("is_active").notNull().default(true),
   isPublic: boolean("is_public").notNull().default(true),
   displayOrder: integer("display_order").notNull().default(0),
@@ -671,17 +654,12 @@ export const plans = pgTable("plans", {
 }, (table) => ({
   displayOrderCheck: check("plans_display_order_check", sql`${table.displayOrder} >= 0`),
   catalogIdx: index("plans_catalog_idx").on(table.isActive, table.isPublic, table.displayOrder, table.name),
-  stripePriceIdUnique: uniqueIndex("plans_stripe_price_id_unique").on(table.stripePriceId).where(sql`${table.stripePriceId} IS NOT NULL`),
-  stripeProductIdUnique: uniqueIndex("plans_stripe_product_id_unique").on(table.stripeProductId).where(sql`${table.stripeProductId} IS NOT NULL`),
 }));
 
 export const tenantSubscriptions = pgTable("tenant_subscriptions", {
   tenantId: text("tenant_id").references(() => tenants.id).primaryKey(),
   planId: text("plan_id").references(() => plans.id).notNull(),
-  stripeCustomerId: text("stripe_customer_id").unique(),
-  stripeSubscriptionId: text("stripe_subscription_id").unique(),
   status: text("status").notNull().default("awaiting_activation"),
-  billingMode: text("billing_mode").notNull().default("manual"),
   subscriptionType: text("subscription_type").notNull().default("paid"),
   monthlyQuota: integer("monthly_quota"),
   term: text("term").notNull().default("monthly"),
@@ -689,51 +667,15 @@ export const tenantSubscriptions = pgTable("tenant_subscriptions", {
   revision: integer("revision").notNull().default(0),
   currentPeriodStart: timestamp("current_period_start").notNull().defaultNow(),
   currentPeriodEnd: timestamp("current_period_end"),
-  trialStartedAt: timestamp("trial_started_at"),
-  stripeLastEventCreatedAt: timestamp("stripe_last_event_created_at"),
-  stripeStateRevision: bigint("stripe_state_revision", { mode: "number" }).notNull().default(0),
   cancelAtPeriodEnd: boolean("cancel_at_period_end").notNull().default(false),
-  checkoutStatus: text("checkout_status").notNull().default("none"),
-  checkoutPlanId: text("checkout_plan_id").references(() => plans.id),
-  checkoutIdempotencyKey: text("checkout_idempotency_key"),
-  checkoutRequestParams: jsonb("checkout_request_params").$type<Record<string, string>>(),
-  checkoutIntentCreatedAt: timestamp("checkout_intent_created_at"),
-  checkoutSessionId: text("checkout_session_id"),
-  checkoutSessionUrl: text("checkout_session_url"),
-  checkoutSessionExpiresAt: timestamp("checkout_session_expires_at"),
-  billingOperationId: text("billing_operation_id"),
-  billingOperationType: text("billing_operation_type"),
-  billingOperationIdempotencyKey: text("billing_operation_idempotency_key"),
-  billingOperationSubscriptionId: text("billing_operation_subscription_id"),
   entitlementBlocked: boolean("entitlement_blocked").notNull().default(false),
   entitlementBlockedReason: text("entitlement_blocked_reason"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 }, (table) => ({
-  statusCheck: check("tenant_subscriptions_status_check", sql`${table.status} in ('awaiting_activation','active','expired','suspended','trialing','past_due','incomplete','incomplete_expired','unpaid','paused','cancelled')`),
+  statusCheck: check("tenant_subscriptions_status_check", sql`${table.status} in ('awaiting_activation','active','expired','suspended')`),
   monthlyQuotaCheck: check("tenant_subscriptions_monthly_quota_check", sql`${table.monthlyQuota} IS NULL OR ${table.monthlyQuota} > 0`),
-  manualTypeCheck: check("tenant_subscriptions_manual_type_check", sql`${table.subscriptionType} IN ('free','paid') AND ${table.term} IN ('monthly','yearly','custom') AND ${table.billingMode} = 'manual'`),
-  checkoutStatusCheck: check("tenant_subscriptions_checkout_status_check", sql`${table.checkoutStatus} in ('none','creating','open','completed')`),
-  billingOperationTypeCheck: check("tenant_subscriptions_billing_operation_type_check", sql`${table.billingOperationType} IS NULL OR ${table.billingOperationType} in ('cancel','resume')`),
-  checkoutIdempotencyUnique: uniqueIndex("tenant_subscriptions_checkout_idempotency_unique").on(table.checkoutIdempotencyKey).where(sql`${table.checkoutIdempotencyKey} IS NOT NULL`),
-  checkoutSessionUnique: uniqueIndex("tenant_subscriptions_checkout_session_unique").on(table.checkoutSessionId).where(sql`${table.checkoutSessionId} IS NOT NULL`),
-  billingOperationUnique: uniqueIndex("tenant_subscriptions_billing_operation_unique").on(table.billingOperationId).where(sql`${table.billingOperationId} IS NOT NULL`),
-  billingOperationKeyUnique: uniqueIndex("tenant_subscriptions_billing_operation_key_unique").on(table.billingOperationIdempotencyKey).where(sql`${table.billingOperationIdempotencyKey} IS NOT NULL`),
-}));
-
-
-export const printUsagePeriods = pgTable("print_usage_periods", {
-  tenantId: text("tenant_id").references(() => tenants.id, { onDelete: "cascade" }).notNull(),
-  periodStart: timestamp("period_start").notNull(),
-  periodEnd: timestamp("period_end"),
-  usedPrints: integer("used_prints").notNull().default(0),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-  updatedAt: timestamp("updated_at").defaultNow().notNull(),
-}, (table) => ({
-  pk: primaryKey({ columns: [table.tenantId, table.periodStart], name: "print_usage_periods_pk" }),
-  tenantPeriodEndIdx: index("print_usage_periods_tenant_period_end_idx").on(table.tenantId, table.periodEnd),
-  usedCheck: check("print_usage_periods_used_check", sql`${table.usedPrints} >= 0`),
-  periodCheck: check("print_usage_periods_period_check", sql`${table.periodEnd} IS NULL OR ${table.periodEnd} > ${table.periodStart}`),
+  manualTypeCheck: check("tenant_subscriptions_manual_type_check", sql`${table.subscriptionType} IN ('free','paid') AND ${table.term} IN ('monthly','yearly','custom')`),
 }));
 
 

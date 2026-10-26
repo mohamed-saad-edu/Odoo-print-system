@@ -60,14 +60,12 @@ export async function GET(req: Request) {
       db.select({
         total: sql<number>`count(*)::int`,
         active: sql<number>`count(*) filter (where ${tenantSubscriptions.status} = 'active')::int`,
-        trialing: sql<number>`count(*) filter (where ${tenantSubscriptions.status} = 'trialing')::int`,
-        pastDue: sql<number>`count(*) filter (where ${tenantSubscriptions.status} = 'past_due')::int`,
-        incomplete: sql<number>`count(*) filter (where ${tenantSubscriptions.status} = 'incomplete')::int`,
-        incompleteExpired: sql<number>`count(*) filter (where ${tenantSubscriptions.status} = 'incomplete_expired')::int`,
-        unpaid: sql<number>`count(*) filter (where ${tenantSubscriptions.status} = 'unpaid')::int`,
-        paused: sql<number>`count(*) filter (where ${tenantSubscriptions.status} = 'paused')::int`,
-        cancelled: sql<number>`count(*) filter (where ${tenantSubscriptions.status} = 'cancelled')::int`,
-        attention: sql<number>`count(*) filter (where ${tenantSubscriptions.status} in ('past_due','incomplete','incomplete_expired','unpaid'))::int`,
+        awaitingActivation: sql<number>`count(*) filter (where ${tenantSubscriptions.status} = 'awaiting_activation')::int`,
+        expired: sql<number>`count(*) filter (where ${tenantSubscriptions.status} = 'expired')::int`,
+        suspended: sql<number>`count(*) filter (where ${tenantSubscriptions.status} = 'suspended')::int`,
+        // Requests awaiting owner approval and expired contracts require review.
+        // An owner-suspended subscription is an intentional administrative state.
+        attention: sql<number>`count(*) filter (where ${tenantSubscriptions.status} in ('awaiting_activation','expired'))::int`,
       }).from(tenantSubscriptions),
 
       db.select({
@@ -253,7 +251,7 @@ export async function GET(req: Request) {
   const responseBody = {
     business:business.rows[0], logicalUsage, verifiedPrinters:verified.rows[0]?.verified??0,
     tenants: tenantStats[0] ?? { total: 0, active: 0, suspended: 0, deleted: 0 },
-    subscriptions: subscriptionStats[0] ?? { total: 0, active: 0, trialing: 0, pastDue: 0, incomplete: 0, incompleteExpired: 0, unpaid: 0, paused: 0, cancelled: 0, attention: 0 },
+    subscriptions: subscriptionStats[0] ?? { total: 0, active: 0, awaitingActivation: 0, expired: 0, suspended: 0, attention: 0 },
     users: userStats[0] ?? { total: 0, verified: 0 },
     agents: agentStats[0] ?? { total: 0, active: 0, online: 0, offline: 0, unknown: 0, inactive: 0 },
     printers: printerStats[0] ?? { total: 0, active: 0, online: 0, busy: 0, offline: 0, error: 0, unknown: 0, inactive: 0 },

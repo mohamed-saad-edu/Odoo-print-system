@@ -1,16 +1,15 @@
 import React from "react";
 import { SetupGuide } from "../components/SetupGuide";
-import { Activity, AlertTriangle, CheckCircle2, ClipboardList, Clock, FileText, Loader2, Play, Printer as PrinterIcon, RefreshCw, Server, Settings } from "lucide-react";
-import { Button, Card, CardHeader, EmptyState, ErrorState, LoadingState, Mono, StatusBadge } from "../../components/ui";
-import { DetailList, StatItem, StatStrip, StatusNotice, ViewAllButton, PrinterAvatar } from "../ui";
+import { Activity, AlertTriangle, CheckCircle2, ClipboardList, FileText, Loader2, Play, Printer as PrinterIcon, RefreshCw, Server, Settings } from "lucide-react";
+import { Button, Card, CardHeader, EmptyState, ErrorState, LoadingState, StatusBadge } from "../../components/ui";
+import { StatItem, StatStrip, StatusNotice, ViewAllButton, PrinterAvatar } from "../ui";
 import { PrinterSharingControl } from "../components/PrinterSharingControl";
 import type { DesktopState } from "../types";
 import { useI18n } from "../../i18n/react";
-import { getPrinterLanguageBadges } from "../../lib/printer-capability";
 import { agentServiceState, agentStatusNoteKey, deriveOutcome, isProductionPrinter, isMainInventoryPrinter, jobDocType, jobId, jobPrinterId, jobStatus, jobTimestamp, labelJob, toneJob, printerDisplayName, printerPresentation, printerHealthCounts } from "../lib/printers";
 
 export function OverviewPage({ s }: { s: DesktopState }) {
-  const { t, tc, locale, formatTime, formatDateTime } = useI18n();
+  const { t, tc, locale, formatDateTime } = useI18n();
   const serviceState = agentServiceState(s.agentStatus);
   const shownPrinters = s.printers.filter(isMainInventoryPrinter);
   const gatewayPrinterIds = new Set(s.printers.map((p) => p.id));
@@ -71,8 +70,8 @@ export function OverviewPage({ s }: { s: DesktopState }) {
         <StatItem label={t("desktop.overview.statJobs")} value={s.jobsLoading || s.jobsError ? "—" : String(s.pendingJobs)} sub={s.jobsLoading ? t("common.checking") : s.jobsError ? t("desktop.overview.queueUnavailable") : s.failedJobs > 0 ? tc("desktop.overview.jobsFailed", s.failedJobs) : t("desktop.status.pending")} tone={s.jobsLoading || s.jobsError ? "neutral" : s.failedJobs > 0 ? "bad" : s.pendingJobs > 0 ? "info" : "neutral"} icon={<ClipboardList className="h-4 w-4" />} />
       </StatStrip></div>
 
-      <div className="grid gap-6 lg:grid-cols-3">
-        <Card className="overflow-hidden lg:col-span-2">
+      <div className="grid gap-6">
+        <Card className="overflow-hidden">
           <CardHeader title={t("desktop.overview.printersTitle")} subtitle={t("desktop.overview.printersOnlineCount", { online, total: shownPrinters.length })} icon={<PrinterIcon className="h-4 w-4 text-brand" />} actions={<Button size="sm" variant="secondary" onClick={s.refreshPrinters} icon={<RefreshCw className="h-4 w-4" />}>{t("desktop.overview.refresh")}</Button>} />
           <div className="px-5 pb-5">
             {s.printersLoading && shownPrinters.length === 0 ? <LoadingState rows={3} /> : s.printersError && shownPrinters.length === 0 && pendingLocalPrinters.length === 0 ? <ErrorState title={t("desktop.overview.unableToLoadPrinters")} message={s.printersError} retry={s.refreshPrinters} /> : shownPrinters.length === 0 ? (
@@ -108,31 +107,7 @@ export function OverviewPage({ s }: { s: DesktopState }) {
           </div>
         </Card>
 
-        <Card className="overflow-hidden">
-          <CardHeader title={t("desktop.overview.activity")} subtitle={t("desktop.overview.activitySubtitle")} icon={<Clock className="h-4 w-4 text-brand" />} />
-          <div className="px-5 pb-5">
-            <DetailList rows={[
-              {
-                label: t("desktop.overview.lastCheck"),
-                value: (
-                  <span dir="auto" className="inline-block text-sm text-ink-2 [unicode-bidi:isolate]">
-                    {s.lastStatusCheck ? formatTime(s.lastStatusCheck) : "—"}
-                  </span>
-                ),
-              },
-              { label: t("desktop.overview.statGateway"), value: <span className="block truncate text-xs">{s.gatewayUrl || "—"}</span> },
-              { label: t("desktop.overview.statAgent"), value: serviceState === "unknown" ? t("desktop.status.unknown") : s.isOnline ? t("desktop.status.running") : t("desktop.status.stopped") },
-            ]} />
-            <div className="mt-4 border-t border-edge pt-4 space-y-2">
-              <div className="flex items-center justify-between text-xs"><span className="font-[550] text-ink-3">{t("desktop.overview.queueTitle")}</span><span className={`font-semibold ${s.jobsError || s.jobsLoading ? "text-ink-3" : s.pendingJobs > 20 ? "text-warn" : s.pendingJobs > 0 ? "text-brand" : "text-ok"}`}>{s.jobsLoading ? t("desktop.overview.queueChecking") : s.jobsError ? t("desktop.overview.queueUnavailable") : s.pendingJobs > 20 ? t("desktop.overview.queueBacklogged") : s.pendingJobs > 0 ? t("desktop.overview.queueInFlight") : t("desktop.overview.queueClear")}</span></div>
-              <div className="flex items-baseline justify-between text-xs"><span className="font-bold text-ink tabular-nums">{s.jobsLoading || s.jobsError ? "—" : s.pendingJobs}<span className="font-normal text-ink-3"> {t("desktop.overview.waiting")}</span></span><span className="text-ink-3">{t("desktop.overview.lastFifty")}</span></div>
-            </div>
-            <div className="mt-4 border-t border-edge pt-4">
-              <div className="mb-2 text-xs font-[550] text-ink-3">{t("desktop.overview.quickActions")}</div>
-              <div className="grid min-w-0 grid-cols-1 gap-2"><Button variant="primary" onClick={s.refreshStatus} icon={<RefreshCw className="h-4 w-4 shrink-0" />} className="min-w-0 w-full h-auto min-h-10 whitespace-normal"><span className="min-w-0 break-words whitespace-normal text-center">{t("desktop.overview.refresh")}</span></Button><Button variant="secondary" onClick={s.checkHealth} icon={<Activity className="h-4 w-4 shrink-0" />} className="min-w-0 w-full h-auto min-h-10 whitespace-normal"><span className="min-w-0 break-words whitespace-normal text-center">{t("desktop.overview.checkGateway")}</span></Button></div>
-            </div>
-          </div>
-        </Card>
+
       </div>
 
       <Card className="overflow-hidden">
@@ -144,7 +119,7 @@ export function OverviewPage({ s }: { s: DesktopState }) {
               <li key={jobId(j)} className="min-w-0 space-y-2 px-4 py-3">
                 <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
                   <span className="break-words text-base font-semibold text-ink">{jobDocType(j, locale)}</span>
-                  <StatusBadge tone={toneJob(jobStatus(j), j.error)} label={labelJob(jobStatus(j), j.error, locale)} />
+                  <StatusBadge tone={toneJob(jobStatus(j), j.error)} label={labelJob(jobStatus(j), j.error, locale, j)} />
                 </div>
                 <p className="truncate font-mono text-xs text-ink-3" dir="ltr" title={jobId(j)}>{jobId(j)}</p>
                 <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs text-ink-3">
@@ -158,36 +133,14 @@ export function OverviewPage({ s }: { s: DesktopState }) {
           <div className="hidden min-w-0 overflow-x-auto lg:block">
             <table className="data-table min-w-[720px] text-base">
               <thead><tr><th>{t("desktop.overview.colDocument")}</th><th>{t("desktop.overview.colPrinter")}</th><th>{t("desktop.overview.colStatus")}</th><th className="text-end">{t("desktop.overview.colUpdated")}</th></tr></thead>
-              <tbody>{s.jobs.slice(0, 5).map((j) => (<tr key={jobId(j)}><td><div className="break-words text-base font-semibold text-ink">{jobDocType(j, locale)}</div><div className="font-mono text-xs text-ink-3">{jobId(j)}</div></td><td className="text-ink-2">{String(s.printers.find((p) => p.id === jobPrinterId(j))?.name || jobPrinterId(j) || "—")}</td><td><StatusBadge tone={toneJob(jobStatus(j), j.error)} label={labelJob(jobStatus(j), j.error, locale)} /></td><td className="text-end text-xs text-ink-3">{formatDateTime(jobTimestamp(j, "updatedAt"))}</td></tr>))}</tbody>
+              <tbody>{s.jobs.slice(0, 5).map((j) => (<tr key={jobId(j)}><td><div className="break-words text-base font-semibold text-ink">{jobDocType(j, locale)}</div><div className="font-mono text-xs text-ink-3">{jobId(j)}</div></td><td className="text-ink-2">{String(s.printers.find((p) => p.id === jobPrinterId(j))?.name || jobPrinterId(j) || "—")}</td><td><StatusBadge tone={toneJob(jobStatus(j), j.error)} label={labelJob(jobStatus(j), j.error, locale, j)} /></td><td className="text-end text-xs text-ink-3">{formatDateTime(jobTimestamp(j, "updatedAt"))}</td></tr>))}</tbody>
             </table>
           </div>
           </>
         )}
       </Card>
 
-      {shownPrinters.length > 0 && (() => {
-        // Both wire casings are accepted (Tauri serializes camelCase; the Gateway
-        // /api/printers rows are camelCase too), so the hardware-profile cards
-        // can actually resolve a thermal / label / spooler device.
-        const badgesOf = (p: (typeof shownPrinters)[number]) =>
-          getPrinterLanguageBadges(p.protocol ?? "unknown", (p.connection_type || p.connectionType) ?? "unknown");
-        // Diagnostic labels derive ONLY from the declared protocol/transport
-        // (device class is not language evidence: a thermal queue can be a
-        // PDF/document backend, a label queue can be TSPL).
-        const escpos = shownPrinters.find((p) => badgesOf(p).includes("ESC/POS"));
-        const zpl = shownPrinters.find((p) => badgesOf(p).includes("ZPL"));
-        const spooler = shownPrinters.find((p) => badgesOf(p).some((b) => b.includes("Spooler") || b.includes("IPP")));
-        return (
-          <Card className="p-5">
-            <details><summary className="cursor-pointer text-sm font-semibold text-ink">{t("v4.experience.advanced")}</summary>
-            <div className="mt-4 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-              <div className="flex items-start gap-2.5"><Activity className="mt-0.5 h-4 w-4 shrink-0 text-ink-3" /><div className="min-w-0"><div className="text-sm font-semibold text-ink">{t("desktop.overview.hardwareProfile")}</div><p className="mt-1 text-xs text-ink-3">{t("desktop.overview.hardwareProfileBody")}</p></div></div>
-              <div className="flex min-w-0 flex-wrap gap-2">{escpos && <Button variant="secondary" disabled={s.busy || !s.gatewayTestPrinterIds.has(escpos.id)} onClick={() => s.handleTest(escpos.id)} icon={<Activity className="h-4 w-4" />}>{t("desktop.overview.testEscPos")}</Button>}{zpl && <Button variant="secondary" disabled={s.busy || !s.gatewayTestPrinterIds.has(zpl.id)} onClick={() => s.handleTest(zpl.id)} icon={<Activity className="h-4 w-4" />}>{t("desktop.overview.testZpl")}</Button>}{spooler && <Button variant="secondary" disabled={s.busy || !s.gatewayTestPrinterIds.has(spooler.id)} onClick={() => s.handleTest(spooler.id)} icon={<Activity className="h-4 w-4" />}>{t("desktop.overview.testSpooler")}</Button>}{!escpos && !zpl && !spooler && <Button variant="secondary" disabled={s.busy || !s.gatewayTestPrinterIds.has(shownPrinters[0].id)} onClick={() => s.handleTest(shownPrinters[0].id)} icon={<Play className="h-4 w-4" />}>{t("desktop.overview.testNamed", { name: shownPrinters[0].name.slice(0, 18) })}</Button>}<p className="w-full text-xs text-ink-3">{t("desktop.printers.cloudTestUnavailable")}</p></div>
-            </div>
-            </details>
-          </Card>
-        );
-      })()}
+
     </div>
   );
 }

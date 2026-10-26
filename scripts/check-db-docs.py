@@ -26,9 +26,18 @@ MIGRATIONS = ROOT / "drizzle"
 DATABASE_DOC = ROOT / "docs" / "DATABASE.md"
 ARCHITECTURE_DOC = ROOT / "ARCHITECTURE.md"
 
-CREATE_RE = re.compile(r'CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?"?([A-Za-z0-9_]+)"?', re.I)
-DROP_RE = re.compile(r'DROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?"?([A-Za-z0-9_]+)"?', re.I)
+# Schema-qualified names are important: moving provider event history into
+# legacy_billing is not a new public table or a dropped audit record.
+IDENT = r'(?:(?P<schema>"?[A-Za-z_][A-Za-z0-9_]*"?)\s*\.\s*)?(?P<table>"?[A-Za-z_][A-Za-z0-9_]*"?)(?![A-Za-z0-9_$]|\s*\.)'
+CREATE_RE = re.compile(r'\bCREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?!IF\b)' + IDENT, re.I)
+DROP_RE = re.compile(r'\bDROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?' + IDENT, re.I)
+MOVE_RE = re.compile(r'\bALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?' + IDENT +
+                     r'\s+SET\s+SCHEMA\s+"?([A-Za-z_][A-Za-z0-9_]*)"?', re.I)
 PGTABLE_RE = re.compile(r"pgTable\(\s*['\"]([A-Za-z0-9_]+)['\"]")
+
+def object_name(match: re.Match[str]) -> tuple[str, str]:
+    return (match.group("schema") or "public").strip('"').lower(), match.group("table").strip('"').lower()
+
 
 
 def main() -> int:
@@ -44,18 +53,31 @@ def main() -> int:
 
     created: dict[str, str] = {}
     dropped: set[str] = set()
+    archived: set[str] = set()
     for sql in sorted(MIGRATIONS.glob("*.sql")):
         text = sql.read_text()
-        for name in CREATE_RE.findall(text):
-            created.setdefault(name, sql.name)
-        dropped.update(DROP_RE.findall(text))
+        for match in CREATE_RE.finditer(text):
+            schema, name = object_name(match)
+            if schema == "public":
+                created.setdefault(name, sql.name)
+        for match in DROP_RE.finditer(text):
+            schema, name = object_name(match)
+            if schema == "public":
+                dropped.add(name)
+        for match in MOVE_RE.finditer(text):
+            schema, name = object_name(match)
+            destination = match.group(3).lower()
+            if schema == "public" and destination == "legacy_billing":
+                archived.add(name)
 
-    # The offline audit's forward repair entries are part of the production migrator.
+    # Forward repairs retain immutable ledger hashes; this checks DDL in them
+    # without treating schema-qualified metadata tables as application tables.
     repairs = (ROOT / "scripts" / "db-migrate.ts").read_text()
-    for name in CREATE_RE.findall(repairs):
-        if name != "drizzle":
+    for match in CREATE_RE.finditer(repairs):
+        schema, name = object_name(match)
+        if schema == "public":
             created.setdefault(name, "scripts/db-migrate.ts")
-    current = set(created) - dropped
+    current = set(created) - dropped - archived
 
     for table in sorted(schema_tables - set(created)):
         problems.append(f"{table}: declared in schema.ts but never created by a migration")
@@ -91,6 +113,7 @@ def main() -> int:
     print(f"migration files      : {len(list(MIGRATIONS.glob('*.sql')))}")
     print(f"tables created       : {len(created)}")
     print(f"legacy tables dropped: {len(dropped)}")
+    print(f"legacy tables archived: {len(archived)}")
     print(f"current tables       : {len(current)}")
 
     if problems:

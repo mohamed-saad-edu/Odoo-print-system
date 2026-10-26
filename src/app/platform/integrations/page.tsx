@@ -111,7 +111,7 @@ export default function PlatformIntegrationsPage() {
 
   return (
     <div className="space-y-5 pb-10">
-      <PageHeader title={t.title} eyebrow={t.eyebrow} icon={<KeyRound className="h-5 w-5" />} description={t.subtitle}
+      <PageHeader variant="inline" title={t.title}  icon={<KeyRound className="h-5 w-5" />} 
         actions={<Button variant="secondary" size="sm" loading={loading} onClick={() => setRefresh(v => v + 1)} icon={<RefreshCw className="h-4 w-4" />}>{t.refresh}</Button>} />
       <div className="rounded-xl border border-edge bg-surface p-4 sm:p-5">
         <div className="mb-4"><SegmentedControl value={kind} label={t.title}
