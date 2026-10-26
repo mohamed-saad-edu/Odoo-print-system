@@ -28,8 +28,15 @@ export function FileOutputDetails({ job }: { job: { status?: unknown; error?: un
   if (job.outputMedium !== "file") return null;
   const output = printOutputPresentation({ status: String(job.status ?? ""), error: typeof job.error === "string" ? job.error : null, outputMedium: "file", outputEvidence: job.outputEvidence });
   const evidence = output.outputEvidence;
+  const error = typeof job.error === "string" ? job.error.trim().toLowerCase() : "";
+  const errorKey = error.includes("access denied") || error.includes("access is denied") || error.includes("permission")
+    ? "printer.verification.fileAccessDenied"
+    : error.includes("not found") || error.includes("no such") ? "printer.verification.fileMissingOutput"
+      : error.includes("timeout") || error.includes("timed out") || error.includes("deadline") ? "printer.verification.fileTimeout"
+        : "printer.verification.fileDiagnostic";
   return <section className="space-y-3" aria-label={t("printer.verification.file")}>
     <Callout tone={evidence ? "ok" : "warn"}>{t(evidence ? "printer.verification.fileCreated" : output.outputOutcome === "pending" ? "printer.verification.fileQueued" : output.outputOutcome === "not_created" ? "printer.verification.fileFailed" : "printer.verification.fileUncertain")}</Callout>
+    {error && <Callout tone="warn">{t(errorKey)}</Callout>}
     {evidence && <KeyValueList rows={[
       { label: t("printer.verification.artifactId"), value: evidence.artifact_id },
       { label: t("printer.verification.pages"), value: formatNumber(evidence.page_count) },

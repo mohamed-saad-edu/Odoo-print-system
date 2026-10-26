@@ -8,7 +8,13 @@ import { PlatformTeamManagement } from "../../../../components/platform/Platform
 import { SubscriptionEditor,type ManualSubscription,type ManualPlan } from "../../../../components/platform/SubscriptionEditor";
 type Row=Record<string,string|number|boolean|null>;
 type Detail={workspace:Row;subscription:ManualSubscription|null;members:Row[];agents:Row[];printers:Row[];installations:Row[];credentials:Row[];jobs:Row[];events:Row[];history:Array<{id:string;action:string;actorEmail:string|null;reason:string;createdAt:string;before:Record<string,unknown>|null;after:Record<string,unknown>}>;requests:Row[];usage:{today:number;month:number;year:number;monthlyHistory:Array<{periodStart:string;used:number}>}};
-export default function WorkspaceDetail({params}:{params:Promise<{id:string}>}){const {id}=use(params),{a,formatNumber,formatDate,formatDateTime}=useAdminText();const [data,setData]=useState<Detail|null>(null),[plans,setPlans]=useState<ManualPlan[]>([]),[tab,setTab]=useState('identity'),[tick,setTick]=useState(0),[error,setError]=useState(''),[saved,setSaved]=useState(false),[rejectKey,setRejectKey]=useState(''),[rejectId,setRejectId]=useState(''),[reason,setReason]=useState(''),[password,setPassword]=useState(''),[busy,setBusy]=useState(false);
+export default function WorkspaceDetail({params}:{params:Promise<{id:string}>}){
+ const {id}=use(params);
+ // Next keeps the dynamic segment's React key across param value changes.
+ // Bind fetched data and every draft/password/action to the exact workspace.
+ return <WorkspaceDetailContent key={id} id={id}/>;
+}
+function WorkspaceDetailContent({id}:{id:string}){const {a,formatNumber,formatDate,formatDateTime}=useAdminText();const [data,setData]=useState<Detail|null>(null),[plans,setPlans]=useState<ManualPlan[]>([]),[tab,setTab]=useState('identity'),[tick,setTick]=useState(0),[error,setError]=useState(''),[saved,setSaved]=useState(false),[rejectKey,setRejectKey]=useState(''),[rejectId,setRejectId]=useState(''),[reason,setReason]=useState(''),[password,setPassword]=useState(''),[busy,setBusy]=useState(false);
  useEffect(()=>{let live=true;Promise.all([adminJson(`/api/platform/tenants/${encodeURIComponent(id)}`),adminJson('/api/platform/plans')]).then(([d,p])=>{if(live){setData(d);setPlans(p.plans);setError('');}}).catch(()=>{if(live)setError(a('loadError'));});return()=>{live=false;};},[id,tick,a]);
  function refreshed(){setSaved(true);setTick(x=>x+1);}
  async function reject(e:React.FormEvent){e.preventDefault();setBusy(true);const proof=password;setPassword('');try{await adminJson('/api/platform/auth/reauth',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:proof})});await adminJson('/api/platform/subscription-requests',{method:'POST',headers:{'Content-Type':'application/json','Idempotency-Key':rejectKey},body:JSON.stringify({id:rejectId,reason})});setRejectId('');refreshed();}catch{setError(a('saveError'));}finally{setBusy(false);}}
