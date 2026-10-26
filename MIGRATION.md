@@ -69,7 +69,10 @@ This runs `scripts/db-migrate.ts` which applies all pending migrations from `dri
 | 0094 | 1 | Add live printer verification, scoped logical identity, immutable job destination bindings, and retained PDF file-result evidence; historical inventory remains pending until verified |
 | 0095 | 1 | Manual subscriptions, authenticated activation requests, immutable change history, owner names and UTC monthly admission ledger; retains provider evidence and conservatively carries prior usage |
 
-**Total**: 97 forward-only SQL migrations (0000–0096), plus retained hash-versioned forward repairs in `scripts/db-migrate.ts`.
+| 0096 | 1 | Retire limited workspace roles without promoting old sessions |
+| 0097 | 1 | Agent-scoped discovery observation IDs; preserve IDs, approvals and runtime links |
+
+**Total**: 98 forward-only SQL migrations (0000–0097), plus retained hash-versioned forward repairs in `scripts/db-migrate.ts`.
 
 Apply all migrations through `0094` before starting V3, with older Gateway instances stopped. Historical `0090` and `0092` remain in the journal so existing content hashes and fresh replay remain valid. V3 uses email/password login and the existing production `__Host-` access/refresh cookies. Migration `0094` does not convert stored configuration into live printer proof: existing registrations and historical queued jobs without an admitted binding remain ineligible for new execution. Deploy the matching Agent, obtain a fresh verified inventory, and reconcile retained legacy jobs explicitly. Terminal history remains available for exact result replay. See the V3 upgrade procedure below and `SECURITY.md`.
 
@@ -211,3 +214,22 @@ Platform Owner audience and current password confirmation.
 
 This is a compatibility-safe first stage, not full role-column removal. Make a
 backup and rehearse restore, and never run the pre-0096 app against the new policy.
+
+## 0097 — Agent-scoped discovery identities (2026-10-26)
+
+Stop older Gateway instances before applying this migration and deploy the
+matching Gateway. The previous `(tenant_id, id)` uniqueness rejected reports
+when two Agents used the same local device ID. The replacement is
+`(tenant_id, agent_id, id)`; stable-identity dedup remains independently scoped
+to tenant and Agent. All candidate IDs, observations, approvals and provisioned
+runtime links are retained. Provisioning writes now include the Agent fence.
+The migration adds its replacement constraint before dropping the old one and
+can be applied repeatedly without rewriting rows.
+
+Back up PostgreSQL before the release. After any cross-Agent ID collisions have
+been admitted, an older Gateway can mutate the wrong Agent's candidate because
+its provisioning writes lack the Agent predicate. Do not roll back that Gateway
+against this widened schema. Retain the fixed Gateway, or stop writes and plan a
+reviewed forward reconciliation; never delete observations or rename external
+IDs to force the old uniqueness back. No Odoo, Agent or desktop wire change is
+required. Updating the Gateway does not update an Odoo addon on a separate server.

@@ -458,9 +458,7 @@ export const discoverySessions = pgTable("discovery_sessions", {
 }));
 
 export const discoveredDevices = pgTable("discovered_devices", {
-  // Observation row identity is tenant-scoped. Agents often reuse the same
-  // stable printer id as the discovery row id; that must not collide across
-  // tenants.
+  // Local observation IDs can repeat across Agents and workspaces.
   id: text("id").notNull(),
   tenantId: text("tenant_id").references(() => tenants.id).notNull(),
   discoveryId: text("discovery_id").notNull(),
@@ -494,7 +492,7 @@ export const discoveredDevices = pgTable("discovered_devices", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 }, (table) => ({
-  tenantIdUnique: unique("discovered_devices_tenant_id_unique").on(table.tenantId, table.id),
+  tenantAgentIdUnique: unique("discovered_devices_tenant_agent_id_unique").on(table.tenantId, table.agentId, table.id),
   discoveryFk: foreignKey({ name: "discovered_devices_tenant_id_discovery_id_fk", columns: [table.tenantId, table.discoveryId], foreignColumns: [discoverySessions.tenantId, discoverySessions.id] }),
   agentFk: foreignKey({ name: "discovered_devices_tenant_id_agent_id_agents_fk", columns: [table.tenantId, table.agentId], foreignColumns: [agents.tenantId, agents.id] }),
   provisionedPrinterFk: foreignKey({ name: "discovered_devices_tenant_id_provisioned_printer_id_fk", columns: [table.tenantId, table.provisionedPrinterId], foreignColumns: [printers.tenantId, printers.id] }),

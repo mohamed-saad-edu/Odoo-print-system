@@ -190,12 +190,12 @@ second physical attempt.
 ### PostgreSQL + Drizzle ORM
 
 **Schema**: 34 tables defined in `src/db/schema.ts`
-**Migrations**: 97 forward-only migrations (`0000`–`0096`) in `drizzle/`
+**Migrations**: 98 forward-only migrations (`0000`–`0097`) in `drizzle/`
 **Driver**: `pg` with connection pool; exact version is pinned in the Node manifests
 
 ### Key Design Patterns
 
-1. **Composite tenant keys**: `UNIQUE(tenant_id, id)` on all tenant-scoped tables
+1. **Composite ownership keys**: tenant-scoped registration IDs; discovery observations additionally include `agent_id`
 2. **CHECK constraints**: Status enums enforced at database level (not just application)
 3. **Idempotency keys**: Unique partial indexes for deduplication
 4. **Claim fencing**: `claim_token` column prevents stale-claim processing
