@@ -10,6 +10,11 @@ import type { PoolClient } from "pg";
  * excluded because they may contain nested secrets or customer documents.
  */
 const SECRET = /(?:password|secret|token|credential|private|signature|salt|hash|payload|document|certificate|authorization|cookie|session_data|card_number|payment_method|refresh|recovery|otp|passcode|api_key_value|body|content|address_line|phone|email)/i;
+// The operator explorer is not a schema dump. Provider data is archived,
+ // and pre-upgrade servers must never leak legacy billing identifiers.
+const RETIRED_COLUMNS = /^(?:stripe_.+|checkout_.+|billing_operation_.+|trial_started_at|billing_mode|currency|interval)$/i;
+const RETIRED_TABLES = new Set(["billing_events", "print_usage_periods"]);
+const PLAN_VISIBLE = new Set(["id", "name", "description", "is_active", "is_public", "created_at", "updated_at"]);
 const SAFE_TYPES = new Set(["text","character varying","character","uuid","integer","bigint","smallint","numeric","boolean","timestamp without time zone","timestamp with time zone","date","double precision","real","USER-DEFINED"]);
 const ALWAYS_HIDDEN = new Set(["platform_sessions","refresh_tokens","auth_rate_limits","password_reset_tokens","email_verification_tokens","pg_stat_statements",
   "platform_session_security", "workspace_session_security"]);
@@ -48,13 +53,14 @@ export async function listExploreTables(client: PoolClient): Promise<ExploreTabl
     primary: string[];
   }>();
   for (const column of catalog.rows) {
-    if (ALWAYS_HIDDEN.has(column.table_name)) continue;
+    if (ALWAYS_HIDDEN.has(column.table_name) || RETIRED_TABLES.has(column.table_name)) continue;
     let table = grouped.get(column.table_name);
     if (!table) {
       table = { columns: [], primary: [] };
       grouped.set(column.table_name, table);
     }
-    if (!SAFE_TYPES.has(column.data_type) || SECRET.test(column.column_name)) continue;
+    if (!SAFE_TYPES.has(column.data_type) || SECRET.test(column.column_name) || RETIRED_COLUMNS.test(column.column_name)) continue;
+    if (column.table_name === "plans" && !PLAN_VISIBLE.has(column.column_name)) continue;
     if (table.columns.length >= 40) continue;
     table.columns.push(column.column_name);
     if (column.is_primary) table.primary.push(column.column_name);

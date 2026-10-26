@@ -147,7 +147,7 @@ describe("deep production review contracts", () => {
       expect(source).toContain("liveTenantSubscriptionPredicate");
     }
     const entitlementSource = read("src/lib/entitlements.ts");
-    expect(entitlementSource).toContain("ts.status = 'active' AND ts.billing_mode = 'manual'");
+    expect(entitlementSource).toContain("ts.status = 'active'");
     expect(entitlementSource).toContain("ts.current_period_start <= clock_timestamp()");
     expect(entitlementSource).toContain("COALESCE(ts.entitlement_blocked, false) = false");
     expect(entitlementSource).toContain("ts.current_period_end > clock_timestamp()");
@@ -193,13 +193,10 @@ describe("deep production review contracts", () => {
     expect(source).toContain("WHERE claim_id ~");
   });
 
-  it("keeps Odoo configuration and billing-operation timestamps on PostgreSQL", () => {
+  it("keeps Odoo configuration timestamps on PostgreSQL" () => {
     const configuration = read("src/app/api/odoo/configuration/route.ts");
-    const billing = read("src/lib/billing-operation.ts");
     expect(configuration).toContain("odooEnabledUpdatedAt: sql`clock_timestamp()`");
     expect(configuration).not.toContain("const now = new Date()");
-    expect(billing).toContain("updatedAt: sql`clock_timestamp()`");
-    expect(billing).not.toContain("updatedAt: new Date()");
   });
 
   it("uses database epoch time when re-enabling an Agent and minting its pairing expiry", () => {
@@ -275,7 +272,7 @@ describe("deep production review contracts", () => {
     expect(register).toContain("liveTenantSubscriptionWhere");
     expect(lifecycle).toContain("requireTenantBillingAccess(tx, tenantId)");
     expect(entitlements).toContain("requireTenantBillingAccess");
-    expect(entitlements).toContain("ts.status = 'active' AND ts.billing_mode = 'manual'");
+    expect(entitlements).toContain("ts.status = 'active'");
     expect(entitlements).toContain("current_period_end > clock_timestamp()");
     expect(entitlements).toContain("COALESCE(ts.entitlement_blocked, false) = false");
     expect(entitlements).toContain("TenantSubscriptionRequiredError");

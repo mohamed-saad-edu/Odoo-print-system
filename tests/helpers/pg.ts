@@ -131,8 +131,6 @@ export async function truncateAll(): Promise<void> {
         "tenant_invitations",
         "platform_sessions",
         "tenant_subscriptions",
-        "print_usage_periods",
-        "billing_events",
         "audit_events",
         "api_keys",
         "tenant_users",

@@ -12,12 +12,7 @@ import { POST as checkout } from "../src/app/api/billing/checkout/route";
 import { POST as startDiscovery } from "../src/app/api/agents/[id]/discovery/route";
 import { sessionCookieName } from "../src/lib/session-config";
 import { issueWorkspaceTestSession } from "./helpers/workspace-session";
-import { stripeRequest } from "../src/lib/stripe";
 import { applyMigrations, closePool, hasTestDatabase, truncateAll } from "./helpers/pg";
-
-vi.mock("../src/lib/stripe", () => ({
-  stripeRequest: vi.fn(),
-}));
 
 const suite = describe.skipIf(!hasTestDatabase);
 let passwordHash: string;
@@ -31,12 +26,6 @@ suite("control-plane concurrency invariants", () => {
     vi.clearAllMocks();
     vi.stubEnv("APP_BASE_URL", "https://billing.test");
     vi.stubEnv("GATEWAY_JWT_SECRET", jwtSecret);
-    vi.mocked(stripeRequest).mockImplementation(async (path: string, _form: URLSearchParams, idempotencyKey?: string) => {
-      await new Promise((resolve) => setTimeout(resolve, 50));
-      if (path === "customers") return { id: "cus_control_plane" };
-      if (path === "checkout/sessions") return { id: `cs_${idempotencyKey}`, url: `https://checkout.example/${idempotencyKey}` };
-      throw new Error(`unexpected Stripe path: ${path}`);
-    });
     await db.insert(tenants).values({ id: "tenant_control_plane", name: "Control Plane Tenant" });
     await db.insert(users).values({ id: "user_control_plane", email: "control-plane@example.test", passwordHash, emailVerifiedAt: new Date() });
     await db.insert(tenantUsers).values({ userId: "user_control_plane", tenantId: "tenant_control_plane", role: "owner" });
@@ -109,8 +98,8 @@ suite("control-plane concurrency invariants", () => {
   it("denies concurrent workspace attempts to create a paid subscription without a platform owner", async () => {
     const planId = `plan_trial_${nanoid(8)}`;
     await db.insert(plans).values({
-      id: planId, name: `Trial ${nanoid(6)}`, stripePriceId: `price_${nanoid(8)}`,
-      entitlements: { max_agents: 5, max_printers: 5, max_jobs_per_minute: 60, max_concurrent_jobs: 8, max_prints_per_period: 100 }, currency: "usd", interval: "month",
+      id: planId, name: `Trial ${nanoid(6)}`, 
+      entitlements: { max_agents: 5, max_printers: 5, max_jobs_per_minute: 60, max_concurrent_jobs: 8, max_prints_per_period: 100 },
     });
     const request = () => onboarding(new Request("http://localhost/api/onboarding", {
       method: "POST", headers: { "content-type": "application/json", cookie: managerCookie },
@@ -122,14 +111,13 @@ suite("control-plane concurrency invariants", () => {
     expect(await b.json()).toMatchObject({ code: "PLATFORM_OWNER_REQUIRED" });
     const subscription = await db.query.tenantSubscriptions.findFirst({ where: eq(tenantSubscriptions.tenantId, "tenant_control_plane") });
     expect(subscription).toBeUndefined();
-    expect(stripeRequest).not.toHaveBeenCalled();
   });
 
   it("rejects concurrent retired checkout requests without creating a provider customer or subscription", async () => {
     const planId = `plan_checkout_${nanoid(8)}`;
     await db.insert(plans).values({
-      id: planId, name: `Checkout ${nanoid(6)}`, stripePriceId: `price_${nanoid(8)}`,
-      entitlements: { max_agents: 5, max_printers: 5, max_jobs_per_minute: 60, max_concurrent_jobs: 8, max_prints_per_period: 100 }, currency: "usd", interval: "month",
+      id: planId, name: `Checkout ${nanoid(6)}`, 
+      entitlements: { max_agents: 5, max_printers: 5, max_jobs_per_minute: 60, max_concurrent_jobs: 8, max_prints_per_period: 100 },
     });
     const request = () => checkout(new Request("http://localhost/api/billing/checkout", {
       method: "POST", headers: { "content-type": "application/json", cookie: managerCookie },
@@ -139,7 +127,6 @@ suite("control-plane concurrency invariants", () => {
     expect([a.status, b.status].sort()).toEqual([410, 410]);
     expect(await a.json()).toMatchObject({ code: "MANUAL_BILLING_REQUIRED" });
     expect(await b.json()).toMatchObject({ code: "MANUAL_BILLING_REQUIRED" });
-    expect(stripeRequest).not.toHaveBeenCalled();
     const subscription = await db.query.tenantSubscriptions.findFirst({ where: eq(tenantSubscriptions.tenantId, "tenant_control_plane") });
     expect(subscription).toBeUndefined();
   });

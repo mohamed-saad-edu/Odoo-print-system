@@ -66,7 +66,7 @@ suite("real PostgreSQL runtime architecture gate", () => {
     expect(job.rows[0]).toMatchObject({ id:'job_pg',agent_id:'agt_pg',printer_id:'prn_pg',destination:'POS' });
   });
 
-  it("preserves Stripe subscription lifecycle states", async () => {
+  it("enforces the four manual-only subscription states", async () => {
     const result = await pool().query(`
       SELECT pg_get_constraintdef(oid) AS definition
       FROM pg_constraint
@@ -75,8 +75,11 @@ suite("real PostgreSQL runtime architecture gate", () => {
     `);
     expect(result.rows).toHaveLength(1);
     const definition = String(result.rows[0].definition);
-    for (const state of ["trialing", "active", "past_due", "incomplete", "incomplete_expired", "unpaid", "paused", "cancelled"]) {
+    for (const state of ["awaiting_activation", "active", "expired", "suspended"]) {
       expect(definition).toContain(state);
+    }
+    for (const state of ["trialing", "past_due", "incomplete", "unpaid", "paused", "cancelled"]) {
+      expect(definition).not.toContain(state);
     }
     const column = await pool().query(`
       SELECT is_nullable, column_default

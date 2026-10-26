@@ -77,6 +77,10 @@ END $destination_labels$;`);
 /** Apply journal order by recorded content hash, including skipped older timestamps. */
 export async function migrateByHash(client: PoolClient, migrationsFolder: string): Promise<void> {
   const migrations = readMigrationFiles({ migrationsFolder });
+  // Immutable legacy repair hashes remain recorded for migration-ledger parity.
+  // Once the manual-only cutover is present, do not re-create retired provider
+  // columns after the forward-only cleanup migration drops them.
+  const manualOnly = migrations.some(m => m.sql.some(statement => statement.includes("PROVIDER_BILLING_RETIREMENT_V1")));
   await client.query("BEGIN");
   try {
     // Historical DDL explicitly references public; keep unqualified tables and
@@ -99,7 +103,8 @@ export async function migrateByHash(client: PoolClient, migrationsFolder: string
     for (const repair of AUDIT_REPAIRS) {
       const hash = createHash("sha256").update(repair).digest("hex");
       if (applied.has(hash)) continue;
-      await client.query(repair);
+      const retiredRepair = /^-- audit A(?:98 v1|96 v1|97 v[12]):/.test(repair);
+      if (!manualOnly || !retiredRepair) await client.query(repair);
       await client.query('INSERT INTO drizzle.__drizzle_migrations (hash, created_at) VALUES ($1, $2)', [hash, Math.max(...migrations.map(m => m.folderMillis))]);
       applied.add(hash);
     }

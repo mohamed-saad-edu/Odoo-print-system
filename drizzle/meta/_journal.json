@@ -687,6 +687,13 @@
       "when": 1793059200001,
       "tag": "0097_agent_scoped_discovery_identity",
       "breakpoints": true
+    },
+    {
+      "idx": 98,
+      "version": "7",
+      "when": 1793059200002,
+      "tag": "0098_manual_only_billing",
+      "breakpoints": true
     }
   ]
 }

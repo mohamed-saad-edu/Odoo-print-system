@@ -13,7 +13,7 @@ suite("billing entitlement access policy", () => {
   beforeEach(async () => { await truncateAll(); });
   afterAll(async () => { await closePool(); });
 
-  it("requires explicit manual activation instead of admitting a legacy past_due recovery state", async () => {
+  it("requires explicit manual activation before customer provisioning", async () => {
     const tenantId = `tenant_${nanoid(8)}`;
     const planId = `plan_${nanoid(8)}`;
     await db.insert(tenants).values({ id: tenantId, name: "Past Due Tenant" });
@@ -21,14 +21,11 @@ suite("billing entitlement access policy", () => {
       id: planId,
       name: "Past Due Plan",
       entitlements: { max_agents: 2, max_printers: 5, max_jobs_per_minute: 60, max_concurrent_jobs: 8, max_prints_per_period: 20 },
-      stripePriceId: `price_${nanoid(8)}`,
-      currency: "usd",
-      interval: "month",
     });
     await db.insert(tenantSubscriptions).values({
       tenantId,
       planId,
-      status: "past_due",
+      status: "awaiting_activation",
       currentPeriodEnd: new Date(Date.now() - 60_000),
     });
 
@@ -43,9 +40,6 @@ suite("billing entitlement access policy", () => {
       id: planId,
       name: "Correlated Predicate Plan",
       entitlements: { max_agents: 2, max_printers: 5, max_jobs_per_minute: 60, max_concurrent_jobs: 8, max_prints_per_period: 20 },
-      stripePriceId: `price_${nanoid(8)}`,
-      currency: "usd",
-      interval: "month",
     });
     await db.insert(tenantSubscriptions).values({
       tenantId,
@@ -66,7 +60,7 @@ suite("billing entitlement access policy", () => {
     expect(result.rows[0]?.live).toBe(1);
   });
 
-  it("fails closed for unpaid subscriptions", async () => {
+  it("fails closed for expired subscriptions", async () => {
     const tenantId = `tenant_${nanoid(8)}`;
     const planId = `plan_${nanoid(8)}`;
     await db.insert(tenants).values({ id: tenantId, name: "Unpaid Tenant" });
@@ -74,14 +68,11 @@ suite("billing entitlement access policy", () => {
       id: planId,
       name: "Unpaid Plan",
       entitlements: { max_agents: 2, max_printers: 5, max_jobs_per_minute: 60, max_concurrent_jobs: 8, max_prints_per_period: 20 },
-      stripePriceId: `price_${nanoid(8)}`,
-      currency: "usd",
-      interval: "month",
     });
     await db.insert(tenantSubscriptions).values({
       tenantId,
       planId,
-      status: "unpaid",
+      status: "expired",
       currentPeriodEnd: new Date(Date.now() + 86_400_000),
     });
 
@@ -97,23 +88,20 @@ suite("billing entitlement access policy", () => {
       id: planId,
       name: "Blocked Billing Plan",
       entitlements: { max_agents: 2, max_printers: 5, max_jobs_per_minute: 60, max_concurrent_jobs: 8, max_prints_per_period: 20 },
-      stripePriceId: `price_${nanoid(8)}`,
-      currency: "usd",
-      interval: "month",
     });
     await db.insert(tenantSubscriptions).values({
       tenantId,
       planId,
       status: "active",
       entitlementBlocked: true,
-      entitlementBlockedReason: "stripe_price_unmapped:price_unknown",
+      entitlementBlockedReason: "manual_review_required",
     });
 
     await expect(getTenantEntitlementLimit(db, tenantId, "max_printers"))
       .rejects.toBeInstanceOf(TenantEntitlementConfigError);
   });
 
-  it("fails closed for paused subscriptions", async () => {
+  it("fails closed for suspended subscriptions", async () => {
     const tenantId = `tenant_${nanoid(8)}`;
     const planId = `plan_${nanoid(8)}`;
     await db.insert(tenants).values({ id: tenantId, name: "Paused Tenant" });
@@ -121,14 +109,11 @@ suite("billing entitlement access policy", () => {
       id: planId,
       name: "Paused Plan",
       entitlements: { max_agents: 2, max_printers: 5, max_jobs_per_minute: 60, max_concurrent_jobs: 8, max_prints_per_period: 20 },
-      stripePriceId: `price_${nanoid(8)}`,
-      currency: "usd",
-      interval: "month",
     });
     await db.insert(tenantSubscriptions).values({
       tenantId,
       planId,
-      status: "paused",
+      status: "suspended",
       currentPeriodEnd: new Date(Date.now() + 86_400_000),
     });
 

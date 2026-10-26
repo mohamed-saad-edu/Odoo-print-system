@@ -22,7 +22,7 @@ const dr=stub({sql,and:(...args)=>args,eq:(...args)=>args,desc:(x)=>x});
 let state;
 const claims=()=>({tenantId:'tenant',jti:'jti',exp:1900000000,ver:state.legacy?1:2,sid:state.legacy?undefined:'sid',role:state.role,userId:'actor',kind:'manager',familyId:state.legacy?undefined:'family'});
 const db={
- query:{tenants:{findFirst:async()=>({id:'tenant'})},plans:{findFirst:async()=>({id:'plan',stripePriceId:'price'})},tenantSubscriptions:{findFirst:async()=>null}},
+ query:{tenants:{findFirst:async()=>({id:'tenant'})},plans:{findFirst:async()=>({id:'plan'})},tenantSubscriptions:{findFirst:async()=>null}},
  transaction:async(fn)=>fn(tx),
 };
 const tx={

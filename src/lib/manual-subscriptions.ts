@@ -18,16 +18,14 @@ export function requireIdempotencyKey(req: Request): string {
   if (!/^[a-zA-Z0-9_-]{16,128}$/.test(key)) throw new ManualSubscriptionError("IDEMPOTENCY_KEY_REQUIRED");
   return key;
 }
-export function customerSubscriptionState(sub: {status: string; billingMode?: string; currentPeriodStart: Date | string; currentPeriodEnd: Date | string | null; entitlementBlocked?: boolean} | null | undefined, lifecycle = "active", now = Date.now()): "awaiting_activation" | "active" | "expired" | "suspended" {
+export function customerSubscriptionState(sub: {status: string; currentPeriodStart: Date | string; currentPeriodEnd: Date | string | null; entitlementBlocked?: boolean} | null | undefined, lifecycle = "active", now = Date.now()): "awaiting_activation" | "active" | "expired" | "suspended" {
   if (lifecycle !== "active" || sub?.status === "suspended" || sub?.entitlementBlocked) return "suspended";
-  // Match runtime admission: a historical provider row is not manual approval.
-  if (sub?.billingMode !== undefined && sub.billingMode !== "manual") return "awaiting_activation";
   if (!sub || sub.status === "awaiting_activation" || (parseDbTimeMs(sub.currentPeriodStart) ?? Infinity) > now) return "awaiting_activation";
   if (sub.status !== "active" || (sub.currentPeriodEnd && (parseDbTimeMs(sub.currentPeriodEnd) ?? -Infinity) <= now)) return "expired";
   return "active";
 }
 export async function ensurePendingManualSubscription(tx: DbTx, tenantId: string, planId: string): Promise<void> {
-  await tx.insert(tenantSubscriptions).values({tenantId,planId,status:"awaiting_activation",billingMode:"manual",subscriptionType:"paid"}).onConflictDoNothing();
+  await tx.insert(tenantSubscriptions).values({tenantId,planId,status:"awaiting_activation",subscriptionType:"paid"}).onConflictDoNothing();
 }
 export type ManualSubscriptionInput = {
   action: "save" | "renew" | "extend" | "suspend" | "reactivate" | "cancel_at_end" | "revoke";
@@ -92,7 +90,7 @@ export async function mutateManualSubscription(tenantId: string, actor: Platform
       if (input.action==='renew' && (!before || !before.currentPeriodEnd || end<=before.currentPeriodEnd)) throw new ManualSubscriptionError("SUBSCRIPTION_DATES_INVALID");
       // A renewal extends the same contract and retains original start; it never
       // replaces or resets the independent calendar monthly admission ledger.
-      changes={...changes,planId:plan.id,subscriptionType:input.subscriptionType,monthlyQuota:input.monthlyQuota,term:input.term,currentPeriodStart:input.action==='renew'?before!.currentPeriodStart:start,currentPeriodEnd:end,status:input.status,billingMode:'manual',cancelAtPeriodEnd:false,entitlementBlocked:false,entitlementBlockedReason:null,internalReference:input.internalReference||null};
+      changes={...changes,planId:plan.id,subscriptionType:input.subscriptionType,monthlyQuota:input.monthlyQuota,term:input.term,currentPeriodStart:input.action==='renew'?before!.currentPeriodStart:start,currentPeriodEnd:end,status:input.status,cancelAtPeriodEnd:false,entitlementBlocked:false,entitlementBlockedReason:null,internalReference:input.internalReference||null};
     } else {
       if (!before) throw new ManualSubscriptionError("SUBSCRIPTION_NOT_FOUND",404);
       if (input.action==='extend') {

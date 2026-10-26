@@ -26,6 +26,25 @@ describe("read-only Platform Owner catalog and search", () => {
     expect(result).toEqual([{ name: "printers", columns: ["id", "name"], primaryKey: "id" }]);
   });
 
+  it("excludes retired billing columns and tables before and after migration", async () => {
+    const fixtures = [
+      { table_name: "plans", column_name: "id", data_type: "text", is_primary: true },
+      { table_name: "plans", column_name: "name", data_type: "text", is_primary: false },
+      { table_name: "plans", column_name: "stripe_price_id", data_type: "text", is_primary: false },
+      { table_name: "plans", column_name: "stripe_product_id", data_type: "text", is_primary: false },
+      { table_name: "plans", column_name: "display_order", data_type: "integer", is_primary: false },
+      { table_name: "tenant_subscriptions", column_name: "tenant_id", data_type: "text", is_primary: true },
+      { table_name: "tenant_subscriptions", column_name: "checkout_status", data_type: "text", is_primary: false },
+      { table_name: "tenant_subscriptions", column_name: "status", data_type: "text", is_primary: false },
+      { table_name: "billing_events", column_name: "event_id", data_type: "text", is_primary: true },
+    ];
+    const result = await listExploreTables(client(vi.fn().mockResolvedValue({ rows: fixtures })));
+    expect(result).toEqual([
+      { name: "plans", columns: ["id", "name"], primaryKey: "id" },
+      { name: "tenant_subscriptions", columns: ["tenant_id", "status"], primaryKey: "tenant_id" },
+    ]);
+  });
+
   it("binds literal punctuation and never interpolates search input", async () => {
     const query = vi.fn().mockResolvedValue({ rows: [{ id: "A1", name: "Desk" }] });
     const term = `_%'";DROP TABLE printers;--`;

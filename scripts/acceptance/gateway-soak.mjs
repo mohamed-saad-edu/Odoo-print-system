@@ -233,7 +233,7 @@ async function startGateway(label) {
   // credentials. This process sees only this drill's generated identities.
   const operatingEnvironment = Object.fromEntries(["PATH", "LD_LIBRARY_PATH"].filter(key => process.env[key] !== undefined).map(key => [key, process.env[key]]));
   const runtimeEnvironment = { ...operatingEnvironment, TZ: "UTC", LANG: "C.UTF-8", NEXT_TELEMETRY_DISABLED: "1", DATABASE_URL: runtimeDatabaseUrl, NODE_ENV: "production", HOSTNAME: "127.0.0.1", PORT: String(summary.httpPort), APP_BASE_URL: summary.origin,
-    GATEWAY_JWT_SECRET: summary.privateJwt, TRUST_PROXY: "1", TRUST_PROXY_SECRET: summary.privateProxy, PLATFORM_TENANT_ID: consumers[0].tenantId, COOKIE_SECURE: "1", RESEND_API_KEY: "", STRIPE_SECRET_KEY: "", STRIPE_WEBHOOK_SECRET: "",
+    GATEWAY_JWT_SECRET: summary.privateJwt, TRUST_PROXY: "1", TRUST_PROXY_SECRET: summary.privateProxy, PLATFORM_TENANT_ID: consumers[0].tenantId, COOKIE_SECURE: "1", RESEND_API_KEY: "",
     YASEIR_PROBE_OUTPUT: path.join(out, `memory-${label}.jsonl`), YASEIR_PROBE_PRIVATE: privateDir };
   if (roleProfile) {
     runtimeEnvironment.PGUSER = roleProfile.runtime;

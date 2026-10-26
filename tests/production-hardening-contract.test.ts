@@ -2,7 +2,6 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { hasBodyOverLimit } from "../src/lib/request-limits";
-import { isDefinitiveStripeMutationError, isRetryableStripeMutationStatus, StripeRequestError } from "../src/lib/stripe";
 
 const read = (file: string) => readFileSync(resolve(process.cwd(), file), "utf8");
 
@@ -311,28 +310,6 @@ describe("production hardening contracts", () => {
           throw new Error("Selection token already used")`);
   });
 
-  it("does not strand billing-operation claims on definitive Stripe rejection", () => {
-    expect(isRetryableStripeMutationStatus(408)).toBe(true);
-    expect(isRetryableStripeMutationStatus(409)).toBe(true);
-    expect(isRetryableStripeMutationStatus(429)).toBe(true);
-    expect(isRetryableStripeMutationStatus(500)).toBe(true);
-    expect(isRetryableStripeMutationStatus(400)).toBe(false);
-    expect(isRetryableStripeMutationStatus(401)).toBe(false);
-    expect(isRetryableStripeMutationStatus(403)).toBe(false);
-    expect(isRetryableStripeMutationStatus(404)).toBe(false);
-    expect(isRetryableStripeMutationStatus(422)).toBe(false);
-
-    const rejected = new StripeRequestError("invalid state", 400);
-    expect(rejected.status).toBe(400);
-    expect(isDefinitiveStripeMutationError(rejected)).toBe(true);
-    expect(isDefinitiveStripeMutationError(new StripeRequestError("timeout", 500))).toBe(false);
-
-    const billingOp = read("src/lib/billing-operation.ts");
-    expect(billingOp).toContain("isDefinitiveStripeMutationError(error)");
-    expect(billingOp).toContain("billingOperationId: null");
-    expect(billingOp).toContain("billingOperationSubscriptionId: null");
-  });
-
   it("keeps control-plane concurrency boundaries enforced by code and schema", () => {
     const invitation = read("src/app/api/team/invitations/accept/route.ts");
     expect(invitation).toContain("FROM tenants");
@@ -425,16 +402,7 @@ describe("production hardening contracts", () => {
     expect(deniedCustomerLogin).toMatch(/await burnPasswordVerification\(password\);\s*return null;/);
     expect(auth).toContain("if (upgradedRows.length !== 1) return null;");
 
-    // The cancel/resume operation protocol (persistent claim fence, Stripe
-    // idempotency, guarded finalization) lives once in the shared billing
-    // operation module; the routes are thin per-operation descriptors.
-    const billingOp = read("src/lib/billing-operation.ts");
-    expect(billingOp).toContain("FROM tenants");
-    expect(billingOp).toContain("FOR UPDATE");
-    expect(billingOp).toContain("FROM tenant_subscriptions");
-    expect(billingOp).toContain("stripeRequest(");
-    expect(billingOp).toContain("billingOperationId");
-    expect(billingOp).toContain('`billing-${operation.type}-${operationId}`');
+    // Retired customer billing endpoints remain disabled.
     for (const [path] of [
       ["src/app/api/billing/cancel/route.ts", "cancel"],
       ["src/app/api/billing/resume/route.ts", "resume"],

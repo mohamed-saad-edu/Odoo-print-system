@@ -144,7 +144,7 @@ export function liveTenantSubscriptionWhere(tenantId: SQL, requireUnblocked = tr
     : sql``;
   return sql`
     ts.tenant_id = ${tenantId}
-    AND ts.status = 'active' AND ts.billing_mode = 'manual' AND ts.current_period_start <= clock_timestamp()
+    AND ts.status = 'active' AND ts.current_period_start <= clock_timestamp()
     AND (
       ts.current_period_end IS NULL
       OR ts.current_period_end > clock_timestamp()
@@ -162,7 +162,7 @@ export function liveTenantSubscriptionPredicate(tenantId: SQL, requireUnblocked 
       SELECT 1
       FROM tenant_subscriptions ts
       WHERE ts.tenant_id = ${tenantId}
-        AND ts.status = 'active' AND ts.billing_mode = 'manual' AND ts.current_period_start <= clock_timestamp()
+        AND ts.status = 'active' AND ts.current_period_start <= clock_timestamp()
         AND (
           ts.current_period_end IS NULL
           OR ts.current_period_end > clock_timestamp()
