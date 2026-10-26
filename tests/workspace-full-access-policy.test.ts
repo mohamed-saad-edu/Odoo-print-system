@@ -54,7 +54,8 @@ describe("one operational Full Access for every workspace membership", () => {
     expect(page).not.toContain("verifyPlatformOwnerPassword");
     expect(page).toContain('fetchWithTimeout("/api/team/invitations"');
     expect(page).not.toContain('type="password"');
-    expect(page).toContain('t("team.platformOwner")');
+    expect(page).toContain('t("team.role.owner")');
+    expect(page).toContain('icon={<Crown className="h-3.5 w-3.5 text-warn" aria-hidden />}');
     expect(platform).toContain("requirePlatformActorInTransaction");
     expect(platform).toContain("assertPlatformTeamOrigin");
     expect(platform).toContain('role: "admin"');

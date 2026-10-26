@@ -152,7 +152,7 @@ export default function TeamPage() {
               <div className="flex items-center gap-2">
                 <Crown className="h-4 w-4 text-brand" aria-hidden />
                 <h2 className="font-semibold">{t("team.inviteTitle")}</h2>
-                <StatusBadge tone="brand" label={t("team.platformOwner")} />
+                <StatusBadge tone="brand" icon={<Crown className="h-3.5 w-3.5 text-warn" aria-hidden />} label={t("team.role.owner")} />
               </div>
               <p className="mt-2 text-sm text-ink-3">{t("team.inviteHint")}</p>
               <form onSubmit={sendInvitation} className="mt-4 grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
@@ -183,7 +183,8 @@ export default function TeamPage() {
                       <span className="min-w-0 break-all text-sm font-semibold">{member.email}</span>
                     </span>
                     <StatusBadge tone={member.platformOwner ? "brand" : "info"}
-                      label={member.platformOwner ? t("team.platformOwner") : t("v4.team.fullAccess")} />
+                      icon={member.platformOwner ? <Crown className="h-3.5 w-3.5 text-warn" aria-hidden /> : undefined}
+                      label={member.platformOwner ? t("team.role.owner") : t("v4.team.fullAccess")} />
                   </li>
                 ))}
               </ul>

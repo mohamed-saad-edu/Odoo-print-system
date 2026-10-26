@@ -55,9 +55,12 @@ describe("restored, single-role team invitations", () => {
     expect(settings).toContain("platformOwner:");
     expect(members).toContain("isPlatformOwner");
     expect(members).toContain("emailVerifiedAt");
-    expect(team).toContain('t("team.platformOwner")');
+    expect(team).toContain('t("team.role.owner")');
+    expect(team).toContain('icon={<Crown className="h-3.5 w-3.5 text-warn" aria-hidden />}');
+    expect(team).toContain('label={member.platformOwner ? t("team.role.owner")');
+    expect(team).not.toContain('label={t("team.platformOwner")}');
     expect(team).toContain('t("v4.team.fullAccess")');
-    expect(account).toContain('t("team.platformOwner")');
+    expect(account).toContain('t("team.role.owner")');
     expect(account).toContain("roleLabel(role, t)");
     expect(team).not.toContain('member.role === "owner"');
   });
