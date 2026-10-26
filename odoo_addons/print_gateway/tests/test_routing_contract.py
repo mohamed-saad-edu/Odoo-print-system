@@ -14,6 +14,23 @@ from odoo.addons.print_gateway.models.gateway_config import PrintGatewayConfig
 
 @tagged("post_install", "-at_install")
 class TestPrintGatewayRoutingContract(TransactionCase):
+    def test_ambiguous_response_vetoes_unrelated_connection_failure(self):
+        jobs = self.env["print_gateway.print_job"]
+        error = requests.ConnectionError("request failed")
+        error.__cause__ = requests.ReadTimeout("response lost after submission")
+        error.__context__ = ConnectionRefusedError("earlier attempt")
+        self.assertFalse(jobs._is_pre_dispatch_error(error))
+        self.assertFalse(jobs._is_pre_dispatch_error(
+            requests.ConnectionError(requests.ReadTimeout("response lost"),
+                                     ConnectionRefusedError("earlier attempt"))
+        ))
+        self.assertTrue(jobs._is_pre_dispatch_error(ConnectionRefusedError("no connection")))
+
+    def test_unspecified_timeout_does_not_prove_safe_failover(self):
+        error = requests.Timeout("request phase unknown")
+        error.__context__ = ConnectionRefusedError("earlier attempt")
+        self.assertFalse(self.env["print_gateway.print_job"]._is_pre_dispatch_error(error))
+
     def setUp(self):
         super().setUp()
         # Routing tests intentionally simulate the print HTTP boundary rather
@@ -708,6 +725,31 @@ class TestPrintGatewayRoutingContract(TransactionCase):
                 self.assertEqual(len(derived_jobs), 1)
                 self.assertEqual(schedule_submit.call_count, 1)
                 self.assertEqual(schedule_submit.call_args.args[1], derived_jobs.id)
+        finally:
+            cr.rollback()
+            cr.close()
+
+    def test_force_reprint_of_maximum_length_operation_preserves_routing(self):
+        original_key = "reprint-key-boundary-".ljust(200, "a")
+        job_id = self._job(original_key)
+        cr = self.env.registry.cursor()
+        try:
+            env = api.Environment(cr, self.env.uid, dict(self.env.context))
+            company = env["res.company"].browse(self.durable_company_id).exists()
+            model_env = env["print_gateway.print_job"].with_company(company).env
+            job = model_env["print_gateway.print_job"].browse(job_id).exists()
+            job.write({"status": "unknown", "next_retry_at": False})
+            with patch.object(type(job), "_schedule_postcommit_submission", autospec=True) as schedule_submit:
+                job.action_force_reprint()
+            self.assertEqual(job.reprint_attempt_count, 1)
+            self.assertEqual(schedule_submit.call_count, 1)
+            retry = model_env["print_gateway.print_job"].browse(schedule_submit.call_args.args[1])
+            self.assertLessEqual(len(retry.idempotency_key), 200)
+            self.assertNotEqual(retry.idempotency_key, original_key)
+            self.assertEqual(retry.printer_id, job.printer_id)
+            self.assertEqual(retry.destination_key, job.destination_key)
+            self.assertEqual(retry.payload, job.payload)
+            self.assertEqual(retry.gateway_idempotency_version, 2)
         finally:
             cr.rollback()
             cr.close()
