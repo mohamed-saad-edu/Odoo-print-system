@@ -85,6 +85,10 @@ jobs:
             docker run --rm --entrypoint gosu yaseir-postgres:ci-go1.26.10 --version | grep -F go1.26.10
           else
             docker run --rm --entrypoint caddy yaseir-caddy:ci-go1.26.10 version
+            # Fail closed if the released runtime regains the vulnerable
+            # curl/libcurl packages (not just when the scanner DB catches up).
+            docker run --rm --entrypoint /bin/sh yaseir-caddy:ci-go1.26.10 -ec \
+              'if apk info --exists curl || apk info --exists libcurl; then echo "Unexpected curl/libcurl in Caddy runtime" >&2; exit 1; fi; test -s /etc/ssl/certs/ca-certificates.crt'
           fi
 
       - name: Build exact released Gateway image
