@@ -686,12 +686,6 @@ msgid "Connect Yaseir"
 msgstr "الربط مع Yaseir"
 
 #. module: print_gateway
-#. odoo-javascript
-#: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_config_form
-msgid "Connect once, choose your printer, and enable the documents your business needs."
-msgstr "اربط الخدمة، واختر الطابعة، ثم فعّل طباعة المستندات التي تحتاجها شركتك."
-
-#. module: print_gateway
 #: model:ir.model.fields.selection,name:print_gateway.selection__print_gateway_gateway_config__gateway_sync_state__active
 #: model:ir.model.fields.selection,name:print_gateway.selection__print_gateway_gateway_config__last_test_status__success
 #: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_config_search
@@ -901,12 +895,8 @@ msgid "Document"
 msgstr "المستند"
 
 #. module: print_gateway
-#: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_binding_form
-msgid "Print Source Settings"
-msgstr "إعدادات مصدر الطباعة"
-
-#. module: print_gateway
 #: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_binding_list
+#: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_binding_form
 msgid "Print Source"
 msgstr "مصدر الطباعة"
 
@@ -2729,12 +2719,6 @@ msgstr "جارٍ تنفيذ مهمة الطباعة"
 #: code:addons/print_gateway/models/print_job.py:0
 msgid "Print Job Retried"
 msgstr "تمت إعادة محاولة مهمة الطباعة"
-
-#. module: print_gateway
-#: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_binding_form
-#: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_policy_list
-msgid "Print Rule"
-msgstr "قاعدة طباعة"
 
 #. module: print_gateway
 #. odoo-python
