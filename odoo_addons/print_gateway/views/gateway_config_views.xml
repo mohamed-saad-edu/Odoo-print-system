@@ -59,7 +59,6 @@
                             <group><field name="last_test_at" readonly="1"/><field name="last_enabled_sync_at" readonly="1"/></group>
                             <div class="d-flex flex-wrap gap-2">
                                 <button name="action_retry_enabled_sync" type="object" string="Retry Synchronization" class="btn btn-secondary"/>
-                                <button name="action_open_runtime_assignments" type="object" string="Manage branch computers" class="btn btn-secondary"/>
                                 <button name="action_reset_stale_sync_state" type="object" string="Recover Stale Synchronization" class="btn btn-outline-warning" confirm="Recover synchronization state only after checking the previous Gateway endpoint."/>
                             </div>
                             <p class="text-muted mt-3">Recovery is for an administrator resolving a previous connection. It does not reprint documents.</p>

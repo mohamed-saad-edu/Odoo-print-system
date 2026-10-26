@@ -1870,12 +1870,6 @@ msgid "Lower value is preferred when multiple bindings are valid."
 msgstr "تُفضَّل القيمة الأصغر عند صلاحية عدة قواعد."
 
 #. module: print_gateway
-#. odoo-javascript
-#: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_config_form
-msgid "Manage branch computers"
-msgstr "إدارة أجهزة الفروع"
-
-#. module: print_gateway
 #: model:ir.model.fields,field_description:print_gateway.field_print_gateway_intent__max_attempts
 msgid "Max Attempts"
 msgstr "الحد الأقصى للمحاولات"
