@@ -186,7 +186,7 @@ class PrintGatewayRuntimePrinterController(http.Controller):
         # choose a runtime agent in the Pair New Agent wizard. Authentication
         # remains inside the server-side Gateway configuration helpers.
         if not config:
-            return {'enabled': False, 'selectedAgentId': False, 'agents': []}
+            return {'enabled': False, 'selectedAgentId': False, 'agents': [], 'registeredAgentCount': 0, 'assignedAgentCount': 0}
         try:
             gateway_base = config._gateway_base(for_request=True)
             gateway_headers = config._gateway_headers()
@@ -235,11 +235,20 @@ class PrintGatewayRuntimePrinterController(http.Controller):
         # assignment_only so it can discover a new Agent before creating that
         # assignment. This is a discovery filter, not the authorization
         # boundary; binding write-time validation remains authoritative.
+        registered_agent_count = len(sanitized)
+        assigned_agent_count = None
         if assignment_only:
             allowed_agent_ids = self._assigned_runtime_agent_ids(root_company, branch)
+            assigned_agent_count = len(allowed_agent_ids)
             sanitized = [agent for agent in sanitized if agent["id"] in allowed_agent_ids]
         selected = sanitized[0]['id'] if len(sanitized) == 1 else False
-        return {'enabled': True, 'selectedAgentId': selected, 'agents': sanitized}
+        return {
+            'enabled': True,
+            'selectedAgentId': selected,
+            'agents': sanitized,
+            'registeredAgentCount': registered_agent_count,
+            'assignedAgentCount': assigned_agent_count,
+        }
 
     @http.route('/print_gateway/runtime-printers', type='jsonrpc', auth='user', methods=['POST'])
     def runtime_printers(self, company_id=None, branch_id=None, agent_id=None):
