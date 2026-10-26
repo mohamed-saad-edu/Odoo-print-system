@@ -71,8 +71,9 @@ This runs `scripts/db-migrate.ts` which applies all pending migrations from `dri
 
 | 0096 | 1 | Retire limited workspace roles without promoting old sessions |
 | 0097 | 1 | Agent-scoped discovery observation IDs; preserve IDs, approvals and runtime links |
+| 0098 | 1 | Retire external billing fields from active plan/subscription schema, archive provider records outside public, preserve manual approvals and monthly usage |
 
-**Total**: 98 forward-only SQL migrations (0000–0097), plus retained hash-versioned forward repairs in `scripts/db-migrate.ts`.
+**Total**: 99 forward-only SQL migrations (0000–0098), plus retained hash-versioned forward repairs in `scripts/db-migrate.ts`.
 
 Apply all migrations through `0094` before starting V3, with older Gateway instances stopped. Historical `0090` and `0092` remain in the journal so existing content hashes and fresh replay remain valid. V3 uses email/password login and the existing production `__Host-` access/refresh cookies. Migration `0094` does not convert stored configuration into live printer proof: existing registrations and historical queued jobs without an admitted binding remain ineligible for new execution. Deploy the matching Agent, obtain a fresh verified inventory, and reconcile retained legacy jobs explicitly. Terminal history remains available for exact result replay. See the V3 upgrade procedure below and `SECURITY.md`.
 
