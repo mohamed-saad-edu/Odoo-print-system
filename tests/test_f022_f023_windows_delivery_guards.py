@@ -15,7 +15,12 @@ def test_f022_installer_only_advertises_verified_nsis_lifecycle():
     assert tauri['bundle']['targets'] == ['nsis']
     assert tauri['bundle']['windows']['nsis']['installerHooks'].endswith('.nsh')
     assert re.search(r'\[ValidateSet\("nsis"\)\]\s*\[string\]\$Bundles\s*=\s*"nsis"', script)
-    assert 'cargo tauri build --target $Target --bundles $Bundles' in script
+    # Invoke exactly the NSIS target via the argument array, with an explicit
+    # signing overlay only when a certificate is available. The old literal
+    # command no longer captures the signing config required by the bundler.
+    assert '$buildArgs = @("tauri", "build", "--target", $Target, "--bundles", $Bundles)' in script
+    assert '& cargo @buildArgs' in script
+    assert '$buildArgs += @("--config", $tauriSigningConfig)' in script
     assert 'if ($Bundles -match "msi")' not in script
     assert 'NSIS/MSI' not in script
     assert 'bundle\\msi\\Yaseir Print Manager_' not in script
