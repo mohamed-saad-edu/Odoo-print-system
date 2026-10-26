@@ -6,7 +6,13 @@
 
 The retired standalone Printers screen and its client action are removed. Print Routing now owns source, branch, Agent and verified printer selection for invoices, reports, POS and operations. Branch Devices and Automation Activity are first-level menu items; the Advanced menu is retired. On module upgrade a guarded migration removes obsolete menu/action records without deleting Agent assignments, print routes or job history.
 
-## 19.0.2.28.0: previous navigation and scope handling
+## Historical UI notes (retired by 19.0.2.29.0)
+
+The following 19.0.2.22–19.0.2.28 notes describe the now-retired standalone
+printer inventory screen. They are preserved as upgrade history, **not** as
+current installation or navigation instructions.
+
+### 19.0.2.28.0: previous navigation and scope handling
 
 Document Destinations is now a primary navigation item, separate from the optional Automatic Printing event rules. Branch Devices and Automation Activity remain Advanced. Printer inventory provides branch-scoped recovery guidance and distinguishes missing assignments, unavailable Agents and disconnected printing service. Arabic labels and test-page vs registration-check actions are consistent. Legacy routing, authorization and physical printer requirements are unchanged.
 
@@ -60,8 +66,8 @@ same state values passed to the print APIs. This avoids relying on a `value`
 attribute on a `<select>` (which alone does not select an HTML option).
 No default/first printer fallback was introduced. This is a source fix, **not**
 a claim of actual Odoo browser asset validation: verify the live selector and
-that `print_gateway.PrintersOverview` is present in the actual recompiled
-backend bundle after the database-specific Odoo module upgrade below.
+that the native `gateway_runtime_agent_binding` and `gateway_runtime_printer`
+widgets are present in the recompiled backend bundle after the addon upgrade.
 
 ## 19.0.2.24.0: exact branch selection and fail-closed rollout
 
@@ -93,7 +99,7 @@ certified in this release. Do **not** remove or merge companies to fix labels.
    restore into a separate, disposable PostgreSQL database first.
 3. Copy **only** `odoo_addons/print_gateway/` from this final V5 source
    into the instance's existing addons location. Verify the new manifest
-   version `19.0.2.27.0` there and do not overwrite other addons.
+   version `19.0.2.29.0` there and do not overwrite other addons.
 4. With the Odoo HTTP workers stopped according to that instance's
    deployment procedure, run the non-destructive module upgrade against
    the correct database. Substitute real deployment values, not example
@@ -109,16 +115,17 @@ certified in this release. Do **not** remove or merge companies to fix labels.
    configuration or backup has not been established. A failed upgrade must
    be investigated against its own logs before further changes.
 5. Restart that Odoo instance's workers through its service manager. Let Odoo
-   generate the backend asset bundle, open the printer screen with
-   `?debug=assets` to inspect current asset source, then reload normally in
+   generate the backend asset bundle, open **Print Routing** with
+   `?debug=assets` to inspect the native Agent/Printer picker assets, then reload normally in
    a fresh browser session (bypass stale browser assets). Never delete all
    `ir.attachment` rows or force unrelated module upgrades.
-6. Inspect the authenticated `POST /print_gateway/setup-context` response:
-   one entry per authorized record ID, explicit `companyId` / `branchId`,
-   non-selectable nested scopes, and unique visible Company/Branch labels.
-   Confirm the loaded JavaScript uses `resolvePrinterScopeSelection`, test
-   same-name root/branch records, access revocation, a branch-specific
-   document binding, and an actual test print to the **selected** device.
+6. In **Print Routing**, select a root company, a direct child branch,
+   its assigned Agent and one of that Agent's verified printers. Confirm the
+   authenticated `POST /print_gateway/runtime-agents` and
+   `POST /print_gateway/runtime-printers` calls use the exact selected
+   company/branch and Agent IDs. Test same-name branches, access revocation,
+   printer change on Agent switch, a POS binding and an actual test print to
+   the **selected** device.
    Production confirmation needs a running Odoo 19 environment and hardware;
    static source tests alone are not evidence of rollout.
 7. Reconcile pending and unknown print outputs before resuming automatic
@@ -137,13 +144,13 @@ Odoo addon.
 
 The Yaseir Print Gateway Odoo addon enables silent, hardware-level printing from Odoo ERP to physical printers through the central Gateway. Odoo owns all business context (what to print, where to print); the Gateway owns runtime infrastructure (agents, printers, job queue).
 
-## V4 operator workflow
+## Current operator workflow
 
 The primary Yaseir navigation is **Connection → Print Routing → Branch Devices → Automatic Printing → Print Activity → Automation Activity**. Enter the company connection address and key from Gateway's **Connect Odoo**, assign a printing computer to the exact company/branch under **Branch Devices**, choose a verified Agent and printer under Print Routing for each source, then enable printing. Automatic Printing is optional: it defines business-event triggers, not printer destinations. Checking a connection or registration never proves physical paper output. The Windows pairing code is separate from the Odoo connection key.
 
 The Print Routing form reads assigned computers and verified printers from its native Agent/printer pickers. The legacy authenticated `/print_gateway/setup-context` endpoint is retained for compatibility, but no separate printer inventory page consumes it; it returns no credentials and creates no assignments. A system administrator must explicitly assign a computer to the exact company or branch. A printer becomes selectable only when its existing verification and availability checks pass. Existing server-side branch authorization remains the authority when a rule is saved.
 
-Advanced connection settings retain guarded synchronization recovery and branch-computer management. Print Routing, Branch Devices and Automation Activity are direct navigation items. Saved historical lifecycle, diagnostic, output and idempotency evidence is retained. Print Activity uses a separate customer presentation: **Waiting**, **Processing**, **Sent to printer**, **Failed before output**, or **Needs review**. Verified file output remains **File created**. Neither accepted submission nor `success` claims that paper physically emerged.
+Connection maintenance retains guarded synchronization recovery and branch-computer management. Print Routing, Branch Devices and Automation Activity are direct navigation items. Saved historical lifecycle, diagnostic, output and idempotency evidence is retained. Print Activity uses a separate customer presentation: **Waiting**, **Processing**, **Sent to printer**, **Failed before output**, or **Needs review**. Verified file output remains **File created**. Neither accepted submission nor `success` claims that paper physically emerged.
 
 Customer errors are classified into localized next steps without interpolating raw backend exception text. Arabic translations are evaluated in the current reader's language; raw diagnostic evidence remains available to authorized technical workflows. An uncertain output warns the operator to check before retrying.
 
