@@ -29,6 +29,16 @@ describe("Gateway customer and Platform Admin remain separate", () => {
     expect(read("src/app/api/platform/tenants/[id]/subscription/route.ts")).toContain("requirePlatformOwner");
   });
 
+  it("private billing controls appear only for the workspace owner", () => {
+    const settings = read("src/app/settings/page.tsx");
+    const keys = read("src/app/api-keys/page.tsx");
+    expect(settings).toContain('role === "owner" && <Button href="/billing"');
+    expect(keys).toContain('setCanReadBilling(principal.permissions?.includes("billing.read") === true)');
+    expect(keys).toContain('action={canReadBilling ? (');
+    expect(keys).toContain('href="/billing"');
+    expect(keys).not.toContain('href="/onboarding"');
+  });
+
   it("navigation never crosses into platform admin for workspace subscription flows", () => {
     const shell = read("src/components/AppShell.tsx");
     const dashboard = read("src/app/dashboard/dashboard-client.tsx");

@@ -32,7 +32,7 @@ const FULL_ACCESS_PERMISSIONS: ReadonlySet<ManagerPermission> = new Set<ManagerP
   "integrations.manage",
 ]);
 
-/** Ownership is never an authority shortcut. Billing and team mutations are Platform Owner-only. */
+/** Only the workspace owner reads/requests billing; commercial mutations require Platform Owner authority. */
 const permissionsByRole: Record<ManagerRole, ReadonlySet<ManagerPermission>> = {
   owner: new Set<ManagerPermission>([...FULL_ACCESS_PERMISSIONS, "billing.read"]),
   admin: FULL_ACCESS_PERMISSIONS,

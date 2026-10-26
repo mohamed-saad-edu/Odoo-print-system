@@ -65,6 +65,7 @@ export default function ApiKeysPage() {
   const [keys, setKeys] = useState<ApiKey[]>([]);
   const [installations, setInstallations] = useState<Installation[]>([]);
   const [canManage, setCanManage] = useState(false);
+  const [canReadBilling, setCanReadBilling] = useState(false);
   const [gatewayUrl, setGatewayUrl] = useState("");
   const { t, tc, formatDate, formatDateTime, formatNumber } = useI18n();
   const [name, setName] = useState(t("apiKeys.defaultName"));
@@ -120,6 +121,7 @@ export default function ApiKeysPage() {
         if (epoch === refreshEpoch.current) setKeys(nextKeys);
         setInstallations(nextInstalls);
         setCanManage(principal.permissions?.includes("integrations.manage") === true);
+        setCanReadBilling(principal.permissions?.includes("billing.read") === true);
         setHasSubscription(billing.hasSubscription === true);
         setGatewayUrl(window.location.origin);
         setInitialLoaded(true);
@@ -249,11 +251,11 @@ export default function ApiKeysPage() {
             <Callout
               tone="warn"
               title={t("apiKeys.choosePlanBeforeConnect")}
-              action={
-                <Button variant="primary" size="sm" href="/onboarding">
+              action={canReadBilling ? (
+                <Button variant="primary" size="sm" href="/billing">
                   {t("apiKeys.choosePlanCta")}
                 </Button>
-              }
+              ) : undefined}
             >
               {t("apiKeys.choosePlanBody")}
             </Callout>
