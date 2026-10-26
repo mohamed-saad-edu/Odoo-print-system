@@ -245,6 +245,8 @@ Printer destinations permit private IPv4 and IPv6 ULA (`fc00::/7`) or link-local
 
 Terminal Agent reports echo their immutable attempt claim token. Matching closed-attempt SHA-256 evidence permits acknowledgement retries of the same terminal status only; it cannot authorize execution, replace evidence or extend reconciliation age. Agents retain terminal outbox tokens until the JSON response confirms success and the requested status. New claims clear closed acknowledgement evidence.
 
+Delivery callbacks and `job_ack` preserve their first evidence timestamps. Replays do not renew the claim lease, and admission ACKs arriving after `printing` do not renew execution. Only fresh execution progress may keep a printing lease alive; a stalled delivered claim still becomes UNKNOWN without automatic reprint.
+
 An Agent may return a delivered/ACKed `claimed` job before printing admission with a recognized pre-execution rejection reason and its current claim token. The atomic update requires remaining TTL/retry budget, clears delivery evidence and refunds the delivery attempt. Stale claims and attempts already admitted to `printing` reject this hand-back; explicit crash recovery remains separate.
 
 Discovery provisioning creates manager-owned printers at desired revision 1 so the owning Agent receives and applies their newly allocated runtime IDs. Existing exact network endpoints, spooler queues and matching stable runtime identities converge instead of allocating duplicate targets. IPP IPv6 URLs retain brackets and separate resource paths.
