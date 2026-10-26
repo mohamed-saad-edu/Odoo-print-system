@@ -69,7 +69,7 @@ This runs `scripts/db-migrate.ts` which applies all pending migrations from `dri
 | 0094 | 1 | Add live printer verification, scoped logical identity, immutable job destination bindings, and retained PDF file-result evidence; historical inventory remains pending until verified |
 | 0095 | 1 | Manual subscriptions, authenticated activation requests, immutable change history, owner names and UTC monthly admission ledger; retains provider evidence and conservatively carries prior usage |
 
-**Total**: 96 forward-only SQL migrations (0000–0095), plus retained hash-versioned forward repairs in `scripts/db-migrate.ts`.
+**Total**: 97 forward-only SQL migrations (0000–0096), plus retained hash-versioned forward repairs in `scripts/db-migrate.ts`.
 
 Apply all migrations through `0094` before starting V3, with older Gateway instances stopped. Historical `0090` and `0092` remain in the journal so existing content hashes and fresh replay remain valid. V3 uses email/password login and the existing production `__Host-` access/refresh cookies. Migration `0094` does not convert stored configuration into live printer proof: existing registrations and historical queued jobs without an admitted binding remain ineligible for new execution. Deploy the matching Agent, obtain a fresh verified inventory, and reconcile retained legacy jobs explicitly. Terminal history remains available for exact result replay. See the V3 upgrade procedure below and `SECURITY.md`.
 
@@ -194,3 +194,20 @@ Drain older Gateway instances during this policy cutover so they cannot continue
 `print_monthly_usage` is a new UTC calendar-month admission ledger. Receipt/live overlap is deduplicated by persistent logical job ID. For the cutover month, an overlapping legacy usage allowance is conservatively retained when it exceeds reconstructed evidence. This may overcount a prior non-calendar allowance, but never grants fresh midmonth credits. An owner may review evidence and increase the monthly quota; historical counters are never reset. Do not delete old usage records.
 
 Every annual or custom contract uses monthly credits. Renewals and quota changes retain the existing monthly ledger. Accepted jobs consume one credit even if canceled/failed/uncertain; rejection before admission and idempotent replay consume none. Provider endpoints now return 410 and never mutate subscription state. Catalog bootstrap uses `YASEIR_PLAN_CATALOG`, with no payment provider configuration.
+
+## 0096 — Retire limited workspace roles (2026-10-26)
+
+Apply after stopping all older Gateway writers; this migration **does not** remove
+`tenant_users.role`. It converts every legacy `viewer`, `operator`,
+`integration_admin`, and `billing_admin` membership and pending invitation
+to canonical `admin`, restricts new membership/invitation check constraints,
+and invalidates every live customer/manager refresh family and legacy manager
+session. All workspace users must sign in again. The `owner` value is retained
+as an **informational database ownership marker only**; it is not granted
+additional workspace permissions. No Platform Owner credential, platform session,
+Odoo machine credential, password hash, account, print job or subscription record
+is removed. All commercial and team mutation APIs require the distinct verified
+Platform Owner audience and current password confirmation.
+
+This is a compatibility-safe first stage, not full role-column removal. Make a
+backup and rehearse restore, and never run the pre-0096 app against the new policy.

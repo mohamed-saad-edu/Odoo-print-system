@@ -11,10 +11,12 @@ describe("SaaS copy and progressive disclosure", () => {
     expect(page).toContain('enabled === 0 && <p className="text-sm text-ink-3">');
   });
   it("keeps warnings for inactive subscriptions without flooding active customers", () => {
-    const page = read("src/app/billing/page.tsx");
-    expect(page).toContain('status !== "active" && <Callout');
-    expect(page).toContain('v4.subscription.nextReset');
-    expect(page).not.toContain('<Callout tone="info" title={t("v4.subscription.unlimitedTitle")}');
+    const billing = read("src/app/billing/page.tsx");
+    const home = read("src/app/page.tsx");
+    expect(billing).toContain('redirect("/dashboard")');
+    expect(home).toContain('customerSubscriptionState(subscription, tenant?.lifecycle, await databaseNowMs())');
+    expect(home).toContain('subscriptionStatus === "active"');
+    expect(billing).not.toContain('v4.subscription.nextReset');
   });
   it("keeps the operations dashboard concise while retaining failure alerts", () => {
     const page = read("src/app/dashboard/page.tsx");

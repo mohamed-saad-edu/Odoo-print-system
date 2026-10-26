@@ -54,3 +54,24 @@ def test_malformed_findings_fail_even_with_a_reviewed_image():
     bad, _ = MODULE.check({'runs': [{'results': [{'ruleId': 'CVE-A', 'message': {'text': ''}}]}]},
                           'image@sha256:fixed', baseline(), date(2026, 10, 19))
     assert len(bad) == 1
+
+def test_odoo_cannot_whitelist_high_critical_or_unknown_severity():
+    for severity in ('HIGH', 'CRITICAL', 'UNKNOWN'):
+        image = 'yaseir-odoo-hardened:review-20261026'
+        policy = {'images': {image: {'expires': '2026-11-08',
+                  'findings': [['CVE-A', 'stdlib', severity]]}}}
+        bad, allowed = MODULE.check(report(severity=severity), image, policy, date(2026, 10, 26))
+        assert bad == [f'forbidden Odoo severity CVE-A / stdlib / {severity}']
+        assert allowed == []
+
+
+def test_odoo_runtime_review_has_no_build_only_packages_and_no_extended_expiry():
+    import json
+    data = json.loads((Path(__file__).resolve().parents[1] /
+                       'security/image-vulnerability-baseline.json').read_text())
+    entry = data['images']['yaseir-odoo-hardened:review-20261026']
+    assert entry['expires'] == '2026-11-08'
+    assert len(entry['findings']) == 64
+    assert {r[2] for r in entry['findings']} <= {'LOW', 'MEDIUM'}
+    assert not ({'python3-pip', 'python3-wheel', 'python3-pdfminer'} &
+                {r[1] for r in entry['findings']})

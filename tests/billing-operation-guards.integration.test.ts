@@ -68,35 +68,22 @@ suite("billing operation status matrix (D-7)", () => {
     });
   }
 
-  it.each(["cancelled", "incomplete_expired"])("cancel on %s is rejected without Stripe", async (status) => {
+  it.each([
+    ["cancelled", CANCEL], ["incomplete_expired", CANCEL], ["paused", CANCEL],
+    ["cancelled", RESUME], ["incomplete_expired", RESUME], ["active", CANCEL],
+  ] as const)("rejects retired %s workspace billing operations before Stripe", async (status, operation) => {
     await seedStatus(status);
-    const res = await runBillingOperation(claims, CANCEL);
-    expect(res.status).toBe(409);
-    expect(((await res.json()) as { error: string }).error).toMatch(/already ended/);
-  });
-
-  it("cancel on paused is rejected without Stripe", async () => {
-    await seedStatus("paused");
-    const res = await runBillingOperation(claims, CANCEL);
-    expect(res.status).toBe(409);
-    expect(((await res.json()) as { error: string }).error).toMatch(/paused/i);
-  });
-
-  it.each(["cancelled", "incomplete_expired"])("resume on %s is rejected without Stripe", async (status) => {
-    await seedStatus(status);
-    const res = await runBillingOperation(claims, RESUME);
-    expect(res.status).toBe(409);
-    expect(((await res.json()) as { error: string }).error).toMatch(/already ended|new checkout/);
-  });
-
-  it("cancel on active proceeds to Stripe", async () => {
-    await seedStatus("active");
     const { stripeRequest } = await import("../src/lib/stripe");
-    vi.mocked(stripeRequest).mockResolvedValueOnce({ id: "sub_billop" });
-    const res = await runBillingOperation(claims, CANCEL);
-    expect(res.status).toBe(200);
-    const row = await db.query.tenantSubscriptions.findFirst({ where: eq(tenantSubscriptions.tenantId, "tenant_billop") });
-    expect(row?.cancelAtPeriodEnd).toBe(true);
+    vi.mocked(stripeRequest).mockClear();
+    await expect(runBillingOperation(claims, operation)).rejects.toMatchObject({
+      code: "WORKSPACE_AUTHORITY_CHANGED", status: 403,
+    });
+    expect(stripeRequest).not.toHaveBeenCalled();
+    const row = await db.query.tenantSubscriptions.findFirst({
+      where: eq(tenantSubscriptions.tenantId, "tenant_billop"),
+    });
+    expect(row?.billingOperationId).toBeNull();
+    expect(row?.status).toBe(status);
   });
 
   it("rechecks tenant lifecycle before claiming an admitted billing mutation", async () => {

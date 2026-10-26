@@ -128,9 +128,9 @@ test('Odoo CI tests the built hardened runtime by content ID with verified immut
     'docs/runtime-hardening/requirements-python312-linux-x86_64.lock',
     'docs/runtime-hardening/build-tools.lock',
   ]) assert.ok(gate.includes('git hash-object ' + file), file);
-  assert.ok(gate.includes('scripts/check-trivy-baseline.py odoo-hardened.sarif yaseir-odoo-hardened:review-20261025'));
-  const findings = JSON.parse(load('security/image-vulnerability-baseline.json')).images['yaseir-odoo-hardened:review-20261025'].findings;
-  assert.equal(findings.length, 72);
+  assert.ok(gate.includes('scripts/check-trivy-baseline.py odoo-hardened.sarif yaseir-odoo-hardened:review-20261026'));
+  const findings = JSON.parse(load('security/image-vulnerability-baseline.json')).images['yaseir-odoo-hardened:review-20261026'].findings;
+  assert.equal(findings.length, 64);
   assert.ok(findings.every((row) => row.length === 3 && ['LOW', 'MEDIUM'].includes(row[2])));
 });
 

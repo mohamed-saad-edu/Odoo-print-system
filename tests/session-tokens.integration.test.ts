@@ -175,7 +175,7 @@ suite("shared refresh-token session rotation", () => {
 
     await pool().query(
       "UPDATE tenant_users SET role = $1 WHERE user_id = $2 AND tenant_id = $3",
-      ["viewer", "user_session_test", "tenant_session_test"],
+      ["owner", "user_session_test", "tenant_session_test"],
     );
 
     const rotated = await rotateRefreshToken("manager", first.refreshToken);

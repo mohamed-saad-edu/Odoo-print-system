@@ -56,7 +56,7 @@ suite("control-plane concurrency invariants", () => {
       await db.insert(tenants).values({ id: tenantId, name: "Invite Tenant" });
       await db.insert(users).values({ id: userId, email, passwordHash: "unused" });
       await db.insert(tenantInvitations).values({
-        id: invitationId, tenantId, inviterUserId: userId, email, role: "viewer",
+        id: invitationId, tenantId, inviterUserId: userId, email, role: "admin",
         tokenHash: await hashToken(token), expiresAt: new Date(Date.now() + 3600_000),
       });
       await transitionTenantLifecycle(tenantId, lifecycle, "test lifecycle", { type: "platform", id: "test-platform" });
@@ -106,7 +106,7 @@ suite("control-plane concurrency invariants", () => {
     ).rejects.toThrow();
   });
 
-  it("persists one pending manual subscription during concurrent onboarding without self-activation", async () => {
+  it("denies concurrent workspace attempts to create a paid subscription without a platform owner", async () => {
     const planId = `plan_trial_${nanoid(8)}`;
     await db.insert(plans).values({
       id: planId, name: `Trial ${nanoid(6)}`, stripePriceId: `price_${nanoid(8)}`,
@@ -117,10 +117,12 @@ suite("control-plane concurrency invariants", () => {
       body: JSON.stringify({ workspaceName: "Control Plane Tenant", planId }),
     }));
     const [a, b] = await Promise.all([request(), request()]);
-    expect([a.status, b.status].sort()).toEqual([200, 200]);
+    expect([a.status, b.status].sort()).toEqual([403, 403]);
+    expect(await a.json()).toMatchObject({ code: "PLATFORM_OWNER_REQUIRED" });
+    expect(await b.json()).toMatchObject({ code: "PLATFORM_OWNER_REQUIRED" });
     const subscription = await db.query.tenantSubscriptions.findFirst({ where: eq(tenantSubscriptions.tenantId, "tenant_control_plane") });
-    expect(subscription?.status).toBe("awaiting_activation");
-    expect(subscription?.trialStartedAt).toBeNull();
+    expect(subscription).toBeUndefined();
+    expect(stripeRequest).not.toHaveBeenCalled();
   });
 
   it("rejects concurrent retired checkout requests without creating a provider customer or subscription", async () => {

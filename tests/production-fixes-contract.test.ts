@@ -348,10 +348,10 @@ describe("2026-09-24 remediation contracts", () => {
 
   it("keeps workspace timestamps on the database clock", () => {
     expect(read("src/app/api/settings/route.ts")).toContain("updatedAt: sql");
-    const onboarding = read("src/app/api/onboarding/route.ts");
-    expect(onboarding).toContain("updatedAt: sql`now()`");
-    expect(onboarding).not.toContain("Date.now()");
-    expect(onboarding).not.toContain("updatedAt: new Date()");
+    const transfer = read("src/app/api/platform/tenants/[id]/ownership/route.ts");
+    expect(transfer).toContain("updatedAt:sql`clock_timestamp()`");
+    expect(transfer).not.toContain("Date.now()");
+    expect(transfer).not.toContain("updatedAt: new Date()");
   });
 
   it("removes the dead rate-limit table without removing migration history", () => {
@@ -390,10 +390,12 @@ describe("production fixes — authentication and observability", () => {
 });
 
 describe("onboarding session contract", () => {
-  it("accepts the normal workspace session after email proof and owner password setup", () => {
-    const source = read("src/app/api/onboarding/route.ts");
-    expect(source).toContain("const claims = await validateWorkspaceManager(req);");
-    expect(source).not.toContain("const claims = await validateManager(req);");
+  it("does not let a signed-in Workspace Owner activate or change a paid subscription", () => {
+    const ordinary = read("src/app/api/onboarding/route.ts");
+    const privileged = read("src/app/api/platform/subscriptions/route.ts");
+    expect(ordinary).toContain("PLATFORM_OWNER_REQUIRED");
+    expect(ordinary).not.toContain("ensurePendingManualSubscription");
+    expect(privileged).toContain("requirePlatformOwner");
   });
 });
 

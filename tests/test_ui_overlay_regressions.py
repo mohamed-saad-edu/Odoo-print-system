@@ -28,7 +28,6 @@ def test_portaled_menu_preserves_rtl_alignment_and_tracks_scroll_resize():
 def test_operational_row_action_surfaces_share_the_repaired_menu_primitive():
     consumers = [
         "src/app/dashboard/dashboard-client.tsx",
-        "src/app/team/page.tsx",
         "src/app/platform/tenants/page.tsx",
         "src/components/AppShell.tsx",
         "src/components/LanguageSwitcher.tsx",
@@ -36,3 +35,14 @@ def test_operational_row_action_surfaces_share_the_repaired_menu_primitive():
     for relative in consumers:
         source = (ROOT / relative).read_text(encoding="utf-8")
         assert "<Menu" in source, relative
+
+
+def test_workspace_team_directory_has_no_role_selector_or_mutation_menu():
+    page = (ROOT / "src/app/team/page.tsx").read_text(encoding="utf-8")
+    assert "<Select" not in page
+    assert "<Menu" not in page
+    assert "updateRole(" not in page
+    assert "/api/team/invitations" not in page
+    platform = (ROOT / "src/components/platform/PlatformTeamManagement.tsx").read_text(encoding="utf-8")
+    assert "Button" in platform
+    assert "/api/platform/auth/reauth" in platform

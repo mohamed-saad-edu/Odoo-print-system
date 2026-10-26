@@ -45,7 +45,11 @@ def check(report: dict, image: str, baseline: dict, today: date) -> tuple[list[s
                 unreviewed.append(f'unrecognized SARIF result: {rule}')
                 continue
             finding = (rule, pkg_match.group(1), severity_match.group(1))
-            if finding not in permitted:
+            # Odoo's public baseline must never authorize an unknown or
+            # high-impact finding, even if a future edit adds it to JSON.
+            if image.startswith('yaseir-odoo-hardened:') and finding[2] in ('UNKNOWN', 'HIGH', 'CRITICAL'):
+                unreviewed.append('forbidden Odoo severity ' + ' / '.join(finding))
+            elif finding not in permitted:
                 unreviewed.append(' / '.join(finding))
             elif today > expiry:
                 unreviewed.append('expired ' + ' / '.join(finding))

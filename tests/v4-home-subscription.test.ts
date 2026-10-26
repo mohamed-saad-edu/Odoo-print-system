@@ -48,11 +48,12 @@ function valueFor(doc: Document, key: Parameters<typeof translate>[1], locale = 
 }
 
 describe("manual subscription truth on Home", () => {
-  it.each(["en", "ar"] as const)("shows a localized active state and contract expiry, without implying renewal, in %s", async locale => {
+  it.each(["en", "ar"] as const)("shows localized operational status without exposing private commercial details in %s", async locale => {
     const doc = await render(locale);
     expect(valueFor(doc, "home.subscriptionLabel")).toBe(translate(locale, "v4.onboarding.active"));
-    expect(valueFor(doc, "home.planLabel")).toBe("Private contract title");
-    expect(valueFor(doc, "v4.subscription.end")).toBe(new Intl.DateTimeFormat(locale === "ar" ? "ar-SA-u-ca-gregory-nu-latn" : "en-US", { dateStyle: "medium", timeZone: "UTC" }).format(new Date("2031-01-01T00:00:00Z")));
+    expect(valueFor(doc, "home.planLabel")).toBeUndefined();
+    expect(fixture.planReads).toBe(0);
+    expect(valueFor(doc, "v4.subscription.end")).toBeUndefined();
     expect(valueFor(doc, "home.renewalLabel")).toBeUndefined();
   });
 
@@ -87,11 +88,12 @@ describe("manual subscription truth on Home", () => {
     expect(valueFor(doc, "home.subscriptionLabel")).toBe(translate("ar", "v4.onboarding.active"));
   });
 
-  it.each(["owner", "admin", "billing_admin"])("uses the translated %s role and permits the billing reader's metadata", async role => {
+  it.each(["owner", "admin", "billing_admin"])("shows %s as Full Access with no commercial fields", async role => {
     fixture.role = role; const doc = await render("ar");
     expect(doc.body.textContent).toContain(roleLabel(role, (key, params) => translate("ar", key, params)));
-    expect(valueFor(doc, "home.planLabel")).toBe("Private contract title");
-    expect(doc.querySelector('a[href="/billing"]')).not.toBeNull();
+    expect(valueFor(doc, "home.planLabel")).toBeUndefined();
+    expect(fixture.planReads).toBe(0);
+    expect(doc.querySelector('a[href="/billing"]')).toBeNull();
   });
 
   it.each(["en", "ar"] as const)("invites public visitors to create a workspace without promising an automatic trial in %s", async locale => {

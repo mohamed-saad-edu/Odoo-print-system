@@ -158,7 +158,7 @@ export const ar: Catalog = {
   "release.evidence.postgres": "شغّل اختبارات ترحيل الإنتاج والاحتفاظ والعزل والتزامن على قاعدة بيانات اختبار معزولة.",
   "release.area.goRace": "كشف تعارضات وكيل الطباعة",
   "release.evidence.goRace": "شغّل اختبارات التعارضات في Go باستخدام الاعتماديات المثبتة والمخزنة وأرفق نتائج النشر.",
-  "settings.roleChangesImmediate": "تُطبَّق تغييرات الأدوار فورًا.",
+  "settings.roleChangesImmediate": "صلاحية الأعضاء موحّدة، وإدارة العضوية من خلال مالك المنصة فقط.",
   "apiKeys.workspaceScopeOnly": "يقتصر الوصول على مساحة العمل هذه.",
   "apiKeys.removeRecordBody": "يحذف المفتاح ويوقف استخدامه فورًا.",
   "billing.paymentReceivedBody": "تم استلام الدفع. ستُحدَّث خطتك قريبًا.",
@@ -490,7 +490,7 @@ export const ar: Catalog = {
 
   // ── Team ─────────────────────────────────────────────────────────────────
   "team.members": "الأعضاء",
-  "team.membersDescription": "تحدد الأدوار ما يمكن لكل عضو تغييره.",
+  "team.membersDescription": "جميع أعضاء مساحة العمل لديهم صلاحية تشغيل كاملة. إدارة الدعوات والأعضاء والفوترة لمالك المنصة فقط.",
   "team.member": "العضو",
   "team.role": "الصلاحية",
   "team.invite": "دعوة زميل",

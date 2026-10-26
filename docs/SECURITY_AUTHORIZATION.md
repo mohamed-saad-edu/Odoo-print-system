@@ -21,36 +21,39 @@ The application has separate human platform, human workspace, paired machine, Od
 
 Environment-configured managers without durable accounts are explicitly limited to the supported development/test compatibility path. Production session issuance/admission rejects the unsupported environment-manager shortcut; never invent a user or password-verification proof for an old/v1/no-state token. Paired Agent identities are unaffected by this human cutover (`src/lib/session-credentials.ts:15`; `MIGRATION.md`).
 
-## Workspace function permission matrix
+## Workspace operational permission policy (single Full Access)
 
-The following is the exact central six-role, 22-permission mapping in `src/lib/authorization.ts:3`. “Allow” establishes only the function permission; the resource/session rules below must still succeed. Unknown roles or permission names grant nothing. `admin` intentionally lacks `tenant.update`; only `owner` may change the workspace name through that permission.
+All authenticated, currently enrolled workspace members receive **one** fixed
+operational access level. Historical `owner` in the membership table records
+ownership for transfer/integrity only; it is **not** a privileged workspace
+role. New invitations always create `admin` memberships; older limited
+roles are migrated to `admin` by forward migration 0096.
 
-| Permission | owner | admin | operator | viewer | integration_admin | billing_admin |
-| --- | --- | --- | --- | --- | --- | --- |
-| `tenant.read` | Allow | Allow | Allow | Allow | Allow | Allow |
-| `tenant.update` | Allow | Deny | Deny | Deny | Deny | Deny |
-| `users.read` | Allow | Allow | Deny | Deny | Deny | Deny |
-| `users.manage` | Allow | Allow | Deny | Deny | Deny | Deny |
-| `agents.read` | Allow | Allow | Allow | Allow | Allow | Deny |
-| `agents.pair` | Allow | Allow | Deny | Deny | Deny | Deny |
-| `agents.disable` | Allow | Allow | Deny | Deny | Deny | Deny |
-| `agents.retire` | Allow | Allow | Deny | Deny | Deny | Deny |
-| `printers.read` | Allow | Allow | Allow | Allow | Allow | Deny |
-| `printers.manage` | Allow | Allow | Deny | Deny | Deny | Deny |
-| `printers.test` | Allow | Allow | Allow | Deny | Deny | Deny |
-| `jobs.read` | Allow | Allow | Allow | Allow | Allow | Deny |
-| `jobs.payload.read` | Allow | Allow | Allow | Deny | Deny | Deny |
-| `jobs.create` | Allow | Allow | Allow | Deny | Deny | Deny |
-| `jobs.retry` | Allow | Allow | Allow | Deny | Deny | Deny |
-| `jobs.cancel` | Allow | Allow | Allow | Deny | Deny | Deny |
-| `bindings.read` | Allow | Allow | Allow | Allow | Allow | Deny |
-| `bindings.manage` | Allow | Allow | Deny | Deny | Allow | Deny |
-| `integrations.read` | Allow | Allow | Deny | Deny | Allow | Deny |
-| `integrations.manage` | Allow | Allow | Deny | Deny | Allow | Deny |
-| `billing.read` | Allow | Allow | Deny | Deny | Deny | Allow |
-| `billing.manage` | Allow | Allow | Deny | Deny | Deny | Allow |
+| Function permissions | Workspace member |
+| --- | --- |
+| `tenant.read`, `tenant.update`, `users.read` | Allow |
+| `agents.read`, `agents.pair`, `agents.disable`, `agents.retire` | Allow |
+| `printers.read`, `printers.manage`, `printers.test` | Allow |
+| `jobs.read`, `jobs.payload.read`, `jobs.create`, `jobs.retry`, `jobs.cancel` | Allow |
+| `bindings.read`, `bindings.manage` | Allow |
+| `integrations.read`, `integrations.manage` | Allow |
+| `users.manage` | **Deny** |
+| `billing.read`, `billing.manage` | **Deny** |
 
-The permission's name describes the authorized operation, not a permission to substitute it for another guard. For example, `users.manage` does not authorize `integrations.manage` or `jobs.cancel`; use the exact operation permission at the service/transaction boundary. Raw payload access has the separate `jobs.payload.read` permission, so a metadata reader does not automatically receive document contents.
+Only the verified `platform` session audience with fresh Platform Owner
+password proof may manage invitations, membership deletion, ownership transfer,
+subscription data, plan limits, billing and other cross-tenant operations.
+The ordinary workspace token never confers these privileges, even if its old
+claims contain `owner`. The read-only workspace directory remains available
+via `users.read`. `/api/billing/status` is restricted to non-commercial
+service availability; the direct commercial endpoints are denied.
+
+**Compatibility note:** 0096 removes old *assignable values* but deliberately
+keeps the database `role` column and the internal `owner` marker while the
+existing signed-token/session and referential integrity architecture remains
+in service. This is a staged retirement, not a completed role-column deletion.
+Do not claim full schema removal without a separately verified role-free
+cutover and populated database restore test.
 
 ## Session and commit-time conditions
 
@@ -71,8 +74,8 @@ Workspace stale confirmation returns HTTP 403 with `WORKSPACE_REAUTHENTICATION_R
 | Resource/function family | Required permission or authority | Resource attributes and additional restrictions | Source |
 | --- | --- | --- | --- |
 | Workspace settings/onboarding | `tenant.read` / `tenant.update`; onboarding billing choice additionally checks billing permission | Tenant is the session's selected tenant. Workspace name update is owner-only by the central matrix. A caller-supplied tenant ID does not replace session scope; plan selection must reference an active/public billable plan. | `src/app/api/settings/route.ts`; `src/app/api/onboarding/route.ts` |
-| Team listing/invitation/role removal | `users.read` or `users.manage` as appropriate; durable user required for mutation | Membership/invitation belongs to the current tenant. Normal assignable roles exclude `owner`. Editing/removing an owner is refused; self-removal is not the generic removal flow. Member changes revoke affected tenant sessions. | `src/app/api/team/members/route.ts`; `src/app/api/team/invitations/route.ts`; `src/lib/team-authorization.ts` |
-| Ownership transfer | Current workspace `owner` plus `users.manage` and fresh authority | Target is an existing same-tenant member, distinct from the actor. Lock both memberships; demote current owner and promote target atomically; revoke both affected authorities. A concurrent role change cannot silently transfer ownership. | `src/app/api/team/ownership/route.ts:23` |
+| Team listing/invitation/role removal | `users.read` or `users.manage` as appropriate; durable user required for mutation | Membership/invitation belongs to the current tenant. Workspace team mutation endpoints deny all workspace tokens. Platform Owner-only endpoints create/revoke invitations and mutate members; the internal owner marker remains protected. | `src/app/api/team/members/route.ts`; `src/app/api/team/invitations/route.ts`; `src/lib/team-authorization.ts` |
+| Ownership transfer | Fresh Platform Owner session and a same-tenant member target | Target is an existing same-tenant member, distinct from the actor. Lock both memberships; demote current owner and promote target atomically; revoke both affected authorities. A concurrent role change cannot silently transfer ownership. | `src/app/api/team/ownership/route.ts:23` |
 | Invitation acceptance / tenant switch | Proof for the existing account or the restricted mailbox/password onboarding flow; live target membership/invitation | Invitation email binds the recipient and role; optional client context grants nothing. Existing-session acceptance/switch carries original password proof and earliest deadline, atomically rechecks source authority, and cannot create freshness from the database's password hash. | `src/app/api/team/invitations/accept/route.ts:144`; `src/app/api/auth/select-tenant/route.ts`; `src/lib/session-tokens.ts` |
 | Agent inventory/pairing/lifecycle | `agents.read`, `agents.pair`, `agents.disable`, `agents.retire` | All human lookups/mutations constrain Agent tenant. Pairing consumes an exact live pending code for that Agent and tenant; it does not convert an arbitrary requested Agent ID into ownership. Lifecycle changes recheck tenant, actor and expected resource state. | `src/lib/agent-control.ts`; `src/lib/agent-lifecycle.ts`; `src/app/api/agents/route.ts`; `src/app/api/agent/register/route.ts` |
 | Discovery and provision | Read Agent/discovery state with the relevant read permission; `agents.pair` to start discovery; `printers.manage` to verify/provision | Session/device IDs belong to the current tenant and selected Agent. Reported candidate identity, observed address, verified transport and snapshot revision must still agree at commit. Discovery itself does not enroll a different tenant's device or make a private printer shared. | `src/app/api/agents/[id]/discovery/route.ts`; `src/app/api/agents/[id]/discovered-printers/[deviceId]/verify/route.ts`; `src/app/api/agents/[id]/discovered-printers/[deviceId]/provision/route.ts` |

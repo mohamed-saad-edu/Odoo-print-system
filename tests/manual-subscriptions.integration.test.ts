@@ -2,7 +2,7 @@ import { afterAll,beforeAll,beforeEach,describe,expect,it,vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import { eq,sql } from "drizzle-orm";
 import { db } from "../src/db";
-import { users,tenants,tenantUsers,plans,tenantSubscriptions } from "../src/db/schema";
+import { users,tenants,tenantUsers,plans,tenantSubscriptions,subscriptionRequests } from "../src/db/schema";
 import { applyMigrations,closePool,hasTestDatabase,pool,seedFixture,truncateAll } from "./helpers/pg";
 import { createVerifiedPlatformSession } from "./helpers/platform-session";
 import { issueWorkspaceTestSession } from "./helpers/workspace-session";
@@ -28,6 +28,21 @@ const entitlements={max_agents:1,max_printers:1,max_jobs_per_minute:120,max_conc
 let platformCookie='',ownerCookie='',memberCookie='',claims:NonNullable<ReturnType<typeof verifyPlatformTokenSignature>>;
 function request(url:string,body:unknown,cookie=ownerCookie,key=randomUUID()){return new Request(origin+url,{method:'POST',headers:{origin,'content-type':'application/json',cookie,'idempotency-key':key},body:JSON.stringify(body)});}
 function input(overrides:Record<string,unknown>={}){return parseManualSubscriptionInput({action:'save',expectedRevision:0,planId:'manual',subscriptionType:'paid',monthlyQuota:10,term:'yearly',startDate:new Date(Date.now()-60000).toISOString(),endDate:new Date(Date.now()+365*86400000).toISOString(),status:'active',reason:'Verified external agreement',...overrides});}
+/** Construct an immutable existing customer request for Platform Owner approval tests.
+ * The customer-facing request creation route is intentionally retired. */
+async function seedPendingRequest(): Promise<{id: string}> {
+ const id = `req_${randomUUID()}`;
+ await db.transaction(async tx => {
+   await tx.insert(subscriptionRequests).values({
+     id, tenantId: 'workspace', requesterUserId: 'owner',
+     requesterName: 'مالك موثق', requesterEmail: 'owner@manual.test',
+     requesterVerifiedAt: new Date(), planId: 'manual', term: 'yearly',
+     idempotencyKey: randomUUID(), requestDigest: randomUUID(), status: 'pending',
+   });
+   await ensurePendingManualSubscription(tx,'workspace','manual');
+ });
+ return {id};
+}
 suite('V4 manual subscriptions security and accounting',()=>{
  beforeAll(async()=>{await applyMigrations();});
  afterAll(async()=>{vi.unstubAllEnvs();await closePool();});
@@ -41,17 +56,24 @@ suite('V4 manual subscriptions security and accounting',()=>{
   const owner=await issueWorkspaceTestSession({kind:'manager',tenantId:'workspace',userId:'owner',role:'owner'});ownerCookie=`${sessionCookieName('manager')}=${owner.accessToken}`;
   const member=await issueWorkspaceTestSession({kind:'manager',tenantId:'workspace',userId:'member',role:'admin'});memberCookie=`${sessionCookieName('manager')}=${member.accessToken}`;
  });
- it('creates one authenticated request under concurrent retry and never activates the workspace',async()=>{
-  const key=randomUUID();const responses=await Promise.all(Array.from({length:6},()=>requestActivation(request('/api/subscription-requests',{planId:'manual',term:'yearly',requesterUserId:'forged'},ownerCookie,key))));
-  expect(responses.map(r=>r.status).every(s=>s===200||s===201)).toBe(true);
-  const rows=await pool().query('SELECT * FROM subscription_requests');expect(rows.rows).toHaveLength(1);expect(rows.rows[0]).toMatchObject({tenant_id:'workspace',requester_user_id:'owner',requester_email:'owner@manual.test',requester_name:'مالك موثق',status:'pending'});
-  expect((await db.query.tenantSubscriptions.findFirst())?.status).toBe('awaiting_activation');
-  await expect(db.transaction(tx=>reserveTenantPrintCredit(tx,'workspace'))).rejects.toBeInstanceOf(TenantSubscriptionRequiredError);
-  const forbidden=await requestActivation(request('/api/subscription-requests',{planId:'manual',term:'monthly'},memberCookie));expect(forbidden.status).toBe(403);
-  const safe=await requestsGET(new Request(origin+'/api/subscription-requests',{headers:{cookie:memberCookie}}));expect(await safe.json()).toMatchObject({requests:[],hasSubscription:false,status:'awaiting_activation'});
+ it('denies concurrent workspace subscription requests and does not reveal commercial terms',async()=>{
+  const key=randomUUID();
+  const responses=await Promise.all(Array.from({length:6},()=>requestActivation(
+    request('/api/subscription-requests',{planId:'manual',term:'yearly',requesterUserId:'forged'},ownerCookie,key)
+  )));
+  expect(responses.map(r=>r.status)).toEqual(Array(6).fill(403));
+  expect((await pool().query('SELECT * FROM subscription_requests')).rows).toHaveLength(0);
+  expect(await db.query.tenantSubscriptions.findFirst()).toBeUndefined();
+  await expect(db.transaction(tx=>reserveTenantPrintCredit(tx,'workspace')))
+    .rejects.toBeInstanceOf(TenantSubscriptionRequiredError);
+  const denied=await requestActivation(request('/api/subscription-requests',{planId:'manual',term:'monthly'},memberCookie));
+  expect(denied.status).toBe(403);
+  const confidential=await requestsGET(new Request(origin+'/api/subscription-requests',{headers:{cookie:memberCookie}}));
+  expect(confidential.status).toBe(403);
+  expect(await confidential.json()).toMatchObject({code:'PLATFORM_OWNER_REQUIRED'});
  });
  it('approves only the linked request, records history, and replays activation without changing revision or credits',async()=>{
-  const r=await requestActivation(request('/api/subscription-requests',{planId:'manual',term:'yearly'}));const {request:record}=await r.json();
+  const record=await seedPendingRequest();
   const key=randomUUID(),body=input({requestId:record.id,subscriptionType:'free'});
   const [a,b]=await Promise.all([mutateManualSubscription('workspace',claims,key,body),mutateManualSubscription('workspace',claims,key,body)]);
   expect([a.replayed,b.replayed].sort()).toEqual([false,true]);expect((await pool().query('SELECT * FROM subscription_changes')).rowCount).toBe(1);
@@ -159,7 +181,7 @@ suite('V4 manual subscriptions security and accounting',()=>{
   expect(lift.before).toMatchObject({entitlementBlocked:true,entitlementBlockedReason:'Review hold'});expect(lift.after.entitlementBlocked).toBe(false);
  });
  it('binds request rejection retries and serializes concurrent approval/rejection without deadlock',async()=>{
-  const created=await requestActivation(request('/api/subscription-requests',{planId:'manual',term:'yearly'}));const {request:r}=await created.json();
+  const r=await seedPendingRequest();
   const key=randomUUID(),body={id:r.id,reason:'Not approved'};
   const decisions=await Promise.all([rejectRequest(request('/api/platform/subscription-requests',body,platformCookie,key)),subscriptionPOST(request('/api/platform/tenants/workspace/subscription',input({requestId:r.id}),platformCookie),{params:Promise.resolve({id:'workspace'})})]);
   expect(decisions.map(r=>r.status).sort()).toEqual([200,409]);

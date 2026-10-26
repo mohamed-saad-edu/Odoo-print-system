@@ -8,22 +8,17 @@ import { I18nProvider } from "../src/i18n/react";
 import { translate } from "../src/i18n/translate";
 import { fetchWithTimeout } from "../src/lib/fetch-timeout";
 
-const navigation = vi.hoisted(() => ({ replace: vi.fn(), refresh: vi.fn(), push: vi.fn() }));
+const navigation = vi.hoisted(() => ({ replace: vi.fn(), refresh: vi.fn(), push: vi.fn(), redirect: vi.fn() }));
 vi.mock("../src/lib/fetch-timeout", () => ({ fetchWithTimeout: vi.fn() }));
 vi.mock("../src/lib/session-config", () => ({ ensureCustomerSession: vi.fn(async () => ({ authenticated: true, expiresAt: Date.now() + 3600000 })) }));
 vi.mock("../src/components/AuthShell", () => ({ AuthShell: ({ children }: { children: ReactNode }) => h("main", null, children) }));
-vi.mock("next/navigation", () => ({ useRouter: () => navigation, useSearchParams: () => new URLSearchParams("token=synthetic-invitation") }));
+vi.mock("next/navigation", () => ({ useRouter: () => navigation, redirect: navigation.redirect, useSearchParams: () => new URLSearchParams("token=synthetic-invitation") }));
 vi.mock("next/link", () => ({ default: ({ children, ...props }: Record<string, unknown>) => h("a", props, children as ReactNode) }));
 
 let root: Root;
 let host: HTMLDivElement;
 const fetchMock = vi.mocked(fetchWithTimeout);
 const response = (status: number, value: unknown) => ({ status, ok: status >= 200 && status < 300, json: async () => value }) as Response;
-const plans = [
-  { id: "plan-one", name: "Starter", currency: "USD", interval: "month", entitlements: { max_prints_per_period: 100 } },
-  { id: "plan-two", name: "Team", currency: "USD", interval: "year", entitlements: { max_prints_per_period: 1000 } },
-];
-
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("scrollTo", vi.fn());
@@ -73,111 +68,12 @@ describe("customer recovery feedback", () => {
 
  });
 
-describe("manual onboarding recovery", () => {
-  function onboardingFixture(status: "awaiting_activation" | "active" | "expired" | "suspended", pending = false) {
-    const state = { status, pending };
-    fetchMock.mockImplementation(async (url, init) => {
-      if (url === "/api/onboarding" && init?.method !== "POST") return response(200, {
-        tenant: { id: "tenant-ui", name: "Synthetic café" }, role: "owner", plans, subscription: { planId: "plan-one" },
-      });
-      if (url === "/api/subscription-requests" && init?.method !== "POST") return response(200, {
-        status: state.status, requests: state.pending ? [{ id: "req_one", reference: "req_one", status: "pending", createdAt: "2026-01-01T10:00:00Z", planId: "plan-one", term: "monthly" }] : [],
-      });
-      return response(200, { ok: true });
-    });
-    return state;
-  }
 
-  it.each(["en", "ar"] as const)("shows the activated checklist without starting another subscription (%s)", async locale => {
-    onboardingFixture("active");
+describe("workspace onboarding is no longer a billing control plane", () => {
+  it.each(["en", "ar"] as const)("redirects the %s workspace member without any billing requests", async locale => {
     await render(h(OnboardingPage), locale);
-    expect(host.textContent).toContain(translate(locale, "v4.onboarding.ready"));
-    // Active entitlement is not evidence that a Windows computer or printer is ready.
-    expect(host.textContent).not.toContain(locale === "en" ? "Your workspace is ready" : "مساحة عملك جاهزة");
-    const checklist = host.querySelector("details");
-    expect(checklist).not.toBeNull();
-    expect(checklist?.open).toBe(false);
-    expect(checklist?.querySelectorAll("li")).toHaveLength(4);
-    expect(host.querySelector('a[href="/dashboard"]')).not.toBeNull();
-    expect(host.querySelector('a[href="/api-keys"]')).not.toBeNull();
-    expect(host.querySelector('form')).toBeNull();
-    expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(0);
-  });
-
-  it("keeps a recorded request pending until the authoritative status changes", async () => {
-    const state = onboardingFixture("awaiting_activation", true);
-    await render(h(OnboardingPage));
-    expect(host.textContent).toContain("Your activation request is recorded");
-    expect(host.textContent).toContain("req_one");
-    expect(host.querySelector('form')).toBeNull();
-    expect(host.querySelector('a[href="/dashboard"]')).toBeNull();
-    state.status = "active";
-    await act(async () => button("Check activation status").click());
-    expect(host.textContent).toContain(translate("en", "v4.onboarding.ready"));
-    expect(host.querySelector('a[href="/dashboard"]')).not.toBeNull();
-    expect(host.querySelector('form')).toBeNull();
-    expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(0);
-  });
-
-  it("reconciles a recorded request with a lost response through an explicit status refresh", async () => {
-    const state = onboardingFixture("awaiting_activation");
-    const normalFetch = fetchMock.getMockImplementation()!;
-    fetchMock.mockImplementation(async (...args) => {
-      if (args[0] === "/api/subscription-requests" && args[1]?.method === "POST") {
-        state.pending = true;
-        throw new Error("synthetic transport failure with private diagnostic");
-      }
-      return normalFetch(...args);
-    });
-    await render(h(OnboardingPage));
-    await act(async () => button("Request activation").click());
-    expect(host.textContent).toContain("We could not confirm your activation request");
-    expect(host.textContent).not.toContain("private diagnostic");
-    expect(navigation.replace).not.toHaveBeenCalled();
-    await act(async () => button("Try again").click());
-    expect(host.textContent).toContain("Your activation request is recorded");
-    expect(host.querySelector('a[href="/dashboard"]')).toBeNull();
-    expect(fetchMock.mock.calls.filter(([url, init]) => url === "/api/subscription-requests" && init?.method === "POST")).toHaveLength(1);
-  });
-
-  it("uses native plan and term radios and submits no trial or checkout fields", async () => {
-    const state = onboardingFixture("awaiting_activation");
-    const normalFetch = fetchMock.getMockImplementation()!;
-    fetchMock.mockImplementation(async (...args) => {
-      if (args[0] === "/api/subscription-requests" && args[1]?.method === "POST") state.pending = true;
-      return normalFetch(...args);
-    });
-    await render(h(OnboardingPage));
-    const radios = host.querySelectorAll<HTMLInputElement>('input[type="radio"][name="plan"]');
-    expect(radios).toHaveLength(2);
-    expect(radios[0].checked).toBe(true);
-    await act(async () => radios[1].click());
-    expect(radios[1].checked).toBe(true);
-    expect(radios[0].checked).toBe(false);
-    await act(async () => host.querySelectorAll<HTMLInputElement>('input[name="term"]')[1].click());
-    await act(async () => button("Request activation").click());
-    const setup = fetchMock.mock.calls.find(([url, init]) => url === "/api/onboarding" && init?.method === "POST")!;
-    expect(JSON.parse(String(setup[1]?.body))).toEqual({ workspaceName: "Synthetic café", planId: "plan-two" });
-    const request = fetchMock.mock.calls.find(([url, init]) => url === "/api/subscription-requests" && init?.method === "POST")!;
-    expect(JSON.parse(String(request[1]?.body))).toEqual({ planId: "plan-two", term: "yearly" });
-    expect(new Headers(request[1]?.headers).get("Idempotency-Key")).toMatch(/^[a-f0-9-]{36}$/);
-    expect(navigation.replace).not.toHaveBeenCalled();
-    expect(fetchMock.mock.calls.some(([url]) => String(url).startsWith("/api/billing/checkout"))).toBe(false);
-  });
-
-  it("reuses the request identity after an ambiguous submission retry", async () => {
-    onboardingFixture("awaiting_activation");
-    const normalFetch = fetchMock.getMockImplementation()!;
-    fetchMock.mockImplementation(async (...args) => {
-      if (args[0] === "/api/subscription-requests" && args[1]?.method === "POST") return response(503, { code: "TEMPORARILY_UNAVAILABLE" });
-      return normalFetch(...args);
-    });
-    await render(h(OnboardingPage));
-    await act(async () => button("Request activation").click());
-    await act(async () => button("Request activation").click());
-    const requests = fetchMock.mock.calls.filter(([url, init]) => url === "/api/subscription-requests" && init?.method === "POST");
-    expect(requests).toHaveLength(2);
-    expect(new Headers(requests[0][1]?.headers).get("Idempotency-Key")).toBe(new Headers(requests[1][1]?.headers).get("Idempotency-Key"));
-    expect(host.querySelector('a[href="/dashboard"]')).toBeNull();
+    expect(navigation.redirect).toHaveBeenCalledWith("/dashboard");
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(host.querySelector("form")).toBeNull();
   });
 });

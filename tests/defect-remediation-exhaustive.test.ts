@@ -284,9 +284,10 @@ describe("DEFECT #6 — Agent test-print fast path", () => {
 describe("SECURITY — onboarding function-level authorization", () => {
   it("onboarding endpoint enforces tenant and billing permissions server-side", () => {
     const source = fs.readFileSync(path.resolve(__dirname, "../src/app/api/onboarding/route.ts"), "utf-8");
-    expect(source).toContain("requireManagerActorInTransaction(tx, claims, \"tenant.update\")");
-    expect(source).toContain("ensurePendingManualSubscription(tx, claims.tenantId, plan.id)");
-    expect(source).toContain('claims.role !== "owner"');
-    expect(source).toContain('code: "MANUAL_ACTIVATION_REQUIRED"');
+    expect(source).toContain("PLATFORM_OWNER_REQUIRED");
+    expect(source).not.toContain("ensurePendingManualSubscription");
+    const platform = fs.readFileSync(path.resolve(__dirname, "../src/app/api/platform/subscriptions/route.ts"), "utf-8");
+    expect(platform).toContain("requirePlatformOwner");
+    expect(platform).not.toContain("validateWorkspaceManager");
   });
 });

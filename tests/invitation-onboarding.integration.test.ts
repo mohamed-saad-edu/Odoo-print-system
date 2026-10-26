@@ -32,7 +32,7 @@ async function fixture(opts: { invitedAccount?: "verified" | "unverified" } = {}
   const invitationId = `inv_${suffix}`;
   await db.insert(tenantInvitations).values({
     id: invitationId, tenantId, inviterUserId: inviterId, email,
-    role: "viewer", tokenHash: await hashToken(token),
+    role: "admin", tokenHash: await hashToken(token),
     expiresAt: new Date(Date.now() + 3600_000),
   });
   return { email, tenantId, inviteeId, invitationId, token };
@@ -48,7 +48,7 @@ suite("company invitation onboarding", () => {
     const res = await preview(new Request(`${baseUrl}/api/team/invitations/preview?token=${encodeURIComponent(f.token)}`));
     expect(res.status).toBe(200);
     expect(res.headers.get("cache-control")).toContain("no-store");
-    expect(await res.json()).toMatchObject({ workspaceName: "Customer Company", email: f.email, role: "viewer" });
+    expect(await res.json()).toMatchObject({ workspaceName: "Customer Company", email: f.email, role: "admin" });
   });
 
   it("automatically seeds an unverified identity, then adds it ONLY to the invited tenant after mailbox proof", async () => {
@@ -82,7 +82,7 @@ suite("company invitation onboarding", () => {
     const membership = await db.query.tenantUsers.findFirst({
       where: and(eq(tenantUsers.userId, identity!.id), eq(tenantUsers.tenantId, f.tenantId)),
     });
-    expect(membership?.role).toBe("viewer");
+    expect(membership?.role).toBe("admin");
     expect((await db.select().from(tenants)).length).toBe(1);
     expect((await db.query.tenantInvitations.findFirst({ where: eq(tenantInvitations.id, f.invitationId) }))?.acceptedAt).toBeTruthy();
     const replay = await accept(new Request(`${baseUrl}/api/team/invitations/accept`, {
@@ -130,10 +130,10 @@ suite("company invitation onboarding", () => {
     expect(invitation?.tenantId).toBe(f.tenantId);
     const joined = await db.transaction(tx =>
       joinWorkspaceByInvitation(tx, invitation!, f.inviteeId, f.email));
-    expect(joined).toEqual({ tenantId: f.tenantId, role: "viewer" });
+    expect(joined).toEqual({ tenantId: f.tenantId, role: "admin" });
     const rows = await db.select().from(tenantUsers);
     expect(rows).toHaveLength(2);
-    expect(rows.find(m => m.userId === f.inviteeId)).toMatchObject({ tenantId: f.tenantId, role: "viewer" });
+    expect(rows.find(m => m.userId === f.inviteeId)).toMatchObject({ tenantId: f.tenantId, role: "admin" });
     expect((await db.select().from(tenants)).length).toBe(1);
     await expect(db.transaction(tx =>
       joinWorkspaceByInvitation(tx, invitation!, f.inviteeId, f.email)))
