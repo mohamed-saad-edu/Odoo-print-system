@@ -35,7 +35,7 @@ vi.mock("../src/db", () => {
     query: { tenantInvitations: { findFirst: async () => state.duplicate ? { id: "existing" } : null } },
     insert: () => ({ values: async (value: Record<string, unknown>) => { state.insertions.push(value); } }),
   };
-  return { db: { transaction: async (fn: (tx: typeof tx) => unknown) => fn(tx) } };
+  return { db: { transaction: async (fn: (tx: unknown) => unknown) => fn(tx) } };
 });
 import { POST as oldPOST } from "../src/app/api/team/invitations/route";
 import { POST as platformPOST } from "../src/app/api/platform/tenants/[id]/invitations/route";
