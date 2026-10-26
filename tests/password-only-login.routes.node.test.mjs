@@ -66,6 +66,17 @@ test("a verified password plus a valid offer recovers an account without a works
   assert.match(response.headers.get("Cache-Control"), /no-store/);
 });
 const roles = ["owner", "admin", "operator", "viewer", "integration_admin", "billing_admin"];
+for (const tenantId of [null, "", 42, false, [], {}, "x".repeat(129)]) {
+  test(`an invalid explicit workspace selector cannot fall back to another workspace: ${JSON.stringify(tenantId)}`, async () => {
+    const post = handler("src/app/api/auth/login/route.ts", "owner");
+    const response = await post(new Request("http://localhost:3000/api/auth/login", {
+      method: "POST", body: JSON.stringify({ email: "user@example.test", password: "correct password fixture", tenantId }),
+    }));
+    assert.equal(response.status, 400);
+    assert.equal((await response.json()).code, "INVALID_REQUEST");
+    assert.equal(response.headers.get("Set-Cookie"), null);
+  });
+}
 for (const kind of ["customer", "manager", "platform"]) {
   for (const role of kind === "platform" ? ["platform_owner"] : roles) {
     test(`${kind} ${role} obtains a session immediately after verified password`, async () => {

@@ -49,4 +49,22 @@ describe.skipIf(!hasTestDatabase)("workspace choices follow live memberships", (
     expect(identity).toMatchObject({ userId,tenantId: "cairo",role: "owner" });
     expect(identity).not.toHaveProperty("selectionToken");
   });
+
+  it("rejects malformed explicit selectors instead of logging into the sole remaining workspace", async () => {
+    await pool().query("UPDATE tenants SET lifecycle='suspended' WHERE id='giza'");
+    for (const tenantId of [null, "", 42, false, [], {}, "x".repeat(129)]) {
+      const response = await POST(new Request("https://gateway.test/api/auth/login", {
+        method: "POST", body: JSON.stringify({ email, password, tenantId }),
+      }));
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({ code: "INVALID_REQUEST" });
+      expect(response.headers.get("set-cookie")).toBeNull();
+    }
+    expect((await pool().query("SELECT count(*)::int AS count FROM refresh_tokens WHERE user_id=$1", [userId])).rows[0].count).toBe(0);
+    const selected = await POST(new Request("https://gateway.test/api/auth/login", {
+      method: "POST", body: JSON.stringify({ email, password, tenantId: "cairo" }),
+    }));
+    expect(selected.status).toBe(200);
+    expect(await selected.json()).toMatchObject({ tenantId: "cairo" });
+  });
 });

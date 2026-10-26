@@ -16,7 +16,9 @@ export async function POST(req: Request) {
   try { const parsedBody = await req.json(); if (!parsedBody || typeof parsedBody !== "object" || Array.isArray(parsedBody)) throw new Error("JSON object required"); body = parsedBody; } catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); }
   const email = typeof body.email === "string" ? body.email : "";
   const password = typeof body.password === "string" ? body.password : "";
-  const tenantId = typeof body.tenantId === "string" && body.tenantId.length <= 128 ? body.tenantId : undefined;
+  if (body.tenantId !== undefined && (typeof body.tenantId !== "string" || !body.tenantId || body.tenantId.length > 128))
+    return NextResponse.json({ error: "Invalid workspace selection", code: "INVALID_REQUEST" }, { status: 400 });
+  const tenantId = typeof body.tenantId === "string" ? body.tenantId : undefined;
   if (body.inviteToken !== undefined && (typeof body.inviteToken !== "string" || !body.inviteToken || body.inviteToken.length > 256))
     return NextResponse.json({ error: "Invitation is invalid or expired", code: "INVITATION_INVALID" }, { status: 400 });
   const inviteToken = typeof body.inviteToken === "string" ? body.inviteToken : "";
