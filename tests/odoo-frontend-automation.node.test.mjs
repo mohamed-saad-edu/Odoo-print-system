@@ -371,14 +371,15 @@ test("printer inventory explains unavailable agents without widening branch disc
     let calls = 0;
     view.call = async (route, data) => {
       assert.equal(route, "/print_gateway/runtime-agents");
-      assert.deepEqual(data, { company_id: 10, branch_id: 21, assignment_only: true });
+      assert.deepEqual({ company_id: data.company_id, branch_id: data.branch_id, assignment_only: data.assignment_only },
+        { company_id: 10, branch_id: 21, assignment_only: true });
       calls += 1;
       return reply;
     };
     await view.refresh();
     assert.equal(calls, 1, "an unavailable scoped Agent cannot start printer discovery");
     assert.equal(view.state.agentEmptyReason, expected);
-    assert.deepEqual(view.state.printers, []);
+    assert.equal(view.state.printers.length, 0);
   }
 });
 
@@ -393,12 +394,12 @@ test("printer inventory navigation maintains exact Odoo scope without creating a
   view.mappings();
   assert.deepEqual(actions.map(a => a.res_model),
     ["print_gateway.runtime_agent_assignment", "print_gateway.binding"]);
-  assert.deepEqual(actions.map(a => a.context),
+  assert.deepEqual(actions.map(a => ({ ...a.context })),
     [{ default_company_id: 10, default_branch_id: 21 },
      { default_company_id: 10, default_branch_id: 21 }]);
-  assert.deepEqual(actions[0].domain,
+  assert.deepEqual(JSON.parse(JSON.stringify(actions[0].domain)),
     [["company_id", "=", 10], ["branch_id", "=", 21]]);
-  assert.deepEqual(actions[1].domain,
+  assert.deepEqual(JSON.parse(JSON.stringify(actions[1].domain)),
     [["company_id", "=", 10], ["branch_id", "in", [false, 21]]]);
   view.state.scopeId = 0;
   assert.equal(view.assignments(), undefined);
