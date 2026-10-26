@@ -79,6 +79,20 @@ export async function mutateManualSubscription(tenantId: string, actor: Platform
       if (previous.requestDigest!==digest || previous.actorId!==actor.userId) throw new ManualSubscriptionError("IDEMPOTENCY_CONFLICT",409);
       return {subscription:previous.after,replayed:true};
     }
+    // A linked approval must match the customer's pending request exactly.
+    // Unrelated subscription changes may still be made without a requestId.
+    if (input.requestId) {
+      if ((input.action !== "save" && input.action !== "renew") || input.status !== "active") {
+        throw new ManualSubscriptionError("SUBSCRIPTION_REQUEST_CONFLICT",409);
+      }
+      const request=await tx.execute(sql`SELECT plan_id AS "planId",term,requested_monthly_quota AS "requestedMonthlyQuota"
+        FROM subscription_requests WHERE id=${input.requestId} AND tenant_id=${tenantId} AND status='pending' FOR UPDATE`);
+      const requested=request.rows[0];
+      if (!requested || input.planId !== requested.planId || input.term !== requested.term ||
+          (requested.requestedMonthlyQuota !== null && input.monthlyQuota !== Number(requested.requestedMonthlyQuota))) {
+        throw new ManualSubscriptionError("SUBSCRIPTION_REQUEST_CONFLICT",409);
+      }
+    }
     const before=await tx.query.tenantSubscriptions.findFirst({where:eq(tenantSubscriptions.tenantId,tenantId)});
     if ((before?.revision??0)!==input.expectedRevision) throw new ManualSubscriptionError("SUBSCRIPTION_REVISION_CONFLICT",409);
     let changes: Partial<typeof tenantSubscriptions.$inferInsert>={revision:(before?.revision??0)+1};

@@ -56,8 +56,10 @@ it("resets the exact workspace data, subscription draft and password before the 
   expect(createSegmentKey(["id", "A", "d", null])).toBe(createSegmentKey(["id", "B", "d", null]));
   await render("A");
   await act(async () => button("subscriptions").click());
-  await enter(host.querySelector("textarea")!, "A private draft");
+  // The reason now appears only in the confirmation step, not the main form.
+  expect(host.querySelector("textarea")).toBeNull();
   await act(async () => button("preview").click());
+  await enter(host.querySelector("textarea")!, "A private draft");
   await enter(host.querySelector('input[type="password"]')!, "A private password");
   expect(host.textContent).toContain("A private draft");
   await render("A");
@@ -72,6 +74,6 @@ it("resets the exact workspace data, subscription draft and password before the 
   expect(host.textContent).toContain("Workspace B");
   await act(async () => button("subscriptions").click());
   expect(host.querySelector('input[type="password"]')).toBeNull();
-  expect(host.querySelector("textarea")!.value).toBe("");
-  expect(host.querySelector("select")!.value).toBe("save");
+  expect(host.querySelector("textarea")).toBeNull();
+  expect(host.querySelector("select")!.value).toBe("plan-B");
 });

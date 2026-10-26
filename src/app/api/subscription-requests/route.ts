@@ -48,11 +48,22 @@ export async function POST(req:Request) {
         return {request:safeRequest(replay),replayed:true};
       }
       const pending=await tx.query.subscriptionRequests.findFirst({where:and(eq(subscriptionRequests.tenantId,actor.tenantId),eq(subscriptionRequests.status,'pending'))});
-      if (pending) return {request:safeRequest(pending),replayed:true};
+      if (pending) {
+        // Do not acknowledge a different plan or term as a successful request.
+        if (pending.requestDigest !== digest) {
+          throw new ManualSubscriptionError("SUBSCRIPTION_REQUEST_ALREADY_PENDING",409);
+        }
+        return {request:safeRequest(pending),replayed:true};
+      }
       const plan=await tx.query.plans.findFirst({where:and(eq(plans.id,input.planId),eq(plans.isActive,true),eq(plans.isPublic,true))});
       if (!plan) throw new ManualSubscriptionError("PLAN_NOT_FOUND",404);
+      // Capture the plan's promised allowance when the request is submitted;
+      // later catalog edits cannot silently rewrite what the customer asked for.
+      const allowance=plan.entitlements.max_prints_per_period;
+      const requestedMonthlyQuota=input.requestedMonthlyQuota ??
+        (typeof allowance==="number" && Number.isSafeInteger(allowance) && allowance>0 ? allowance : null);
       await ensurePendingManualSubscription(tx,actor.tenantId,plan.id);
-      const [request]=await tx.insert(subscriptionRequests).values({id:`req_${nanoid(24)}`,tenantId:actor.tenantId,requesterUserId:user.id,requesterName:user.displayName??'',requesterEmail:user.email,requesterVerifiedAt:user.emailVerifiedAt,...input,idempotencyKey:key,requestDigest:digest}).returning();
+      const [request]=await tx.insert(subscriptionRequests).values({id:`req_${nanoid(24)}`,tenantId:actor.tenantId,requesterUserId:user.id,requesterName:user.displayName??'',requesterEmail:user.email,requesterVerifiedAt:user.emailVerifiedAt,...input,requestedMonthlyQuota,idempotencyKey:key,requestDigest:digest}).returning();
       await writeAuditEvent({tenantId:actor.tenantId,actorType:'user',actorId:user.id,action:'subscription.requested',resourceType:'subscription_request',resourceId:request.id,metadata:input},tx);
       return {request:safeRequest(request),replayed:false};
     });
