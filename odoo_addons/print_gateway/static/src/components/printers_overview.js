@@ -53,6 +53,14 @@ export class PrintersOverview extends Component {
 
     get scope() { return this.state.scopes.find(scope => scope.id === this.state.scopeId); }
 
+    // Scope IDs stay distinct and authorized. Hide the redundant selector
+    // when the operator has only one assignable company/branch.
+    get assignableScopes() { return this.state.scopes.filter(scope => scope.assignable !== false); }
+    get hasMultipleScopes() { return this.assignableScopes.length > 1; }
+    // Invalid or revoked action context: ask for explicit selection; never
+    // silently route to a different branch, even when one remains available.
+    get showScopeSelector() { return this.hasMultipleScopes || !this.scope; }
+
     async call(route, params) {
         this.request?.cancel();
         this.request = startRpcWithDeadline(rpc, route, params, {
@@ -87,7 +95,13 @@ export class PrintersOverview extends Component {
             if (!this.alive || generation !== this.generation) return;
             this.state.agents = Array.isArray(result?.agents) ? result.agents : [];
             if (!this.state.agents.some(agent => agent.id === this.state.agentId)) {
-                this.state.agentId = this.state.agents.length === 1 ? this.state.agents[0].id : "";
+                // Select an already assigned Agent for INVENTORY VIEW only.
+                // This must never create a Branch assignment or a print route.
+                const preferred = this.state.agents.find(agent =>
+                    agent.freshness === "fresh" && agent.status === "online")
+                    || this.state.agents.find(agent => agent.freshness === "fresh")
+                    || this.state.agents[0];
+                this.state.agentId = preferred?.id || "";
             }
             if (this.state.agentId) {
                 const printers = await this.call("/print_gateway/runtime-printers", { ...params, agent_id: this.state.agentId });

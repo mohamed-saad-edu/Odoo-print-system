@@ -63,7 +63,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
         eyebrow={t("dashboard.page.eyebrow")}
         icon={<Activity className="h-4 w-4" />}
         title={t("v4.experience.home")}
-        description={t("v4.experience.health.body")}
+        
         meta={
           <StatusBadge
             tone={databaseError ? "bad" : "ok"}

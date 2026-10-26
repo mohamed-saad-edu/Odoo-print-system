@@ -71,7 +71,7 @@ const root = path.resolve("odoo_addons/print_gateway/static/src");
 async function load(relative, extra = {}, overrides = {}) {
   const registry = { category: () => ({ add() {}, contains: () => false }) };
   const stubs = {
-    "@odoo/owl": { Component: class {}, onWillUnmount() {}, onMounted() {}, useEffect() {}, useState: v => v, xml: () => "" },
+    "@odoo/owl": { Component: class {}, onWillStart() {}, onWillUnmount() {}, onMounted() {}, useEffect() {}, useState: v => v, xml: () => "" },
     "@web/core/registry": { registry },
     "@web/core/network/rpc": { rpc() {} },
     "@web/core/l10n/translation": { _t: value => value },
@@ -299,4 +299,58 @@ test("an unavailable or stale language session never reloads with the previous l
     assert.equal(reloaded, false);
     assert.equal(messages.length, 1);
   }
+});
+
+
+test("printer inventory chooses an already assigned healthy agent without a second registration step", async () => {
+  const { PrintersOverview } = await load("components/printers_overview.js");
+  const view = Object.create(PrintersOverview.prototype);
+  view.state = { scopes: [{ id: 21, companyId: 10, branchId: 21, configId: 2 }], scopeId: 21,
+    agents: [], agentId: "", printers: [], loading: false, error: "" };
+  view.alive = true;
+  view.generation = 0;
+  const called = [];
+  view.call = async (route, args) => {
+    called.push([route, args]);
+    if (route === "/print_gateway/runtime-agents") return { agents: [
+      { id: "agent-stale", status: "offline", freshness: "stale" },
+      { id: "agent-ready", status: "online", freshness: "fresh" },
+    ] };
+    if (route === "/print_gateway/runtime-printers") return { printers: [{ id: "verified-printer" }] };
+    throw new Error("unexpected RPC");
+  };
+  await view.refresh();
+  assert.equal(view.state.agentId, "agent-ready");
+  assert.deepEqual(Array.from(view.state.printers, p => p.id), ["verified-printer"]);
+  assert.equal(called.length, 2);
+  assert.deepEqual({ ...called[1][1] }, { company_id: 10, branch_id: 21, agent_id: "agent-ready" });
+  assert.equal(view.hasMultipleScopes, false);
+  assert.equal(view.showScopeSelector, false);
+  view.state.scopeId = 0; // revoked explicit scope must offer a safe manual selector
+  assert.equal(view.showScopeSelector, true);
+  view.state.scopeId = 21;
+  view.state.scopes.push({ id: 31, companyId: 30, branchId: false });
+  assert.equal(view.hasMultipleScopes, true);
+  assert.equal(view.showScopeSelector, true);
+  // Inventory is read-only; changing the visible Agent never mutates assignments.
+  assert.ok(called.every(([route]) => route === "/print_gateway/runtime-agents" || route === "/print_gateway/runtime-printers"));
+});
+
+test("Odoo Apps description uses translated manifest metadata, not untranslatable static HTML or repository links", () => {
+  const base = path.resolve("odoo_addons/print_gateway");
+  const manifest = fs.readFileSync(path.join(base, "__manifest__.py"), "utf8");
+  const catalog = fs.readFileSync(path.join(base, "i18n/ar.po"), "utf8");
+  const inventory = fs.readFileSync(path.join(base, "static/src/components/printers_overview.xml"), "utf8");
+  const config = fs.readFileSync(path.join(base, "models/gateway_config.py"), "utf8");
+  const menus = fs.readFileSync(path.join(base, "views/menu.xml"), "utf8");
+  assert.equal(fs.existsSync(path.join(base, "static/description/index.html")), false);
+  assert.doesNotMatch(manifest, /github\.com/);
+  assert.match(manifest, /https:\/\/print\.yaseir\.cloud\//);
+  assert.match(catalog, /model:ir\.module\.module,description:base\.module_print_gateway/);
+  assert.match(catalog, /model:ir\.module\.module,summary:base\.module_print_gateway/);
+  assert.match(inventory, /t-if="state\.agents\.length > 1"/);
+  assert.match(inventory, /t-elif="state\.agents\.length === 1"/);
+  assert.doesNotMatch(inventory, /o_pg_setup_steps/);
+  assert.match(config, /context\["default_branch_id"\] = active_company\.id/);
+  assert.match(menus, /name="Automatic Printing"/);
 });

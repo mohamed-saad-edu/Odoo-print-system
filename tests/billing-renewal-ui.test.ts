@@ -19,7 +19,12 @@ describe("manual billing status and independent monthly usage",()=>{
   it.each(["en","ar"] as const)("shows truthful annual contract and independent monthly allowance in %s",async locale=>{
     const markup=await render(locale);expect(markup).toContain(translate(locale,"v4.subscription.manualRenewal"));expect(markup).toContain(translate(locale,"v4.onboarding.yearly"));expect(markup).not.toMatch(/Stripe|checkout|billingActions\./);
     const doc=new DOMParser().parseFromString(markup,"text/html");const label=[...doc.querySelectorAll("dt")].find(node=>node.textContent===translate(locale,"v4.subscription.allowance"));expect(label?.nextElementSibling?.textContent).toBe(formatNumber(100,locale));
-    expect(markup).toContain(translate(locale,"v4.subscription.unlimitedBody"));
+    // Commercial-limit information stays available without another prominent
+    // repeated callout in the active contract view.
+    const limitsDetails=[...doc.querySelectorAll("details")].find(node=>node.querySelector("summary")?.textContent===translate(locale,"v4.subscription.unlimitedTitle"));
+    expect(limitsDetails).toBeDefined();
+    expect(limitsDetails?.hasAttribute("open")).toBe(false);
+    expect(limitsDetails?.textContent).toContain(translate(locale,"v4.subscription.unlimitedBody"));
   });
   it("expired contract retains usage history but never claims printing access",async()=>{fixture.subscription.currentPeriodEnd=new Date("2029-12-31T00:00:00Z");const markup=await render("en");expect(markup).toContain("Subscription expired");expect(markup).toContain(translate("en","v4.subscription.balanceNotAccess"));expect(markup).not.toContain(translate("en","v4.subscription.activeBody"));});
   it("suspended subscription does not become active despite future contract end",async()=>{fixture.subscription.entitlementBlocked=true;const markup=await render("en");expect(markup).toContain(translate("en","v4.subscription.suspendedBody"));expect(markup).not.toContain(translate("en","v4.subscription.activeBody"));});

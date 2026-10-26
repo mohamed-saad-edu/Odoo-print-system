@@ -95,9 +95,13 @@ export default function Onboarding() {
       </header>
       {error && <ErrorState title={t("errors.operationFailed")} message={error} retry={() => void load()} />}
       {loading ? <div role="status" aria-label={t("common.loading")} className="space-y-3"><Skeleton className="h-28 w-full" /><Skeleton className="h-48 w-full" /></div> : active ? <>
+        <Button href="/dashboard" variant="primary">{t("v4.onboarding.start")}</Button>
         <Card><CardHeader title={workspace?.tenant.name ?? ""} icon={<CheckCircle2 className="h-5 w-5" />} />
-          <ol className="divide-y divide-edge-subtle">{steps.map((step, index) => <li key={step.href} className="flex flex-wrap items-center gap-4 p-5"><step.icon className="h-5 w-5 text-brand" aria-hidden /><div className="min-w-48 flex-1"><h2 className="font-semibold">{formatNumber(index + 1)}. {t(step.title)}</h2><p className="mt-1 text-sm text-ink-3">{t(step.body)}</p></div><Button href={step.href || undefined} disabled={!step.href} variant="secondary">{t(step.href ? "common.continue" : "v4.onboarding.downloadUnavailable")}</Button></li>)}</ol>
-        </Card><Button href="/dashboard" variant="primary">{t("v4.onboarding.start")}</Button>
+          <details className="group">
+            <summary className="flex min-h-11 cursor-pointer items-center gap-2 px-5 py-4 font-semibold text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/35">{t("v4.experience.setup.title")}</summary>
+            <ol className="divide-y divide-edge-subtle border-t border-edge-subtle">{steps.map((step, index) => <li key={step.title} className="flex flex-wrap items-center gap-4 p-5"><step.icon className="h-5 w-5 text-brand" aria-hidden /><div className="min-w-48 flex-1"><h2 className="font-semibold">{formatNumber(index + 1)}. {t(step.title)}</h2><p className="mt-1 text-sm text-ink-3">{t(step.body)}</p></div><Button href={step.href || undefined} disabled={!step.href} variant="secondary">{t(step.href ? "common.continue" : "v4.onboarding.downloadUnavailable")}</Button></li>)}</ol>
+          </details>
+        </Card>
       </> : workspace && state ? <>
         {(pending || !owner || state.status === "suspended") ? <Card><CardHeader title={workspace.tenant.name} icon={<Clock className="h-5 w-5" />} /><div className="space-y-4 p-5">
           <h2 className="text-xl font-semibold">{t(state.status === "suspended" ? "v4.onboarding.suspended" : "v4.onboarding.wait")}</h2>

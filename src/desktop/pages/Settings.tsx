@@ -110,11 +110,7 @@ export function SettingsPage({ s }: { s: DesktopState }) {
           <StatusBadge label={serviceState === "unknown" ? t("desktop.agents.statusUnavailable") : s.isOnline ? (s.gatewayConnected ? t("desktop.settings.pairRunning") : t("desktop.settings.pairGatewayUnreachable")) : t("desktop.settings.pairStopped")} tone={s.isOnline ? (s.gatewayConnected ? "ok" : "warn") : "neutral"} />
         </div>
         <div className="grid gap-5 px-5 py-5 lg:grid-cols-[1fr_auto] lg:items-end">
-          <ol className="space-y-2.5 text-sm text-ink-2">
-            {[t("desktop.settings.pairStep1"), t("desktop.settings.pairStep2"), t("desktop.settings.pairStep3")].map((step, i) => (
-              <li key={step} className="flex items-start gap-2.5"><span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-sm bg-brand-solid text-2xs font-bold text-brand-contrast">{i + 1}</span><span className="min-w-0 break-words">{step}</span></li>
-            ))}
-          </ol>
+          <p className="text-sm text-ink-3">{t("desktop.settings.pairStep1")}</p>
           <div className="flex w-full max-w-sm flex-col gap-3">
             <Field label={t("desktop.settings.pairCodeLabel")} htmlFor="pair-code" className="flex-1">
               <div className="flex items-center gap-2"><Input id="pair-code" dir="ltr" value={s.pairCode} onChange={(e) => s.setPairCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ""))} placeholder="KQ7XTM" maxLength={6} className="text-center font-mono text-lg font-bold uppercase tracking-[0.3em] h-11 rounded-md" autoComplete="off" /><Button variant="primary" onClick={s.pair} loading={s.busy} disabled={!s.pairCode.trim() || s.pairCode.trim().length !== 6} icon={<ShieldCheck className="h-4 w-4" />} className="h-11 rounded-md">{t("desktop.settings.pair")}</Button></div>

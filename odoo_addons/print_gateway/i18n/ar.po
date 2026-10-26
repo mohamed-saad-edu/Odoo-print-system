@@ -35,32 +35,14 @@ msgid "%d print job(s) synchronized, %d failed."
 msgstr "تمت مزامنة %d مهمة/مهام طباعة، وتعذّرت %d."
 
 #. module: print_gateway
-#. odoo-javascript
-#: code:addons/print_gateway/static/src/components/printers_overview.xml:0
-msgid "1. Connect Yaseir"
-msgstr "١. الربط مع Yaseir"
-
-#. module: print_gateway
 #: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_config_form
 msgid "1. Connect your company"
 msgstr "١. ربط شركتك"
 
 #. module: print_gateway
-#. odoo-javascript
-#: code:addons/print_gateway/static/src/components/printers_overview.xml:0
-msgid "2. Choose a printer"
-msgstr "٢. اختيار الطابعة"
-
-#. module: print_gateway
 #: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_config_form
 msgid "2. Choose printers and documents"
 msgstr "٢. اختيار الطابعات والمستندات"
-
-#. module: print_gateway
-#. odoo-javascript
-#: code:addons/print_gateway/static/src/components/printers_overview.xml:0
-msgid "3. Set document destinations"
-msgstr "٣. تحديد طابعة كل مستند"
 
 #. module: print_gateway
 #: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_config_form
@@ -712,15 +694,6 @@ msgid "Checking available printers…"
 msgstr "جارٍ التحقق من الطابعات المتاحة…"
 
 #. module: print_gateway
-#. odoo-javascript
-#: code:addons/print_gateway/static/src/components/printers_overview.xml:0
-msgid ""
-"Choose a company, find its verified printer, then choose which documents to "
-"print."
-msgstr ""
-"اختر الشركة وطابعتها التي تم التحقق منها، ثم حدد المستندات المطلوب طباعتها."
-
-#. module: print_gateway
 #: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_pair_agent_wizard_form
 msgid "Choose a connected Print Agent for this branch."
 msgstr "اختر Agent طباعة متصل لهذا الفرع."
@@ -752,6 +725,8 @@ msgstr "اختيار الطابعات"
 
 #. module: print_gateway
 #: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_binding_form
+#. odoo-javascript
+#: code:addons/print_gateway/static/src/components/printers_overview.xml:0
 msgid "Choose where each document should be printed."
 msgstr "اختر مكان طباعة كل مستند."
 
@@ -889,6 +864,8 @@ msgstr "ربط Agent طباعة"
 
 #. module: print_gateway
 #: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_config_form
+#. odoo-javascript
+#: code:addons/print_gateway/static/src/components/printers_overview.xml:0
 msgid "Connect Yaseir"
 msgstr "الربط مع Yaseir"
 
@@ -900,6 +877,8 @@ msgstr "اربط جهاز الطباعة أولًا"
 
 #. module: print_gateway
 #: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_config_form
+#. odoo-javascript
+#: code:addons/print_gateway/static/src/components/printers_overview.xml:0
 msgid ""
 "Connect once, choose your printer, and enable the documents your business "
 "needs."
@@ -3340,7 +3319,6 @@ msgstr ""
 #. module: print_gateway
 #. odoo-python
 #: code:addons/print_gateway/models/gateway_config.py:0
-#: model:ir.ui.menu,name:print_gateway.menu_print_gateway_policies
 #: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_binding_list
 msgid "Print Rules"
 msgstr "قواعد الطباعة"
@@ -3845,12 +3823,6 @@ msgstr "استجابة خدمة الطباعة غير متاحة"
 #: code:addons/print_gateway/static/src/js/pos_print_router.js:0
 msgid "Printing service update timed out."
 msgstr "انتهت مهلة تحديث خدمة الطباعة."
-
-#. module: print_gateway
-#. odoo-javascript
-#: code:addons/print_gateway/static/src/components/printers_overview.xml:0
-msgid "Printing setup"
-msgstr "إعداد الطباعة"
 
 #. module: print_gateway
 #: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_config_form
@@ -5763,6 +5735,7 @@ msgstr "تاريخ التعديل"
 #. module: print_gateway
 #: model:ir.ui.menu,name:print_gateway.menu_print_gateway_main
 #: model_terms:ir.ui.view,arch_db:print_gateway.diagnostic_report
+#: model:ir.module.module,shortdesc:base.module_print_gateway
 msgid "Yaseir Print Gateway"
 msgstr "طباعة Yaseir"
 
@@ -6056,3 +6029,19 @@ msgstr "لم يعد نطاق الشركة أو الفرع المحدد متاح�
 #: code:addons/print_gateway/controllers/runtime_printers.py:0
 msgid "Nested Odoo branches are not supported for printer assignments."
 msgstr "الفروع المتداخلة في Odoo غير مدعومة لتعيين الطابعات."
+
+
+#. module: print_gateway
+#: model:ir.ui.menu,name:print_gateway.menu_print_gateway_policies
+msgid "Automatic Printing"
+msgstr "الطباعة التلقائية"
+
+#. module: print_gateway
+#: model:ir.module.module,summary:base.module_print_gateway
+msgid "Connect Odoo to Yaseir printers with company and branch routing"
+msgstr "ربط طابعات Yaseir بأودو مع توجيه الطباعة حسب الشركة والفرع"
+
+#. module: print_gateway
+#: model:ir.module.module,description:base.module_print_gateway
+msgid "\nConnect Odoo to Yaseir once per company.\n\nAssign a printing computer to each company or branch. Select a verified printer\nfor each document under Document Destinations. Enable automatic printing\nonly when the relevant print rules are ready.\n\nComputer assignments are managed in one place. Selecting a printer does not\ncreate an agent assignment or send a print job.\n    "
+msgstr "\nاربط أودو بـ Yaseir مرة واحدة لكل شركة.\n\nعيّن جهاز طباعة لكل شركة أو فرع، ثم اختر الطابعة التي تم التحقق منها لكل مستند من «وجهات المستندات». فعّل الطباعة التلقائية فقط بعد إعداد القواعد المطلوبة.\n\nتُدار تعيينات أجهزة الطباعة من مكان واحد. اختيار طابعة لا ينشئ تعيينًا جديدًا للـ Agent ولا يرسل مهمة طباعة.\n    "

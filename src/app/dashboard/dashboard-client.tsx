@@ -1413,7 +1413,7 @@ export default function DashboardClient({
       </nav>
       {view === "home" && <Card className="space-y-5 p-5 sm:p-6">
         <div className="flex flex-wrap items-start justify-between gap-4">
-          <div className="min-w-0"><h2 className="text-xl font-semibold text-ink">{t("v4.experience.health.title")}</h2><p className="mt-2 text-sm leading-relaxed text-ink-3">{t("v4.experience.health.body")}</p></div>
+          <div className="min-w-0"><h2 className="text-xl font-semibold text-ink">{t("v4.experience.health.title")}</h2></div>
           {canReadBillingUsage && <StatusBadge tone={subscription?.customerState === "active" ? "ok" : "warn"} label={subscription ? t(`v4.experience.subscription.${subscription.customerState}`) : t("v4.experience.health.unknown")} />}
         </div>
         {subscription?.currentPeriodEnd && <p className="text-sm text-ink-3">{t("v4.experience.subscription.ends", { date: formatManualCalendarDate(subscription.currentPeriodEnd, locale) ?? t("common.notAvailable") })}</p>}
@@ -1422,15 +1422,6 @@ export default function DashboardClient({
           <Button href="/api-keys" variant="secondary">{t("v4.experience.connection")}</Button>
           <Button href="#jobs" variant="secondary">{t("v4.experience.activity")}</Button>
         </div>
-        <details className="rounded-lg border border-edge p-4" open={kpis.totalAgents === 0}>
-          <summary className="min-h-8 cursor-pointer font-semibold text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/35">{t("v4.experience.setup.title")}</summary>
-          <p className="mt-2 text-sm text-ink-3">{t("v4.experience.setup.body")}</p>
-          <ol className="mt-4 grid gap-3 sm:grid-cols-3">
-            <li className="rounded-lg bg-surface-2 p-3"><a href="#agents" className="inline-flex min-h-11 items-center font-semibold text-brand underline">1. {t("v4.experience.setup.pair")}</a><p className="text-sm text-ink-3">{t("v4.experience.setup.pairBody")}</p></li>
-            <li className="rounded-lg bg-surface-2 p-3"><a href="#printers" className="inline-flex min-h-11 items-center font-semibold text-brand underline">2. {t("v4.experience.setup.verify")}</a><p className="text-sm text-ink-3">{t("v4.experience.setup.verifyBody")}</p></li>
-            <li className="rounded-lg bg-surface-2 p-3"><Button href="/api-keys" variant="ghost">3. {t("v4.experience.connection")}</Button><p className="text-sm text-ink-3">{t("v4.experience.setup.odooBody")}</p></li>
-          </ol>
-        </details>
       </Card>}
       {/* ── Fleet summary ─────────────────────────────────────────── */}
       {view === "home" && <section
@@ -1511,10 +1502,9 @@ export default function DashboardClient({
                     <span className="font-[500] text-ink-3"> / {formatNumber(prints.limit)}</span>
                   )}
                 </span>
-                {prints.limit === "unlimited" && <StatusBadge tone="ok" label={t("billing.unlimited")} size="sm" />}
+                
                 {printsLimitReached && <StatusBadge tone="bad" label={t("billing.limitReached")} size="sm" />}
               </div>
-              <p className="mt-1 text-xs text-ink-3">{t("v4.experience.health.monthlyBody")}</p>
               <p className="mt-0.5 text-xs text-ink-3">
                 {billingUsage?.plan?.name ? `${billingUsage.plan.name} · ` : ""}
                 {prints.periodEnd ? t("billing.resetsOnDate", { date: formatManualCalendarDate(prints.periodEnd, locale) ?? t("common.notAvailable") }) : t("billing.currentPeriod")}

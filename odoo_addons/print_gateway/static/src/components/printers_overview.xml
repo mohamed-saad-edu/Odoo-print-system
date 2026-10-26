@@ -3,30 +3,39 @@
     <t t-name="print_gateway.PrintersOverview">
         <main class="o_pg_view o_pg_inventory p-3 p-md-4 overflow-auto h-100">
             <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-4">
-                <div><h1>Printers</h1><p class="text-muted mb-0">Choose a company, find its verified printer, then choose which documents to print.</p></div>
+                <div><h1>Printers</h1><p class="text-muted mb-0">Choose where each document should be printed.</p></div>
                 <button type="button" class="btn btn-outline-primary" t-on-click="refresh" t-att-disabled="state.loading">Refresh</button>
             </div>
-            <div class="o_pg_setup_steps mb-4" aria-label="Printing setup">
-                <button type="button" class="btn btn-light" t-on-click="connect">1. Connect Yaseir</button>
-                <span class="fw-bold">2. Choose a printer</span>
-                <button type="button" class="btn btn-light" t-on-click="mappings">3. Set document destinations</button>
-            </div>
-            <div class="row g-3 mb-4">
-                <div class="col-md-6"><label for="pg_inventory_scope" class="form-label">Company or branch</label>
-                    <select id="pg_inventory_scope" class="form-select" t-on-change="changeScope" t-att-value="state.scopeId">
+            <div class="row g-3 mb-4" t-if="assignableScopes.length">
+                <div class="col-md-6">
+                    <label t-if="showScopeSelector" for="pg_inventory_scope" class="form-label">Company or branch</label>
+                    <label t-else="" class="form-label">Company or branch</label>
+                    <select t-if="showScopeSelector" id="pg_inventory_scope" class="form-select" t-on-change="changeScope" t-att-value="state.scopeId">
                         <option value="0" disabled="disabled" t-att-selected="state.scopeId === 0">Choose a company or branch</option>
-                        <option t-foreach="state.scopes" t-as="scope" t-key="scope.id" t-att-selected="scope.id === state.scopeId" t-att-value="scope.id" t-att-disabled="scope.assignable === false" t-esc="scope.label"/>
+                        <option t-foreach="state.scopes" t-as="scope" t-key="scope.id" t-att-selected="scope.id === state.scopeId" t-att-disabled="scope.assignable === false" t-att-value="scope.id" t-esc="scope.label"/>
                     </select>
+                    <div t-else="" class="form-control bg-light" role="status"><bdi t-esc="scope.label"/></div>
                 </div>
-                <div class="col-md-6"><label for="pg_inventory_agent" class="form-label">Printing computer</label>
+                <div t-if="state.agents.length > 1" class="col-md-6">
+                    <label for="pg_inventory_agent" class="form-label">Printing computer</label>
                     <select id="pg_inventory_agent" class="form-select" t-on-change="changeAgent" t-att-value="state.agentId" t-att-disabled="state.loading">
                         <option value="" t-att-selected="!state.agentId">Select a computer</option>
                         <option t-foreach="state.agents" t-as="agent" t-key="agent.id" t-att-selected="agent.id === state.agentId" t-att-value="agent.id" t-esc="agent.name"/>
                     </select>
                 </div>
+                <div t-elif="state.agents.length === 1" class="col-md-6">
+                    <label class="form-label">Printing computer</label>
+                    <div class="form-control bg-light"><bdi t-esc="state.agents[0].name"/></div>
+                </div>
             </div>
             <div t-if="state.error" class="alert alert-warning" role="alert"><t t-esc="state.error"/></div>
             <p t-if="state.loading" role="status">Checking available printers…</p>
+            <div t-elif="!scope" class="card p-4 text-center"><p>Choose a company or branch</p></div>
+            <div t-elif="scope &amp;&amp; !scope.configId" class="card p-4 text-center">
+                <h2>Connect Yaseir</h2>
+                <p>Connect once, choose your printer, and enable the documents your business needs.</p>
+                <div><button type="button" class="btn btn-primary" t-on-click="connect">Connect Yaseir</button></div>
+            </div>
             <div t-elif="!state.agents.length" class="card p-4 text-center">
                 <h2>Connect a printing computer first</h2>
                 <p>Install and pair the Windows printing app in Yaseir. Assign that computer to this company or branch to see its printers here.</p>

@@ -1,21 +1,20 @@
 # -*- coding: utf-8 -*-
 {
     'name': 'Yaseir Print Gateway',
-    'version': '19.0.2.25.0',
-    'summary': 'Reliable silent printing for Odoo through Yaseir Print Gateway',
+    'version': '19.0.2.27.0',
+    'summary': 'Connect Odoo to Yaseir printers with company and branch routing',
     'description': """
-Yaseir Print Gateway connects Odoo with the printers used by your business.
+Connect Odoo to Yaseir once per company.
 
-Manage your printing connection, branch devices, print rules, automated printing,
-and print activity from Odoo. Documents are sent to the configured printer for
-the correct company and branch, while the printing service tracks delivery and
-reports the result back to Odoo.
+Assign a printing computer to each company or branch. Select a verified printer
+for each document under Document Destinations. Enable automatic printing
+only when the relevant print rules are ready.
 
-Gateway printing is silent: when a print rule is active, Odoo sends the document
-to the printing service without opening the browser print dialog.
+Computer assignments are managed in one place. Selecting a printer does not
+create an agent assignment or send a print job.
     """,
     'author': 'Yaseir',
-    'website': 'https://github.com/mohamed-saad-edu/Odoo-print-system',
+    'website': 'https://print.yaseir.cloud/',
     'category': 'Tools',
     'depends': ['base', 'web', 'sale', 'account', 'stock', 'purchase', 'point_of_sale'],
     'external_dependencies': {'python': ['requests', 'cryptography']},

@@ -2260,13 +2260,19 @@ class PrintGatewayConfig(models.Model):
         }
 
     def action_open_printers(self):
-        """Open live, company-scoped inventory without granting new assignments."""
+        """Keep the operator's authorized active branch when opening inventory."""
         self.ensure_one()
         self._check_admin()
+        context = {"default_company_id": self.company_id.id}
+        active_company = self.env.company
+        # Passing a branch is presentation only; assignments and RPC access
+        # remain enforced independently by the runtime printer controller.
+        if active_company.parent_id == self.company_id and active_company in self.env.companies:
+            context["default_branch_id"] = active_company.id
         return {
             "type": "ir.actions.client",
             "tag": "print_gateway.printers",
-            "context": {"default_company_id": self.company_id.id},
+            "context": context,
         }
 
     def action_open_print_rules(self):
