@@ -1,35 +1,25 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { hasManagerPermission } from "../src/lib/authorization";
-
 const status = readFileSync("src/app/api/billing/status/route.ts", "utf8");
 const shell = readFileSync("src/components/AppShell.tsx", "utf8");
 const usage = readFileSync("src/app/api/billing/usage/route.ts", "utf8");
 
-describe("console plan summary and billing permission boundaries", () => {
-  it("uses a lightweight status summary instead of calling the quota endpoint on every mount", () => {
+describe("workspace cannot discover commercial billing", () => {
+  it("only polls service availability on shell mount, never protected quota", () => {
     expect(shell).toContain('fetchWithTimeout("/api/billing/status?includePlanName=1"');
     expect(shell).not.toContain('fetchWithTimeout("/api/billing/usage"');
-    expect(shell).toContain('data.hasSubscription && typeof data.planName === "string"');
+    expect(status).toContain("customerSubscriptionState(");
   });
-
-  it("only reads and returns a plan name for a live subscription and billing.read manager", () => {
-    expect(status).toContain('includePlanName = new URL(req.url).searchParams.get("includePlanName") === "1"');
-    expect(status).toContain("includePlanName && customerState==='active' && hasManagerPermission(manager,\"billing.read\") && sub");
-    expect(status).toContain('where:eq(plans.id,sub.planId)');
-    expect(status).toContain("'Cache-Control':'no-store'");
-    expect(status).toContain('customerSubscriptionState(sub,tenant?.lifecycle,await databaseNowMs())');
+  it("does not query a plan name or return subscription commercial fields", () => {
+    expect(status).not.toContain("planName");
+    expect(status).not.toContain("monthlyQuota");
+    expect(status).not.toContain("planId");
+    expect(status).toContain("Cache-Control");
   });
-
-  it("keeps the protected usage endpoint denied to managers without billing.read", () => {
+  it("every former workspace role is refused usage by the existing server-side guard", () => {
     expect(usage).toContain('requireManagerPermission(manager, "billing.read")');
-    expect(usage).toContain('{ status: 403 }');
-    const billingReaders = ["owner", "admin", "billing_admin"];
-    const nonReaders = ["operator", "viewer", "integration_admin"];
-    for (const role of billingReaders) {
-      expect(hasManagerPermission({ role } as Parameters<typeof hasManagerPermission>[0], "billing.read")).toBe(true);
-    }
-    for (const role of nonReaders) {
+    for (const role of ["owner","admin","viewer","operator","billing_admin","integration_admin"]) {
       expect(hasManagerPermission({ role } as Parameters<typeof hasManagerPermission>[0], "billing.read")).toBe(false);
     }
   });
