@@ -15,6 +15,10 @@ export const isTauri =
   typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
 const REQUEST_TIMEOUT_MS = 10_000;
+// Bound the complete traversal as well as each individual native request.
+// Broken Gateways can keep returning fresh cursors, even for empty pages.
+const MAX_FLEET_PAGES = 1_000;
+const MAX_FLEET_ROWS = 100_000;
 
 export interface AgentStatus {
   running: boolean;
@@ -185,7 +189,9 @@ async function fetchGatewayFleet(gatewayUrl: string, path: "/api/printers" | "/a
   const rows: Array<Record<string, unknown>> = [];
   const seenCursors = new Set<string>();
   let params = new URLSearchParams({ limit: "100" });
+  let pageCount = 0;
   while (true) {
+    if (pageCount++ >= MAX_FLEET_PAGES) throw new Error("Gateway fleet pagination limit exceeded");
     const { status, body, headers } = await gatewayConsoleRequest(gatewayUrl, `${path}?${params}`, "GET");
     if (status < 200 || status >= 300) {
       throw gatewayHttpError(status, body, `fleet fetch failed (${status})`);
@@ -194,6 +200,7 @@ async function fetchGatewayFleet(gatewayUrl: string, path: "/api/printers" | "/a
     if (!Array.isArray(page) || page.some((row) => !row || typeof row !== "object" || typeof row.id !== "string" || !row.id)) {
       throw new Error("Invalid Gateway fleet response");
     }
+    if (page.length > MAX_FLEET_ROWS - rows.length) throw new Error("Gateway fleet inventory limit exceeded");
     rows.push(...page);
     if (headers?.["x-has-more"] !== "true") return rows;
     const createdAt = headers["x-next-before-created-at"];
@@ -585,7 +592,20 @@ export async function fetchGatewayJobs(
   if (status < 200 || status >= 300) {
     throw gatewayHttpError(status, body, `jobs fetch failed ${status}`);
   }
-  return JSON.parse(body) as Record<string, unknown>[];
+  // Successful HTTP status does not establish a usable inventory. An old or
+  // broken Gateway can return an object/null, which otherwise looks like an
+  // empty successful history, or invalid rows which break timeline selection.
+  // Reject the whole snapshot so the caller shows its localized load error.
+  // Duplicate identities also make timeline selection unsafe.
+  const rows: unknown = JSON.parse(body);
+  const ids = new Set<string>();
+  if (!Array.isArray(rows) || rows.some((row) => {
+    if (!row || typeof row !== "object" || Array.isArray(row)
+        || typeof row.id !== "string" || !row.id.trim() || ids.has(row.id)) return true;
+    ids.add(row.id);
+    return false;
+  })) throw new Error("Invalid Gateway jobs response");
+  return rows as Record<string, unknown>[];
 }
 
 /** Tray menu "Restart Agent" event. Returns the unlisten function. */

@@ -1362,10 +1362,7 @@ pub async fn get_printers(app: tauri::AppHandle) -> Result<Vec<PrinterInfo>, Str
         }
         let v: Vec<PrinterInfo> = serde_json::from_slice(&output.stdout)
             .map_err(|_| "invalid local printer inventory response".to_string())?;
-        let filtered: Vec<PrinterInfo> = v
-            .into_iter()
-            .filter(is_valid_printer_for_ui)
-            .collect();
+        let filtered: Vec<PrinterInfo> = v.into_iter().filter(is_valid_printer_for_ui).collect();
         Ok(filtered)
     })
     .await
