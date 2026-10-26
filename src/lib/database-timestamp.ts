@@ -6,7 +6,10 @@
  */
 export function parseDbTimeMs(value: Date | string | null | undefined): number | null {
   if (value == null) return null;
-  if (value instanceof Date) return value.getTime();
+  if (value instanceof Date) {
+    const ms = value.getTime();
+    return Number.isFinite(ms) ? ms : null;
+  }
   const text = value.trim();
   if (!text) return null;
   let iso = text.replace(" ", "T");
