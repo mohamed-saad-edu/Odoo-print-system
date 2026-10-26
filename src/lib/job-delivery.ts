@@ -219,11 +219,10 @@ export async function markJobDelivered(jobId: string, tenantId: string, agentId:
   if (!claimToken) return false;
   const res = await db.update(printJobs)
     .set({
-      // DB-native clock_timestamp() so delivered_at and updated_at are
-      // wall-clock readings matching the sweeper's lease comparisons.
-      deliveredAt: sql`clock_timestamp()`,
+      // Delivery replays and late callbacks are not execution keep-alives.
+      deliveredAt: sql`COALESCE(${printJobs.deliveredAt}, clock_timestamp())`,
       error: sql`CASE WHEN ${printJobs.error} = ${DELIVERY_EVIDENCE_PENDING} THEN NULL ELSE ${printJobs.error} END`,
-      updatedAt: sql`clock_timestamp()`,
+      updatedAt: sql`CASE WHEN ${printJobs.deliveredAt} IS NULL AND ${printJobs.status} = 'claimed' THEN clock_timestamp() ELSE ${printJobs.updatedAt} END`,
     })
     .where(fencedDeliveryWrite(jobId, tenantId, agentId, claimToken, ["claimed", "printing"]))
     .returning({ id: printJobs.id });
@@ -280,8 +279,8 @@ export async function recordJobAck(jobId: string, tenantId: string, agentId: str
         AND lifecycle = 'active' FOR SHARE`);
     if (agent.rows.length !== 1) return false;
     const res = await tx.update(printJobs)
-      // ACK means local executor admission, independently of transport evidence.
-      .set({ ackedAt: sql`COALESCE(${printJobs.ackedAt}, clock_timestamp())`, updatedAt: sql`clock_timestamp()` })
+      // ACK means admission; replays or ACKs after progress cannot renew execution.
+      .set({ ackedAt: sql`COALESCE(${printJobs.ackedAt}, clock_timestamp())`, updatedAt: sql`CASE WHEN ${printJobs.ackedAt} IS NULL AND ${printJobs.status} = 'claimed' THEN clock_timestamp() ELSE ${printJobs.updatedAt} END` })
       .where(fencedDeliveryWrite(jobId, tenantId, agentId, claimToken, ["claimed", "printing"]))
       .returning({ id: printJobs.id });
     return res.length > 0;

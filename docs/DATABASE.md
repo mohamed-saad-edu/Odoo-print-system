@@ -9,7 +9,7 @@ and records permission rollback metadata; see [PostgreSQL deployment roles](DATA
 
 ## Schema inventory
 
-There are **31 current application tables**, **94 forward-only SQL migrations (`0000`–`0093`)**, and additional versioned forward repairs in [`scripts/db-migrate.ts`](../scripts/db-migrate.ts). The migration ledger, `drizzle.__drizzle_migrations`, is separate from the application tables.
+There are **34 current application tables**, **98 forward-only SQL migrations (`0000`–`0097`)**, and additional versioned forward repairs in [`scripts/db-migrate.ts`](../scripts/db-migrate.ts). The migration ledger, `drizzle.__drizzle_migrations`, is separate from the application tables.
 
 | Table | Purpose and identity | Scope and relevant constraints |
 | --- | --- | --- |
@@ -33,7 +33,7 @@ There are **31 current application tables**, **94 forward-only SQL migrations (`
 | `odoo_v2_operations` | Lifetime association of versioned Odoo business identity to original accepted Gateway job | Per-installation operation composite primary key, tenant-wide versioned-key unique constraint; no physical retry implied |
 | `odoo_legacy_resolutions` | Explicit, audited operator decisions about old-key collisions | Tenant/installation uniqueness, immutable observed job fingerprint and decision (`reuse` or `distinct`) |
 | `discovery_sessions` | Agent discovery run state, requested scan configuration and chunk/summary evidence | Composite tenant/Agent FK; at most one `running` session per tenant/Agent |
-| `discovered_devices` | Tenant-scoped observations, candidate identity, verification and optional provisioned-printer link | Composite tenant/discovery, tenant/Agent and tenant/printer FKs; unique non-null `(tenant_id, agent_id, identity_key)` |
+| `discovered_devices` | Agent-scoped observations within a tenant, candidate identity, verification and optional provisioned-printer link | Composite tenant/discovery, tenant/Agent and tenant/printer FKs; unique `(tenant_id, agent_id, id)` and non-null `(tenant_id, agent_id, identity_key)` |
 | `print_jobs` | Admitted payload, immutable execution binding/output medium, bounded file evidence, state, claim/attempt fencing and delivery/acknowledgment timestamps | Composite tenant/Agent, tenant/printer and tenant/API-key FKs; unique non-null `(tenant_id, idempotency_key)`; payload/status/counter CHECKs |
 | `job_events` | Per-job timeline and attempt/correlation metadata | Composite tenant/job FK with cascade on job deletion; bounded stage/status sets |
 | `print_job_receipts` | Payload-free terminal receipt, retained execution binding/output evidence and idempotency identity after cleanup | Tenant reference, unique `(tenant_id, idempotency_key)`, fingerprint and terminal outcome; retained historical resource IDs are not all live FKs |
@@ -51,7 +51,7 @@ The schema retains global account, catalog, metric and authentication data along
 
 Isolation is enforced by authenticated tenant context, permission checks, ownership predicates and transactional revalidation in the Gateway. The supplied migrations do not enable PostgreSQL row-level security. Composite foreign keys add database enforcement where declared; they do not replace current-actor or tenant-lifecycle checks.
 
-In particular, printer and discovered-device IDs are unique within a tenant. Agent-generated IDs can legitimately repeat in different tenants. Queries and references must use the full tenant-scoped identity.
+Printer registration IDs are unique within a tenant. Discovery observation IDs are unique within an Agent and tenant: two Agents can report the same local ID. Migration `0097` replaces the narrower tenant/ID constraint without changing IDs, rows, approvals or provisioned links. Candidate queries and mutations must include tenant, Agent and device ID. The migration is repeatable; rolling back to tenant/ID uniqueness requires first reconciling any newly admitted cross-Agent collisions without deleting data.
 
 Keep printer lifecycle, observed health, inventory presence, sharing permission and physical print outcome separate. The database's physical-printer filters reject known virtual/redirected metadata patterns; they are not hardware attestation. An accepted or acknowledged print job is not universal proof of paper output. Claim tokens and terminal receipts support reconciliation; do not reset an uncertain job to `queued` by hand. See [OPERATIONS.md](../OPERATIONS.md).
 

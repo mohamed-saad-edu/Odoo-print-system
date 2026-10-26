@@ -162,14 +162,14 @@ describe("production hardening contracts", () => {
     const discoveredTable = discoveredBlock.slice(0, discoveredBlock.indexOf("export const printJobs"));
     expect(discoveredTable).toContain("id: text(\"id\").notNull()");
     expect(discoveredTable).not.toContain("id: text(\"id\").primaryKey()");
-    expect(discoveredTable).toContain("unique(\"discovered_devices_tenant_id_unique\")");
+    expect(discoveredTable).toContain("unique(\"discovered_devices_tenant_agent_id_unique\")");
 
     const heartbeat = read("src/app/api/agent/heartbeat/route.ts");
     expect(heartbeat).toContain("onConflictDoNothing({ target: [printers.tenantId, printers.id] })");
     expect(heartbeat).not.toContain("onConflictDoNothing({ target: printers.id })");
 
     const discoveryReport = read("src/app/api/agent/discovery/route.ts");
-    expect(discoveryReport).toContain("onConflictDoNothing({ target: [discoveredDevices.tenantId, discoveredDevices.id] })");
+    expect(discoveryReport).toContain("onConflictDoNothing({ target: [discoveredDevices.tenantId, discoveredDevices.agentId, discoveredDevices.id] })");
 
     const migration = read("drizzle/0072_tenant_scoped_printer_identity.sql");
     expect(migration).toContain("DROP CONSTRAINT IF EXISTS \"printers_pkey\"");

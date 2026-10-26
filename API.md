@@ -237,6 +237,8 @@ Only Odoo-originated jobs authorized by the installation scope (or unmapped v1 j
 
 Discovery reports use the additive `errors: string[]` contract in `contracts/print-payload-contract.json` (maximum 64 messages, 2048 UTF-16 units each). The Gateway returns these in session `stats.errors`; optional unavailable device fields are omitted, and protocol defaults to `unknown`. Odoo consumes approved runtime printers, not discovery candidates or source diagnostics; no addon producer emits discovery reports.
 
+Discovery device IDs are local to the reporting Agent within its workspace. Approval and provisioning URLs carry both Agent and device IDs; identical device IDs from another Agent neither collide nor inherit approval. Existing external IDs and runtime-printer links are preserved.
+
 Historical provider-normalization helpers and database fields are retained for evidence and compatibility inspection. They are not active V4 billing routes and cannot activate or renew a workspace through the retired provider endpoints.
 
 New physical dispatch requires an acknowledged, claim-fenced `printing` response (`success: true`, `status: "printing"`). Local delivery receipt age is diagnostic only; a buffered frame may already have a stale claim. An unacknowledged admission sends no hardware bytes. Printing that already crossed this boundary retains its durable outcome reporting through a later disconnect. Repeated admission for the same live printing claim is acknowledged without creating another job or physical attempt.
@@ -244,6 +246,8 @@ New physical dispatch requires an acknowledged, claim-fenced `printing` response
 Printer destinations permit private IPv4 and IPv6 ULA (`fc00::/7`) or link-local literals across Gateway and Agent. Loopback, unspecified, multicast and instance metadata endpoints remain rejected; metadata rejection applies to equivalent expanded IPv6 spellings.
 
 Terminal Agent reports echo their immutable attempt claim token. Matching closed-attempt SHA-256 evidence permits acknowledgement retries of the same terminal status only; it cannot authorize execution, replace evidence or extend reconciliation age. Agents retain terminal outbox tokens until the JSON response confirms success and the requested status. New claims clear closed acknowledgement evidence.
+
+Delivery callbacks and `job_ack` preserve their first evidence timestamps. Replays do not renew the claim lease, and admission ACKs arriving after `printing` do not renew execution. Only fresh execution progress may keep a printing lease alive; a stalled delivered claim still becomes UNKNOWN without automatic reprint.
 
 An Agent may return a delivered/ACKed `claimed` job before printing admission with a recognized pre-execution rejection reason and its current claim token. The atomic update requires remaining TTL/retry budget, clears delivery evidence and refunds the delivery attempt. Stale claims and attempts already admitted to `printing` reject this hand-back; explicit crash recovery remains separate.
 

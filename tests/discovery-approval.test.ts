@@ -289,6 +289,34 @@ suite("discovery trust and approval flow", () => {
     expect(device.rows[0].provisioned_printer_id).toBe(body.printerId);
   });
 
+  it.each(["new", "network", "ipp"])("provisioning a %s endpoint leaves another Agent's same-ID candidate untouched", async mode => {
+    const discoveryId = await createDiscoverySession("disc-agent-scoped-provision");
+    const protocol = mode === "ipp" ? "ipp" : "raw";
+    const port = mode === "ipp" ? 631 : 9100;
+    const uri = mode === "ipp" ? "ipp://192.168.10.50/ipp/print" : undefined;
+    expect((await agentRequest(discoveryId, [{ id: "colliding-device", protocol, ipAddress: "192.168.10.50", port, uri }])).status).toBe(200);
+    if (mode !== "new") {
+      const config = uri ? { address: uri } : { ip: "192.168.10.50", port };
+      await pool().query("UPDATE printers SET connection_type=$1,protocol=$2,config=$3::jsonb WHERE tenant_id=$4 AND id=$5", [mode, protocol, JSON.stringify(config), f.tenantId, f.printerId]);
+    }
+    await pool().query("INSERT INTO agents(id,tenant_id,name,lifecycle) VALUES('agt_shadow01',$1,'Other Agent','active')", [f.tenantId]);
+    await pool().query("INSERT INTO discovery_sessions(id,tenant_id,agent_id,status) VALUES('disc-shadow',$1,'agt_shadow01','completed')", [f.tenantId]);
+    await pool().query("INSERT INTO discovered_devices(id,tenant_id,agent_id,discovery_id,protocol,ip_address,port,verification,candidate_status) VALUES('colliding-device',$1,'agt_shadow01','disc-shadow','raw','192.168.20.50',9100,'verified','verified')", [f.tenantId]);
+    const shadow = async () => (await pool().query("SELECT * FROM discovered_devices WHERE tenant_id=$1 AND agent_id='agt_shadow01' AND id='colliding-device'", [f.tenantId])).rows[0];
+    const before = await shadow();
+    const manager = await createWorkspaceManagerTestSession(f.tenantId);
+    expect((await verifyPOST(await observationApprovalRequest(manager.token, discoveryId, "colliding-device"), {
+      params: Promise.resolve({ id: f.agentId, deviceId: "colliding-device" }),
+    })).status).toBe(200);
+    const result = await provisionPOST(await managerRequest(manager.token, "/api/provision"), {
+      params: Promise.resolve({ id: f.agentId, deviceId: "colliding-device" }),
+    });
+    expect(result.status).toBe(mode === "new" ? 201 : 200);
+    expect(await shadow()).toEqual(before);
+    const target = await pool().query("SELECT candidate_status,provisioned_printer_id FROM discovered_devices WHERE tenant_id=$1 AND agent_id=$2 AND id='colliding-device'", [f.tenantId, f.agentId]);
+    expect(target.rows[0]).toEqual({ candidate_status: "provisioned", provisioned_printer_id: (await result.json()).printerId });
+  });
+
   it("provisions a verified Windows spooler candidate with a routable queue config", async () => {
     const discoveryId = await createDiscoverySession();
     await agentRequest(discoveryId, [{

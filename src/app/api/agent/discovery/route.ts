@@ -260,7 +260,7 @@ export async function POST(req: Request) {
       if (anonymousRows.length > 0) {
         const inserted = await tx.insert(discoveredDevices)
           .values(anonymousRows)
-          .onConflictDoNothing({ target: [discoveredDevices.tenantId, discoveredDevices.id] })
+          .onConflictDoNothing({ target: [discoveredDevices.tenantId, discoveredDevices.agentId, discoveredDevices.id] })
           .returning({ id: discoveredDevices.id });
         insertedCount += inserted.length;
       }

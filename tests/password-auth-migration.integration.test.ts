@@ -123,12 +123,12 @@ describe.skipIf(!hasTestDatabase)("populated V2 to password-only migration", () 
         .toEqual(canonical(expected));
     }
     expect(after.ledger).toEqual(expect.arrayContaining(before.ledger as unknown[]));
-    // Four forward migrations (0093 to 0096), with 0096 intentionally forcing new workspace logins.
+    // Forward migrations 0093 to 0097; 0096 intentionally forces new workspace logins.
     // Preserve the hashes of all historical migrations.
-    expect((after.ledger as unknown[]).length).toBe((before.ledger as unknown[]).length+4);
+    expect((after.ledger as unknown[]).length).toBe((before.ledger as unknown[]).length+5);
     const priorHashes = new Set((before.ledger as Array<{hash:string}>).map(row=>row.hash));
     const addedHashes = (after.ledger as Array<{hash:string}>).filter(row=>!priorHashes.has(row.hash)).map(row=>row.hash).sort();
-    const expectedHashes = await Promise.all(["0093_password_only_authentication.sql", "0094_printer_operational_verification.sql", "0095_manual_subscriptions.sql", "0096_retire_limited_workspace_roles.sql"]
+    const expectedHashes = await Promise.all(["0093_password_only_authentication.sql", "0094_printer_operational_verification.sql", "0095_manual_subscriptions.sql", "0096_retire_limited_workspace_roles.sql", "0097_agent_scoped_discovery_identity.sql"]
       .map(async name=>digest(await readFile(join("drizzle",name),"utf8"))));
     expect(addedHashes).toEqual(expectedHashes.sort());
     expect((await target.query("SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_name=ANY($1::text[])",[factorTables])).rows).toEqual([]);
@@ -137,6 +137,6 @@ describe.skipIf(!hasTestDatabase)("populated V2 to password-only migration", () 
     expect(await isPlatformSessionAssured("revoked-family","owner",false,connection)).toBe(false);
     for (const kind of ["customer","manager"] as const) expect(await readWorkspaceSessionState({ familyId:`${kind}-family`,kind,tenantId:"upgrade-tenant",userId:"owner",sid:`${kind}-sid`,role:"owner" },connection)).toBeNull();
     const baseline = await snapshot(); await apply(join(process.cwd(),"drizzle")); expect(await snapshot()).toEqual(baseline);
-    expect((await readdir("drizzle")).filter(n=>n.endsWith(".sql"))).toHaveLength(97);
+    expect((await readdir("drizzle")).filter(n=>n.endsWith(".sql"))).toHaveLength(98);
   });
 });

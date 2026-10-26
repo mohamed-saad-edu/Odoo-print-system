@@ -149,7 +149,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           && ip === device.ipAddress && cfg?.port === device.port) {
           await tx.update(discoveredDevices)
             .set({ candidateStatus: "provisioned", provisionedPrinterId: p.id, updatedAt: sql`now()` })
-            .where(and(eq(discoveredDevices.id, deviceId), eq(discoveredDevices.tenantId, claims.tenantId), eq(discoveredDevices.candidateStatus, "verified")));
+            .where(and(eq(discoveredDevices.id, deviceId), eq(discoveredDevices.tenantId, claims.tenantId), eq(discoveredDevices.agentId, agentId), eq(discoveredDevices.candidateStatus, "verified")));
           return { kind: "already" as const, printerId: p.id };
         }
         // IPP/IPPS convergence: match the persisted address URL (or the
@@ -160,7 +160,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           && (cfg.address === expectedIppAddress || (device.uri != null && cfg.address === device.uri))) {
           await tx.update(discoveredDevices)
             .set({ candidateStatus: "provisioned", provisionedPrinterId: p.id, updatedAt: sql`now()` })
-            .where(and(eq(discoveredDevices.id, deviceId), eq(discoveredDevices.tenantId, claims.tenantId), eq(discoveredDevices.candidateStatus, "verified")));
+            .where(and(eq(discoveredDevices.id, deviceId), eq(discoveredDevices.tenantId, claims.tenantId), eq(discoveredDevices.agentId, agentId), eq(discoveredDevices.candidateStatus, "verified")));
           return { kind: "already" as const, printerId: p.id };
         }
       }
@@ -233,7 +233,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     });
     await tx.update(discoveredDevices)
       .set({ candidateStatus: "provisioned", provisionedPrinterId: printerId, updatedAt: sql`now()` })
-      .where(and(eq(discoveredDevices.id, deviceId), eq(discoveredDevices.tenantId, claims.tenantId), eq(discoveredDevices.candidateStatus, "verified")));
+      .where(and(eq(discoveredDevices.id, deviceId), eq(discoveredDevices.tenantId, claims.tenantId), eq(discoveredDevices.agentId, agentId), eq(discoveredDevices.candidateStatus, "verified")));
 
     return { kind: "created" as const, printerId };
     });
