@@ -94,7 +94,7 @@
                             <field name="output_outcome" readonly="1" invisible="output_medium != 'file'"/>
                             <field name="physical_outcome" readonly="1" invisible="output_medium == 'file'" widget="badge" decoration-danger="physical_outcome == 'not_printed'" decoration-warning="physical_outcome == 'unknown'" decoration-success="physical_outcome == 'printed'"/>
                         </group>
-                        <group string="Delivery details">
+                        <group string="Delivery details" groups="base.group_system">
                             <field name="gateway_job_id" readonly="1"/>
                             <field name="attempts" readonly="1"/>
                             <field name="reprint_attempt_count" readonly="1" invisible="reprint_attempt_count == 0"/>
@@ -122,7 +122,7 @@
     </record>
 
     <record id="action_print_gateway_jobs" model="ir.actions.act_window">
-        <field name="name">Print Jobs</field>
+        <field name="name">Print Activity</field>
         <field name="res_model">print_gateway.print_job</field>
         <field name="view_mode">list,form</field>
         <field name="search_view_id" ref="view_print_gateway_job_search"/>

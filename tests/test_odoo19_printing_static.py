@@ -277,7 +277,8 @@ def test_gateway_config_form_exposes_guarded_connection_and_recovery_actions():
     assert 'name="action_open_runtime_assignments"' in advanced
     assert 'name="action_reset_stale_sync_state"' in advanced
     assert 'name="action_open_printers"' in form
-    assert 'name="action_open_print_rules"' in form
+    assert 'name="action_open_destinations"' in form
+    assert 'name="action_open_print_rules"' not in form
     assert 'field name="gateway_url"' in form
     assert 'field name="gateway_api_key"' in form
     assert 'field name="enabled" widget="boolean_toggle"' in form

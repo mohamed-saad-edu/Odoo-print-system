@@ -354,3 +354,72 @@ test("Odoo Apps description uses translated manifest metadata, not untranslatabl
   assert.match(config, /context\["default_branch_id"\] = active_company\.id/);
   assert.match(menus, /name="Automatic Printing"/);
 });
+
+test("printer inventory explains unavailable agents without widening branch discovery", async () => {
+  const { PrintersOverview } = await load("components/printers_overview.js");
+  const view = Object.create(PrintersOverview.prototype);
+  view.state = { scopes: [{ id: 21, companyId: 10, branchId: 21, configId: 2 }],
+    scopeId: 21, agents: [], agentId: "", printers: [], loading: false, error: "", agentEmptyReason: "" };
+  view.alive = true;
+  view.generation = 0;
+  for (const [reply, expected] of [
+    [{ enabled: true, agents: [], assignedAgentCount: 0, registeredAgentCount: 2 }, "unassigned"],
+    [{ enabled: true, agents: [], assignedAgentCount: 1, registeredAgentCount: 0 }, "not_registered"],
+    [{ enabled: false, agents: [], assignedAgentCount: 0, registeredAgentCount: 0 }, "connection"],
+    [{ enabled: true, agents: [] }, "unavailable"],
+  ]) {
+    let calls = 0;
+    view.call = async (route, data) => {
+      assert.equal(route, "/print_gateway/runtime-agents");
+      assert.deepEqual(data, { company_id: 10, branch_id: 21, assignment_only: true });
+      calls += 1;
+      return reply;
+    };
+    await view.refresh();
+    assert.equal(calls, 1, "an unavailable scoped Agent cannot start printer discovery");
+    assert.equal(view.state.agentEmptyReason, expected);
+    assert.deepEqual(view.state.printers, []);
+  }
+});
+
+test("printer inventory navigation maintains exact Odoo scope without creating assignments", async () => {
+  const { PrintersOverview } = await load("components/printers_overview.js");
+  const view = Object.create(PrintersOverview.prototype);
+  view.state = { scopes: [{ id: 21, companyId: 10, branchId: 21, configId: 2,
+    assignable: true }], scopeId: 21, agents: [], agentId: "", printers: [] };
+  const actions = [];
+  view.action = { doAction: action => { actions.push(action); return action; } };
+  view.assignments();
+  view.mappings();
+  assert.deepEqual(actions.map(a => a.res_model),
+    ["print_gateway.runtime_agent_assignment", "print_gateway.binding"]);
+  assert.deepEqual(actions.map(a => a.context),
+    [{ default_company_id: 10, default_branch_id: 21 },
+     { default_company_id: 10, default_branch_id: 21 }]);
+  assert.deepEqual(actions[0].domain,
+    [["company_id", "=", 10], ["branch_id", "=", 21]]);
+  assert.deepEqual(actions[1].domain,
+    [["company_id", "=", 10], ["branch_id", "in", [false, 21]]]);
+  view.state.scopeId = 0;
+  assert.equal(view.assignments(), undefined);
+  assert.equal(view.mappings(), undefined);
+  assert.equal(actions.length, 2, "a revoked scope never navigates to another branch");
+});
+
+test("scope labels never collapse equal-name companies into the same visible branch option", async () => {
+  const { labelPrinterScopes } = await load("js/printer_scope_labels.js");
+  const scopes = [
+    { id: 5, name: "My Company", companyId: 5, branchId: false },
+    { id: 6, name: "My Company", companyId: 6, branchId: false },
+    { id: 7, name: "My Company", companyId: 7, branchId: false },
+  ];
+  const labeled = labelPrinterScopes(scopes, {
+    company: "الشركة", branch: "الفرع", unavailable: "غير متاح",
+  });
+  assert.deepEqual(Array.from(labeled, row => row.id), [5, 6, 7]);
+  assert.equal(new Set(Array.from(labeled, row => row.label)).size, 3);
+  for (const row of labeled) {
+    assert.match(row.label, new RegExp("#" + row.id));
+    assert.ok(row.label.startsWith("الشركة: "));
+  }
+});

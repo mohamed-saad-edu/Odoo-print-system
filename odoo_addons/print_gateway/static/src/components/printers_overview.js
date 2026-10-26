@@ -17,7 +17,7 @@ export class PrintersOverview extends Component {
 
     setup() {
         this.action = useService("action");
-        this.state = useState({ scopes: [], scopeId: 0, agents: [], agentId: "", printers: [], loading: true, error: "" });
+        this.state = useState({ scopes: [], scopeId: 0, agents: [], agentId: "", printers: [], loading: true, error: "", agentEmptyReason: "" });
         this.alive = true;
         this.generation = 0;
         this.request = null;
@@ -52,6 +52,8 @@ export class PrintersOverview extends Component {
     }
 
     get scope() { return this.state.scopes.find(scope => scope.id === this.state.scopeId); }
+    get selectedAgent() { return this.state.agents.find(agent => agent.id === this.state.agentId); }
+    get agentIsOffline() { return Boolean(this.selectedAgent && (this.selectedAgent.freshness !== "fresh" || this.selectedAgent.status !== "online")); }
 
     // Scope IDs stay distinct and authorized. Hide the redundant selector
     // when the operator has only one assignable company/branch.
@@ -77,7 +79,7 @@ export class PrintersOverview extends Component {
     }
 
     async changeAgent(event) {
-        this.state.agentId = event.target.value;
+        this.state.agentId = this.state.agents.some(agent => agent.id === event.target.value) ? event.target.value : "";
         await this.refresh();
     }
 
@@ -88,12 +90,17 @@ export class PrintersOverview extends Component {
         this.state.error = "";
         this.state.printers = [];
         this.state.agents = [];
-        if (!scope || scope.assignable === false) { this.state.loading = false; return; }
+        this.state.agentEmptyReason = "";
+        if (!scope || scope.assignable === false || !scope.configId) { this.state.loading = false; return; }
         const params = { company_id: scope.companyId, branch_id: scope.branchId };
         try {
             const result = await this.call("/print_gateway/runtime-agents", { ...params, assignment_only: true });
             if (!this.alive || generation !== this.generation) return;
             this.state.agents = Array.isArray(result?.agents) ? result.agents : [];
+            this.state.agentEmptyReason = result?.enabled === false ? "connection"
+                : result?.assignedAgentCount === 0 ? "unassigned"
+                : result?.registeredAgentCount === 0 ? "not_registered"
+                : "unavailable";
             if (!this.state.agents.some(agent => agent.id === this.state.agentId)) {
                 // Select an already assigned Agent for INVENTORY VIEW only.
                 // This must never create a Branch assignment or a print route.
@@ -132,11 +139,28 @@ export class PrintersOverview extends Component {
     connect() { return this.action.doAction("print_gateway.action_print_gateway_config"); }
     assignments() {
         const scope = this.scope;
-        return this.action.doAction("print_gateway.action_print_gateway_runtime_assignments", {
-            additionalContext: { default_company_id: scope?.companyId, default_branch_id: scope?.branchId || false },
+        if (!scope || scope.assignable === false) return;
+        return this.action.doAction({
+            type: "ir.actions.act_window", name: _t("Branch Devices"),
+            res_model: "print_gateway.runtime_agent_assignment", views: [[false, "list"], [false, "form"]],
+            target: "current",
+            domain: [["company_id", "=", scope.companyId],
+                ...(scope.branchId ? [["branch_id", "=", scope.branchId]] : [])],
+            context: { default_company_id: scope.companyId, default_branch_id: scope.branchId || false },
         });
     }
-    mappings() { return this.action.doAction("print_gateway.action_print_gateway_binding"); }
+    mappings() {
+        const scope = this.scope;
+        if (!scope || scope.assignable === false) return;
+        return this.action.doAction({
+            type: "ir.actions.act_window", name: _t("Document Destinations"),
+            res_model: "print_gateway.binding", views: [[false, "list"], [false, "form"]],
+            target: "current",
+            domain: [["company_id", "=", scope.companyId],
+                ...(scope.branchId ? [["branch_id", "in", [false, scope.branchId]]] : [])],
+            context: { default_company_id: scope.companyId, default_branch_id: scope.branchId || false },
+        });
+    }
     choose(printer) {
         if (!this.isReady(printer) || !this.scope || this.scope.assignable === false || !this.state.agentId) return;
         return this.action.doAction({

@@ -574,6 +574,7 @@ msgstr "جهاز الفرع"
 
 #. module: print_gateway
 #: model:ir.ui.menu,name:print_gateway.menu_print_gateway_assignments
+#: model:ir.actions.act_window,name:print_gateway.action_print_gateway_runtime_assignments
 #: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_runtime_assignment_list
 msgid "Branch Devices"
 msgstr "أجهزة الفروع"
@@ -1143,8 +1144,13 @@ msgstr "المستند/التقرير يتبع سياق شركة/فرع آخر."
 
 #. module: print_gateway
 #: model:ir.ui.menu,name:print_gateway.menu_print_gateway_bindings
+#: model:ir.actions.act_window,name:print_gateway.action_print_gateway_binding
+#: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_config_form
+#. odoo-javascript
+#: code:addons/print_gateway/static/src/components/printers_overview.xml:0
+#: code:addons/print_gateway/static/src/components/printers_overview.js:0
 msgid "Document Destinations"
-msgstr "طابعات المستندات"
+msgstr "وجهات المستندات"
 
 #. module: print_gateway
 #: model:ir.model.fields,field_description:print_gateway.field_print_gateway_binding__document_type
@@ -6033,6 +6039,7 @@ msgstr "الفروع المتداخلة في Odoo غير مدعومة لتعيي
 
 #. module: print_gateway
 #: model:ir.ui.menu,name:print_gateway.menu_print_gateway_policies
+#: model:ir.actions.act_window,name:print_gateway.action_print_gateway_policies
 msgid "Automatic Printing"
 msgstr "الطباعة التلقائية"
 
@@ -6045,3 +6052,152 @@ msgstr "ربط طابعات Yaseir بأودو مع توجيه الطباعة ح�
 #: model:ir.module.module,description:base.module_print_gateway
 msgid "\nConnect Odoo to Yaseir once per company.\n\nAssign a printing computer to each company or branch. Select a verified printer\nfor each document under Document Destinations. Enable automatic printing\nonly when the relevant print rules are ready.\n\nComputer assignments are managed in one place. Selecting a printer does not\ncreate an agent assignment or send a print job.\n    "
 msgstr "\nاربط أودو بـ Yaseir مرة واحدة لكل شركة.\n\nعيّن جهاز طباعة لكل شركة أو فرع، ثم اختر الطابعة التي تم التحقق منها لكل مستند من «وجهات المستندات». فعّل الطباعة التلقائية فقط بعد إعداد القواعد المطلوبة.\n\nتُدار تعيينات أجهزة الطباعة من مكان واحد. اختيار طابعة لا ينشئ تعيينًا جديدًا للـ Agent ولا يرسل مهمة طباعة.\n    "
+#. module: print_gateway
+#: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_config_form
+msgid "Connection details"
+msgstr "تفاصيل الاتصال"
+
+#. module: print_gateway
+#: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_config_form
+msgid "Connection help"
+msgstr "مساعدة الاتصال"
+
+#. module: print_gateway
+#: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_config_form
+msgid "Use the Odoo connection key from Connect Odoo in Yaseir. The Windows computer pairing code is different."
+msgstr "استخدم مفتاح ربط أودو من «ربط Odoo» في يسير. رمز اقتران جهاز ويندوز مختلف عن هذا المفتاح."
+
+#. module: print_gateway
+#: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_config_form
+msgid "Next steps"
+msgstr "الخطوات التالية"
+
+#. module: print_gateway
+#: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_config_form
+msgid "View printers"
+msgstr "عرض الطابعات"
+
+#. module: print_gateway
+#: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_config_form
+msgid "When can printing start?"
+msgstr "متى يمكن بدء الطباعة؟"
+
+#. module: print_gateway
+#: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_config_form
+msgid "Check the connection, assign a computer to the branch, and choose a verified printer for the document before enabling printing."
+msgstr "تحقق من الاتصال وعيّن جهاز طباعة للفرع واختر طابعة موثّقة للمستند قبل تفعيل الطباعة."
+
+#. module: print_gateway
+#: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_binding_form
+msgid "Document Destination"
+msgstr "وجهة طباعة المستند"
+
+#. module: print_gateway
+#: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_binding_form
+msgid "Print test page"
+msgstr "طباعة صفحة اختبار"
+
+#. module: print_gateway
+#: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_binding_form
+msgid "Check registration"
+msgstr "التحقق من تسجيل الجهاز"
+
+#. module: print_gateway
+#: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_binding_form
+msgid "This sends a real test page to the selected printer. Continue?"
+msgstr "سيتم إرسال صفحة اختبار حقيقية إلى الطابعة المحددة. هل تريد المتابعة؟"
+
+#. module: print_gateway
+#: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_binding_form
+msgid "Choose an Odoo document and the verified printer that should receive it."
+msgstr "اختر مستند أودو والطابعة الموثّقة التي ستستقبله."
+
+#. module: print_gateway
+#: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_binding_form
+msgid "Which document destination should I use?"
+msgstr "أي وجهة مستند أختار؟"
+
+#. module: print_gateway
+#: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_binding_form
+msgid "Select the company, branch, Odoo document, and Yaseir printer. POS preparation uses the Odoo Preparation Printer to preserve category routing."
+msgstr "حدد الشركة والفرع ومستند أودو وطابعة يسير. تستخدم طباعة تحضير نقاط البيع طابعة التحضير في أودو للحفاظ على توجيه فئات المنتجات."
+
+#. module: print_gateway
+#: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_binding_form
+msgid "For raw warehouse labels, select the exact ZPL, TSPL or ESC/POS language under Advanced. For PDF reports, choose a PDF-compatible printer."
+msgstr "لملصقات المخزون الخام، اختر لغة ZPL أو TSPL أو ESC/POS الصحيحة من الإعدادات المتقدمة. لتقارير PDF، اختر طابعة تدعم المستندات."
+
+#. module: print_gateway
+#: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_policy_form
+msgid "Optional explicit Document Destination for this company and branch. Leave empty for automatic routing."
+msgstr "يمكنك اختيار وجهة مستند محددة لهذه الشركة والفرع. اتركها فارغة لاستخدام التوجيه التلقائي."
+
+#. module: print_gateway
+#: model_terms:ir.actions.act_window,help:print_gateway.action_print_gateway_intents
+msgid "No automation activity yet"
+msgstr "لا يوجد نشاط طباعة تلقائية بعد"
+
+#. module: print_gateway
+#: model_terms:ir.actions.act_window,help:print_gateway.action_print_gateway_intents
+msgid "Automatic printing appears here after an eligible business event."
+msgstr "تظهر عمليات الطباعة التلقائية هنا بعد حدوث إجراء مناسب في أودو."
+
+#. module: print_gateway
+#: code:addons/print_gateway/static/src/components/printers_overview.xml:0
+msgid "Choose a verified printer, then select its documents."
+msgstr "اختر طابعة موثّقة، ثم حدد المستندات التي ستُطبع عليها."
+
+#. module: print_gateway
+#: code:addons/print_gateway/static/src/components/printers_overview.xml:0
+msgid "The selected printing computer is offline or its status is outdated. Check the Windows printing app before relying on printer availability."
+msgstr "جهاز الطباعة المحدد غير متصل أو أن حالته قديمة. تحقق من تطبيق الطباعة على ويندوز قبل الاعتماد على حالة الطابعة."
+
+#. module: print_gateway
+#: code:addons/print_gateway/static/src/components/printers_overview.xml:0
+msgid "No computer assigned to this company or branch"
+msgstr "لا يوجد جهاز طباعة معيّن لهذه الشركة أو الفرع"
+
+#. module: print_gateway
+#: code:addons/print_gateway/static/src/components/printers_overview.xml:0
+msgid "No active printing computer found"
+msgstr "لم يتم العثور على جهاز طباعة نشط"
+
+#. module: print_gateway
+#: code:addons/print_gateway/static/src/components/printers_overview.xml:0
+msgid "Printing service is not connected"
+msgstr "خدمة الطباعة غير متصلة"
+
+#. module: print_gateway
+#: code:addons/print_gateway/static/src/components/printers_overview.xml:0
+msgid "Assigned printing computer is unavailable"
+msgstr "جهاز الطباعة المعيّن غير متاح"
+
+#. module: print_gateway
+#: code:addons/print_gateway/static/src/components/printers_overview.xml:0
+msgid "Choose an existing Yaseir Print Agent for this exact company or branch."
+msgstr "اختر جهاز طباعة مسجّلًا في يسير لهذه الشركة أو الفرع تحديدًا."
+
+#. module: print_gateway
+#: code:addons/print_gateway/static/src/components/printers_overview.xml:0
+msgid "Open and pair the Windows printing app in Yaseir, then refresh."
+msgstr "افتح تطبيق الطباعة على ويندوز واربطه بيسير، ثم حدّث الصفحة."
+
+#. module: print_gateway
+#: code:addons/print_gateway/static/src/components/printers_overview.xml:0
+msgid "Check the company connection before selecting a printing computer."
+msgstr "تحقق من اتصال الشركة قبل اختيار جهاز الطباعة."
+
+#. module: print_gateway
+#: code:addons/print_gateway/static/src/components/printers_overview.xml:0
+msgid "Check the assigned Agent in Yaseir. Inactive or removed Agents cannot provide printers."
+msgstr "تحقق من حالة جهاز الطباعة المعيّن في يسير. الأجهزة غير النشطة أو المحذوفة لا يمكنها عرض الطابعات."
+
+#. module: print_gateway
+#: code:addons/print_gateway/static/src/components/printers_overview.xml:0
+msgid "Computer assignments control which Agents can serve this company or branch. Changing an assignment does not create a print destination."
+msgstr "تحدد تعيينات الأجهزة ما يُسمح له بخدمة هذه الشركة أو الفرع. تغيير التعيين لا ينشئ وجهة طباعة جديدة."
+
+#. module: print_gateway
+#: code:addons/print_gateway/static/src/components/runtime_agent_field.js:0
+msgid "Assigned Print Agent is unavailable — check the Agent connection or status in Yaseir"
+msgstr "جهاز الطباعة المعيّن غير متاح — تحقق من اتصاله وحالته في يسير"

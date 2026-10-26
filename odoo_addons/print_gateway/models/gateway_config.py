@@ -2252,7 +2252,7 @@ class PrintGatewayConfig(models.Model):
         self.ensure_one()
         return {
             "type": "ir.actions.act_window",
-            "name": _("Branch Agent Assignments"),
+            "name": _("Branch Devices"),
             "res_model": "print_gateway.runtime_agent_assignment",
             "view_mode": "list,form",
             "domain": [("company_id", "=", self.company_id.id)],
@@ -2275,12 +2275,33 @@ class PrintGatewayConfig(models.Model):
             "context": context,
         }
 
+    def action_open_destinations(self):
+        """Open document/printer mappings for this root company.
+
+        The active Branch is only a default for new rows; record rules and
+        binding validators remain authoritative for printer routing.
+        """
+        self.ensure_one()
+        self._check_admin()
+        context = {"default_company_id": self.company_id.id}
+        active_company = self.env.company
+        if active_company.parent_id == self.company_id and active_company in self.env.companies:
+            context["default_branch_id"] = active_company.id
+        return {
+            "type": "ir.actions.act_window",
+            "name": self.env._("Document Destinations"),
+            "res_model": "print_gateway.binding",
+            "view_mode": "list,form",
+            "domain": [("company_id", "=", self.company_id.id)],
+            "context": context,
+        }
+
     def action_open_print_rules(self):
         self.ensure_one()
         self._check_admin()
         return {
             "type": "ir.actions.act_window",
-            "name": self.env._("Print Rules"),
+            "name": self.env._("Automatic Printing"),
             "res_model": "print_gateway.policy",
             "view_mode": "list,form",
             "domain": [("company_id", "=", self.company_id.id)],

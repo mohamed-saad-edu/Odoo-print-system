@@ -48,7 +48,7 @@ export class RuntimeAgentField extends Component {
         this.currentRequestId = 0;
         this.activeRequest = null;
         this.loadedScopeKey = null;
-        this.state = useState({ loading: false, agents: [], companyId: false, branchId: false, enabled: true, error: null });
+        this.state = useState({ loading: false, agents: [], companyId: false, branchId: false, enabled: true, assignedAgentCount: null, error: null });
         // Inline `xml` templates are not scanned for translations (Odoo only
         // translates templates defined in XML files), so the strings live here
         // where `_t` is in scope and the export can see them.
@@ -130,9 +130,12 @@ export class RuntimeAgentField extends Component {
         if (!this.state.enabled) {
             return _t("The printing service is not configured or unreachable for this company — check Connection & Printing");
         }
-        return this.assignmentOnly
-            ? _t("No Print Agent is assigned to this company/branch — assign one under Branch Devices first")
-            : _t("No connected Print Agents found — connect one from Connection & Printing");
+        if (this.assignmentOnly) {
+            return this.state.assignedAgentCount > 0
+                ? _t("Assigned Print Agent is unavailable — check the Agent connection or status in Yaseir")
+                : _t("No Print Agent is assigned to this company/branch — assign one under Branch Devices first");
+        }
+        return _t("No connected Print Agents found — connect one from Connection & Printing");
     }
 
     scopeKey(companyId, branchId, assignmentOnly) {
@@ -158,6 +161,7 @@ export class RuntimeAgentField extends Component {
         // Never leave agents of a previous scope on screen while the new scope
         // is being fetched (a branch must not offer another branch's agents).
         this.state.agents = [];
+        this.state.assignedAgentCount = null;
         this.state.error = null;
 
         if (!companyId) {
@@ -177,6 +181,7 @@ export class RuntimeAgentField extends Component {
             const result = await request.promise;
             if (reqId !== this.currentRequestId) return;
             this.state.enabled = result?.enabled !== false;
+            this.state.assignedAgentCount = Number.isSafeInteger(result?.assignedAgentCount) ? result.assignedAgentCount : null;
             this.state.agents = Array.isArray(result?.agents) ? result.agents : [];
             if (result?.selectedAgentId && !props.readonly && !props.record?.data?.[props.name]) {
                 if (this.state.agents.some((a) => a.id === result.selectedAgentId)) {

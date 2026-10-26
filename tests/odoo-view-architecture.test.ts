@@ -55,7 +55,8 @@ describe("Odoo 19 view architecture contract — gateway_config_views.xml", () =
     expect(advanced).toContain('name="action_open_runtime_assignments"');
     expect(advanced).toContain('name="action_reset_stale_sync_state"');
     expect(formSection).toContain('name="action_open_printers"');
-    expect(formSection).toContain('name="action_open_print_rules"');
+    expect(formSection).toContain('name="action_open_destinations"');
+    expect(formSection).not.toContain('name="action_open_print_rules"');
   });
 
   it("keeps the Odoo 19 configuration state readable through connection status", () => {
@@ -129,5 +130,34 @@ describe("Odoo concise connection guidance", () => {
     expect(xml).toContain('<details class="mb-2">');
     expect(xml).toContain('string="Enable printing"');
     expect(xml).toContain('name="action_test_connection"');
+  });
+});
+
+describe("Customer navigation keeps printer destinations and automation separate", () => {
+  it("shows document destinations before automation and keeps diagnostics advanced", () => {
+    const menu = read("odoo_addons/print_gateway/views/menu.xml");
+    const destination = menu.split("\n").find(row => row.includes('id="menu_print_gateway_bindings"')) || "";
+    const automation = menu.split("\n").find(row => row.includes('id="menu_print_gateway_policies"')) || "";
+    const intents = menu.split("\n").find(row => row.includes('id="menu_print_gateway_intents"')) || "";
+    expect(destination).toContain('parent="menu_print_gateway_main"');
+    expect(destination).toContain('sequence="30"');
+    expect(automation).toContain('sequence="40"');
+    expect(intents).toContain('parent="menu_print_gateway_advanced"');
+    const binding = read("odoo_addons/print_gateway/views/binding_views.xml");
+    const policy = read("odoo_addons/print_gateway/views/print_policy_views.xml");
+    expect(binding).toContain('<form string="Document Destination"');
+    expect(binding).toContain('string="Check registration"');
+    expect(binding).toContain('string="Print test page"');
+    expect(policy).toContain('string="Document Destination"');
+    expect(read("odoo_addons/print_gateway/views/print_job_views.xml")).toContain('<field name="name">Print Activity</field>');
+  });
+});
+
+describe("Odoo UX localization contract", () => {
+  it("uses one Arabic label for document destinations across menus, forms, and actions", () => {
+    const po = read("odoo_addons/print_gateway/i18n/ar.po");
+    expect(po).toMatch(/msgid "Document Destinations"\nmsgstr "وجهات المستندات"/);
+    expect(po).toContain('msgid "No computer assigned to this company or branch"');
+    expect(po).toContain('msgid "Assigned Print Agent is unavailable');
   });
 });

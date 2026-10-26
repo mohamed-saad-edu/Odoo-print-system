@@ -4,7 +4,7 @@
         <field name="name">print_gateway.binding.list</field>
         <field name="model">print_gateway.binding</field>
         <field name="arch" type="xml">
-            <list string="Print Rules" create="1" delete="1" class="o_pg_list">
+            <list string="Document Destinations" create="1" delete="1" class="o_pg_list">
                 <field name="company_id" string="Company" optional="hide"/>
                 <field name="branch_id" string="Branch" placeholder="All Branches / Root Default" help="Empty means this binding applies to the whole company as the default route."/>
                 <field name="effective_company_id" column_invisible="1"/>
@@ -23,29 +23,23 @@
         <field name="name">print_gateway.binding.form</field>
         <field name="model">print_gateway.binding</field>
         <field name="arch" type="xml">
-            <form string="Print Rule" class="o_pg_view o_pg_form">
+            <form string="Document Destination" class="o_pg_view o_pg_form">
                 <header>
-                    <button name="action_send_test_print" type="object" string="Test Print" class="btn btn-primary" icon="fa-print" invisible="not runtime_agent_id or not printer_id"
-                            confirm="A test receipt will be printed on the selected printer. Continue?"/>
-                    <button name="action_verify_remote_hardware" type="object" string="Check Setup" class="btn btn-secondary" icon="fa-check-circle" invisible="not runtime_agent_id or not printer_id"/>
+                    <button name="action_send_test_print" type="object" string="Print test page" class="btn btn-primary" icon="fa-print" invisible="not runtime_agent_id or not printer_id"
+                            confirm="This sends a real test page to the selected printer. Continue?"/>
+                    <button name="action_verify_remote_hardware" type="object" string="Check registration" class="btn btn-secondary" icon="fa-check-circle" invisible="not runtime_agent_id or not printer_id"/>
                 </header>
                 <sheet>
                     <div class="oe_title">
-                        <h1>Print Rule</h1>
-                        <p class="text-muted">Choose where each document should be printed.</p>
+                        <h1>Document Destination</h1>
+                        <p class="text-muted">Choose an Odoo document and the verified printer that should receive it.</p>
                     </div>
 
-                    <separator string="Rule"/>
-                    <div class="mb-3">
-                        <field name="display_name" readonly="1"/>
-                    </div>
-                    <div class="text-muted mb-3"><small t-translation="on">Select the branch, destination, and Gateway physical printer for this rule. POS Receipt does not require an Odoo printer or PDF report. POS Kitchen / Preparation uses the selected Odoo Preparation Printer for category routing; the Gateway printer remains the physical destination.</small></div>
-                    <div class="text-muted" invisible="destination_type != 'pos_printer'">
-                        <small t-translation="on">Gateway Kitchen / Preparation follows Odoo 19 Preparation Printers and their Printed Product Categories. Select the Odoo Preparation Printer here; the Gateway Runtime Printer remains the physical target. Existing POS Shop-only bindings remain a compatibility fallback.</small>
-                    </div>
-                    <div class="text-muted" invisible="destination_type != 'picking_type'">
-                        <small t-translation="on">For raw warehouse labels, leave Report empty and select the printer's exact ZPL, TSPL, ESC/POS or raw language under Advanced. To print a PDF warehouse report, select the Report instead and use a document-capable printer transport.</small>
-                    </div>
+                    <details class="mb-3">
+                        <summary>Which document destination should I use?</summary>
+                        <p class="text-muted">Select the company, branch, Odoo document, and Yaseir printer. POS preparation uses the Odoo Preparation Printer to preserve category routing.</p>
+                        <p class="text-muted" invisible="destination_type != 'picking_type'">For raw warehouse labels, select the exact ZPL, TSPL or ESC/POS language under Advanced. For PDF reports, choose a PDF-compatible printer.</p>
+                    </details>
 
                     <group string="Scope">
                         <field name="company_id" string="Company" domain="[('parent_id', '=', False)]" options="{'no_create': True}"/>
@@ -103,7 +97,7 @@
     </record>
 
     <record id="action_print_gateway_binding" model="ir.actions.act_window">
-        <field name="name">Print Gateway Bindings</field>
+        <field name="name">Document Destinations</field>
         <field name="res_model">print_gateway.binding</field>
         <field name="view_mode">list,form</field>
     </record>

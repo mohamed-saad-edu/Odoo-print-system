@@ -29,8 +29,8 @@
                 </header>
                 <sheet>
                     <div class="oe_title"><h1>Connect Yaseir</h1></div>
-                    <div class="alert alert-info" role="status"><field name="gateway_sync_message" readonly="1" nolabel="1"/></div>
-                    <group string="1. Connect your company">
+                    <div class="alert alert-info" role="status" invisible="not gateway_sync_message"><field name="gateway_sync_message" readonly="1" nolabel="1"/></div>
+                    <group string="Connection details">
                         <field name="company_id" string="Company"/>
                         <field name="gateway_url" string="Connection address" placeholder="https://print.example.com"/>
                         <field name="gateway_api_key" string="Connection key" password="True" placeholder="Copy the key from Connect Odoo in Yaseir"/>
@@ -38,21 +38,20 @@
                                decoration-success="last_test_status == 'success'" decoration-danger="last_test_status in ('failed', 'revoked')"/>
                     </group>
                     <details class="mb-3">
-                        <summary>Connection</summary>
-                        <p class="text-muted">Connect once, choose your printer, and enable the documents your business needs.</p>
-                        <p class="text-muted">Use your Odoo connection key here. The Windows pairing code connects a computer and cannot be used in this field.</p>
+                        <summary>Connection help</summary>
+                        <p class="text-muted">Use the Odoo connection key from Connect Odoo in Yaseir. The Windows computer pairing code is different.</p>
                     </details>
-                    <group string="2. Choose printers and documents">
+                    <group string="Next steps">
                         <div class="d-flex flex-wrap gap-2">
-                            <button name="action_open_printers" type="object" string="Choose printers" class="btn btn-outline-primary"/>
-                            <button name="action_open_print_rules" type="object" string="Configure automatic printing" class="btn btn-outline-primary"/>
+                            <button name="action_open_printers" type="object" string="View printers" class="btn btn-outline-primary"/>
+                            <button name="action_open_destinations" type="object" string="Document Destinations" class="btn btn-outline-primary"/>
                         </div>
                     </group>
-                    <group string="3. Start printing">
+                    <group string="Printing">
                         <field name="enabled" widget="boolean_toggle" string="Enable printing"/>
                         <details class="mb-2">
-                            <summary>Enable printing</summary>
-                            <p class="text-muted">Printing starts only after the connection is confirmed and a verified printer is assigned to the document.</p>
+                            <summary>When can printing start?</summary>
+                            <p class="text-muted">Check the connection, assign a computer to the branch, and choose a verified printer for the document before enabling printing.</p>
                         </details>
                     </group>
                     <notebook>
