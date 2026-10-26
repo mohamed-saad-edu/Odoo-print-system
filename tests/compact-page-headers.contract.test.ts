@@ -23,7 +23,7 @@ describe("compact, consistent page headers", () => {
 
   it.each(platformPages)("uses the inline admin heading without an extra padded band: %s", page => {
     const file = read(`src/app/platform/${page}/page.tsx`);
-    expect(file).toContain('<PageHeader variant="inline"');
+    expect(file).toMatch(/<PageHeader\s+variant="inline"/);
     const headers = file.split("<PageHeader").slice(1);
     expect(headers.length).toBeGreaterThan(0);
     for (const header of headers) {
