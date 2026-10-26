@@ -8,7 +8,7 @@ import { fetchWithTimeout } from "../lib/fetch-timeout";
 import { codeMessageKey } from "../lib/api-error-keys";
 
 export type SubscriptionPlanOption = { id: string; name: string; entitlements: Record<string, unknown> };
-export type CustomerSubscriptionRequest = { id: string; reference: string; status: string; planId: string; term: string; createdAt: string; whatsappUrl?: string | null };
+export type CustomerSubscriptionRequest = { id: string; reference: string; status: string; planId: string; term: string; createdAt: string; requestedMonthlyQuota?: number | null; whatsappUrl?: string | null };
 
 /** A request records customer intent; only the Platform Owner changes entitlements. */
 export function BillingActions({ plans, selectedPlanId, currentPlanId, isOwner, status, initialRequest, currentTerm }: {
@@ -60,7 +60,7 @@ export function BillingActions({ plans, selectedPlanId, currentPlanId, isOwner, 
   return <div className="space-y-4" id="billing-actions">
     {!isOwner ? <Callout tone="info" title={t("v4.subscription.ownerTitle")}>{t("v4.subscription.ownerBody")}</Callout> : pending ? <Callout tone="info" title={t("v4.onboarding.requestReceived")}>
       <p>{t("v4.subscription.requestPending")}</p>
-      <dl className="mt-3 space-y-2 text-sm"><div><dt>{t("v4.onboarding.reference")}</dt><dd dir="ltr" className="break-all font-mono">{request.reference}</dd></div><div><dt>{t("v4.onboarding.requestedAt")}</dt><dd>{formatDateTime(request.createdAt)}</dd></div><div><dt>{t("v4.subscription.requestedPlan")}</dt><dd>{plans.find(plan => plan.id === request.planId)?.name ?? request.planId}</dd></div><div><dt>{t("v4.onboarding.term")}</dt><dd>{t(request.term === "yearly" ? "v4.onboarding.yearly" : request.term === "custom" ? "v4.subscription.custom" : "v4.onboarding.monthly")}</dd></div></dl>
+      <dl className="mt-3 space-y-2 text-sm"><div><dt>{t("v4.onboarding.reference")}</dt><dd dir="ltr" className="break-all font-mono">{request.reference}</dd></div><div><dt>{t("v4.onboarding.requestedAt")}</dt><dd>{formatDateTime(request.createdAt)}</dd></div><div><dt>{t("v4.subscription.requestedPlan")}</dt><dd>{plans.find(plan => plan.id === request.planId)?.name ?? request.planId}</dd></div><div><dt>{t("v4.onboarding.term")}</dt><dd>{t(request.term === "yearly" ? "v4.onboarding.yearly" : request.term === "custom" ? "v4.subscription.custom" : "v4.onboarding.monthly")}</dd></div>{typeof request.requestedMonthlyQuota === "number" && <div><dt>{t("v4.subscription.allowance")}</dt><dd>{formatNumber(request.requestedMonthlyQuota)}</dd></div>}</dl>
       <div className="mt-4 flex flex-wrap gap-3">{request.whatsappUrl && <Button href={request.whatsappUrl} target="_blank" rel="noopener noreferrer" variant="primary">{t("v4.onboarding.whatsapp")}</Button>}<Button variant="secondary" onClick={() => router.refresh()}>{t("v4.onboarding.refresh")}</Button></div>
     </Callout> : <>
       {request && <Callout tone={request.status === "approved" ? "ok" : "warn"} title={t(request.status === "approved" ? "v4.subscription.requestApproved" : "v4.subscription.requestRejected")}>

@@ -38,7 +38,6 @@ export default function Requests() {
 
   useEffect(() => {
     let live = true;
-    setLoading(true);
     adminJson(`/api/platform/subscription-requests?status=${encodeURIComponent(status)}&offset=${offset}`)
       .then((result: RequestResponse) => {
         if (!live) return;
@@ -55,7 +54,7 @@ export default function Requests() {
   }, [status, tick, offset]);
 
   return <div className="space-y-5">
-    <PageHeader variant="inline" title={a("requests")} actions={<Button onClick={() => setTick(x => x + 1)}>{a("refresh")}</Button>} />
+    <PageHeader variant="inline" title={a("requests")} actions={<Button onClick={() => { setLoading(true); setTick(x => x + 1); }}>{a("refresh")}</Button>} />
     <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-edge bg-surface p-4">
       <div className="flex items-center gap-3">
         <span className="rounded-lg bg-brand/10 p-2.5 text-brand"><ClipboardList className="h-5 w-5" aria-hidden /></span>
@@ -67,7 +66,7 @@ export default function Requests() {
       <label className="w-full text-sm sm:w-52">
         <span className="sr-only">{a("status")}</span>
         <select className={controlClass} aria-label={a("status")} value={status}
-          onChange={e => { setStatus(e.target.value); setOffset(0); }}>
+          onChange={e => { setLoading(true); setStatus(e.target.value); setOffset(0); }}>
           {["pending", "approved", "rejected", "all"].map(item => <option key={item} value={item}>{a(item)}</option>)}
         </select>
       </label>
@@ -109,8 +108,8 @@ export default function Requests() {
           })}
         </div>}
     {!error && !loading && (offset > 0 || hasMore) && <nav className="flex justify-end gap-3" aria-label={a("requests")}>
-      <Button disabled={offset === 0} onClick={() => setOffset(x => Math.max(0, x - 100))}>{t("common.previousPage")}</Button>
-      <Button disabled={!hasMore} onClick={() => setOffset(x => x + 100)}>{t("common.nextPage")}</Button>
+      <Button disabled={offset === 0} onClick={() => { setLoading(true); setOffset(x => Math.max(0, x - 100)); }}>{t("common.previousPage")}</Button>
+      <Button disabled={!hasMore} onClick={() => { setLoading(true); setOffset(x => x + 100); }}>{t("common.nextPage")}</Button>
     </nav>}
   </div>;
 }

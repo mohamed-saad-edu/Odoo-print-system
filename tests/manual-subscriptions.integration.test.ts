@@ -88,6 +88,8 @@ suite('V4 manual subscriptions security and accounting',()=>{
   expect(changed.status).toBe(409);
   expect(await changed.json()).toMatchObject({code:'SUBSCRIPTION_REQUEST_ALREADY_PENDING'});
 
+  // Catalog changes must not rewrite the customer's requested allowance.
+  await db.update(plans).set({entitlements:{...entitlements,max_prints_per_period:99}}).where(eq(plans.id,'manual'));
   const queue=await listPlatformRequests(new Request(origin+'/api/platform/subscription-requests?status=pending',{headers:{cookie:platformCookie}}));
   expect(queue.status).toBe(200);
   const pending=await queue.json();
@@ -95,7 +97,7 @@ suite('V4 manual subscriptions security and accounting',()=>{
   expect(pending.requests).toHaveLength(1);
   expect(pending.requests[0]).toMatchObject({
     id,tenant_id:'workspace',tenantName:'Manual workspace',plan_id:'manual',
-    planName:'Manual plan',planMonthlyQuota:10,term:'yearly',
+    planName:'Manual plan',planMonthlyQuota:99,requested_monthly_quota:10,term:'yearly',
     requester_email:'owner@manual.test',status:'pending',
   });
 
