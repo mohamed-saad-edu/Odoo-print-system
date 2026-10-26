@@ -1,39 +1,351 @@
 "use client";
+
 import { useState } from "react";
-import { Button,Card } from "../ui";
-import { adminJson,controlClass,useAdminText } from "./ManualAdmin";
-export type ManualSubscription={planId:string;planName:string;status:string;effectiveStatus:string;subscriptionType:string;monthlyQuota:number|null;term:string;currentPeriodStart:string;currentPeriodEnd:string|null;cancelAtPeriodEnd:boolean;internalReference:string|null;revision:number;monthlyUsed:number;nextReset:string};
-export type ManualPlan={id:string;name:string;description:string;entitlements:Record<string,number|string>;isActive:boolean;isPublic:boolean;displayOrder:number};
-export type PendingSubscriptionRequest={id:string;planId:string;term:string;requestedMonthlyQuota:number|null;status:string;requesterName:string;requesterEmail:string;createdAt:string};
-function dateValue(value:string|null|undefined){return value?value.slice(0,10):new Date().toISOString().slice(0,10);}
-function endFor(start:string,term:string){const d=new Date(start+'T00:00:00Z');if(!Number.isFinite(d.getTime()))return start;const day=d.getUTCDate();d.setUTCDate(1);d.setUTCMonth(d.getUTCMonth()+(term==='yearly'?12:1));const last=new Date(Date.UTC(d.getUTCFullYear(),d.getUTCMonth()+1,0)).getUTCDate();d.setUTCDate(Math.min(day,last));return d.toISOString().slice(0,10);}
-export function SubscriptionEditor({tenantId,subscription,plans,request,onSaved}:{tenantId:string;subscription:ManualSubscription|null;plans:ManualPlan[];request?:PendingSubscriptionRequest;onSaved:()=>void}){
- const {a,formatNumber}=useAdminText();
- const requestedPlan=plans.find(p=>p.id===request?.planId);
- const initialAction=request && subscription?.status==='active' && subscription.currentPeriodEnd ? 'renew' : 'save';
- const initialPlan=request?.planId??subscription?.planId??plans[0]?.id??'';
- const initialTerm=request?.term??subscription?.term??'monthly';
- const defaultQuota=request?.requestedMonthlyQuota??requestedPlan?.entitlements.max_prints_per_period??subscription?.monthlyQuota??plans[0]?.entitlements.max_prints_per_period??1000;
- const initialStart=initialAction==='renew' ? dateValue(subscription?.currentPeriodStart) : request ? dateValue(null) : dateValue(subscription?.currentPeriodStart);
- const initialEnd=request ? endFor(initialAction==='renew'?dateValue(subscription?.currentPeriodEnd):initialStart,initialTerm)
-    : subscription?.currentPeriodEnd?dateValue(subscription.currentPeriodEnd):endFor(dateValue(null),'monthly');
- const [action,setAction]=useState(initialAction);
- const [planId,setPlanId]=useState(initialPlan);
- const [type,setType]=useState(subscription?.subscriptionType??'paid');
- const [quota,setQuota]=useState(String(typeof defaultQuota==='number'?defaultQuota:1000));
- const [term,setTerm]=useState(initialTerm);
- const [start,setStart]=useState(initialStart);
- const [end,setEnd]=useState(initialEnd);
- const [status,setStatus]=useState(request?'active':subscription?.status==='active'?'active':'awaiting_activation');
- const [reference,setReference]=useState(subscription?.internalReference??'');
- const [reason,setReason]=useState('');
- const [password,setPassword]=useState('');
- const [preview,setPreview]=useState<{body:Record<string,unknown>;key:string}|null>(null);
- const [busy,setBusy]=useState(false);
- const [error,setError]=useState('');
- const full=action==='save'||action==='renew';
- function review(e:React.FormEvent){e.preventDefault();setError('');setPreview({key:crypto.randomUUID(),body:{action,expectedRevision:subscription?.revision??0,...(full?{planId,subscriptionType:type,monthlyQuota:Number(quota),term,startDate:start+'T00:00:00.000Z',status,internalReference:reference}:{}),...(full||action==='extend'?{endDate:end+'T00:00:00.000Z'}:{}),reason,...(request&&full&&status==='active'?{requestId:request.id}:{})}});}
- async function save(e:React.FormEvent){e.preventDefault();if(!preview||busy)return;setBusy(true);setError('');const proof=password;setPassword('');try{await adminJson('/api/platform/auth/reauth',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:proof})});await adminJson(`/api/platform/tenants/${encodeURIComponent(tenantId)}/subscription`,{method:'POST',headers:{'Content-Type':'application/json','Idempotency-Key':preview.key},body:JSON.stringify(preview.body)});setPreview(null);onSaved();}catch(e){setError(e instanceof Error&&['SUBSCRIPTION_REVISION_CONFLICT','SUBSCRIPTION_REQUEST_CONFLICT'].includes(e.message)?a('conflict'):a('saveError'));}finally{setBusy(false);}}
- const field=(label:string,child:React.ReactNode)=><label className="block space-y-1.5 text-sm"><span className="font-semibold">{a(label)}</span>{child}</label>;
- return <Card className="p-5"><h2 className="text-xl font-semibold">{request?a('review'):a('manage')}</h2>{request&&<p className="mt-2 rounded-lg border border-brand/20 bg-brand/5 p-3 text-sm text-ink-2">{a('requestLinked')} <bdi dir="ltr" className="font-mono">{request.id}</bdi></p>}{error&&<p role="alert" className="my-3 text-bad">{error}</p>}{preview?<form onSubmit={save} className="space-y-4"><h3 className="font-semibold">{a('previewTitle')}</h3><dl className="grid gap-3 rounded-lg bg-surface-2 p-4 sm:grid-cols-2"><div><dt>{a('action')}</dt><dd className="font-semibold">{a(action)}</dd></div>{request&&<div><dt>{a('reference')}</dt><dd dir="ltr" className="break-all font-mono">{request.id}</dd></div>}{full&&<><div><dt>{a('plan')}</dt><dd>{plans.find(p=>p.id===planId)?.name}</dd></div><div><dt>{a('type')}</dt><dd>{a(type)}</dd></div><div><dt>{a('quota')}</dt><dd>{formatNumber(Number(quota))}</dd></div><div><dt>{a('start')}</dt><dd dir="ltr">{start}</dd></div><div><dt>{a('status')}</dt><dd>{a(status)}</dd></div></>}{(full||action==='extend')&&<div><dt>{a('end')}</dt><dd dir="ltr">{end}</dd></div>}<div><dt>{a('used')}</dt><dd>{formatNumber(subscription?.monthlyUsed??0)}</dd></div><div><dt>{a('reason')}</dt><dd>{reason}</dd></div></dl><p className="text-sm text-ink-3">{a('noReset')}</p>{field('password',<input className={controlClass} type="password" autoComplete="current-password" required maxLength={4096} value={password} onChange={e=>setPassword(e.target.value)}/>)}<div className="flex flex-wrap gap-3"><Button type="submit" disabled={busy||!password} loading={busy}>{a('confirm')}</Button><Button type="button" variant="secondary" disabled={busy} onClick={()=>{setPreview(null);setPassword('');}}>{a('cancel')}</Button></div></form>:<form onSubmit={review} className="space-y-4"><div className="grid gap-4 sm:grid-cols-2">{field('action',<select className={controlClass} value={action} disabled={!!request} onChange={e=>{setAction(e.target.value);if(e.target.value==='renew'&&subscription){setStart(dateValue(subscription.currentPeriodStart));setEnd(endFor(dateValue(subscription.currentPeriodEnd),term));}}}>{(request?[initialAction]:subscription?['save','renew','extend','suspend','reactivate','cancel_at_end','revoke']:['save']).map(v=><option key={v} value={v}>{a(v)}</option>)}</select>)}{full&&<>{field('type',<select className={controlClass} value={type} onChange={e=>setType(e.target.value)}>{['free','paid'].map(v=><option key={v} value={v}>{a(v)}</option>)}</select>)}{field('plan',<select className={controlClass} required disabled={!!request} value={planId} onChange={e=>{setPlanId(e.target.value);const p=plans.find(p=>p.id===e.target.value);if(p)setQuota(String(p.entitlements.max_prints_per_period));}}>{plans.filter(p=>p.isActive||p.id===planId).map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select>)}{field('quota',<input className={controlClass} required disabled={!!request&&request.requestedMonthlyQuota!==null} type="number" min={1} max={2147483647} step={1} value={quota} onChange={e=>setQuota(e.target.value)}/>)}{field('term',<select className={controlClass} disabled={!!request} value={term} onChange={e=>{setTerm(e.target.value);if(e.target.value!=='custom')setEnd(endFor(action==='renew'&&subscription?dateValue(subscription.currentPeriodEnd):start,e.target.value));}}>{['monthly','yearly','custom'].map(v=><option key={v} value={v}>{a(v)}</option>)}</select>)}{field('start',<input className={controlClass} required disabled={action==='renew'} type="date" value={start} onChange={e=>{setStart(e.target.value);if(term!=='custom')setEnd(endFor(e.target.value,term));}}/>)}{field('status',<select className={controlClass} disabled={!!request} value={status} onChange={e=>setStatus(e.target.value)}>{['awaiting_activation','active'].map(v=><option key={v} value={v}>{a(v)}</option>)}</select>)}</>}{(full||action==='extend')&&field('end',<input className={controlClass} required type="date" value={end} onChange={e=>setEnd(e.target.value)}/>)}{full&&field('internalReference',<input className={controlClass} value={reference} maxLength={200} onChange={e=>setReference(e.target.value)}/>)}</div>{field('reason',<textarea className={controlClass} value={reason} maxLength={500} required onChange={e=>setReason(e.target.value)}/>)}{request&&full&&<p className="text-sm font-medium text-brand">{a('approvalLinked')}</p>}<p className="text-sm text-ink-3">{a('noReset')}</p><Button type="submit">{a('preview')}</Button></form>}</Card>;
+import { CalendarClock, Settings2 } from "lucide-react";
+import { Button, Card } from "../ui";
+import { adminJson, controlClass, useAdminText } from "./ManualAdmin";
+
+export type ManualSubscription = {
+  planId: string;
+  planName: string;
+  status: string;
+  effectiveStatus: string;
+  subscriptionType: string;
+  monthlyQuota: number | null;
+  term: string;
+  currentPeriodStart: string;
+  currentPeriodEnd: string | null;
+  cancelAtPeriodEnd: boolean;
+  internalReference: string | null;
+  revision: number;
+  monthlyUsed: number;
+  nextReset: string;
+};
+export type ManualPlan = {
+  id: string;
+  name: string;
+  description: string;
+  entitlements: Record<string, number | string>;
+  isActive: boolean;
+  isPublic: boolean;
+  displayOrder: number;
+};
+export type PendingSubscriptionRequest = {
+  id: string;
+  planId: string;
+  term: string;
+  requestedMonthlyQuota: number | null;
+  status: string;
+  requesterName: string;
+  requesterEmail: string;
+  createdAt: string;
+};
+
+type Action = "save" | "renew" | "extend" | "suspend" | "reactivate" | "cancel_at_end" | "revoke";
+type Term = "monthly" | "yearly" | "custom";
+type Preview = { body: Record<string, unknown>; key: string };
+
+function day(value?: string | null) {
+  return value ? value.slice(0, 10) : new Date().toISOString().slice(0, 10);
+}
+function laterDay(one?: string | null, two = day()) {
+  const first = day(one);
+  return first > two ? first : two;
+}
+function endFor(start: string, term: Term) {
+  const date = new Date(start + "T00:00:00Z");
+  if (!Number.isFinite(date.getTime())) return start;
+  const dayOfMonth = date.getUTCDate();
+  date.setUTCDate(1);
+  date.setUTCMonth(date.getUTCMonth() + (term === "yearly" ? 12 : 1));
+  const lastDay = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 0)).getUTCDate();
+  date.setUTCDate(Math.min(dayOfMonth, lastDay));
+  return date.toISOString().slice(0, 10);
+}
+function instant(date: string) {
+  return date + "T00:00:00.000Z";
+}
+function actionLabel(action: Action, t: (key: string) => string, editing: boolean, request?: PendingSubscriptionRequest) {
+  if (request) return t(action === "renew" ? "renewRequested" : "activateRequested");
+  if (action === "save") return t(editing ? "updatePlan" : "activateSubscription");
+  return t(action);
+}
+
+export function SubscriptionEditor({
+  tenantId, subscription, plans, request, onSaved,
+}: {
+  tenantId: string;
+  subscription: ManualSubscription | null;
+  plans: ManualPlan[];
+  request?: PendingSubscriptionRequest;
+  onSaved: () => void;
+}) {
+  const { a, formatNumber, formatDate } = useAdminText();
+  const active = subscription?.effectiveStatus === "active";
+  const renewalFromRequest = !!request && active && !!subscription?.currentPeriodEnd;
+  const canReactivate = subscription?.status === "suspended" &&
+    (!subscription.currentPeriodEnd || day(subscription.currentPeriodEnd) > day());
+  const initialAction: Action = renewalFromRequest ? "renew" : request ? "save" : canReactivate ? "reactivate" : "save";
+  const initialTerm: Term = request?.term === "yearly" || request?.term === "custom" ? request.term :
+    subscription?.term === "yearly" || subscription?.term === "custom" ? subscription.term : "monthly";
+  const initialStart = active || renewalFromRequest ? day(subscription?.currentPeriodStart) : day();
+  const renewalBase = laterDay(subscription?.currentPeriodEnd);
+  const initialEnd = renewalFromRequest ? endFor(renewalBase, initialTerm) :
+    active && !request ? day(subscription?.currentPeriodEnd) : endFor(initialStart, initialTerm);
+  const selectedRequestPlan = plans.find(plan => plan.id === request?.planId);
+  const initialQuota = request?.requestedMonthlyQuota ??
+    selectedRequestPlan?.entitlements.max_prints_per_period ??
+    subscription?.monthlyQuota ?? plans[0]?.entitlements.max_prints_per_period ?? 1000;
+
+  const [action, setAction] = useState<Action>(initialAction);
+  const [planId, setPlanId] = useState(request?.planId ?? subscription?.planId ?? plans[0]?.id ?? "");
+  const [quota, setQuota] = useState(String(initialQuota));
+  const [term, setTerm] = useState<Term>(initialTerm);
+  const [start, setStart] = useState(initialStart);
+  const [end, setEnd] = useState(initialEnd);
+  const [type, setType] = useState(subscription?.subscriptionType ?? "paid");
+  const [reference, setReference] = useState(subscription?.internalReference ?? "");
+  const [editDates, setEditDates] = useState(false);
+  const [leavePending, setLeavePending] = useState(false);
+  const [reason, setReason] = useState("");
+  const [password, setPassword] = useState("");
+  const [preview, setPreview] = useState<Preview | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  const full = action === "save" || action === "renew";
+  const editing = action === "save" && active && !request;
+  const activating = action === "save" && !editing;
+  const showTerm = full && (action === "renew" || activating || editDates);
+  const showCustomDates = full && showTerm && term === "custom";
+  const title = activating && leavePending && !request ? a("savePendingSubscription") : actionLabel(action, a, editing, request);
+
+  const extraActions: Action[] = !subscription || request ? [] : [
+    ...(active && subscription.currentPeriodEnd ? ["renew", "extend"] as Action[] : []),
+    ...(active ? ["suspend"] as Action[] : []),
+    ...(active && subscription.currentPeriodEnd && !subscription.cancelAtPeriodEnd ? ["cancel_at_end"] as Action[] : []),
+    ...(active ? ["revoke"] as Action[] : []),
+    ...(canReactivate ? ["reactivate"] as Action[] : []),
+    ...(active && action !== "save" ? ["save"] as Action[] : []),
+  ].filter(value => value !== action);
+
+  function selectAction(next: Action) {
+    setError("");
+    setPreview(null);
+    setAction(next);
+    if (next === "renew" && subscription?.currentPeriodEnd) {
+      setStart(day(subscription.currentPeriodStart));
+      setEnd(endFor(laterDay(subscription.currentPeriodEnd), term));
+    } else if (next === "extend") {
+      setEnd(endFor(laterDay(subscription?.currentPeriodEnd), "monthly"));
+    } else if (next === "save") {
+      // Returning from renewal/extension must never carry their expiry into a plan-only edit.
+      setEditDates(false);
+      if (active) {
+        setStart(day(subscription?.currentPeriodStart));
+        setEnd(day(subscription?.currentPeriodEnd));
+        const original = subscription?.term;
+        if (original === "monthly" || original === "yearly" || original === "custom") setTerm(original);
+      } else {
+        setStart(day());
+        setEnd(endFor(day(), term));
+      }
+    }
+    // For sensitive actions the only inputs are the reason and password in confirmation.
+    if (!["save", "renew", "extend"].includes(next)) {
+      setPreview({ body: { action: next, expectedRevision: subscription?.revision ?? 0 }, key: crypto.randomUUID() });
+    }
+  }
+
+  function changeTerm(value: Term) {
+    setTerm(value);
+    if (value !== "custom") {
+      setEnd(endFor(action === "renew" ? laterDay(subscription?.currentPeriodEnd) : start, value));
+    }
+  }
+
+  function prepare(event: React.FormEvent) {
+    event.preventDefault();
+    setError("");
+    if (full) {
+      const limit = Number(quota);
+      if (!planId || !Number.isSafeInteger(limit) || limit < 1 || limit > 2147483647) {
+        setError(a("invalidQuota"));
+        return;
+      }
+    }
+    if ((full || action === "extend") &&
+      (Date.parse(instant(end)) <= Date.parse(instant(start)) ||
+       (action === "renew" && subscription?.currentPeriodEnd &&
+        Date.parse(instant(end)) <= Date.parse(instant(day(subscription.currentPeriodEnd)))) ||
+       (action === "extend" && subscription?.currentPeriodEnd &&
+        Date.parse(instant(end)) <= Date.parse(instant(day(subscription.currentPeriodEnd)))))) {
+      setError(a("invalidDates"));
+      return;
+    }
+    const body: Record<string, unknown> = {
+      action, expectedRevision: subscription?.revision ?? 0,
+      ...(full ? {
+        planId, subscriptionType: type, monthlyQuota: Number(quota), term,
+        startDate: instant(start), endDate: instant(end),
+        status: activating && !request && leavePending ? "awaiting_activation" : "active",
+        internalReference: reference,
+      } : {}),
+      ...(action === "extend" ? { endDate: instant(end) } : {}),
+      ...(request && full ? { requestId:request.id } : {}),
+    };
+    setPreview({ body, key: crypto.randomUUID() });
+  }
+
+  async function save(event: React.FormEvent) {
+    event.preventDefault();
+    if (!preview || busy || !reason.trim() || !password) return;
+    setBusy(true);
+    setError("");
+    const proof = password;
+    setPassword("");
+    try {
+      await adminJson("/api/platform/auth/reauth", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password: proof }),
+      });
+      await adminJson("/api/platform/tenants/" + encodeURIComponent(tenantId) + "/subscription", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Idempotency-Key": preview.key },
+        body: JSON.stringify({ ...preview.body, reason: reason.trim() }),
+      });
+      setPreview(null);
+      onSaved();
+    } catch (caught) {
+      const conflict = caught instanceof Error &&
+        ["SUBSCRIPTION_REVISION_CONFLICT", "SUBSCRIPTION_REQUEST_CONFLICT"].includes(caught.message);
+      setError(a(conflict ? "conflict" : "saveError"));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const field = (name: string, children: React.ReactNode) => (
+    <label className="block space-y-1.5 text-sm">
+      <span className="block font-medium text-ink-2">{a(name)}</span>{children}
+    </label>
+  );
+
+  return <Card className="max-w-4xl p-5 sm:p-6">
+    <div className="mb-5 flex items-center gap-3">
+      <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-brand/10 text-brand">
+        <Settings2 className="h-5 w-5" aria-hidden />
+      </span>
+      <div>
+        <h2 className="text-lg font-semibold">{title}</h2>
+        {request && <p className="text-sm text-ink-3">{a("requestDecisionHint")}</p>}
+      </div>
+    </div>
+    {error && <p role="alert" className="mb-4 text-sm text-bad">{error}</p>}
+
+    {preview ? <form onSubmit={save} className="space-y-5">
+      <h3 className="font-semibold">{a("previewTitle")}</h3>
+      <dl className="grid gap-x-6 gap-y-3 rounded-xl bg-surface-2 p-4 text-sm sm:grid-cols-2">
+        <div><dt className="text-ink-3">{a("action")}</dt><dd className="mt-1 font-semibold">{title}</dd></div>
+        {full && <>
+          <div><dt className="text-ink-3">{a("plan")}</dt><dd className="mt-1 font-semibold">{plans.find(plan => plan.id === planId)?.name ?? a("notRecorded")}</dd></div>
+          <div><dt className="text-ink-3">{a("quota")}</dt><dd className="mt-1 font-semibold">{formatNumber(Number(quota))}</dd></div>
+          <div><dt className="text-ink-3">{a("term")}</dt><dd className="mt-1">{a(term)}</dd></div>
+          <div><dt className="text-ink-3">{a("type")}</dt><dd className="mt-1">{a(type)}</dd></div>
+          <div><dt className="text-ink-3">{a(action === "renew" ? "contractStart" : "start")}</dt><dd className="mt-1"><time dateTime={start}>{formatDate(start)}</time></dd></div>
+          {activating && leavePending && !request && <div><dt className="text-ink-3">{a("status")}</dt><dd>{a("awaiting_activation")}</dd></div>}
+        </>}
+        {(full || action === "extend") && <div><dt className="text-ink-3">{a("end")}</dt><dd className="mt-1"><time dateTime={end}>{formatDate(end)}</time></dd></div>}
+      </dl>
+      {field("reason", <textarea className={controlClass} required maxLength={500} rows={2}
+        value={reason} onChange={event => {
+          setReason(event.target.value);
+          // A changed reason changes the request digest, so use a new operation key.
+          setPreview(current => current ? { ...current, key: crypto.randomUUID() } : current);
+        }} />)}
+      {field("password", <input className={controlClass} type="password" autoComplete="current-password"
+        required maxLength={4096} value={password} onChange={event => setPassword(event.target.value)} />)}
+      <div className="flex flex-wrap gap-3">
+        <Button type="submit" disabled={busy || !reason.trim() || !password} loading={busy}>{a("confirm")}</Button>
+        <Button type="button" variant="secondary" disabled={busy} onClick={() => {
+          setPreview(null); setPassword("");
+        }}>{a("cancel")}</Button>
+      </div>
+    </form> : <>
+      {full ? <form className="space-y-4" onSubmit={prepare}>
+        <div className="grid gap-4 sm:grid-cols-2">
+          {field("plan", <select className={controlClass} required disabled={!!request} value={planId}
+            onChange={event => {
+              setPlanId(event.target.value);
+              const selected = plans.find(plan => plan.id === event.target.value);
+              const allowance = selected?.entitlements.max_prints_per_period;
+              if (typeof allowance === "number") setQuota(String(allowance));
+            }}>
+            {plans.filter(plan => plan.isActive || plan.id === planId).map(plan =>
+              <option key={plan.id} value={plan.id}>{plan.name}</option>)}
+          </select>)}
+          {field("quota", <input className={controlClass} required type="number" min={1} max={2147483647} step={1}
+            disabled={!!request && request.requestedMonthlyQuota !== null}
+            value={quota} onChange={event => setQuota(event.target.value)} />)}
+          {showTerm && field("term", <select className={controlClass} value={term} disabled={!!request}
+            onChange={event => changeTerm(event.target.value as Term)}>
+            {(["monthly", "yearly", "custom"] as const).map(v => <option key={v} value={v}>{a(v)}</option>)}
+          </select>)}
+          {showCustomDates && action === "save" && field("start", <input className={controlClass}
+            type="date" required value={start} onChange={event => setStart(event.target.value)} />)}
+          {showCustomDates && field("end", <input className={controlClass} type="date" required value={end}
+            onChange={event => setEnd(event.target.value)} />)}
+        </div>
+
+        {showTerm && !showCustomDates && <div className="flex flex-wrap items-center gap-2 rounded-lg bg-surface-2 p-3 text-sm">
+          <CalendarClock className="h-4 w-4 text-brand" aria-hidden />
+          <span className="text-ink-3">{a("end")}:</span>
+          <time dateTime={end} className="font-semibold">{formatDate(end)}</time>
+        </div>}
+
+        <details className="rounded-lg border border-edge-subtle px-4 py-3">
+          <summary className="cursor-pointer text-sm font-medium text-ink-2">{a("optionalDetails")}</summary>
+          <div className="mt-4 grid gap-4 sm:grid-cols-2">
+            {field("type", <select className={controlClass} value={type} onChange={event => setType(event.target.value)}>
+              {(["free", "paid"] as const).map(v => <option key={v} value={v}>{a(v)}</option>)}
+            </select>)}
+            {field("internalReference", <input className={controlClass} maxLength={200} value={reference}
+              onChange={event => setReference(event.target.value)} />)}
+            {editing && <label className="flex items-center gap-2 text-sm">
+              <input type="checkbox" checked={editDates} onChange={event => setEditDates(event.target.checked)} />
+              {a("editContractDates")}
+            </label>}
+            {action === "save" && (activating || editDates) && term !== "custom" &&
+              field("start", <input className={controlClass} type="date" required value={start} onChange={event => {
+                setStart(event.target.value);
+                setEnd(endFor(event.target.value, term));
+              }} />)}
+            {activating && !request && <label className="flex items-center gap-2 text-sm">
+              <input type="checkbox" checked={leavePending} onChange={event => setLeavePending(event.target.checked)} />
+              {a("leavePending")}
+            </label>}
+          </div>
+        </details>
+        <div className="flex items-center gap-3">
+          <Button type="submit" disabled={!planId || busy}>{a("preview")}</Button>
+        </div>
+      </form> : action === "extend" ? <form onSubmit={prepare} className="space-y-4">
+        {field("end", <input className={controlClass} type="date" required value={end} onChange={event => setEnd(event.target.value)} />)}
+        <Button type="submit">{a("preview")}</Button>
+      </form> : <div className="space-y-3">
+        <p className="text-sm text-ink-3">{a("actionRequiresConfirmation")}</p>
+        <Button type="button" onClick={() => setPreview({
+          body: { action, expectedRevision: subscription?.revision ?? 0 },
+          key: crypto.randomUUID(),
+        })}>{a("preview")}</Button>
+      </div>}
+      {!!extraActions.length && <details className="mt-5 rounded-lg border border-edge-subtle px-4 py-3">
+        <summary className="cursor-pointer text-sm font-medium text-ink-2">{a("manageExtraActions")}</summary>
+        <div className="mt-3 flex flex-wrap gap-2">
+          {extraActions.map(v => <Button key={v} type="button" variant="secondary"
+            onClick={() => selectAction(v)}>{v === "save" ? a("updatePlan") : a(v)}</Button>)}
+        </div>
+      </details>}
+    </>}
+  </Card>;
 }
