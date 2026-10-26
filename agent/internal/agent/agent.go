@@ -983,17 +983,40 @@ func (a *Agent) RegisterManual(info printer.DeviceInfo) error {
 			return fmt.Errorf("printer ID %q already exists", info.ID)
 		}
 	}
-	if info.ID == "" {
-		info.ID = printer.StableIDForDevice(info)
-	}
-	if _, err := printer.RegisterManual(a.registryPath, info); err != nil {
+	rows, err := printer.RegisterManual(a.registryPath, info)
+	if err != nil {
 		return err
 	}
 	if !info.Enabled {
 		return nil // successful durable registration, with no execution authority
 	}
+	// The registry owns canonical IDs and retained disablement, not discovery hints.
+	binding, err := config.PrinterBindingDigest(printer.SharingConfigForDevice(info))
+	if err != nil {
+		return err
+	}
+	var selected *printer.DeviceInfo
+	for i := range rows {
+		storedBinding, bindingErr := config.PrinterBindingDigest(printer.SharingConfigForDevice(rows[i]))
+		if bindingErr == nil && storedBinding == binding {
+			if selected != nil {
+				return fmt.Errorf("manual printer endpoint has ambiguous registrations")
+			}
+			selected = &rows[i]
+		}
+	}
+	if selected == nil {
+		return fmt.Errorf("manual printer endpoint was not registered")
+	}
+	info = *selected
+	if !info.Enabled {
+		return nil
+	}
+	if a.isGatewayOwned(info.ID) {
+		return fmt.Errorf("printer ID %q is managed by the Gateway", info.ID)
+	}
 	pc := printerConfigFromDeviceInfo(info)
-	pc, err := a.resolveLocalPrinter(pc)
+	pc, err = a.resolveLocalPrinter(pc)
 	if err != nil {
 		return err
 	}
