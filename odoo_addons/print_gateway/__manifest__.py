@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 {
     'name': 'Yaseir Print Gateway',
-    'version': '19.0.2.31.0',
+    'version': '19.0.2.32.0',
     'summary': 'Connect Odoo to Yaseir printers with company and branch routing',
     'description': """
 Connect Odoo to Yaseir once per company.

@@ -81,6 +81,24 @@ class TestBranchRuntimeBinding(TransactionCase):
             allowed_company_ids=[self.branch.id],
         ).env
 
+    def test_branch_only_admin_navigation_respects_root_read_without_root_write(self):
+        """Odoo 19 branch admins may reach scoped menus, never mutate root."""
+        branch_env = self._branch_admin_env()
+        root_config = self.config.with_env(branch_env)
+        root_config.check_access("read")
+        for method, expected_model in (
+            ("action_open_runtime_assignments", "print_gateway.runtime_agent_assignment"),
+            ("action_open_destinations", "print_gateway.binding"),
+            ("action_open_print_rules", "print_gateway.policy"),
+        ):
+            with self.subTest(method=method):
+                action = getattr(root_config, method)()
+                self.assertEqual(action["res_model"], expected_model)
+                self.assertEqual(action["domain"], [("company_id", "=", self.company.id)])
+        # Navigation must not quietly grant company-wide edit rights.
+        with self.assertRaises((AccessError, ValidationError)), self.env.cr.savepoint():
+            root_config.write({"runtime_agent_id": "should-not-change"})
+
     def test_v4_setup_context_contains_only_activated_scope_and_safe_metadata(self):
         from odoo.addons.print_gateway.controllers.runtime_printers import PrintGatewayRuntimePrinterController
         controller = PrintGatewayRuntimePrinterController()
