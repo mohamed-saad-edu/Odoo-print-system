@@ -1,40 +1,21 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import { roleLabel } from "../src/lib/roles";
+const roles = ["owner", "admin", "operator", "viewer", "integration_admin", "billing_admin"];
 
-const ROLE_KEYS = [
-  "team.role.owner",
-  "v4.team.fullAccess",
-  "team.role.operator",
-  "team.role.viewer",
-  "team.role.integrationAdmin",
-  "team.role.billingAdmin",
-] as const;
-
-describe("team role labels follow the active language", () => {
-  it("maps every role through the shared translator helper", () => {
-    const helper = readFileSync("src/lib/roles.ts", "utf8");
-    const en = readFileSync("src/i18n/messages/en.ts", "utf8") + readFileSync("src/i18n/messages/v4-onboarding.ts", "utf8");
-    const ar = readFileSync("src/i18n/messages/ar.ts", "utf8") + readFileSync("src/i18n/messages/v4-onboarding.ts", "utf8");
-
-    for (const key of ROLE_KEYS) {
-      expect(helper).toContain(`t("${key}")`);
-      expect(en).toContain(`"${key}":`);
-      expect(ar).toContain(`"${key}":`);
-    }
-    // Unknown future roles must also respect the selected locale.
-    expect(helper).toMatch(/default:\s*\n\s*return t\("common.unknown"\)/);
+describe("one translated operational Full Access label", () => {
+  it.each(roles)("maps legacy %s membership to the same Full Access wording", role => {
+    expect(roleLabel(role, key => key)).toBe("v4.team.fullAccess");
   });
-
-  it("team table and settings both use the shared helper with the translator", () => {
+  it("unknown role never receives a Full Access label", () => {
+    expect(roleLabel("unexpected", key => key)).toBe("common.unknown");
+  });
+  it("team lists colleagues without selectable roles; settings use the same roleLabel", () => {
     const page = readFileSync("src/app/team/page.tsx", "utf8");
     const settings = readFileSync("src/app/settings/page.tsx", "utf8");
-    expect(page).toContain('from "../../lib/roles"');
-    expect(page).toContain("roleLabel(value, t)");
-    expect(page).toContain("roleLabel(member.role, t)");
-    expect(page).toContain("roleLabel(invitation.role, t)");
-    expect(page).not.toMatch(/function roleLabel\(/);
-    // Settings must not render integration_admin/billing_admin as Unknown.
+    expect(page).toContain('t("v4.team.fullAccess")');
+    expect(page).not.toContain("<Select");
+    expect(page).not.toContain("/api/team/invitations");
     expect(settings).toContain("roleLabel(role, t)");
-    expect(settings).not.toContain('t("common.unknown")');
   });
 });

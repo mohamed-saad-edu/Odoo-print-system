@@ -14,7 +14,8 @@ def test_migration_inventory_matches_current_journal():
     # journal and the SQL files, including new forward-only migrations.
     tags=[entry['tag'] for entry in journal]
     assert tags==[path.stem for path in sql]
-    assert len(journal)==len(sql)==96
+    assert len(journal)==len(sql)==97
+    assert journal[96]['tag']=='0096_retire_limited_workspace_roles'
     assert journal[84]['tag']=='0084_printer_cloud_sharing'
     assert journal[85]['tag']=='0085_odoo_installation_idempotency'
     assert journal[86]['tag']=='0086_printer_identity_and_api_key_deletion'
@@ -39,7 +40,7 @@ def test_migration_inventory_matches_current_journal():
     assert journal[93]['tag']=='0093_password_only_authentication'
     assert journal[94]['tag']=='0094_printer_operational_verification'
     assert '| 0094 | 1 |' in read('MIGRATION.md')
-    assert '**Total**: 96 forward-only SQL migrations (0000–0095)' in read('MIGRATION.md')
+    assert '**Total**: 97 forward-only SQL migrations (0000–0096)' in read('MIGRATION.md')
     sharing=read('drizzle/0084_printer_cloud_sharing.sql')
     assert '"shared_with_gateway" boolean NOT NULL DEFAULT true' in sharing
     assert '"shared_with_gateway_version" text' in sharing

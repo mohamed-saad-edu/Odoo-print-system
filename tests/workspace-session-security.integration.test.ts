@@ -115,7 +115,7 @@ describe.skipIf(!hasTestDatabase)("workspace persisted activity and fresh-passwo
     expect(await verifyWorkspaceToken(current.access)).not.toBeNull();
     await expect(db.transaction(async tx => { await requireActiveTenantInTransaction(tx, "a"); await requireManagerActorInTransaction(tx, current.claims, "tenant.read"); })).resolves.toBeUndefined();
     await expect(db.transaction(async tx => { await requireActiveTenantInTransaction(tx, "a"); await requireManagerActorInTransaction(tx, current.claims, "integrations.manage"); })).rejects.toMatchObject({ code: "WORKSPACE_REAUTHENTICATION_REQUIRED" });
-    await expect(db.transaction(tx => requireTeamActorInTransaction(tx, current.claims))).rejects.toMatchObject({ code: "WORKSPACE_REAUTHENTICATION_REQUIRED" });
+    await expect(db.transaction(tx => requireTeamActorInTransaction(tx, current.claims))).rejects.toMatchObject({ code: "WORKSPACE_AUTHORITY_CHANGED" });
   });
 
   it("fresh password reauth rotates tokens and updates proof without extending absolute expiry", async () => {

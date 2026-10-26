@@ -344,10 +344,11 @@ describe("production hardening contracts", () => {
     expect(enrollment).toContain("}, tx);");
 
     const onboarding = read("src/app/api/onboarding/route.ts");
-    expect(onboarding).toContain("await tx.update(tenants)");
-    expect(onboarding).toContain("FOR UPDATE");
-    expect(onboarding).toContain("ensurePendingManualSubscription(tx, claims.tenantId, plan.id)");
-    expect(onboarding).toContain("MANUAL_ACTIVATION_REQUIRED");
+    const privileged = read("src/app/api/platform/tenants/[id]/invitations/route.ts");
+    expect(onboarding).toContain("PLATFORM_OWNER_REQUIRED");
+    expect(onboarding).not.toContain("ensurePendingManualSubscription");
+    expect(privileged).toContain("FOR UPDATE");
+    expect(privileged).toContain("requirePlatformActorInTransaction");
     const manual=read("src/lib/manual-subscriptions.ts");
     expect(manual).toContain("requirePlatformActorInTransaction(tx,actor)");
     expect(manual).toContain("SUBSCRIPTION_REVISION_CONFLICT");

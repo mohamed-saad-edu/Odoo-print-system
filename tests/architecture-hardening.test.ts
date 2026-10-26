@@ -35,14 +35,12 @@ describe("architecture hardening", () => {
     expect(pkg.scripts?.build).toBe("next build --webpack");
   });
 
-  it("uses the workspace-aware auth contract for browser onboarding", () => {
-    const src = readFileSync("src/app/api/onboarding/route.ts", "utf8");
-    const postStart = src.indexOf("export async function POST(req: Request)");
-    expect(postStart).toBeGreaterThanOrEqual(0);
-    const post = src.slice(postStart);
-    expect(src).toContain("validateWorkspaceManager");
-    expect(post).toContain("const claims = await validateWorkspaceManager(req);");
-    expect(post).not.toContain("const claims = await validateManager(req);");
+  it("separates workspace onboarding from Platform Owner subscription authority", () => {
+    const old = readFileSync("src/app/api/onboarding/route.ts", "utf8");
+    const platform = readFileSync("src/app/api/platform/subscriptions/route.ts", "utf8");
+    expect(old).toContain("PLATFORM_OWNER_REQUIRED");
+    expect(old).not.toContain("ensurePendingManualSubscription");
+    expect(platform).toContain("requirePlatformOwner");
   });
 
   it("enforces terminal retired lifecycle", () => {
@@ -254,17 +252,18 @@ describe("ambiguous Odoo submission recovery", () => {
 
 describe("ambiguous email side effects", () => {
   it("keeps invitation state durable when the provider response is ambiguous", () => {
-    const route = readFileSync("src/app/api/team/invitations/route.ts", "utf8");
+    const route = readFileSync("src/app/api/platform/tenants/[id]/invitations/route.ts", "utf8");
     // The sendTransactionalEmail() call is now formatted across several lines
     // and its copy is localized, so slice on markers that survive formatting:
     // everything from the delivery attempt up to the final success response.
     const start = route.indexOf('await sendTransactionalEmail({');
-    const end = route.indexOf('return NextResponse.json({ ok: true, id });', start);
+    const end = route.indexOf('return NextResponse.json({ ok: true, id: inviteId }', start);
     expect(start).toBeGreaterThan(-1);
     expect(end).toBeGreaterThan(start);
     const block = route.slice(start, end);
-    expect(block).toContain("Invitation delivery is temporarily unavailable");
+    expect(block).toContain("Invitation created; delivery unconfirmed");
     expect(block).not.toContain("set({ revokedAt:");
-    expect(block).toContain("Never revoke the durable invitation");
+    expect(block).toContain("invitation_delivery_ambiguous");
+    expect(block).not.toContain("revokedAt");
   });
 });

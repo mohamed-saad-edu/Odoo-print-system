@@ -24,24 +24,18 @@ describe("production TypeScript safety contracts", () => {
   });
   it("awaits the database-backed manager token verifier on server pages", () => {
     const managerProtectedPages = [
-      "app/billing/page.tsx",
       "app/release-readiness/page.tsx",
     ];
     for (const relative of managerProtectedPages) {
       const source = readFileSync(resolve(process.cwd(), "src", relative), "utf8");
-      if (relative === "app/billing/page.tsx") {
-        expect(source).toContain("await verifyWorkspaceTokenFromCookieValues(");
-        expect(source).not.toContain("validateManagerClaims(token ? verifyManagerToken(token) : null)");
-      } else {
-        // Workspace auth: customer sessions with the right permission reach
-        // these pages like they reach the dashboard — still through the
-        // awaited, database-backed verifier (never sync/local validation).
-        expect(source).toContain("await verifyWorkspaceTokenFromCookieValues(");
-        expect(source).toContain('hasManagerPermission(claims, "agents.read")');
-        expect(source).not.toContain("validateManagerClaims(token ? verifyManagerToken(token) : null)");
-      }
+      // Restricted operational pages still verify the workspace session at the server.
+      expect(source).toContain("await verifyWorkspaceTokenFromCookieValues(");
+      expect(source).toContain('hasManagerPermission(claims, "agents.read")');
+      expect(source).not.toContain("validateManagerClaims(token ? verifyManagerToken(token) : null)");
     }
 
+    const billing = readFileSync(resolve(process.cwd(), "src/app/billing/page.tsx"), "utf8");
+    expect(billing).toContain('redirect("/dashboard")');
     const dashboard = readFileSync(resolve(process.cwd(), "src/app/dashboard/page.tsx"), "utf8");
     expect(dashboard).toContain("verifyWorkspaceTokenFromCookieValues(");
     expect(dashboard).toContain("await verifyWorkspaceTokenFromCookieValues(");

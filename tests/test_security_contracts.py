@@ -125,20 +125,17 @@ def test_platform_owner_routes_distinguish_invalid_auth_from_platform_dependency
             assert "Platform authentication temporarily unavailable" in source, route
             assert "status: 503" in source, route
 
-def test_billing_page_surfaces_print_usage_lookup_failures():
-    source = read("src/app/billing/page.tsx")
-    assert "billing.monthly_usage_unavailable" in source
-    assert re.search(r"let usage: .*\| null = null;", source)
-    failure = re.search(r"catch\s*\{(.*?)\}\s*\n\s*const date", source, re.S)
-    assert failure
-    assert "billing.monthly_usage_unavailable" in failure.group(1)
-    assert not re.search(r"usage\s*=", failure.group(1))
-    # Missing usage remains unavailable, never a fabricated zero. A successful
-    # read alone renders numbers; the failure branch resolves localized copy.
-    assert "{usage ? <div" in source
-    assert "formatNumber(usage.used,locale)" in source
-    assert 't(sub ? "billing.usageUnavailableBody" : "v4.subscription.noAllowance")' in source
-    assert not re.search(r"usage\?\.(used|remaining)\s*\?\?\s*0", source)
+def test_workspace_billing_page_never_discloses_commercial_contract_or_invents_quota():
+    page = read("src/app/billing/page.tsx")
+    assert 'redirect("/dashboard")' in page
+    assert '/api/billing' not in page
+    assert 'usage' not in page.lower()
+    status = read("src/app/api/billing/status/route.ts")
+    assert 'customerSubscriptionState(subscription' in status
+    assert 'monthlyQuota' not in status and 'planName' not in status
+    usage = read("src/app/api/billing/usage/route.ts")
+    assert 'requireManagerPermission(manager, "billing.read")' in usage
+
 
 def test_health_metrics_do_not_turn_database_lookup_failures_into_zero_values():
     source = read("src/lib/agent-health.ts")
@@ -515,17 +512,28 @@ def test_tenant_selection_issues_customer_kind_session():
     assert "issueSessionPairInTransaction" in source
 
 
-def test_team_member_role_change_and_removal_revoke_refresh_families():
-    source = read("src/app/api/team/members/route.ts")
-    assert "revokeUserTenantRefreshFamiliesInTransaction" in source
-    assert '"role_changed"' in source
-    assert '"member_removed"' in source
+def test_workspace_team_mutations_refused_and_platform_deletion_revokes_families():
+    ordinary = read("src/app/api/team/members/route.ts")
+    assert 'PLATFORM_OWNER_REQUIRED' in ordinary
+    assert 'export async function PATCH(req: Request) { return denyMemberMutation(req); }' in ordinary
+    assert 'export async function DELETE(req: Request) { return denyMemberMutation(req); }' in ordinary
+    assert 'if (!claims?.userId)' in ordinary and 'status: 401' in ordinary
+    platform = read("src/app/api/platform/tenants/[id]/members/route.ts")
+    assert 'requirePlatformOwner' in platform
+    assert 'requirePlatformActorInTransaction' in platform
+    assert 'revokeUserTenantRefreshFamiliesInTransaction' in platform
+    assert 'platform_member_removed' in platform
 
 
-def test_ownership_transfer_revokes_old_owner_refresh_sessions():
-    source = read("src/app/api/team/ownership/route.ts")
-    assert "revokeUserTenantRefreshFamiliesInTransaction" in source
-    assert "ownership_transferred" in source
+def test_platform_only_ownership_transfer_revokes_both_session_families():
+    ordinary = read("src/app/api/team/ownership/route.ts")
+    assert 'PLATFORM_OWNER_REQUIRED' in ordinary
+    platform = read("src/app/api/platform/tenants/[id]/ownership/route.ts")
+    assert 'requirePlatformOwner' in platform
+    assert 'requirePlatformActorInTransaction' in platform
+    assert 'revokeUserTenantRefreshFamiliesInTransaction' in platform
+    assert platform.count('revokeUserTenantRefreshFamiliesInTransaction(') >= 2
+    assert 'ownership_transferred' in platform
 
 
 def test_legacy_session_storage_is_restricted_to_compatibility_paths():

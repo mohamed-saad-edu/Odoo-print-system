@@ -138,34 +138,30 @@ test("platform probe body completing after unmount cannot authenticate or schedu
   assert.equal(harness.timers.size, 0);
 });
 
-test("team generation fence spans both response bodies and preserves the newer snapshot", async () => {
+test("retired Team page rejects stale late responses after a newer mount", async () => {
   const oldMembers = deferred();
-  let membersRequest = 0, invitationsRequest = 0;
-  const freshMembers = [{ userId: "new-user", email: "new@example.test", role: "viewer" }];
-  const freshInvitations = [{ id: "new-invitation", email: "new-invite@example.test" }];
+  let count = 0;
+  const freshMembers = [{ userId: "new-user", email: "new@example.test" }];
   const harness = component("src/app/team/page.tsx", async url => {
-    if (url.endsWith("/me")) return { ok: true, json: async () => ({ userId: "actor", permissions: ["users.read"] }) };
-    if (url.includes("/members?")) {
-      membersRequest += 1;
-      return { ok: true, json: () => membersRequest === 1 ? oldMembers.promise : Promise.resolve({ members: freshMembers, total: 1 }) };
-    }
-    invitationsRequest += 1;
-    const stale = invitationsRequest === 1;
-    return { ok: true, json: async () => ({ invitations: stale ? [{ id: "old-invitation" }] : freshInvitations, total: 1 }) };
+    assert.match(url, /\/api\/team\/members\?/);
+    count += 1;
+    return { ok: true, json: () => count === 1 ? oldMembers.promise :
+      Promise.resolve({ members: freshMembers, hasMore: false }) };
   });
-  const load = harness.callbacks[0];
-  const old = load(0, 0);
+  const obsoleteCleanup = harness.effects[0]();
   await flush();
-  await load(0, 0);
+  obsoleteCleanup();
+  harness.render();
+  const currentCleanup = harness.effects.at(-1)();
+  await flush();
   assert.deepEqual(harness.states[0], freshMembers);
-  assert.deepEqual(harness.states[1], freshInvitations);
-  oldMembers.resolve({ members: [{ userId: "old-user" }], total: 1 });
-  await old;
+  oldMembers.resolve({ members: [{ userId: "stale-user" }], hasMore: false });
+  await flush();
   assert.deepEqual(harness.states[0], freshMembers);
-  assert.deepEqual(harness.states[1], freshInvitations);
+  currentCleanup();
 });
 
-test("unmounted team admission cannot redirect a newer page to login", async () => {
+test("unmounted team membership admission cannot redirect an unrelated page", async () => {
   const session = deferred();
   const harness = component("src/app/team/page.tsx", async () => { throw Error("stale admission must not fetch"); }, () => session.promise);
   const cleanup = harness.effects[0]();
@@ -174,7 +170,7 @@ test("unmounted team admission cannot redirect a newer page to login", async () 
   session.resolve({ authenticated: false });
   await flush();
   assert.deepEqual(harness.redirects, []);
-  assert.equal(harness.states[8], false, "stale load does not mark the current page loaded");
+  assert.equal(harness.states[3], true, "stale load cannot mark a newly-mounted page as loaded");
 });
 
 test("email proof follows the server password-setup step while preserving invitation and plan context", async () => {

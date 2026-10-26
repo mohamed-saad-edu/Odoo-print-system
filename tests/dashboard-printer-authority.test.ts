@@ -61,11 +61,11 @@ describe("dashboard printer action authority", () => {
     expect(send!.disabled).toBe(true);
     expect(printer.status).toBe("online");
   });
-  it("keeps read-only printer details while hiding both test-print controls", async () => {
+  it("legacy viewer has operational printer details and test-print controls", async () => {
     const html = await render("viewer");
     expect(html).toContain("Canon");
     expect(html).toContain("Technical details");
-    expect(html).not.toContain(">Send test page<");
+    expect(html).toContain(">Send test page<");
     expect(html).not.toContain(">Test page<");
   });
 
@@ -74,7 +74,7 @@ describe("dashboard printer action authority", () => {
     expect(html).toContain(">Send test page<");
   });
 
-  it.each([["viewer", false], ["operator", true]] as const)("enforces %s authority after switching to the real table view", async (role, allowed) => {
+  it.each([["viewer", true], ["operator", true]] as const)("enforces %s authority after switching to the real table view", async (role, allowed) => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => new Response(JSON.stringify(
       String(input).includes("/api/auth/me") ? { exp: Math.floor(Date.now() / 1000) + 3600 } : {
@@ -109,14 +109,15 @@ describe("dashboard printer action authority", () => {
     }
   });
 
-  it.each(["viewer", "operator", "integration_admin"] as const)("hides Agent registration and re-enable from %s", async (role) => {
-    const html = await render(role, "disabled");
-    expect(html).toContain("Reception");
-    expect(html).not.toContain("Register an agent");
-    expect(html).not.toContain("Re-enable agent…");
-    expect(html).not.toContain("Actions for agent Reception");
-  });
-
+  it.each(["viewer", "operator", "integration_admin", "billing_admin"] as const)(
+    "legacy %s now has all Agent operational and lifecycle controls", async (role) => {
+      const html = await render(role, "disabled");
+      expect(html).toContain("Reception");
+      expect(html).toContain("Register an agent");
+      expect(html).toContain("Re-enable agent…");
+      expect(html).toContain("Actions for agent Reception");
+    });
+  
   it.each(["owner", "admin"] as const)("retains Agent registration and re-enable for %s", async (role) => {
     const html = await render(role, "disabled");
     expect(html).toContain("Register an agent");
@@ -222,101 +223,27 @@ async function refreshDashboard(host: HTMLDivElement) {
   await act(async () => { button!.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
 }
 
-describe("dashboard billing read authority", () => {
-  it.each(["viewer", "operator", "integration_admin"] as const)("does not poll forbidden billing or show an outage for %s", async (role) => {
-    await withMountedDashboard(role, async () => new Response(JSON.stringify({ error: "Forbidden" }), { status: 403 }), async (host, fetchMock) => {
-      expect(host.textContent).toContain("Printers available");
+describe("workspace dashboard never requests privileged billing usage", () => {
+  it.each(["owner","admin","operator","viewer","integration_admin","billing_admin"] as const)(
+    "does not poll quota or reveal a commercial plan to %s", async role => {
+      await withMountedDashboard(role, async () => usageResponse(), async (host, fetchMock) => {
+        await refreshDashboard(host);
+        expect(usageRequests(fetchMock)).toHaveLength(0);
+        expect(host.textContent).not.toContain("Audit subscription");
+        expect(host.textContent).not.toContain("Jobs remaining this month");
+        expect(host.textContent).not.toContain(usageWarning);
+      });
+    });
+  it("old and new workspace sessions cannot turn billing visibility back on", async () => {
+    await withMountedDashboard("admin", async () => usageResponse(), async (host, fetchMock, rerender) => {
+      await rerender("owner");
+      await rerender("viewer", "another-workspace:another-user:viewer");
       await refreshDashboard(host);
       expect(usageRequests(fetchMock)).toHaveLength(0);
-      expect(host.textContent).not.toContain(usageWarning);
-      expect(host.textContent).not.toContain("Jobs remaining this month");
-    });
-  });
-
-  it.each(["owner", "admin"] as const)("does not report a billing outage or call usage during onboarding for %s", async (role) => {
-    await withMountedDashboard(role, async () => { throw new Error("Quota request must not happen"); }, async (host, fetchMock) => {
-      expect(fetchMock.mock.calls.filter(([url]) => url === "/api/billing/status")).toHaveLength(1);
-      expect(usageRequests(fetchMock)).toHaveLength(0);
-      expect(host.textContent).not.toContain(usageWarning);
-      expect(host.textContent).not.toContain("Jobs remaining this month");
-      await refreshDashboard(host);
-      expect(usageRequests(fetchMock)).toHaveLength(0);
-    }, false);
-  });
-
-  it.each(["owner", "admin"] as const)("retains fetched print usage for %s", async (role) => {
-    await withMountedDashboard(role, async () => usageResponse(), async (host, fetchMock) => {
-      expect(usageRequests(fetchMock).length).toBeGreaterThan(0);
-      expect(host.textContent).toContain("Audit subscription");
-      expect(host.textContent).toContain("Jobs remaining this month");
-      expect(host.textContent).not.toContain(usageWarning);
-    });
-  });
-
-  it.each([403, 503])("preserves a permitted actor's %s failure and real Retry recovery", async (status) => {
-    const fetchUsage = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ error: "Unavailable" }), { status }))
-      .mockImplementation(async () => usageResponse());
-    await withMountedDashboard("admin", fetchUsage, async (host, fetchMock) => {
-      expect(host.textContent).toContain(usageWarning);
-      const retry = [...host.querySelectorAll("button")].find((button) => button.textContent?.trim() === "Retry");
-      expect(retry).toBeDefined();
-      const before = usageRequests(fetchMock).length;
-      await act(async () => { retry!.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
-      expect(usageRequests(fetchMock)).toHaveLength(before + 1);
-      expect(host.textContent).toContain("Audit subscription");
-      expect(host.textContent).not.toContain(usageWarning);
-    });
-  });
-
-  it.each(["usage", "error"] as const)("clears prior billing %s when read authority is revoked", async (mode) => {
-    await withMountedDashboard("admin", async () => mode === "usage" ? usageResponse() : new Response("unavailable", { status: 503 }), async (host, fetchMock, rerender) => {
-      expect(host.textContent).toContain(mode === "usage" ? "Audit subscription" : usageWarning);
-      const before = usageRequests(fetchMock).length;
-      await rerender("viewer");
-      await refreshDashboard(host);
-      expect(usageRequests(fetchMock)).toHaveLength(before);
       expect(host.textContent).not.toContain("Audit subscription");
-      expect(host.textContent).not.toContain(usageWarning);
-      expect(host.textContent).not.toContain("Jobs remaining this month");
     });
   });
-
-  it("aborts and ignores an old actor's response after permission loss and restoration", async () => {
-    let resolveOld!: (response: Response) => void;
-    let oldSignal: AbortSignal | null | undefined;
-    const oldResponse = new Promise<Response>((resolve) => { resolveOld = resolve; });
-    const fetchUsage = vi.fn().mockImplementationOnce((init?: RequestInit) => {
-      oldSignal = init?.signal;
-      return oldResponse;
-    }).mockImplementation(async () => new Response(JSON.stringify({ ...billingUsage, plan: { id: "new", name: "Current subscription" } }), { status: 200 }));
-    await withMountedDashboard("admin", fetchUsage, async (host, fetchMock, rerender) => {
-      expect(usageRequests(fetchMock)).toHaveLength(1);
-      await rerender("viewer");
-      expect(oldSignal?.aborted).toBe(true);
-      await rerender("admin");
-      expect(host.textContent).toContain("Current subscription");
-      await act(async () => { resolveOld(usageResponse()); });
-      expect(host.textContent).toContain("Current subscription");
-      expect(host.textContent).not.toContain("Audit subscription");
-      expect(host.textContent).not.toContain(usageWarning);
-    });
-  });
-
-  it("clears another actor's usage immediately while the current actor's fetch is pending", async () => {
-    let resolveCurrent!: (response: Response) => void;
-    const currentResponse = new Promise<Response>((resolve) => { resolveCurrent = resolve; });
-    const fetchUsage = vi.fn().mockImplementationOnce(async () => usageResponse()).mockImplementation(() => currentResponse);
-    await withMountedDashboard("admin", fetchUsage, async (host, _fetchMock, rerender) => {
-      expect(host.textContent).toContain("Audit subscription");
-      await rerender("admin", "other-workspace:other-user:admin");
-      expect(host.textContent).not.toContain("Audit subscription");
-      expect(host.textContent).not.toContain("Jobs remaining this month");
-      await act(async () => { resolveCurrent(new Response(JSON.stringify({ ...billingUsage, plan: { id: "new", name: "Current subscription" } }), { status: 200 })); });
-      expect(host.textContent).toContain("Current subscription");
-    });
-  });
-
-  it("projects the exact backend billing.read permission at the only production renderer", () => {
+  it("projects the server-side billing.read guard even though no workspace role grants it", () => {
     const page = readFileSync("src/app/dashboard/page.tsx", "utf8");
     expect(page).toContain('canReadBillingUsage={hasManagerPermission(claims, "billing.read")}');
     const route = readFileSync("src/app/api/billing/usage/route.ts", "utf8");

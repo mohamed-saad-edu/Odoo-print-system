@@ -34,7 +34,7 @@ async function currentSession() {
 }
 async function invitation() {
   const token = randomBytes(32).toString("base64url");
-  await pool().query("INSERT INTO tenant_invitations(id,tenant_id,inviter_user_id,email,role,token_hash,expires_at) VALUES ('invitation','invited','inviter','invitee@example.test','viewer',$1,clock_timestamp()+interval '1 hour')", [await hashToken(token)]);
+  await pool().query("INSERT INTO tenant_invitations(id,tenant_id,inviter_user_id,email,role,token_hash,expires_at) VALUES ('invitation','invited','inviter','invitee@example.test','admin',$1,clock_timestamp()+interval '1 hour')", [await hashToken(token)]);
   return token;
 }
 async function waitForBlockedBy(pid: number) {
@@ -65,7 +65,7 @@ describe.skipIf(!hasTestDatabase)("independent invitation session-authority revi
   });
   afterAll(closePool);
 
-  it("accepting a viewer invitation cannot refresh password authority or extend the original lifetime", async () => {
+  it("accepting a Full Access invitation cannot refresh password authority or extend the original lifetime", async () => {
     const { access: originalAccess, claims: original } = await currentSession();
     await pool().query("UPDATE workspace_session_security SET created_at=created_at-interval '10 minutes',password_verified_at=password_verified_at-interval '6 minutes',expires_at=clock_timestamp()+interval '2 hours' WHERE family_id=$1", [original.familyId]);
     const before = (await pool().query("SELECT created_at,password_verified_at,expires_at FROM workspace_session_security WHERE family_id=$1", [original.familyId])).rows[0];
@@ -73,12 +73,12 @@ describe.skipIf(!hasTestDatabase)("independent invitation session-authority revi
     expect(initiallyDenied.status).toBe(403);
     expect(await initiallyDenied.json()).toMatchObject({ code: "WORKSPACE_REAUTHENTICATION_REQUIRED" });
     const token = randomBytes(32).toString("base64url");
-    await pool().query("INSERT INTO tenant_invitations(id,tenant_id,inviter_user_id,email,role,token_hash,expires_at) VALUES ('invitation','invited','inviter','invitee@example.test','viewer',$1,clock_timestamp()+interval '1 hour')", [await hashToken(token)]);
+    await pool().query("INSERT INTO tenant_invitations(id,tenant_id,inviter_user_id,email,role,token_hash,expires_at) VALUES ('invitation','invited','inviter','invitee@example.test','admin',$1,clock_timestamp()+interval '1 hour')", [await hashToken(token)]);
     const accepted = await acceptInvitation(request("/api/team/invitations/accept", originalAccess, { token }));
     expect(accepted.status).toBe(200);
     expect(await accepted.json()).toMatchObject({ sessionEstablished: true, tenantId: "invited" });
     const invitedAccess = cookie(accepted), invited = (await verifyWorkspaceToken(invitedAccess))!;
-    expect(invited).toMatchObject({ tenantId: "invited", role: "viewer" });
+    expect(invited).toMatchObject({ tenantId: "invited", role: "admin" });
     const after = (await pool().query("SELECT created_at,password_verified_at,expires_at FROM workspace_session_security WHERE family_id=$1", [invited.familyId])).rows[0];
     expect.soft(after).toEqual(before);
     const switched = await selectTenant(request("/api/auth/select-tenant", invitedAccess, { tenantId: "source" }));

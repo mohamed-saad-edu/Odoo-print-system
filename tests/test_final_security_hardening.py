@@ -568,16 +568,19 @@ def test_odoo_gateway_status_reconciliation_cannot_downgrade_terminal_state():
 
 
 def test_team_invitation_email_ambiguity_does_not_revoke_durable_token():
-    route = read("src/app/api/team/invitations/route.ts")
+    route = read("src/app/api/platform/tenants/[id]/invitations/route.ts")
     # The email subject is keyed (i18n contract); anchor the delivery block
     # on the send call itself rather than on the English subject.
     block_start = route.index("await sendTransactionalEmail({")
-    block_end = route.index('return NextResponse.json({ ok: true, id });', block_start)
+    block_end = route.index('return NextResponse.json({ ok: true, id: inviteId }', block_start)
     block = route[block_start:block_end]
     assert "const revoked = await db.transaction" not in block
     assert 't("mail.invite.subject")' in block
     assert '"INVITATION_DELIVERY_UNAVAILABLE"' in block
-    assert "Never revoke the durable invitation" in block
+    assert 'requirePlatformOwner' in route
+    assert 'requirePlatformActorInTransaction' in route
+    assert 'invitation_delivery_ambiguous' in block
+    assert 'revoke' not in block
 
 
 def test_agent_terminal_physical_result_is_fenced_when_sqlite_terminalization_fails():

@@ -1,100 +1,101 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { PgDialect } from "drizzle-orm/pg-core";
-import { credentialVersionFor } from "../src/lib/session-credentials";
 
-const state = vi.hoisted(() => ({ role: "owner", callerRole: "owner", live: true, lifecycle: "active",
-  statements: [] as string[], inserts: 0, emails: 0 }));
+const state = vi.hoisted(() => ({
+  role: "owner", live: true, lifecycle: "active", duplicate: false, memberExists: false,
+  insertions: [] as Record<string, unknown>[], proofChecks: 0, emailSends: 0, statements: [] as string[],
+}));
 const dialect = new PgDialect();
-const tx = {
-  execute: async (query: Parameters<typeof dialect.sqlToQuery>[0]) => {
-    const statement = dialect.sqlToQuery(query).sql;
-    state.statements.push(statement);
-    if (statement.includes("FROM tenants")) return { rows: [{ id: "workspace", lifecycle: state.lifecycle }] };
-    if (statement.includes("FROM refresh_tokens")) return { rows: state.live ? [{ id: "live-session" }] : [] };
-    if (statement.includes("FROM workspace_session_security")) return { rows: state.live ? [{
-      familyId: "f".repeat(32), kind: "manager", tenantId: "workspace", userId: "actor",
-      credentialVersion: credentialVersionFor("actor", "verified-fixture-verifier"),
-      passwordHash: "verified-fixture-verifier", verified: true, createdAtMs: 1000, passwordVerifiedAtMs: 1000,
-      lastSeenAtMs: 1000, expiresAtMs: 1000000, nowMs: 2000,
-    }] : [] };
-    if (statement.includes("UPDATE workspace_session_security")) return { rows: [{ now_ms: 2000 }] };
-    return { rows: [] };
+vi.mock("../src/lib/manager-auth", () => ({
+  validateWorkspaceManager: async () => ({ userId: "regular", tenantId: "tenant", role: state.role }),
+}));
+vi.mock("../src/lib/platform-auth", () => ({
+  requirePlatformOwner: async () => {
+    if (!state.live) throw Object.assign(new Error("Unauthenticated"), { status: 401 });
+    return { userId: "platform-admin", email: "admin@example.invalid" };
   },
-  query: { tenantUsers: { findFirst: async () => ({ role: state.role }) },
-    tenantInvitations: { findFirst: async () => undefined } },
-  insert: () => ({ values: async () => { state.inserts++; } }),
-};
-vi.mock("../src/db", () => ({ db: { transaction: async (fn: (tx: unknown) => unknown) => fn(tx) } }));
-vi.mock("../src/lib/manager-auth", () => ({ validateWorkspaceManager: async () => ({
-  tenantId: "workspace", userId: "actor", role: state.callerRole, kind: "manager", sub: "manager",
-  familyId: "f".repeat(32), jti: "a".repeat(32), ver: 2, sid: "b".repeat(32), iat: 1, exp: 9999999999,
-}) }));
-vi.mock("../src/lib/email", () => ({ appBaseUrl: () => "https://audit.invalid",
-  sendTransactionalEmail: async () => { state.emails++; } }));
-vi.mock("../src/lib/audit", () => ({ writeAuditEvent: async () => {} }));
+  requirePlatformActorInTransaction: async () => { state.proofChecks += 1; },
+  PlatformUnauthorizedError: class PlatformUnauthorizedError extends Error {},
+  PlatformMutationAuthorityChangedError: class PlatformMutationAuthorityChangedError extends Error {},
+}));
+vi.mock("../src/lib/platform-team-security", () => ({ assertPlatformTeamOrigin: () => {} }));
+vi.mock("../src/lib/email", () => ({
+  appBaseUrl: () => "https://audit.invalid",
+  sendTransactionalEmail: async () => { state.emailSends += 1; },
+}));
 vi.mock("../src/i18n/server", () => ({ getServerLocale: async () => "en", makeT: () => (key: string) => key }));
-import { POST } from "../src/app/api/team/invitations/route";
+vi.mock("../src/lib/audit", () => ({ writeAuditEvent: async () => {} }));
+vi.mock("../src/db", () => {
+  const tx = {
+    execute: async (statement: Parameters<PgDialect["sqlToQuery"]>[0]) => {
+      const s = dialect.sqlToQuery(statement).sql;
+      state.statements.push(s);
+      if (s.includes("FROM tenants")) return { rows: [{ id: "tenant", lifecycle: state.lifecycle }] };
+      if (s.includes("FROM tenant_users")) return { rows: state.memberExists ? [{ id: "already" }] : [] };
+      return { rows: [] };
+    },
+    query: { tenantInvitations: { findFirst: async () => state.duplicate ? { id: "existing" } : null } },
+    insert: () => ({ values: async (value: Record<string, unknown>) => { state.insertions.push(value); } }),
+  };
+  return { db: { transaction: async (fn: (tx: unknown) => unknown) => fn(tx) } };
+});
+import { POST as oldPOST } from "../src/app/api/team/invitations/route";
+import { POST as platformPOST } from "../src/app/api/platform/tenants/[id]/invitations/route";
+const ctx = { params: Promise.resolve({ id: "tenant" }) };
+const request = (body: object, path = "/api/team/invitations") =>
+  new Request(`https://gateway.test${path}`, { method: "POST", body: JSON.stringify(body) });
+const email = "invitee@example.invalid";
 
-function request() {
-  return new Request("http://gateway.test/api/team/invitations", { method: "POST",
-    body: JSON.stringify({ email: "synthetic@example.invalid", role: "admin" }) });
-}
-describe("invitation actor authority and lifecycle lock ordering", () => {
-  beforeEach(() => { process.env.GATEWAY_JWT_SECRET = "invitation-authority-test-secret-at-least-32";
-    state.role = "owner"; state.callerRole = "owner"; state.live = true; state.lifecycle = "active";
-    state.statements.length = 0; state.inserts = 0; state.emails = 0; });
-  it("denies Full Access invitation creation before a database or email side effect", async () => {
-    state.callerRole = "admin";
-    expect((await POST(request())).status).toBe(403);
-    expect(state.statements).toEqual([]);
-    expect(state.inserts).toBe(0);
-    expect(state.emails).toBe(0);
+describe("invitation authority is reserved for the separate Platform Owner", () => {
+  beforeEach(() => {
+    state.role="owner";state.live=true;state.lifecycle="active";state.duplicate=false;state.memberExists=false;
+    state.insertions=[];state.statements=[];state.proofChecks=0;state.emailSends=0;
   });
-  it.each(["viewer", "operator", "owner", "billing_admin", "integration_admin"])("only exposes Full Access for new invitations (%s rejected)", async role => {
-    const response = await POST(new Request("http://gateway.test/api/team/invitations", { method: "POST", body: JSON.stringify({ email: "invite@example.invalid", role }) }));
-    expect(response.status).toBe(400);
-    expect(state.inserts).toBe(0);
-  });
-  it("locks tenant before users/family/session, consistent with suspension, and commits one invitation", async () => {
-    const response = await POST(request());
-    expect(response.status).toBe(200);
-    expect(state.statements[0]).toContain("FROM tenants");
+  it.each(["owner","admin","operator","viewer","integration_admin","billing_admin"])(
+    "old workspace %s has no invitation write side effects", async role => {
+      state.role = role;
+      const res = await oldPOST(request({ email, role: "admin" }));
+      expect(res.status).toBe(403);
+      expect(state.insertions).toEqual([]);
+      expect(state.emailSends).toBe(0);
+      expect(state.proofChecks).toBe(0);
+    });
+  it("platform creates only a single canonical Full Access invitation after proof and tenant lock", async () => {
+    const result = await platformPOST(request({email}, "/api/platform/tenants/tenant/invitations"),ctx);
+    expect(result.status).toBe(201);
+    expect(state.proofChecks).toBe(1);
+    expect(state.insertions).toHaveLength(1);
+    expect(state.insertions[0]).toMatchObject({role:"admin",tenantId:"tenant",email});
     expect(state.statements[0]).toContain("FOR UPDATE");
-    expect(state.statements[1]).toContain("FROM tenants");
-    expect(state.statements[1]).toContain("FOR SHARE");
-    expect(state.statements[2]).toContain("FROM users");
-    expect(state.statements[3]).toContain("pg_advisory_xact_lock");
-    expect(state.statements[4]).toContain("FROM refresh_tokens");
-    expect(state.inserts).toBe(1);
-    expect(state.emails).toBe(1);
+    expect(state.emailSends).toBe(1);
   });
-  it.each(["admin", "viewer", "operator"])("does not invite or send email using a demoted actor (%s)", async role => {
-    state.role = role;
-    expect((await POST(request())).status).toBe(403);
-    expect(state.statements[0]).toContain("FROM tenants");
-    expect(state.inserts).toBe(0);
-    expect(state.emails).toBe(0);
+  it("refuses any supplied role, even the former owner role", async () => {
+    const result = await platformPOST(request({email,role:"owner"}, "/api/platform/tenants/tenant/invitations"),ctx);
+    expect(result.status).toBe(400);
+    expect(state.insertions).toEqual([]);
+    expect(state.emailSends).toBe(0);
   });
-  it("does not invite or send email using a revoked family", async () => {
-    state.live = false;
-    expect((await POST(request())).status).toBe(401);
-    expect(state.inserts).toBe(0);
-    expect(state.emails).toBe(0);
+  it("rejects revoked platform identity before a tenant mutation", async () => {
+    state.live=false;
+    await platformPOST(request({email}, "/api/platform/tenants/tenant/invitations"),ctx);
+    expect(state.proofChecks).toBe(0);
+    expect(state.insertions).toHaveLength(0);
   });
-  it("rejects a suspended tenant before acquiring session locks", async () => {
-    state.lifecycle = "suspended";
-    expect((await POST(request())).status).toBe(409);
-    expect(state.statements).toEqual([expect.stringContaining("FROM tenants")]);
-    expect(state.inserts).toBe(0);
-    expect(state.emails).toBe(0);
+  it.each(["suspended", "deleted"])("cannot invite into a %s workspace", async lifecycle => {
+    state.lifecycle=lifecycle;
+    const res=await platformPOST(request({email}, "/api/platform/tenants/tenant/invitations"),ctx);
+    expect(res.status).toBe(409);
+    expect(state.insertions).toHaveLength(0);
+    expect(state.emailSends).toBe(0);
   });
-  it.each(["invalid", "recipient\n@example.invalid", `${"a".repeat(310)}@example.invalid`])("rejects an invalid email before creating an invitation (%s)", async email => {
-    const response = await POST(new Request("http://gateway.test/api/team/invitations", {
-      method: "POST", body: JSON.stringify({ email, role: "admin" }),
-    }));
-    expect(response.status).toBe(400);
-    expect(state.statements).toEqual([]);
-    expect(state.inserts).toBe(0);
-    expect(state.emails).toBe(0);
+  it("checks duplicate active invitations and existing members before issuing tokens", async () => {
+    state.duplicate=true;
+    let res=await platformPOST(request({email}, "/api/platform/tenants/tenant/invitations"),ctx);
+    expect(res.status).toBe(409);
+    state.duplicate=false; state.memberExists=true;
+    res=await platformPOST(request({email}, "/api/platform/tenants/tenant/invitations"),ctx);
+    expect(res.status).toBe(409);
+    expect(state.insertions).toHaveLength(0);
+    expect(state.emailSends).toBe(0);
   });
 });

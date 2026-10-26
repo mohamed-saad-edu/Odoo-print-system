@@ -26,58 +26,36 @@ import { POST } from "../src/app/api/onboarding/route";
 const request = (body: unknown) => new Request("http://local/api/onboarding", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
 const validBody = { workspaceName: "Company", planId: "public-plan" };
 
-describe("V4 workspace onboarding authority", () => {
-  beforeEach(() => { state.role = "owner"; state.lifecycle = "active"; state.plan = true; state.statements = []; state.names = []; state.pending = []; state.audit = 0; state.actorValid = true; });
-  it("saves workspace identity and only requests a pending subscription under the tenant lock", async () => {
-    const response = await POST(request(validBody));
-    expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({ next: "/onboarding" });
-    expect(state.statements[0]).toContain("FOR UPDATE");
-    expect(state.names).toEqual(["Company"]);
-    expect(state.pending).toEqual(["tenant:public-plan"]);
-    expect(state.audit).toBe(1);
-  });
-  it.each([true, false])("rejects the retired trial self-activation payload (%s)", async trial => {
-    expect((await POST(request({ ...validBody, trial }))).status).toBe(400);
-    expect(state.statements).toEqual([]); expect(state.pending).toEqual([]);
-  });
-  it.each(["admin", "operator", "viewer", "integration_admin", "billing_admin"])("does not onboard or create a subscription for invited %s members", async role => {
-    state.role = role;
-    expect((await POST(request(validBody))).status).toBe(403);
-    expect(state.names).toEqual([]); expect(state.pending).toEqual([]);
-  });
-  it("revalidates owner authority at commit", async () => {
-    state.actorValid = false;
-    expect((await POST(request(validBody))).status).toBe(403);
-    expect(state.names).toEqual([]); expect(state.pending).toEqual([]);
-  });
-  it.each(["suspended", "deleted"])("cannot change a %s workspace", async lifecycle => {
-    state.lifecycle = lifecycle;
-    expect((await POST(request(validBody))).status).toBe(403);
-    expect(state.names).toEqual([]); expect(state.pending).toEqual([]);
-  });
-  it("rejects nonpublic/inactive plans before any writes", async () => {
-    state.plan = false;
-    expect((await POST(request(validBody))).status).toBe(400);
-    expect(state.names).toEqual([]); expect(state.pending).toEqual([]);
+describe("workspace onboarding and commercial actions are Platform Owner-only", () => {
+  beforeEach(() => { state.role = "owner"; state.lifecycle = "active"; state.plan = true;
+    state.statements = []; state.names = []; state.pending = []; state.audit = 0; state.actorValid = true; });
+  it.each(["owner", "admin", "operator", "viewer", "integration_admin", "billing_admin"])(
+    "does not permit %s to submit a workspace name, plan or activation request", async role => {
+      state.role = role;
+      const response = await POST(request(validBody));
+      expect(response.status).toBe(403);
+      expect(await response.json()).toMatchObject({ code: "PLATFORM_OWNER_REQUIRED" });
+      expect(state.statements).toEqual([]);
+      expect(state.pending).toEqual([]);
+      expect(state.names).toEqual([]);
+      expect(state.audit).toBe(0);
+    });
+  it.each([true, false])("retired trial payload (%s) cannot bypass Platform Owner scope", async trial => {
+    expect((await POST(request({ ...validBody, trial }))).status).toBe(403);
+    expect(state.names).toEqual([]);
+    expect(state.pending).toEqual([]);
   });
 });
-
-describe("Full Access and historical role boundaries", () => {
+describe("operational Full Access is independent of commercial authority", () => {
   const principal = (role: ManagerClaims["role"]) => ({ role } as ManagerClaims);
-  it("permits ordinary Full Access operations but no invitation or billing mutations", () => {
-    for (const permission of ["tenant.update", "agents.pair", "printers.manage", "jobs.create", "integrations.manage"] as const)
-      expect(hasManagerPermission(principal("admin"), permission)).toBe(true);
-    expect(hasManagerPermission(principal("admin"), "users.manage")).toBe(false);
-    expect(hasManagerPermission(principal("admin"), "billing.manage")).toBe(false);
-    expect(hasManagerPermission(principal("owner"), "users.manage")).toBe(true);
-  });
-  it("preserves the exact historical viewer permission set", () => {
-    expect(managerPermissions(principal("viewer")).sort()).toEqual(["tenant.read", "agents.read", "printers.read", "jobs.read", "bindings.read"].sort());
-    expect(hasManagerPermission(principal("operator"), "integrations.manage")).toBe(false);
-    expect(hasManagerPermission(principal("integration_admin"), "users.manage")).toBe(false);
-    expect(hasManagerPermission(principal("billing_admin"), "jobs.create")).toBe(false);
-  });
+  it.each(["owner", "admin", "operator", "viewer", "integration_admin", "billing_admin"] as const)(
+    "%s has printer and workspace configuration access but not billing/team management", role => {
+      for (const permission of ["tenant.update", "agents.pair", "printers.manage", "jobs.create", "integrations.manage"] as const)
+        expect(hasManagerPermission(principal(role), permission)).toBe(true);
+      for (const permission of ["users.manage", "billing.read", "billing.manage"] as const)
+        expect(hasManagerPermission(principal(role), permission)).toBe(false);
+      expect(managerPermissions(principal(role))).not.toContain("billing.read");
+    });
 });
 
 describe("safe activation contact", () => {

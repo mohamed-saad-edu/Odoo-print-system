@@ -11,37 +11,36 @@ export type ManagerPermission =
   | "integrations.read" | "integrations.manage"
   | "billing.read" | "billing.manage";
 
-const permissionsByRole: Record<ManagerRole, ReadonlySet<ManagerPermission>> = {
-  owner: new Set<ManagerPermission>([
-    "tenant.read", "tenant.update", "users.read", "users.manage",
-    "agents.read", "agents.pair", "agents.disable", "agents.retire",
-    "printers.read", "printers.manage", "printers.test",
-    "jobs.read", "jobs.payload.read", "jobs.create", "jobs.retry", "jobs.cancel", "bindings.read", "bindings.manage",
-    "integrations.read", "integrations.manage", "billing.read", "billing.manage",
-  ]),
-  admin: new Set<ManagerPermission>([
-    "tenant.read", "tenant.update", "users.read",
-    "agents.read", "agents.pair", "agents.disable", "agents.retire",
-    "printers.read", "printers.manage", "printers.test",
-    "jobs.read", "jobs.payload.read", "jobs.create", "jobs.retry", "jobs.cancel", "bindings.read", "bindings.manage",
-    "integrations.read", "integrations.manage", "billing.read",
-  ]),
-  operator: new Set<ManagerPermission>([
-    "tenant.read", "agents.read", "printers.read", "printers.test",
-    "jobs.read", "jobs.payload.read", "jobs.create", "jobs.retry", "jobs.cancel", "bindings.read",
-  ]),
-  viewer: new Set<ManagerPermission>([
-    "tenant.read", "agents.read", "printers.read", "jobs.read", "bindings.read",
-  ]),
-  integration_admin: new Set<ManagerPermission>([
-    "tenant.read", "agents.read", "printers.read", "jobs.read",
-    "bindings.read", "bindings.manage", "integrations.read", "integrations.manage",
-  ]),
-  billing_admin: new Set<ManagerPermission>([
-    "tenant.read", "billing.read", "billing.manage",
-  ]),
-};
+const FULL_ACCESS_PERMISSIONS: ReadonlySet<ManagerPermission> = new Set<ManagerPermission>([
+  "tenant.read", "tenant.update",
+  "users.read",
+  "agents.read",
+  "agents.pair",
+  "agents.disable",
+  "agents.retire",
+  "printers.read",
+  "printers.manage",
+  "printers.test",
+  "jobs.read",
+  "jobs.payload.read",
+  "jobs.create",
+  "jobs.retry",
+  "jobs.cancel",
+  "bindings.read",
+  "bindings.manage",
+  "integrations.read",
+  "integrations.manage",
+]);
 
+/** Ownership is never an authority shortcut. Billing and team mutations are Platform Owner-only. */
+const permissionsByRole: Record<ManagerRole, ReadonlySet<ManagerPermission>> = {
+  owner: FULL_ACCESS_PERMISSIONS,
+  admin: FULL_ACCESS_PERMISSIONS,
+  operator: FULL_ACCESS_PERMISSIONS,
+  viewer: FULL_ACCESS_PERMISSIONS,
+  integration_admin: FULL_ACCESS_PERMISSIONS,
+  billing_admin: FULL_ACCESS_PERMISSIONS,
+};
 export function hasManagerPermission(claims: ManagerClaims, permission: ManagerPermission): boolean {
   return permissionsByRole[claims.role]?.has(permission) ?? false;
 }

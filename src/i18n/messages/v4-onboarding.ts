@@ -1,8 +1,8 @@
 export const v4OnboardingEn = {
   "v4.signup.name": "Your name",
   "v4.team.fullAccess": "Full Access",
-  "v4.team.fullAccessBody": "Manage daily workspace operations, devices, printers and integrations. Invitations, membership and ownership decisions remain with the Workspace Owner. Only the Platform Owner grants subscriptions.",
-  "v4.team.ownerOnly": "Only the Workspace Owner can invite or manage members. Existing limited roles retain their permissions.",
+  "v4.team.fullAccessBody": "Manage daily printing, devices, printers and integrations. Only the Platform Owner manages invitations, team membership, ownership and subscriptions.",
+  "v4.team.ownerOnly": "Only the Platform Owner can invite or manage members and billing.",
   "v4.onboarding.title": "Set up your company workspace",
   "v4.onboarding.intro": "Choose your monthly print allowance and request activation. We will record your request so the Platform Owner can follow up.",
   "v4.onboarding.companyPlan": "Company and subscription",
@@ -120,8 +120,8 @@ export const v4OnboardingEn = {
 export const v4OnboardingAr = {
   "v4.signup.name": "اسمك",
   "v4.team.fullAccess": "صلاحية كاملة",
-  "v4.team.fullAccessBody": "إدارة العمل اليومي والأجهزة والطابعات وربط الأنظمة. تبقى الدعوات وإدارة الأعضاء وقرارات الملكية لدى مالك مساحة العمل. تفعيل الاشتراكات من صلاحية مالك المنصة فقط.",
-  "v4.team.ownerOnly": "دعوة الأعضاء وإدارتهم من صلاحية مالك مساحة العمل فقط. تبقى الصلاحيات المحدودة للأعضاء الحاليين كما هي.",
+  "v4.team.fullAccessBody": "إدارة مهام الطباعة والأجهزة والطابعات والتكاملات. إدارة الدعوات والأعضاء والملكية والاشتراكات من صلاحية مالك المنصة فقط.",
+  "v4.team.ownerOnly": "دعوة الأعضاء وإدارتهم والفوترة من صلاحية مالك المنصة فقط.",
   "v4.onboarding.title": "جهّز مساحة عمل شركتك",
   "v4.onboarding.intro": "اختر عدد مهام الطباعة الشهري وأرسل طلب التفعيل. سنسجّل طلبك ليتابعه مالك المنصة.",
   "v4.onboarding.companyPlan": "الشركة والاشتراك",

@@ -16,7 +16,7 @@ import { issueSessionPair, rotateRefreshToken } from "../src/lib/session-tokens"
 
 const password = "V3 exact password fixture 7! ";
 let passwordHash: string;
-const roles = ["owner", "admin", "operator", "viewer", "integration_admin", "billing_admin"] as const;
+const roles = ["owner", "admin"] as const;
 const origin = "http://localhost:3000";
 function request(path: string, body?: unknown, cookie = "") {
   return new Request(origin + path, { method: body === undefined ? "GET" : "POST",
@@ -103,13 +103,13 @@ describe.skipIf(!hasTestDatabase)("password-only authentication and retained ses
   });
 
   it("selects a workspace once without an extra authentication state", async () => {
-    await pool().query("INSERT INTO tenant_users(user_id,tenant_id,role) VALUES ('user','b','viewer')");
+    await pool().query("INSERT INTO tenant_users(user_id,tenant_id,role) VALUES ('user','b','admin')");
     const pending = await customerLogin(request("/api/auth/login", { email: "user@example.test", password }));
     expect(pending.status).toBe(409);
     const { selectionToken } = await pending.json();
     const selected = await selectTenant(request("/api/auth/select-tenant", { tenantId: "b", selectionToken }));
     expect(selected.status).toBe(200);
-    expect(await validateCustomer(request("/api/auth/me", undefined, cookies(selected)))).toMatchObject({ tenantId: "b", role: "viewer" });
+    expect(await validateCustomer(request("/api/auth/me", undefined, cookies(selected)))).toMatchObject({ tenantId: "b", role: "admin" });
     expect((await selectTenant(request("/api/auth/select-tenant", { tenantId: "b", selectionToken }))).status).toBe(409);
   });
 

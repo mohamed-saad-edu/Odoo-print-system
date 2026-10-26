@@ -88,7 +88,7 @@ describe.skipIf(!hasTestDatabase)("populated V2 to password-only migration", () 
     await target.query("DROP VIEW public.custom_retired_factor_export");
   });
 
-  it("preserves every non-factor record and deadline, then admits retained password-bound session policies", async () => {
+  it("preserves account and password-session evidence, while 0096 intentionally revokes old workspace authorities", async () => {
     const before = await snapshot();
     for (const table of factorTables) expect((before[table] as unknown[]).length).toBeGreaterThan(0);
     await apply(join(process.cwd(),"drizzle"));
@@ -100,27 +100,43 @@ describe.skipIf(!hasTestDatabase)("populated V2 to password-only migration", () 
       const expected = (rows as Array<{row:Record<string,unknown>}>).map(({row}) => {
         const kept = {...row}; for (const column of retiredColumns[table] ?? []) delete kept[column];
         if (table === "platform_session_security") kept.password_version = digest(passwordHash);
+        if (table === "tenant_users" && kept.role === "viewer") {
+          kept.role = "admin";
+          // 0096 records the canonical membership role cutover as an update.
+          kept.updated_at = (after[table] as Array<{row:Record<string,unknown>}>).find(e => e.row.user_id === kept.user_id)?.row.updated_at;
+        }
+        if (table === "refresh_tokens" && (kept.kind === "customer" || kept.kind === "manager") && kept.revoked_at === null) {
+          // 0096 revokes all outstanding workspace families rather than promoting
+          // a low-authority session into Full Access with its old credentials.
+          kept.revoked_at = (after[table] as Array<{row:Record<string,unknown>}>).find(e => e.row.id === kept.id)?.row.revoked_at;
+          kept.revoked_reason = "workspace_role_cutover";
+        }
         // V4 adds an optional display name; historical identity is not guessed.
         if (table === "users") kept.display_name = null;
         return {row:kept};
       });
-      expect(after[table],`Preserve ${table} records, revocation and timestamps`).toEqual(expected);
+      // ORDER BY to_jsonb(row)::text can reorder members after canonical role changes.
+      // Sort both snapshots by their complete normalized row before comparing all fields.
+      const canonical = (items: unknown[]) =>
+        [...items].sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b)));
+      expect(canonical(after[table] as unknown[]),`Preserve ${table} records, revocation and timestamps`)
+        .toEqual(canonical(expected));
     }
     expect(after.ledger).toEqual(expect.arrayContaining(before.ledger as unknown[]));
-    // V4 adds three forward migrations (0093, 0094, 0095).
+    // Four forward migrations (0093 to 0096), with 0096 intentionally forcing new workspace logins.
     // Preserve the hashes of all historical migrations.
-    expect((after.ledger as unknown[]).length).toBe((before.ledger as unknown[]).length+3);
+    expect((after.ledger as unknown[]).length).toBe((before.ledger as unknown[]).length+4);
     const priorHashes = new Set((before.ledger as Array<{hash:string}>).map(row=>row.hash));
     const addedHashes = (after.ledger as Array<{hash:string}>).filter(row=>!priorHashes.has(row.hash)).map(row=>row.hash).sort();
-    const expectedHashes = await Promise.all(["0093_password_only_authentication.sql", "0094_printer_operational_verification.sql", "0095_manual_subscriptions.sql"]
+    const expectedHashes = await Promise.all(["0093_password_only_authentication.sql", "0094_printer_operational_verification.sql", "0095_manual_subscriptions.sql", "0096_retire_limited_workspace_roles.sql"]
       .map(async name=>digest(await readFile(join("drizzle",name),"utf8"))));
     expect(addedHashes).toEqual(expectedHashes.sort());
     expect((await target.query("SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_name=ANY($1::text[])",[factorTables])).rows).toEqual([]);
     const connection = drizzle(target) as unknown as DbTx;
     expect(await isPlatformSessionAssured("platform-family","owner",false,connection)).toBe(true);
     expect(await isPlatformSessionAssured("revoked-family","owner",false,connection)).toBe(false);
-    for (const kind of ["customer","manager"] as const) expect(await readWorkspaceSessionState({ familyId:`${kind}-family`,kind,tenantId:"upgrade-tenant",userId:"owner",sid:`${kind}-sid`,role:"owner" },connection)).not.toBeNull();
+    for (const kind of ["customer","manager"] as const) expect(await readWorkspaceSessionState({ familyId:`${kind}-family`,kind,tenantId:"upgrade-tenant",userId:"owner",sid:`${kind}-sid`,role:"owner" },connection)).toBeNull();
     const baseline = await snapshot(); await apply(join(process.cwd(),"drizzle")); expect(await snapshot()).toEqual(baseline);
-    expect((await readdir("drizzle")).filter(n=>n.endsWith(".sql"))).toHaveLength(96);
+    expect((await readdir("drizzle")).filter(n=>n.endsWith(".sql"))).toHaveLength(97);
   });
 });
