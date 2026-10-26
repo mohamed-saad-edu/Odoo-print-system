@@ -1,13 +1,18 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
-const navigation = vi.hoisted(() => ({ redirect: vi.fn() }));
-vi.mock("next/navigation", () => ({ redirect: navigation.redirect }));
-import BillingPage from "../src/app/billing/page";
+import { readFileSync } from "node:fs";
+import { describe, expect, it } from "vitest";
 
-describe("commercial contract data is Platform Owner-only", () => {
-  beforeEach(() => navigation.redirect.mockReset());
-  it.each(["en", "ar"] as const)("redirects %s workspace members away from billing, ignoring requested plan parameters", () => {
-    const rendered = BillingPage({ searchParams: Promise.resolve({ plan: "secret-plan" }) });
-    expect(rendered).toBeNull();
-    expect(navigation.redirect).toHaveBeenCalledExactlyOnceWith("/platform/subscriptions");
+describe("workspace subscription page", () => {
+  const billing = readFileSync("src/app/billing/page.tsx", "utf8");
+  it("uses the authenticated workspace instead of Platform Admin", () => {
+    expect(billing).toContain("verifyWorkspaceTokenFromCookieValues(");
+    expect(billing).toContain("customerSubscriptionState(");
+    expect(billing).toContain('redirect("/login?next=%2Fbilling")');
+    expect(billing).not.toContain('redirect("/platform/subscriptions")');
+  });
+  it("preserves the requested plan and displays manual request controls", () => {
+    expect(billing).toContain("selectedPlanId");
+    expect(billing).toContain("<BillingActions");
+    expect(billing).toContain("initialRequest=");
+    expect(billing).toContain("currentPeriodEnd");
   });
 });

@@ -125,11 +125,17 @@ def test_platform_owner_routes_distinguish_invalid_auth_from_platform_dependency
             assert "Platform authentication temporarily unavailable" in source, route
             assert "status: 503" in source, route
 
-def test_workspace_billing_page_never_discloses_commercial_contract_or_invents_quota():
+def test_workspace_subscription_is_scoped_to_authenticated_owner_and_manual_approval():
     page = read("src/app/billing/page.tsx")
-    assert 'redirect("/platform/subscriptions")' in page
-    assert '/api/billing' not in page
-    assert 'usage' not in page.lower()
+    assert 'verifyWorkspaceTokenFromCookieValues(' in page
+    assert 'hasManagerPermission(claims, "billing.read")' in page
+    assert '<BillingActions' in page
+    assert 'redirect("/platform/subscriptions")' not in page
+    customer = read("src/app/api/subscription-requests/route.ts")
+    assert 'requireManagerActorInTransaction(tx,actor,"billing.read")' in customer
+    assert 'requireIdempotencyKey(req)' in customer
+    platform = read("src/app/api/platform/tenants/[id]/subscription/route.ts")
+    assert "requirePlatformOwner" in platform
     status = read("src/app/api/billing/status/route.ts")
     assert 'customerSubscriptionState(subscription' in status
     assert 'monthlyQuota' not in status and 'planName' not in status

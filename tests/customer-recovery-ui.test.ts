@@ -69,10 +69,10 @@ describe("customer recovery feedback", () => {
  });
 
 
-describe("workspace onboarding is no longer a billing control plane", () => {
-  it.each(["en", "ar"] as const)("redirects the %s workspace member without any billing requests", async locale => {
+describe("legacy workspace onboarding routes into customer subscription management", () => {
+  it.each(["en", "ar"] as const)("redirects the %s workspace member to billing without platform API requests", async locale => {
     await render(h(OnboardingPage), locale);
-    expect(navigation.redirect).toHaveBeenCalledWith("/dashboard");
+    expect(navigation.redirect).toHaveBeenCalledWith("/billing");
     expect(fetchMock).not.toHaveBeenCalled();
     expect(host.querySelector("form")).toBeNull();
   });

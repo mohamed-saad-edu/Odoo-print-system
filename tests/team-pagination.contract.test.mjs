@@ -20,8 +20,8 @@ test("workspace invitations are scoped and use verified owner session authorizat
   assert.match(old, /export async function GET/);
   assert.match(old, /assertPlatformTeamOrigin/);
   assert.match(old, /role: "admin"/);
-  assert.match(platform, /requirePlatformOwner/);
-  assert.match(platform, /\.limit\(100\)/);
+  assert.match(platform, /status: 410/);
+  assert.doesNotMatch(platform, /sendTransactionalEmail/);
 });
 test("workspace Team UI uses a session with no new password prompt or role selector", () => {
   const page = read("src/app/team/page.tsx");

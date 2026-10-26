@@ -252,7 +252,7 @@ describe("ambiguous Odoo submission recovery", () => {
 
 describe("ambiguous email side effects", () => {
   it("keeps invitation state durable when the provider response is ambiguous", () => {
-    const route = readFileSync("src/app/api/platform/tenants/[id]/invitations/route.ts", "utf8");
+    const route = readFileSync("src/app/api/team/invitations/route.ts", "utf8");
     // The sendTransactionalEmail() call is now formatted across several lines
     // and its copy is localized, so slice on markers that survive formatting:
     // everything from the delivery attempt up to the final success response.

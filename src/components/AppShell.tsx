@@ -10,6 +10,7 @@ import {
   LayoutDashboard,
   KeyRound,
   CreditCard,
+  Users,
   Settings as SettingsIcon,
   LogOut,
   PanelLeftClose,
@@ -149,7 +150,8 @@ function WorkspaceMenu({
       ? [{ key: "identity", label: workspace.email, meta: workspace.role, disabled: true }]
       : []),
     { key: "settings", label: t("nav.workspaceSettings"), icon: <SettingsIcon className="h-4 w-4" />, href: "/settings" },
-    ...(workspace.platformOwner ? [{ key: "billing", label: t("nav.planAndBilling"), icon: <CreditCard className="h-4 w-4" />, href: "/platform/subscriptions", separatorBefore: true }] : []),
+    ...(workspace.platformOwner ? [{ key: "team", label: t("nav.team"), icon: <Users className="h-4 w-4" />, href: "/team", separatorBefore: true }] : []),
+    ...(workspace.role === "owner" ? [{ key: "billing", label: t("nav.planAndBilling"), icon: <CreditCard className="h-4 w-4" />, href: "/billing", separatorBefore: true }] : []),
     {
       key: "theme",
       label: t("nav.toggleTheme"),

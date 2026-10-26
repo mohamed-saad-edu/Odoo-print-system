@@ -223,9 +223,9 @@ async function refreshDashboard(host: HTMLDivElement) {
   await act(async () => { button!.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
 }
 
-describe("workspace dashboard never requests privileged billing usage", () => {
-  it.each(["owner","admin","operator","viewer","integration_admin","billing_admin"] as const)(
-    "does not poll quota or reveal a commercial plan to %s", async role => {
+describe("workspace dashboard billing usage follows the owner-only read permission", () => {
+  it.each(["admin","operator","viewer","integration_admin","billing_admin"] as const)(
+    "does not poll quota or reveal commercial plan to %s", async role => {
       await withMountedDashboard(role, async () => usageResponse(), async (host, fetchMock) => {
         await refreshDashboard(host);
         expect(usageRequests(fetchMock)).toHaveLength(0);
@@ -234,16 +234,22 @@ describe("workspace dashboard never requests privileged billing usage", () => {
         expect(host.textContent).not.toContain(usageWarning);
       });
     });
-  it("old and new workspace sessions cannot turn billing visibility back on", async () => {
+  it("owner can inspect their own usage without Platform Admin navigation", async () => {
+    await withMountedDashboard("owner", async () => usageResponse(), async (host, fetchMock) => {
+      await refreshDashboard(host);
+      expect(usageRequests(fetchMock).length).toBeGreaterThan(0);
+      expect(router.replace).not.toHaveBeenCalledWith("/platform/subscriptions");
+    });
+  });
+  it("changing between non-owner sessions never enables billing reads", async () => {
     await withMountedDashboard("admin", async () => usageResponse(), async (host, fetchMock, rerender) => {
-      await rerender("owner");
       await rerender("viewer", "another-workspace:another-user:viewer");
       await refreshDashboard(host);
       expect(usageRequests(fetchMock)).toHaveLength(0);
       expect(host.textContent).not.toContain("Audit subscription");
     });
   });
-  it("projects the server-side billing.read guard even though no workspace role grants it", () => {
+  it("projects the owner-only billing.read guard on the server", () => {
     const page = readFileSync("src/app/dashboard/page.tsx", "utf8");
     expect(page).toContain('canReadBillingUsage={hasManagerPermission(claims, "billing.read")}');
     const route = readFileSync("src/app/api/billing/usage/route.ts", "utf8");

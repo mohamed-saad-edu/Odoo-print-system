@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
-/** No workspace member can request or edit commercial subscriptions. */
+
+/** Legacy setup links resolve inside the customer workspace, never Platform Admin. */
 export default function Page() {
-  redirect("/dashboard");
-  return null;
+  redirect("/billing");
 }

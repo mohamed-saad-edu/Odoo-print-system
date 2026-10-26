@@ -11,7 +11,7 @@ describe("full operational job payload authorization with commercial isolation",
     expect(hasManagerPermission(claims(role), "jobs.payload.read")).toBe(true);
   });
   it.each(roles)("denies commercial and team mutation permission to %s", role => {
-    expect(hasManagerPermission(claims(role), "billing.read")).toBe(false);
+    expect(hasManagerPermission(claims(role), "billing.read")).toBe(role === "owner");
     expect(hasManagerPermission(claims(role), "billing.manage")).toBe(false);
     expect(hasManagerPermission(claims(role), "users.manage")).toBe(false);
   });
