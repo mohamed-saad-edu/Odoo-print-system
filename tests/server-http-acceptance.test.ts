@@ -78,6 +78,16 @@ suite("production server HTTP acceptance (real Next.js + guard)", () => {
     if (server) await new Promise<void>((resolve) => server!.close(() => resolve()));
   });
 
+  it.each(["/release-readiness", "/platform/release-readiness"])("does not serve the internal engineering checklist at %s to a customer request", async path => {
+    const res = await fetch(`http://127.0.0.1:${PORT}${path}`, { redirect: "manual" });
+    // Next.js retains 200 after a streamed layout; notFound still denies the page.
+    expect(path === "/release-readiness" ? [404] : [200, 404]).toContain(res.status);
+    const html = await res.text();
+    if (res.status === 200) expect(html).toContain("NEXT_HTTP_ERROR_FALLBACK;404");
+    expect(html).not.toContain("Release readiness");
+    expect(html).not.toContain("الجاهزية للإصدار");
+  });
+
   describe("mutating API requests reach the route handlers", () => {
     it("POST /api/print/jobs rejects unauthenticated malformed input with protected JSON (not a 500 ISE page)", async () => {
       const res = await fetch(`http://127.0.0.1:${PORT}/api/print/jobs`, {

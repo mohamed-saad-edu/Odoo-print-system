@@ -183,7 +183,7 @@ describe("windows-service-recovery", () => {
       cargoHasUpdater = false;
     }
     // If no updater found, it must be marked BLOCKED/NOT IMPLEMENTED, not claimed PASS
-    const releaseReadiness = fs.readFileSync("src/app/release-readiness/release-readiness-client.tsx", "utf8");
+    const releaseReadiness = fs.readFileSync("src/app/platform/release-readiness/release-readiness-client.tsx", "utf8");
     if (!hasUpdater && !cargoHasUpdater) {
       expect(releaseReadiness).toContain('t("release.area.updater")');
       expect(releaseReadiness).toMatch(/BLOCKED|NOT IMPLEMENTED|FAIL/);

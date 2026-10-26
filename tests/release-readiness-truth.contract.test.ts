@@ -3,7 +3,7 @@ import fs from "node:fs";
 
 describe("release-readiness truth contracts", () => {
   it("does not hard-code source implementation as PASS and surfaces health observation failures", () => {
-    const source = fs.readFileSync("src/app/release-readiness/release-readiness-client.tsx", "utf8");
+    const source = fs.readFileSync("src/app/platform/release-readiness/release-readiness-client.tsx", "utf8");
     expect(source).not.toContain('implemented: "PASS"');
     expect(source).toContain('sourceEvidence: "DOCUMENTED"');
     expect(source).toContain('sourceEvidence: "MISSING"');

@@ -10,9 +10,9 @@ import {
   SegmentedControl,
   StatusBadge,
   type Tone,
-} from "../../components/ui";
-import { useI18n } from "../../i18n/react";
-import type { MessageKey } from "../../i18n/messages/en";
+} from "../../../components/ui";
+import { useI18n } from "../../../i18n/react";
+import type { MessageKey } from "../../../i18n/messages/en";
 
 type Status = "PASS" | "FAIL" | "BLOCKED" | "NOT APPLICABLE" | "UNVERIFIED";
 

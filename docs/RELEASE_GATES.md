@@ -8,6 +8,11 @@ the exact current candidate; historical passes do not establish a V5 pass. A
 missing Windows, hardware or staging result must remain blocked, even when
 software unit tests pass.
 
+The `/platform/release-readiness` engineering checklist is internal: the server requires
+a live Platform Owner session, including its session policy. Customer and
+workspace manager sessions cannot view it or select it as a workspace return
+destination. Automated release checks remain available independently of this UI.
+
 ## Supported execution boundaries
 
 | Component | Build/runtime contract | Acceptance still required |
