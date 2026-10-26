@@ -285,7 +285,7 @@ export const ar: Catalog = {
   // ── Sign up ──────────────────────────────────────────────────────────────
   "auth.signup.eyebrow": "ابدأ الآن",
   "auth.signup.title": "أنشئ حسابك",
-  "auth.signup.description": "استخدم بريد عملك — سنرسل إليك رابط تحقّق لإكمال الإعداد.",
+  "auth.signup.description": "أدخل اسمك وبريد العمل، ثم عيّن كلمة مرور بعد التأكيد.",
   "auth.signup.submit": "إنشاء الحساب",
   "auth.signup.submitting": "جارٍ إنشاء الحساب…",
   "auth.signup.failed": "تعذّر إنشاء الحساب",
@@ -336,7 +336,8 @@ export const ar: Catalog = {
   "auth.reset.requestNewLink": "طلب رابط جديد لإعادة تعيين كلمة المرور",
 
   "auth.setup.title": "عيّن كلمة مرور حسابك",
-  "auth.setup.description": "تم التحقّق من بريدك. اختر كلمة مرور الآن لتأمين حسابك قبل تسجيل الدخول.",
+  "auth.setup.description": "تم تأكيد بريدك. عيّن كلمة المرور مرة واحدة للدخول إلى مساحة عملك.",
+  "auth.setup.takingYou": "جارٍ فتح مساحة عملك…",
   "auth.setup.submit": "حفظ كلمة مرور الحساب",
 
   // ── Onboarding ───────────────────────────────────────────────────────────

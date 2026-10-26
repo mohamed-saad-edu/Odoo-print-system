@@ -13,6 +13,9 @@ import { revokeUserRefreshFamiliesInTransaction } from "../../../../lib/session-
 import { passwordScreeningFailure, screenNewPassword } from "../../../../lib/password-screening";
 import { emailAuthTokenIsLive } from "../../../../lib/email-auth-token-policy";
 import { isValidNewPasswordLength } from "../../../../lib/new-password-policy";
+import { issueCustomerSession, customerSessionCookie, customerRefreshCookie } from "../../../../lib/customer-auth";
+import { credentialVersionFor } from "../../../../lib/session-credentials";
+import type { ManagerRole } from "../../../../lib/manager-auth";
 
 export async function POST(req: Request) {
   if (hasBodyOverLimit(req, 32 * 1024)) return NextResponse.json({ error: "Request body too large" }, { status: 413 });
@@ -53,6 +56,9 @@ export async function POST(req: Request) {
     ),
   });
   if (!row) return NextResponse.json({ error: "Reset link expired or invalid" }, { status: 400 });
+  // Only mailbox-proof setup tokens may create a first authenticated session.
+  // The untrusted URL query (?setup=1) cannot grant this capability.
+  const initialSetup = row.id.startsWith("psu_");
 
   // A provider outage or breached candidate must not consume the reset proof.
   const passwordFailure = passwordScreeningFailure(await screenNewPassword(password));
@@ -121,5 +127,46 @@ export async function POST(req: Request) {
   }
 
   await recordAuthSuccess(ip, rateIdentity).catch((error) => logWarn("auth.reset_password.rate_limit_clear_failed", { ip, error: error instanceof Error ? error.message : "unknown" }));
-  return setRateLimitHeaders(NextResponse.json({ ok: true }), rate);
+  if (initialSetup) {
+    // The setup password is the user's first credential, not a recovery event.
+    // Mint a fresh, server-validated customer session after the transaction
+    // revokes any previous session families. Ordinary reset proofs never do so.
+    try {
+      const member = await db.query.tenantUsers.findFirst({
+        where: eq(tenantUsers.userId, row.userId),
+        columns: { tenantId: true, role: true },
+      });
+      const account = await db.query.users.findFirst({
+        where: eq(users.id, row.userId),
+        columns: { email: true },
+      });
+      const isManagerRole = (value: string): value is ManagerRole =>
+        ["owner", "admin", "operator", "viewer", "integration_admin", "billing_admin"].includes(value);
+      if (member && account?.email && isManagerRole(member.role)) {
+        const session = await issueCustomerSession(row.userId, member.tenantId, member.role, {
+          ipAddress: ip,
+          userAgent: req.headers.get("user-agent"),
+        }, account.email, credentialVersionFor(row.userId, nextHash));
+        if (session) {
+          const response = NextResponse.json({ ok: true, authenticated: true }, {
+            headers: {
+              "Cache-Control": "private, no-store",
+              "Set-Cookie": customerSessionCookie(session),
+            },
+          });
+          response.headers.append("Set-Cookie", customerRefreshCookie(session));
+          return setRateLimitHeaders(response, rate);
+        }
+      }
+    } catch (error) {
+      // The new password has already committed. Never claim it failed or
+      // mint a weaker session: the user can sign in normally if this fails.
+      logError("auth.password_setup.session_unavailable", {
+        error: error instanceof Error ? error.message : "unknown",
+      });
+    }
+  }
+  return setRateLimitHeaders(NextResponse.json({ ok: true, authenticated: false }, {
+    headers: { "Cache-Control": "private, no-store" },
+  }), rate);
 }

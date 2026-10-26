@@ -103,7 +103,7 @@ describe.skipIf(!hasTestDatabase)("email authentication proof lifetime", () => {
   afterAll(closePool);
 
   it("caps registration proof at ten minutes using the database clock", async () => {
-    const result = await register(request("/api/auth/register", { email: "new@example.test", password }));
+    const result = await register(request("/api/auth/register", { email: "new@example.test", displayName: "New Customer" }));
     expect(result.status).toBe(202);
     expect(result.headers.get("set-cookie")).toBeNull();
     await boundedIssuedToken("verification", "new@example.test");

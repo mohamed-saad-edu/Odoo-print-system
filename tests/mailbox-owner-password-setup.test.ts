@@ -133,18 +133,20 @@ describe("mailbox-owner password setup production routes", () => {
     const token = destination.searchParams.get("token");
     expect(token).toMatch(/^[A-Za-z0-9_-]{43}$/);
     expect(state.resets[1].tokenHash).toBe(await hashToken(token!));
+    expect(state.resets[1].id).toMatch(/^psu_/);
     state.statements.length = 0;
     const saved = await resetPassword(post("reset-password", { token, password: "mailbox_owner_password_456" }));
     expect(saved.status).toBe(200);
-    expect(saved.headers.get("set-cookie")).toBeNull();
+    expect(saved.headers.get("set-cookie")).toContain("cust_session=");
+    await expect(saved.json()).resolves.toMatchObject({ ok: true, authenticated: true });
     expect(state.statements[0]).toMatch(/FROM tenants.*FOR SHARE/s);
     expect(state.statements[1]).toMatch(/FROM users.*FOR UPDATE/s);
-    expect(state.sessions).toHaveLength(0);
+    expect(state.sessions).toHaveLength(1);
     const loginRequest = post("login", { email: state.user.email, password: "mailbox_owner_password_456", tenantId });
     const signedIn = await login(loginRequest);
     expect(signedIn.status).toBe(200);
     expect(signedIn.headers.get("set-cookie")).toContain("cust_session=");
-    expect(state.sessions).toHaveLength(1);
+    expect(state.sessions).toHaveLength(2);
     expect((await resetPassword(post("reset-password", { token, password: "second_owner_password_789" }))).status).toBe(400);
     expect((await verifyEmail(post("verify-email", { token: proof }))).status).toBe(400);
   });
@@ -177,5 +179,20 @@ describe("mailbox-owner password setup production routes", () => {
     expect(await verifyPassword("recovered_owner_password_123", state.user.passwordHash)).toBe(true);
     expect(state.tenants[0].lifecycle).toBe("suspended");
     expect(state.memberships[0].role).toBe("viewer");
+    expect(saved.headers.get("set-cookie")).toBeNull(); // suspended workspaces cannot receive sessions
   });
+  it("an ordinary recovery proof never auto-authenticates even with a setup query", async () => {
+    state.user.emailVerifiedAt = new Date();
+    state.tenants.push({ id: "tenant_active", lifecycle: "active" });
+    state.memberships.push({ userId: state.user.id, tenantId: "tenant_active", role: "owner" });
+    const token = generateOpaqueToken();
+    state.resets.push({ id: "prt_recovery", userId: state.user.id, tokenHash: await hashToken(token), consumedAt: null, expiresAt: new Date(Date.now() + 600_000) });
+    const saved = await resetPassword(post("reset-password", { token, password: "owner_recovered_password_789", setup: "1" }));
+    expect(saved.status).toBe(200);
+    await expect(saved.json()).resolves.toMatchObject({ ok: true, authenticated: false });
+    expect(saved.headers.get("set-cookie")).toBeNull();
+    expect(state.sessions).toHaveLength(0);
+  });
+
+
 });

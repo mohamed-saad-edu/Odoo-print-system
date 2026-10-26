@@ -85,14 +85,12 @@ suite("Tenant Lifecycle", () => {
       });
       const saved = await resetPassword(resetRequest());
       expect(saved.status).toBe(200);
-      expect(saved.headers.get("set-cookie")).toBeNull();
+      expect(saved.headers.get("set-cookie")).toContain("cust_session=");
+      await expect(saved.json()).resolves.toMatchObject({ ok: true, authenticated: true });
       const identity = await authenticateForTenant(email, ownerPassword, membership!.tenantId);
       expect(identity?.userId).toBe(userId);
       expect(await authenticateForTenant(email, oldPassword, membership!.tenantId)).toBeNull();
-      const pair = await issueSessionPair({ kind: "customer", userId, tenantId: membership!.tenantId, role: "owner", email,
-        credentialVersion: identity!.credentialVersion });
       expect((await pool().query("SELECT id FROM refresh_tokens WHERE user_id=$1 AND revoked_at IS NULL", [userId])).rows).toHaveLength(1);
-      expect(pair.accessToken).toBeTruthy();
       expect((await resetPassword(resetRequest())).status).toBe(400);
       expect((await verifyEmail(new Request("http://gateway.test/api/auth/verify-email", { method: "POST", body: JSON.stringify({ token: proof }) }))).status).toBe(400);
     });

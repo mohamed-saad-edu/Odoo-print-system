@@ -278,7 +278,7 @@ export const en = {
   // ── Sign up ──────────────────────────────────────────────────────────────
   "auth.signup.eyebrow": "Get started",
   "auth.signup.title": "Create your account",
-  "auth.signup.description": "Use your business email — we’ll send a verification link to finish setup.",
+  "auth.signup.description": "Enter your name and business email. You’ll set a password after verification.",
   "auth.signup.submit": "Create account",
   "auth.signup.submitting": "Creating account…",
   "auth.signup.failed": "We couldn’t create the account",
@@ -330,7 +330,8 @@ export const en = {
   "auth.reset.requestNewLink": "Request a new password reset link",
 
   "auth.setup.title": "Set your account password",
-  "auth.setup.description": "Your email is verified. Choose a password now to secure your account before signing in.",
+  "auth.setup.description": "Email verified. Create your password once to enter your workspace.",
+  "auth.setup.takingYou": "Opening your workspace…",
   "auth.setup.submit": "Save account password",
 
   // ── Onboarding ───────────────────────────────────────────────────────────

@@ -86,7 +86,7 @@ def test_first_run_verify_email_documents_password_setup_redirect():
     sec9=source[source.index('## 9. Email verification'):source.index('## 10. First workspace setup')]
     assert '/reset-password?token=...&setup=1' in sec9
     assert 'requiresPasswordSetup' in sec9
-    assert '20-minute' in sec9
+    assert '10-minute' in sec9
     assert 'creates a customer/manager session cookie' not in sec9
 
 

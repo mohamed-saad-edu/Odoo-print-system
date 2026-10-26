@@ -4,7 +4,7 @@ This is the canonical first deployment path for a fresh production server.
 
 **Repository:** https://github.com/mohamed-saad-edu/Odoo-print-system  
 **Web app:** Yaseir Gateway  
-**Customer portal:** `/signup` → `/verify-email` → `/onboarding` → `/login` → `/dashboard`  
+**Customer portal:** `/signup` → `/verify-email` → `/reset-password?setup=1` → `/onboarding` → `/dashboard`  
 **Platform control plane:** `/platform/login`
 
 ## 0. What runs on the server
@@ -311,12 +311,12 @@ POST /api/auth/verify-email
 A successful verification:
 
 1. consumes the one-time token;
-2. marks the user verified and invalidates the pre-registrant password hash;
+2. marks the user verified and invalidates any old provisional password hash;
 3. creates the first workspace if the user has no membership yet;
-4. issues a single-use, 20-minute password setup token (`requiresPasswordSetup: true`) without setting a session cookie;
-5. redirects to `/reset-password?token=...&setup=1` so only the mailbox owner can set the account password before signing in and continuing to `/onboarding`.
+4. issues a single-use, 10-minute password setup token (`requiresPasswordSetup: true`) without setting a session cookie;
+5. redirects to `/reset-password?token=...&setup=1` for one-time password creation. Successful setup starts a fresh customer session and continues to onboarding without another password prompt; inaccessible workspaces fall back to normal sign-in.
 
-The verification token expires after 30 minutes.
+The verification token expires after 10 minutes.
 
 ## 10. First workspace setup
 

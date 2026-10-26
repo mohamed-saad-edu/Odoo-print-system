@@ -77,65 +77,75 @@ export default function ApiKeysPage() {
   const [pending, setPending] = useState<{ kind: "revoke" | "remove" | "rotate"; id: string; name: string } | null>(null);
   const [hasSubscription, setHasSubscription] = useState<boolean | null>(null);
 
+  const [loadTick, setLoadTick] = useState(0);
+  const [initialLoaded, setInitialLoaded] = useState(false);
+
   const loadKeys = useCallback(async () => {
-    if (!(await ensureCustomerSession()).authenticated) throw new Error(t("errors.sessionExpired"));
-    const r = await fetchWithTimeout("/api/odoo/keys", { cache: "no-store", credentials: "include" });
-    if (!r.ok) throw new Error(t("apiKeys.loadFailed"));
-    return (await r.json()) as ApiKey[];
-  }, [t]);
-
-  useEffect(() => {
-    let cancel = false;
-
-    const tick = async (reportError: boolean) => {
-      const epoch = refreshEpoch.current;
-      try {
-        const d = await loadKeys();
-        if (!cancel && epoch === refreshEpoch.current) setKeys(d);
-      } catch {
-        if (!cancel && reportError) {
-          setError(t("apiKeys.operationFailed"));
-        }
-      } finally {
-        if (!cancel && reportError) setLoading(false);
-      }
-    };
-
-    // One immediate load followed by lightweight refreshes. Keeping both paths
-    // behind the same loader avoids duplicate /api/odoo/keys calls on mount.
-    void tick(true);
-    const id = setInterval(() => void tick(false), 5000);
-    return () => { cancel = true; clearInterval(id); };
-  }, [loadKeys, t]);
-
-  useEffect(() => {
-    fetchWithTimeout("/api/subscription-requests", { cache: "no-store", credentials: "include" })
-      .then(async (r) => {
-        if (!r.ok) return;
-        const b = (await r.json()) as { hasSubscription?: boolean; status?: string };
-        setHasSubscription(b.status ? b.status === "active" : b.hasSubscription ?? null);
-      })
-      .catch(() => {});
+    if (!(await ensureCustomerSession()).authenticated) throw new Error("SESSION_EXPIRED");
+    const response = await fetchWithTimeout("/api/odoo/keys", { cache: "no-store", credentials: "include" });
+    if (!response.ok) throw new Error("KEYS_UNAVAILABLE");
+    const items: unknown = await response.json();
+    if (!Array.isArray(items)) throw new Error("INVALID_KEYS_PAYLOAD");
+    return items as ApiKey[];
   }, []);
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([
-      fetchWithTimeout("/api/odoo/installations", { credentials: "include", cache: "no-store" }),
-      fetchWithTimeout("/api/auth/me", { credentials: "include", cache: "no-store" }),
-    ]).then(async ([installationsResponse, meResponse]) => {
-      const [items, principal] = await Promise.all([
-        installationsResponse.ok ? installationsResponse.json() : [],
-        meResponse.ok ? meResponse.json() as Promise<{ permissions?: string[] }> : {} as { permissions?: string[] },
-      ]);
-      if (!cancelled) {
-        setInstallations(Array.isArray(items) ? items : []);
+    let poll: ReturnType<typeof setInterval> | undefined;
+    const bootstrap = async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        // Confirm or refresh the customer cookie BEFORE starting the four
+        // protected requests. All four projections settle before first paint.
+        if (!(await ensureCustomerSession()).authenticated) throw new Error("SESSION_EXPIRED");
+        const epoch = refreshEpoch.current;
+        const [keysResponse, installsResponse, principalResponse, billingResponse] = await Promise.all([
+          fetchWithTimeout("/api/odoo/keys", { credentials: "include", cache: "no-store" }),
+          fetchWithTimeout("/api/odoo/installations", { credentials: "include", cache: "no-store" }),
+          fetchWithTimeout("/api/auth/me", { credentials: "include", cache: "no-store" }),
+          fetchWithTimeout("/api/billing/status", { credentials: "include", cache: "no-store" }),
+        ]);
+        if (!keysResponse.ok || !installsResponse.ok || !principalResponse.ok || !billingResponse.ok)
+          throw new Error("CONNECTION_DATA_UNAVAILABLE");
+        const [nextKeys, nextInstalls, principal, billing] = await Promise.all([
+          keysResponse.json() as Promise<ApiKey[]>,
+          installsResponse.json() as Promise<Installation[]>,
+          principalResponse.json() as Promise<{ permissions?: string[] }>,
+          billingResponse.json() as Promise<{ hasSubscription?: boolean }>,
+        ]);
+        if (!Array.isArray(nextKeys) || !Array.isArray(nextInstalls))
+          throw new Error("INVALID_CONNECTION_DATA");
+        if (cancelled) return;
+        if (epoch === refreshEpoch.current) setKeys(nextKeys);
+        setInstallations(nextInstalls);
         setCanManage(principal.permissions?.includes("integrations.manage") === true);
+        setHasSubscription(billing.hasSubscription === true);
         setGatewayUrl(window.location.origin);
+        setInitialLoaded(true);
+        // Background refresh never replaces the page with a new skeleton or
+        // resets an in-progress key mutation. A new mount has one bootstrap.
+        poll = setInterval(() => {
+          if (cancelled || mutationInFlight.current || document.visibilityState !== "visible") return;
+          const observedEpoch = refreshEpoch.current;
+          void loadKeys().then((items) => {
+            if (!cancelled && observedEpoch === refreshEpoch.current) setKeys(items);
+          }).catch(() => {
+            if (!cancelled) setError(t("apiKeys.loadFailed"));
+          });
+        }, 30_000);
+      } catch {
+        if (!cancelled) setError(t("apiKeys.loadFailed"));
+      } finally {
+        if (!cancelled) setLoading(false);
       }
-    }).catch(() => { if (!cancelled) setError(t("apiKeys.loadFailed")); });
-    return () => { cancelled = true; };
-  }, [t]);
+    };
+    void bootstrap();
+    return () => {
+      cancelled = true;
+      if (poll) clearInterval(poll);
+    };
+  }, [loadKeys, loadTick, t]);
 
   async function generate() {
     if (mutationInFlight.current || !canManage) return;
@@ -187,6 +197,26 @@ export default function ApiKeysPage() {
   const active = keys.filter(k => !k.revokedAt).length;
   const enabled = keys.filter(k => !k.revokedAt && k.odooEnabled).length;
 
+
+  // One stable initial state: do not render the empty connection form, access
+  // badges or onboarding copy before the owner and key inventory are known.
+  if (loading || !initialLoaded) {
+    return (
+      <>
+        <PageHeader icon={<KeyRound className="h-4 w-4" />} title={t("v4.connection.title")} />
+        <PageContainer>
+          {error && !loading
+            ? <ErrorState title={t("apiKeys.loadFailed")} message={error} retry={() => setLoadTick(tick => tick + 1)} />
+            : <div role="status" aria-label={t("apiKeys.loadingCredentials")} className="space-y-5" aria-busy="true">
+                <Skeleton className="h-20 w-full" />
+                <Skeleton className="h-44 w-full" />
+                <Skeleton className="h-48 w-full" />
+                <span className="sr-only">{t("apiKeys.loadingCredentials")}</span>
+              </div>}
+        </PageContainer>
+      </>
+    );
+  }
 
   return (
     <>
@@ -270,7 +300,7 @@ export default function ApiKeysPage() {
 
           <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1.55fr)_minmax(300px,0.85fr)]">
             <div className="space-y-5">
-              {active === 0 && <Card>
+              <Card>
                 <CardHeader
                   title={t("apiKeys.connectOdoo")}
                   subtitle={t("apiKeys.connectDescription")}
@@ -309,15 +339,8 @@ export default function ApiKeysPage() {
                     </Button>
                   </div>
                 </form>
-              </Card>}
+              </Card>
 
-              <details className="card group overflow-hidden">
-                <summary className="flex min-h-11 cursor-pointer items-center justify-between gap-3 p-5 font-semibold focus-visible:ring-2 focus-visible:ring-brand">{t("v4.connection.advanced")}<ChevronDown className="h-4 w-4" aria-hidden /></summary>
-                <div className="border-t border-edge-subtle p-5 space-y-3">
-                  <p className="text-sm text-ink-3">{t("v4.connection.advancedBody")}</p>
-                  <Field label={t("apiKeys.credentialName")} htmlFor="advanced-key-name"><Input id="advanced-key-name" value={name} maxLength={120} onChange={event => setName(event.target.value)} disabled={busy || !canManage} /></Field>
-                  <Button variant="secondary" onClick={() => void generate()} disabled={busy || !canManage || hasSubscription !== true}>{t("apiKeys.generateKey")}</Button>
-                </div>
               <Card className="overflow-hidden">
                 <CardHeader
                   title={t("apiKeys.credentials")}
@@ -398,7 +421,6 @@ export default function ApiKeysPage() {
                   </ul>
                 )}
               </Card>
-              </details>
             </div>
 
             <aside className="space-y-5">

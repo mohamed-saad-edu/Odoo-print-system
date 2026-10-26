@@ -21,7 +21,7 @@ import {
 import { LanguageSwitcher } from "./LanguageSwitcher";
 import { TopNavbar, type TopNavItem } from "./TopNavbar";
 import { MobileAppBar } from "./MobileAppBar";
-import { Avatar, Button, Callout, Menu, type MenuItemSpec } from "./ui";
+import { Avatar, Button, Callout, Menu, PageSkeleton, type MenuItemSpec } from "./ui";
 import { CommandPalette, type CommandItem } from "./CommandPalette";
 import { ThemeToggle, toggleTheme } from "./ThemeToggle";
 import { ensureCustomerSession } from "../lib/session-config";
@@ -589,8 +589,9 @@ export function AppShell({ children }: { children: ReactNode }) {
     );
   }
 
-  // Brief loading state while the session check resolves, render without navigation chrome.
-  return <main className="tg-shell-root min-h-screen min-w-0 max-w-full bg-app text-ink">{children}</main>;
+  // The protected page must not flash unauthenticated data or its initial
+  // empty state before the session check has settled.
+  return <main className="tg-shell-root min-h-screen min-w-0 max-w-full bg-app p-5" aria-busy="true"><PageSkeleton /></main>;
 }
 
 export { TopNavbar };
