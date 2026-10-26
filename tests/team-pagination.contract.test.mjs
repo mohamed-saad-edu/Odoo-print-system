@@ -12,20 +12,26 @@ test("workspace member list is tenant-scoped and bounded independently of invita
     /hasMore: rows\.length > limit/, /total: countRows\[0\]\?\.total \?\? 0/
   ]) assert.match(source, pattern);
 });
-test("workspace invitations deny ordinary sessions and Platform Admin lists are bounded", () => {
+test("workspace invitations expose a bounded read-only list while writes stay Platform Owner-only", () => {
   const old = read("src/app/api/team/invitations/route.ts");
   const platform = read("src/app/api/platform/tenants/[id]/invitations/route.ts");
   assert.match(old, /PLATFORM_OWNER_REQUIRED/);
+  assert.match(old, /eq\(tenantInvitations.tenantId, claims.tenantId\)/);
+  assert.match(old, /export async function GET/);
+  assert.match(old, /export async function POST\(req: Request\) \{ return denyWorkspaceMutation\(req\); \}/);
   assert.match(platform, /requirePlatformOwner/);
   assert.match(platform, /\.limit\(100\)/);
 });
-test("workspace Team UI paginates only read-only members and never offers role changes or invitations", () => {
+test("workspace Team UI restores invitations but never offers role selection or workspace-authorized writes", () => {
   const page = read("src/app/team/page.tsx");
   assert.match(page, /const PAGE_SIZE = 50/);
   assert.match(page, /\/api\/team\/members\?limit=/);
   assert.match(page, /hasMore/);
   assert.match(page, /common\.nextPage/);
-  assert.doesNotMatch(page, /updateRole\(|roleOptions\(|\/api\/team\/invitations/);
+  assert.doesNotMatch(page, /updateRole\(|roleOptions\(|<Select/);
+  assert.match(page, /\/api\/team\/invitations\?limit=/);
+  assert.match(page, /\/api\/platform\/tenants\//);
+  assert.match(page, /verifyPlatformOwnerPassword/);
 });
 test("DB indexes for current membership and historical invitations are preserved", () => {
   const schema = read("src/db/schema.ts");

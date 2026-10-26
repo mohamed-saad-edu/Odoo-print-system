@@ -38,7 +38,9 @@ def test_native_tests_precede_architecture_aligned_cgo_builds_and_environment_is
 def test_each_local_signing_path_checks_signature_and_identity():
     signing_calls = [line for line in BUILDER.splitlines() if "= Set-AuthenticodeSignature " in line]
     validations = [line for line in BUILDER.splitlines() if "= Assert-AuthenticodeSigningResult " in line]
-    assert len(signing_calls) == len(validations) == 2
+    assert len(signing_calls) == 1 and len(validations) == 2
+    assert 'Get-AuthenticodeSignature -LiteralPath $nsis[0].FullName' in BUILDER
+    assert 'Set-AuthenticodeSignature -FilePath $nsis[0].FullName' not in BUILDER
     assert all("-ErrorAction Stop" in line for line in signing_calls)
     assert '[string]$Signature.Status -notin @("Valid", "NotTrusted")' in BUILDER
     assert "$Signature.SignerCertificate.Thumbprint -ne $ExpectedThumbprint" in BUILDER
@@ -105,3 +107,36 @@ def test_nsis_installed_manager_uses_cryptographic_signature_check_after_tauri_p
     assert "'agent\\yaseir-agent-cli.exe' = 'resources\\yaseir-agent-cli.exe'" in step
     assert 'if ($installedHash -ne $expectedHash)' in step
     assert "'src-tauri\\target\\x86_64-pc-windows-msvc\\release\\yaseir-manager.exe' =" not in step
+
+
+def test_patched_manager_binary_receives_explicit_cli_signing_config_before_nsis():
+    # The failure on main was NotSigned for the installed Manager even though
+    # the NSIS setup executable itself was signed. Rust's TAURI_CONFIG alone
+    # does not prove that the bundler's Windows settings were overridden.
+    build = WORKFLOW.split("- name: Build Tauri Windows NSIS installer", 1)[1].split("\n      - name:", 1)[0]
+    sign = WORKFLOW.split("- name: Prepare code-signing certificate and sign Go Agent binaries", 1)[1].split("\n      - name:", 1)[0]
+    assert '"TAURI_CONFIG=$tauriConfig"' in sign
+    assert '"YASEIR_SIGNING_THUMBPRINT=$($cert.Thumbprint)"' in sign
+    assert '$env:YASEIR_SIGNING_THUMBPRINT' in build
+    assert '$env:TAURI_CONFIG' in build
+    assert 'certificateThumbprint' in build
+    assert 'tauri.windows.signing.json' in build
+    assert 'cargo tauri build --target x86_64-pc-windows-msvc --bundles nsis --config $signingConfig' in build
+    assert '--no-binary-patching' not in build
+    verify = WORKFLOW.split("- name: Verify NSIS installer artifact", 1)[1].split("\n      - name:", 1)[0]
+    assert "Get-AuthenticodeSignature -LiteralPath $exe[0].FullName" in verify
+    assert "Set-AuthenticodeSignature -FilePath $exe[0].FullName" not in verify
+    installed = WORKFLOW.split("- name: Install, smoke-test, and fully uninstall NSIS package", 1)[1].split("\n      - name:", 1)[0]
+    assert 'Get-AuthenticodeSignature -LiteralPath $managerPath' in installed
+    assert '$managerSignature.Status -ne "Valid"' in installed
+    assert '$managerSignature.SignerCertificate.Thumbprint -ne $env:YASEIR_SIGNING_THUMBPRINT' in installed
+
+
+def test_local_windows_builder_passes_signing_overlay_to_cli_when_requested():
+    assert 'certificateThumbprint = $signingCert.Thumbprint' in BUILDER
+    assert '$buildArgs += @("--config", $tauriSigningConfig)' in BUILDER
+    assert '$env:TAURI_CONFIG' in BUILDER
+    assert 'if ($signingCert)' in BUILDER
+    assert 'Remove-Item -LiteralPath $tauriSigningConfig' in BUILDER
+    assert 'Get-AuthenticodeSignature -LiteralPath $nsis[0].FullName' in BUILDER
+    assert 'cargo tauri build --target $Target --bundles $Bundles' not in BUILDER
