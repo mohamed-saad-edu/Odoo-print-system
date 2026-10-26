@@ -1,3 +1,6 @@
 import { redirect } from "next/navigation";
-/** Billing and subscription management is available only in Platform Admin. */
-export default function Page() { redirect("/dashboard"); }
+/** Commercial billing is exclusively administered in Platform Admin. */
+export default function Page(_props?: { searchParams?: Promise<unknown> }) {
+  redirect("/dashboard");
+  return null;
+}

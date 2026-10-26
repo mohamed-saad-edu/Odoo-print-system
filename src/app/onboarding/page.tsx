@@ -1,3 +1,6 @@
 import { redirect } from "next/navigation";
-/** Billing and subscription management is available only in Platform Admin. */
-export default function Page() { redirect("/dashboard"); }
+/** No workspace member can request or edit commercial subscriptions. */
+export default function Page() {
+  redirect("/dashboard");
+  return null;
+}

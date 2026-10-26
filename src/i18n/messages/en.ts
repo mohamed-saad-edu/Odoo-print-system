@@ -485,7 +485,6 @@ export const en = {
   // ── Team ─────────────────────────────────────────────────────────────────
   "team.members": "Members",
   "team.membersDescription": "Workspace colleagues have the same operational Full Access. Only the Platform Owner manages invitations, membership and billing.",
-  "team.pendingInvitations": "Pending invitations",
   "team.member": "Member",
   "team.role": "Role",
   "team.invite": "Invite teammate",
