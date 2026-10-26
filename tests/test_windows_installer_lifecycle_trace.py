@@ -14,7 +14,7 @@ class HookAbort(Exception):
     pass
 
 
-def trace_hook(macro, *, certificate=False, stop_at=0, foreign=False, qc_code=0, query_code=0, install_dir=r'C:\Program Files\Yaseir'):
+def trace_hook(macro, *, certificate=False, stop_at=0, foreign=False, qc_code=0, query_code=0, install_dir=r'C:\Program Files\Yaseir', binary_path=None):
     source = (ROOT / 'src-tauri/installer_hooks.nsh').read_text()
     body = source.split(f'!macro {macro}', 1)[1].split('!macroend', 1)[0].splitlines()[1:]
     replacements = {'name': 'YaseirAgent', 'exe': 'YaseirAgent.exe', 'tag': 'test'}
@@ -61,7 +61,8 @@ def trace_hook(macro, *, certificate=False, stop_at=0, foreign=False, qc_code=0,
             command = value(args[0]); commands.append(command)
             if 'sc.exe" qc ' in command:
                 image = r'C:\Foreign\Agent.exe' if foreign else install_dir + r'\resources\YaseirAgent.exe'
-                code, output = qc_code, 'BINARY_PATH_NAME : "' + image + '" -service run\r\n'
+                command_line = binary_path if binary_path is not None else '"' + image + '" -service run'
+                code, output = qc_code, 'BINARY_PATH_NAME : ' + command_line + '\r\n'
             elif 'sc.exe" query ' in command:
                 code, output = query_code, 'STATE : ' + ('1 STOPPED' if elapsed >= stop_at else '3 STOP_PENDING')
             else:
@@ -159,3 +160,34 @@ def test_failed_query_never_confirms_stopped_state():
         assert 'still running' in str(error) or 'Unable to verify' in str(error)
     else:
         raise AssertionError('STOPPED text from a failed query is not service-state evidence')
+
+
+def test_upgrade_rejects_ambiguous_or_malformed_executable_before_stopping():
+    image = r'C:\Program Files\Yaseir\resources\YaseirAgent.exe'
+    for command_line in [
+        image + ' -service run',  # unquoted spaces do not identify this executable
+        '"' + image,  # unterminated executable token
+        image + '" -service run',  # unmatched trailing quote
+        '"' + image + '"" -service run',
+        '"' + image + '"other.exe -service run',
+        '"' + image + '.foreign" -service run',
+        ':"' + image + '" -service run',  # separator-like bytes are part of the path
+    ]:
+        try:
+            trace_hook('YASEIR_STOP_OWNED_SERVICE_VERIFY', binary_path=command_line)
+        except HookAbort as error:
+            assert 'foreign Windows service' in str(error)
+            assert 'sc.exe" stop ' not in str(error), command_line
+        else:
+            raise AssertionError(f'unverified executable must abort before stop: {command_line}')
+
+
+def test_upgrade_accepts_exact_quoted_and_unquoted_executable_tokens():
+    for install_dir, command_line in [
+        (r'C:\Program Files\Yaseir', r'"C:\Program Files\Yaseir\resources\YaseirAgent.exe" -service run'),
+        (r'C:\Program Files\Yaseir', r'"C:\Program Files\Yaseir\YaseirAgent.exe"'),
+        (r'C:\Apps\Yaseir', r'C:\Apps\Yaseir\resources\YaseirAgent.exe -service run'),
+        (r'C:\Apps\Yaseir', r'C:\Apps\Yaseir\YaseirAgent.exe'),
+    ]:
+        commands, _ = trace_hook('YASEIR_STOP_OWNED_SERVICE_VERIFY', install_dir=install_dir, binary_path=command_line)
+        assert any('sc.exe" stop ' in command for command in commands), command_line

@@ -269,7 +269,7 @@ describe("deep production review contracts", () => {
     expect(odooAgents).toContain("TenantSubscriptionRequiredError");
     expect(odooAgents).toContain('code: "SUBSCRIPTION_REQUIRED"');
     expect(register).toContain("SUBSCRIPTION_REQUIRED");
-    expect(register).toContain("liveTenantSubscriptionWhere");
+    expect(register).toContain("requireTenantBillingAccess(tx, agent.tenantId)");
     expect(lifecycle).toContain("requireTenantBillingAccess(tx, tenantId)");
     expect(entitlements).toContain("requireTenantBillingAccess");
     expect(entitlements).toContain("ts.status = 'active'");

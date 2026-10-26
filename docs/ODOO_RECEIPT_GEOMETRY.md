@@ -1,6 +1,6 @@
 # Odoo receipt geometry in V3
 
-Current addon version: `19.0.2.25.0` (V5 preserves the V3 receipt-geometry contract).
+Current addon version: `19.0.2.35.0` (V5 preserves the V3 receipt-geometry contract).
 
 POS receipts, kitchen tickets and the in-session Sale Details receipt use the
 geometry reported for their selected execution destination. Unknown geometry produces
@@ -161,7 +161,7 @@ outcome before deliberately creating new paper output.
    unresolved-operation records. Use the normal backup and upgrade procedure.
 2. Deploy the matching Agent and Gateway geometry contract and obtain a converged
    observation or a validated measurement profile for each receipt printer.
-3. Upgrade `print_gateway` to `19.0.2.25.0` using the ordinary Odoo module update.
+3. Upgrade `print_gateway` to `19.0.2.35.0` using the ordinary Odoo module update.
    The `19.0.2.22.0` schema increment added nullable output-medium, output-outcome
    and canonical artifact-evidence columns through Odoo's normal schema update;
    V5 preserves those columns and existing jobs, credentials, identities and

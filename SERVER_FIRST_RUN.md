@@ -4,7 +4,7 @@ This is the canonical first deployment path for a fresh production server.
 
 **Repository:** https://github.com/mohamed-saad-edu/Odoo-print-system  
 **Web app:** Yaseir Gateway  
-**Customer portal:** `/signup` → `/verify-email` → `/reset-password?setup=1` → `/onboarding` → `/dashboard`  
+**Customer portal:** `/signup` → `/verify-email` → `/reset-password?setup=1` → `/dashboard`
 **Platform control plane:** `/platform/login`
 
 ## 0. What runs on the server
@@ -155,7 +155,7 @@ The registration endpoint deliberately keeps its response generic and suppresses
 
 ## 4. Configure the manual plan catalog and contact
 
-Public onboarding plans require an active, public plan with a monthly job allowance. No provider price identifier is required. Create the catalog in Platform Admin, or bootstrap it once with:
+The public catalog exposes active, public plans with a monthly job allowance; only the Platform Owner assigns commercial subscriptions. No provider price identifier is required. Create the catalog in Platform Admin, or bootstrap it once with:
 
 ```bash
 export YASEIR_PLAN_CATALOG='[{"id":"starter","name":"Starter","description":"Monthly printing allowance","monthlyQuota":1000}]'
@@ -314,23 +314,32 @@ A successful verification:
 2. marks the user verified and invalidates any old provisional password hash;
 3. creates the first workspace if the user has no membership yet;
 4. issues a single-use, 10-minute password setup token (`requiresPasswordSetup: true`) without setting a session cookie;
-5. redirects to `/reset-password?token=...&setup=1` for one-time password creation. Successful setup starts a fresh customer session and continues to onboarding without another password prompt; inaccessible workspaces fall back to normal sign-in.
+5. redirects to `/reset-password?token=...&setup=1` for one-time password creation. Successful setup starts a fresh customer session and continues to the workspace dashboard without another password prompt; inaccessible workspaces fall back to normal sign-in.
 
 The verification token expires after 10 minutes.
 
 ## 10. First workspace setup
 
-On `/onboarding`:
+`/onboarding` redirects to `/dashboard`; workspace members cannot submit plan,
+activation or renewal requests. Its retired API and `/api/subscription-requests`
+return `403 PLATFORM_OWNER_REQUIRED`.
 
-1. Enter the workspace name.
-2. Select a public plan and a monthly or yearly term.
-3. Submit the activation request and retain its reference.
-4. The platform owner reviews the request, records the business reason and dates, and activates it manually.
-5. Refresh the pending screen to obtain the actual active state, then connect a Windows computer, discover and verify its printer, and use **Connect Odoo**.
+1. The Platform Owner opens the workspace in Platform Admin and selects the
+   plan, free/paid type, term, dates and independent monthly job allowance.
+2. After external business settlement or an explicit free grant, the Platform
+   Owner confirms activation with recent password proof, a reason, an
+   idempotency key and the current revision. Existing historical requests may
+   be reviewed without granting a new customer write path.
+3. The member's dashboard reads actual non-commercial availability. Once active,
+   connect a Windows computer, discover and verify its printer, and use
+   **Connect Odoo**. Members can update the workspace name through Settings.
 
-The subscription term and monthly quota reset are separate. A request or email verification never grants print access. Invited users join their intended existing workspace without creating another workspace or subscription. New invitations grant Full Access for ordinary work; only the workspace owner can invite people or change ownership/billing.
-
-Do not skip plan provisioning; an empty catalog prevents a meaningful request.
+The subscription term and UTC monthly quota bucket are separate. Signup and
+email verification do not grant print access. Invited users join their intended
+existing workspace without creating another workspace or subscription. New
+invitations grant Full Access for ordinary work; only the Platform Owner can
+invite people or change ownership/billing. Provision the manual plan catalog
+before the Platform Owner assigns subscriptions.
 
 ## 11. Customer login
 

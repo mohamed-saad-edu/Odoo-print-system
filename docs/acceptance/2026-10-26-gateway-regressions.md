@@ -1,4 +1,6 @@
-# Current-tree implementation and verification — 2026-10-26
+# Gateway implementation and verification checkpoint — 2026-10-26
+
+Scope: this is a retained earlier verification checkpoint for the source revisions named below, not the final gate result for later working-tree changes. Do not reuse its test totals or PASS labels as current execution evidence.
 
 Verdict: **NO-GO for production release**. The two reproduced Gateway defects
 below are fixed and software gates pass on the available toolchains. Real

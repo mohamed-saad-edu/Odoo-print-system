@@ -15,8 +15,9 @@ No previous branch, repository or older project artifact was consulted or merged
   explicitly track the state used in printer routing requests.
 - Legacy browser scope normalization produces unambiguous final visible
   names, including generated ID and "Unavailable" suffix collisions.
-- `print_gateway` manifest version bumped from `19.0.2.24.0` to
-  `19.0.2.25.0`; see `ODOO_INTEGRATION.md` for the non-destructive,
+- The current candidate uses `print_gateway` version `19.0.2.35.0`.
+  The initial V5 increment was `19.0.2.24.0` to `19.0.2.25.0`;
+  see `ODOO_INTEGRATION.md` for later changes and the non-destructive,
   **database-specific** upgrade and asset invalidation checklist.
 - Added isolated Python and Node source-method regression cases.
 
