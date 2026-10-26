@@ -9,7 +9,7 @@ and records permission rollback metadata; see [PostgreSQL deployment roles](DATA
 
 ## Schema inventory
 
-There are **34 current application tables**, **98 forward-only SQL migrations (`0000`–`0097`)**, and additional versioned forward repairs in [`scripts/db-migrate.ts`](../scripts/db-migrate.ts). The migration ledger, `drizzle.__drizzle_migrations`, is separate from the application tables.
+There are **32 current application tables**, **99 forward-only SQL migrations (`0000`–`0098`)**, and additional versioned forward repairs in [`scripts/db-migrate.ts`](../scripts/db-migrate.ts). The migration ledger, `drizzle.__drizzle_migrations`, is separate from the application tables.
 
 | Table | Purpose and identity | Scope and relevant constraints |
 | --- | --- | --- |
@@ -40,10 +40,18 @@ There are **34 current application tables**, **98 forward-only SQL migrations (`
 | `gateway_metrics` | Shared operational counters | Global metric-name primary key; nonnegative value; written by the metrics service |
 | `audit_events` | Actor/action/resource audit metadata | Tenant is required except for Platform actor records; actor type CHECK and scope/time indexes |
 | `auth_rate_limits` | Authentication attempt windows, failure counters and lockout expiry | Global opaque-key primary key; account/source-IP/pairing scope is encoded by the application, not a tenant column |
-| `plans` | Public/private plan catalog, entitlements and current/historical Stripe price identity | Global plan identity/name; optional Stripe price/product uniqueness; active/public/display-order fields |
-| `tenant_subscriptions` | Tenant plan and provider billing state, checkout intent/session and billing-operation reconciliation | One row per tenant; plan references; unique provider/idempotency identities; bounded subscription/checkout/operation states |
-| `billing_events` | Provider webhook receipt, payload and processing state | Provider event ID primary key for deduplication; optional tenant reference until the event is associated |
-| `print_usage_periods` | Reserved/used print credits per billing period | Composite primary key `(tenant_id, period_start)`; nonnegative use and ordered optional period end |
+| `plans` | Public/private manual plan catalog and monthly print allowance | Global plan identity/name; active/public/display-order fields |
+| `tenant_subscriptions` | Manually approved plan, term, quota, status, revision and expiry | One row per workspace; plan reference; four allowed statuses, no provider identity or checkout columns |
+
+Migration `0098` retires all Stripe and checkout columns from operational
+`plans` and `tenant_subscriptions`. It moves `billing_events` and
+`print_usage_periods` into the non-public `legacy_billing` schema and
+archives legacy identities in `legacy_billing.plan_provider_history`
+and `legacy_billing.subscription_provider_history`. Historical records are
+kept strictly for audit and restore; the Gateway runtime and public explorer
+do not use them. Explicitly approved manual subscriptions and the
+`print_monthly_usage` ledger remain authoritative. See
+[Manual-only database](MANUAL_ONLY_DATABASE.md) for the forward-only cutover.
 
 The schema retains global account, catalog, metric and authentication data alongside tenant-scoped data. A missing `tenant_id` on a global table is not by itself an isolation defect. Conversely, the existence of a tenant column does not authorize access to a row.
 
@@ -75,7 +83,7 @@ Only `printer_type='file'`, `connection_type='pdf_output'`, `protocol='pdf'` and
 
 Current browser access JWTs are short-lived and are not stored as refresh-token rows. The `refresh_tokens` table holds hashes of opaque refresh secrets, family history and revocation evidence. Validation also checks the live principal and current membership. Legacy workspace and platform sessions are denied because they lack current persisted assurance. Migration `0091` revokes pre-policy workspace families and legacy rows. Historical `0092` remains immutable; `0093` removes the retired factor stores and preserves all retained password/session deadlines and revocation state. No old or missing session is silently promoted. See [SECURITY.md](../SECURITY.md) for cookie, rotation and expiry behavior.
 
-Agent and API-key columns contain credential hashes, not recoverable raw bearer secrets. Passwords use the account password-hashing implementation. Pairing codes use the deployment's configured keyed hashing policy. A database backup still contains sensitive data: credential hashes, account identifiers, print payloads, billing webhook payloads and operational metadata. Restrict database/backup access and apply deployment encryption and retention controls; the schema does not encrypt all of those columns. Preserve the independent JWT signing key through protected custody. Old backups containing retired factor material remain sensitive even though V3 does not read it.
+Agent and API-key columns contain credential hashes, not recoverable raw bearer secrets. Passwords use the account password-hashing implementation. Pairing codes use the deployment's configured keyed hashing policy. A database backup still contains sensitive data: credential hashes, account identifiers, print payloads, archived legacy billing events and operational metadata. Restrict database/backup access and apply deployment encryption and retention controls; the schema does not encrypt all of those columns. Preserve the independent JWT signing key through protected custody. Old backups containing retired factor material remain sensitive even though V3 does not read it.
 
 Audit rows are persisted in PostgreSQL, but not every audit write is atomic with its business operation. Some paths write best effort after commit. The audit table is not an external alert-delivery service or an immutable storage boundary against a privileged database account.
 
@@ -124,7 +132,7 @@ This checks current table names against schema declarations, migration creates/d
 
 - `subscription_requests`: verified authenticated requester identity snapshots, workspace/plan relationship, one pending request per workspace, request idempotency/digest, reviewer decision/reason/time and resulting subscription revision. Historical requester names remain blank if never recorded; never inferred from an email.
 - `subscription_changes`: append-only business history of every manual subscription mutation and migration, actor, old/new values, reason, request digest and per-workspace idempotency key. Every application write also records an `audit_events` entry in the same transaction.
-- `print_monthly_usage`: transactional credit consumption keyed by workspace and UTC calendar month. Separate from contract start/end and historical `print_usage_periods`. Renewal and plan changes cannot reset it. Receipts and live jobs provide deduplicated logical-job reporting; the cutover month conservatively preserves overlapping legacy consumption.
+- `print_monthly_usage`: transactional credit consumption keyed by workspace and UTC calendar month. Separate from contract start/end and archived legacy `print_usage_periods`. Renewal and plan changes cannot reset it. Receipts and live jobs provide deduplicated logical-job reporting; the cutover month conservatively preserves overlapping legacy consumption.
 
 `tenant_subscriptions` adds `billing_mode=manual`, free/paid type, optional finite monthly quota override, monthly/yearly/custom term, internal reference and revision. New status defaults to awaiting_activation. Runtime requires explicit active status, valid start/end, unblocked entitlement and an active tenant fence. `users.display_name` is nullable for historical accounts. Provider columns remain read-only historical evidence.
 
