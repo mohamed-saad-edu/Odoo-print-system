@@ -35,21 +35,6 @@ msgid "%d print job(s) synchronized, %d failed."
 msgstr "تمت مزامنة %d مهمة/مهام طباعة، وتعذّرت %d."
 
 #. module: print_gateway
-#: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_config_form
-msgid "1. Connect your company"
-msgstr "١. ربط شركتك"
-
-#. module: print_gateway
-#: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_config_form
-msgid "2. Choose printers and documents"
-msgstr "٢. اختيار الطابعات والمستندات"
-
-#. module: print_gateway
-#: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_config_form
-msgid "3. Start printing"
-msgstr "٣. بدء الطباعة"
-
-#. module: print_gateway
 #. odoo-python
 #: code:addons/print_gateway/models/print_router.py:0
 msgid ""
@@ -185,11 +170,6 @@ msgid ""
 "A root-company Automation Rule cannot target a branch-specific Binding."
 msgstr ""
 "لا يمكن لقاعدة أتمتة على مستوى الشركة الجذر أن تستهدف ربطًا خاصًا بفرع."
-
-#. module: print_gateway
-#: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_binding_form
-msgid "A test receipt will be printed on the selected printer. Continue?"
-msgstr "ستتم طباعة إيصال تجريبي على الطابعة المحدَّدة. هل تريد المتابعة؟"
 
 #. module: print_gateway
 #. odoo-python
@@ -333,12 +313,6 @@ msgid "Advanced connection settings"
 msgstr "إعدادات الاتصال المتقدمة"
 
 #. module: print_gateway
-#. odoo-javascript
-#: code:addons/print_gateway/static/src/components/printers_overview.xml:0
-msgid "Advanced device assignments"
-msgstr "توزيع الأجهزة المتقدم"
-
-#. module: print_gateway
 #. odoo-python
 #: code:addons/print_gateway/models/binding.py:0
 #: code:addons/print_gateway/models/runtime_assignment.py:0
@@ -454,12 +428,6 @@ msgid "Assign Runtime Agent Wizard"
 msgstr "معالج تعيين Agent طباعة"
 
 #. module: print_gateway
-#. odoo-javascript
-#: code:addons/print_gateway/static/src/components/printers_overview.xml:0
-msgid "Assign a computer"
-msgstr "تعيين جهاز كمبيوتر"
-
-#. module: print_gateway
 #: model:ir.model.fields,field_description:print_gateway.field_print_gateway_intent__attempts
 msgid "Attempt Count"
 msgstr "عدد المحاولات"
@@ -561,21 +529,16 @@ msgid "Branch"
 msgstr "الفرع"
 
 #. module: print_gateway
-#. odoo-python
-#: code:addons/print_gateway/models/gateway_config.py:0
-#: model:ir.actions.act_window,name:print_gateway.action_print_gateway_runtime_assignments
-msgid "Branch Agent Assignments"
-msgstr "تعيينات الـ Agents للفروع"
-
-#. module: print_gateway
 #: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_runtime_assignment_form
 msgid "Branch Device"
 msgstr "جهاز الفرع"
 
 #. module: print_gateway
+#. odoo-python
 #: model:ir.ui.menu,name:print_gateway.menu_print_gateway_assignments
 #: model:ir.actions.act_window,name:print_gateway.action_print_gateway_runtime_assignments
 #: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_runtime_assignment_list
+#: code:addons/print_gateway/models/gateway_config.py:0
 msgid "Branch Devices"
 msgstr "أجهزة الفروع"
 
@@ -659,12 +622,9 @@ msgid "Changing language timed out. Reload the page before trying again."
 msgstr "انتهت مهلة تغيير اللغة. أعد تحميل الصفحة قبل المحاولة مرة أخرى."
 
 #. module: print_gateway
-#: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_binding_form
-msgid "Check Setup"
-msgstr "فحص الإعداد"
-
-#. module: print_gateway
+#. odoo-javascript
 #: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_config_form
+#: code:addons/print_gateway/static/src/components/printers_overview.xml:0
 msgid "Check connection"
 msgstr "التحقق من الاتصال"
 
@@ -718,18 +678,6 @@ msgstr "اختر Agent طباعة نشطًا متصلًا بهذا الحساب.
 #: code:addons/print_gateway/static/src/components/printers_overview.xml:0
 msgid "Choose documents for this printer"
 msgstr "تحديد مستندات هذه الطابعة"
-
-#. module: print_gateway
-#: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_config_form
-msgid "Choose printers"
-msgstr "اختيار الطابعات"
-
-#. module: print_gateway
-#: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_binding_form
-#. odoo-javascript
-#: code:addons/print_gateway/static/src/components/printers_overview.xml:0
-msgid "Choose where each document should be printed."
-msgstr "اختر مكان طباعة كل مستند."
 
 #. module: print_gateway
 #: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_runtime_assignment_form
@@ -849,11 +797,6 @@ msgstr ""
 "الاتصال قبل الطباعة."
 
 #. module: print_gateway
-#: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_config_form
-msgid "Configure automatic printing"
-msgstr "إعداد الطباعة التلقائية"
-
-#. module: print_gateway
 #: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_pair_agent_wizard_form
 msgid "Connect Agent"
 msgstr "ربط Agent"
@@ -869,12 +812,6 @@ msgstr "ربط Agent طباعة"
 #: code:addons/print_gateway/static/src/components/printers_overview.xml:0
 msgid "Connect Yaseir"
 msgstr "الربط مع Yaseir"
-
-#. module: print_gateway
-#. odoo-javascript
-#: code:addons/print_gateway/static/src/components/printers_overview.xml:0
-msgid "Connect a printing computer first"
-msgstr "اربط جهاز الطباعة أولًا"
 
 #. module: print_gateway
 #: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_config_form
@@ -1043,11 +980,6 @@ msgid "Destination key"
 msgstr "مفتاح الوجهة"
 
 #. module: print_gateway
-#: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_runtime_assignment_form
-msgid "Details"
-msgstr "التفاصيل"
-
-#. module: print_gateway
 #. odoo-python
 #: code:addons/print_gateway/models/print_router.py:0
 msgid "Diagnostic paper width must be 58 or 80 mm."
@@ -1143,12 +1075,14 @@ msgid "Document / Report belongs to another company/branch context."
 msgstr "المستند/التقرير يتبع سياق شركة/فرع آخر."
 
 #. module: print_gateway
+#. odoo-python
 #: model:ir.ui.menu,name:print_gateway.menu_print_gateway_bindings
 #: model:ir.actions.act_window,name:print_gateway.action_print_gateway_binding
 #: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_config_form
 #. odoo-javascript
 #: code:addons/print_gateway/static/src/components/printers_overview.xml:0
 #: code:addons/print_gateway/static/src/components/printers_overview.js:0
+#: code:addons/print_gateway/models/gateway_config.py:0
 msgid "Document Destinations"
 msgstr "وجهات المستندات"
 
@@ -1318,18 +1252,6 @@ msgid "File output pending"
 msgstr "إخراج الملف قيد الانتظار"
 
 #. module: print_gateway
-#: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_binding_form
-msgid ""
-"For raw warehouse labels, leave Report empty and select the printer's exact "
-"ZPL, TSPL, ESC/POS or raw language under Advanced. To print a PDF warehouse "
-"report, select the Report instead and use a document-capable printer "
-"transport."
-msgstr ""
-"لملصقات المستودع الخام، اترك التقرير فارغًا وحدد لغة الطابعة الفعلية ZPL أو "
-"TSPL أو ESC/POS أو Raw من الخيارات المتقدمة. لطباعة PDF، اختر التقرير ووسيلة"
-" نقل تدعم المستندات."
-
-#. module: print_gateway
 #. odoo-python
 #: code:addons/print_gateway/models/print_job.py:0
 msgid "Force Reprint Dispatched"
@@ -1463,18 +1385,6 @@ msgstr "معرّف المهمة في الـ Gateway"
 #: code:addons/print_gateway/static/src/js/pos_print_router.js:0
 msgid "Gateway Kitchen"
 msgstr "مطبخ الـ Gateway"
-
-#. module: print_gateway
-#: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_binding_form
-msgid ""
-"Gateway Kitchen / Preparation follows Odoo 19 Preparation Printers and their"
-" Printed Product Categories. Select the Odoo Preparation Printer here; the "
-"Gateway Runtime Printer remains the physical target. Existing POS Shop-only "
-"bindings remain a compatibility fallback."
-msgstr ""
-"تتبع طباعة المطبخ / التحضير عبر الـ Gateway طابعات التحضير وفئات المنتجات "
-"المطبوعة في Odoo 19. اختر طابعة التحضير هنا؛ وتظل طابعة الـ Gateway هدف "
-"الطباعة الفعلي. تُحفظ قواعد متجر نقطة البيع القديمة للتوافق."
 
 #. module: print_gateway
 #. odoo-javascript
@@ -2067,16 +1977,6 @@ msgid "In Progress"
 msgstr "قيد التنفيذ"
 
 #. module: print_gateway
-#. odoo-javascript
-#: code:addons/print_gateway/static/src/components/printers_overview.xml:0
-msgid ""
-"Install and pair the Windows printing app in Yaseir. Assign that computer to"
-" this company or branch to see its printers here."
-msgstr ""
-"ثبّت برنامج الطباعة على Windows واربطه بحساب Yaseir، ثم عيّن الجهاز لهذه "
-"الشركة أو هذا الفرع لعرض طابعاته هنا."
-
-#. module: print_gateway
 #. odoo-python
 #: code:addons/print_gateway/models/print_job.py:0
 msgid ""
@@ -2324,12 +2224,8 @@ msgstr "تُفضَّل القيمة الأصغر عند صلاحية عدة قو
 
 #. module: print_gateway
 #. odoo-javascript
-#: code:addons/print_gateway/static/src/components/printers_overview.xml:0
-msgid "Manage assignments"
-msgstr "إدارة توزيع الأجهزة"
-
-#. module: print_gateway
 #: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_config_form
+#: code:addons/print_gateway/static/src/components/printers_overview.xml:0
 msgid "Manage branch computers"
 msgstr "إدارة أجهزة الفروع"
 
@@ -2764,11 +2660,6 @@ msgstr ""
 "[('picking_type_code', '=', 'outgoing')]"
 
 #. module: print_gateway
-#: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_policy_form
-msgid "Optional explicit Print Rule for this exact Company and Branch scope."
-msgstr "قاعدة طباعة صريحة اختيارية لنطاق هذه الشركة وهذا الفرع تحديدًا."
-
-#. module: print_gateway
 #: model:ir.model.fields,help:print_gateway.field_print_gateway_policy__binding_id
 msgid ""
 "Optional explicit Print Rule for this exact Odoo Company and Branch scope."
@@ -3179,6 +3070,7 @@ msgstr ""
 #: model:ir.ui.menu,name:print_gateway.menu_print_gateway_jobs
 #: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_job_form
 #: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_job_list
+#: model:ir.actions.act_window,name:print_gateway.action_print_gateway_jobs
 msgid "Print Activity"
 msgstr "نشاط الطباعة"
 
@@ -3203,11 +3095,6 @@ msgstr "منطقة الطباعة"
 #: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_job_form
 msgid "Print Details"
 msgstr "تفاصيل الطباعة"
-
-#. module: print_gateway
-#: model:ir.actions.act_window,name:print_gateway.action_print_gateway_binding
-msgid "Print Gateway Bindings"
-msgstr "قواعد Print Gateway"
 
 #. module: print_gateway
 #: model:ir.model,name:print_gateway.model_print_gateway_print_router
@@ -3297,16 +3184,6 @@ msgid "Print Job Retried"
 msgstr "تمت إعادة محاولة مهمة الطباعة"
 
 #. module: print_gateway
-#: model:ir.actions.act_window,name:print_gateway.action_print_gateway_jobs
-msgid "Print Jobs"
-msgstr "مهام الطباعة"
-
-#. module: print_gateway
-#: model:ir.actions.act_window,name:print_gateway.action_print_gateway_policies
-msgid "Print Policies"
-msgstr "سياسات الطباعة"
-
-#. module: print_gateway
 #: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_binding_form
 #: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_policy_list
 msgid "Print Rule"
@@ -3321,13 +3198,6 @@ msgid ""
 msgstr ""
 "قاعدة الطباعة «%(binding)s» لا تطبع التقرير «%(report)s». اختر قاعدة طباعة "
 "لهذا التقرير، أو امسح «الربط المستهدف» لاستخدام التوجيه التلقائي."
-
-#. module: print_gateway
-#. odoo-python
-#: code:addons/print_gateway/models/gateway_config.py:0
-#: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_binding_list
-msgid "Print Rules"
-msgstr "قواعد الطباعة"
 
 #. module: print_gateway
 #. odoo-javascript
@@ -3738,6 +3608,7 @@ msgstr ""
 #: code:addons/print_gateway/static/src/components/printers_overview.js:0
 #: model:ir.model.fields.selection,name:print_gateway.selection__print_gateway_print_job__status__printing
 #: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_config_list
+#: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_config_form
 msgid "Printing"
 msgstr "الطباعة"
 
@@ -3829,13 +3700,6 @@ msgstr "استجابة خدمة الطباعة غير متاحة"
 #: code:addons/print_gateway/static/src/js/pos_print_router.js:0
 msgid "Printing service update timed out."
 msgstr "انتهت مهلة تحديث خدمة الطباعة."
-
-#. module: print_gateway
-#: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_config_form
-msgid ""
-"Printing starts only after the connection is confirmed and a verified "
-"printer is assigned to the document."
-msgstr "تبدأ الطباعة بعد تأكيد الاتصال وتعيين طابعة تم التحقق منها للمستند."
 
 #. module: print_gateway
 #. odoo-python
@@ -4172,6 +4036,7 @@ msgstr "تمت إعادة محاولة %d مهمة/مهام طباعة بمعر�
 #. odoo-javascript
 #: code:addons/print_gateway/static/src/components/runtime_agent_field.js:0
 #: code:addons/print_gateway/static/src/components/runtime_printer_field.js:0
+#: code:addons/print_gateway/static/src/components/printers_overview.xml:0
 msgid "Retry"
 msgstr "إعادة المحاولة"
 
@@ -4199,11 +4064,6 @@ msgstr ""
 #: model:ir.model.fields.selection,name:print_gateway.selection__print_gateway_intent__status__failed
 msgid "Routing Failed"
 msgstr "فشل التوجيه"
-
-#. module: print_gateway
-#: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_binding_form
-msgid "Rule"
-msgstr "القاعدة"
 
 #. module: print_gateway
 #: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_policy_form
@@ -4325,19 +4185,6 @@ msgid ""
 " than one agent."
 msgstr ""
 "حدّد الفرع واختر Agent طباعة متاحًا. يمكن للفرع استخدام أكثر من Agent."
-
-#. module: print_gateway
-#: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_binding_form
-msgid ""
-"Select the branch, destination, and Gateway physical printer for this rule. "
-"POS Receipt does not require an Odoo printer or PDF report. POS Kitchen / "
-"Preparation uses the selected Odoo Preparation Printer for category routing;"
-" the Gateway printer remains the physical destination."
-msgstr ""
-"حدّد الفرع والوجهة وطابعة الـ Gateway الفعلية لهذه القاعدة. لا يتطلب POS "
-"Receipt طابعة Odoo أو تقرير PDF. تستخدم POS Kitchen / Preparation طابعة Odoo"
-" Preparation Printer المحددة لتوجيه الفئات، بينما تظل طابعة الـ Gateway هي "
-"الوجهة الفعلية للطباعة."
 
 #. module: print_gateway
 #. odoo-python
@@ -4538,11 +4385,6 @@ msgid "Submitted"
 msgstr "تم تقديم المهمة"
 
 #. module: print_gateway
-#: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_runtime_assignment_form
-msgid "Summary"
-msgstr "الملخص"
-
-#. module: print_gateway
 #. odoo-javascript
 #: code:addons/print_gateway/static/src/js/pos_print_router.js:0
 msgid "Sync the POS order before sending the receipt to the printing service."
@@ -4596,11 +4438,6 @@ msgid ""
 msgstr ""
 "بروتوكول الربط المستهدف '%s' وهو '%s' غير متوافق مع البروتوكول الخام للقاعدة"
 " '%s' (يجب أن يتطابق البروتوكولان تمامًا)."
-
-#. module: print_gateway
-#: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_binding_form
-msgid "Test Print"
-msgstr "طباعة تجريبية"
 
 #. module: print_gateway
 #. odoo-python
@@ -5583,25 +5420,6 @@ msgstr "استخدام الإصدار الثاني من هويات الطباع�
 
 #. module: print_gateway
 #. odoo-javascript
-#: code:addons/print_gateway/static/src/components/printers_overview.xml:0
-msgid ""
-"Use these settings to change which computers serve each company or branch. "
-"Existing print rules still need to match their assigned printer."
-msgstr ""
-"استخدم هذه الإعدادات لتحديد أجهزة الطباعة لكل شركة أو فرع. يجب أن تظل قواعد "
-"الطباعة متوافقة مع الطابعة المعيّنة لها."
-
-#. module: print_gateway
-#: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_config_form
-msgid ""
-"Use your Odoo connection key here. The Windows pairing code connects a "
-"computer and cannot be used in this field."
-msgstr ""
-"استخدم مفتاح اتصال أودو هنا. رمز ربط Windows مخصص لربط جهاز الكمبيوتر ولا "
-"يُستخدم في هذا الحقل."
-
-#. module: print_gateway
-#. odoo-javascript
 #: code:addons/print_gateway/static/src/js/gateway_limit_dialog.js:0
 msgid "Used: %s"
 msgstr "المستخدَم: %s"
@@ -6038,8 +5856,10 @@ msgstr "الفروع المتداخلة في Odoo غير مدعومة لتعيي
 
 
 #. module: print_gateway
+#. odoo-python
 #: model:ir.ui.menu,name:print_gateway.menu_print_gateway_policies
 #: model:ir.actions.act_window,name:print_gateway.action_print_gateway_policies
+#: code:addons/print_gateway/models/gateway_config.py:0
 msgid "Automatic Printing"
 msgstr "الطباعة التلقائية"
 
@@ -6089,6 +5909,7 @@ msgstr "تحقق من الاتصال وعيّن جهاز طباعة للفرع �
 
 #. module: print_gateway
 #: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_binding_form
+#: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_policy_form
 msgid "Document Destination"
 msgstr "وجهة طباعة المستند"
 
@@ -6143,61 +5964,73 @@ msgid "Automatic printing appears here after an eligible business event."
 msgstr "تظهر عمليات الطباعة التلقائية هنا بعد حدوث إجراء مناسب في أودو."
 
 #. module: print_gateway
+#. odoo-javascript
 #: code:addons/print_gateway/static/src/components/printers_overview.xml:0
 msgid "Choose a verified printer, then select its documents."
 msgstr "اختر طابعة موثّقة، ثم حدد المستندات التي ستُطبع عليها."
 
 #. module: print_gateway
+#. odoo-javascript
 #: code:addons/print_gateway/static/src/components/printers_overview.xml:0
 msgid "The selected printing computer is offline or its status is outdated. Check the Windows printing app before relying on printer availability."
 msgstr "جهاز الطباعة المحدد غير متصل أو أن حالته قديمة. تحقق من تطبيق الطباعة على ويندوز قبل الاعتماد على حالة الطابعة."
 
 #. module: print_gateway
+#. odoo-javascript
 #: code:addons/print_gateway/static/src/components/printers_overview.xml:0
 msgid "No computer assigned to this company or branch"
 msgstr "لا يوجد جهاز طباعة معيّن لهذه الشركة أو الفرع"
 
 #. module: print_gateway
+#. odoo-javascript
 #: code:addons/print_gateway/static/src/components/printers_overview.xml:0
 msgid "No active printing computer found"
 msgstr "لم يتم العثور على جهاز طباعة نشط"
 
 #. module: print_gateway
+#. odoo-javascript
 #: code:addons/print_gateway/static/src/components/printers_overview.xml:0
 msgid "Printing service is not connected"
 msgstr "خدمة الطباعة غير متصلة"
 
 #. module: print_gateway
+#. odoo-javascript
 #: code:addons/print_gateway/static/src/components/printers_overview.xml:0
 msgid "Assigned printing computer is unavailable"
 msgstr "جهاز الطباعة المعيّن غير متاح"
 
 #. module: print_gateway
+#. odoo-javascript
 #: code:addons/print_gateway/static/src/components/printers_overview.xml:0
 msgid "Choose an existing Yaseir Print Agent for this exact company or branch."
 msgstr "اختر جهاز طباعة مسجّلًا في يسير لهذه الشركة أو الفرع تحديدًا."
 
 #. module: print_gateway
+#. odoo-javascript
 #: code:addons/print_gateway/static/src/components/printers_overview.xml:0
 msgid "Open and pair the Windows printing app in Yaseir, then refresh."
 msgstr "افتح تطبيق الطباعة على ويندوز واربطه بيسير، ثم حدّث الصفحة."
 
 #. module: print_gateway
+#. odoo-javascript
 #: code:addons/print_gateway/static/src/components/printers_overview.xml:0
 msgid "Check the company connection before selecting a printing computer."
 msgstr "تحقق من اتصال الشركة قبل اختيار جهاز الطباعة."
 
 #. module: print_gateway
+#. odoo-javascript
 #: code:addons/print_gateway/static/src/components/printers_overview.xml:0
 msgid "Check the assigned Agent in Yaseir. Inactive or removed Agents cannot provide printers."
 msgstr "تحقق من حالة جهاز الطباعة المعيّن في يسير. الأجهزة غير النشطة أو المحذوفة لا يمكنها عرض الطابعات."
 
 #. module: print_gateway
+#. odoo-javascript
 #: code:addons/print_gateway/static/src/components/printers_overview.xml:0
 msgid "Computer assignments control which Agents can serve this company or branch. Changing an assignment does not create a print destination."
 msgstr "تحدد تعيينات الأجهزة ما يُسمح له بخدمة هذه الشركة أو الفرع. تغيير التعيين لا ينشئ وجهة طباعة جديدة."
 
 #. module: print_gateway
+#. odoo-javascript
 #: code:addons/print_gateway/static/src/components/runtime_agent_field.js:0
 msgid "Assigned Print Agent is unavailable — check the Agent connection or status in Yaseir"
 msgstr "جهاز الطباعة المعيّن غير متاح — تحقق من اتصاله وحالته في يسير"
