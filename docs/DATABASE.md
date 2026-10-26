@@ -127,3 +127,13 @@ This checks current table names against schema declarations, migration creates/d
 - `print_monthly_usage`: transactional credit consumption keyed by workspace and UTC calendar month. Separate from contract start/end and historical `print_usage_periods`. Renewal and plan changes cannot reset it. Receipts and live jobs provide deduplicated logical-job reporting; the cutover month conservatively preserves overlapping legacy consumption.
 
 `tenant_subscriptions` adds `billing_mode=manual`, free/paid type, optional finite monthly quota override, monthly/yearly/custom term, internal reference and revision. New status defaults to awaiting_activation. Runtime requires explicit active status, valid start/end, unblocked entitlement and an active tenant fence. `users.display_name` is nullable for historical accounts. Provider columns remain read-only historical evidence.
+
+### 0096 workspace membership access
+
+`tenant_users.role` remains a compatibility field restricted to `admin`
+and the internal `owner` marker; neither represents additional privileges.
+Every enrolled person receives the fixed operational Full Access permission set,
+excluding all billing, invitation, membership mutation, and tenant-wide owner
+powers. Legacy limited membership/invitation values are converted to `admin`.
+Only a separately authenticated Platform Owner may change membership or billing.
+A future verified schema cutover will be required to physically drop the role field.

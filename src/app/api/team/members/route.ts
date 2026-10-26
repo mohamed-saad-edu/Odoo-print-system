@@ -1,18 +1,11 @@
-import { requireTeamActorInTransaction, TeamAuthorizationChangedError } from "../../../../lib/team-authorization";
 import { NextResponse } from "next/server";
 import { db } from "../../../../db";
 import { tenantUsers, users } from "../../../../db/schema";
-import { and, desc, eq, sql } from "drizzle-orm";
+import { desc, eq, sql } from "drizzle-orm";
 import { validateWorkspaceManager } from "../../../../lib/manager-auth";
 import { hasManagerPermission } from "../../../../lib/authorization";
-import { writeAuditEvent } from "../../../../lib/audit";
 import { queryWithTimeout } from "../../../../db/client";
 import { clampListLimit } from "../../../../lib/request-limits";
-import {
-  revokeUserTenantRefreshFamiliesInTransaction,
-} from "../../../../lib/session-tokens";
-
-const ASSIGNABLE_ROLES = ["admin", "operator", "viewer", "integration_admin", "billing_admin"] as const;
 
 export async function GET(req: Request) {
   const claims = await validateWorkspaceManager(req);
@@ -63,116 +56,11 @@ export async function GET(req: Request) {
   });
 }
 
-export async function PATCH(req: Request) {
-  const claims = await validateWorkspaceManager(req);
-  if (!claims) return NextResponse.json({ error: "Unauthorized", code: "UNAUTHORIZED" }, { status: 401 });
-  if (!claims?.userId || !hasManagerPermission(claims, "users.manage")) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  let body: { userId?: unknown; role?: unknown };
-  try { const parsedBody = await req.json(); if (!parsedBody || typeof parsedBody !== "object" || Array.isArray(parsedBody)) throw new Error("JSON object required"); body = parsedBody; } catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); }
-  const userId = typeof body.userId === "string" ? body.userId : "";
-  const role = typeof body.role === "string" ? body.role : "";
-  if (!userId || !ASSIGNABLE_ROLES.includes(role as (typeof ASSIGNABLE_ROLES)[number])) return NextResponse.json({ error: "Invalid member update" }, { status: 400 });
 
-  try {
-    await db.transaction(async (tx) => {
-      await requireTeamActorInTransaction(tx, claims, [userId]);
-      const target = await tx.query.tenantUsers.findFirst({
-        where: and(eq(tenantUsers.tenantId, claims.tenantId), eq(tenantUsers.userId, userId)),
-        columns: { role: true },
-      });
-      if (!target) throw new TeamMemberConflict("Member not found", 404);
-      if (target.role === "owner") throw new TeamMemberConflict("Owner role must be transferred explicitly", 409);
-
-      const updated = await tx.update(tenantUsers)
-        .set({ role, updatedAt: sql`now()` })
-        .where(and(
-          eq(tenantUsers.tenantId, claims.tenantId),
-          eq(tenantUsers.userId, userId),
-          eq(tenantUsers.role, target.role),
-        ))
-        .returning({ userId: tenantUsers.userId });
-      if (updated.length !== 1) throw new TeamMemberConflict("Member changed concurrently; refresh and try again", 409);
-
-      await revokeUserTenantRefreshFamiliesInTransaction(
-        tx,
-        userId,
-        claims.tenantId,
-        "role_changed",
-      );
-
-      await writeAuditEvent({
-        tenantId: claims.tenantId,
-        actorType: "user",
-        actorId: claims.userId,
-        action: "team.member.role_changed",
-        resourceType: "user",
-        resourceId: userId,
-        metadata: { role },
-      }, tx);
-    });
-  } catch (error) {
-    if (error instanceof TeamAuthorizationChangedError) return error.response();
-    if (error instanceof TeamMemberConflict) return NextResponse.json({ error: error.message }, { status: error.status });
-    throw error;
-  }
-  return NextResponse.json({ ok: true });
+/** Workspace membership mutations require the separate Platform Owner audience. */
+export async function PATCH(_req: Request) {
+  return NextResponse.json({ error: "Platform Owner required", code: "PLATFORM_OWNER_REQUIRED" }, { status: 403 });
 }
-
-export async function DELETE(req: Request) {
-  const claims = await validateWorkspaceManager(req);
-  if (!claims) return NextResponse.json({ error: "Unauthorized", code: "UNAUTHORIZED" }, { status: 401 });
-  if (!claims?.userId || !hasManagerPermission(claims, "users.manage")) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  const userId = new URL(req.url).searchParams.get("userId") ?? "";
-  if (!userId) return NextResponse.json({ error: "userId is required" }, { status: 400 });
-  if (userId === claims.userId) return NextResponse.json({ error: "Use ownership transfer or leave-workspace flow before removing yourself" }, { status: 409 });
-
-  try {
-    await db.transaction(async (tx) => {
-      await requireTeamActorInTransaction(tx, claims, [userId]);
-      const target = await tx.query.tenantUsers.findFirst({
-        where: and(eq(tenantUsers.tenantId, claims.tenantId), eq(tenantUsers.userId, userId)),
-        columns: { role: true },
-      });
-      if (!target) throw new TeamMemberConflict("Member not found", 404);
-      if (target.role === "owner") throw new TeamMemberConflict("Transfer ownership before removing the owner", 409);
-
-      const deleted = await tx.delete(tenantUsers)
-        .where(and(
-          eq(tenantUsers.tenantId, claims.tenantId),
-          eq(tenantUsers.userId, userId),
-          eq(tenantUsers.role, target.role),
-        ))
-        .returning({ userId: tenantUsers.userId });
-      if (deleted.length !== 1) throw new TeamMemberConflict("Member changed concurrently; refresh and try again", 409);
-
-      await revokeUserTenantRefreshFamiliesInTransaction(
-        tx,
-        userId,
-        claims.tenantId,
-        "member_removed",
-      );
-
-      await writeAuditEvent({
-        tenantId: claims.tenantId,
-        actorType: "user",
-        actorId: claims.userId,
-        action: "team.member.removed",
-        resourceType: "user",
-        resourceId: userId,
-      }, tx);
-    });
-  } catch (error) {
-    if (error instanceof TeamAuthorizationChangedError) return error.response();
-    if (error instanceof TeamMemberConflict) return NextResponse.json({ error: error.message }, { status: error.status });
-    throw error;
-  }
-  return NextResponse.json({ ok: true });
-}
-
-class TeamMemberConflict extends Error {
-  readonly status: number;
-  constructor(message: string, status: number) {
-    super(message);
-    this.status = status;
-  }
+export async function DELETE(_req: Request) {
+  return NextResponse.json({ error: "Platform Owner required", code: "PLATFORM_OWNER_REQUIRED" }, { status: 403 });
 }

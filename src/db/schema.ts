@@ -129,7 +129,7 @@ export const workspaceSessionSecurity = pgTable("workspace_session_security", {
 export const tenantUsers = pgTable("tenant_users", {
   userId: text("user_id").references(() => users.id).notNull(),
   tenantId: text("tenant_id").references(() => tenants.id).notNull(),
-  role: text("role").notNull().default("viewer"),
+  role: text("role").notNull().default("admin"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 }, (table) => ({
@@ -142,7 +142,7 @@ export const tenantUsers = pgTable("tenant_users", {
   tenantIdx: index("tenant_users_tenant_idx").on(table.tenantId),
   tenantCreatedUserIdx: index("tenant_users_tenant_created_user_idx").on(table.tenantId, table.createdAt, table.userId),
   ownerUnique: uniqueIndex("tenant_users_single_owner_idx").on(table.tenantId).where(sql`${table.role} = 'owner'`),
-  roleCheck: check("tenant_users_role_check", sql`${table.role} in ('owner','admin','operator','viewer','integration_admin','billing_admin')`),
+  roleCheck: check("tenant_users_role_check", sql`${table.role} in ('owner','admin')`),
 }));
 
 export const agents = pgTable("agents", {
@@ -363,7 +363,7 @@ export const managerSessions = pgTable("manager_sessions", {
   expiresIdx: index("manager_sessions_expires_idx").on(table.expiresAt),
   tenantIdx: index("manager_sessions_tenant_idx").on(table.tenantId),
   userIdx: index("manager_sessions_user_idx").on(table.userId),
-  roleCheck: check("manager_sessions_role_check", sql`${table.role} in ('owner','admin','operator','viewer','integration_admin','billing_admin')`),
+  roleCheck: check("manager_sessions_role_check", sql`${table.role} in ('owner','admin')`),
 }));
 
 export const emailVerificationTokens = pgTable("email_verification_tokens", {
@@ -411,7 +411,7 @@ export const tenantInvitations = pgTable("tenant_invitations", {
   tenantCreatedIdIdx: index("tenant_invitations_tenant_created_id_idx").on(table.tenantId, table.createdAt, table.id),
   emailIdx: index("tenant_invitations_email_idx").on(table.email),
   expiresIdx: index("tenant_invitations_expires_idx").on(table.expiresAt),
-  roleCheck: check("tenant_invitations_role_check", sql`${table.role} in ('admin','operator','viewer','integration_admin','billing_admin')`),
+  roleCheck: check("tenant_invitations_role_check", sql`${table.role} = 'admin'`),
 }));
 
 export const billingEvents = pgTable("billing_events", {
