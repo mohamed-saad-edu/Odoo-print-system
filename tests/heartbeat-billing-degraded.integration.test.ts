@@ -29,7 +29,7 @@ suite("heartbeat billing degradation (D-6)", () => {
   it("commits presence and ACKs while fencing new inventory when billing lapsed", async () => {
     const f = await seedFixture();
     await pool().query(
-      `UPDATE tenant_subscriptions SET status = 'cancelled', current_period_end = now() - interval '1 minute' WHERE tenant_id = $1`,
+      `UPDATE tenant_subscriptions SET status = 'suspended', current_period_end = now() - interval '1 minute' WHERE tenant_id = $1`,
       [f.tenantId],
     );
     const before = (await pool().query(`SELECT last_seen_at FROM agents WHERE id = $1`, [f.agentId])).rows[0].last_seen_at;

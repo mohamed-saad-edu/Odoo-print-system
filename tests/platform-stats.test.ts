@@ -51,33 +51,31 @@ suite("Platform Stats Route", () => {
     await closePool();
   });
 
-  it("executes all subscription lifecycle aggregates, including incomplete states", async () => {
+  it.each([
+    { status: "active", active: 1, awaitingActivation: 0, expired: 0, suspended: 0, attention: 0 },
+    { status: "awaiting_activation", active: 0, awaitingActivation: 1, expired: 0, suspended: 0, attention: 1 },
+    { status: "expired", active: 0, awaitingActivation: 0, expired: 1, suspended: 0, attention: 1 },
+    { status: "suspended", active: 0, awaitingActivation: 0, expired: 0, suspended: 1, attention: 0 },
+  ])("aggregates the manual-only $status subscription lifecycle", async ({ status, ...expected }) => {
     await db.update(tenantSubscriptions)
-      .set({ status: "incomplete" })
+      .set({ status })
       .where(eq(tenantSubscriptions.tenantId, fixture.tenantId));
 
     await insertQueuedJob(fixture, `job_${nanoid(10)}`);
 
     const response = await GET(new Request("http://localhost/api/platform/stats", {
-      headers: { Authorization: `Bearer ${platformToken}` },
+      headers: { Authorization: `Bearer ${platformToken}`, "cache-control": "no-cache" },
     }));
     expect(response.status).toBe(200);
 
     const body = await response.json();
-    expect(body.subscriptions).toMatchObject({
-      total: 1,
-      active: 0,
-      trialing: 0,
-      pastDue: 0,
-      incomplete: 1,
-      incompleteExpired: 0,
-      unpaid: 0,
-      paused: 0,
-      cancelled: 0,
-      attention: 1,
-    });
+    expect(body.subscriptions).toMatchObject({ total: 1, ...expected });
+    expect(Object.keys(body.subscriptions).sort()).toEqual([
+      "active", "attention", "awaitingActivation", "expired", "suspended", "total",
+    ]);
     expect(body.jobs24h.total).toBe(1);
     expect(body.jobs24hHourly).toHaveLength(25);
     expect(body.jobs24hHourly.some((row: { total: number; queued: number }) => row.total === 1 && row.queued === 1)).toBe(true);
   });
+
 });

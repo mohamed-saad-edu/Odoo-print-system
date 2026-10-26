@@ -22,9 +22,9 @@ suite("Odoo runtime discovery billing boundary", () => {
     await closePool();
   });
 
-  it("requires explicit manual activation for discovery after a legacy past_due term expires", async () => {
+  it("blocks discovery after the manual subscription expires", async () => {
     await pool().query(
-      "UPDATE tenant_subscriptions SET status = 'past_due', current_period_end = now() - interval '1 minute' WHERE tenant_id = $1",
+      "UPDATE tenant_subscriptions SET status = 'expired', current_period_end = now() - interval '1 minute' WHERE tenant_id = $1",
       [fixture.tenantId],
     );
 
@@ -38,9 +38,9 @@ suite("Odoo runtime discovery billing boundary", () => {
     expect(await response.json()).toMatchObject({ code: "SUBSCRIPTION_REQUIRED" });
   });
 
-  it("blocks printer inventory discovery after subscription cancellation", async () => {
+  it("blocks printer inventory discovery after manual suspension", async () => {
     await pool().query(
-      "UPDATE tenant_subscriptions SET status = 'cancelled', current_period_end = now() - interval '1 minute' WHERE tenant_id = $1",
+      "UPDATE tenant_subscriptions SET status = 'suspended', current_period_end = now() - interval '1 minute' WHERE tenant_id = $1",
       [fixture.tenantId],
     );
 

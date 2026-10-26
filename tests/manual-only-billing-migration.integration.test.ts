@@ -18,6 +18,19 @@ suite("manual-only billing migration", () => {
       AND column_name IN ('monthly_quota','subscription_type','term','internal_reference','revision')`);
     expect(active.rowCount).toBe(5);
   });
+  it.each(["trialing", "past_due", "incomplete", "cancelled", "paused", "unpaid"])(
+    "rejects retired provider state %s at the PostgreSQL boundary",
+    async (status) => {
+      const tenant = `manual_state_guard_${status}`;
+      await pool().query("INSERT INTO tenants(id,name) VALUES ($1,'Manual-only validation') ON CONFLICT DO NOTHING", [tenant]);
+      const plan = `manual_state_plan_${status}`;
+      await pool().query("INSERT INTO plans(id,name) VALUES ($1,$2) ON CONFLICT DO NOTHING", [plan, plan]);
+      await expect(pool().query(
+        "INSERT INTO tenant_subscriptions(tenant_id,plan_id,status) VALUES ($1,$2,$3)",
+        [tenant, plan, status],
+      )).rejects.toMatchObject({ code: "23514", constraint: "tenant_subscriptions_status_check" });
+    },
+  );
   it("retains historical event tables in a non-public archive", async () => {
     const result = await pool().query(`SELECT table_schema,table_name
       FROM information_schema.tables

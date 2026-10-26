@@ -178,7 +178,7 @@ suite("local-owner printer sharing across Gateway/Odoo boundaries", () => {
   });
 
   it("withdraws private policy even when billing access blocks inventory admission", async () => {
-    await pool().query("UPDATE tenant_subscriptions SET status='cancelled' WHERE tenant_id=$1", [f.tenantId]);
+    await pool().query("UPDATE tenant_subscriptions SET status='suspended' WHERE tenant_id=$1", [f.tenantId]);
     expect((await heartbeat({ privatePrinterIds: [f.printerId], printers: [] })).status).toBe(200);
     expect((await printerRow()).shared_with_gateway).toBe(false);
   });
