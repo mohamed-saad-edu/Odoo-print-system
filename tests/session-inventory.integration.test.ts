@@ -22,10 +22,10 @@ describe.skipIf(!hasTestDatabase)("customer-owned account-wide session inventory
     await truncateAll();
     await pool().query("INSERT INTO tenants(id,name) VALUES ('a','A'),('b','B')");
     await pool().query("INSERT INTO users(id,email,password_hash,email_verified_at) VALUES ('u','u@example.test',$1,clock_timestamp()),('v','v@example.test',$1,clock_timestamp())", [passwordHash]);
-    await pool().query("INSERT INTO tenant_users(user_id,tenant_id,role) VALUES ('u','a','viewer'),('u','b','viewer'),('v','a','viewer')");
+    await pool().query("INSERT INTO tenant_users(user_id,tenant_id,role) VALUES ('u','a','admin'),('u','b','admin'),('v','a','admin')");
   });
   afterAll(closePool);
-  const pair = (tenantId: string, userId = "u") => issueWorkspaceTestSession({ kind: "customer", tenantId, userId, email: `${userId}@example.test`, role: "viewer" });
+  const pair = (tenantId: string, userId = "u") => issueWorkspaceTestSession({ kind: "customer", tenantId, userId, email: `${userId}@example.test`, role: "admin" });
   const req = (token: string, body?: unknown) => new Request("http://localhost:3000/api/auth/sessions", {
     method: body ? "POST" : "GET", headers: { cookie: `cust_session=${token}`, origin: "http://localhost:3000", "content-type": "application/json" },
     ...(body ? { body: JSON.stringify(body) } : {}),
@@ -121,14 +121,14 @@ describe.skipIf(!hasTestDatabase)("customer-owned account-wide session inventory
       await requireActiveTenantInTransaction(tx, "a");
       await requireManagerActorInTransaction(tx, priorClaims, "tenant.read");
     })).rejects.toMatchObject({ code: "SESSION_EXPIRED" });
-    await expect(db.transaction(tx => requireTeamActorInTransaction(tx, priorClaims))).rejects.toMatchObject({ code: "SESSION_EXPIRED" });
+    await expect(db.transaction(tx => requireTeamActorInTransaction(tx, priorClaims))).rejects.toMatchObject({ code: "WORKSPACE_AUTHORITY_CHANGED" });
     const liveClaims = (await verifyWorkspaceToken(nextAccess!))!;
     expect(liveClaims).toBeTruthy();
     await expect(db.transaction(async tx => {
       await requireActiveTenantInTransaction(tx, "a");
       await requireManagerActorInTransaction(tx, liveClaims, "tenant.read");
       await requireTeamActorInTransaction(tx, liveClaims);
-    })).resolves.toBeUndefined();
+    })).rejects.toMatchObject({ code: "WORKSPACE_AUTHORITY_CHANGED" });
     expect((await rotateRefreshToken(kind, nextRefresh!)).status).toBe("rotated");
   });
 
@@ -215,10 +215,10 @@ describe.skipIf(!hasTestDatabase)("customer-owned account-wide session inventory
   it("requires a new login before legacy sessions can perform password-confirmed revocation", async () => {
     const jti = `legacy_${randomBytes(16).toString("hex")}`;
     const now = Number((await pool().query("SELECT FLOOR(EXTRACT(EPOCH FROM clock_timestamp())) AS now")).rows[0].now);
-    const claims = { sub: "manager", jti, iat: now, exp: now + 8 * 3600, tenantId: "a", userId: "u", role: "viewer" };
+    const claims = { sub: "manager", jti, iat: now, exp: now + 8 * 3600, tenantId: "a", userId: "u", role: "admin" };
     const encoded = [Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url"), Buffer.from(JSON.stringify(claims)).toString("base64url")].join(".");
     const token = `${encoded}.${createHmac("sha256", process.env.GATEWAY_JWT_SECRET!).update(encoded).digest("base64url")}`;
-    await pool().query("INSERT INTO manager_sessions(jti,tenant_id,user_id,role,expires_at) VALUES ($1,'a','u','viewer',to_timestamp($2))", [jti, claims.exp]);
+    await pool().query("INSERT INTO manager_sessions(jti,tenant_id,user_id,role,expires_at) VALUES ($1,'a','u','admin',to_timestamp($2))", [jti, claims.exp]);
     const other = await pair("a"), foreign = await pair("b");
     const request = (id: string) => new Request("http://localhost:3000/api/auth/sessions", { method: "POST", headers: {
       cookie: `mgr_session=${token}`, origin: "http://localhost:3000", "content-type": "application/json",

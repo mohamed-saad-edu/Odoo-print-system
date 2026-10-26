@@ -12,7 +12,7 @@ const origin = "http://localhost:3000";
 const password = " account-inventory-fixture-91! ";
 let passwordHash: string;
 const pair = (tenantId = "account-a", userId = "account-u", kind: "customer" | "manager" = "customer") =>
-  issueWorkspaceTestSession({ kind, tenantId, userId, email: `${userId}@example.test`, role: "viewer" });
+  issueWorkspaceTestSession({ kind, tenantId, userId, email: `${userId}@example.test`, role: "admin" });
 const request = (token: string, body?: unknown, platformToken?: string, query = "") => new Request(`${origin}/api/auth/sessions${query}`, {
   method: body ? "POST" : "GET", headers: { origin, "content-type": "application/json",
     cookie: `cust_session=${token}${platformToken ? `; plt_session=${platformToken}` : ""}` },
@@ -30,7 +30,7 @@ describe.skipIf(!hasTestDatabase)("account-wide own-session inventory and author
     await truncateAll();
     await pool().query("INSERT INTO tenants(id,name) VALUES ('account-a','Workspace A'),('account-b','Workspace B')");
     await pool().query("INSERT INTO users(id,email,password_hash,email_verified_at,is_platform_owner) VALUES ('account-u','account-u@example.test',$1,clock_timestamp(),true),('account-v','account-v@example.test',$1,clock_timestamp(),false)", [passwordHash]);
-    await pool().query("INSERT INTO tenant_users(user_id,tenant_id,role) VALUES ('account-u','account-a','viewer'),('account-u','account-b','viewer'),('account-v','account-a','viewer')");
+    await pool().query("INSERT INTO tenant_users(user_id,tenant_id,role) VALUES ('account-u','account-a','admin'),('account-u','account-b','admin'),('account-v','account-a','admin')");
   });
   afterAll(closePool);
 

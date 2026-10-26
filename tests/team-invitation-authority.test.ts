@@ -15,6 +15,8 @@ vi.mock("../src/lib/platform-auth", () => ({
     return { userId: "platform-admin", email: "admin@example.invalid" };
   },
   requirePlatformActorInTransaction: async () => { state.proofChecks += 1; },
+  PlatformUnauthorizedError: class PlatformUnauthorizedError extends Error {},
+  PlatformMutationAuthorityChangedError: class PlatformMutationAuthorityChangedError extends Error {},
 }));
 vi.mock("../src/lib/platform-team-security", () => ({ assertPlatformTeamOrigin: () => {} }));
 vi.mock("../src/lib/email", () => ({

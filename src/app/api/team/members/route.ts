@@ -57,10 +57,11 @@ export async function GET(req: Request) {
 }
 
 
-/** Workspace membership mutations require the separate Platform Owner audience. */
-export async function PATCH(_req: Request) {
+/** Deny write access at the route boundary; 401 still distinguishes an expired session. */
+async function denyMemberMutation(req: Request) {
+  const claims = await validateWorkspaceManager(req);
+  if (!claims?.userId) return NextResponse.json({ error: "Unauthorized", code: "UNAUTHORIZED" }, { status: 401 });
   return NextResponse.json({ error: "Platform Owner required", code: "PLATFORM_OWNER_REQUIRED" }, { status: 403 });
 }
-export async function DELETE(_req: Request) {
-  return NextResponse.json({ error: "Platform Owner required", code: "PLATFORM_OWNER_REQUIRED" }, { status: 403 });
-}
+export async function PATCH(req: Request) { return denyMemberMutation(req); }
+export async function DELETE(req: Request) { return denyMemberMutation(req); }

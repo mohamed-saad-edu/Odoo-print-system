@@ -12,7 +12,7 @@ const navigation = vi.hoisted(() => ({ replace: vi.fn(), refresh: vi.fn(), push:
 vi.mock("../src/lib/fetch-timeout", () => ({ fetchWithTimeout: vi.fn() }));
 vi.mock("../src/lib/session-config", () => ({ ensureCustomerSession: vi.fn(async () => ({ authenticated: true, expiresAt: Date.now() + 3600000 })) }));
 vi.mock("../src/components/AuthShell", () => ({ AuthShell: ({ children }: { children: ReactNode }) => h("main", null, children) }));
-vi.mock("next/navigation", () => ({ useRouter: () => navigation, useSearchParams: () => new URLSearchParams("token=synthetic-invitation") }));
+vi.mock("next/navigation", () => ({ useRouter: () => navigation, redirect: navigation.redirect, useSearchParams: () => new URLSearchParams("token=synthetic-invitation") }));
 vi.mock("next/link", () => ({ default: ({ children, ...props }: Record<string, unknown>) => h("a", props, children as ReactNode) }));
 
 let root: Root;

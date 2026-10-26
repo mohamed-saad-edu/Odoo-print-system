@@ -58,13 +58,14 @@ describe("API error contract", () => {
 });
 
 describe("invitation route honours the coded contract", () => {
-  const route = fs.readFileSync("src/app/api/team/invitations/route.ts", "utf8");
+  const route = fs.readFileSync("src/app/api/platform/tenants/[id]/invitations/route.ts", "utf8");
 
   it("sends the delivery code alongside the 503", () => {
     // The client already reads `data.code` and maps it via codeMessageKey();
     // without this field that branch is dead code.
     expect(route).toContain('code: "INVITATION_DELIVERY_UNAVAILABLE"');
-    expect(route).toContain("Invitation delivery is temporarily unavailable");
+    expect(route).toContain("Invitation created; delivery unconfirmed");
+    expect(route).toContain("requirePlatformOwner");
   });
 
   it("never revokes the invitation when email delivery is ambiguous", () => {
@@ -72,12 +73,13 @@ describe("invitation route honours the coded contract", () => {
     // durable row must survive; revoking could invalidate a link the invitee
     // already received.
     const start = route.indexOf("await sendTransactionalEmail({");
-    const end = route.indexOf("return NextResponse.json({ ok: true, id });", start);
+    const end = route.indexOf("return NextResponse.json({ ok: true, id: inviteId }", start);
     expect(start).toBeGreaterThan(-1);
     expect(end).toBeGreaterThan(start);
     const block = route.slice(start, end);
     expect(block).toContain("code: \"INVITATION_DELIVERY_UNAVAILABLE\"");
     expect(block).not.toContain("set({ revokedAt:");
-    expect(block).toContain("Never revoke the durable invitation");
+    expect(block).toContain("invitation_delivery_ambiguous");
+    expect(block).not.toContain("revokedAt");
   });
 });

@@ -116,7 +116,7 @@ describe.skipIf(!hasTestDatabase)("email authentication proof lifetime", () => {
   });
   it("caps invitation onboarding proof without granting a membership or session", async () => {
     const invitation = randomBytes(32).toString("base64url");
-    await pool().query("INSERT INTO tenant_invitations(id,tenant_id,inviter_user_id,email,role,token_hash,expires_at) VALUES ('invitation','tenant','user','invited@example.test','viewer',$1,clock_timestamp()+interval '1 day')", [await hashToken(invitation)]);
+    await pool().query("INSERT INTO tenant_invitations(id,tenant_id,inviter_user_id,email,role,token_hash,expires_at) VALUES ('invitation','tenant','user','invited@example.test','admin',$1,clock_timestamp()+interval '1 day')", [await hashToken(invitation)]);
     expect((await acceptInvitation(request("/api/team/invitations/accept", { token: invitation }))).status).toBe(202);
     await boundedIssuedToken("verification", "invited@example.test");
     expect((await pool().query("SELECT 1 FROM tenant_users")).rows).toHaveLength(1);

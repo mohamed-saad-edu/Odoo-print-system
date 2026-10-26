@@ -115,7 +115,12 @@ describe.skipIf(!hasTestDatabase)("populated V2 to password-only migration", () 
         if (table === "users") kept.display_name = null;
         return {row:kept};
       });
-      expect(after[table],`Preserve ${table} records, revocation and timestamps`).toEqual(expected);
+      // ORDER BY to_jsonb(row)::text can reorder members after canonical role changes.
+      // Sort both snapshots by their complete normalized row before comparing all fields.
+      const canonical = (items: unknown[]) =>
+        [...items].sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b)));
+      expect(canonical(after[table] as unknown[]),`Preserve ${table} records, revocation and timestamps`)
+        .toEqual(canonical(expected));
     }
     expect(after.ledger).toEqual(expect.arrayContaining(before.ledger as unknown[]));
     // Four forward migrations (0093 to 0096), with 0096 intentionally forcing new workspace logins.

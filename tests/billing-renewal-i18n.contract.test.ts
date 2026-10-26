@@ -11,9 +11,11 @@ describe("billing renewal localization contract", () => {
     expect(source).not.toContain("`Ended ${formatDate(");
 
     expect(source).not.toContain('t("billing.renewsOn"');
-    expect(source).toContain('t(sub?.cancelAtPeriodEnd ? "v4.subscription.endsAtTerm" : "v4.subscription.manualRenewal")');
-    expect(source).toContain('t("v4.subscription.end"), date(sub?.currentPeriodEnd)');
-    expect(source).toContain("formatManualCalendarDate(value, locale)");
+    expect(source).toContain('redirect("/dashboard")');
+    expect(source).not.toContain("currentPeriodEnd");
+    expect(source).not.toContain("subscription-requests");
+    const platform = readFileSync("src/components/platform/SubscriptionEditor.tsx", "utf8");
+    expect(platform).toContain("a(v)");
     const calendarDates = readFileSync("src/lib/manual-calendar-date.ts", "utf8");
     expect(calendarDates).toContain("intlLocale(locale)");
     expect(calendarDates).toMatch(/timeZone:\s*['"]UTC['"]/);
