@@ -3,6 +3,8 @@ import { db, type DbTx } from "../db";
 import { tenantInvitations, tenantUsers, users } from "../db/schema";
 import { hashToken, normalizeEmail } from "./password";
 import { writeAuditEvent } from "./audit";
+import { assertSessionCredentialInTransaction, issueSessionPairInTransaction, type SessionRequestContext } from "./session-tokens";
+import type { ManagerRole } from "./manager-auth";
 
 export type ActiveWorkspaceInvitation = typeof tenantInvitations.$inferSelect;
 
@@ -68,4 +70,29 @@ export async function joinWorkspaceByInvitation(
     actorId: userId, action: "team.invitation.accepted",
     resourceType: "tenant_invitation", resourceId: liveInvite.id }, tx);
   return { tenantId: liveInvite.tenantId, role: liveInvite.role };
+}
+
+/** A freshly password-authenticated identity can accept an offer even after
+ * losing its last active membership. An invitation is never authentication:
+ * the locked credential snapshot must still match before membership is added.
+ * Admission and session persistence commit together or both roll back. */
+export async function joinInvitationWithPassword(
+  token: string,
+  principal: { userId: string; email: string; credentialVersion: string },
+  context?: SessionRequestContext,
+) {
+  const invitation = await findActiveInvitation(token);
+  if (!invitation || normalizeEmail(invitation.email) !== normalizeEmail(principal.email))
+    throw new Error("INVITATION_INVALID");
+  return db.transaction(async tx => {
+    // Match lifecycle writers: invited tenant before the authenticated user.
+    const tenant = await tx.execute(sql`SELECT id, lifecycle FROM tenants WHERE id=${invitation.tenantId} FOR UPDATE`);
+    if (tenant.rows[0]?.lifecycle !== "active") throw new Error("INVITATION_WORKSPACE_UNAVAILABLE");
+    await assertSessionCredentialInTransaction(tx, principal.userId, principal.credentialVersion);
+    const membership = await joinWorkspaceByInvitation(tx, invitation, principal.userId, principal.email);
+    const session = await issueSessionPairInTransaction(tx, {
+      kind: "customer", ...principal, tenantId: membership.tenantId, role: membership.role as ManagerRole,
+    }, context);
+    return { membership, session };
+  });
 }

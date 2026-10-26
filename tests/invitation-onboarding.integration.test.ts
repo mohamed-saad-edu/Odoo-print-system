@@ -2,12 +2,13 @@ import { beforeAll, beforeEach, afterAll, describe, expect, it, vi } from "vites
 import { db } from "../src/db";
 import { tenantInvitations, tenants, tenantUsers, users, emailVerificationTokens } from "../src/db/schema";
 import { and, eq, sql } from "drizzle-orm";
-import { generateOpaqueToken, hashToken } from "../src/lib/password";
+import { generateOpaqueToken, hashPassword, hashToken } from "../src/lib/password";
 import { applyMigrations, closePool, hasTestDatabase, truncateAll, pool } from "./helpers/pg";
 import { POST as accept } from "../src/app/api/team/invitations/accept/route";
 import { GET as preview } from "../src/app/api/team/invitations/preview/route";
 import { POST as verify } from "../src/app/api/auth/verify-email/route";
 import { findActiveInvitation, joinWorkspaceByInvitation } from "../src/lib/invitation-join";
+import { POST as login } from "../src/app/api/auth/login/route";
 
 const emails = vi.hoisted(() => ({ sent: vi.fn(async (_input: unknown) => {}) }));
 vi.mock("../src/lib/email", () => ({
@@ -41,7 +42,7 @@ async function fixture(opts: { invitedAccount?: "verified" | "unverified" } = {}
 suite("company invitation onboarding", () => {
   beforeAll(async () => { await applyMigrations(); });
   beforeEach(async () => { await truncateAll(); emails.sent.mockClear(); });
-  afterAll(async () => { await closePool(); });
+  afterAll(async () => { vi.unstubAllEnvs(); await closePool(); });
 
   it("shows company + invited mailbox without requiring an account or workspace ID", async () => {
     const f = await fixture();
@@ -49,6 +50,28 @@ suite("company invitation onboarding", () => {
     expect(res.status).toBe(200);
     expect(res.headers.get("cache-control")).toContain("no-store");
     expect(await res.json()).toMatchObject({ workspaceName: "Customer Company", email: f.email, role: "admin" });
+  });
+
+  it.each(["no-memberships", "all-suspended"] as const)("fresh password login accepts an invitation with %s and creates no extra workspace", async previousState => {
+    const f = await fixture({ invitedAccount: "verified" });
+    vi.stubEnv("GATEWAY_JWT_SECRET", "invitation-login-test-secret-12345678901234567890");
+    const password = "Verified-offer-password-84!";
+    await db.update(users).set({ passwordHash: await hashPassword(password) }).where(eq(users.id, f.inviteeId));
+    if (previousState === "all-suspended") {
+      await db.insert(tenants).values({ id: "old-suspended", name: "Old workspace", lifecycle: "suspended" });
+      await db.insert(tenantUsers).values({ userId: f.inviteeId, tenantId: "old-suspended", role: "admin" });
+    }
+    const before = await db.select({ id: tenants.id }).from(tenants);
+    const response = await login(new Request(`${baseUrl}/api/auth/login`, {
+      method: "POST", body: JSON.stringify({ email: f.email, password, inviteToken: f.token }),
+    }));
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ tenantId: f.tenantId, role: "admin", invitationAccepted: true });
+    expect(response.headers.get("set-cookie")).toContain("cust_session=");
+    expect(await db.select({ id: tenants.id }).from(tenants)).toEqual(before);
+    expect(await db.query.tenantUsers.findFirst({ where: and(eq(tenantUsers.tenantId, f.tenantId), eq(tenantUsers.userId, f.inviteeId)) }))
+      .toMatchObject({ role: "admin" });
+    expect((await db.query.tenantInvitations.findFirst({ where: eq(tenantInvitations.id, f.invitationId) }))?.acceptedAt).toBeTruthy();
   });
 
   it("automatically seeds an unverified identity, then adds it ONLY to the invited tenant after mailbox proof", async () => {

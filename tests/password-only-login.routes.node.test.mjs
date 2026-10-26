@@ -10,8 +10,9 @@ const pair = { token: "access-fixture", accessToken: "access-fixture", refreshTo
 const cookie = (name) => () => `${name}=fixture; HttpOnly; SameSite=Strict`;
 class AuthenticationChangedError extends Error {}
 
-function handler(file, role) {
-  const identity = { userId: "user", email: "user@example.test", tenantId: "tenant", role, credentialVersion: "b".repeat(64) };
+function handler(file, role, recoverInvitation = false) {
+  const identity = { userId: "user", email: "user@example.test", credentialVersion: "b".repeat(64),
+    ...(recoverInvitation ? { memberships: [], multipleTenants: false } : { tenantId: "tenant", role }) };
   const modules = {
     "next/server": { NextResponse: Response },
     "auth-rate-limit": { clientIpFrom: () => "unknown", reserveAuthAttempt: async () => ({ allowed: true }), recordAuthSuccess: async () => {}, setRateLimitHeaders: r => r },
@@ -21,6 +22,12 @@ function handler(file, role) {
     "audit": { writeAuditEvent: async () => {} },
     "customer-auth": { authenticateForTenant: async () => identity, issueCustomerSession: async () => pair,
       customerSessionCookie: cookie("cust_session"), customerRefreshCookie: cookie("cust_refresh") },
+    "invitation-join": { joinInvitationWithPassword: async (token, principal) => {
+      assert.equal(recoverInvitation, true, "ordinary password login must not consume an invitation");
+      assert.equal(token, "offer-fixture");
+      assert.equal(principal, identity, "only the authenticated credential snapshot may join");
+      return { membership: { tenantId: "invited", role: "admin" }, session: pair };
+    } },
     "manager-auth": { resolveManagerTenantId: async () => "tenant", authenticateManagerUser: async () => identity,
       getManagerUsername: () => null, verifyManagerPassword: async () => false, createManagerSession: async () => pair,
       managerCookieHeader: cookie("mgr_session"), managerRefreshCookieHeader: cookie("mgr_refresh") },
@@ -44,6 +51,20 @@ function handler(file, role) {
     return modules[resolved];
   });
 }
+
+test("a verified password plus a valid offer recovers an account without a workspace, without MFA or exposed tokens", async () => {
+  const post = handler("src/app/api/auth/login/route.ts", "admin", true);
+  const response = await post(new Request("http://localhost:3000/api/auth/login", {
+    method: "POST", body: JSON.stringify({ email: "user@example.test", password: "correct password fixture", inviteToken: "offer-fixture" }),
+  }));
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.invitationAccepted, true);
+  assert.equal(body.tenantId, "invited");
+  assert.doesNotMatch(JSON.stringify(body), /accessToken|refreshToken|credentialVersion|mfa|challenge|recoveryCodes/i);
+  assert.match(response.headers.get("Set-Cookie"), /cust_session=fixture; HttpOnly/);
+  assert.match(response.headers.get("Cache-Control"), /no-store/);
+});
 const roles = ["owner", "admin", "operator", "viewer", "integration_admin", "billing_admin"];
 for (const kind of ["customer", "manager", "platform"]) {
   for (const role of kind === "platform" ? ["platform_owner"] : roles) {

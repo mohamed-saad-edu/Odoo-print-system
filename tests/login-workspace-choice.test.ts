@@ -5,11 +5,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import LoginPage from "../src/app/login/page";
 import { fetchWithTimeout } from "../src/lib/fetch-timeout";
 
+const router = vi.hoisted(() => ({ replace: vi.fn(), push: vi.fn(), refresh: vi.fn() }));
+
 vi.mock("../src/lib/fetch-timeout", () => ({ fetchWithTimeout: vi.fn() }));
 vi.mock("../src/lib/session-config", () => ({ ensureCustomerSession: async () => ({ authenticated: false }) }));
 vi.mock("../src/components/AuthShell", () => ({ AuthShell: ({ children }: { children: ReactNode }) => h("div", null, children) }));
 vi.mock("next/navigation", () => {
-  const router = { replace: vi.fn(), push: vi.fn(), refresh: vi.fn() };
   return { useRouter: () => router };
 });
 vi.mock("next/link", () => ({ default: ({ children, ...props }: Record<string, unknown>) => h("a", props, children as ReactNode) }));
@@ -26,6 +27,8 @@ const workspaceResponse = {
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   fetchMock.mockReset();
+  router.replace.mockReset(); router.refresh.mockReset();
+  window.history.replaceState({}, "", "/login");
   fetchMock.mockResolvedValue({ status: 409, ok: false, json: async () => workspaceResponse } as Response);
   host = document.createElement("div");
   document.body.appendChild(host);
@@ -43,6 +46,21 @@ async function signIn() {
 }
 
 describe("workspace selection after authenticated sign in", () => {
+  it("forwards an offer from the validated invitation destination and opens the joined workspace", async () => {
+    window.history.replaceState({}, "", "/login?switch=1&next=" + encodeURIComponent("/invite?token=offered-token"));
+    fetchMock.mockResolvedValueOnce({ status: 200, ok: true, json: async () => ({ invitationAccepted: true, tenantId: "invited" }) } as Response);
+    await signIn();
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body)).inviteToken).toBe("offered-token");
+    expect(router.replace).toHaveBeenCalledWith("/dashboard");
+    expect(router.refresh).toHaveBeenCalledOnce();
+  });
+
+  it("never forwards a token taken from an external return destination", async () => {
+    window.history.replaceState({}, "", "/login?switch=1&next=" + encodeURIComponent("https://other.test/invite?token=untrusted"));
+    await signIn();
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).not.toHaveProperty("inviteToken");
+  });
+
   it("shows workspace names and submits the selected immutable ID and selection token", async () => {
     await signIn();
     const choice = [...host.querySelectorAll<HTMLButtonElement>("button")].find((node) => node.textContent?.includes("Kitchen team"));
