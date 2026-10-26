@@ -96,8 +96,13 @@ class TestBranchRuntimeBinding(TransactionCase):
                 self.assertEqual(action["res_model"], expected_model)
                 self.assertEqual(action["domain"], [("company_id", "=", self.company.id)])
         # Navigation must not quietly grant company-wide edit rights.
-        with self.assertRaises((AccessError, ValidationError)), self.env.cr.savepoint():
-            root_config.write({"runtime_agent_id": "should-not-change"})
+        # Odoo 19 TransactionCase.assertRaises accepts a single exception
+        # class (it calls issubclass internally), unlike unittest.TestCase.
+        # Use the standard unittest assertion for the expected exception tuple
+        # while keeping the database savepoint around the rejected write.
+        with self.env.cr.savepoint():
+            with StandardTestCase.assertRaises(self, (AccessError, ValidationError)):
+                root_config.write({"runtime_agent_id": "should-not-change"})
 
     def test_v4_setup_context_contains_only_activated_scope_and_safe_metadata(self):
         from odoo.addons.print_gateway.controllers.runtime_printers import PrintGatewayRuntimePrinterController
