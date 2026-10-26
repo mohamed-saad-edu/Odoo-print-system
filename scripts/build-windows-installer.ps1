@@ -259,11 +259,32 @@ foreach ($dir in @("msi", "nsis")) {
 }
 
 Write-Step "cargo tauri build (--target $Target --bundles $Bundles)"
+$tauriSigningConfig = $null
+$buildArgs = @("tauri", "build", "--target", $Target, "--bundles", $Bundles)
 Push-Location $repoRoot
 try {
-  cargo tauri build --target $Target --bundles $Bundles
+  if ($signingCert) {
+    # Unlike a Rust build-script override, the bundler's signing settings must
+    # be passed through the Tauri CLI. It signs the patched Manager PE before
+    # embedding it in NSIS (as well as signing the NSIS executable).
+    if ([string]::IsNullOrWhiteSpace($env:TAURI_CONFIG)) {
+      throw "Tauri signing overlay missing after certificate initialization"
+    }
+    $config = $env:TAURI_CONFIG | ConvertFrom-Json -ErrorAction Stop
+    if ($config.bundle.windows.certificateThumbprint -ne $signingCert.Thumbprint -or
+        $config.bundle.windows.digestAlgorithm -ne "sha256") {
+      throw "Bundler signing configuration does not match the selected certificate"
+    }
+    $tauriSigningConfig = Join-Path ([IO.Path]::GetTempPath()) ("yaseir-tauri-windows-signing-" + [guid]::NewGuid().ToString("N") + ".json")
+    [IO.File]::WriteAllText($tauriSigningConfig, $env:TAURI_CONFIG, [Text.UTF8Encoding]::new($false))
+    $buildArgs += @("--config", $tauriSigningConfig)
+  }
+  & cargo @buildArgs
   if ($LASTEXITCODE -ne 0) { throw "cargo tauri build failed with exit code $LASTEXITCODE" }
 } finally {
+  if ($tauriSigningConfig) {
+    Remove-Item -LiteralPath $tauriSigningConfig -Force -ErrorAction SilentlyContinue
+  }
   Pop-Location
 }
 
@@ -276,8 +297,8 @@ if ($Bundles -match "nsis") {
   $unexpectedNsis = @(Get-ChildItem (Join-Path $bundleDir "nsis\*.exe") -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -ne $nsis[0].Name })
   if ($unexpectedNsis.Count -ne 0) { throw "Unexpected extra NSIS executable(s) detected: $($unexpectedNsis.Name -join ', ')" }
   if ($signingCert) {
-    Write-Step "Signing final NSIS installer executable"
-    $sigResult = Set-AuthenticodeSignature -FilePath $nsis[0].FullName -Certificate $signingCert -HashAlgorithm SHA256 -ErrorAction Stop
+    Write-Step "Verifying Tauri-signed final NSIS installer executable"
+    $sigResult = Get-AuthenticodeSignature -LiteralPath $nsis[0].FullName -ErrorAction Stop
     $signatureStatus = Assert-AuthenticodeSigningResult $sigResult $signingCert.Thumbprint $nsis[0].FullName
     Write-Host "  Signed installer: $($nsis[0].Name) (status: $signatureStatus)"
     if ($signatureStatus -eq "NotTrusted") { Write-Host "  Publisher trust is not established on this build host." }

@@ -475,19 +475,38 @@ jobs:
       - name: Build Tauri Windows NSIS installer
         shell: pwsh
         run: |
-          $maxAttempts = 2
-          for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
-            Write-Host "Tauri NSIS build attempt $attempt/$maxAttempts"
-            & cargo tauri build --target x86_64-pc-windows-msvc --bundles nsis
-            if ($LASTEXITCODE -eq 0) {
-              Write-Host "Tauri NSIS build succeeded on attempt $attempt."
-              break
+          # TAURI_CONFIG alone is used by the Rust build script; the Tauri CLI
+          # bundler must also receive the signing overlay explicitly. Otherwise
+          # it can patch the Manager PE and silently package it as NotSigned,
+          # even though the outer NSIS installer gets signed in a later step.
+          if ([string]::IsNullOrWhiteSpace($env:TAURI_CONFIG) -or
+              [string]::IsNullOrWhiteSpace($env:YASEIR_SIGNING_THUMBPRINT)) {
+            throw "Windows signing configuration is missing; refusing to bundle unsigned Manager"
+          }
+          $signing = $env:TAURI_CONFIG | ConvertFrom-Json -ErrorAction Stop
+          if ($signing.bundle.windows.certificateThumbprint -ne $env:YASEIR_SIGNING_THUMBPRINT -or
+              $signing.bundle.windows.digestAlgorithm -ne "sha256") {
+            throw "Tauri signing overlay does not match the verified Windows publisher"
+          }
+          $signingConfig = Join-Path $env:RUNNER_TEMP "tauri.windows.signing.json"
+          [IO.File]::WriteAllText($signingConfig, $env:TAURI_CONFIG, [Text.UTF8Encoding]::new($false))
+          try {
+            $maxAttempts = 2
+            for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
+              Write-Host "Tauri NSIS build attempt $attempt/$maxAttempts with pinned signer"
+              & cargo tauri build --target x86_64-pc-windows-msvc --bundles nsis --config $signingConfig
+              if ($LASTEXITCODE -eq 0) {
+                Write-Host "Tauri NSIS build succeeded on attempt $attempt."
+                break
+              }
+              if ($attempt -eq $maxAttempts) {
+                throw "Tauri NSIS build failed after $maxAttempts attempts."
+              }
+              Write-Warning "Tauri NSIS bundling failed (exit code $LASTEXITCODE). Retrying once in 10 seconds."
+              Start-Sleep -Seconds 10
             }
-            if ($attempt -eq $maxAttempts) {
-              throw "Tauri NSIS build failed after $maxAttempts attempts."
-            }
-            Write-Warning "Tauri NSIS bundling failed (exit code $LASTEXITCODE). Retrying once in 10 seconds."
-            Start-Sleep -Seconds 10
+          } finally {
+            Remove-Item -LiteralPath $signingConfig -Force -ErrorAction SilentlyContinue
           }
       - name: Verify NSIS installer artifact
         shell: pwsh
@@ -501,7 +520,8 @@ jobs:
             $cert = Get-ChildItem Cert:\CurrentUser\My | Where-Object { $_.Thumbprint -eq $env:YASEIR_SIGNING_THUMBPRINT } | Select-Object -First 1
             if (-not $cert) { throw "Requested installer signing certificate was not found" }
             if ($cert) {
-              $sig = Set-AuthenticodeSignature -FilePath $exe[0].FullName -Certificate $cert -HashAlgorithm SHA256
+              # Fail closed if Tauri did not sign the NSIS installer itself.
+              $sig = Get-AuthenticodeSignature -LiteralPath $exe[0].FullName
               if ($sig.Status -ne "Valid" -or -not $sig.SignerCertificate -or $sig.SignerCertificate.Thumbprint -ne $cert.Thumbprint) { throw "NSIS installer signature invalid: $($sig.Status)" }
               Write-Host "Verified Authenticode signature on $($exe[0].Name) ($($cert.Thumbprint))"
             }
