@@ -1,64 +1,3 @@
-test("printer scope choices remain unique when legacy Odoo returns identical company names", async () => {
-  const { labelPrinterScopes } = await load("js/printer_scope_labels.js");
-  const raw = [
-    { id: 11, name: "My Company", companyId: 11, branchId: false },
-    { id: 12, name: "My Company", companyId: 11, branchId: 12 },
-    { id: 24, name: " MY COMPANY ", companyId: 24, branchId: false },
-    { id: 27, name: "Alexandria", companyId: 11, branchId: 27 },
-    { id: 12, name: "My Company", companyId: 11, branchId: 12 },
-    { id: "bad", name: "Invalid", companyId: 11, branchId: false },
-  ];
-  const result = Array.from(labelPrinterScopes(raw, { company: "Company", branch: "Branch" }));
-  assert.deepEqual(result.map(x => x.id), [11, 12, 24, 27]);
-  assert.deepEqual(result.map(x => x.label), [
-    "Company: My Company (#11)",
-    "Branch: My Company",
-    "Company: MY COMPANY (#24)",
-    "Branch: Alexandria",
-  ]);
-  assert.equal(new Set(result.map(x => x.label.toLowerCase())).size, result.length);
-  assert.deepEqual(result.map(x => [x.companyId, x.branchId]), [[11, false], [11, 12], [24, false], [11, 27]]);
-  assert.deepEqual(raw[0], { id: 11, name: "My Company", companyId: 11, branchId: false }, "must not mutate server scopes");
-});
-
-test("legacy server suffix-shaped names never collide after client disambiguation", async () => {
-  const { labelPrinterScopes } = await load("js/printer_scope_labels.js");
-  const input = [
-    { id: 1, name: "My Company", companyId: 1, branchId: false },
-    { id: 2, name: "My Company", companyId: 2, branchId: false },
-    { id: 3, name: "My Company (#2)", companyId: 3, branchId: false },
-  ];
-  const results = Array.from(labelPrinterScopes(input));
-  assert.equal(new Set(results.map(scope => scope.label.toLocaleLowerCase())).size, results.length,
-    "even a literal suffix in the original company name must not duplicate the final visible labels");
-  assert.deepEqual(results.map(scope => scope.id), [1, 2, 3]);
-});
-
-test("disabled scope status suffix cannot mimic an assignable company name", async () => {
-  const { labelPrinterScopes } = await load("js/printer_scope_labels.js");
-  const input = [
-    { id: 1, name: "My Company", companyId: 1, branchId: false, assignable: false },
-    { id: 2, name: "My Company (Unavailable)", companyId: 2, branchId: false },
-  ];
-  const labels = Array.from(labelPrinterScopes(input), scope => scope.label.toLocaleLowerCase());
-  assert.equal(new Set(labels).size, labels.length,
-    "the appended unavailable status must not create an ambiguous final option label");
-});
-
-test("already disambiguated Odoo scopes keep server labels and do not gain extra suffixes", async () => {
-  const { labelPrinterScopes } = await load("js/printer_scope_labels.js");
-  const scopes = [
-    { id: 1, name: "My Company (#1)", companyId: 1, branchId: false },
-    { id: 2, name: "My Company (#2)", companyId: 2, branchId: false },
-    { id: 3, name: "My Company / Branch", companyId: 1, branchId: 3 },
-  ];
-  assert.deepEqual(Array.from(labelPrinterScopes(scopes), x => x.label), [
-    "Company: My Company (#1)", "Company: My Company (#2)", "Branch: My Company / Branch",
-  ]);
-  assert.deepEqual(Array.from(labelPrinterScopes([])), []);
-  assert.deepEqual(Array.from(labelPrinterScopes(null)), []);
-});
-
 import { receiptGeometry, verifiedPrinter } from "./helpers/odoo-printer-geometry.mjs";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -103,40 +42,6 @@ async function load(relative, extra = {}, overrides = {}) {
 }
 
 
-
-test("printer selector prioritizes explicit branch, never falls through revoked scopes", async () => {
-  const { resolvePrinterScopeSelection } = await load("js/printer_scope_labels.js");
-  const normalizedSelection = (...args) => {
-    const result = resolvePrinterScopeSelection(...args);
-    return { id: result.id, invalidated: result.invalidated };
-  };
-  const scopes = [
-    { id: 5, name: "My Company", companyId: 5, branchId: false },
-    { id: 6, name: "My Company / My Company", companyId: 5, branchId: 6 },
-    { id: 8, name: "Other Company", companyId: 8, branchId: false },
-    { id: 9, name: "Unsupported nested", companyId: 5, branchId: 9, assignable: false },
-  ];
-  assert.deepEqual(normalizedSelection(scopes, {
-    requestedCompanyId: "5", requestedBranchId: "6", currentCompanyId: 5,
-  }), { id: 6, invalidated: false });
-  assert.deepEqual(normalizedSelection(scopes, {
-    requestedCompanyId: "5", requestedBranchId: "7", currentCompanyId: 5,
-  }), { id: 0, invalidated: true });
-  assert.deepEqual(normalizedSelection(scopes, {
-    requestedCompanyId: "8", currentCompanyId: 5,
-  }), { id: 8, invalidated: false });
-  assert.deepEqual(normalizedSelection(scopes, {
-    currentCompanyId: 11,
-  }), { id: 0, invalidated: true });
-  assert.deepEqual(normalizedSelection(scopes, {
-    currentCompanyId: 9,
-  }), { id: 0, invalidated: true });
-  assert.deepEqual(normalizedSelection(scopes, {
-    currentCompanyId: 5,
-  }), { id: 5, invalidated: false });
-  assert.deepEqual(normalizedSelection([], { currentCompanyId: 5 }),
-    { id: 0, invalidated: true });
-});
 
 test("monthly allowance reset shows the exact UTC boundary from Saudi and western browser timezones", async () => {
   for (const browserZone of ["Asia/Riyadh", "America/Los_Angeles"]) {
@@ -302,45 +207,11 @@ test("an unavailable or stale language session never reloads with the previous l
 });
 
 
-test("printer inventory chooses an already assigned healthy agent without a second registration step", async () => {
-  const { PrintersOverview } = await load("components/printers_overview.js");
-  const view = Object.create(PrintersOverview.prototype);
-  view.state = { scopes: [{ id: 21, companyId: 10, branchId: 21, configId: 2 }], scopeId: 21,
-    agents: [], agentId: "", printers: [], loading: false, error: "" };
-  view.alive = true;
-  view.generation = 0;
-  const called = [];
-  view.call = async (route, args) => {
-    called.push([route, args]);
-    if (route === "/print_gateway/runtime-agents") return { agents: [
-      { id: "agent-stale", status: "offline", freshness: "stale" },
-      { id: "agent-ready", status: "online", freshness: "fresh" },
-    ] };
-    if (route === "/print_gateway/runtime-printers") return { printers: [{ id: "verified-printer" }] };
-    throw new Error("unexpected RPC");
-  };
-  await view.refresh();
-  assert.equal(view.state.agentId, "agent-ready");
-  assert.deepEqual(Array.from(view.state.printers, p => p.id), ["verified-printer"]);
-  assert.equal(called.length, 2);
-  assert.deepEqual({ ...called[1][1] }, { company_id: 10, branch_id: 21, agent_id: "agent-ready" });
-  assert.equal(view.hasMultipleScopes, false);
-  assert.equal(view.showScopeSelector, false);
-  view.state.scopeId = 0; // revoked explicit scope must offer a safe manual selector
-  assert.equal(view.showScopeSelector, true);
-  view.state.scopeId = 21;
-  view.state.scopes.push({ id: 31, companyId: 30, branchId: false });
-  assert.equal(view.hasMultipleScopes, true);
-  assert.equal(view.showScopeSelector, true);
-  // Inventory is read-only; changing the visible Agent never mutates assignments.
-  assert.ok(called.every(([route]) => route === "/print_gateway/runtime-agents" || route === "/print_gateway/runtime-printers"));
-});
-
 test("Odoo Apps description uses translated manifest metadata, not untranslatable static HTML or repository links", () => {
   const base = path.resolve("odoo_addons/print_gateway");
   const manifest = fs.readFileSync(path.join(base, "__manifest__.py"), "utf8");
   const catalog = fs.readFileSync(path.join(base, "i18n/ar.po"), "utf8");
-  const inventory = fs.readFileSync(path.join(base, "static/src/components/printers_overview.xml"), "utf8");
+  const routing = fs.readFileSync(path.join(base, "views/binding_views.xml"), "utf8");
   const config = fs.readFileSync(path.join(base, "models/gateway_config.py"), "utf8");
   const menus = fs.readFileSync(path.join(base, "views/menu.xml"), "utf8");
   assert.equal(fs.existsSync(path.join(base, "static/description/index.html")), false);
@@ -348,79 +219,43 @@ test("Odoo Apps description uses translated manifest metadata, not untranslatabl
   assert.match(manifest, /https:\/\/print\.yaseir\.cloud\//);
   assert.match(catalog, /model:ir\.module\.module,description:base\.module_print_gateway/);
   assert.match(catalog, /model:ir\.module\.module,summary:base\.module_print_gateway/);
-  assert.match(inventory, /t-if="state\.agents\.length > 1"/);
-  assert.match(inventory, /t-elif="state\.agents\.length === 1"/);
-  assert.doesNotMatch(inventory, /o_pg_setup_steps/);
+  assert.match(routing, /widget="gateway_runtime_agent_binding"/);
+  assert.match(routing, /widget="gateway_runtime_printer"/);
+  assert.equal(fs.existsSync(path.join(base, "static/src/components/printers_overview.xml")), false);
+  assert.equal(fs.existsSync(path.join(base, "static/src/components/printers_overview.js")), false);
+  assert.doesNotMatch(menus, /menu_print_gateway_printers|menu_print_gateway_advanced|action_print_gateway_printers/);
   assert.match(config, /context\["default_branch_id"\] = active_company\.id/);
   assert.match(menus, /name="Automatic Printing"/);
 });
 
-test("printer inventory explains unavailable agents without widening branch discovery", async () => {
-  const { PrintersOverview } = await load("components/printers_overview.js");
-  const view = Object.create(PrintersOverview.prototype);
-  view.state = { scopes: [{ id: 21, companyId: 10, branchId: 21, configId: 2 }],
-    scopeId: 21, agents: [], agentId: "", printers: [], loading: false, error: "", agentEmptyReason: "" };
-  view.alive = true;
-  view.generation = 0;
-  for (const [reply, expected] of [
-    [{ enabled: true, agents: [], assignedAgentCount: 0, registeredAgentCount: 2 }, "unassigned"],
-    [{ enabled: true, agents: [], assignedAgentCount: 1, registeredAgentCount: 0 }, "not_registered"],
-    [{ enabled: false, agents: [], assignedAgentCount: 0, registeredAgentCount: 0 }, "connection"],
-    [{ enabled: true, agents: [] }, "unavailable"],
-  ]) {
-    let calls = 0;
-    view.call = async (route, data) => {
-      assert.equal(route, "/print_gateway/runtime-agents");
-      assert.deepEqual({ company_id: data.company_id, branch_id: data.branch_id, assignment_only: data.assignment_only },
-        { company_id: 10, branch_id: 21, assignment_only: true });
-      calls += 1;
-      return reply;
-    };
-    await view.refresh();
-    assert.equal(calls, 1, "an unavailable scoped Agent cannot start printer discovery");
-    assert.equal(view.state.agentEmptyReason, expected);
-    assert.equal(view.state.printers.length, 0);
-  }
+
+test("native print route switches Agent without retaining a printer from another Agent", async () => {
+  const { RuntimeAgentField } = await load("components/runtime_agent_field.js");
+  const updates = [];
+  const view = Object.create(RuntimeAgentField.prototype);
+  view.props = { name: "runtime_agent_id", record: {
+    data: { company_id: [10, "Company"], branch_id: [21, "Branch"], runtime_agent_id: "agent-old", printer_id: "printer-old" },
+    fields: { printer_id: {} },
+    update: value => updates.push(value),
+  } };
+  assert.equal(view.companyId, 10);
+  assert.equal(view.branchId, 21);
+  assert.equal(view.scopeKey(10, 21, true), "10|21|1");
+  view.onChange({ target: { value: "agent-new" } });
+  assert.deepEqual({ ...updates[0] }, { runtime_agent_id: "agent-new", printer_id: false });
 });
 
-test("printer inventory navigation maintains exact Odoo scope without creating assignments", async () => {
-  const { PrintersOverview } = await load("components/printers_overview.js");
-  const view = Object.create(PrintersOverview.prototype);
-  view.state = { scopes: [{ id: 21, companyId: 10, branchId: 21, configId: 2,
-    assignable: true }], scopeId: 21, agents: [], agentId: "", printers: [] };
-  const actions = [];
-  view.action = { doAction: action => { actions.push(action); return action; } };
-  view.assignments();
-  view.mappings();
-  assert.deepEqual(actions.map(a => a.res_model),
-    ["print_gateway.runtime_agent_assignment", "print_gateway.binding"]);
-  assert.deepEqual(actions.map(a => ({ ...a.context })),
-    [{ default_company_id: 10, default_branch_id: 21 },
-     { default_company_id: 10, default_branch_id: 21 }]);
-  assert.deepEqual(JSON.parse(JSON.stringify(actions[0].domain)),
-    [["company_id", "=", 10], ["branch_id", "=", 21]]);
-  assert.deepEqual(JSON.parse(JSON.stringify(actions[1].domain)),
-    [["company_id", "=", 10], ["branch_id", "in", [false, 21]]]);
-  view.state.scopeId = 0;
-  assert.equal(view.assignments(), undefined);
-  assert.equal(view.mappings(), undefined);
-  assert.equal(actions.length, 2, "a revoked scope never navigates to another branch");
-});
-
-test("scope labels never collapse equal-name companies into the same visible branch option", async () => {
-  const { labelPrinterScopes } = await load("js/printer_scope_labels.js");
-  const scopes = [
-    { id: 5, name: "My Company", companyId: 5, branchId: false },
-    { id: 6, name: "My Company", companyId: 6, branchId: false },
-    { id: 7, name: "My Company", companyId: 7, branchId: false },
-  ];
-  const labeled = labelPrinterScopes(scopes, {
-    company: "الشركة", branch: "الفرع", unavailable: "غير متاح",
-  });
-  assert.deepEqual(Array.from(labeled, row => row.id), [5, 6, 7]);
-  assert.equal(new Set(Array.from(labeled, row => row.label)).size, 3);
-  for (const row of labeled) {
-    assert.match(row.label, new RegExp("#" + row.id));
-    assert.ok(row.label.startsWith("الشركة: "));
-  }
+test("native runtime printer picker is tied to the selected Agent and Odoo branch", async () => {
+  const { RuntimePrinterField } = await load("components/runtime_printer_field.js");
+  const view = Object.create(RuntimePrinterField.prototype);
+  view.props = { name: "printer_id", record: { data: {
+    company_id: [10, "Company"], branch_id: [21, "Branch"], runtime_agent_id: "agent-123",
+    destination_type: "report", report_id: [60, "Report"], document_type: "invoice", printer_id: false,
+  } } };
+  assert.equal(view.companyId, 10);
+  assert.equal(view.branchId, 21);
+  assert.equal(view.agentId, "agent-123");
+  assert.equal(view.destinationType, "report");
+  assert.equal(view.reportId, 60);
+  assert.equal(view.scopeKey(10, 21, "agent-123"), "10|21|agent-123|report|60|invoice");
 });

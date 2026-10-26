@@ -7,7 +7,6 @@ import ast
 import copy
 from pathlib import Path
 from types import SimpleNamespace
-from xml.etree import ElementTree
 
 import pytest
 
@@ -121,19 +120,17 @@ def test_explicit_branch_scope_rejects_fractional_rpc_ids():
     assert controller._scope(company_id="1", branch_id="2") == (root, branch)
 
 
-def test_visual_selected_option_tracks_authorized_internal_scope_not_first_row():
-    root = ElementTree.parse(VIEW).getroot()
-    select = next(element for element in root.iter("select") if element.attrib.get("id") == "pg_inventory_scope")
-    options = list(select.iter("option"))
-    placeholder = options[0]
-    scope_option = next(option for option in options if "t-foreach" in option.attrib)
-    assert placeholder.attrib.get("t-att-selected") == "state.scopeId === 0"
-    assert scope_option.attrib.get("t-att-selected") == "scope.id === state.scopeId"
+def test_native_agent_picker_tracks_saved_agent_not_implicit_first_scope():
+    source = (ROOT / "odoo_addons/print_gateway/static/src/components/runtime_agent_field.js").read_text()
+    assert 't-att-selected="agent.id === props.record.data[props.name]"' in source
+    assert 'this.state.agents = [];' in source
+    assert 'this.state.branchId = branchId;' in source
+    assert "updateData.printer_id = false" in source
 
 
-def test_agent_selector_selected_option_tracks_selected_agent():
-    root = ElementTree.parse(VIEW).getroot()
-    select = next(element for element in root.iter("select") if element.attrib.get("id") == "pg_inventory_agent")
-    options = list(select.iter("option"))
-    assert options[0].attrib.get("t-att-selected") == "!state.agentId"
-    assert options[1].attrib.get("t-att-selected") == "agent.id === state.agentId"
+def test_native_printer_picker_tracks_saved_printer_for_exact_agent():
+    source = (ROOT / "odoo_addons/print_gateway/static/src/components/runtime_printer_field.js").read_text()
+    assert 't-att-selected="printer.id === props.record.data[props.name]"' in source
+    assert 't-att-disabled="state.loading || !state.agentId"' in source
+    assert "this.companyId, this.branchId, this.agentId, this.destinationType" in source
+    assert "/print_gateway/runtime-printers" in source

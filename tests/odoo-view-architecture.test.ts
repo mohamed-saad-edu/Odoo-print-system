@@ -51,10 +51,10 @@ describe("Odoo 19 view architecture contract — gateway_config_views.xml", () =
     ]) {
       expect(formSection).not.toContain(action);
     }
-    const advanced = formSection.slice(formSection.indexOf('<page string="Advanced connection settings"'));
-    expect(advanced).toContain('name="action_open_runtime_assignments"');
-    expect(advanced).toContain('name="action_reset_stale_sync_state"');
-    expect(formSection).toContain('name="action_open_printers"');
+    const maintenance = formSection.slice(formSection.indexOf('<page string="Connection maintenance"'));
+    expect(maintenance).toContain('name="action_reset_stale_sync_state"');
+    expect(formSection).toContain('name="action_open_runtime_assignments"');
+    expect(formSection).not.toContain('name="action_open_printers"');
     expect(formSection).toContain('name="action_open_destinations"');
     expect(formSection).not.toContain('name="action_open_print_rules"');
   });
@@ -133,31 +133,57 @@ describe("Odoo concise connection guidance", () => {
   });
 });
 
-describe("Customer navigation keeps printer destinations and automation separate", () => {
-  it("shows document destinations before automation and keeps diagnostics advanced", () => {
+describe("One native print routing workflow, with every operation in the main navigation", () => {
+  it("removes the separate inventory page and keeps Agent and printer in the route form", () => {
     const menu = read("odoo_addons/print_gateway/views/menu.xml");
-    const destination = menu.split("\n").find(row => row.includes('id="menu_print_gateway_bindings"')) || "";
-    const automation = menu.split("\n").find(row => row.includes('id="menu_print_gateway_policies"')) || "";
-    const intents = menu.split("\n").find(row => row.includes('id="menu_print_gateway_intents"')) || "";
-    expect(destination).toContain('parent="menu_print_gateway_main"');
-    expect(destination).toContain('sequence="30"');
-    expect(automation).toContain('sequence="40"');
-    expect(intents).toContain('parent="menu_print_gateway_advanced"');
-    const binding = read("odoo_addons/print_gateway/views/binding_views.xml");
-    const policy = read("odoo_addons/print_gateway/views/print_policy_views.xml");
-    expect(binding).toContain('<form string="Document Destination"');
-    expect(binding).toContain('string="Check registration"');
-    expect(binding).toContain('string="Print test page"');
-    expect(policy).toContain('string="Document Destination"');
-    expect(read("odoo_addons/print_gateway/views/print_job_views.xml")).toContain('<field name="name">Print Activity</field>');
+    const expected = [
+      ["menu_print_gateway_config", "Connection", "10"],
+      ["menu_print_gateway_bindings", "Print Routing", "20"],
+      ["menu_print_gateway_assignments", "Branch Devices", "30"],
+      ["menu_print_gateway_policies", "Automatic Printing", "40"],
+      ["menu_print_gateway_jobs", "Print Activity", "50"],
+      ["menu_print_gateway_intents", "Automation Activity", "60"],
+    ];
+    for (const [id, name, sequence] of expected) {
+      const row = menu.split("\n").find(line => line.includes(`id="${id}"`)) || "";
+      expect(row).toContain(`name="${name}"`);
+      expect(row).toContain('parent="menu_print_gateway_main"');
+      expect(row).toContain(`sequence="${sequence}"`);
+    }
+    expect(menu).not.toMatch(/menu_print_gateway_printers|menu_print_gateway_advanced|action_print_gateway_printers|print_gateway\.printers/);
+    const addon = "odoo_addons/print_gateway/";
+    const manifest = read(addon + "__manifest__.py");
+    expect(manifest).not.toMatch(/printers_overview|printer_scope_labels/);
+    const routing = read(addon + "views/binding_views.xml");
+    expect(routing).toContain('<form string="Print Route"');
+    expect(routing).toContain('widget="gateway_runtime_agent_binding"');
+    expect(routing).toContain('widget="gateway_runtime_printer"');
+    expect(routing).toContain('string="Check registration"');
+    expect(routing).toContain('string="Print test page"');
+    expect(read(addon + "views/print_policy_views.xml")).toContain('string="Print Route"');
+  });
+  it("removes obsolete persisted Odoo actions/menus on upgrade without deleting routes or jobs", () => {
+    const migration = read("odoo_addons/print_gateway/migrations/19.0.2.29.0/post-migrate.py");
+    for (const old of ["menu_print_gateway_printers", "menu_print_gateway_advanced", "action_print_gateway_printers"]) {
+      expect(migration).toContain(old);
+    }
+    expect(migration).toContain('children.write({"parent_id": root.id})');
+    expect(migration).toContain("printer_menu.unlink()");
+    expect(migration).toContain("old_action.unlink()");
+    expect(migration).not.toContain('env["print_gateway.binding"]');
+    expect(migration).not.toContain('env["print_gateway.print_job"]');
   });
 });
 
 describe("Odoo UX localization contract", () => {
-  it("uses one Arabic label for document destinations across menus, forms, and actions", () => {
+  it("uses one Arabic label for print routing and exposes both pickers", () => {
     const po = read("odoo_addons/print_gateway/i18n/ar.po");
-    expect(po).toMatch(/msgid "Document Destinations"\nmsgstr "وجهات المستندات"/);
-    expect(po).toContain('msgid "No computer assigned to this company or branch"');
-    expect(po).toContain('msgid "Assigned Print Agent is unavailable');
+    expect(po).toContain('msgid "Print Routing"\nmsgstr "توجيه الطباعة"');
+    expect(po).toContain('msgid "Print Route"');
+    expect(po).toContain('msgid "Branch Devices"');
+    expect(po).toContain('msgid "Automation Activity"');
+    const xml = read("odoo_addons/print_gateway/views/gateway_config_views.xml");
+    expect(xml).toContain('name="action_open_destinations" type="object" string="Print Routing"');
+    expect(xml).not.toContain('name="action_open_printers"');
   });
 });

@@ -2259,24 +2259,8 @@ class PrintGatewayConfig(models.Model):
             "context": {"default_company_id": self.company_id.id},
         }
 
-    def action_open_printers(self):
-        """Keep the operator's authorized active branch when opening inventory."""
-        self.ensure_one()
-        self._check_admin()
-        context = {"default_company_id": self.company_id.id}
-        active_company = self.env.company
-        # Passing a branch is presentation only; assignments and RPC access
-        # remain enforced independently by the runtime printer controller.
-        if active_company.parent_id == self.company_id and active_company in self.env.companies:
-            context["default_branch_id"] = active_company.id
-        return {
-            "type": "ir.actions.client",
-            "tag": "print_gateway.printers",
-            "context": context,
-        }
-
     def action_open_destinations(self):
-        """Open document/printer mappings for this root company.
+        """Open print routes for this root company.
 
         The active Branch is only a default for new rows; record rules and
         binding validators remain authoritative for printer routing.
@@ -2289,7 +2273,7 @@ class PrintGatewayConfig(models.Model):
             context["default_branch_id"] = active_company.id
         return {
             "type": "ir.actions.act_window",
-            "name": self.env._("Document Destinations"),
+            "name": self.env._("Print Routing"),
             "res_model": "print_gateway.binding",
             "view_mode": "list,form",
             "domain": [("company_id", "=", self.company_id.id)],
