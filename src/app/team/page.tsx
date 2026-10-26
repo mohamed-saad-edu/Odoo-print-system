@@ -15,26 +15,6 @@ type Profile = { userId: string; email: string; platformOwner: boolean; tenant: 
 type Notice = { kind: "ok" | "err" | "warn"; message: string };
 const PAGE_SIZE = 50;
 
-/** A workspace session alone is NEVER proof that the actor may create invitations.
- * The existing Platform Owner login/reauth endpoint verifies the password and
- * establishes the separate Platform Owner session for every write. */
-async function verifyPlatformOwnerPassword(profile: Profile, password: string): Promise<void> {
-  const me = await fetchWithTimeout("/api/platform/auth/me", {
-    credentials: "include", cache: "no-store",
-  });
-  if (!me.ok && me.status !== 401) throw new Error("PLATFORM_SESSION_UNAVAILABLE");
-  const current = me.ok ? await me.json() as { userId?: string } : null;
-  const reauth = current?.userId === profile.userId;
-  const proof = await fetchWithTimeout(reauth
-    ? "/api/platform/auth/reauth"
-    : "/api/platform/auth/login", {
-    method: "POST", credentials: "include", cache: "no-store",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(reauth ? { password } : { email: profile.email, password }),
-  });
-  if (!proof.ok) throw new Error("PLATFORM_PASSWORD_REJECTED");
-}
-
 export default function TeamPage() {
   const { t, formatDate } = useI18n();
   const router = useRouter();
@@ -49,7 +29,6 @@ export default function TeamPage() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
   const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
 
@@ -103,17 +82,13 @@ export default function TeamPage() {
 
   async function sendInvitation(event: React.FormEvent) {
     event.preventDefault();
-    if (!profile?.platformOwner || busy || !password) return;
+    if (!profile?.platformOwner || busy) return;
     const invitedEmail = email.trim();
     if (!invitedEmail) return;
-    const secret = password;
-    setPassword("");
     setBusy(true);
     setNotice(null);
     try {
-      await verifyPlatformOwnerPassword(profile, secret);
-      const base = "/api/platform/tenants/" + encodeURIComponent(profile.tenant.id);
-      const response = await fetchWithTimeout(`${base}/invitations`, {
+      const response = await fetchWithTimeout("/api/team/invitations", {
         method: "POST", credentials: "include", cache: "no-store",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email: invitedEmail }),
@@ -132,24 +107,18 @@ export default function TeamPage() {
       if (inviteOffset !== 0) setInviteOffset(0);
       else refresh();
     } catch (error) {
-      setNotice({ kind: "err", message: error instanceof Error && error.message !== "PLATFORM_PASSWORD_REJECTED" &&
-        error.message !== "PLATFORM_SESSION_UNAVAILABLE"
-        ? error.message : t("team.invitationFailed") });
+      setNotice({ kind: "err", message: error instanceof Error ? error.message : t("team.invitationFailed") });
     } finally {
       setBusy(false);
     }
   }
 
   async function revokeInvitation(id: string) {
-    if (!profile?.platformOwner || busy || !password) return;
-    const secret = password;
-    setPassword("");
+    if (!profile?.platformOwner || busy) return;
     setBusy(true);
     setNotice(null);
     try {
-      await verifyPlatformOwnerPassword(profile, secret);
-      const base = "/api/platform/tenants/" + encodeURIComponent(profile.tenant.id);
-      const response = await fetchWithTimeout(`${base}/invitations?id=${encodeURIComponent(id)}`, {
+      const response = await fetchWithTimeout(`/api/team/invitations?id=${encodeURIComponent(id)}`, {
         method: "DELETE", credentials: "include", cache: "no-store",
       });
       const result = await response.json().catch(() => ({})) as { code?: string };
@@ -186,19 +155,14 @@ export default function TeamPage() {
                 <StatusBadge tone="brand" label={t("team.platformOwner")} />
               </div>
               <p className="mt-2 text-sm text-ink-3">{t("team.inviteHint")}</p>
-              <form onSubmit={sendInvitation} className="mt-4 grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] sm:items-end">
+              <form onSubmit={sendInvitation} className="mt-4 grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
                 <label className="block text-sm">
                   {t("team.inviteEmail")}
                   <Input type="email" required maxLength={320} autoComplete="email"
                     value={email} onChange={e => setEmail(e.target.value)} />
                 </label>
-                <label className="block text-sm">
-                  {t("platform.login.password")}
-                  <Input type="password" autoComplete="current-password" required maxLength={4096}
-                    value={password} onChange={e => setPassword(e.target.value)} />
-                </label>
                 <Button type="submit" variant="primary" loading={busy}
-                  disabled={busy || !email.trim() || !password}>
+                  disabled={busy || !email.trim()}>
                   {t("team.inviteSubmit")}
                 </Button>
               </form>
@@ -250,7 +214,7 @@ export default function TeamPage() {
                       <span className="block text-xs text-ink-3">{formatDate(invitation.expiresAt)}</span>
                     </span>
                     {profile?.platformOwner && (
-                      <Button variant="secondary" size="sm" disabled={busy || !password}
+                      <Button variant="secondary" size="sm" disabled={busy}
                         onClick={() => void revokeInvitation(invitation.id)}>
                         {t("team.revoke")}
                       </Button>

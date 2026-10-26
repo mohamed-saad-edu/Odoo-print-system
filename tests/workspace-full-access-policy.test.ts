@@ -35,25 +35,25 @@ describe("one operational Full Access for every workspace membership", () => {
     for (const permission of allowed) expect(hasManagerPermission(unknown, permission)).toBe(false);
   });
   it("workspace mutation routes deny direct HTTP bypass for all logged-in members", async () => {
-    const { POST: invite } = await import("../src/app/api/team/invitations/route");
     const { PATCH: changeRole, DELETE: removeMember } = await import("../src/app/api/team/members/route");
     const { POST: transfer } = await import("../src/app/api/team/ownership/route");
     const { POST: subscribe, GET: billingRequests } = await import("../src/app/api/subscription-requests/route");
     const request = new Request("https://gateway.example.test/api/team/invitations", { method: "POST" });
-    expect((await invite(request)).status).toBe(403);
     expect((await changeRole(request)).status).toBe(403);
     expect((await removeMember(request)).status).toBe(403);
     expect((await transfer(request)).status).toBe(403);
     expect((await subscribe(request)).status).toBe(403);
     expect((await billingRequests(request)).status).toBe(403);
   });
-  it("removes legacy role choices from the workspace team page and requires platform proof", () => {
+  it("removes legacy roles while granting invitations only to verified owner sessions", () => {
     const page = readFileSync(join(process.cwd(), "src/app/team/page.tsx"), "utf8");
     const platform = readFileSync(join(process.cwd(), "src/app/api/platform/tenants/[id]/invitations/route.ts"), "utf8");
     const sql = readFileSync(join(process.cwd(), "drizzle/0096_retire_limited_workspace_roles.sql"), "utf8");
     expect(page).not.toMatch(/ROLE_VALUES|roleOptions\(|updateRole\(|<Select/);
     expect(page).toContain("/api/team/invitations?limit=");
-    expect(page).toContain("verifyPlatformOwnerPassword");
+    expect(page).not.toContain("verifyPlatformOwnerPassword");
+    expect(page).toContain('fetchWithTimeout("/api/team/invitations"');
+    expect(page).not.toContain('type="password"');
     expect(page).toContain('t("team.platformOwner")');
     expect(platform).toContain("requirePlatformActorInTransaction");
     expect(platform).toContain("assertPlatformTeamOrigin");
