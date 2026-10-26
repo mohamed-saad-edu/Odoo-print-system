@@ -23,7 +23,7 @@ export default function PlatformDashboard() {
   const [tick, setTick] = useState(0);
   useEffect(() => {
     let live = true;
-    adminJson("/api/platform/stats").then((result: Stats) => {
+    adminJson('/api/platform/stats').then((result: Stats) => {
       if (live) { setData(result); setError(false); }
     }).catch(() => { if (live) setError(true); });
     return () => { live = false; };
@@ -50,9 +50,9 @@ export default function PlatformDashboard() {
             <Activity className="h-5 w-5 text-brand" aria-hidden />{a("activity")}
           </h2>
           <div className="mt-4 grid gap-3 sm:grid-cols-3">
-            {(["today", "month", "year"] as const).map(key => <div key={key} className="rounded-lg bg-surface-2 p-4">
-              <p className="text-sm text-ink-3">{a(key)}</p>
-              <p className="mt-2 text-2xl font-semibold tabular-nums">{formatNumber(data.logicalUsage[key])}</p>
+            {(["today", "month", "year"] as const).map(k => <div key={k} className="rounded-lg bg-surface-2 p-4">
+              <p className="text-sm text-ink-3">{a(k)}</p>
+              <p className="mt-2 text-2xl font-semibold tabular-nums">{formatNumber(data.logicalUsage[k])}</p>
             </div>)}
           </div>
           <p className="mt-3 text-xs text-ink-3">{a("semantics")}</p>
@@ -71,8 +71,8 @@ export default function PlatformDashboard() {
             <span className="mx-2 text-ink-3">·</span>{a("processingJobs")}: <b className="tabular-nums">{formatNumber(data.queueNow.inFlight)}</b>
           </Link>
           <Link href="/platform/fleet" className="rounded-lg p-2 hover:bg-surface-2 hover:text-brand">
-            {a("agentsAttention")}: <b className="tabular-nums">{formatNumber(data.agents.offline + data.agents.unknown)}</b>
-            <span className="mx-2 text-ink-3">·</span>{a("printersAttention")}: <b className="tabular-nums">{formatNumber(data.printers.offline + data.printers.error + data.printers.unknown)}</b>
+            {a('agentsAttention')}: <b className="tabular-nums">{formatNumber(data.agents.offline + data.agents.unknown)}</b>
+            <span className="mx-2 text-ink-3">·</span>{a('printersAttention')}: <b className="tabular-nums">{formatNumber(data.printers.offline + data.printers.error + data.printers.unknown)}</b>
           </Link>
         </Card>
       </>}
