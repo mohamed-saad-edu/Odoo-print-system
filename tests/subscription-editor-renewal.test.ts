@@ -79,4 +79,37 @@ describe("subscription renewal dates", () => {
     choose(field("term"), "custom");
     expect(field("end").value).toBe("2029-01-31");
   });
+
+  it.each(["en", "ar"] as const)("preselects the requested plan, term and quota for a pending %s activation", locale => {
+    localStorage.setItem(LOCALE_STORAGE_KEY, locale);
+    document.cookie = `${LOCALE_COOKIE_KEY}=${locale}; path=/`;
+    const request = {
+      id: "req_customer_choice", planId: "requested", term: "yearly", requestedMonthlyQuota: 250,
+      status: "pending", requesterName: "Workspace owner", requesterEmail: "owner@example.test", createdAt: "2026-10-27T00:00:00Z",
+    };
+    root = createRoot(host);
+    act(() => root!.render(h(I18nProvider, {
+      initialLocale: locale,
+      children: h(SubscriptionEditor, {
+        tenantId: "workspace-customer", subscription: null, request,
+        plans: [
+          { id: "default", name: "Other plan", description: "", entitlements: { max_prints_per_period: 100 }, isActive: true, isPublic: true, displayOrder: 0 },
+          { id: "requested", name: "Requested plan", description: "", entitlements: { max_prints_per_period: 250 }, isActive: true, isPublic: true, displayOrder: 1 },
+        ],
+        onSaved: () => undefined,
+      }),
+    })));
+    const field = (key: string) => {
+      const label = translate(locale, `v4.admin.${key}` as MessageKey);
+      return [...host.querySelectorAll("label")].find(node => node.querySelector("span")?.textContent === label)?.querySelector("select,input") as HTMLInputElement | HTMLSelectElement | null;
+    };
+    expect(field("plan")?.value).toBe("requested");
+    expect(field("plan")?.disabled).toBe(true);
+    expect(field("term")?.value).toBe("yearly");
+    expect(field("term")?.disabled).toBe(true);
+    expect(field("quota")?.value).toBe("250");
+    expect(field("quota")?.disabled).toBe(true);
+    expect(field("status")?.value).toBe("active");
+    expect(host.textContent).toContain(request.id);
+  });
 });

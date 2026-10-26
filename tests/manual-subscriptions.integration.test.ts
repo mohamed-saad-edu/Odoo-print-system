@@ -13,7 +13,7 @@ import { getTenantPrintUsage,getTenantEntitlements,getTenantEntitlementLimit,req
 import { POST as requestActivation,GET as requestsGET } from "../src/app/api/subscription-requests/route";
 import { POST as subscriptionPOST } from "../src/app/api/platform/tenants/[id]/subscription/route";
 import { GET as workspaceGET } from "../src/app/api/platform/tenants/[id]/route";
-import { POST as rejectRequest } from "../src/app/api/platform/subscription-requests/route";
+import { POST as rejectRequest, GET as listPlatformRequests } from "../src/app/api/platform/subscription-requests/route";
 import { PATCH as editPlan } from "../src/app/api/platform/plans/[id]/route";
 import { POST as suspendWorkspace } from "../src/app/api/platform/tenants/[id]/suspend/route";
 import { POST as reactivateWorkspace } from "../src/app/api/platform/tenants/[id]/reactivate/route";
@@ -77,6 +77,42 @@ suite('V4 manual subscriptions security and accounting',()=>{
   expect(ownerRead.status).toBe(200);
   expect((await ownerRead.json()).requests).toHaveLength(1);
  });
+ it('shows the actual customer request in Platform Admin and requires an exact linked approval',async()=>{
+  const created=await requestActivation(request('/api/subscription-requests',{planId:'manual',term:'yearly'},ownerCookie));
+  expect(created.status).toBe(201);
+  const requestBody=await created.json();
+  const id=String(requestBody.request.id);
+
+  // Different customer intent cannot be silently acknowledged as the earlier request.
+  const changed=await requestActivation(request('/api/subscription-requests',{planId:'manual',term:'monthly'},ownerCookie));
+  expect(changed.status).toBe(409);
+  expect(await changed.json()).toMatchObject({code:'SUBSCRIPTION_REQUEST_ALREADY_PENDING'});
+
+  const queue=await listPlatformRequests(new Request(origin+'/api/platform/subscription-requests?status=pending',{headers:{cookie:platformCookie}}));
+  expect(queue.status).toBe(200);
+  const pending=await queue.json();
+  expect(pending.pendingCount).toBe(1);
+  expect(pending.requests).toHaveLength(1);
+  expect(pending.requests[0]).toMatchObject({
+    id,tenant_id:'workspace',tenantName:'Manual workspace',plan_id:'manual',
+    planName:'Manual plan',planMonthlyQuota:10,term:'yearly',
+    requester_email:'owner@manual.test',status:'pending',
+  });
+
+  await expect(mutateManualSubscription('workspace',claims,randomUUID(),input({requestId:id,term:'monthly'})))
+    .rejects.toMatchObject({code:'SUBSCRIPTION_REQUEST_CONFLICT'});
+  expect((await db.query.subscriptionRequests.findFirst())?.status).toBe('pending');
+
+  await mutateManualSubscription('workspace',claims,randomUUID(),input({requestId:id}));
+  expect((await db.query.subscriptionRequests.findFirst())?.status).toBe('approved');
+  const after=await listPlatformRequests(new Request(origin+'/api/platform/subscription-requests?status=approved',{headers:{cookie:platformCookie}}));
+  expect(after.status).toBe(200);
+  expect((await after.json()).requests[0]).toMatchObject({id,status:'approved'});
+  const customer=await requestsGET(new Request(origin+'/api/subscription-requests',{headers:{cookie:ownerCookie}}));
+  expect(customer.status).toBe(200);
+  expect((await customer.json()).requests[0]).toMatchObject({id,status:'approved'});
+ });
+
  it('approves only the linked request, records history, and replays activation without changing revision or credits',async()=>{
   const record=await seedPendingRequest();
   const key=randomUUID(),body=input({requestId:record.id,subscriptionType:'free'});

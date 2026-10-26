@@ -19,5 +19,18 @@ describe("public manual plan catalog",()=>{
  it("routes the signed-in workspace owner to the customer billing request instead of Platform Admin",async()=>{fixture.authenticated=true;const markup=await render();expect(markup).toContain('href="/billing?plan=manual-plan"');expect(markup).not.toContain('/platform/subscriptions');expect(markup).not.toContain(translate("en","pricing.currentPlan"));expect(markup).not.toContain('/api/billing/checkout');});
  it("keeps public pricing usable to other members without granting them a billing mutation route",async()=>{fixture.authenticated=true;fixture.role="admin";const markup=await render();expect(markup).toContain('href="/dashboard"');expect(markup).not.toContain('href="/billing?plan=manual-plan"');});
  it.each(["expired","suspended"])("never marks a %s subscription current",async status=>{fixture.authenticated=true;fixture.status=status;const markup=await render();expect(markup).not.toContain(translate("en","pricing.currentPlan"));});
- it("hides technical infrastructure limits in Arabic while preserving monthly jobs",async()=>{fixture.locale="ar";document.cookie="yaseir_locale=ar; path=/";const markup=await render();expect(markup).toContain(translate("ar","v4.pricing.unlimitedDevices"));expect(markup).toContain(translate("ar","v4.pricing.jobsPerMonth"));expect(markup).not.toMatch(/max_agents|max_printers|max_jobs_per_minute|max_concurrent_jobs|Stripe|v4\.pricing\./);});
+ it("uses concise Arabic SaaS copy without unsupported retry-credit promises or duplicate footer sections",async()=>{
+  fixture.locale="ar";document.cookie="yaseir_locale=ar; path=/";
+  const markup=await render();
+  expect(markup).toContain(translate("ar","v4.pricing.title"));
+  expect(markup).toContain(translate("ar","v4.pricing.jobsPerMonth"));
+  expect(markup).not.toContain(translate("ar","v4.pricing.unlimitedDevices"));
+  expect(markup).not.toContain(translate("ar","v4.onboarding.monthlyReset"));
+  expect(markup).not.toContain("إعادة إرسال المهمة نفسها بطريقة آمنة");
+  expect(markup).not.toMatch(/max_agents|max_printers|max_jobs_per_minute|max_concurrent_jobs|Stripe|v4\.pricing\./);
+ });
+ it("renders exactly one console action for a signed-in customer",async()=>{
+  fixture.authenticated=true;const markup=await render();
+  expect(markup.match(/>Open console<\/a>/g)?.length).toBe(1);
+ });
 });

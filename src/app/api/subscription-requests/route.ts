@@ -48,7 +48,13 @@ export async function POST(req:Request) {
         return {request:safeRequest(replay),replayed:true};
       }
       const pending=await tx.query.subscriptionRequests.findFirst({where:and(eq(subscriptionRequests.tenantId,actor.tenantId),eq(subscriptionRequests.status,'pending'))});
-      if (pending) return {request:safeRequest(pending),replayed:true};
+      if (pending) {
+        // Do not acknowledge a different plan or term as a successful request.
+        if (pending.planId !== input.planId || pending.term !== input.term || pending.requestedMonthlyQuota !== input.requestedMonthlyQuota) {
+          throw new ManualSubscriptionError("SUBSCRIPTION_REQUEST_ALREADY_PENDING",409);
+        }
+        return {request:safeRequest(pending),replayed:true};
+      }
       const plan=await tx.query.plans.findFirst({where:and(eq(plans.id,input.planId),eq(plans.isActive,true),eq(plans.isPublic,true))});
       if (!plan) throw new ManualSubscriptionError("PLAN_NOT_FOUND",404);
       await ensurePendingManualSubscription(tx,actor.tenantId,plan.id);

@@ -12,8 +12,20 @@ export async function GET(req:Request) {
     const params=new URL(req.url).searchParams,status=params.get('status')??'pending',offset=Number(params.get('offset')??0);
     if(!Number.isSafeInteger(offset)||offset<0||offset>1000000)throw new ManualSubscriptionError('SUBSCRIPTION_INVALID');
     if(!['pending','approved','rejected','all'].includes(status))throw new ManualSubscriptionError('SUBSCRIPTION_INVALID');
-    const rows=await db.execute(sql`SELECT r.*,t.name AS "tenantName",p.name AS "planName" FROM subscription_requests r JOIN tenants t ON t.id=r.tenant_id JOIN plans p ON p.id=r.plan_id WHERE (${status}='all' OR r.status=${status}) ORDER BY r.created_at DESC,r.id DESC LIMIT 101 OFFSET ${offset}`);
-    return NextResponse.json({requests:rows.rows.slice(0,100),hasMore:rows.rows.length>100,offset},{headers:{'Cache-Control':'no-store'}});
+    const [rows,counts]=await Promise.all([
+      db.execute(sql`SELECT r.*,t.name AS "tenantName",p.name AS "planName",
+        CASE WHEN p.entitlements->>'max_prints_per_period' ~ '^[0-9]{1,9}$'
+          THEN (p.entitlements->>'max_prints_per_period')::int ELSE NULL END AS "planMonthlyQuota",
+        current_plan.name AS "currentPlanName",current_sub.status AS "currentSubscriptionStatus"
+        FROM subscription_requests r JOIN tenants t ON t.id=r.tenant_id
+        JOIN plans p ON p.id=r.plan_id
+        LEFT JOIN tenant_subscriptions current_sub ON current_sub.tenant_id=r.tenant_id
+        LEFT JOIN plans current_plan ON current_plan.id=current_sub.plan_id
+        WHERE (${status}='all' OR r.status=${status})
+        ORDER BY r.created_at DESC,r.id DESC LIMIT 101 OFFSET ${offset}`),
+      db.execute(sql`SELECT count(*)::int AS pending FROM subscription_requests WHERE status='pending'`),
+    ]);
+    return NextResponse.json({requests:rows.rows.slice(0,100),hasMore:rows.rows.length>100,offset,pendingCount:Number(counts.rows[0]?.pending??0)},{headers:{'Cache-Control':'no-store'}});
   } catch(error){return manualApiError(error);}
 }
 export async function POST(req:Request) {
