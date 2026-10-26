@@ -78,6 +78,24 @@ describe("desktop complete fleet traversal", () => {
     expect(mocks.invoke).toHaveBeenCalledTimes(2);
   });
 
+  it("bounds advancing empty pages instead of polling a broken Gateway forever", async () => {
+    let page = 0;
+    mocks.invoke.mockImplementation(async () => {
+      // Stop the intentionally broken baseline before its unbounded microtask
+      // chain can exhaust this test runner; production must stop first.
+      if (page === 1001) throw new Error("test safety stop: unbounded pagination");
+      return envelope([], next(`hidden-${page++}`));
+    });
+    await expect(ipc.fetchGatewayPrinters("https://gateway.example")).rejects.toThrow("Gateway fleet pagination limit exceeded");
+    expect(mocks.invoke).toHaveBeenCalledTimes(1000);
+  });
+
+  it("rejects an oversized fleet without returning partial inventory", async () => {
+    mocks.invoke.mockResolvedValueOnce(envelope(Array.from({ length: 100001 }, (_, id) => ({ id: `a-${id}` }))));
+    await expect(ipc.fetchGatewayAgents("https://gateway.example")).rejects.toThrow("Gateway fleet inventory limit exceeded");
+    expect(mocks.invoke).toHaveBeenCalledTimes(1);
+  });
+
   it("never presents a truncated fleet after a later page fails", async () => {
     mocks.invoke.mockResolvedValueOnce(envelope([{ id: "a1", name: "Agent" }], next("a1")))
       .mockResolvedValueOnce(envelope({ code: "INTERNAL_ERROR" }, undefined, 503));

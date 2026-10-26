@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { isIP } from "node:net";
 
 /** Match configured logical execution endpoints within a single Agent and workspace.
  * Neither mutable display names nor discovered IDs are physical identity.
@@ -9,7 +10,13 @@ export type PrinterEndpoint = {
   config: Record<string, unknown> | null | undefined;
 };
 const val = (v: unknown) => typeof v === "string" ? v.trim() : "";
-const host = (v: string) => v.replace(/^\[|\]$/g, "").toLowerCase().replace(/\.$/, "");
+const host = (v: string) => {
+  const name = v.replace(/^\[|\]$/g, "").toLowerCase().replace(/\.$/, "");
+  // Compare IPv6 addresses numerically; textual compression is not a new printer.
+  return isIP(name) === 6 && !name.includes("%")
+    ? new URL(`http://[${name}]/`).hostname.slice(1, -1)
+    : name;
+};
 const port = (v: unknown) => typeof v === "number" && Number.isInteger(v) && v >= 1 && v <= 65535 ? v : null;
 export function physicalPrinterIdentityKey(p: PrinterEndpoint): string | null {
   const cfg = p.config ?? {};

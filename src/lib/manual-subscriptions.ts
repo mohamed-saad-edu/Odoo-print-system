@@ -7,6 +7,7 @@ import { nanoid } from "./nanoid";
 import { writeAuditEvent } from "./audit";
 import { requirePlatformActorInTransaction, type PlatformOwnerClaims } from "./platform-auth";
 import { normalizePlanEntitlements } from "./entitlements";
+import { z } from "zod";
 
 export class ManualSubscriptionError extends Error {
   constructor(public readonly code: string, public readonly status = 400) { super(code); }
@@ -17,8 +18,10 @@ export function requireIdempotencyKey(req: Request): string {
   if (!/^[a-zA-Z0-9_-]{16,128}$/.test(key)) throw new ManualSubscriptionError("IDEMPOTENCY_KEY_REQUIRED");
   return key;
 }
-export function customerSubscriptionState(sub: {status: string; currentPeriodStart: Date | string; currentPeriodEnd: Date | string | null; entitlementBlocked?: boolean} | null | undefined, lifecycle = "active", now = Date.now()): "awaiting_activation" | "active" | "expired" | "suspended" {
+export function customerSubscriptionState(sub: {status: string; billingMode?: string; currentPeriodStart: Date | string; currentPeriodEnd: Date | string | null; entitlementBlocked?: boolean} | null | undefined, lifecycle = "active", now = Date.now()): "awaiting_activation" | "active" | "expired" | "suspended" {
   if (lifecycle !== "active" || sub?.status === "suspended" || sub?.entitlementBlocked) return "suspended";
+  // Match runtime admission: a historical provider row is not manual approval.
+  if (sub?.billingMode !== undefined && sub.billingMode !== "manual") return "awaiting_activation";
   if (!sub || sub.status === "awaiting_activation" || (parseDbTimeMs(sub.currentPeriodStart) ?? Infinity) > now) return "awaiting_activation";
   if (sub.status !== "active" || (sub.currentPeriodEnd && (parseDbTimeMs(sub.currentPeriodEnd) ?? -Infinity) <= now)) return "expired";
   return "active";
@@ -40,18 +43,23 @@ export type ManualSubscriptionInput = {
   internalReference?: string;
   requestId?: string;
 };
+// Date.parse accepts rolled-over calendar dates and host-local timestamps.
+// Contracts need an actual calendar date with an explicit timezone before a
+// Date is constructed or persisted. Keep valid ISO instants from existing API
+// clients, including offsets, rather than silently changing their terms.
+const subscriptionDate = z.iso.datetime({ offset: true }).max(100);
 export function parseManualSubscriptionInput(value: unknown): ManualSubscriptionInput {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new ManualSubscriptionError("SUBSCRIPTION_INVALID");
   const b = value as Record<string, unknown>;
-  if (!["save","renew","extend","suspend","reactivate","cancel_at_end","revoke"].includes(String(b.action)) || !Number.isSafeInteger(b.expectedRevision) || Number(b.expectedRevision)<0) throw new ManualSubscriptionError("SUBSCRIPTION_INVALID");
+  if (typeof b.action!=="string" || !["save","renew","extend","suspend","reactivate","cancel_at_end","revoke"].includes(b.action) || !Number.isSafeInteger(b.expectedRevision) || Number(b.expectedRevision)<0) throw new ManualSubscriptionError("SUBSCRIPTION_INVALID");
   if (typeof b.reason!=="string" || !b.reason.trim() || b.reason.length>500) throw new ManualSubscriptionError("SUBSCRIPTION_REASON_REQUIRED");
   for (const key of ["internalReference","requestId","planId"] as const) if (b[key]!==undefined && (typeof b[key]!=="string" || b[key].length>200)) throw new ManualSubscriptionError("SUBSCRIPTION_INVALID");
-  if (["save","renew"].includes(String(b.action))) {
-    if (typeof b.planId!=="string" || !["free","paid"].includes(String(b.subscriptionType)) || !["monthly","yearly","custom"].includes(String(b.term)) || !Number.isSafeInteger(b.monthlyQuota) || Number(b.monthlyQuota)<1 || Number(b.monthlyQuota)>2147483647 || !["active","awaiting_activation"].includes(String(b.status))) throw new ManualSubscriptionError("SUBSCRIPTION_INVALID");
-    if (typeof b.startDate!=="string" || !Number.isFinite(Date.parse(b.startDate))) throw new ManualSubscriptionError("SUBSCRIPTION_DATES_INVALID");
+  if (["save","renew"].includes(b.action)) {
+    if (typeof b.planId!=="string" || typeof b.subscriptionType!=="string" || !["free","paid"].includes(b.subscriptionType) || typeof b.term!=="string" || !["monthly","yearly","custom"].includes(b.term) || !Number.isSafeInteger(b.monthlyQuota) || Number(b.monthlyQuota)<1 || Number(b.monthlyQuota)>2147483647 || typeof b.status!=="string" || !["active","awaiting_activation"].includes(b.status)) throw new ManualSubscriptionError("SUBSCRIPTION_INVALID");
+    if (!subscriptionDate.safeParse(b.startDate).success) throw new ManualSubscriptionError("SUBSCRIPTION_DATES_INVALID");
   }
-  if (["save","renew","extend"].includes(String(b.action))) {
-    if (typeof b.endDate!=="string" || !Number.isFinite(Date.parse(b.endDate))) throw new ManualSubscriptionError("SUBSCRIPTION_DATES_INVALID");
+  if (["save","renew","extend"].includes(b.action)) {
+    if (!subscriptionDate.safeParse(b.endDate).success) throw new ManualSubscriptionError("SUBSCRIPTION_DATES_INVALID");
     if (b.startDate && Date.parse(String(b.endDate))<=Date.parse(String(b.startDate))) throw new ManualSubscriptionError("SUBSCRIPTION_DATES_INVALID");
   }
   return {...b,reason:b.reason.trim()} as ManualSubscriptionInput;

@@ -135,6 +135,13 @@ def test_proxy_acceptance_changes_rerun_the_docker_boundary():
         assert flags["app"] and flags["docker"] and flags["codeql_py"], path
 
 
+def test_release_orchestration_changes_rerun_the_docker_runtime_gate():
+    for path in ("scripts/deploy-compose.sh", "tests/test_compose_release_orchestration.py",
+                 "scripts/check-compose-build-contexts.py", "tests/test_compose_build_contexts.py"):
+        flags = classify(path)
+        assert flags["app"] and flags["docker"] and flags["supply"], path
+
+
 def test_audit_fixture_changes_rerun_the_supply_chain_gate():
     for path in ("scripts/verify-npm-audit-fixture.mjs", "tests/test_ci_audit_fixture.py"):
         flags = classify(path)

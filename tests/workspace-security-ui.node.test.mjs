@@ -156,6 +156,7 @@ test("status expiry values use the existing locale formatter and status401 is no
 
 test("return paths reject external, API, auth, malformed and encoded separator targets", () => {
   const h = harness(async () => reply(200, status)); const safe = h.exports.safeWorkspaceReturnPath;
+  assert.equal(safe("/release-readiness", "https://gateway.test"), null);
   for (const path of ["/dashboard#printers", "/api-keys?tab=active", "https://gateway.test/team", "/billing"]) assert.ok(safe(path, "https://gateway.test"));
   for (const path of [null, "", "//external.test", "https://external.test/dashboard", "javascript:alert(1)", "/api/auth/logout", "/login", "/platform/security", "https://user:password@gateway.test/dashboard", "/dashboard%2f..%2fapi/auth/logout", "/dashboard\\evil", "/dashboard\n", " /dashboard", "/dashboard/%ZZ", "/dashboard/../../api/auth/logout"]) assert.equal(safe(path, "https://gateway.test"), null, String(path));
 });

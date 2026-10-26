@@ -175,9 +175,23 @@ cd /opt/yaseir
 # This protects stale browser tabs from incompatible Server Action builds.
 # For git-based installs:
 RELEASE_ID="$(git rev-parse --verify HEAD)"
-sudo env YASEIR_DEPLOYMENT_ID="$RELEASE_ID" docker compose up -d --build
+sudo env YASEIR_DEPLOYMENT_ID="$RELEASE_ID" bash scripts/deploy-compose.sh
 sudo docker compose ps
 ```
+
+This builds services sequentially before runtime changes, then runs the role,
+migration and role-verification gates in order. For an archive deployment, set
+`RELEASE_ID` to the verified source-manifest hash. After successful database gates,
+an interrupted application startup can resume with the same release and images:
+
+```bash
+sudo env YASEIR_DEPLOYMENT_ID="$RELEASE_ID" bash scripts/deploy-compose.sh --resume
+```
+
+Resume refuses failed, missing or differently labeled database gates and an
+unhealthy PostgreSQL container. It does not replay migrations. Preserve existing
+database, TLS and secret files; review the backup/restore and migration rollback
+procedures before an upgrade.
 
 Expected services:
 

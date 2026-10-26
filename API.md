@@ -188,6 +188,11 @@ metadata. Unrelated, suspended and erased workspaces are excluded. No session
 is issued until the selected active membership is revalidated. These responses
 are `no-store`; names never replace membership IDs as authorization input.
 
+An optional `tenantId` on password login selects that exact active membership.
+If supplied, it must be a nonempty string of at most 128 characters. Invalid
+types, empty values and oversized IDs return `400 INVALID_REQUEST` without
+issuing a session; they never become automatic workspace selection.
+
 Workspace lifecycle uses `POST /api/onboarding`. Team lifecycle uses `GET/POST/DELETE /api/team/invitations`, `POST /api/team/invitations/accept`, `GET/PATCH/DELETE /api/team/members`, and `POST /api/team/ownership`. Team collection reads are bounded and paginated: both GET routes accept `limit`/`offset` (default 50, maximum 100) and return `hasMore`, `offset`, `limit`, and the tenant-scoped `total` alongside the collection.
 
 V4 manual subscriptions use `GET /api/billing/plans`, `GET /api/billing/status`, `GET /api/billing/usage` and `GET/POST /api/subscription-requests`. Only a verified, live Workspace Owner can submit an activation/change/renewal request; its workspace and requester are derived from the authenticated session. A request records intent and never grants entitlements. The optional WhatsApp link contains only its opaque reference.

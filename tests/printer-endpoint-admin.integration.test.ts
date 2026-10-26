@@ -26,6 +26,21 @@ suite("physical endpoint convergence and credential-row erasure", () => {
     body: JSON.stringify(payload),
   }));
 
+  it("converges concurrent registrations of expanded and compressed IPv6 endpoints", async () => {
+    const f = await seedFixture();
+    const manager = await createWorkspaceManagerTestSession(f.tenantId);
+    const payload = { agentId: f.agentId, name: "IPv6 receipt printer", printerType: "physical",
+      deviceClass: "thermal", connectionType: "network", protocol: "raw",
+      config: { ip: "fd00:0:0:0:0:0:0:1", port: 9100 } };
+    const [a, b] = await Promise.all([post(manager.token, payload),
+      post(manager.token, { ...payload, config: { ip: "fd00::1", port: 9100 } })]);
+    expect([a.status, b.status].sort()).toEqual([200, 201]);
+    expect((await a.json()).id).toBe((await b.json()).id);
+    const rows = await pool().query("SELECT id FROM printers WHERE tenant_id=$1 AND name=$2",
+      [f.tenantId, payload.name]);
+    expect(rows.rows).toHaveLength(1);
+  });
+
   it("converges two simultaneous manager registrations of the same physical Windows queue", async () => {
     const f = await seedFixture();
     const manager = await createWorkspaceManagerTestSession(f.tenantId);

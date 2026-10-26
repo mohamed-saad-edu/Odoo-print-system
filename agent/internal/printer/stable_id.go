@@ -44,7 +44,7 @@ func normalizeUnicode(value string) string {
 func usableIdentityValue(value string) bool {
 	v := strings.ToLower(strings.TrimSpace(value))
 	switch v {
-	case "", "0", "unknown", "none", "null", "n/a", "na", "-", "unavailable":
+	case "", "0", "unknown", "none", "null", "n/a", "na", "-", "unavailable", "00000000-0000-0000-0000-000000000000":
 		return false
 	default:
 		return true
@@ -52,10 +52,12 @@ func usableIdentityValue(value string) bool {
 }
 
 func normalizeIdentityValue(value string) string {
-	value = strings.TrimSpace(value)
+	// Fold the URN prefix before removing it: discovery sources may spell
+	// the same UUID as urn:uuid:, URN:UUID: or as a bare identifier.
+	value = strings.ToLower(strings.TrimSpace(value))
 	value = strings.TrimPrefix(value, "urn:uuid:")
 	value = normalizeUnicode(value)
-	return strings.ToLower(value)
+	return value
 }
 
 func capabilityIdentityValue(d DeviceInfo, keys ...string) string {
@@ -63,10 +65,25 @@ func capabilityIdentityValue(d DeviceInfo, keys ...string) string {
 		if d.Capabilities == nil {
 			continue
 		}
-		if value, ok := d.Capabilities[key]; ok {
-			candidate := strings.TrimSpace(fmt.Sprint(value))
+		if value, ok := d.Capabilities[key].(string); ok {
+			// JSON nulls, booleans and objects are missing identity evidence,
+			// not shared serials such as "<nil>" or "false". Formatting them
+			// into a key can collapse unrelated physical destinations.
+			// Validate after canonicalization: stripping a URN prefix can
+			// expose an empty/placeholder UUID. It cannot prove that two
+			// distinct endpoints are the same physical destination.
+			candidate := normalizeIdentityValue(value)
+			if key == "uuid" || key == "printer_uuid" {
+				// Discovery can expose nil UUIDs as braced GUIDs or compact
+				// hex too. Reject only missing UUID evidence; do not rewrite
+				// valid UUIDs/serials or change established external IDs.
+				compact := strings.ReplaceAll(strings.Trim(candidate, "{}"), "-", "")
+				if compact == "00000000000000000000000000000000" {
+					continue
+				}
+			}
 			if usableIdentityValue(candidate) {
-				return normalizeIdentityValue(candidate)
+				return candidate
 			}
 		}
 	}

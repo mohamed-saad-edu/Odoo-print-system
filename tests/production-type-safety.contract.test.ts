@@ -23,16 +23,9 @@ describe("production TypeScript safety contracts", () => {
     expect(source).toContain('capabilities: jsonb("capabilities").$type<Record<string, unknown>>()');
   });
   it("awaits the database-backed manager token verifier on server pages", () => {
-    const managerProtectedPages = [
-      "app/release-readiness/page.tsx",
-    ];
-    for (const relative of managerProtectedPages) {
-      const source = readFileSync(resolve(process.cwd(), "src", relative), "utf8");
-      // Restricted operational pages still verify the workspace session at the server.
-      expect(source).toContain("await verifyWorkspaceTokenFromCookieValues(");
-      expect(source).toContain('hasManagerPermission(claims, "agents.read")');
-      expect(source).not.toContain("validateManagerClaims(token ? verifyManagerToken(token) : null)");
-    }
+    const internalReport = readFileSync(resolve(process.cwd(), "src/app/platform/release-readiness/page.tsx"), "utf8");
+    expect(internalReport).toContain("await validatePlatformClaims(verifyPlatformTokenSignature(token), true)");
+    expect(internalReport).toContain('sessionCookieName("platform")');
 
     const billing = readFileSync(resolve(process.cwd(), "src/app/billing/page.tsx"), "utf8");
     expect(billing).toContain('redirect("/dashboard")');

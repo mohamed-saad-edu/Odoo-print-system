@@ -215,6 +215,11 @@ IPP capability probes reject HTTP responses larger than 64 KiB **including a val
 
 ## 8. Manual registration
 
+When `--id` is omitted, the registry resolves the selected execution endpoint
+and retains any existing registration ID and local disablement. Hardware UUIDs
+or serials cannot implicitly retarget another saved printer. The Agent uses
+the persisted canonical record when constructing its runtime backend.
+
 ```powershell
 # Network RAW 9100 (thermal ESC/POS)
 yaseir-agent-cli.exe printers add --name "Kitchen 9100" --type network --endpoint 192.168.1.50:9100 --protocol escpos --printer-type thermal

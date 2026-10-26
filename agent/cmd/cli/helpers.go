@@ -116,9 +116,6 @@ func addPrinterHelper(cfg *config.Config, registryPath string, info struct {
 	if di.ConnectionType == "spooler" && di.SpoolerName == "" {
 		di.SpoolerName = di.Endpoint
 	}
-	if di.ID == "" {
-		di.ID = printer.StableIDForDevice(di)
-	}
 	// Split a host:port endpoint into address + port so heartbeat payloads
 	// and diagnostics carry structured network identity instead of blanks.
 	if ep := strings.TrimSpace(info.Endpoint); ep != "" {

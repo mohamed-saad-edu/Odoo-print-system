@@ -3,18 +3,25 @@ import { NextResponse } from "next/server";
 import { authenticateForTenant, issueCustomerSession, customerSessionCookie, customerRefreshCookie } from "../../../../lib/customer-auth";
 import { reserveAuthAttempt, clientIpFrom, recordAuthSuccess, setRateLimitHeaders } from "../../../../lib/auth-rate-limit";
 import { hasBodyOverLimit } from "../../../../lib/request-limits";
-import { sessionReplacementFromRequest } from "../../../../lib/session-tokens";
+import { sessionReplacementFromRequest, type SessionPair } from "../../../../lib/session-tokens";
 import { clearLegacySessionCookies } from "../../../../lib/session-config";
 import { writeAuditEvent } from "../../../../lib/audit";
 import { workspaceSecurityErrorResponse } from "../../../../lib/workspace-session-http";
+import { joinInvitationWithPassword } from "../../../../lib/invitation-join";
+import type { ManagerRole } from "../../../../lib/manager-auth";
 
 export async function POST(req: Request) {
   if (hasBodyOverLimit(req, 64 * 1024)) return NextResponse.json({ error: "Request body too large" }, { status: 413 });
-  let body: { email?: unknown; password?: unknown; tenantId?: unknown };
+  let body: { email?: unknown; password?: unknown; tenantId?: unknown; inviteToken?: unknown };
   try { const parsedBody = await req.json(); if (!parsedBody || typeof parsedBody !== "object" || Array.isArray(parsedBody)) throw new Error("JSON object required"); body = parsedBody; } catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); }
   const email = typeof body.email === "string" ? body.email : "";
   const password = typeof body.password === "string" ? body.password : "";
-  const tenantId = typeof body.tenantId === "string" && body.tenantId.length <= 128 ? body.tenantId : undefined;
+  if (body.tenantId !== undefined && (typeof body.tenantId !== "string" || !body.tenantId || body.tenantId.length > 128))
+    return NextResponse.json({ error: "Invalid workspace selection", code: "INVALID_REQUEST" }, { status: 400 });
+  const tenantId = typeof body.tenantId === "string" ? body.tenantId : undefined;
+  if (body.inviteToken !== undefined && (typeof body.inviteToken !== "string" || !body.inviteToken || body.inviteToken.length > 256))
+    return NextResponse.json({ error: "Invitation is invalid or expired", code: "INVITATION_INVALID" }, { status: 400 });
+  const inviteToken = typeof body.inviteToken === "string" ? body.inviteToken : "";
   if (!email || !password || password.length > 4096) return NextResponse.json({ error: "Email and password are required" }, { status: 400 });
   const ip = clientIpFrom(req);
   let pre: Awaited<ReturnType<typeof reserveAuthAttempt>>;
@@ -54,22 +61,37 @@ export async function POST(req: Request) {
       workspaceOptions: identity.memberships.map((m) => ({ id: m.tenantId, name: m.name })),
     }, { status: 409, headers: { "Cache-Control": "no-store" } }), pre);
   }
-  if (!("tenantId" in identity) || !identity.tenantId || !identity.role) return setRateLimitHeaders(NextResponse.json({ error: "Workspace setup is incomplete" }, { status: 409 }), pre);
   try {
-    const session = await issueCustomerSession(identity.userId, identity.tenantId, identity.role, {
+    let resolvedTenantId = "tenantId" in identity ? identity.tenantId : undefined;
+    let resolvedRole: ManagerRole | undefined = "role" in identity ? identity.role : undefined;
+    let invitationSession: SessionPair | undefined;
+    if (!resolvedTenantId && inviteToken) {
+      const joined = await joinInvitationWithPassword(inviteToken, identity, {
+        ipAddress: ip, userAgent: req.headers.get("user-agent"), replaceCurrent: sessionReplacementFromRequest(req, "customer"),
+      });
+      resolvedTenantId = joined.membership.tenantId;
+      resolvedRole = joined.membership.role as ManagerRole;
+      invitationSession = joined.session;
+    }
+    if (!resolvedTenantId || !resolvedRole) return setRateLimitHeaders(NextResponse.json({ error: "Workspace setup is incomplete" }, { status: 409 }), pre);
+    const session = invitationSession ?? await issueCustomerSession(identity.userId, resolvedTenantId, resolvedRole, {
       ipAddress: ip, userAgent: req.headers.get("user-agent"), replaceCurrent: sessionReplacementFromRequest(req, "customer"),
     }, identity.email, identity.credentialVersion);
     if (!session) return setRateLimitHeaders(NextResponse.json({ error: "Invalid email or password" }, { status: 401 }), pre);
-    await writeAuditEvent({ tenantId: identity.tenantId, actorType: "user", actorId: identity.userId,
+    await writeAuditEvent({ tenantId: resolvedTenantId, actorType: "user", actorId: identity.userId,
       action: "user.login.success", resourceType: "session", resourceId: session.familyId }).catch(error =>
       logError("audit_write_failed", { error: error instanceof Error ? error.message : "unknown" }));
-    const response = NextResponse.json({ ok: true, tenantId: identity.tenantId, role: identity.role, expiresAt: session.accessExpiresAt.toISOString() }, {
+    const response = NextResponse.json({ ok: true, tenantId: resolvedTenantId, role: resolvedRole, expiresAt: session.accessExpiresAt.toISOString(),
+      ...(invitationSession ? { invitationAccepted: true } : {}),
+    }, {
       headers: { "Cache-Control": "private, no-store", "Set-Cookie": customerSessionCookie(session) },
     });
     response.headers.append("Set-Cookie", customerRefreshCookie(session));
     clearLegacySessionCookies(response.headers, "customer");
     return setRateLimitHeaders(response, pre);
   } catch (error) {
+    if (error instanceof Error && error.message.startsWith("INVITATION_"))
+      return setRateLimitHeaders(NextResponse.json({ error: "Invitation is invalid or expired", code: "INVITATION_INVALID" }, { status: 409 }), pre);
     return workspaceSecurityErrorResponse(error);
   }
 }

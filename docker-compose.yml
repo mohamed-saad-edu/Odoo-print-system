@@ -24,6 +24,8 @@ services:
       - printer_backend
 
   database_roles:
+    labels:
+      com.yaseir.release: ${YASEIR_DEPLOYMENT_ID:-}
     build:
       context: .
       dockerfile: Dockerfile
@@ -56,6 +58,8 @@ services:
       - printer_backend
 
   migrate:
+    labels:
+      com.yaseir.release: ${YASEIR_DEPLOYMENT_ID:-}
     build:
       context: .
       dockerfile: Dockerfile
@@ -78,6 +82,8 @@ services:
       - printer_backend
 
   database_verify:
+    labels:
+      com.yaseir.release: ${YASEIR_DEPLOYMENT_ID:-}
     build:
       context: .
       dockerfile: Dockerfile

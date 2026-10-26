@@ -143,6 +143,8 @@ else
         mark app odoo docker_scan supply codeql_js codeql_py ;;
       scripts/check-proxy-boundary.py|tests/test_ci_proxy_boundary.py)
         mark app docker codeql_py ;;
+      scripts/deploy-compose.sh|tests/test_compose_release_orchestration.py|scripts/check-compose-build-contexts.py|tests/test_compose_build_contexts.py)
+        mark app docker supply codeql_py ;;
       tests/test_ci_audit_fixture.py)
         mark app supply codeql_py ;;
       tests/*)

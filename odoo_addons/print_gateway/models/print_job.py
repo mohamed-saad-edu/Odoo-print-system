@@ -1165,6 +1165,7 @@ class PrintGatewayJob(models.Model):
         """
         seen = set()
         stack = [exc]
+        connection_failure = False
         while stack:
             current = stack.pop()
             if current is None or id(current) in seen:
@@ -1180,10 +1181,18 @@ class PrintGatewayJob(models.Model):
                 "NameResolutionError",
                 "GatewayResolutionError",
             ):
-                return True
+                # Keep walking: an unrelated earlier connection failure may
+                # survive in __context__ or args alongside evidence that the
+                # current request was sent. Ambiguous output always wins;
+                # exception traversal order must never authorize failover.
+                connection_failure = True
             if name in (
                 "ProtocolError",
                 "ReadTimeoutError",
+                "ReadTimeout",
+                "Timeout",
+                "ChunkedEncodingError",
+                "ContentDecodingError",
                 "RemoteDisconnected",
                 "ConnectionResetError",
                 "BrokenPipeError",
@@ -1197,7 +1206,7 @@ class PrintGatewayJob(models.Model):
             for arg in getattr(current, "args", ()):
                 if isinstance(arg, BaseException):
                     stack.append(arg)
-        return False
+        return connection_failure
 
     @api.model
     def _is_deterministic_failure(self, exc):
@@ -2406,6 +2415,13 @@ class PrintGatewayJob(models.Model):
         for job in reprint_candidates:
             new_count = (job.reprint_attempt_count or 0) + 1
             derived_key = "%s-reprint-%d" % (job.idempotency_key, new_count)
+            if len(derived_key) > 200:
+                # A valid original v2 key can already occupy all 200
+                # characters. Preserve existing short derived identities,
+                # and compact only keys which the wire contract cannot admit.
+                # Hash the full source and sequence so concurrent requests
+                # still collapse and distinct long prefixes never truncate.
+                derived_key = "reprint-" + uuid.uuid5(uuid.NAMESPACE_URL, derived_key).hex
             _logger.info(
                 "Force reprint requested for print job %s (attempt %d, derived key: %s)",
                 job.id, new_count, derived_key,

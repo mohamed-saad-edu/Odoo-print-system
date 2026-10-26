@@ -75,11 +75,13 @@ export default function LoginPage() {
     setSelectionToken("");
     setLoading(true);
     try {
+      const destination = new URL(postAuthDestination(), window.location.origin);
+      const inviteToken = destination.pathname === "/invite" ? destination.searchParams.get("token") : null;
       const res = await fetchWithTimeout("/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "same-origin", mode: "same-origin", cache: "no-store", redirect: "error",
-        body: JSON.stringify({ email, password: exactPassword }), signal: controller.signal,
+        body: JSON.stringify({ email, password: exactPassword, ...(inviteToken ? { inviteToken } : {}) }), signal: controller.signal,
       });
       const data = await res.json().catch(() => ({}));
       if (!mounted.current || controller.signal.aborted || flight.current !== controller) return;
@@ -106,7 +108,7 @@ export default function LoginPage() {
         throw new LoginRequestError(codeMessageKey(typeof data.code === "string" ? data.code : undefined)
           ?? (res.status === 429 ? "errors.tooManyAttempts" : res.status === 503 ? "errors.serviceUnavailable" : "auth.signIn.failed"));
       }
-      router.replace(postAuthDestination());
+      router.replace(data.invitationAccepted === true ? "/dashboard" : postAuthDestination());
       router.refresh();
     } catch (error) {
       if (mounted.current && !controller.signal.aborted && flight.current === controller) setErr(t(error instanceof LoginRequestError ? error.key : "errors.networkError"));
