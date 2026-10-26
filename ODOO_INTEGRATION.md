@@ -1,6 +1,12 @@
 # Odoo Integration Guide
 
-> Module: `print_gateway` | Version: 19.0.2.29.0 | Odoo: 19 Community Edition
+> Module: `print_gateway` | Version: 19.0.2.30.0 | Odoo: 19 Community Edition
+
+## 19.0.2.30.0: deterministic company-wide route priorities
+
+Odoo 19 uses native res.company root/branch records for routing. Print Route priorities must be unique within a company, branch, source and document type. PostgreSQL does not treat an absent Branch as equal to another absent Branch in a regular UNIQUE constraint, so a partial Odoo 19 UniqueIndex now enforces the company-wide case as well. On upgrade, the pre-migration adjusts only conflicting priorities in deterministic (priority, record ID) order; it does not delete routes, change their destinations, change printers, create jobs or call the Gateway. Existing route selection precedence is preserved.
+
+Agent and printer pickers continue to use the Odoo 19 field registry and exact company/branch scope. Empty states link to the current Connection menu, not the retired "Connection & Printing" label.
 
 ## 19.0.2.29.0: unified print routing navigation
 

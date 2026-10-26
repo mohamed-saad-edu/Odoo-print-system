@@ -102,6 +102,7 @@ class PrintGatewayIntent(models.Model):
         return super().write(vals)
 
     @api.model
+    @api.private
     def compute_intent_key(self, policy, record, event_type):
         raw = f"{record._name}:{record.id}:{event_type}:{policy.id}"
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()

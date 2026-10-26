@@ -99,10 +99,10 @@ class PrintGatewayPolicy(models.Model):
         help="Raw printer command string with optional {<field>} placeholders (bare field names only, e.g. {name}). Dotted paths like {record.name} are not allowed.",
     )
     binding_id = fields.Many2one(
-        "print_gateway.binding", string="Target Binding", ondelete="restrict",
+        "print_gateway.binding", string="Print Route", ondelete="restrict",
         # shortcut: field domain hides company-wide fallbacks when a branch is set (string pinned by contract test); the form view widens it, the validator stays authoritative
         domain="[('company_id', '=', company_id), ('branch_id', '=', branch_id)]",
-        help="Optional explicit Print Rule for this exact Odoo Company and Branch scope.",
+        help="Optional explicit Print Route for this exact Odoo Company and Branch scope.",
     )
     warehouse_id = fields.Many2one(
         "stock.warehouse", string="Warehouse Filter", ondelete="restrict",
@@ -130,6 +130,7 @@ class PrintGatewayPolicy(models.Model):
         if conversion:
             raise ValidationError(_("Format conversions (!r/!s/!a) are forbidden in raw print templates."))
 
+    @api.private
     def render_raw_template(self, record, protocol=None):
         """Deterministically render a raw template while keeping field values inert.
 
@@ -396,6 +397,7 @@ class PrintGatewayPolicy(models.Model):
                     raise ValidationError(_("Invalid domain filter expression for policy '%s': %s") % (policy.name, exc)) from exc
 
     @api.model
+    @api.private
     def resolve_for_record(self, record, event_type):
         """Return branch policies plus root fallback, never sibling policies."""
         record_company = getattr(record, "company_id", False)
@@ -495,6 +497,7 @@ class PrintGatewayPolicy(models.Model):
             )
             return self.binding_id.id if self.binding_id else False
 
+    @api.private
     def effective_target_key(self, record):
         """Return the validated effective target used for policy fan-out dedup."""
         self.ensure_one()
@@ -507,6 +510,7 @@ class PrintGatewayPolicy(models.Model):
             self.raw_template or False,
         )
 
+    @api.private
     def matches_record(self, record):
         """Evaluate whether a given record satisfies the policy filters."""
         self.ensure_one()

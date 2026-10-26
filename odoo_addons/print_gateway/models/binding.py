@@ -167,6 +167,7 @@ class PrintGatewayBinding(models.Model):
     priority = fields.Integer(default=10, help="Lower value is preferred when multiple bindings are valid.")
     name = fields.Char(compute="_compute_name", store=True)
 
+    @api.private
     def get_peripheral_payload(self):
         self.ensure_one()
         payload = {}
@@ -181,6 +182,12 @@ class PrintGatewayBinding(models.Model):
     _priority_unique = models.Constraint(
         "UNIQUE(company_id, branch_id, destination_ref, document_type, priority)",
         "Priority must be unique for the same Odoo company, branch, destination and document type.",
+    )
+    # Regular PostgreSQL UNIQUE constraints allow repeated NULL branch_id.
+    # Enforce company-wide print-route priority uniqueness independently.
+    _company_wide_priority_unique = models.UniqueIndex(
+        "(company_id, destination_ref, document_type, priority) WHERE branch_id IS NULL",
+        "Company-wide print routes need distinct priorities for each source and document type.",
     )
 
     @api.depends("company_id", "branch_id")
@@ -716,6 +723,7 @@ class PrintGatewayBinding(models.Model):
 
     # create/write/unlink are inherited from base; no overrides needed.
     @api.model
+    @api.private
     def destination_for(self, *, record=None, report=None, explicit_destination=None):
         if explicit_destination:
             return explicit_destination
@@ -734,6 +742,7 @@ class PrintGatewayBinding(models.Model):
         raise ValidationError(_("A deterministic Odoo print destination is required."))
 
     @api.model
+    @api.private
     def resolve_explicit(self, binding, company, document_type, destination, *, report=None, branch=None, protocol=None, payload_type=None):
         """Validate and return the exact caller-selected binding; never reprioritize it."""
         binding = binding.exists()
@@ -769,6 +778,7 @@ class PrintGatewayBinding(models.Model):
         return binding
 
     @api.model
+    @api.private
     def find_for(self, company, document_type, report=None, record=None, explicit_destination=None, branch=None):
         normalized = (document_type or "").strip().lower()
         if not normalized:

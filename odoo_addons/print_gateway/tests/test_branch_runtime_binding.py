@@ -1058,6 +1058,20 @@ class TestBranchRuntimeBinding(TransactionCase):
         ))
         self.assertEqual(binding.runtime_agent_id, "agent-root-assigned")
 
+    def test_duplicate_company_wide_print_route_priorities_are_rejected(self):
+        """A NULL Branch is still one scope for the same company and source."""
+        model = self.env["print_gateway.binding"]
+        first = model.create(self._values(branch_id=False, priority=199))
+        self.assertFalse(first.branch_id)
+        with self.env.cr.savepoint():
+            with self.assertRaises(IntegrityError) as caught:
+                model.create(self._values(branch_id=False, priority=199))
+            self.assertIn("company_wide_priority_unique", str(caught.exception))
+        # Different priorities are valid and allow an ordered backup route.
+        backup = model.create(self._values(branch_id=False, priority=200))
+        self.assertTrue(backup.id)
+        self.assertNotEqual(first.priority, backup.priority)
+
     def test_duplicate_company_wide_assignment_is_rejected(self):
         model = self.env["print_gateway.runtime_agent_assignment"]
         model.create({
