@@ -247,6 +247,13 @@ const runtimeAgentField = {
 // where the admin must be able to discover a new Agent before assigning it.
 const runtimeAgentBindingField = {
     ...runtimeAgentField,
+    // Only a print binding has printer_id. Odoo 19 fieldDependencies ensures
+    // even a compact form loads the value that onChange must clear.
+    // The generic picker stays usable on Branch Devices and the pairing wizard.
+    fieldDependencies: [
+        ...runtimeAgentField.fieldDependencies,
+        { name: "printer_id", type: "char" },
+    ],
     supportedOptions: [],
     extractProps: () => ({
         assignmentOnly: true,

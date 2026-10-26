@@ -1,6 +1,15 @@
 # Odoo Integration Guide
 
-> Module: `print_gateway` | Version: 19.0.2.30.0 | Odoo: 19 Community Edition
+> Module: `print_gateway` | Version: 19.0.2.31.0 | Odoo: 19 Community Edition
+
+## 19.0.2.31.0: Odoo 19 compact form and single-company scope correctness
+
+The **Print Routing** Agent picker now declares `printer_id` as a binding-only field dependency. Switching an Agent clears the saved printer in compact or customized Odoo 19 forms. The generic picker used in **Branch Devices** remains independent of `printer_id`, because that model has no printer field.
+
+The native Printer picker now declares `report_id`, legacy `destination_report_id`, computed `document_type`, and `printer_protocol` as field dependencies alongside company, branch, Agent, and destination. This keeps printer capability filtering and protocol selection correctly driven by record values even in compact views. Backend assignment and printer compatibility checks remain authoritative.
+
+The **Automatic Printing** form includes an invisible `company_id` for domain expressions for single-company operators, while presenting the visible company selector to multi-company operators. This follows Odoo 19 view architecture rules. This change does not alter persisted routes, jobs, company assignments or credentials.
+
 
 ## 19.0.2.30.0: deterministic company-wide route priorities
 

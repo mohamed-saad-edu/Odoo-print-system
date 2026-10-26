@@ -38,6 +38,9 @@
 
                     <group>
                         <group name="scope_trigger" string="When this happens">
+                            <!-- Domain operands must be in the Odoo 19 view
+                                 even for operators without multi-company UI. -->
+                            <field name="company_id" invisible="1"/>
                             <field name="company_id" domain="[('parent_id', '=', False)]" options="{'no_create': True}" groups="base.group_multi_company"/>
                             <field name="branch_id" domain="[('parent_id', '=', company_id)]" invisible="not company_id" placeholder="All Branches / Root Default" options="{'no_create': True}"/>
                             <field name="model_id" options="{'no_create': True}" required="1"/>
