@@ -541,6 +541,7 @@ msgstr "جهاز الفرع"
 #: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_runtime_assignment_list
 #: code:addons/print_gateway/models/gateway_config.py:0
 #: code:addons/print_gateway/static/src/components/printers_overview.js:0
+#: code:addons/print_gateway/static/src/components/printers_overview.xml:0
 msgid "Branch Devices"
 msgstr "أجهزة الفروع"
 
