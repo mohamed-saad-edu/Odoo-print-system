@@ -122,6 +122,24 @@ RUN python3 -c "import platform,sys; assert sys.version_info[:2] == (3,12); asse
 # package (and its vendored legacy msgpack/urllib3/setuptools copies) above.
 # Check that pip cannot be imported while patched runtime packages remain.
 RUN /opt/yaseir-venv/bin/python -c 'import importlib.metadata as m, importlib.util as u; assert u.find_spec("pip") is None; assert m.version("urllib3") == "2.8.0"; assert m.version("setuptools") == "84.2.1"'
+
+# The digest-pinned upstream image carries Ubuntu's build-time pip, wheel
+# and pdfminer packages. Odoo executes only inside the isolated CPython 3.12
+# venv; its pinned application dependencies are already installed there.
+# Fail closed if the parent package versions change or removal breaks Odoo.
+# Do not purge Node/rtlcss, libsass, or PDF rendering libraries: those need
+# a separate Odoo 19 compatibility review.
+RUN test "$(dpkg-query -W -f='${Version}' python3-pip)" = '24.0+dfsg-1ubuntu1.3' \
+    && test "$(dpkg-query -W -f='${Version}' python3-wheel)" = '0.42.0-2' \
+    && test "$(dpkg-query -W -f='${Version}' python3-pdfminer)" = '20221105+dfsg-1' \
+    && dpkg --purge python3-pip python3-wheel python3-pdfminer \
+    && for package in python3-pip python3-wheel python3-pdfminer; do \
+         if dpkg-query -W -f='${Status}' "$package" 2>/dev/null | grep -qx 'install ok installed'; then \
+           echo "Unexpected installed runtime package: $package" >&2; exit 1; \
+         fi; \
+       done \
+    && python3 -c 'import importlib.util as u; assert u.find_spec("pip") is None; assert u.find_spec("pdfminer") is None' \
+    && /opt/yaseir-venv/bin/python /opt/odoo/odoo-bin --version
 LABEL org.opencontainers.image.title="Yaseir hardened Odoo 19 runtime" \
     org.opencontainers.image.revision="14f9b8149d5260d92fb74404df09483fb42dd820" \
     io.yaseir.runtime-profile="cpython312-linux-x86_64-pypdf-bounds"
