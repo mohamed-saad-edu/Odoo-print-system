@@ -169,6 +169,7 @@ jobs:
         run: |
           set -euo pipefail
           docker compose config --quiet
+          python3 scripts/check-compose-build-contexts.py
           bash -n scripts/ci-postgres.sh
           # Building/migrating the application is already verified in CI's
           # App / Gateway job. Full Compose startup, auth WS and backup-restore
@@ -188,7 +189,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Validate Compose configuration
-        run: docker compose config
+        run: python3 scripts/check-compose-build-contexts.py
 
       - name: Build pinned Compose images
         run: docker compose build

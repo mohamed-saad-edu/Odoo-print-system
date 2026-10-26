@@ -12,6 +12,7 @@ def test_docker_context_excludes_generated_and_runtime_state():
     }
 
     required = {
+        ".engineering",
         "dist-desktop",
         "src-tauri/target",
         "src-tauri/gen",

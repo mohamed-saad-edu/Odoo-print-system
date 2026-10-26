@@ -124,8 +124,31 @@ TLS verification and redirect refusal remain enabled. The Agent **never** sends 
 ## Docker Deployment
 
 ```bash
-docker compose up -d --build
+# Use the reviewed immutable source revision; it is public, not a secret.
+YASEIR_DEPLOYMENT_ID="$(git rev-parse --verify HEAD)" bash scripts/deploy-compose.sh
 ```
+
+The helper builds one service at a time before changing running services, then
+runs `database_roles`, `migrate` and `database_verify` in order. Back up the
+database first and review migration rollback boundaries. For a release ZIP, use
+its verified source-manifest hash instead of `git rev-parse`.
+
+If those three gates completed successfully and only application startup failed,
+use the same release ID, image artifacts and Compose options with
+`bash scripts/deploy-compose.sh --resume`. It verifies the completed gates belong
+to that release and PostgreSQL is healthy, then starts Gateway/Caddy without
+rebuilding or replaying migrations. A failed gate must be resolved before resume;
+never remove data or TLS volumes to recover. Additional Compose options follow
+`--`, for example `-- --env-file reviewed.env`.
+
+For legacy Caddy volumes containing root-owned files, back up both TLS volumes,
+then add `--repair-caddy-storage` to the helper (including with `--resume`). This
+is an explicit, idempotent ownership/mode migration to UID/GID 10001. Only its
+disposable maintenance container receives CHOWN, FOWNER and DAC_OVERRIDE; Caddy
+continues running without capabilities. Certificate bytes and directory names
+are retained. The helper stops on any repair failure before application startup;
+correct the underlying volume access and repeat the same resume command. Never
+delete certificates or grant those capabilities to the long-running service.
 
 The `docker-compose.yml` includes Gateway, PostgreSQL, Caddy and the one-shot
 `database_roles`, `migrate` and `database_verify` jobs. Compose requires
