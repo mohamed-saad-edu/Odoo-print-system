@@ -109,18 +109,24 @@ test('actual Odoo credential route refuses revoked family before issuing key',as
 test('actual Odoo credential route refuses demoted actor before issuing key',async()=>{
  reset({memberRole:'viewer'});const response=await keys.POST(req('/api/odoo/keys',{name:'Printer key'}));assert.equal(response.status,403);assert.equal(state.writes.length,0);
 });
-test('actual onboarding route saves workspace and pending request only after live owner authority',async()=>{
- reset({role:'owner',memberRole:'owner'});const response=await onboarding.POST(req('/api/onboarding',{workspaceName:'New workspace',planId:'plan'}));assert.equal(response.status,200);assert.equal(state.writes.length,2);assert.equal(state.audit,1);
- assert.equal(state.writes[0].name,'New workspace');assert.deepEqual(state.writes[1],{tenantId:'tenant',planId:'plan',status:'awaiting_activation'});
+test('old owner session cannot create commercial subscription or edit workspace through onboarding',async()=>{
+ reset({role:'owner',memberRole:'owner'});
+ const response=await onboarding.POST(req('/api/onboarding',{workspaceName:'New workspace',planId:'plan'}));
+ assert.equal(response.status,403);assert.equal((await response.json()).code,'PLATFORM_OWNER_REQUIRED');
+ assert.equal(state.writes.length,0);assert.equal(state.audit,0);
 });
-test('actual onboarding route refuses legacy self-activation without workspace or entitlement writes',async()=>{
- reset({role:'owner',memberRole:'owner'});const response=await onboarding.POST(req('/api/onboarding',{workspaceName:'New workspace',planId:'plan',trial:true}));assert.equal(response.status,400);assert.equal((await response.json()).code,'MANUAL_ACTIVATION_REQUIRED');assert.equal(state.writes.length,0);assert.equal(state.audit,0);
-});
-test('actual onboarding route rejects stale session before pending subscription or workspace write',async()=>{
- reset({role:'owner',memberRole:'owner',familyActive:false});const response=await onboarding.POST(req('/api/onboarding',{workspaceName:'New workspace',planId:'plan'}));assert.equal(response.status,401);assert.equal((await response.json()).code,'SESSION_EXPIRED');assert.equal(state.writes.length,0);assert.equal(state.audit,0);
+test('retired trial and expired workspace sessions cannot bypass the separate Platform Owner audience',async()=>{
+ for (const [payload,changes] of [
+   [{workspaceName:'New workspace',planId:'plan',trial:true},{role:'owner',memberRole:'owner'}],
+   [{workspaceName:'New workspace',planId:'plan'},{role:'owner',memberRole:'owner',familyActive:false}],
+ ]) {
+   reset(changes);
+   const response=await onboarding.POST(req('/api/onboarding',payload));
+   assert.equal(response.status,403);assert.equal(state.writes.length,0);assert.equal(state.audit,0);
+ }
 });
 test('stale password proof blocks settings, credential issuance and manual onboarding side effects',async()=>{
- const operations=[()=>setting.PATCH(patch({name:'New workspace'})),()=>keys.POST(req('/api/odoo/keys',{name:'Printer key'})),()=>onboarding.POST(req('/api/onboarding',{workspaceName:'New workspace',planId:'plan'}))];
+ const operations=[()=>setting.PATCH(patch({name:'New workspace'})),()=>keys.POST(req('/api/odoo/keys',{name:'Printer key'}))];
  for(const operation of operations){reset({role:'owner',memberRole:'owner',staleProof:true});const response=await operation();
   assert.equal(response.status,403);assert.equal((await response.json()).code,'WORKSPACE_REAUTHENTICATION_REQUIRED');assert.equal(response.headers.get('X-Yaseir-Reauthentication'),'required');assert.equal(state.writes.length,0);assert.equal(state.audit,0);}
 });

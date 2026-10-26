@@ -31,13 +31,13 @@ roles are migrated to `admin` by forward migration 0096.
 
 | Function permissions | Workspace member |
 | --- | --- |
-| `tenant.read`, `users.read` | Allow |
+| `tenant.read`, `tenant.update`, `users.read` | Allow |
 | `agents.read`, `agents.pair`, `agents.disable`, `agents.retire` | Allow |
 | `printers.read`, `printers.manage`, `printers.test` | Allow |
 | `jobs.read`, `jobs.payload.read`, `jobs.create`, `jobs.retry`, `jobs.cancel` | Allow |
 | `bindings.read`, `bindings.manage` | Allow |
 | `integrations.read`, `integrations.manage` | Allow |
-| `tenant.update`, `users.manage` | **Deny** |
+| `users.manage` | **Deny** |
 | `billing.read`, `billing.manage` | **Deny** |
 
 Only the verified `platform` session audience with fresh Platform Owner

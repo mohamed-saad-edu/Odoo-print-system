@@ -1,4 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+vi.mock("../src/lib/manager-auth", () => ({
+  validateWorkspaceManager: async () => ({ userId: "user-A", tenantId: "workspace-A", role: "admin" }),
+}));
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { hasManagerPermission, managerPermissions, type ManagerPermission } from "../src/lib/authorization";
@@ -10,13 +13,13 @@ const claims = (role: ManagerRole) => ({
   sub: "manager", jti: "test-access-control-jti", iat: 10, exp: 300,
 } as ManagerClaims);
 const allowed: ManagerPermission[] = [
-  "tenant.read", "users.read",
+  "tenant.read", "tenant.update", "users.read",
   "agents.read", "agents.pair", "agents.disable", "agents.retire",
   "printers.read", "printers.manage", "printers.test",
   "jobs.read", "jobs.payload.read", "jobs.create", "jobs.retry", "jobs.cancel",
   "bindings.read", "bindings.manage", "integrations.read", "integrations.manage",
 ];
-const forbidden: ManagerPermission[] = ["users.manage", "tenant.update", "billing.read", "billing.manage"];
+const forbidden: ManagerPermission[] = ["users.manage", "billing.read", "billing.manage"];
 
 describe("one operational Full Access for every workspace membership", () => {
   it.each(roles)("grants all printing/Agent/integration capabilities to %s", role => {

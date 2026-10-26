@@ -1,5 +1,11 @@
 import { NextResponse } from "next/server";
-/** Workspace users cannot perform this action; Platform Owner has a distinct session audience. */
-export async function GET(_req: Request) { return NextResponse.json({ error: "Platform Owner required", code: "PLATFORM_OWNER_REQUIRED" }, { status: 403 }); }
-export async function POST(_req: Request) { return NextResponse.json({ error: "Platform Owner required", code: "PLATFORM_OWNER_REQUIRED" }, { status: 403 }); }
-export async function DELETE(_req: Request) { return NextResponse.json({ error: "Platform Owner required", code: "PLATFORM_OWNER_REQUIRED" }, { status: 403 }); }
+import { validateWorkspaceManager } from "../../../../lib/manager-auth";
+
+/** Every workspace tenant invitation operation is Platform Owner-only. */
+export async function GET(req: Request) {
+  const principal = await validateWorkspaceManager(req);
+  if (!principal) return NextResponse.json({ error: "Unauthorized", code: "UNAUTHORIZED" }, { status: 401 });
+  return NextResponse.json({ error: "Platform Owner required", code: "PLATFORM_OWNER_REQUIRED" }, { status: 403 });
+}
+export async function POST(req: Request) { return GET(req); }
+export async function DELETE(req: Request) { return GET(req); }

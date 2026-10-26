@@ -12,7 +12,7 @@ export type ManagerPermission =
   | "billing.read" | "billing.manage";
 
 const FULL_ACCESS_PERMISSIONS: ReadonlySet<ManagerPermission> = new Set<ManagerPermission>([
-  "tenant.read",
+  "tenant.read", "tenant.update",
   "users.read",
   "agents.read",
   "agents.pair",

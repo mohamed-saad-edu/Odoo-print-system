@@ -133,7 +133,7 @@ This checks current table names against schema declarations, migration creates/d
 `tenant_users.role` remains a compatibility field restricted to `admin`
 and the internal `owner` marker; neither represents additional privileges.
 Every enrolled person receives the fixed operational Full Access permission set,
-excluding all billing, invitation, membership mutation, and tenant-wide owner
+excluding all billing, invitation, membership mutation, and platform
 powers. Legacy limited membership/invitation values are converted to `admin`.
 Only a separately authenticated Platform Owner may change membership or billing.
 A future verified schema cutover will be required to physically drop the role field.
