@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useI18n } from "../../i18n/react";
+import { Crown } from "lucide-react";
 import { adminJson, controlClass, useAdminText } from "./ManualAdmin";
 import { Button, Card } from "../ui";
 
@@ -116,7 +117,9 @@ export function PlatformTeamManagement({ tenantId, members, onChanged }: {
             return <li key={id} className="flex flex-wrap items-center justify-between gap-3 py-3">
               <div className="min-w-0">
                 <p className="break-all font-semibold">{String(member.email ?? "")}</p>
-                <p className="text-sm text-ink-3">{member.isPlatformOwner === true ? t("team.platformOwner") : t("v4.team.fullAccess")}</p>
+                <p className="flex items-center gap-1.5 text-sm text-ink-3">{member.isPlatformOwner === true
+                  ? <><Crown className="h-3.5 w-3.5 text-warn" aria-hidden />{t("team.role.owner")}</>
+                  : t("v4.team.fullAccess")}</p>
               </div>
               {!isOwner && <div className="flex flex-wrap gap-2">
                 <Button variant="secondary" size="sm" disabled={busy}

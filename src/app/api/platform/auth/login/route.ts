@@ -77,7 +77,10 @@ export async function POST(req: Request) {
     return setRateLimitHeaders(NextResponse.json({ error: "Sign-in is temporarily unavailable. Try again in a moment." }, { status: 503 }), decision);
   }
 
-  void writeAuditEvent({
+  // Settle the login audit before the response. A detached insert could race
+  // with a following password reauthentication or the next request's DB
+  // snapshot, making a failed attempt appear to mutate established authority.
+  await writeAuditEvent({
     tenantId: null,
     actorType: "platform",
     actorId: user.userId,

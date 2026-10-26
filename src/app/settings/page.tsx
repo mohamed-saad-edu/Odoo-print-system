@@ -9,6 +9,7 @@ import { roleLabel } from "../../lib/roles";
 import { useI18n } from "../../i18n/react";
 import {
   Building2,
+  Crown,
   User,
   Shield,
   Save,
@@ -183,7 +184,9 @@ export default function SettingsPage() {
                 <KeyValueList
                   rows={[
                     { label: t("settings.signedInAs"), value: email || "—" },
-                    { label: t("settings.role"), value: <span>{platformOwner ? t("team.platformOwner") : roleLabel(role, t)}</span> },
+                    { label: t("settings.role"), value: platformOwner
+                        ? <span className="inline-flex items-center gap-1.5 font-semibold"><Crown className="h-4 w-4 text-warn" aria-hidden />{t("team.role.owner")}</span>
+                        : <span>{roleLabel(role, t)}</span> },
                     {
                       label: t("settings.workspaceCreated"),
                       value: tenantCreatedAt ? formatDate(tenantCreatedAt) : "—",

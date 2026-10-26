@@ -14,22 +14,26 @@ describe("restored, single-role team invitations", () => {
     expect(page).not.toContain("updateRole(");
     expect(page).not.toContain('role: "viewer"');
   });
-  it("proves the platform-owner identity with a password and uses the existing Platform invitation API", () => {
+  it("uses the verified Platform Owner workspace session without another password prompt", () => {
     const page = read("src/app/team/page.tsx");
-    expect(page).toContain('"/api/platform/auth/me"');
-    expect(page).toContain('"/api/platform/auth/login"');
-    expect(page).toContain('"/api/platform/auth/reauth"');
-    expect(page).toContain('"/api/platform/tenants/');
-    expect(page).toContain('JSON.stringify({ email: invitedEmail })');
-    expect(page).not.toContain('"/api/team/invitations", {');
-    const existing = read("src/app/api/platform/tenants/[id]/invitations/route.ts");
-    expect(existing).toContain("requirePlatformOwner(req)");
-    expect(existing).toContain("requirePlatformActorInTransaction");
-    expect(existing).toContain('role: "admin"');
-    expect(existing).toContain("sendTransactionalEmail");
-    expect(existing).toContain("INVITATION_DELIVERY_UNAVAILABLE");
+    const route = read("src/app/api/team/invitations/route.ts");
+    const guard = read("src/lib/workspace-owner-invitations.ts");
+    expect(page).toContain('fetchWithTimeout("/api/team/invitations"');
+    expect(page).not.toContain("verifyPlatformOwnerPassword");
+    expect(page).not.toContain('type="password"');
+    expect(route).toContain("assertPlatformTeamOrigin(req)");
+    expect(route).toContain("requireWorkspacePlatformOwnerForInvites(tx, claims)");
+    expect(route).toContain('role: "admin"');
+    expect(route).toContain("sendTransactionalEmail");
+    expect(route).toContain("INVITATION_DELIVERY_UNAVAILABLE");
+    expect(guard).toContain('requireManagerActorInTransaction(tx, claims, "users.read")');
+    expect(guard).toContain("u.is_platform_owner=true");
+    expect(guard).toContain("u.email_verified_at IS NOT NULL");
+    const platform = read("src/app/api/platform/tenants/[id]/invitations/route.ts");
+    expect(platform).toContain("requirePlatformOwner(req)");
+    expect(platform).toContain("requirePlatformActorInTransaction");
   });
-  it("returns read-only, scoped, bounded pending invitations without granting workspace write authority", () => {
+  it("lists scoped, bounded pending invitations without exposing tokens", () => {
     const route = read("src/app/api/team/invitations/route.ts");
     expect(route).toContain('export async function GET(req: Request)');
     expect(route).toContain('hasManagerPermission(claims, "users.read")');
@@ -37,8 +41,9 @@ describe("restored, single-role team invitations", () => {
     expect(route).toContain('isNull(tenantInvitations.revokedAt)');
     expect(route).toContain('clampListLimit(searchParams.get("limit"), 50, 100)');
     expect(route).toContain("hasMore: rows.length > limit");
-    expect(route).toContain('PLATFORM_OWNER_REQUIRED');
-    expect(route).not.toContain("sendTransactionalEmail");
+    expect(route).toContain('export async function POST(req: Request)');
+    expect(route).toContain('export async function DELETE(req: Request)');
+    expect(route).not.toContain("tokenHash: tenantInvitations.tokenHash");
   });
   it("uses database platform-owner identity for account and team badges, never workspace role=owner", () => {
     const settings = read("src/app/api/settings/route.ts");
@@ -50,9 +55,12 @@ describe("restored, single-role team invitations", () => {
     expect(settings).toContain("platformOwner:");
     expect(members).toContain("isPlatformOwner");
     expect(members).toContain("emailVerifiedAt");
-    expect(team).toContain('t("team.platformOwner")');
+    expect(team).toContain('t("team.role.owner")');
+    expect(team).toContain('icon={<Crown className="h-3.5 w-3.5 text-warn" aria-hidden />}');
+    expect(team).toContain('label={member.platformOwner ? t("team.role.owner")');
+    expect(team).not.toContain('label={t("team.platformOwner")}');
     expect(team).toContain('t("v4.team.fullAccess")');
-    expect(account).toContain('t("team.platformOwner")');
+    expect(account).toContain('t("team.role.owner")');
     expect(account).toContain("roleLabel(role, t)");
     expect(team).not.toContain('member.role === "owner"');
   });
