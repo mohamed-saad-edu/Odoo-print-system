@@ -5889,7 +5889,7 @@ msgstr "مساعدة الاتصال"
 #. module: print_gateway
 #: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_config_form
 msgid "Use the Odoo connection key from Connect Odoo in Yaseir. The Windows computer pairing code is different."
-msgstr "استخدم مفتاح ربط أودو من «ربط Odoo» في يسير. رمز اقتران جهاز ويندوز مختلف عن هذا المفتاح."
+msgstr "استخدم مفتاح ربط أودو من «ربط Odoo» في Yaseir. رمز اقتران جهاز ويندوز مختلف عن هذا المفتاح."
 
 #. module: print_gateway
 #: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_config_form
@@ -5945,7 +5945,7 @@ msgstr "أي وجهة مستند أختار؟"
 #. module: print_gateway
 #: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_binding_form
 msgid "Select the company, branch, Odoo document, and Yaseir printer. POS preparation uses the Odoo Preparation Printer to preserve category routing."
-msgstr "حدد الشركة والفرع ومستند أودو وطابعة يسير. تستخدم طباعة تحضير نقاط البيع طابعة التحضير في أودو للحفاظ على توجيه فئات المنتجات."
+msgstr "حدد الشركة والفرع ومستند أودو وطابعة Yaseir. تستخدم طباعة تحضير نقاط البيع طابعة التحضير في أودو للحفاظ على توجيه فئات المنتجات."
 
 #. module: print_gateway
 #: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_binding_form
@@ -6007,13 +6007,13 @@ msgstr "جهاز الطباعة المعيّن غير متاح"
 #. odoo-javascript
 #: code:addons/print_gateway/static/src/components/printers_overview.xml:0
 msgid "Choose an existing Yaseir Print Agent for this exact company or branch."
-msgstr "اختر جهاز طباعة مسجّلًا في يسير لهذه الشركة أو الفرع تحديدًا."
+msgstr "اختر جهاز طباعة مسجّلًا في Yaseir لهذه الشركة أو الفرع تحديدًا."
 
 #. module: print_gateway
 #. odoo-javascript
 #: code:addons/print_gateway/static/src/components/printers_overview.xml:0
 msgid "Open and pair the Windows printing app in Yaseir, then refresh."
-msgstr "افتح تطبيق الطباعة على ويندوز واربطه بيسير، ثم حدّث الصفحة."
+msgstr "افتح تطبيق الطباعة على ويندوز واربطه بYaseir، ثم حدّث الصفحة."
 
 #. module: print_gateway
 #. odoo-javascript
@@ -6025,7 +6025,7 @@ msgstr "تحقق من اتصال الشركة قبل اختيار جهاز ال�
 #. odoo-javascript
 #: code:addons/print_gateway/static/src/components/printers_overview.xml:0
 msgid "Check the assigned Agent in Yaseir. Inactive or removed Agents cannot provide printers."
-msgstr "تحقق من حالة جهاز الطباعة المعيّن في يسير. الأجهزة غير النشطة أو المحذوفة لا يمكنها عرض الطابعات."
+msgstr "تحقق من حالة جهاز الطباعة المعيّن في Yaseir. الأجهزة غير النشطة أو المحذوفة لا يمكنها عرض الطابعات."
 
 #. module: print_gateway
 #. odoo-javascript
@@ -6037,4 +6037,9 @@ msgstr "تحدد تعيينات الأجهزة ما يُسمح له بخدمة �
 #. odoo-javascript
 #: code:addons/print_gateway/static/src/components/runtime_agent_field.js:0
 msgid "Assigned Print Agent is unavailable — check the Agent connection or status in Yaseir"
-msgstr "جهاز الطباعة المعيّن غير متاح — تحقق من اتصاله وحالته في يسير"
+msgstr "جهاز الطباعة المعيّن غير متاح — تحقق من اتصاله وحالته في Yaseir"
+
+#. module: print_gateway
+#: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_binding_form
+msgid "POS Receipt does not require an Odoo printer or PDF report. POS Kitchen / Preparation uses the selected Odoo Preparation Printer for category routing; the Gateway printer remains the physical destination."
+msgstr "لا يتطلب إيصال نقاط البيع طابعة Odoo أو تقرير PDF. تستخدم طباعة المطبخ / التحضير طابعة التحضير المحددة في Odoo لتوجيه فئات المنتجات، وتظل طابعة Gateway هي وجهة الطباعة الفعلية."

@@ -1,6 +1,11 @@
 # Odoo Integration Guide
 
-> Module: `print_gateway` | Version: 19.0.2.27.0 | Odoo: 19 Community Edition
+> Module: `print_gateway` | Version: 19.0.2.28.0 | Odoo: 19 Community Edition
+
+## 19.0.2.28.0: consistent navigation and scoped printer guidance
+
+Document Destinations is now a primary navigation item, separate from the optional Automatic Printing event rules. Branch Devices and Automation Activity remain Advanced. Printer inventory provides branch-scoped recovery guidance and distinguishes missing assignments, unavailable Agents and disconnected printing service. Arabic labels and test-page vs registration-check actions are consistent. Legacy routing, authorization and physical printer requirements are unchanged.
+
 
 ## 19.0.2.27.0: streamlined customer setup
 
