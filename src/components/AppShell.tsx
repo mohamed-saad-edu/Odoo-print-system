@@ -42,6 +42,7 @@ type WorkspaceInfo = {
   email?: string;
   role?: string;
   plan?: string;
+  platformOwner?: boolean;
 };
 
 const COLLAPSE_KEY = "yaseir:console-nav";
@@ -148,7 +149,7 @@ function WorkspaceMenu({
       ? [{ key: "identity", label: workspace.email, meta: workspace.role, disabled: true }]
       : []),
     { key: "settings", label: t("nav.workspaceSettings"), icon: <SettingsIcon className="h-4 w-4" />, href: "/settings" },
-    { key: "billing", label: t("nav.planAndBilling"), icon: <CreditCard className="h-4 w-4" />, href: "/billing", separatorBefore: true },
+    ...(workspace.platformOwner ? [{ key: "billing", label: t("nav.planAndBilling"), icon: <CreditCard className="h-4 w-4" />, href: "/platform/subscriptions", separatorBefore: true }] : []),
     {
       key: "theme",
       label: t("nav.toggleTheme"),
@@ -254,7 +255,7 @@ function ConsoleShell({
     fetchWithTimeout("/api/settings", { credentials: "include", cache: "no-store" })
       .then(async (response) => {
         if (!response.ok) return null;
-        return (await response.json()) as { tenant?: { name?: string }; email?: string; role?: string };
+        return (await response.json()) as { tenant?: { name?: string }; email?: string; role?: string; platformOwner?: boolean };
       })
       .then((data) => {
         if (cancelled || !data) return;
@@ -263,6 +264,7 @@ function ConsoleShell({
           name: data.tenant?.name,
           email: data.email,
           role: data.role,
+          platformOwner: data.platformOwner === true,
         }));
       })
       .catch(() => undefined);

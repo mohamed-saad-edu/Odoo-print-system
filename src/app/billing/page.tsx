@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
-/** Commercial billing is exclusively administered in Platform Admin. */
+/** Commercial plan management requires a separately authenticated Platform Owner. */
 export default function Page(_props: { searchParams?: Promise<unknown> }) {
-  redirect("/dashboard");
+  redirect("/platform/subscriptions");
   return null;
 }

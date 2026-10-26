@@ -7,7 +7,7 @@ describe("subscription is never controlled or personalized through workspace rol
   it("workspace billing and onboarding pages redirect without reading or mutating subscription data", () => {
     for (const page of ["src/app/billing/page.tsx", "src/app/onboarding/page.tsx"]) {
       const source = read(page);
-      expect(source).toContain('redirect("/dashboard")');
+      expect(source).toContain(page.includes("/billing/") ? 'redirect("/platform/subscriptions")' : 'redirect("/dashboard")');
       expect(source).not.toContain("/api/subscription-requests");
       expect(source).not.toContain("billing/checkout");
       expect(source).not.toContain("customerSubscriptionState");

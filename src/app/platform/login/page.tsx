@@ -9,6 +9,15 @@ import { Button, Field, Input, ErrorState, Skeleton } from "../../../components/
 import { useI18n } from "../../../i18n/react";
 import { codeMessageKey } from "../../../lib/api-error-keys";
 
+/** Only allow known Platform Admin destinations to prevent open redirects. */
+function afterLoginDestination(): string {
+  if (typeof window === "undefined") return "/platform/dashboard";
+  const next = new URLSearchParams(window.location.search).get("next");
+  return next && /^\/platform\/(?:subscriptions|plans|subscription-requests)$/.test(next)
+    ? next
+    : "/platform/dashboard";
+}
+
 export default function PlatformLoginPage() {
   const router = useRouter();
   const { t } = useI18n();
@@ -29,7 +38,7 @@ export default function PlatformLoginPage() {
       .then(async (res) => {
         if (cancelled) return;
         if (res.ok) {
-          router.replace("/platform/dashboard");
+          router.replace(afterLoginDestination());
           return;
         }
         const refresh = await fetchWithTimeout("/api/platform/auth/refresh", {
@@ -38,7 +47,7 @@ export default function PlatformLoginPage() {
           cache: "no-store",
           signal: startup.signal,
         });
-        if (!cancelled && refresh.ok) router.replace("/platform/dashboard");
+        if (!cancelled && refresh.ok) router.replace(afterLoginDestination());
       })
       .catch(() => undefined)
       .finally(() => {
@@ -80,7 +89,7 @@ export default function PlatformLoginPage() {
           ?? (res.status === 429 ? "errors.tooManyAttempts" : "auth.signIn.failed")));
       }
 
-      router.replace("/platform/dashboard");
+      router.replace(afterLoginDestination());
       router.refresh();
     } catch (err: unknown) {
       if (mounted.current && !controller.signal.aborted && flight.current === controller) {

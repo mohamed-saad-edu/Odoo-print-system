@@ -178,12 +178,12 @@ describe("Part 6 desktop hardening", () => {
 
   it("keeps raw agent operational diagnostics out of localized desktop status copy", () => {
     const main = read("src/desktop/main.tsx");
-    const agents = read("src/desktop/pages/Agents.tsx");
+    const overview = read("src/desktop/pages/Overview.tsx");
     expect(main).toContain('t("desktop.app.agentStarted")');
     expect(main).toContain('t("desktop.app.agentPaired")');
     expect(main).not.toContain("setMsg({ text: r ||");
-    expect(agents).toContain("agentStatusNoteKey");
-    expect(agents).not.toContain("String(anyStatus.note)");
+    expect(overview).toContain("agentStatusNoteKey");
+    expect(overview).not.toContain("String(anyStatus.note)");
   });
 
 });

@@ -49,7 +49,7 @@ export default function PlatformLayout({ children }: { children: React.ReactNode
     }
 
     function redirectToLogin() {
-      if (!cancelled) router.replace("/platform/login");
+      if (!cancelled) router.replace(`/platform/login?next=${encodeURIComponent(pathname)}`);
     }
 
     async function refreshSession() {
@@ -147,7 +147,7 @@ export default function PlatformLayout({ children }: { children: React.ReactNode
       if (timer) clearTimeout(timer);
       document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [isLoginPage, router, checkTick]);
+  }, [isLoginPage, pathname, router, checkTick]);
 
   if (isLoginPage) return <>{children}</>;
 

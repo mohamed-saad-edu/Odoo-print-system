@@ -7,7 +7,7 @@ describe("entitlement label coverage (H-3)", () => {
   it("shows monthly jobs and unlimited commercial counts without infrastructure limits", () => {
     const page = readFileSync("src/app/billing/page.tsx", "utf8");
     const pricing = readFileSync("src/app/pricing/page.tsx", "utf8");
-    expect(page).toContain('redirect("/dashboard")');
+    expect(page).toContain('redirect("/platform/subscriptions")');
     expect(pricing).toContain('t("v4.pricing.jobsPerMonth")');
     expect(pricing).not.toContain('Object.entries(plan.entitlements)');
     expect(pricing).not.toContain('t("billing.entitlement.max_jobs_per_minute")');

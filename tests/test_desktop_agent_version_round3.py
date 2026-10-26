@@ -23,7 +23,7 @@ def test_desktop_agent_version_from_bundled_agent_marker_not_manager_version():
 def test_desktop_agent_version_truthfully_labelled_disk_not_running_service():
     en = (ROOT / "src/i18n/messages/en.ts").read_text()
     ar = (ROOT / "src/i18n/messages/ar.ts").read_text()
-    view = (ROOT / "src/desktop/pages/Agents.tsx").read_text()
+    view = (ROOT / "src/desktop/pages/Settings.tsx").read_text()
     assert '"desktop.agents.version": "Bundled Agent build (disk)"' in en
     assert '"desktop.agents.version": "نسخة الوكيل المُرفَقة (على القرص)"' in ar
     assert 'anyStatus?.version || s.version' not in view

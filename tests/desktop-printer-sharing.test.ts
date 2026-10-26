@@ -8,7 +8,6 @@ import { I18nProvider } from "../src/i18n/react";
 import { PrinterSharingControl } from "../src/desktop/components/PrinterSharingControl";
 import { PrintersPage } from "../src/desktop/pages/Printers";
 import { OverviewPage } from "../src/desktop/pages/Overview";
-import { AgentsPage } from "../src/desktop/pages/Agents";
 import { SettingsPage } from "../src/desktop/pages/Settings";
 import type { PrinterInfo } from "../src/desktop/lib/ipc";
 import type { DesktopState } from "../src/desktop/types";
@@ -110,8 +109,8 @@ describe("Desktop overview evidence boundaries", () => {
     expect([...doc.querySelectorAll(".yw-agent-status button")].map((node) => node.textContent)).toContain("Start");
   });
 
-  it.each([AgentsPage, SettingsPage])("does not label failed status checks as stopped on management screens", (Page) => {
-    const doc = new DOMParser().parseFromString(renderToStaticMarkup(tree(h(Page, { s: state({
+  it("does not label failed status checks as stopped in settings", () => {
+    const doc = new DOMParser().parseFromString(renderToStaticMarkup(tree(h(SettingsPage, { s: state({
       ...connected, isOnline: false, agentStatus: { running: false, note_code: "status_check_failed" },
     }) }))), "text/html");
     expect(doc.body.textContent).toContain("Agent status unavailable");
