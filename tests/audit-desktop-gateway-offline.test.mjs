@@ -108,10 +108,10 @@ test("failed candidate check keeps configuration and presents HTTP guidance once
   assert.equal(changes.length, 0);
   assert.equal(drafts.at(-1), translate("ar", "desktop.gateway.serverError"));
   assert.equal(messages.at(-1).text, drafts.at(-1));
-  for (const page of ["Settings", "Agents"]) {
-    const source = await readFile(`src/desktop/pages/${page}.tsx`, "utf8");
-    assert.doesNotMatch(source, /friendlyGatewayError\(/);
-  }
+  const settings = await readFile("src/desktop/pages/Settings.tsx", "utf8");
+  assert.doesNotMatch(settings, /friendlyGatewayError\(/);
+  const shell = await readFile("src/desktop/main.tsx", "utf8");
+  assert.doesNotMatch(shell, /AgentsPage|page === "agents"/);
 });
 
 test("native probe records bounded diagnostics without response bodies or credentials", async () => {
