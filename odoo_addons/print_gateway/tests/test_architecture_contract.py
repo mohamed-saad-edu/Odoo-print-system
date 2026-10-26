@@ -106,8 +106,8 @@ class TestPrintGatewayArchitectureContract(TransactionCase):
         for label in (
             'string="Company"', 'string="Branch"',
             'string="Print Agent"', 'string="Printer"',
-            'string="Scope"', 'string="Document &amp; Destination"', 'string="Printer Setup"',
-            'string="Advanced"', 'string="Printer Options"',
+            'string="Scope"', 'string="Print Source"', 'string="Printer Setup"',
+            'string="Routing Options"', 'string="Printer Options"',
         ):
             self.assertIn(label, source)
         self.assertIn('widget="gateway_runtime_agent_binding"', source)
@@ -115,7 +115,34 @@ class TestPrintGatewayArchitectureContract(TransactionCase):
         # Verbose legacy labels must stay out of the simplified form.
         self.assertNotIn("Hardware Print Binding", source)
         self.assertIn('string="Odoo Preparation Printer"', source)
-        self.assertIn("Gateway Runtime Printer remains the physical target", source)
+        self.assertIn("POS Receipt does not require an Odoo printer or PDF report.", source)
+        self.assertIn("POS Kitchen / Preparation uses the selected Odoo Preparation Printer for category routing", source)
+        self.assertIn("Gateway printer remains the physical destination", source)
+        self.assertNotIn('string="Document &amp; Destination"', source)
+        self.assertNotIn('string="Advanced"', source)
+
+    def test_print_navigation_removes_duplicate_inventory_without_disabling_discovery(self):
+        menu = (VIEWS / "menu.xml").read_text(encoding="utf-8")
+        form = (VIEWS / "binding_views.xml").read_text(encoding="utf-8")
+        manifest = (ADDON / "__manifest__.py").read_text(encoding="utf-8")
+        controller = (CONTROLLERS / "runtime_printers.py").read_text(encoding="utf-8")
+        for menu_id in (
+            "menu_print_gateway_bindings",
+            "menu_print_gateway_assignments",
+            "menu_print_gateway_intents",
+        ):
+            row = next(line for line in menu.splitlines() if 'id="%s"' % menu_id in line)
+            self.assertIn('parent="menu_print_gateway_main"', row)
+        self.assertIn('name="Print Routing"', menu)
+        self.assertNotIn("menu_print_gateway_printers", menu)
+        self.assertNotIn("menu_print_gateway_advanced", menu)
+        self.assertNotIn("action_print_gateway_printers", menu)
+        self.assertNotIn("printers_overview", manifest)
+        self.assertIn('widget="gateway_runtime_agent_binding"', form)
+        self.assertIn('widget="gateway_runtime_printer"', form)
+        self.assertIn("/print_gateway/runtime-agents", controller)
+        self.assertIn("/print_gateway/runtime-printers", controller)
+        self.assertIn("selected_agent_id not in allowed_agent_ids", controller)
 
     def test_database_utc_clock_is_the_shared_scheduler_clock(self):
         clock = (ADDON / "runtime_clock.py").read_text(encoding="utf-8")
