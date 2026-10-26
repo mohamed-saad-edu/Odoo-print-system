@@ -73,6 +73,10 @@ try {
   await close(owner);
   const runtime = await client(config.runtime, config.runtimePassword);
   await verifyRuntime(runtime, config.runtime);
+  for (const archived of ["billing_events", "print_usage_periods", "plan_provider_history", "subscription_provider_history"]) {
+    await denied(runtime, `SELECT * FROM legacy_billing.${archived}`);
+  }
+  checked("runtime-legacy-archive-access-denied", { archivedTables: 4 });
   await runtime.query("INSERT INTO public.future_migration_table(value) VALUES ('new-table-default-grant')");
   await runtime.query("UPDATE public.future_migration_table SET value='updated' WHERE id=1");
   assert.equal((await runtime.query("SELECT value FROM public.future_migration_table WHERE id=1")).rows[0].value, "updated");
@@ -166,6 +170,13 @@ try {
   await privilegeAdmin.query("ALTER TABLE public.future_migration_table OWNER TO yaseir_owner");
   await privilegeAdmin.query("GRANT SELECT,INSERT,UPDATE,DELETE ON public.future_migration_table TO yaseir_runtime");
   await privilegeAdmin.query("GRANT USAGE,SELECT ON ALL SEQUENCES IN SCHEMA public TO yaseir_runtime");
+  await verifyRuntime(runtime, config.runtime);
+  await privilegeAdmin.query("GRANT USAGE ON SCHEMA legacy_billing TO yaseir_runtime");
+  await assert.rejects(verifyRuntime(runtime, config.runtime), /forbidden schema/);
+  await privilegeAdmin.query("REVOKE USAGE ON SCHEMA legacy_billing FROM yaseir_runtime");
+  await privilegeAdmin.query("GRANT SELECT ON legacy_billing.billing_events TO yaseir_runtime");
+  await assert.rejects(verifyRuntime(runtime, config.runtime), /forbidden object ownership, table or routine authority/);
+  await privilegeAdmin.query("REVOKE SELECT ON legacy_billing.billing_events FROM yaseir_runtime");
   await verifyRuntime(runtime, config.runtime);
   await close(privilegeAdmin);
   checked("runtime-startup-verifier-rejects-grant-or-object-ownership-drift");

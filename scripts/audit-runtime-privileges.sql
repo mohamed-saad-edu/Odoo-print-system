@@ -21,3 +21,21 @@ BEGIN
     END LOOP;
   END LOOP;
 END $$;
+
+-- Provider evidence is not application data. Moving a relation keeps its
+-- existing ACLs, so a schema move alone cannot revoke runtime table access.
+-- This executes on every owner migration, not just the initial 0098 cutover.
+DO $archive_permissions$
+DECLARE runtime_role text;
+BEGIN
+  IF to_regnamespace('legacy_billing') IS NULL THEN RETURN; END IF;
+  REVOKE ALL ON SCHEMA legacy_billing FROM PUBLIC;
+  REVOKE ALL ON ALL TABLES IN SCHEMA legacy_billing FROM PUBLIC;
+  FOR runtime_role IN
+    SELECT rolname FROM pg_roles
+    WHERE shobj_description(oid, 'pg_authid') = 'Yaseir role profile v1 runtime ' || current_database()
+  LOOP
+    EXECUTE format('REVOKE ALL PRIVILEGES ON SCHEMA legacy_billing FROM %I', runtime_role);
+    EXECUTE format('REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA legacy_billing FROM %I', runtime_role);
+  END LOOP;
+END $archive_permissions$;
