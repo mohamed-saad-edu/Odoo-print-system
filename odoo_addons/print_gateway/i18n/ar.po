@@ -534,11 +534,13 @@ msgid "Branch Device"
 msgstr "جهاز الفرع"
 
 #. module: print_gateway
+#. odoo-javascript
 #. odoo-python
 #: model:ir.ui.menu,name:print_gateway.menu_print_gateway_assignments
 #: model:ir.actions.act_window,name:print_gateway.action_print_gateway_runtime_assignments
 #: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_runtime_assignment_list
 #: code:addons/print_gateway/models/gateway_config.py:0
+#: code:addons/print_gateway/static/src/components/printers_overview.js:0
 msgid "Branch Devices"
 msgstr "أجهزة الفروع"
 
@@ -1083,6 +1085,7 @@ msgstr "المستند/التقرير يتبع سياق شركة/فرع آخر."
 #: code:addons/print_gateway/static/src/components/printers_overview.xml:0
 #: code:addons/print_gateway/static/src/components/printers_overview.js:0
 #: code:addons/print_gateway/models/gateway_config.py:0
+#: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_binding_list
 msgid "Document Destinations"
 msgstr "وجهات المستندات"
 
