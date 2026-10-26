@@ -1,6 +1,16 @@
 # Odoo Integration Guide
 
-> Module: `print_gateway` | Version: 19.0.2.31.0 | Odoo: 19 Community Edition
+> Module: `print_gateway` | Version: 19.0.2.32.0 | Odoo: 19 Community Edition
+
+
+## 19.0.2.32.0: navigation authorization parity with Odoo 19
+
+Opening Branch Devices, Print Routing and Automatic Printing from the company
+connection form requires an Odoo system administrator plus **record-read**
+access to that connection. Branch-only system administrators may view scoped
+navigation without receiving root-company write rights. Ordinary operators
+cannot invoke these navigation actions directly by RPC. Company/branch record
+rules continue to enforce which assignments, routes and policies are visible.
 
 ## 19.0.2.31.0: Odoo 19 compact form and single-company scope correctness
 

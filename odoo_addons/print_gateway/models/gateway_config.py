@@ -2247,9 +2247,22 @@ class PrintGatewayConfig(models.Model):
             "context": {"default_config_id": self.id},
         }
 
+    def _check_navigation_admin(self):
+        """Authorize navigation without requiring root-Company write access.
+
+        Odoo 19 permits a branch-only system administrator to read the root
+        configuration through our record rule, but not to change that
+        configuration. Opening scoped Branch Devices or Print Routing must
+        respect that distinction while never becoming an operator RPC shortcut.
+        """
+        self.ensure_one()
+        if not (self.env.is_superuser() or self.env.user.has_group("base.group_system")):
+            raise AccessError(_("Only Odoo system administrators can change Gateway configuration."))
+        self.check_access("read")
+
     def action_open_runtime_assignments(self):
         """Navigation only: open the branch → agent assignments for this company."""
-        self.ensure_one()
+        self._check_navigation_admin()
         return {
             "type": "ir.actions.act_window",
             "name": _("Branch Devices"),
@@ -2265,8 +2278,7 @@ class PrintGatewayConfig(models.Model):
         The active Branch is only a default for new rows; record rules and
         binding validators remain authoritative for printer routing.
         """
-        self.ensure_one()
-        self._check_admin()
+        self._check_navigation_admin()
         context = {"default_company_id": self.company_id.id}
         active_company = self.env.company
         if active_company.parent_id == self.company_id and active_company in self.env.companies:
@@ -2281,8 +2293,7 @@ class PrintGatewayConfig(models.Model):
         }
 
     def action_open_print_rules(self):
-        self.ensure_one()
-        self._check_admin()
+        self._check_navigation_admin()
         return {
             "type": "ir.actions.act_window",
             "name": self.env._("Automatic Printing"),

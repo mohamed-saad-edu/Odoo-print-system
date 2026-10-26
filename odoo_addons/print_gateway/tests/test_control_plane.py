@@ -1846,6 +1846,19 @@ class TestControlPlane(TransactionCase):
             get_public_method(self.env["print_gateway.print_job"], "create_operation")
         self.assertTrue(callable(get_public_method(self.env["print_gateway.print_job"], "action_retry")))
 
+    def test_admin_navigation_rejects_normal_operator_model_rpc(self):
+        """A readable config is not permission to open admin-only actions."""
+        operator = self._operator_user()
+        scoped = self.gateway_config.with_user(operator)
+        for action in (
+            "action_open_runtime_assignments",
+            "action_open_destinations",
+            "action_open_print_rules",
+        ):
+            with self.subTest(action=action):
+                with self.assertRaises(AccessError):
+                    getattr(scoped, action)()
+
     def test_28_operator_retry_and_direct_create_stay_fail_closed(self):
         """BEHAVIORAL: operator actions that change outbox state still
         require real write rights; direct ORM create without rights fails.
