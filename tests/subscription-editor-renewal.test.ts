@@ -47,7 +47,7 @@ function input(locale: Locale, key: string) {
     .find(node => node.querySelector("span")?.textContent === labelText(locale, key));
   return label?.querySelector("select,input,textarea") as HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement | null;
 }
-function choose(node: HTMLSelectElement | HTMLInputElement | null, value: string) {
+function choose(node: HTMLSelectElement | HTMLInputElement | HTMLTextAreaElement | null, value: string) {
   expect(node).not.toBeNull();
   act(() => {
     node!.value = value;
