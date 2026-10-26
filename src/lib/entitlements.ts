@@ -172,31 +172,29 @@ export function liveTenantSubscriptionPredicate(tenantId: SQL, requireUnblocked 
   `;
 }
 
+async function lockTenantSubscription(tx: EntitlementTx, tenantId: string): Promise<void> {
+  // Lock before evaluating volatile deadlines: a qualifying unchanged row can
+  // expire while FOR UPDATE waits without PostgreSQL rechecking its predicate.
+  await tx.execute(sql`SELECT tenant_id FROM tenant_subscriptions WHERE tenant_id = ${tenantId} FOR UPDATE`);
+}
+
 export async function requireTenantBillingAccess(tx: EntitlementTx, tenantId: string): Promise<void> {
   // Lock the subscription row while deciding whether to grant or re-enable
   // runtime access. Manual subscription updates lock the same row, so state cannot
   // change between this decision and the protected runtime mutation.
+  await lockTenantSubscription(tx, tenantId);
   const result = await tx.execute(sql`
     SELECT 1
     FROM tenant_subscriptions ts
     WHERE ${liveTenantSubscriptionWhere(sql`${tenantId}`)}
     LIMIT 1
-    FOR UPDATE
   `);
   if (result.rows.length === 0) throw new TenantSubscriptionRequiredError();
 }
 
 export async function getTenantEntitlementLimit(tx: EntitlementTx, tenantId: string, key: string, lockRows = false): Promise<number | null> {
-  const result = lockRows
-    ? await tx.execute(sql`
-    SELECT p.entitlements, ts.monthly_quota AS "monthlyQuota", ts.entitlement_blocked AS "entitlementBlocked"
-    FROM tenant_subscriptions ts
-    JOIN plans p ON p.id = ts.plan_id
-    WHERE ${liveTenantSubscriptionWhere(sql`${tenantId}`, false)}
-    LIMIT 1
-    FOR UPDATE OF ts
-  `)
-    : await tx.execute(sql`
+  if (lockRows) await lockTenantSubscription(tx, tenantId);
+  const result = await tx.execute(sql`
     SELECT p.entitlements, ts.monthly_quota AS "monthlyQuota", ts.entitlement_blocked AS "entitlementBlocked"
     FROM tenant_subscriptions ts
     JOIN plans p ON p.id = ts.plan_id
@@ -316,16 +314,8 @@ function parseEntitlementDate(value: Date | string | null): Date | null {
 }
 
 async function getTenantPrintQuotaContext(tx: EntitlementTx, tenantId: string, lockRows = false): Promise<{ limit: number | "unlimited"; periodStart: Date; periodEnd: Date | null }> {
-  const result = lockRows
-    ? await tx.execute(sql`
-        SELECT p.entitlements, ts.monthly_quota AS "monthlyQuota", date_trunc('month', clock_timestamp() AT TIME ZONE 'UTC') AS "periodStart", ts.entitlement_blocked AS "entitlementBlocked"
-        FROM tenant_subscriptions ts
-        JOIN plans p ON p.id = ts.plan_id
-        WHERE ${liveTenantSubscriptionWhere(sql`${tenantId}`, false)}
-        LIMIT 1
-        FOR UPDATE OF ts
-      `)
-    : await tx.execute(sql`
+  if (lockRows) await lockTenantSubscription(tx, tenantId);
+  const result = await tx.execute(sql`
         SELECT p.entitlements, ts.monthly_quota AS "monthlyQuota", date_trunc('month', clock_timestamp() AT TIME ZONE 'UTC') AS "periodStart", ts.entitlement_blocked AS "entitlementBlocked"
         FROM tenant_subscriptions ts
         JOIN plans p ON p.id = ts.plan_id

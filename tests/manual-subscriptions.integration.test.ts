@@ -9,7 +9,7 @@ import { issueWorkspaceTestSession } from "./helpers/workspace-session";
 import { sessionCookieName } from "../src/lib/session-config";
 import { verifyPlatformTokenSignature } from "../src/lib/platform-auth";
 import { mutateManualSubscription,ensurePendingManualSubscription,parseManualSubscriptionInput } from "../src/lib/manual-subscriptions";
-import { getTenantPrintUsage,getTenantEntitlements,reserveTenantPrintCredit,TenantPrintQuotaExceededError,TenantSubscriptionRequiredError } from "../src/lib/entitlements";
+import { getTenantPrintUsage,getTenantEntitlements,getTenantEntitlementLimit,requireTenantBillingAccess,reserveTenantPrintCredit,TenantPrintQuotaExceededError,TenantSubscriptionRequiredError } from "../src/lib/entitlements";
 import { POST as requestActivation,GET as requestsGET } from "../src/app/api/subscription-requests/route";
 import { POST as subscriptionPOST } from "../src/app/api/platform/tenants/[id]/subscription/route";
 import { GET as workspaceGET } from "../src/app/api/platform/tenants/[id]/route";
@@ -88,6 +88,31 @@ suite('V4 manual subscriptions security and accounting',()=>{
   expect(results.filter(r=>r.status==='fulfilled')).toHaveLength(3);expect(results.filter(r=>r.status==='rejected').every(r=>r.status==='rejected'&&r.reason instanceof TenantPrintQuotaExceededError)).toBe(true);
   expect(await getTenantPrintUsage(db,'workspace')).toMatchObject({used:3,remaining:0,limit:3});
   const limits=await getTenantEntitlements(db,'workspace');expect(limits.max_agents).toBe('unlimited');expect(limits.max_printers).toBe('unlimited');expect(limits.max_concurrent_jobs).toBe(100);
+ });
+ it.each(['access','limit','credit'] as const)('rejects %s admission that waited past subscription expiry on an unchanged locked row',async(operation)=>{
+  await mutateManualSubscription('workspace',claims,randomUUID(),input());
+  await pool().query("UPDATE tenant_subscriptions SET current_period_end=clock_timestamp()+interval '1 second' WHERE tenant_id='workspace'");
+  const locker=await pool().connect();
+  try {
+   await locker.query('BEGIN');
+   await locker.query("SELECT tenant_id FROM tenant_subscriptions WHERE tenant_id='workspace' FOR UPDATE");
+   const {rows:[{pid}]}=await locker.query<{pid:number}>('SELECT pg_backend_pid() AS pid');
+   const admission=db.transaction(async tx=>operation==='access'?requireTenantBillingAccess(tx,'workspace'):operation==='limit'?getTenantEntitlementLimit(tx,'workspace','max_concurrent_jobs',true):reserveTenantPrintCredit(tx,'workspace'))
+    .then(value=>({value,error:null}),error=>({value:null,error}));
+   // Observe actual lock contention before advancing through the term boundary.
+   await vi.waitFor(async()=>{
+    const waiting=await pool().query('SELECT 1 FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid))',[pid]);
+    expect(waiting.rows.length).toBeGreaterThan(0);
+   });
+   await vi.waitFor(async()=>{
+    const expired=await pool().query("SELECT current_period_end<=clock_timestamp() AS expired FROM tenant_subscriptions WHERE tenant_id='workspace'");
+    expect(expired.rows[0].expired).toBe(true);
+   },{timeout:3000});
+   // No UPDATE: PostgreSQL need not re-evaluate the original scan predicate.
+   await locker.query('COMMIT');
+   expect((await admission).error).toBeInstanceOf(TenantSubscriptionRequiredError);
+   expect((await pool().query("SELECT * FROM print_monthly_usage WHERE tenant_id='workspace'")).rows).toHaveLength(0);
+  } finally {await locker.query('ROLLBACK');locker.release();}
  });
  it('uses the UTC calendar month during an annual term and ignores previous-month consumption',async()=>{
   await mutateManualSubscription('workspace',claims,randomUUID(),input());

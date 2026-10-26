@@ -228,6 +228,9 @@ export async function POST(req: Request) {
     }
     const desiredStatePaging = body.desiredStatePaging === true;
 
+    if ((body.printers !== undefined || inventoryComplete) && !Array.isArray(body.printers)) {
+      return NextResponse.json({ error: "printers must be an array for an inventory snapshot" }, { status: 400 });
+    }
     const reportedPrinters = Array.isArray(body?.printers) ? body.printers : [];
     // 500 is a transport page ceiling, not a fleet-size ceiling. Agents with
     // larger inventories send multiple pages; no printer may be silently

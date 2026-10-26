@@ -26,6 +26,18 @@ suite("heartbeat billing degradation (D-6)", () => {
   afterAll(async () => { await closePool(); });
   beforeEach(async () => { await truncateAll(); });
 
+  it.each([undefined, null, {}, "unavailable", 42])("rejects malformed inventory %j without declaring existing printers absent", async (printers) => {
+    const f = await seedFixture();
+    const response = await heartbeat(f.agentAuth, {
+      status: "online", heartbeatPage: 1, heartbeatPageCount: 1,
+      inventorySnapshotId: "malformed-inventory", inventorySnapshotVersion: "1",
+      inventoryComplete: true, printers,
+    });
+    expect.soft(response.status).toBe(400);
+    const printer = (await pool().query("SELECT inventory_present,verification_state FROM printers WHERE tenant_id=$1 AND id=$2", [f.tenantId, f.printerId])).rows[0];
+    expect(printer).toMatchObject({ inventory_present: true, verification_state: "verified" });
+  });
+
   it("commits presence and ACKs while fencing new inventory when billing lapsed", async () => {
     const f = await seedFixture();
     await pool().query(
