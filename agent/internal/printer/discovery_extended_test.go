@@ -8,6 +8,28 @@ import (
 	"time"
 )
 
+func TestUSBDiscoveryDoesNotMergeMissingOrUntypedIdentity(t *testing.T) {
+	for _, identity := range []interface{}{nil, true, 123, map[string]interface{}{"serial": "same"}, []string{"same"}, "unknown", "none", "n/a", "unavailable"} {
+		for _, field := range []string{"device_instance_id", "location", "serial"} {
+			a := DeviceInfo{ID: "first", USBVID: "1234", USBPID: "5678", Endpoint: `\\?\first`}
+			b := DeviceInfo{ID: "second", USBVID: "1234", USBPID: "5678", Endpoint: `\\?\second`}
+			if field == "serial" {
+				value, ok := identity.(string)
+				if !ok {
+					continue
+				}
+				a.USBSerial, b.USBSerial = value, value
+			} else {
+				a.Capabilities = map[string]interface{}{field: identity}
+				b.Capabilities = map[string]interface{}{field: identity}
+			}
+			if sameUSBDevice(a, b) {
+				t.Errorf("distinct USB interfaces merged using %s=%#v", field, identity)
+			}
+		}
+	}
+}
+
 func TestDedupeKeyPriority(t *testing.T) {
 	di1 := DeviceInfo{ID: "a", Capabilities: map[string]interface{}{"uuid": "ABC-123"}}
 	di2 := DeviceInfo{ID: "b", NetworkAddress: "192.168.1.50", Port: 631}

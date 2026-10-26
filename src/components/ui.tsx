@@ -1440,7 +1440,8 @@ export function Menu({
       event.preventDefault();
       nodes[nodes.length - 1]?.focus();
     } else if (event.key === "Tab") {
-      close(false);
+      // Continue the browser's Tab order from the opener after the portal closes.
+      close();
     }
   };
 
@@ -1497,7 +1498,7 @@ export function Menu({
                     data-variant={item.tone === "danger" ? "danger" : undefined}
                     className="menu-item disabled:pointer-events-none disabled:opacity-45"
                     onClick={() => {
-                      close(false);
+                      close();
                       item.onSelect?.();
                     }}
                   >

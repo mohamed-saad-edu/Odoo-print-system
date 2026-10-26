@@ -562,19 +562,19 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   // Platform control plane keeps its own layout (src/app/platform/layout.tsx).
   if (isPlatformScreen) {
-    return <main className="tg-shell-root min-h-screen min-w-0 max-w-full bg-app text-ink">{children}</main>;
+    return <div className="tg-shell-root min-h-screen min-w-0 max-w-full bg-app text-ink">{children}</div>;
   }
 
   // Auth screens render their own centered card — no shell chrome.
   if (isAuthScreen) {
-    return <main className="min-h-screen bg-app">{children}</main>;
+    return <div className="min-h-screen bg-app">{children}</div>;
   }
 
   // Marketing home / pricing must never inherit authenticated console chrome.
   // This check intentionally precedes the authenticated branch because auth state
   // can remain true for one client render while sign-out navigates to "/".
   if (isPublicScreen) {
-    return <main className="tg-shell-root min-h-screen min-w-0 max-w-full bg-app text-ink">{children}</main>;
+    return <div className="tg-shell-root min-h-screen min-w-0 max-w-full bg-app text-ink">{children}</div>;
   }
 
   // Authenticated console: sidebar shell + full-width content.
