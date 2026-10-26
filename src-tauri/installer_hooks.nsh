@@ -44,31 +44,67 @@ ${StrStr}
   yaseir_owned_trim_${tag}:
     StrCpy $R4 $R2 1
     StrCmp $R4 " " yaseir_owned_strip_${tag}
-    StrCmp $R4 ":" yaseir_owned_strip_${tag}
     StrCmp $R4 "$\t" yaseir_owned_strip_${tag}
-    StrCmp $R4 "$\"" yaseir_owned_strip_${tag}
-    Goto yaseir_owned_compare_${tag}
+    StrCmp $R4 ":" yaseir_owned_separator_${tag} yaseir_owned_reject_${tag}
   yaseir_owned_strip_${tag}:
     StrCpy $R2 $R2 "" 1
     Goto yaseir_owned_trim_${tag}
 
-  yaseir_owned_compare_${tag}:
-    StrLen $R3 "$INSTDIR\resources\${exe}"
-    StrCpy $R4 $R2 $R3
-    StrCmp $R4 "$INSTDIR\resources\${exe}" yaseir_owned_delim_${tag}
-    StrLen $R3 "$INSTDIR\${exe}"
-    StrCpy $R4 $R2 $R3
-    StrCmp $R4 "$INSTDIR\${exe}" yaseir_owned_delim_${tag}
+  yaseir_owned_separator_${tag}:
+    StrCpy $R2 $R2 "" 1
+  yaseir_owned_value_trim_${tag}:
+    StrCpy $R4 $R2 1
+    StrCmp $R4 " " yaseir_owned_value_strip_${tag}
+    StrCmp $R4 "$\t" yaseir_owned_value_strip_${tag}
+    Goto yaseir_owned_token_${tag}
+  yaseir_owned_value_strip_${tag}:
+    StrCpy $R2 $R2 "" 1
+    Goto yaseir_owned_value_trim_${tag}
+
+  ; Parse the executable token before comparing identity. Windows interprets
+  ; an unquoted path containing spaces ambiguously (for example C:\Program.exe
+  ; can win over C:\Program Files\...). A matching textual prefix is not proof.
+  yaseir_owned_token_${tag}:
+    StrCpy $R6 0
+    StrCpy $R4 $R2 1
+    StrCmp $R4 "$\"" yaseir_owned_quoted_${tag} yaseir_owned_unquoted_${tag}
+
+  yaseir_owned_quoted_${tag}:
+    StrCpy $R2 $R2 "" 1
+  yaseir_owned_quoted_scan_${tag}:
+    StrCpy $R4 $R2 1 $R6
+    StrCmp $R4 "" yaseir_owned_reject_${tag}
+    StrCmp $R4 "$\r" yaseir_owned_reject_${tag}
+    StrCmp $R4 "$\n" yaseir_owned_reject_${tag}
+    StrCmp $R4 "$\"" yaseir_owned_quoted_end_${tag}
+    IntOp $R6 $R6 + 1
+    Goto yaseir_owned_quoted_scan_${tag}
+
+  yaseir_owned_quoted_end_${tag}:
+    IntOp $R3 $R6 + 1
+    StrCpy $R5 $R2 1 $R3
+    StrCmp $R5 "" yaseir_owned_compare_${tag}
+    StrCmp $R5 " " yaseir_owned_compare_${tag}
+    StrCmp $R5 "$\t" yaseir_owned_compare_${tag}
+    StrCmp $R5 "$\r" yaseir_owned_compare_${tag}
+    StrCmp $R5 "$\n" yaseir_owned_compare_${tag}
     Goto yaseir_owned_reject_${tag}
 
-  yaseir_owned_delim_${tag}:
-    StrCpy $R5 $R2 1 $R3
-    StrCmp $R5 "" yaseir_owned_stop_${tag}
-    StrCmp $R5 "$\"" yaseir_owned_stop_${tag}
-    StrCmp $R5 " " yaseir_owned_stop_${tag}
-    StrCmp $R5 "$\t" yaseir_owned_stop_${tag}
-    StrCmp $R5 "$\r" yaseir_owned_stop_${tag}
-    StrCmp $R5 "$\n" yaseir_owned_stop_${tag}
+  yaseir_owned_unquoted_${tag}:
+    StrCpy $R4 $R2 1 $R6
+    StrCmp $R4 "" yaseir_owned_compare_${tag}
+    StrCmp $R4 " " yaseir_owned_compare_${tag}
+    StrCmp $R4 "$\t" yaseir_owned_compare_${tag}
+    StrCmp $R4 "$\r" yaseir_owned_compare_${tag}
+    StrCmp $R4 "$\n" yaseir_owned_compare_${tag}
+    StrCmp $R4 "$\"" yaseir_owned_reject_${tag}
+    IntOp $R6 $R6 + 1
+    Goto yaseir_owned_unquoted_${tag}
+
+  yaseir_owned_compare_${tag}:
+    StrCpy $R4 $R2 $R6
+    StrCmp $R4 "$INSTDIR\resources\${exe}" yaseir_owned_stop_${tag}
+    StrCmp $R4 "$INSTDIR\${exe}" yaseir_owned_stop_${tag}
     Goto yaseir_owned_reject_${tag}
 
   yaseir_owned_reject_${tag}:

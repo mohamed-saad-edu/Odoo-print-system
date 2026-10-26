@@ -139,6 +139,38 @@ describe("Desktop detail identity follows current Gateway evidence", () => {
     expect(jobDrawer()).toBeNull();
   });
 
+  it("keeps file-only drawer outcomes out of the physical print timeline", async () => {
+    fixture.jobs = [{ ...fixture.jobs[0], status: "success", outputMedium: "file", outputEvidence: null }];
+    await click(document.querySelector<HTMLButtonElement>('button[aria-label="Refresh all"]'));
+    await click([...document.querySelectorAll<HTMLButtonElement>("main button")].find((button) => button.textContent === "Details"));
+    expect(jobDrawer()?.textContent).toContain("PDF file creation is not confirmed");
+    expect(jobDrawer()?.textContent).not.toContain("Sent to printer");
+    expect(jobDrawer()?.querySelector('[role="group"]')).toBeNull();
+    expect(jobDrawer()?.textContent).not.toContain("The print service accepted the job");
+  });
+
+  it("preserves safe failed-file details without exposing local paths or paper guidance", async () => {
+    fixture.jobs = [{ ...fixture.jobs[0], status: "failed", outputMedium: "file", outputEvidence: null, error: "write C:\\private\\output.pdf: access is denied; secret=hidden" }];
+    await click(document.querySelector<HTMLButtonElement>('button[aria-label="Refresh all"]'));
+    await click([...document.querySelectorAll<HTMLButtonElement>("main button")].find((button) => button.textContent === "Details"));
+    expect(jobDrawer()?.textContent).toContain("Check the permissions of the approved output directory.");
+    expect(jobDrawer()?.textContent).not.toContain("private");
+    expect(jobDrawer()?.textContent).not.toContain("secret=hidden");
+    expect(jobDrawer()?.textContent).not.toContain("Sent to printer");
+    expect(jobDrawer()?.querySelector('[role="group"]')).toBeNull();
+  });
+
+  it.each(["LATE_SUCCESS:", "LATE_SUCCESS_POST_EXPIRATION:"])("keeps reconciled submission guidance for %s", async marker => {
+    fixture.jobs = [{ ...fixture.jobs[0], status: "success", error: `${marker} Original AGENT_EXECUTION_TIMEOUT; the original Agent confirmed submission` }];
+    await click(document.querySelector<HTMLButtonElement>('button[aria-label="Refresh all"]'));
+    await click([...document.querySelectorAll<HTMLButtonElement>("main button")].find((button) => button.textContent === "Details"));
+    expect(jobDrawer()?.textContent).toContain("Sent to printer");
+    expect(jobDrawer()?.textContent).toContain("The print service accepted the job; paper output is not verified.");
+    expect(jobDrawer()?.textContent).not.toContain("Printer did not respond in time.");
+    expect(jobDrawer()?.textContent).not.toContain("The printer operation could not be completed.");
+    expect(jobDrawer()?.textContent).not.toContain("Print completed");
+  });
+
   it("drops the previous Gateway inventory when a committed origin change loses its notification", async () => {
     await navigate("printers");
     expect(document.querySelector("main")?.textContent).toContain("First Gateway printer");

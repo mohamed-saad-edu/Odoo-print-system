@@ -119,7 +119,7 @@ export function OverviewPage({ s }: { s: DesktopState }) {
               <li key={jobId(j)} className="min-w-0 space-y-2 px-4 py-3">
                 <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
                   <span className="break-words text-base font-semibold text-ink">{jobDocType(j, locale)}</span>
-                  <StatusBadge tone={toneJob(jobStatus(j), j.error)} label={labelJob(jobStatus(j), j.error, locale)} />
+                  <StatusBadge tone={toneJob(jobStatus(j), j.error)} label={labelJob(jobStatus(j), j.error, locale, j)} />
                 </div>
                 <p className="truncate font-mono text-xs text-ink-3" dir="ltr" title={jobId(j)}>{jobId(j)}</p>
                 <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs text-ink-3">
@@ -133,7 +133,7 @@ export function OverviewPage({ s }: { s: DesktopState }) {
           <div className="hidden min-w-0 overflow-x-auto lg:block">
             <table className="data-table min-w-[720px] text-base">
               <thead><tr><th>{t("desktop.overview.colDocument")}</th><th>{t("desktop.overview.colPrinter")}</th><th>{t("desktop.overview.colStatus")}</th><th className="text-end">{t("desktop.overview.colUpdated")}</th></tr></thead>
-              <tbody>{s.jobs.slice(0, 5).map((j) => (<tr key={jobId(j)}><td><div className="break-words text-base font-semibold text-ink">{jobDocType(j, locale)}</div><div className="font-mono text-xs text-ink-3">{jobId(j)}</div></td><td className="text-ink-2">{String(s.printers.find((p) => p.id === jobPrinterId(j))?.name || jobPrinterId(j) || "—")}</td><td><StatusBadge tone={toneJob(jobStatus(j), j.error)} label={labelJob(jobStatus(j), j.error, locale)} /></td><td className="text-end text-xs text-ink-3">{formatDateTime(jobTimestamp(j, "updatedAt"))}</td></tr>))}</tbody>
+              <tbody>{s.jobs.slice(0, 5).map((j) => (<tr key={jobId(j)}><td><div className="break-words text-base font-semibold text-ink">{jobDocType(j, locale)}</div><div className="font-mono text-xs text-ink-3">{jobId(j)}</div></td><td className="text-ink-2">{String(s.printers.find((p) => p.id === jobPrinterId(j))?.name || jobPrinterId(j) || "—")}</td><td><StatusBadge tone={toneJob(jobStatus(j), j.error)} label={labelJob(jobStatus(j), j.error, locale, j)} /></td><td className="text-end text-xs text-ink-3">{formatDateTime(jobTimestamp(j, "updatedAt"))}</td></tr>))}</tbody>
             </table>
           </div>
           </>

@@ -236,10 +236,10 @@ export function toneJob(status: string, error?: unknown): Tone {
 /* ---------- Human-friendly descriptions ---------- */
 
 export function humanType(p: PrinterInfo, locale: Locale = DEFAULT_LOCALE): string {
-  // Device class (thermal/laser/inkjet/label/other/unknown) — NOT printer_type,
-  // which is physical/virtual/redirected. Reading printer_type here made the
-  // thermal/label/laser/inkjet branches dead code.
-  const deviceClass = (p.device_class || p.deviceClass || "").toLowerCase();
+  // The local CLI retains device classes in printerType; Gateway uses deviceClass.
+  const legacyClass = (p.printerType || p.printer_type || "").toLowerCase();
+  const deviceClass = (p.device_class || p.deviceClass ||
+    (["thermal", "laser", "inkjet", "label"].includes(legacyClass) ? legacyClass : "")).toLowerCase();
   if (deviceClass === "thermal" || deviceClass === "label") return tr(locale, "desktop.type.thermal");
   if (deviceClass === "laser") return tr(locale, "desktop.type.laser");
   if (deviceClass === "inkjet") return tr(locale, "desktop.type.inkjet");

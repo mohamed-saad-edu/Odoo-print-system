@@ -65,14 +65,7 @@ fn build_menu(app: &tauri::AppHandle, locale: &str) -> tauri::Result<Menu<tauri:
 
     Menu::with_items(
         app,
-        &[
-            &status_header,
-            &open,
-            &gateway,
-            &settings,
-            &restart,
-            &quit,
-        ],
+        &[&status_header, &open, &gateway, &settings, &restart, &quit],
     )
 }
 
