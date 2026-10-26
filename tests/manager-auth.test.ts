@@ -157,20 +157,28 @@ suite("manager authentication hardening", () => {
   });
 
   it("anchors v2 session creation and verification to PostgreSQL when the host clock is skewed", async () => {
-    const dbNow = Number((await pool().query(
+    // The DB advances while the request is in flight. A separate SQL clock
+    // sample can straddle a second boundary; use both DB samples so a real
+    // PostgreSQL-authority regression still fails without a flaky equality.
+    const dbBefore = Number((await pool().query(
       "SELECT FLOOR(EXTRACT(EPOCH FROM clock_timestamp()))::bigint AS now_sec",
     )).rows[0].now_sec);
 
     vi.useFakeTimers();
-    vi.setSystemTime(new Date((dbNow + 24 * 60 * 60) * 1000));
+    vi.setSystemTime(new Date((dbBefore + 24 * 60 * 60) * 1000));
     const created = await createVerifiedEnvironmentSession();
+    const dbAfter = Number((await pool().query(
+      "SELECT FLOOR(EXTRACT(EPOCH FROM clock_timestamp()))::bigint AS now_sec",
+    )).rows[0].now_sec);
 
-    expect(Math.floor(created.exp.getTime() / 1000)).toBe(dbNow + 15 * 60);
+    const expiresAt = Math.floor(created.exp.getTime() / 1000);
+    expect(expiresAt).toBeGreaterThanOrEqual(dbBefore + 15 * 60);
+    expect(expiresAt).toBeLessThanOrEqual(dbAfter + 15 * 60);
     await expect(verifyManagerToken(created.token)).resolves.toMatchObject({ jti: created.jti });
 
     // v2 access JWTs are stateless; manager_sessions is the legacy-session
     // compatibility store and must not control v2 access-token expiry.
-    vi.setSystemTime(new Date((dbNow - 24 * 60 * 60) * 1000));
+    vi.setSystemTime(new Date((dbBefore - 24 * 60 * 60) * 1000));
     await expect(verifyManagerToken(created.token)).resolves.toMatchObject({ jti: created.jti });
   });
 

@@ -2365,10 +2365,17 @@ class TestControlPlane(TransactionCase):
                 get_public_method(self.env["print_gateway.print_job"], name)
         with self.assertRaises(AccessError):
             get_public_method(self.env["print_gateway.intent"], "cron_recover_pending_intents")
-        # Legitimately public entrypoints remain RPC-reachable (their model
-        # guards are tested behaviorally elsewhere):
+        # Odoo 19 @api.private protects routing resolution regardless of the
+        # caller's user privileges: an operator cannot select arbitrary
+        # company/branch printer routes remotely. This must never be made
+        # public merely to satisfy the RPC contract test.
         binding = self.env["print_gateway.binding"]
-        for name in ("dispatch_report_action", "action_send_test_print", "find_for"):
+        for recordset in (binding, binding.with_user(user)):
+            with self.assertRaises(AccessError):
+                get_public_method(recordset, "find_for")
+        # Legitimately public entrypoints remain RPC-reachable; their model
+        # ACLs and company checks are tested behaviorally elsewhere.
+        for name in ("dispatch_report_action", "action_send_test_print"):
             self.assertTrue(callable(get_public_method(binding, name)))
         self.assertTrue(callable(get_public_method(self.env["print_gateway.intent"], "action_rearm_intent")))
         self.assertTrue(callable(get_public_method(self.env["print_gateway.print_job"], "action_retry")))
