@@ -28,8 +28,8 @@ ARCHITECTURE_DOC = ROOT / "ARCHITECTURE.md"
 
 # Schema-qualified names are important: moving provider event history into
 # legacy_billing is not a new public table or a dropped audit record.
-IDENT = r'(?:(?P<schema>"?[A-Za-z_][A-Za-z0-9_]*"?)\s*\.\s*)?(?P<table>"?[A-Za-z_][A-Za-z0-9_]*"?)'
-CREATE_RE = re.compile(r'\bCREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?' + IDENT, re.I)
+IDENT = r'(?:(?P<schema>"?[A-Za-z_][A-Za-z0-9_]*"?)\s*\.\s*)?(?P<table>"?[A-Za-z_][A-Za-z0-9_]*"?)(?![A-Za-z0-9_$]|\s*\.)'
+CREATE_RE = re.compile(r'\bCREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?!IF\b)' + IDENT, re.I)
 DROP_RE = re.compile(r'\bDROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?' + IDENT, re.I)
 MOVE_RE = re.compile(r'\bALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?' + IDENT +
                      r'\s+SET\s+SCHEMA\s+"?([A-Za-z_][A-Za-z0-9_]*)"?', re.I)

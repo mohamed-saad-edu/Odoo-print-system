@@ -25,6 +25,14 @@ provider events and old period usage into a **non-public**
 `legacy_billing` schema. Operational roles must not query the archive. No
 operator UI, customer API or runtime authorization path uses this schema.
 
+The migration runner archives every retired field and source row before
+pending migration `0098`, including currency, interval, trial timestamps and
+checkout/operation metadata. This runs in the migration transaction and
+preserves the published SQL checksum. Use the runner; executing `0098` alone
+omits some historical fields. If `0098` was already applied by an older
+runner, recovery of omitted fields requires a pre-cutover backup or external
+history; the remaining schema cannot reconstruct them.
+
 Previously unapproved subscriptions carrying provider identities move to
 `awaiting_activation` with a manual-review block. Owner-approved changes
 (`save` or `renew`) and manual monthly usage remain unchanged.

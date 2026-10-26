@@ -66,12 +66,12 @@ async function identity(client) {
 async function objects(client) {
   return (await client.query(`
     SELECT 'DATABASE' AS kind, quote_ident(datname) AS name, pg_get_userbyid(datdba) AS owner, datacl::text AS acl, 'd' AS aclkind, datdba AS owneroid FROM pg_database WHERE datname IN (current_database(),'postgres','template1')
-    UNION ALL SELECT 'SCHEMA',quote_ident(nspname),pg_get_userbyid(nspowner),nspacl::text,'n',nspowner FROM pg_namespace WHERE nspname IN ('public','drizzle','legacy_billing')
+    UNION ALL SELECT 'SCHEMA',quote_ident(nspname),pg_get_userbyid(nspowner),nspacl::text,'n',nspowner FROM pg_namespace WHERE nspname IN ('public','drizzle','legacy_billing','legacy_printing')
     UNION ALL SELECT CASE c.relkind WHEN 'S' THEN 'SEQUENCE' WHEN 'v' THEN 'VIEW' WHEN 'm' THEN 'MATERIALIZED VIEW' WHEN 'f' THEN 'FOREIGN TABLE' ELSE 'TABLE' END,
       format('%I.%I',n.nspname,c.relname),pg_get_userbyid(c.relowner),c.relacl::text,CASE WHEN c.relkind='S' THEN 's' ELSE 'r' END,c.relowner
-      FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname IN ('public','drizzle','legacy_billing') AND c.relkind IN ('r','p','S','v','m','f')
+      FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname IN ('public','drizzle','legacy_billing','legacy_printing') AND c.relkind IN ('r','p','S','v','m','f')
     UNION ALL SELECT CASE p.prokind WHEN 'p' THEN 'PROCEDURE' ELSE 'FUNCTION' END,p.oid::regprocedure::text,pg_get_userbyid(p.proowner),p.proacl::text,'f',p.proowner
-      FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname IN ('public','drizzle','legacy_billing') AND p.prokind IN ('f','p')
+      FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname IN ('public','drizzle','legacy_billing','legacy_printing') AND p.prokind IN ('f','p')
     ORDER BY kind,name
   `)).rows;
 }
@@ -102,13 +102,13 @@ async function checkDedicatedCluster(client, config) {
   const otherDatabases = (await client.query("SELECT datname FROM pg_database WHERE datname<>ALL($1::text[])", [[config.database, "postgres", "template0", "template1"]])).rows;
   const otherRoles = (await client.query("SELECT rolname FROM pg_roles WHERE rolname NOT LIKE 'pg\\_%' ESCAPE '\\' AND rolname<>ALL($1::text[])", [[config.bootstrap, config.owner, config.runtime]])).rows;
   if (otherDatabases.length || otherRoles.length) throw new Error("Dedicated cluster required; unrelated databases or roles need an operator-reviewed external role profile");
-  const otherSchemas = (await client.query("SELECT nspname FROM pg_namespace WHERE nspname NOT LIKE 'pg\\_%' ESCAPE '\\' AND nspname<>ALL($1::text[])", [["public", "drizzle", "information_schema", "legacy_billing"]])).rows;
+  const otherSchemas = (await client.query("SELECT nspname FROM pg_namespace WHERE nspname NOT LIKE 'pg\\_%' ESCAPE '\\' AND nspname<>ALL($1::text[])", [["public", "drizzle", "information_schema", "legacy_billing", "legacy_printing"]])).rows;
   if (otherSchemas.length) throw new Error("Unexpected application schema; refusing ownership changes");
   const active = (await client.query("SELECT count(*)::int n FROM pg_stat_activity WHERE datname=current_database() AND pid<>pg_backend_pid() AND backend_type='client backend'")).rows[0].n;
   if (active) throw new Error("Stop Gateway, migration and other target-database clients before applying or rolling back role privileges");
-  const unsafeFunctions = (await client.query("SELECT count(*)::int n FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname IN ('public','drizzle','legacy_billing') AND (p.prosecdef OR p.prokind NOT IN ('f','p'))")).rows[0].n;
+  const unsafeFunctions = (await client.query("SELECT count(*)::int n FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname IN ('public','drizzle','legacy_billing','legacy_printing') AND (p.prosecdef OR p.prokind NOT IN ('f','p'))")).rows[0].n;
   if (unsafeFunctions) throw new Error("Security-definer or unsupported routines require explicit privilege review");
-  const customTypes = (await client.query("SELECT count(*)::int n FROM pg_type t JOIN pg_namespace n ON n.oid=t.typnamespace WHERE n.nspname IN ('public','drizzle','legacy_billing') AND t.typtype IN ('e','d','r')")).rows[0].n;
+  const customTypes = (await client.query("SELECT count(*)::int n FROM pg_type t JOIN pg_namespace n ON n.oid=t.typnamespace WHERE n.nspname IN ('public','drizzle','legacy_billing','legacy_printing') AND t.typtype IN ('e','d','r')")).rows[0].n;
   if (customTypes) throw new Error("Custom type ownership requires explicit privilege review");
 }
 
@@ -211,11 +211,11 @@ export async function rollbackProfile(client, config, stateFile) {
 export async function verifyRuntime(client, expectedUser) {
   const role = (await client.query("SELECT current_user AS name,rolsuper,rolcreatedb,rolcreaterole,rolreplication,rolbypassrls FROM pg_roles WHERE rolname=current_user")).rows[0];
   if (role.name !== expectedUser || ["rolsuper", "rolcreatedb", "rolcreaterole", "rolreplication", "rolbypassrls"].some(key => role[key])) throw new Error("Runtime role has forbidden cluster authority");
-  const capability = (await client.query("SELECT has_database_privilege(current_database(),'CREATE') AS ddl,has_database_privilege(current_database(),'TEMP') AS temp,has_schema_privilege('public','CREATE') AS schema_create,has_schema_privilege('drizzle','USAGE') AS ledger_access,COALESCE(has_schema_privilege(to_regnamespace('legacy_billing'),'USAGE'),false) AS archive_access,(SELECT count(*)::int FROM pg_auth_members WHERE member=(SELECT oid FROM pg_roles WHERE rolname=current_user)) AS memberships,(SELECT count(*)::int FROM pg_database WHERE datname<>current_database() AND datallowconn AND has_database_privilege(oid,'CONNECT')) AS other_databases")).rows[0];
+  const capability = (await client.query("SELECT has_database_privilege(current_database(),'CREATE') AS ddl,has_database_privilege(current_database(),'TEMP') AS temp,has_schema_privilege('public','CREATE') AS schema_create,has_schema_privilege('drizzle','USAGE') AS ledger_access,COALESCE(has_schema_privilege(to_regnamespace('legacy_billing'),'USAGE'),false) AS archive_access,COALESCE(has_schema_privilege(to_regnamespace('legacy_printing'),'USAGE'),false) AS printing_archive_access,(SELECT count(*)::int FROM pg_auth_members WHERE member=(SELECT oid FROM pg_roles WHERE rolname=current_user)) AS memberships,(SELECT count(*)::int FROM pg_database WHERE datname<>current_database() AND datallowconn AND has_database_privilege(oid,'CONNECT')) AS other_databases")).rows[0];
   if (Object.values(capability).some(Boolean)) throw new Error("Runtime role has forbidden schema, ledger, membership or cross-database privileges");
   const objectAuthority = (await client.query(`SELECT
     (SELECT count(*)::int FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
-      WHERE n.nspname IN ('public','drizzle','legacy_billing') AND c.relowner=(SELECT oid FROM pg_roles WHERE rolname=current_user)) AS owned_relations,
+      WHERE n.nspname IN ('public','drizzle','legacy_billing','legacy_printing') AND c.relowner=(SELECT oid FROM pg_roles WHERE rolname=current_user)) AS owned_relations,
     (SELECT count(*)::int FROM pg_namespace WHERE nspowner=(SELECT oid FROM pg_roles WHERE rolname=current_user)) AS owned_schemas,
     (SELECT count(*)::int FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
       WHERE n.nspname='public' AND CASE WHEN c.relkind IN ('r','p') THEN
@@ -224,7 +224,7 @@ export async function verifyRuntime(client, expectedUser) {
     (SELECT count(*)::int FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
       WHERE n.nspname='public' AND CASE WHEN c.relkind='S' THEN has_sequence_privilege(c.oid,'UPDATE') ELSE false END) AS excess_sequence_privileges,
     (SELECT count(*)::int FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
-      WHERE n.nspname='legacy_billing' AND CASE
+      WHERE n.nspname IN ('legacy_billing','legacy_printing') AND CASE
         WHEN c.relkind IN ('r','p','v','m','f') THEN
           has_table_privilege(c.oid,'SELECT') OR has_table_privilege(c.oid,'INSERT') OR
           has_table_privilege(c.oid,'UPDATE') OR has_table_privilege(c.oid,'DELETE') OR
@@ -235,7 +235,7 @@ export async function verifyRuntime(client, expectedUser) {
         WHEN c.relkind='S' THEN has_sequence_privilege(c.oid,'USAGE') OR has_sequence_privilege(c.oid,'SELECT') OR has_sequence_privilege(c.oid,'UPDATE')
         ELSE false END) AS archived_table_access,
     (SELECT count(*)::int FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
-      WHERE n.nspname IN ('public','drizzle','legacy_billing') AND (p.proowner=(SELECT oid FROM pg_roles WHERE rolname=current_user)
+      WHERE n.nspname IN ('public','drizzle','legacy_billing','legacy_printing') AND (p.proowner=(SELECT oid FROM pg_roles WHERE rolname=current_user)
         OR (p.prosecdef AND has_function_privilege(p.oid,'EXECUTE')))) AS unsafe_routines`)).rows[0];
   if (Object.values(objectAuthority).some(Boolean)) throw new Error("Runtime role has forbidden object ownership, table or routine authority");
   const missing = (await client.query(`SELECT
