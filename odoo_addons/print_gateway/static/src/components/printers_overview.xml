@@ -12,7 +12,7 @@
                     <label t-else="" class="form-label">Company or branch</label>
                     <select t-if="showScopeSelector" id="pg_inventory_scope" class="form-select" t-on-change="changeScope" t-att-value="state.scopeId">
                         <option value="0" disabled="disabled" t-att-selected="state.scopeId === 0">Choose a company or branch</option>
-                        <option t-foreach="assignableScopes" t-as="scopeOption" t-key="scopeOption.id" t-att-selected="scopeOption.id === state.scopeId" t-att-value="scopeOption.id" t-esc="scopeOption.label"/>
+                        <option t-foreach="state.scopes" t-as="scope" t-key="scope.id" t-att-selected="scope.id === state.scopeId" t-att-disabled="scope.assignable === false" t-att-value="scope.id" t-esc="scope.label"/>
                     </select>
                     <div t-else="" class="form-control bg-light" role="status"><bdi t-esc="scope.label"/></div>
                 </div>

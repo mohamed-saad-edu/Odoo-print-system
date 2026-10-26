@@ -1,6 +1,15 @@
 # Odoo Integration Guide
 
-> Module: `print_gateway` | Version: 19.0.2.25.0 | Odoo: 19 Community Edition
+> Module: `print_gateway` | Version: 19.0.2.27.0 | Odoo: 19 Community Edition
+
+## 19.0.2.27.0: streamlined customer setup
+
+The customer inventory opens to the authorized company/branch. With only one
+assignable scope, its name is shown without asking the user to select it again;
+multiple scopes remain explicit. Nested branches remain visible but disabled
+in the selector and are rejected by the server. Selecting a printer does not
+create an Agent assignment. The connection form hides optional explanations
+under expandable details while retaining the same authorization and sync state.
 
 ## Printer company/branch dropdown repair (19.0.2.22.0)
 
@@ -75,7 +84,7 @@ certified in this release. Do **not** remove or merge companies to fix labels.
    restore into a separate, disposable PostgreSQL database first.
 3. Copy **only** `odoo_addons/print_gateway/` from this final V5 source
    into the instance's existing addons location. Verify the new manifest
-   version `19.0.2.25.0` there and do not overwrite other addons.
+   version `19.0.2.27.0` there and do not overwrite other addons.
 4. With the Odoo HTTP workers stopped according to that instance's
    deployment procedure, run the non-destructive module upgrade against
    the correct database. Substitute real deployment values, not example

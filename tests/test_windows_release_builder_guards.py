@@ -91,3 +91,17 @@ def test_native_ci_exercises_only_pure_production_helpers_before_packaging():
     assert "Invoke-Expression $definitions[0].Extent.Text" in behavioral
     assert "HashMismatch" in behavioral and "NotTrusted" in behavioral and "DIFFERENT" in behavioral
     assert not re.search(r"(?m)^\s*(?:&|\.)\s*\$builder", behavioral)
+
+
+def test_nsis_installed_manager_uses_cryptographic_signature_check_after_tauri_patching():
+    # Tauri patches and signs the NSIS executable, then restores the original
+    # release EXE. Comparing those two different artifacts by SHA is invalid.
+    step = WORKFLOW.split("- name: Install, smoke-test, and fully uninstall NSIS package", 1)[1].split("\n      - name:", 1)[0]
+    assert "Get-AuthenticodeSignature -LiteralPath $managerPath" in step
+    assert '$managerSignature.Status -ne "Valid"' in step
+    assert '$managerSignature.SignerCertificate.Thumbprint -ne $env:YASEIR_SIGNING_THUMBPRINT' in step
+    assert 'Cannot verify NSIS-installed Manager without its expected signing thumbprint' in step
+    assert "'agent\\YaseirAgent.exe' = 'resources\\YaseirAgent.exe'" in step
+    assert "'agent\\yaseir-agent-cli.exe' = 'resources\\yaseir-agent-cli.exe'" in step
+    assert 'if ($installedHash -ne $expectedHash)' in step
+    assert "'src-tauri\\target\\x86_64-pc-windows-msvc\\release\\yaseir-manager.exe' =" not in step

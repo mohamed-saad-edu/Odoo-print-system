@@ -544,10 +544,31 @@ jobs:
           }
           Write-Host "NSIS preserved legacy Agent config path: $nsisPathName"
 
-          # Test the exact bytes built by this job, even for the explicitly
-          # untrusted internal-test signer. Existence alone can accept stale files.
+          # Tauri patches the Manager PE with the NSIS bundle marker and
+          # re-signs that packaged binary. It then restores the pre-bundle
+          # release executable, so the release/manager.exe SHA-256 is NOT the
+          # digest of the signed executable embedded in the NSIS payload.
+          # Verify the installed Manager's entire signed payload with the
+          # expected signer identity instead of comparing it to wrong bytes.
+          $managerPath = Join-Path $installDir "yaseir-manager.exe"
+          if (-not (Test-Path -LiteralPath $managerPath -PathType Leaf)) {
+            throw "NSIS did not install the Manager executable"
+          }
+          if ([string]::IsNullOrWhiteSpace($env:YASEIR_SIGNING_THUMBPRINT)) {
+            throw "Cannot verify NSIS-installed Manager without its expected signing thumbprint"
+          }
+          $managerSignature = Get-AuthenticodeSignature -LiteralPath $managerPath
+          if ($managerSignature.Status -ne "Valid" -or
+              -not $managerSignature.SignerCertificate -or
+              $managerSignature.SignerCertificate.Thumbprint -ne $env:YASEIR_SIGNING_THUMBPRINT) {
+            throw "NSIS-installed Manager signature or signer identity mismatch: $($managerSignature.Status)"
+          }
+          $managerHash = (Get-FileHash -LiteralPath $managerPath -Algorithm SHA256).Hash
+          Write-Host "Verified NSIS-installed Manager signature and SHA-256: $managerHash"
+
+          # Go resources are signed before bundling and are NOT re-patched.
+          # The strict source-vs-installed SHA-256 check must remain here.
           $installedFiles = @{
-            'src-tauri\target\x86_64-pc-windows-msvc\release\yaseir-manager.exe' = 'yaseir-manager.exe'
             'agent\YaseirAgent.exe' = 'resources\YaseirAgent.exe'
             'agent\yaseir-agent-cli.exe' = 'resources\yaseir-agent-cli.exe'
           }
