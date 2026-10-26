@@ -33,6 +33,7 @@ type SettingsPayload = {
   tenant?: { id?: string; name?: string; createdAt?: string };
   email?: string;
   role?: string;
+  platformOwner?: boolean;
 };
 
 function securityDestinationSnapshot() {
@@ -51,6 +52,7 @@ export default function SettingsPage() {
   const { t, formatDate } = useI18n();
   const [email, setEmail] = useState("");
   const [role, setRole] = useState("");
+  const [platformOwner, setPlatformOwner] = useState(false);
   const [tenantCreatedAt, setTenantCreatedAt] = useState<string | null>(null);
   const [message, setMessage] = useState<{ text: string; type: "ok" | "err" } | null>(null);
   const [busy, setBusy] = useState(false);
@@ -69,6 +71,7 @@ export default function SettingsPage() {
         if (!nameEdited.current) setName(d.tenant?.name ?? "");
         setEmail(d.email ?? "");
         setRole(d.role ?? "");
+        setPlatformOwner(d.platformOwner === true);
         setTenantCreatedAt(d.tenant?.createdAt ?? null);
       })
       .catch((e) => { if (!cancelled) setMessage({ text: e instanceof Error ? e.message : t("settings.loadFailed"), type: "err" }); })
@@ -180,7 +183,7 @@ export default function SettingsPage() {
                 <KeyValueList
                   rows={[
                     { label: t("settings.signedInAs"), value: email || "—" },
-                    { label: t("settings.role"), value: <span>{roleLabel(role, t)}</span> },
+                    { label: t("settings.role"), value: <span>{platformOwner ? t("team.platformOwner") : roleLabel(role, t)}</span> },
                     {
                       label: t("settings.workspaceCreated"),
                       value: tenantCreatedAt ? formatDate(tenantCreatedAt) : "—",

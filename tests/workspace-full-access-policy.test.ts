@@ -52,7 +52,9 @@ describe("one operational Full Access for every workspace membership", () => {
     const platform = readFileSync(join(process.cwd(), "src/app/api/platform/tenants/[id]/invitations/route.ts"), "utf8");
     const sql = readFileSync(join(process.cwd(), "drizzle/0096_retire_limited_workspace_roles.sql"), "utf8");
     expect(page).not.toMatch(/ROLE_VALUES|roleOptions\(|updateRole\(|<Select/);
-    expect(page).not.toContain("/api/team/invitations");
+    expect(page).toContain("/api/team/invitations?limit=");
+    expect(page).toContain("verifyPlatformOwnerPassword");
+    expect(page).toContain('t("team.platformOwner")');
     expect(platform).toContain("requirePlatformActorInTransaction");
     expect(platform).toContain("assertPlatformTeamOrigin");
     expect(platform).toContain('role: "admin"');

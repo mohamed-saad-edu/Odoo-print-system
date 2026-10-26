@@ -494,6 +494,8 @@ export const ar: Catalog = {
   "team.member": "العضو",
   "team.role": "الصلاحية",
   "team.invite": "دعوة زميل",
+  "team.platformOwner": "مالك المنصة",
+  "team.deliveryUnconfirmed": "تم حفظ الدعوة لكن لم نتمكن من تأكيد وصول البريد. راجع الدعوات المعلقة قبل إعادة الإرسال.",
   "team.inviteEmail": "عنوان البريد الإلكتروني",
   "team.inviteSubmit": "إرسال الدعوة",
   "team.inviteSending": "جارٍ الإرسال…",

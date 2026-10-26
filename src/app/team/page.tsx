@@ -2,24 +2,56 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Users } from "lucide-react";
+import { Crown, Mail, Users } from "lucide-react";
 import { useI18n } from "../../i18n/react";
 import { ensureCustomerSession } from "../../lib/session-config";
 import { fetchWithTimeout } from "../../lib/fetch-timeout";
-import { Avatar, Button, Card, CardHeader, PageContainer, PageHeader, StatusBadge } from "../../components/ui";
+import { codeMessageKey } from "../../lib/api-error-keys";
+import { Avatar, Button, Card, CardHeader, Input, PageContainer, PageHeader, StatusBadge } from "../../components/ui";
 
-type Member = { userId: string; email: string };
+type Member = { userId: string; email: string; platformOwner: boolean };
+type Invitation = { id: string; email: string; expiresAt: string };
+type Profile = { userId: string; email: string; platformOwner: boolean; tenant: { id: string } };
+type Notice = { kind: "ok" | "err" | "warn"; message: string };
 const PAGE_SIZE = 50;
 
-/** Workspace teammates have one fixed operational access level, no selectable roles. */
+/** A workspace session alone is NEVER proof that the actor may create invitations.
+ * The existing Platform Owner login/reauth endpoint verifies the password and
+ * establishes the separate Platform Owner session for every write. */
+async function verifyPlatformOwnerPassword(profile: Profile, password: string): Promise<void> {
+  const me = await fetchWithTimeout("/api/platform/auth/me", {
+    credentials: "include", cache: "no-store",
+  });
+  if (!me.ok && me.status !== 401) throw new Error("PLATFORM_SESSION_UNAVAILABLE");
+  const current = me.ok ? await me.json() as { userId?: string } : null;
+  const reauth = current?.userId === profile.userId;
+  const proof = await fetchWithTimeout(reauth
+    ? "/api/platform/auth/reauth"
+    : "/api/platform/auth/login", {
+    method: "POST", credentials: "include", cache: "no-store",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(reauth ? { password } : { email: profile.email, password }),
+  });
+  if (!proof.ok) throw new Error("PLATFORM_PASSWORD_REJECTED");
+}
+
 export default function TeamPage() {
-  const { t } = useI18n();
+  const { t, formatDate } = useI18n();
   const router = useRouter();
+  const [profile, setProfile] = useState<Profile | null>(null);
   const [members, setMembers] = useState<Member[]>([]);
-  const [offset, setOffset] = useState(0);
-  const [hasMore, setHasMore] = useState(false);
+  const [invitations, setInvitations] = useState<Invitation[]>([]);
+  const [memberOffset, setMemberOffset] = useState(0);
+  const [inviteOffset, setInviteOffset] = useState(0);
+  const [moreMembers, setMoreMembers] = useState(false);
+  const [moreInvitations, setMoreInvitations] = useState(false);
+  const [revision, setRevision] = useState(0);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(false);
+  const [loadError, setLoadError] = useState(false);
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState<Notice | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -27,46 +59,222 @@ export default function TeamPage() {
       try {
         const session = await ensureCustomerSession();
         if (cancelled) return;
-        if (!session.authenticated) { router.replace("/login?next=%2Fteam"); return; }
-        const response = await fetchWithTimeout(`/api/team/members?limit=${PAGE_SIZE}&offset=${offset}`, { credentials: "include", cache: "no-store" });
-        if (!response.ok) throw new Error("Members unavailable");
-        const data = await response.json() as { members: Member[]; hasMore: boolean };
+        if (!session.authenticated) {
+          router.replace("/login?next=%2Fteam");
+          return;
+        }
+        const [membersRes, invitesRes, settingsRes] = await Promise.all([
+          fetchWithTimeout(`/api/team/members?limit=${PAGE_SIZE}&offset=${memberOffset}`, {
+            credentials: "include", cache: "no-store",
+          }),
+          fetchWithTimeout(`/api/team/invitations?limit=${PAGE_SIZE}&offset=${inviteOffset}`, {
+            credentials: "include", cache: "no-store",
+          }),
+          fetchWithTimeout("/api/settings", {
+            credentials: "include", cache: "no-store",
+          }),
+        ]);
+        if (!membersRes.ok || !invitesRes.ok || !settingsRes.ok) throw new Error("TEAM_LIST_UNAVAILABLE");
+        const [team, pending, account] = await Promise.all([
+          membersRes.json() as Promise<{ members: Member[]; hasMore: boolean }>,
+          invitesRes.json() as Promise<{ invitations: Invitation[]; hasMore: boolean }>,
+          settingsRes.json() as Promise<Profile>,
+        ]);
         if (cancelled) return;
-        setMembers(previous => offset === 0 ? (data.members ?? []) : [...previous, ...(data.members ?? [])]);
-        setHasMore(data.hasMore === true);
-        setError(false);
+        setMembers(team.members ?? []);
+        setMoreMembers(team.hasMore === true);
+        setInvitations(pending.invitations ?? []);
+        setMoreInvitations(pending.hasMore === true);
+        setProfile(account);
+        setLoadError(false);
       } catch {
-        if (!cancelled) setError(true);
+        if (!cancelled) setLoadError(true);
       } finally {
         if (!cancelled) setLoading(false);
       }
     })();
     return () => { cancelled = true; };
-  }, [offset, router]);
+  }, [memberOffset, inviteOffset, revision, router]);
+
+  function refresh() {
+    setLoading(true);
+    setRevision(value => value + 1);
+  }
+
+  async function sendInvitation(event: React.FormEvent) {
+    event.preventDefault();
+    if (!profile?.platformOwner || busy || !password) return;
+    const invitedEmail = email.trim();
+    if (!invitedEmail) return;
+    const secret = password;
+    setPassword("");
+    setBusy(true);
+    setNotice(null);
+    try {
+      await verifyPlatformOwnerPassword(profile, secret);
+      const base = "/api/platform/tenants/" + encodeURIComponent(profile.tenant.id);
+      const response = await fetchWithTimeout(`${base}/invitations`, {
+        method: "POST", credentials: "include", cache: "no-store",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: invitedEmail }),
+      });
+      const result = await response.json().catch(() => ({})) as { code?: string };
+      if (response.status === 503 && result.code === "INVITATION_DELIVERY_UNAVAILABLE") {
+        setNotice({ kind: "warn", message: t("team.deliveryUnconfirmed") });
+        setEmail("");
+        if (inviteOffset !== 0) setInviteOffset(0);
+        else refresh();
+        return;
+      }
+      if (!response.ok) throw new Error(t(codeMessageKey(result.code) ?? "team.invitationFailed"));
+      setEmail("");
+      setNotice({ kind: "ok", message: t("success.invitationSent") });
+      if (inviteOffset !== 0) setInviteOffset(0);
+      else refresh();
+    } catch (error) {
+      setNotice({ kind: "err", message: error instanceof Error && error.message !== "PLATFORM_PASSWORD_REJECTED" &&
+        error.message !== "PLATFORM_SESSION_UNAVAILABLE"
+        ? error.message : t("team.invitationFailed") });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function revokeInvitation(id: string) {
+    if (!profile?.platformOwner || busy || !password) return;
+    const secret = password;
+    setPassword("");
+    setBusy(true);
+    setNotice(null);
+    try {
+      await verifyPlatformOwnerPassword(profile, secret);
+      const base = "/api/platform/tenants/" + encodeURIComponent(profile.tenant.id);
+      const response = await fetchWithTimeout(`${base}/invitations?id=${encodeURIComponent(id)}`, {
+        method: "DELETE", credentials: "include", cache: "no-store",
+      });
+      const result = await response.json().catch(() => ({})) as { code?: string };
+      if (!response.ok) throw new Error(t(codeMessageKey(result.code) ?? "team.invitationRevocationFailed"));
+      setNotice({ kind: "ok", message: t("success.invitationRevoked") });
+      if (invitations.length === 1 && inviteOffset > 0) {
+        setLoading(true);
+        setInviteOffset(Math.max(0, inviteOffset - PAGE_SIZE));
+      } else refresh();
+    } catch {
+      setNotice({ kind: "err", message: t("team.invitationRevocationFailed") });
+    } finally {
+      setBusy(false);
+    }
+  }
 
   return (
     <>
-      <PageHeader width="wide" eyebrow={t("nav.section.administration")} icon={<Users className="h-4 w-4" />}
+      <PageHeader width="wide" eyebrow={t("nav.section.administration")}
+        icon={<Users className="h-4 w-4" />}
         title={t("nav.team")} description={t("team.membersDescription")} />
       <PageContainer width="wide">
-        <Card>
-          <CardHeader title={t("team.members")} subtitle={t("v4.team.fullAccessBody")} icon={<Users className="h-4 w-4" />} />
-          {error && <p role="alert" className="p-5 text-bad">{t("team.loadFailed")}</p>}
-          <ul className="divide-y divide-edge-subtle">
-            {members.map(member => (
-              <li key={member.userId} className="flex items-center justify-between gap-3 p-4">
-                <span className="flex min-w-0 items-center gap-3"><Avatar name={member.email} size="sm" />
-                  <span className="truncate text-sm font-semibold">{member.email}</span></span>
-                <StatusBadge tone="info" label={t("v4.team.fullAccess")} />
-              </li>
-            ))}
-          </ul>
-          {loading && <p role="status" className="p-5 text-sm text-ink-3">{t("common.loading")}</p>}
-          {!loading && !error && members.length === 0 && <p className="p-5 text-sm text-ink-3">{t("empty.members.description")}</p>}
-          {!loading && hasMore && <div className="p-4">
-            <Button variant="secondary" onClick={() => { setLoading(true); setOffset(v => v + PAGE_SIZE); }}>{t("common.nextPage")}</Button>
-          </div>}
-        </Card>
+        <div className="space-y-5">
+          {notice && <p role={notice.kind === "err" ? "alert" : "status"}
+            className={`rounded-lg border border-edge p-4 text-sm ${notice.kind === "err" ? "text-bad" : notice.kind === "warn" ? "text-warn" : "text-ok"}`}>
+            {notice.message}
+          </p>}
+
+          {profile?.platformOwner && (
+            <Card className="p-5">
+              <div className="flex items-center gap-2">
+                <Crown className="h-4 w-4 text-brand" aria-hidden />
+                <h2 className="font-semibold">{t("team.inviteTitle")}</h2>
+                <StatusBadge tone="brand" label={t("team.platformOwner")} />
+              </div>
+              <p className="mt-2 text-sm text-ink-3">{t("team.inviteHint")}</p>
+              <form onSubmit={sendInvitation} className="mt-4 grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] sm:items-end">
+                <label className="block text-sm">
+                  {t("team.inviteEmail")}
+                  <Input type="email" required maxLength={320} autoComplete="email"
+                    value={email} onChange={e => setEmail(e.target.value)} />
+                </label>
+                <label className="block text-sm">
+                  {t("platform.login.password")}
+                  <Input type="password" autoComplete="current-password" required maxLength={4096}
+                    value={password} onChange={e => setPassword(e.target.value)} />
+                </label>
+                <Button type="submit" variant="primary" loading={busy}
+                  disabled={busy || !email.trim() || !password}>
+                  {t("team.inviteSubmit")}
+                </Button>
+              </form>
+              <p className="mt-3 text-xs text-ink-3">{t("v4.team.fullAccess")}</p>
+            </Card>
+          )}
+
+          <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)]">
+            <Card>
+              <CardHeader title={t("team.members")} subtitle={t("v4.team.fullAccessBody")}
+                icon={<Users className="h-4 w-4" />} />
+              {loadError && <p role="alert" className="p-5 text-bad">{t("team.loadMembersFailed")}</p>}
+              <ul className="divide-y divide-edge-subtle">
+                {members.map(member => (
+                  <li key={member.userId} className="flex flex-wrap items-center justify-between gap-3 p-4">
+                    <span className="flex min-w-0 items-center gap-3">
+                      <Avatar name={member.email} size="sm" />
+                      <span className="min-w-0 break-all text-sm font-semibold">{member.email}</span>
+                    </span>
+                    <StatusBadge tone={member.platformOwner ? "brand" : "info"}
+                      label={member.platformOwner ? t("team.platformOwner") : t("v4.team.fullAccess")} />
+                  </li>
+                ))}
+              </ul>
+              {loading && <p role="status" className="p-5 text-sm text-ink-3">{t("common.loading")}</p>}
+              {!loading && !loadError && members.length === 0 &&
+                <p className="p-5 text-sm text-ink-3">{t("empty.members.description")}</p>}
+              {!loading && (memberOffset > 0 || moreMembers) &&
+                <div className="flex justify-end gap-2 p-4">
+                  <Button variant="secondary" disabled={busy || memberOffset === 0}
+                    onClick={() => { setLoading(true); setMemberOffset(v => Math.max(0, v - PAGE_SIZE)); }}>
+                    {t("common.previousPage")}
+                  </Button>
+                  <Button variant="secondary" disabled={busy || !moreMembers}
+                    onClick={() => { setLoading(true); setMemberOffset(v => v + PAGE_SIZE); }}>
+                    {t("common.nextPage")}
+                  </Button>
+                </div>}
+            </Card>
+            <Card>
+              <CardHeader title={t("team.pendingInvitations")} subtitle={t("team.invitationsHint")}
+                icon={<Mail className="h-4 w-4" />} />
+              {loadError && <p role="alert" className="p-5 text-bad">{t("team.loadInvitationsFailed")}</p>}
+              <ul className="divide-y divide-edge-subtle">
+                {invitations.map(invitation => (
+                  <li key={invitation.id} className="flex items-center justify-between gap-3 p-4">
+                    <span className="min-w-0">
+                      <span className="block break-all text-sm font-semibold">{invitation.email}</span>
+                      <span className="block text-xs text-ink-3">{formatDate(invitation.expiresAt)}</span>
+                    </span>
+                    {profile?.platformOwner && (
+                      <Button variant="secondary" size="sm" disabled={busy || !password}
+                        onClick={() => void revokeInvitation(invitation.id)}>
+                        {t("team.revoke")}
+                      </Button>
+                    )}
+                  </li>
+                ))}
+              </ul>
+              {loading && <p role="status" className="p-5 text-sm text-ink-3">{t("common.loading")}</p>}
+              {!loading && !loadError && invitations.length === 0 &&
+                <p className="p-5 text-sm text-ink-3">{t("team.noInvitations")}</p>}
+              {!loading && (inviteOffset > 0 || moreInvitations) &&
+                <div className="flex justify-end gap-2 p-4">
+                  <Button variant="secondary" disabled={busy || inviteOffset === 0}
+                    onClick={() => { setLoading(true); setInviteOffset(v => Math.max(0, v - PAGE_SIZE)); }}>
+                    {t("common.previousPage")}
+                  </Button>
+                  <Button variant="secondary" disabled={busy || !moreInvitations}
+                    onClick={() => { setLoading(true); setInviteOffset(v => v + PAGE_SIZE); }}>
+                    {t("common.nextPage")}
+                  </Button>
+                </div>}
+            </Card>
+          </div>
+        </div>
       </PageContainer>
     </>
   );

@@ -488,6 +488,8 @@ export const en = {
   "team.member": "Member",
   "team.role": "Role",
   "team.invite": "Invite teammate",
+  "team.platformOwner": "Platform Owner",
+  "team.deliveryUnconfirmed": "Invitation saved, but email delivery could not be confirmed. Check pending invitations before trying again.",
   "team.inviteEmail": "Email address",
   "team.inviteSubmit": "Send invitation",
   "team.inviteSending": "Sending…",
