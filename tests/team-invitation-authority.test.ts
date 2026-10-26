@@ -52,9 +52,9 @@ describe("invitation authority is reserved for the separate Platform Owner", () 
     state.insertions=[];state.statements=[];state.proofChecks=0;state.emailSends=0;
   });
   it.each(["owner","admin","operator","viewer","integration_admin","billing_admin"])(
-    "old workspace %s has no invitation write side effects", async role => {
+    "workspace %s without Platform Owner identity cannot invite", async role => {
       state.role = role;
-      const res = await oldPOST(request({ email, role: "admin" }));
+      const res = await oldPOST(request({ email }));
       expect(res.status).toBe(403);
       expect(state.insertions).toEqual([]);
       expect(state.emailSends).toBe(0);

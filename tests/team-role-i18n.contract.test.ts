@@ -17,7 +17,8 @@ describe("one translated operational Full Access label", () => {
     expect(page).not.toContain("<Select");
     expect(page).toContain("/api/team/invitations?limit=");
     expect(page).toContain('t("team.inviteTitle")');
-    expect(page).toContain('t("team.platformOwner")');
+    expect(page).toContain('t("team.role.owner")');
+    expect(page).toContain('icon={<Crown className="h-3.5 w-3.5 text-warn" aria-hidden />}');
     expect(settings).toContain("roleLabel(role, t)");
   });
 });

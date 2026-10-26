@@ -82,6 +82,46 @@ describe.skipIf(!hasTestDatabase)("password-only authentication and retained ses
     expect((await rotateRefreshToken("platform", value(response, "plt_refresh"))).status).toBe("invalid");
   });
 
+  it("commits the Platform Owner login audit before returning successful credentials", async () => {
+    // A locked audit table exposes an implicit fire-and-forget insert: its
+    // caller may return a successful session while the audit is still pending.
+    // The test checks the actual PostgreSQL insertion, not a mocked logger.
+    const blocker = await pool().connect();
+    let loginPromise: Promise<Response> | null = null;
+    let finished = false;
+    let finishedWhileAuditBlocked = false;
+    let auditWriteWaiting = false;
+    await blocker.query("BEGIN");
+    try {
+      await blocker.query("LOCK TABLE audit_events IN ACCESS EXCLUSIVE MODE");
+      loginPromise = platformLogin(request("/api/platform/auth/login", { email: "user@example.test", password }))
+        .then(response => { finished = true; return response; });
+
+      const deadline = Date.now() + 10_000;
+      while (Date.now() < deadline) {
+        const active = await pool().query(`SELECT 1 FROM pg_stat_activity
+          WHERE datname=current_database() AND pid<>pg_backend_pid()
+            AND wait_event_type='Lock' AND query ILIKE '%audit_events%' LIMIT 1`);
+        if (active.rows.length) { auditWriteWaiting = true; break; }
+        await new Promise(resolve => setTimeout(resolve, 50));
+      }
+      // Give the login response microtasks time to settle while the actual
+      // audit INSERT remains blocked by our independent PostgreSQL lock.
+      if (auditWriteWaiting) await new Promise(resolve => setTimeout(resolve, 100));
+      finishedWhileAuditBlocked = finished;
+    } finally {
+      await blocker.query("ROLLBACK");
+      blocker.release();
+    }
+
+    const response = await loginPromise;
+    expect(auditWriteWaiting).toBe(true);
+    expect(finishedWhileAuditBlocked).toBe(false);
+    expect(response.status).toBe(200);
+    const audits = await pool().query("SELECT id FROM audit_events WHERE actor_id='user' AND action='platform.login'");
+    expect(audits.rows).toHaveLength(1);
+  });
+
   it("never lets an unverified account, wrong password or ordinary workspace admin obtain an owner session", async () => {
     for (const change of ["UPDATE users SET email_verified_at=NULL", "UPDATE users SET email_verified_at=clock_timestamp(),is_platform_owner=false"]) {
       await pool().query(change);
