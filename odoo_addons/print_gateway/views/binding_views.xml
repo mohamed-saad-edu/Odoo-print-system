@@ -38,6 +38,7 @@
                     <details class="mb-3">
                         <summary>Which document destination should I use?</summary>
                         <p class="text-muted">Select the company, branch, Odoo document, and Yaseir printer. POS preparation uses the Odoo Preparation Printer to preserve category routing.</p>
+                        <p class="text-muted" invisible="destination_type not in ('pos', 'pos_printer')">POS Receipt does not require an Odoo printer or PDF report. POS Kitchen / Preparation uses the selected Odoo Preparation Printer for category routing; the Gateway printer remains the physical destination.</p>
                         <p class="text-muted" invisible="destination_type != 'picking_type'">For raw warehouse labels, select the exact ZPL, TSPL or ESC/POS language under Advanced. For PDF reports, choose a PDF-compatible printer.</p>
                     </details>
 
