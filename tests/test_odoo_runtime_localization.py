@@ -47,7 +47,8 @@ def test_arabic_catalog_keeps_brand_identity_and_translates_picker_vocab():
     expected = {
         "Yaseir Print Gateway": "طباعة Yaseir",
         "Connection": "الاتصال",
-        "Print Rules": "قواعد الطباعة",
+        "Document Destinations": "وجهات المستندات",
+        "Automatic Printing": "الطباعة التلقائية",
         "online": "متصل",
         "offline": "غير متصل",
         "unknown": "غير معروف",
