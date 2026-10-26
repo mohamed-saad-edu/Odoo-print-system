@@ -2006,8 +2006,8 @@ msgstr "لا توجد تذكرة اختبار جاهزة للبروتوكول '%
 #. module: print_gateway
 #. odoo-javascript
 #: code:addons/print_gateway/static/src/components/runtime_agent_field.js:0
-msgid "No connected Print Agents found — connect one from Connection & Printing"
-msgstr "لا توجد Agents طباعة متصلة — اربط واحدة من «الاتصال والطباعة»"
+msgid "No connected Print Agents found — connect one from Connection"
+msgstr "لا توجد أجهزة طباعة متصلة — اربط جهازًا من «الاتصال»"
 
 #. module: print_gateway
 #. odoo-python
@@ -2241,8 +2241,8 @@ msgstr "تعبير اختياري لترشيح النطاق يُقيّم على 
 
 #. module: print_gateway
 #: model:ir.model.fields,help:print_gateway.field_print_gateway_policy__binding_id
-msgid "Optional explicit Print Rule for this exact Odoo Company and Branch scope."
-msgstr "قاعدة طباعة صريحة اختيارية لنطاق شركة وفرع Odoo المحددين."
+msgid "Optional explicit Print Route for this exact Odoo Company and Branch scope."
+msgstr "مسار طباعة اختياري محدد لهذه الشركة والفرع في Odoo."
 
 #. module: print_gateway
 #: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_binding_form
@@ -3749,11 +3749,6 @@ msgid "TSC TSPL"
 msgstr "أوامر TSC TSPL"
 
 #. module: print_gateway
-#: model:ir.model.fields,field_description:print_gateway.field_print_gateway_policy__binding_id
-msgid "Target Binding"
-msgstr "قاعدة الطباعة المستهدفة"
-
-#. module: print_gateway
 #. odoo-python
 #: code:addons/print_gateway/models/print_policy.py:0
 msgid "Target Binding must belong to the same Odoo Company as this Automation Rule."
@@ -4147,14 +4142,14 @@ msgstr "خدمة الطباعة مشغولة. انتظر قليلًا وراجع
 #. module: print_gateway
 #. odoo-javascript
 #: code:addons/print_gateway/static/src/components/runtime_printer_field.js:0
-msgid "The printing service is disabled or unreachable for this company — check Connection & Printing"
-msgstr "خدمة الطباعة معطَّلة أو لا يمكن الوصول إليها لهذه الشركة — تحقّق من «الاتصال والطباعة»"
+msgid "The printing service is disabled or unreachable for this company — check Connection"
+msgstr "خدمة الطباعة معطّلة أو لا يمكن الوصول إليها لهذه الشركة — تحقّق من «الاتصال»"
 
 #. module: print_gateway
 #. odoo-javascript
 #: code:addons/print_gateway/static/src/components/runtime_agent_field.js:0
-msgid "The printing service is not configured or unreachable for this company — check Connection & Printing"
-msgstr "خدمة الطباعة غير مُعدّة أو لا يمكن الوصول إليها لهذه الشركة — تحقّق من «الاتصال والطباعة»"
+msgid "The printing service is not configured or unreachable for this company — check Connection"
+msgstr "خدمة الطباعة غير مُعدّة أو لا يمكن الوصول إليها لهذه الشركة — تحقّق من «الاتصال»"
 
 #. module: print_gateway
 #. odoo-javascript
@@ -4917,6 +4912,7 @@ msgstr "تحقق من الاتصال، وعيّن جهازًا من أجهزة �
 #: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_binding_form
 #: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_policy_form
 #: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_policy_list
+#: model:ir.model.fields,field_description:print_gateway.field_print_gateway_policy__binding_id
 msgid "Print Route"
 msgstr "مسار الطباعة"
 

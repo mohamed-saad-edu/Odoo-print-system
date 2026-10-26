@@ -164,7 +164,7 @@ export class RuntimePrinterField extends Component {
     get emptyMessage() {
         return this.state.enabled
             ? _t("No printers found for this Print Agent — check the printer or workstation")
-            : _t("The printing service is disabled or unreachable for this company — check Connection & Printing");
+            : _t("The printing service is disabled or unreachable for this company — check Connection");
     }
 
     get configuredPrinterMissing() {

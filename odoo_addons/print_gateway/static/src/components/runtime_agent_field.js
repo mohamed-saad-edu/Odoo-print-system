@@ -128,14 +128,14 @@ export class RuntimeAgentField extends Component {
         // send the operator to the wrong screen. An empty assignment list and a
         // missing print service are two different problems.
         if (!this.state.enabled) {
-            return _t("The printing service is not configured or unreachable for this company — check Connection & Printing");
+            return _t("The printing service is not configured or unreachable for this company — check Connection");
         }
         if (this.assignmentOnly) {
             return this.state.assignedAgentCount > 0
                 ? _t("Assigned Print Agent is unavailable — check the Agent connection or status in Yaseir")
                 : _t("No Print Agent is assigned to this company/branch — assign one under Branch Devices first");
         }
-        return _t("No connected Print Agents found — connect one from Connection & Printing");
+        return _t("No connected Print Agents found — connect one from Connection");
     }
 
     scopeKey(companyId, branchId, assignmentOnly) {

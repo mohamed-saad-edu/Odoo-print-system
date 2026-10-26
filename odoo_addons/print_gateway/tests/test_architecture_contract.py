@@ -267,7 +267,7 @@ class TestPrintGatewayArchitectureContract(TransactionCase):
     def test_policy_scope_domain_matches_backend_invariant(self):
         model_source = (MODELS / "print_policy.py").read_text(encoding="utf-8")
         self.assertIn("domain=\"[('company_id', '=', company_id), ('branch_id', '=', branch_id)]\"", model_source)
-        self.assertIn("Optional explicit Print Rule for this exact Odoo Company and Branch scope.", model_source)
+        self.assertIn("Optional explicit Print Route for this exact Odoo Company and Branch scope.", model_source)
 
     def test_automation_binding_picker_is_scope_filtered(self):
         source = (VIEWS / "print_policy_views.xml").read_text(encoding="utf-8")
@@ -923,3 +923,43 @@ class TestPrintGatewayArchitectureContract(TransactionCase):
         if allowlist_match:
             self.assertNotIn('"partial"', allowlist_match.group(0),
                              "partial must not be in submit allowlist; it must be pre-mapped to submitted")
+
+    def test_internal_routing_and_policy_helpers_are_odoo19_rpc_private(self):
+        """Only explicit, guarded actions may be called through call_kw."""
+        binding = (MODELS / "binding.py").read_text(encoding="utf-8")
+        policy = (MODELS / "print_policy.py").read_text(encoding="utf-8")
+        intent = (MODELS / "print_intent.py").read_text(encoding="utf-8")
+        for helper in ("destination_for", "resolve_explicit", "find_for"):
+            self.assertIn(
+                "@api.model\n    @api.private\n    def %s(" % helper,
+                binding,
+            )
+        self.assertIn("@api.private\n    def get_peripheral_payload(", binding)
+        for helper in ("render_raw_template", "effective_target_key", "matches_record"):
+            self.assertIn("@api.private\n    def %s(" % helper, policy)
+        self.assertIn(
+            "@api.model\n    @api.private\n    def resolve_for_record(", policy,
+        )
+        self.assertIn(
+            "@api.model\n    @api.private\n    def compute_intent_key(", intent,
+        )
+        # Customer RPC printing still uses its separately authorized public
+        # route, and Odoo's report interceptor must not regress.
+        self.assertIn("def dispatch_report_action(", binding)
+
+    def test_company_wide_route_priority_enforced_by_odoo19_partial_index(self):
+        binding = (MODELS / "binding.py").read_text(encoding="utf-8")
+        self.assertIn("_company_wide_priority_unique = models.UniqueIndex(", binding)
+        self.assertIn(
+            "(company_id, destination_ref, document_type, priority) WHERE branch_id IS NULL",
+            binding,
+        )
+        migration = ADDON / "migrations" / "19.0.2.30.0" / "pre-migrate.py"
+        self.assertTrue(migration.is_file())
+        content = migration.read_text(encoding="utf-8")
+        self.assertIn(
+            "ORDER BY company_id, destination_ref, document_type, priority, id",
+            content,
+        )
+        self.assertIn("UPDATE print_gateway_binding SET priority = %s WHERE id = %s", content)
+        self.assertNotIn("DELETE FROM print_gateway_binding", content)

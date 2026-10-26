@@ -108,3 +108,61 @@ class TestPrintGatewayMigrationUpgrade(TransactionCase):
         self.assertTrue(migration.exists())
         source = migration.read_text(encoding="utf-8")
         self.assertIn("company_branch_agent_uniq", source)
+
+    def test_company_wide_route_priority_upgrade_preserves_all_rows_and_order(self):
+        """Normalize only conflicting priorities without deleting routes."""
+        migration = (
+            Path(__file__).resolve().parents[1]
+            / "migrations" / "19.0.2.30.0" / "pre-migrate.py"
+        )
+        self.assertTrue(migration.exists())
+        spec = importlib.util.spec_from_file_location(
+            "print_gateway_upgrade_19_0_2_30", migration
+        )
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        cursor = MagicMock()
+        cursor.fetchall.return_value = [
+            (21, 1, "ir.actions.report,8", "invoice", 10),
+            (22, 1, "ir.actions.report,8", "invoice", 10),
+            (23, 1, "ir.actions.report,8", "invoice", 11),
+            (24, 1, "ir.actions.report,8", "invoice", 20),
+            (25, 1, "ir.actions.report,9", "invoice", 10),
+            (26, 2, "ir.actions.report,8", "invoice", 10),
+            (27, 2, "ir.actions.report,8", "invoice", 10),
+        ]
+        module.migrate(cursor, "19.0.2.29.0")
+        updates = [
+            call.args[1] for call in cursor.execute.call_args_list
+            if call.args[0].startswith("UPDATE print_gateway_binding")
+        ]
+        self.assertEqual(updates, [(11, 22), (12, 23), (11, 27)])
+        self.assertFalse(any(
+            "DELETE" in call.args[0].upper()
+            for call in cursor.execute.call_args_list
+        ))
+        self.assertEqual(cursor.execute.call_count, 4)
+        cursor.reset_mock()
+        module.migrate(cursor, None)
+        cursor.execute.assert_not_called()
+
+    def test_company_wide_route_priority_upgrade_refuses_integer_overflow(self):
+        migration = (
+            Path(__file__).resolve().parents[1]
+            / "migrations" / "19.0.2.30.0" / "pre-migrate.py"
+        )
+        spec = importlib.util.spec_from_file_location("print_gateway_priority_overflow", migration)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        cursor = MagicMock()
+        cursor.fetchall.return_value = [
+            (31, 4, "ir.actions.report,1", "invoice", 2147483647),
+            (32, 4, "ir.actions.report,1", "invoice", 2147483647),
+        ]
+        with self.assertRaisesRegex(RuntimeError, "integer priority range exhausted"):
+            module.migrate(cursor, "19.0.2.29.0")
+        self.assertFalse(any(
+            "UPDATE" in call.args[0].upper()
+            for call in cursor.execute.call_args_list
+        ))
