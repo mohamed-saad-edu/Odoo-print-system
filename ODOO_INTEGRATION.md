@@ -1,7 +1,11 @@
 # Odoo Integration Guide
 
-> Module: `print_gateway` | Version: 19.0.2.32.0 | Odoo: 19 Community Edition
+> Module: `print_gateway` | Version: 19.0.2.33.0 | Odoo: 19 Community Edition
 
+
+## 19.0.2.33.0: one Branch Devices navigation path
+
+Connection maintenance now contains only repair/reconciliation actions; the Branch Devices page is accessible through the main navigation and the initial setup shortcut, not repeated again inside maintenance. No printer routing, assignments, or job data is changed.
 
 ## 19.0.2.32.0: navigation authorization parity with Odoo 19
 

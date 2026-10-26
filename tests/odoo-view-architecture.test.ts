@@ -54,6 +54,8 @@ describe("Odoo 19 view architecture contract — gateway_config_views.xml", () =
     const maintenance = formSection.slice(formSection.indexOf('<page string="Connection maintenance"'));
     expect(maintenance).toContain('name="action_reset_stale_sync_state"');
     expect(formSection).toContain('name="action_open_runtime_assignments"');
+    expect((formSection.match(/name="action_open_runtime_assignments"/g) || [])).toHaveLength(1);
+    expect(maintenance).not.toContain('name="action_open_runtime_assignments"');
     expect(formSection).not.toContain('name="action_open_printers"');
     expect(formSection).toContain('name="action_open_destinations"');
     expect(formSection).not.toContain('name="action_open_print_rules"');
