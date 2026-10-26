@@ -15,7 +15,9 @@ describe("one translated operational Full Access label", () => {
     const settings = readFileSync("src/app/settings/page.tsx", "utf8");
     expect(page).toContain('t("v4.team.fullAccess")');
     expect(page).not.toContain("<Select");
-    expect(page).not.toContain("/api/team/invitations");
+    expect(page).toContain("/api/team/invitations?limit=");
+    expect(page).toContain('t("team.inviteTitle")');
+    expect(page).toContain('t("team.platformOwner")');
     expect(settings).toContain("roleLabel(role, t)");
   });
 });

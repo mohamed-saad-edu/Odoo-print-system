@@ -15,10 +15,12 @@ export async function GET(req: Request) {
   if (!hasManagerPermission(claims, "tenant.read")) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   const [tenant, user] = await Promise.all([
     db.query.tenants.findFirst({ where: eq(tenants.id, claims.tenantId), columns: { id: true, name: true, createdAt: true, updatedAt: true } }),
-    db.query.users.findFirst({ where: eq(users.id, claims.userId), columns: { email: true } }),
+    db.query.users.findFirst({ where: eq(users.id, claims.userId), columns: { email: true, isPlatformOwner: true, emailVerifiedAt: true } }),
   ]);
   if (!tenant || !user) return NextResponse.json({ error: "Workspace not found" }, { status: 404 });
-  return NextResponse.json({ tenant, email: user.email, role: claims.role });
+  return NextResponse.json({ tenant, userId: claims.userId, email: user.email, role: claims.role,
+    platformOwner: user.isPlatformOwner === true && !!user.emailVerifiedAt,
+  }, { headers: { "Cache-Control": "private, no-store" } });
 }
 
 export async function PATCH(req: Request) {

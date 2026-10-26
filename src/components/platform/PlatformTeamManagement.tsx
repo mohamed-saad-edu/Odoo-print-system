@@ -116,7 +116,7 @@ export function PlatformTeamManagement({ tenantId, members, onChanged }: {
             return <li key={id} className="flex flex-wrap items-center justify-between gap-3 py-3">
               <div className="min-w-0">
                 <p className="break-all font-semibold">{String(member.email ?? "")}</p>
-                <p className="text-sm text-ink-3">{isOwner ? t("team.role.owner") : t("v4.team.fullAccess")}</p>
+                <p className="text-sm text-ink-3">{member.isPlatformOwner === true ? t("team.platformOwner") : t("v4.team.fullAccess")}</p>
               </div>
               {!isOwner && <div className="flex flex-wrap gap-2">
                 <Button variant="secondary" size="sm" disabled={busy}

@@ -138,15 +138,24 @@ test("platform probe body completing after unmount cannot authenticate or schedu
   assert.equal(harness.timers.size, 0);
 });
 
-test("retired Team page rejects stale late responses after a newer mount", async () => {
+test("restored Team page rejects stale late responses without hiding pending invitations", async () => {
   const oldMembers = deferred();
   let count = 0;
-  const freshMembers = [{ userId: "new-user", email: "new@example.test" }];
+  const freshMembers = [{ userId: "new-user", email: "new@example.test", platformOwner: false }];
+  const pending = [{ id: "invitation", email: "colleague@example.test", expiresAt: "2031-01-01T00:00:00Z" }];
   const harness = component("src/app/team/page.tsx", async url => {
-    assert.match(url, /\/api\/team\/members\?/);
-    count += 1;
-    return { ok: true, json: () => count === 1 ? oldMembers.promise :
-      Promise.resolve({ members: freshMembers, hasMore: false }) };
+    if (url.startsWith("/api/team/members?")) {
+      count += 1;
+      return { ok: true, json: () => count === 1 ? oldMembers.promise :
+        Promise.resolve({ members: freshMembers, hasMore: false }) };
+    }
+    if (url.startsWith("/api/team/invitations?")) {
+      return { ok: true, json: async () => ({ invitations: pending, hasMore: false }) };
+    }
+    if (url === "/api/settings") {
+      return { ok: true, json: async () => ({ userId: "me", email: "me@example.test", platformOwner: false, tenant: { id: "tenant" } }) };
+    }
+    throw Error("Unexpected Team request: " + url);
   });
   const obsoleteCleanup = harness.effects[0]();
   await flush();
@@ -154,10 +163,11 @@ test("retired Team page rejects stale late responses after a newer mount", async
   harness.render();
   const currentCleanup = harness.effects.at(-1)();
   await flush();
-  assert.deepEqual(harness.states[0], freshMembers);
+  assert.deepEqual(harness.states[1], freshMembers);
+  assert.deepEqual(harness.states[2], pending);
   oldMembers.resolve({ members: [{ userId: "stale-user" }], hasMore: false });
   await flush();
-  assert.deepEqual(harness.states[0], freshMembers);
+  assert.deepEqual(harness.states[1], freshMembers);
   currentCleanup();
 });
 
@@ -170,7 +180,7 @@ test("unmounted team membership admission cannot redirect an unrelated page", as
   session.resolve({ authenticated: false });
   await flush();
   assert.deepEqual(harness.redirects, []);
-  assert.equal(harness.states[3], true, "stale load cannot mark a newly-mounted page as loaded");
+  assert.equal(harness.states[8], true, "stale load cannot mark a newly-mounted page as loaded");
 });
 
 test("email proof follows the server password-setup step while preserving invitation and plan context", async () => {

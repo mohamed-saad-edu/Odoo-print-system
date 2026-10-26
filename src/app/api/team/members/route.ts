@@ -26,6 +26,7 @@ export async function GET(req: Request) {
           userId: tenantUsers.userId,
           email: users.email,
           role: tenantUsers.role,
+          platformOwner: sql<boolean>`${users.isPlatformOwner} AND ${users.emailVerifiedAt} IS NOT NULL`,
           createdAt: tenantUsers.createdAt,
         })
         .from(tenantUsers)
