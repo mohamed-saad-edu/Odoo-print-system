@@ -175,6 +175,10 @@ def extract_occurrences(addon: Path = ADDON) -> dict[str, set[str]]:
                 if name == "arch" and model == "ir.ui.view":
                     for child in field:
                         xml_terms(child, f"model_terms:ir.ui.view,arch_db:{xmlid}")
+                elif name == "help" and model == "ir.actions.act_window" and len(field):
+                    # Include visible HTML help content in the same translation
+                    # contract as the rest of the Odoo 19 customer interface.
+                    xml_terms(field, f"model_terms:ir.actions.act_window,help:{xmlid}")
                 elif name in {"name", "help"} and model in {"ir.actions.act_window", "ir.actions.client", "ir.actions.report", "ir.ui.menu", "res.groups", "ir.module.category"}:
                     add((field.text or "").strip(), f"model:{model},{name}:{xmlid}")
         for template in tree.iter("template"):
