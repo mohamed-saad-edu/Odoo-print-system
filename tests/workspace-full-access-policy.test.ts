@@ -19,15 +19,16 @@ const allowed: ManagerPermission[] = [
   "jobs.read", "jobs.payload.read", "jobs.create", "jobs.retry", "jobs.cancel",
   "bindings.read", "bindings.manage", "integrations.read", "integrations.manage",
 ];
-const forbidden: ManagerPermission[] = ["users.manage", "billing.read", "billing.manage"];
+const forbidden: ManagerPermission[] = ["users.manage", "billing.manage"];
 
 describe("one operational Full Access for every workspace membership", () => {
   it.each(roles)("grants all printing/Agent/integration capabilities to %s", role => {
     for (const permission of allowed) expect(hasManagerPermission(claims(role), permission)).toBe(true);
-    expect(new Set(managerPermissions(claims(role)))).toEqual(new Set(allowed));
+    expect(new Set(managerPermissions(claims(role)))).toEqual(new Set(role === "owner" ? [...allowed, "billing.read"] : allowed));
   });
-  it.each(roles)("%s has no team, billing, or workspace ownership mutation authority", role => {
+  it.each(roles)("%s has no team or commercial activation authority", role => {
     for (const permission of forbidden) expect(hasManagerPermission(claims(role), permission)).toBe(false);
+    expect(hasManagerPermission(claims(role), "billing.read")).toBe(role === "owner");
   });
   it("unknown role never acquires authority", () => {
     const unknown = claims("unknown" as ManagerRole);
@@ -35,15 +36,17 @@ describe("one operational Full Access for every workspace membership", () => {
     for (const permission of allowed) expect(hasManagerPermission(unknown, permission)).toBe(false);
   });
   it("workspace mutation routes deny direct HTTP bypass for all logged-in members", async () => {
+    vi.stubEnv("APP_BASE_URL", "https://gateway.example.test");
     const { PATCH: changeRole, DELETE: removeMember } = await import("../src/app/api/team/members/route");
     const { POST: transfer } = await import("../src/app/api/team/ownership/route");
     const { POST: subscribe, GET: billingRequests } = await import("../src/app/api/subscription-requests/route");
-    const request = new Request("https://gateway.example.test/api/team/invitations", { method: "POST" });
+    const request = new Request("https://gateway.example.test/api/team/invitations", { method: "POST", headers: { Origin: "https://gateway.example.test" } });
     expect((await changeRole(request)).status).toBe(403);
     expect((await removeMember(request)).status).toBe(403);
     expect((await transfer(request)).status).toBe(403);
     expect((await subscribe(request)).status).toBe(403);
     expect((await billingRequests(request)).status).toBe(403);
+    vi.unstubAllEnvs();
   });
   it("removes legacy roles while granting invitations only to verified owner sessions", () => {
     const page = readFileSync(join(process.cwd(), "src/app/team/page.tsx"), "utf8");
@@ -56,9 +59,9 @@ describe("one operational Full Access for every workspace membership", () => {
     expect(page).not.toContain('type="password"');
     expect(page).toContain('t("team.role.owner")');
     expect(page).toContain('icon={<Crown className="h-3.5 w-3.5 text-warn" aria-hidden />}');
-    expect(platform).toContain("requirePlatformActorInTransaction");
-    expect(platform).toContain("assertPlatformTeamOrigin");
-    expect(platform).toContain('role: "admin"');
+    expect(platform).toContain("status: 410");
+    expect(platform).not.toContain("sendTransactionalEmail");
+    expect(readFileSync(join(process.cwd(), "src/app/api/team/invitations/route.ts"), "utf8")).toContain('role: "admin"');
     expect(sql).toContain("workspace_role_cutover");
     expect(sql).toContain("ALTER TABLE tenant_invitations ADD CONSTRAINT tenant_invitations_role_check CHECK (role='admin')");
   });

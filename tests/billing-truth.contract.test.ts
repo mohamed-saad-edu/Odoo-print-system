@@ -3,37 +3,41 @@ import { describe, expect, it } from "vitest";
 import { v4OnboardingAr, v4OnboardingEn } from "../src/i18n/messages/v4-onboarding";
 const read = (path: string) => readFileSync(path, "utf8");
 
-describe("subscription is never controlled or personalized through workspace roles", () => {
-  it("workspace billing and onboarding pages redirect without reading or mutating subscription data", () => {
-    for (const page of ["src/app/billing/page.tsx", "src/app/onboarding/page.tsx"]) {
-      const source = read(page);
-      expect(source).toContain(page.includes("/billing/") ? 'redirect("/platform/subscriptions")' : 'redirect("/dashboard")');
-      expect(source).not.toContain("/api/subscription-requests");
-      expect(source).not.toContain("billing/checkout");
-      expect(source).not.toContain("customerSubscriptionState");
-    }
-    expect(read("src/app/api/subscription-requests/route.ts")).toContain("PLATFORM_OWNER_REQUIRED");
+describe("customer subscriptions are separate from Platform Admin approval", () => {
+  it("workspace billing shows its own subscription and customer requests", () => {
+    const billing = read("src/app/billing/page.tsx");
+    expect(billing).toContain("verifyWorkspaceTokenFromCookieValues(");
+    expect(billing).toContain("BillingActions");
+    expect(billing).toContain("customerSubscriptionState(");
+    expect(billing).toContain('redirect("/login?next=%2Fbilling")');
+    expect(billing).not.toContain('redirect("/platform/subscriptions")');
+    const onboarding = read("src/app/onboarding/page.tsx");
+    expect(onboarding).toContain('redirect("/billing")');
+    const requests = read("src/app/api/subscription-requests/route.ts");
+    expect(requests).toContain("validateWorkspaceManager(req)");
+    expect(requests).toContain('requireManagerActorInTransaction(tx,actor,"billing.read")');
+    expect(requests).toContain("requireIdempotencyKey(req)");
   });
-  it("public pricing never queries or displays the logged-in workspace contract", () => {
+  it("public pricing uses only public plans while signed-in customers can choose a plan", () => {
     const pricing = read("src/app/pricing/page.tsx");
     expect(pricing).not.toContain("tenantSubscriptions.findFirst");
     expect(pricing).not.toContain("currentPlanId");
-    expect(pricing).not.toContain("/billing?plan=");
+    expect(pricing).toContain('/billing?plan=');
     const home = read("src/app/page.tsx");
     expect(home).toContain('const canBilling = hasManagerPermission(claims, "billing.read")');
     expect(home).toContain("const plan = canBilling && subscription");
-    expect(home).toContain('customerSubscriptionState(subscription, tenant?.lifecycle, await databaseNowMs())');
-    expect(home).not.toContain('subscription.status === "past_due" ||');
+    expect(home).toContain("customerSubscriptionState(subscription, tenant?.lifecycle, await databaseNowMs())");
   });
-  it("reserves commercial plan changes for a separately authenticated Platform Owner", () => {
+  it("manual activation is exclusive to Platform Owner while the customer can request", () => {
     const platform = read("src/app/api/platform/subscriptions/route.ts");
     expect(platform).toContain("requirePlatformOwner");
-    const editor = read("src/components/platform/SubscriptionEditor.tsx");
-    expect(editor).toContain("a(v)");
+    const approval = read("src/app/api/platform/tenants/[id]/subscription/route.ts");
+    expect(approval).toContain("requirePlatformOwner");
+    expect(read("src/components/BillingActions.tsx")).toContain('fetchWithTimeout("/api/subscription-requests"');
     const usage = read("src/app/api/billing/usage/route.ts");
     expect(usage).toContain('requireManagerPermission(manager, "billing.read")');
   });
-  it("keeps terms and billing interval localization available exclusively to Platform Admin", () => {
+  it("keeps subscriptions and billing interval localized in both languages", () => {
     const labels = read("src/lib/billing-labels.ts");
     const en = read("src/i18n/messages/en.ts");
     const ar = read("src/i18n/messages/ar.ts");
@@ -46,11 +50,9 @@ describe("subscription is never controlled or personalized through workspace rol
       expect(v4OnboardingEn[key]).toBeTruthy();
       expect(v4OnboardingAr[key]).toMatch(/\p{Script=Arabic}/u);
     }
-    expect(read("src/i18n/messages/v4-admin.ts")).toContain("v4.admin.yearly");
   });
   it("does not promise unlimited use while the subscription has finite quotas", () => {
-    const en = read("src/i18n/messages/en.ts");
-    expect(en).toContain("pricing.point1");
-    expect(en).not.toContain("you never hit a surprise stop");
+    expect(read("src/i18n/messages/en.ts")).toContain("pricing.point1");
+    expect(read("src/i18n/messages/en.ts")).not.toContain("you never hit a surprise stop");
   });
 });

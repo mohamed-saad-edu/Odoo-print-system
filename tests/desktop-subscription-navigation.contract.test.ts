@@ -18,18 +18,20 @@ describe("simplified desktop and owner subscription navigation", () => {
     expect(tray).not.toContain("#agents");
   });
 
-  it("routes subscription entry to owner panel and preserves the intended destination at login", () => {
+  it("routes subscriptions to the workspace page and leaves the Platform Admin login separate", () => {
     const billing = read("src/app/billing/page.tsx");
     const layout = read("src/app/platform/layout.tsx");
     const login = read("src/app/platform/login/page.tsx");
     const appShell = read("src/components/AppShell.tsx");
-    expect(billing).toContain('redirect("/platform/subscriptions")');
+    expect(billing).toContain("verifyWorkspaceTokenFromCookieValues(");
+    expect(billing).not.toContain('redirect("/platform/subscriptions")');
     expect(layout).toContain('encodeURIComponent(pathname)');
     expect(layout).toContain('/platform/login?next=');
     expect(login).toContain('afterLoginDestination()');
     expect(login).toContain('subscription-requests');
-    expect(appShell).toContain("workspace.platformOwner");
-    expect(appShell).toContain('href: "/platform/subscriptions"');
+    expect(appShell).toContain('href: "/billing"');
+    expect(appShell).toContain('href: "/team"');
+    expect(appShell).not.toContain('href: "/platform/subscriptions"');
   });
 
   it("retains native Agent pairing and removes repetitive setup fields on the home screen", () => {

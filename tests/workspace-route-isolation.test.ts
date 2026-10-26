@@ -19,7 +19,6 @@ vi.mock("../src/components/ui", () => ({
   PageHeader: ({ title }: { title: string }) => h("h1", null, title),
 }));
 vi.mock("next/link", () => ({ default: (props: Record<string, unknown>) => h("a", props) }));
-vi.mock("../src/components/platform/PlatformTeamManagement", () => ({ PlatformTeamManagement: () => null }));
 
 const subscription = (id: string) => ({ planId: `plan-${id}`, planName: `Plan ${id}`, status: "active", effectiveStatus: "active",
   subscriptionType: "paid", monthlyQuota: 1000, term: "monthly", currentPeriodStart: "2026-10-01T00:00:00Z",

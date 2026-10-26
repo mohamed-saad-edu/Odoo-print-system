@@ -28,8 +28,8 @@ const entitlements={max_agents:1,max_printers:1,max_jobs_per_minute:120,max_conc
 let platformCookie='',ownerCookie='',memberCookie='',claims:NonNullable<ReturnType<typeof verifyPlatformTokenSignature>>;
 function request(url:string,body:unknown,cookie=ownerCookie,key=randomUUID()){return new Request(origin+url,{method:'POST',headers:{origin,'content-type':'application/json',cookie,'idempotency-key':key},body:JSON.stringify(body)});}
 function input(overrides:Record<string,unknown>={}){return parseManualSubscriptionInput({action:'save',expectedRevision:0,planId:'manual',subscriptionType:'paid',monthlyQuota:10,term:'yearly',startDate:new Date(Date.now()-60000).toISOString(),endDate:new Date(Date.now()+365*86400000).toISOString(),status:'active',reason:'Verified external agreement',...overrides});}
-/** Construct an immutable existing customer request for Platform Owner approval tests.
- * The customer-facing request creation route is intentionally retired. */
+/** Construct an immutable customer request for Platform Owner approval tests.
+ * Requests are allowed from the authenticated workspace owner; activation is not. */
 async function seedPendingRequest(): Promise<{id: string}> {
  const id = `req_${randomUUID()}`;
  await db.transaction(async tx => {
@@ -56,21 +56,26 @@ suite('V4 manual subscriptions security and accounting',()=>{
   const owner=await issueWorkspaceTestSession({kind:'manager',tenantId:'workspace',userId:'owner',role:'owner'});ownerCookie=`${sessionCookieName('manager')}=${owner.accessToken}`;
   const member=await issueWorkspaceTestSession({kind:'manager',tenantId:'workspace',userId:'member',role:'admin'});memberCookie=`${sessionCookieName('manager')}=${member.accessToken}`;
  });
- it('denies concurrent workspace subscription requests and does not reveal commercial terms',async()=>{
+ it('deduplicates concurrent customer requests and requires independent Platform Owner approval',async()=>{
   const key=randomUUID();
   const responses=await Promise.all(Array.from({length:6},()=>requestActivation(
     request('/api/subscription-requests',{planId:'manual',term:'yearly',requesterUserId:'forged'},ownerCookie,key)
   )));
-  expect(responses.map(r=>r.status)).toEqual(Array(6).fill(403));
-  expect((await pool().query('SELECT * FROM subscription_requests')).rows).toHaveLength(0);
-  expect(await db.query.tenantSubscriptions.findFirst()).toBeUndefined();
+  expect(responses.map(r=>r.status).sort()).toEqual([200,200,200,200,200,201]);
+  const pending=(await pool().query("SELECT * FROM subscription_requests")).rows;
+  expect(pending).toHaveLength(1);
+  expect(pending[0]).toMatchObject({tenant_id:'workspace',requester_user_id:'owner',status:'pending',plan_id:'manual'});
+  expect((await db.query.tenantSubscriptions.findFirst())?.status).toBe('awaiting_activation');
   await expect(db.transaction(tx=>reserveTenantPrintCredit(tx,'workspace')))
     .rejects.toBeInstanceOf(TenantSubscriptionRequiredError);
   const denied=await requestActivation(request('/api/subscription-requests',{planId:'manual',term:'monthly'},memberCookie));
   expect(denied.status).toBe(403);
   const confidential=await requestsGET(new Request(origin+'/api/subscription-requests',{headers:{cookie:memberCookie}}));
   expect(confidential.status).toBe(403);
-  expect(await confidential.json()).toMatchObject({code:'PLATFORM_OWNER_REQUIRED'});
+  expect(await confidential.json()).toMatchObject({code:'OWNER_REQUIRED'});
+  const ownerRead=await requestsGET(new Request(origin+'/api/subscription-requests',{headers:{cookie:ownerCookie}}));
+  expect(ownerRead.status).toBe(200);
+  expect((await ownerRead.json()).requests).toHaveLength(1);
  });
  it('approves only the linked request, records history, and replays activation without changing revision or credits',async()=>{
   const record=await seedPendingRequest();

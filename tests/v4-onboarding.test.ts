@@ -52,9 +52,10 @@ describe("operational Full Access is independent of commercial authority", () =>
     "%s has printer and workspace configuration access but not billing/team management", role => {
       for (const permission of ["tenant.update", "agents.pair", "printers.manage", "jobs.create", "integrations.manage"] as const)
         expect(hasManagerPermission(principal(role), permission)).toBe(true);
-      for (const permission of ["users.manage", "billing.read", "billing.manage"] as const)
+      for (const permission of ["users.manage", "billing.manage"] as const)
         expect(hasManagerPermission(principal(role), permission)).toBe(false);
-      expect(managerPermissions(principal(role))).not.toContain("billing.read");
+      expect(hasManagerPermission(principal(role), "billing.read")).toBe(role === "owner");
+      expect(managerPermissions(principal(role)).includes("billing.read")).toBe(role === "owner");
     });
 });
 

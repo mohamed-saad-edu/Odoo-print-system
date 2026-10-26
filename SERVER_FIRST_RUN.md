@@ -320,25 +320,28 @@ The verification token expires after 10 minutes.
 
 ## 10. First workspace setup
 
-`/onboarding` redirects to `/dashboard`; workspace members cannot submit plan,
-activation or renewal requests. Its retired API and `/api/subscription-requests`
-return `403 PLATFORM_OWNER_REQUIRED`.
+`/onboarding` redirects to `/billing`. After login, the Workspace Owner can view
+its current plan, usage and contract, choose a public plan, and send an
+idempotent activation or renewal request through `/api/subscription-requests`.
+The retired onboarding API cannot activate a workspace.
 
-1. The Platform Owner opens the workspace in Platform Admin and selects the
-   plan, free/paid type, term, dates and independent monthly job allowance.
-2. After external business settlement or an explicit free grant, the Platform
-   Owner confirms activation with recent password proof, a reason, an
-   idempotency key and the current revision. Existing historical requests may
-   be reviewed without granting a new customer write path.
-3. The member's dashboard reads actual non-commercial availability. Once active,
+1. The Workspace Owner opens `/billing`, selects a public plan and term, and
+   submits the request. The request remains pending and never enables printing.
+2. The separately signed-in Platform Owner reviews the request in Platform
+   Admin. After external settlement or an explicit free grant, the Platform
+   Owner confirms the plan, dates and monthly quota with recent password proof,
+   a reason, an idempotency key and the current revision.
+3. The workspace dashboard reports operational availability. Once active,
    connect a Windows computer, discover and verify its printer, and use
    **Connect Odoo**. Members can update the workspace name through Settings.
 
 The subscription term and UTC monthly quota bucket are separate. Signup and
 email verification do not grant print access. Invited users join their intended
 existing workspace without creating another workspace or subscription. New
-invitations grant Full Access for ordinary work; only the Platform Owner can
-invite people or change ownership/billing. Provision the manual plan catalog
+invitations grant Full Access for ordinary work; the verified Platform Owner
+sends invitations from the signed-in workspace `/team` screen, not Platform
+Admin. Commercial activation and membership ownership changes remain Platform
+Owner-only. Provision the manual plan catalog
 before the Platform Owner assigns subscriptions.
 
 ## 11. Customer login
@@ -580,7 +583,7 @@ Then verify in the browser:
 /signup
   → email arrives
   → /verify-email
-  → /onboarding
+  → /billing (owner requests manual activation)
   → /dashboard
   → logout
   → /login
@@ -631,7 +634,7 @@ Customer:
     ↓
   /verify-email
     ↓
-  /onboarding
+  /billing
     ↓
   /login
     ↓

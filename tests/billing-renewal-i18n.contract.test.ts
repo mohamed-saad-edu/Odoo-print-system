@@ -11,9 +11,9 @@ describe("billing renewal localization contract", () => {
     expect(source).not.toContain("`Ended ${formatDate(");
 
     expect(source).not.toContain('t("billing.renewsOn"');
-    expect(source).toContain('redirect("/platform/subscriptions")');
-    expect(source).not.toContain("currentPeriodEnd");
-    expect(source).not.toContain("subscription-requests");
+    expect(source).toContain("currentPeriodEnd");
+    expect(source).toContain("BillingActions");
+    expect(source).not.toContain('redirect("/platform/subscriptions")');
     const platform = readFileSync("src/components/platform/SubscriptionEditor.tsx", "utf8");
     expect(platform).toContain("a(v)");
     const calendarDates = readFileSync("src/lib/manual-calendar-date.ts", "utf8");

@@ -30,8 +30,8 @@ describe("restored, single-role team invitations", () => {
     expect(guard).toContain("u.is_platform_owner=true");
     expect(guard).toContain("u.email_verified_at IS NOT NULL");
     const platform = read("src/app/api/platform/tenants/[id]/invitations/route.ts");
-    expect(platform).toContain("requirePlatformOwner(req)");
-    expect(platform).toContain("requirePlatformActorInTransaction");
+    expect(platform).toContain("status: 410");
+    expect(platform).not.toContain("sendTransactionalEmail");
   });
   it("lists scoped, bounded pending invitations without exposing tokens", () => {
     const route = read("src/app/api/team/invitations/route.ts");

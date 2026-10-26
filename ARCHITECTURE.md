@@ -50,11 +50,11 @@ The Gateway is a Next.js application (dependency versions are pinned in `package
 - `/api/print/*` — Job submission and batch status
 - `/api/printers/*` — Printer management and test operations
 - `/api/auth/*` — Customer authentication (register, login, verify-email, etc.)
-- `/api/billing/*` — Public plan catalog and authenticated non-commercial availability; workspace commercial usage is denied, and retired provider mutations return HTTP 410
-- `/api/subscription-requests` — Retired workspace request surface; returns403 `PLATFORM_OWNER_REQUIRED`
+- `/api/billing/*` — Public catalog, workspace subscription status and owner-only commercial usage; retired provider mutations return HTTP 410
+- `/api/subscription-requests` — Workspace-owner, tenant-scoped, idempotent subscription request/read; approval and activation require separate Platform Owner authority
 - `/api/platform/*` — Platform administration, manual subscription grants and tenant lifecycle management
 - `/api/admin/*` — Compatibility tenant-lifecycle endpoint with platform authorization
-- `/api/team/*` — Workspace directory and recipient-proof invitation acceptance; workspace team mutations deny access. Platform Owner team administration uses `/api/platform/tenants/:id/*`
+- `/api/team/*` — Tenant-scoped directory and invitation/acceptance flow; verified Platform Owner signed into the workspace can invite members with Full Access. Platform Admin invitations are retired; platform billing and cross-tenant administration remain separate.
 
 ### 2.2 Go Windows Agent
 

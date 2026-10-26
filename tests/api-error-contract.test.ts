@@ -58,14 +58,14 @@ describe("API error contract", () => {
 });
 
 describe("invitation route honours the coded contract", () => {
-  const route = fs.readFileSync("src/app/api/platform/tenants/[id]/invitations/route.ts", "utf8");
+  const route = fs.readFileSync("src/app/api/team/invitations/route.ts", "utf8");
 
   it("sends the delivery code alongside the 503", () => {
     // The client already reads `data.code` and maps it via codeMessageKey();
     // without this field that branch is dead code.
     expect(route).toContain('code: "INVITATION_DELIVERY_UNAVAILABLE"');
     expect(route).toContain("Invitation created; delivery unconfirmed");
-    expect(route).toContain("requirePlatformOwner");
+    expect(route).toContain("requireWorkspacePlatformOwnerForInvites");
   });
 
   it("never revokes the invitation when email delivery is ambiguous", () => {

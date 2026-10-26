@@ -540,7 +540,7 @@ export default function DashboardClient({
   useEffect(() => {
     // Only the authoritative manual lifecycle redirects. An absent/failed
     // response or an active invited membership never starts onboarding.
-    if (subscription && subscription.customerState !== "active") router.replace("/onboarding");
+    if (subscription && subscription.customerState !== "active") router.replace("/billing");
   }, [subscription, router]);
   // Start with a first read on mount; no synchronous setState inside an effect.
   const [billingRefreshTick, setBillingRefreshTick] = useState(1);

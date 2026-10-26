@@ -568,7 +568,7 @@ def test_odoo_gateway_status_reconciliation_cannot_downgrade_terminal_state():
 
 
 def test_team_invitation_email_ambiguity_does_not_revoke_durable_token():
-    route = read("src/app/api/platform/tenants/[id]/invitations/route.ts")
+    route = read("src/app/api/team/invitations/route.ts")
     # The email subject is keyed (i18n contract); anchor the delivery block
     # on the send call itself rather than on the English subject.
     block_start = route.index("await sendTransactionalEmail({")
@@ -577,8 +577,8 @@ def test_team_invitation_email_ambiguity_does_not_revoke_durable_token():
     assert "const revoked = await db.transaction" not in block
     assert 't("mail.invite.subject")' in block
     assert '"INVITATION_DELIVERY_UNAVAILABLE"' in block
-    assert 'requirePlatformOwner' in route
-    assert 'requirePlatformActorInTransaction' in route
+    assert 'requireWorkspacePlatformOwnerForInvites' in route
+    assert 'assertPlatformTeamOrigin' in route
     assert 'invitation_delivery_ambiguous' in block
     assert 'revoke' not in block
 

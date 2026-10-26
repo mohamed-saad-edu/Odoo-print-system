@@ -18,7 +18,7 @@ function ResetPasswordContent() {
   const joined = params.get("joined") === "1";
   const plan = params.get("plan") ?? "";
   const continuation = joined ? "/dashboard" : invite ? `/invite?token=${encodeURIComponent(invite)}`
-    : plan ? `/onboarding?plan=${encodeURIComponent(plan)}` : "/onboarding";
+    : plan ? `/billing?plan=${encodeURIComponent(plan)}` : "/billing";
   const signInDestination = setup ? `/login?next=${encodeURIComponent(continuation)}` : "/login";
   const router = useRouter();
   const [pw, setPw] = useState("");

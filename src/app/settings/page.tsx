@@ -115,7 +115,7 @@ export default function SettingsPage() {
       <PageContainer width="narrow">
         <div className="space-y-5">
           <nav aria-label={t("nav.section.workspace")} className="flex flex-wrap gap-3">
-            <Button href="/billing" variant="secondary">{t("v4.experience.subscription")}</Button>
+            {role === "owner" && <Button href="/billing" variant="secondary">{t("v4.experience.subscription")}</Button>}
             <Button href="/team" variant="secondary">{t("v4.experience.team")}</Button>
             <Button href="/api-keys" variant="secondary">{t("v4.experience.connection")}</Button>
           </nav>

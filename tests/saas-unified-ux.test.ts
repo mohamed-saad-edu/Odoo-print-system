@@ -23,7 +23,7 @@ describe("Yaseir customer UX: concise, state-driven setup", () => {
   it("shows the setup checklist on demand and calls active subscription what it actually is", () => {
     const source = read("src/app/onboarding/page.tsx");
     const words = read("src/i18n/messages/v4-onboarding.ts");
-    expect(source).toContain('redirect("/dashboard")');
+    expect(source).toContain('redirect("/billing")');
     expect(source).not.toContain('subscription-requests');
     expect(words).toContain('"v4.onboarding.ready": "Subscription active"');
     expect(words).toContain('"v4.onboarding.ready": "الاشتراك نشط"');

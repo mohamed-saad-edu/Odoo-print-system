@@ -48,13 +48,14 @@ function valueFor(doc: Document, key: Parameters<typeof translate>[1], locale = 
 }
 
 describe("manual subscription truth on Home", () => {
-  it.each(["en", "ar"] as const)("shows localized operational status without exposing private commercial details in %s", async locale => {
+  it.each(["en", "ar"] as const)("shows owner-facing subscription details in %s without taking the user to Platform Admin", async locale => {
     const doc = await render(locale);
     expect(valueFor(doc, "home.subscriptionLabel")).toBe(translate(locale, "v4.onboarding.active"));
-    expect(valueFor(doc, "home.planLabel")).toBeUndefined();
-    expect(fixture.planReads).toBe(0);
-    expect(valueFor(doc, "v4.subscription.end")).toBeUndefined();
-    expect(valueFor(doc, "home.renewalLabel")).toBeUndefined();
+    expect(valueFor(doc, "home.planLabel")).toBe("Private contract title");
+    expect(fixture.planReads).toBe(1);
+    expect(valueFor(doc, "v4.subscription.end")).toBeTruthy();
+    expect(doc.querySelector('a[href="/billing"]')).not.toBeNull();
+    expect(doc.querySelector('a[href="/platform/subscriptions"]')).toBeNull();
   });
 
   it("does not claim active access before a scheduled start, using database time instead of the host clock", async () => {
@@ -62,7 +63,7 @@ describe("manual subscription truth on Home", () => {
     vi.spyOn(Date, "now").mockReturnValue(Date.parse("2040-01-01T00:00:00Z"));
     const doc = await render();
     expect(valueFor(doc, "home.subscriptionLabel")).toBe(translate("en", "v4.onboarding.pending"));
-    expect(valueFor(doc, "home.planLabel")).not.toBe("Private contract title");
+    expect(valueFor(doc, "home.planLabel")).toBe(translate("en", "billing.noPlanSelected"));
   });
 
   it.each(["missing", "awaiting_activation", "expired", "suspended", "blocked", "tenant_suspended"])("renders %s in Arabic without provider wording or raw state identifiers", async state => {
@@ -88,7 +89,7 @@ describe("manual subscription truth on Home", () => {
     expect(valueFor(doc, "home.subscriptionLabel")).toBe(translate("ar", "v4.onboarding.active"));
   });
 
-  it.each(["owner", "admin", "billing_admin"])("shows %s as Full Access with no commercial fields", async role => {
+  it.each(["admin", "billing_admin"])("shows %s as Full Access without customer billing authority", async role => {
     fixture.role = role; const doc = await render("ar");
     expect(doc.body.textContent).toContain(roleLabel(role, (key, params) => translate("ar", key, params)));
     expect(valueFor(doc, "home.planLabel")).toBeUndefined();
