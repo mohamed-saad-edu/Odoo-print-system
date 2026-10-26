@@ -4,12 +4,12 @@
         <field name="name">print_gateway.binding.list</field>
         <field name="model">print_gateway.binding</field>
         <field name="arch" type="xml">
-            <list string="Document Destinations" create="1" delete="1" class="o_pg_list">
+            <list string="Print Routing" create="1" delete="1" class="o_pg_list">
                 <field name="company_id" string="Company" optional="hide"/>
                 <field name="branch_id" string="Branch" placeholder="All Branches / Root Default" help="Empty means this binding applies to the whole company as the default route."/>
                 <field name="effective_company_id" column_invisible="1"/>
                 <field name="destination_type" string="Print Area" widget="badge" decoration-info="destination_type == 'pos'" decoration-success="destination_type == 'report'" decoration-warning="destination_type == 'picking_type'"/>
-                <field name="destination_ref" string="Document / Destination"/>
+                <field name="destination_ref" string="Print Source"/>
                 <field name="document_type" string="Document Type"/>
                 <field name="runtime_agent_id" string="Print Agent" optional="show"/>
                 <field name="printer_id" string="Printer"/>
@@ -23,7 +23,7 @@
         <field name="name">print_gateway.binding.form</field>
         <field name="model">print_gateway.binding</field>
         <field name="arch" type="xml">
-            <form string="Document Destination" class="o_pg_view o_pg_form">
+            <form string="Print Route" class="o_pg_view o_pg_form">
                 <header>
                     <button name="action_send_test_print" type="object" string="Print test page" class="btn btn-primary" icon="fa-print" invisible="not runtime_agent_id or not printer_id"
                             confirm="This sends a real test page to the selected printer. Continue?"/>
@@ -31,15 +31,15 @@
                 </header>
                 <sheet>
                     <div class="oe_title">
-                        <h1>Document Destination</h1>
-                        <p class="text-muted">Choose an Odoo document and the verified printer that should receive it.</p>
+                        <h1>Print Route</h1>
+                        <p class="text-muted">Route POS receipts, invoices, reports and other print jobs to the right Agent and printer.</p>
                     </div>
 
                     <details class="mb-3">
-                        <summary>Which document destination should I use?</summary>
-                        <p class="text-muted">Select the company, branch, Odoo document, and Yaseir printer. POS preparation uses the Odoo Preparation Printer to preserve category routing.</p>
+                        <summary>How does print routing work?</summary>
+                        <p class="text-muted">Choose a company, optional branch, print source, Agent and printer. POS preparation uses the Odoo Preparation Printer to preserve category routing.</p>
                         <p class="text-muted" invisible="destination_type not in ('pos', 'pos_printer')">POS Receipt does not require an Odoo printer or PDF report. POS Kitchen / Preparation uses the selected Odoo Preparation Printer for category routing; the Gateway printer remains the physical destination.</p>
-                        <p class="text-muted" invisible="destination_type != 'picking_type'">For raw warehouse labels, select the exact ZPL, TSPL or ESC/POS language under Advanced. For PDF reports, choose a PDF-compatible printer.</p>
+                        <p class="text-muted" invisible="destination_type != 'picking_type'">For raw warehouse labels, select the exact ZPL, TSPL or ESC/POS language under Routing Options. For PDF reports, choose a PDF-compatible printer.</p>
                     </details>
 
                     <group string="Scope">
@@ -48,7 +48,7 @@
                                invisible="not company_id" placeholder="All Branches / Root Default" options="{'no_create': True}" help="Empty means this binding applies to the whole company as the default route."/>
                     </group>
 
-                    <group string="Document &amp; Destination">
+                    <group string="Print Source">
                         <field name="destination_type" string="Print Area" widget="radio" options="{'horizontal': true}"/>
                         <field name="destination_pos_config_id" string="POS Shop"
                                invisible="destination_type != 'pos'" required="destination_type == 'pos'"
@@ -73,10 +73,10 @@
                     </group>
 
                     <notebook>
-                        <page string="Advanced">
+                        <page string="Routing Options">
                             <group>
                                 <field name="printer_protocol" string="Printer Protocol"/>
-                                <field name="fallback_binding_id" string="Backup Rule" options="{'no_create': True}"/>
+                                <field name="fallback_binding_id" string="Backup Route" options="{'no_create': True}"/>
                                 <field name="enabled" widget="boolean_toggle"/>
                                 <field name="priority"/>
                             </group>
@@ -98,7 +98,7 @@
     </record>
 
     <record id="action_print_gateway_binding" model="ir.actions.act_window">
-        <field name="name">Document Destinations</field>
+        <field name="name">Print Routing</field>
         <field name="res_model">print_gateway.binding</field>
         <field name="view_mode">list,form</field>
     </record>

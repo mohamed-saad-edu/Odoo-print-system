@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
 {
     'name': 'Yaseir Print Gateway',
-    'version': '19.0.2.28.0',
+    'version': '19.0.2.29.0',
     'summary': 'Connect Odoo to Yaseir printers with company and branch routing',
     'description': """
 Connect Odoo to Yaseir once per company.
 
 Assign a printing computer to each company or branch. Select a verified printer
-for each document under Document Destinations. Enable automatic printing
+for each print source under Print Routing. Enable automatic printing
 only when the relevant print rules are ready.
 
 Computer assignments are managed in one place. Selecting a printer does not
@@ -48,11 +48,8 @@ create an agent assignment or send a print job.
             'print_gateway/static/src/js/async_control.js',
             'print_gateway/static/src/js/printer_geometry.js',
             'print_gateway/static/src/js/printer_verification.js',
-            'print_gateway/static/src/js/printer_scope_labels.js',
             'print_gateway/static/src/js/operation_recovery.js',
             'print_gateway/static/src/scss/print_gateway_backend.scss',
-            'print_gateway/static/src/components/printers_overview.js',
-            'print_gateway/static/src/components/printers_overview.xml',
             'print_gateway/static/src/components/runtime_agent_field.js',
             'print_gateway/static/src/components/runtime_printer_field.js',
             'print_gateway/static/src/components/language_switcher.js',

@@ -1,8 +1,12 @@
 # Odoo Integration Guide
 
-> Module: `print_gateway` | Version: 19.0.2.28.0 | Odoo: 19 Community Edition
+> Module: `print_gateway` | Version: 19.0.2.29.0 | Odoo: 19 Community Edition
 
-## 19.0.2.28.0: consistent navigation and scoped printer guidance
+## 19.0.2.29.0: unified print routing navigation
+
+The retired standalone Printers screen and its client action are removed. Print Routing now owns source, branch, Agent and verified printer selection for invoices, reports, POS and operations. Branch Devices and Automation Activity are first-level menu items; the Advanced menu is retired. On module upgrade a guarded migration removes obsolete menu/action records without deleting Agent assignments, print routes or job history.
+
+## 19.0.2.28.0: previous navigation and scope handling
 
 Document Destinations is now a primary navigation item, separate from the optional Automatic Printing event rules. Branch Devices and Automation Activity remain Advanced. Printer inventory provides branch-scoped recovery guidance and distinguishes missing assignments, unavailable Agents and disconnected printing service. Arabic labels and test-page vs registration-check actions are consistent. Legacy routing, authorization and physical printer requirements are unchanged.
 
@@ -135,11 +139,11 @@ The Yaseir Print Gateway Odoo addon enables silent, hardware-level printing from
 
 ## V4 operator workflow
 
-The primary Yaseir navigation is **Connection → Printers → Document Destinations → Automatic Printing → Print Activity**. Enter the company connection address and key from Gateway's **Connect Odoo**, assign a printing computer to the exact company/branch under **Advanced → Branch Devices**, choose a verified printer and its document destination, then enable printing. Automatic Printing is optional: it defines business-event triggers, not printer destinations. Checking a connection or registration never proves physical paper output. The Windows pairing code is separate from the Odoo connection key.
+The primary Yaseir navigation is **Connection → Print Routing → Branch Devices → Automatic Printing → Print Activity → Automation Activity**. Enter the company connection address and key from Gateway's **Connect Odoo**, assign a printing computer to the exact company/branch under **Branch Devices**, choose a verified Agent and printer under Print Routing for each source, then enable printing. Automatic Printing is optional: it defines business-event triggers, not printer destinations. Checking a connection or registration never proves physical paper output. The Windows pairing code is separate from the Odoo connection key.
 
-The Printers screen reads actual assigned computers and approved printer inventory. Its authenticated `/print_gateway/setup-context` endpoint returns only the user's activated company scopes and connection record identifiers; it returns no credentials and creates no assignments. A system administrator must explicitly assign a computer to the exact company or branch. A printer becomes selectable only when its existing verification and availability checks pass. Existing server-side branch authorization remains the authority when a rule is saved.
+The Print Routing form reads assigned computers and verified printers from its native Agent/printer pickers. The legacy authenticated `/print_gateway/setup-context` endpoint is retained for compatibility, but no separate printer inventory page consumes it; it returns no credentials and creates no assignments. A system administrator must explicitly assign a computer to the exact company or branch. A printer becomes selectable only when its existing verification and availability checks pass. Existing server-side branch authorization remains the authority when a rule is saved.
 
-Advanced connection settings retain guarded synchronization recovery and branch-computer management. Document Destinations is a primary screen; Branch Devices and Automation Activity stay under Advanced. Saved historical lifecycle, diagnostic, output and idempotency evidence is retained. Print Activity uses a separate customer presentation: **Waiting**, **Processing**, **Sent to printer**, **Failed before output**, or **Needs review**. Verified file output remains **File created**. Neither accepted submission nor `success` claims that paper physically emerged.
+Advanced connection settings retain guarded synchronization recovery and branch-computer management. Print Routing, Branch Devices and Automation Activity are direct navigation items. Saved historical lifecycle, diagnostic, output and idempotency evidence is retained. Print Activity uses a separate customer presentation: **Waiting**, **Processing**, **Sent to printer**, **Failed before output**, or **Needs review**. Verified file output remains **File created**. Neither accepted submission nor `success` claims that paper physically emerged.
 
 Customer errors are classified into localized next steps without interpolating raw backend exception text. Arabic translations are evaluated in the current reader's language; raw diagnostic evidence remains available to authorized technical workflows. An uncertain output warns the operator to check before retrying.
 

@@ -43,19 +43,19 @@
                     </details>
                     <group string="Next steps">
                         <div class="d-flex flex-wrap gap-2">
-                            <button name="action_open_printers" type="object" string="View printers" class="btn btn-outline-primary"/>
-                            <button name="action_open_destinations" type="object" string="Document Destinations" class="btn btn-outline-primary"/>
+                            <button name="action_open_destinations" type="object" string="Print Routing" class="btn btn-outline-primary"/>
+                            <button name="action_open_runtime_assignments" type="object" string="Branch Devices" class="btn btn-outline-secondary"/>
                         </div>
                     </group>
                     <group string="Printing">
                         <field name="enabled" widget="boolean_toggle" string="Enable printing"/>
                         <details class="mb-2">
                             <summary>When can printing start?</summary>
-                            <p class="text-muted">Check the connection, assign a computer to the branch, and choose a verified printer for the document before enabling printing.</p>
+                            <p class="text-muted">Check the connection, assign a computer under Branch Devices, and choose the print source, Agent and verified printer under Print Routing before enabling printing.</p>
                         </details>
                     </group>
                     <notebook>
-                        <page string="Advanced connection settings">
+                        <page string="Connection maintenance">
                             <group><field name="last_test_at" readonly="1"/><field name="last_enabled_sync_at" readonly="1"/></group>
                             <div class="d-flex flex-wrap gap-2">
                                 <button name="action_retry_enabled_sync" type="object" string="Retry Synchronization" class="btn btn-secondary"/>

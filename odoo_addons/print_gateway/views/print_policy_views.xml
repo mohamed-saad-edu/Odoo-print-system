@@ -14,7 +14,7 @@
                 <field name="event_type" string="When" widget="badge"/>
                 <field name="action_type" widget="badge"/>
                 <field name="report_id" string="Document" optional="show"/>
-                <field name="binding_id" string="Print Rule" optional="show"/>
+                <field name="binding_id" string="Print Route" optional="show"/>
                 <field name="active" widget="boolean_toggle"/>
             </list>
         </field>
@@ -61,18 +61,18 @@
                                    invisible="action_type != 'raw_template'" 
                                    required="action_type == 'raw_template'"/>
                             
-                            <field name="binding_id" string="Document Destination"
+                            <field name="binding_id" string="Print Route"
                                    domain="['&amp;', ('company_id', '=', company_id), '|', ('branch_id', '=', branch_id), ('branch_id', '=', False)] + ([('report_id', '=', report_id)] if action_type == 'report' else [])"
                                    options="{'no_create': True}"
-                                   help="Optional explicit Document Destination for this company and branch. Leave empty for automatic routing."/>
+                                   help="Optional explicit Print Route for this company and branch. Leave empty for automatic routing."/>
                         </group>
                     </group>
 
-                    <group string="Advanced Printer Command" invisible="action_type != 'raw_template'">
+                    <group string="Printer Command" invisible="action_type != 'raw_template'">
                         <field name="raw_template" nolabel="1" placeholder="e.g. ^XA^FO50,50^ADN,36,20^FD{name}^FS^XZ" class="font-monospace" style="min-height: 120px;"/>
                     </group>
 
-                    <notebook><page string="Advanced conditions"><group string="Conditions">
+                    <notebook><page string="Conditions"><group string="Conditions">
                         <field name="warehouse_id" invisible="model_name != 'stock.picking'" options="{'no_create': True}"/>
                         <field name="picking_type_id" invisible="model_name != 'stock.picking'" options="{'no_create': True}"/>
                         <field name="domain_filter" widget="domain" options="{'model': 'model_name'}" placeholder="e.g. [('state', '=', 'done')]"/>

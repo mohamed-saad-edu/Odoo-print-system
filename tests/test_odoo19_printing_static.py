@@ -271,12 +271,12 @@ def test_gateway_config_form_exposes_guarded_connection_and_recovery_actions():
         'name="action_clear_api_key"',
     ):
         assert action not in form
-    # V4 exposes explicit branch administration only inside Advanced, while
-    # keeping guarded recovery and credential deletion out of the main flow.
-    advanced = form[form.index('<page string="Advanced connection settings"'):]
-    assert 'name="action_open_runtime_assignments"' in advanced
-    assert 'name="action_reset_stale_sync_state"' in advanced
-    assert 'name="action_open_printers"' in form
+    # The route form owns Agent/printer selection. Connection repair remains
+    # under Maintenance; Branch Devices is directly navigable from the menu.
+    maintenance = form[form.index('<page string="Connection maintenance"'):]
+    assert 'name="action_reset_stale_sync_state"' in maintenance
+    assert 'name="action_open_runtime_assignments"' in form
+    assert 'name="action_open_printers"' not in form
     assert 'name="action_open_destinations"' in form
     assert 'name="action_open_print_rules"' not in form
     assert 'field name="gateway_url"' in form
