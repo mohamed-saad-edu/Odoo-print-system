@@ -72,7 +72,7 @@ function readRecord(store, key) {
  * priorId/canReplay describe an identical payload still owned in live memory.
  * A page reload has neither payload nor proof of non-delivery, so it blocks.
  */
-export function claimPrintOperation(key, priorId, canReplay, newId) {
+function reservePrintOperation(key, priorId, canReplay, newId) {
     const store = browserStore();
     const persisted = readRecord(store, key);
     if (persisted) {
@@ -90,6 +90,47 @@ export function claimPrintOperation(key, priorId, canReplay, newId) {
         }
     }
     return { blocked: false, id, newIntent: !reuse };
+}
+
+export async function claimPrintOperation(key, priorId, canReplay, newId) {
+    const reserve = () => reservePrintOperation(key, priorId, canReplay, newId);
+    if (typeof window === "undefined") return reserve();
+    // Read/write transactions serialize across tabs, including on HTTP origins
+    // where Web Locks is unavailable. The empty store holds no print data.
+    return new Promise((resolve, reject) => {
+        let database, transaction, result, settled = false;
+        const unavailable = () => new Error(_t("Browser operation recovery storage is unavailable. Printing is paused."));
+        const finish = (error) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            database?.close();
+            if (error) reject(error); else resolve(result);
+        };
+        const timer = setTimeout(() => {
+            transaction?.abort();
+            finish(unavailable());
+        }, 15000);
+        try {
+            const opening = window.indexedDB.open("yaseir-print-recovery-lock", 1);
+            opening.onupgradeneeded = () => opening.result.createObjectStore("claims");
+            opening.onerror = opening.onblocked = () => finish(unavailable());
+            opening.onsuccess = () => {
+                database = opening.result;
+                if (settled) { database.close(); return; }
+                try {
+                    transaction = database.transaction("claims", "readwrite");
+                    transaction.onerror = transaction.onabort = () => finish(unavailable());
+                    transaction.oncomplete = () => finish();
+                    transaction.objectStore("claims").get(key).onsuccess = () => {
+                        if (settled) return;
+                        try { result = reserve(); }
+                        catch (error) { finish(error); transaction.abort(); }
+                    };
+                } catch { finish(unavailable()); }
+            };
+        } catch { finish(unavailable()); }
+    });
 }
 
 export function finishPrintOperation(key, operationId) {

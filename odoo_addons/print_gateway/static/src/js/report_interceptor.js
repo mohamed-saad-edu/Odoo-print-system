@@ -124,7 +124,7 @@ async function silentPrintReportHandler(action, options, env) {
             env.services.company?.currentCompany?.id || 0,
             operationKey,
         ]);
-        claim = claimPrintOperation(recoveryKey,
+        claim = await claimPrintOperation(recoveryKey,
             operation?.request?.operation_id || null, Boolean(operation?.request), reportOperationUuid);
         if (claim.blocked) {
             notification.add(

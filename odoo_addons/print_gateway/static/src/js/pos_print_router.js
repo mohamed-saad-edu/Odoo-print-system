@@ -401,7 +401,7 @@ patch(PosStore.prototype, {
                 sessionId, this.config?.id || 0, orderId, currentOrder.uuid || "",
                 Boolean(basic),
             ]);
-            const claim = claimPrintOperation(
+            const claim = await claimPrintOperation(
                 recoveryKey, memoryRetry ? lastOp.id : null,
                 memoryRetry, gatewayUuid,
             );
@@ -832,7 +832,7 @@ patch(PosStore.prototype, {
                 });
                 const recoveryOperations = this.gatewayKitchenRecoveryOperations ||= new Map();
                 const priorOperation = recoveryOperations.get(recoveryKey);
-                const claim = claimPrintOperation(recoveryKey, priorOperation?.id,
+                const claim = await claimPrintOperation(recoveryKey, priorOperation?.id,
                     priorOperation?.signature === signature, gatewayUuid);
                 if (claim.blocked) {
                     this.notification.add(

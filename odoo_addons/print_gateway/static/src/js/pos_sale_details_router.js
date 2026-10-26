@@ -87,7 +87,7 @@ patch(SaleDetailsButton.prototype, {
                 this.pos.company?.id || this.pos.env?.services?.company?.currentCompany?.id || 0,
                 sessionId, this.pos.config?.id || 0,
             ]);
-            const claim = claimPrintOperation(recoveryKey, memoryRetry ? lastOp.id : null,
+            const claim = await claimPrintOperation(recoveryKey, memoryRetry ? lastOp.id : null,
                 memoryRetry, gatewayOperationUuid);
             if (claim.blocked) {
                 this.env.services.notification.add(

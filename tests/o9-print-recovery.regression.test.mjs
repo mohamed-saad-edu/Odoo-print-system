@@ -1,4 +1,5 @@
 import { receiptGeometry } from "./helpers/odoo-printer-geometry.mjs";
+import { recoveryIndexedDB } from "./helpers/odoo-recovery-indexeddb.mjs";
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { readFile } from 'node:fs/promises';
@@ -73,6 +74,7 @@ async function loadHook(file, { storage, clock = { now: 1000 }, storageThrows = 
     const localWindow = storageThrows
         ? Object.defineProperty({}, 'localStorage', { get() { throw new Error('Storage blocked'); } })
         : { localStorage: storage, location: { search: '?db=yaseir-audit', pathname: '/pos/ui' } };
+    localWindow.indexedDB = recoveryIndexedDB();
     const context = vm.createContext({
         console: { warn() {}, error() {}, log() {}, ...(infoThrows ? { info() { throw new Error('console sink failed'); } } : {}) }, Date: DateStub,
         crypto: webcrypto, Map, Set, Uint8Array, window: localWindow,
