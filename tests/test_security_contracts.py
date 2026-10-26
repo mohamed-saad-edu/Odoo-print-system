@@ -514,7 +514,10 @@ def test_tenant_selection_issues_customer_kind_session():
 
 def test_workspace_team_mutations_refused_and_platform_deletion_revokes_families():
     ordinary = read("src/app/api/team/members/route.ts")
-    assert ordinary.count('PLATFORM_OWNER_REQUIRED') >= 2
+    assert 'PLATFORM_OWNER_REQUIRED' in ordinary
+    assert 'export async function PATCH(req: Request) { return denyMemberMutation(req); }' in ordinary
+    assert 'export async function DELETE(req: Request) { return denyMemberMutation(req); }' in ordinary
+    assert 'if (!claims?.userId)' in ordinary and 'status: 401' in ordinary
     platform = read("src/app/api/platform/tenants/[id]/members/route.ts")
     assert 'requirePlatformOwner' in platform
     assert 'requirePlatformActorInTransaction' in platform
