@@ -4,10 +4,10 @@ import { StatusDot, type Tone } from "../components/ui";
 
 export function PageHeader({ title, subtitle, actions, children }: { title: string; subtitle?: string; actions?: React.ReactNode; children?: React.ReactNode; }) {
   return (
-    <div className="flex min-w-0 flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+    <div className="flex min-w-0 flex-wrap items-center justify-between gap-x-4 gap-y-3">
       <div className="min-w-0">
-        <h1 className="text-[24px] font-[680] leading-tight tracking-[-0.025em] text-ink">{title}</h1>
-        {subtitle && <p className="mt-1 max-w-2xl text-sm leading-relaxed text-ink-3">{subtitle}</p>}
+        <h1 className="text-xl font-[650] leading-tight tracking-[-0.02em] text-ink sm:text-2xl">{title}</h1>
+        {subtitle && <p className="mt-1 max-w-xl text-sm leading-normal text-ink-3">{subtitle}</p>}
       </div>
       {actions && <div className="flex w-full min-w-0 flex-wrap items-center gap-2 lg:w-auto lg:shrink-0">{actions}</div>}
       {children}

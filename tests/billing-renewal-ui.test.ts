@@ -8,6 +8,6 @@ describe("commercial contract data is Platform Owner-only", () => {
   it.each(["en", "ar"] as const)("redirects %s workspace members away from billing, ignoring requested plan parameters", () => {
     const rendered = BillingPage({ searchParams: Promise.resolve({ plan: "secret-plan" }) });
     expect(rendered).toBeNull();
-    expect(navigation.redirect).toHaveBeenCalledExactlyOnceWith("/dashboard");
+    expect(navigation.redirect).toHaveBeenCalledExactlyOnceWith("/platform/subscriptions");
   });
 });

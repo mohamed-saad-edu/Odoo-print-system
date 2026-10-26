@@ -105,8 +105,7 @@ export default function SettingsPage() {
 
   return (
     <>
-      <PageHeader
-        eyebrow={t("nav.section.administration")}
+      <PageHeader 
         icon={<SettingsIcon className="h-4 w-4" />}
         title={t("nav.settings")}
         width="narrow"

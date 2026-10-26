@@ -220,11 +220,9 @@ export default function ApiKeysPage() {
 
   return (
     <>
-      <PageHeader
-        eyebrow={t("nav.section.integration")}
+      <PageHeader 
         icon={<KeyRound className="h-4 w-4" />}
-        title={t("v4.connection.title")}
-        description={active === 0 ? t("v4.connection.intro") : undefined}
+        title={t("v4.connection.title")} 
         meta={
           active > 0 ? (
             <StatusBadge tone={enabled > 0 ? "ok" : "warn"} label={tc("apiKeys.activeCount", active, { count: formatNumber(active) })} />

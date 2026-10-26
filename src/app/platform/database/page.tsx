@@ -82,11 +82,9 @@ export default function PlatformDatabasePage() {
 
   return (
     <div className="space-y-5 pb-10">
-      <PageHeader
-        title={ar ? "مستكشف قاعدة البيانات" : "Database Explorer"}
-        eyebrow={ar ? "المنصة / البيانات" : "Platform / Data"}
-        icon={<Database className="h-5 w-5" />}
-        description={ar ? "ابحث باسم السجل أو حالته أو جزء من ID، واعرض التفاصيل وانسخ المعرّف بضغطة واحدة." : "Find records by name, status or partial ID. Inspect details and copy IDs with one click."}
+      <PageHeader variant="inline"
+        title={ar ? "مستكشف قاعدة البيانات" : "Database Explorer"} 
+        icon={<Database className="h-5 w-5" />} 
         actions={<Button variant="secondary" size="sm" loading={loading} onClick={refresh} icon={<RefreshCw className="h-4 w-4" />}>{ar ? "تحديث" : "Refresh"}</Button>}
       />
       <div className="flex items-center gap-2 rounded-xl border border-edge bg-surface p-4 text-sm text-ink-3">

@@ -127,7 +127,7 @@ describe("ApiKeysPage API-key authoring", () => {
         return new Response(JSON.stringify(list), { status: 200, headers: { "content-type": "application/json" } });
       }
       if (url === "/api/odoo/installations") return new Response(JSON.stringify([]), { status: 200 });
-      if (url === "/api/subscription-requests") {
+      if (url === "/api/billing/status") {
         return new Response(JSON.stringify({ hasSubscription: true, status: "active" }), { status: 200, headers: { "content-type": "application/json" } });
       }
       if (url === "/api/odoo/keys" && init?.method === "POST") {

@@ -71,7 +71,7 @@ export default function PlatformPrintOperationsPage() {
   const stateChoices = ["all", "active", "success", "failed", "expired", "unknown"] as const;
   return (
     <div className="space-y-5 pb-10">
-      <PageHeader title={t.title} eyebrow={t.eyebrow} icon={<History className="h-5 w-5" />} description={t.description} actions={<Button variant="secondary" size="sm" loading={loading} onClick={() => setReload(v => v + 1)} icon={<RefreshCw className="h-4 w-4" />}>{t.refresh}</Button>} />
+      <PageHeader variant="inline" title={t.title}  icon={<History className="h-5 w-5" />}  actions={<Button variant="secondary" size="sm" loading={loading} onClick={() => setReload(v => v + 1)} icon={<RefreshCw className="h-4 w-4" />}>{t.refresh}</Button>} />
       <div className="rounded-xl border border-edge bg-surface px-5 py-4 shadow-sm">
         <div className="grid gap-3 md:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
           <label className="relative block text-sm text-ink-3"><Search className="absolute left-3 top-3 h-4 w-4 rtl:left-auto rtl:right-3" aria-hidden /><span className="sr-only">{t.search}</span><input value={query} onChange={e => { setQuery(e.target.value); setOffset(0); }} maxLength={64} placeholder={t.search} className="h-11 w-full rounded-lg border border-edge bg-surface-2 ps-10 pe-3 text-ink outline-none focus:border-brand focus:ring-2 focus:ring-brand/25" /></label>

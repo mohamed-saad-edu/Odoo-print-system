@@ -173,8 +173,7 @@ export default function PlatformTenantsPage() {
       <PageHeader
         variant="inline"
         icon={<Building2 className="h-4 w-4" aria-hidden />}
-        title={t("platform.tenants.title")}
-        description={t("platform.tenants.description")}
+        title={t("platform.tenants.title")} 
         actions={
           <>
             {suspendedCount > 0 && <StatusBadge tone="warn" label={t("platform.tenants.suspendedCount", { count: formatNumber(suspendedCount) })} />}

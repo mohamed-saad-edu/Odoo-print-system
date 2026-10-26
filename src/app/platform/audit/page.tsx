@@ -131,8 +131,7 @@ export default function PlatformAuditPage() {
       <PageHeader
         variant="inline"
         icon={<Shield className="h-4 w-4" aria-hidden />}
-        title={t("platform.audit.title")}
-        description={t("platform.audit.description")}
+        title={t("platform.audit.title")} 
         actions={
           <Button
             variant="secondary"

@@ -105,7 +105,7 @@ export default function PlatformFleetPage() {
   }
   const choices = ["all", "active", "disabled", "retired"] as const;
   return <div className="space-y-5 pb-10">
-    <PageHeader title={t.title} eyebrow={t.eyebrow} icon={<Cpu className="h-5 w-5" />} description={t.desc} actions={<Button size="sm" loading={loading} onClick={() => setRefresh(x => x+1)} icon={<RefreshCw className="h-4 w-4" />}>{t.refreshed}</Button>} />
+    <PageHeader variant="inline" title={t.title}  icon={<Cpu className="h-5 w-5" />}  actions={<Button size="sm" loading={loading} onClick={() => setRefresh(x => x+1)} icon={<RefreshCw className="h-4 w-4" />}>{t.refreshed}</Button>} />
     <div className="rounded-xl border border-edge bg-surface px-5 py-4 shadow-sm">
       <div className="mb-4"><SegmentedControl value={kind} label={t.inventory}
         options={[{ value: "agents", label: t.agents }, { value: "printers", label: t.printers }]}
