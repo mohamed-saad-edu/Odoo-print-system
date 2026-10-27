@@ -17,27 +17,32 @@ type Subscription = {
   term: string;
 };
 
+const PAGE_SIZE = 50;
+
 export default function Subscriptions() {
-  const { a, formatDate, formatNumber } = useAdminText();
+  const { a, t, formatDate, formatNumber } = useAdminText();
   const [items, setItems] = useState<Subscription[]>([]);
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("all");
+  const [offset, setOffset] = useState(0);
+  const [hasMore, setHasMore] = useState(false);
   const [error, setError] = useState(false);
   const [loading, setLoading] = useState(true);
   const [tick, setTick] = useState(0);
 
   useEffect(() => {
     let live = true;
-    adminJson("/api/platform/subscriptions?search=" + encodeURIComponent(search))
-      .then((data: { subscriptions: Subscription[] }) => {
-        if (live) { setItems(data.subscriptions); setError(false); }
+    const query = new URLSearchParams({ search, status: status, limit: String(PAGE_SIZE), offset: String(offset) });
+    adminJson("/api/platform/subscriptions?" + query.toString())
+      .then((data: { subscriptions: Subscription[]; hasMore: boolean }) => {
+        if (live) { setItems(data.subscriptions); setHasMore(data.hasMore); setError(false); }
       })
-      .catch(() => { if (live) { setItems([]); setError(true); } })
+      .catch(() => { if (live) { setItems([]); setHasMore(false); setError(true); } })
       .finally(() => { if (live) setLoading(false); });
     return () => { live = false; };
-  }, [search, tick]);
+  }, [search, status, offset, tick]);
 
-  const visible = items.filter(item => status === "all" || item.status === status);
+  const visible = items;
   return <div className="space-y-5">
     <PageHeader variant="inline" title={a("subscriptions")} actions={
       <div className="flex flex-wrap gap-2">
@@ -46,9 +51,9 @@ export default function Subscriptions() {
       </div>} />
     <div className="grid gap-3 sm:grid-cols-2">
       <input className={controlClass} aria-label={a("search")} placeholder={a("search")} value={search}
-        onChange={event => { setLoading(true); setError(false); setSearch(event.target.value); }} />
+        onChange={event => { setOffset(0); setHasMore(false); setLoading(true); setError(false); setSearch(event.target.value); }} />
       <select className={controlClass} aria-label={a("status")} value={status}
-        onChange={event => setStatus(event.target.value)}>
+        onChange={event => { setOffset(0); setHasMore(false); setLoading(true); setError(false); setStatus(event.target.value); }}>
         {["all", "active", "awaiting_activation", "expired", "suspended"].map(value =>
           <option key={value} value={value}>{a(value)}</option>)}
       </select>
@@ -94,5 +99,18 @@ export default function Subscriptions() {
           </div>
         </Card>)}
       </div>}
+    {!loading && !error && (items.length > 0 || offset > 0) && <nav aria-label={a("subscriptions")} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-edge p-3">
+      <Button type="button" variant="secondary" size="sm" disabled={offset === 0}
+        onClick={() => { setLoading(true); setOffset(value => Math.max(0, value - PAGE_SIZE)); }}>
+        {t("common.previousPage")}
+      </Button>
+      <span aria-live="polite" className="text-sm text-ink-3">
+        {t("common.pageRange", { start: items.length ? offset + 1 : 0, end: offset + items.length })}
+      </span>
+      <Button type="button" variant="secondary" size="sm" disabled={!hasMore}
+        onClick={() => { setLoading(true); setOffset(value => value + PAGE_SIZE); }}>
+        {t("common.nextPage")}
+      </Button>
+    </nav>}
   </div>;
 }
