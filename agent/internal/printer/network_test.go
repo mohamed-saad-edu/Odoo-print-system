@@ -179,6 +179,42 @@ func TestNetworkPrinterPartialDelivery(t *testing.T) {
 	}
 }
 
+// A net.Conn implementation may return an unsuccessful or zero-progress
+// Write after reaching the physical transport. Zero CONFIRMED bytes cannot
+// establish zero transmitted bytes; the Agent must never auto-retry it.
+type unconfirmedFirstWriteConn struct {
+	net.Conn
+	writeErr error
+}
+
+func (c *unconfirmedFirstWriteConn) Write([]byte) (int, error) {
+	return 0, c.writeErr
+}
+
+func TestNetworkUnconfirmedFirstWriteIsUnknown(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+	}{
+		{"driver_zero_progress", nil},
+		{"driver_error_zero_confirmed_bytes", errors.New("connection reset after attempted transmission")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client, peer := net.Pipe()
+			defer client.Close()
+			defer peer.Close()
+			conn := &unconfirmedFirstWriteConn{Conn: client, writeErr: tc.err}
+			written, err := writePrintPayload(context.Background(), conn, []byte("receipt"), "simulated-queue")
+			if written != 0 || !OutcomeUnknown(err) {
+				t.Fatalf("unconfirmed TCP write must not claim safe retry: confirmed=%d err=%v", written, err)
+			}
+			if err == nil || !strings.HasPrefix(err.Error(), "UNKNOWN_PARTIAL_DELIVERY") {
+				t.Fatalf("Gateway cannot reconcile this attempt without the exact unknown marker: %v", err)
+			}
+		})
+	}
+}
+
 type partialWriteConn struct {
 	net.Conn
 	firstSize int
