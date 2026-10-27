@@ -61,6 +61,14 @@ export function normalizeGatewayUrl(raw: string): string {
     if (parsed.username || parsed.password || candidate.includes("@")) {
       throw new Error("Gateway URL cannot include embedded credentials");
     }
+    // Parse the raw authority before WHATWG removes an empty port suffix.
+    // Native Go rejects both "host:" and port zero; accepting them here
+    // would make a saved/pasted Gateway work in the WebView but fail pairing.
+    // IPv6 colons are always inside brackets and never the authority suffix.
+    const rawAuthority = candidate.slice(candidate.indexOf("://") + 3).split(/[/?#]/, 1)[0] ?? "";
+    if (rawAuthority.endsWith(":") || parsed.port === "0") {
+      throw new Error("Gateway URL port must be between 1 and 65535");
+    }
     // Match the packaged Tauri transport policy (commands.rs
     // normalize_gateway_url): remote Gateways must use HTTPS; plain HTTP is
     // accepted only for local development hosts.
