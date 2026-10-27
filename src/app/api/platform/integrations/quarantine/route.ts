@@ -39,9 +39,11 @@ export async function POST(req: Request) {
     const result = await db.transaction(async tx => {
       const rows = await tx.select({ id: odooInstallations.id, enabled: odooInstallations.enabled })
         .from(odooInstallations).where(and(eq(odooInstallations.tenantId, tenantId), eq(odooInstallations.id, id))).for("update");
+      // Acquire the installation row lock before user/session authority as
+      // before; a stale Platform Owner may not observe existence or state.
+      await requirePlatformActorInTransaction(tx, actor);
       if (!rows[0]) return { status: 404, error: "Installation not found" } as const;
       if (!rows[0].enabled) return { status: 409, error: "Installation already quarantined" } as const;
-      await requirePlatformActorInTransaction(tx, actor);
       const disabled = await tx.update(odooInstallations)
         .set({ enabled: false, disabledAt: sql`clock_timestamp()` })
         .where(and(eq(odooInstallations.id, id), eq(odooInstallations.tenantId, tenantId), eq(odooInstallations.enabled, true)))
