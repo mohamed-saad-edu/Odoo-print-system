@@ -40,9 +40,11 @@ jobs:
     name: Agent / Go
     needs: changes
     if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && needs.changes.outputs.agent == 'true'
-    # Preserve running main/release gates; supersede only redundant PR attempts.
+    # Each main SHA needs its own verification queue. The GitHub Actions
+    # concurrency service replaces older PENDING jobs in a shared ref group
+    # even when cancel-in-progress is false; keep PR duplication grouped by ref.
     concurrency:
-      group: ci-agent-${{ github.ref }}
+      group: ci-agent-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
       cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -102,9 +104,11 @@ jobs:
     name: App / Quality
     needs: changes
     if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && needs.changes.outputs.app == 'true'
-    # Preserve running main/release gates; supersede only redundant PR attempts.
+    # Each main SHA needs its own verification queue. The GitHub Actions
+    # concurrency service replaces older PENDING jobs in a shared ref group
+    # even when cancel-in-progress is false; keep PR duplication grouped by ref.
     concurrency:
-      group: ci-quality-${{ github.ref }}
+      group: ci-quality-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
       cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -198,9 +202,11 @@ jobs:
     name: App / Gateway
     needs: changes
     if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && needs.changes.outputs.app == 'true'
-    # Preserve running main/release gates; supersede only redundant PR attempts.
+    # Each main SHA needs its own verification queue. The GitHub Actions
+    # concurrency service replaces older PENDING jobs in a shared ref group
+    # even when cancel-in-progress is false; keep PR duplication grouped by ref.
     concurrency:
-      group: ci-gateway-${{ github.ref }}
+      group: ci-gateway-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
       cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -411,9 +417,11 @@ jobs:
   odoo19:
     needs: changes
     if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && needs.changes.outputs.odoo == 'true'
-    # Preserve running main/release gates; supersede only redundant PR attempts.
+    # Each main SHA needs its own verification queue. The GitHub Actions
+    # concurrency service replaces older PENDING jobs in a shared ref group
+    # even when cancel-in-progress is false; keep PR duplication grouped by ref.
     concurrency:
-      group: ci-odoo-${{ github.ref }}
+      group: ci-odoo-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
       cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     runs-on: ubuntu-latest
     timeout-minutes: 35
