@@ -15,6 +15,13 @@ permissions:
   contents: read
 
 
+# Preserve running main verification while retaining only the latest pending
+# push for this workflow. Never coalesce manual or merge-queue release gates.
+# PR retries may cancel older attempts of the same PR only.
+concurrency:
+  group: security-supply-run-${{ github.event_name == 'push' && github.ref || github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   changes:
     name: Relevant change scopes
