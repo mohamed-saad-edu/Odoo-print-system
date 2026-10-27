@@ -2228,6 +2228,32 @@ mod security_tests {
     }
 
     #[test]
+    fn gateway_url_rejects_empty_or_zero_ports_without_normalization() {
+        for raw in [
+            "https://gateway.example.com:/",
+            "https://gateway.example.com:0/",
+            "https://gateway.example.com:00000/",
+            "http://localhost:/",
+            "http://localhost:0/",
+            "https://[::1]:/",
+            "https://[::1]:0/",
+        ] {
+            assert!(
+                normalize_gateway_url(raw).is_err(),
+                "invalid Gateway port silently normalized: {raw}"
+            );
+        }
+        assert_eq!(
+            normalize_gateway_url("https://gateway.example.com:443/").unwrap(),
+            "https://gateway.example.com"
+        );
+        assert_eq!(
+            normalize_gateway_url("https://gateway.example.com:8443/").unwrap(),
+            "https://gateway.example.com:8443"
+        );
+    }
+
+    #[test]
     fn pairing_code_contract_remains_strict() {
         assert!(is_valid_code("ABCD23"));
         assert!(!is_valid_code("ABC123")); // digit 1 is excluded by contract.
