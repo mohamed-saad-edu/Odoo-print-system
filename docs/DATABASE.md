@@ -9,7 +9,7 @@ and records permission rollback metadata; see [PostgreSQL deployment roles](DATA
 
 ## Schema inventory
 
-There are **32 current application tables**, **99 forward-only SQL migrations (`0000`–`0098`)**, and additional versioned forward repairs in [`scripts/db-migrate.ts`](../scripts/db-migrate.ts). The migration ledger, `drizzle.__drizzle_migrations`, is separate from the application tables.
+There are **32 current application tables**, **102 forward-only SQL migrations (`0000`–`0101`)**, and additional versioned forward repairs in [`scripts/db-migrate.ts`](../scripts/db-migrate.ts). The migration ledger, `drizzle.__drizzle_migrations`, is separate from the application tables.
 
 | Table | Purpose and identity | Scope and relevant constraints |
 | --- | --- | --- |
@@ -40,8 +40,8 @@ There are **32 current application tables**, **99 forward-only SQL migrations (`
 | `gateway_metrics` | Shared operational counters | Global metric-name primary key; nonnegative value; written by the metrics service |
 | `audit_events` | Actor/action/resource audit metadata | Tenant is required except for Platform actor records; actor type CHECK and scope/time indexes |
 | `auth_rate_limits` | Authentication attempt windows, failure counters and lockout expiry | Global opaque-key primary key; account/source-IP/pairing scope is encoded by the application, not a tenant column |
-| `plans` | Public/private manual plan catalog and monthly print allowance | Global plan identity/name; active/public/display-order fields |
-| `tenant_subscriptions` | Manually approved plan, term, quota, status, revision and expiry | One row per workspace; plan reference; four allowed statuses, no provider identity or checkout columns |
+| `plans` | Public/private manual plan catalog and monthly print allowance | Global plan identity/name; active/public/display-order fields, plus optional USD/SAR display price in integer minor units |
+| `tenant_subscriptions` | Manually approved plan, term, quota, status, revision and expiry | One row per workspace; plan reference; four allowed statuses, manually approved contract dates and immutable first-activation print-cycle anchor; no provider checkout columns |
 
 Migration `0098` retires all Stripe and checkout columns from operational
 `plans` and `tenant_subscriptions`. It moves `billing_events` and
