@@ -2064,6 +2064,7 @@ mod agent_console_path_tests {
         for path in [
             "/api/printers/%D8%B7%D8%A7%D8%A8%D8%B9%D8%A9~1234abcd/test-print",
             "/api/printers/Receipt%20Printer/test-print",
+            "/api/printers/pr%EF%BB%BFinter/test-print",
         ] {
             assert!(gateway_printer_action_path(path, "test-print"), "{path}");
         }
@@ -2076,6 +2077,8 @@ mod agent_console_path_tests {
             "/api/printers/p%70/test-print",
             "/api/printers/%FF/test-print",
             "/api/printers/%d8%b7/test-print",
+            "/api/printers/%EF%BB%BFprinter/test-print",
+            "/api/printers/printer%EF%BB%BF/test-print",
             "/api/printers/Bad%00Name/test-print",
             "/api/printers/p%ZZ/test-print",
             "/api/printers/p1/test-print?target=/api/other",
