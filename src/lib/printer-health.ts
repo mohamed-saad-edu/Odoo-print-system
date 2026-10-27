@@ -216,7 +216,12 @@ export function buildPrinterCapabilityMatrix(p: typeof printers.$inferSelect, ag
   }
 
   // Spooler health: evidence-based, NOT from DB printer state alone
-  const spoolerName = config.spooler_name;
+  // Gateway permits either spooler_name or address for a Windows queue; the
+  // Go Agent also resolves spooler_name first, then the configured endpoint.
+  // The health projection must identify that same queue before honoring probes.
+  const spoolerName = capStr(configBag, "spooler_name")?.trim()
+    || capStr(configBag, "address")?.trim()
+    || undefined;
   const spoolerProbe = capStr(caps, "spooler_status");
   let spoolerStatus: "ok" | "error" | "unknown" = "unknown";
   let spoolerMessage = "Not using spooler transport or no spooler evidence";

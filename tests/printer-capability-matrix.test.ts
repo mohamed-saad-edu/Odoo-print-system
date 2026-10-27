@@ -133,6 +133,40 @@ describe("printer-capability-matrix", () => {
     expect(matrix.driver.evidence).toContain("no ACTUAL DRIVER STATUS");
   });
 
+  it("uses the executable spooler address when spooler_name is absent without fabricating health", () => {
+    const now = new Date("2026-10-28T00:00:00.000Z");
+    const seen = new Date(now.getTime() - 5_000);
+    const base = {
+      id: "queue-address-only",
+      tenantId: "tenant-one",
+      agentId: "agent-one",
+      name: "Office Printer",
+      deviceClass: "laser",
+      connectionType: "spooler",
+      protocol: "spooler",
+      status: "online",
+      lifecycle: "active",
+      config: { address: " Office Queue " },
+      capabilities: { spooler_status: "ok" },
+      lastSeenAt: seen,
+    } as unknown as Parameters<typeof buildPrinterCapabilityMatrix>[0];
+    const agent = {
+      id: "agent-one", tenantId: "tenant-one", status: "online", lifecycle: "active",
+      lastSeenAt: seen,
+    } as unknown as Parameters<typeof buildPrinterCapabilityMatrix>[1];
+    const verified = buildPrinterCapabilityMatrix(base, agent, now);
+    expect(verified.spooler.name).toBe("Office Queue");
+    expect(verified.spooler.status).toBe("ok");
+    expect(verified.spooler.evidence).toContain("spooler_status=ok");
+
+    const noProbe = buildPrinterCapabilityMatrix({ ...base, capabilities: {} }, agent, now);
+    expect(noProbe.spooler.name).toBe("Office Queue");
+    expect(noProbe.spooler.status).toBe("unknown");
+
+    const stale = buildPrinterCapabilityMatrix(base, { ...agent, lastSeenAt: new Date(now.getTime() - 300_000) }, now);
+    expect(stale.spooler.status).toBe("unknown");
+  });
+
   it("driver and spooler health are evidence-based, not from DB status alone", () => {
     const source = fs.readFileSync("src/lib/printer-health.ts", "utf8");
     // Must check for actual spooler_status evidence, not just DB status
