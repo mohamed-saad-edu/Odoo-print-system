@@ -1,4 +1,4 @@
-import { db } from "../db";
+import { db, type DbTx } from "../db";
 import { sql, type SQL } from "drizzle-orm";
 import { printOutputPresentation } from "./print-output";
 import { isJobFilterStatus, PHYSICAL_OUTCOME_UNKNOWN_MARKERS } from "./job-status";
@@ -55,7 +55,7 @@ function scopedWhere(alias: "j" | "r", tenantId: string | undefined): SQL {
     : sql`WHERE TRUE`;
 }
 
-export async function listPrintJobHistory(input: JobHistoryOptions = {}) {
+export async function listPrintJobHistory(input: JobHistoryOptions = {}, tx?: DbTx) {
   const limit = input.limit ?? 50;
   const offset = input.offset ?? 0;
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > 201 || !Number.isSafeInteger(offset) || offset < 0 || offset > 10_000) {
@@ -104,7 +104,7 @@ export async function listPrintJobHistory(input: JobHistoryOptions = {}) {
     )`);
   }
   const where = predicates.length ? sql`WHERE ${sql.join(predicates, sql` AND `)}` : sql``;
-  const result = await db.execute(sql<HistoryRow>`
+  const query = sql<HistoryRow>`
     WITH history AS (
       SELECT j.id, j.tenant_id, j.destination, j.document_type,
         j.agent_id, j.printer_id, j.requested_by, j.status, j.error,
@@ -140,7 +140,10 @@ export async function listPrintJobHistory(input: JobHistoryOptions = {}) {
     ${where}
     ORDER BY h.created_at DESC, h.id DESC, h.tenant_id DESC
     LIMIT ${limit} OFFSET ${offset}
-  `);
+  `;
+  // Console routes pass their fenced read transaction. Platform summaries
+  // retain the original standalone executor and shared SQL projection.
+  const result = tx ? await tx.execute(query) : await db.execute(query);
   const rows = result.rows as HistoryRow[];
   return rows.map(row => ({ ...row, ...printOutputPresentation(row) }));
 }
