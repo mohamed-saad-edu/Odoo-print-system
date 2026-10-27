@@ -118,7 +118,9 @@ export async function listPrintJobHistory(input: JobHistoryOptions = {}) {
         r.acked_at, NULL::timestamp AS expires_at, r.created_at, r.updated_at, r.output_medium, r.output_evidence,
         TRUE AS archived
       FROM print_job_receipts r ${scopedWhere("r", input.tenantId)}
-      AND NOT EXISTS (SELECT 1 FROM print_jobs live WHERE live.id = r.id)
+      -- Job IDs belong to separate archival/live tables; only suppress
+      -- the receipt when its own tenant has the matching live row.
+      AND NOT EXISTS (SELECT 1 FROM print_jobs live WHERE live.id = r.id AND live.tenant_id = r.tenant_id)
     )
     SELECT h.id, h.tenant_id AS "tenantId", t.name AS "tenantName",
       h.agent_id AS "agentId", a.name AS "agentName",
