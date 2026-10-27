@@ -166,7 +166,9 @@ export function buildPrinterCapabilityMatrix(p: typeof printers.$inferSelect, ag
   // Legacy rows may carry keys outside the schema $type (e.g. driver_name);
   // read those through a string bag instead of erasing the whole row to any.
   const configBag = config as Record<string, unknown>;
-  const caps: Record<string, unknown> = p.capabilities ?? {};
+  // Geometry admitted for a prior desired configuration must not be exposed
+  // to clients after that configuration was revoked or changed.
+  const caps: Record<string, unknown> = capabilitiesWithCurrentGeometry(p) ?? {};
 
   // DB text columns infer as string; narrow to the checked vocabularies
   // (the CHECK constraints bound the values). Unlike `as any`, a wrong
@@ -174,7 +176,7 @@ export function buildPrinterCapabilityMatrix(p: typeof printers.$inferSelect, ag
   const documentTypes = getSupportedDocumentTypes(
     p.protocol as ProtocolType,
     p.connectionType as TransportType,
-    capabilitiesWithCurrentGeometry(p),
+    caps,
   );
 
   const statusInfo = normalizePrinterStatus(p.status, {
