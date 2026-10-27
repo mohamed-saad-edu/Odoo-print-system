@@ -338,6 +338,9 @@ func TestSpoolerFailedWriteWithOverReportedCountStillAborts(t *testing.T) {
 	if !abortCalled {
 		t.Fatal("a failed document session must be aborted")
 	}
+	if res.written != 0 {
+		t.Fatalf("failed over-report must preserve only previously confirmed bytes, got %d", res.written)
+	}
 }
 
 func TestSpoolerEndPagePrinterFailureCannotSucceed(t *testing.T) {
