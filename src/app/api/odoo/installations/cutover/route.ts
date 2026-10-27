@@ -27,14 +27,15 @@ export async function POST(req: Request) {
   if (!parsed.success) return NextResponse.json({ error: "Explicit outbox, receipt and enrollment attestations required" }, { status: 400 });
   try {
     const state = await db.transaction(async (tx) => {
-      await requireActiveTenantInTransaction(tx, manager.tenantId);
-      await requireManagerActorInTransaction(tx, manager, "integrations.manage");
-      // FOR UPDATE prevents any in-flight enqueue (which takes tenant FOR
-      // SHARE) from straddling the version-mode transition.
+      // Acquire the exclusive tenant fence FIRST. Two concurrent managers can
+      // deadlock upgrading the shared tenant lock to FOR UPDATE otherwise.
+      // This also serializes cutover with print admission's tenant FOR SHARE.
       const tenant = await tx.execute(sql`
         SELECT odoo_idempotency_mode AS mode FROM tenants
         WHERE id = ${manager.tenantId} FOR UPDATE
       `);
+      await requireActiveTenantInTransaction(tx, manager.tenantId);
+      await requireManagerActorInTransaction(tx, manager, "integrations.manage");
       if (tenant.rows[0]?.mode === "strict_v2") return "already_active";
       const count = await tx.execute(sql`
         SELECT COUNT(*)::int AS count FROM odoo_installations
