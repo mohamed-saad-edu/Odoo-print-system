@@ -28,19 +28,23 @@ const approveSchema = operationSchema.extend({
 
 type LegacyCandidate = { id: string; fingerprint: string; status: string };
 
-async function findLegacyHistory(tx: Pick<typeof db, "execute">, tenantId: string, legacyKey: string): Promise<LegacyCandidate | null> {
+async function findLegacyHistory(tx: Pick<typeof db, "execute">, tenantId: string, legacyKey: string, lockRows = true): Promise<LegacyCandidate | null> {
+  // Only audited POST reconciliation needs to lock the historical evidence.
+  // A GET preview is informational: revalidation at POST prevents mistaken
+  // reuse while its read must never block an in-flight print/receipt update.
+  const rowLock = lockRows ? sql`FOR UPDATE` : sql``;
   const receipt = await tx.execute(sql`
     SELECT id, fingerprint, status FROM print_job_receipts
     WHERE tenant_id = ${tenantId} AND idempotency_key = ${legacyKey}
       AND api_key_id IS NOT NULL
-    FOR UPDATE
+    ${rowLock}
   `);
   if (receipt.rows[0]) return receipt.rows[0] as LegacyCandidate;
   const live = await tx.execute(sql`
     SELECT id, printer_id, destination, document_type, payload, status FROM print_jobs
     WHERE tenant_id = ${tenantId} AND idempotency_key = ${legacyKey}
       AND api_key_id IS NOT NULL
-    FOR UPDATE
+    ${rowLock}
   `);
   if (!live.rows[0]) return null;
   const row = live.rows[0] as {id: string; printer_id: string; destination: string | null; document_type: string | null; payload: unknown; status: string};
@@ -80,7 +84,7 @@ export async function GET(req: Request) {
         WHERE id = ${installationId} AND tenant_id = ${manager.tenantId} AND enabled = TRUE
       `);
       if (!rows.rows.length) return null;
-      const candidate = await findLegacyHistory(tx, manager.tenantId, legacyKey);
+      const candidate = await findLegacyHistory(tx, manager.tenantId, legacyKey, false);
       const decision = await tx.execute(sql`
         SELECT disposition, legacy_job_id, legacy_fingerprint, approved_at
         FROM odoo_legacy_resolutions WHERE tenant_id = ${manager.tenantId}
