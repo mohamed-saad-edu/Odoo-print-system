@@ -1,4 +1,4 @@
-import { db } from "../db";
+import { db, type DbTx } from "../db";
 import { apiKeys } from "../db/schema";
 import { and, eq, gt, isNotNull, isNull, lte, or, sql } from "drizzle-orm";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
@@ -23,6 +23,36 @@ function timingSafeEqualStr(a: string, b: string): boolean {
 export function generateOdooApiKey(): { raw: string; hashed: string; id: string } {
   const raw = `odoo_${randomBytes(32).toString("base64url")}`;
   return { raw, hashed: hashKey(raw), id: `key_${randomBytes(8).toString("hex")}` };
+}
+
+/** Revocation is authoritative at inventory read time, not at the
+ * earlier HTTP authentication snapshot. This shared predicate intentionally
+ * mirrors validateOdooKey: a rotated key remains valid for read-only status
+ * recovery only until read_only_until. No expired or revoked key can disclose
+ * fresh tenant printer or Agent inventory.
+ *
+ * Acquire after the tenant lifecycle fence, before the subscription fence:
+ * tenant -> API credential -> subscription -> inventory.
+ */
+export class OdooReadKeyUnavailableError extends Error {
+  readonly code = "UNAUTHORIZED" as const;
+  constructor() { super("Odoo integration key is no longer active"); }
+}
+
+export async function requireOdooReadKeyInTransaction(
+  tx: Pick<DbTx, "execute">,
+  key: Pick<typeof apiKeys.$inferSelect, "id" | "tenantId" | "hashedKey">,
+): Promise<void> {
+  const matched = await tx.execute(sql`
+    SELECT id FROM api_keys
+    WHERE id = ${key.id} AND tenant_id = ${key.tenantId} AND hashed_key = ${key.hashedKey}
+      AND (
+        (revoked_at IS NULL AND read_only_until IS NULL)
+        OR (revoked_at <= clock_timestamp() AND read_only_until > clock_timestamp())
+      )
+    FOR SHARE
+  `);
+  if (matched.rows.length !== 1) throw new OdooReadKeyUnavailableError();
 }
 
 export async function validateOdooKey(
