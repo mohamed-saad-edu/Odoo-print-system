@@ -17,4 +17,12 @@ describe("workspace subscription page", () => {
     expect(billing).toContain("initialRequest=");
     expect(billing).toContain("currentPeriodEnd");
   });
+  it("offers clear quota and expiry actions without silently adding credits", () => {
+    const dash = readFileSync("src/app/dashboard/dashboard-client.tsx", "utf8");
+    const admin = readFileSync("src/components/platform/SubscriptionEditor.tsx", "utf8");
+    expect(dash).toContain('v4.subscription.quotaPausedTitle');
+    expect(dash).toContain('v4.subscription.expiringSoonTitle');
+    expect(billing).toContain('v4.subscription.quotaPausedBody');
+    expect(admin).toContain("renewalKeepsUsage");
+  });
 });

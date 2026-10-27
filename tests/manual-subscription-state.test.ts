@@ -12,8 +12,8 @@ describe("manual subscription availability agrees with runtime admission", () =>
     expect(customerSubscriptionState({ ...active, currentPeriodStart: new Date(NaN) }, "active", now)).not.toBe("active");
     expect(customerSubscriptionState({ ...active, currentPeriodEnd: new Date(NaN) }, "active", now)).not.toBe("active");
   });
-  it("retains open-ended legacy manual contracts and respects suspension and boundaries", () => {
-    expect(customerSubscriptionState({ ...active, currentPeriodEnd: null }, "active", now)).toBe("active");
+  it("refuses open-ended manual contracts and respects suspension and boundaries", () => {
+    expect(customerSubscriptionState({ ...active, currentPeriodEnd: null }, "active", now)).toBe("expired");
     expect(customerSubscriptionState(active, "suspended", now)).toBe("suspended");
     expect(customerSubscriptionState({ ...active, currentPeriodEnd: new Date(now) }, "active", now)).toBe("expired");
     expect(customerSubscriptionState({ ...active, currentPeriodStart: new Date(now + 1) }, "active", now)).toBe("awaiting_activation");
