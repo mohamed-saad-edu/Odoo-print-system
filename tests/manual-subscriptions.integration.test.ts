@@ -136,6 +136,34 @@ suite('V4 manual subscriptions security and accounting',()=>{
  });
 
 
+ it.each(["monthly", "yearly"] as const)("begins a delayed %s subscription at actual approval, not the customer's request or stale form date",async term=>{
+    const created=await requestActivation(request('/api/subscription-requests',{planId:'manual',term},ownerCookie));
+    expect(created.status).toBe(201);
+    const id=String((await created.json()).request.id);
+    await db.update(subscriptionRequests).set({createdAt:new Date(Date.now()-2*86400000)}).where(eq(subscriptionRequests.id,id));
+    const staleInput=input({requestId:id,term,startDate:"2026-01-01T00:00:00.000Z",endDate:"2027-01-01T00:00:00.000Z"});
+    const key=randomUUID();
+    const lower=new Date((await pool().query("SELECT clock_timestamp() AS now")).rows[0].now).getTime();
+    const result=await mutateManualSubscription('workspace',claims,key,staleInput);
+    const upper=new Date((await pool().query("SELECT clock_timestamp() AS now")).rows[0].now).getTime();
+    const start=new Date(String(result.subscription.currentPeriodStart));
+    const end=new Date(String(result.subscription.currentPeriodEnd));
+    expect(start.getTime()).toBeGreaterThanOrEqual(lower);
+    expect(start.getTime()).toBeLessThanOrEqual(upper);
+    const expected=new Date(start);
+    const originalDay=expected.getUTCDate();
+    expected.setUTCDate(1);
+    expected.setUTCMonth(expected.getUTCMonth()+(term==="monthly"?1:12));
+    const finalDay=new Date(Date.UTC(expected.getUTCFullYear(),expected.getUTCMonth()+1,0)).getUTCDate();
+    expected.setUTCDate(Math.min(originalDay,finalDay));
+    expect(end.toISOString()).toBe(expected.toISOString());
+    const approved=await db.query.subscriptionRequests.findFirst({where:eq(subscriptionRequests.id,id)});
+    expect(approved?.lastActionAt?.toISOString()).toBe(start.toISOString());
+    const replay=await mutateManualSubscription('workspace',claims,key,staleInput);
+    expect(replay.replayed).toBe(true);
+    expect(replay.subscription).toEqual(result.subscription);
+  });
+
  it('approves monthly Go over an existing yearly contract without false revision errors, and records explicit changed terms',async()=>{
    await db.insert(plans).values({id:'go',name:'Go',entitlements:{...entitlements,max_prints_per_period:2000}});
    await mutateManualSubscription('workspace',claims,randomUUID(),input());
