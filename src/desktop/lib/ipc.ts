@@ -202,7 +202,18 @@ async function fetchGatewayFleet(gatewayUrl: string, path: "/api/printers" | "/a
     }
     if (page.length > MAX_FLEET_ROWS - rows.length) throw new Error("Gateway fleet inventory limit exceeded");
     rows.push(...page);
-    if (headers?.["x-has-more"] !== "true") return rows;
+    const hasMore = headers?.["x-has-more"];
+    // Older unpaged Gateways omit this metadata entirely. A present but
+    // malformed flag cannot silently truncate a valid multi-page inventory.
+    if (hasMore === undefined) return rows;
+    if (hasMore === "false") {
+      if (headers?.["x-next-before-created-at"] || headers?.["x-next-before-id"] || headers?.["x-next-before-id-encoded"]) {
+        throw new Error("Invalid Gateway fleet cursor");
+      }
+      return rows;
+    }
+    if (hasMore !== "true") throw new Error("Invalid Gateway fleet pagination metadata");
+
     const createdAt = headers["x-next-before-created-at"];
     const encodedId = headers["x-next-before-id-encoded"];
     const rawId = headers["x-next-before-id"];
