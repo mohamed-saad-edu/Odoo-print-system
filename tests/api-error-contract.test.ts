@@ -81,6 +81,22 @@ describe("API error contract", () => {
     expect(translate("ar", apiMessageKey("INVALID_PRINTER_ENDPOINT", 422))).toMatch(/[\u0600-\u06ff]/u);
   });
 
+  it("guides workspace approval and unsupported printer transport without blaming the Agent", () => {
+    expect(codeMessageKey("DEVICE_NOT_APPROVED")).toBe("errors.deviceNotApproved");
+    expect(codeMessageKey("UNSUPPORTED_DISCOVERY_TRANSPORT")).toBe("errors.unsupportedDiscoveryTransport");
+    const pending = translate("en", apiMessageKey("DEVICE_NOT_APPROVED", 409));
+    const unsupported = translate("en", apiMessageKey("UNSUPPORTED_DISCOVERY_TRANSPORT", 422));
+    expect(pending).toMatch(/workspace|approve/i);
+    expect(pending).not.toMatch(/on the agent/i);
+    expect(unsupported).toMatch(/transport|protocol/i);
+    expect(unsupported).not.toMatch(/update the agent/i);
+    for (const code of ["DEVICE_NOT_APPROVED", "UNSUPPORTED_DISCOVERY_TRANSPORT"]) {
+      const localized = translate("ar", apiMessageKey(code, code === "DEVICE_NOT_APPROVED" ? 409 : 422));
+      expect(localized).toMatch(/[\u0600-\u06ff]/u);
+      expect(localized).not.toBe(translate("ar", "errors.operationFailed"));
+    }
+  });
+
   it("resolves the ambiguous-invitation-delivery code", () => {
     // This code exists because the 503 is NOT a failure: the invitation row
     // was created and deliberately not revoked. Before it was added the
