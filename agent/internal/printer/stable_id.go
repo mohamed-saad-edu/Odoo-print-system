@@ -279,10 +279,19 @@ func StableIDFromIPPURI(endpoint string, host string, port int) string {
 	if err != nil || u.Hostname() == "" {
 		return StableIDFromEndpoint(endpoint)
 	}
-	// Only an explicit default resource inherits the TCP 631 scan ID.
-	// A no-path IPP URI addresses "/", which may be a different queue.
+	// Legacy plaintext IPP /ipp/print shares the TCP 631 scan ID.
+	// An IPPS/HTTPS endpoint on that SAME port is a different executable
+	// destination. Reusing its plaintext ID could silently replace a secure
+	// queue during discovery. Keep established plaintext IDs unchanged;
+	// registry alias reconciliation preserves existing secure IDs on upgrade.
 	if u.Path == "/ipp/print" && u.RawQuery == "" {
-		return StableIDFromNetwork(host, port)
+		switch strings.ToLower(u.Scheme) {
+		case "ipp", "http":
+			return StableIDFromNetwork(host, port)
+		case "ipps", "https":
+			// Both spellings execute through the same TLS transport.
+			u.Scheme = "ipps"
+		}
 	}
 	resource := u.EscapedPath()
 	if resource == "" {
