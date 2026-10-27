@@ -453,7 +453,10 @@ export async function POST(req: Request) {
       });
       const knownByEndpoint = new Map<string, (typeof knownPhysicalPrinters)[number]>();
       for (const row of knownPhysicalPrinters) {
-        const endpoint = physicalPrinterIdentityKey(row) ?? row.physicalIdentityKey;
+        // Stored identity hashes are only hints: if the live endpoint cannot
+        // be reconstructed, do not suppress or bind an observation to an
+        // unrelated printer using a stale historical key.
+        const endpoint = physicalPrinterIdentityKey(row);
         if (endpoint && !knownByEndpoint.has(endpoint)) knownByEndpoint.set(endpoint, row);
       }
       const seenEndpoints = new Set<string>();
