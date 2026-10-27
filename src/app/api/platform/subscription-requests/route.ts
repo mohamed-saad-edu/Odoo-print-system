@@ -6,6 +6,7 @@ import { requirePlatformOwner,requirePlatformActorInTransaction } from "../../..
 import { manualApiError } from "../../../../lib/manual-api-error";
 import { ManualSubscriptionError,requireIdempotencyKey } from "../../../../lib/manual-subscriptions";
 import { writeAuditEvent } from "../../../../lib/audit";
+import { effectiveSubscriptionStatusSql } from "../../../../lib/effective-subscription-status";
 export async function GET(req:Request) {
   try {
     await requirePlatformOwner(req);
@@ -16,7 +17,8 @@ export async function GET(req:Request) {
       db.execute(sql`SELECT r.*,t.name AS "tenantName",p.name AS "planName",
         CASE WHEN p.entitlements->>'max_prints_per_period' ~ '^[0-9]{1,9}$'
           THEN (p.entitlements->>'max_prints_per_period')::int ELSE NULL END AS "planMonthlyQuota",
-        current_plan.name AS "currentPlanName",current_sub.status AS "currentSubscriptionStatus"
+        current_plan.name AS "currentPlanName",
+        ${effectiveSubscriptionStatusSql({tenantId:sql`t.id`,tenantLifecycle:sql`t.lifecycle`,subscriptionStatus:sql`current_sub.status`,entitlementBlocked:sql`current_sub.entitlement_blocked`,currentPeriodStart:sql`current_sub.current_period_start`})} AS "currentSubscriptionStatus"
         FROM subscription_requests r JOIN tenants t ON t.id=r.tenant_id
         JOIN plans p ON p.id=r.plan_id
         LEFT JOIN tenant_subscriptions current_sub ON current_sub.tenant_id=r.tenant_id

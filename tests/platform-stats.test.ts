@@ -8,7 +8,7 @@ import {
   closePool,
   type Fixture,
 } from "./helpers/pg";
-import { users, tenantSubscriptions } from "../src/db/schema";
+import { users, tenantSubscriptions, subscriptionRequests } from "../src/db/schema";
 import { db } from "../src/db";
 import { eq } from "drizzle-orm";
 import { nanoid } from "../src/lib/nanoid";
@@ -16,6 +16,7 @@ import { createVerifiedPlatformSession as createPlatformSession } from "./helper
 import { GET } from "../src/app/api/platform/stats/route";
 import { GET as subscriptionListGET } from "../src/app/api/platform/subscriptions/route";
 import { GET as tenantListGET } from "../src/app/api/platform/tenants/route";
+import { GET as subscriptionRequestsGET } from "../src/app/api/platform/subscription-requests/route";
 import { getTenantEntitlementLimit, TenantSubscriptionRequiredError, TenantEntitlementConfigError } from "../src/lib/entitlements";
 
 const suite = describe.skipIf(!hasTestDatabase);
@@ -23,6 +24,7 @@ const suite = describe.skipIf(!hasTestDatabase);
 let prevSecret: string | undefined;
 let fixture: Fixture;
 let platformToken = "";
+let platformUserId = "";
 
 suite("Platform Stats Route", () => {
   beforeAll(async () => {
@@ -36,6 +38,7 @@ suite("Platform Stats Route", () => {
     fixture = await seedFixture();
 
     const userId = `usr_${nanoid(18)}`;
+    platformUserId = userId;
     const email = `platform_${nanoid(8)}@platform.local`;
     await db.insert(users).values({
       id: userId,
@@ -83,16 +86,27 @@ suite("Platform Stats Route", () => {
 
 
   it("keeps platform list, dashboard and runtime admission consistent for expired and blocked contracts", async () => {
+    const [subscription] = await db.select({ planId: tenantSubscriptions.planId })
+      .from(tenantSubscriptions).where(eq(tenantSubscriptions.tenantId, fixture.tenantId));
+    await db.insert(subscriptionRequests).values({
+      id: `req_${nanoid(16)}`, tenantId: fixture.tenantId,
+      requesterUserId: platformUserId, requesterName: "Test Customer",
+      requesterEmail: "customer@example.test", requesterVerifiedAt: new Date(),
+      planId: subscription.planId, term: "monthly",
+      idempotencyKey: `request_${nanoid(24)}`, requestDigest: "test-request",
+    });
     const headers = { Authorization: `Bearer ${platformToken}`, "cache-control": "no-cache" };
     async function verify(status: "expired" | "suspended") {
-      const [statsResponse, listResponse, tenantsResponse] = await Promise.all([
+      const [statsResponse, listResponse, tenantsResponse, requestsResponse] = await Promise.all([
         GET(new Request("http://localhost/api/platform/stats", { headers })),
         subscriptionListGET(new Request("http://localhost/api/platform/subscriptions", { headers })),
         tenantListGET(new Request("http://localhost/api/platform/tenants", { headers })),
+        subscriptionRequestsGET(new Request("http://localhost/api/platform/subscription-requests", { headers })),
       ]);
       expect(statsResponse.status).toBe(200);
       expect(listResponse.status).toBe(200);
       expect(tenantsResponse.status).toBe(200);
+      expect(requestsResponse.status).toBe(200);
       const stats = await statsResponse.json();
       expect(stats.subscriptions).toMatchObject({
         active: 0, expired: status === "expired" ? 1 : 0,
@@ -102,6 +116,7 @@ suite("Platform Stats Route", () => {
       expect(stats.business.active).toBe(0);
       expect((await listResponse.json()).subscriptions.find((row: { tenantId: string }) => row.tenantId === fixture.tenantId)?.status).toBe(status);
       expect((await tenantsResponse.json()).tenants.find((row: { id: string }) => row.id === fixture.tenantId)?.subscriptionStatus).toBe(status);
+      expect((await requestsResponse.json()).requests.find((row: { tenant_id: string }) => row.tenant_id === fixture.tenantId)?.currentSubscriptionStatus).toBe(status);
     }
 
     // An active flag with no finite end is not an admissible contract.
