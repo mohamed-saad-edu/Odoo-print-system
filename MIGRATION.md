@@ -74,8 +74,9 @@ This runs `scripts/db-migrate.ts` which applies all pending migrations from `dri
 | 0098 | 1 | Retire external billing fields from active plan/subscription schema, archive provider records outside public, preserve manual approvals and monthly usage |
 | 0099 | 1 | Preserve original customer subscription requests and separately snapshot approved terms when Platform Owner explicitly adjusts a manual approval |
 | 0100 | 1 | Add optional USD/SAR catalog prices in integer cents/halalas without touching any existing subscription, quota, invoice or job history |
+| 0101 | 1 | Add immutable 30-day print-allowance anchor from first activation, migrate overlapping historical usage conservatively without resetting credits |
 
-**Total**: 101 forward-only SQL migrations (0000–0100), plus retained hash-versioned forward repairs in `scripts/db-migrate.ts`.
+**Total**: 102 forward-only SQL migrations (0000–0101), plus retained hash-versioned forward repairs in `scripts/db-migrate.ts`.
 
 Apply all migrations through `0094` before starting V3, with older Gateway instances stopped. Historical `0090` and `0092` remain in the journal so existing content hashes and fresh replay remain valid. V3 uses email/password login and the existing production `__Host-` access/refresh cookies. Migration `0094` does not convert stored configuration into live printer proof: existing registrations and historical queued jobs without an admitted binding remain ineligible for new execution. Deploy the matching Agent, obtain a fresh verified inventory, and reconcile retained legacy jobs explicitly. Terminal history remains available for exact result replay. See the V3 upgrade procedure below and `SECURITY.md`.
 

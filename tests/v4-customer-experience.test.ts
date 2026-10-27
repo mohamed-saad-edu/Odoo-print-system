@@ -59,7 +59,19 @@ describe("V4 subscription summary privacy and truthfulness", () => {
     expect(result.kind).toBe("unsubscribed");
     expect(summaries).toEqual([{ customerState: "awaiting_activation", currentPeriodEnd: null }]);
   });
-  it("does not deliver a late subscription summary after actor scope is canceled", async () => {
+  it("lets Full Access members read only lifecycle state, without requesting protected billing usage", async () => {
+    const calls: string[] = [];
+    const snapshots: unknown[] = [];
+    const result = await fetchDashboardBillingUsage(async (url) => {
+      calls.push(url);
+      if (url !== "/api/billing/status") throw new Error("Non-owner accessed billing details");
+      return Response.json({ hasSubscription: true, customerState: "active" });
+    }, new AbortController().signal, summary => snapshots.push(summary), false);
+    expect(result).toEqual({ kind: "status_only" });
+    expect(calls).toEqual(["/api/billing/status"]);
+    expect(snapshots).toEqual([{ customerState: "active", currentPeriodEnd: null }]);
+  });
+    it("does not deliver a late subscription summary after actor scope is canceled", async () => {
     const controller = new AbortController();
     const summaries: unknown[] = [];
     await fetchDashboardBillingUsage(async () => {

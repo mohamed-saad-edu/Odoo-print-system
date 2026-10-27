@@ -534,14 +534,14 @@ export default function DashboardClient({
     setBillingState({ authority: { canReadBillingUsage, diagnosticActorScope }, usage: null, subscription: null, error: false });
   }
   const view = React.useSyncExternalStore(subscribeDashboardView, () => dashboardViewSnapshot(initialView), () => initialView);
-  const subscription = canReadBillingUsage && billingScopeMatches ? billingState.subscription : null;
+  const subscription = billingScopeMatches ? billingState.subscription : null;
   const billingUsage = canReadBillingUsage && billingScopeMatches ? billingState.usage : null;
   const billingUsageError = canReadBillingUsage && billingScopeMatches && billingState.error;
   useEffect(() => {
     // Only the authoritative manual lifecycle redirects. An absent/failed
     // response or an active invited membership never starts onboarding.
-    if (subscription && subscription.customerState !== "active") router.replace("/billing");
-  }, [subscription, router]);
+    if (canReadBillingUsage && subscription && subscription.customerState !== "active") router.replace("/billing");
+  }, [subscription, router, canReadBillingUsage]);
   // Start with a first read on mount; no synchronous setState inside an effect.
   const [billingRefreshTick, setBillingRefreshTick] = useState(1);
   const billingForbiddenScopeRef = React.useRef<string | null>(null);
@@ -762,7 +762,6 @@ export default function DashboardClient({
   // Usage metrics are not part of the six-second device/job refresh loop.
   // A 60-second cadence keeps the counters useful without quota API floods.
   useEffect(() => {
-    if (!canReadBillingUsage) return;
     const timer = window.setInterval(() => {
       if (document.visibilityState === "visible") refreshBillingUsage();
     }, 60_000);
@@ -770,8 +769,7 @@ export default function DashboardClient({
   }, [canReadBillingUsage, diagnosticActorScope, refreshBillingUsage]);
 
   useEffect(() => {
-    if (!billingAuthority.canReadBillingUsage ||
-        billingForbiddenScopeRef.current === billingAuthority.diagnosticActorScope) return;
+    if (billingForbiddenScopeRef.current === billingAuthority.diagnosticActorScope) return;
     const controller = new AbortController();
     // Scope identity changes even when the same role returns after revocation.
     // A cancelled response must never restore another actor's usage or errors.
@@ -788,8 +786,8 @@ export default function DashboardClient({
         const result = await fetchDashboardBillingUsage<BillingUsage>(fetchWithTimeout, controller.signal, (subscription) => {
           if (controller.signal.aborted) return;
           setBillingState((current) => current.authority === billingAuthority ? { ...current, subscription } : current);
-        });
-        if (result.kind === "unsubscribed") {
+        }, billingAuthority.canReadBillingUsage);
+        if (result.kind === "unsubscribed" || result.kind === "status_only") {
           update(null, false);
         } else if (result.kind === "forbidden") {
           // An actual 401/403 may reflect a revoked role or broken entitlement.
@@ -1412,6 +1410,9 @@ export default function DashboardClient({
           {t(item === "home" ? "v4.experience.home" : item === "printers" ? "desktop.nav.printers" : item === "agents" ? "dashboard.tab.agents" : "v4.experience.activity")}
         </a>)}
       </nav>
+      {subscription && !canReadBillingUsage && subscription.customerState !== "active" && <Callout tone="warn" title={t(`v4.experience.subscription.${subscription.customerState}`)}>
+        {t("v4.subscription.memberPausedBody")}
+      </Callout>}
       {printsLimitReached && subscription?.customerState === "active" && <Callout tone="warn" title={t("v4.subscription.quotaBlockedTitle")}>
         <p>{t("v4.subscription.quotaBlockedBody")}</p>
         <div className="mt-3"><Button size="sm" variant="secondary" href="/billing">{t("v4.subscription.quotaBlockedAction")}</Button></div>
@@ -1423,11 +1424,11 @@ export default function DashboardClient({
       {view === "home" && <Card className="space-y-5 p-5 sm:p-6">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="min-w-0"><h2 className="text-xl font-semibold text-ink">{t("v4.experience.health.title")}</h2></div>
-          {canReadBillingUsage && <StatusBadge tone={subscription?.customerState === "active" ? "ok" : "warn"} label={subscription ? t(`v4.experience.subscription.${subscription.customerState}`) : t("v4.experience.health.unknown")} />}
+          {subscription && <StatusBadge tone={subscription.customerState === "active" ? "ok" : "warn"} label={t(`v4.experience.subscription.${subscription.customerState}`)} />}
         </div>
         {subscription?.currentPeriodEnd && <p className="text-sm text-ink-3">{t("v4.experience.subscription.ends", { date: formatManualCalendarDate(subscription.currentPeriodEnd, locale) ?? t("common.notAvailable") })}</p>}
         <div className="flex flex-wrap gap-3">
-          {subscription && subscription.customerState !== "active" ? <Button href="/onboarding" variant="primary">{t("v4.experience.health.manage")}</Button> : kpis.totalAgents === 0 && canMutate.agentsPair ? <Button variant="primary" onClick={() => { setMessage(null); setRegisterOpen(true); }}>{t("v4.experience.health.none")}</Button> : <Button href="#printers" variant="primary">{t(kpis.onlinePrinters > 0 ? "v4.experience.health.ready" : "v4.experience.health.review")}</Button>}
+          {canReadBillingUsage && subscription && subscription.customerState !== "active" ? <Button href="/billing" variant="primary">{t("v4.experience.health.manage")}</Button> : kpis.totalAgents === 0 && canMutate.agentsPair ? <Button variant="primary" onClick={() => { setMessage(null); setRegisterOpen(true); }}>{t("v4.experience.health.none")}</Button> : <Button href="#printers" variant="primary">{t(kpis.onlinePrinters > 0 ? "v4.experience.health.ready" : "v4.experience.health.review")}</Button>}
           <Button href="/api-keys" variant="secondary">{t("v4.experience.connection")}</Button>
           <Button href="#jobs" variant="secondary">{t("v4.experience.activity")}</Button>
         </div>
@@ -2630,6 +2631,7 @@ export default function DashboardClient({
         limit={upgradeLimit?.limit ?? null}
         periodEnd={upgradeLimit?.periodEnd ?? null}
         retryAfterSeconds={upgradeLimit?.retryAfterSeconds ?? null}
+        billingAccess={canReadBillingUsage}
       />
     </div>
   );

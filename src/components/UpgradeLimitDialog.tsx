@@ -45,6 +45,7 @@ export default function UpgradeLimitDialog({
   periodEnd,
   retryAfterSeconds,
   copyBillingDestination,
+  billingAccess = true,
 }: {
   open: boolean;
   onClose: () => void;
@@ -55,6 +56,8 @@ export default function UpgradeLimitDialog({
   retryAfterSeconds?: number | null;
   /** Desktop: never navigate WebView to /billing; give a validated copyable origin URL. */
   copyBillingDestination?: { url: string | null };
+  /** Non-owner Full Access members see a safe notice instead of a broken billing link. */
+  billingAccess?: boolean;
 }) {
   const { t, tc, formatNumber, formatDate } = useI18n();
   const copy = COPY[resource];
@@ -142,6 +145,8 @@ export default function UpgradeLimitDialog({
             ) : (
               <p className="text-sm text-warn">{t("limit.configureGatewayFirst")}</p>
             )
+          ) : !billingAccess ? (
+            <p className="text-sm text-ink-2">{t("v4.subscription.memberPausedBody")}</p>
           ) : (
             <Button
               variant="primary"

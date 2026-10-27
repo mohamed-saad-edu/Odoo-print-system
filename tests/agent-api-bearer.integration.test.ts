@@ -21,7 +21,7 @@ suite("agent creation HTTP authentication boundary", () => {
       `INSERT INTO plans (id, name, entitlements) VALUES ('plan_agent_bearer', 'Test', '{"max_agents":"unlimited","max_printers":"unlimited","max_jobs_per_minute":"unlimited","max_concurrent_jobs":"unlimited","max_prints_per_period":"unlimited"}'::jsonb)`,
     );
     await pool().query(
-      `INSERT INTO tenant_subscriptions (tenant_id, plan_id, status, current_period_end) VALUES ($1, 'plan_agent_bearer', 'active', NULL)`,
+      `INSERT INTO tenant_subscriptions (tenant_id, plan_id, status, current_period_end) VALUES ($1, 'plan_agent_bearer', 'active', now() + interval '1 year')`,
       [tenantId],
     );
   });

@@ -76,8 +76,8 @@ describe("subscription period gate", () => {
   });
 
   it("compares manual subscription expiry against the calibrated clock", () => {
-    expect(isSubscriptionPeriodLive(null)).toBe(true);
-    expect(isSubscriptionPeriodLive(undefined)).toBe(true);
+    expect(isSubscriptionPeriodLive(null)).toBe(false);
+    expect(isSubscriptionPeriodLive(undefined)).toBe(false);
     expect(isSubscriptionPeriodLive(new Date(Date.now() + 60_000))).toBe(true);
     expect(isSubscriptionPeriodLive(new Date(Date.now() - 60_000))).toBe(false);
     expect(isSubscriptionPeriodLive("not-a-timestamp")).toBe(false);

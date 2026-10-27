@@ -21,7 +21,7 @@ export function requireIdempotencyKey(req: Request): string {
 export function customerSubscriptionState(sub: {status: string; currentPeriodStart: Date | string; currentPeriodEnd: Date | string | null; entitlementBlocked?: boolean} | null | undefined, lifecycle = "active", now = Date.now()): "awaiting_activation" | "active" | "expired" | "suspended" {
   if (lifecycle !== "active" || sub?.status === "suspended" || sub?.entitlementBlocked) return "suspended";
   if (!sub || sub.status === "awaiting_activation" || (parseDbTimeMs(sub.currentPeriodStart) ?? Infinity) > now) return "awaiting_activation";
-  if (sub.status !== "active" || (sub.currentPeriodEnd && (parseDbTimeMs(sub.currentPeriodEnd) ?? -Infinity) <= now)) return "expired";
+  if (sub.status !== "active" || !sub.currentPeriodEnd || (parseDbTimeMs(sub.currentPeriodEnd) ?? -Infinity) <= now) return "expired";
   return "active";
 }
 export async function ensurePendingManualSubscription(tx: DbTx, tenantId: string, planId: string): Promise<void> {

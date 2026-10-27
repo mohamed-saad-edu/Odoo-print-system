@@ -17,7 +17,8 @@ def test_migration_inventory_matches_current_journal():
     assert len(journal)==len(sql)
     assert journal[98]['tag']=='0098_manual_only_billing'
     assert journal[99]['tag']=='0099_subscription_approval_terms'
-    assert journal[-1]['tag']=='0100_plan_prices'
+    assert journal[-2]['tag']=='0100_plan_prices'
+    assert journal[-1]['tag']=='0101_rolling_print_allowance'
     assert journal[97]['tag']=='0097_agent_scoped_discovery_identity'
     assert journal[96]['tag']=='0096_retire_limited_workspace_roles'
     assert journal[84]['tag']=='0084_printer_cloud_sharing'
@@ -46,7 +47,7 @@ def test_migration_inventory_matches_current_journal():
     assert '| 0094 | 1 |' in read('MIGRATION.md')
     assert '| 0097 | 1 |' in read('MIGRATION.md')
     assert '| 0100 | 1 |' in read('MIGRATION.md')
-    assert f'**Total**: {len(sql)} forward-only SQL migrations (0000–0100)' in read('MIGRATION.md')
+    assert f'**Total**: {len(sql)} forward-only SQL migrations (0000–0101)' in read('MIGRATION.md')
     sharing=read('drizzle/0084_printer_cloud_sharing.sql')
     assert '"shared_with_gateway" boolean NOT NULL DEFAULT true' in sharing
     assert '"shared_with_gateway_version" text' in sharing
