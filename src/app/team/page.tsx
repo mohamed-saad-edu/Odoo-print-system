@@ -42,23 +42,28 @@ export default function TeamPage() {
           router.replace("/login?next=%2Fteam");
           return;
         }
-        const [membersRes, invitesRes, settingsRes] = await Promise.all([
+        const [membersRes, settingsRes] = await Promise.all([
           fetchWithTimeout(`/api/team/members?limit=${PAGE_SIZE}&offset=${memberOffset}`, {
-            credentials: "include", cache: "no-store",
-          }),
-          fetchWithTimeout(`/api/team/invitations?limit=${PAGE_SIZE}&offset=${inviteOffset}`, {
             credentials: "include", cache: "no-store",
           }),
           fetchWithTimeout("/api/settings", {
             credentials: "include", cache: "no-store",
           }),
         ]);
-        if (!membersRes.ok || !invitesRes.ok || !settingsRes.ok) throw new Error("TEAM_LIST_UNAVAILABLE");
-        const [team, pending, account] = await Promise.all([
+        if (!membersRes.ok || !settingsRes.ok) throw new Error("TEAM_LIST_UNAVAILABLE");
+        const [team, account] = await Promise.all([
           membersRes.json() as Promise<{ members: Member[]; hasMore: boolean }>,
-          invitesRes.json() as Promise<{ invitations: Invitation[]; hasMore: boolean }>,
           settingsRes.json() as Promise<Profile>,
         ]);
+        // Pending invite recipients belong to the owner-only account surface.
+        let pending: { invitations: Invitation[]; hasMore: boolean } = { invitations: [], hasMore: false };
+        if (account.platformOwner && !cancelled) {
+          const invitesRes = await fetchWithTimeout(`/api/team/invitations?limit=${PAGE_SIZE}&offset=${inviteOffset}`, {
+            credentials: "include", cache: "no-store",
+          });
+          if (!invitesRes.ok) throw new Error("TEAM_INVITATIONS_UNAVAILABLE");
+          pending = await invitesRes.json() as { invitations: Invitation[]; hasMore: boolean };
+        }
         if (cancelled) return;
         setMembers(team.members ?? []);
         setMoreMembers(team.hasMore === true);
@@ -170,7 +175,7 @@ export default function TeamPage() {
             </Card>
           )}
 
-          <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)]">
+          <div className={profile?.platformOwner ? "grid items-start gap-5 lg:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)]" : "grid items-start gap-5"}>
             <Card>
               <CardHeader title={t("team.members")} subtitle={t("v4.team.fullAccessBody")}
                 icon={<Users className="h-4 w-4" />} />
@@ -203,6 +208,7 @@ export default function TeamPage() {
                   </Button>
                 </div>}
             </Card>
+            {profile?.platformOwner && (
             <Card>
               <CardHeader title={t("team.pendingInvitations")} subtitle={t("team.invitationsHint")}
                 icon={<Mail className="h-4 w-4" />} />
@@ -238,6 +244,7 @@ export default function TeamPage() {
                   </Button>
                 </div>}
             </Card>
+            )}
           </div>
         </div>
       </PageContainer>

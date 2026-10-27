@@ -3,7 +3,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 import { applyMigrations, closePool, hasTestDatabase, pool, truncateAll } from "./helpers/pg";
 import { hashPassword } from "../src/lib/password";
 import { POST as login } from "../src/app/api/auth/login/route";
-import { POST as invite, DELETE as revoke } from "../src/app/api/team/invitations/route";
+import { GET as listInvites, POST as invite, DELETE as revoke } from "../src/app/api/team/invitations/route";
 
 const mail = vi.hoisted(() => ({ send: vi.fn(async (_message: unknown) => undefined) }));
 vi.mock("../src/lib/email", async importActual => ({
@@ -14,7 +14,7 @@ vi.mock("../src/lib/email", async importActual => ({
 const origin = "http://localhost:3000";
 const password = "Tested workspace invitation session 19!";
 let passwordHash: string;
-function request(path: string, method: "POST" | "DELETE", cookie: string, body?: Record<string, unknown>, urlOrigin = origin) {
+function request(path: string, method: "GET" | "POST" | "DELETE", cookie: string, body?: Record<string, unknown>, urlOrigin = origin) {
   return new Request(urlOrigin + path, {
     method,
     headers: { origin: urlOrigin, host: new URL(urlOrigin).host, cookie,
@@ -66,6 +66,30 @@ describe.skipIf(!hasTestDatabase)("session-backed Platform Owner invitations", (
     const message = mail.send.mock.calls[0]?.[0] as {to?:string;text?:string};
     expect(message.to).toBe("colleague@example.test");
     expect(message.text).toContain("/invite?token=");
+  });
+
+  it("does not disclose pending invitation emails to Full Access members", async () => {
+    const owner = await cookieFor("owner@example.test");
+    const member = await cookieFor("member@example.test");
+    const created = await invite(request("/api/team/invitations", "POST", owner, { email: "private.invitee@example.test" }));
+    expect(created.status).toBe(201);
+    const denied = await listInvites(request("/api/team/invitations", "GET", member));
+    expect(denied.status).toBe(403);
+    expect(await denied.json()).toMatchObject({ code: "PLATFORM_OWNER_REQUIRED" });
+    const visible = await listInvites(request("/api/team/invitations", "GET", owner));
+    expect(visible.status).toBe(200);
+    const response = await visible.json();
+    expect(response.invitations).toHaveLength(1);
+    expect(response.invitations[0]).toMatchObject({ email: "private.invitee@example.test" });
+    expect(response.invitations[0]).not.toHaveProperty("tokenHash");
+  });
+
+  it("revoking an owner identity denies later invitation reads with the same session", async () => {
+    const owner = await cookieFor("owner@example.test");
+    await pool().query("UPDATE users SET is_platform_owner=false WHERE id='owner'");
+    const denied = await listInvites(request("/api/team/invitations", "GET", owner));
+    expect(denied.status).toBe(403);
+    expect(await denied.json()).toMatchObject({ code: "PLATFORM_OWNER_REQUIRED" });
   });
 
   it("denies a Full Access workspace owner without database Platform Owner authority", async () => {

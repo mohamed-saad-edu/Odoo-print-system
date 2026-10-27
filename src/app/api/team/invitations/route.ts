@@ -20,37 +20,43 @@ import { logError } from "../../../../lib/log";
 
 /** Workspace-scoped pending invitations, without revealing any invitation token. */
 export async function GET(req: Request) {
-  const claims = await validateWorkspaceManager(req);
-  if (!claims?.userId) return NextResponse.json({ error: "Unauthorized", code: "UNAUTHORIZED" }, { status: 401 });
-  if (!hasManagerPermission(claims, "users.read")) {
-    return NextResponse.json({ error: "Forbidden", code: "FORBIDDEN" }, { status: 403 });
-  }
-  const { searchParams } = new URL(req.url);
-  const limit = clampListLimit(searchParams.get("limit"), 50, 100);
-  const offset = Number(searchParams.get("offset") ?? "0");
-  if (!Number.isSafeInteger(offset) || offset < 0 || offset > 1_000_000) {
-    return NextResponse.json({ error: "Invalid offset", code: "INVALID_OFFSET" }, { status: 400 });
-  }
-  const visible = and(
-    eq(tenantInvitations.tenantId, claims.tenantId),
-    isNull(tenantInvitations.acceptedAt),
-    isNull(tenantInvitations.revokedAt),
-    gt(tenantInvitations.expiresAt, sql`clock_timestamp()`),
-  );
-  const [rows, countRows] = await Promise.all([
-    queryWithTimeout(() => db.select({
-      id: tenantInvitations.id, email: tenantInvitations.email,
-      expiresAt: tenantInvitations.expiresAt, createdAt: tenantInvitations.createdAt,
-    }).from(tenantInvitations).where(visible)
-      .orderBy(desc(tenantInvitations.createdAt), desc(tenantInvitations.id))
-      .offset(offset).limit(limit + 1), 5_000, "teamInvitationsList"),
-    queryWithTimeout(() => db.select({ total: sql<number>`count(*)::int` })
-      .from(tenantInvitations).where(visible), 5_000, "teamInvitationsCount"),
-  ]);
-  return NextResponse.json({
-    invitations: rows.slice(0, limit), hasMore: rows.length > limit,
-    offset, limit, total: countRows[0]?.total ?? 0,
-  }, { headers: { "Cache-Control": "private, no-store" } });
+  try {
+    const claims = await validateWorkspaceManager(req);
+    if (!claims?.userId) return NextResponse.json({ error: "Unauthorized", code: "UNAUTHORIZED" }, { status: 401 });
+    if (!hasManagerPermission(claims, "users.read")) {
+      return NextResponse.json({ error: "Forbidden", code: "FORBIDDEN" }, { status: 403 });
+    }
+    const { searchParams } = new URL(req.url);
+    const limit = clampListLimit(searchParams.get("limit"), 50, 100);
+    const offset = Number(searchParams.get("offset") ?? "0");
+    if (!Number.isSafeInteger(offset) || offset < 0 || offset > 1_000_000) {
+      return NextResponse.json({ error: "Invalid offset", code: "INVALID_OFFSET" }, { status: 400 });
+    }
+    const visible = and(
+      eq(tenantInvitations.tenantId, claims.tenantId),
+      isNull(tenantInvitations.acceptedAt),
+      isNull(tenantInvitations.revokedAt),
+      gt(tenantInvitations.expiresAt, sql`clock_timestamp()`),
+    );
+    // Recheck the live owner and session while holding the same database snapshot as the read.
+    const [rows, countRows] = await db.transaction(async tx => {
+      await requireWorkspacePlatformOwnerForInvites(tx, claims);
+      return Promise.all([
+      queryWithTimeout(() => tx.select({
+        id: tenantInvitations.id, email: tenantInvitations.email,
+        expiresAt: tenantInvitations.expiresAt, createdAt: tenantInvitations.createdAt,
+      }).from(tenantInvitations).where(visible)
+        .orderBy(desc(tenantInvitations.createdAt), desc(tenantInvitations.id))
+        .offset(offset).limit(limit + 1), 5_000, "teamInvitationsList"),
+      queryWithTimeout(() => tx.select({ total: sql<number>`count(*)::int` })
+        .from(tenantInvitations).where(visible), 5_000, "teamInvitationsCount"),
+      ]);
+    });
+    return NextResponse.json({
+      invitations: rows.slice(0, limit), hasMore: rows.length > limit,
+      offset, limit, total: countRows[0]?.total ?? 0,
+    }, { headers: { "Cache-Control": "private, no-store" } });
+  } catch (error) { return manualApiError(error); }
 }
 
 const active = (tenantId: string, email?: string) => and(

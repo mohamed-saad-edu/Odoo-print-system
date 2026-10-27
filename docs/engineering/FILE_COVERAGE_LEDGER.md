@@ -4,7 +4,7 @@
 
 Status key: `INDEXED` = path enumerated only; `PARTIAL` = excerpts or sections inspected; `READ` = file content read at least once without a correctness guarantee; `AUTHORED` = created during this documentation run. A file's successful component/integration test must be tracked separately in the notebook, not inferred from READ. No source file is marked functionally VERIFIED by this inventory alone.
 
-**Status counts at snapshot**: {"INDEXED":1855,"READ":17,"PARTIAL":20,"AUTHORED":2}. Coverage: 1892 existing tracked files indexed, 0 of 1892 independently signed off as production-ready.
+**Status counts after the 2026-10-28 live review**: {"INDEXED":1839,"READ":26,"PARTIAL":27,"AUTHORED":2}. Coverage: 1892 existing tracked files indexed, 0 of 1892 independently signed off as production-ready.
 
 ## .github (8)
 
@@ -13,10 +13,10 @@ INDEXED .github/CODEOWNERS
 INDEXED .github/dependabot.yml
 INDEXED .github/workflows/build-windows.yml
 PARTIAL .github/workflows/ci.yml
-INDEXED .github/workflows/docker.yml
+PARTIAL .github/workflows/docker.yml
 INDEXED .github/workflows/native-backports.yml
-INDEXED .github/workflows/security-supply-chain.yml
-INDEXED .github/workflows/static-security.yml
+PARTIAL .github/workflows/security-supply-chain.yml
+PARTIAL .github/workflows/static-security.yml
 ```
 
 ## (root files) (46)
@@ -57,7 +57,7 @@ INDEXED eslint.config.mjs
 INDEXED next-env.d.ts
 INDEXED next.config.ts
 INDEXED package-lock.json
-INDEXED package.json
+PARTIAL package.json
 INDEXED postcss.config.mjs
 INDEXED proxy.ts
 INDEXED requirements-test.txt
@@ -824,7 +824,7 @@ INDEXED security/CSP_REPORTING.md
 INDEXED security/PASSWORD_SCREENING.md
 INDEXED security/common-passwords-LICENSE.txt
 INDEXED security/common-passwords-provenance.json
-PARTIAL security/image-vulnerability-baseline.json
+READ security/image-vulnerability-baseline.json
 INDEXED security/odoo19-image-review-2026-10-26.md
 ```
 
@@ -933,12 +933,12 @@ INDEXED src/app/api/printers/[id]/test-print/route.ts
 INDEXED src/app/api/printers/capabilities/route.ts
 INDEXED src/app/api/printers/route.ts
 INDEXED src/app/api/security/csp-report/route.ts
-INDEXED src/app/api/settings/route.ts
+PARTIAL src/app/api/settings/route.ts
 INDEXED src/app/api/subscription-requests/route.ts
 INDEXED src/app/api/team/invitations/accept/route.ts
 INDEXED src/app/api/team/invitations/preview/route.ts
 READ    src/app/api/team/invitations/route.ts
-INDEXED src/app/api/team/members/route.ts
+READ src/app/api/team/members/route.ts
 INDEXED src/app/api/team/ownership/route.ts
 PARTIAL src/app/billing/page.tsx
 INDEXED src/app/dashboard/dashboard-client.tsx
@@ -987,7 +987,7 @@ INDEXED src/app/pricing/page.tsx
 INDEXED src/app/reset-password/page.tsx
 INDEXED src/app/settings/page.tsx
 INDEXED src/app/signup/page.tsx
-INDEXED src/app/team/page.tsx
+READ src/app/team/page.tsx
 INDEXED src/app/verify-email/page.tsx
 INDEXED src/components/AppShell.tsx
 INDEXED src/components/AuthShell.tsx
@@ -1108,9 +1108,9 @@ INDEXED src/lib/lifecycle-labels.ts
 INDEXED src/lib/lifecycle.ts
 INDEXED src/lib/limit-signal.ts
 INDEXED src/lib/log.ts
-INDEXED src/lib/manager-auth.ts
-INDEXED src/lib/manager-mutation-authorization.ts
-INDEXED src/lib/manual-api-error.ts
+PARTIAL src/lib/manager-auth.ts
+READ src/lib/manager-mutation-authorization.ts
+READ src/lib/manual-api-error.ts
 INDEXED src/lib/manual-calendar-date.ts
 INDEXED src/lib/manual-plans.ts
 PARTIAL src/lib/manual-subscriptions.ts
@@ -1170,7 +1170,7 @@ INDEXED src/lib/utils.ts
 INDEXED src/lib/worker-schema.ts
 READ    src/lib/workspace-owner-invitations.ts
 INDEXED src/lib/workspace-session-http.ts
-INDEXED src/lib/workspace-session-security.ts
+READ src/lib/workspace-session-security.ts
 INDEXED src/lib/ws-rate-limit.ts
 INDEXED src/server/api-defaults.ts
 INDEXED src/server/authorization-monitor.ts
@@ -1685,7 +1685,7 @@ INDEXED tests/platform-login-cancellation.node.test.mjs
 INDEXED tests/platform-mutation-authorization.test.ts
 INDEXED tests/platform-operations-history.node.test.mjs
 INDEXED tests/platform-operations-ui.test.ts
-INDEXED tests/platform-owner-invitation-session.integration.test.ts
+READ tests/platform-owner-invitation-session.integration.test.ts
 INDEXED tests/platform-stats-optimization.test.ts
 INDEXED tests/platform-stats.test.ts
 INDEXED tests/poll-claim-budget.contract.test.mjs
@@ -1782,9 +1782,9 @@ INDEXED tests/sweep-limit.regression.test.mjs
 INDEXED tests/system-contracts.test.ts
 INDEXED tests/tailgrids-ui-current-run.node.test.mjs
 INDEXED tests/team-authority-cutover.test.ts
-INDEXED tests/team-authorization.test.ts
-INDEXED tests/team-invitation-authority.test.ts
-INDEXED tests/team-invitation-restoration.contract.test.ts
+PARTIAL tests/team-authorization.test.ts
+READ tests/team-invitation-authority.test.ts
+READ tests/team-invitation-restoration.contract.test.ts
 INDEXED tests/team-pagination.contract.test.mjs
 PARTIAL tests/team-role-i18n.contract.test.ts
 INDEXED tests/tenant-batch-fencing.integration.test.ts
@@ -1941,7 +1941,7 @@ INDEXED tests/windows-smoke-acl.contract.test.ts
 INDEXED tests/windows-uninstall-ownership-f011.contract.test.mjs
 INDEXED tests/windows-uninstall-resilience.contract.test.mjs
 INDEXED tests/workspace-full-access-policy.test.ts
-INDEXED tests/workspace-invitation-independent.integration.test.ts
+PARTIAL tests/workspace-invitation-independent.integration.test.ts
 INDEXED tests/workspace-route-isolation.test.ts
 INDEXED tests/workspace-security-fetch.node.test.mjs
 INDEXED tests/workspace-security-ui.node.test.mjs
