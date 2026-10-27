@@ -93,7 +93,6 @@ export const JOB_FILTER_STATUSES = [
   "claimed",
   "printing",
   "success",
-  "printed",
   "failed",
   "expired",
   "unknown",

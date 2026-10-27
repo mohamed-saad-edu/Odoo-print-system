@@ -13,6 +13,16 @@ import {
   type JobStatus,
 } from "../src/lib/job-status";
 
+describe("physical-output filter policy", () => {
+  it("never labels submission success as a physically printed job", () => {
+    expect(isJobFilterStatus("success")).toBe(true);
+    expect(isJobFilterStatus("printed")).toBe(false);
+    expect(JOB_FILTER_STATUSES).not.toContain("printed");
+    const source = readFileSync("src/lib/job-history.ts", "utf8");
+    expect(source).not.toContain('status === "printed"');
+  });
+});
+
 describe("job-status", () => {
   it("unknown-outcome markers stay in lockstep across all layers", () => {
     // The marker TEXT is the wire protocol between the Go agent, this

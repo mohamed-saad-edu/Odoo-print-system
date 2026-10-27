@@ -73,7 +73,7 @@ export async function listPrintJobHistory(input: JobHistoryOptions = {}) {
   if (input.agentId) predicates.push(sql`h.agent_id = ${input.agentId}`);
   if (input.printerId) predicates.push(sql`h.printer_id = ${input.printerId}`);
   if (status === "active" || status === "in_flight") predicates.push(sql`h.status IN ('queued','claimed','printing')`);
-  else if (status === "success" || status === "printed") predicates.push(sql`h.status = 'success'`);
+  else if (status === "success") predicates.push(sql`h.status = 'success'`);
   else if (status === "queued" || status === "claimed" || status === "printing" || status === "expired") predicates.push(sql`h.status = ${status}`);
   else if (status === "failed" || status === "unknown" || status === "attention") {
     const unknown = sql`(${sql.join(PHYSICAL_OUTCOME_UNKNOWN_MARKERS.map(marker => sql`COALESCE(h.error, '') LIKE ${marker + "%"}`), sql` OR `)})`;
