@@ -28,3 +28,23 @@ test("CI keeps one running main verification and coalesces superseded pending pu
   // Per-job per-SHA scopes must remain present: running main jobs are not
   // replaced under the old shared-ref PENDING slot.
 });
+
+test("all workflows coalesce superseded main runs without sacrificing release gates", () => {
+  const policies = [
+    [".github/workflows/ci.yml", "ci-run"],
+    [".github/workflows/docker.yml", "docker-run"],
+    [".github/workflows/build-windows.yml", "windows-run"],
+    [".github/workflows/security-supply-chain.yml", "security-supply-run"],
+    [".github/workflows/static-security.yml", "static-security-run"],
+    [".github/workflows/native-backports.yml", "native-backports-run"],
+  ];
+  for (const [file, prefix] of policies) {
+    const source = readFileSync(file, "utf8");
+    const header = source.split("\njobs:")[0];
+    assert.ok(header.includes("group: " + prefix + "-"), "missing unique workflow group: " + file);
+    assert.match(header, /concurrency:\s*\n\s*group:.*github\.event_name == 'push'.*github\.ref.*github\.run_id/);
+    assert.match(header, /cancel-in-progress:.*github\.event_name == 'pull_request'/);
+    assert.ok(header.includes("workflow_dispatch:"), "manual full-release gates must remain: " + file);
+    assert.ok(header.includes("merge_group:"), "merge-queue validation must remain: " + file);
+  }
+});
