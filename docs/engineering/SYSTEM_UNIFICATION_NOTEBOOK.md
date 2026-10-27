@@ -234,3 +234,14 @@ After the initial directory read audit, two additional Odoo control-plane reads 
 | `/api/billing/usage` | `44700a84`: read subscription, plan, entitlements, calendar-month quota and physical Agent/printer counters from a single live owner-authorized transaction; Full Access still denied billing.read, no automatic upgrade/activation | `9511da6e`: authorized owner, role downgrade, session revocation and workspace suspension |
 
 **No historical data mutations** or database migration edits. Lock order tenant -> actor identity/session -> subscription/counters; no newly granted role capabilities. A cancelled GitHub workflow, successful Docker build of a different SHA, or TS source inspection is not equivalent to the required exact-SHA PostgreSQL concurrency PASS. Real POS, Windows printing and populated migration/restore are still BLOCKED.
+
+
+### AUTH-ODOO-LEGACY-PREVIEW-2026-10-28 — historical receipt privacy
+
+**Scope:** `GET /api/odoo/installations/resolutions` discloses legacy job IDs/fingerprints, reviewed operator disposition, and immutable installation business identity. Prior GET checks `integrations.read` only at the HTTP preflight and independently read installation, history and decision; a concurrent owner-role removal, session revocation or tenant suspension could commit before the final read. The `POST` reconciliation mutation already had a transactional lifecycle + manager actor fence and was left unchanged.
+
+**Fix:** `a36e9c8c58745950cb870beb796c8ecafb516344`: perform installation check and the historical receipt/operation lookups in one transaction under tenant `FOR SHARE` and live `integrations.read` actor/session guard. Return current 401/403 on raced revocation or suspension, 404 for unregistered installations, private/no-store on all response branches, and no unhandled internal exception information. Immutable historic jobs, receipt fingerprints, manual disposition and the `reuse`/ `distinct` requirement were **not** modified.
+
+**Regression authored first:** `169277f5ca39115adade0ec9860f4740f6640060`, `tests/odoo-legacy-resolution-inventory-live-authority.integration.test.ts`: preview normal path and concurrent suspend/revoke at the tenant lock. **RED/GREEN NOT VERIFIED**: GitHub CI queued/pending; do not describe test as PASS.
+
+**P1 follow-up:** `findLegacyHistory` currently uses `FOR UPDATE` for both GET and POST callers, so reconciliation previews acquire stronger historical row locks than needed. Consider splitting lookup read-vs-write row locking after obtaining a real race profile; no speculative concurrency optimization without PostgreSQL regression and exact-SHA CI.
