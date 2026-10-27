@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { and, asc, eq } from "drizzle-orm";
 import { db } from "../../../../db";
 import { agents } from "../../../../db/schema";
-import { validateOdooKey } from "../../../../lib/odoo-auth";
+import { validateOdooKey, requireOdooReadKeyInTransaction, OdooReadKeyUnavailableError } from "../../../../lib/odoo-auth";
 import { getAgentHeartbeatFreshness, getEffectiveAgentStatus } from "../../../../lib/agent-availability";
 import { gatewayNow, refreshClockSkew } from "../../../../lib/database-clock";
 import { TenantSubscriptionRequiredError, requireTenantBillingAccess } from "../../../../lib/entitlements";
@@ -35,6 +35,8 @@ export async function GET(req: Request) {
       // Authentication is outside this transaction. Fence a concurrent tenant
       // suspension before touching subscription and inventory (lock order).
       await requireActiveTenantInTransaction(tx, apiKey.tenantId);
+      // Key rotation and full revocation are fenced after initial auth.
+      await requireOdooReadKeyInTransaction(tx, apiKey);
       await requireTenantBillingAccess(tx, apiKey.tenantId);
       return tx
         .select({
@@ -49,6 +51,9 @@ export async function GET(req: Request) {
         .orderBy(asc(agents.name));
     });
   } catch (error) {
+    if (error instanceof OdooReadKeyUnavailableError) {
+      return NextResponse.json({ error: error.message, code: error.code }, { status: 401, headers: { "Cache-Control": "no-store" } });
+    }
     if (error instanceof TenantSuspendedError || error instanceof TenantDeletedError) {
       return NextResponse.json({ error: error.message, code: error.code }, { status: 403, headers: { "Cache-Control": "no-store" } });
     }
