@@ -69,7 +69,11 @@ export function normalizeGatewayUrl(raw: string): string {
       }
     }
     if (parsed.pathname !== "/") throw new Error("Gateway URL must use the origin root");
-    if (parsed.search || parsed.hash) {
+    // WHATWG URL.search/hash are empty strings for bare '?' and '#'.
+    // Rust/Go reject *present* markers even when their values are empty.
+    // Inspect serialized URL so the desktop cannot accept an origin that
+    // native pairing later rejects (or silently redirects to another URL).
+    if (parsed.href.includes("?") || parsed.href.includes("#")) {
       throw new Error("Gateway URL cannot include query strings or fragments");
     }
     return parsed.toString().replace(/\/+$/, "");
