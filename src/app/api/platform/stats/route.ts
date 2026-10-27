@@ -185,7 +185,7 @@ export async function GET(req: Request) {
           SELECT r.id, r.created_at, r.status
           FROM print_job_receipts r
           WHERE r.created_at >= (SELECT at FROM observation) - interval '24 hours'
-            AND NOT EXISTS (SELECT 1 FROM print_jobs live WHERE live.id = r.id)
+            AND NOT EXISTS (SELECT 1 FROM print_jobs live WHERE live.id = r.id AND live.tenant_id = r.tenant_id)
         )
         SELECT
           hours.bucket AS bucket,

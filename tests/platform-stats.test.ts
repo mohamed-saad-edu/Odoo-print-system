@@ -5,6 +5,7 @@ import {
   truncateAll,
   seedFixture,
   insertQueuedJob,
+  pool,
   closePool,
   type Fixture,
 } from "./helpers/pg";
@@ -85,6 +86,46 @@ suite("Platform Stats Route", () => {
     expect(body.jobs24hHourly.some((row: { total: number; queued: number }) => row.total === 1 && row.queued === 1)).toBe(true);
   });
 
+
+  it("counts a receipt even when another tenant has a live job with the same ID", async () => {
+    const other = await seedFixture();
+    const id = `cross-tenant-stats-${nanoid(10)}`;
+    // Both tables have their own primary key: the identical opaque ID is
+    // permitted in separate tenants and must not suppress either operation.
+    await pool().query(`
+      INSERT INTO print_job_receipts
+        (id, tenant_id, fingerprint, printer_id, agent_id,
+         destination, document_type, status, output_medium, created_at, updated_at)
+      VALUES ($1, $2, $3, $4, $5, 'receipt', 'receipt', 'success',
+              'physical', clock_timestamp(), clock_timestamp())
+    `, [id, fixture.tenantId, "a".repeat(64), fixture.printerId, fixture.agentId]);
+    await insertQueuedJob(other, id);
+    const response = await GET(new Request("http://localhost/api/platform/stats", {
+      headers: { Authorization: `Bearer ${platformToken}`, "cache-control": "no-cache" },
+    }));
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.jobs24h).toMatchObject({ total: 2, success: 1, queued: 1 });
+    expect(body.jobs24hHourly.reduce((sum: number, hour: { total: number }) => sum + hour.total, 0)).toBe(2);
+  });
+
+  it("does not double-count a live job and receipt of the same tenant and ID", async () => {
+    const id = `same-tenant-stats-${nanoid(10)}`;
+    await pool().query(`
+      INSERT INTO print_job_receipts
+        (id, tenant_id, fingerprint, printer_id, agent_id,
+         destination, document_type, status, output_medium, created_at, updated_at)
+      VALUES ($1, $2, $3, $4, $5, 'receipt', 'receipt', 'success',
+              'physical', clock_timestamp(), clock_timestamp())
+    `, [id, fixture.tenantId, "b".repeat(64), fixture.printerId, fixture.agentId]);
+    await insertQueuedJob(fixture, id);
+    const response = await GET(new Request("http://localhost/api/platform/stats", {
+      headers: { Authorization: `Bearer ${platformToken}`, "cache-control": "no-cache" },
+    }));
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.jobs24h).toMatchObject({ total: 1, queued: 1, success: 0 });
+  });
 
   it("keeps platform list, dashboard and runtime admission consistent for expired and blocked contracts", async () => {
     const [subscription] = await db.select({ planId: tenantSubscriptions.planId })
