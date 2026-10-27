@@ -55,10 +55,10 @@ jobs:
   docker-image-scan:
     needs: changes
     if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && needs.changes.outputs.docker_scan == 'true'
-    # Cancel only an eligible duplicate job, never on an unrelated push.
+    # Preserve running main image scans; supersede only outdated PR scans.
     concurrency:
       group: docker-scan-${{ matrix.variant }}-${{ github.ref }}
-      cancel-in-progress: true
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -182,10 +182,10 @@ jobs:
   docker-build-runtime:
     needs: changes
     if: github.event_name != 'pull_request' && needs.changes.outputs.docker == 'true'
-    # Cancel only an eligible duplicate job, never on an unrelated push.
+    # Keep an in-progress main runtime build and smoke result tied to its SHA.
     concurrency:
       group: docker-runtime-${{ github.ref }}
-      cancel-in-progress: true
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
