@@ -256,7 +256,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ ...outcome.row, ...operationalVerificationPresentation(outcome.row), already: outcome.kind === "existing" }, { status: outcome.kind === "existing" ? 200 : 201 });
     } catch (error) {
       if (error instanceof ManagerMutationAuthorityChangedError) return error.response();
-      if (error instanceof TenantEntitlementError) return NextResponse.json({ error: error.message, code: "MAX_PRINTERS_EXCEEDED", entitlement: error.entitlement, limit: error.limit, used: error.used, upgradeRequired: true }, { status: 429, headers: { "Retry-After": "60", "Cache-Control": "no-store" } });
+      if (error instanceof TenantEntitlementError) return NextResponse.json({ error: error.message, code: "MAX_PRINTERS_EXCEEDED", entitlement: error.entitlement, limit: error.limit, used: error.used, upgradeRequired: false }, { status: 429, headers: { "Retry-After": "60", "Cache-Control": "no-store" } });
       if (isTenantBillingError(error)) return NextResponse.json({ error: error.message, code: error.code }, { status: 403 });
       if (error instanceof Error && error.message === "agentId not found") return NextResponse.json({ error: "Agent is not paired with this Gateway workspace", code: "AGENT_NOT_FOUND" }, { status: 404 });
       if (error instanceof Error && /^agent is (disabled|retired)$/.test(error.message)) return NextResponse.json({ error: error.message, code: "AGENT_UNAVAILABLE" }, { status: 409 });
