@@ -91,3 +91,14 @@ Baseline inspected: main@65214cf7948a214843110fa2fbc1a23aec388340. This is an **
 **Regression:** `tests/test_partial_gateway_status_reconciliation.py` invokes the actual production method via AST with controlled ORM boundaries, checking ambiguous delivery with and without a diagnostic. GitHub-only environment cannot run pytest locally; **NOT RUN** pending GitHub Actions on the exact commit. Existing tests already require `job_customer_state("partial") == "needs_review"`.
 
 **Coverage:** `odoo_addons/print_gateway/models/print_job.py` PARTIAL; `tests/test_partial_gateway_status_reconciliation.py` AUTHORED. Other directories and hardware remain TODO/BLOCKED; no claim of full-repo completion.
+
+
+## Batch 3 — cross-layer exact geometry printer identity
+
+**Finding (MEDIUM/HIGH, source-confirmed):** Gateway's `validatePrinterGeometry` and Go's `validGeometryPrinterID` reject printer identities over 120 UTF-16 code units, control characters, or surrounding whitespace. Both Odoo Python and Odoo browser JS instead allowed up to 256 code points/units and did not reject whitespace/control in the printer identity; this admitted a geometry snapshot that native execution correctly rejects.
+
+**Correction:** Require exact, non-trimmed printer identity with <=120 UTF-16 units and no C0/C1 controls across Odoo Python and browser JS. No printer fallback, default geometry or synthetic measurement was introduced. Keep actual ID strings and fingerprints unchanged.
+
+**Regression:** Add six valid/invalid identity boundary vectors to `contracts/printer-geometry-fixtures.json`. The same fixture is exercised by Gateway Vitest (`tests/printer-geometry-contract.test.ts`), Go (`agent/internal/printer/geometry_contract_test.go`), Odoo browser Vitest (`tests/receipt-geometry-v3.test.ts`) and Odoo Python (`tests/test_odoo_receipt_geometry_v3.py`), including astral Unicode UTF-16 boundaries, whitespace and control characters.
+
+**Verification:** Contract suites and cross-language execution **NOT RUN** locally; GitHub Actions on the exact commit required. Geometry files and shared test fixtures PARTIAL; all hardware and remaining modules TODO/BLOCKED.

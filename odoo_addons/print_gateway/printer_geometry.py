@@ -15,7 +15,14 @@ def validated_printer_geometry(value, printer_id=None, fingerprint=None):
     if value.get("source") not in expected_validation or value.get("validation") != expected_validation[value["source"]]:
         return None
     identity = value.get("printer_id")
-    if not isinstance(identity, str) or not identity.strip() or len(identity) > 256 or (printer_id is not None and identity != printer_id):
+    # Gateway JS and Go Agent use the same execution printer ID:
+    # <=120 UTF-16 code units, no leading/trailing whitespace or controls.
+    # Python len() counts astral characters once, so count UTF-16 units too.
+    if (not isinstance(identity, str) or not identity or identity != identity.strip()
+            or len(identity) > 120
+            or sum(2 if ord(char) > 0xFFFF else 1 for char in identity) > 120
+            or re.search(r"[\x00-\x1f\x7f-\x9f]", identity)
+            or (printer_id is not None and identity != printer_id)):
         return None
     actual_fingerprint = value.get("config_fingerprint")
     if not isinstance(actual_fingerprint, str) or not re.fullmatch(r"[0-9a-f]{64}", actual_fingerprint) or (fingerprint is not None and actual_fingerprint != fingerprint):

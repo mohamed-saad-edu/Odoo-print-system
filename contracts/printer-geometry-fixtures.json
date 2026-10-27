@@ -732,6 +732,102 @@
       "valid": true,
       "physical": false,
       "rasterWidth": 576
+    },
+    {
+      "name": "identity-over-120-utf16-units",
+      "geometry": {
+        "version": 1,
+        "source": "validated_profile",
+        "validation": "configured",
+        "observed_at": "2026-10-24T12:00:00Z",
+        "printer_id": "ppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp",
+        "config_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "printable_width_dots": 576,
+        "raster_command": "gs_v_0"
+      },
+      "valid": false,
+      "physical": false,
+      "rasterWidth": null
+    },
+    {
+      "name": "identity-astral-characters-over-120-utf16-units",
+      "geometry": {
+        "version": 1,
+        "source": "validated_profile",
+        "validation": "configured",
+        "observed_at": "2026-10-24T12:00:00Z",
+        "printer_id": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀",
+        "config_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "printable_width_dots": 576,
+        "raster_command": "gs_v_0"
+      },
+      "valid": false,
+      "physical": false,
+      "rasterWidth": null
+    },
+    {
+      "name": "identity-has-trailing-whitespace",
+      "geometry": {
+        "version": 1,
+        "source": "validated_profile",
+        "validation": "configured",
+        "observed_at": "2026-10-24T12:00:00Z",
+        "printer_id": "receipt-printer ",
+        "config_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "printable_width_dots": 576,
+        "raster_command": "gs_v_0"
+      },
+      "valid": false,
+      "physical": false,
+      "rasterWidth": null
+    },
+    {
+      "name": "identity-has-leading-whitespace",
+      "geometry": {
+        "version": 1,
+        "source": "validated_profile",
+        "validation": "configured",
+        "observed_at": "2026-10-24T12:00:00Z",
+        "printer_id": " receipt-printer",
+        "config_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "printable_width_dots": 576,
+        "raster_command": "gs_v_0"
+      },
+      "valid": false,
+      "physical": false,
+      "rasterWidth": null
+    },
+    {
+      "name": "identity-has-control-character",
+      "geometry": {
+        "version": 1,
+        "source": "validated_profile",
+        "validation": "configured",
+        "observed_at": "2026-10-24T12:00:00Z",
+        "printer_id": "receipt-\u0007printer",
+        "config_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "printable_width_dots": 576,
+        "raster_command": "gs_v_0"
+      },
+      "valid": false,
+      "physical": false,
+      "rasterWidth": null
+    },
+    {
+      "name": "identity-at-exact-120-utf16-boundary",
+      "geometry": {
+        "version": 1,
+        "source": "validated_profile",
+        "validation": "configured",
+        "observed_at": "2026-10-24T12:00:00Z",
+        "printer_id": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀",
+        "config_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "printable_width_dots": 576,
+        "raster_command": "gs_v_0"
+      },
+      "valid": true,
+      "physical": false,
+      "rasterWidth": 576
     }
   ],
   "profileCases": [

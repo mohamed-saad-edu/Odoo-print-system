@@ -7,7 +7,9 @@ export function validatedPrinterGeometry(value, printerId = null, fingerprint = 
     if (!value || typeof value !== "object" || Array.isArray(value) || value.version !== 1) return null;
     const validation = { windows_driver: "observed", ipp: "observed", validated_profile: "configured" };
     if (!Object.hasOwn(validation, value.source) || value.validation !== validation[value.source]) return null;
-    if (typeof value.printer_id !== "string" || !value.printer_id.trim() || value.printer_id.length > 256 ||
+    if (typeof value.printer_id !== "string" || !value.printer_id ||
+        value.printer_id !== value.printer_id.trim() || value.printer_id.length > 120 ||
+        /[\u0000-\u001f\u007f-\u009f]/.test(value.printer_id) ||
         (printerId !== null && value.printer_id !== printerId)) return null;
     if (typeof value.config_fingerprint !== "string" || !/^[0-9a-f]{64}$/.test(value.config_fingerprint) ||
         (fingerprint !== null && value.config_fingerprint !== fingerprint)) return null;
