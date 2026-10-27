@@ -152,7 +152,14 @@ func (a *Agent) privatePrinterIDs(snapshot localPrinterSharingSnapshot) ([]strin
 }
 
 func validGatewaySharingID(id string) bool {
-	if id == "" || !utf8.ValidString(id) || strings.TrimSpace(id) != id || strings.ContainsFunc(id, unicode.IsControl) {
+	// Match JavaScript String.trim() used by Gateway isExactPrinterId.
+	// Unicode White_Space differs only at the BOM boundary: JS trims U+FEFF,
+	// while Go strings.TrimSpace does not. Neither side may normalize an
+	// opaque printer execution ID into a different identity.
+	hasEdgeWhitespace := strings.TrimFunc(id, func(r rune) bool {
+		return unicode.IsSpace(r) || r == '\uFEFF'
+	}) != id
+	if id == "" || !utf8.ValidString(id) || hasEdgeWhitespace || strings.ContainsFunc(id, unicode.IsControl) {
 		return false
 	}
 	// The Gateway's isExactPrinterId enforces 120 UTF-8 bytes, not 120
