@@ -16,6 +16,7 @@ from ..customer_presentation import customer_error_message
 from odoo.exceptions import AccessError, ValidationError
 
 from ..runtime_clock import db_now_utc
+from ..pos_retry_policy import is_stale_pos_operation
 from ..idempotency_namespace import wire_key, deployment_proof
 from ..runtime_policy import inventory_has_shared_printer
 from ..print_output import gateway_output_values, validated_file_output
@@ -1536,6 +1537,26 @@ class PrintGatewayJob(models.Model):
                     return self._advance_status_claimed(job, target, values, claim_token)
                 self._advance_status(job, target, values)
                 return True
+
+            # A paid-plan outage can leave an old POS ticket in the local outbox.
+            # When billing resumes, do not silently print a receipt or kitchen
+            # ticket from an earlier sale. This applies ONLY before Gateway
+            # admission; a previously accepted job is reconciled, not canceled.
+            # Evaluate under the committed claim lease before any HTTP side effect.
+            if job.status == "queued" and is_stale_pos_operation(
+                job.source_model, job.document_type, job.create_date,
+                db_now_utc(self.env.cr), gateway_job_id=job.gateway_job_id,
+            ):
+                parked = advance_submit_status("failed", {
+                    "last_error": "GATEWAY_REJECTED_STALE_POS_OPERATION: No Gateway submission; explicit operator reprint required.",
+                    "next_retry_at": False,
+                    "completed_at": db_now_utc(self.env.cr),
+                })
+                if parked and raise_on_failure:
+                    raise ValidationError(_(
+                        "This POS ticket is over 30 minutes old and was not sent. Review it and use Reprint explicitly if still needed."
+                    ))
+                continue
 
             current_binding = job.fallback_binding_id
             visited_bindings = {job.printer_id}

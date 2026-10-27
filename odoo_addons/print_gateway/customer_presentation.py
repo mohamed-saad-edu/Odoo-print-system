@@ -33,6 +33,8 @@ def customer_error_category(value=None, *, code=None, status=None):
     text = (str(code or "") + " " + str(value or "")[:4000]).upper()
     if any(token in text for token in ("UNKNOWN_", "UNCERTAIN", "PARTIAL_DELIVERY", "AMBIGUOUS")):
         return "uncertain"
+    if "GATEWAY_REJECTED_STALE_POS_OPERATION" in text:
+        return "stale_pos"
     if "PRINT_QUOTA_EXCEEDED" in text or "MAX_PRINTS_PER_PERIOD" in text:
         return "quota"
     if any(token in text for token in ("SUBSCRIPTION", "TENANT_SUSPENDED", "TENANT_DELETED", "TENANT_ENTITLEMENT_UNAVAILABLE")):
@@ -60,6 +62,8 @@ def customer_error_message(_, value=None, *, code=None, status=None):
     category = customer_error_category(value, code=code, status=status)
     if category == "uncertain":
         return _("The print result needs review. Check the printer before starting another print to avoid duplicate output.")
+    if category == "stale_pos":
+        return _("This old POS ticket was not sent. Review the sale and explicitly reprint only if needed.")
     if category == "quota":
         return _("This month's print-job allowance has been used. Wait for the monthly reset or contact the workspace owner.")
     if category == "subscription":

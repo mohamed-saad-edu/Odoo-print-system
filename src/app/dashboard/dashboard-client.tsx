@@ -1385,6 +1385,7 @@ export default function DashboardClient({
 
   const prints = billingUsage?.resources.prints;
   const printsLimitReached = prints && prints.limit !== "unlimited" && prints.remaining !== "unlimited" && prints.remaining === 0;
+  const contractExpiresSoon = subscription?.customerState === "active" && !!subscription.currentPeriodEnd && Date.parse(subscription.currentPeriodEnd) > nowMs && Date.parse(subscription.currentPeriodEnd) - nowMs <= 7 * 86_400_000;
   const printsPercent =
     prints && prints.limit !== "unlimited" ? (prints.used / Math.max(1, prints.limit)) * 100 : null;
   const printerStatusOptions = ["all", "ready", "printing", "attention", "unavailable", "saved"] as const;
@@ -1411,6 +1412,14 @@ export default function DashboardClient({
           {t(item === "home" ? "v4.experience.home" : item === "printers" ? "desktop.nav.printers" : item === "agents" ? "dashboard.tab.agents" : "v4.experience.activity")}
         </a>)}
       </nav>
+      {printsLimitReached && subscription?.customerState === "active" && <Callout tone="warn" title={t("v4.subscription.quotaBlockedTitle")}>
+        <p>{t("v4.subscription.quotaBlockedBody")}</p>
+        <div className="mt-3"><Button size="sm" variant="secondary" href="/billing">{t("v4.subscription.quotaBlockedAction")}</Button></div>
+      </Callout>}
+      {!printsLimitReached && contractExpiresSoon && <Callout tone="warn" title={t("v4.subscription.expiringSoonTitle")}>
+        <p>{t("v4.subscription.expiringSoonBody", { date: formatManualCalendarDate(subscription?.currentPeriodEnd, locale) ?? t("common.notAvailable") })}</p>
+        <div className="mt-3"><Button size="sm" variant="secondary" href="/billing">{t("v4.subscription.renewRequestAction")}</Button></div>
+      </Callout>}
       {view === "home" && <Card className="space-y-5 p-5 sm:p-6">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="min-w-0"><h2 className="text-xl font-semibold text-ink">{t("v4.experience.health.title")}</h2></div>

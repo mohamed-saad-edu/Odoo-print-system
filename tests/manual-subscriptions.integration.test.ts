@@ -13,6 +13,7 @@ import { getTenantPrintUsage,getTenantEntitlements,getTenantEntitlementLimit,req
 import { POST as requestActivation,GET as requestsGET } from "../src/app/api/subscription-requests/route";
 import { POST as subscriptionPOST } from "../src/app/api/platform/tenants/[id]/subscription/route";
 import { GET as workspaceGET } from "../src/app/api/platform/tenants/[id]/route";
+import { GET as billingStatusGET } from "../src/app/api/billing/status/route";
 import { POST as rejectRequest, GET as listPlatformRequests } from "../src/app/api/platform/subscription-requests/route";
 import { PATCH as editPlan } from "../src/app/api/platform/plans/[id]/route";
 import { POST as createPlan,GET as listAdminPlans } from "../src/app/api/platform/plans/route";
@@ -57,6 +58,23 @@ suite('V4 manual subscriptions security and accounting',()=>{
   const platform=await createVerifiedPlatformSession('platform','platform@manual.test');platformCookie=`${sessionCookieName('platform')}=${platform.token}`;claims=verifyPlatformTokenSignature(platform.token)!;
   const owner=await issueWorkspaceTestSession({kind:'manager',tenantId:'workspace',userId:'owner',role:'owner'});ownerCookie=`${sessionCookieName('manager')}=${owner.accessToken}`;
   const member=await issueWorkspaceTestSession({kind:'manager',tenantId:'workspace',userId:'member',role:'admin'});memberCookie=`${sessionCookieName('manager')}=${member.accessToken}`;
+ });
+
+ it('returns the subscription end date only to the owner and uses DB time for expiry',async()=>{
+  await mutateManualSubscription('workspace',claims,randomUUID(),input());
+  const owner = await billingStatusGET(new Request(origin+'/api/billing/status',{headers:{cookie:ownerCookie}}));
+  const member = await billingStatusGET(new Request(origin+'/api/billing/status',{headers:{cookie:memberCookie}}));
+  expect(owner.status).toBe(200);expect(member.status).toBe(200);
+  const ownData = await owner.json();
+  const memberData = await member.json();
+  expect(ownData).toMatchObject({hasSubscription:true,customerState:'active',currentPeriodEnd:expect.any(String)});
+  expect(Date.parse(ownData.currentPeriodEnd)).toBeGreaterThan(Date.now());
+  expect(memberData).not.toHaveProperty('currentPeriodEnd');
+  expect(memberData).not.toHaveProperty('planId');
+  expect(memberData).not.toHaveProperty('monthlyQuota');
+  await db.update(tenantSubscriptions).set({currentPeriodEnd:new Date(Date.now()-1000)}).where(eq(tenantSubscriptions.tenantId,'workspace'));
+  const expired = await billingStatusGET(new Request(origin+'/api/billing/status',{headers:{cookie:ownerCookie}}));
+  expect((await expired.json())).toMatchObject({hasSubscription:false,customerState:'expired',currentPeriodEnd:expect.any(String)});
  });
  it('deduplicates concurrent customer requests and requires independent Platform Owner approval',async()=>{
   const key=randomUUID();

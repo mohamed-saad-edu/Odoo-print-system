@@ -41,6 +41,7 @@ def test_job_customer_state_uses_output_evidence(status, physical, medium, outpu
 
 @pytest.mark.parametrize("raw,category", [
     ("PRINT_QUOTA_EXCEEDED", "quota"),
+    ("GATEWAY_REJECTED_STALE_POS_OPERATION", "stale_pos"),
     ("TENANT_SUBSCRIPTION_REQUIRED", "subscription"),
     ("TENANT_SUSPENDED", "subscription"),
     ("API_KEY_REVOKED", "credential"),

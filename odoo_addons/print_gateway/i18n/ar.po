@@ -4971,3 +4971,13 @@ msgstr "جهاز الطباعة المعيّن غير متاح — تحقق من
 msgid "POS Receipt does not require an Odoo printer or PDF report. POS Kitchen / Preparation uses the selected Odoo Preparation Printer for category routing; the Gateway printer remains the physical destination."
 msgstr "لا يتطلب إيصال نقاط البيع طابعة Odoo أو تقرير PDF. تستخدم طباعة المطبخ / التحضير طابعة التحضير المحددة في Odoo لتوجيه فئات المنتجات، وتظل طابعة Gateway هي وجهة الطباعة الفعلية."
 
+
+#. module: print_gateway
+#: code:addons/print_gateway/models/print_job.py:0
+msgid "This POS ticket is over 30 minutes old and was not sent. Review it and use Reprint explicitly if still needed."
+msgstr "إيصال نقطة البيع ده أقدم من 30 دقيقة ولم يتم إرساله للطابعة. راجع العملية واستخدم إعادة الطباعة يدويًا إذا كان ما زال مطلوبًا."
+
+#. module: print_gateway
+#: code:addons/print_gateway/customer_presentation.py:0
+msgid "This old POS ticket was not sent. Review the sale and explicitly reprint only if needed."
+msgstr "لم يُرسل إيصال نقطة البيع القديم للطابعة. راجع البيع وأعد طباعته يدويًا فقط إذا كان مطلوبًا."

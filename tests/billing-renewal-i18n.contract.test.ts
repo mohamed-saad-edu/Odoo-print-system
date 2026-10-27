@@ -24,5 +24,9 @@ describe("billing renewal localization contract", () => {
       expect(v4OnboardingAr[key]).toMatch(/\p{Script=Arabic}/u);
     }
     expect(v4OnboardingEn["v4.subscription.manualRenewal"]).toMatch(/no automatic charge or automatic renewal/i);
+    for (const key of ["v4.subscription.quotaBlockedTitle", "v4.subscription.quotaBlockedBody", "v4.subscription.quotaBlockedAction", "v4.subscription.expiringSoonTitle", "v4.subscription.expiringSoonBody", "v4.subscription.renewalDoesNotReset", "v4.subscription.legacyEndMissingTitle", "v4.subscription.legacyEndMissingBody"] as const) {
+      expect(v4OnboardingEn[key]).toBeTruthy();
+      expect(v4OnboardingAr[key]).toMatch(/\p{Script=Arabic}/u);
+    }
   });
 });

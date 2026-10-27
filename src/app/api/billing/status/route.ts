@@ -21,5 +21,7 @@ export async function GET(req: Request) {
     hasSubscription: status === "active",
     status, customerState: status,
     entitlementBlocked: subscription?.entitlementBlocked ?? false,
+    // Contract dates are commercial metadata: never expose them to invited Full Access members.
+    ...(member.role === "owner" ? { currentPeriodEnd: subscription?.currentPeriodEnd?.toISOString() ?? null } : {}),
   }, { headers: { "Cache-Control": "private, no-store" } });
 }
