@@ -536,7 +536,11 @@ func TestAgentSharingAdmittedJobFinishesWhileMutexWaiterIsReturned(t *testing.T)
 	case <-time.After(5 * time.Second):
 		t.Fatal("initial physical attempt never admitted")
 	}
-	ag.dispatchJob(context.Background(), sharingDispatchTestJob(ag, "waiting-private", "local~aaaaaaaa"))
+	// Exercise the real printer mutex with the Agent-scoped canonical
+	// cloud alias. A forged suffix cannot resolve a backend and tests the
+	// alias security fence, not the fresh admission of a queued waiter.
+	waitingAlias := gatewayAliasPrinterID(local.ID, ag.cfg.Agent.ID)
+	ag.dispatchJob(context.Background(), sharingDispatchTestJob(ag, "waiting-private", waitingAlias))
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		_, status, found, err := ag.queue.Get("waiting-private")
