@@ -901,6 +901,12 @@
             "escpos",
             "image"
           ]
+        },
+        "config": {
+          "geometry_profile": {
+            "printable_width_dots": 576,
+            "raster_command": "gs_v_0"
+          }
         }
       },
       "payload": {
@@ -930,6 +936,12 @@
             "escpos",
             "image"
           ]
+        },
+        "config": {
+          "geometry_profile": {
+            "printable_width_dots": 576,
+            "raster_command": "gs_v_0"
+          }
         }
       },
       "payload": {
@@ -958,6 +970,12 @@
           "supported_protocols": [
             "escpos"
           ]
+        },
+        "config": {
+          "geometry_profile": {
+            "printable_width_dots": 576,
+            "raster_command": "gs_v_0"
+          }
         }
       },
       "payload": {
@@ -1175,6 +1193,15 @@
             "observed_at": "2026-10-24T12:00:00Z",
             "printer_id": "receipt-printer",
             "config_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "printable_width_dots": 576,
+            "raster_command": "gs_v_0",
+            "dpi_x": 203,
+            "dpi_y": 203,
+            "paper_width_mm": 80
+          }
+        },
+        "config": {
+          "geometry_profile": {
             "printable_width_dots": 576,
             "raster_command": "gs_v_0",
             "dpi_x": 203,

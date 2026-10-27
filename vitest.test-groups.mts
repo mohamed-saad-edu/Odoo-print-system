@@ -6,6 +6,7 @@
  * remain runnable without PostgreSQL, a production build or external services.
  */
 export const integrationVitestTestFiles = [
+  "tests/job-history-tenant-collision.integration.test.ts",
   "tests/physical-history-migration.integration.test.ts",
   "tests/manual-billing-history-migration.integration.test.ts",
   "tests/manual-only-billing-migration.integration.test.ts",

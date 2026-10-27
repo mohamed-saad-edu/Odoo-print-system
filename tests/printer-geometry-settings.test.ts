@@ -22,7 +22,11 @@ describe("verified profiles in existing printer details", () => {
   it("displays high-DPI measurements in English and Arabic without changing their units", () => {
     const geometry = fixtures.geometryCases.find((entry) => entry.name === "physical-1664-dots-600-dpi-80-mm")!.geometry;
     for (const locale of ["en", "ar"] as const) {
-      const html = renderToStaticMarkup(tree(h(PrinterGeometryDetails, { printer: { ...printer, capabilities: { geometry } } }), locale));
+      const profile = Object.fromEntries(Object.entries(geometry).filter(([key]) =>
+        !["version", "source", "validation", "observed_at", "printer_id", "config_fingerprint"].includes(key)));
+      const html = renderToStaticMarkup(tree(h(PrinterGeometryDetails, {
+        printer: { ...printer, capabilities: { geometry }, config: { geometry_profile: profile } },
+      }), locale));
       expect(html).not.toContain("undefined");
       expect(html).not.toContain("printer.geometry.");
       expect(html).not.toContain("measurements are unavailable");

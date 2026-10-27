@@ -58,7 +58,10 @@ describe("canonical operational proof and file-result fixtures", () => {
     expect(validatePayloadForPrinter({ type: "pdf" }, printer).ok).toBe(true);
     expect(validatePayloadForPrinter({ type: "raw", protocol: "raw" }, printer).ok).toBe(false);
     expect(validatePayloadForPrinter({ type: "image", geometry_fingerprint: digestForImage }, printer).ok).toBe(false);
-    const measured = { ...printer, capabilities: { geometry: { version: 1, source: "validated_profile", validation: "configured", observed_at: fixtures.now,
+    const measured = { ...printer, config: { geometry_profile: {
+      printable_width_dots: 2400, printable_height_dots: 3400, dpi_x: 300, dpi_y: 300,
+      paper_width_mm: 210, paper_height_mm: 297, offset_x_dots: 40, offset_y_dots: 40,
+    } }, capabilities: { geometry: { version: 1, source: "validated_profile", validation: "configured", observed_at: fixtures.now,
       printer_id: printer.id, config_fingerprint: digestForImage, printable_width_dots: 2400, printable_height_dots: 3400,
       dpi_x: 300, dpi_y: 300, paper_width_mm: 210, paper_height_mm: 297, offset_x_dots: 40, offset_y_dots: 40 } } };
     expect(validatePayloadForPrinter({ type: "image", geometry_fingerprint: digestForImage }, measured).ok).toBe(true);
