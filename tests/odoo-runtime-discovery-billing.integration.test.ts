@@ -91,6 +91,60 @@ suite("Odoo runtime discovery billing boundary", () => {
     }
   });
 
+  it.each([
+    ["agents", agentsGET, "/api/odoo/agents"],
+    ["printers", printersGET, "/api/odoo/printers"],
+  ] as const)("rechecks revoked credentials after workspace lock before exposing %s inventory", async (_name, handler, route) => {
+    const blocker = await pool().connect();
+    let settled = false;
+    let pending: Promise<Response> | undefined;
+    try {
+      await blocker.query("BEGIN");
+      // An innocuous admin update holds the tenant-row fence long enough for
+      // Odoo key authentication to complete on its earlier snapshot.
+      await blocker.query("UPDATE tenants SET lifecycle='active' WHERE id=$1", [fixture.tenantId]);
+      const blockerPid = Number((await blocker.query("SELECT pg_backend_pid() AS pid")).rows[0].pid);
+      pending = handler(new Request("https://gateway.test" + route, {headers: {"x-api-key":fixture.odooKey}}));
+      await expect.poll(async () => {
+        const waiting = await pool().query(
+          `SELECT count(*)::int AS n FROM pg_stat_activity
+           WHERE datname=current_database() AND wait_event_type='Lock'
+             AND query LIKE '%FROM tenants%' AND query LIKE '%FOR SHARE%'
+             AND $1 = ANY(pg_blocking_pids(pid))`, [blockerPid],
+        );
+        return Number(waiting.rows[0].n);
+      }, {timeout: 8_000, interval: 100}).toBeGreaterThan(0);
+      // Revocation commits independently while the request is blocked at the
+      // tenant fence. An initial valid key check is no longer authority.
+      const revoked = await pool().query(
+        "UPDATE api_keys SET revoked_at=clock_timestamp(), read_only_until=NULL WHERE tenant_id=$1",
+        [fixture.tenantId],
+      );
+      expect(revoked.rowCount).toBeGreaterThan(0);
+      await blocker.query("COMMIT");
+      settled = true;
+      const response = await pending;
+      expect(response.status).toBe(401);
+      expect(await response.json()).toMatchObject({code: "UNAUTHORIZED"});
+    } finally {
+      if (!settled) await blocker.query("ROLLBACK");
+      blocker.release();
+      await pending?.catch(() => {});
+    }
+  });
+
+  it.each([
+    ["agents", agentsGET, "/api/odoo/agents"],
+    ["printers", printersGET, "/api/odoo/printers"],
+  ] as const)("retains the documented read-only rotation grace for %s inventory", async (_name, handler, route) => {
+    await pool().query(
+      "UPDATE api_keys SET revoked_at=clock_timestamp()-interval '1 second', read_only_until=clock_timestamp()+interval '30 minutes' WHERE tenant_id=$1",
+      [fixture.tenantId],
+    );
+    const response = await handler(new Request("https://gateway.test" + route, {headers: {"x-api-key":fixture.odooKey}}));
+    expect(response.status).toBe(200);
+  });
+
   it("publishes bounded selected roll media separately from printable dots", async () => {
     await pool().query(
       "UPDATE printers SET capabilities = $1::jsonb WHERE tenant_id = $2 AND id = $3",
