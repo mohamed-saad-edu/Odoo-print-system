@@ -6,6 +6,7 @@ import {
   canTransition,
   isTerminal,
   isJobStatus,
+  isJobFilterStatus,
   isLateSuccessAllowed,
   LATE_SUCCESS_MAX_AGE_MS,
   PHYSICAL_OUTCOME_UNKNOWN_MARKERS,
@@ -26,6 +27,11 @@ describe("physical-output filter policy", () => {
 });
 
 describe("job-status", () => {
+  it("only narrows canonical job filter statuses after callers normalize input", () => {
+    for (const status of ["all", "queued", "in_flight", "printed", "unknown", "attention"]) expect(isJobFilterStatus(status)).toBe(true);
+    for (const status of ["QUEUED", "Queued", " printed ", "in-FLIGHT", "", "unknown_filter", null, 7]) expect(isJobFilterStatus(status)).toBe(false);
+  });
+
   it("unknown-outcome markers stay in lockstep across all layers", () => {
     // The marker TEXT is the wire protocol between the Go agent, this
     // gateway, Odoo, and the desktop UX: a marker renamed in one layer
