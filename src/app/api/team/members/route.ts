@@ -55,7 +55,7 @@ export async function GET(req: Request) {
     offset,
     limit,
     total: countRows[0]?.total ?? 0,
-  });
+  }, { headers: { "Cache-Control": "private, no-store" } });
 }
 
 

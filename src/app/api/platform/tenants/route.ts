@@ -21,7 +21,7 @@ export async function GET(req: Request) {
   const limit = clampListLimit(searchParams.get("limit"), 300, 1000);
 
   const offset = parseStrictListOffset(searchParams.get("offset"), 1_000_000);
-  if (offset === null) return NextResponse.json({ error: "Invalid offset" }, { status: 400 });
+  if (offset === null) return NextResponse.json({ error: "Invalid offset", code: "INVALID_OFFSET" }, { status: 400 });
   const search = (searchParams.get("search") ?? "").trim().toLowerCase();
   if (search.length > 200) return NextResponse.json({ error: "Search too long" }, { status: 400 });
   const term = `%${search.replace(/[%_\\]/g, "\\$&")}%`;
@@ -60,5 +60,5 @@ export async function GET(req: Request) {
     "platformTenantsList",
   );
 
-  return NextResponse.json({ tenants: rows.slice(0, limit), hasMore: rows.length > limit, offset, limit });
+  return NextResponse.json({ tenants: rows.slice(0, limit), hasMore: rows.length > limit, offset, limit }, { headers: { "Cache-Control": "private, no-store" } });
 }
