@@ -24,3 +24,8 @@ export async function requireTeamActorInTransaction(
 ): Promise<void> {
   throw new TeamAuthorizationChangedError();
 }
+
+/** Standard 403 response for workspace team/ownership mutation routes reserved for Platform Owner. */
+export function platformOwnerRequiredResponse(): Response {
+  return Response.json({ error: "Platform Owner required", code: "PLATFORM_OWNER_REQUIRED" }, { status: 403 });
+}

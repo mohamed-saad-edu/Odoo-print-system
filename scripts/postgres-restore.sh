@@ -2,8 +2,8 @@
 set -eu
 
 # Restore a Yaseir Gateway PostgreSQL custom-format archive.
-# The target database must be explicitly acknowledged. By default it must be
-# empty; destructive replacement requires RESTORE_ALLOW_NONEMPTY=1.
+# The explicitly acknowledged target MUST be empty. Replacing production data,
+# including via a legacy override flag, is intentionally not supported.
 
 umask 077
 
@@ -76,24 +76,21 @@ checksum="$archive.sha256"
 # Force a full archive parse before touching the target database.
 pg_restore --list "$archive" >/dev/null
 
-user_tables=$(psql --no-password -X -A -t -v ON_ERROR_STOP=1 -c \
-  "SELECT count(*) FROM pg_catalog.pg_tables WHERE schemaname NOT IN ('pg_catalog','information_schema');")
-case "$user_tables" in
-  ''|*[!0-9]*) echo "ERROR: could not determine target database table count" >&2; exit 2 ;;
+# Check all ordinary user relations, not only tables: a database with only a
+# view or sequence is still populated. Refuse rather than ever attempting a
+# destructive replacement. The query itself needs no write privileges.
+user_relations=$(psql --no-password -X -A -t -v ON_ERROR_STOP=1 -c \
+  "SELECT count(*) FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname NOT IN ('pg_catalog','information_schema') AND n.nspname NOT LIKE 'pg_toast%' AND n.nspname NOT LIKE 'pg_temp%' AND c.relkind IN ('r','p','v','m','S','f');")
+case "$user_relations" in
+  ''|*[!0-9]*) echo "ERROR: could not determine whether target database is empty" >&2; exit 2 ;;
 esac
-
-clean_args=""
-if [ "$user_tables" -ne 0 ]; then
-  [ "${RESTORE_ALLOW_NONEMPTY:-0}" = "1" ] || {
-    echo "ERROR: target database is not empty; set RESTORE_ALLOW_NONEMPTY=1 only for an intentional destructive replacement" >&2
-    exit 2
-  }
-  clean_args="--clean --if-exists"
+if [ "$user_relations" -ne 0 ]; then
+  echo "ERROR: target database is not empty; restore only to a new empty recovery database" >&2
+  exit 2
 fi
 
-# --single-transaction implies exit-on-error: either the archive is applied in
-# full or the restore transaction rolls back. shellcheck disable=SC2086
-pg_restore --no-password --single-transaction $clean_args --dbname="$PGDATABASE" "$archive"
+# --single-transaction implies exit-on-error; no existing objects are dropped.
+pg_restore --no-password --single-transaction --dbname="$PGDATABASE" "$archive"
 
 # Minimal post-restore structural proof. Application migrations/health checks
 # must still run before traffic is re-enabled.

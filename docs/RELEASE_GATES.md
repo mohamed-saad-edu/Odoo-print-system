@@ -279,7 +279,7 @@ benchmark does not establish a sustained jobs/minute guarantee or production SLO
 
 The repository's backup helper writes restrictive custom-format archives and
 checksum sidecars. The restore helper verifies the selected archive, refuses
-a nonempty target by default and restores in one transaction. Use libpq secret
+any nonempty target, without a destructive override, and restores in one transaction. Use libpq secret
 files and a dedicated empty recovery database; see `DEPLOYMENT.md` for exact
 commands. Re-run migrations and integrity checks before allowing traffic.
 
