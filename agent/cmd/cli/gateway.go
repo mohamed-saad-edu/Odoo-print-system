@@ -89,6 +89,7 @@ func encodeGatewayResponse(status uint16, data []byte, headers http.Header) ([]b
 
 // Gate the exact canonical encodeURIComponent() segment from Desktop.
 const gatewayPrinterIDPattern = "(?:[A-Za-z0-9._~!'()*-]|%[0-9A-F]{2})+"
+
 var gatewayPrinterActionPathRe = regexp.MustCompile("^/api/printers/" + gatewayPrinterIDPattern + "/test-connection$")
 var gatewayTestPrintPathRe = regexp.MustCompile("^/api/printers/" + gatewayPrinterIDPattern + "/test-print$")
 var gatewayTestKeyRe = regexp.MustCompile("^[A-Za-z0-9._:-]+$")
@@ -102,8 +103,8 @@ func canonicalPrinterSegment(identity string) string {
 			b.WriteByte(ch)
 		} else {
 			b.WriteByte('%')
-			b.WriteByte(hex[ch >> 4])
-			b.WriteByte(hex[ch & 15])
+			b.WriteByte(hex[ch>>4])
+			b.WriteByte(hex[ch&15])
 		}
 	}
 	return b.String()
