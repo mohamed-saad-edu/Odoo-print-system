@@ -1,11 +1,11 @@
 import { validateFileOutputEvidence } from "../lib/print-output";
+import { derivePhysicalOutcome, PHYSICAL_OUTCOME_UNKNOWN_MARKERS, type PhysicalOutcome as GatewayPhysicalOutcome } from "../lib/job-status";
 // ============================================================
 // Single source of truth for operator-facing status vocabulary.
 // Web console, desktop app and the Odoo screens must render the
 // SAME word for the SAME state. Backend states are the gateway
-// job statuses plus the derived physical outcome; the markers
-// below MUST stay in lockstep with PHYSICAL_OUTCOME_UNKNOWN_MARKERS
-// in src/lib/job-status.ts (a unit test locks both lists).
+// job statuses plus the derived physical outcome. Gateway and UI now
+// import the same TypeScript definition; Go and Odoo are parity-tested.
 // ============================================================
 
 import { agentStaleThresholdSeconds, printerStaleThresholdSeconds, resolveAgentStaleThresholdSeconds } from "../lib/stale-threshold";
@@ -35,13 +35,8 @@ export function parseSharedTimeMs(value: Date | string | null | undefined): numb
   return Number.isNaN(ms) ? null : ms;
 }
 
-export const UNKNOWN_OUTCOME_MARKERS = [
-  "AGENT_EXECUTION_TIMEOUT",
-  "AGENT_RESTART_DURING_PRINT",
-  "JOB_EXPIRED_DURING_PRINT",
-  "UNKNOWN_PARTIAL_DELIVERY",
-  "UNKNOWN_SUBMISSION_OUTCOME",
-] as const;
+/** Client-safe alias: a single Gateway/UI definition prevents marker drift. */
+export const UNKNOWN_OUTCOME_MARKERS = PHYSICAL_OUTCOME_UNKNOWN_MARKERS;
 
 
 export type JobFailureKind = "capability_mismatch" | "unsupported_transport" | "unsupported_protocol" | "ipp_unreachable" | "pdfium_headless" | "spooler_session_busy" | "interactive_virtual_timeout";
@@ -144,19 +139,11 @@ export function printerObservationFreshness(
   return sharedObservationFreshness(lastSeenAt, printerStaleThresholdSeconds(), nowMs);
 }
 
-export type PhysicalOutcome = "printed" | "not_printed" | "unknown";
+export type PhysicalOutcome = GatewayPhysicalOutcome;
 
-/** Client-side mirror of derivePhysicalOutcome (src/lib/job-status.ts).
- * Claimed/printing rows have unknown physical output: the Agent can execute
- * before its next status report arrives, so absence of paper evidence cannot
- * prove that nothing printed. The existing job status still conveys progress. */
+/** One physical evidence rule for Gateway, dashboard and Tauri. */
 export function deriveOutcome(status: string, error?: string | null): PhysicalOutcome {
-  // Successful transport/execution is not proof of physical paper output.
-  // Keep the physical result unverified until a real hardware proof exists.
-  if (status === "claimed" || status === "printing" || status === "success") return "unknown";
-  const msg = error ?? "";
-  if (UNKNOWN_OUTCOME_MARKERS.some((marker) => msg.startsWith(marker))) return "unknown";
-  return "not_printed";
+  return derivePhysicalOutcome(status, error);
 }
 
 export function jobTone(status: string, outcome?: PhysicalOutcome): Tone {
