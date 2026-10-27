@@ -34,7 +34,9 @@
   },
   "signatures": {
     "pdfPrefix": "%PDF-",
-    "jpegHexPrefix": "ffd8ff"
+    "jpegHexPrefix": "ffd8ff",
+    "pdfEOFMarker": "%%EOF",
+    "pdfEOFSearchLastBytes": 4096
   },
   "diagnosticPage": {
     "inventoryEndpoint": "/api/odoo/printers",

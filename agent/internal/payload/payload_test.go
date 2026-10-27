@@ -72,13 +72,38 @@ func TestParseValidEscpos(t *testing.T) {
 }
 
 func TestParseValidPDF(t *testing.T) {
-	data := base64.StdEncoding.EncodeToString([]byte("%PDF-1.4 fake"))
+	data := base64.StdEncoding.EncodeToString([]byte("%PDF-1.4\ntrailer\n%%EOF\n"))
 	pl, err := Parse(map[string]interface{}{"type": "pdf", "encoding": "base64", "data": data})
 	if err != nil {
 		t.Fatalf("unexpected error for pdf: %v", err)
 	}
 	if pl.Type != TypePDF {
 		t.Fatalf("expected pdf, got %s", pl.Type)
+	}
+}
+
+func TestPDFPayloadRequiresEOFInFinal4096Bytes(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		data []byte
+	}{
+		{"missing eof", []byte("%PDF-1.4\n1 0 obj\nendobj\n")},
+		{"eof outside trailer window", []byte("%PDF-1.4\n%%EOF\n" + strings.Repeat("A", 4096))},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Parse(map[string]interface{}{
+				"type": "pdf", "encoding": "base64", "data": base64.StdEncoding.EncodeToString(tc.data),
+			})
+			if err == nil || !strings.Contains(err.Error(), "%%EOF") {
+				t.Fatalf("incomplete PDF was admitted: %v", err)
+			}
+		})
+	}
+	if _, err := Parse(map[string]interface{}{
+		"type": "pdf", "encoding": "base64",
+		"data": base64.StdEncoding.EncodeToString([]byte("%PDF-1.4\n%%EOF\n")),
+	}); err != nil {
+		t.Fatalf("PDF with trailer should be admitted: %v", err)
 	}
 }
 

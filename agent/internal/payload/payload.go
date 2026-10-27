@@ -163,6 +163,17 @@ func Parse(raw interface{}) (*Payload, error) {
 	if Type(typ) == TypePDF && !looksLikePDF {
 		return nil, fmt.Errorf("PDF payload must start with the %%PDF- signature")
 	}
+	if Type(typ) == TypePDF {
+		// Mirror the Gateway's syntax admission: native driver validation is
+		// a later boundary, never a substitute for an incomplete PDF refusal.
+		tailStart := len(decoded) - 4096
+		if tailStart < 0 {
+			tailStart = 0
+		}
+		if !bytes.Contains(decoded[tailStart:], []byte("%%EOF")) {
+			return nil, fmt.Errorf("PDF payload is incomplete (missing %%EOF trailer)")
+		}
+	}
 	if Type(typ) == TypeImage && !looksLikeJPEG {
 		return nil, fmt.Errorf("image payload must be a JPEG")
 	}
