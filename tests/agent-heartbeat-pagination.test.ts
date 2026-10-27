@@ -99,6 +99,31 @@ suite("agent heartbeat pagination contract", () => {
     snapshotVersions.clear();
   });
 
+
+  it("rejects overlong UTF-8 printer IDs even when the JS character count is below 120", async () => {
+    const f = await seedFixture();
+    const unicodeId = "é".repeat(80); // 80 characters, 160 UTF-8 bytes
+    const printer = { ...makePrinter("hb-over-limit"), id: unicodeId, name: "Unicode printer ID" };
+    const result = await heartbeat(f.agentAuth, snapshotHeartbeat("utf8-id", true, [printer]));
+    expect(result.status).toBe(200);
+    const body = await result.json();
+    expect(body.skippedPrinters).toContainEqual({ id: unicodeId, reason: "invalid_id" });
+    const match = await pool().query("SELECT 1 FROM printers WHERE tenant_id=$1 AND id=$2", [f.tenantId, unicodeId]);
+    expect(match.rows).toHaveLength(0);
+  });
+
+  it("rejects oversized UTF-8 private printer identifiers before changing sharing state", async () => {
+    const f = await seedFixture();
+    const unicodeId = "é".repeat(80);
+    const message = { ...snapshotHeartbeat("utf8-private", true, []), privatePrinterIds: [unicodeId] };
+    const response = await heartbeat(f.agentAuth, message);
+    expect(response.status).toBe(400);
+    expect((await response.json()).error).toMatch(/120/);
+    const existing = await pool().query("SELECT shared_with_gateway FROM printers WHERE tenant_id=$1 AND id=$2",
+      [f.tenantId, f.printerId]);
+    expect(existing.rows[0].shared_with_gateway).toBe(true);
+  });
+
   it("rejects an older empty page 1 after a newer complete inventory, without changing presence or metadata", async () => {
     const f = await seedFixture();
     const older = snapshotHeartbeat("old-empty", true, []);
