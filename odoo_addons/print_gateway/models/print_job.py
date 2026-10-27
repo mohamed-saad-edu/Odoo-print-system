@@ -2648,14 +2648,14 @@ class PrintGatewayJob(models.Model):
                     gateway_job_id IS NOT NULL
                     AND (
                         status NOT IN ('success', 'failed', 'partial', 'unknown')
-                        OR (status = 'failed' AND (last_error LIKE 'AGENT_EXECUTION_TIMEOUT%%' OR last_error LIKE 'AGENT_RESTART_DURING_PRINT%%' OR last_error LIKE 'UNKNOWN_PARTIAL_DELIVERY%%'))
-                        OR (status = 'unknown' AND (last_error LIKE 'JOB_EXPIRED_DURING_PRINT%%' OR last_error LIKE 'UNKNOWN_PARTIAL_DELIVERY%%' OR last_error LIKE 'UNKNOWN_SUBMISSION_OUTCOME%%' OR last_error LIKE 'AGENT_EXECUTION_TIMEOUT%%' OR last_error LIKE 'AGENT_RESTART_DURING_PRINT%%'))
+                        OR (status = 'failed' AND (starts_with(COALESCE(last_error, ''), 'AGENT_EXECUTION_TIMEOUT') OR starts_with(COALESCE(last_error, ''), 'AGENT_RESTART_DURING_PRINT') OR starts_with(COALESCE(last_error, ''), 'UNKNOWN_PARTIAL_DELIVERY')))
+                        OR (status = 'unknown' AND (starts_with(COALESCE(last_error, ''), 'JOB_EXPIRED_DURING_PRINT') OR starts_with(COALESCE(last_error, ''), 'UNKNOWN_PARTIAL_DELIVERY') OR starts_with(COALESCE(last_error, ''), 'UNKNOWN_SUBMISSION_OUTCOME') OR starts_with(COALESCE(last_error, ''), 'AGENT_EXECUTION_TIMEOUT') OR starts_with(COALESCE(last_error, ''), 'AGENT_RESTART_DURING_PRINT')))
                     )
                )
                OR (
                     gateway_job_id IS NULL
                     AND status = 'unknown'
-                    AND last_error LIKE 'UNKNOWN_SUBMISSION_OUTCOME:%%'
+                    AND starts_with(COALESCE(last_error, ''), 'UNKNOWN_SUBMISSION_OUTCOME:')
                     AND (next_retry_at IS NULL OR next_retry_at <= now())
                )
              ORDER BY last_status_polled_at ASC NULLS FIRST, id ASC
