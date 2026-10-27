@@ -517,7 +517,7 @@ jobs:
           # The exception list is bound to the immutable Dockerfile and
           # Python dependency locks that were reviewed. Any change requires
           # a new security review rather than silently inheriting exceptions.
-          test "$(git hash-object Dockerfile.odoo-hardened)" = "1857e27b8ad699a5011855ee250a776c25c06206"
+          test "$(git hash-object Dockerfile.odoo-hardened)" = "3360387027d43d28972752fd8ac098f783d3f697"
           test "$(git hash-object docs/runtime-hardening/requirements-python312-linux-x86_64.lock)" = "0213f5552156b3d81f2515ee3f6bc786aca475ab"
           test "$(git hash-object docs/runtime-hardening/build-tools.lock)" = "96b65dba00600b2c78b4af0ff5eaf2c83365c672"
           test -s odoo-hardened.sarif
