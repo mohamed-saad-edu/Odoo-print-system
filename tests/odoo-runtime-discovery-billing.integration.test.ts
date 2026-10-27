@@ -56,6 +56,41 @@ suite("Odoo runtime discovery billing boundary", () => {
     });
   });
 
+  it.each([
+    ["agents", agentsGET, "/api/odoo/agents"],
+    ["printers", printersGET, "/api/odoo/printers"],
+  ] as const)("denies %s inventory if workspace is suspended between key auth and read", async (_name, handler, route) => {
+    const blocker = await pool().connect();
+    let committed = false;
+    let pending: Promise<Response> | undefined;
+    try {
+      await blocker.query("BEGIN");
+      await blocker.query("UPDATE tenants SET lifecycle='suspended' WHERE id=$1", [fixture.tenantId]);
+      const blockerPid = Number((await blocker.query("SELECT pg_backend_pid() AS pid")).rows[0].pid);
+      // The first authorization SELECT sees the previously committed active
+      // record. The inventory transaction must wait for the tenant row fence.
+      pending = handler(new Request("https://gateway.test" + route, { headers: { "x-api-key": fixture.odooKey } }));
+      await expect.poll(async () => {
+        const waiting = await pool().query(
+          `SELECT count(*)::int AS n FROM pg_stat_activity
+           WHERE datname=current_database() AND wait_event_type='Lock'
+             AND query LIKE '%FROM tenants%' AND query LIKE '%FOR SHARE%'
+             AND $1 = ANY(pg_blocking_pids(pid))`, [blockerPid],
+        );
+        return Number(waiting.rows[0].n);
+      }, { timeout: 8_000, interval: 100 }).toBeGreaterThan(0);
+      await blocker.query("COMMIT");
+      committed = true;
+      const response = await pending;
+      expect(response.status).toBe(403);
+      expect(await response.json()).toMatchObject({ code: "TENANT_SUSPENDED" });
+    } finally {
+      if (!committed) await blocker.query("ROLLBACK");
+      blocker.release();
+      await pending?.catch(() => {});
+    }
+  });
+
   it("publishes bounded selected roll media separately from printable dots", async () => {
     await pool().query(
       "UPDATE printers SET capabilities = $1::jsonb WHERE tenant_id = $2 AND id = $3",
