@@ -720,6 +720,11 @@ export const subscriptionRequests = pgTable("subscription_requests", {
   planId: text("plan_id").notNull().references(() => plans.id),
   term: text("term").notNull(),
   requestedMonthlyQuota: integer("requested_monthly_quota"),
+  // Preserve the immutable customer request AND the actual approved terms.
+  approvedPlanId: text("approved_plan_id").references(() => plans.id),
+  approvedTerm: text("approved_term"),
+  approvedMonthlyQuota: integer("approved_monthly_quota"),
+  approvalModified: boolean("approval_modified").notNull().default(false),
   status: text("status").notNull().default("pending"),
   idempotencyKey: text("idempotency_key").notNull(),
   requestDigest: text("request_digest").notNull(),
@@ -734,6 +739,8 @@ export const subscriptionRequests = pgTable("subscription_requests", {
   statusCheck: check("subscription_requests_status_check", sql`${table.status} IN ('pending','approved','rejected')`),
   termCheck: check("subscription_requests_term_check", sql`${table.term} IN ('monthly','yearly','custom')`),
   quotaCheck: check("subscription_requests_requested_monthly_quota_check", sql`${table.requestedMonthlyQuota} IS NULL OR ${table.requestedMonthlyQuota} > 0`),
+  approvedTermCheck: check("subscription_requests_approved_term_check", sql`${table.approvedTerm} IS NULL OR ${table.approvedTerm} IN ('monthly','yearly','custom')`),
+  approvedQuotaCheck: check("subscription_requests_approved_monthly_quota_check", sql`${table.approvedMonthlyQuota} IS NULL OR ${table.approvedMonthlyQuota} > 0`),
 }));
 
 export const subscriptionChanges = pgTable("subscription_changes", {

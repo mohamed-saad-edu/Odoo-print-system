@@ -18,4 +18,11 @@ describe('manual contract and monthly quota calendar display',()=>{
     expect(formatManualCalendarDate(NaN,'en')).toBeNull();
     expect(formatManualCalendarDate(new Date(NaN),'en')).toBeNull();
   });
+
+  it('formats strict YYYY-MM-DD form values without the missing-date placeholder',()=>{
+    expect(formatManualCalendarDate('2026-10-27','en')).toBe('Oct 27, 2026');
+    expect(formatManualCalendarDate('2026-10-27','ar')).toBe(new Intl.DateTimeFormat('ar-SA-u-ca-gregory-nu-latn',{dateStyle:'medium',timeZone:'UTC'}).format(new Date('2026-10-27T00:00:00Z')));
+    expect(formatManualCalendarDate('2026-02-30','en')).toBeNull();
+    expect(formatManualCalendarDate('2026-13-05','en')).toBeNull();
+  });
 });

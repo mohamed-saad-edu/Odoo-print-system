@@ -32,7 +32,8 @@ describe("request lifecycle is traceable from customer to Platform Admin", () =>
     expect(detail).toContain("selectedRequest?.status==='pending'");
     expect(detail).toContain("request={linkedRequest}");
     expect(editor).toContain("request?.planId");
-    expect(editor).toContain("request?.term");
+    expect(editor).toContain("request.term as Term");
+    expect(editor).toContain("allowRequestChanges");
     expect(editor).toContain("requestId:request.id");
     expect(editor).not.toContain("setApprove(");
   });
@@ -41,7 +42,10 @@ describe("request lifecycle is traceable from customer to Platform Admin", () =>
     const customer = source("src/app/api/subscription-requests/route.ts");
     expect(approval).toContain("input.planId !== requested.planId");
     expect(approval).toContain("input.term !== requested.term");
-    expect(approval).toContain("input.monthlyQuota !== Number(requested.requestedMonthlyQuota)");
+    expect(approval).toContain("input.monthlyQuota !== requestedQuota");
+    expect(approval).toContain("SUBSCRIPTION_REQUEST_TERMS_MISMATCH");
+    expect(approval).toContain("approvalModified:requestApproval?.modified");
+    expect(approval).toContain("approvedTerm:input.term");
     expect(approval).toContain("status='pending' FOR UPDATE");
     expect(customer).toContain("SUBSCRIPTION_REQUEST_ALREADY_PENDING");
     expect(customer).toContain('requireManagerActorInTransaction(tx,actor,"billing.read")');

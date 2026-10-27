@@ -8,7 +8,11 @@ import { fetchWithTimeout } from "../lib/fetch-timeout";
 import { codeMessageKey } from "../lib/api-error-keys";
 
 export type SubscriptionPlanOption = { id: string; name: string; entitlements: Record<string, unknown> };
-export type CustomerSubscriptionRequest = { id: string; reference: string; status: string; planId: string; term: string; createdAt: string; requestedMonthlyQuota?: number | null; whatsappUrl?: string | null };
+export type CustomerSubscriptionRequest = {
+  id: string; reference: string; status: string; planId: string; term: string; createdAt: string;
+  requestedMonthlyQuota?: number | null; whatsappUrl?: string | null;
+  approvalModified?: boolean; approvedPlanId?: string | null; approvedTerm?: string | null; approvedMonthlyQuota?: number | null;
+};
 
 /** A request records customer intent; only the Platform Owner changes entitlements. */
 export function BillingActions({ plans, selectedPlanId, currentPlanId, isOwner, status, initialRequest, currentTerm }: {
@@ -63,8 +67,15 @@ export function BillingActions({ plans, selectedPlanId, currentPlanId, isOwner, 
       <dl className="mt-3 space-y-2 text-sm"><div><dt>{t("v4.onboarding.reference")}</dt><dd dir="ltr" className="break-all font-mono">{request.reference}</dd></div><div><dt>{t("v4.onboarding.requestedAt")}</dt><dd>{formatDateTime(request.createdAt)}</dd></div><div><dt>{t("v4.subscription.requestedPlan")}</dt><dd>{plans.find(plan => plan.id === request.planId)?.name ?? request.planId}</dd></div><div><dt>{t("v4.onboarding.term")}</dt><dd>{t(request.term === "yearly" ? "v4.onboarding.yearly" : request.term === "custom" ? "v4.subscription.custom" : "v4.onboarding.monthly")}</dd></div>{typeof request.requestedMonthlyQuota === "number" && <div><dt>{t("v4.subscription.allowance")}</dt><dd>{formatNumber(request.requestedMonthlyQuota)}</dd></div>}</dl>
       <div className="mt-4 flex flex-wrap gap-3">{request.whatsappUrl && <Button href={request.whatsappUrl} target="_blank" rel="noopener noreferrer" variant="primary">{t("v4.onboarding.whatsapp")}</Button>}<Button variant="secondary" onClick={() => router.refresh()}>{t("v4.onboarding.refresh")}</Button></div>
     </Callout> : <>
-      {request && <Callout tone={request.status === "approved" ? "ok" : "warn"} title={t(request.status === "approved" ? "v4.subscription.requestApproved" : "v4.subscription.requestRejected")}>
+      {request && <Callout tone={request.status === "approved" ? "ok" : "warn"}
+        title={t(request.status === "approved" ? request.approvalModified
+          ? "v4.subscription.approvedWithChanges" : "v4.subscription.requestApproved" : "v4.subscription.requestRejected")}>
         <p className="text-sm" dir="ltr">{request.reference}</p>
+        {request.status === "approved" && request.approvalModified && <p className="mt-2 text-sm">
+          {t("v4.subscription.approvedTerms")}: {plans.find(plan => plan.id === request.approvedPlanId)?.name ?? request.approvedPlanId}
+          {" · "}{t(request.approvedTerm === "yearly" ? "v4.onboarding.yearly" : "v4.onboarding.monthly")}
+          {typeof request.approvedMonthlyQuota === "number" ? " · " + formatNumber(request.approvedMonthlyQuota) : ""}
+        </p>}
       </Callout>}
       <form onSubmit={submit} className="space-y-4">
       <h2 className="text-lg font-semibold">{t(status === "active" ? "v4.subscription.changeRenew" : status === "suspended" ? "v4.subscription.reviewAccess" : "v4.onboarding.request")}</h2>

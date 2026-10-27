@@ -171,4 +171,30 @@ describe("minimal, contextual subscription editor", () => {
     expect(host.querySelector('time[datetime="2028-01-31"]')).not.toBeNull();
     expect(host.querySelector('time[datetime="2029-01-31"]')).toBeNull();
   });
+
+  it.each(["en","ar"] as const)("does not replace a monthly Go request with an existing yearly subscription in %s",locale=>{
+    renderEditor(locale,currentSubscription,{...request,term:"monthly",planId:"requested",requestedMonthlyQuota:250});
+    expect(input(locale,"plan")?.value).toBe("requested");
+    expect(input(locale,"term")?.value).toBe("monthly");
+    expect(input(locale,"term")?.disabled).toBe(true);
+    expect(host.textContent).toContain(labelText(locale,"activateRequested"));
+    expect(host.textContent).not.toContain(labelText(locale,"renewRequested"));
+    press(locale,"preview");
+    expect(host.textContent).toContain(labelText(locale,"monthly"));
+    expect(host.querySelectorAll('time[datetime]').length).toBeGreaterThanOrEqual(2);
+    expect(host.textContent).not.toContain("—");
+  });
+
+  it.each(["en","ar"] as const)("allows an explicit, audited admin change while keeping original monthly request visible in %s",locale=>{
+    renderEditor(locale,currentSubscription,{...request,term:"monthly"});
+    press(locale,"adjustRequestTerms");
+    expect(input(locale,"term")?.disabled).toBe(false);
+    choose(input(locale,"term"),"yearly");
+    press(locale,"preview");
+    expect(host.textContent).toContain(labelText(locale,"monthly"));
+    expect(host.textContent).toContain(labelText(locale,"yearly"));
+    expect(host.textContent).toContain(labelText(locale,"requestedTerms"));
+    expect(host.textContent).toContain(labelText(locale,"approvedTerms"));
+  });
+
 });
