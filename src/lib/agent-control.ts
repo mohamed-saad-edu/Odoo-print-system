@@ -80,7 +80,8 @@ export async function createAgentForManager(name: string, manager: ManagerClaims
         entitlement: error.entitlement,
         limit: error.limit,
         used: error.used,
-        upgradeRequired: error.entitlement === "max_agents",
+        // Agent count is a technical safety guard, not a priced unit.
+        upgradeRequired: false,
       });
     }
     if (isTenantBillingError(error)) throw new ActionError(error.message, 403, error.code);
