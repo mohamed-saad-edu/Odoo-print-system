@@ -7,7 +7,7 @@ export function parseManualPlan(input: unknown) {
   if((b.isActive!==undefined&&typeof b.isActive!=='boolean')||(b.isPublic!==undefined&&typeof b.isPublic!=='boolean'))throw new ManualSubscriptionError('PLAN_INVALID');
   const quota=b.monthlyQuota;
   if(typeof quota!=='number'||!Number.isSafeInteger(quota)||quota<1||quota>2147483647)throw new ManualSubscriptionError('PLAN_INVALID');
-  const displayOrder=b.displayOrder??0;
+  const displayOrder=b.displayOrder===undefined?0:b.displayOrder;
   if(typeof displayOrder!=='number'||!Number.isSafeInteger(displayOrder)||displayOrder<0||displayOrder>1000000)throw new ManualSubscriptionError('PLAN_INVALID');
   // An unpriced plan is "price on request", never silently a free plan.
   // Accept exact decimal strings only; no floats, exponents or silent rounding.
