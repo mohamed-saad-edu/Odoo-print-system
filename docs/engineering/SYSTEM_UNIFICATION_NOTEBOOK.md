@@ -245,3 +245,12 @@ After the initial directory read audit, two additional Odoo control-plane reads 
 **Regression authored first:** `169277f5ca39115adade0ec9860f4740f6640060`, `tests/odoo-legacy-resolution-inventory-live-authority.integration.test.ts`: preview normal path and concurrent suspend/revoke at the tenant lock. **RED/GREEN NOT VERIFIED**: GitHub CI queued/pending; do not describe test as PASS.
 
 **P1 follow-up:** `findLegacyHistory` currently uses `FOR UPDATE` for both GET and POST callers, so reconciliation previews acquire stronger historical row locks than needed. Consider splitting lookup read-vs-write row locking after obtaining a real race profile; no speculative concurrency optimization without PostgreSQL regression and exact-SHA CI.
+
+
+### ODOO-RECONCILIATION-PREVIEW-LOCK-SPLIT (2026-10-28)
+
+Earlier AUTH-ODOO-LEGACY-PREVIEW identified unnecessary historical `FOR UPDATE` locks on a GET preview. **Fixed** in `ebb7ca0af5adb265ac4cf2e84c01aafba6f9b149`: shared `findLegacyHistory` retains its default exclusive row lock for the human-attested `POST` disposition, while `GET` explicitly chooses an informational MVCC read without row-upgrade locks. The later POST still requires the same ID/fingerprint evidence under a transaction and checks the unchanged historical job before accepting `reuse` or `distinct`.
+
+Regression `6e7b4cbdd41510c4160ec3bcdbc9918069f82fea` first created a queued legacy job and then held an uncommitted update to that exact row; GET must return the committed preview before the write lock is released. This prevents a routine UI preview from unnecessarily queuing behind ongoing runtime changes while preserving write-side authority.
+
+**Status: source changed, PostgreSQL RED/GREEN NOT VERIFIED** (latest exact-commit CI pending). Do not claim the preview is safe from *every* unknown historical intent collision; clone/restore/operator reconciliation rules remain mandatory.
