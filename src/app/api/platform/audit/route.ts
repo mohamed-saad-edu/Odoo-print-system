@@ -4,6 +4,7 @@ import { db } from "../../../../db";
 import { auditEvents, tenants } from "../../../../db/schema";
 import { desc, eq } from "drizzle-orm";
 import { queryWithTimeout } from "../../../../db/client";
+import { parseStrictListLimit } from "../../../../lib/request-limits";
 
 export async function GET(req: Request) {
   try {
@@ -16,8 +17,10 @@ export async function GET(req: Request) {
   }
 
   const { searchParams } = new URL(req.url);
-  const limitParam = parseInt(searchParams.get("limit") ?? "100", 10);
-  const limit = Math.min(Math.max(1, isNaN(limitParam) ? 100 : limitParam), 500);
+  const limit = parseStrictListLimit(searchParams.get("limit"), 100, 500);
+  if (limit === null) {
+    return NextResponse.json({ error: "limit must be a positive decimal integer", code: "INVALID_LIMIT" }, { status: 400 });
+  }
 
   const rows = await queryWithTimeout(
     () => db

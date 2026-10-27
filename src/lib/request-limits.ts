@@ -30,6 +30,18 @@ export function parseStrictListOffset(raw: string | null | undefined, max: numbe
 }
 
 /**
+ * An audit limit must be an exact safe positive decimal. Unlike general
+ * list controls, malformed input is an HTTP 400 rather than a silent fallback.
+ * Values beyond max retain the historical bounded page behavior.
+ */
+export function parseStrictListLimit(raw: string | null | undefined, fallback: number, max: number): number | null {
+  if (raw == null) return fallback;
+  if (!/^\d+$/.test(raw)) return null;
+  const value = Number(raw);
+  return Number.isSafeInteger(value) && value >= 1 ? Math.min(value, max) : null;
+}
+
+/**
  * Checks the declared HTTP Content-Length before a JSON body is parsed.
  * The custom HTTP server also enforces a global ceiling for chunked requests;
  * a reverse proxy should enforce an equivalent limit when it terminates or
