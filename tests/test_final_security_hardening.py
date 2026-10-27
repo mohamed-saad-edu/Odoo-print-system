@@ -534,7 +534,10 @@ def test_odoo_cron_reconciles_ambiguous_submissions_without_stale_not_found_writ
     cron_start = jobs.index("def cron_sync_status")
     cron = jobs[cron_start:]
     assert "gateway_job_id IS NULL" in cron
-    assert 'last_error LIKE \'UNKNOWN_SUBMISSION_OUTCOME:%%\'' in cron
+    assert "starts_with(COALESCE(last_error, ''), 'UNKNOWN_SUBMISSION_OUTCOME:')" in cron
+    assert "last_error LIKE 'UNKNOWN_SUBMISSION_OUTCOME:%%'" not in cron
+    # The prefix is an opaque durable outcome marker, not a SQL LIKE
+    # pattern: a percent/underscore inside evidence must remain literal.
     assert 'def _lookup_gateway_job_for_ambiguous_submission(self, job):' in jobs
     assert 'params={"idempotencyKey": job._gateway_idempotency_key()}' in jobs
     assert 'self._mark_gateway_job_missing(' in jobs
