@@ -24,6 +24,15 @@ export function customerSubscriptionState(sub: {status: string; currentPeriodSta
   if (sub.status !== "active" || !sub.currentPeriodEnd || (parseDbTimeMs(sub.currentPeriodEnd) ?? -Infinity) <= now) return "expired";
   return "active";
 }
+/** PostgreSQL timestamps without a zone are UTC in this application.
+ * Convert through the shared database parser: new Date(rawSQLString) would
+ * interpret naive clock strings in the Node host's local timezone. */
+export function manualReactivationDeadlineLive(
+  expiry: Date | null, databaseClock: Date | string | null,
+): boolean {
+  const nowMs = parseDbTimeMs(databaseClock);
+  return nowMs !== null && expiry !== null && Number.isFinite(expiry.getTime()) && expiry.getTime() > nowMs;
+}
 export async function ensurePendingManualSubscription(tx: DbTx, tenantId: string, planId: string): Promise<void> {
   await tx.insert(tenantSubscriptions).values({tenantId,planId,status:"awaiting_activation",subscriptionType:"paid"}).onConflictDoNothing();
 }
@@ -172,7 +181,7 @@ export async function mutateManualSubscription(tenantId: string, actor: Platform
       if (input.action==='reactivate') {
         if (before.status!=='suspended') throw new ManualSubscriptionError('SUBSCRIPTION_REQUEST_CONFLICT',409);
         const now=await tx.execute(sql`SELECT clock_timestamp() AS now`);
-        if (!before.currentPeriodEnd || before.currentPeriodEnd<=new Date(String(now.rows[0].now))) throw new ManualSubscriptionError("SUBSCRIPTION_EXPIRED",409);
+        if (!manualReactivationDeadlineLive(before.currentPeriodEnd, now.rows[0]?.now as Date | string | null)) throw new ManualSubscriptionError("SUBSCRIPTION_EXPIRED",409);
         changes.status='active'; changes.entitlementBlocked=false; changes.entitlementBlockedReason=null;
       }
       if (input.action==='cancel_at_end') {
