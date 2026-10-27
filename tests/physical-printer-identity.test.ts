@@ -45,6 +45,18 @@ describe("physical printer identity", () => {
     expect(matchingPhysicalPrinter([{ id: "root-queue", ...root }], noPath)?.id).toBe("root-queue");
   });
 
+  it("scheme-less IPP host shortcut matches its explicit print resource, never the root queue", () => {
+    const shortcut = { connectionType: "ipp", protocol: "ipp", config: { address: "192.168.1.20:631" } };
+    const defaultQueue = { connectionType: "ipp", protocol: "ipp", config: { address: "ipp://192.168.1.20/ipp/print" } };
+    const root = { connectionType: "ipp", protocol: "ipp", config: { address: "ipp://192.168.1.20/" } };
+    expect(key(shortcut)).toBe(key(defaultQueue));
+    expect(key(shortcut)).not.toBe(key(root));
+    expect(matchingPhysicalPrinter([{ id: "canonical", ...defaultQueue }], shortcut)?.id).toBe("canonical");
+    // A bare host with a path is not a valid native execution shortcut.
+    expect(key({ ...shortcut, config: { address: "192.168.1.20:631/printers/office" } })).toBeNull();
+  });
+
+
   it("does not collapse USB devices merely by model", () => {
     expect(key({ connectionType: "usb", protocol: "unknown", config: { vid: 100, pid: 200 } })).toBe(null);
     expect(key({ connectionType: "usb", protocol: "unknown", config: { vid: 100, pid: 200, serial: "a" } }))
