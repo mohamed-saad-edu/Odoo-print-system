@@ -308,7 +308,15 @@ func isAllowedJobsPath(path string) bool {
 		return true
 	}
 	for _, pair := range strings.Split(parsed.RawQuery, "&") {
-		if pair == "" || !strings.Contains(pair, "=") {
+		rawKey, _, found := strings.Cut(pair, "=")
+		if !found {
+			return false
+		}
+		// Only the literal ASCII wire name is authorized. ParseQuery decodes
+		// se%61rch into "search", which Rust correctly refuses as a key alias.
+		switch rawKey {
+		case "limit", "offset", "status", "search", "q", "printerId", "agentId":
+		default:
 			return false
 		}
 	}
