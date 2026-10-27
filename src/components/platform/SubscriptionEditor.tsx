@@ -300,7 +300,7 @@ export function SubscriptionEditor({
           </div>}
           {requestTermsDiffer && <div><dt className="text-ink-3">{a("approvedTerms")}</dt>
             <dd className="mt-1 font-semibold">{plans.find(plan => plan.id === planId)?.name ?? planId} · {a(term)} · {formatNumber(Number(quota))}</dd>
-          </div>
+          </div>}
           <div><dt className="text-ink-3">{a("type")}</dt><dd className="mt-1">{a(type)}</dd></div>
           <div><dt className="text-ink-3">{a(action === "renew" ? "contractStart" : "start")}</dt><dd className="mt-1"><time dateTime={start}>{formatDate(start)}</time></dd></div>
           {activating && leavePending && !request && <div><dt className="text-ink-3">{a("status")}</dt><dd>{a("awaiting_activation")}</dd></div>}

@@ -76,7 +76,7 @@ export function BillingActions({ plans, selectedPlanId, currentPlanId, isOwner, 
           {" · "}{t(request.approvedTerm === "yearly" ? "v4.onboarding.yearly" : "v4.onboarding.monthly")}
           {typeof request.approvedMonthlyQuota === "number" ? " · " + formatNumber(request.approvedMonthlyQuota) : ""}
         </p>}
-      </Callout>
+      </Callout>}
       <form onSubmit={submit} className="space-y-4">
       <h2 className="text-lg font-semibold">{t(status === "active" ? "v4.subscription.changeRenew" : status === "suspended" ? "v4.subscription.reviewAccess" : "v4.onboarding.request")}</h2>
       <p className="text-sm leading-relaxed text-ink-3">{t("v4.subscription.requestBody")}</p>
