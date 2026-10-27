@@ -1,7 +1,7 @@
 import { cookies } from "next/headers";
 import Link from "next/link";
 import { and, asc, eq } from "drizzle-orm";
-import { ArrowRight } from "lucide-react";
+import { ArrowRight, Check } from "lucide-react";
 import { db } from "../../db";
 import { plans } from "../../db/schema";
 import { sessionCookieName } from "../../lib/session-config";
@@ -54,7 +54,6 @@ export default async function Pricing() {
     <main className="mx-auto max-w-6xl space-y-7 px-5 py-10 sm:px-8">
       <header className="max-w-3xl space-y-2">
         <h1 className="text-3xl font-semibold tracking-tight text-ink sm:text-4xl">{t("v4.pricing.title")}</h1>
-        <p className="text-base text-ink-3">{t("v4.pricing.intro")}</p>
       </header>
       {unavailable
         ? <Callout tone="warn" title={t("pricing.catalogUnavailableTitle")}>{t("pricing.catalogUnavailableBody")}
@@ -63,16 +62,23 @@ export default async function Pricing() {
         : rows.length === 0
           ? <Callout tone="info" title={t("pricing.noPlansTitle")}>{t("pricing.noPlansBody")}</Callout>
           : <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-              {rows.map(plan => <Card key={plan.id} className="flex flex-col">
+              {rows.map(plan => <Card key={plan.id} className="flex h-full flex-col">
                 <div className="flex-1 space-y-4 p-5">
                   <h2 className="text-xl font-semibold">{plan.name}</h2>
                   {plan.description && <p className="text-sm text-ink-3">{plan.description}</p>}
                   <div>
-                    <p className="text-3xl font-semibold tabular-nums text-brand">{typeof plan.entitlements.max_prints_per_period === "number"
+                    <p className="text-3xl font-semibold tabular-nums text-brand"><bdi dir="ltr">{typeof plan.entitlements.max_prints_per_period === "number"
                       ? formatNumber(plan.entitlements.max_prints_per_period, locale)
-                      : t("billing.unlimited")}</p>
+                      : t("billing.unlimited")}</bdi></p>
                     <p className="mt-1 text-sm text-ink-3">{t("v4.pricing.jobsPerMonth")}</p>
                   </div>
+                  <ul className="space-y-3 border-t border-edge-subtle pt-5 text-sm text-ink-2">
+                    {(["v4.pricing.featureOdoo", "v4.pricing.featurePos", "v4.pricing.featureBranches", "v4.pricing.featureActivity"] as const).map(key =>
+                      <li key={key} className="flex items-start gap-2.5">
+                        <Check className="mt-0.5 h-4 w-4 shrink-0 text-brand" aria-hidden="true" />
+                        <span>{t(key)}</span>
+                      </li>)}
+                  </ul>
                 </div>
                 <div className="border-t border-edge-subtle p-5">
                   <Button href={destination(plan.id)} variant="primary" className="w-full" icon={<ArrowRight className="h-4 w-4 rtl:-scale-x-100" />}>

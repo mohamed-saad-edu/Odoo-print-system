@@ -72,12 +72,13 @@ function actionLabel(action: Action, t: (key: string) => string, editing: boolea
 }
 
 export function SubscriptionEditor({
-  tenantId, subscription, plans, request, onSaved, onConflict,
+  tenantId, subscription, plans, request, preferredAction, onSaved, onConflict,
 }: {
   tenantId: string;
   subscription: ManualSubscription | null;
   plans: ManualPlan[];
   request?: PendingSubscriptionRequest;
+  preferredAction?: "revoke";
   onSaved: () => void;
   onConflict?: (code: string) => void;
 }) {
@@ -90,7 +91,9 @@ export function SubscriptionEditor({
     !!subscription?.currentPeriodEnd;
   const canReactivate = subscription?.status === "suspended" &&
     (!subscription.currentPeriodEnd || day(subscription.currentPeriodEnd) > day());
-  const initialAction: Action = renewalFromRequest ? "renew" : request ? "save" : canReactivate ? "reactivate" : "save";
+  const initialAction: Action = !request && active && preferredAction === "revoke"
+    ? "revoke" : renewalFromRequest ? "renew" : request ? "save"
+    : canReactivate ? "reactivate" : "save";
   const initialTerm: Term = request && ["monthly", "yearly", "custom"].includes(request.term)
     ? request.term as Term
     : subscription?.term === "yearly" || subscription?.term === "custom"
@@ -287,6 +290,7 @@ export function SubscriptionEditor({
 
     {preview ? <form onSubmit={save} className="space-y-5">
       <h3 className="font-semibold">{a("previewTitle")}</h3>
+      {action === "revoke" && <p className="rounded-lg border border-bad/25 p-3 text-sm text-bad">{a("endSubscriptionWarning")}</p>
       <dl className="grid gap-x-6 gap-y-3 rounded-xl bg-surface-2 p-4 text-sm sm:grid-cols-2">
         <div><dt className="text-ink-3">{a("action")}</dt><dd className="mt-1 font-semibold">{title}</dd></div>
         {full && <>

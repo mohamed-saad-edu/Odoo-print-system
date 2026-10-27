@@ -20,7 +20,7 @@ describe("manual subscription request controls",()=>{
     await mount({selectedPlanId:"p2",currentTerm:"yearly"});
     expect((container.querySelector("#request-plan") as HTMLSelectElement).value).toBe("p2");
     expect((container.querySelector("#request-term") as HTMLSelectElement).value).toBe("yearly");
-    expect(container.textContent).toContain("does not charge you");
+    expect(container.textContent).toContain("reviewed before anything changes");
     expect(container.textContent).not.toMatch(/Stripe|checkout|Resume subscription/);
   });
   it("posts only an authenticated request and reconciles its safe reference",async()=>{
@@ -34,7 +34,7 @@ describe("manual subscription request controls",()=>{
     expect(refresh).toHaveBeenCalledTimes(1);
   });
   it("reuses the same idempotency key after an ambiguous network failure",async()=>{
-    fetchMock.mockRejectedValue(new Error("secret raw server exception"));await mount();await submit();await submit();
+    fetchMock.mockRejectedValue(new Error("secret raw server exception"));await mount({selectedPlanId:"p1"});await submit();await submit();
     expect(fetchMock.mock.calls[0][1].headers["Idempotency-Key"]).toBe(fetchMock.mock.calls[1][1].headers["Idempotency-Key"]);
     expect(container.textContent).not.toContain("secret raw");
   });
@@ -45,5 +45,35 @@ describe("manual subscription request controls",()=>{
   it("an existing pending request is shown instead of creating a second one",async()=>{
     const initialRequest:CustomerSubscriptionRequest={id:"req_old",reference:"req_old",status:"pending",planId:"p1",term:"yearly",createdAt:"2030-01-01T00:00:00Z"};
     await mount({initialRequest});expect(container.querySelector("form")).toBeNull();expect(container.textContent).toContain("req_old");expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it.each(["ar", "en"] as const)("archives an approved request in a collapsed history row while keeping a new request available in %s", async locale => {
+    const initialRequest: CustomerSubscriptionRequest = {
+      id: "req_approved", reference: "req_approved", status: "approved",
+      planId: "p1", term: "monthly", createdAt: "2030-01-01T00:00:00Z",
+    };
+    await mount({initialRequest}, locale);
+    expect(container.querySelector("form")).toBeNull();
+    const details = container.querySelector("details");
+    expect(details?.open).toBe(false);
+    expect(details?.querySelector("summary")?.textContent).toContain(locale === "ar" ? "آخر طلب اشتراك" : "Latest subscription request");
+    expect(details?.querySelector("summary")?.textContent).not.toContain(locale === "ar" ? "تمت الموافقة" : "approved");
+    expect(details?.textContent).toContain("req_approved");
+    const openLabel = locale === "ar" ? "تغيير الباقة أو التجديد" : "Change plan or renew";
+    const open = [...container.querySelectorAll("button")].find(button => button.textContent?.trim() === openLabel);
+    expect(open).toBeDefined();
+    await act(async () => { open!.click(); });
+    expect(container.querySelector("form")).not.toBeNull();
+    expect(container.querySelector("#request-plan")).not.toBeNull();
+  });
+
+  it("keeps customer request references LTR even inside Arabic pending content", async () => {
+    const initialRequest: CustomerSubscriptionRequest = {
+      id: "req_123ABC", reference: "req_123ABC", status: "pending",
+      planId: "p2", term: "yearly", createdAt: "2030-01-01T00:00:00Z", requestedMonthlyQuota: 5000,
+    };
+    await mount({initialRequest}, "ar");
+    expect(container.querySelector("form")).toBeNull();
+    expect([...container.querySelectorAll('bdi[dir="ltr"]')].some(el => el.textContent === "req_123ABC")).toBe(true);
   });
 });

@@ -29,6 +29,16 @@ describe("public manual plan catalog",()=>{
   expect(markup).not.toContain("إعادة إرسال المهمة نفسها بطريقة آمنة");
   expect(markup).not.toMatch(/max_agents|max_printers|max_jobs_per_minute|max_concurrent_jobs|Stripe|v4\.pricing\./);
  });
+ it.each(["ar","en"] as const)("shows only grounded printing features inside the %s plan card",async locale=>{
+  fixture.locale=locale;document.cookie=`yaseir_locale=${locale}; path=/`;
+  const markup=await render();
+  for(const key of ["v4.pricing.featureOdoo","v4.pricing.featurePos","v4.pricing.featureBranches","v4.pricing.featureActivity"] as const){
+    expect(markup).toContain(translate(locale,key));
+  }
+  expect(markup).toContain('dir="ltr"');
+  expect(markup).not.toContain(translate(locale,"v4.pricing.intro"));
+  expect(markup).not.toMatch(/24\/7|guaranteed uptime|unlimited jobs|Stripe/);
+ });
  it("renders exactly one console action for a signed-in customer",async()=>{
   fixture.authenticated=true;const markup=await render();
   expect(markup.match(/>Open console<\/a>/g)?.length).toBe(1);
