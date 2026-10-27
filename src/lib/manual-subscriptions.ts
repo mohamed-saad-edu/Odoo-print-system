@@ -28,10 +28,11 @@ export function customerSubscriptionState(sub: {status: string; currentPeriodSta
  * Convert through the shared database parser: new Date(rawSQLString) would
  * interpret naive clock strings in the Node host's local timezone. */
 export function manualReactivationDeadlineLive(
-  expiry: Date | null, databaseClock: Date | string | null,
+  expiry: Date | string | null, databaseClock: Date | string | null,
 ): boolean {
   const nowMs = parseDbTimeMs(databaseClock);
-  return nowMs !== null && expiry !== null && Number.isFinite(expiry.getTime()) && expiry.getTime() > nowMs;
+  const expiryMs = parseDbTimeMs(expiry);
+  return nowMs !== null && expiryMs !== null && expiryMs > nowMs;
 }
 export async function ensurePendingManualSubscription(tx: DbTx, tenantId: string, planId: string): Promise<void> {
   await tx.insert(tenantSubscriptions).values({tenantId,planId,status:"awaiting_activation",subscriptionType:"paid"}).onConflictDoNothing();

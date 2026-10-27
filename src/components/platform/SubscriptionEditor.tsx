@@ -20,6 +20,8 @@ export type ManualSubscription = {
   revision: number;
   monthlyUsed: number;
   nextReset: string;
+  /** Computed by Gateway from the authoritative database clock, never render time. */
+  canReactivate?: boolean;
 };
 export type ManualPlan = {
   id: string;
@@ -91,11 +93,9 @@ export function SubscriptionEditor({
   const renewalFromRequest = !!request && active &&
     request.planId === subscription?.planId && request.term === subscription?.term &&
     !!subscription?.currentPeriodEnd;
-  // Show reactivation only for a finite, future contract deadline.
-  // Exact timestamps matter: a same-day deadline may still be valid.
-  const canReactivate = subscription?.status === "suspended" &&
-    !!subscription.currentPeriodEnd &&
-    Date.parse(subscription.currentPeriodEnd) > Date.now();
+  // Gateway evaluates the finite deadline with PostgreSQL time. Rendering must
+  // never use Date.now() to guess whether this subscription is reactivatable.
+  const canReactivate = subscription?.status === "suspended" && subscription.canReactivate === true;
   const initialAction: Action = !request && active && preferredAction === "revoke"
     ? "revoke" : renewalFromRequest ? "renew" : request ? "save"
     : canReactivate ? "reactivate" : "save";

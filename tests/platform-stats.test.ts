@@ -16,6 +16,7 @@ import { createVerifiedPlatformSession as createPlatformSession } from "./helper
 import { GET } from "../src/app/api/platform/stats/route";
 import { GET as subscriptionListGET } from "../src/app/api/platform/subscriptions/route";
 import { GET as tenantListGET } from "../src/app/api/platform/tenants/route";
+import { GET as tenantDetailGET } from "../src/app/api/platform/tenants/[id]/route";
 import { GET as subscriptionRequestsGET } from "../src/app/api/platform/subscription-requests/route";
 import { getTenantEntitlementLimit, TenantSubscriptionRequiredError, TenantEntitlementConfigError } from "../src/lib/entitlements";
 
@@ -131,5 +132,31 @@ suite("Platform Stats Route", () => {
     }).where(eq(tenantSubscriptions.tenantId, fixture.tenantId));
     await expect(getTenantEntitlementLimit(db, fixture.tenantId, "max_printers")).rejects.toBeInstanceOf(TenantEntitlementConfigError);
     await verify("suspended");
+  });
+
+  it("only offers contract reactivation when the authoritative database deadline is live", async () => {
+    const id = fixture.tenantId;
+    const context = { params: Promise.resolve({ id }) };
+    const req = () => new Request(`http://localhost/api/platform/tenants/${id}`, {
+      headers: { Authorization: `Bearer ${platformToken}` },
+    });
+    await db.update(tenantSubscriptions).set({
+      status: "suspended", currentPeriodEnd: new Date(Date.now() + 86_400_000),
+    }).where(eq(tenantSubscriptions.tenantId, id));
+    const live = await tenantDetailGET(req(), context);
+    expect(live.status).toBe(200);
+    expect((await live.json()).subscription.canReactivate).toBe(true);
+
+    await db.update(tenantSubscriptions).set({ currentPeriodEnd: new Date(Date.now() - 86_400_000) })
+      .where(eq(tenantSubscriptions.tenantId, id));
+    const expired = await tenantDetailGET(req(), context);
+    expect(expired.status).toBe(200);
+    expect((await expired.json()).subscription.canReactivate).toBe(false);
+
+    await db.update(tenantSubscriptions).set({ currentPeriodEnd: null })
+      .where(eq(tenantSubscriptions.tenantId, id));
+    const missing = await tenantDetailGET(req(), context);
+    expect(missing.status).toBe(200);
+    expect((await missing.json()).subscription.canReactivate).toBe(false);
   });
 });

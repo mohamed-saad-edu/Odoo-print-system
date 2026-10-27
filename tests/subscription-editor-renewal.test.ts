@@ -161,19 +161,25 @@ describe("minimal, contextual subscription editor", () => {
   });
 
   it.each(["en", "ar"] as const)("does not offer reactivation without finite expiry in %s", locale => {
-    renderEditor(locale, {...currentSubscription, status: "suspended", effectiveStatus: "suspended", currentPeriodEnd: null});
+    renderEditor(locale, {...currentSubscription, status: "suspended", effectiveStatus: "suspended", currentPeriodEnd: null, canReactivate: false});
     expect(host.textContent).not.toContain(labelText(locale, "reactivate"));
   });
 
   it.each(["en", "ar"] as const)("does not offer reactivation after same-day expiry in %s", locale => {
     renderEditor(locale, {...currentSubscription, status: "suspended", effectiveStatus: "suspended",
-      currentPeriodEnd: new Date(Date.now() - 60_000).toISOString()});
+      currentPeriodEnd: new Date(Date.now() - 60_000).toISOString(), canReactivate: false});
+    expect(host.textContent).not.toContain(labelText(locale, "reactivate"));
+  });
+
+  it.each(["en", "ar"] as const)("does not invent reactivation from a future date without Gateway confirmation in %s", locale => {
+    renderEditor(locale, {...currentSubscription, status: "suspended", effectiveStatus: "suspended",
+      currentPeriodEnd: new Date(Date.now() + 86_400_000).toISOString(), canReactivate: false});
     expect(host.textContent).not.toContain(labelText(locale, "reactivate"));
   });
 
   it.each(["en", "ar"] as const)("offers reactivation for a future finite expiry in %s", locale => {
     renderEditor(locale, {...currentSubscription, status: "suspended", effectiveStatus: "suspended",
-      currentPeriodEnd: new Date(Date.now() + 86_400_000).toISOString()});
+      currentPeriodEnd: new Date(Date.now() + 86_400_000).toISOString(), canReactivate: true});
     expect(host.textContent).toContain(labelText(locale, "reactivate"));
   });
 

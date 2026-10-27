@@ -4,7 +4,7 @@ import { db } from "../../../../../db";
 import { requirePlatformOwner } from "../../../../../lib/platform-auth";
 import { manualApiError } from "../../../../../lib/manual-api-error";
 import { databaseNowMs } from "../../../../../lib/database-clock";
-import { customerSubscriptionState,ManualSubscriptionError } from "../../../../../lib/manual-subscriptions";
+import { customerSubscriptionState,manualReactivationDeadlineLive,ManualSubscriptionError } from "../../../../../lib/manual-subscriptions";
 import { logicalUsageReport } from "../../../../../lib/manual-usage-report";
 import { quotaCycleStartSql, quotaCycleEndSql } from "../../../../../lib/quota-cycle";
 export async function GET(req:Request,context:{params:Promise<{id:string}>}) {
@@ -26,7 +26,9 @@ export async function GET(req:Request,context:{params:Promise<{id:string}>}) {
    logicalUsageReport(id),
   ]);
   const stored=subscription.rows[0] as {status:string;billingMode:string;currentPeriodStart:string;currentPeriodEnd:string|null;entitlementBlocked:boolean}|undefined;
-  const effectiveStatus=customerSubscriptionState(stored,String(workspace.rows[0].lifecycle),await databaseNowMs());
-  return NextResponse.json({workspace:workspace.rows[0],subscription:stored?{...stored,effectiveStatus}:null,members:members.rows,agents:agents.rows,printers:printers.rows,installations:installations.rows,credentials:credentials.rows,jobs:jobs.rows,events:events.rows,history:history.rows,requests:requests.rows,usage},{headers:{'Cache-Control':'no-store'}});
+  const databaseClock=new Date(await databaseNowMs());
+   const effectiveStatus=customerSubscriptionState(stored,String(workspace.rows[0].lifecycle),databaseClock.getTime());
+   const canReactivate=!!stored && stored.status==="suspended" && manualReactivationDeadlineLive(stored.currentPeriodEnd,databaseClock);
+  return NextResponse.json({workspace:workspace.rows[0],subscription:stored?{...stored,effectiveStatus,canReactivate}:null,members:members.rows,agents:agents.rows,printers:printers.rows,installations:installations.rows,credentials:credentials.rows,jobs:jobs.rows,events:events.rows,history:history.rows,requests:requests.rows,usage},{headers:{'Cache-Control':'no-store'}});
  }catch(e){return manualApiError(e);}
 }

@@ -41,6 +41,11 @@ describe("manual reactivation uses the authoritative UTC database timestamp", ()
     expect(manualReactivationDeadlineLive(new Date(NaN), "2026-10-26 11:59:59")).toBe(false);
     expect(manualReactivationDeadlineLive(expiry, "not-a-timestamp")).toBe(false);
   });
+  it("parses a raw PostgreSQL subscription deadline with the same UTC authority", () => {
+    expect(manualReactivationDeadlineLive("2026-10-26 12:00:01", "2026-10-26 12:00:00")).toBe(true);
+    expect(manualReactivationDeadlineLive("2026-10-26 12:00:00", "2026-10-26 12:00:00")).toBe(false);
+    expect(manualReactivationDeadlineLive("invalid date", "2026-10-26 12:00:00")).toBe(false);
+  });
   it("parses a zone-less PostgreSQL clock as UTC rather than local time", () => {
     const expiry = new Date("2026-10-26T12:00:01Z");
     expect(manualReactivationDeadlineLive(expiry, "2026-10-26 12:00:00")).toBe(true);
