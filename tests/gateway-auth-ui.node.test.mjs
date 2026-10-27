@@ -138,7 +138,7 @@ test("platform probe body completing after unmount cannot authenticate or schedu
   assert.equal(harness.timers.size, 0);
 });
 
-test("restored Team page rejects stale late responses without hiding pending invitations", async () => {
+test("verified owner Team page rejects stale late responses without hiding pending invitations", async () => {
   const oldMembers = deferred();
   let count = 0;
   const freshMembers = [{ userId: "new-user", email: "new@example.test", platformOwner: false }];
@@ -153,7 +153,7 @@ test("restored Team page rejects stale late responses without hiding pending inv
       return { ok: true, json: async () => ({ invitations: pending, hasMore: false }) };
     }
     if (url === "/api/settings") {
-      return { ok: true, json: async () => ({ userId: "me", email: "me@example.test", platformOwner: false, tenant: { id: "tenant" } }) };
+      return { ok: true, json: async () => ({ userId: "me", email: "me@example.test", platformOwner: true, tenant: { id: "tenant" } }) };
     }
     throw Error("Unexpected Team request: " + url);
   });
@@ -169,6 +169,29 @@ test("restored Team page rejects stale late responses without hiding pending inv
   await flush();
   assert.deepEqual(harness.states[1], freshMembers);
   currentCleanup();
+});
+
+test("Full Access Team never requests or renders pending invitation recipients", async () => {
+  const calls = [];
+  const members = [{ userId: "member", email: "member@example.test", platformOwner: false }];
+  const harness = component("src/app/team/page.tsx", async url => {
+    calls.push(url);
+    if (url.startsWith("/api/team/members?")) {
+      return { ok: true, json: async () => ({ members, hasMore: false }) };
+    }
+    if (url === "/api/settings") {
+      return { ok: true, json: async () => ({ userId: "member", email: "member@example.test", platformOwner: false, tenant: { id: "tenant" } }) };
+    }
+    throw Error("Full Access attempted to read owner invitation data: " + url);
+  });
+  const cleanup = harness.effects[0]();
+  await flush(); harness.render();
+  assert.deepEqual(harness.states[1], members);
+  assert.deepEqual(harness.states[2], []);
+  assert.equal(find(harness.tree, node => node.type === "CardHeader" && node.props.title === "team.pendingInvitations"), undefined);
+  assert.ok(calls.some(url => url === "/api/settings"));
+  assert.ok(calls.every(url => !url.startsWith("/api/team/invitations?")));
+  cleanup();
 });
 
 test("unmounted team membership admission cannot redirect an unrelated page", async () => {

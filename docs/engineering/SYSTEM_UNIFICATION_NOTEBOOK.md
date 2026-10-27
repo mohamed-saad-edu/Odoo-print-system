@@ -97,3 +97,7 @@ Verification sequence: immutable migration journal parity → type/lint/localiza
 4. Confirm deployment/rollback and backup evidence on a populated staging database before releasing. Until verified, describe the **implemented** rolling 30-day behavior accurately rather than claiming calendar reset.
 
 **Evidence paths:** `src/lib/quota-cycle.ts`, `drizzle/0101_rolling_print_allowance.sql`, `src/lib/entitlements.ts`, `src/lib/print-job-service.ts`, `src/lib/manual-subscriptions.ts`. This section supersedes the unqualified policy assertion in BILL-02 as a *product decision*: BILL-02 documents the implementation as of its audit snapshot; the desired UTC calendar-month behavior remains unresolved.
+
+### Verified regression reconciliation and security patch
+
+On `main@172e85866bb9cb6ef84120450399fbe19dc74869`, the native UI suite logged 679 passes / 1 failure (CI `40592702785`). The one failing test expected a pending invitation list despite mocking a non-owner profile, contradicting the newly enforced owner-only API/UI contract. Keep its stale-response assertions but use an owner fixture; add an independent Full Access test to ensure no invitation read/render. The change preserves intentional denial rather than weakening permissions. Latest independent commit `433057118fb99574a7254a31e3c1319508ffc9a8` separately installs the SHA-256-pinned Ubuntu Brotli security patch; CI verification of that exact image/commit remains necessary. No physical-printing claim.

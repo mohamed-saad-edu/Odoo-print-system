@@ -4,7 +4,7 @@
 
 Status key: `INDEXED` = path enumerated only; `PARTIAL` = excerpts or sections inspected; `READ` = file content read at least once without a correctness guarantee; `AUTHORED` = created during this documentation run. A file's successful component/integration test must be tracked separately in the notebook, not inferred from READ. No source file is marked functionally VERIFIED by this inventory alone.
 
-**Status counts after the 2026-10-28 live review**: {"INDEXED":1839,"READ":26,"PARTIAL":27,"AUTHORED":2}. Coverage: 1892 existing tracked files indexed, 0 of 1892 independently signed off as production-ready.
+**Status counts after the 2026-10-28 live review**: {"INDEXED":1838,"READ":26,"PARTIAL":28,"AUTHORED":2}. Coverage: 1892 existing tracked files indexed, 0 of 1892 independently signed off as production-ready.
 
 ## .github (8)
 
@@ -1537,7 +1537,7 @@ INDEXED tests/form-accessibility.test.ts
 INDEXED tests/forwarded-ip.test.ts
 INDEXED tests/fresh-printing-admission.test.mjs
 INDEXED tests/gateway-agent-console.contract.test.ts
-INDEXED tests/gateway-auth-ui.node.test.mjs
+PARTIAL tests/gateway-auth-ui.node.test.mjs
 INDEXED tests/gateway-connectivity-state.test.ts
 INDEXED tests/gateway-console-metadata.test.ts
 INDEXED tests/gateway-control-lock-order.test.ts
