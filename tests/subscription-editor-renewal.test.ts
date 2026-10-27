@@ -69,14 +69,14 @@ function reveal(locale: Locale, key: string) {
   return details!;
 }
 function renderEditor(locale: Locale, subscription: ManualSubscription | null = currentSubscription,
-  pendingRequest?: PendingSubscriptionRequest) {
+  pendingRequest?: PendingSubscriptionRequest, preferredAction?: "revoke") {
   localStorage.setItem(LOCALE_STORAGE_KEY, locale);
   document.cookie = LOCALE_COOKIE_KEY + "=" + locale + "; path=/";
   root = createRoot(host);
   act(() => root!.render(h(I18nProvider, {
     initialLocale: locale,
     children: h(SubscriptionEditor, {
-      tenantId: "workspace", subscription, request: pendingRequest, plans,
+      tenantId: "workspace", subscription, request: pendingRequest, preferredAction, plans,
       onSaved: () => undefined,
     }),
   })));
@@ -197,4 +197,15 @@ describe("minimal, contextual subscription editor", () => {
     expect(host.textContent).toContain(labelText(locale,"approvedTerms"));
   });
 
+
+  it.each(["en","ar"] as const)("opens a safe revoke preview from the admin subscription shortcut in %s", locale=>{
+    renderEditor(locale, currentSubscription, undefined, "revoke");
+    expect(input(locale,"plan")).toBeNull();
+    expect(input(locale,"password")).toBeNull();
+    expect(host.textContent).toContain(labelText(locale,"revoke"));
+    press(locale,"preview");
+    expect(input(locale,"reason")).not.toBeNull();
+    expect(input(locale,"password")?.getAttribute("type")).toBe("password");
+    expect(host.textContent).toContain(labelText(locale,"endSubscriptionWarning"));
+  });
 });
