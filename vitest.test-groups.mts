@@ -92,6 +92,25 @@ export const integrationVitestTestFiles = [
   "tests/tenant-scoped-session-revocation.integration.test.ts",
   "tests/agent-identity-isolation.integration.test.ts",
   "tests/ambiguous-print-outcome.integration.test.ts",
+  // Tenant/session mutation races and Odoo adoption need a real PostgreSQL
+  // phase; the unit run omits database access and cannot verify these files.
+  "tests/billing-status-live-authority.integration.test.ts",
+  "tests/billing-usage-live-owner.integration.test.ts",
+  "tests/discovery-provision-target-drift.integration.test.ts",
+  "tests/fleet-live-authorization.integration.test.ts",
+  "tests/job-detail-live-authority.integration.test.ts",
+  "tests/odoo-configuration-inventory-live-authority.integration.test.ts",
+  "tests/odoo-cutover-locking.integration.test.ts",
+  "tests/odoo-health-fencing.integration.test.ts",
+  "tests/odoo-installation-directory-live-authority.integration.test.ts",
+  "tests/odoo-keys-inventory-live-authority.integration.test.ts",
+  "tests/odoo-legacy-resolution-inventory-live-authority.integration.test.ts",
+  "tests/odoo-manual-enrollment.integration.test.ts",
+  "tests/settings-live-authority.integration.test.ts",
+  "tests/subscription-owner-directory-live-authority.integration.test.ts",
+  "tests/team-directory-live-authority.integration.test.ts",
+  "tests/team-invitation-audit-actor.integration.test.ts",
+  "tests/team-invitation-read-authority.integration.test.ts",
 ] as const;
 
 export const integrationTestFiles = [
