@@ -623,6 +623,97 @@ suite("discovery trust and approval flow", () => {
     const devices = await pool().query(`SELECT id FROM discovered_devices WHERE discovery_id = $1`, [discoveryId]);
     expect(devices.rows).toEqual([{ id: "device-valid-1" }]);
   });
+  it.each([
+    ["retired", "network"],
+    ["unshared", "network"],
+    ["retired", "ipp"],
+    ["unshared", "ipp"],
+    ["retired", "spooler"],
+    ["unshared", "spooler"],
+  ] as const)("will not resurrect a %s or unshared printer via legacy %s provisioning dedupe", async (state, transport) => {
+    const discoveryId = await createDiscoverySession(`disc-retire-${state}-${transport}`);
+    const address = "192.168.10.86";
+    const isIpp = transport === "ipp";
+    const isSpooler = transport === "spooler";
+    const protocol = isIpp ? "ipp" : isSpooler ? "spooler" : "raw";
+    const config = isIpp
+      ? { address: "ipp://192.168.10.86:631/ipp/print" }
+      : isSpooler ? { spooler_name: "Blocked Office Queue", address: "Blocked Office Queue" }
+        : { ip: address, port: 9100 };
+    await pool().query(
+      "UPDATE printers SET connection_type=$1, protocol=$2, config=$3::jsonb, lifecycle=$4, shared_with_gateway=$5 WHERE tenant_id=$6 AND id=$7",
+      [transport, protocol, JSON.stringify(config), state === "retired" ? "retired" : "active", state !== "unshared", f.tenantId, f.printerId],
+    );
+    const deviceId = `candidate-${transport}-${state}`;
+    const device = {
+      id: deviceId,
+      source: [isSpooler ? "windows_spooler" : isIpp ? "ipp" : "tcp_port_scan"],
+      transport: isSpooler ? "spooler" : isIpp ? "ipp" : "network",
+      protocol,
+      deviceName: isSpooler ? "Blocked Office Queue" : "Discovered but withheld",
+      ...(isSpooler ? { spoolerName: "Blocked Office Queue" }
+        : { ipAddress: address, port: isIpp ? 631 : 9100,
+          ...(isIpp ? { uri: config.address } : {}) }),
+    };
+    expect((await agentRequest(discoveryId, [device])).status).toBe(200);
+    const manager = await createWorkspaceManagerTestSession(f.tenantId);
+    const verified = await verifyPOST(
+      await observationApprovalRequest(manager.token, discoveryId, deviceId),
+      { params: Promise.resolve({ id: f.agentId, deviceId }) },
+    );
+    expect(verified.status).toBe(200);
+    const response = await provisionPOST(
+      await managerRequest(manager.token, `/api/agents/${f.agentId}/discovered-printers/${deviceId}/provision`),
+      { params: Promise.resolve({ id: f.agentId, deviceId }) },
+    );
+    expect(response.status).toBe(422);
+    expect(await response.json()).toMatchObject({ code: "INVALID_PRINTER_ENDPOINT" });
+    const printer = await pool().query(
+      "SELECT lifecycle, shared_with_gateway FROM printers WHERE tenant_id=$1 AND id=$2",
+      [f.tenantId, f.printerId],
+    );
+    expect(printer.rows[0]).toMatchObject({
+      lifecycle: state === "retired" ? "retired" : "active",
+      shared_with_gateway: state !== "unshared",
+    });
+    const candidate = await pool().query(
+      "SELECT candidate_status, provisioned_printer_id FROM discovered_devices WHERE tenant_id=$1 AND agent_id=$2 AND id=$3",
+      [f.tenantId, f.agentId, deviceId],
+    );
+    expect(candidate.rows[0]).toEqual({ candidate_status: "verified", provisioned_printer_id: null });
+    const count = await pool().query("SELECT count(*)::int AS total FROM printers WHERE tenant_id=$1", [f.tenantId]);
+    expect(count.rows[0].total).toBe(1);
+  });
+
+  it("will not return a previously provisioned printer after its sharing is revoked", async () => {
+    const discoveryId = await createDiscoverySession("disc-provisioned-then-unshared");
+    const deviceId = "candidate-provisioned-unshared";
+    expect((await agentRequest(discoveryId, [{
+      id: deviceId, source: ["tcp_port_scan"], protocol: "raw",
+      transport: "network", ipAddress: "192.168.10.89", port: 9100,
+      deviceName: "Later unshared",
+    }])).status).toBe(200);
+    const manager = await createWorkspaceManagerTestSession(f.tenantId);
+    expect((await verifyPOST(
+      await observationApprovalRequest(manager.token, discoveryId, deviceId),
+      { params: Promise.resolve({ id: f.agentId, deviceId }) },
+    )).status).toBe(200);
+    const endpoint = `/api/agents/${f.agentId}/discovered-printers/${deviceId}/provision`;
+    const context = { params: Promise.resolve({ id: f.agentId, deviceId }) };
+    const first = await provisionPOST(await managerRequest(manager.token, endpoint), context);
+    expect(first.status).toBe(201);
+    const { printerId } = await first.json();
+    await pool().query(
+      "UPDATE printers SET shared_with_gateway=false WHERE tenant_id=$1 AND id=$2",
+      [f.tenantId, printerId],
+    );
+    const second = await provisionPOST(await managerRequest(manager.token, endpoint), context);
+    expect(second.status).toBe(422);
+    expect(await second.json()).toMatchObject({ code: "INVALID_PRINTER_ENDPOINT" });
+    const registered = await pool().query("SELECT shared_with_gateway FROM printers WHERE id=$1 AND tenant_id=$2", [printerId, f.tenantId]);
+    expect(registered.rows[0].shared_with_gateway).toBe(false);
+  });
+
   it("serializes concurrent provisioning so one candidate cannot create two printers", async () => {
     const discoveryId = await createDiscoverySession();
     await agentRequest(discoveryId, [{
