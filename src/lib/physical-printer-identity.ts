@@ -32,7 +32,7 @@ export function physicalPrinterIdentityKey(p: PrinterEndpoint): string | null {
       const explicitUri = raw.includes("://");
       // A scheme-less host:port is the Agent's /ipp/print shortcut, not
       // a declaration of the URI root; path-bearing shortcuts are invalid.
-      if (!explicitUri && /[\\/?#]/.test(raw)) return null;
+      if (!explicitUri && (raw.includes("/") || raw.includes("?") || raw.includes("#") || raw.includes("\\"))) return null;
       if (!explicitUri && conn === "ipps") return null;
       const url = new URL(explicitUri ? raw : `http://${raw}`);
       if (["ipp:", "ipps:", "http:", "https:"].includes(url.protocol) && url.hostname && !url.username && !url.password && !url.search && !url.hash) {
