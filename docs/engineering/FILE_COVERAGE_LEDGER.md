@@ -2046,3 +2046,13 @@ AUTHORED tests/billing-usage-live-owner.integration.test.ts — owner role/sessi
 ```
 
 Those paths remain **PARTIAL/AUTHORED**, not VERIFIED; full PostgreSQL, native Windows printer, real POS and Odoo integration execution remains outstanding. See engineering notebook follow-up for exact commits.
+
+
+#### AUTH-ODOO-LEGACY-PREVIEW-2026-10-28
+
+```text
+PARTIAL src/app/api/odoo/installations/resolutions/route.ts — transactionally fenced GET reconciliation preview only; POST not exhaustively reviewed
+AUTHORED tests/odoo-legacy-resolution-inventory-live-authority.integration.test.ts — PostgreSQL suspend and session revocation race
+```
+
+Historical receipt lookup rules are unchanged. Exact-SHA PostgreSQL CI confirmation and multi-worker collision tests remain NOT RUN; see SYSTEM_UNIFICATION_NOTEBOOK.md.
