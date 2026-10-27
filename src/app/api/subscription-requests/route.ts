@@ -25,11 +25,21 @@ export async function GET(req:Request) {
     const actor=await validateWorkspaceManager(req);
     if (!actor) throw new ManualSubscriptionError("UNAUTHORIZED",401);
     if (!actor.userId || !hasManagerPermission(actor, "billing.read")) throw new ManualSubscriptionError("OWNER_REQUIRED",403);
-    const [subscription,tenant,requests]=await Promise.all([
-      db.query.tenantSubscriptions.findFirst({where:eq(tenantSubscriptions.tenantId,actor.tenantId)}),
-      db.query.tenants.findFirst({where:eq(tenants.id,actor.tenantId)}),
-      actor.role==='owner'?db.query.subscriptionRequests.findMany({where:eq(subscriptionRequests.tenantId,actor.tenantId),orderBy:desc(subscriptionRequests.createdAt),limit:50}):Promise.resolve([]),
-    ]);
+    // Commercial details are owner-only. An initial cookie validation cannot
+    // authorize an unfenced read after an owner downgrade, logout or suspension.
+    // Recheck the durable member/session and tenant lifecycle in the same
+    // transaction that reads contract dates and pending/approved requests.
+    const [subscription,tenant,requests]=await db.transaction(async tx=>{
+      await requireActiveTenantInTransaction(tx,actor.tenantId);
+      await requireManagerActorInTransaction(tx,actor,"billing.read");
+      const subscription=await tx.query.tenantSubscriptions.findFirst({where:eq(tenantSubscriptions.tenantId,actor.tenantId)});
+      const tenant=await tx.query.tenants.findFirst({where:eq(tenants.id,actor.tenantId)});
+      const requests=await tx.query.subscriptionRequests.findMany({
+        where:eq(subscriptionRequests.tenantId,actor.tenantId),
+        orderBy:desc(subscriptionRequests.createdAt),limit:50,
+      });
+      return [subscription,tenant,requests] as const;
+    });
     const status=customerSubscriptionState(subscription,tenant?.lifecycle,await databaseNowMs());
     return NextResponse.json({requests:requests.map(safeRequest),status,hasSubscription:status==='active',planId:subscription?.planId??null,currentPeriodStart:subscription?.currentPeriodStart??null,currentPeriodEnd:subscription?.currentPeriodEnd??null},{headers:{"Cache-Control":"no-store"}});
   } catch(error) {return manualApiError(error);}
