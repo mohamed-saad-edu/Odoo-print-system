@@ -21,6 +21,56 @@ beforeEach(() => mocks.invoke.mockReset());
 afterAll(() => vi.unstubAllGlobals());
 
 describe("desktop complete fleet traversal", () => {
+  it("keeps browser fetch deadlines active while fleet bodies are still streaming", async () => {
+    // fetch() resolves at response headers; a stream can hang afterwards.
+    // A deadline cleared immediately on the fetch() resolution cannot abort
+    // response.text() and leaves the Desktop waiting indefinitely.
+    vi.resetModules();
+    vi.stubGlobal("window", {});
+    const deadline = new AbortController();
+    const timeout = vi.spyOn(AbortSignal, "timeout").mockReturnValue(deadline.signal);
+    let streamController: ReadableStreamDefaultController<Uint8Array> | undefined;
+    const fakeFetch = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const signal = init?.signal;
+      if (!signal) throw new Error("Missing request signal");
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          streamController = controller;
+          controller.enqueue(new TextEncoder().encode("["));
+          signal.addEventListener("abort", () => controller.error(new Error("body deadline enforced")), { once: true });
+        },
+      });
+      return new Response(stream, { status: 200, headers: { "x-has-more": "false" } });
+    });
+    vi.stubGlobal("fetch", fakeFetch);
+    let safety: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const browser = await import("../src/desktop/lib/ipc");
+      const pending = browser.fetchGatewayAgents("https://gateway.example");
+      // The timeout must remain bound to the body even after fetch() has
+      // returned headers, not just to the connection establishment phase.
+      const verdict = Promise.race([
+        pending.then(() => "resolved", error => error instanceof Error ? error.message : "unknown rejection"),
+        new Promise<string>(resolve => {
+          safety = setTimeout(() => {
+            try { streamController?.error(new Error("test safety cutoff")); } catch { /* already closed */ }
+            resolve("stalled after headers");
+          }, 120);
+        }),
+      ]);
+      await Promise.resolve();
+      deadline.abort();
+      expect(await verdict).toBe("body deadline enforced");
+      expect(fakeFetch).toHaveBeenCalledTimes(1);
+      expect(timeout).toHaveBeenCalledWith(10_000);
+    } finally {
+      if (safety) clearTimeout(safety);
+      timeout.mockRestore();
+      vi.unstubAllGlobals();
+      vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
+    }
+  });
+
   it("traverses pagination from direct-browser response headers", async () => {
     vi.resetModules();
     vi.stubGlobal("window", {});
