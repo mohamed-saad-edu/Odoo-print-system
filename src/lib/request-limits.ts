@@ -17,6 +17,18 @@ export function clampListLimit(raw: string | null | undefined, fallback: number,
   return Math.min(Math.max(1, value), max);
 }
 
+
+/**
+ * Read list offsets exactly, rather than accepting parseInt("10junk") or
+ * silently treating invalid pagination as the first page.
+ */
+export function parseStrictListOffset(raw: string | null | undefined, max: number): number | null {
+  if (raw == null) return 0;
+  if (!/^\\d+$/.test(raw)) return null;
+  const value = Number(raw);
+  return Number.isSafeInteger(value) && value <= max ? value : null;
+}
+
 /**
  * Checks the declared HTTP Content-Length before a JSON body is parsed.
  * The custom HTTP server also enforces a global ceiling for chunked requests;

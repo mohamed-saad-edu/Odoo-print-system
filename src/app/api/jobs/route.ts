@@ -8,7 +8,7 @@ import { validateWorkspaceManager } from "../../../lib/manager-auth";
 import { validateConsoleAuth } from "../../../lib/console-auth";
 import { requireManagerPermission } from "../../../lib/authorization";
 import { and, eq, inArray, isNull, lt, sql } from "drizzle-orm";
-import { clampListLimit } from "../../../lib/request-limits";
+import { clampListLimit, parseStrictListOffset } from "../../../lib/request-limits";
 import { RECEIPT_MATERIALIZE_BATCH_ROWS } from "../../../shared/job-retention";
 import { isJobFilterStatus } from "../../../lib/job-status";
 import { databaseNowMs } from "../../../lib/database-clock";
@@ -37,9 +37,9 @@ export async function GET(req: Request) {
   const printerId = url.searchParams.get("printerId")?.trim() || null;
   const agentId = url.searchParams.get("agentId")?.trim() || null;
   const limit = clampListLimit(url.searchParams.get("limit"), 50, 200);
-  const offset = Math.max(parseInt(url.searchParams.get("offset") ?? "0", 10) || 0, 0);
-  if (offset > MAX_LIST_OFFSET) {
-    return NextResponse.json({ error: `offset must be <= ${MAX_LIST_OFFSET}` }, { status: 400 });
+  const offset = parseStrictListOffset(url.searchParams.get("offset"), MAX_LIST_OFFSET);
+  if (offset === null) {
+    return NextResponse.json({ error: `offset must be <= ${MAX_LIST_OFFSET} and a non-negative decimal integer`, code: "INVALID_OFFSET" }, { status: 400 });
   }
   if (searchParam && (searchParam.length < 2 || searchParam.length > MAX_SEARCH_LENGTH)) {
     return NextResponse.json({ error: `search must be between 2 and ${MAX_SEARCH_LENGTH} characters` }, { status: 400 });
