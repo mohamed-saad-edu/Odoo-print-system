@@ -190,6 +190,20 @@ export async function POST(req: Request) {
           where: and(eq(printers.tenantId, tenantId), eq(printers.agentId, data.agentId)),
         });
         const matching = matchingPhysicalPrinter(known, { connectionType, protocol, config });
+        // An explicit printer ID may be occupied by another logical queue
+        // (including a different Agent inside this tenant). Never return
+        // 200 for an unrelated matching physical endpoint while silently
+        // ignoring that occupied identity. Preserve unoccupied aliases:
+        // discovery can still converge their IDs onto an existing queue.
+        if (data.id !== undefined) {
+          const occupied = await tx.query.printers.findFirst({
+            where: and(eq(printers.tenantId, tenantId), eq(printers.id, id)),
+            columns: { id: true, agentId: true },
+          });
+          if (occupied && (occupied.agentId !== data.agentId || matching?.id !== occupied.id)) {
+            return { kind: "conflict" as const, error: "Printer ID is already assigned to a different endpoint" };
+          }
+        }
         if (matching) {
           if (!samePrinterProtocol(matching, { connectionType, protocol, config })) {
             return { kind: "conflict" as const, error: "Physical endpoint uses a different print protocol; change the existing printer instead" };
