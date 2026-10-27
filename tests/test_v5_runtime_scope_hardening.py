@@ -98,6 +98,19 @@ def test_runtime_printer_picker_rejects_noncanonical_agent_ids_before_inventory(
         result = picker.runtime_printers(agent_id=raw_id)
         assert result == {"enabled": True, "selectedAgentId": False, "printers": []}
 
+    # A correctly shaped exact Agent ID must still pass input validation and
+    # reach the normal scoped configuration/assignment authority, not be
+    # silently treated as a malformed identity.
+    calls = []
+    def no_config(_company):
+        calls.append(True)
+        return (False, None)
+    picker._get_config = no_config
+    assert picker.runtime_printers(agent_id="agt-one") == {
+        "enabled": False, "selectedAgentId": False, "printers": [],
+    }
+    assert calls == [True]
+
 
 def test_duplicate_names_and_user_supplied_suffixes_never_collide():
     a = Company(1, "My Company")
