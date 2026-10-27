@@ -48,9 +48,7 @@ func TestIPPURLNormalization(t *testing.T) {
 
 func TestIPPExplicitRootResourceIsNotRewrittenToDefaultQueue(t *testing.T) {
 	cases := []struct {
-		endpoint  string
-		transport string
-		printerURI string
+		endpoint, transport, printerURI string
 	}{
 		{"ipp://192.168.1.60/", "http://192.168.1.60:631/", "ipp://192.168.1.60:631/"},
 		{"ipp://192.168.1.60", "http://192.168.1.60:631/", "ipp://192.168.1.60:631/"},
