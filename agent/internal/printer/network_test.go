@@ -215,6 +215,38 @@ func TestNetworkUnconfirmedFirstWriteIsUnknown(t *testing.T) {
 	}
 }
 
+// A corrupted transport byte count must not advance the confirmed-byte
+// ledger, index outside the payload, or claim that all receipt bytes were sent.
+type invalidNetworkCountConn struct {
+	net.Conn
+	count int
+}
+
+func (c *invalidNetworkCountConn) Write([]byte) (int, error) {
+	return c.count, nil
+}
+
+func TestNetworkInvalidWriteCountsNeverCompleteOrPanic(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		count int
+	}{
+		{"negative", -1},
+		{"more_than_chunk", len("receipt") + 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client, peer := net.Pipe()
+			defer client.Close()
+			defer peer.Close()
+			conn := &invalidNetworkCountConn{Conn: client, count: tc.count}
+			written, err := writePrintPayload(context.Background(), conn, []byte("receipt"), "simulated-queue")
+			if written != 0 || !OutcomeUnknown(err) {
+				t.Fatalf("invalid net.Conn byte count must stay UNKNOWN and unconfirmed: n=%d error=%v", written, err)
+			}
+		})
+	}
+}
+
 type partialWriteConn struct {
 	net.Conn
 	firstSize int
