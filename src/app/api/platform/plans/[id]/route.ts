@@ -13,7 +13,8 @@ export async function PATCH(req:Request,context:{params:Promise<{id:string}>}) {
     assertWorkspaceSecurityOrigin(req);
   const actor=await requirePlatformOwner(req),key=requireIdempotencyKey(req),{id}=await context.params;
   const raw=await readWorkspaceSecurityJson(req) as Record<string,unknown>;
-  const plan=parseManualPlan({...raw,id}),digest=requestDigest(plan);
+  const priceProvided = raw.priceAmount !== undefined || raw.priceCurrency !== undefined;
+  const plan=parseManualPlan({...raw,id}),digest=requestDigest({plan,priceProvided});
   await db.transaction(async tx=>{
    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${'manual-plan:'+id},0))`);
    await tx.execute(sql`SELECT id FROM plans WHERE id=${id} FOR UPDATE`);
@@ -25,8 +26,13 @@ export async function PATCH(req:Request,context:{params:Promise<{id:string}>}) {
    // Per-workspace quotas are explicit and remain unchanged. Preserve technical
    // safety policy on catalog edits instead of exposing it as commercial pricing.
    const entitlements={...before.entitlements,max_agents:'unlimited',max_printers:'unlimited',max_prints_per_period:plan.entitlements.max_prints_per_period};
-   await tx.update(plans).set({...plan,entitlements,updatedAt:sql`clock_timestamp()`}).where(eq(plans.id,id));
-   await writeAuditEvent({tenantId:null,actorType:'platform',actorId:actor.userId,action:'plan.updated',resourceType:'plan',resourceId:id,requestId:key,metadata:{before:{name:before.name,entitlements:before.entitlements,isActive:before.isActive,isPublic:before.isPublic},after:{...plan,entitlements},digest}},tx);
+   // Legacy catalog clients that omit price must not accidentally erase it.
+   // Explicit null/null clears the advertised price.
+   const priceFields = priceProvided
+     ? {priceMinorUnits:plan.priceMinorUnits,priceCurrency:plan.priceCurrency}
+     : {priceMinorUnits:before.priceMinorUnits,priceCurrency:before.priceCurrency};
+   await tx.update(plans).set({...plan,...priceFields,entitlements,updatedAt:sql`clock_timestamp()`}).where(eq(plans.id,id));
+   await writeAuditEvent({tenantId:null,actorType:'platform',actorId:actor.userId,action:'plan.updated',resourceType:'plan',resourceId:id,requestId:key,metadata:{before:{name:before.name,entitlements:before.entitlements,isActive:before.isActive,isPublic:before.isPublic,priceMinorUnits:before.priceMinorUnits,priceCurrency:before.priceCurrency},after:{...plan,...priceFields,entitlements},digest}},tx);
   });return NextResponse.json({ok:true});
  }catch(e){return manualApiError(e);}
 }

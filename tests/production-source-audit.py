@@ -117,6 +117,13 @@ def scan(root: Path):
     for rel, content in sources.items():
         if "/tests/" in rel or ".test." in rel or rel.endswith("_test.go"):
             continue
+        for alias_match in re.finditer(r"path\.resolve\([^,]+,\s*[\x27\"](src/[^\x27\"]+)[\x27\"]\)", content):
+            candidate = root / alias_match.group(1)
+            if candidate.is_file():
+                imported.add(candidate.resolve())
+    for rel, content in sources.items():
+        if "/tests/" in rel or ".test." in rel or rel.endswith("_test.go"):
+            continue
         for match in IMPORTS.finditer(content):
             name = match.group(1)
             if not name.startswith("."):

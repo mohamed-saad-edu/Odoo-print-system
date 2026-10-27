@@ -1,4 +1,7 @@
 export const v4AdminEn = {
+  "v4.admin.priceAmount": "Plan price (leave blank for quote)",
+  "v4.admin.priceCurrency": "Currency",
+  "v4.admin.priceOnRequest": "Price on request",
   "v4.admin.waitingJobs": "Waiting jobs",
   "v4.admin.processingJobs": "Processing jobs",
   "v4.admin.agentsAttention": "Agents needing attention",
@@ -168,6 +171,9 @@ export const v4AdminEn = {
 } as const satisfies Record<string,string>;
 
 export const v4AdminAr = {
+  "v4.admin.priceAmount": "سعر الباقة (اتركه فارغًا للاستفسار)",
+  "v4.admin.priceCurrency": "العملة",
+  "v4.admin.priceOnRequest": "السعر عند الطلب",
   "v4.admin.waitingJobs": "مهام بانتظار الطباعة",
   "v4.admin.processingJobs": "مهام قيد المعالجة",
   "v4.admin.agentsAttention": "أجهزة تحتاج إلى متابعة",

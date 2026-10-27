@@ -230,7 +230,8 @@ The backup helper creates PostgreSQL custom-format archives, makes
 a SHA-256 sidecar. Custom-format archives are intentionally used because
 PostgreSQL supports inspection and selective/full restore through `pg_restore`.
 
-Restore into an empty recovery database first whenever possible:
+Restore **only into a new empty recovery database**. Do not restore over a
+live or previously populated database:
 
 ```bash
 export PGHOST=recovery-db.example.internal PGPORT=5432 PGDATABASE=print_gateway_restore PGUSER=restore
@@ -242,8 +243,11 @@ scripts/postgres-restore.sh /mnt/independent-backups/yaseir/print_gateway-YYYYMM
 The restore helper requires the matching checksum, validates the archive table
 of contents, requires `RESTORE_CONFIRM` to exactly match `PGDATABASE`, and uses
 `pg_restore --single-transaction` so a restore error rolls back the restore
-transaction. A non-empty target is rejected by default. Deliberate destructive
-replacement additionally requires `RESTORE_ALLOW_NONEMPTY=1`.
+transaction. A non-empty target is **always** rejected, even when a legacy
+`RESTORE_ALLOW_NONEMPTY=1` environment variable is present. To recover a live
+environment, provision a new empty database, restore there, verify service and
+printer state, and cut over explicitly. Keep the original database intact for
+reconciliation and rollback; never use `--clean` on the active database.
 
 After every restore, before enabling traffic:
 

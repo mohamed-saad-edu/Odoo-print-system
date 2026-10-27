@@ -10,6 +10,17 @@ import { createHash, randomBytes } from "node:crypto";
 
 const SENSITIVE = /secret|password|passwd|token|authorization|cookie|api[_-]?key|payload|pairing/i;
 
+function redactInlineCredentials(value: string): string {
+  return value
+    // URL userinfo is confidential even if the scheme is not HTTP(S).
+    .replace(/([a-z][a-z0-9+.-]*:\/\/)[^\s\x40/]+\x40/gi, "$1[redacted]@")
+    // Bearer/Basic credentials also occur inside free-form descriptions.
+    .replace(/\b(bearer|basic)\s+[^\s;,\\"'<>]+/gi, "$1 [redacted]")
+    .replace(/\b(authorization|proxy-authorization|set-cookie)\s*:\s*[^\r\n;,]+/gi, "$1: [redacted]")
+    // Querystrings, form data, stack traces, and common key=value / key: value diagnostics.
+    .replace(/\b(api[_-]?key|access[_-]?token|refresh[_-]?token|token|password|passwd|secret|cookie|session|stack)\s*[:=]\s*[^\s&;,]+/gi, "$1=[redacted]");
+}
+
 export function redactClaimToken(value: unknown): string | null | undefined {
   if (value === null || value === undefined) return value;
   if (typeof value !== "string" || !value) return undefined;
@@ -22,7 +33,10 @@ export type LogFields = Record<string, unknown>;
 function normalizeLogValue(value: unknown, seen = new WeakSet<object>(), depth = 0): unknown {
   if (depth > 6) return "[depth-limit]";
   if (typeof value === "bigint") return String(value);
-  if (typeof value === "string" && value.length > 500) return `${value.slice(0, 200)}…(${value.length} chars)`;
+  if (typeof value === "string") {
+    const safeValue = redactInlineCredentials(value);
+    return safeValue.length > 500 ? `${safeValue.slice(0, 200)}…(${safeValue.length} chars)` : safeValue;
+  }
   if (value === null || typeof value !== "object") return value;
   if (seen.has(value)) return "[Circular]";
   seen.add(value);
@@ -30,7 +44,7 @@ function normalizeLogValue(value: unknown, seen = new WeakSet<object>(), depth =
   if (Array.isArray(value)) return value.slice(0, 100).map((entry) => normalizeLogValue(entry, seen, depth + 1));
   const out: Record<string, unknown> = {};
   if (value instanceof Error) {
-    out.name = value.name;
+    out.name = normalizeLogValue(value.name, seen, depth + 1);
     out.message = normalizeLogValue(value.message, seen, depth + 1);
     if (value.stack) out.stack = normalizeLogValue(value.stack, seen, depth + 1);
     if (value.cause !== undefined) out.cause = normalizeLogValue(value.cause, seen, depth + 1);
@@ -102,7 +116,7 @@ function emit(level: "debug" | "info" | "warn" | "error", event: string, fields:
   const line = {
     ts: new Date().toISOString(),
     level,
-    event,
+    event: normalizeLogValue(event),
     ...correlation,
     ...sanitize(fields),
   };

@@ -1,6 +1,11 @@
 import { cookies } from "next/headers";
 import Link from "next/link";
 import { and, asc, eq } from "drizzle-orm";
+import { redirect } from "next/navigation";
+import { tenantSubscriptions, tenants } from "../../db/schema";
+import { customerSubscriptionState } from "../../lib/manual-subscriptions";
+import { databaseNowMs } from "../../lib/database-clock";
+import { formatPlanPrice } from "../../lib/plan-price";
 import { ArrowRight, Check } from "lucide-react";
 import { db } from "../../db";
 import { plans } from "../../db/schema";
@@ -19,21 +24,22 @@ export const dynamic = "force-dynamic";
 export default async function Pricing() {
   const locale = await getServerLocale();
   const t = makeT(locale);
-  let rows: Array<{ id: string; name: string; description: string | null; entitlements: Record<string, unknown> }> = [];
+  let rows: Array<{ id: string; name: string; description: string | null; priceMinorUnits: number | null; priceCurrency: string | null; entitlements: Record<string, unknown> }> = [];
+  const jar = await cookies();
+  const claims = await verifyWorkspaceTokenFromCookieValues(jar.get(sessionCookieName("customer"))?.value ?? null,jar.get(getManagerCookieName())?.value ?? null);
+  if (claims) {
+    const [sub,tenant,now] = await Promise.all([db.query.tenantSubscriptions.findFirst({where:eq(tenantSubscriptions.tenantId,claims.tenantId)}),db.query.tenants.findFirst({where:eq(tenants.id,claims.tenantId),columns:{lifecycle:true}}),databaseNowMs()]);
+    if (customerSubscriptionState(sub,tenant?.lifecycle,now)==="active") redirect(claims.role==="owner"?"/billing":"/dashboard");
+  }
   let unavailable = false;
   try {
-    rows = await db.select({ id: plans.id, name: plans.name, description: plans.description, entitlements: plans.entitlements })
+    rows = await db.select({ id: plans.id, name: plans.name, description: plans.description, priceMinorUnits: plans.priceMinorUnits, priceCurrency: plans.priceCurrency, entitlements: plans.entitlements })
       .from(plans).where(and(eq(plans.isActive, true), eq(plans.isPublic, true))).orderBy(asc(plans.displayOrder), asc(plans.name));
   } catch {
     unavailable = true;
     logError("pricing.catalog_load_failed", { error: "Public catalog unavailable" });
   }
-  const jar = await cookies();
-  const claims = await verifyWorkspaceTokenFromCookieValues(
-    jar.get(sessionCookieName("customer"))?.value ?? null,
-    jar.get(getManagerCookieName())?.value ?? null,
-  );
-  // Public catalog never claims to be the customer's existing subscription.
+  // An inactive workspace can request access; an active one sees its contract.
   const destination = (planId: string) => claims?.role === "owner"
     ? `/billing?plan=${encodeURIComponent(planId)}`
     : claims ? "/dashboard" : `/signup?plan=${encodeURIComponent(planId)}`;
@@ -65,6 +71,7 @@ export default async function Pricing() {
               {rows.map(plan => <Card key={plan.id} className="flex h-full flex-col">
                 <div className="flex-1 space-y-4 p-5">
                   <h2 className="text-xl font-semibold">{plan.name}</h2>
+                  <p className="text-2xl font-semibold text-brand"><bdi dir="auto">{formatPlanPrice(plan.priceMinorUnits,plan.priceCurrency,locale) ?? t("v4.pricing.contactPrice")}</bdi></p>
                   {plan.description && <p className="text-sm text-ink-3">{plan.description}</p>}
                   <div>
                     <p className="text-3xl font-semibold tabular-nums text-brand"><bdi dir="ltr">{typeof plan.entitlements.max_prints_per_period === "number"

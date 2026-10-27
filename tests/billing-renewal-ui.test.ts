@@ -12,6 +12,8 @@ describe("workspace subscription page", () => {
   it("preserves the requested plan and displays manual request controls", () => {
     expect(billing).toContain("selectedPlanId");
     expect(billing).toContain("<BillingActions");
+    expect(billing).toContain("publishedPlanPrice");
+    expect(billing).toContain('t("v4.subscription.catalogPrice")');
     expect(billing).toContain("initialRequest=");
     expect(billing).toContain("currentPeriodEnd");
   });

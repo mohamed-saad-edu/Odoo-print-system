@@ -15,6 +15,8 @@ import { POST as subscriptionPOST } from "../src/app/api/platform/tenants/[id]/s
 import { GET as workspaceGET } from "../src/app/api/platform/tenants/[id]/route";
 import { POST as rejectRequest, GET as listPlatformRequests } from "../src/app/api/platform/subscription-requests/route";
 import { PATCH as editPlan } from "../src/app/api/platform/plans/[id]/route";
+import { POST as createPlan,GET as listAdminPlans } from "../src/app/api/platform/plans/route";
+import { GET as publicPlansGET } from "../src/app/api/billing/plans/route";
 import { POST as suspendWorkspace } from "../src/app/api/platform/tenants/[id]/suspend/route";
 import { POST as reactivateWorkspace } from "../src/app/api/platform/tenants/[id]/reactivate/route";
 import { GET as statsGET } from "../src/app/api/platform/stats/route";
@@ -309,6 +311,36 @@ suite('V4 manual subscriptions security and accounting',()=>{
    expect((await rejectRequest(request('/api/platform/subscription-requests',{...body,reason:'Different reason'},platformCookie,key))).status).toBe(409);
    expect((await rejectRequest(request('/api/platform/subscription-requests',body,platformCookie,randomUUID()))).status).toBe(409);
   }else expect(final).toBe('approved');
+ });
+
+ it('persists and edits published USD/SAR prices without mutating subscriptions',async()=>{
+  const plan={id:'priced',name:'Published plan',description:'',monthlyQuota:500,priceAmount:'19.95',priceCurrency:'USD',isActive:true,isPublic:true,displayOrder:1};
+  const key=randomUUID();
+  expect((await createPlan(request('/api/platform/plans',plan,platformCookie,key))).status).toBe(201);
+  expect((await createPlan(request('/api/platform/plans',plan,platformCookie,key))).status).toBe(201);
+  expect((await createPlan(request('/api/platform/plans',{...plan,priceAmount:'20'},platformCookie,key))).status).toBe(409);
+  expect(await db.query.plans.findFirst({where:eq(plans.id,'priced')})).toMatchObject({priceMinorUnits:1995,priceCurrency:'USD'});
+  const publicCatalog=await publicPlansGET();
+  expect((await publicCatalog.json()).plans).toEqual(expect.arrayContaining([expect.objectContaining({id:'priced',priceMinorUnits:1995,priceCurrency:'USD'})]));
+  const adminCatalog=await listAdminPlans(new Request(origin+'/api/platform/plans',{headers:{cookie:platformCookie}}));
+  expect(adminCatalog.status).toBe(200);
+  expect((await adminCatalog.json()).plans).toEqual(expect.arrayContaining([expect.objectContaining({id:'priced',priceMinorUnits:1995,priceCurrency:'USD'})]));
+  await mutateManualSubscription('workspace',claims,randomUUID(),input({planId:'priced',monthlyQuota:75}));
+  const context={params:Promise.resolve({id:'priced'})};
+  const patch=(body:Record<string,unknown>,k=randomUUID())=>editPlan(
+    new Request(origin+'/api/platform/plans/priced',{method:'PATCH',headers:{origin,'content-type':'application/json',cookie:platformCookie,'idempotency-key':k},body:JSON.stringify(body)}),context);
+  const revised={...plan,name:'Updated plan',monthlyQuota:999,priceAmount:'54.25',priceCurrency:'SAR'};
+  expect((await patch(revised)).status).toBe(200);
+  expect(await db.query.plans.findFirst({where:eq(plans.id,'priced')})).toMatchObject({priceMinorUnits:5425,priceCurrency:'SAR'});
+  expect(await db.query.tenantSubscriptions.findFirst({where:eq(tenantSubscriptions.tenantId,'workspace')})).toMatchObject({planId:'priced',status:'active',monthlyQuota:75});
+  const legacy={id:'priced',name:'Legacy patch',description:'',monthlyQuota:999,isActive:true,isPublic:true,displayOrder:1};
+  expect((await patch(legacy)).status).toBe(200);
+  expect(await db.query.plans.findFirst({where:eq(plans.id,'priced')})).toMatchObject({priceMinorUnits:5425,priceCurrency:'SAR'});
+  for(const bad of [{...legacy,priceAmount:'10.001',priceCurrency:'SAR'},{...legacy,priceAmount:'20',priceCurrency:'EUR'},{...legacy,priceAmount:'25',priceCurrency:null}])
+    expect((await patch(bad)).status).toBe(400);
+  expect((await patch({...legacy,priceAmount:null,priceCurrency:null})).status).toBe(200);
+  expect(await db.query.plans.findFirst({where:eq(plans.id,'priced')})).toMatchObject({priceMinorUnits:null,priceCurrency:null});
+  expect(await db.query.tenantSubscriptions.findFirst({where:eq(tenantSubscriptions.tenantId,'workspace')})).toMatchObject({planId:'priced',monthlyQuota:75});
  });
  it('audits the actual preserved technical plan limits',async()=>{
   await db.update(plans).set({entitlements:{...entitlements,max_concurrent_jobs:7,max_jobs_per_minute:19}}).where(eq(plans.id,'manual'));

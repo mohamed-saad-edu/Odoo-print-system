@@ -14,6 +14,8 @@ import { activationWhatsAppUrl } from "../../lib/activation-contact";
 import { getServerLocale, makeT } from "../../i18n/server";
 import { formatNumber } from "../../i18n/format";
 import { formatManualCalendarDate } from "../../lib/manual-calendar-date";
+import { billingTermLabel } from "../../lib/billing-labels";
+import { formatPlanPrice } from "../../lib/plan-price";
 import { BillingActions } from "../../components/BillingActions";
 import { Button, Callout, Card, CardHeader, PageContainer, PageHeader, Progress, StatusBadge, type Tone } from "../../components/ui";
 import { logWarn } from "../../lib/log";
@@ -33,8 +35,11 @@ export default async function BillingPage({ searchParams }: { searchParams: Prom
     claims.role === "owner" ? db.query.subscriptionRequests.findMany({ where: eq(subscriptionRequests.tenantId, claims.tenantId), orderBy: desc(subscriptionRequests.createdAt), limit: 1 }) : Promise.resolve([]),
     databaseNowMs(),
   ]);
-  const plan = sub ? await db.query.plans.findFirst({ where: eq(plans.id, sub.planId), columns: { name: true, entitlements: true } }) : null;
+  const plan = sub ? await db.query.plans.findFirst({ where: eq(plans.id, sub.planId), columns: { name: true, entitlements: true, priceMinorUnits: true, priceCurrency: true } }) : null;
   const status = customerSubscriptionState(sub, tenant?.lifecycle, now);
+  // Published list price is not the manually agreed price of this subscription.
+  const publishedPlanPrice = sub?.subscriptionType === "paid" && plan
+    ? formatPlanPrice(plan.priceMinorUnits, plan.priceCurrency, locale) : null;
   const statusKey = { active: "v4.onboarding.active", awaiting_activation: "v4.onboarding.pending", expired: "v4.onboarding.expired", suspended: "v4.onboarding.suspended" } as const;
   const tone: Tone = status === "active" ? "ok" : status === "suspended" ? "bad" : "warn";
   let usage: { used: number; limit: number | "unlimited"; remaining: number | "unlimited"; reset: Date } | null = null;
@@ -54,12 +59,12 @@ export default async function BillingPage({ searchParams }: { searchParams: Prom
   const request = requests[0];
   const selectedPlanId = typeof params.plan === "string" ? params.plan : undefined;
   return <>
-    <PageHeader title={t("v4.subscription.title")} description={t("v4.subscription.intro")} icon={<CreditCard className="h-4 w-4" />} meta={<StatusBadge tone={tone} label={t(statusKey[status])} />} actions={<Button href="/pricing" variant="secondary">{t("billing.comparePlans")}</Button>} />
+    <PageHeader title={t("v4.subscription.title")} description={t("v4.subscription.intro")} icon={<CreditCard className="h-4 w-4" />} meta={<StatusBadge tone={tone} label={t(statusKey[status])} />}  />
     <PageContainer><div className="space-y-5">
       {status !== "active" && <Callout tone={tone} title={t(statusKey[status])}>{t(status === "expired" ? "v4.subscription.expiredBody" : status === "suspended" ? "v4.subscription.suspendedBody" : "v4.subscription.pendingBody")}</Callout>}
       <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1.4fr)_minmax(280px,1fr)]"><div className="space-y-5">
-        <Card><CardHeader title={plan?.name ?? t("billing.noPlanSelected")} subtitle={t(status === "active" ? "v4.subscription.currentContract" : "v4.subscription.recordedContract")} icon={<CalendarDays className="h-4 w-4" />} /><dl className="grid gap-5 p-5 sm:grid-cols-2">
-          {[[t("v4.subscription.type"), t(sub?.subscriptionType === "free" ? "v4.subscription.free" : sub?.subscriptionType === "paid" ? "v4.subscription.paid" : "v4.subscription.notSet")], [t("v4.onboarding.term"), t(sub?.term === "yearly" ? "v4.onboarding.yearly" : sub?.term === "custom" ? "v4.subscription.custom" : sub?.term === "monthly" ? "v4.onboarding.monthly" : "v4.subscription.notSet")], [t("v4.subscription.start"), date(sub?.currentPeriodStart)], [t("v4.subscription.end"), date(sub?.currentPeriodEnd)]].map(([label,value]) => <div key={label}><dt className="text-sm text-ink-3">{label}</dt><dd className="mt-1 font-semibold"><bdi dir="auto">{value}</bdi></dd></div>)}
+        <Card><CardHeader title={t(status === "active" ? "v4.subscription.yourCurrentPlan" : "v4.subscription.recordedContract")} subtitle={t(status === "active" ? "v4.subscription.currentContract" : "v4.subscription.recordedContract")} icon={<CalendarDays className="h-4 w-4" />} /><div className="px-5 pt-4 text-lg font-semibold">{plan?.name ?? t("billing.noPlanSelected")}</div>{publishedPlanPrice && <p className="px-5 pt-2 text-sm text-ink-3">{t("v4.subscription.catalogPrice")}: <bdi dir="auto">{publishedPlanPrice}</bdi></p>}<dl className="grid gap-5 p-5 sm:grid-cols-2">
+          {[[t("v4.subscription.type"), t(sub?.subscriptionType === "free" ? "v4.subscription.free" : sub?.subscriptionType === "paid" ? "v4.subscription.paid" : "v4.subscription.notSet")], [t("v4.onboarding.term"), billingTermLabel(sub?.term, t)], [t("v4.subscription.start"), date(sub?.currentPeriodStart)], [t("v4.subscription.end"), date(sub?.currentPeriodEnd)]].map(([label,value]) => <div key={label}><dt className="text-sm text-ink-3">{label}</dt><dd className="mt-1 font-semibold"><bdi dir="auto">{value}</bdi></dd></div>)}
         </dl><p className="border-t border-edge-subtle p-5 text-sm text-ink-3">{t(sub?.cancelAtPeriodEnd ? "v4.subscription.endsAtTerm" : "v4.subscription.manualRenewal")}</p>
         </Card>
         <Card><CardHeader title={t("v4.subscription.monthlyUsage")} />{usage ? <div className="space-y-4 p-5"><dl className="grid gap-4 sm:grid-cols-3">{[[t("v4.subscription.used"),formatNumber(usage.used,locale)],[t("v4.subscription.allowance"),usage.limit === "unlimited" ? t("billing.unlimited") : formatNumber(usage.limit,locale)],[t("v4.subscription.remaining"),usage.remaining === "unlimited" ? t("billing.unlimited") : formatNumber(usage.remaining,locale)]].map(([label,value]) => <div key={label}><dt className="text-sm text-ink-3">{label}</dt><dd className="mt-1 text-2xl font-semibold tabular-nums"><bdi dir="ltr">{value}</bdi></dd></div>)}</dl>{usage.limit !== "unlimited" && <Progress value={Math.min(100,usage.used / Math.max(1,usage.limit)*100)} tone={usage.remaining === 0 ? "bad" : "brand"} label={t("billing.usageAria", { used: formatNumber(usage.used,locale), limit: formatNumber(usage.limit,locale) })} />}<p className="text-sm text-ink-3">{t("v4.subscription.nextReset", { date: date(usage.reset) })}</p>{status !== "active" && <p className="text-sm text-ink-3">{t("v4.subscription.balanceNotAccess")}</p>}</div> : <p className="p-5 text-sm text-ink-3">{t(sub ? "billing.usageUnavailableBody" : "v4.subscription.noAllowance")}</p>}</Card>

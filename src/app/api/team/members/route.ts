@@ -6,6 +6,7 @@ import { validateWorkspaceManager } from "../../../../lib/manager-auth";
 import { hasManagerPermission } from "../../../../lib/authorization";
 import { queryWithTimeout } from "../../../../db/client";
 import { clampListLimit } from "../../../../lib/request-limits";
+import { platformOwnerRequiredResponse } from "../../../../lib/team-authorization";
 
 export async function GET(req: Request) {
   const claims = await validateWorkspaceManager(req);
@@ -62,7 +63,7 @@ export async function GET(req: Request) {
 async function denyMemberMutation(req: Request) {
   const claims = await validateWorkspaceManager(req);
   if (!claims?.userId) return NextResponse.json({ error: "Unauthorized", code: "UNAUTHORIZED" }, { status: 401 });
-  return NextResponse.json({ error: "Platform Owner required", code: "PLATFORM_OWNER_REQUIRED" }, { status: 403 });
+  return platformOwnerRequiredResponse(); // PLATFORM_OWNER_REQUIRED
 }
 export async function PATCH(req: Request) { return denyMemberMutation(req); }
 export async function DELETE(req: Request) { return denyMemberMutation(req); }
