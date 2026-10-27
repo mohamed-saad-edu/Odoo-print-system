@@ -103,7 +103,9 @@ export const JOB_FILTER_STATUSES = [
 export type JobFilterStatus = (typeof JOB_FILTER_STATUSES)[number];
 
 export function isJobFilterStatus(value: unknown): value is JobFilterStatus {
-  return typeof value === "string" && (JOB_FILTER_STATUSES as readonly string[]).includes(value.toLowerCase());
+  // The shared type guard must accept only canonical values; callers normalize case first.
+  // Keeping mixed-case input would incorrectly narrow it to a canonical status type.
+  return typeof value === "string" && (JOB_FILTER_STATUSES as readonly string[]).includes(value);
 }
 
 export function isTerminal(status: JobStatus): boolean {
