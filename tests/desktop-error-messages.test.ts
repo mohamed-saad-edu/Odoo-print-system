@@ -14,7 +14,7 @@ describe("desktop friendly error mapping", () => {
     expect(route).not.toContain("friendlyGatewayError(errMsg(e), locale)");
 
     const serverError = Object.assign(new Error("INTERNAL_ERROR"), { status: 503, code: "SERVICE_UNAVAILABLE" });
-    expect(friendlyGatewayError(serverError, "en")).toBe("The Gateway is temporarily unavailable. Try again shortly.");
+    expect(friendlyGatewayError(serverError, "en")).toBe("Gateway is temporarily unavailable. Try again shortly.");
     expect(friendlyGatewayError(serverError, "ar")).toMatch(/[\u0600-\u06ff]/);
     expect(friendlyGatewayError(serverError, "en")).not.toContain("INTERNAL_ERROR");
   });
