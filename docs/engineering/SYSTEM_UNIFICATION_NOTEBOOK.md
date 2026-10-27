@@ -221,3 +221,16 @@ The root-level `NOTES.md` is now the **GitHub-only full path inventory**, organi
 **Verification limitations:** New tests were committed before their implementation to exercise the unfenced read behavior, but the test-only SHA GitHub CI runs were queued/superseded; no reproducible red/green result was observed and **TDD RED/GREEN = NOT VERIFIED**. No assertion of passed PostgreSQL integration, TypeScript, Windows, Odoo or end-to-end acceptance is made. GitHub Docker failures `40602163086`/`40601945652` are confirmed *older SHA* desktop TypeScript `TS18048` at `src/desktop/lib/ipc.ts:217-219`; the current file already contains the missing header-narrowing guard from a separate concurrent commit, so do not revert it or claim that older failure persists. Continue checking an exact completed newer SHA.
 
 **Open coverage:** This was a GET read-boundary audit, *not* a line-by-line signoff for these route files' other methods. Continue scanning `src/app/api/odoo/keys`, `src/app/api/odoo/configuration`, Agent/printer fleet inventory, platform actor listings and all query/tenant contracts; link any actual red/green CI evidence and keep older test paths PARTIAL. Real POS, Winspool/IPP, populated forward-migration, Arabic RTL and printer-output validation remain BLOCKED until their own hardware/integration results exist.
+
+
+### AUTH-LIVE-DIRECTORY-FOLLOWUP-2026-10-28 — Odoo activation and owner usage
+
+After the initial directory read audit, two additional Odoo control-plane reads and the owner usage summary were verified in source to have the same stale-preflight gap. All changes below are on `main` via GitHub API and were test-authored-first, but **PostgreSQL RED/GREEN and full exact-SHA CI are NOT VERIFIED** (workflows remain queued under concurrent main commits).
+
+| Route (GET only) | Protection | Tests |
+| --- | --- | --- |
+| `/api/odoo/keys` | `b74e33eb`: tenant lifecycle and live integrations.read actor/session fence encloses key metadata SELECT, all expected errors carry private/no-store; raw secrets remain absent | `68dea6ed`: key metadata, suspension, revocation and cache contract |
+| `/api/odoo/configuration` | `6a51db5c`: tenant/session fenced Odoo activation read with coded private/no-store responses; PATCH activation revision, billing and key fences preserved | `25c0c2d9`: activation snapshot and concurrent suspend/revoke |
+| `/api/billing/usage` | `44700a84`: read subscription, plan, entitlements, calendar-month quota and physical Agent/printer counters from a single live owner-authorized transaction; Full Access still denied billing.read, no automatic upgrade/activation | `9511da6e`: authorized owner, role downgrade, session revocation and workspace suspension |
+
+**No historical data mutations** or database migration edits. Lock order tenant -> actor identity/session -> subscription/counters; no newly granted role capabilities. A cancelled GitHub workflow, successful Docker build of a different SHA, or TS source inspection is not equivalent to the required exact-SHA PostgreSQL concurrency PASS. Real POS, Windows printing and populated migration/restore are still BLOCKED.
