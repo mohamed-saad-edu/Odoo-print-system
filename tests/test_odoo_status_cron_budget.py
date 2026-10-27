@@ -51,6 +51,7 @@ class StatusCron(Production):
 
         class Cursor:
             def execute(self, query):
+                owner.selection_sql = query
                 assert 'ORDER BY last_status_polled_at ASC NULLS FIRST, id ASC' in query
                 assert 'LIMIT 100' in query
 
@@ -299,3 +300,17 @@ def test_missing_bulk_results_stay_unknown_without_reprint_or_fallback_submissio
     assert [method for method, _url, _kwargs in cron.calls] == ['POST']
     assert [job.status for job in cron.jobs.values()] == ['unknown'] * 3
     assert all(job.last_error.startswith('GATEWAY_JOB_NOT_FOUND:') for job in cron.jobs.values())
+
+def test_reconciliation_selection_uses_exact_unknown_outcome_prefixes(monkeypatch):
+    """Match the Gateway's literal startsWith semantics; underscores are NOT SQL wildcards."""
+    cron = StatusCron(monkeypatch, count=0)
+    assert cron.cron_sync_status() == 0
+    sql = cron.selection_sql
+    for marker in (
+        'AGENT_EXECUTION_TIMEOUT', 'AGENT_RESTART_DURING_PRINT',
+        'UNKNOWN_PARTIAL_DELIVERY', 'UNKNOWN_SUBMISSION_OUTCOME',
+        'JOB_EXPIRED_DURING_PRINT', 'UNKNOWN_SUBMISSION_OUTCOME:',
+    ):
+        assert "starts_with(COALESCE(last_error, ''), '%s')" % marker in sql
+    assert 'last_error LIKE' not in sql
+
