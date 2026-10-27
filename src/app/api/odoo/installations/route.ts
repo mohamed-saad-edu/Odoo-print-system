@@ -19,21 +19,43 @@ const enrollSchema = z.object({
   apiKeyId: z.string().trim().min(1).max(128),
 }).strict();
 
+const INVENTORY_HEADERS = { "Cache-Control": "private, no-store" };
+
+/** Installation identifiers and associated key IDs are authenticated inventory. */
 export async function GET(req: Request) {
   const manager = await validateWorkspaceManager(req);
-  if (!manager) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!manager) return NextResponse.json({ error: "Unauthorized" }, { status: 401, headers: INVENTORY_HEADERS });
   try { requireManagerPermission(manager, "integrations.read"); }
-  catch { return NextResponse.json({ error: "Forbidden" }, { status: 403 }); }
-  const rows = await db.execute(sql`
-    SELECT i.id, i.name, i.enabled, i.created_at, i.disabled_at,
-           array_agg(c.api_key_id ORDER BY c.created_at) AS api_key_ids
-    FROM odoo_installations i
-    JOIN odoo_installation_credentials c ON c.tenant_id = i.tenant_id AND c.installation_id = i.id
-    WHERE i.tenant_id = ${manager.tenantId}
-    GROUP BY i.id, i.name, i.enabled, i.created_at, i.disabled_at
-    ORDER BY i.created_at DESC
-  `);
-  return NextResponse.json(rows.rows, { headers: { "Cache-Control": "no-store" } });
+  catch { return NextResponse.json({ error: "Forbidden" }, { status: 403, headers: INVENTORY_HEADERS }); }
+  try {
+    const rows = await db.transaction(async tx => {
+      // Initial session validation cannot authorize a later, unfenced read.
+      // Hold both tenant lifecycle and live session/member authority until
+      // the inventory query completes, including during concurrent revokes.
+      await requireActiveTenantInTransaction(tx, manager.tenantId);
+      await requireManagerActorInTransaction(tx, manager, "integrations.read");
+      return tx.execute(sql`
+        SELECT i.id, i.name, i.enabled, i.created_at, i.disabled_at,
+               array_agg(c.api_key_id ORDER BY c.created_at) AS api_key_ids
+        FROM odoo_installations i
+        JOIN odoo_installation_credentials c
+          ON c.tenant_id = i.tenant_id AND c.installation_id = i.id
+        WHERE i.tenant_id = ${manager.tenantId}
+        GROUP BY i.id, i.name, i.enabled, i.created_at, i.disabled_at
+        ORDER BY i.created_at DESC
+      `);
+    });
+    return NextResponse.json(rows.rows, { headers: INVENTORY_HEADERS });
+  } catch (error) {
+    if (error instanceof ManagerMutationAuthorityChangedError) {
+      return NextResponse.json({ error: error.message, code: error.code }, { status: error.status, headers: INVENTORY_HEADERS });
+    }
+    if (error instanceof TenantSuspendedError || error instanceof TenantDeletedError) {
+      return NextResponse.json({ error: error.message, code: error.code }, { status: 403, headers: INVENTORY_HEADERS });
+    }
+    logError("odoo.installation_inventory_failed", { error: error instanceof Error ? error.message : "unknown" });
+    return NextResponse.json({ error: "Installation inventory unavailable" }, { status: 503, headers: INVENTORY_HEADERS });
+  }
 }
 
 /** Enrollment is operator-only. Never register automatically from a client-controlled database UUID. */
