@@ -48,6 +48,21 @@ suite("tenant print quota", () => {
     expect(await print).toMatchObject({ value: expect.anything() });
   });
 
+  it("uses exact 30-day UTC credit cycles anchored to the customer's subscription start", async () => {
+    const f = await seedFixture();
+    const activatedAt = new Date("2026-10-15T10:30:00.000Z");
+    await pool().query(
+      "UPDATE tenant_subscriptions SET current_period_start=$1, current_period_end=clock_timestamp()+interval '1 year' WHERE tenant_id=$2",
+      [activatedAt, f.tenantId],
+    );
+    const observedAt = new Date((await pool().query("SELECT clock_timestamp() AS now")).rows[0].now);
+    const elapsedCycles = Math.floor((observedAt.getTime() - activatedAt.getTime()) / (30 * 86_400_000));
+    const expectedStart = new Date(activatedAt.getTime() + elapsedCycles * 30 * 86_400_000);
+    const usage = await getTenantPrintUsage(db, f.tenantId);
+    expect(usage.periodStart.toISOString()).toBe(expectedStart.toISOString());
+    expect(usage.periodEnd?.getTime()).toBe(expectedStart.getTime() + 30 * 86_400_000);
+  });
+
   it("enforces a finite print quota before the job row is inserted", async () => {
     const f = await seedFixture();
     await setPlanLimit(f.tenantId, 20);
