@@ -212,7 +212,7 @@ async function fetchGatewayFleet(gatewayUrl: string, path: "/api/printers" | "/a
       }
       return rows;
     }
-    if (hasMore !== "true") throw new Error("Invalid Gateway fleet pagination metadata");
+    if (hasMore !== "true" || !headers) throw new Error("Invalid Gateway fleet pagination metadata");
 
     const createdAt = headers["x-next-before-created-at"];
     const encodedId = headers["x-next-before-id-encoded"];
