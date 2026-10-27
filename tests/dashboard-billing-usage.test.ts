@@ -81,7 +81,8 @@ describe("dashboard billing preflight", () => {
     expect(fleetRefresh).toBeDefined();
     expect(fleetRefresh).not.toContain("refreshBillingUsage()");
     expect(source).toContain("}, 60_000)");
-    expect(source).toContain("if (!canReadBillingUsage) return;");
+    expect(source).toContain("}, billingAuthority.canReadBillingUsage)");
+    expect(source).toContain('if (result.kind === "unsubscribed" || result.kind === "status_only")');
     expect(source).toContain("billingForbiddenScopeRef.current === billingAuthority.diagnosticActorScope");
     expect(source).toContain("billingForbiddenScopeRef.current = billingAuthority.diagnosticActorScope");
     expect(source).toContain("if (retryForbidden) billingForbiddenScopeRef.current = null");
