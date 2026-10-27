@@ -42,6 +42,18 @@ export type ManualSubscriptionInput = {
   requestId?: string;
   allowRequestChanges?: boolean;
 };
+/** Contract months are calendar months, never 30-day blocks. Keep the approval
+ * instant (hour/minute included), clamping 31st and leap days at month-end. */
+export function endOfCalendarTermUTC(start: Date, term: "monthly" | "yearly"): Date {
+  const end = new Date(start.getTime());
+  if (!Number.isFinite(end.getTime())) throw new ManualSubscriptionError("SUBSCRIPTION_DATES_INVALID");
+  const dayOfMonth = end.getUTCDate();
+  end.setUTCDate(1);
+  end.setUTCMonth(end.getUTCMonth() + (term === "monthly" ? 1 : 12));
+  const lastDay = new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth() + 1, 0)).getUTCDate();
+  end.setUTCDate(Math.min(dayOfMonth, lastDay));
+  return end;
+}
 // Date.parse accepts rolled-over calendar dates and host-local timestamps.
 // Contracts need an actual calendar date with an explicit timezone before a
 // Date is constructed or persisted. Keep valid ISO instants from existing API
@@ -108,11 +120,34 @@ export async function mutateManualSubscription(tenantId: string, actor: Platform
     const before=await tx.query.tenantSubscriptions.findFirst({where:eq(tenantSubscriptions.tenantId,tenantId)});
     if ((before?.revision??0)!==input.expectedRevision) throw new ManualSubscriptionError("SUBSCRIPTION_REVISION_CONFLICT",409);
     let changes: Partial<typeof tenantSubscriptions.$inferInsert>={revision:(before?.revision??0)+1};
+    // Only a successfully approved, linked customer request fixes the term
+    // start from the authoritative database clock, not the request's creation
+    // date, browser time, or a stale admin form. Keep one timestamp for the
+    // contract start and approval audit event.
+    let approvedAt: Date | null = null;
     if (input.action==='save'||input.action==='renew') {
       const plan=await tx.query.plans.findFirst({where:and(eq(plans.id,input.planId!),eq(plans.isActive,true))});
       if (!plan) throw new ManualSubscriptionError("PLAN_NOT_FOUND",404);
       normalizePlanEntitlements(plan.entitlements);
-      const start=new Date(input.startDate!),end=new Date(input.endDate!);
+      let start=new Date(input.startDate!), end=new Date(input.endDate!);
+      if (input.requestId) {
+        const clock = await tx.execute(sql`SELECT EXTRACT(EPOCH FROM clock_timestamp()) * 1000 AS "approvalMs"`);
+        const approvalMs = Number(clock.rows[0]?.approvalMs);
+        if (!Number.isFinite(approvalMs)) throw new ManualSubscriptionError("SUBSCRIPTION_DATES_INVALID");
+        approvedAt = new Date(approvalMs);
+        if (input.action === 'save') {
+          start = approvedAt;
+          // Custom contracts retain the explicitly agreed deadline; automatic
+          // monthly/yearly contracts get their full duration after approval.
+          if (input.term !== 'custom') end = endOfCalendarTermUTC(start, input.term!);
+        } else if (input.term !== 'custom' && before?.currentPeriodEnd) {
+          // Renewals preserve time already paid for. When the old term has
+          // elapsed, count the renewed term from this actual approval instead.
+          const base = before.currentPeriodEnd > approvedAt ? before.currentPeriodEnd : approvedAt;
+          end = endOfCalendarTermUTC(base, input.term!);
+        }
+      }
+      if (end <= start) throw new ManualSubscriptionError("SUBSCRIPTION_DATES_INVALID");
       if (input.action==='renew' && (!before || !before.currentPeriodEnd || end<=before.currentPeriodEnd)) throw new ManualSubscriptionError("SUBSCRIPTION_DATES_INVALID");
       // A renewal extends the same contract and retains original start; it never
       // replaces or resets the independent calendar monthly admission ledger.
@@ -142,7 +177,7 @@ export async function mutateManualSubscription(tenantId: string, actor: Platform
     const snapshot=publicSnapshot(after!)!;
     if (input.requestId) {
       const approved=await tx.update(subscriptionRequests).set({
-        status:'approved',lastActionBy:actor.userId,lastActionAt:sql`clock_timestamp()`,
+        status:'approved',lastActionBy:actor.userId,lastActionAt:approvedAt ?? sql`clock_timestamp()`,
         lastActionReason:input.reason,subscriptionRevision:after!.revision,
         approvedPlanId:input.planId,approvedTerm:input.term,approvedMonthlyQuota:input.monthlyQuota,
         approvalModified:requestApproval?.modified??false,

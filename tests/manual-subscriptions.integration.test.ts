@@ -164,6 +164,23 @@ suite('V4 manual subscriptions security and accounting',()=>{
     expect(replay.subscription).toEqual(result.subscription);
   });
 
+ it("keeps paid time remaining when a customer renewal is approved after a delay",async()=>{
+    const contractStart="2026-03-15T13:15:00.000Z";
+    const originalEnd="2027-03-15T13:15:00.000Z";
+    await mutateManualSubscription('workspace',claims,randomUUID(),input({startDate:contractStart,endDate:originalEnd}));
+    const created=await requestActivation(request('/api/subscription-requests',{planId:'manual',term:'yearly'},ownerCookie));
+    expect(created.status).toBe(201);
+    const id=String((await created.json()).request.id);
+    const approved=await mutateManualSubscription('workspace',claims,randomUUID(),input({
+      action:'renew',expectedRevision:1,requestId:id,term:'yearly',
+      startDate:contractStart,endDate:"2027-03-16T00:00:00.000Z",
+    }));
+    expect(approved.subscription.currentPeriodStart).toBe(contractStart);
+    expect(approved.subscription.currentPeriodEnd).toBe("2028-03-15T13:15:00.000Z");
+    const record=await db.query.subscriptionRequests.findFirst({where:eq(subscriptionRequests.id,id)});
+    expect(record?.lastActionAt).not.toBeNull();
+    expect(record?.lastActionAt?.getTime()).toBeGreaterThan(new Date("2026-10-27T00:00:00Z").getTime());
+  });
  it('approves monthly Go over an existing yearly contract without false revision errors, and records explicit changed terms',async()=>{
    await db.insert(plans).values({id:'go',name:'Go',entitlements:{...entitlements,max_prints_per_period:2000}});
    await mutateManualSubscription('workspace',claims,randomUUID(),input());

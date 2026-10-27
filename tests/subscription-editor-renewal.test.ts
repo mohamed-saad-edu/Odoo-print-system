@@ -172,6 +172,15 @@ describe("minimal, contextual subscription editor", () => {
     expect(host.querySelector('time[datetime="2029-01-31"]')).toBeNull();
   });
 
+  it.each(["en","ar"] as const)("labels new subscription timing as approval-based instead of a stale date in %s", locale => {
+    renderEditor(locale, null, request);
+    expect(host.textContent).toContain(labelText(locale, "approvalDateNotice"));
+    press(locale, "preview");
+    expect(host.textContent).toContain(labelText(locale, "startsAtApproval"));
+    expect(host.textContent).toContain(labelText(locale, "endsFromApproval"));
+    expect(host.querySelector('time[datetime="2026-10-27"]')).toBeNull();
+  });
+
   it.each(["en","ar"] as const)("does not replace a monthly Go request with an existing yearly subscription in %s",locale=>{
     renderEditor(locale,currentSubscription,{...request,term:"monthly",planId:"requested",requestedMonthlyQuota:250});
     expect(input(locale,"plan")?.value).toBe("requested");
@@ -181,7 +190,9 @@ describe("minimal, contextual subscription editor", () => {
     expect(host.textContent).not.toContain(labelText(locale,"renewRequested"));
     press(locale,"preview");
     expect(host.textContent).toContain(labelText(locale,"monthly"));
-    expect(host.querySelectorAll('time[datetime]').length).toBeGreaterThanOrEqual(2);
+    // A linked approval cannot advertise client-side form dates as contractual.
+    expect(host.textContent).toContain(labelText(locale, "startsAtApproval"));
+    expect(host.textContent).toContain(labelText(locale, "endsFromApproval"));
     expect(host.textContent).not.toContain("—");
   });
 
