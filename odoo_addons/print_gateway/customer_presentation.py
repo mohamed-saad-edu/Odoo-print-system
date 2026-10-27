@@ -65,7 +65,7 @@ def customer_error_message(_, value=None, *, code=None, status=None):
     if category == "billing_receipt":
         return _("The receipt was not printed because the subscription blocked it. After renewal, choose an explicit reprint only if still needed.")
     if category == "quota":
-        return _("This month's print-job allowance has been used. Wait for the monthly reset or contact the workspace owner.")
+        return _("The current 30-day print allowance has been used. Wait for the next reset or contact the workspace owner.")
     if category == "subscription":
         return _("Printing is not active for this workspace. Ask the workspace owner to review its subscription in Yaseir.")
     if category == "credential":

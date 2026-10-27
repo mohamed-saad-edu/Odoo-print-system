@@ -306,7 +306,7 @@ suite("tenant print quota", () => {
   it("does not grant duplicate monthly credits when the subscription term is renewed or extended", async () => {
     const f = await seedFixture();
     await setPlanLimit(f.tenantId, 2);
-    await pool().query("UPDATE tenant_subscriptions SET current_period_start=clock_timestamp()-interval '1 day', current_period_end=clock_timestamp()+interval '1 month' WHERE tenant_id=$1", [f.tenantId]);
+    await pool().query("UPDATE tenant_subscriptions SET current_period_start=statement_timestamp()-interval '1 day', print_cycle_anchor=statement_timestamp()-interval '1 day', current_period_end=statement_timestamp()+interval '1 month' WHERE tenant_id=$1", [f.tenantId]);
     await createPrintJobForPrinter(f.printerId, payload("term-1"), { tenantId: f.tenantId, requestedBy: "quota-test", documentType: "receipt", destination: f.destination, idempotencyKey: "term-1" });
     const first = await getTenantPrintUsage(db, f.tenantId);
     await pool().query("UPDATE tenant_subscriptions SET current_period_start=clock_timestamp()-interval '1 hour', current_period_end=clock_timestamp()+interval '1 year', term='yearly' WHERE tenant_id=$1", [f.tenantId]);

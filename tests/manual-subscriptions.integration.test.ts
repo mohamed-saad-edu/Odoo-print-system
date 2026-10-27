@@ -209,53 +209,42 @@ suite('V4 manual subscriptions security and accounting',()=>{
    expect((await pool().query("SELECT * FROM print_monthly_usage WHERE tenant_id='workspace'")).rows).toHaveLength(0);
   } finally {await locker.query('ROLLBACK');locker.release();}
  });
- it('uses the UTC calendar month during an annual term and ignores previous-month consumption',async()=>{
-  await mutateManualSubscription('workspace',claims,randomUUID(),input());
-  await db.execute(sql`INSERT INTO print_monthly_usage(tenant_id,period_start,period_end,used_prints) VALUES('workspace',date_trunc('month',clock_timestamp() AT TIME ZONE 'UTC')-interval '1 month',date_trunc('month',clock_timestamp() AT TIME ZONE 'UTC'),10)`);
-  const usage=await db.transaction(tx=>reserveTenantPrintCredit(tx,'workspace'));expect(usage.used).toBe(1);expect(usage.periodStart.getUTCDate()).toBe(1);expect(usage.periodStart.getUTCHours()).toBe(0);expect(usage.periodEnd!.getUTCDate()).toBe(1);
-  expect((await db.query.tenantSubscriptions.findFirst())?.term).toBe('yearly');
+ it('keeps credits separated by the original activation-anchored 30-day cycle',async()=>{
+   await mutateManualSubscription('workspace',claims,randomUUID(),input());
+   const current=await getTenantPrintUsage(db,'workspace');
+   const previousStart=new Date(current.periodStart.getTime()-30*86_400_000);
+   await db.execute(sql`INSERT INTO print_monthly_usage(tenant_id,period_start,period_end,used_prints)
+     VALUES('workspace',${previousStart},${current.periodStart},10)`);
+   const usage=await db.transaction(tx=>reserveTenantPrintCredit(tx,'workspace'));
+   expect(usage.used).toBe(1);
+   expect(usage.periodStart).toEqual(current.periodStart);
+   expect(usage.periodEnd!.getTime()-usage.periodStart.getTime()).toBe(30*86_400_000);
+   expect((await db.query.tenantSubscriptions.findFirst())?.term).toBe('yearly');
  });
- it.each(['read','reserve'] as const)('keeps %s quota boundaries in one UTC calendar month when the database clock crosses New Year',async(operation)=>{
-  await mutateManualSubscription('workspace',claims,randomUUID(),input({startDate:'2026-01-01T00:00:00.000Z',endDate:'2030-01-01T00:00:00.000Z'}));
-  const {rows:[{schema}]}=await pool().query<{schema:string}>('SELECT current_schema() AS schema');
-  const identifier='"'+schema.replaceAll('"','""')+'"';
-  const expectedPeriods=[
-   ['2026-12-01T00:00:00.000Z','2027-01-01T00:00:00.000Z'],
-   ['2027-01-01T00:00:00.000Z','2027-02-01T00:00:00.000Z'],
-  ];
-  // Override only this transaction's database clock, never the host clock or
-  // another worker. Sweep where the clock changes among the predicate and
-  // projection reads; the subscription itself remains live on both sides.
-  for(const beforeBoundaryReads of [1,2,3,4,5,6]){
-   const rollback=Symbol('rollback isolated database clock');
-   try{
-    await db.transaction(async tx=>{
-     await tx.execute(sql.raw('CREATE TEMP SEQUENCE quota_boundary_clock_reads'));
-     await tx.execute(sql.raw(`CREATE FUNCTION ${identifier}.clock_timestamp() RETURNS timestamptz LANGUAGE sql VOLATILE AS $clock$
-      SELECT CASE WHEN nextval('pg_temp.quota_boundary_clock_reads') <= ${beforeBoundaryReads}
-       THEN TIMESTAMPTZ '2026-12-31 23:59:59.999999+00'
-       ELSE TIMESTAMPTZ '2027-01-01 00:00:00+00' END
-     $clock$`));
-     await tx.execute(sql.raw(`SET LOCAL search_path TO ${identifier}, pg_catalog, public`));
-     const usage=operation==='reserve'?await reserveTenantPrintCredit(tx,'workspace'):await getTenantPrintUsage(tx,'workspace');
-     expect(expectedPeriods,`clock transition after database read ${beforeBoundaryReads}`).toContainEqual([usage.periodStart.toISOString(),usage.periodEnd?.toISOString()]);
-     if(operation==='reserve'){
-      const ledger=await tx.execute(sql`SELECT EXTRACT(EPOCH FROM period_start AT TIME ZONE 'UTC') * 1000 AS "periodStartMs",EXTRACT(EPOCH FROM period_end AT TIME ZONE 'UTC') * 1000 AS "periodEndMs",used_prints AS used FROM print_monthly_usage WHERE tenant_id='workspace'`);
-      expect(ledger.rows).toHaveLength(1);
-      expect(ledger.rows[0].used).toBe(1);
-      expect(new Date(Number(ledger.rows[0].periodStartMs)).toISOString()).toBe(usage.periodStart.toISOString());
-      expect(new Date(Number(ledger.rows[0].periodEndMs)).toISOString()).toBe(usage.periodEnd?.toISOString());
-     }
-     throw rollback;
-    });
-   }catch(error){if(error!==rollback)throw error;}
-  }
+ it('does not reset the 30-day allowance on January 1 at UTC midnight',async()=>{
+   const {quotaCycleStartSql}=await import('../src/lib/quota-cycle');
+   const activation=sql`timestamp '2026-12-15 16:00:00'`;
+   for(const [at,expected] of [
+      ['2026-12-31 23:59:59','2026-12-15T16:00:00.000Z'],
+      ['2027-01-01 00:00:00','2026-12-15T16:00:00.000Z'],
+      ['2027-01-14 15:59:59','2026-12-15T16:00:00.000Z'],
+      ['2027-01-14 16:00:00','2027-01-14T16:00:00.000Z'],
+   ] as const){
+      const result=await db.execute(sql`SELECT ${quotaCycleStartSql(activation,sql`${at}::timestamp`)} AS "started"`);
+      const raw=result.rows[0].started;
+      const start=raw instanceof Date ? raw : new Date(String(raw).replace(" ","T")+"Z");
+      expect(start.toISOString()).toBe(expected);
+   }
  });
  it('renewal/quota edits preserve usage; suspension and expiry block admission; cancel at term remains usable until expiry',async()=>{
-  await mutateManualSubscription('workspace',claims,randomUUID(),input());await db.transaction(tx=>reserveTenantPrintCredit(tx,'workspace'));
+  await mutateManualSubscription('workspace',claims,randomUUID(),input());
+   const originalAnchor=(await db.query.tenantSubscriptions.findFirst())?.printCycleAnchor;
+   expect(originalAnchor).toBeInstanceOf(Date);
+   await db.transaction(tx=>reserveTenantPrintCredit(tx,'workspace'));
   const renewKey=randomUUID(),renew=input({action:'renew',expectedRevision:1,monthlyQuota:20,endDate:new Date(Date.now()+730*86400000).toISOString()});
   await mutateManualSubscription('workspace',claims,renewKey,renew);await mutateManualSubscription('workspace',claims,renewKey,renew);
   expect(await getTenantPrintUsage(db,'workspace')).toMatchObject({used:1,limit:20});
+   expect((await db.query.tenantSubscriptions.findFirst())?.printCycleAnchor).toEqual(originalAnchor);
   await mutateManualSubscription('workspace',claims,randomUUID(),input({action:'suspend',expectedRevision:2}));await expect(db.transaction(tx=>reserveTenantPrintCredit(tx,'workspace'))).rejects.toBeInstanceOf(TenantSubscriptionRequiredError);
   await mutateManualSubscription('workspace',claims,randomUUID(),input({action:'reactivate',expectedRevision:3}));
   await mutateManualSubscription('workspace',claims,randomUUID(),input({action:'cancel_at_end',expectedRevision:4}));expect((await db.query.tenantSubscriptions.findFirst())?.cancelAtPeriodEnd).toBe(true);expect((await getTenantPrintUsage(db,'workspace')).used).toBe(1);

@@ -290,7 +290,7 @@ contracts) and `tests/database-clock.integration.test.ts` (live calibration,
 single-reading TTL invariant, quota rollback).
 
 Manual subscriptions are changed by authorized Platform Admin operations.
-`print_monthly_usage` counts the current UTC calendar month's jobs independently
+`print_monthly_usage` counts jobs per fixed 30-day UTC cycle from first activation, independently
 of monthly, yearly or custom contract dates. Provider timestamps and identifiers
 remain historical evidence; retired provider routes cannot grant or renew a
 subscription or reset consumed credits.

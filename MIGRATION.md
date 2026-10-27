@@ -197,7 +197,7 @@ Drain older Gateway instances during this policy cutover so they cannot continue
 
 0095 preserves all historical Stripe columns, receipts, job identities and prior `print_usage_periods`. It records a `subscription_changes` before/after snapshot per existing subscription. Only previously usable active/trialing/past_due records with an unexpired or open-ended contract retain active access; paused becomes suspended and all other legacy statuses become expired. New subscriptions default to awaiting activation. Finite inherited quotas are frozen as workspace overrides.
 
-`print_monthly_usage` is a new UTC calendar-month admission ledger. Receipt/live overlap is deduplicated by persistent logical job ID. For the cutover month, an overlapping legacy usage allowance is conservatively retained when it exceeds reconstructed evidence. This may overcount a prior non-calendar allowance, but never grants fresh midmonth credits. An owner may review evidence and increase the monthly quota; historical counters are never reset. Do not delete old usage records.
+`print_monthly_usage` was introduced as a UTC calendar-month admission ledger in 0095; migration 0101 switches the active policy to fixed 30-day cycles from original activation. Receipt/live overlap is deduplicated by persistent logical job ID. For the cutover month, an overlapping legacy usage allowance is conservatively retained when it exceeds reconstructed evidence. Migration 0101 also carries overlapping legacy monthly consumption conservatively into the first 30-day cycle to avoid granting unearned fresh credits. An owner may review evidence and increase the monthly quota; historical counters are never reset. Do not delete old usage records.
 
 Every annual or custom contract uses monthly credits. Renewals and quota changes retain the existing monthly ledger. Accepted jobs consume one credit even if canceled/failed/uncertain; rejection before admission and idempotent replay consume none. Provider endpoints now return 410 and never mutate subscription state. Catalog bootstrap uses `YASEIR_PLAN_CATALOG`, with no payment provider configuration.
 
@@ -254,3 +254,8 @@ Older binaries cannot read the new catalog price fields; finish migrating before
 promoting the matching Gateway release. Rollback requires a reviewed forward fix
 or an application build compatible with the expanded table, never deleting
 historical subscription data.
+
+
+### 0101 — fixed 30-day print quota cycles
+
+Every workspace receives a 30-day allowance window measured from its first actual subscription activation (UTC). The immutable `print_cycle_anchor` stays unchanged by plan changes, suspension, renewal, and extension. Contracts are still renewed manually. The forward-only migration preserves previous calendar-month ledger rows and conservatively carries overlapping consumption into the first rolling window; it never clears usage or historical records. This can temporarily overestimate consumption when old per-job timestamps are no longer retained; the Platform Owner can explicitly adjust the quota after checking historical evidence. 

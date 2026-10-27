@@ -67,7 +67,7 @@ export function parseManualSubscriptionInput(value: unknown): ManualSubscription
 }
 function publicSnapshot(row: typeof tenantSubscriptions.$inferSelect | null): Record<string, unknown> | null {
   if (!row) return null;
-  return {planId:row.planId,status:row.status,subscriptionType:row.subscriptionType,monthlyQuota:row.monthlyQuota,term:row.term,currentPeriodStart:row.currentPeriodStart.toISOString(),currentPeriodEnd:row.currentPeriodEnd?.toISOString()??null,cancelAtPeriodEnd:row.cancelAtPeriodEnd,internalReference:row.internalReference,revision:row.revision,entitlementBlocked:row.entitlementBlocked,entitlementBlockedReason:row.entitlementBlockedReason};
+  return {planId:row.planId,status:row.status,subscriptionType:row.subscriptionType,monthlyQuota:row.monthlyQuota,term:row.term,currentPeriodStart:row.currentPeriodStart.toISOString(),currentPeriodEnd:row.currentPeriodEnd?.toISOString()??null,printCycleAnchor:row.printCycleAnchor?.toISOString()??null,cancelAtPeriodEnd:row.cancelAtPeriodEnd,internalReference:row.internalReference,revision:row.revision,entitlementBlocked:row.entitlementBlocked,entitlementBlockedReason:row.entitlementBlockedReason};
 }
 /** Resource -> subscription -> actor lock order matches runtime admission fences. */
 export async function mutateManualSubscription(tenantId: string, actor: PlatformOwnerClaims, key: string, input: ManualSubscriptionInput) {
@@ -115,8 +115,17 @@ export async function mutateManualSubscription(tenantId: string, actor: Platform
       const start=new Date(input.startDate!),end=new Date(input.endDate!);
       if (input.action==='renew' && (!before || !before.currentPeriodEnd || end<=before.currentPeriodEnd)) throw new ManualSubscriptionError("SUBSCRIPTION_DATES_INVALID");
       // A renewal extends the same contract and retains original start; it never
-      // replaces or resets the independent calendar monthly admission ledger.
-      changes={...changes,planId:plan.id,subscriptionType:input.subscriptionType,monthlyQuota:input.monthlyQuota,term:input.term,currentPeriodStart:input.action==='renew'?before!.currentPeriodStart:start,currentPeriodEnd:end,status:input.status,cancelAtPeriodEnd:false,entitlementBlocked:false,entitlementBlockedReason:null,internalReference:input.internalReference||null};
+      // replaces or resets the independent 30-day allowance ledger.
+      // Fix the allowance clock once, at first activation. A pending record's
+      // creation date and any later edited contract start must not re-anchor it.
+      const firstActivation = input.status === 'active' && (!before || before.status === 'awaiting_activation');
+      let cycleAnchor = before?.printCycleAnchor ?? null;
+      if (firstActivation && !cycleAnchor) {
+        const clock = approvedAt ?? new Date(Number((await tx.execute(sql`SELECT EXTRACT(EPOCH FROM clock_timestamp()) * 1000 AS ms`)).rows[0]?.ms));
+        if (!Number.isFinite(clock.getTime())) throw new ManualSubscriptionError("SUBSCRIPTION_DATES_INVALID");
+        cycleAnchor = new Date(Math.max(clock.getTime(), start.getTime()));
+      }
+      changes={...changes,planId:plan.id,subscriptionType:input.subscriptionType,monthlyQuota:input.monthlyQuota,term:input.term,currentPeriodStart:input.action==='renew'?before!.currentPeriodStart:start,currentPeriodEnd:end,status:input.status,cancelAtPeriodEnd:false,entitlementBlocked:false,entitlementBlockedReason:null,internalReference:input.internalReference||null,...(cycleAnchor ? {printCycleAnchor:cycleAnchor} : {})};
     } else {
       if (!before) throw new ManualSubscriptionError("SUBSCRIPTION_NOT_FOUND",404);
       if (input.action==='extend') {

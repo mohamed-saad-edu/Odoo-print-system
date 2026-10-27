@@ -1882,8 +1882,8 @@ msgstr "اسم النموذج"
 #. module: print_gateway
 #. odoo-javascript
 #: code:addons/print_gateway/static/src/js/gateway_limit_dialog.js:0
-msgid "Monthly allowance resets: %s"
-msgstr "تتجدد الحصة الشهرية: %s"
+msgid "30-day allowance resets: %s"
+msgstr "موعد تجديد رصيد الـ30 يومًا: %s"
 
 #. module: print_gateway
 #: model:ir.model.fields,field_description:print_gateway.field_print_gateway_binding__name
@@ -4361,8 +4361,8 @@ msgstr "لا يمكن حذف إعداد الـ Gateway هذا بينما لا ت
 #. module: print_gateway
 #. odoo-python
 #: code:addons/print_gateway/customer_presentation.py:0
-msgid "This month's print-job allowance has been used. Wait for the monthly reset or contact the workspace owner."
-msgstr "استهلكت حصة مهام الطباعة لهذا الشهر. انتظر تجدد الحصة أو تواصل مع مالك مساحة العمل."
+msgid "The current 30-day print allowance has been used. Wait for the next reset or contact the workspace owner."
+msgstr "استهلكت رصيد الطباعة لدورة الـ30 يومًا الحالية. انتظر التجديد التالي أو تواصل مع مالك مساحة العمل."
 
 #. module: print_gateway
 #: model_terms:ir.ui.view,arch_db:print_gateway.diagnostic_report
@@ -4534,8 +4534,8 @@ msgstr "انتظر انتهاء المهام الحالية. تواصل مع ا�
 #. module: print_gateway
 #. odoo-javascript
 #: code:addons/print_gateway/static/src/js/gateway_limit_dialog.js:0
-msgid "Wait for the monthly reset or contact the workspace owner to request a different allowance."
-msgstr "انتظر تجدد الحصة الشهرية أو تواصل مع مالك مساحة العمل لطلب تعديلها."
+msgid "Wait for the next 30-day reset or contact the workspace owner to increase the allowance."
+msgstr "انتظر موعد تجديد دورة الـ30 يومًا التالية أو تواصل مع مالك مساحة العمل لزيادة الرصيد."
 
 #. module: print_gateway
 #: model:ir.model.fields.selection,name:print_gateway.selection__print_gateway_print_job__customer_status__waiting
@@ -4610,14 +4610,14 @@ msgstr "ليست لديك صلاحية تنفيذ إجراء الطباعة هذ
 #. module: print_gateway
 #. odoo-javascript
 #: code:addons/print_gateway/static/src/js/gateway_limit_dialog.js:0
-msgid "You have used this month's print-job allowance."
-msgstr "استهلكت حصة مهام الطباعة لهذا الشهر."
+msgid "You have used the current 30-day print allowance."
+msgstr "استهلكت رصيد الطباعة في دورة الـ30 يومًا الحالية."
 
 #. module: print_gateway
 #. odoo-javascript
 #: code:addons/print_gateway/static/src/js/gateway_limit_dialog.js:0
-msgid "You have used this month's print-job allowance. Wait for the monthly reset or contact the workspace owner."
-msgstr "استهلكت حصة مهام الطباعة لهذا الشهر. انتظر تجدد الحصة أو تواصل مع مالك مساحة العمل."
+msgid "You have used the current 30-day allowance. Wait for the next cycle or contact the workspace owner."
+msgstr "استهلكت رصيد دورة الـ30 يومًا الحالية. انتظر موعد التجديد القادم أو تواصل مع مالك مساحة العمل."
 
 #. module: print_gateway
 #. odoo-python
