@@ -16,6 +16,10 @@ export async function PATCH(req:Request,context:{params:Promise<{id:string}>}) {
   const priceProvided = raw.priceAmount !== undefined || raw.priceCurrency !== undefined;
   const plan=parseManualPlan({...raw,id}),digest=requestDigest({plan,priceProvided});
   await db.transaction(async tx=>{
+   // A single Platform Owner operation key cannot edit two different plans
+   // concurrently. Acquire the actor+key lock before the resource lock so
+   // the second request observes the first audit digest and fails with 409.
+   await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${'manual-plan:update:'+actor.userId+':'+key},0))`);
    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${'manual-plan:'+id},0))`);
    await tx.execute(sql`SELECT id FROM plans WHERE id=${id} FOR UPDATE`);
    await requirePlatformActorInTransaction(tx,actor);
