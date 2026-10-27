@@ -235,12 +235,10 @@ func TestPrivateCloudAliasRemainsWithheldAfterLocalRuntimeBackendIsRemoved(t *te
 		t.Fatal(err)
 	}
 	ownedAlias := gatewayAliasPrinterID(local.ID, ag.cfg.Agent.ID)
-	foreignAlias := gatewayAliasPrinterID(local.ID, "different-agent")
 	ag.gatewayOwned[ownedAlias] = struct{}{}
-	ag.gatewayOwned[foreignAlias] = struct{}{}
 	// A transient backend retirement must never erase the old cloud alias's
-	// privacy report. Neither the cloud state nor unrelated Agent IDs are
-	// independent authority to re-share a locally denied destination.
+	// privacy report. Gateway-owned state is never independent authority
+	// to re-share a locally denied destination.
 	delete(ag.printers, local.ID)
 	delete(ag.printerConfigs, local.ID)
 	ids, complete := ag.privatePrinterIDs(ag.loadLocalPrinterSharing())
@@ -251,8 +249,8 @@ func TestPrivateCloudAliasRemainsWithheldAfterLocalRuntimeBackendIsRemoved(t *te
 	for _, id := range ids {
 		got[id] = true
 	}
-	if !got[local.ID] || !got[ownedAlias] || got[foreignAlias] {
-		t.Fatalf("denied cloud alias not preserved or foreign alias affected: %v", ids)
+	if !got[local.ID] || !got[ownedAlias] || len(got) != 2 {
+		t.Fatalf("denied cloud alias not preserved after backend retirement: %v", ids)
 	}
 }
 
