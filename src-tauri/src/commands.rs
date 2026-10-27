@@ -2103,6 +2103,14 @@ mod agent_console_path_tests {
         assert!(!valid_jobs_query("/api/jobs?limit=50&evil=x"));
         assert!(!valid_jobs_query("/api/jobs?limit"));
         assert!(!valid_jobs_query("/api/jobs?=50"));
+        assert!(valid_jobs_query("/api/jobs?search=receipt+%D8%A3"));
+        assert!(valid_jobs_query("/api/jobs?search=a%23b"));
+        assert!(!valid_jobs_query("/api/jobs?limit=10&limit=20"));
+        assert!(!valid_jobs_query("/api/jobs?search=%ZZ"));
+        assert!(!valid_jobs_query("/api/jobs?status=queued&evil=%ZZ"));
+        assert!(!valid_jobs_query("/api/jobs?"));
+        assert!(!valid_jobs_query("/api/jobs#"));
+        assert!(!valid_jobs_query("/api/jobs?status=queued#"));
     }
 
     #[test]
