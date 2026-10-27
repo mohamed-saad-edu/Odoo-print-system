@@ -358,7 +358,9 @@ export async function POST(req: Request) {
       for (const rawAck of desiredStateAcks) {
         if (!rawAck || typeof rawAck !== "object") continue;
         const ack = rawAck as DesiredStateAck;
-        const printerId = typeof ack.printerId === "string" ? ack.printerId.trim() : "";
+        // Printer IDs are opaque. Never trim a malformed ACK into another
+        // manager-controlled queue's exact identity.
+        const printerId = isExactPrinterId(ack.printerId) ? ack.printerId : "";
         const applied = typeof ack.appliedDesiredRevision === "number" && Number.isSafeInteger(ack.appliedDesiredRevision) && ack.appliedDesiredRevision >= 0 ? ack.appliedDesiredRevision : -1;
         const observed = typeof ack.observedDesiredRevision === "number" && Number.isSafeInteger(ack.observedDesiredRevision) && ack.observedDesiredRevision >= 0 ? ack.observedDesiredRevision : -1;
         if (!printerId || applied < 0 || observed < 0) continue;
