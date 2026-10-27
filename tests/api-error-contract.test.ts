@@ -13,6 +13,19 @@ import { en } from "../src/i18n/messages/en";
  * English text is not.
  */
 describe("API error contract", () => {
+  it("localizes combined page-size and offset errors from platform lists", () => {
+    expect(codeMessageKey("INVALID_PAGINATION")).toBe("errors.invalidPagination");
+    expect(apiMessageKey("INVALID_PAGINATION", 400)).toBe("errors.invalidPagination");
+    for (const locale of ["en", "ar"] as const) {
+      const combined = translate(locale, "errors.invalidPagination");
+      expect(combined).not.toBe(translate(locale, "errors.requestRejected"));
+      expect(combined).not.toBe(translate(locale, "errors.invalidPaginationLimit"));
+      expect(combined).not.toContain("INVALID_PAGINATION");
+    }
+    expect(translate("en", "errors.invalidPagination")).toMatch(/page size or position/i);
+    expect(translate("ar", "errors.invalidPagination")).toMatch(/[\u0600-\u06FF]/u);
+  });
+
   it("maps strict job-history pagination failures to Arabic/English catalog copy", () => {
     expect(codeMessageKey("INVALID_OFFSET")).toBe("errors.invalidPaginationOffset");
     expect(apiMessageKey("INVALID_OFFSET", 400)).toBe("errors.invalidPaginationOffset");
