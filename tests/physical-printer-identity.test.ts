@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
 import { physicalPrinterIdentityKey as key, matchingPhysicalPrinter, samePrinterProtocol } from "../src/lib/physical-printer-identity";
 
 describe("physical printer identity", () => {
@@ -34,6 +35,24 @@ describe("physical printer identity", () => {
     expect(key({ connectionType: "usb", protocol: "unknown", config: { vid: 100, pid: 200, serial: "a" } }))
       .not.toBe(key({ connectionType: "usb", protocol: "unknown", config: { vid: 100, pid: 200, serial: "b" } }));
   });
+  it("never reuses a stale database identity key when the stored endpoint is incomplete or malformed", () => {
+    const incoming = { connectionType: "network", protocol: "raw", config: { ip: "10.20.30.40", port: 9100 } };
+    const staleKey = key(incoming);
+    const malformed = { id: "stale", connectionType: "network", protocol: "raw",
+      config: { ip: "10.20.30.99", port: "9100" }, physicalIdentityKey: staleKey };
+    const missing = { id: "missing", connectionType: "network", protocol: "raw",
+      config: {}, physicalIdentityKey: staleKey };
+    expect(matchingPhysicalPrinter([malformed, missing], incoming)).toBeUndefined();
+    // Existing old rows with a valid endpoint still converge from live config.
+    expect(matchingPhysicalPrinter([{ ...malformed, config: incoming.config }], incoming)?.id).toBe("stale");
+  });
+
+  it("keeps the heartbeat discovery deduplication aligned with live endpoint identity", () => {
+    const source = readFileSync("src/app/api/agent/heartbeat/route.ts", "utf8");
+    expect(source).toContain("const endpoint = physicalPrinterIdentityKey(row);");
+    expect(source).not.toContain("physicalPrinterIdentityKey(row) ?? row.physicalIdentityKey");
+  });
+
   it("compares legacy keyless rows without deleting historical printer identities", () => {
     const input = { connectionType: "network", protocol: "raw", config: { ip: "192.168.1.100", port: 9100 } };
     expect(matchingPhysicalPrinter([{ id: "legacy", physicalIdentityKey: null, ...input }], input)?.id).toBe("legacy");
