@@ -234,9 +234,10 @@ export async function getTenantEntitlements(tx: EntitlementTx, tenantId: string)
  * dialog consumes. Returns null for anything that is not a limit trip, so
  * callers keep their existing error handling for every other failure mode.
  *
- * `retryable` distinguishes a periodic allowance that resets (per-minute rate,
- * concurrent jobs, billing-period quota) from a capacity that only an upgrade
- * can raise (`max_agents`, `max_printers`).
+ * `retryable` distinguishes burst limits that recover without changing
+ * capacity from technical device caps requiring an operator intervention.
+ * `upgradeRequired` is reserved for the paid monthly print-job allowance,
+ * not max_agents, max_printers, rate or concurrency safety limits.
  */
 export function entitlementLimitSignal(error: unknown): EntitlementLimitSignal | null {
   if (error instanceof TenantPrintQuotaExceededError) {
@@ -266,7 +267,10 @@ export function entitlementLimitSignal(error: unknown): EntitlementLimitSignal |
       used: error.used,
       remaining: Math.max(0, error.limit - error.used),
       retryAfterSeconds: capacity ? null : 60,
-      upgradeRequired: true,
+      // TenantEntitlementError covers technical safety capacity and burst
+      // limits. Print credits are charged ONLY via TenantPrintQuotaExceededError
+      // above; a device/rate cap cannot be resolved by paying more.
+      upgradeRequired: false,
       message: error.message,
       retryable: !capacity,
     };
