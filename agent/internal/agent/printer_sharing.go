@@ -110,8 +110,16 @@ func (a *Agent) privatePrinterIDs(snapshot localPrinterSharingSnapshot) ([]strin
 		}
 	}
 	for _, id := range owned {
-		localID := a.resolvePrinterAlias(id)
-		if pc, exists := byID[localID]; exists {
+		// The heartbeat is a negative privacy projection, not executable
+		// alias admission. Match only exact local IDs and their signed
+		// Agent-scoped aliases, including when the live backend was removed.
+		// Resolving through a.printers can drop a locally denied cloud alias.
+		matches := 0
+		for localID, pc := range byID {
+			if localID != id && gatewayAliasPrinterID(localID, a.cfg.Agent.ID) != id {
+				continue
+			}
+			matches++
 			shared, err := snapshot.shared(pc)
 			if !shared || err != nil {
 				private[id] = struct{}{}
@@ -119,7 +127,10 @@ func (a *Agent) privatePrinterIDs(snapshot localPrinterSharingSnapshot) ([]strin
 			if err != nil {
 				complete = false
 			}
-		} else if snapshot.err != nil {
+		}
+		// An unresolved historical cloud ID, or an ambiguous exact+alias
+		// collision, cannot prove that the local printer is shared.
+		if matches != 1 {
 			private[id] = struct{}{}
 		}
 	}
