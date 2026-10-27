@@ -6,6 +6,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/yaseir-agent/agent/internal/config"
 )
 
 func TestAllowedGatewayConsolePath(t *testing.T) {
@@ -43,6 +45,20 @@ func TestAllowedGatewayConsolePath(t *testing.T) {
 		{"create printer", "/api/printers", "POST", true},
 		{"test connection", "/api/printers/p1/test-connection", "POST", true},
 		{"agent self test-print", "/api/printers/p1/test-print", "POST", true},
+		{"Arabic printer ID", "/api/printers/%D8%B7%D8%A7%D8%A8%D8%B9%D8%A9~1234abcd/test-print", "POST", true},
+		{"spaced printer ID", "/api/printers/Receipt%20Printer/test-print", "POST", true},
+		{"Arabic connection", "/api/printers/%D8%B7%D8%A7%D8%A8%D8%B9%D8%A9/test-connection", "POST", true},
+		{"encoded slash", "/api/printers/p%2Fother/test-print", "POST", false},
+		{"encoded backslash", "/api/printers/p%5Cother/test-print", "POST", false},
+		{"encoded query", "/api/printers/p%3Fother/test-print", "POST", false},
+		{"double encoding", "/api/printers/p%252Fother/test-print", "POST", false},
+		{"escaped traversal", "/api/printers/%2E%2E/test-print", "POST", false},
+		{"noncanonical ASCII", "/api/printers/p%70/test-print", "POST", false},
+		{"lowercase escapes", "/api/printers/%d8%b7/test-print", "POST", false},
+		{"invalid UTF8", "/api/printers/%FF/test-print", "POST", false},
+		{"encoded control", "/api/printers/Bad%00Name/test-print", "POST", false},
+		{"invalid percent", "/api/printers/p%ZZ/test-print", "POST", false},
+		{"oversized printer ID", "/api/printers/" + strings.Repeat("p", 121) + "/test-print", "POST", false},
 		{"patch printer is manager-only", "/api/printers/p1", "PATCH", false},
 		{"delete printer", "/api/printers/p1", "DELETE", false},
 		{"branch endpoint", "/api/branches", "GET", false},
@@ -159,5 +175,16 @@ func TestGatewayPaginationHeaderValuesAreBoundedWithoutTruncation(t *testing.T) 
 	headers.Set("Set-Cookie", strings.Repeat("private", gatewayPaginationHeaderMaxBytes))
 	if got, err := gatewayPaginationHeaders(headers); err != nil || got != nil {
 		t.Fatalf("nonallowlisted private headers must not enter the envelope or alter accepted fleet metadata: %v err=%v", got, err)
+	}
+}
+
+func TestPrinterDiagnosticPreservesEncodedIDAndOrigin(t *testing.T) {
+	path := "/api/printers/%D8%B7%D8%A7%D8%A8%D8%B9%D8%A9~1234abcd/test-print"
+	if !isAllowedGatewayConsolePath(path, "POST") {
+		t.Fatal("paired Agent rejected Unicode printer ID")
+	}
+	target, err := config.GatewayEndpoint("https://print.example.com", path)
+	if err != nil || target != "https://print.example.com"+path {
+		t.Fatalf("Gateway origin or printer identity was modified: %q %v", target, err)
 	}
 }
