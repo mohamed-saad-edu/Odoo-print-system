@@ -94,7 +94,7 @@ def test_runtime_printer_picker_rejects_noncanonical_agent_ids_before_inventory(
     picker._get_config = must_not_read_inventory
 
     for raw_id in (" agt-one ", "agt-one\n", "\ufeffagt-one",
-                   "agt-one\x00", "x" * 121):
+                   "agt-one\x00", "\ud800", "x" * 121):
         result = picker.runtime_printers(agent_id=raw_id)
         assert result == {"enabled": True, "selectedAgentId": False, "printers": []}
 
