@@ -102,3 +102,14 @@ Baseline inspected: main@65214cf7948a214843110fa2fbc1a23aec388340. This is an **
 **Regression:** Add six valid/invalid identity boundary vectors to `contracts/printer-geometry-fixtures.json`. The same fixture is exercised by Gateway Vitest (`tests/printer-geometry-contract.test.ts`), Go (`agent/internal/printer/geometry_contract_test.go`), Odoo browser Vitest (`tests/receipt-geometry-v3.test.ts`) and Odoo Python (`tests/test_odoo_receipt_geometry_v3.py`), including astral Unicode UTF-16 boundaries, whitespace and control characters.
 
 **Verification:** Contract suites and cross-language execution **NOT RUN** locally; GitHub Actions on the exact commit required. Geometry files and shared test fixtures PARTIAL; all hardware and remaining modules TODO/BLOCKED.
+
+
+## Batch 4 — workspace invitation authority in customer-facing EN/AR
+
+**Finding (MEDIUM, source-confirmed):** Team and Settings copy told customers that only the **Platform Owner** could manage workspace invitations/membership. The real authorization guard `requireWorkspaceOwnerForInvites`, request routes and Team UI grant invite authority to a verified **Workspace Owner** and deny a Platform Owner who is merely a Full Access member. Misleading copy asked ordinary customers to contact the wrong party.
+
+**Correction:** Change `team.membersDescription` and `settings.roleChangesImmediate` in English and Arabic to identify the *workspace owner* as invitation authority, distinguish Full Access operational permissions, and reserve plan/billing detail visibility to the workspace owner. No actual role/auth changes or repeated password prompts.
+
+**Regression:** `tests/team-invitation-restoration.contract.test.ts` invokes `translate()` for both languages, asserts the owner distinction and Full Access copy alongside the existing route and session access tests. **NOT RUN** locally; verify via exact-commit GitHub Actions.
+
+**Coverage:** `src/i18n/messages/en.ts`, `src/i18n/messages/ar.ts`, `tests/team-invitation-restoration.contract.test.ts` PARTIAL; all unreviewed components TODO. No source-level review is promoted to production-verified.

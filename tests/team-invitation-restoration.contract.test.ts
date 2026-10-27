@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import { translate } from "../src/i18n/translate";
 const read = (path: string) => readFileSync(path, "utf8");
 
 describe("restored, single-role team invitations", () => {
@@ -65,6 +66,18 @@ describe("restored, single-role team invitations", () => {
     expect(account).toContain('t("team.role.owner")');
     expect(account).toContain("roleLabel(role, t)");
     expect(team).toContain('member.role === "owner"');
+  });
+  it("tells signed-in owners, not platform admins, who can invite and access billing details", () => {
+    for (const key of ["team.membersDescription", "settings.roleChangesImmediate"] as const) {
+      const english = translate("en", key);
+      const arabic = translate("ar", key);
+      expect(english).toContain("workspace owner");
+      expect(english).not.toContain("Platform Owner");
+      expect(arabic).toContain("مالك مساحة العمل");
+      expect(arabic).not.toContain("مالك المنصة");
+    }
+    expect(translate("en", "team.membersDescription")).toContain("Full Access");
+    expect(translate("ar", "team.membersDescription")).toContain("صلاحية تشغيل كاملة");
   });
   it("keeps the platform-owner title localized in English and Arabic", () => {
     expect(read("src/i18n/messages/en.ts")).toContain('"team.platformOwner": "Platform Owner"');

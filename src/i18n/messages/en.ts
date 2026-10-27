@@ -154,7 +154,7 @@ export const en = {
   "release.evidence.postgres": "Run the production migration, retention, isolation and concurrency tests against an isolated database.",
   "release.area.goRace": "Agent race detection",
   "release.evidence.goRace": "Run Go race tests with the pinned cached dependencies and attach deployment-specific results.",
-  "settings.roleChangesImmediate": "Workspace member access is fixed. Membership administration is managed by the Platform Owner.",
+  "settings.roleChangesImmediate": "Workspace members have Full Access to operations. Only the workspace owner manages invitations.",
   "apiKeys.workspaceScopeOnly": "Scoped to this workspace only.",
   "apiKeys.removeRecordBody": "Deletes the key and stops its access immediately.",
   "billing.paymentReceivedBody": "Payment received. Your plan will update shortly.",
@@ -489,7 +489,7 @@ export const en = {
 
   // ── Team ─────────────────────────────────────────────────────────────────
   "team.members": "Members",
-  "team.membersDescription": "Workspace colleagues have the same operational Full Access. Only the Platform Owner manages invitations, membership and billing.",
+  "team.membersDescription": "Workspace members have Full Access to operations. Only the workspace owner can invite colleagues or view plan and billing details.",
   "team.member": "Member",
   "team.role": "Role",
   "team.invite": "Invite teammate",
