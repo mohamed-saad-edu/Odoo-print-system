@@ -1,10 +1,11 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { GET as listAgents } from "../src/app/api/agents/route";
 import { GET as listPrinters } from "../src/app/api/printers/route";
+import { GET as listJobs } from "../src/app/api/jobs/route";
 import { createWorkspaceManagerTestSession } from "./helpers/workspace-session";
-import { applyMigrations, closePool, hasTestDatabase, pool, seedFixture, truncateAll, type Fixture } from "./helpers/pg";
+import { applyMigrations, closePool, hasTestDatabase, insertQueuedJob, pool, seedFixture, truncateAll, type Fixture } from "./helpers/pg";
 
-describe.skipIf(!hasTestDatabase)("fleet listings recheck current workspace and Agent authority", () => {
+describe.skipIf(!hasTestDatabase)("fleet and job history listings recheck current workspace and Agent authority", () => {
   let fixture: Fixture, managerToken: string, familyId: string;
   beforeAll(async () => {
     vi.stubEnv("GATEWAY_JWT_SECRET", "live-fleet-authorization-contract-test-secret");
@@ -13,6 +14,7 @@ describe.skipIf(!hasTestDatabase)("fleet listings recheck current workspace and 
   beforeEach(async () => {
     await truncateAll();
     fixture = await seedFixture();
+    await insertQueuedJob(fixture, "fleet-read-job");
     const session = await createWorkspaceManagerTestSession(fixture.tenantId, { role: "owner" });
     managerToken = session.token;
     familyId = session.familyId;
@@ -22,6 +24,7 @@ describe.skipIf(!hasTestDatabase)("fleet listings recheck current workspace and 
   const routes = [
     ["agents", listAgents, "/api/agents"],
     ["printers", listPrinters, "/api/printers"],
+    ["jobs", listJobs, "/api/jobs"],
   ] as const;
 
   async function race(
