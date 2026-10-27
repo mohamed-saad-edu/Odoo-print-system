@@ -222,20 +222,25 @@ export async function GET(req: Request) {
     throw error;
   }
   const params = new URL(req.url).searchParams;
-  const id = params.get("id")?.trim();
-  const idempotencyKey = params.get("idempotencyKey")?.trim();
-  if (id && id.length > 120) return NextResponse.json({ error: "id is too long" }, { status: 400 });
-  if (idempotencyKey && idempotencyKey.length > 200) {
-    return NextResponse.json({ error: "idempotencyKey is too long" }, { status: 400 });
-  }
-  if (id && idempotencyKey) {
+  const id = params.get("id");
+  const idempotencyKey = params.get("idempotencyKey");
+  // Status reconciliation is exact for the original accepted attempt.
+  // Trimming, even on a read-only endpoint, could disclose the status of a
+  // different print operation with a normalized caller-supplied identity.
+  if (id !== null && idempotencyKey !== null) {
     return NextResponse.json({ error: "Provide exactly one lookup key" }, { status: 400 });
   }
-  if (!id && !idempotencyKey) {
+  if (id === null && idempotencyKey === null) {
     return NextResponse.json({ error: "id or idempotencyKey query param required" }, { status: 400 });
   }
+  if (id !== null && !isExactPrinterId(id)) {
+    return NextResponse.json({ error: id.length > 120 ? "id is too long" : "Invalid exact job id" }, { status: 400 });
+  }
+  if (idempotencyKey !== null && !isExactIdempotencyKey(idempotencyKey)) {
+    return NextResponse.json({ error: idempotencyKey.length > 200 ? "idempotencyKey is too long" : "Invalid exact idempotencyKey" }, { status: 400 });
+  }
   try {
-    const row = await readOdooJobStatus(odoo, identity, id ? { id } : { idempotencyKey: idempotencyKey! });
+    const row = await readOdooJobStatus(odoo, identity, id !== null ? { id } : { idempotencyKey: idempotencyKey! });
     if (!row) return NextResponse.json({ error: "Not found" }, { status: 404, headers: { "Cache-Control": "no-store" } });
     return NextResponse.json(responseForRow(row), { status: 200, headers: { "Cache-Control": "no-store" } });
   } catch (error) {
