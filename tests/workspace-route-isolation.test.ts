@@ -5,8 +5,9 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createSegmentKey } from "next/dist/client/components/router-reducer/create-segment-key";
 import WorkspaceDetail from "../src/app/platform/tenants/[id]/page";
 
-const fixture = vi.hoisted(() => ({ request: vi.fn(), a: (key: string) => key,
+const fixture = vi.hoisted(() => ({ request: vi.fn(), searchParams: new URLSearchParams(), a: (key: string) => key,
   format: (value: unknown) => String(value ?? "") }));
+vi.mock("next/navigation", () => ({ useSearchParams: () => fixture.searchParams }));
 vi.mock("../src/components/platform/ManualAdmin", () => ({
   adminJson: fixture.request, controlClass: "control",
   useAdminText: () => ({ a: fixture.a, formatNumber: fixture.format, formatDate: fixture.format, formatDateTime: fixture.format }),
@@ -44,7 +45,7 @@ async function enter(node: HTMLTextAreaElement | HTMLInputElement, value: string
 }
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  fixture.request.mockReset(); host = document.createElement("div"); document.body.append(host); root = createRoot(host);
+  fixture.request.mockReset(); fixture.searchParams = new URLSearchParams(); host = document.createElement("div"); document.body.append(host); root = createRoot(host);
 });
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.unstubAllGlobals(); });
 
@@ -76,4 +77,23 @@ it("resets the exact workspace data, subscription draft and password before the 
   expect(host.querySelector('input[type="password"]')).toBeNull();
   expect(host.querySelector("textarea")).toBeNull();
   expect(host.querySelector("select")!.value).toBe("plan-B");
+});
+
+it("follows a different selected customer request in the same workspace without leaking the previous draft", async () => {
+  const first = {id:"req_A",planId:"plan-A",term:"monthly",requestedMonthlyQuota:1000,status:"pending",
+    requesterName:"First client",requesterEmail:"first@example.test",createdAt:"2026-10-27T00:00:00Z"};
+  const second = {...first,id:"req_B",planId:"plan-B",term:"yearly",requesterName:"Second client",requesterEmail:"second@example.test"};
+  fixture.request.mockImplementation((url: string) => url === "/api/platform/plans" ? Promise.resolve({plans})
+    : Promise.resolve({...detail("A"),requests:[first,second]}));
+  fixture.searchParams = new URLSearchParams("request=req_A");
+  await render("A");
+  expect(host.textContent).toContain("First client");
+  expect(host.textContent).toContain("req_A");
+  expect(host.querySelector<HTMLSelectElement>("select")?.value).toBe("plan-A");
+  fixture.searchParams = new URLSearchParams("request=req_B");
+  await render("A");
+  expect(host.textContent).toContain("Second client");
+  expect(host.textContent).toContain("req_B");
+  expect(host.querySelector<HTMLSelectElement>("select")?.value).toBe("plan-B");
+  expect(host.querySelector('input[type="password"]')).toBeNull();
 });
