@@ -55,7 +55,10 @@ export function normalizeGatewayUrl(raw: string): string {
     if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
       throw new Error("Gateway URL must use http:// or https://");
     }
-    if (parsed.username || parsed.password) {
+    // Check the raw marker as well: URL parsers may discard userinfo whose
+    // username and password are both empty (https://@host). The native Go
+    // origin parser rejects any such authority, even if it has no secret.
+    if (parsed.username || parsed.password || candidate.includes("@")) {
       throw new Error("Gateway URL cannot include embedded credentials");
     }
     // Match the packaged Tauri transport policy (commands.rs
