@@ -121,7 +121,7 @@ export async function mutateManualSubscription(tenantId: string, actor: Platform
       const firstActivation = input.status === 'active' && (!before || before.status === 'awaiting_activation');
       let cycleAnchor = before?.printCycleAnchor ?? null;
       if (firstActivation && !cycleAnchor) {
-        const clock = approvedAt ?? new Date(Number((await tx.execute(sql`SELECT EXTRACT(EPOCH FROM clock_timestamp()) * 1000 AS ms`)).rows[0]?.ms));
+        const clock = new Date(Number((await tx.execute(sql`SELECT EXTRACT(EPOCH FROM clock_timestamp()) * 1000 AS ms`)).rows[0]?.ms));
         if (!Number.isFinite(clock.getTime())) throw new ManualSubscriptionError("SUBSCRIPTION_DATES_INVALID");
         cycleAnchor = new Date(Math.max(clock.getTime(), start.getTime()));
       }
