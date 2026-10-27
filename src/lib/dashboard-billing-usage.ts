@@ -23,6 +23,7 @@ export function dashboardSubscriptionSummary(value: unknown): DashboardSubscript
 export type DashboardBillingUsageResult<T> =
   | { kind: "available"; usage: T }
   | { kind: "unsubscribed" }
+  | { kind: "status_only" }
   | { kind: "forbidden" }
   | { kind: "unavailable" };
 
@@ -30,6 +31,7 @@ export async function fetchDashboardBillingUsage<T>(
   request: (url: string, init: RequestInit) => Promise<Response>,
   signal: AbortSignal,
   onSubscription?: (summary: DashboardSubscriptionSummary | null) => void,
+  allowUsage = true,
 ): Promise<DashboardBillingUsageResult<T>> {
   const init: RequestInit = { credentials: "same-origin", cache: "no-store", signal };
   const status = await request("/api/billing/status", init);
@@ -43,6 +45,8 @@ export async function fetchDashboardBillingUsage<T>(
   }
   if (!signal.aborted) onSubscription?.(dashboardSubscriptionSummary(summary));
   if (!(summary as { hasSubscription: boolean }).hasSubscription) return { kind: "unsubscribed" };
+  // Full Access users can see if printing is paused, but not owner-only usage or terms.
+  if (!allowUsage) return { kind: "status_only" };
 
   const usageResponse = await request("/api/billing/usage", init);
   if (usageResponse.status === 401 || usageResponse.status === 403) return { kind: "forbidden" };

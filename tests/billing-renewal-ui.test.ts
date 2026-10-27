@@ -24,5 +24,7 @@ describe("workspace subscription page", () => {
     expect(dash).toContain('v4.subscription.expiringSoonTitle');
     expect(billing).toContain('v4.subscription.quotaPausedBody');
     expect(admin).toContain("renewalKeepsUsage");
+    expect(dash).toContain("!canReadBillingUsage && subscription.customerState");
+    expect(dash).toContain("billingAccess={canReadBillingUsage}");
   });
 });
