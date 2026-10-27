@@ -18,6 +18,7 @@ import { getAgentAvailability } from "../../../../../lib/agent-availability";
 import { hasBodyOverLimit } from "../../../../../lib/request-limits";
 import { receiptPaperWidthMM } from "../../../../../lib/receipt-width";
 import { validatePayloadForPrinter } from "../../../../../lib/printer-capability";
+import { isExactIdempotencyKey } from "../../../../../lib/idempotency";
 
 const CERTIFY_MAX_BODY_BYTES = 16 * 1024;
 
@@ -133,22 +134,24 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       // Certify's physical test is also a test_page in the authenticated
       // Gateway envelope, so Windows Agent can use live selected driver paper.
       const documentType = testPage ? "test_page" : (typeof body.documentType === "string" ? body.documentType : "raw");
-      // Idempotency: header preferred, then body, then deterministic fallback per certification session
-      const headerKey = req.headers.get("Idempotency-Key")?.trim();
-      const bodyKey = typeof body.idempotencyKey === "string" ? body.idempotencyKey.trim() : null;
-      const providedKey = headerKey || bodyKey;
-      // If the client provides a key, preserve it across retries. Otherwise the auto-key
-      // deduplicates double-clicks for the same tenant/printer within one minute.
-      // Explicit Idempotency-Key is the contract for retry-safe response-loss recovery across time;
-      // the auto-key is intentionally short-lived convenience deduplication only
-      const minuteBucket = Math.floor(certificationNowMs / 60000);
-      const autoKey = `cert:${printerId}:${tenantId}:${minuteBucket}`;
-      const idempotencyKey = providedKey && providedKey.length >= 8 && providedKey.length <= 200 ? providedKey : autoKey;
-
-      if (providedKey && (providedKey.length < 8 || providedKey.length > 200)) {
-        setStep("queue", "error", "Invalid Idempotency-Key length", `length=${providedKey.length}`);
+      // Idempotency: header preferred, then body, then deterministic fallback per certification session.
+      // Keys are opaque operation identities. Never trim a body key (or
+      // substitute an auto-key for an explicitly empty/malformed one), because
+      // that can turn a distinct caller operation into a duplicate print.
+      const headerKey = req.headers.get("Idempotency-Key");
+      const bodyKeyPresent = Object.prototype.hasOwnProperty.call(body, "idempotencyKey");
+      const providedKeyPresent = headerKey !== null || bodyKeyPresent;
+      const providedKey = headerKey !== null ? headerKey : body.idempotencyKey;
+      if (providedKeyPresent && (!isExactIdempotencyKey(providedKey) || providedKey.length < 8)) {
+        const evidence = typeof providedKey === "string" ? `length=${providedKey.length}` : "invalid-key-type";
+        setStep("queue", "error", "Invalid Idempotency-Key", evidence);
         return NextResponse.json({ error: "invalid Idempotency-Key", code: "INVALID_REQUEST", steps }, { status: 400, headers: { "x-request-id": requestId } });
       }
+      // If the client provides a key, preserve it exactly across retries.
+      // Otherwise the short-lived auto-key deduplicates accidental double-clicks.
+      const minuteBucket = Math.floor(certificationNowMs / 60000);
+      const autoKey = `cert:${printerId}:${tenantId}:${minuteBucket}`;
+      const idempotencyKey = providedKeyPresent && typeof providedKey === "string" ? providedKey : autoKey;
 
       // Build payload YASEIR TEST PAGE in the LANGUAGE THE PRINTER SPEAKS.
       // The printable payload MUST be deterministic for one idempotency key.
