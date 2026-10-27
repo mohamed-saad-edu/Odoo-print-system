@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
 import { parseManualPlan } from "../src/lib/manual-plans";
 import { formatPlanPrice, formatPlanPriceDisplay } from "../src/lib/plan-price";
 const base={id:"basic",name:"Basic",description:"",monthlyQuota:1000};
@@ -32,6 +33,15 @@ describe("manual price catalog",()=>{
   }
   expect(parseManualPlan({...base,displayOrder:0}).displayOrder).toBe(0);
   expect(parseManualPlan(base).displayOrder).toBe(0);
+ });
+
+ it("keeps the Platform Owner plan form limits aligned with the parser",()=>{
+  const source=readFileSync("src/app/platform/plans/page.tsx","utf8");
+  expect(source).toContain("maxLength={k==='description'?500:k==='id'?64:120}");
+  expect(source).toContain("pattern={k==='id'?'[a-z0-9][a-z0-9_-]{1,63}':undefined}");
+  expect(source).toContain("max={k==='monthlyQuota'?2147483647:k==='displayOrder'?1000000:undefined}");
+  expect(source).toContain('pattern="(?:0|[1-9][0-9]{0,9})(?:[.][0-9]{1,2})?"');
+  expect(source).toContain("maxLength={13}");
  });
  it("formats only configured currency and amount",()=>{
   expect(formatPlanPrice(1995,"USD","en")).toContain("19.95");
