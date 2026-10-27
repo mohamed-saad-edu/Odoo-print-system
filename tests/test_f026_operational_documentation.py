@@ -57,6 +57,26 @@ def test_migration_inventory_matches_current_journal():
     assert '"printers_sharing_version_check"' in sharing
     assert "'^[1-9][0-9]{0,18}$'" in sharing and '9223372036854775807' in sharing
 
+def test_canonical_quota_docs_match_immutable_calendar_month_migration():
+    # The migration ledger defines today's shipped quota contract. Earlier
+    # forward migrations remain immutable history, not current policy.
+    journal = json.loads(read('drizzle/meta/_journal.json'))['entries']
+    newest = journal[-1]['tag']
+    assert newest == '0102_calendar_month_print_allowance'
+    database = read('docs/DATABASE.md')
+    assert f"**{len(journal)} forward-only SQL migrations (`0000`–`0102`)**" in database
+    notebook = read('docs/engineering/SYSTEM_UNIFICATION_NOTEBOOK.md')
+    canonical = notebook.split('## 2. End-to-end flows')[0]
+    invariants = notebook.split('## 3. Canonical invariants and verification owners')[1].split('## 4. Issue/evidence register')[0]
+    assert '0102_calendar_month_print_allowance.sql' in canonical
+    assert 'UTC calendar month' in canonical
+    assert 'fixed 30×24-hour UTC cycles' not in canonical
+    assert '| BILL-02 |' in invariants and 'UTC calendar month' in invariants
+    assert '| DATA-02 | 103 immutable SQL migrations through `0102`' in invariants
+    assert 'Credit cycle = 30 UTC days' not in invariants
+    assert '**State: OPEN / P0 policy consistency' not in notebook
+
+
 def test_adr_targets_are_not_presented_as_measured_guarantees():
     content=read('ADR.md')
     assert '100% reliable job delivery' not in content
