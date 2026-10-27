@@ -149,7 +149,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           && ip === device.ipAddress && cfg?.port === device.port) {
           // Legacy exact host:port shortcut must enforce the same withdrawal
           // fence as matchingPhysicalPrinter below.
-          if (p.lifecycle === "retired" || p.sharedWithGateway === false)
+          if (p.lifecycle !== "active" || p.sharedWithGateway === false)
             return { kind: "invalid_endpoint" as const, error: "This physical endpoint was removed or withheld from the Gateway" };
           await tx.update(discoveredDevices)
             .set({ candidateStatus: "provisioned", provisionedPrinterId: p.id, updatedAt: sql`now()` })
@@ -162,7 +162,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           && (transport.connectionType === "ipp" || transport.connectionType === "ipps")
           && typeof cfg?.address === "string"
           && (cfg.address === expectedIppAddress || (device.uri != null && cfg.address === device.uri))) {
-          if (p.lifecycle === "retired" || p.sharedWithGateway === false)
+          if (p.lifecycle !== "active" || p.sharedWithGateway === false)
             return { kind: "invalid_endpoint" as const, error: "This physical endpoint was removed or withheld from the Gateway" };
           await tx.update(discoveredDevices)
             .set({ candidateStatus: "provisioned", provisionedPrinterId: p.id, updatedAt: sql`now()` })
@@ -213,7 +213,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const existingPrinters = await tx.query.printers.findMany({ where: and(eq(printers.agentId, agentId), eq(printers.tenantId, claims.tenantId)) });
     const matching = matchingPhysicalPrinter(existingPrinters, { connectionType: transport.connectionType, protocol: transport.protocol, config: printerConfig });
     if (matching) {
-      if (matching.lifecycle === "retired" || matching.sharedWithGateway === false)
+      if (matching.lifecycle !== "active" || matching.sharedWithGateway === false)
         return { kind: "invalid_endpoint" as const, error: "This physical endpoint was removed or withheld from the Gateway" };
       if (!samePrinterProtocol(matching, { connectionType: transport.connectionType, protocol: transport.protocol, config: printerConfig })) {
         return { kind: "invalid_endpoint" as const, error: "Physical endpoint already uses another print protocol. Configure the existing printer." };
@@ -229,7 +229,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     if (existing) {
       // Canonical identity matching can be absent on historical records.
       // Even this final legacy fallback cannot override operator withdrawal.
-      if (existing.lifecycle === "retired" || existing.sharedWithGateway === false)
+      if (existing.lifecycle !== "active" || existing.sharedWithGateway === false)
         return { kind: "invalid_endpoint" as const, error: "This physical endpoint was removed or withheld from the Gateway" };
       await tx.update(discoveredDevices).set({ candidateStatus: "provisioned", provisionedPrinterId: existing.id, updatedAt: sql`now()` })
         .where(and(eq(discoveredDevices.id, deviceId), eq(discoveredDevices.tenantId, claims.tenantId), eq(discoveredDevices.agentId, agentId), eq(discoveredDevices.candidateStatus, "verified")));
