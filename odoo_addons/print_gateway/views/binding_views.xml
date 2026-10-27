@@ -56,7 +56,7 @@
                         <field name="destination_pos_printer_id" string="Odoo Preparation Printer"
                                invisible="destination_type != 'pos_printer'"
                                domain="['|', ('company_id', '=', False), ('company_id', '=', effective_company_id)]"
-                               help="Odoo 19 Preparation Printer. Its Printed Product Categories determine which kitchen lines reach this Gateway runtime printer."/>
+                               help="Odoo Preparation Printer. Its Printed Product Categories determine which kitchen lines reach this Gateway runtime printer."/>
                         <field name="destination_picking_type_id" string="Operation Type"
                                invisible="destination_type != 'picking_type'" required="destination_type == 'picking_type'"
                                domain="['&amp;', '|', ('company_id', '=', False), ('company_id', '=', effective_company_id), ('active', '=', True)]"/>

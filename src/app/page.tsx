@@ -403,7 +403,7 @@ function PublicFooter({ t }: { t: Translator }) {
           <Link href="/pricing" className="rounded-xs transition-colors hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/35 focus-visible:ring-offset-2">{t("home.navPricing")}</Link>
           <Link href="/login" className="rounded-xs transition-colors hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/35 focus-visible:ring-offset-2">{t("auth.signIn.submit")}</Link>
           <Link href="/signup" className="rounded-xs transition-colors hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/35 focus-visible:ring-offset-2">{t("auth.signup.submit")}</Link>
-          <span className="text-ink-3">Odoo 19</span>
+          <span className="text-ink-3">Odoo</span>
         </nav>
       </div>
     </footer>

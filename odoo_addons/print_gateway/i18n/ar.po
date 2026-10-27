@@ -1898,8 +1898,8 @@ msgstr "محتوى الأوامر الأصلية"
 
 #. module: print_gateway
 #: model:ir.model.fields,help:print_gateway.field_print_gateway_binding__destination_pos_printer_id
-msgid "Native Odoo 19 preparation-printer identity. Its product categories determine which kitchen lines this Gateway binding receives."
-msgstr "معرّف طابعة التحضير الأصلية في Odoo 19. تحدد فئات منتجاتها أسطر المطبخ التي تستقبلها قاعدة الـ Gateway هذه."
+msgid "Native Odoo preparation-printer identity. Its product categories determine which kitchen lines this Gateway binding receives."
+msgstr "معرّف طابعة التحضير الأصلية في Odoo. تحدد فئات منتجاتها أسطر المطبخ التي تستقبلها قاعدة الـ Gateway هذه."
 
 #. module: print_gateway
 #: model:ir.model.fields.selection,name:print_gateway.selection__print_gateway_print_job__payload_type__raw_cmd
@@ -2061,8 +2061,8 @@ msgstr "لم يُطبع"
 
 #. module: print_gateway
 #: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_binding_form
-msgid "Odoo 19 Preparation Printer. Its Printed Product Categories determine which kitchen lines reach this Gateway runtime printer."
-msgstr "طابعة تحضير في Odoo 19. تحدد فئات المنتجات المطبوعة الخاصة بها أي سطور المطبخ تصل إلى طابعة الـ Gateway هذه."
+msgid "Odoo Preparation Printer. Its Printed Product Categories determine which kitchen lines reach this Gateway runtime printer."
+msgstr "طابعة تحضير في Odoo. تحدد فئات المنتجات المطبوعة الخاصة بها أي سطور المطبخ تصل إلى طابعة الـ Gateway هذه."
 
 #. module: print_gateway
 #: model:ir.model.fields,field_description:print_gateway.field_print_gateway_binding__branch_id
