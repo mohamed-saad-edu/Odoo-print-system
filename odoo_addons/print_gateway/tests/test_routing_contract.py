@@ -536,6 +536,76 @@ class TestPrintGatewayRoutingContract(TransactionCase):
             cr.rollback()
             cr.close()
 
+    def test_unclassified_gateway_5xx_never_reposts_an_ambiguous_print(self):
+        """A reverse proxy may return 500/502/503 after an upstream admission.
+
+        The HTTP code alone does not establish pre-dispatch refusal. Retain
+        the original immutable job key for status reconciliation and prohibit
+        automated physical replay.
+        """
+        for status, code in ((500, "INTERNAL_ERROR"), (502, ""), (503, "INTERNAL_ERROR"), (503, "")):
+            with self.subTest(status=status, code=code):
+                job_id = self._job("unclassified-%d-%s" % (status, uuid.uuid4().hex[:10]))
+                cr = self.env.registry.cursor()
+                try:
+                    env = api.Environment(cr, self.env.uid, dict(self.env.context))
+                    company = env["res.company"].browse(self.durable_company_id).exists()
+                    job = env["print_gateway.print_job"].with_company(company).browse(job_id).exists()
+                    response = Mock(status_code=status)
+                    response.json.return_value = {"code": code} if code else {}
+                    with patch("odoo.addons.print_gateway.models.print_job.requests.post", return_value=response) as post:
+                        job.action_submit(raise_on_failure=False)
+                        post.assert_called_once()
+                    cr.rollback()
+                finally:
+                    cr.close()
+
+                cr = self.env.registry.cursor()
+                try:
+                    env = api.Environment(cr, self.env.uid, dict(self.env.context))
+                    company = env["res.company"].browse(self.durable_company_id).exists()
+                    job = env["print_gateway.print_job"].with_company(company).browse(job_id).exists()
+                    self.assertEqual(job.status, "unknown", (status, code))
+                    self.assertFalse(job.next_retry_at)
+                    self.assertTrue(job.last_error.startswith("UNKNOWN_SUBMISSION_OUTCOME:"))
+                    self.assertEqual(job.physical_outcome, "unknown")
+                    self.assertTrue(job._needs_gateway_status_reconciliation(job))
+                    with patch("odoo.addons.print_gateway.models.print_job.requests.post") as post:
+                        job.action_submit(raise_on_failure=False)
+                        post.assert_not_called()
+                finally:
+                    cr.rollback()
+                    cr.close()
+
+    def test_typed_gateway_queue_full_refusal_keeps_safe_503_backoff(self):
+        """A *typed* Gateway capacity rejection is a pre-admission refusal."""
+        job_id = self._job("typed-queue-full-" + uuid.uuid4().hex[:10])
+        cr = self.env.registry.cursor()
+        try:
+            env = api.Environment(cr, self.env.uid, dict(self.env.context))
+            company = env["res.company"].browse(self.durable_company_id).exists()
+            job = env["print_gateway.print_job"].with_company(company).browse(job_id).exists()
+            response = Mock(status_code=503)
+            response.json.return_value = {"code": "AGENT_QUEUE_FULL", "retryable": True}
+            with patch("odoo.addons.print_gateway.models.print_job.requests.post", return_value=response) as post:
+                job.action_submit(raise_on_failure=False)
+                post.assert_called_once()
+            cr.rollback()
+        finally:
+            cr.close()
+
+        cr = self.env.registry.cursor()
+        try:
+            env = api.Environment(cr, self.env.uid, dict(self.env.context))
+            company = env["res.company"].browse(self.durable_company_id).exists()
+            job = env["print_gateway.print_job"].with_company(company).browse(job_id).exists()
+            self.assertEqual(job.status, "queued")
+            self.assertTrue(job.next_retry_at)
+            self.assertTrue(job.last_error.startswith("GATEWAY_BUSY_503:"))
+        finally:
+            cr.rollback()
+            cr.close()
+
     def test_namespace_reconciliation_never_resubmits_ambiguous_historical_operation(self):
         """A 409 namespace collision may refer to paper already printed elsewhere.
 
