@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { GET as resolutionGET } from "../src/app/api/odoo/installations/resolutions/route";
+import { makeLegacyOdooKey } from "../src/lib/odoo-idempotency";
 import { createWorkspaceManagerTestSession } from "./helpers/workspace-session";
-import { applyMigrations, closePool, hasTestDatabase, pool, seedFixture, truncateAll, type Fixture } from "./helpers/pg";
+import { applyMigrations, closePool, hasTestDatabase, insertQueuedJob, pool, seedFixture, truncateAll, type Fixture } from "./helpers/pg";
 
 const suite = describe.skipIf(!hasTestDatabase);
 
@@ -47,6 +48,45 @@ suite("legacy reconciliation preview needs a live tenant/session", () => {
     expect(body.history).toBeNull();
     expect(body.resolution).toBeNull();
     expect(JSON.stringify(body)).not.toContain("c".repeat(64));
+  });
+
+  it("does not block a read-only preview behind a concurrent historical row update", async () => {
+    const historicalId = "legacy_preview_update_race";
+    await insertQueuedJob(fixture, historicalId);
+    const legacyKey = makeLegacyOdooKey("1", "original-receipt");
+    const keyId = (await pool().query("SELECT id FROM api_keys WHERE tenant_id=$1", [fixture.tenantId])).rows[0].id;
+    await pool().query(
+      "UPDATE print_jobs SET api_key_id=$1,idempotency_key=$2 WHERE id=$3",
+      [keyId, legacyKey, historicalId],
+    );
+    const blocker = await pool().connect();
+    let pending: Promise<Response> | undefined;
+    let finished = false;
+    try {
+      await blocker.query("BEGIN");
+      await blocker.query(
+        "UPDATE print_jobs SET updated_at=clock_timestamp() WHERE id=$1",
+        [historicalId],
+      );
+      pending = resolutionGET(request()).then(response => {
+        finished = true;
+        return response;
+      });
+      void pending.catch(() => undefined);
+      // Preview must read a stable committed version, not lock historical
+      // print job rows. POST reconciliation still takes FOR UPDATE and
+      // revalidates the exact fingerprint/receipt before altering anything.
+      await expect.poll(() => finished, { timeout: 2_500, interval: 50 }).toBe(true);
+      const response = await pending;
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({
+        history: { id: historicalId, status: "queued" },
+      });
+    } finally {
+      await blocker.query("ROLLBACK");
+      blocker.release();
+      await pending?.catch(() => undefined);
+    }
   });
 
   it.each(["suspend", "revoke"] as const)(
