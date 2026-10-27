@@ -59,6 +59,7 @@ const CODE_KEYS: Record<string, MessageKey> = {
   // Request shape
   INVALID_OFFSET: "errors.invalidPaginationOffset",
   INVALID_LIMIT: "errors.invalidPaginationLimit",
+  INVALID_PAGINATION: "errors.invalidPagination",
   INVALID_REQUEST: "errors.requestRejected",
   INVALID_BODY: "errors.requestRejected",
   INVALID_PAYLOAD: "errors.requestRejected",
