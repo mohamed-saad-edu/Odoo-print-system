@@ -102,7 +102,7 @@ suite('V4 manual subscriptions security and accounting',()=>{
   });
 
   await expect(mutateManualSubscription('workspace',claims,randomUUID(),input({requestId:id,term:'monthly'})))
-    .rejects.toMatchObject({code:'SUBSCRIPTION_REQUEST_CONFLICT'});
+    .rejects.toMatchObject({code:'SUBSCRIPTION_REQUEST_TERMS_MISMATCH'});
   expect((await db.query.subscriptionRequests.findFirst())?.status).toBe('pending');
 
   await mutateManualSubscription('workspace',claims,randomUUID(),input({requestId:id}));
