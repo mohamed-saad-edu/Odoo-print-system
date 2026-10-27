@@ -4,7 +4,7 @@
 
 Status key: `INDEXED` = path enumerated only; `PARTIAL` = excerpts or sections inspected; `READ` = file content read at least once without a correctness guarantee; `AUTHORED` = created during this documentation run. A file's successful component/integration test must be tracked separately in the notebook, not inferred from READ. No source file is marked functionally VERIFIED by this inventory alone.
 
-**Status counts after the 2026-10-28 live review**: {"INDEXED":1838,"READ":26,"PARTIAL":28,"AUTHORED":2}. Coverage: 1892 existing tracked files indexed, 0 of 1892 independently signed off as production-ready.
+**Status counts after the 2026-10-28 live review**: {"INDEXED":1837,"PARTIAL":29,"READ":26,"AUTHORED":2}.. Coverage: 1892 existing tracked files indexed, 0 of 1892 independently signed off as production-ready.
 
 ## .github (8)
 
@@ -1427,7 +1427,7 @@ INDEXED tests/authentication-cutover.test.ts
 INDEXED tests/authorization-denial-logging.test.ts
 INDEXED tests/batch-status.test.ts
 INDEXED tests/billing-controls.test.ts
-INDEXED tests/billing-entitlement-access.test.ts
+PARTIAL tests/billing-entitlement-access.test.ts
 INDEXED tests/billing-log-contract.test.ts
 INDEXED tests/billing-portal-idempotency.test.ts
 INDEXED tests/billing-renewal-i18n.contract.test.ts

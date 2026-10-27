@@ -93,12 +93,18 @@ suite("billing entitlement access policy", () => {
       tenantId,
       planId,
       status: "active",
+      // An active manual contract must have a future expiry; otherwise the
+      // contract gate rejects it before the entitlement-block policy is reached.
+      currentPeriodEnd: new Date(Date.now() + 86_400_000),
       entitlementBlocked: true,
       entitlementBlockedReason: "manual_review_required",
     });
 
     await expect(getTenantEntitlementLimit(db, tenantId, "max_printers"))
       .rejects.toBeInstanceOf(TenantEntitlementConfigError);
+    const result = await db.execute(sql`SELECT 1 AS admitted FROM tenants t
+      WHERE t.id = ${tenantId} AND ${liveTenantSubscriptionPredicate(sql`t.id`)}`);
+    expect(result.rows).toHaveLength(0);
   });
 
   it("does not grant perpetual printing when an active manual contract lacks an expiry", async () => {

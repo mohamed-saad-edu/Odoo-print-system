@@ -101,3 +101,13 @@ Verification sequence: immutable migration journal parity → type/lint/localiza
 ### Verified regression reconciliation and security patch
 
 On `main@172e85866bb9cb6ef84120450399fbe19dc74869`, the native UI suite logged 679 passes / 1 failure (CI `40592702785`). The one failing test expected a pending invitation list despite mocking a non-owner profile, contradicting the newly enforced owner-only API/UI contract. Keep its stale-response assertions but use an owner fixture; add an independent Full Access test to ensure no invitation read/render. The change preserves intentional denial rather than weakening permissions. Latest independent commit `433057118fb99574a7254a31e3c1319508ffc9a8` separately installs the SHA-256-pinned Ubuntu Brotli security patch; CI verification of that exact image/commit remains necessary. No physical-printing claim.
+
+## 9. 2026-10-28 — BILL-CI-001: blocked-plan fixture vs active-contract expiry
+
+**Baseline evidence**: `main@a93017eaeeefb2235b2174a5c50e410d644df0a0`, GitHub Actions CI run `40593133779`, App / Gateway integration job: 768 passed, 1 failed in `tests/billing-entitlement-access.test.ts` at the case “fails closed when billing configuration explicitly blocks entitlements”. `getTenantEntitlementLimit` returned `TenantSubscriptionRequiredError` instead of the test's expected `TenantEntitlementConfigError`.
+
+**Root cause**: The fixture set `status: "active"` and `entitlementBlocked: true` but did not populate `currentPeriodEnd`. The shared live-contract predicate in `src/lib/entitlements.ts` deliberately rejects missing/expired contract dates **before** checking entitlement configuration. That ordering is security-correct and matches the separate regression test proving a missing end date cannot grant perpetual printing.
+
+**Repair**: For this *specific* blocked-entitlement test, provide an explicit future contract end, keeping the real configuration block as the only reason for denial. Assert both the expected `TenantEntitlementConfigError` and that the correlated live-subscription predicate continues to exclude this blocked tenant. Preserve runtime predicates, subscription data and immutable migrations unchanged. The already-existing missing-expiry test remains intact. No auth/scanner/test gate was weakened.
+
+**Verification**: The prior CI failure constitutes RED evidence. Record the *new commit*'s exact App / Gateway integration and quality gate outcome after GitHub Actions completes; until then verification is pending, not PASS. Physical printer tests were not run for this billing-test fix.
