@@ -1943,19 +1943,35 @@ class PrintGatewayJob(models.Model):
                                         )
                                     )
                                 break
-                            # Any other 503 (queue-full capacity, unknown
-                            # shape) is transient: the printer/agent state may
-                            # recover, so keep the durable outbox queued with
-                            # backoff exactly like the 429 path. Interactive
-                            # callers get an actionable re-queued message.
-                            values = self._billing_retry_values(
-                                job,
-                                "GATEWAY_BUSY_503: %s" % (reject_msg or reject_code or "printer temporarily busy"),
-                                60,
+                            # The Gateway's typed capacity denials occur
+                            # before job admission and cannot have printed.
+                            # A generic proxy/HTTP 503 is NOT the same proof:
+                            # an upstream print may already have been accepted.
+                            if reject_code in ("AGENT_QUEUE_FULL", "AGENT_QUEUED_QUEUE_FULL") and reject_body.get("retryable") is True:
+                                values = self._billing_retry_values(
+                                    job,
+                                    "GATEWAY_BUSY_503: %s" % reject_code,
+                                    60,
+                                )
+                                persist_submit_state(values)
+                                if raise_on_failure:
+                                    raise ValidationError(_("The printer is temporarily busy. The job was safely re-queued for retry."))
+                                break
+                            self._record_ambiguous_submission(
+                                job, RuntimeError("GATEWAY_HTTP_503"),
+                                "Unclassified HTTP 503; Gateway acceptance could not be excluded",
+                                raise_on_failure, claim_token,
                             )
-                            persist_submit_state(values)
-                            if raise_on_failure:
-                                raise ValidationError(_("The printer is temporarily busy. The job was safely re-queued for retry."))
+                            break
+                        if 500 <= response.status_code <= 599:
+                            # A reverse proxy can emit 500/502/504 after the
+                            # backend committed a print job. Neither a retryable
+                            # flag nor an HTTP status is proof of non-admission.
+                            self._record_ambiguous_submission(
+                                job, RuntimeError("GATEWAY_HTTP_%s" % response.status_code),
+                                "HTTP %s without proven pre-admission refusal" % response.status_code,
+                                raise_on_failure, claim_token,
+                            )
                             break
                         raise RuntimeError("GATEWAY_HTTP_%s" % response.status_code)
                     try:
