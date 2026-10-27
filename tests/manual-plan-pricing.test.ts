@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parseManualPlan } from "../src/lib/manual-plans";
-import { formatPlanPrice } from "../src/lib/plan-price";
+import { formatPlanPrice, formatPlanPriceDisplay } from "../src/lib/plan-price";
 const base={id:"basic",name:"Basic",description:"",monthlyQuota:1000};
 describe("manual price catalog",()=>{
  it("stores exact USD/SAR minor units",()=>{
@@ -26,4 +26,14 @@ describe("manual price catalog",()=>{
   expect(formatPlanPrice(-1,"USD","en")).toBeNull();
   expect(formatPlanPrice(0,"USD","en")).toContain("0.00");
  });
+ it("keeps amount and ISO currency in separate, locale-aware display tiers",()=>{
+  expect(formatPlanPriceDisplay(1995,"USD","en")).toEqual({amount:"19.95",currency:"USD"});
+  expect(formatPlanPriceDisplay(0,"USD","en")).toEqual({amount:"0.00",currency:"USD"});
+  expect(formatPlanPriceDisplay(1995,"SAR","ar")?.currency).toBe("SAR");
+  expect(formatPlanPriceDisplay(1995,"SAR","ar")?.amount).toContain("19");
+  expect(formatPlanPriceDisplay(null,"USD","en")).toBeNull();
+  expect(formatPlanPriceDisplay(-1,"SAR","ar")).toBeNull();
+  expect(formatPlanPriceDisplay(100,"EUR","en")).toBeNull();
+ });
+
 });
