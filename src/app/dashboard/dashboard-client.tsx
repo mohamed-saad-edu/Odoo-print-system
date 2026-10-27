@@ -1387,6 +1387,10 @@ export default function DashboardClient({
   const printsLimitReached = prints && prints.limit !== "unlimited" && prints.remaining !== "unlimited" && prints.remaining === 0;
   const printsPercent =
     prints && prints.limit !== "unlimited" ? (prints.used / Math.max(1, prints.limit)) * 100 : null;
+  const remainingContractMs = subscription?.customerState === "active" && subscription.currentPeriodEnd
+    ? Date.parse(subscription.currentPeriodEnd) - nowMs : null;
+  const subscriptionExpiresSoon = remainingContractMs !== null && remainingContractMs > 0 &&
+    remainingContractMs <= 7 * 24 * 60 * 60 * 1000;
   const printerStatusOptions = ["all", "ready", "printing", "attention", "unavailable", "saved"] as const;
 
   const onlineAgentsLabel =
@@ -1411,6 +1415,14 @@ export default function DashboardClient({
           {t(item === "home" ? "v4.experience.home" : item === "printers" ? "desktop.nav.printers" : item === "agents" ? "dashboard.tab.agents" : "v4.experience.activity")}
         </a>)}
       </nav>
+      {canReadBillingUsage && printsLimitReached && subscription?.customerState === "active" && <Callout tone="bad" title={t("v4.subscription.quotaPausedTitle")}>
+        <p>{t("v4.subscription.quotaPausedBody")}</p>
+        <div className="mt-3"><Button href="/billing" variant="secondary">{t("v4.subscription.renewalRequest")}</Button></div>
+      </Callout>}
+      {canReadBillingUsage && subscriptionExpiresSoon && subscription?.currentPeriodEnd && <Callout tone="warn" title={t("v4.subscription.expiringSoonTitle")}>
+        <p>{t("v4.subscription.expiringSoonBody", { date: formatManualCalendarDate(subscription.currentPeriodEnd, locale) ?? t("common.notAvailable") })}</p>
+        <div className="mt-3"><Button href="/billing" variant="secondary">{t("v4.subscription.renewalRequest")}</Button></div>
+      </Callout>}
       {view === "home" && <Card className="space-y-5 p-5 sm:p-6">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="min-w-0"><h2 className="text-xl font-semibold text-ink">{t("v4.experience.health.title")}</h2></div>

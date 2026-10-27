@@ -42,15 +42,14 @@ export function isBillingAccessStatus(status: string | null | undefined): boolea
  * (pairing, key creation, and printing all return 403 SUBSCRIPTION_REQUIRED),
  * while a host running behind would keep an expired subscription provisioned.
  *
- * A null period end means "no period boundary recorded yet" and stays live —
- * matching the SQL predicates in `getTenantEntitlementLimit`, which treat
- * `period_end IS NULL` as live for active rows.
+ * An active manual contract MUST have a finite end. Legacy null deadlines
+ * fail closed until the Platform Owner records an explicit contract term.
  */
 export function isSubscriptionPeriodLive(
   currentPeriodEnd: Date | string | null | undefined,
   nowMs: number = gatewayNowMs(),
 ): boolean {
-  if (currentPeriodEnd === null || currentPeriodEnd === undefined) return true;
+  if (currentPeriodEnd === null || currentPeriodEnd === undefined) return false;
   const endsAt = currentPeriodEnd instanceof Date ? currentPeriodEnd.getTime() : parseEntitlementDate(currentPeriodEnd)?.getTime();
   if (typeof endsAt !== "number" || Number.isNaN(endsAt)) return false;
   return endsAt > nowMs;
@@ -145,10 +144,7 @@ export function liveTenantSubscriptionWhere(tenantId: SQL, requireUnblocked = tr
   return sql`
     ts.tenant_id = ${tenantId}
     AND ts.status = 'active' AND ts.current_period_start <= clock_timestamp()
-    AND (
-      ts.current_period_end IS NULL
-      OR ts.current_period_end > clock_timestamp()
-    )
+    AND ts.current_period_end > clock_timestamp()
     ${unblocked}
   `;
 }
@@ -163,10 +159,7 @@ export function liveTenantSubscriptionPredicate(tenantId: SQL, requireUnblocked 
       FROM tenant_subscriptions ts
       WHERE ts.tenant_id = ${tenantId}
         AND ts.status = 'active' AND ts.current_period_start <= clock_timestamp()
-        AND (
-          ts.current_period_end IS NULL
-          OR ts.current_period_end > clock_timestamp()
-        )
+        AND ts.current_period_end > clock_timestamp()
         ${unblocked}
     )
   `;

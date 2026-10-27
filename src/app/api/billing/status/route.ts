@@ -4,6 +4,7 @@ import { tenantSubscriptions, tenants } from "../../../../db/schema";
 import { validateWorkspaceManager } from "../../../../lib/manager-auth";
 import { eq } from "drizzle-orm";
 import { customerSubscriptionState } from "../../../../lib/manual-subscriptions";
+import { hasManagerPermission } from "../../../../lib/authorization";
 import { databaseNowMs } from "../../../../lib/database-clock";
 
 export const dynamic = "force-dynamic";
@@ -21,5 +22,10 @@ export async function GET(req: Request) {
     hasSubscription: status === "active",
     status, customerState: status,
     entitlementBlocked: subscription?.entitlementBlocked ?? false,
+    // Dates are commercial contract data. Full Access members receive only the
+    // availability state; only the workspace owner sees renewal deadlines.
+    ...(hasManagerPermission(member, "billing.read") ? {
+      currentPeriodEnd: subscription?.currentPeriodEnd?.toISOString() ?? null,
+    } : {}),
   }, { headers: { "Cache-Control": "private, no-store" } });
 }

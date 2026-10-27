@@ -62,6 +62,10 @@ export default async function BillingPage({ searchParams }: { searchParams: Prom
     <PageHeader title={t("v4.subscription.title")} description={t("v4.subscription.intro")} icon={<CreditCard className="h-4 w-4" />} meta={<StatusBadge tone={tone} label={t(statusKey[status])} />}  />
     <PageContainer><div className="space-y-5">
       {status !== "active" && <Callout tone={tone} title={t(statusKey[status])}>{t(status === "expired" ? "v4.subscription.expiredBody" : status === "suspended" ? "v4.subscription.suspendedBody" : "v4.subscription.pendingBody")}</Callout>}
+      {status === "active" && usage?.remaining === 0 && <Callout tone="bad" title={t("v4.subscription.quotaPausedTitle")}>
+        <p>{t("v4.subscription.quotaPausedBody")}</p>
+        <div className="mt-3"><Button href="#billing-actions" variant="secondary">{t("v4.subscription.renewalRequest")}</Button></div>
+      </Callout>}
       <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1.4fr)_minmax(280px,1fr)]"><div className="space-y-5">
         <Card><CardHeader title={t(status === "active" ? "v4.subscription.yourCurrentPlan" : "v4.subscription.recordedContract")} subtitle={t(status === "active" ? "v4.subscription.currentContract" : "v4.subscription.recordedContract")} icon={<CalendarDays className="h-4 w-4" />} /><div className="px-5 pt-4 text-lg font-semibold">{plan?.name ?? t("billing.noPlanSelected")}</div>{publishedPlanPrice && <p className="px-5 pt-2 text-sm text-ink-3">{t("v4.subscription.catalogPrice")}: <bdi dir="auto">{publishedPlanPrice}</bdi></p>}<dl className="grid gap-5 p-5 sm:grid-cols-2">
           {[[t("v4.subscription.type"), t(sub?.subscriptionType === "free" ? "v4.subscription.free" : sub?.subscriptionType === "paid" ? "v4.subscription.paid" : "v4.subscription.notSet")], [t("v4.onboarding.term"), billingTermLabel(sub?.term, t)], [t("v4.subscription.start"), date(sub?.currentPeriodStart)], [t("v4.subscription.end"), date(sub?.currentPeriodEnd)]].map(([label,value]) => <div key={label}><dt className="text-sm text-ink-3">{label}</dt><dd className="mt-1 font-semibold"><bdi dir="auto">{value}</bdi></dd></div>)}

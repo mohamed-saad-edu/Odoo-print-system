@@ -68,6 +68,20 @@ test("monthly allowance reset shows the exact UTC boundary from Saudi and wester
   }
 });
 
+test("billing dialog tells POS operators to reprint manually, never promises delayed automatic output", async () => {
+  const dialogs = [];
+  const { showGatewayBillingLimitDialog } = await load("js/gateway_limit_dialog.js", {}, {
+    "@web/core/confirmation_dialog/confirmation_dialog": { ConfirmationDialog: class {} },
+  });
+  const shown = showGatewayBillingLimitDialog({
+    services: { dialog: { add: (_component, props) => dialogs.push(props) }, action: {} },
+  }, {
+    entitlement: "max_prints_per_period", message: "No credit", used: 10, limit: 10,
+    manualReprintRequired: true, retryAfterSeconds: null, periodEnd: "2026-11-01T00:00:00Z",
+  });
+  assert.equal(shown, true);
+  assert.match(dialogs[0].body, /reprint it explicitly only if still needed/i);
+});
 test("POS picker offers only physical JPEG transports and declared ESC/POS raster capability", async () => {
   const { RuntimePrinterField } = await load("components/runtime_printer_field.js");
   const field = Object.create(RuntimePrinterField.prototype);

@@ -361,6 +361,8 @@ export function SubscriptionEditor({
             onChange={event => setEnd(event.target.value)} />)}
         </div>
 
+        {action === "renew" && <p className="text-sm leading-6 text-ink-3">{a("renewalKeepsUsage")}</p>}
+
         {showTerm && !showCustomDates && <div className="flex flex-wrap items-center gap-2 rounded-lg bg-surface-2 p-3 text-sm">
           <CalendarClock className="h-4 w-4 text-brand" aria-hidden />
           <span className="text-ink-3">{a("end")}:</span>

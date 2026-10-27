@@ -101,6 +101,21 @@ suite("billing entitlement access policy", () => {
       .rejects.toBeInstanceOf(TenantEntitlementConfigError);
   });
 
+  it("does not grant perpetual printing when an active manual contract lacks an expiry", async () => {
+    const tenantId = `tenant_${nanoid(8)}`;
+    const planId = `plan_${nanoid(8)}`;
+    await db.insert(tenants).values({ id: tenantId, name: "Missing contract deadline" });
+    await db.insert(plans).values({
+      id: planId, name: "Manual plan without end",
+      entitlements: { max_agents: 2, max_printers: 5, max_jobs_per_minute: 60, max_concurrent_jobs: 8, max_prints_per_period: 20 },
+    });
+    await db.insert(tenantSubscriptions).values({ tenantId, planId, status: "active", currentPeriodEnd: null });
+    await expect(getTenantEntitlementLimit(db, tenantId, "max_printers"))
+      .rejects.toBeInstanceOf(TenantSubscriptionRequiredError);
+    const result = await db.execute(sql`SELECT 1 AS allowed FROM tenants t WHERE t.id = ${tenantId}
+      AND ${liveTenantSubscriptionPredicate(sql`t.id`)}`);
+    expect(result.rows).toHaveLength(0);
+  });
   it("fails closed for suspended subscriptions", async () => {
     const tenantId = `tenant_${nanoid(8)}`;
     const planId = `plan_${nanoid(8)}`;

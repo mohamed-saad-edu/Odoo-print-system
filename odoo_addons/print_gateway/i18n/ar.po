@@ -4971,3 +4971,27 @@ msgstr "جهاز الطباعة المعيّن غير متاح — تحقق من
 msgid "POS Receipt does not require an Odoo printer or PDF report. POS Kitchen / Preparation uses the selected Odoo Preparation Printer for category routing; the Gateway printer remains the physical destination."
 msgstr "لا يتطلب إيصال نقاط البيع طابعة Odoo أو تقرير PDF. تستخدم طباعة المطبخ / التحضير طابعة التحضير المحددة في Odoo لتوجيه فئات المنتجات، وتظل طابعة Gateway هي وجهة الطباعة الفعلية."
 
+
+#. module: print_gateway
+#. odoo-python
+#: code:addons/print_gateway/models/print_job.py:0
+msgid "The earlier receipt was not printed because the subscription blocked it. Print it again explicitly if still needed."
+msgstr "لم تتم طباعة الإيصال السابق بسبب توقف الاشتراك. اطبعه مجددًا بشكل صريح إذا كنت لا تزال تحتاج إليه."
+
+#. module: print_gateway
+#. odoo-python
+#: code:addons/print_gateway/models/print_job.py:0
+msgid "Printing is paused by the subscription. This receipt was not printed; reprint explicitly after renewal if needed."
+msgstr "الطباعة متوقفة بسبب الاشتراك. لم تتم طباعة الإيصال؛ أعد طباعته بشكل صريح بعد التجديد إذا لزم الأمر."
+
+#. module: print_gateway
+#. odoo-python
+#: code:addons/print_gateway/models/print_job.py:0
+msgid "The receipt was not printed because the subscription blocked it. After renewal, choose an explicit reprint only if still needed."
+msgstr "لم تتم طباعة الإيصال لأن الاشتراك منعها. بعد التجديد، اختر إعادة الطباعة بشكل صريح فقط إذا كنت لا تزال تحتاج إليها."
+
+#. module: print_gateway
+#. odoo-python
+#: code:addons/print_gateway/models/print_job.py:0
+msgid "This receipt was not printed. After renewal, reprint it explicitly only if still needed."
+msgstr "لم تتم طباعة هذا الإيصال. بعد التجديد، أعد طباعته بشكل صريح فقط عند الحاجة."

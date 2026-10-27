@@ -1619,6 +1619,7 @@ class PrintGatewayJob(models.Model):
                                 "message": message_map[entitlement],
                                 "retryAfterSeconds": retry_after,
                                 "periodEnd": period_end,
+                                "manualReprintRequired": values.get("status") == "failed",
                             }
                             marker_message = "GATEWAY_BILLING_LIMIT:" + json.dumps(marker_payload, separators=(",", ":"))
                             if raise_on_failure:

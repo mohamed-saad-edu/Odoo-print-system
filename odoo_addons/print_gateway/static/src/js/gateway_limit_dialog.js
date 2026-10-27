@@ -148,6 +148,7 @@ export function parseGatewayBillingLimit(error) {    for (const candidate of can
                         ? Math.round(details.retryAfterSeconds)
                         : null,
                 periodEnd: typeof details.periodEnd === "string" ? details.periodEnd : null,
+                manualReprintRequired: details.manualReprintRequired === true,
             };
         } catch {
             // Ignore malformed markers and keep the normal Odoo error path.
@@ -206,7 +207,9 @@ export function showGatewayBillingLimitDialog(env, errorOrDetails) {
         _t("This request was not accepted for printing. Check Print Activity for any earlier attempts."),
         facts.join("  •  "),
         details.entitlement === "max_prints_per_period"
-            ? _t("Wait for the monthly reset or contact the workspace owner to request a different allowance.")
+            ? details.manualReprintRequired
+                ? _t("This receipt was not printed. After renewal, reprint it explicitly only if still needed.")
+                : _t("Wait for the monthly reset or contact the workspace owner to request a different allowance.")
             : _t("Wait for current work to finish. Contact your administrator if the limit continues."),
     ].filter(Boolean).join("\n\n");
 
