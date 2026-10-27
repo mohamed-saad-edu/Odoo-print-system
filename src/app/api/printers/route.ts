@@ -1,11 +1,12 @@
 import { operationalVerificationPresentation } from "../../../lib/printer-operational-verification";
+import { requireConsoleReadAuthorityInTransaction, ConsoleAgentAuthorityRevokedError } from "../../../lib/console-read-authority";
 import { NextResponse } from "next/server";
 import { db } from "../../../db";
 import { agents, printers } from "../../../db/schema";
 import { validateConsoleAuth } from "../../../lib/console-auth";
 import { requireManagerPermission } from "../../../lib/authorization";
 import { requireManagerActorInTransaction, ManagerMutationAuthorityChangedError } from "../../../lib/manager-mutation-authorization";
-import { requireActiveTenantInTransaction } from "../../../lib/tenant-guard";
+import { requireActiveTenantInTransaction, TenantSuspendedError, TenantDeletedError } from "../../../lib/tenant-guard";
 import { and, desc, eq, lt, or, sql } from "drizzle-orm";
 import { clampListLimit, parseStrictListOffset } from "../../../lib/request-limits";
 import { fleetCursorIdHeaders, readFleetCursorId } from "../../../lib/fleet-cursor";
@@ -67,13 +68,30 @@ export async function GET(req: Request) {
     ? or(lt(printers.createdAt, beforeCreatedAt), and(eq(printers.createdAt, beforeCreatedAt), lt(printers.id, beforeId)))
     : undefined;
   const where = cursorWhere ? and(ownershipWhere, cursorWhere) : ownershipWhere;
-  const rows = await db.select({ printer: printers, agent: agents })
+  let rows;
+  try {
+    rows = await db.transaction(async (tx) => {
+      await requireConsoleReadAuthorityInTransaction(tx, auth, "printers.read");
+      return tx.select({ printer: printers, agent: agents })
     .from(printers)
     .leftJoin(agents, and(eq(agents.id, printers.agentId), eq(agents.tenantId, tenantId)))
     .where(where)
     .orderBy(desc(printers.createdAt), desc(printers.id))
     .limit(limit + 1)
     .offset(beforeCreatedAt ? 0 : offset);
+    });
+  } catch (error) {
+    const headers = { "Cache-Control": "private, no-store" };
+    if (error instanceof TenantSuspendedError || error instanceof TenantDeletedError) {
+      return NextResponse.json({ error: error.message, code: error.code }, { status: error.status, headers });
+    }
+    if (error instanceof ManagerMutationAuthorityChangedError) return error.response();
+    if (error instanceof ConsoleAgentAuthorityRevokedError) {
+      return NextResponse.json({ error: error.message, code: error.code }, { status: error.status, headers });
+    }
+    logError("printers.inventory_read_failed", { tenantId, error: error instanceof Error ? error.message : "unknown" });
+    return NextResponse.json({ error: "Printer inventory unavailable", code: "FLEET_UNAVAILABLE" }, { status: 503, headers });
+  }
   const hasMore = rows.length > limit;
   const pageRows = (hasMore ? rows.slice(0, limit) : rows).filter(({ printer }) => !isVirtualPrinterRecord(printer));
   const responseRows = pageRows.map(({ printer, agent }) => ({
