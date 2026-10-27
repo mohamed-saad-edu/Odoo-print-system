@@ -159,8 +159,10 @@ func normalizeIPPURL(raw string) (*url.URL, error) {
 	if (wasIPP || wasIPPS) && u.Port() == "" {
 		u.Host = net.JoinHostPort(u.Hostname(), "631")
 	}
-	if u.Path == "" || u.Path == "/" {
-		u.Path = "/ipp/print"
+	// A bare address without a scheme was already given /ipp/print above.
+	// An explicit IPP URL at the root must keep that exact execution path.
+	if u.Path == "" {
+		u.Path = "/"
 	}
 	return u, nil
 }
