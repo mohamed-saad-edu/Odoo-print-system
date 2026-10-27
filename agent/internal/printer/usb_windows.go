@@ -276,6 +276,12 @@ func (p *USBPrinter) Print(ctx context.Context, data []byte) error {
 		if handleTransferred {
 			callerOwnsHandle = false
 		}
+		// Validate the reported count BEFORE recording confirmed progress,
+		// including when WriteFile also returned an error. A faulty driver
+		// could over-report bytes and poison the job's physical evidence.
+		if int64(n) > int64(len(chunk)) {
+			return MarkUnknown("WriteFile to %s over-reported %d bytes for a %d-byte chunk after %d/%d confirmed bytes", p.DevicePath, n, len(chunk), written, len(data))
+		}
 		if err != nil {
 			if n > 0 {
 				written += int(n)
@@ -296,15 +302,6 @@ func (p *USBPrinter) Print(ctx context.Context, data []byte) error {
 			// a failed WriteFile, zero confirmed bytes cannot establish that
 			// the USB printer received nothing. Never auto-retry this job.
 			return MarkUnknown("WriteFile to %s reported success with zero confirmed bytes after %d/%d", p.DevicePath, written, len(data))
-		}
-		if int64(n) > int64(len(chunk)) {
-			// A driver/helper that reports more bytes than the submitted
-			// chunk is faulty and the wire state is uncertain: report
-			// UNKNOWN with the honestly confirmed byte count (bytes
-			// accepted before this chunk). The counter is NOT advanced to
-			// the payload size — a fabricated total must never read as
-			// completion evidence.
-			return MarkUnknown("WriteFile to %s over-reported %d bytes for a %d-byte chunk after %d/%d confirmed bytes", p.DevicePath, n, len(chunk), written, len(data))
 		}
 		written += int(n)
 	}
