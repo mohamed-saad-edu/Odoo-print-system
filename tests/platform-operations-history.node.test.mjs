@@ -48,3 +48,11 @@ test('platform operations appear as real navigable pages and do not offer silent
   assert.match(action, /writeAuditEvent/);
   assert.match(action, /expectedLifecycle/);
 });
+
+test('unknown job filters return the same coded 400 contract across tenant and platform routes', () => {
+  for (const path of ['src/app/api/jobs/route.ts', 'src/app/api/platform/jobs/route.ts']) {
+    const source = read(path);
+    assert.match(source, /code: "INVALID_STATUS_FILTER"/);
+    assert.match(source, /isJobFilterStatus/);
+  }
+});

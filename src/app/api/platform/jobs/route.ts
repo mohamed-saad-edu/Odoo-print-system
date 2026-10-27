@@ -20,9 +20,12 @@ export async function GET(req: Request) {
   const status = (params.get("status") ?? "all").toLowerCase();
   const search = (params.get("search") ?? "").trim();
   const tenantId = (params.get("tenantId") ?? "").trim();
+  if (!isJobFilterStatus(status)) {
+    return NextResponse.json({ error: "Invalid status filter", code: "INVALID_STATUS_FILTER" }, { status: 400, headers: HEADERS });
+  }
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100 ||
       !Number.isSafeInteger(offset) || offset < 0 || offset > 10_000 ||
-      !isJobFilterStatus(status) || (search && (search.length < 2 || search.length > 64)) ||
+      (search && (search.length < 2 || search.length > 64)) ||
       tenantId.length > 120) {
     return NextResponse.json({ error: "Invalid operations filter" }, { status: 400, headers: HEADERS });
   }

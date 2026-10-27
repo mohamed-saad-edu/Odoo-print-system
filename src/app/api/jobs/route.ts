@@ -49,7 +49,7 @@ export async function GET(req: Request) {
   }
 
   if (statusParam && !isJobFilterStatus(statusParam)) {
-    return NextResponse.json({ error: "invalid status filter" }, { status: 400 });
+    return NextResponse.json({ error: "invalid status filter", code: "INVALID_STATUS_FILTER" }, { status: 400 });
   }
 
   const rows = await listPrintJobHistory({

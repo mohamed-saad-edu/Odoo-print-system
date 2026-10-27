@@ -14,6 +14,15 @@ describe("bounded job-history pagination", () => {
     ]) expect(parseStrictListOffset(invalid, 10_000), invalid).toBeNull();
   });
 
+  it("returns a stable localized error code for unsupported job statuses", () => {
+    const gateway = readFileSync("src/app/api/jobs/route.ts", "utf8");
+    const platform = readFileSync("src/app/api/platform/jobs/route.ts", "utf8");
+    for (const source of [gateway, platform]) {
+      expect(source).toContain("isJobFilterStatus");
+      expect(source).toContain('code: "INVALID_STATUS_FILTER"');
+    }
+  });
+
   it("uses strict parsing in the customer and Agent job-history API before reading rows", () => {
     const route = readFileSync("src/app/api/jobs/route.ts", "utf8");
     expect(route).toContain('parseStrictListOffset(url.searchParams.get("offset"), MAX_LIST_OFFSET)');
