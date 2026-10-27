@@ -45,3 +45,43 @@ for (const isTauri of [false, true]) {
     await assert.rejects(request("https://gateway.example", "/api/printers"), /Invalid Gateway pagination metadata/);
   });
 }
+
+test("fleet pagination accepts legacy missing headers and rejects malformed modern cursors", async () => {
+  const source = readFileSync("src/desktop/lib/ipc.ts", "utf8");
+  const start = source.indexOf("async function fetchGatewayFleet(");
+  const end = source.indexOf("export function getAgentStatus(", start);
+  assert.ok(start >= 0 && end > start);
+
+  function fleetWith(response) {
+    let calls = 0;
+    const request = vm.runInNewContext(
+      stripTypeScriptTypes(source.slice(start, end)) + "\nfetchGatewayFleet",
+      {
+        MAX_FLEET_PAGES: 25,
+        MAX_FLEET_ROWS: 1000,
+        URLSearchParams,
+        gatewayHttpError: (_status, _body, fallback) => new Error(fallback),
+        gatewayConsoleRequest: async () => {
+          calls += 1;
+          return response;
+        },
+      },
+    );
+    return { request, numberOfCalls: () => calls };
+  }
+
+  // Old Gateways that never supported pagination omit the envelope headers.
+  const legacy = fleetWith({ status: 200, body: '[{"id":"printer-1"}]' });
+  const rows = await legacy.request("https://gateway.example", "/api/printers");
+  assert.equal(JSON.stringify(rows), '[{"id":"printer-1"}]');
+  assert.equal(legacy.numberOfCalls(), 1);
+
+  // New Gateways cannot advertise a next page without an exact cursor.
+  const incomplete = fleetWith({ status: 200, body: '[{"id":"printer-1"}]', headers: { "x-has-more": "true" } });
+  await assert.rejects(incomplete.request("https://gateway.example", "/api/printers"), /Invalid Gateway fleet cursor/);
+  assert.equal(incomplete.numberOfCalls(), 1);
+
+  const malformed = fleetWith({ status: 200, body: "[]", headers: { "x-has-more": "maybe" } });
+  await assert.rejects(malformed.request("https://gateway.example", "/api/agents"), /Invalid Gateway fleet pagination metadata/);
+  assert.equal(malformed.numberOfCalls(), 1);
+});
