@@ -7,9 +7,14 @@
  * bytes. Keep this dependency-free for both API validation and service calls.
  */
 export function isExactPrinterId(value: unknown): value is string {
-  return typeof value === "string"
-    && value.length > 0
-    && value === value.trim()
-    && !/[\u0000-\u001f\u007f-\u009f]/.test(value)
-    && new TextEncoder().encode(value).byteLength <= 120;
+  if (typeof value !== "string" || !value || value !== value.trim()
+      || /[\u0000-\u001f\u007f-\u009f]/.test(value)) return false;
+  try {
+    // A lone UTF-16 surrogate is not a valid UTF-8 identity. TextEncoder
+    // would silently replace it; fail closed before that target changes.
+    encodeURIComponent(value);
+    return new TextEncoder().encode(value).byteLength <= 120;
+  } catch {
+    return false;
+  }
 }
