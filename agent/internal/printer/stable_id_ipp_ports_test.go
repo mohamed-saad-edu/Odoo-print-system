@@ -82,3 +82,20 @@ func TestManualIPPPortsRemainSeparateDestinations(t *testing.T) {
 		})
 	}
 }
+
+func TestIPPDefaultResourceIdentifiesSeparateSecureTransport(t *testing.T) {
+	// Both endpoints reach /ipp/print on port 631, but TLS and plaintext
+	// are distinct execution authorities. Auto-discovery must never assign
+	// the same registry ID and silently replace a queue's security binding.
+	plain := StableIDFromIPPURI("ipp://192.168.1.20:631/ipp/print", "192.168.1.20", 631)
+	secure := StableIDFromIPPURI("ipps://192.168.1.20:631/ipp/print", "192.168.1.20", 631)
+	if plain == secure {
+		t.Fatalf("IPP and IPPS endpoints collided at stable ID %q", plain)
+	}
+	if want := StableIDFromNetwork("192.168.1.20", 631); plain != want {
+		t.Fatalf("historical plain IPP scan ID changed: got %q want %q", plain, want)
+	}
+	if got := StableIDFromIPPURI("https://192.168.1.20:631/ipp/print", "192.168.1.20", 631); got != secure {
+		t.Fatalf("same secure destination changed identity when using HTTPS spelling: %q vs %q", secure, got)
+	}
+}
