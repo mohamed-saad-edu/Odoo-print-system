@@ -149,21 +149,12 @@ export function liveTenantSubscriptionWhere(tenantId: SQL, requireUnblocked = tr
     ${unblocked}
   `;
 }
-/** Canonical live-subscription predicate; database time is authoritative. */
+/** Reuse the same authoritative live-row policy for correlated admission. */
 export function liveTenantSubscriptionPredicate(tenantId: SQL, requireUnblocked = true): SQL {
-  const unblocked = requireUnblocked
-    ? sql`AND COALESCE(ts.entitlement_blocked, false) = false`
-    : sql``;
-  return sql`
-    EXISTS (
-      SELECT 1
-      FROM tenant_subscriptions ts
-      WHERE ts.tenant_id = ${tenantId}
-        AND ts.status = 'active' AND ts.current_period_start <= clock_timestamp()
-        AND ts.current_period_end > clock_timestamp()
-        ${unblocked}
-    )
-  `;
+  return sql`EXISTS (
+    SELECT 1 FROM tenant_subscriptions ts
+    WHERE ${liveTenantSubscriptionWhere(tenantId, requireUnblocked)}
+  )`;
 }
 
 async function lockTenantSubscription(tx: EntitlementTx, tenantId: string): Promise<void> {
