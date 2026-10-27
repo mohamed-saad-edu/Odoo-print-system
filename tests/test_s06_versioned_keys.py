@@ -53,6 +53,21 @@ def test_v2_unicode_operation_length_matches_gateway_utf16_units():
     assert m.wire_key(1, 7, rejected) == m.legacy_key(7, rejected)
 
 
+def test_v2_rejects_ill_formed_unicode_before_durable_request():
+    """Odoo v2 cannot encode isolated UTF-16 surrogate values.
+
+    The Gateway admission and operator reconciliation paths must enforce
+    identical Unicode validity; existing v1 history is untouched.
+    """
+    import pytest
+
+    m = impl()
+    installation = "00000000-0000-4000-8000-000000000001"
+    for malformed in (chr(0xD800), chr(0xDC00), "a" + chr(0xD800) + "b"):
+        with pytest.raises(ValueError, match="Durable local operation key"):
+            m.wire_key(2, 7, malformed, installation)
+
+
 def test_v2_is_pinned_to_saved_installation_not_a_rotating_credential():
     m = impl()
     stored = m.wire_key(2, 7, "old-queued", "00000000-0000-4000-8000-000000000001")
