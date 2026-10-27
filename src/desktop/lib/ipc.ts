@@ -210,13 +210,18 @@ async function fetchGatewayFleet(gatewayUrl: string, path: "/api/printers" | "/a
     if (page.length > MAX_FLEET_ROWS - rows.length) throw new Error("Gateway fleet inventory limit exceeded");
     rows.push(...page);
     const hasMore = headers?.["x-has-more"];
-    // Older unpaged Gateways omit this metadata entirely. A present but
-    // malformed flag cannot silently truncate a valid multi-page inventory.
-    if (hasMore === undefined) return rows;
+    const hasCursor = Boolean(headers?.["x-next-before-created-at"]
+      || headers?.["x-next-before-id"] || headers?.["x-next-before-id-encoded"]
+      || headers?.["x-next-cursor"]);
+    // Legacy unpaged Gateways omit all pagination metadata. A cursor with
+    // no has-more flag means missing pages: never present a partial fleet
+    // as complete, or associate a print job with a stale device inventory.
+    if (hasMore === undefined) {
+      if (hasCursor) throw new Error("Invalid Gateway fleet pagination metadata");
+      return rows;
+    }
     if (hasMore === "false") {
-      if (headers?.["x-next-before-created-at"] || headers?.["x-next-before-id"] || headers?.["x-next-before-id-encoded"]) {
-        throw new Error("Invalid Gateway fleet cursor");
-      }
+      if (hasCursor) throw new Error("Invalid Gateway fleet cursor");
       return rows;
     }
     if (hasMore !== "true" || !headers) throw new Error("Invalid Gateway fleet pagination metadata");
