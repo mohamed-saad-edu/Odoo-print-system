@@ -1,6 +1,6 @@
 # NOTES.md — Yaseir Cloud Printing full-repository engineering coverage
 
-Source: `main@cdb28b998f6d69db2d24273161fedac6f2ec7f84`. Re-scanned **1915 tracked files** in **89 directory groups** through GitHub's complete recursive tree (`truncated=false`). This is a coverage index, **not** a claim of line-by-line audit. This file is root-level, outside the Gateway/Agent/Odoo/Desktop product trees.
+Source: `main@ddc4fc7bed57ee9f0893a09692c62367fd463372`. Re-scanned **1917 tracked files** in **89 directory groups** through GitHub's complete recursive tree (`truncated=false`). This is a coverage index, **not** a claim of line-by-line audit. This file is root-level, outside the Gateway/Agent/Odoo/Desktop product trees.
 
 **Status semantics:** `TODO` = path enumerated, code/read/verification incomplete; `DONE` = code, cross-contract and exact-commit CI tests reviewed; `BLOCKED` = cannot verify as text through GitHub API or requires real hardware/staging. These are independent of existing per-file ledger statuses. Every path stays TODO/BLOCKED until evidence is linked; counts do not imply production readiness.
 
@@ -12,6 +12,9 @@ Source: `main@cdb28b998f6d69db2d24273161fedac6f2ec7f84`. Re-scanned **1915 track
 | HIST-01 tenant collision | Receipt archived for tenant A hidden by live job with same id in tenant B | `b3cc2704177351104e564c9f1ba8c8a021a59e7a`; real DB test `tests/job-history-tenant-collision.integration.test.ts` | Commit pushed; CI superseded/cancelled | TODO |
 | GEO-01 stale configured profile | Agent cached configured geometry survived profile removal | `258c1a7da29f2df3c151b44d622ba0ec88c05256`; `tests/printer-geometry-contract.test.ts` | Commit pushed; exact CI pending | TODO |
 | HIST-02 unknown markers | SQL LIKE `_` wildcards mismatched JS literal startsWith() | `17e08a46d2869ea0a31412e583ce4bbe70ce891f`; DB test for real/lookalike marker | Commit pushed; exact CI pending | TODO |
+| HIST-STATS-03 cross-tenant dashboard collision | Platform 24h totals suppressed tenant A's receipt when tenant B had a live job with the same opaque ID | `327b97d240bbfa2f8073edd55a604971480d9170` changes the exact tenant predicate; PostgreSQL regressions in `tests/platform-stats.test.ts` cover cross-tenant inclusion and same-tenant dedup | Windows / Security & Resilience / Native Backport PASS on exact SHA; CI / Docker / Static Security CANCELLED when new pushes superseded this run | TODO |
+| INPUT-PLATFORM-01 malformed fleet paging | Platform Owner inventory treated scientific/empty/fractional offset and limit tokens as valid by `Number()` coercion | `a39455104e18de51360c3bd4131c91acd563073b`: bounded exact decimal parsing and authenticated PostgreSQL route regression | Windows / Security & Resilience / Native Backport PASS on exact SHA; CI / Docker / Static Security CANCELLED during concurrent push activity | TODO |
+| PRINTER-IPP-ROOT-01 wrong queue identity | Gateway and Go identity folded explicit root URI into `/ipp/print`, although the endpoints can address different IPP queues | `12c6ca3d39a888ec12c27e8b27c9f5d63eec247a`; formatting follow-up `d9a24f171860fc009fc863bb850d4765e5c36689`; TypeScript + native Go regressions for root, empty path, default queue and hardware identity | Exact-SHA CI unfinished or cancelled by concurrent pushes; physical printer execution NOT RUN | TODO |
 | HW-01 print result | Neither Gateway `success` nor spooler submission proves physical paper | Status contract requires independent explicit physical evidence; never auto-retry unknown | No physical printer attached through GitHub API | BLOCKED |
 | DATA-01 defense in depth | PostgreSQL RLS not enabled; predicates, composite FKs and transaction locks are tenant boundary | Audit every raw query, add safe migration only after staged design/coverage | Requires comprehensive source+staging audit | TODO |
 
@@ -1827,6 +1830,7 @@ Source: `main@cdb28b998f6d69db2d24273161fedac6f2ec7f84`. Re-scanned **1915 track
 - TODO `src/lib/email-auth-token-policy.ts`
 - TODO `src/lib/email.ts`
 - TODO `src/lib/entitlements.ts`
+- TODO `src/lib/exact-printer-id.ts`
 - TODO `src/lib/fetch-timeout.ts`
 - TODO `src/lib/fleet-cursor.ts`
 - TODO `src/lib/idempotency.ts`
@@ -2227,6 +2231,7 @@ Source: `main@cdb28b998f6d69db2d24273161fedac6f2ec7f84`. Re-scanned **1915 track
 - TODO `tests/platform-login-cancellation.node.test.mjs`
 - TODO `tests/platform-mutation-authorization.test.ts`
 - TODO `tests/platform-operations-history.node.test.mjs`
+- TODO `tests/platform-operations-pagination.test.ts`
 - TODO `tests/platform-operations-ui.test.ts`
 - TODO `tests/platform-owner-invitation-session.integration.test.ts`
 - TODO `tests/platform-stats-optimization.test.ts`
