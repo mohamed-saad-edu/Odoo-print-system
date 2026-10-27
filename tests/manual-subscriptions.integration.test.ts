@@ -14,6 +14,7 @@ import { POST as requestActivation,GET as requestsGET } from "../src/app/api/sub
 import { POST as subscriptionPOST } from "../src/app/api/platform/tenants/[id]/subscription/route";
 import { GET as workspaceGET } from "../src/app/api/platform/tenants/[id]/route";
 import { GET as billingStatusGET } from "../src/app/api/billing/status/route";
+import { GET as platformSubscriptionsGET } from "../src/app/api/platform/subscriptions/route";
 import { POST as rejectRequest, GET as listPlatformRequests } from "../src/app/api/platform/subscription-requests/route";
 import { PATCH as editPlan } from "../src/app/api/platform/plans/[id]/route";
 import { POST as createPlan,GET as listAdminPlans } from "../src/app/api/platform/plans/route";
@@ -75,6 +76,25 @@ suite('V4 manual subscriptions security and accounting',()=>{
   await db.update(tenantSubscriptions).set({currentPeriodEnd:new Date(Date.now()-1000)}).where(eq(tenantSubscriptions.tenantId,'workspace'));
   const expired = await billingStatusGET(new Request(origin+'/api/billing/status',{headers:{cookie:ownerCookie}}));
   expect((await expired.json())).toMatchObject({hasSubscription:false,customerState:'expired',currentPeriodEnd:expect.any(String)});
+ });
+ it('admin status matches runtime admission when contracts expire or lack a deadline', async () => {
+  await mutateManualSubscription('workspace', claims, randomUUID(), input());
+  const list = () => platformSubscriptionsGET(new Request(origin + '/api/platform/subscriptions', {headers: {cookie: platformCookie}}));
+  const active = await list();
+  expect(active.status).toBe(200);
+  expect((await active.json()).subscriptions[0].status).toBe('active');
+  await requireTenantBillingAccess(db, 'workspace');
+
+  await db.update(tenantSubscriptions).set({currentPeriodEnd: null}).where(eq(tenantSubscriptions.tenantId, 'workspace'));
+  const missing = await list();
+  expect(missing.status).toBe(200);
+  expect((await missing.json()).subscriptions[0].status).toBe('expired');
+  await expect(requireTenantBillingAccess(db, 'workspace')).rejects.toBeInstanceOf(TenantSubscriptionRequiredError);
+
+  await db.update(tenantSubscriptions).set({currentPeriodEnd: new Date(Date.now() - 60_000)}).where(eq(tenantSubscriptions.tenantId, 'workspace'));
+  const expired = await list();
+  expect((await expired.json()).subscriptions[0].status).toBe('expired');
+  await expect(requireTenantBillingAccess(db, 'workspace')).rejects.toBeInstanceOf(TenantSubscriptionRequiredError);
  });
  it('deduplicates concurrent customer requests and requires independent Platform Owner approval',async()=>{
   const key=randomUUID();
