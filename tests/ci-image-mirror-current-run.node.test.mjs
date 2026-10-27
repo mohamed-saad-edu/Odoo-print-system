@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve } from 'node:path';
 
@@ -132,6 +133,17 @@ test('Odoo CI tests the built hardened runtime by content ID with verified immut
   const findings = JSON.parse(load('security/image-vulnerability-baseline.json')).images['yaseir-odoo-hardened:review-20261026'].findings;
   assert.equal(findings.length, 64);
   assert.ok(findings.every((row) => row.length === 3 && ['LOW', 'MEDIUM'].includes(row[2])));
+});
+
+test('Odoo SARIF review stays bound to the source bytes of the tested Dockerfile', () => {
+  // Do not delete the immutable source binding or replace it with a glob.
+  // A reviewed security backport changes the Git blob hash: update the
+  // precise CI pin only after auditing the artifact and its source manifest.
+  const source = readFileSync(join(root, 'Dockerfile.odoo-hardened'));
+  const expected = createHash('sha1').update(`blob ${source.length}\0`).update(source).digest('hex');
+  const pinned = ci.match(/test "\$\(git hash-object Dockerfile\.odoo-hardened\)" = "([a-f0-9]{40})"/)?.[1];
+  assert.ok(pinned, 'Odoo release gate must bind the scanned image to exact reviewed Dockerfile source');
+  assert.equal(pinned, expected, 'Odoo security review pin drifted from the source used to build and scan');
 });
 
 test('Docker scans the shipped npm-free Gateway runtime and retains upstream advisory evidence', () => {
