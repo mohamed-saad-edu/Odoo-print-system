@@ -13,7 +13,7 @@ const SENSITIVE = /secret|password|passwd|token|authorization|cookie|api[_-]?key
 function redactInlineCredentials(value: string): string {
   return value
     // URL userinfo is confidential even if the scheme is not HTTP(S).
-    .replace(/([a-z][a-z0-9+.-]*:\/\/)[^\s@/]+@/gi, "$1[redacted]@")
+    .replace(/([a-z][a-z0-9+.-]*:\/\/)[^\s\x40/]+\x40/gi, "$1[redacted]@")
     // Bearer/Basic credentials also occur inside free-form descriptions.
     .replace(/\b(bearer|basic)\s+[^\s;,\\"'<>]+/gi, "$1 [redacted]")
     .replace(/\b(authorization|proxy-authorization|set-cookie)\s*:\s*[^\r\n;,]+/gi, "$1: [redacted]")
