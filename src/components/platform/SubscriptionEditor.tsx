@@ -91,8 +91,11 @@ export function SubscriptionEditor({
   const renewalFromRequest = !!request && active &&
     request.planId === subscription?.planId && request.term === subscription?.term &&
     !!subscription?.currentPeriodEnd;
+  // Show reactivation only for a finite, future contract deadline.
+  // Exact timestamps matter: a same-day deadline may still be valid.
   const canReactivate = subscription?.status === "suspended" &&
-    (!subscription.currentPeriodEnd || day(subscription.currentPeriodEnd) > day());
+    !!subscription.currentPeriodEnd &&
+    Date.parse(subscription.currentPeriodEnd) > Date.now();
   const initialAction: Action = !request && active && preferredAction === "revoke"
     ? "revoke" : renewalFromRequest ? "renew" : request ? "save"
     : canReactivate ? "reactivate" : "save";
