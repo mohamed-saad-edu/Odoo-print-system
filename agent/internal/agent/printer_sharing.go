@@ -76,9 +76,7 @@ func (a *Agent) isPrinterSharedWithGateway(id string) bool {
 func (a *Agent) privatePrinterIDs(snapshot localPrinterSharingSnapshot) ([]string, bool) {
 	configs := append([]config.PrinterConfig{}, snapshot.known...)
 	a.printersMu.RLock()
-	byID := make(map[string]config.PrinterConfig, len(a.printerConfigs))
-	for id, pc := range a.printerConfigs {
-		byID[id] = pc
+	for _, pc := range a.printerConfigs {
 		configs = append(configs, pc)
 	}
 	owned := make([]string, 0, len(a.gatewayOwned))
@@ -110,16 +108,16 @@ func (a *Agent) privatePrinterIDs(snapshot localPrinterSharingSnapshot) ([]strin
 		}
 	}
 	for _, id := range owned {
-		// The heartbeat is a negative privacy projection, not executable
-		// alias admission. Match only exact local IDs and their signed
-		// Agent-scoped aliases, including when the live backend was removed.
-		// Resolving through a.printers can drop a locally denied cloud alias.
-		matches := 0
-		for localID, pc := range byID {
-			if localID != id && gatewayAliasPrinterID(localID, a.cfg.Agent.ID) != id {
+		// Only authoritative LOCAL binding records can identify the
+		// physical printer behind this Agent-scoped cloud alias. Include
+		// the persisted local registry even after its runtime backend was
+		// removed. Never mark a foreign Agent's unmatched alias private.
+		matchedIDs := make(map[string]struct{})
+		for _, pc := range configs {
+			if pc.ID == "" || (pc.ID != id && gatewayAliasPrinterID(pc.ID, a.cfg.Agent.ID) != id) {
 				continue
 			}
-			matches++
+			matchedIDs[pc.ID] = struct{}{}
 			shared, err := snapshot.shared(pc)
 			if !shared || err != nil {
 				private[id] = struct{}{}
@@ -128,9 +126,9 @@ func (a *Agent) privatePrinterIDs(snapshot localPrinterSharingSnapshot) ([]strin
 				complete = false
 			}
 		}
-		// An unresolved historical cloud ID, or an ambiguous exact+alias
-		// collision, cannot prove that the local printer is shared.
-		if matches != 1 {
+		// Multiple distinct local IDs selecting the same cloud identity
+		// are ambiguous; a damaged policy cannot authorize any owned ID.
+		if len(matchedIDs) > 1 || (len(matchedIDs) == 0 && snapshot.err != nil) {
 			private[id] = struct{}{}
 		}
 	}
