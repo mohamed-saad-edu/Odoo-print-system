@@ -1,6 +1,6 @@
 # NOTES.md — Yaseir Cloud Printing full-repository engineering coverage
 
-Source: `main@2fa5f7454872d575dfad68a1c1f4668dea204e0e`. Re-scanned **1906 tracked files** in **89 directory groups** through GitHub's complete recursive tree (`truncated=false`). This is a coverage index, **not** a claim of line-by-line audit. This file is root-level, outside the Gateway/Agent/Odoo/Desktop product trees.
+Source: `main@cdb28b998f6d69db2d24273161fedac6f2ec7f84`. Re-scanned **1915 tracked files** in **89 directory groups** through GitHub's complete recursive tree (`truncated=false`). This is a coverage index, **not** a claim of line-by-line audit. This file is root-level, outside the Gateway/Agent/Odoo/Desktop product trees.
 
 **Status semantics:** `TODO` = path enumerated, code/read/verification incomplete; `DONE` = code, cross-contract and exact-commit CI tests reviewed; `BLOCKED` = cannot verify as text through GitHub API or requires real hardware/staging. These are independent of existing per-file ledger statuses. Every path stays TODO/BLOCKED until evidence is linked; counts do not imply production readiness.
 
@@ -2590,3 +2590,27 @@ The recursive GitHub tree at `main@2fa5f7454872d575dfad68a1c1f4668dea204e0e` has
 - **Ruling:** never auto-remap or select any printer based only on a suffix; negative local policy follows a known alias, while an ambiguous positive physical execution fails closed. No CI workflow disabled, no deployment or migration.
 
 **Concurrent merge note:** The native ambiguity fix and its Go regression were committed separately to `main` as `81ef03dacf7235c310697c693025a8c39d66e8e8`; this batch changes only Gateway alias-sharing denial, the PostgreSQL regression and the records. Go native tests still require exact-SHA execution.
+
+### 2026-10-28 — cross-layer spooler, pagination and file evidence review
+
+**Source tree:** non-truncated `main@cdb28b998f6d69db2d24273161fedac6f2ec7f84`, 1915 tracked files. Additional indexed tracked paths are below; existing TODO/BLOCKED entries are retained. No blanket whole-project completion or native/hardware verification is claimed.
+
+**Changes authored through GitHub API** (the source of CI truth is the exact commit):
+- `8dbd6ff333f0cfee3f7eff633f572cd004866e7d`: Windows Agent resolves `spooler_name` then `address`; Gateway health projection now uses that same precedence before interpreting explicit spooler status, with stale/no-probe regressions.
+- `837e42fd0b6697e9c27c408fa4986a78a12bae83`: team members/invitations, admin tenant/jobs, explorer pagination now parse complete unsigned decimal offsets under their existing bounds. `6cf4c40950c1c9a6b18b66a61459680ca68d53ab` adds explicit 400 `INVALID_OFFSET` before explorer schema coercion. Regression files include `tests/platform-explorer-offset.test.ts`, `tests/jobs-pagination-validation.test.ts` and `tests/team-pagination.contract.test.mjs`.
+- `b11078ca0c0b7301aa3e6831ed8a067b138b34d6`, `2a88f18ec24b0123128312f078ae8711a2e55bd2`: Gateway/Odoo PDF output stays pending throughout claimed/printing, never file_created without explicit validated artifact evidence. `638695fa8c8746d7cb06682387e3f43675316f05`, `029d2beaa15cb5d80a092c0758347703871de88a` add independent TypeScript/Python regression tests; physical paper output remains `unknown`.
+
+**Verification:** GitHub-only authoring means RED/green cannot be directly executed before code commits. Any workflow/job marked cancelled, skipped, pending or in progress is NOT RUN/PENDING for success claims; a docs-only green workflow with App jobs skipped does not prove application behavior. There has been no production deployment, hardware printer exercise, Windows desktop session, full Odoo server run, or populated UTC-month migration rehearsal.
+
+**New tracked paths (all TODO until individual verification):**
+- TODO `tests/ci-main-preserve-running-gates.test.mjs`
+- TODO `tests/odoo-cutover-locking.integration.test.ts`
+- TODO `tests/odoo-health-fencing.integration.test.ts`
+- TODO `tests/odoo-manual-enrollment.integration.test.ts`
+- TODO `tests/platform-explorer-offset.test.ts`
+- TODO `tests/platform-manual-collections-policy.test.ts`
+- TODO `tests/print-output-status.test.ts`
+- TODO `tests/team-platform-list-contract.test.ts`
+- TODO `tests/test_odoo_file_output_pending.py`
+
+**Open risk:** full per-file trust-boundary coverage (1900+ files) remains TODO; PostgreSQL RLS absent; actual Windows printer identity, geometry, spooler proof, tenant and company scope, irreversible migration rollback and Odoo POS behavior cannot be certified from remote source-only inspections.
