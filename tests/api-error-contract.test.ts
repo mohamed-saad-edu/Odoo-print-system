@@ -20,6 +20,22 @@ describe("API error contract", () => {
     expect(translate("ar", "errors.invalidPaginationOffset")).toMatch(/\p{Script=Arabic}/u);
   });
 
+  it("explains Agent and printer safety limits without claiming too many login attempts", () => {
+    expect(apiMessageKey("MAX_AGENTS_EXCEEDED", 429)).toBe("limit.title.agents");
+    expect(apiMessageKey("MAX_PRINTERS_EXCEEDED", 429)).toBe("limit.title.printers");
+    for (const locale of ["en", "ar"] as const) {
+      for (const code of ["MAX_AGENTS_EXCEEDED", "MAX_PRINTERS_EXCEEDED"]) {
+        const key = codeMessageKey(code);
+        expect(key).toBeTruthy();
+        const localized = translate(locale, key!);
+        expect(localized).not.toBe(translate(locale, "errors.tooManyAttempts"));
+        expect(localized).not.toBe(translate(locale, "errors.printQuotaExceeded"));
+      }
+    }
+    expect(translate("en", "limit.title.agents")).toMatch(/agent limit/i);
+    expect(translate("ar", "limit.title.printers")).toMatch(/[\u0600-\u06FF]/u);
+  });
+
   it("distinguishes retryable print-rate or concurrency limits from subscription denial", () => {
     expect(apiMessageKey("TENANT_ENTITLEMENT_EXCEEDED", 429)).toBe("errors.printCapacityExceeded");
     for (const locale of ["en", "ar"] as const) {
