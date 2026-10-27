@@ -34,7 +34,18 @@ def job_customer_state(status, physical_outcome, output_medium=None, output_outc
 def customer_error_category(value=None, *, code=None, status=None):
     # Bound processing of historical diagnostics. Only the chosen category,
     # never these strings, is returned or translated.
-    text = (str(code or "") + " " + str(value or "")[:4000]).upper()
+    # A known Gateway machine code is stronger evidence than arbitrary
+    # diagnostic prose. Billing-denied operations never reached a printer;
+    # misleading UNKNOWN_ text must not turn them into physical ambiguities.
+    stable_code = str(code or "").upper()
+    if stable_code in ("PRINT_QUOTA_EXCEEDED", "MAX_PRINTS_PER_PERIOD"):
+        return "quota"
+    if stable_code in (
+        "TENANT_SUBSCRIPTION_REQUIRED", "TENANT_SUSPENDED",
+        "TENANT_DELETED", "TENANT_ENTITLEMENT_UNAVAILABLE",
+    ):
+        return "subscription"
+    text = (stable_code + " " + str(value or "")[:4000]).upper()
     if any(token in text for token in ("UNKNOWN_", "UNCERTAIN", "PARTIAL_DELIVERY", "AMBIGUOUS")):
         return "uncertain"
     if "GATEWAY_REJECTED_STALE_POS_OPERATION" in text:
