@@ -35,6 +35,15 @@ describe("Odoo billing control-plane contracts", () => {
     expect(source).toContain("await requireTenantBillingAccess(tx, apiKey.tenantId);");
   });
 
+  it("holds the tenant lifecycle fence before subscription admission in both inventory routes", () => {
+    for (const path of ["src/app/api/odoo/agents/route.ts", "src/app/api/odoo/printers/route.ts"]) {
+      const source = read(path);
+      expect(source).toContain("await requireActiveTenantInTransaction(tx, apiKey.tenantId);");
+      expect(source.indexOf("await requireActiveTenantInTransaction(tx, apiKey.tenantId);"))
+        .toBeLessThan(source.indexOf("await requireTenantBillingAccess(tx, apiKey.tenantId);"));
+    }
+  });
+
   it("decides Odoo runtime access and reads the inventory in one transaction", () => {
     // A subscription that lapses between the billing decision and the
     // inventory read must not still expose tenant runtime state. Both
