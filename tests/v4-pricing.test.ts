@@ -2,7 +2,6 @@
 import { createElement as h, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { PgDialect } from "drizzle-orm/pg-core";
-import { redirect } from "next/navigation";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { I18nProvider } from "../src/i18n/react";
 import { translate } from "../src/i18n/translate";
@@ -42,8 +41,9 @@ describe("public manual plan catalog",()=>{
   expect(markup).not.toContain(translate(locale,"v4.pricing.intro"));
   expect(markup).not.toMatch(/24\/7|guaranteed uptime|unlimited jobs|Stripe/);
  });
- it("renders exactly one console action for a signed-in customer",async()=>{
-  fixture.authenticated=true;const markup=await render();
+ it("renders one console action for an inactive, signed-in customer and keeps plan requests owner-only",async()=>{
+  fixture.authenticated=true;fixture.status="expired";const markup=await render();
   expect(markup.match(/>Open console<\/a>/g)?.length).toBe(1);
+  expect(markup).toContain('href="/billing?plan=manual-plan"');
  });
 });
