@@ -4,6 +4,7 @@ import { requireManagerPermission } from "../../../../lib/authorization";
 import { getAllAgentsHealth, getAgentHealth } from "../../../../lib/agent-health";
 import { requestIdFrom } from "../../../../lib/log";
 import { runWithCorrelation, generateRequestId } from "../../../../server/correlation";
+import { parseStrictListOffset } from "../../../../lib/request-limits";
 
 export const dynamic = "force-dynamic";
 
@@ -24,9 +25,9 @@ export async function GET(req: Request) {
     }
     const rawLimit = url.searchParams.get("limit");
     const rawOffset = url.searchParams.get("offset");
-    const limit = rawLimit === null ? 100 : Number(rawLimit);
-    const offset = rawOffset === null ? 0 : Number(rawOffset);
-    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 200 || !Number.isSafeInteger(offset) || offset < 0 || offset > 100_000) {
+    const limit = rawLimit === null ? 100 : parseStrictListOffset(rawLimit, Number.MAX_SAFE_INTEGER);
+    const offset = parseStrictListOffset(rawOffset, Number.MAX_SAFE_INTEGER);
+    if (limit === null || limit < 1 || limit > 200 || offset === null || offset > 100_000) {
       return NextResponse.json(
         { error: "Invalid pagination", code: "INVALID_PAGINATION" },
         { status: 400, headers: { "x-request-id": requestId } },
