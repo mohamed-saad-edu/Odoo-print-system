@@ -37,6 +37,9 @@ export default async function BillingPage({ searchParams }: { searchParams: Prom
   ]);
   const plan = sub ? await db.query.plans.findFirst({ where: eq(plans.id, sub.planId), columns: { name: true, entitlements: true, priceMinorUnits: true, priceCurrency: true } }) : null;
   const status = customerSubscriptionState(sub, tenant?.lifecycle, now);
+  // Published list price is not the manually agreed price of this subscription.
+  const publishedPlanPrice = sub?.subscriptionType === "paid" && plan
+    ? formatPlanPrice(plan.priceMinorUnits, plan.priceCurrency, locale) : null;
   const statusKey = { active: "v4.onboarding.active", awaiting_activation: "v4.onboarding.pending", expired: "v4.onboarding.expired", suspended: "v4.onboarding.suspended" } as const;
   const tone: Tone = status === "active" ? "ok" : status === "suspended" ? "bad" : "warn";
   let usage: { used: number; limit: number | "unlimited"; remaining: number | "unlimited"; reset: Date } | null = null;
@@ -60,7 +63,7 @@ export default async function BillingPage({ searchParams }: { searchParams: Prom
     <PageContainer><div className="space-y-5">
       {status !== "active" && <Callout tone={tone} title={t(statusKey[status])}>{t(status === "expired" ? "v4.subscription.expiredBody" : status === "suspended" ? "v4.subscription.suspendedBody" : "v4.subscription.pendingBody")}</Callout>}
       <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1.4fr)_minmax(280px,1fr)]"><div className="space-y-5">
-        <Card><CardHeader title={status === "active" ? t("v4.subscription.yourCurrentPlan") : plan?.name ?? t("billing.noPlanSelected") } subtitle={t(status === "active" ? "v4.subscription.currentContract" : "v4.subscription.recordedContract")} icon={<CalendarDays className="h-4 w-4" />} /><div className="px-5 pt-4 text-lg font-semibold">{plan?.name ?? t("billing.noPlanSelected")}</div>{plan && <p className="px-5 pt-2 text-sm text-ink-3"><bdi dir="auto">{formatPlanPrice(plan.priceMinorUnits,plan.priceCurrency,locale) ?? t("v4.pricing.contactPrice")}</bdi></p>}<dl className="grid gap-5 p-5 sm:grid-cols-2">
+        <Card><CardHeader title={t(status === "active" ? "v4.subscription.yourCurrentPlan" : "v4.subscription.recordedContract")} subtitle={t(status === "active" ? "v4.subscription.currentContract" : "v4.subscription.recordedContract")} icon={<CalendarDays className="h-4 w-4" />} /><div className="px-5 pt-4 text-lg font-semibold">{plan?.name ?? t("billing.noPlanSelected")}</div>{publishedPlanPrice && <p className="px-5 pt-2 text-sm text-ink-3">{t("v4.subscription.catalogPrice")}: <bdi dir="auto">{publishedPlanPrice}</bdi></p>}<dl className="grid gap-5 p-5 sm:grid-cols-2">
           {[[t("v4.subscription.type"), t(sub?.subscriptionType === "free" ? "v4.subscription.free" : sub?.subscriptionType === "paid" ? "v4.subscription.paid" : "v4.subscription.notSet")], [t("v4.onboarding.term"), billingTermLabel(sub?.term, t)], [t("v4.subscription.start"), date(sub?.currentPeriodStart)], [t("v4.subscription.end"), date(sub?.currentPeriodEnd)]].map(([label,value]) => <div key={label}><dt className="text-sm text-ink-3">{label}</dt><dd className="mt-1 font-semibold"><bdi dir="auto">{value}</bdi></dd></div>)}
         </dl><p className="border-t border-edge-subtle p-5 text-sm text-ink-3">{t(sub?.cancelAtPeriodEnd ? "v4.subscription.endsAtTerm" : "v4.subscription.manualRenewal")}</p>
         </Card>

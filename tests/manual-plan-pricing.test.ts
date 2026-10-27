@@ -24,5 +24,6 @@ describe("manual price catalog",()=>{
   expect(formatPlanPrice(1995,"SAR","ar")).toContain("19.95");
   expect(formatPlanPrice(null,null,"en")).toBeNull();
   expect(formatPlanPrice(-1,"USD","en")).toBeNull();
+  expect(formatPlanPrice(0,"USD","en")).toContain("0.00");
  });
 });
