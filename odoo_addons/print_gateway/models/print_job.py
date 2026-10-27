@@ -1424,6 +1424,24 @@ class PrintGatewayJob(models.Model):
         # deprecated since 18.0).
         self.check_access("write")
 
+    @staticmethod
+    def _is_time_sensitive_receipt(job):
+        """POS/customer receipts and kitchen tickets must not print unexpectedly after renewal."""
+        return str(job.document_type or "").strip().lower() in {
+            "receipt", "kitchen", "pos_receipt", "pos_kitchen",
+        }
+
+    def _is_billing_deferred_receipt(self, job):
+        """An old pre-admission billing refusal must never be retried as a new POS print."""
+        marker = str(job.last_error or "")
+        return self._is_time_sensitive_receipt(job) and (
+            marker.startswith(("GATEWAY_BILLING_LIMIT_REACHED:", "GATEWAY_BILLING_BLOCKED:"))
+            or (
+                marker.startswith("GATEWAY_BILLING_PARKED:")
+                and any(code in marker for code in ("GATEWAY_BILLING_LIMIT_REACHED:", "GATEWAY_BILLING_BLOCKED:"))
+            )
+        )
+
     def _billing_retry_values(self, job, last_error, retry_after):
         """Queued-retry values for operator-recoverable Gateway refusals.
 
@@ -1432,6 +1450,20 @@ class PrintGatewayJob(models.Model):
         not grow forever while blocked: past the cap the job parks with a
         24h backoff and frozen attempts, staying recoverable.
         """
+        # Receipt and kitchen output is time-sensitive: a rejected print is
+        # definitely NOT admitted at the Gateway. Preserve the audit/history
+        # but require an intentional NEW reprint rather than replaying it after
+        # a subscription renewal (which may be days later).
+        if self._is_time_sensitive_receipt(job) and last_error.startswith((
+            "GATEWAY_BILLING_LIMIT_REACHED:", "GATEWAY_BILLING_BLOCKED:",
+        )):
+            return {
+                "status": "failed",
+                "attempts": job.attempts + 1,
+                "last_error": "GATEWAY_REJECTED_BILLING_HOLD: %s" % last_error,
+                "next_retry_at": False,
+                "completed_at": db_now_utc(self.env.cr),
+            }
         next_attempt = job.attempts + 1
         if next_attempt > MAX_BILLING_PARK_ATTEMPTS:
             return {
@@ -1536,6 +1568,22 @@ class PrintGatewayJob(models.Model):
                     return self._advance_status_claimed(job, target, values, claim_token)
                 self._advance_status(job, target, values)
                 return True
+
+            # Existing queued POS receipts from an older version may carry a
+            # billing refusal and have been parked for hours or days. Fence
+            # them before ANY HTTP submission, even if access is now active.
+            if self._is_billing_deferred_receipt(job):
+                persist_submit_state({
+                    "status": "failed",
+                    "last_error": "GATEWAY_REJECTED_BILLING_HOLD: Billing refusal; explicit reprint required",
+                    "next_retry_at": False,
+                    "completed_at": db_now_utc(self.env.cr),
+                })
+                if raise_on_failure:
+                    raise ValidationError(_(
+                        "The earlier receipt was not printed because the subscription blocked it. Print it again explicitly if still needed."
+                    ))
+                continue
 
             current_binding = job.fallback_binding_id
             visited_bindings = {job.printer_id}
@@ -1674,6 +1722,10 @@ class PrintGatewayJob(models.Model):
                                 )
                                 persist_submit_state(values)
                                 if raise_on_failure:
+                                    if values.get("status") == "failed":
+                                        raise ValidationError(_(
+                                            "Printing is paused by the subscription. This receipt was not printed; reprint explicitly after renewal if needed."
+                                        ))
                                     raise ValidationError(
                                         _("Gateway billing access is temporarily unavailable. The job was safely re-queued for retry.")
                                     )
