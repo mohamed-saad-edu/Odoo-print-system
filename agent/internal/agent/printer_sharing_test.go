@@ -574,6 +574,27 @@ func TestAgentSharingAdmittedJobFinishesWhileMutexWaiterIsReturned(t *testing.T)
 	}
 }
 
+func TestPreDispatchDesiredStateRefusalClearsAcceptedHandBackClaim(t *testing.T) {
+	p := &fakePrinter{}
+	ag, _ := prepareSharingTestAgent(t, p)
+	// The native runtime has a queue, but the local YAML authority was
+	// removed before the first synced Gateway desired-state snapshot.
+	// This must be rejected *before* any physical attempt.
+	ag.cfg.Printers = nil
+	ag.desiredStateSynced = false
+	ag.processJob(context.Background(), sharingDispatchTestJob(ag, "unsynced-private", "local"))
+	if p.Calls() != 0 {
+		t.Fatal("unverified desired-state queue reached hardware")
+	}
+	_, status, found, err := ag.queue.Get("unsynced-private")
+	if err != nil || !found || status != "queued" {
+		t.Fatalf("pre-dispatch refusal did not remain queued: status=%q found=%v err=%v", status, found, err)
+	}
+	if token := ag.queue.ClaimTokenFor("unsynced-private"); token != "" {
+		t.Fatalf("Gateway-acknowledged desired-state hand-back retained a stale local claim: %q", token)
+	}
+}
+
 func TestAgentSharingDurablePredispatchReturnRetainsPrivateReasonAndToken(t *testing.T) {
 	t.Setenv("YASEIR_AGENT_ALLOW_INSECURE_HTTP", "1")
 	var allowACK atomic.Bool
