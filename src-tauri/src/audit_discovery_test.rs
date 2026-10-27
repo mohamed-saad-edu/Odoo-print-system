@@ -85,7 +85,7 @@ fn local_test_print_preserves_exact_printer_identity_in_cli_args() {
             "test".to_string(),
             id.to_string(),
             "-config".to_string(),
-            "agent.yaml".to_string()
+            "agent.yaml".to_string(),
         ]
     );
     let long = "é".repeat(129);
