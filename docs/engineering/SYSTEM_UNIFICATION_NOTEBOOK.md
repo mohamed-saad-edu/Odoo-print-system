@@ -183,3 +183,11 @@ The root-level `NOTES.md` is now the **GitHub-only full path inventory**, organi
 - **API-ERROR-007**: return `INVALID_STATUS_FILTER` from both tenant and platform job history routes; `api-error-keys.ts` already maps it to localized copy. Commit `0aefc2953d8a3109d59fa1d0cf5de1c56a4c44b1`.
 
 **Test evidence:** Older `17e08a46` CI failed due a duplicate import subsequently corrected in the repo. Audit-only `bfbbd60d` CI succeeded with application jobs skipped (cannot establish runtime PASS). All updated PostgreSQL integration and native hardware acceptance still need a completed exact-current-commit run. Do not deploy from this review.
+
+## 13. 2026-10-28 — AUTH-PROBE-CACHE-2026-10: session metadata must never be cached
+
+**Scope and evidence:** The customer session probe `src/app/api/auth/me/route.ts` explicitly emitted `Cache-Control: no-store`, but `src/app/api/auth/manager/me/route.ts` and `src/app/api/platform/auth/me/route.ts` returned tenant/role/expiry or Platform Owner identity data without explicit private/no-store on either 200 or 401. This is a demonstrable response-policy inconsistency; no live cache leak is asserted. Current username/password session checks, role authorization and token expiry are preserved.
+
+**Fix commits on main:** `4cc2eff63b2435dcd751ec4e0e07b3c9398c630b` (manager probe), `cdd9666a126bb7c48158f16f05c16db92438a7cc` (Platform Owner probe). Both successful and unauthorized responses now carry `Cache-Control: private, no-store`; the manager route is explicitly dynamic. `942ef291b6cf23f1f6e85ab3c870052cea3fa4d6` adds PostgreSQL-backed password-login regressions covering both response types. No application data, authentication policy, or migration was changed.
+
+**Verification:** Commit `942ef291` triggered GitHub CI `40600071474`, but the workflow was cancelled by further concurrent commits before its App / Gateway job completed; this **is not PASS**. An exact-SHA App / Gateway run including `tests/password-only-auth.integration.test.ts` remains required. Hardware POS/Windows and populated-migration rehearsal remain **NOT RUN**. Maintain TODO status for unreviewed modules.
