@@ -92,7 +92,7 @@ export function BillingActions({ plans, selectedPlanId, currentPlanId, isOwner, 
           <p><bdi dir="ltr" className="break-all font-mono">{request.reference}</bdi></p>
           {request.status === "approved" && request.approvalModified && <p>
             {t("v4.subscription.approvedTerms")}: {plans.find(plan => plan.id === request.approvedPlanId)?.name ?? request.approvedPlanId}
-            {" · "}{t(request.approvedTerm === "yearly" ? "v4.onboarding.yearly" : "v4.onboarding.monthly")}
+            {" · "}{t(request.approvedTerm === "yearly" ? "v4.onboarding.yearly" : request.approvedTerm === "custom" ? "v4.subscription.custom" : "v4.onboarding.monthly")}
             {typeof request.approvedMonthlyQuota === "number" && <>{" · "}<bdi dir="ltr" className="tabular-nums">{formatNumber(request.approvedMonthlyQuota)}</bdi></>}
           </p>}
         </div>

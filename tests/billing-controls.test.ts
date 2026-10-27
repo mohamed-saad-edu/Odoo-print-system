@@ -68,6 +68,19 @@ describe("manual subscription request controls",()=>{
     expect(container.querySelector("#request-plan")).not.toBeNull();
   });
 
+  it("labels an approved custom term accurately instead of calling it monthly", async () => {
+    const initialRequest: CustomerSubscriptionRequest = {
+      id:"req_custom",reference:"req_custom",status:"approved",planId:"p1",term:"monthly",
+      approvalModified:true,approvedPlanId:"p2",approvedTerm:"custom",approvedMonthlyQuota:5000,
+      createdAt:"2030-01-01T00:00:00Z",
+    };
+    await mount({initialRequest});
+    const details = container.querySelector("details");
+    expect(details).not.toBeNull();
+    expect(details!.textContent).toContain("Custom duration");
+    expect(details!.textContent).not.toContain("yearly term");
+  });
+
   it("keeps customer request references LTR even inside Arabic pending content", async () => {
     const initialRequest: CustomerSubscriptionRequest = {
       id: "req_123ABC", reference: "req_123ABC", status: "pending",
