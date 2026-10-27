@@ -1,6 +1,6 @@
 # NOTES.md — Yaseir Cloud Printing full-repository engineering coverage
 
-Source: `main@ddc4fc7bed57ee9f0893a09692c62367fd463372`. Re-scanned **1917 tracked files** in **89 directory groups** through GitHub's complete recursive tree (`truncated=false`). This is a coverage index, **not** a claim of line-by-line audit. This file is root-level, outside the Gateway/Agent/Odoo/Desktop product trees.
+Source: `main@97cab650baad381a4538a7f6bf9e66b9af972731`. Re-scanned **1921 tracked files** in **89 directory groups** through GitHub's complete recursive tree (`truncated=false`). This is a coverage index, **not** a claim of line-by-line audit. This file is root-level, outside the Gateway/Agent/Odoo/Desktop product trees.
 
 **Status semantics:** `TODO` = path enumerated, code/read/verification incomplete; `DONE` = code, cross-contract and exact-commit CI tests reviewed; `BLOCKED` = cannot verify as text through GitHub API or requires real hardware/staging. These are independent of existing per-file ledger statuses. Every path stays TODO/BLOCKED until evidence is linked; counts do not imply production readiness.
 
@@ -15,6 +15,7 @@ Source: `main@ddc4fc7bed57ee9f0893a09692c62367fd463372`. Re-scanned **1917 track
 | HIST-STATS-03 cross-tenant dashboard collision | Platform 24h totals suppressed tenant A's receipt when tenant B had a live job with the same opaque ID | `327b97d240bbfa2f8073edd55a604971480d9170` changes the exact tenant predicate; PostgreSQL regressions in `tests/platform-stats.test.ts` cover cross-tenant inclusion and same-tenant dedup | Windows / Security & Resilience / Native Backport PASS on exact SHA; CI / Docker / Static Security CANCELLED when new pushes superseded this run | TODO |
 | INPUT-PLATFORM-01 malformed fleet paging | Platform Owner inventory treated scientific/empty/fractional offset and limit tokens as valid by `Number()` coercion | `a39455104e18de51360c3bd4131c91acd563073b`: bounded exact decimal parsing and authenticated PostgreSQL route regression | Windows / Security & Resilience / Native Backport PASS on exact SHA; CI / Docker / Static Security CANCELLED during concurrent push activity | TODO |
 | PRINTER-IPP-ROOT-01 wrong queue identity | Gateway and Go identity folded explicit root URI into `/ipp/print`, although the endpoints can address different IPP queues | `12c6ca3d39a888ec12c27e8b27c9f5d63eec247a`; formatting follow-up `d9a24f171860fc009fc863bb850d4765e5c36689`; TypeScript + native Go regressions for root, empty path, default queue and hardware identity | Exact-SHA CI unfinished or cancelled by concurrent pushes; physical printer execution NOT RUN | TODO |
+| PRINTER-IPP-ROOT-02 native transport alignment | Legacy Go `normalizeIPPURL` silently rewrote explicit root to `/ipp/print`, and `PrinterBindingDigest` merged separate queues despite new stable-ID guards | Guarded GitHub commits: `5959e1ffe90116d5aa9da01235af95582893225d` (native transport), `c15806bb600c282618d4d993e2178ce378d00058` (binding digest), `58c06d38ffef49e41a00ebb31d71ae32cbd6f0c1` (privacy regression), `94321050aee470ea9913b641c3a162cd44503f46` (registry regression). Preserves `/ipp/print` fallback for bare hosts. | Exact-SHA CI results were queued/in progress or cancelled as later commits superseded; real physical IPP hardware NOT RUN | TODO |
 | HW-01 print result | Neither Gateway `success` nor spooler submission proves physical paper | Status contract requires independent explicit physical evidence; never auto-retry unknown | No physical printer attached through GitHub API | BLOCKED |
 | DATA-01 defense in depth | PostgreSQL RLS not enabled; predicates, composite FKs and transaction locks are tenant boundary | Audit every raw query, add safe migration only after staged design/coverage | Requires comprehensive source+staging audit | TODO |
 
@@ -2052,6 +2053,7 @@ Source: `main@ddc4fc7bed57ee9f0893a09692c62367fd463372`. Re-scanned **1917 track
 - TODO `tests/desktop-auth-contract.test.ts`
 - TODO `tests/desktop-bounded-startup.contract.test.ts`
 - TODO `tests/desktop-browser-headers.test.mjs`
+- TODO `tests/desktop-diagnostic-admission.test.ts`
 - TODO `tests/desktop-error-messages.test.ts`
 - TODO `tests/desktop-file-output.test.ts`
 - TODO `tests/desktop-fleet-count.contract.test.mjs`
@@ -2075,6 +2077,7 @@ Source: `main@ddc4fc7bed57ee9f0893a09692c62367fd463372`. Re-scanned **1917 track
 - TODO `tests/discovery-commit-f013.test.mjs`
 - TODO `tests/discovery-identity.integration.test.ts`
 - TODO `tests/discovery-ipp-identity.round5.test.mjs`
+- TODO `tests/discovery-provision-target-drift.integration.test.ts`
 - TODO `tests/discovery-report-fencing.round5.test.mjs`
 - TODO `tests/discovery-security.test.ts`
 - TODO `tests/discovery-unit.test.ts`
@@ -2084,6 +2087,7 @@ Source: `main@ddc4fc7bed57ee9f0893a09692c62367fd463372`. Re-scanned **1917 track
 - TODO `tests/email-auth-token-lifetime.integration.test.ts`
 - TODO `tests/email-retry-idempotency.round5.test.mjs`
 - TODO `tests/entitlement-labels.test.ts`
+- TODO `tests/exact-printer-id.test.ts`
 - TODO `tests/f017-fetch-body-integration.test.mjs`
 - TODO `tests/fleet-api-pagination.contract.test.mjs`
 - TODO `tests/fleet-cursor-route.test.ts`
@@ -2330,6 +2334,7 @@ Source: `main@ddc4fc7bed57ee9f0893a09692c62367fd463372`. Re-scanned **1917 track
 - TODO `tests/tailgrids-ui-current-run.node.test.mjs`
 - TODO `tests/team-authority-cutover.test.ts`
 - TODO `tests/team-authorization.test.ts`
+- TODO `tests/team-directory-live-authority.integration.test.ts`
 - TODO `tests/team-invitation-authority.test.ts`
 - TODO `tests/team-invitation-restoration.contract.test.ts`
 - TODO `tests/team-pagination.contract.test.mjs`
