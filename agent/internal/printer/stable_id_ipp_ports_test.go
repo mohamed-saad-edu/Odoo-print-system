@@ -113,7 +113,7 @@ func TestDiscoveryKeepsPlainAndSecureIPPDefaultQueuesSeparate(t *testing.T) {
 		}
 		rows, err := UpsertRegistry(path, []DeviceInfo{{
 			Name: "Same server", PrinterType: "physical",
-			ConnectionType: "ipp", Protocol: protocol,
+			ConnectionType: protocol, Protocol: protocol,
 			Endpoint: endpoint, NetworkAddress: host, Port: 631,
 			Enabled: true, Status: "online",
 		}})
@@ -135,7 +135,7 @@ func TestLegacySecureIPPRegistryRetainsIDAfterStableIDUpgrade(t *testing.T) {
 	endpoint := "ipps://" + host + ":631/ipp/print"
 	original := DeviceInfo{
 		ID: legacyID, Name: "Secure receipt queue",
-		PrinterType: "physical", ConnectionType: "ipp", Protocol: "ipps",
+		PrinterType: "physical", ConnectionType: "ipps", Protocol: "ipps",
 		Endpoint: endpoint, NetworkAddress: host, Port: 631,
 		Enabled: false, Status: "unknown",
 	}
@@ -144,7 +144,7 @@ func TestLegacySecureIPPRegistryRetainsIDAfterStableIDUpgrade(t *testing.T) {
 	}
 	rows, err := UpsertRegistry(path, []DeviceInfo{{
 		Name: original.Name, PrinterType: "physical",
-		ConnectionType: "ipp", Protocol: "ipps",
+		ConnectionType: "ipps", Protocol: "ipps",
 		Endpoint: "https://" + host + ":631/ipp/print",
 		NetworkAddress: host, Port: 631, Enabled: true, Status: "online",
 	}})
