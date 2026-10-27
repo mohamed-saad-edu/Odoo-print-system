@@ -7,7 +7,8 @@ import { odooInstallations, odooInstallationCredentials } from "../../../../db/s
 import { validateWorkspaceManager } from "../../../../lib/manager-auth";
 import { requireManagerPermission } from "../../../../lib/authorization";
 import { requireManagerActorInTransaction, ManagerMutationAuthorityChangedError } from "../../../../lib/manager-mutation-authorization";
-import { requireActiveTenantInTransaction } from "../../../../lib/tenant-guard";
+import { requireActiveTenantInTransaction, TenantSuspendedError, TenantDeletedError } from "../../../../lib/tenant-guard";
+import { requireTenantBillingAccess, isTenantBillingError } from "../../../../lib/entitlements";
 import { writeAuditEvent } from "../../../../lib/audit";
 import { logError } from "../../../../lib/log";
 
@@ -49,19 +50,21 @@ export async function POST(req: Request) {
   try {
     const enrolled = await db.transaction(async (tx) => {
       await requireActiveTenantInTransaction(tx, manager.tenantId);
-      await requireManagerActorInTransaction(tx, manager, "integrations.manage");
-      // Unique credential ownership enforces a separate Gateway key for each
-      // independent Odoo deployment. A copied database cannot enroll by itself.
+      // Lock the live credential BEFORE the manager identity guard, just like
+      // API-key rotation. Reversing this order can deadlock enrollment against
+      // rotation of the same key while the user session is being rechecked.
       const credential = await tx.execute(sql`
         SELECT id FROM api_keys WHERE id = ${parsed.data.apiKeyId} AND tenant_id = ${manager.tenantId}
           AND revoked_at IS NULL AND read_only_until IS NULL AND odoo_enabled = TRUE FOR UPDATE
       `);
+      await requireManagerActorInTransaction(tx, manager, "integrations.manage");
       if (!credential.rows.length) return false;
-      const bound = await tx.execute(sql`
-        SELECT installation_id FROM odoo_installation_credentials
-        WHERE tenant_id = ${manager.tenantId} AND api_key_id = ${parsed.data.apiKeyId} FOR UPDATE
-      `);
-      if (bound.rows.length) return false;
+      // This provisioned runtime identity must obey the same manual contract
+      // gate as automatic enrollment (and printer/Agent provisioning).
+      await requireTenantBillingAccess(tx, manager.tenantId);
+      // Migration 0087 deliberately allows a single credential to attest
+      // several independent Odoo installations. Their separate 256-bit proofs
+      // and versioned operation namespaces prevent cross-installation replay.
       await tx.insert(odooInstallations).values({ id: installationId, tenantId: manager.tenantId, name: parsed.data.name, secretHash });
       await tx.insert(odooInstallationCredentials).values({ tenantId: manager.tenantId, installationId, apiKeyId: parsed.data.apiKeyId });
       await writeAuditEvent({ tenantId: manager.tenantId, actorType: manager.userId ? "user" : "system",
@@ -69,11 +72,17 @@ export async function POST(req: Request) {
         resourceType: "odoo_installation", resourceId: installationId, metadata: { keyId: parsed.data.apiKeyId } }, tx);
       return true;
     });
-    if (!enrolled) return NextResponse.json({ error: "Active unbound Odoo credential required", code: "ENROLLMENT_CONFLICT" }, { status: 409 });
+    if (!enrolled) return NextResponse.json({ error: "Active Odoo integration credential required", code: "ENROLLMENT_CONFLICT" }, { status: 409 });
     return NextResponse.json({ installationId, installationProof: proof, note: "Save this 256-bit proof OUTSIDE the Odoo database in YASEIR_ODOO_INSTALLATION_PROOFS. It is shown only once. Restore/clone operations require operator re-enrollment." },
       { status: 201, headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     if (error instanceof ManagerMutationAuthorityChangedError) return error.response();
+    if (error instanceof TenantSuspendedError || error instanceof TenantDeletedError) {
+      return NextResponse.json({ error: error.message, code: error.code }, { status: 403, headers: { "Cache-Control": "no-store" } });
+    }
+    if (isTenantBillingError(error)) {
+      return NextResponse.json({ error: error.message, code: error.code }, { status: 403, headers: { "Cache-Control": "no-store" } });
+    }
     logError("odoo.installation.enrollment_failed", { error: error instanceof Error ? error.message : String(error) });
     return NextResponse.json({ error: "Enrollment unavailable" }, { status: 500 });
   }
