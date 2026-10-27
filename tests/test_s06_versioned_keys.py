@@ -32,6 +32,27 @@ def test_v2_different_installations_same_local_operation_are_distinct():
     assert ka == hashlib.sha256(json.dumps(["yaseir-odoo-v2",a,"7","operation-123"], separators=(",", ":")).encode()).hexdigest()
 
 
+def test_v2_unicode_operation_length_matches_gateway_utf16_units():
+    """Gateway JS enforces 200 UTF-16 code units; astral symbols use two.
+
+    Odoo must reject unsupported operation IDs BEFORE enqueuing a durable
+    local request. Never change v1 keys; historical operations remain valid.
+    """
+    import pytest
+
+    m = impl()
+    installation = "00000000-0000-4000-8000-000000000001"
+    accepted = "🖨" * 100  # 200 UTF-16 units
+    rejected = "🖨" * 101  # 202 UTF-16 units
+    expected = hashlib.sha256(json.dumps(
+        ["yaseir-odoo-v2", installation, "7", accepted],
+        ensure_ascii=False, separators=(",", ":")).encode("utf-8")).hexdigest()
+    assert m.wire_key(2, 7, accepted, installation) == expected
+    with pytest.raises(ValueError, match="Durable local operation key"):
+        m.wire_key(2, 7, rejected, installation)
+    assert m.wire_key(1, 7, rejected) == m.legacy_key(7, rejected)
+
+
 def test_v2_is_pinned_to_saved_installation_not_a_rotating_credential():
     m = impl()
     stored = m.wire_key(2, 7, "old-queued", "00000000-0000-4000-8000-000000000001")
