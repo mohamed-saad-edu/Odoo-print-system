@@ -61,7 +61,9 @@ describe("overlay and job evidence contracts", () => {
     expect(plans).toContain('grid gap-4 sm:grid-cols-2 lg:grid-cols-3');
     expect(plans).toContain("a('preview')");
     expect(subscriptions).toContain('grid gap-4 lg:grid-cols-2');
-    expect(subscriptions).toContain("a('manage')");
+    expect(subscriptions).toMatch(/a\(['"]manage['"]\)/);
+    expect(subscriptions).toContain("subscriptionAction=revoke");
+    expect(subscriptions).toContain('bdi dir="ltr"');
   });
 
   it("loads an authoritative job snapshot before rendering job evidence", () => {

@@ -34,7 +34,7 @@ describe("manual subscription request controls",()=>{
     expect(refresh).toHaveBeenCalledTimes(1);
   });
   it("reuses the same idempotency key after an ambiguous network failure",async()=>{
-    fetchMock.mockRejectedValue(new Error("secret raw server exception"));await mount({selectedPlanId:"p1"});await submit();await submit();
+    fetchMock.mockRejectedValue(new Error("secret raw server exception"));await mount({selectedPlanId:"p2"});await submit();await submit();
     expect(fetchMock.mock.calls[0][1].headers["Idempotency-Key"]).toBe(fetchMock.mock.calls[1][1].headers["Idempotency-Key"]);
     expect(container.textContent).not.toContain("secret raw");
   });
