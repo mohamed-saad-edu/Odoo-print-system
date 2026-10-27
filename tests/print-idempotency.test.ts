@@ -101,6 +101,23 @@ suite("print idempotency (Odoo → Gateway)", () => {
     }
   });
 
+  it("never reroutes a padded opaque printer identity through Odoo or direct service admission", async () => {
+    const padded = ` ${f.printerId} `;
+    const legacy = await create(jobBody("padded-legacy-target", { printerId: padded }));
+    expect(legacy.status).toBe(400);
+    const v2 = await printJobsV2POST(new Request("http://gateway.test/api/print/jobs/v2", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${f.odooKey}`, "content-type": "application/json" },
+      body: JSON.stringify(jobBody("padded-v2-target", { printerId: padded })),
+    }));
+    expect(v2.status).toBe(400);
+    await expect(createPrintJobForPrinter(padded, jobBody("direct-padded-target").payload, {
+      requestedBy: "internal-service", tenantId: f.tenantId,
+      idempotencyKey: "direct-padded-target", destination: "POS", documentType: "invoice",
+    })).rejects.toMatchObject({ code: "INVALID_REQUEST", status: 400 });
+    expect(await jobCount()).toBe(0);
+  });
+
   it("does not reuse an internal Manager job through the Odoo idempotency surface", async () => {
     const key = "op-internal-collision";
     const internal = await createPrintJobForPrinter(f.printerId, jobBody(key).payload, {
