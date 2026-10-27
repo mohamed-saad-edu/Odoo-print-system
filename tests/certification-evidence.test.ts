@@ -41,7 +41,7 @@ describe("certification evidence and request handling", () => {
     mocks.event.mockResolvedValue(undefined);
   });
 
-  it.each([" padded-operation ", "   ", "bad\\noperation", "\\uFEFFpadded-operation"])(
+  it.each([" padded-operation ", "   ", "bad\noperation", "\uFEFFpadded-operation"])(
     "rejects a noncanonical caller-supplied certification key %j without creating any print intent",
     async (key) => {
       replyRows({ id: "job", status: "queued" });
