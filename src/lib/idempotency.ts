@@ -51,7 +51,15 @@ export function generateIdempotencyKey(): string {
  * instead of rejecting the invalid caller identity.
  */
 export function isExactIdempotencyKey(value: unknown): value is string {
-  return typeof value === "string" && value.length >= 1 && value.length <= 200
-    && value === value.trim()
-    && !/[\u0000-\u001f\u007f-\u009f]/.test(value);
+  if (typeof value !== "string" || value.length < 1 || value.length > 200
+      || value !== value.trim() || /[\u0000-\u001f\u007f-\u009f]/.test(value)) return false;
+  try {
+    // PostgreSQL and UTF-8 transports replace unpaired UTF-16 surrogates.
+    // Never accept a different wire key than the caller presented: it could
+    // collide with a prior print operation and silently replay its receipt.
+    encodeURIComponent(value);
+    return true;
+  } catch {
+    return false;
+  }
 }
