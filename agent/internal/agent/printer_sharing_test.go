@@ -431,7 +431,17 @@ func (*verifiedNetworkSharingFixture) VerifyOperational(ctx context.Context, pc 
 
 func sharingDispatchTestJob(a *Agent, id, printerID string) map[string]interface{} {
 	job := dispatchTestJob(id, printerID)
-	job["bindingDigest"] = testPrinterBinding(a.printerConfigs[a.resolvePrinterAlias(printerID)])
+	// The Gateway assigned the job's binding before local sharing could
+	// change. Resolving its target AGAIN through current local policy turns
+	// a deliberately denied alias into an empty test config and panics,
+	// preventing the test from reaching the actual fail-closed dispatch gate.
+	// These sharing fixtures use one known local printer; keep its original
+	// binding and leave the potentially forged/denied wire ID untouched.
+	local, ok := a.printerConfigs["local"]
+	if !ok || len(a.printerConfigs) != 1 {
+		panic("sharing dispatch fixture requires exactly one local printer")
+	}
+	job["bindingDigest"] = testPrinterBinding(local)
 	return job
 }
 
