@@ -107,9 +107,13 @@ func TestDiscoveryKeepsPlainAndSecureIPPDefaultQueuesSeparate(t *testing.T) {
 		"ipp://" + host + ":631/ipp/print",
 		"ipps://" + host + ":631/ipp/print",
 	} {
+		protocol := "ipp"
+		if endpoint == "ipps://"+host+":631/ipp/print" {
+			protocol = "ipps"
+		}
 		rows, err := UpsertRegistry(path, []DeviceInfo{{
 			Name: "Same server", PrinterType: "physical",
-			ConnectionType: "ipp", Protocol: "ipp",
+			ConnectionType: "ipp", Protocol: protocol,
 			Endpoint: endpoint, NetworkAddress: host, Port: 631,
 			Enabled: true, Status: "online",
 		}})
