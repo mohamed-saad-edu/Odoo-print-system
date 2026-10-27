@@ -25,6 +25,9 @@ func TestPrivatePrinterIDHeartbeatMatchesGatewayUTF8ByteLimit(t *testing.T) {
 		{"30 emoji, 120 bytes", strings.Repeat("😀", 30), true},
 		{"31 emoji, 124 bytes", strings.Repeat("😀", 31), false},
 		{"noncanonical padded", " printer", false},
+		{"leading BOM (JS trim)", "\uFEFFprinter", false},
+		{"space and BOM (JS trim)", " \uFEFFprinter", false},
+		{"interior BOM is an opaque ID character", "prin\uFEFFter", true},
 		{"newline", "line\nprinter", false},
 	}
 	for _, tc := range tests {
