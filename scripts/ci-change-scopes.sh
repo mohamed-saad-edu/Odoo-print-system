@@ -18,7 +18,9 @@ mark_all() { mark "${scopes[@]}"; }
 
 files=()
 full=false
+paths_mode=false
 if [[ "${1:-}" == "--paths" ]]; then
+  paths_mode=true
   # Pure classification mode, used by offline regression tests.
   shift
   files=("$@")
@@ -198,6 +200,15 @@ else
         mark_all ;;
     esac
   done
+fi
+
+# Main is the release baseline. A docs-only push can otherwise finish green
+# while cancelling the previous code commit's in-flight checks. Keep
+# path-based PR/weekly optimizations, but never report main CI as green
+# without executing the Gateway, Go and Odoo suites on that exact SHA.
+# Offline --paths regression mode remains a pure path classifier.
+if [[ "$paths_mode" == false && "${GITHUB_EVENT_NAME:-}" == "push" && "${GITHUB_REF:-}" == "refs/heads/main" ]]; then
+  mark app agent odoo
 fi
 
 output="${GITHUB_OUTPUT:-/dev/stdout}"
