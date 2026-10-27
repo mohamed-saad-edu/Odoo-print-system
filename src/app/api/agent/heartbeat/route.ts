@@ -252,7 +252,15 @@ export async function POST(req: Request) {
         if (typeof value !== "string" || !value.trim() || value.length > 120) {
           return NextResponse.json({ error: "privatePrinterIds must contain non-empty printer IDs up to 120 characters" }, { status: 400 });
         }
-        privatePrinterIds.add(value.trim());
+        const localId = value.trim();
+        privatePrinterIds.add(localId);
+        // Negative local sharing authority must follow the canonical ID the
+        // Gateway assigned after a cross-Agent collision. The reporting Agent
+        // deliberately keeps its original local ID; it does not know whether
+        // that ID is the bare tenant ID or its per-Agent cloud alias.
+        // The UPDATE below remains scoped to this authenticated tenant+Agent,
+        // so a denied ID can never hide another Agent's physical printer.
+        privatePrinterIds.add(aliasPrinterIdForAgent(localId, agent.id));
       }
     }
 

@@ -115,4 +115,47 @@ suite("heartbeat cross-agent printer identity", () => {
     const rebound = await pool().query("SELECT capabilities FROM printers WHERE tenant_id=$1 AND id=$2", [f.tenantId, alias]);
     expect(rebound.rows[0].capabilities.geometry.printer_id).toBe(alias);
   });
+
+  it("denies an aliased cloud printer when its Agent reports its original local ID as private", async () => {
+    const f = await seedFixture();
+    await pool().query("DELETE FROM printers WHERE tenant_id = $1 AND id = $2", [f.tenantId, f.printerId]);
+    const second = await secondAgentSameTenant(f.tenantId);
+    const localId = "printer_net_private_collision";
+
+    expect((await heartbeat(f.agentAuth, [makePrinter(localId)])).status).toBe(200);
+    const created = await heartbeat(second.agentAuth, [makePrinter(localId)]);
+    expect(created.status).toBe(200);
+    const alias = (await created.json()).printerIdAliases?.[localId] as string | undefined;
+    expect(alias).toMatch(/^printer_net_private_collision~[0-9a-f]{8}$/);
+
+    const privateSnapshot = await heartbeatPOST(new Request("https://gateway.test/api/agent/heartbeat", {
+      method: "POST", headers: { Authorization: second.agentAuth, "content-type": "application/json" },
+      body: JSON.stringify({
+        status: "online", heartbeatPage: 1, heartbeatPageCount: 1,
+        inventorySnapshotId: "alias-private-snapshot", inventorySnapshotVersion: "100",
+        inventoryComplete: true, privatePrinterIds: [localId], printers: [],
+        desiredStateAcks: [], gatewayOwnedPrinterIds: [],
+      }),
+    }));
+    expect(privateSnapshot.status).toBe(200);
+    const rows = (await pool().query(
+      "SELECT id,agent_id,shared_with_gateway,inventory_present FROM printers WHERE tenant_id=$1 AND id IN ($2,$3)",
+      [f.tenantId, localId, alias],
+    )).rows as Array<{ id:string;agent_id:string;shared_with_gateway:boolean;inventory_present:boolean }>;
+    expect(rows).toHaveLength(2);
+    expect(rows.find(row => row.id === localId)).toMatchObject({
+      agent_id: f.agentId, shared_with_gateway: true, inventory_present: true,
+    });
+    expect(rows.find(row => row.id === alias)).toMatchObject({
+      agent_id: second.agentId, shared_with_gateway: false, inventory_present: true,
+    });
+    // Unversioned legacy heartbeat cannot silently re-share the private alias.
+    expect((await heartbeat(second.agentAuth, [makePrinter(localId)])).status).toBe(200);
+    const after = await pool().query(
+      "SELECT shared_with_gateway FROM printers WHERE tenant_id=$1 AND id=$2",
+      [f.tenantId, alias],
+    );
+    expect(after.rows[0]?.shared_with_gateway).toBe(false);
+  });
+
 });

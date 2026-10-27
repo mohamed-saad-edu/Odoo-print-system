@@ -16,16 +16,22 @@
   "cloudDiscovery": "Remote scan reports withhold denied IDs and identifiable execution bindings, including setup observations lacking a byte language; local scan/registry results remain complete. Unidentifiable candidates retain existing discovery semantics, never gain dispatch permission. A failed policy read sends no device metadata and only a bounded generic source error.",
   "nativeMutation": {
     "command": "set_printer_sharing",
-    "arguments": { "printerId": "string", "sharedWithGateway": "boolean" },
+    "arguments": {
+      "printerId": "string",
+      "sharedWithGateway": "boolean"
+    },
     "cli": "Fixed bundled CLI printers-share --id ID --shared true|false using the fixed protected config path",
-    "acknowledgment": { "printerId": "exact requested ID", "sharedWithGateway": "exact requested boolean" },
+    "acknowledgment": {
+      "printerId": "exact requested ID",
+      "sharedWithGateway": "exact requested boolean"
+    },
     "rules": "Validate exact local ID up to256 UTF8 bytes/boolean, enforce the existing Administrator boundary, bound child15s/stdout2KiB/stderr8KiB (JSON escaping may expand IDs6x), reject mismatched/non-JSON/non-success acknowledgment; never expose Agent credentials or interpolate a shell command"
   },
   "heartbeat": {
     "privatePrinterIds": "Optional bounded array, at most500 IDs/page; no private names, endpoint or capability objects are published",
     "sharedObservations": "Shared printer objects explicitly report sharedWithGateway:true; false belongs in privatePrinterIds and is rejected as an observation",
     "pagination": "Any privatePrinterIds or explicit sharedWithGateway requires the existing valid paginated snapshot ID/version tuple. Private-ID pages join existing printer/ack page counts; all known private runtime aliases are reported",
-    "ownership": "Only existing rows owned by the authenticated tenant and Agent may be made private; unknown private IDs do not create/adopt records",
+    "ownership": "Only existing rows owned by the authenticated tenant and Agent may be made private; unknown private IDs do not create/adopt records For a local ID already aliased under a cross-Agent collision, a privatePrinterIds denial is applied to both that original ID and the deterministic alias for the authenticated reporting Agent; no other Agent/tenant row may be changed. A literal local backend whose ID equals another local backend's authenticated cloud alias is ambiguous and cannot be selected for execution.",
     "precedence": "Negative IDs take precedence across the entire same-version snapshot, including duplicate/different pages. Missing legacy shared fields preserve an existing database denial; re-share requires explicit true with a strictly newer version than the retained denial. Older snapshots cannot undo a newer decision."
   },
   "gateway": {

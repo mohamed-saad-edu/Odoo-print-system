@@ -2580,3 +2580,13 @@ The recursive GitHub tree at `main@2fa5f7454872d575dfad68a1c1f4668dea204e0e` has
 - **BLOCKED / NOT RUN**: installed Windows Agent + spooler/USB/IPPS + Odoo POS, real PDF/receipt output, desktop user session, printer geometry calibration; populated staging database backup/restore and `0102` migration while writers drained.
 - **P1 architecture**: no PostgreSQL RLS defense-in-depth; verify tenant predicate coverage before any RLS rollout, and never perform a destructive production migration.
 - **Release rule**: no PASS claim for tests not executed on the exact current SHA; cancelled/skipped workflows stay CANCELLED/SKIPPED.
+
+
+### 2026-10-28 — printer alias privacy / ambiguous execution batch
+
+- **P1 PRINTER-SHARE-ALIAS-002**: local `privatePrinterIds` denied only bare IDs, while the other Agent's claimed ID persisted under its unique cloud alias. The same authenticated tenant+Agent denial now also reaches its deterministic alias. Cloud histories/rows are not deleted; different Agent rows remain untouched.
+- **P1 PRINTER-ALIAS-EXACT-003**: a literal local printer ID colliding with a different backend's authenticated cloud alias previously won native exact lookup, risking wrong-printer dispatch. The Agent now refuses this ambiguity before hardware.
+- **Regressions**: `tests/heartbeat-cross-agent-identity.test.ts` covers 2 Agents, original and alias, negative sharing/presence and no implicit re-share; `agent/internal/agent/printer_alias_contract_test.go` exercises ambiguous resolution and zero transport calls. Test source was drafted first; direct RED test run unavailable with GitHub-only access (no branch created). Complete Go/Postgres CI **NOT RUN** until an exact-commit Actions job completes.
+- **Ruling:** never auto-remap or select any printer based only on a suffix; negative local policy follows a known alias, while an ambiguous positive physical execution fails closed. No CI workflow disabled, no deployment or migration.
+
+**Concurrent merge note:** The native ambiguity fix and its Go regression were committed separately to `main` as `81ef03dacf7235c310697c693025a8c39d66e8e8`; this batch changes only Gateway alias-sharing denial, the PostgreSQL regression and the records. Go native tests still require exact-SHA execution.
