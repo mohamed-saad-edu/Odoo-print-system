@@ -94,46 +94,46 @@ var gatewayTestPrintPathRe = regexp.MustCompile("^/api/printers/" + gatewayPrint
 var gatewayTestKeyRe = regexp.MustCompile("^[A-Za-z0-9._:-]+$")
 
 func canonicalPrinterSegment(identity string) string {
-    const hex = "0123456789ABCDEF"
-    var b strings.Builder
-    for i := 0; i < len(identity); i++ {
-        ch := identity[i]
-        if (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || strings.ContainsRune("-_.!~*'()", rune(ch)) {
-            b.WriteByte(ch)
-        } else {
-            b.WriteByte('%')
-            b.WriteByte(hex[ch >> 4])
-            b.WriteByte(hex[ch & 15])
-        }
-    }
-    return b.String()
+	const hex = "0123456789ABCDEF"
+	var b strings.Builder
+	for i := 0; i < len(identity); i++ {
+		ch := identity[i]
+		if (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || strings.ContainsRune("-_.!~*'()", rune(ch)) {
+			b.WriteByte(ch)
+		} else {
+			b.WriteByte('%')
+			b.WriteByte(hex[ch >> 4])
+			b.WriteByte(hex[ch & 15])
+		}
+	}
+	return b.String()
 }
 
 func validGatewayPrinterSegment(segment string) bool {
-    if segment == "" || len(segment) > 360 {
-        return false
-    }
-    identity, err := url.PathUnescape(segment)
-    if err != nil || identity == "" || len(identity) > 120 || !utf8.ValidString(identity) ||
-        strings.TrimSpace(identity) != identity || strings.Contains(identity, "..") ||
-        strings.ContainsAny(identity, "/?#%") || strings.ContainsRune(identity, rune(92)) ||
-        strings.ContainsFunc(identity, unicode.IsControl) {
-        return false
-    }
-    first, _ := utf8.DecodeRuneInString(identity)
-    if first < 128 && !((first >= 'A' && first <= 'Z') || (first >= 'a' && first <= 'z') || (first >= '0' && first <= '9')) {
-        return false
-    }
-    return canonicalPrinterSegment(identity) == segment
+	if segment == "" || len(segment) > 360 {
+		return false
+	}
+	identity, err := url.PathUnescape(segment)
+	if err != nil || identity == "" || len(identity) > 120 || !utf8.ValidString(identity) ||
+		strings.TrimSpace(identity) != identity || strings.Contains(identity, "..") ||
+		strings.ContainsAny(identity, "/?#%") || strings.ContainsRune(identity, rune(92)) ||
+		strings.ContainsFunc(identity, unicode.IsControl) {
+		return false
+	}
+	first, _ := utf8.DecodeRuneInString(identity)
+	if first < 128 && !((first >= 'A' && first <= 'Z') || (first >= 'a' && first <= 'z') || (first >= '0' && first <= '9')) {
+		return false
+	}
+	return canonicalPrinterSegment(identity) == segment
 }
 
 func gatewayPrinterActionPathAllowed(path, action string) bool {
-    prefix := "/api/printers/"
-    suffix := "/" + action
-    if !strings.HasPrefix(path, prefix) || !strings.HasSuffix(path, suffix) {
-        return false
-    }
-    return validGatewayPrinterSegment(strings.TrimSuffix(strings.TrimPrefix(path, prefix), suffix))
+	prefix := "/api/printers/"
+	suffix := "/" + action
+	if !strings.HasPrefix(path, prefix) || !strings.HasSuffix(path, suffix) {
+		return false
+	}
+	return validGatewayPrinterSegment(strings.TrimSuffix(strings.TrimPrefix(path, prefix), suffix))
 }
 
 // Deliberately wider than the desktop console proxy (which allows exact
