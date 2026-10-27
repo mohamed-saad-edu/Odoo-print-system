@@ -2206,6 +2206,25 @@ mod security_tests {
     }
 
     #[test]
+    fn gateway_url_rejects_empty_userinfo_before_native_pairing() {
+        for raw in [
+            "https://@gateway.example.com/",
+            "https://:@gateway.example.com/",
+            "https://user:@gateway.example.com/",
+            "https://:password@gateway.example.com/",
+        ] {
+            assert!(
+                normalize_gateway_url(raw).is_err(),
+                "embedded userinfo marker was silently normalized: {raw}"
+            );
+        }
+        assert_eq!(
+            normalize_gateway_url("https://gateway.example.com/").unwrap(),
+            "https://gateway.example.com"
+        );
+    }
+
+    #[test]
     fn pairing_code_contract_remains_strict() {
         assert!(is_valid_code("ABCD23"));
         assert!(!is_valid_code("ABC123")); // digit 1 is excluded by contract.
