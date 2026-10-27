@@ -1424,8 +1424,7 @@ class PrintGatewayJob(models.Model):
         # deprecated since 18.0).
         self.check_access("write")
 
-    @staticmethod
-    def _is_time_sensitive_receipt(job):
+    def _is_time_sensitive_receipt(self, job):
         """POS/customer receipts and kitchen tickets must not print unexpectedly after renewal."""
         return str(job.document_type or "").strip().lower() in {
             "receipt", "kitchen", "pos_receipt", "pos_kitchen",

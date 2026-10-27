@@ -80,7 +80,7 @@ def fixture(response=None, transport_error=None, unrecorded_error=None, lease_av
     output_path = ROOT.parent / "print_output.py"
     exec(compile(output_path.read_text(), str(output_path), "exec"), output_namespace)
     namespace["gateway_output_values"] = output_namespace["gateway_output_values"]
-    job_methods = methods("print_job.py", ["_action_submit_trusted", "_record_ambiguous_submission", "_is_deterministic_failure", "_persist_state", "_billing_retry_values", "_compute_physical_outcome"], namespace)
+    job_methods = methods("print_job.py", ["_action_submit_trusted", "_record_ambiguous_submission", "_is_deterministic_failure", "_persist_state", "_billing_retry_values", "_is_time_sensitive_receipt", "_is_billing_deferred_receipt", "_compute_physical_outcome"], namespace)
     class Job:
         _TERMINAL = {"success", "failed", "unknown", "partial"}
         _GATEWAY_UNKNOWN_MARKERS = ("AGENT_EXECUTION_TIMEOUT", "AGENT_RESTART_DURING_PRINT",
@@ -96,6 +96,7 @@ def fixture(response=None, transport_error=None, unrecorded_error=None, lease_av
         printer_id = "station-2"
         fallback_binding_id = False
         idempotency_key = "company:1:kitchen-operation"
+        document_type = "kitchen"
         gateway_config_id = config
         company_id = company
         def __iter__(self): return iter([self])
@@ -218,6 +219,29 @@ def test_post_dispatch_timeout_or_malformed_reply_keeps_unknown_operation(respon
     assert result["can_retry"] is False
     assert job.status == "unknown"
     assert len(sent) == 1
+    assert cursor.closed
+
+
+def test_quota_blocked_kitchen_receipt_is_not_replayed_automatically():
+    router, job, cursor, sent, _order = fixture(reply(429, {
+        "code": "PRINT_QUOTA_EXCEEDED", "upgradeRequired": True,
+        "entitlement": "max_prints_per_period", "limit": 10, "used": 10,
+    }))
+    result = router._submit_durable_job(7, structured_outcome=True)
+    assert result["status"] == "failed"
+    assert job.gateway_job_id is False
+    assert job.last_error.startswith("GATEWAY_REJECTED_BILLING_HOLD")
+    assert job.next_retry_at is False
+    assert len(sent) == 1 and cursor.closed
+
+
+def test_legacy_blocked_kitchen_receipt_never_auto_replays_after_renewal():
+    router, job, cursor, sent, _order = fixture(reply(201, {"jobId": "should-not-create"}))
+    job.last_error = "GATEWAY_BILLING_LIMIT_REACHED: max_prints_per_period"
+    result = router._submit_durable_job(7, structured_outcome=True)
+    assert result["status"] == "failed"
+    assert job.next_retry_at is False
+    assert sent == []
     assert cursor.closed
 
 
