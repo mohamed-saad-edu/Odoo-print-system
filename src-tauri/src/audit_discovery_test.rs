@@ -53,6 +53,25 @@ fn sharing_id_and_acknowledgment_are_exact_and_bounded() {
 }
 
 #[test]
+fn local_test_print_preserves_exact_printer_identity_in_cli_args() {
+    let executable = std::path::Path::new("fake-agent");
+    let config = std::path::Path::new("agent.yaml");
+    let root = std::path::Path::new("agent-data");
+    for invalid in ["", "local ", " local", "-config", "local\nother", "local\u{85}other", "\u{feff}local"] {
+        assert!(
+            super::build_local_printer_test_command(executable, config, root, invalid).is_err(),
+            "local test print silently remapped invalid target {invalid:?}"
+        );
+    }
+    let id = "طابعة-1 (POS)";
+    let command = super::build_local_printer_test_command(executable, config, root, id).unwrap();
+    let args: Vec<_> = command.get_args().collect();
+    assert_eq!(args, ["printers", "test", id, "-config", "agent.yaml"]);
+    let long = "é".repeat(129);
+    assert!(super::build_local_printer_test_command(executable, config, root, &long).is_err());
+}
+
+#[test]
 fn discovery_uses_current_cli_result_and_preserves_legacy_empty_output() {
     let printers = parse_discovery_stdout(r#"[{"id":"fresh-scan","name":"Office","status":"unknown","enabled":true,"connectionType":"spooler","protocol":"spooler","capabilities":{"driver_name":"Microsoft enhanced point and print compatibility driver"}}]"#).unwrap();
     assert_eq!(printers.len(), 1);
