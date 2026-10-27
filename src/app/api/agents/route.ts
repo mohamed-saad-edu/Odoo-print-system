@@ -1,4 +1,7 @@
 import { NextResponse } from "next/server";
+import { requireConsoleReadAuthorityInTransaction, ConsoleAgentAuthorityRevokedError } from "../../../lib/console-read-authority";
+import { TenantSuspendedError, TenantDeletedError } from "../../../lib/tenant-guard";
+import { ManagerMutationAuthorityChangedError } from "../../../lib/manager-mutation-authorization";
 import { db } from "../../../db";
 import { agents } from "../../../db/schema";
 import { validateWorkspaceManager } from "../../../lib/manager-auth";
@@ -57,10 +60,30 @@ export async function GET(req: Request) {
   const where = cursorWhere ? and(ownershipWhere, cursorWhere) : ownershipWhere;
   await refreshClockSkew();
   const now = gatewayNow();
-  const rows = await db.select({
+  // Preflight credentials can be revoked while a fleet query waits.
+  // The tenant/manager/Agent locks protect both read and pagination metadata.
+  let rows;
+  try {
+    rows = await db.transaction(async (tx) => {
+      await requireConsoleReadAuthorityInTransaction(tx, auth, "agents.read");
+      return tx.select({
     id: agents.id, name: agents.name, status: agents.status, lifecycle: agents.lifecycle,
     metadata: agents.metadata, lastSeenAt: agents.lastSeenAt, createdAt: agents.createdAt,
-  }).from(agents).where(where).orderBy(desc(agents.createdAt), desc(agents.id)).limit(limit + 1).offset(beforeCreatedAt ? 0 : offset);
+      }).from(agents).where(where).orderBy(desc(agents.createdAt), desc(agents.id))
+        .limit(limit + 1).offset(beforeCreatedAt ? 0 : offset);
+    });
+  } catch (error) {
+    const headers = { "Cache-Control": "private, no-store" };
+    if (error instanceof TenantSuspendedError || error instanceof TenantDeletedError) {
+      return NextResponse.json({ error: error.message, code: error.code }, { status: error.status, headers });
+    }
+    if (error instanceof ManagerMutationAuthorityChangedError) return error.response();
+    if (error instanceof ConsoleAgentAuthorityRevokedError) {
+      return NextResponse.json({ error: error.message, code: error.code }, { status: error.status, headers });
+    }
+    logError("agents.inventory_read_failed", { tenantId, error: error instanceof Error ? error.message : "unknown" });
+    return NextResponse.json({ error: "Agent inventory unavailable", code: "FLEET_UNAVAILABLE" }, { status: 503, headers });
+  }
   const hasMore = rows.length > limit;
   const pageRows = hasMore ? rows.slice(0, limit) : rows;
   const staleThresholdSeconds = agentStaleThresholdSeconds();
