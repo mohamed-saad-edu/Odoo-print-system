@@ -37,6 +37,27 @@ describe("Desktop Gateway origin matches native Rust/Go URL boundary", () => {
       .toThrow("Gateway URL cannot include embedded credentials");
   });
 
+  it.each([
+    "https://gateway.example.com:/",
+    "https://gateway.example.com:0/",
+    "https://gateway.example.com:00000/",
+    "http://localhost:/",
+    "http://localhost:0/",
+    "https://[::1]:/",
+    "https://[::1]:0/",
+  ])("rejects an empty or zero network port without parser normalization (%s)", (input) => {
+    expect(() => normalizeGatewayUrl(input))
+      .toThrow("Gateway URL port must be between 1 and 65535");
+  });
+
+  it.each([
+    ["https://gateway.example.com:443/", "https://gateway.example.com"],
+    ["https://gateway.example.com:8443/", "https://gateway.example.com:8443"],
+    ["http://localhost:3000/", "http://localhost:3000"],
+  ])("retains valid native-supported port configuration (%s)", (input, expected) => {
+    expect(normalizeGatewayUrl(input)).toBe(expected);
+  });
+
   it("continues to reject remote HTTP and nonroot paths before pairing", () => {
     expect(() => normalizeGatewayUrl("http://gateway.example.com"))
       .toThrow("Gateway URL must use HTTPS for remote Gateways");
