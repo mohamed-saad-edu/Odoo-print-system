@@ -678,16 +678,17 @@ fn valid_jobs_query(path: &str) -> bool {
     let Some((base, query)) = path.split_once('?') else {
         return path == "/api/jobs";
     };
-    if base != "/api/jobs" || query.is_empty() {
+    if base != "/api/jobs" || query.is_empty() || query.contains('#') {
         return false;
     }
+    let mut keys = std::collections::BTreeSet::new();
     for pair in query.split('&') {
         let mut parts = pair.splitn(2, '=');
         let key = parts.next().unwrap_or("");
         let Some(value) = parts.next() else {
             return false;
         };
-        if key.is_empty() || value.len() > 200 {
+        if key.is_empty() || value.len() > 200 || !keys.insert(key) {
             return false;
         }
         if !matches!(
@@ -695,6 +696,18 @@ fn valid_jobs_query(path: &str) -> bool {
             "limit" | "offset" | "status" | "search" | "q" | "printerId" | "agentId"
         ) {
             return false;
+        }
+        // A malformed %-escape must not be normalized or ignored while
+        // the native Agent sends an authenticated Gateway request.
+        let bytes = value.as_bytes();
+        for (index, byte) in bytes.iter().enumerate() {
+            if *byte == b'%'
+                && (index + 2 >= bytes.len()
+                    || !bytes[index + 1].is_ascii_hexdigit()
+                    || !bytes[index + 2].is_ascii_hexdigit())
+            {
+                return false;
+            }
         }
     }
     true
