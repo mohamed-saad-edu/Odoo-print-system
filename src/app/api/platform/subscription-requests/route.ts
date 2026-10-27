@@ -7,11 +7,14 @@ import { manualApiError } from "../../../../lib/manual-api-error";
 import { ManualSubscriptionError,requireIdempotencyKey } from "../../../../lib/manual-subscriptions";
 import { writeAuditEvent } from "../../../../lib/audit";
 import { effectiveSubscriptionStatusSql } from "../../../../lib/effective-subscription-status";
+import { parseStrictListOffset } from "../../../../lib/request-limits";
 export async function GET(req:Request) {
   try {
     await requirePlatformOwner(req);
-    const params=new URL(req.url).searchParams,status=params.get('status')??'pending',offset=Number(params.get('offset')??0);
-    if(!Number.isSafeInteger(offset)||offset<0||offset>1000000)throw new ManualSubscriptionError('SUBSCRIPTION_INVALID');
+    const params=new URL(req.url).searchParams;
+    const status=params.get('status')??'pending';
+    const offset=parseStrictListOffset(params.get('offset'),1_000_000);
+    if(offset===null)throw new ManualSubscriptionError('INVALID_OFFSET',400);
     if(!['pending','approved','rejected','all'].includes(status))throw new ManualSubscriptionError('SUBSCRIPTION_INVALID');
     const [rows,counts]=await Promise.all([
       db.execute(sql`SELECT r.*,t.name AS "tenantName",p.name AS "planName",
@@ -27,7 +30,7 @@ export async function GET(req:Request) {
         ORDER BY r.created_at DESC,r.id DESC LIMIT 101 OFFSET ${offset}`),
       db.execute(sql`SELECT count(*)::int AS pending FROM subscription_requests WHERE status='pending'`),
     ]);
-    return NextResponse.json({requests:rows.rows.slice(0,100),hasMore:rows.rows.length>100,offset,pendingCount:Number(counts.rows[0]?.pending??0)},{headers:{'Cache-Control':'no-store'}});
+    return NextResponse.json({requests:rows.rows.slice(0,100),hasMore:rows.rows.length>100,offset,pendingCount:Number(counts.rows[0]?.pending??0)},{headers:{'Cache-Control':'private, no-store'}});
   } catch(error){return manualApiError(error);}
 }
 export async function POST(req:Request) {
