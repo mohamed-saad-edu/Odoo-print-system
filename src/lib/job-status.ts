@@ -76,7 +76,7 @@ export function derivePhysicalOutcome(status: JobStatus | string, error: string 
   // output. Never infer physical output from an ACK/WritePrinter result.
   // Once claimed, the Agent may execute before a later status report arrives.
   // Lack of paper evidence cannot prove that nothing has printed.
-  if (status === "claimed" || status === "printing" || status === "success") return "unknown";
+  if (status === "claimed" || status === "printing" || status === "success" || status === "unknown" || status === "partial") return "unknown";
   if (hasUnknownPhysicalOutcomeMarker(error)) return "unknown";
   return "not_printed";
 }

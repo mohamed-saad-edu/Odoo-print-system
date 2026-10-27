@@ -11,7 +11,8 @@ into the interface. There is deliberately no import-time translation cache.
 def job_customer_state(status, physical_outcome, output_medium=None, output_outcome=None):
     if output_medium == "file":
         if output_outcome == "file_created":
-            return "file_created"
+            # Stale file markers cannot override a failed or uncertain operation.
+            return "file_created" if status == "success" else "needs_review"
         if output_outcome == "not_created" and status in ("failed", "unknown", "partial"):
             return "failed_before_output"
         if status in ("success", "failed", "unknown", "partial"):

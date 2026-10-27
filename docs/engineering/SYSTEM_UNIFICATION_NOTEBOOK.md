@@ -154,3 +154,11 @@ On `main@172e85866bb9cb6ef84120450399fbe19dc74869`, the native UI suite logged 6
 **Root-cause fix:** Retain all assertions comparing ordered SQL filenames and journal entries and exact latest migration `0102`. Derive the documented upper migration ID directly from `journal[-1]['tag']` when comparing against `MIGRATION.md`, while also asserting the 0102 migration's table entry exists. This prevents the same stale hardcoded upper bound at subsequent forward migrations without relaxing journal/count parity. No migration, history, production data, scanning or admission code was changed.
 
 **GREEN evidence:** Pending re-run on exact correction commit; do not infer pass from authorship alone. Other CI jobs from the first run may still be in progress. Physical Windows/printing evidence remains unavailable.
+
+## 12. 2026-10-28 — physical-status and PDF-output contract review
+
+**Source baseline:** `main@65214cf7948a214843110fa2fbc1a23aec388340`. **Observed drift:** Gateway's `derivePhysicalOutcome` returned `not_printed` for explicit `unknown` or `partial` operation state with no marker. The shared browser/desktop vocabulary now delegates to this helper; such states indicate ambiguous physical output, not proof of no paper. Fix: classify both as `unknown`; do not change the closed persisted Gateway job enum or proven pre-admission failures.
+
+**ODOO-FILE-TRUTH-001:** Odoo's `job_customer_state` displayed `file_created` when `output_outcome=file_created` even on a `failed/unknown/queued` operation. Gateway's file output presenter requires success plus valid file evidence. Fix: stale/conflicting Odoo file evidence now needs review, never a success label; durable evidence is retained and ambiguous jobs never auto-retry.
+
+**Regression source:** `tests/physical-outcome.test.ts` protects Gateway/shared-client uncertainty. `tests/test_v4_odoo_customer_presentation.py` tests file success vs contradictory state. Before change, source behavior contradicted these cases; local RED execution is NOT RUN. GitHub CI on the exact resulting commit is the verification gate; physical printer and staged deployment are NOT RUN.

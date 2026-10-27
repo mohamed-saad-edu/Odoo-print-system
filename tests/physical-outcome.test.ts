@@ -33,6 +33,11 @@ describe("physical print outcome semantics", () => {
     expect(jobGuidance(status, "unknown", "en")).toBe(translate("en", `job.guidance.${status as "claimed" | "printing"}`));
   });
 
+  it.each(["unknown", "partial"])("never labels an explicit %s operation as definitely not printed", (status) => {
+    expect(derivePhysicalOutcome(status, null)).toBe("unknown");
+    expect(deriveOutcome(status, null)).toBe("unknown");
+  });
+
   it("retains not-printed evidence before admission and on pre-dispatch failure", () => {
     for (const status of ["queued", "failed", "expired"]) {
       expect(derivePhysicalOutcome(status, null)).toBe("not_printed");
