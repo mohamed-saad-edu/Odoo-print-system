@@ -102,6 +102,23 @@ describe("desktop complete fleet traversal", () => {
     await expect(ipc.fetchGatewayAgents("https://gateway.example")).rejects.toMatchObject({ status: 503 });
   });
 
+  it.each(["TRUE", "1", "maybe"])("rejects malformed has-more metadata (%s) rather than truncating the fleet", async (flag) => {
+    mocks.invoke.mockResolvedValueOnce(envelope([{ id: "p1" }], { "x-has-more": flag }));
+    await expect(ipc.fetchGatewayPrinters("https://gateway.example"))
+      .rejects.toThrow("Invalid Gateway fleet pagination metadata");
+    expect(mocks.invoke).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects a completed fleet page carrying a conflicting keyset cursor", async () => {
+    mocks.invoke.mockResolvedValueOnce(envelope([{ id: "a1" }], {
+      "x-has-more": "false",
+      "x-next-before-created-at": "2026-10-13T00:00:00.000Z",
+      "x-next-before-id": "a1",
+    }));
+    await expect(ipc.fetchGatewayAgents("https://gateway.example"))
+      .rejects.toThrow("Invalid Gateway fleet cursor");
+  });
+
   it("rejects a malformed fleet row and a missing continuation", async () => {
     mocks.invoke.mockResolvedValueOnce(envelope([{ id: null }]));
     await expect(ipc.fetchGatewayAgents("https://gateway.example")).rejects.toThrow("Invalid Gateway fleet response");
