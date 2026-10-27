@@ -46,6 +46,32 @@ func TestIPPURLNormalization(t *testing.T) {
 	}
 }
 
+func TestIPPExplicitRootResourceIsNotRewrittenToDefaultQueue(t *testing.T) {
+	cases := []struct {
+		endpoint  string
+		transport string
+		printerURI string
+	}{
+		{"ipp://192.168.1.60/", "http://192.168.1.60:631/", "ipp://192.168.1.60:631/"},
+		{"ipp://192.168.1.60", "http://192.168.1.60:631/", "ipp://192.168.1.60:631/"},
+		{"ipps://192.168.1.60/", "https://192.168.1.60:631/", "ipps://192.168.1.60:631/"},
+		{"http://192.168.1.60/", "http://192.168.1.60/", "ipp://192.168.1.60:80/"},
+		{"https://192.168.1.60/", "https://192.168.1.60/", "ipps://192.168.1.60:443/"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.endpoint, func(t *testing.T) {
+			p, err := NewIPPPrinter(tc.endpoint, "root queue")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if p.URL != tc.transport || p.PrinterURI != tc.printerURI {
+				t.Fatalf("explicit root was redirected to another print queue: transport=%q want=%q printerURI=%q want=%q",
+					p.URL, tc.transport, p.PrinterURI, tc.printerURI)
+			}
+		})
+	}
+}
+
 func TestIPPBuildPrintJob(t *testing.T) {
 	url := "http://192.168.1.60/ipp/print"
 	data := append([]byte("%PDF-1.4\n"), 0x00)
