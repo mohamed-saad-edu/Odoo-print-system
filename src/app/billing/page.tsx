@@ -10,6 +10,7 @@ import { hasManagerPermission } from "../../lib/authorization";
 import { customerSubscriptionState } from "../../lib/manual-subscriptions";
 import { databaseNowMs } from "../../lib/database-clock";
 import { effectiveManualEntitlements } from "../../lib/entitlements";
+import { quotaCycleStartSql } from "../../lib/quota-cycle";
 import { activationWhatsAppUrl } from "../../lib/activation-contact";
 import { getServerLocale, makeT } from "../../i18n/server";
 import { formatNumber } from "../../i18n/format";
@@ -48,7 +49,12 @@ export default async function BillingPage({ searchParams }: { searchParams: Prom
       const quota = effectiveManualEntitlements(plan.entitlements, sub.monthlyQuota).max_prints_per_period;
       // Read the same transactional monthly admission ledger used by quota enforcement,
       // even after expiry. Contract dates never determine this reporting window.
-      const row = await db.execute(sql`SELECT coalesce((SELECT used_prints FROM print_monthly_usage WHERE tenant_id=${claims.tenantId} AND period_start=date_trunc('month',clock_timestamp() AT TIME ZONE 'UTC')),0)::int AS used, (date_trunc('month',clock_timestamp() AT TIME ZONE 'UTC')+interval '1 month') AT TIME ZONE 'UTC' AS reset`);
+      const cycle = quotaCycleStartSql(sql`COALESCE(s.print_cycle_anchor,s.current_period_start)`);
+       const row = await db.execute(sql`SELECT coalesce(m.used_prints,0)::int AS used,
+         (${cycle} + interval '30 days') AT TIME ZONE 'UTC' AS reset
+         FROM tenant_subscriptions s
+         LEFT JOIN print_monthly_usage m ON m.tenant_id=s.tenant_id AND m.period_start=${cycle}
+         WHERE s.tenant_id=${claims.tenantId}`);
       const used = Number(row.rows[0]?.used);
       const reset = new Date(String(row.rows[0]?.reset));
       if (!Number.isSafeInteger(used) || used < 0 || !Number.isFinite(reset.getTime())) throw new Error("Usage unavailable");
@@ -56,6 +62,7 @@ export default async function BillingPage({ searchParams }: { searchParams: Prom
     }
   } catch { logWarn("billing.monthly_usage_unavailable", { tenantId: claims.tenantId }); }
   const date = (value: Date | null | undefined) => formatManualCalendarDate(value, locale) ?? t("v4.subscription.notSet");
+  const resetInstant = (value: Date | null | undefined) => value ? new Intl.DateTimeFormat(locale === "ar" ? "ar-EG" : "en-US", { dateStyle:"medium", timeStyle:"short", timeZone:"UTC" }).format(value) : t("v4.subscription.notSet");
   const quotaExhausted = status === "active" && usage?.remaining === 0;
   const expiringSoon = status === "active" && !!sub?.currentPeriodEnd && sub.currentPeriodEnd.getTime() > now && sub.currentPeriodEnd.getTime() - now <= 7 * 86_400_000;
   const legacyEndMissing = status === "active" && sub?.subscriptionType === "paid" && !sub.currentPeriodEnd;
@@ -84,7 +91,7 @@ export default async function BillingPage({ searchParams }: { searchParams: Prom
           {[[t("v4.subscription.type"), t(sub?.subscriptionType === "free" ? "v4.subscription.free" : sub?.subscriptionType === "paid" ? "v4.subscription.paid" : "v4.subscription.notSet")], [t("v4.onboarding.term"), billingTermLabel(sub?.term, t)], [t("v4.subscription.start"), date(sub?.currentPeriodStart)], [t("v4.subscription.end"), date(sub?.currentPeriodEnd)]].map(([label,value]) => <div key={label}><dt className="text-sm text-ink-3">{label}</dt><dd className="mt-1 font-semibold"><bdi dir="auto">{value}</bdi></dd></div>)}
         </dl><p className="border-t border-edge-subtle p-5 text-sm text-ink-3">{t(sub?.cancelAtPeriodEnd ? "v4.subscription.endsAtTerm" : "v4.subscription.manualRenewal")}</p>
         </Card>
-        <Card><CardHeader title={t("v4.subscription.monthlyUsage")} />{usage ? <div className="space-y-4 p-5"><dl className="grid gap-4 sm:grid-cols-3">{[[t("v4.subscription.used"),formatNumber(usage.used,locale)],[t("v4.subscription.allowance"),usage.limit === "unlimited" ? t("billing.unlimited") : formatNumber(usage.limit,locale)],[t("v4.subscription.remaining"),usage.remaining === "unlimited" ? t("billing.unlimited") : formatNumber(usage.remaining,locale)]].map(([label,value]) => <div key={label}><dt className="text-sm text-ink-3">{label}</dt><dd className="mt-1 text-2xl font-semibold tabular-nums"><bdi dir="ltr">{value}</bdi></dd></div>)}</dl>{usage.limit !== "unlimited" && <Progress value={Math.min(100,usage.used / Math.max(1,usage.limit)*100)} tone={usage.remaining === 0 ? "bad" : "brand"} label={t("billing.usageAria", { used: formatNumber(usage.used,locale), limit: formatNumber(usage.limit,locale) })} />}<p className="text-sm text-ink-3">{t("v4.subscription.nextReset", { date: date(usage.reset) })}</p>{status !== "active" && <p className="text-sm text-ink-3">{t("v4.subscription.balanceNotAccess")}</p>}<p className="text-xs text-ink-3">{t("v4.subscription.renewalDoesNotReset")}</p></div> : <p className="p-5 text-sm text-ink-3">{t(sub ? "billing.usageUnavailableBody" : "v4.subscription.noAllowance")}</p>}</Card>
+        <Card><CardHeader title={t("v4.subscription.monthlyUsage")} />{usage ? <div className="space-y-4 p-5"><dl className="grid gap-4 sm:grid-cols-3">{[[t("v4.subscription.used"),formatNumber(usage.used,locale)],[t("v4.subscription.allowance"),usage.limit === "unlimited" ? t("billing.unlimited") : formatNumber(usage.limit,locale)],[t("v4.subscription.remaining"),usage.remaining === "unlimited" ? t("billing.unlimited") : formatNumber(usage.remaining,locale)]].map(([label,value]) => <div key={label}><dt className="text-sm text-ink-3">{label}</dt><dd className="mt-1 text-2xl font-semibold tabular-nums"><bdi dir="ltr">{value}</bdi></dd></div>)}</dl>{usage.limit !== "unlimited" && <Progress value={Math.min(100,usage.used / Math.max(1,usage.limit)*100)} tone={usage.remaining === 0 ? "bad" : "brand"} label={t("billing.usageAria", { used: formatNumber(usage.used,locale), limit: formatNumber(usage.limit,locale) })} />}<p className="text-sm text-ink-3">{t("v4.subscription.nextReset", { date: resetInstant(usage.reset) })}</p>{status !== "active" && <p className="text-sm text-ink-3">{t("v4.subscription.balanceNotAccess")}</p>}<p className="text-xs text-ink-3">{t("v4.subscription.renewalDoesNotReset")}</p></div> : <p className="p-5 text-sm text-ink-3">{t(sub ? "billing.usageUnavailableBody" : "v4.subscription.noAllowance")}</p>}</Card>
         
       </div><Card><div className="p-5"><BillingActions key={`${selectedPlanId ?? ""}:${request?.id ?? "none"}:${request?.status ?? "none"}`} plans={availablePlans} selectedPlanId={selectedPlanId} currentPlanId={sub?.planId} currentTerm={sub?.term} isOwner={claims.role === "owner"} status={status} initialRequest={request ? { id:request.id,reference:request.id,status:request.status,planId:request.planId,term:request.term,requestedMonthlyQuota:request.requestedMonthlyQuota,approvalModified:request.approvalModified,approvedPlanId:request.approvedPlanId,approvedTerm:request.approvedTerm,approvedMonthlyQuota:request.approvedMonthlyQuota,createdAt:request.createdAt.toISOString(),whatsappUrl:activationWhatsAppUrl(request.id) } : null} /></div></Card></div>
     </div></PageContainer>

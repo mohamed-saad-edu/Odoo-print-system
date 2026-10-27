@@ -58,7 +58,7 @@ credentials promptly after the grace window ends.
 
 Review activation requests in Platform Admin and open the workspace detail before applying a change. Confirm the requester, plan, free/paid business mode, monthly/yearly/custom contract dates and the independent monthly job allowance. Mutations require a reason, recent password proof, an idempotency key and current revision. Repeating the same operation returns its prior result; a conflicting or stale operation must be reloaded and reviewed.
 
-Use `subscription_changes` and `audit_events` for immutable action evidence. `print_monthly_usage` is the quota authority for the current UTC calendar month. Retained `print_usage_periods`, provider identifiers and `billing_events` are migration/history evidence; do not delete them to reset a customer allowance. Renewal and same-month plan changes retain consumed credits. Usage summaries deduplicate live jobs and retained receipts by tenant and job identity.
+Use `subscription_changes` and `audit_events` for immutable action evidence. `print_monthly_usage` is the quota authority for the current 30-day cycle anchored at first activation. Retained `print_usage_periods`, provider identifiers and `billing_events` are migration/history evidence; do not delete them to reset a customer allowance. Renewal and same-cycle plan changes retain consumed credits. Usage summaries deduplicate live jobs and retained receipts by tenant and job identity.
 
 No V4 customer flow automatically collects or settles payment. Retired provider routes return HTTP 410 without writing subscription state. Reconcile historical external recurring subscriptions separately before a real business cutover; changing a local record does not cancel an external charge.
 

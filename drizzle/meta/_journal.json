@@ -708,6 +708,13 @@
       "when": 1793059200004,
       "tag": "0100_plan_prices",
       "breakpoints": true
+    },
+    {
+      "idx": 101,
+      "version": "7",
+      "when": 1793170000000,
+      "tag": "0101_rolling_print_allowance",
+      "breakpoints": true
     }
   ]
 }

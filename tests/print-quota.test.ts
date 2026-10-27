@@ -48,6 +48,21 @@ suite("tenant print quota", () => {
     expect(await print).toMatchObject({ value: expect.anything() });
   });
 
+  it("uses exact 30-day UTC credit cycles anchored to the customer's subscription start", async () => {
+    const f = await seedFixture();
+    const activatedAt = new Date("2026-10-15T10:30:00.000Z");
+    await pool().query(
+      "UPDATE tenant_subscriptions SET current_period_start=$1, current_period_end=clock_timestamp()+interval '1 year' WHERE tenant_id=$2",
+      [activatedAt, f.tenantId],
+    );
+    const observedAt = new Date((await pool().query("SELECT clock_timestamp() AS now")).rows[0].now);
+    const elapsedCycles = Math.floor((observedAt.getTime() - activatedAt.getTime()) / (30 * 86_400_000));
+    const expectedStart = new Date(activatedAt.getTime() + elapsedCycles * 30 * 86_400_000);
+    const usage = await getTenantPrintUsage(db, f.tenantId);
+    expect(usage.periodStart.toISOString()).toBe(expectedStart.toISOString());
+    expect(usage.periodEnd?.getTime()).toBe(expectedStart.getTime() + 30 * 86_400_000);
+  });
+
   it("enforces a finite print quota before the job row is inserted", async () => {
     const f = await seedFixture();
     await setPlanLimit(f.tenantId, 20);
@@ -291,7 +306,7 @@ suite("tenant print quota", () => {
   it("does not grant duplicate monthly credits when the subscription term is renewed or extended", async () => {
     const f = await seedFixture();
     await setPlanLimit(f.tenantId, 2);
-    await pool().query("UPDATE tenant_subscriptions SET current_period_start=clock_timestamp()-interval '1 day', current_period_end=clock_timestamp()+interval '1 month' WHERE tenant_id=$1", [f.tenantId]);
+    await pool().query("UPDATE tenant_subscriptions SET current_period_start=statement_timestamp()-interval '1 day', print_cycle_anchor=statement_timestamp()-interval '1 day', current_period_end=statement_timestamp()+interval '1 month' WHERE tenant_id=$1", [f.tenantId]);
     await createPrintJobForPrinter(f.printerId, payload("term-1"), { tenantId: f.tenantId, requestedBy: "quota-test", documentType: "receipt", destination: f.destination, idempotencyKey: "term-1" });
     const first = await getTenantPrintUsage(db, f.tenantId);
     await pool().query("UPDATE tenant_subscriptions SET current_period_start=clock_timestamp()-interval '1 hour', current_period_end=clock_timestamp()+interval '1 year', term='yearly' WHERE tenant_id=$1", [f.tenantId]);

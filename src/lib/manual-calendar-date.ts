@@ -1,6 +1,6 @@
 import { intlLocale, type Locale } from '../i18n/config';
 import { parseDbTimeMs } from './database-timestamp';
-/** Contract date inputs and quota month boundaries are UTC calendar dates. */
+/** Contract dates use UTC calendar days; quota reset instants are displayed separately with time. */
 export function formatManualCalendarDate(value: Date | string | number | null | undefined, locale: Locale): string | null {
   // Native <input type="date"> values have no timezone. Treat their exact
   // YYYY-MM-DD calendar day as midnight UTC, never host-local time.

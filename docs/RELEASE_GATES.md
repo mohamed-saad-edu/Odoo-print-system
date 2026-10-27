@@ -122,7 +122,7 @@ for this candidate does not execute Win32 code.
    from a mutable printer row. See `MIGRATION.md` for populated-upgrade and
    rollback evidence. V4 migration 0095 preserves provider/history records,
    separates manual subscriptions from authenticated requests and initializes
-   the independent UTC calendar-month ledger conservatively. Review its cutover
+   the original UTC calendar-month ledger conservatively (historical migration only). Review its cutover
    usage before admitting jobs. Retired provider routes cannot renew access;
    reconcile any previous external recurring charges separately.
 5. Upgrade the compatible agent/desktop together, preserving machine data and

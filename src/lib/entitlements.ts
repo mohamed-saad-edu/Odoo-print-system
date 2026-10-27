@@ -1,4 +1,5 @@
 import { sql, type SQL } from "drizzle-orm";
+import { quotaCycleStartSql, QUOTA_CYCLE_MS } from "./quota-cycle";
 import { logError } from "./log";
 import { gatewayNowMs } from "./database-clock";
 import type { EntitlementLimitSignal } from "./limit-signal";
@@ -316,7 +317,7 @@ function parseEntitlementDate(value: Date | string | null): Date | null {
 async function getTenantPrintQuotaContext(tx: EntitlementTx, tenantId: string, lockRows = false): Promise<{ limit: number | "unlimited"; periodStart: Date; periodEnd: Date | null }> {
   if (lockRows) await lockTenantSubscription(tx, tenantId);
   const result = await tx.execute(sql`
-        SELECT p.entitlements, ts.monthly_quota AS "monthlyQuota", date_trunc('month', clock_timestamp() AT TIME ZONE 'UTC') AS "periodStart", ts.entitlement_blocked AS "entitlementBlocked"
+        SELECT p.entitlements, ts.monthly_quota AS "monthlyQuota", ${quotaCycleStartSql(sql`COALESCE(ts.print_cycle_anchor, ts.current_period_start)`)} AS "periodStart", ts.entitlement_blocked AS "entitlementBlocked"
         FROM tenant_subscriptions ts
         JOIN plans p ON p.id = ts.plan_id
         WHERE ${liveTenantSubscriptionWhere(sql`${tenantId}`, false)}
@@ -334,10 +335,8 @@ async function getTenantPrintQuotaContext(tx: EntitlementTx, tenantId: string, l
   }
   const periodStart = parseEntitlementDate(row.periodStart);
   if (!periodStart) throw new TenantEntitlementConfigError("subscription_period");
-  // One database month determines both boundaries. Two volatile clock reads
-  // can straddle midnight and incorrectly extend a quota window by a month.
-  const periodEnd = new Date(periodStart.getTime());
-  periodEnd.setUTCMonth(periodEnd.getUTCMonth() + 1);
+  // The financial term is separate; allowance lasts exactly 30 UTC days.
+  const periodEnd = new Date(periodStart.getTime() + QUOTA_CYCLE_MS);
   return { limit: entitlements[PRINT_QUOTA_ENTITLEMENT], periodStart, periodEnd };
 }
 

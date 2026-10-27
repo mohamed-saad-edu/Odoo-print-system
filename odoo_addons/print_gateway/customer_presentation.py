@@ -65,7 +65,7 @@ def customer_error_message(_, value=None, *, code=None, status=None):
     if category == "stale_pos":
         return _("This old POS ticket was not sent. Review the sale and explicitly reprint only if needed.")
     if category == "quota":
-        return _("This month's print-job allowance has been used. Wait for the monthly reset or contact the workspace owner.")
+        return _("The current 30-day print allowance has been used. Wait for the next reset or contact the workspace owner.")
     if category == "subscription":
         return _("Printing is not active for this workspace. Ask the workspace owner to review its subscription in Yaseir.")
     if category == "credential":

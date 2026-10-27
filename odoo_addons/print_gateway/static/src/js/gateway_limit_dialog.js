@@ -32,7 +32,7 @@ function billingCopy() { return {
     },
     max_prints_per_period: {
         title: _t("Print allowance reached"),
-        reason: _t("You have used this month's print-job allowance."),
+        reason: _t("You have used the current 30-day print allowance."),
     },
 }; }
 
@@ -109,7 +109,7 @@ export function gatewayServerMessage(error) {
         return _t("The print result needs review. Check the printer before starting another print to avoid duplicate output.");
     }
     if (/PRINT_QUOTA_EXCEEDED|MAX_PRINTS_PER_PERIOD/.test(code)) {
-        return _t("You have used this month's print-job allowance. Wait for the monthly reset or contact the workspace owner.");
+        return _t("You have used the current 30-day allowance. Wait for the next cycle or contact the workspace owner.");
     }
     if (/SUBSCRIPTION|TENANT_SUSPENDED|TENANT_DELETED/.test(code)) {
         return _t("Printing is not active for this workspace. Ask the workspace owner to review its subscription in Yaseir.");
@@ -195,7 +195,7 @@ export function showGatewayBillingLimitDialog(env, errorOrDetails) {
 
     if (details.entitlement === "max_prints_per_period") {
         const periodEnd = formatPeriodEnd(details.periodEnd);
-        if (periodEnd) facts.push(_t("Monthly allowance resets: %s", periodEnd));
+        if (periodEnd) facts.push(_t("30-day allowance resets: %s", periodEnd));
     }
 
     const retryText = formatRetryAfter(details.retryAfterSeconds);
@@ -206,7 +206,7 @@ export function showGatewayBillingLimitDialog(env, errorOrDetails) {
         _t("This request was not accepted for printing. Check Print Activity for any earlier attempts."),
         facts.join("  •  "),
         details.entitlement === "max_prints_per_period"
-            ? _t("Wait for the monthly reset or contact the workspace owner to request a different allowance.")
+            ? _t("Wait for the next 30-day reset or contact the workspace owner to increase the allowance.")
             : _t("Wait for current work to finish. Contact your administrator if the limit continues."),
     ].filter(Boolean).join("\n\n");
 
