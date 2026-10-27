@@ -74,6 +74,23 @@ describe("agent health read pagination", () => {
     },
   );
 
+
+  it("marks the authenticated Agent-health inventory and all denials private no-store", async () => {
+    const requests = [
+      new Request("http://gateway.test/api/agents/health"),
+      new Request("http://gateway.test/api/agents/health?limit=1e1"),
+      new Request("http://gateway.test/api/agents/health?agentId=unknown"),
+    ];
+    for (const request of requests) {
+      const response = await GET(request);
+      expect(response.headers.get("Cache-Control")).toBe("private, no-store");
+    }
+    mocks.authenticate.mockResolvedValueOnce(null);
+    expect((await GET(new Request("http://gateway.test/api/agents/health"))).headers.get("Cache-Control")).toBe("private, no-store");
+    mocks.permission.mockImplementationOnce(() => { throw new Error("Forbidden"); });
+    expect((await GET(new Request("http://gateway.test/api/agents/health"))).headers.get("Cache-Control")).toBe("private, no-store");
+  });
+
   it("does not authorize or query on unauthenticated or forbidden reads", async () => {
     mocks.authenticate.mockResolvedValueOnce(null);
     expect((await GET(new Request("http://gateway.test/api/agents/health"))).status).toBe(401);
