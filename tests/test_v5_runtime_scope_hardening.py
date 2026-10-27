@@ -72,6 +72,33 @@ def controller_under_test(env):
     return klass()
 
 
+def test_runtime_printer_picker_rejects_noncanonical_agent_ids_before_inventory():
+    """Compile the actual RPC method, not a mock clone of its acceptance logic."""
+    tree = ast.parse(CONTROLLER.read_text(encoding="utf8"))
+    original = next(node for node in tree.body if isinstance(node, ast.ClassDef)
+                    and node.name == "PrintGatewayRuntimePrinterController")
+    method = next(node for node in original.body if isinstance(node, ast.FunctionDef)
+                  and node.name == "runtime_printers")
+    method = copy.deepcopy(method)
+    method.decorator_list = []
+    cls = ast.ClassDef(name="RuntimePicker", bases=[], keywords=[], body=[method], decorator_list=[])
+    module = ast.fix_missing_locations(ast.Module(body=[cls], type_ignores=[]))
+    namespace = {}
+    exec(compile(module, str(CONTROLLER), "exec"), namespace)
+    picker = namespace["RuntimePicker"]()
+    picker._require_runtime_admin = lambda: None
+    picker._scope = lambda _company, _branch: (object(), None)
+
+    def must_not_read_inventory(_company):
+        raise AssertionError("malformed remote Agent identity reached privileged printer inventory")
+    picker._get_config = must_not_read_inventory
+
+    for raw_id in (" agt-one ", "agt-one\\n", "\\ufeffagt-one",
+                   "agt-one\\x00", "x" * 121):
+        result = picker.runtime_printers(agent_id=raw_id)
+        assert result == {"enabled": True, "selectedAgentId": False, "printers": []}
+
+
 def test_duplicate_names_and_user_supplied_suffixes_never_collide():
     a = Company(1, "My Company")
     b = Company(2, "My Company")
