@@ -84,3 +84,16 @@ Verification sequence: immutable migration journal parity → type/lint/localiza
 **Odoo event observed during audit**: `main@88a894133d70df8516c7f6a42cef468eaa17852c` added an explicit-reprint policy for *billing-denied POS and kitchen receipts*, rather than silently replaying old receipt intent after renewal. This is distinct from ordinary documents that can remain queued and recoverable. Future print lifecycle audits must preserve the durable record while forbidding surprise receipt replay; accepted jobs/physically uncertain attempts must keep their separate reconciliation rules. The live hardware and Windows checks remain unverified.
 
 **Test evidence**: The two additional integration tests are new source coverage, not yet proof of execution; record the CI result for the resulting exact commit. A separate policy question remains about `tenant_users.role=owner` versus the currently enforced `users.is_platform_owner` authority; do not widen the guard without a deliberate decision and role matrix.
+
+
+## 8. Policy conflict: calendar UTC month versus rolling 30-day print credits
+
+**State: OPEN / P0 policy consistency — do not silently migrate production accounts.** The previously specified customer billing behavior is that usage credits reset at **00:00 UTC on the first day of each calendar month**, while financial contract renewal remains manual and an expired contract still blocks new admissions. This conflicts with current `main` implementation: `src/lib/quota-cycle.ts` uses `QUOTA_CYCLE_MS = 30 * 24 * 60 * 60 * 1000` and PostgreSQL `date_bin(interval '30 days', ...)`; `drizzle/0101_rolling_print_allowance.sql` migrated usage from calendar windows to rolling windows anchored to first activation. This is a verified **requirements–implementation divergence**, not a claim that either implementation crashes.
+
+**Required unified remediation (not implemented by this note):**
+1. Record an explicit product decision and migrate **forward** with a new numbered migration (never rewrite 0101 or reset customer usage/history). Define fair cutover rules for currently active 30-day cycles, historical monthly ledger keys, and already accepted jobs; consider a shadow comparison/rollout.
+2. Make the Gateway's transactional admission, DB timestamps/period keys, plan dashboard, Odoo deferred outbox/retry and administrative billing displays agree on the single rule. Changing the UI alone is insufficient.
+3. Regression tests: January/February, leap years, month ends, UTC boundary at 23:59:59.999 to 00:00:00, concurrent same-idempotency-key admissions, contract expiration at rollover, plan edits without credit reset, migration with nonzero existing usage, and POS no-surprise-replay policy.
+4. Confirm deployment/rollback and backup evidence on a populated staging database before releasing. Until verified, describe the **implemented** rolling 30-day behavior accurately rather than claiming calendar reset.
+
+**Evidence paths:** `src/lib/quota-cycle.ts`, `drizzle/0101_rolling_print_allowance.sql`, `src/lib/entitlements.ts`, `src/lib/print-job-service.ts`, `src/lib/manual-subscriptions.ts`. This section supersedes the unqualified policy assertion in BILL-02 as a *product decision*: BILL-02 documents the implementation as of its audit snapshot; the desired UTC calendar-month behavior remains unresolved.
