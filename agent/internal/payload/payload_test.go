@@ -94,8 +94,8 @@ func TestPDFPayloadRequiresEOFInFinal4096Bytes(t *testing.T) {
 			_, err := Parse(map[string]interface{}{
 				"type": "pdf", "encoding": "base64", "data": base64.StdEncoding.EncodeToString(tc.data),
 			})
-			if err == nil || !strings.Contains(err.Error(), "%%EOF") {
-				t.Fatalf("incomplete PDF was admitted: %v", err)
+			if err == nil || !strings.Contains(err.Error(), "EOF trailer") {
+				t.Fatalf("missing PDF EOF trailer was not rejected with a clear error: %v", err)
 			}
 		})
 	}
