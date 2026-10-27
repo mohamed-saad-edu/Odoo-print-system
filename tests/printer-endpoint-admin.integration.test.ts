@@ -125,6 +125,30 @@ suite("physical endpoint convergence and credential-row erasure", () => {
     expect((await freshAlias.json()).id).toBe(first.id);
   });
 
+  it("refuses an ID owned by a different Agent even if the endpoint matches locally", async () => {
+    const f = await seedFixture();
+    const manager = await createWorkspaceManagerTestSession(f.tenantId);
+    await pool().query("INSERT INTO agents(id,tenant_id,name) VALUES ($1,$2,$3)",
+      ["other-agent-in-workspace", f.tenantId, "Other Branch"]);
+    const first = { id: "first-branch-queue", agentId: f.agentId, name: "First Branch",
+      printerType: "physical", deviceClass: "thermal",
+      connectionType: "spooler", protocol: "spooler",
+      config: { spooler_name: "First Branch POS Queue" } };
+    const other = { ...first, id: "other-branch-queue", agentId: "other-agent-in-workspace",
+      name: "Other Branch", config: { spooler_name: "Other Branch POS Queue" } };
+    expect((await post(manager.token, first)).status).toBe(201);
+    expect((await post(manager.token, other)).status).toBe(201);
+    const replay = await post(manager.token, { ...first, id: other.id });
+    expect(replay.status).toBe(409);
+    expect(await replay.json()).toMatchObject({ code: "PRINTER_ENDPOINT_CONFLICT" });
+    const stored = await pool().query("SELECT agent_id, id FROM printers WHERE tenant_id=$1 AND id IN ($2,$3) ORDER BY id",
+      [f.tenantId, first.id, other.id]);
+    expect(stored.rows).toEqual([
+      { agent_id: f.agentId, id: first.id },
+      { agent_id: other.agentId, id: other.id },
+    ]);
+  });
+
   it("does not register an Agent discovery duplicate of an existing manager queue", async () => {
     const f = await seedFixture();
     const manager = await createWorkspaceManagerTestSession(f.tenantId);
