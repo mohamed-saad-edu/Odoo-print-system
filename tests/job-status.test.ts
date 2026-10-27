@@ -2,7 +2,6 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "fs";
 import {
   JOB_FILTER_STATUSES,
-  isJobFilterStatus,
   canTransition,
   isTerminal,
   isJobStatus,
@@ -28,8 +27,8 @@ describe("physical-output filter policy", () => {
 
 describe("job-status", () => {
   it("only narrows canonical job filter statuses after callers normalize input", () => {
-    for (const status of ["all", "queued", "in_flight", "printed", "unknown", "attention"]) expect(isJobFilterStatus(status)).toBe(true);
-    for (const status of ["QUEUED", "Queued", " printed ", "in-FLIGHT", "", "unknown_filter", null, 7]) expect(isJobFilterStatus(status)).toBe(false);
+    for (const status of ["all", "queued", "in_flight", "success", "unknown", "attention"]) expect(isJobFilterStatus(status)).toBe(true);
+    for (const status of ["QUEUED", "Queued", "printed", " printed ", "in-FLIGHT", "", "unknown_filter", null, 7]) expect(isJobFilterStatus(status)).toBe(false);
   });
 
   it("unknown-outcome markers stay in lockstep across all layers", () => {
