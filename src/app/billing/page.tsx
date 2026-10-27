@@ -65,7 +65,7 @@ export default async function BillingPage({ searchParams }: { searchParams: Prom
   const resetInstant = (value: Date | null | undefined) => value ? new Intl.DateTimeFormat(locale === "ar" ? "ar-EG" : "en-US", { dateStyle:"medium", timeStyle:"short", timeZone:"UTC" }).format(value) : t("v4.subscription.notSet");
   const quotaExhausted = status === "active" && usage?.remaining === 0;
   const expiringSoon = status === "active" && !!sub?.currentPeriodEnd && sub.currentPeriodEnd.getTime() > now && sub.currentPeriodEnd.getTime() - now <= 7 * 86_400_000;
-  const legacyEndMissing = status === "active" && sub?.subscriptionType === "paid" && !sub.currentPeriodEnd;
+  const legacyEndMissing = status === "expired" && sub?.status === "active" && sub?.subscriptionType === "paid" && !sub.currentPeriodEnd;
   const request = requests[0];
   const selectedPlanId = typeof params.plan === "string" ? params.plan : undefined;
   return <>
