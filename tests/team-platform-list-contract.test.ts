@@ -8,7 +8,18 @@ vi.mock("../src/lib/platform-auth", () => ({
   PlatformUnauthorizedError: class PlatformUnauthorizedError extends Error {},
 }));
 vi.mock("../src/db/client", () => ({ queryWithTimeout: mocks.query }));
+// This is the pagination/private-cache unit boundary; the live tenant,
+// membership and session fence is tested with real PostgreSQL separately.
+vi.mock("../src/lib/tenant-guard", async original => ({
+  ...await original<typeof import("../src/lib/tenant-guard")>(),
+  requireActiveTenantInTransaction: async () => "active",
+}));
+vi.mock("../src/lib/manager-mutation-authorization", async original => ({
+  ...await original<typeof import("../src/lib/manager-mutation-authorization")>(),
+  requireManagerActorInTransaction: async () => undefined,
+}));
 
+import { db } from "../src/db";
 import { GET as listMembers } from "../src/app/api/team/members/route";
 import { GET as listInvitations } from "../src/app/api/team/invitations/route";
 import { GET as listWorkspaces } from "../src/app/api/platform/tenants/route";
@@ -52,9 +63,18 @@ describe("authenticated directory pagination and privacy", () => {
     ["workspace members", "/api/team/members", listMembers],
     ["platform workspaces", "/api/platform/tenants", listWorkspaces],
   ] as const)("%s: authenticated lists are private and uncacheable", async (_label, path, handler) => {
-    const response = await handler(new Request(`http://gateway.test${path}`));
-    expect(response.status).toBe(200);
-    expect(response.headers.get("Cache-Control")).toBe("private, no-store");
-    expect(mocks.query).toHaveBeenCalled();
+    // The member read now owns a transaction. The diagnostic queries are
+    // already doubled above; bypass only DB I/O in this no-database unit test.
+    const transaction = vi.spyOn(db, "transaction").mockImplementation(
+      (async (callback: (tx: unknown) => Promise<unknown>) => callback({})) as typeof db.transaction,
+    );
+    try {
+      const response = await handler(new Request(`http://gateway.test${path}`));
+      expect(response.status).toBe(200);
+      expect(response.headers.get("Cache-Control")).toBe("private, no-store");
+      expect(mocks.query).toHaveBeenCalled();
+    } finally {
+      transaction.mockRestore();
+    }
   });
 });
