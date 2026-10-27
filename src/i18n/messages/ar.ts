@@ -1009,6 +1009,7 @@ export const ar: Catalog = {
   "errors.invalidJobSearchLength": "استخدم من حرفين إلى 64 حرفًا للبحث في مهام الطباعة.",
   "errors.invalidPrinterSearchLength": "يجب أن يتكون بحث الطابعة من حرفين إلى 64 حرفًا.",
   "errors.billingBlocked": "الطباعة موقوفة حتى تُعالَج حالة اشتراك مساحة العمل. افتح الفوترة ثم حاول مرة أخرى.",
+  "errors.printQuotaExceeded": "نفد رصيد الطباعة لهذا الشهر. اطلب من مالك مساحة العمل زيادة رصيد الطباعة.",
   "errors.lifecycleConflict": "رُفض التغيير لأن حالة الوكيل تغيّرت أولًا. حدّث الصفحة وحاول مرة أخرى.",
   "home.heroEyebrow": "Odoo · طباعة آلية للمتاجر والمستودعات والمكاتب",
   "home.heroTitle1": "الطباعة من Odoo",

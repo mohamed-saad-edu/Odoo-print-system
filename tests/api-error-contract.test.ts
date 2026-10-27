@@ -13,6 +13,19 @@ import { en } from "../src/i18n/messages/en";
  * English text is not.
  */
 describe("API error contract", () => {
+  it("localizes exhausted monthly print credits separately from blocked billing", () => {
+    expect(codeMessageKey("PRINT_QUOTA_EXCEEDED")).toBe("errors.printQuotaExceeded");
+    expect(apiMessageKey("PRINT_QUOTA_EXCEEDED", 429)).toBe("errors.printQuotaExceeded");
+    expect(codeMessageKey("TENANT_ENTITLEMENT_UNAVAILABLE")).toBe("errors.billingBlocked");
+    for (const locale of ["en", "ar"] as const) {
+      const quota = translate(locale, "errors.printQuotaExceeded");
+      expect(quota).not.toBe(translate(locale, "errors.billingBlocked"));
+      expect(quota).not.toContain("PRINT_QUOTA_EXCEEDED");
+    }
+    expect(translate("en", "errors.printQuotaExceeded")).toMatch(/month.*credit/i);
+    expect(translate("ar", "errors.printQuotaExceeded")).toMatch(/[\u0600-\u06FF]/u);
+  });
+
   it("resolves the ambiguous-invitation-delivery code", () => {
     // This code exists because the 503 is NOT a failure: the invitation row
     // was created and deliberately not revoked. Before it was added the

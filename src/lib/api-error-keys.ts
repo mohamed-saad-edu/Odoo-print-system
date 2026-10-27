@@ -46,7 +46,11 @@ const CODE_KEYS: Record<string, MessageKey> = {
   DEVICE_NOT_APPROVED: "errors.deviceNotApproved",
   UNSUPPORTED_DISCOVERY_TRANSPORT: "errors.unsupportedDiscoveryTransport",
   // Billing and plans
+  // A depleted UTC calendar-month allowance is NOT an expired contract.
+  PRINT_QUOTA_EXCEEDED: "errors.printQuotaExceeded",
   TENANT_ENTITLEMENT_EXCEEDED: "errors.billingBlocked",
+  // Real configuration failures use UNAVAILABLE; keep the older wire alias.
+  TENANT_ENTITLEMENT_UNAVAILABLE: "errors.billingBlocked",
   TENANT_SUBSCRIPTION_REQUIRED: "errors.billingBlocked",
   TENANT_ENTITLEMENT_CONFIG_ERROR: "errors.billingBlocked",
   // Request shape
