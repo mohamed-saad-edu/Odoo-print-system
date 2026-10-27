@@ -25,7 +25,6 @@ func TestParseValidRaw(t *testing.T) {
 	}
 }
 
-
 func TestParseRejectsNoncanonicalBase64BeforePhysicalDispatch(t *testing.T) {
 	// Gateway validates a padded RFC4648 byte-exact base64 string. The Go
 	// decoder otherwise ignores CR/LF and accepts nonzero padding bits, so
