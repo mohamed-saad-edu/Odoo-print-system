@@ -1613,6 +1613,25 @@ class PrintGatewayJob(models.Model):
 
             while True:
                 response_state_persisted = False
+
+                def persist_ambiguous_response(exc, detail):
+                    nonlocal response_state_persisted
+                    # Persist first without raising: an interactive
+                    # ValidationError thrown inside this try must not enter
+                    # the generic deterministic-failure handler and erase
+                    # unknown physical-outcome evidence.
+                    persisted = self._record_ambiguous_submission(
+                        job, exc, detail, False, claim_token,
+                    )
+                    if persisted is False:
+                        return False
+                    response_state_persisted = True
+                    if raise_on_failure:
+                        raise ValidationError(_(
+                            "Gateway submission outcome is unknown; physical outcome is ambiguous. Automated retries are paused to prevent duplicate prints. Operator reprint required."
+                        )) from exc
+                    return True
+
                 gateway_config = job.gateway_config_id.sudo()
                 try:
                     if int(getattr(job, "gateway_idempotency_version", 1) or 1) == 2:
@@ -1703,10 +1722,9 @@ class PrintGatewayJob(models.Model):
                         # must retain their identity for read-only lookup,
                         # never schedule an automatic new physical POST.
                         if str(rate_body.get("code") or "").strip() != "RATE_LIMIT_EXCEEDED":
-                            self._record_ambiguous_submission(
-                                job, RuntimeError("GATEWAY_HTTP_429"),
+                            persist_ambiguous_response(
+                                RuntimeError("GATEWAY_HTTP_429"),
                                 "Unclassified HTTP 429; Gateway acceptance could not be excluded",
-                                raise_on_failure, claim_token,
                             )
                             break
                         # An explicit pre-admission rate limit is safe to
@@ -1969,20 +1987,18 @@ class PrintGatewayJob(models.Model):
                                 if raise_on_failure:
                                     raise ValidationError(_("The printer is temporarily busy. The job was safely re-queued for retry."))
                                 break
-                            self._record_ambiguous_submission(
-                                job, RuntimeError("GATEWAY_HTTP_503"),
+                            persist_ambiguous_response(
+                                RuntimeError("GATEWAY_HTTP_503"),
                                 "Unclassified HTTP 503; Gateway acceptance could not be excluded",
-                                raise_on_failure, claim_token,
                             )
                             break
                         if 500 <= response.status_code <= 599:
                             # A reverse proxy can emit 500/502/504 after the
                             # backend committed a print job. Neither a retryable
                             # flag nor an HTTP status is proof of non-admission.
-                            self._record_ambiguous_submission(
-                                job, RuntimeError("GATEWAY_HTTP_%s" % response.status_code),
+                            persist_ambiguous_response(
+                                RuntimeError("GATEWAY_HTTP_%s" % response.status_code),
                                 "HTTP %s without proven pre-admission refusal" % response.status_code,
-                                raise_on_failure, claim_token,
                             )
                             break
                         raise RuntimeError("GATEWAY_HTTP_%s" % response.status_code)
@@ -1993,9 +2009,8 @@ class PrintGatewayJob(models.Model):
                             raise ValueError("GATEWAY_INVALID_RESPONSE")
                         remote_id = remote_id.strip()
                     except (ValueError, TypeError) as exc:
-                        self._record_ambiguous_submission(
-                            job, exc, "Gateway accepted submission but returned an invalid response",
-                            raise_on_failure, claim_token,
+                        persist_ambiguous_response(
+                            exc, "Gateway accepted submission but returned an invalid response",
                         )
                         break
                     remote_status = str(body.get("status") or "queued").strip().lower()
