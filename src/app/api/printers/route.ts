@@ -176,7 +176,15 @@ export async function POST(req: Request) {
           if (!samePrinterProtocol(matching, { connectionType, protocol, config })) {
             return { kind: "conflict" as const, error: "Physical endpoint uses a different print protocol; change the existing printer instead" };
           }
-          // Never reactivate a disabled, retired or locally-unshared printer.
+          // An idempotent 200 is valid only for an existing executable
+          // registration. A retired/disabled or locally-withheld queue must
+          // never look like a successful re-registration: that would hide the
+          // operator's withdrawal while keeping the printer unavailable.
+          // Preserve its ID, history and local-sharing authority unchanged.
+          if (matching.lifecycle !== "active" || matching.sharedWithGateway !== true) {
+            return { kind: "conflict" as const,
+              error: "This printer endpoint was disabled, retired or withheld. Review the existing printer before registering it again." };
+          }
           return { kind: "existing" as const, row: matching };
         }
         if (known.some(row => row.id === id))
