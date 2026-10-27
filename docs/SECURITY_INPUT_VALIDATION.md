@@ -451,12 +451,12 @@ Source: `src/app/api/print/jobs/route.ts:36`. This is the declared field structu
 
 ```ts
 bodySchema = z.object({
-  printerId: z.string().trim().min(1).max(120),
+  printerId: z.string().min(1).max(120).refine(isExactPrinterId, { message: "printerId must be the exact configured printer identity" }),
   documentType: z.string().trim().min(1).max(120),
   destination: z.string().trim().min(1).max(255).optional(),
   payload: z.unknown(),
   expiresAt: z.string().optional(),
-  idempotencyKey: z.string().trim().min(1).max(200).optional(),
+  idempotencyKey: z.string().min(1).max(200).refine(isExactIdempotencyKey, { message: "idempotencyKey must match the original operation exactly" }).optional(),
   // S06-006: optional only for legacy callers; v2 fields must travel together.
   idempotencyVersion: z.literal(2).optional(),
   installationId: z.string().optional(),
@@ -471,12 +471,12 @@ Source: `src/app/api/print/jobs/v2/route.ts:20`. This is the declared field stru
 
 ```ts
 bodySchema = z.object({
-  printerId: z.string().trim().min(1).max(120),
+  printerId: z.string().min(1).max(120).refine(isExactPrinterId, { message: "printerId must be the exact configured printer identity" }),
   documentType: z.string().trim().min(1).max(120),
   destination: z.string().trim().min(1).max(255).optional(),
   payload: z.unknown(),
   expiresAt: z.string().optional(),
-  idempotencyKey: z.string().trim().min(1).max(200),
+  idempotencyKey: z.string().min(1).max(200).refine(isExactIdempotencyKey, { message: "idempotencyKey must match the original operation exactly" }),
   // S06-006: optional only for legacy callers; v2 fields must travel together.
   idempotencyVersion: z.literal(2).optional(),
   installationId: z.string().optional(),
