@@ -153,7 +153,7 @@ describe("printer-capability-matrix", () => {
     const agent = {
       id: "agent-one", tenantId: "tenant-one", status: "online", lifecycle: "active",
       lastSeenAt: seen,
-    } as unknown as Parameters<typeof buildPrinterCapabilityMatrix>[1];
+    } as unknown as NonNullable<Parameters<typeof buildPrinterCapabilityMatrix>[1]>;
     const verified = buildPrinterCapabilityMatrix(base, agent, now);
     expect(verified.spooler.name).toBe("Office Queue");
     expect(verified.spooler.status).toBe("ok");
