@@ -20,6 +20,16 @@ describe("API error contract", () => {
     expect(translate("ar", "errors.invalidPaginationOffset")).toMatch(/\p{Script=Arabic}/u);
   });
 
+  it("translates malformed pagination limits rather than calling them offset errors", () => {
+    const platformAudit = fs.readFileSync("src/app/api/platform/audit/route.ts", "utf8");
+    expect(platformAudit).toContain('code: "INVALID_LIMIT"');
+    expect(codeMessageKey("INVALID_LIMIT")).toBe("errors.invalidPaginationLimit");
+    expect(apiMessageKey("INVALID_LIMIT", 400)).toBe("errors.invalidPaginationLimit");
+    expect(translate("en", "errors.invalidPaginationLimit")).toMatch(/page size|limit/i);
+    expect(translate("ar", "errors.invalidPaginationLimit")).toMatch(/\p{Script=Arabic}/u);
+    expect(translate("en", "errors.invalidPaginationLimit")).not.toBe(translate("en", "errors.invalidPaginationOffset"));
+  });
+
   it("explains Agent and printer safety limits without claiming too many login attempts", () => {
     expect(apiMessageKey("MAX_AGENTS_EXCEEDED", 429)).toBe("limit.title.agents");
     expect(apiMessageKey("MAX_PRINTERS_EXCEEDED", 429)).toBe("limit.title.printers");
