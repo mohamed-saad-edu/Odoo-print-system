@@ -85,7 +85,7 @@ describe.skipIf(!hasTestDatabase)("session-backed workspace owner invitations", 
   });
 
   it("loss of owner email verification denies later invitation reads from the same session", async () => {
-    const owner = await cookieFor("owner@example.test");
+    const owner = await cookieFor("member@example.test");
     await pool().query("UPDATE users SET email_verified_at=NULL WHERE id='member'");
     const denied = await listInvites(request("/api/team/invitations", "GET", owner));
     expect(denied.status).toBe(403);
