@@ -35,6 +35,8 @@ def customer_error_category(value=None, *, code=None, status=None):
         return "uncertain"
     if "GATEWAY_REJECTED_STALE_POS_OPERATION" in text:
         return "stale_pos"
+    if "GATEWAY_REJECTED_BILLING_HOLD" in text:
+        return "billing_receipt"
     if "PRINT_QUOTA_EXCEEDED" in text or "MAX_PRINTS_PER_PERIOD" in text:
         return "quota"
     if any(token in text for token in ("SUBSCRIPTION", "TENANT_SUSPENDED", "TENANT_DELETED", "TENANT_ENTITLEMENT_UNAVAILABLE")):
@@ -64,6 +66,8 @@ def customer_error_message(_, value=None, *, code=None, status=None):
         return _("The print result needs review. Check the printer before starting another print to avoid duplicate output.")
     if category == "stale_pos":
         return _("This old POS ticket was not sent. Review the sale and explicitly reprint only if needed.")
+    if category == "billing_receipt":
+        return _("The receipt was not printed because the subscription blocked it. After renewal, choose an explicit reprint only if still needed.")
     if category == "quota":
         return _("The current 30-day print allowance has been used. Wait for the next reset or contact the workspace owner.")
     if category == "subscription":

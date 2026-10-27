@@ -1425,6 +1425,24 @@ class PrintGatewayJob(models.Model):
         # deprecated since 18.0).
         self.check_access("write")
 
+    def _is_time_sensitive_receipt(self, job):
+        """Only POS/kitchen/receipt documents need an explicit reprint after billing refusal."""
+        kind = str(job.document_type or "").strip().lower()
+        if kind in {"kitchen", "pos_receipt", "pos_kitchen"}:
+            return True
+        return kind == "receipt" and getattr(job, "source_model", None) in ("pos.order", "pos.session")
+
+    def _is_billing_deferred_receipt(self, job):
+        """Old pre-admission billing refusals must not automatically replay after renewal."""
+        marker = str(job.last_error or "")
+        return self._is_time_sensitive_receipt(job) and (
+            marker.startswith(("GATEWAY_BILLING_LIMIT_REACHED:", "GATEWAY_BILLING_BLOCKED:"))
+            or (
+                marker.startswith("GATEWAY_BILLING_PARKED:")
+                and any(code in marker for code in ("GATEWAY_BILLING_LIMIT_REACHED:", "GATEWAY_BILLING_BLOCKED:"))
+            )
+        )
+
     def _billing_retry_values(self, job, last_error, retry_after):
         """Queued-retry values for operator-recoverable Gateway refusals.
 
@@ -1433,6 +1451,18 @@ class PrintGatewayJob(models.Model):
         not grow forever while blocked: past the cap the job parks with a
         24h backoff and frozen attempts, staying recoverable.
         """
+        # A rejected receipt never reached the Gateway. Keep an immutable
+        # failure record instead of surprising a POS customer with a delayed print.
+        if self._is_time_sensitive_receipt(job) and last_error.startswith((
+            "GATEWAY_BILLING_LIMIT_REACHED:", "GATEWAY_BILLING_BLOCKED:",
+        )):
+            return {
+                "status": "failed",
+                "attempts": job.attempts + 1,
+                "last_error": "GATEWAY_REJECTED_BILLING_HOLD: %s" % last_error,
+                "next_retry_at": False,
+                "completed_at": db_now_utc(self.env.cr),
+            }
         next_attempt = job.attempts + 1
         if next_attempt > MAX_BILLING_PARK_ATTEMPTS:
             return {
@@ -1562,6 +1592,21 @@ class PrintGatewayJob(models.Model):
                     ))
                 continue
 
+            # Older Odoo versions may have queued this receipt behind billing
+            # for hours/days. Recheck before ANY HTTP submission after renewal.
+            if self._is_billing_deferred_receipt(job):
+                persist_submit_state({
+                    "status": "failed",
+                    "last_error": "GATEWAY_REJECTED_BILLING_HOLD: Billing refused earlier; explicit reprint required",
+                    "next_retry_at": False,
+                    "completed_at": db_now_utc(self.env.cr),
+                })
+                if raise_on_failure:
+                    raise ValidationError(_(
+                        "The earlier receipt was not printed because the subscription blocked it. Print it again explicitly if still needed."
+                    ))
+                continue
+
             current_binding = job.fallback_binding_id
             visited_bindings = {job.printer_id}
             failover_count = 0
@@ -1644,6 +1689,7 @@ class PrintGatewayJob(models.Model):
                                 "message": message_map[entitlement],
                                 "retryAfterSeconds": retry_after,
                                 "periodEnd": period_end,
+                                "manualReprintRequired": values.get("status") == "failed",
                             }
                             marker_message = "GATEWAY_BILLING_LIMIT:" + json.dumps(marker_payload, separators=(",", ":"))
                             if raise_on_failure:
@@ -1698,6 +1744,10 @@ class PrintGatewayJob(models.Model):
                                 )
                                 persist_submit_state(values)
                                 if raise_on_failure:
+                                    if values.get("status") == "failed":
+                                        raise ValidationError(_(
+                                            "Printing is paused by the subscription. This receipt was not printed; reprint explicitly after renewal if needed."
+                                        ))
                                     raise ValidationError(
                                         _("Gateway billing access is temporarily unavailable. The job was safely re-queued for retry.")
                                     )

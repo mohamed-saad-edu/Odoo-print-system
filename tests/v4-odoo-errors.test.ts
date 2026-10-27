@@ -18,6 +18,15 @@ describe("V4 Odoo customer error boundary", () => {
     expect(value).toContain("Check the printer");
     expect(value).not.toContain("Nothing was printed");
   });
+  it("explains that an explicitly rejected POS receipt must be deliberately reprinted", () => {
+    const details = parseGatewayBillingLimit('GATEWAY_BILLING_LIMIT:{"entitlement":"max_prints_per_period","limit":100,"used":100,"manualReprintRequired":true,"message":"PRIVATE"}');
+    expect(details?.manualReprintRequired).toBe(true);
+    let dialog: { body: string } | undefined;
+    showGatewayBillingLimitDialog({ services: { dialog: { add(_type: unknown, options: { body: string }) { dialog = options; } } } }, details);
+    expect(dialog?.body).toContain("reprint it explicitly only if still needed");
+    expect(dialog?.body).not.toContain("PRIVATE");
+  });
+
   it("uses local quota wording and ignores backend English in structured limit details", () => {
     const details = parseGatewayBillingLimit('GATEWAY_BILLING_LIMIT:{"entitlement":"max_prints_per_period","limit":100,"used":100,"message":"INTERNAL_BACKEND_SECRET"}');
     expect(details.message).not.toContain("INTERNAL_BACKEND_SECRET");
