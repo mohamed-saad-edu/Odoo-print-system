@@ -38,7 +38,7 @@ test('native VM exercises the actual exact printer ID contract, never a permissi
   const validator = contracts.get('exact-printer-id')?.namespace.isExactPrinterId;
   assert.equal(typeof validator, 'function');
   assert.equal(validator('printer-c'), true);
-  for (const invalid of [' printer-c', 'printer-c ', 'printer-c\\n', '🖨'.repeat(40)]) {
+  for (const invalid of [' printer-c', 'printer-c ', 'printer-c\n', '🖨'.repeat(40)]) {
     assert.equal(validator(invalid), false, `invalid opaque printer identity: ${JSON.stringify(invalid)}`);
   }
 });
