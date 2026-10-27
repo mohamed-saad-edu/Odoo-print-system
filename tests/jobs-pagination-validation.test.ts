@@ -23,6 +23,22 @@ describe("bounded job-history pagination", () => {
     }
   });
 
+  it("keeps admin and workspace collection offsets on the same exact decimal-only policy", () => {
+    const scopes: Array<[string, string]> = [
+      ["src/app/api/team/members/route.ts", 'parseStrictListOffset(searchParams.get("offset"), 1_000_000)'],
+      ["src/app/api/team/invitations/route.ts", 'parseStrictListOffset(searchParams.get("offset"), 1_000_000)'],
+      ["src/app/api/platform/tenants/route.ts", 'parseStrictListOffset(searchParams.get("offset"), 1_000_000)'],
+      ["src/app/api/platform/jobs/route.ts", 'parseStrictListOffset(params.get("offset"), 10_000)'],
+      ["src/app/api/platform/database/route.ts", 'parseStrictListOffset(url.searchParams.get("offset"), 10_000)'],
+    ];
+    for (const [path, parser] of scopes) {
+      const route = readFileSync(path, "utf8");
+      expect(route, path).toContain(parser);
+      expect(route, path).not.toMatch(/Number\((?:searchParams|params)\.get\("offset"\)/);
+      expect(route, path).toContain("offset === null");
+    }
+  });
+
   it("uses strict parsing in the customer and Agent job-history API before reading rows", () => {
     const route = readFileSync("src/app/api/jobs/route.ts", "utf8");
     expect(route).toContain('parseStrictListOffset(url.searchParams.get("offset"), MAX_LIST_OFFSET)');

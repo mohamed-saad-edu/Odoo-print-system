@@ -7,7 +7,7 @@ test("workspace member list is tenant-scoped and bounded independently of invita
   const source = read("src/app/api/team/members/route.ts");
   for (const pattern of [
     /clampListLimit\(searchParams\.get\("limit"\), 50, 100\)/,
-    /Number\.isSafeInteger\(offset\)/, /\.orderBy\(/, /\.offset\(offset\)/,
+    /parseStrictListOffset\(searchParams\.get\("offset"\), 1_000_000\)/, /\.orderBy\(/, /\.offset\(offset\)/,
     /\.limit\(limit \+ 1\)/, /queryWithTimeout\(/,
     /hasMore: rows\.length > limit/, /total: countRows\[0\]\?\.total \?\? 0/
   ]) assert.match(source, pattern);

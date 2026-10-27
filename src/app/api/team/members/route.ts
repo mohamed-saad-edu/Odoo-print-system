@@ -5,7 +5,7 @@ import { desc, eq, sql } from "drizzle-orm";
 import { validateWorkspaceManager } from "../../../../lib/manager-auth";
 import { hasManagerPermission } from "../../../../lib/authorization";
 import { queryWithTimeout } from "../../../../db/client";
-import { clampListLimit } from "../../../../lib/request-limits";
+import { clampListLimit, parseStrictListOffset } from "../../../../lib/request-limits";
 import { platformOwnerRequiredResponse } from "../../../../lib/team-authorization";
 
 export async function GET(req: Request) {
@@ -15,9 +15,9 @@ export async function GET(req: Request) {
 
   const { searchParams } = new URL(req.url);
   const limit = clampListLimit(searchParams.get("limit"), 50, 100);
-  const offset = Number(searchParams.get("offset") ?? "0");
-  if (!Number.isSafeInteger(offset) || offset < 0 || offset > 1_000_000) {
-    return NextResponse.json({ error: "Invalid offset" }, { status: 400 });
+  const offset = parseStrictListOffset(searchParams.get("offset"), 1_000_000);
+  if (offset === null) {
+    return NextResponse.json({ error: "Invalid offset", code: "INVALID_OFFSET" }, { status: 400 });
   }
 
   const [rows, countRows] = await Promise.all([

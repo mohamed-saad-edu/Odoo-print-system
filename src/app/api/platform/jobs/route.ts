@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { requirePlatformOwner, PlatformUnauthorizedError } from "../../../../lib/platform-auth";
 import { listPrintJobHistory } from "../../../../lib/job-history";
 import { isJobFilterStatus } from "../../../../lib/job-status";
+import { parseStrictListOffset } from "../../../../lib/request-limits";
 import { queryWithTimeout } from "../../../../db/client";
 
 export const dynamic = "force-dynamic";
@@ -16,7 +17,7 @@ export async function GET(req: Request) {
   }
   const params = new URL(req.url).searchParams;
   const limit = Number(params.get("limit") ?? "50");
-  const offset = Number(params.get("offset") ?? "0");
+  const offset = parseStrictListOffset(params.get("offset"), 10_000);
   const status = (params.get("status") ?? "all").toLowerCase();
   const search = (params.get("search") ?? "").trim();
   const tenantId = (params.get("tenantId") ?? "").trim();
@@ -24,7 +25,7 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "Invalid status filter", code: "INVALID_STATUS_FILTER" }, { status: 400, headers: HEADERS });
   }
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100 ||
-      !Number.isSafeInteger(offset) || offset < 0 || offset > 10_000 ||
+      offset === null ||
       (search && (search.length < 2 || search.length > 64)) ||
       tenantId.length > 120) {
     return NextResponse.json({ error: "Invalid operations filter" }, { status: 400, headers: HEADERS });

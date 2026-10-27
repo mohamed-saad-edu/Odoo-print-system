@@ -3,7 +3,7 @@ import { requirePlatformOwner, PlatformUnauthorizedError } from "../../../../lib
 import { db } from "../../../../db";
 import { tenants, tenantSubscriptions, tenantUsers, agents, printers, plans } from "../../../../db/schema";
 import { desc, eq, and, sql, type SQL } from "drizzle-orm";
-import { clampListLimit } from "../../../../lib/request-limits";
+import { clampListLimit, parseStrictListOffset } from "../../../../lib/request-limits";
 import { queryWithTimeout } from "../../../../db/client";
 import { effectiveSubscriptionStatusSql } from "../../../../lib/effective-subscription-status";
 
@@ -20,8 +20,8 @@ export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const limit = clampListLimit(searchParams.get("limit"), 300, 1000);
 
-  const offset = Number(searchParams.get("offset") ?? "0");
-  if (!Number.isSafeInteger(offset) || offset < 0 || offset > 1000000) return NextResponse.json({ error: "Invalid offset" }, { status: 400 });
+  const offset = parseStrictListOffset(searchParams.get("offset"), 1_000_000);
+  if (offset === null) return NextResponse.json({ error: "Invalid offset" }, { status: 400 });
   const search = (searchParams.get("search") ?? "").trim().toLowerCase();
   if (search.length > 200) return NextResponse.json({ error: "Search too long" }, { status: 400 });
   const term = `%${search.replace(/[%_\\]/g, "\\$&")}%`;
