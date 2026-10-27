@@ -2032,3 +2032,17 @@ AUTHORED tests/billing-status-live-authority.integration.test.ts — commercial 
 ```
 
 Source commits and residual risk are recorded in [SYSTEM_UNIFICATION_NOTEBOOK.md](SYSTEM_UNIFICATION_NOTEBOOK.md) under AUTH-LIVE-DIRECTORY-2026-10-28. Every integration test still needs exact-SHA CI output. No live customer data or historical migration was rewritten.
+
+
+#### AUTH-LIVE-DIRECTORY-FOLLOWUP-2026-10-28
+
+```text
+PARTIAL src/app/api/odoo/keys/route.ts — GET live actor/tenant read and no-store metadata; write routes not exhaustively reviewed
+PARTIAL src/app/api/odoo/configuration/route.ts — GET fenced; PATCH existing revision flow not fully verified
+PARTIAL src/app/api/billing/usage/route.ts — owner-only GET transactional plan, quotas, counters
+AUTHORED tests/odoo-keys-inventory-live-authority.integration.test.ts — PG revoke/suspend and private caching boundary
+AUTHORED tests/odoo-configuration-inventory-live-authority.integration.test.ts — PG activation directory races
+AUTHORED tests/billing-usage-live-owner.integration.test.ts — owner role/session/lifecycle races
+```
+
+Those paths remain **PARTIAL/AUTHORED**, not VERIFIED; full PostgreSQL, native Windows printer, real POS and Odoo integration execution remains outstanding. See engineering notebook follow-up for exact commits.
