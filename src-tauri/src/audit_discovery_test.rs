@@ -57,18 +57,41 @@ fn local_test_print_preserves_exact_printer_identity_in_cli_args() {
     let executable = std::path::Path::new("fake-agent");
     let config = std::path::Path::new("agent.yaml");
     let root = std::path::Path::new("agent-data");
-    for invalid in ["", "local ", " local", "-config", "local\nother", "local\u{85}other", "\u{feff}local"] {
+    for invalid in [
+        "",
+        "local ",
+        " local",
+        "-config",
+        "local\nother",
+        "local\u{85}other",
+        "\u{feff}local",
+    ] {
         assert!(
             super::build_local_printer_test_command(executable, config, root, invalid).is_err(),
             "local test print silently remapped invalid target {invalid:?}"
         );
     }
     let id = "طابعة-1 (POS)";
-    let command = super::build_local_printer_test_command(executable, config, root, id).unwrap();
-    let args: Vec<_> = command.get_args().collect();
-    assert_eq!(args, ["printers", "test", id, "-config", "agent.yaml"]);
+    let command =
+        super::build_local_printer_test_command(executable, config, root, id).unwrap();
+    let args: Vec<String> = command
+        .get_args()
+        .map(|arg| arg.to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(
+        args,
+        vec![
+            "printers".to_string(),
+            "test".to_string(),
+            id.to_string(),
+            "-config".to_string(),
+            "agent.yaml".to_string()
+        ]
+    );
     let long = "é".repeat(129);
-    assert!(super::build_local_printer_test_command(executable, config, root, &long).is_err());
+    assert!(
+        super::build_local_printer_test_command(executable, config, root, &long).is_err()
+    );
 }
 
 #[test]
