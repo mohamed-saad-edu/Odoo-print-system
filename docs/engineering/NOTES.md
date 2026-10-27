@@ -121,3 +121,16 @@ Baseline inspected: main@65214cf7948a214843110fa2fbc1a23aec388340. This is an **
 **Change:** Validate a single canonical percent-encoded path segment in Rust and Go. Only the existing diagnostic routes/verbs, exact Agent credential, idempotency key and Gateway tenant/printer fence remain available. Reject traversal, encoded separators, malformed UTF-8, double-decoding, controls, query injection and oversized IDs; no other-printer fallback.
 
 **Tests:** Rust native `printer_action_paths_are_strictly_scoped`, Go `TestAllowedGatewayConsolePath` and `TestPrinterDiagnosticPreservesEncodedIDAndOrigin`. Source-local test execution NOT RUN under GitHub-only constraint; confirm full CI on exact commit. Remaining modules stay TODO until reviewed; physical hardware NOT RUN.
+
+
+## Batch 6 — Odoo v2 Unicode source-operation boundary
+
+**State:** implementation committed; exact-commit tests NOT RUN (GitHub Actions runs cancelled by concurrent `main` updates).
+
+**Root cause:** `src/lib/odoo-idempotency.ts::parseOdooIdentity` validates `sourceOperationId.length <= 200` in UTF-16 code units; Python `idempotency_namespace.py::wire_key(2,...)` validated `len(operation_id) <= 200` in Unicode code points. For 101 astral symbols, Python admitted the durable Odoo operation (101 points) while Gateway rejected its identifier (202 UTF-16 units). Repeating the same outbox operation would continue to receive an input error rather than ever entering the Gateway queue. No automatic physical retry is introduced by the fix.
+
+**Regression-first commits:** `0ba3276827ec6385d28746b10f2b6efc090460ab` adds Python acceptance of 100 astral symbols, denial of 101 and immutable v1 acceptance; `041f6b200f177a1de58e956da0c385b2ff2beaf0` adds Gateway Node boundary parity.
+
+**Implementation:** `9e919ca2cfb639a84bc2acb5410221f6c207eb90` counts UTF-16LE bytes in Python, rejects invalid Unicode and length over 400 bytes before persistence, does not touch stored v1/v2 digests or historic print rows. Source independently inspected. CI run `40600057383`: App/Quality, App/Gateway and Odoo19 cancelled; Agent/Go skipped. Docker, Windows Installer and Security/Resilience workflow reported success; those are not evidence of the target Python test. **RED/GREEN not observed in CI.**
+
+**Coverage:** `src/lib/odoo-idempotency.ts`, `odoo_addons/print_gateway/idempotency_namespace.py`, `tests/test_s06_versioned_keys.py`, `tests/s06-identity-policy.node.test.mjs` inspected; all other directories remain TODO or BLOCKED until end-to-end review and exact-commit test proof.
