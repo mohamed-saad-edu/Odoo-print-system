@@ -10,6 +10,13 @@ on:
   workflow_dispatch:
 
 
+# A rapid sequence of main pushes must not queue full application suites
+# for superseded pending SHAs. Preserve the running verification, retain only
+# the newest pending main SHA, and isolate manual/merge-queue release checks.
+concurrency:
+  group: ci-run-${{ github.event_name == 'push' && github.ref || github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 permissions:
   contents: read
 
