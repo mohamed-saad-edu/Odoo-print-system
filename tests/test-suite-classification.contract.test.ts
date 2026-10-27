@@ -17,6 +17,18 @@ describe("test suite classification", () => {
     }
   });
 
+  it("registers every integration-named suite for the PostgreSQL phase", () => {
+    // An unregistered database regression can silently skip in the unit
+    // suite (DATABASE_URL absent) and never run in the integration suite.
+    const registered = new Set<string>(integrationVitestTestFiles);
+    const missing = readdirSync("tests")
+      .filter((name) => name.endsWith(".integration.test.ts"))
+      .map((name) => `tests/${name}`)
+      .filter((name) => !registered.has(name))
+      .sort();
+    expect(missing).toEqual([]);
+  });
+
   it("uses the dedicated unit config", () => {
     expect(packageJson.scripts["test:unit"]).toBe("vitest run --config vitest.unit.config.mts");
   });
