@@ -36,6 +36,10 @@ def presenter():
     ("queued", "not_printed", "file", "file_created", "needs_review"),
     ("success", "unknown", "file", "unknown", "needs_review"),
     ("failed", "unknown", "file", "not_created", "failed_before_output"),
+    # A contradictory "not_created" flag cannot prove an explicit ambiguous
+    # terminal operation did not make a file; never permit auto-reprint.
+    ("unknown", "unknown", "file", "not_created", "needs_review"),
+    ("partial", "unknown", "file", "not_created", "needs_review"),
     ("unexpected", "unknown", "physical", None, "needs_review"),
 ])
 def test_job_customer_state_uses_output_evidence(status, physical, medium, output, expected):
