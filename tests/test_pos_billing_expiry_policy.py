@@ -39,7 +39,7 @@ def test_outbox_checks_age_after_lease_and_before_network_submission():
     source = (ROOT / "odoo_addons/print_gateway/models/print_job.py").read_text(encoding="utf-8")
     entry = source.index("def _action_submit_trusted(")
     lease = source.index("claim_token = lease_result", entry)
-    guard = source.index("if is_stale_pos_operation(", lease)
+    guard = source.index("is_stale_pos_operation(", lease)
     http = source.index("response = requests.post(", lease)
     assert lease < guard < http
     assert 'advance_submit_status("failed"' in source[guard:http]

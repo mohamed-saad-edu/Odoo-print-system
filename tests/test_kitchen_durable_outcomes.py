@@ -80,6 +80,9 @@ def fixture(response=None, transport_error=None, unrecorded_error=None, lease_av
     output_path = ROOT.parent / "print_output.py"
     exec(compile(output_path.read_text(), str(output_path), "exec"), output_namespace)
     namespace["gateway_output_values"] = output_namespace["gateway_output_values"]
+    # The AST-based fake runs the real POS expiry policy, not a mocked callback.
+    from runpy import run_path
+    namespace["is_stale_pos_operation"] = run_path(str(ROOT.parent / "pos_retry_policy.py"))["is_stale_pos_operation"]
     job_methods = methods("print_job.py", ["_action_submit_trusted", "_record_ambiguous_submission", "_is_deterministic_failure", "_persist_state", "_billing_retry_values", "_compute_physical_outcome"], namespace)
     class Job:
         _TERMINAL = {"success", "failed", "unknown", "partial"}
@@ -163,6 +166,19 @@ def fixture(response=None, transport_error=None, unrecorded_error=None, lease_av
 
 def reply(status, body):
     return SimpleNamespace(status_code=status, json=lambda: body, headers={}, content=True)
+
+
+def test_stale_pos_outbox_requires_deliberate_reprint_without_gateway_post():
+    _router, job, _cursor, sent, _order = fixture(reply(201, {"jobId":"must-not-print"}))
+    job.source_model = "pos.order"
+    job.document_type = "kitchen"
+    job.create_date = datetime.datetime(2026, 10, 8, 9, 0)
+    job._action_submit_trusted()
+    assert sent == []
+    assert job.status == "failed"
+    assert job.gateway_job_id is False
+    assert str(job.last_error).startswith("GATEWAY_REJECTED_STALE_POS_OPERATION:")
+    assert job.physical_outcome == "not_printed"
 
 
 def test_kitchen_definite_gateway_refusal_is_structured_after_real_submit_loop():

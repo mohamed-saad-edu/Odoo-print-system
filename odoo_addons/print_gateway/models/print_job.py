@@ -1543,9 +1543,13 @@ class PrintGatewayJob(models.Model):
             # ticket from an earlier sale. This applies ONLY before Gateway
             # admission; a previously accepted job is reconciled, not canceled.
             # Evaluate under the committed claim lease before any HTTP side effect.
-            if job.status == "queued" and is_stale_pos_operation(
-                job.source_model, job.document_type, job.create_date,
-                db_now_utc(self.env.cr), gateway_job_id=job.gateway_job_id,
+            if (
+                job.status == "queued"
+                and getattr(job, "source_model", None) in ("pos.order", "pos.session")
+                and is_stale_pos_operation(
+                    job.source_model, job.document_type, job.create_date,
+                    db_now_utc(self.env.cr), gateway_job_id=job.gateway_job_id,
+                )
             ):
                 parked = advance_submit_status("failed", {
                     "last_error": "GATEWAY_REJECTED_STALE_POS_OPERATION: No Gateway submission; explicit operator reprint required.",
