@@ -99,3 +99,52 @@ func TestIPPDefaultResourceIdentifiesSeparateSecureTransport(t *testing.T) {
 		t.Fatalf("same secure destination changed identity when using HTTPS spelling: %q vs %q", secure, got)
 	}
 }
+
+func TestDiscoveryKeepsPlainAndSecureIPPDefaultQueuesSeparate(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "printers.json")
+	host := "192.168.1.20"
+	for _, endpoint := range []string{
+		"ipp://" + host + ":631/ipp/print",
+		"ipps://" + host + ":631/ipp/print",
+	} {
+		rows, err := UpsertRegistry(path, []DeviceInfo{{
+			Name: "Same server", PrinterType: "physical",
+			ConnectionType: "ipp", Protocol: "ipp",
+			Endpoint: endpoint, NetworkAddress: host, Port: 631,
+			Enabled: true, Status: "online",
+		}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if endpoint == "ipps://"+host+":631/ipp/print" {
+			if len(rows) != 2 || rows[0].ID == rows[1].ID {
+				t.Fatalf("secure queue overwrote plaintext queue: %+v", rows)
+			}
+		}
+	}
+}
+
+func TestLegacySecureIPPRegistryRetainsIDAfterStableIDUpgrade(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "printers.json")
+	host := "192.168.1.20"
+	legacyID := StableIDFromNetwork(host, 631)
+	endpoint := "ipps://" + host + ":631/ipp/print"
+	original := DeviceInfo{
+		ID: legacyID, Name: "Secure receipt queue",
+		PrinterType: "physical", ConnectionType: "ipp", Protocol: "ipps",
+		Endpoint: endpoint, NetworkAddress: host, Port: 631,
+		Enabled: false, Status: "unknown",
+	}
+	if err := SaveRegistry(path, []DeviceInfo{original}); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := UpsertRegistry(path, []DeviceInfo{{
+		Name: original.Name, PrinterType: "physical",
+		ConnectionType: "ipp", Protocol: "ipps",
+		Endpoint: "https://" + host + ":631/ipp/print",
+		NetworkAddress: host, Port: 631, Enabled: true, Status: "online",
+	}})
+	if err != nil || len(rows) != 1 || rows[0].ID != legacyID || rows[0].Enabled {
+		t.Fatalf("secure registry upgrade rewrote existing ID or operator disablement: %+v, %v", rows, err)
+	}
+}
