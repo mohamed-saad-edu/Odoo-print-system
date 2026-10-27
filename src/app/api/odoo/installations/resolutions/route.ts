@@ -8,14 +8,14 @@ import { requireManagerActorInTransaction, ManagerMutationAuthorityChangedError 
 import { requireActiveTenantInTransaction } from "../../../../../lib/tenant-guard";
 import { writeAuditEvent } from "../../../../../lib/audit";
 import { idempotencyDigest } from "../../../../../lib/print-job-service";
-import { makeLegacyOdooKey, makeV2OdooKey } from "../../../../../lib/odoo-idempotency";
+import { makeLegacyOdooKey, makeV2OdooKey, isValidOdooV2OperationId } from "../../../../../lib/odoo-idempotency";
 import { logError } from "../../../../../lib/log";
 
 export const dynamic = "force-dynamic";
 const operationSchema = z.object({
   installationId: z.string().uuid(),
   sourceCompanyId: z.string().regex(/^[1-9][0-9]{0,17}$/),
-  sourceOperationId: z.string().min(1).max(200),
+  sourceOperationId: z.string().refine(isValidOdooV2OperationId, { message: "Invalid v2 source operation identity" }),
 }).strict();
 const approveSchema = operationSchema.extend({
   disposition: z.enum(["reuse", "distinct"]),
