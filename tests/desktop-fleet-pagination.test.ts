@@ -72,6 +72,29 @@ describe("desktop complete fleet traversal", () => {
     expect(await ipc.fetchGatewayAgents("https://gateway.example")).toEqual([{ id: "a1", name: "Legacy agent" }]);
   });
 
+  it.each([
+    "x-next-before-created-at",
+    "x-next-before-id",
+    "x-next-before-id-encoded",
+    "x-next-cursor",
+  ])("rejects stray fleet continuation %s when has-more metadata is missing", async (header) => {
+    // Legacy unpaged responses are allowed only when no continuation
+    // metadata is present; a lost flag must not hide later Agent pages.
+    mocks.invoke.mockResolvedValueOnce(envelope([{ id: "a1" }], { [header]: "stray" }));
+    await expect(ipc.fetchGatewayAgents("https://gateway.example"))
+      .rejects.toThrow("Invalid Gateway fleet pagination metadata");
+    expect(mocks.invoke).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects a final fleet page carrying a cursor for another pagination protocol", async () => {
+    mocks.invoke.mockResolvedValueOnce(envelope([{ id: "p1" }], {
+      "x-has-more": "false",
+      "x-next-cursor": "extra-token",
+    }));
+    await expect(ipc.fetchGatewayPrinters("https://gateway.example"))
+      .rejects.toThrow("Invalid Gateway fleet cursor");
+  });
+
   it("rejects a repeated cursor instead of looping forever", async () => {
     mocks.invoke.mockResolvedValue(envelope([], next("same")));
     await expect(ipc.fetchGatewayPrinters("https://gateway.example")).rejects.toThrow("cursor did not advance");
