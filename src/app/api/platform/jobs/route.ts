@@ -16,7 +16,7 @@ export async function GET(req: Request) {
       { status: error instanceof PlatformUnauthorizedError ? 401 : 503, headers: HEADERS });
   }
   const params = new URL(req.url).searchParams;
-  const limit = Number(params.get("limit") ?? "50");
+  const limit = params.get("limit") === null ? 50 : parseStrictListOffset(params.get("limit"), 100);
   const offset = parseStrictListOffset(params.get("offset"), 10_000);
   const status = (params.get("status") ?? "all").toLowerCase();
   const search = (params.get("search") ?? "").trim();
@@ -24,10 +24,10 @@ export async function GET(req: Request) {
   if (!isJobFilterStatus(status)) {
     return NextResponse.json({ error: "Invalid status filter", code: "INVALID_STATUS_FILTER" }, { status: 400, headers: HEADERS });
   }
-  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100 ||
-      offset === null ||
-      (search && (search.length < 2 || search.length > 64)) ||
-      tenantId.length > 120) {
+  if (limit === null || limit < 1 || offset === null) {
+    return NextResponse.json({ error: "Invalid operations pagination", code: "INVALID_PAGINATION" }, { status: 400, headers: HEADERS });
+  }
+  if ((search && (search.length < 2 || search.length > 64)) || tenantId.length > 120) {
     return NextResponse.json({ error: "Invalid operations filter" }, { status: 400, headers: HEADERS });
   }
   try {

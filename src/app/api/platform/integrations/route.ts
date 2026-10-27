@@ -3,6 +3,7 @@ import { and, desc, eq, gt, ilike, isNotNull, isNull, lte, or, sql, type SQL } f
 import { db } from "../../../../db";
 import { apiKeys, odooInstallationCredentials, odooInstallations, tenants } from "../../../../db/schema";
 import { queryWithTimeout } from "../../../../db/client";
+import { parseStrictListOffset } from "../../../../lib/request-limits";
 import { requirePlatformOwner, PlatformUnauthorizedError } from "../../../../lib/platform-auth";
 
 export const dynamic = "force-dynamic";
@@ -20,12 +21,13 @@ export async function GET(req: Request) {
   const status = p.get("status") ?? "all";
   const tenantId = (p.get("tenantId") ?? "").trim();
   const search = (p.get("search") ?? "").trim();
-  const limit = Number(p.get("limit") ?? "40");
-  const offset = Number(p.get("offset") ?? "0");
+  const limit = p.get("limit") === null ? 40 : parseStrictListOffset(p.get("limit"), 100);
+  const offset = parseStrictListOffset(p.get("offset"), 10_000);
+  if (limit === null || limit < 1 || offset === null) {
+    return NextResponse.json({ error: "Invalid integration pagination", code: "INVALID_PAGINATION" }, { status: 400, headers: HEADERS });
+  }
   if (!(["keys", "installations"].includes(kind)) ||
       !(["all", "active", "inactive"].includes(status)) ||
-      !Number.isSafeInteger(limit) || limit < 1 || limit > 100 ||
-      !Number.isSafeInteger(offset) || offset < 0 || offset > 10_000 ||
       tenantId.length > 120 || (search.length > 0 && (search.length < 2 || search.length > 64))) {
     return NextResponse.json({ error: "Invalid integration filter" }, { status: 400, headers: HEADERS });
   }
