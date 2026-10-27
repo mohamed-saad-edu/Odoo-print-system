@@ -113,3 +113,11 @@ Baseline inspected: main@65214cf7948a214843110fa2fbc1a23aec388340. This is an **
 **Regression:** `tests/team-invitation-restoration.contract.test.ts` invokes `translate()` for both languages, asserts the owner distinction and Full Access copy alongside the existing route and session access tests. **NOT RUN** locally; verify via exact-commit GitHub Actions.
 
 **Coverage:** `src/i18n/messages/en.ts`, `src/i18n/messages/ar.ts`, `tests/team-invitation-restoration.contract.test.ts` PARTIAL; all unreviewed components TODO. No source-level review is promoted to production-verified.
+
+## 2026-10-28 — Desktop/Gateway Unicode diagnostic printer identity (GitHub-only)
+
+**HIGH finding:** Desktop correctly serializes `encodeURIComponent(printerId)`, while Rust and Go CLI allowlists accepted only ASCII and rejected Arabic IDs or names with spaces before Gateway could authenticate the diagnostic.
+
+**Change:** Validate a single canonical percent-encoded path segment in Rust and Go. Only the existing diagnostic routes/verbs, exact Agent credential, idempotency key and Gateway tenant/printer fence remain available. Reject traversal, encoded separators, malformed UTF-8, double-decoding, controls, query injection and oversized IDs; no other-printer fallback.
+
+**Tests:** Rust native `printer_action_paths_are_strictly_scoped`, Go `TestAllowedGatewayConsolePath` and `TestPrinterDiagnosticPreservesEncodedIDAndOrigin`. Source-local test execution NOT RUN under GitHub-only constraint; confirm full CI on exact commit. Remaining modules stay TODO until reviewed; physical hardware NOT RUN.
