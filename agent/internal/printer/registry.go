@@ -447,6 +447,19 @@ func mutateRegistry(registryPath string, discovered []DeviceInfo, completeSource
 			}
 		}
 		if idx, ok := byID[d.ID]; ok {
+			// Pre-upgrade auto-discovery could give HTTPS/IPPS and plaintext
+			// /ipp/print on port 631 the same generated stable ID. An ID
+			// collision is NOT permission to replace an established print
+			// resource or downgrade its transport. Only a deliberate manual
+			// update targeting this precise saved ID may rebind it.
+			if priorBinding, priorOK := ippRegistryBinding(existing[idx]); priorOK {
+				if incomingBinding, incomingOK := ippRegistryBinding(d); incomingOK &&
+					incomingBinding != priorBinding && operatorTargetID != existing[idx].ID {
+					existing[idx] = withRegistryIdentityCollision(existing[idx], "same_id_different_ipp_queue")
+					log.Printf("[registry] conflicting IPP execution destinations share saved ID %q; operator reconciliation required", d.ID)
+					continue
+				}
+			}
 			if isSpoolerDevice(existing[idx]) && isSpoolerDevice(d) && !sameSpoolerQueueDuringDetailLoss(existing[idx], d) {
 				oldGUID, newGUID := verifiedWindowsQueueGUID(existing[idx]), verifiedWindowsQueueGUID(d)
 				source, _ := d.Capabilities["registration_source"].(string)
