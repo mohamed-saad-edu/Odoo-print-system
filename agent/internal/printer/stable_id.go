@@ -108,8 +108,8 @@ func ippQueueIdentitySuffix(d DeviceInfo) string {
 		return ""
 	}
 	path := u.EscapedPath()
-	if path == "" || path == "/" {
-		path = "/ipp/print"
+	if path == "" {
+		path = "/"
 	}
 	return "|ipp-resource:" + path + "?" + u.RawQuery
 }
@@ -279,12 +279,16 @@ func StableIDFromIPPURI(endpoint string, host string, port int) string {
 	if err != nil || u.Hostname() == "" {
 		return StableIDFromEndpoint(endpoint)
 	}
-	if u.Path == "" || u.Path == "/ipp/print" {
-		if u.RawQuery == "" {
-			return StableIDFromNetwork(host, port)
-		}
+	// Only an explicit default resource inherits the TCP 631 scan ID.
+	// A no-path IPP URI addresses "/", which may be a different queue.
+	if u.Path == "/ipp/print" && u.RawQuery == "" {
+		return StableIDFromNetwork(host, port)
 	}
-	key := "ipp-queue:" + strings.ToLower(u.Scheme) + "://" + net.JoinHostPort(strings.ToLower(host), fmt.Sprint(port)) + u.EscapedPath() + "?" + u.RawQuery
+	resource := u.EscapedPath()
+	if resource == "" {
+		resource = "/"
+	}
+	key := "ipp-queue:" + strings.ToLower(u.Scheme) + "://" + net.JoinHostPort(strings.ToLower(host), fmt.Sprint(port)) + resource + "?" + u.RawQuery
 	h := sha256.Sum256([]byte(key))
 	return fmt.Sprintf("printer_ep_%x", h[:8])
 }

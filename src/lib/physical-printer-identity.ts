@@ -33,7 +33,9 @@ export function physicalPrinterIdentityKey(p: PrinterEndpoint): string | null {
       if (["ipp:", "ipps:", "http:", "https:"].includes(url.protocol) && url.hostname && !url.username && !url.password && !url.search && !url.hash) {
         const scheme = url.protocol === "ipp:" ? "http:" : url.protocol === "ipps:" ? "https:" : url.protocol;
         const defaultPort = ["ipp:", "ipps:"].includes(url.protocol) ? "631" : scheme === "https:" ? "443" : "80";
-        const path = (!url.pathname || url.pathname === "/" ? "/ipp/print" : url.pathname).replace(/%[0-9a-fA-F]{2}/g, escape => {
+        // Root "/" is a real IPP resource, not an alias for /ipp/print.
+        // Collapsing them can reuse a different queue on a multi-queue server.
+        const path = (url.pathname || "/").replace(/%[0-9a-fA-F]{2}/g, escape => {
           const character = String.fromCharCode(parseInt(escape.slice(1), 16));
           return /^[A-Za-z0-9._~-]$/.test(character) ? character : escape.toUpperCase();
         });

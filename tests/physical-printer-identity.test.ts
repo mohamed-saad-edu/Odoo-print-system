@@ -30,6 +30,21 @@ describe("physical printer identity", () => {
     expect(key(a)).not.toBe(key({ ...a, config: { address: "ipp://printserver.local/printers/two" } }));
     expect(key(a)).not.toBe(key({ connectionType: "ipps", protocol: "ipps", config: { address: "ipps://printserver.local/printers/one" } }));
   });
+
+  it("never merges an explicit IPP root with the different /ipp/print queue", () => {
+    const root = { connectionType: "ipp", protocol: "ipp", config: { address: "ipp://printserver.local/" } };
+    const noPath = { ...root, config: { address: "ipp://printserver.local" } };
+    const defaultQueue = { ...root, config: { address: "ipp://printserver.local/ipp/print" } };
+    const scannedDefault = { connectionType: "network", protocol: "ipp", config: { ip: "printserver.local", port: 631 } };
+    // Omitting a URI path still addresses the HTTP request root.
+    expect(key(noPath)).toBe(key(root));
+    expect(key(noPath)).not.toBe(key(defaultQueue));
+    // The TCP scanner explicitly observes /ipp/print, which may be another queue.
+    expect(key(scannedDefault)).toBe(key(defaultQueue));
+    expect(matchingPhysicalPrinter([{ id: "default-queue", ...defaultQueue }], root)).toBeUndefined();
+    expect(matchingPhysicalPrinter([{ id: "root-queue", ...root }], noPath)?.id).toBe("root-queue");
+  });
+
   it("does not collapse USB devices merely by model", () => {
     expect(key({ connectionType: "usb", protocol: "unknown", config: { vid: 100, pid: 200 } })).toBe(null);
     expect(key({ connectionType: "usb", protocol: "unknown", config: { vid: 100, pid: 200, serial: "a" } }))
