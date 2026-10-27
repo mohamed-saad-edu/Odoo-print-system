@@ -31,7 +31,7 @@ describe.skipIf(!hasTestDatabase)("fleet and job history listings recheck curren
     handler: typeof listAgents,
     route: string,
     principal: "manager" | "agent",
-    change: "suspend" | "revoke" | "disable_agent",
+    change: "suspend" | "revoke" | "disable_agent" | "rotate_agent",
   ): Promise<Response> {
     const writer = await pool().connect();
     let committed = false;
@@ -57,6 +57,9 @@ describe.skipIf(!hasTestDatabase)("fleet and job history listings recheck curren
         await pool().query("UPDATE refresh_tokens SET revoked_at=clock_timestamp() WHERE family_id=$1", [familyId]);
       } else if (change === "disable_agent") {
         await pool().query("UPDATE agents SET lifecycle='disabled' WHERE tenant_id=$1 AND id=$2", [fixture.tenantId, fixture.agentId]);
+      } else if (change === "rotate_agent") {
+        await pool().query("UPDATE agents SET secret=$3 WHERE tenant_id=$1 AND id=$2",
+          [fixture.tenantId, fixture.agentId, "f".repeat(64)]);
       }
       await writer.query("COMMIT");
       committed = true;
@@ -75,6 +78,24 @@ describe.skipIf(!hasTestDatabase)("fleet and job history listings recheck curren
     expect(response.status).toBe(200);
     expect(response.headers.get("Cache-Control")).toContain("no-store");
     expect(Array.isArray(await response.json())).toBe(true);
+  });
+
+  it.each(routes)("%s active Agent reads only its own scoped records", async (name, handler, route) => {
+    const response = await handler(new Request("https://gateway.test" + route, {
+      headers: { Authorization: fixture.agentAuth },
+    }));
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    const expected = name === "agents" ? fixture.agentId :
+      name === "printers" ? fixture.printerId : "fleet-read-job";
+    expect(body).toEqual(expect.arrayContaining([expect.objectContaining({ id: expected })]));
+  });
+
+  it.each(routes)("%s cannot disclose the fleet after concurrent Agent credential rotation", async (_name, handler, route) => {
+    const response = await race(handler, route, "agent", "rotate_agent");
+    expect(response.status).toBe(401);
+    expect(response.headers.get("Cache-Control")).toContain("no-store");
+    expect(await response.json()).toMatchObject({ code: "UNAUTHORIZED" });
   });
 
   it.each(routes)("%s cannot disclose inventory after concurrent workspace suspension", async (_name, handler, route) => {
