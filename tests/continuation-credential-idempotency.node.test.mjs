@@ -32,6 +32,17 @@ async function evaluate(path, deps) {
   return mod.namespace;
 }
 
+test('native VM exercises the actual exact printer ID contract, never a permissive mock', async () => {
+  const context = createContext({ Buffer, Date, Error, console, Request, Response, URL, process });
+  const contracts = await printingContractModules(context, sql);
+  const validator = contracts.get('exact-printer-id')?.namespace.isExactPrinterId;
+  assert.equal(typeof validator, 'function');
+  assert.equal(validator('printer-c'), true);
+  for (const invalid of [' printer-c', 'printer-c ', 'printer-c\\n', '🖨'.repeat(40)]) {
+    assert.equal(validator(invalid), false, `invalid opaque printer identity: ${JSON.stringify(invalid)}`);
+  }
+});
+
 async function serviceFixture({ keyActive = true, tenantActive = true, printerPresent = true, agentPresent = true, resultFrom = 'receipt', fingerprintValid = true } = {}) {
   const events = [];
   const canonicalize = (value) => value;
