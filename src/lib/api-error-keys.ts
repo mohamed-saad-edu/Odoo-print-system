@@ -58,6 +58,7 @@ const CODE_KEYS: Record<string, MessageKey> = {
   TENANT_ENTITLEMENT_CONFIG_ERROR: "errors.billingBlocked",
   // Request shape
   INVALID_OFFSET: "errors.invalidPaginationOffset",
+  INVALID_LIMIT: "errors.invalidPaginationLimit",
   INVALID_REQUEST: "errors.requestRejected",
   INVALID_BODY: "errors.requestRejected",
   INVALID_PAYLOAD: "errors.requestRejected",
