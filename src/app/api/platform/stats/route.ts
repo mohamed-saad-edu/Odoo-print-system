@@ -7,6 +7,7 @@ import { tenants, tenantSubscriptions, users, agents, printers, printJobs, apiKe
 import { sql, eq, and, inArray } from "drizzle-orm";
 import { agentStaleThresholdSeconds, printerStaleThresholdSeconds } from "../../../../lib/agent-availability";
 import { nonVirtualPrinterPredicate } from "../../../../lib/printer-virtual-sql";
+import { effectiveSubscriptionStatusSql } from "../../../../lib/effective-subscription-status";
 
 import { getCachedPlatformStats, setCachedPlatformStats } from "../../../../lib/platform-stats-cache";
 
@@ -38,6 +39,14 @@ export async function GET(req: Request) {
     });
   }
 
+  const projectedSubscriptionStatus = effectiveSubscriptionStatusSql({
+    tenantId: sql`${tenants.id}`,
+    tenantLifecycle: sql`${tenants.lifecycle}`,
+    subscriptionStatus: sql`${tenantSubscriptions.status}`,
+    entitlementBlocked: sql`${tenantSubscriptions.entitlementBlocked}`,
+    currentPeriodStart: sql`${tenantSubscriptions.currentPeriodStart}`,
+  });
+
   const [
     tenantStats,
     subscriptionStats,
@@ -59,14 +68,12 @@ export async function GET(req: Request) {
 
       db.select({
         total: sql<number>`count(*)::int`,
-        active: sql<number>`count(*) filter (where ${tenantSubscriptions.status} = 'active')::int`,
-        awaitingActivation: sql<number>`count(*) filter (where ${tenantSubscriptions.status} = 'awaiting_activation')::int`,
-        expired: sql<number>`count(*) filter (where ${tenantSubscriptions.status} = 'expired')::int`,
-        suspended: sql<number>`count(*) filter (where ${tenantSubscriptions.status} = 'suspended')::int`,
-        // Requests awaiting owner approval and expired contracts require review.
-        // An owner-suspended subscription is an intentional administrative state.
-        attention: sql<number>`count(*) filter (where ${tenantSubscriptions.status} in ('awaiting_activation','expired'))::int`,
-      }).from(tenantSubscriptions),
+        active: sql<number>`count(*) filter (where ${projectedSubscriptionStatus} = 'active')::int`,
+        awaitingActivation: sql<number>`count(*) filter (where ${projectedSubscriptionStatus} = 'awaiting_activation')::int`,
+        expired: sql<number>`count(*) filter (where ${projectedSubscriptionStatus} = 'expired')::int`,
+        suspended: sql<number>`count(*) filter (where ${projectedSubscriptionStatus} = 'suspended')::int`,
+        attention: sql<number>`count(*) filter (where ${projectedSubscriptionStatus} IN ('awaiting_activation', 'expired'))::int`,
+      }).from(tenantSubscriptions).innerJoin(tenants, eq(tenants.id, tenantSubscriptions.tenantId)),
 
       db.select({
         total: sql<number>`count(*)::int`,
@@ -235,10 +242,7 @@ export async function GET(req: Request) {
   const logicalUsage = await logicalUsageReport();
   const business = await db.execute(sql`WITH states AS (
     SELECT s.subscription_type,s.current_period_end,
-    CASE WHEN t.lifecycle<>'active' OR s.status='suspended' OR s.entitlement_blocked THEN 'suspended'
-      WHEN s.status='awaiting_activation' OR s.current_period_start>clock_timestamp() THEN 'awaiting_activation'
-      WHEN s.status='active' AND (s.current_period_end IS NULL OR s.current_period_end>clock_timestamp()) THEN 'active'
-      ELSE 'expired' END AS effective_status
+    ${effectiveSubscriptionStatusSql({tenantId:sql`t.id`,tenantLifecycle:sql`t.lifecycle`,subscriptionStatus:sql`s.status`,entitlementBlocked:sql`s.entitlement_blocked`,currentPeriodStart:sql`s.current_period_start`})} AS effective_status
     FROM tenant_subscriptions s JOIN tenants t ON t.id=s.tenant_id
   ) SELECT
     (SELECT count(*)::int FROM subscription_requests WHERE status='pending') AS "pendingRequests",

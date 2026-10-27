@@ -5,6 +5,7 @@ import { tenants, tenantSubscriptions, tenantUsers, agents, printers, plans } fr
 import { desc, eq, and, sql, type SQL } from "drizzle-orm";
 import { clampListLimit } from "../../../../lib/request-limits";
 import { queryWithTimeout } from "../../../../db/client";
+import { effectiveSubscriptionStatusSql } from "../../../../lib/effective-subscription-status";
 
 export async function GET(req: Request) {
   try {
@@ -36,7 +37,13 @@ export async function GET(req: Request) {
         suspendedAt: tenants.suspendedAt,
         createdAt: tenants.createdAt,
         updatedAt: tenants.updatedAt,
-        subscriptionStatus: tenantSubscriptions.status,
+        subscriptionStatus: effectiveSubscriptionStatusSql({
+          tenantId: sql`${tenants.id}`,
+          tenantLifecycle: sql`${tenants.lifecycle}`,
+          subscriptionStatus: sql`${tenantSubscriptions.status}`,
+          entitlementBlocked: sql`${tenantSubscriptions.entitlementBlocked}`,
+          currentPeriodStart: sql`${tenantSubscriptions.currentPeriodStart}`,
+        }),
         planName: plans.name,
         memberCount: sql<number>`(SELECT count(*)::int FROM ${tenantUsers} WHERE ${tenantUsers.tenantId} = ${tenants.id})`,
         agentCount: sql<number>`(SELECT count(*)::int FROM ${agents} WHERE ${agents.tenantId} = ${tenants.id})`,

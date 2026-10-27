@@ -14,6 +14,9 @@ import { eq } from "drizzle-orm";
 import { nanoid } from "../src/lib/nanoid";
 import { createVerifiedPlatformSession as createPlatformSession } from "./helpers/platform-session";
 import { GET } from "../src/app/api/platform/stats/route";
+import { GET as subscriptionListGET } from "../src/app/api/platform/subscriptions/route";
+import { GET as tenantListGET } from "../src/app/api/platform/tenants/route";
+import { getTenantEntitlementLimit, TenantSubscriptionRequiredError, TenantEntitlementConfigError } from "../src/lib/entitlements";
 
 const suite = describe.skipIf(!hasTestDatabase);
 
@@ -78,4 +81,40 @@ suite("Platform Stats Route", () => {
     expect(body.jobs24hHourly.some((row: { total: number; queued: number }) => row.total === 1 && row.queued === 1)).toBe(true);
   });
 
+
+  it("keeps platform list, dashboard and runtime admission consistent for expired and blocked contracts", async () => {
+    const headers = { Authorization: `Bearer ${platformToken}`, "cache-control": "no-cache" };
+    async function verify(status: "expired" | "suspended") {
+      const [statsResponse, listResponse, tenantsResponse] = await Promise.all([
+        GET(new Request("http://localhost/api/platform/stats", { headers })),
+        subscriptionListGET(new Request("http://localhost/api/platform/subscriptions", { headers })),
+        tenantListGET(new Request("http://localhost/api/platform/tenants", { headers })),
+      ]);
+      expect(statsResponse.status).toBe(200);
+      expect(listResponse.status).toBe(200);
+      expect(tenantsResponse.status).toBe(200);
+      const stats = await statsResponse.json();
+      expect(stats.subscriptions).toMatchObject({
+        active: 0, expired: status === "expired" ? 1 : 0,
+        suspended: status === "suspended" ? 1 : 0,
+        attention: status === "expired" ? 1 : 0,
+      });
+      expect(stats.business.active).toBe(0);
+      expect((await listResponse.json()).subscriptions.find((row: { tenantId: string }) => row.tenantId === fixture.tenantId)?.status).toBe(status);
+      expect((await tenantsResponse.json()).tenants.find((row: { id: string }) => row.id === fixture.tenantId)?.subscriptionStatus).toBe(status);
+    }
+
+    // An active flag with no finite end is not an admissible contract.
+    await db.update(tenantSubscriptions).set({ status: "active", currentPeriodEnd: null, entitlementBlocked: false })
+      .where(eq(tenantSubscriptions.tenantId, fixture.tenantId));
+    await expect(getTenantEntitlementLimit(db, fixture.tenantId, "max_printers")).rejects.toBeInstanceOf(TenantSubscriptionRequiredError);
+    await verify("expired");
+
+    // A finite contract that the operator explicitly blocked is also not active.
+    await db.update(tenantSubscriptions).set({
+      currentPeriodEnd: new Date(Date.now() + 86_400_000), entitlementBlocked: true,
+    }).where(eq(tenantSubscriptions.tenantId, fixture.tenantId));
+    await expect(getTenantEntitlementLimit(db, fixture.tenantId, "max_printers")).rejects.toBeInstanceOf(TenantEntitlementConfigError);
+    await verify("suspended");
+  });
 });
