@@ -970,7 +970,7 @@ func (p *SpoolerPrinter) Print(ctx context.Context, data []byte) error {
 			return res.err
 		}
 		log.Printf("print.trace spooler_session printer=%s latency_ms=%d success=true", p.SpoolerName, time.Since(printStart).Milliseconds())
-		log.Printf("Spooler printed %d bytes to %s (job %d)", res.written, p.SpoolerName, res.jobID)
+		log.Printf("Spooler accepted %d bytes for %s (job %d; physical output unconfirmed)", res.written, p.SpoolerName, res.jobID)
 		return nil
 	}
 }
