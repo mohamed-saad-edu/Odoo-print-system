@@ -29,6 +29,8 @@ export type ManualPlan = {
   isActive: boolean;
   isPublic: boolean;
   displayOrder: number;
+  priceMinorUnits: number | null;
+  priceCurrency: string | null;
 };
 export type PendingSubscriptionRequest = {
   id: string;

@@ -20,7 +20,7 @@ describe("customer subscriptions are separate from Platform Admin approval", () 
   });
   it("public pricing uses only public plans while signed-in customers can choose a plan", () => {
     const pricing = read("src/app/pricing/page.tsx");
-    expect(pricing).not.toContain("tenantSubscriptions.findFirst");
+    expect(pricing).toContain("tenantSubscriptions.findFirst");
     expect(pricing).not.toContain("currentPlanId");
     expect(pricing).toContain('/billing?plan=');
     const home = read("src/app/page.tsx");

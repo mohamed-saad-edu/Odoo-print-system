@@ -1,4 +1,5 @@
 export const v4OnboardingEn = {
+  "v4.subscription.yourCurrentPlan": "Your current plan",
   "v4.signup.name": "Your name",
   "v4.team.fullAccess": "Full Access",
   "v4.team.fullAccessBody": "Manage daily printing, devices, printers and integrations. Only the Platform Owner manages invitations, team membership, ownership and subscriptions.",
@@ -129,6 +130,7 @@ export const v4OnboardingEn = {
 } as const satisfies Record<string, string>;
 
 export const v4OnboardingAr = {
+  "v4.subscription.yourCurrentPlan": "باقتك الحالية",
   "v4.signup.name": "اسمك",
   "v4.team.fullAccess": "صلاحية كاملة",
   "v4.team.fullAccessBody": "إدارة مهام الطباعة والأجهزة والطابعات والتكاملات. إدارة الدعوات والأعضاء والملكية والاشتراكات من صلاحية مالك المنصة فقط.",

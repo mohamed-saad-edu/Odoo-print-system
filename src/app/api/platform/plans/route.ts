@@ -9,7 +9,7 @@ import { parseManualPlan } from "../../../../lib/manual-plans";
 import { ManualSubscriptionError,requireIdempotencyKey,requestDigest } from "../../../../lib/manual-subscriptions";
 import { writeAuditEvent } from "../../../../lib/audit";
 export async function GET(req:Request) {
- try {await requirePlatformOwner(req);return NextResponse.json({plans:await db.select({id:plans.id,name:plans.name,description:plans.description,entitlements:plans.entitlements,isActive:plans.isActive,isPublic:plans.isPublic,displayOrder:plans.displayOrder}).from(plans).orderBy(asc(plans.displayOrder),asc(plans.name))});}catch(e){return manualApiError(e);}
+ try {await requirePlatformOwner(req);return NextResponse.json({plans:await db.select({id:plans.id,name:plans.name,description:plans.description,priceMinorUnits:plans.priceMinorUnits,priceCurrency:plans.priceCurrency,entitlements:plans.entitlements,isActive:plans.isActive,isPublic:plans.isPublic,displayOrder:plans.displayOrder}).from(plans).orderBy(asc(plans.displayOrder),asc(plans.name))});}catch(e){return manualApiError(e);}
 }
 export async function POST(req:Request) {
  try {

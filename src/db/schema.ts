@@ -649,10 +649,15 @@ export const plans = pgTable("plans", {
   isActive: boolean("is_active").notNull().default(true),
   isPublic: boolean("is_public").notNull().default(true),
   displayOrder: integer("display_order").notNull().default(0),
+  // Catalog prices are informational; contract payments remain manual.
+  // Integer minor units avoid floating-point rounding for SAR/USD.
+  priceMinorUnits: integer("price_minor_units"),
+  priceCurrency: text("price_currency"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 }, (table) => ({
   displayOrderCheck: check("plans_display_order_check", sql`${table.displayOrder} >= 0`),
+  priceCheck: check("plans_price_configuration_check", sql`(${table.priceMinorUnits} IS NULL AND ${table.priceCurrency} IS NULL) OR (${table.priceMinorUnits} >= 0 AND ${table.priceCurrency} IN ('USD','SAR'))`),
   catalogIdx: index("plans_catalog_idx").on(table.isActive, table.isPublic, table.displayOrder, table.name),
 }));
 

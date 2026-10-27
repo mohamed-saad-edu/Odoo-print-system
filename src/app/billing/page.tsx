@@ -15,6 +15,7 @@ import { getServerLocale, makeT } from "../../i18n/server";
 import { formatNumber } from "../../i18n/format";
 import { formatManualCalendarDate } from "../../lib/manual-calendar-date";
 import { billingTermLabel } from "../../lib/billing-labels";
+import { formatPlanPrice } from "../../lib/plan-price";
 import { BillingActions } from "../../components/BillingActions";
 import { Button, Callout, Card, CardHeader, PageContainer, PageHeader, Progress, StatusBadge, type Tone } from "../../components/ui";
 import { logWarn } from "../../lib/log";
@@ -34,7 +35,7 @@ export default async function BillingPage({ searchParams }: { searchParams: Prom
     claims.role === "owner" ? db.query.subscriptionRequests.findMany({ where: eq(subscriptionRequests.tenantId, claims.tenantId), orderBy: desc(subscriptionRequests.createdAt), limit: 1 }) : Promise.resolve([]),
     databaseNowMs(),
   ]);
-  const plan = sub ? await db.query.plans.findFirst({ where: eq(plans.id, sub.planId), columns: { name: true, entitlements: true } }) : null;
+  const plan = sub ? await db.query.plans.findFirst({ where: eq(plans.id, sub.planId), columns: { name: true, entitlements: true, priceMinorUnits: true, priceCurrency: true } }) : null;
   const status = customerSubscriptionState(sub, tenant?.lifecycle, now);
   const statusKey = { active: "v4.onboarding.active", awaiting_activation: "v4.onboarding.pending", expired: "v4.onboarding.expired", suspended: "v4.onboarding.suspended" } as const;
   const tone: Tone = status === "active" ? "ok" : status === "suspended" ? "bad" : "warn";
@@ -55,11 +56,11 @@ export default async function BillingPage({ searchParams }: { searchParams: Prom
   const request = requests[0];
   const selectedPlanId = typeof params.plan === "string" ? params.plan : undefined;
   return <>
-    <PageHeader title={t("v4.subscription.title")} description={t("v4.subscription.intro")} icon={<CreditCard className="h-4 w-4" />} meta={<StatusBadge tone={tone} label={t(statusKey[status])} />} actions={<Button href="/pricing" variant="secondary">{t("billing.comparePlans")}</Button>} />
+    <PageHeader title={t("v4.subscription.title")} description={t("v4.subscription.intro")} icon={<CreditCard className="h-4 w-4" />} meta={<StatusBadge tone={tone} label={t(statusKey[status])} />}  />
     <PageContainer><div className="space-y-5">
       {status !== "active" && <Callout tone={tone} title={t(statusKey[status])}>{t(status === "expired" ? "v4.subscription.expiredBody" : status === "suspended" ? "v4.subscription.suspendedBody" : "v4.subscription.pendingBody")}</Callout>}
       <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1.4fr)_minmax(280px,1fr)]"><div className="space-y-5">
-        <Card><CardHeader title={plan?.name ?? t("billing.noPlanSelected")} subtitle={t(status === "active" ? "v4.subscription.currentContract" : "v4.subscription.recordedContract")} icon={<CalendarDays className="h-4 w-4" />} /><dl className="grid gap-5 p-5 sm:grid-cols-2">
+        <Card><CardHeader title={status === "active" ? t("v4.subscription.yourCurrentPlan") : plan?.name ?? t("billing.noPlanSelected") } subtitle={t(status === "active" ? "v4.subscription.currentContract" : "v4.subscription.recordedContract")} icon={<CalendarDays className="h-4 w-4" />} /><div className="px-5 pt-4 text-lg font-semibold">{plan?.name ?? t("billing.noPlanSelected")}</div>{plan && <p className="px-5 pt-2 text-sm text-ink-3"><bdi dir="auto">{formatPlanPrice(plan.priceMinorUnits,plan.priceCurrency,locale) ?? t("v4.pricing.contactPrice")}</bdi></p>}<dl className="grid gap-5 p-5 sm:grid-cols-2">
           {[[t("v4.subscription.type"), t(sub?.subscriptionType === "free" ? "v4.subscription.free" : sub?.subscriptionType === "paid" ? "v4.subscription.paid" : "v4.subscription.notSet")], [t("v4.onboarding.term"), billingTermLabel(sub?.term, t)], [t("v4.subscription.start"), date(sub?.currentPeriodStart)], [t("v4.subscription.end"), date(sub?.currentPeriodEnd)]].map(([label,value]) => <div key={label}><dt className="text-sm text-ink-3">{label}</dt><dd className="mt-1 font-semibold"><bdi dir="auto">{value}</bdi></dd></div>)}
         </dl><p className="border-t border-edge-subtle p-5 text-sm text-ink-3">{t(sub?.cancelAtPeriodEnd ? "v4.subscription.endsAtTerm" : "v4.subscription.manualRenewal")}</p>
         </Card>
