@@ -9,6 +9,8 @@ import { GET as preview } from "../src/app/api/team/invitations/preview/route";
 import { POST as verify } from "../src/app/api/auth/verify-email/route";
 import { findActiveInvitation, joinWorkspaceByInvitation } from "../src/lib/invitation-join";
 import { POST as login } from "../src/app/api/auth/login/route";
+import { issueWorkspaceTestSession } from "./helpers/workspace-session";
+import { refreshTokens } from "../src/db/schema";
 
 const emails = vi.hoisted(() => ({ sent: vi.fn(async (_input: unknown) => {}) }));
 vi.mock("../src/lib/email", () => ({
@@ -133,6 +135,45 @@ suite("company invitation onboarding", () => {
     expect(await db.query.tenantUsers.findFirst({
       where: and(eq(tenantUsers.userId, identity!.id), eq(tenantUsers.tenantId, f.tenantId)),
     })).toBeUndefined();
+  });
+
+  it("accepts a matching verified manager session without another password or a new workspace", async () => {
+    const f = await fixture({ invitedAccount: "verified" });
+    vi.stubEnv("GATEWAY_JWT_SECRET", "manager-invitation-continuation-secret-123456789012");
+    const currentTenant = "tenant_existing_manager_workspace";
+    await db.insert(tenants).values({ id: currentTenant, name: "Existing Work" });
+    await db.insert(tenantUsers).values({ tenantId: currentTenant, userId: f.inviteeId, role: "owner" });
+    const prior = await issueWorkspaceTestSession({
+      kind: "manager", tenantId: currentTenant, userId: f.inviteeId, role: "owner", email: f.email,
+    });
+    const before = (await db.select({ id: tenants.id }).from(tenants)).map(row => row.id).sort();
+    expect(before).toEqual([f.tenantId, currentTenant].sort());
+
+    // This is a real authenticated manager-kind v2 session; it is not an
+    // invitation bearer or an unverified identity, and no password is sent.
+    const response = await accept(new Request(`${baseUrl}/api/team/invitations/accept`, {
+      method: "POST",
+      headers: { cookie: `mgr_session=${prior.accessToken}`, "content-type": "application/json" },
+      body: JSON.stringify({ token: f.token }),
+    }));
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      code: "INVITATION_ACCEPTED", tenantId: f.tenantId, sessionEstablished: true,
+    });
+    expect(response.headers.get("set-cookie")).toContain("cust_session=");
+    expect((await db.select({ id: tenants.id }).from(tenants)).map(row => row.id).sort()).toEqual(before);
+    expect(await db.query.tenantUsers.findFirst({
+      where: and(eq(tenantUsers.tenantId, f.tenantId), eq(tenantUsers.userId, f.inviteeId)),
+    })).toMatchObject({ role: "admin" });
+    expect((await db.query.tenantInvitations.findFirst({ where: eq(tenantInvitations.id, f.invitationId) }))?.acceptedAt)
+      .toBeTruthy();
+    // A successful tenant switch must not leave an independently valid old
+    // manager session that could shadow the new customer workspace cookie.
+    const oldFamily = await db.query.refreshTokens.findFirst({
+      where: eq(refreshTokens.familyId, prior.familyId), columns: { revokedAt: true },
+    });
+    expect(oldFamily?.revokedAt).toBeTruthy();
+    expect(emails.sent).not.toHaveBeenCalled();
   });
 
   it("does not let a bearer token silently join an existing verified account without its session", async () => {
