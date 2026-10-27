@@ -52,7 +52,8 @@ describe("manual subscription request controls",()=>{
       id: "req_approved", reference: "req_approved", status: "approved",
       planId: "p1", term: "monthly", createdAt: "2030-01-01T00:00:00Z",
     };
-    await mount({initialRequest}, locale);
+    // The old /billing?plan=p1 URL must not reopen the just-approved p1 request.
+    await mount({initialRequest, selectedPlanId:"p1"}, locale);
     expect(container.querySelector("form")).toBeNull();
     const details = container.querySelector("details");
     expect(details?.open).toBe(false);

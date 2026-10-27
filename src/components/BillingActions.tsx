@@ -30,7 +30,8 @@ export function BillingActions({ plans, selectedPlanId, currentPlanId, isOwner, 
   const [term, setTerm] = useState(currentTerm === "yearly" ? "yearly" : "monthly");
   const [request, setRequest] = useState(initialRequest ?? null);
   // On an active workspace the completed request is history, not a permanent success banner.
-  const [showRequestForm, setShowRequestForm] = useState(() => !!selectedPlanId || status !== "active");
+  const [showRequestForm, setShowRequestForm] = useState(() =>
+    status !== "active" || (!!selectedPlanId && selectedPlanId !== currentPlanId));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const flight = useRef(false);
