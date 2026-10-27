@@ -6,21 +6,51 @@ import { eq, sql } from "drizzle-orm";
 import { validateWorkspaceManager } from "../../../lib/manager-auth";
 import { hasManagerPermission } from "../../../lib/authorization";
 import { writeAuditEvent } from "../../../lib/audit";
+import { requireActiveTenantInTransaction, TenantSuspendedError, TenantDeletedError } from "../../../lib/tenant-guard";
+import { logError } from "../../../lib/log";
+
+export const dynamic = "force-dynamic";
+const PRIVATE_HEADERS = { "Cache-Control": "private, no-store" };
 
 export async function GET(req: Request) {
   const claims = await validateWorkspaceManager(req);
-  // Repo convention: 401 for missing authentication, 403 only for a
-  // permission failure on an authenticated principal.
-  if (!claims?.userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (!hasManagerPermission(claims, "tenant.read")) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  const [tenant, user] = await Promise.all([
-    db.query.tenants.findFirst({ where: eq(tenants.id, claims.tenantId), columns: { id: true, name: true, createdAt: true, updatedAt: true } }),
-    db.query.users.findFirst({ where: eq(users.id, claims.userId), columns: { email: true, isPlatformOwner: true, emailVerifiedAt: true } }),
-  ]);
-  if (!tenant || !user) return NextResponse.json({ error: "Workspace not found" }, { status: 404 });
-  return NextResponse.json({ tenant, userId: claims.userId, email: user.email, role: claims.role,
-    platformOwner: user.isPlatformOwner === true && !!user.emailVerifiedAt,
-  }, { headers: { "Cache-Control": "private, no-store" } });
+  if (!claims?.userId) return NextResponse.json({ error: "Unauthorized", code: "UNAUTHORIZED" }, { status: 401, headers: PRIVATE_HEADERS });
+  if (!hasManagerPermission(claims, "tenant.read")) {
+    return NextResponse.json({ error: "Forbidden", code: "FORBIDDEN" }, { status: 403, headers: PRIVATE_HEADERS });
+  }
+  try {
+    // The initial session validation is only a preflight. Lock tenant before
+    // live actor/session authorization and keep the locks until both
+    // metadata projections finish; a concurrent revocation must not leak PII.
+    const [tenant, user] = await db.transaction(async tx => {
+      await requireActiveTenantInTransaction(tx, claims.tenantId);
+      await requireManagerActorInTransaction(tx, claims, "tenant.read");
+      return Promise.all([
+        tx.query.tenants.findFirst({
+          where: eq(tenants.id, claims.tenantId),
+          columns: { id: true, name: true, createdAt: true, updatedAt: true },
+        }),
+        tx.query.users.findFirst({
+          where: eq(users.id, claims.userId!),
+          columns: { email: true, isPlatformOwner: true, emailVerifiedAt: true },
+        }),
+      ]);
+    });
+    if (!tenant || !user) {
+      return NextResponse.json({ error: "Workspace not found", code: "WORKSPACE_NOT_FOUND" }, { status: 404, headers: PRIVATE_HEADERS });
+    }
+    return NextResponse.json({
+      tenant, userId: claims.userId, email: user.email, role: claims.role,
+      platformOwner: user.isPlatformOwner === true && !!user.emailVerifiedAt,
+    }, { headers: PRIVATE_HEADERS });
+  } catch (error) {
+    if (error instanceof TenantSuspendedError || error instanceof TenantDeletedError) {
+      return NextResponse.json({ error: error.message, code: error.code }, { status: error.status, headers: PRIVATE_HEADERS });
+    }
+    if (error instanceof ManagerMutationAuthorityChangedError) return error.response();
+    logError("settings.account_read_failed", { error: error instanceof Error ? error.message : "unknown" });
+    return NextResponse.json({ error: "Workspace settings unavailable", code: "SETTINGS_UNAVAILABLE" }, { status: 503, headers: PRIVATE_HEADERS });
+  }
 }
 
 export async function PATCH(req: Request) {
