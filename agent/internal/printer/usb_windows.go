@@ -291,10 +291,11 @@ func (p *USBPrinter) Print(ctx context.Context, data []byte) error {
 			return MarkUnknown("WriteFile to %s failed after %d/%d confirmed bytes (device may have received data): %v", p.DevicePath, written, len(data), err)
 		}
 		if n == 0 {
-			if written > 0 {
-				return MarkUnknown("WriteFile to %s wrote 0 bytes after %d/%d", p.DevicePath, written, len(data))
-			}
-			return fmt.Errorf("WriteFile to %s wrote 0 bytes", p.DevicePath)
+			// The driver reported success after a kernel write but confirmed
+			// zero bytes, violating the required progress contract. As with
+			// a failed WriteFile, zero confirmed bytes cannot establish that
+			// the USB printer received nothing. Never auto-retry this job.
+			return MarkUnknown("WriteFile to %s reported success with zero confirmed bytes after %d/%d", p.DevicePath, written, len(data))
 		}
 		if int64(n) > int64(len(chunk)) {
 			// A driver/helper that reports more bytes than the submitted
