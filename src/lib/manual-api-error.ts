@@ -1,10 +1,12 @@
 import { TenantLifecycleError } from "./tenant-lifecycle";
+import { TenantSuspendedError, TenantDeletedError } from "./tenant-guard";
 import { WorkspaceSecurityRequestError } from "./workspace-session-http";
 import { NextResponse } from "next/server";
 import { ManualSubscriptionError } from "./manual-subscriptions";
 import { PlatformUnauthorizedError, PlatformMutationAuthorityChangedError } from "./platform-auth";
 import { ManagerMutationAuthorityChangedError } from "./manager-mutation-authorization";
 export function manualApiError(error: unknown) {
+  if (error instanceof TenantSuspendedError || error instanceof TenantDeletedError) return NextResponse.json({error:error.message,code:error.code},{status:error.status,headers:{"Cache-Control":"private, no-store"}});
   if (error instanceof TenantLifecycleError) return NextResponse.json({error:error.code,code:error.code},{status:error.status});
   if (error instanceof WorkspaceSecurityRequestError) return NextResponse.json({error:error.code,code:error.code},{status:error.status});
   if (error instanceof ManualSubscriptionError) return NextResponse.json({error:error.code,code:error.code},{status:error.status});

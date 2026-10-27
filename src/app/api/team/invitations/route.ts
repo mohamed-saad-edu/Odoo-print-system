@@ -4,6 +4,7 @@ import { tenantInvitations } from "../../../../db/schema";
 import { and, desc, eq, gt, isNull, sql } from "drizzle-orm";
 import { validateWorkspaceManager } from "../../../../lib/manager-auth";
 import { hasManagerPermission } from "../../../../lib/authorization";
+import { requireActiveTenantInTransaction } from "../../../../lib/tenant-guard";
 import { queryWithTimeout } from "../../../../db/client";
 import { clampListLimit, parseStrictListOffset } from "../../../../lib/request-limits";
 import { hasBodyOverLimit } from "../../../../lib/request-limits";
@@ -40,6 +41,8 @@ export async function GET(req: Request) {
     );
     // Recheck the live owner and session while holding the same database snapshot as the read.
     const [rows, countRows] = await db.transaction(async tx => {
+      // Tenant lifecycle must be fenced BEFORE the owner/session read.
+      await requireActiveTenantInTransaction(tx, claims.tenantId);
       await requireWorkspaceOwnerForInvites(tx, claims);
       return Promise.all([
       queryWithTimeout(() => tx.select({
