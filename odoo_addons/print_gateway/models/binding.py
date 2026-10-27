@@ -95,7 +95,7 @@ class PrintGatewayBinding(models.Model):
     destination_pos_printer_id = fields.Many2one(
         "pos.printer", string="Odoo Preparation Printer", ondelete="restrict",
         domain="['|', ('company_id', '=', False), ('company_id', '=', effective_company_id)]",
-        help="Native Odoo 19 preparation-printer identity. Its product categories determine which kitchen lines this Gateway binding receives.",
+        help="Native Odoo preparation-printer identity. Its product categories determine which kitchen lines this Gateway binding receives.",
     )
     destination_picking_type_id = fields.Many2one(
         "stock.picking.type", string="Operation Type", ondelete="restrict",
