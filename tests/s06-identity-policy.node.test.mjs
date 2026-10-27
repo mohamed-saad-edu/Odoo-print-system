@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { makeV2OdooKey, makeLegacyOdooKey, parseOdooIdentity, classifyLegacyCollision } from '../src/lib/odoo-idempotency.ts';
+import { makeV2OdooKey, makeLegacyOdooKey, parseOdooIdentity, classifyLegacyCollision, isCanonicalOdooV2InstallationId } from '../src/lib/odoo-idempotency.ts';
 
 const a = '00000000-0000-4000-8000-000000000001';
 const b = '00000000-0000-4000-8000-000000000002';
@@ -61,6 +61,28 @@ test('operator reconciliation uses the same v2 Unicode identity guard as print a
   const { readFileSync } = await import('node:fs');
   const source = readFileSync('src/app/api/odoo/installations/resolutions/route.ts', 'utf8');
   assert.match(source, /sourceOperationId:\s*z\.string\(\)\.refine\(isValidOdooV2OperationId/);
+});
+
+test('operator reconciliation and print admission require the same canonical v4 installation ID', async () => {
+  assert.equal(isCanonicalOdooV2InstallationId(a), true);
+  assert.equal(isCanonicalOdooV2InstallationId(b), true);
+  const unsupported = [
+    a.toUpperCase(),
+    '00000000-0000-1000-8000-000000000001',
+    '00000000-0000-5000-8000-000000000001',
+    'not-a-uuid',
+    a + ' ',
+  ];
+  const source = (await import('node:fs')).readFileSync('src/app/api/odoo/installations/resolutions/route.ts','utf8');
+  assert.match(source, /installationId:\s*z\.string\(\)\.refine\(isCanonicalOdooV2InstallationId/);
+  for (const identity of unsupported) {
+    assert.equal(isCanonicalOdooV2InstallationId(identity), false);
+    assert.throws(() => parseOdooIdentity({
+      idempotencyVersion: 2, installationId: identity, installationProof: 'p'.repeat(43),
+      sourceCompanyId: '7', sourceOperationId: 'operation-canonical',
+      idempotencyKey: makeV2OdooKey(identity, '7', 'operation-canonical'),
+    }), /INVALID_INSTALLATION_IDENTITY/);
+  }
 });
 
 test('legacy history requires approved resolution and never infers owner from bytes alone', () => {
