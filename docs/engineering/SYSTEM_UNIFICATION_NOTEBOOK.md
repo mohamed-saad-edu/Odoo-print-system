@@ -146,3 +146,11 @@ On `main@172e85866bb9cb6ef84120450399fbe19dc74869`, the native UI suite logged 6
 **Correction:** Keep every historical row in PostgreSQL, but scope the monthly chart query to exactly aligned UTC month boundaries (`period_start = date_trunc('month',period_start)` and `period_end = period_start + interval '1 month'`). The operational today/month/year counters still use deduplicated live jobs and receipts. An integration test seeds a calendar bucket plus a rolling window overlapping it and expects one monthly record. Historical months with only archived rolling windows will be absent from the calendar chart; their ledger evidence remains in the DB. This does not certify historic calendar attribution when job timestamps have been purged.
 
 **Verification:** source-level RED→GREEN assertion executed in isolation; PostgreSQL regression and full CI must run on the exact follow-up commit before release. No customer data, historical migrations, or print attempts were changed.
+
+## 11. 2026-10-28 CI feedback: migration inventory regression
+
+**RED evidence:** Exact `main@972d7df3f83068b5dd66abc4be35e109007d17c3`, GitHub Actions CI run [40595272182](https://github.com/mohamed-saad-edu/Odoo-print-system/actions/runs/40595272182), App / Quality: **1255 passed, 1 failed**. In `tests/test_f026_operational_documentation.py::test_migration_inventory_matches_current_journal`, the assertion demanded `0000–0101` while the immutable journal and `MIGRATION.md` accurately listed **103 SQL migrations through 0102**. The failure was in the old test's fixed upper endpoint, not a detected SQL replay failure.
+
+**Root-cause fix:** Retain all assertions comparing ordered SQL filenames and journal entries and exact latest migration `0102`. Derive the documented upper migration ID directly from `journal[-1]['tag']` when comparing against `MIGRATION.md`, while also asserting the 0102 migration's table entry exists. This prevents the same stale hardcoded upper bound at subsequent forward migrations without relaxing journal/count parity. No migration, history, production data, scanning or admission code was changed.
+
+**GREEN evidence:** Pending re-run on exact correction commit; do not infer pass from authorship alone. Other CI jobs from the first run may still be in progress. Physical Windows/printing evidence remains unavailable.

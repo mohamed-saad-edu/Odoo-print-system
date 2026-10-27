@@ -48,7 +48,9 @@ def test_migration_inventory_matches_current_journal():
     assert '| 0094 | 1 |' in read('MIGRATION.md')
     assert '| 0097 | 1 |' in read('MIGRATION.md')
     assert '| 0100 | 1 |' in read('MIGRATION.md')
-    assert f'**Total**: {len(sql)} forward-only SQL migrations (0000–0101)' in read('MIGRATION.md')
+    assert '| 0102 | 1 |' in read('MIGRATION.md')
+    latest_number=journal[-1]['tag'].split('_',1)[0]
+    assert f'**Total**: {len(sql)} forward-only SQL migrations (0000–{latest_number})' in read('MIGRATION.md')
     sharing=read('drizzle/0084_printer_cloud_sharing.sql')
     assert '"shared_with_gateway" boolean NOT NULL DEFAULT true' in sharing
     assert '"shared_with_gateway_version" text' in sharing
