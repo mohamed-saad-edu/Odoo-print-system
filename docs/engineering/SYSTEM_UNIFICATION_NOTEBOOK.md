@@ -254,3 +254,17 @@ Earlier AUTH-ODOO-LEGACY-PREVIEW identified unnecessary historical `FOR UPDATE` 
 Regression `6e7b4cbdd41510c4160ec3bcdbc9918069f82fea` first created a queued legacy job and then held an uncommitted update to that exact row; GET must return the committed preview before the write lock is released. This prevents a routine UI preview from unnecessarily queuing behind ongoing runtime changes while preserving write-side authority.
 
 **Status: source changed, PostgreSQL RED/GREEN NOT VERIFIED** (latest exact-commit CI pending). Do not claim the preview is safe from *every* unknown historical intent collision; clone/restore/operator reconciliation rules remain mandatory.
+
+
+### 2026-10-28 — physical transport first-write and counter integrity
+
+**Contracts:** An Agent can report physical `not_printed` only for a proven pre-execution rejection; an attempted Win32 spooler, direct USB or raw TCP write with missing or corrupt byte-count evidence remains `UNKNOWN_PARTIAL_DELIVERY`. A successful transport syscall with a zero count is not proof of no bytes delivered, and an over-reported counter is never proof the full payload was accepted.
+
+**Evidence → regression → fix:**
+- Windows spooler: `agent/internal/printer/spooler_windows_test.go::TestSpoolerSuccessfulWriteWithZeroReportedBytesIsUnknown` in `1238a928`, native correction `f7beda51`. Requires Win32 unit CI and real printer validation.
+- Direct TCP: `agent/internal/printer/network_test.go::TestNetworkUnconfirmedFirstWriteIsUnknown` in `50447fb9`, fix `e6bbe7e2`; invalid negative/over-reported progress test `8574667c`, fix `9cc31103`. Preserve known pre-dial/admission rejection as pre-dispatch; no free retry after attempted writes.
+- Direct USB: `agent/internal/printer/usb_windows_test.go::TestUSBSuccessfulZeroProgressIsUnknownWithoutRetry` in `66839b94`, fix `cf36d550`; `TestUSBInvalidWriteProgressNeverInflatesConfirmedEvidence` in `bcf88011`, fix merged through PR #52 as `bd0c16ab182f7008355c5b66e6b31888f8854023`. Count bounds are validated *before* error handling, retaining original correct confirmed bytes.
+- Agent alias privacy and test repairs: Windows CI run `40602077383` (plus Linux `40602011033`) showed lost private owned alias, a denied-alias test helper panic, and a forged waiter identity. Preserve negative privacy without relaxing positive authorization in `3e1b0f20`, `7eed3b9c`; use original local binding fixture `34393f50` and signed Agent-scoped waiter alias `afc16ea6`. PDF literal EOF test expectation fixed by `96bae99d` (the PDF parser already rejected incomplete data).
+- Historical Docker/Gateway TS18048 on optional Desktop pagination headers was already corrected by another concurrent main commit; no competing patch. IPP explicit-root queue path was also corrected elsewhere. Both require current exact-SHA CI.
+
+**Verification status:** All source edits committed. RED is supported only where an actual earlier CI job and error are named; some synthetic regressions were authored before fixes but local test execution was unavailable under GitHub-only access. Latest GitHub Actions are queued/pending, so results for the new code remain **NOT VERIFIED**, not PASS. Hardware paper output, USB/Windows GDI, populated migrations, Odoo POS, production deployment **NOT RUN / BLOCKED**. These are bounded review slices, not completion of every indexed module.
