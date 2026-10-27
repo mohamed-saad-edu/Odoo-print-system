@@ -19,6 +19,20 @@ describe("manual price catalog",()=>{
   expect(()=>parseManualPlan({...base,priceAmount:"20"})).toThrow("PLAN_INVALID");
   expect(()=>parseManualPlan({...base,priceCurrency:"SAR"})).toThrow("PLAN_INVALID");
  });
+
+ it("requires a numeric monthly quota instead of coercing booleans or string tokens",()=>{
+  for(const invalid of ["1000","1e3","1000.0","",true,false,null,{},[], " 1000 "]) {
+   expect(()=>parseManualPlan({...base,monthlyQuota:invalid})).toThrow("PLAN_INVALID");
+  }
+  expect(parseManualPlan({...base,monthlyQuota:1000}).entitlements.max_prints_per_period).toBe(1000);
+ });
+ it("requires a numeric optional display order, without Number() coercion",()=>{
+  for(const invalid of ["5","5e0","5.0","",true,false,null,{},[]]) {
+   expect(()=>parseManualPlan({...base,displayOrder:invalid})).toThrow("PLAN_INVALID");
+  }
+  expect(parseManualPlan({...base,displayOrder:0}).displayOrder).toBe(0);
+  expect(parseManualPlan(base).displayOrder).toBe(0);
+ });
  it("formats only configured currency and amount",()=>{
   expect(formatPlanPrice(1995,"USD","en")).toContain("19.95");
   expect(formatPlanPrice(1995,"SAR","ar")).toContain("19.95");
