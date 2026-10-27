@@ -13,6 +13,7 @@ import { getAgentAvailability } from "./agent-availability";
 import { parseDbTimeMs } from "./database-clock";
 import type { V2OdooIdentity } from "./odoo-idempotency";
 import { reserveV2Operation, OdooNamespaceError } from "./odoo-v2-admission";
+import { isExactPrinterId } from "./exact-printer-id";
 
 import { enforceTenantJobEntitlements, reserveTenantPrintCredit } from "./entitlements";
 import { logInfo, logWarn } from "./log";
@@ -711,8 +712,8 @@ export async function createPrintJobForPrinter(
   payload: unknown,
   options: CreatePrintJobOptions,
 ): Promise<CreatePrintJobResult> {
-  const normalizedPrinterId = typeof printerId === "string" ? printerId.trim() : "";
-  if (!normalizedPrinterId) throw new PrintJobInputError("printer id is required", "INVALID_REQUEST", 400);
+  if (!isExactPrinterId(printerId)) throw new PrintJobInputError("printer id must be the exact configured identity", "INVALID_REQUEST", 400);
+  const normalizedPrinterId = printerId;
   if (typeof options.tenantId !== "string" || !options.tenantId.trim()) throw new PrintJobInputError("tenant context is required", "TENANT_CONTEXT_REQUIRED", 400);
   const requestedBy = normalizeRequestedBy(options.requestedBy);
   const validatedPayload = validatePrintJobPayload(payload);
