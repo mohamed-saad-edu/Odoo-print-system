@@ -479,13 +479,16 @@ func executeSpoolerSessionWithSyscallsObserved(spoolerName string, data []byte, 
 		}
 		r, writeErr := sys.writePrinter(hPrinter, unsafe.Pointer(&chunk[0]), len(chunk), &bytesWritten)
 		if r == 0 {
-			// A failed WritePrinter may still have accepted bytes. Fold them
-			// into `written` (capped at the payload size, so a driver that
-			// over-reports cannot make a truncated job look complete) so the
-			// deferred cleanup reports the same evidence the caller returns
-			// instead of under-reporting as "0 bytes".
-			if remaining := uint32(len(data)) - written; bytesWritten > remaining {
-				bytesWritten = remaining
+			// A failed Win32 syscall may still have accepted bytes, but
+			// the driver's count is trustworthy only within THIS chunk.
+			// An over-report must not be silently capped to the total
+			// payload and recorded as completed transfer evidence.
+			if bytesWritten > uint32(len(chunk)) {
+				return spoolerTaskResult{
+					written: written,
+					jobID:   jobID,
+					err:     MarkUnknown("WritePrinter(%q) failed while reporting %d bytes for a %d-byte chunk after %d/%d confirmed bytes", spoolerName, bytesWritten, len(chunk), written, len(data)),
+				}
 			}
 			written += bytesWritten
 			// The Windows spooler can have accepted or forwarded bytes even when
