@@ -208,14 +208,15 @@ func TestAgentSharingPrivateInventoryIncludesRuntimeDesiredAndScopedAliases(t *t
 	other.ID, other.Endpoint = "other", "192.168.10.11:9100"
 	ag.printerConfigs[alias.ID], ag.printerConfigs[other.ID] = alias, other
 	ag.printers[alias.ID], ag.printers[other.ID] = &fakePrinter{}, &fakePrinter{}
-	ag.gatewayOwned["local~aaaaaaaa"] = struct{}{}
+	ownedAlias := gatewayAliasPrinterID(local.ID, ag.cfg.Agent.ID)
+	ag.gatewayOwned[ownedAlias] = struct{}{}
 	ag.desiredStates["desired-alias"] = desiredPrinterRecord{Desired: testDesiredPrinter("desired-alias", 1, "active")}
 	row := ag.desiredStates["desired-alias"]
 	row.Desired.Config["ip"] = "192.168.10.10"
 	ag.desiredStates["desired-alias"] = row
 	snapshot := ag.loadLocalPrinterSharing()
 	ids, complete := ag.privatePrinterIDs(snapshot)
-	if !complete || strings.Join(ids, ",") != "cloud-alias,desired-alias,local,local~aaaaaaaa" {
+	if !complete || strings.Join(ids, ",") != "cloud-alias,desired-alias,local,"+ownedAlias {
 		t.Fatalf("private alias IDs lost: %v complete=%v", ids, complete)
 	}
 	rows := ag.printerStatusPayloadWithSharing(snapshot)
@@ -321,7 +322,10 @@ func TestAgentSharingRejectsClaimBeforePrintingAndAllowsStoredResultReplay(t *te
 	if err := config.SetPrinterSharing(ag.configPath, local, nil, false); err != nil {
 		t.Fatal(err)
 	}
-	ag.processJob(context.Background(), sharingDispatchTestJob(ag, "private-job", "local~aaaaaaaa"))
+	// A verified alias reaches the real sharing guard; a forged hash must
+	// never be resolved into another physical printer's binding.
+	privateAlias := gatewayAliasPrinterID(local.ID, ag.cfg.Agent.ID)
+	ag.processJob(context.Background(), sharingDispatchTestJob(ag, "private-job", privateAlias))
 	if p.Calls() != 0 {
 		t.Fatal("unshared alias reached printer")
 	}
