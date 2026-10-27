@@ -1,5 +1,6 @@
 import { validateFileOutputEvidence } from "../lib/print-output";
 import { derivePhysicalOutcome, PHYSICAL_OUTCOME_UNKNOWN_MARKERS, type PhysicalOutcome as GatewayPhysicalOutcome } from "../lib/job-status";
+import { parseDbTimeMs } from "../lib/database-timestamp";
 // ============================================================
 // Single source of truth for operator-facing status vocabulary.
 // Web console, desktop app and the Odoo screens must render the
@@ -16,26 +17,14 @@ import type { MessageKey } from "../i18n/messages/en";
 export type Tone = "ok" | "bad" | "warn" | "info" | "neutral";
 
 /**
- * Client-safe timestamp normalization. This module ships in browser/desktop
- * bundles, so it cannot import parseDbTimeMs from lib/database-clock (which
- * pulls in the pg chain). The naive-string branch mirrors it exactly:
- * node-postgres raw rows emit naive "YYYY-MM-DD HH:MM:SS" in UTC, and
- * new Date(str) would parse those as host-local time.
+ * Browser-safe UTC timestamp parser. Unlike the earlier copied implementation,
+ * the canonical helper rejects invalid Date objects with null rather than NaN.
+ * database-timestamp is pure and does not import PostgreSQL or Node-only code.
  */
 export function parseSharedTimeMs(value: Date | string | null | undefined): number | null {
-  if (value == null) return null;
-  if (value instanceof Date) return value.getTime();
-  const text = value.trim();
-  if (!text) return null;
-  let iso = text.replace(" ", "T");
-  if (!/[zZ]$|[+-]\d{2}:?\d{2}$/.test(iso)) {
-    iso += /[+-]\d{2}$/.test(iso) ? ":00" : "Z";
-  }
-  const ms = Date.parse(iso);
-  return Number.isNaN(ms) ? null : ms;
+  return parseDbTimeMs(value);
 }
 
-/** Client-safe alias: a single Gateway/UI definition prevents marker drift. */
 export const UNKNOWN_OUTCOME_MARKERS = PHYSICAL_OUTCOME_UNKNOWN_MARKERS;
 
 

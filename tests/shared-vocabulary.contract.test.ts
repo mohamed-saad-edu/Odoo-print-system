@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "fs";
-import { classifyJobFailure, jobFailurePresentation, deriveOutcome, UNKNOWN_OUTCOME_MARKERS } from "../src/shared/job-vocabulary";
+import { classifyJobFailure, jobFailurePresentation, deriveOutcome, UNKNOWN_OUTCOME_MARKERS, parseSharedTimeMs, sharedObservationFreshness } from "../src/shared/job-vocabulary";
+import { parseDbTimeMs } from "../src/lib/database-timestamp";
 import { derivePhysicalOutcome, PHYSICAL_OUTCOME_UNKNOWN_MARKERS } from "../src/lib/job-status";
 
 function read(path: string): string {
@@ -13,6 +14,17 @@ function read(path: string): string {
 // adds a runtime import that would drag node-only modules into the
 // browser/desktop bundles, these tests fail before CI does.
 describe("shared vocabulary single-authority contracts", () => {
+  it("rejects invalid client Date observations exactly like the UTC Gateway parser", () => {
+    const invalid = new Date(Number.NaN);
+    expect(parseDbTimeMs(invalid)).toBeNull();
+    expect(parseSharedTimeMs(invalid)).toBeNull();
+    expect(sharedObservationFreshness(invalid, 60)).toBe("missing");
+    for (const value of ["2026-09-24 00:00:00", "2026-09-24T00:00:00Z", null, "invalid"]) {
+      expect(parseSharedTimeMs(value)).toBe(parseDbTimeMs(value));
+    }
+    expect(read("src/shared/job-vocabulary.ts")).toContain('from "../lib/database-timestamp"');
+  });
+
   it("shares the exact Gateway ambiguity markers and physical evidence interpreter with both UIs", () => {
     expect(UNKNOWN_OUTCOME_MARKERS).toBe(PHYSICAL_OUTCOME_UNKNOWN_MARKERS);
     for (const status of ["queued", "claimed", "printing", "success", "failed", "expired"]) {
