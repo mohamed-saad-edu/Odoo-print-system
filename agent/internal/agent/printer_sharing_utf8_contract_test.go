@@ -2,10 +2,10 @@ package agent
 
 import (
 	"strings"
-
-	"github.com/yaseir-agent/agent/internal/config"
 	"testing"
 	"unicode/utf8"
+
+	"github.com/yaseir-agent/agent/internal/config"
 )
 
 // Heartbeat POST /api/agent/heartbeat validates every privatePrinterIds
