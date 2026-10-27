@@ -158,3 +158,22 @@ Baseline inspected: main@65214cf7948a214843110fa2fbc1a23aec388340. This is an **
 **Finding P1 (billing error code authority):** The same customer presenter classified an arbitrary free-text `UNKNOWN_...` substring before checking stable machine code `PRINT_QUOTA_EXCEEDED` or `TENANT_SUBSCRIPTION_REQUIRED`, falsely presenting an admission rejection as physical ambiguity and hiding translated next steps. Regression first (`2e2abdbbafe2e6ed60bf5e579ba47d5f09104146`) then fix (`440a75f3014ba5832095280dcbe6c6957490311c`) gives known quota and manual-subscription denial codes priority, retaining existing fallback for unknown codes and non-billing diagnostics. This changes presentation, never actual admission/retry decisions. Arabic/English translations remain in place.
 
 **Test/CI evidence:** `tests/test_v4_odoo_customer_presentation.py` added parameterized contradictory-state cases and explicit untrusted-text collisions. CI `40601661798` Odoo19, Gateway, Quality and Go jobs were cancelled by concurrent newer pushes; no PASS claimed. Full staging acceptance, physical printers, migration replay and other TODO modules remain outstanding. Neither historical print rows nor migrations were changed.
+
+
+## Batch 9 — Desktop complete-fleet pagination metadata (source-reviewed)
+
+**Status:** source change `048b305c4d16ab2a89610ee1f115e46adaab7354`, regression `1efdf27b2d71daa6817a038929f7f319d4498e1f`; **CI App/Quality CANCELLED**, not PASS. `src/desktop/lib/ipc.ts` and `tests/desktop-fleet-pagination.test.ts` PARTIAL; related Gateway fleet read, Go CLI response headers and Rust IPC remain TODO pending complete execution proof.
+
+**Finding:** Desktop `fetchGatewayFleet` used `headers?.["x-has-more"] !== "true"` as an unconditional success terminal. Explicit malformed metadata (`TRUE`, `1`, etc.) or a final page with contradictory continuation headers could hide part of a printer/Agent fleet without alerting the operator. Gateway publishes a strict `true|false` contract.
+
+**Correction:** Reject malformed present flags and `false` pages carrying continuation cursor identity/timestamp; retain absent metadata for older unpaged paired-Agent CLI responses. Paginated `true` responses still require a valid advancing keyset. Regression uses the actual typed Tauri IPC flow with injected malformed response envelopes. No printer fallback, printing or DB mutations.
+
+## Batch 10 — Desktop diagnostic admission localization (source-reviewed)
+
+**Status:** source `31e74dc211135cb2f3019501f5533cf3b5371e04`, UI callsite `2e39fc4807a920c5175f7601803eb3aa077f97f5`, bilingual regression `c0c7906ce1af4f209d529ff3407bd4a9e3f9f4e9`; exact-commit CI **NOT RUN / pending**. Source areas `src/desktop/lib/printers.ts`, `src/desktop/main.tsx`, `tests/desktop-diagnostic-admission.test.ts` PARTIAL.
+
+**Finding:** A diagnostic test-print receiving Gateway `PRINT_QUOTA_EXCEEDED` 429 displayed `friendlyPrinterError` generic hardware failure rather than the translated UTC-month credit notice. A `TENANT_SUBSCRIPTION_REQUIRED` 403 became a misleading permissions denial. Machine-readable API codes were already preserved on the IPC error but not used in the Desktop diagnostic presentation.
+
+**Correction:** A pure locale-aware `friendlyDiagnosticAdmissionError` maps validated known printer, quota, rate/concurrency, and manual-subscription codes to existing EN/AR keys. Unknown/transport-ambiguous results continue to show `diagnostic.admissionUnknown`. The existing guarded `DiagnosticOperations` key lifecycle is untouched: no automatic reprint, no invented paper proof, no cross-printer fallback. Regression checks real translated outputs, no untrusted raw diagnostic leakage, and guarded UI wiring.
+
+**Verification/coverage:** New Vitest was authored through GitHub API only. Tests, local Rust/Go, physical Windows hardware, and full populated-data migrations are **NOT RUN** until exact-commit jobs complete. Continuous concurrent updates to main have cancelled many earlier runs; workflow-level success with all source jobs skipped is not a full test PASS. Source-wide ledger remains TODO.
