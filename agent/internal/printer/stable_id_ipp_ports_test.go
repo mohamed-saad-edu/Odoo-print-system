@@ -31,7 +31,6 @@ func TestIPPIdentityDefaultsMatchExecutionPort(t *testing.T) {
 	}
 }
 
-
 func TestIPPRootResourceIsNotTheDefaultIPPPrintQueue(t *testing.T) {
 	const host = "192.168.1.20"
 	root := StableIDFromIPPURI("ipp://192.168.1.20:631/", host, 631)
