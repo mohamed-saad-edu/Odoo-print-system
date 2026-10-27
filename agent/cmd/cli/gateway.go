@@ -374,7 +374,15 @@ func isAllowedFleetPath(path string) bool {
 		return false
 	}
 	for _, pair := range strings.Split(parsed.RawQuery, "&") {
-		if pair == "" || !strings.Contains(pair, "=") {
+		rawKey, _, found := strings.Cut(pair, "=")
+		if !found {
+			return false
+		}
+		// Match the Rust/TypeScript wire contract before URL decoding:
+		// l%69mit must not be silently accepted as the "limit" key.
+		switch rawKey {
+		case "limit", "offset", "beforeCreatedAt", "beforeId", "beforeIdEncoded":
+		default:
 			return false
 		}
 	}
