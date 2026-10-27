@@ -28,6 +28,15 @@ describe("Desktop Gateway origin matches native Rust/Go URL boundary", () => {
     expect(normalizeGatewayUrl(raw)).toBe(expected);
   });
 
+  it.each([
+    "https://@gateway.example.com/",
+    "https://:@gateway.example.com/",
+    "https://user:@gateway.example.com/",
+  ])("rejects any raw userinfo marker, including empty credentials (%s)", (input) => {
+    expect(() => normalizeGatewayUrl(input))
+      .toThrow("Gateway URL cannot include embedded credentials");
+  });
+
   it("continues to reject remote HTTP and nonroot paths before pairing", () => {
     expect(() => normalizeGatewayUrl("http://gateway.example.com"))
       .toThrow("Gateway URL must use HTTPS for remote Gateways");
