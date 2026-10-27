@@ -2013,3 +2013,22 @@ PARTIAL tests/manual-subscriptions.integration.test.ts — seeded overlapping ro
 ```
 
 Both paths are **PARTIAL** until actual PostgreSQL integration CI results are attached; this is not a sign-off of all customer usage reports.
+
+
+### AUTH-LIVE-DIRECTORY-2026-10-28 partial route coverage
+
+Original full-path inventory counts above are historical and remain unchanged; reviewed behavior is specifically the authenticated GET/read boundary, not the complete route implementation. These files must not be marked DONE or VERIFIED on code inspection alone.
+
+```text
+PARTIAL src/app/api/team/members/route.ts — tenant+session fenced GET; PATCH/DELETE not audited here
+PARTIAL src/app/api/odoo/installations/route.ts — installation inventory GET guarded; POST reviewed earlier for billing/key assignment
+PARTIAL src/app/api/subscription-requests/route.ts — commercial owner GET fenced; POST previously protected
+PARTIAL src/app/api/billing/status/route.ts — owner-only contract expiry projection fenced
+AUTHORED tests/team-directory-live-authority.integration.test.ts — PostgreSQL session and lifecycle race
+PARTIAL tests/team-platform-list-contract.test.ts — bounded directory unit compatibility
+AUTHORED tests/odoo-installation-directory-live-authority.integration.test.ts — PostgreSQL installation read races
+AUTHORED tests/subscription-owner-directory-live-authority.integration.test.ts — owner/member session downgrade race
+AUTHORED tests/billing-status-live-authority.integration.test.ts — commercial field role isolation race
+```
+
+Source commits and residual risk are recorded in [SYSTEM_UNIFICATION_NOTEBOOK.md](SYSTEM_UNIFICATION_NOTEBOOK.md) under AUTH-LIVE-DIRECTORY-2026-10-28. Every integration test still needs exact-SHA CI output. No live customer data or historical migration was rewritten.
