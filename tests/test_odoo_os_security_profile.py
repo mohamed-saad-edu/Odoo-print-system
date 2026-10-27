@@ -136,7 +136,7 @@ def test_all_available_parent_security_fixes_have_exact_guarded_artifacts():
     # installed packages with published fixes. Do not silently drop a group
     # when regenerating the immutable artifact profile.
     expected = {
-        "curl", "libcares2", "libcurl4t64", "libexpat1", "libfreetype6",
+        "curl", "libcares2", "libcurl4t64", "libbrotli1", "libexpat1", "libfreetype6",
         "libglib2.0-0t64", "libperl5.38t64", "libpng16-16t64", "libsqlite3-0",
         "libssl-dev", "libssl3t64", "libx11-6", "libx11-data", "libxml2",
         "openssl", "perl", "perl-base", "perl-modules-5.38", "python3-lxml",
@@ -150,3 +150,19 @@ def test_all_available_parent_security_fixes_have_exact_guarded_artifacts():
         assert f'{entry["package"]}|{entry["previous_version"]}|{entry["version"]}' in dockerfile
         assert f'{entry["package"]}={entry["version"]}' in dockerfile
         assert f'/os-security/{entry["filename"]}' in dockerfile
+
+
+def test_brotli_cve_fix_uses_reviewed_ubuntu_security_artifact_not_scanner_exemption():
+    manifest = json.loads((PROFILE / "os-security-artifacts.json").read_text())
+    brotli = next(item for item in manifest["artifacts"] if item.get("package") == "libbrotli1")
+    assert brotli["version"] == "1.1.0-2ubuntu0.1"
+    assert brotli["previous_version"] == "1.1.0-2build2"
+    assert brotli["advisories"] == ["CVE-2026-111497"]
+    assert brotli["bytes"] == 330968
+    assert brotli["sha256"] == "70b188a86d81f30d7510aab30e25d638ed5037dded6691af1533952b71ac61de"
+    assert brotli["url"].startswith("https://security.ubuntu.com/ubuntu/")
+    docker = (ROOT / "Dockerfile.odoo-hardened").read_text()
+    assert f'ADD --checksum=sha256:{brotli["sha256"]} {brotli["url"]} /os-security/{brotli["filename"]}' in docker
+    assert f'libbrotli1|{brotli["previous_version"]}|{brotli["version"]}' in docker
+    assert f'libbrotli1={brotli["version"]}' in docker
+    assert f'/os-security/{brotli["filename"]}' in docker
