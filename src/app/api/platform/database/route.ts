@@ -25,6 +25,7 @@ export async function GET(request:Request) {
   }
   const url=new URL(request.url);
   const offset = parseStrictListOffset(url.searchParams.get("offset"), 10_000);
+  if (offset === null) return NextResponse.json({ error: "Invalid explorer offset", code: "INVALID_OFFSET" }, { status: 400, headers });
   const args=querySchema.safeParse({table:url.searchParams.get("table")??undefined,
     q:url.searchParams.get("q")??undefined,offset});
   if(!args.success) return NextResponse.json({error:"Invalid explorer filters"},{status:400,headers});
