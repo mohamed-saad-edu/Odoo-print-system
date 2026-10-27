@@ -5,10 +5,10 @@ export function parseManualPlan(input: unknown) {
   const b=input as Record<string,unknown>;
   if(typeof b.id!=='string'||!/^[a-z0-9][a-z0-9_-]{1,63}$/.test(b.id)||typeof b.name!=='string'||!b.name.trim()||b.name.length>120||typeof b.description!=='string'||b.description.length>500)throw new ManualSubscriptionError('PLAN_INVALID');
   if((b.isActive!==undefined&&typeof b.isActive!=='boolean')||(b.isPublic!==undefined&&typeof b.isPublic!=='boolean'))throw new ManualSubscriptionError('PLAN_INVALID');
-  const quota=Number(b.monthlyQuota);
-  if(!Number.isSafeInteger(quota)||quota<1||quota>2147483647)throw new ManualSubscriptionError('PLAN_INVALID');
-  const displayOrder=Number(b.displayOrder??0);
-  if(!Number.isSafeInteger(displayOrder)||displayOrder<0||displayOrder>1000000)throw new ManualSubscriptionError('PLAN_INVALID');
+  const quota=b.monthlyQuota;
+  if(typeof quota!=='number'||!Number.isSafeInteger(quota)||quota<1||quota>2147483647)throw new ManualSubscriptionError('PLAN_INVALID');
+  const displayOrder=b.displayOrder??0;
+  if(typeof displayOrder!=='number'||!Number.isSafeInteger(displayOrder)||displayOrder<0||displayOrder>1000000)throw new ManualSubscriptionError('PLAN_INVALID');
   // An unpriced plan is "price on request", never silently a free plan.
   // Accept exact decimal strings only; no floats, exponents or silent rounding.
   let priceMinorUnits: number | null = null;
