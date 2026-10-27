@@ -1007,6 +1007,7 @@ export const ar: Catalog = {
   "errors.invalidStatusFilter": "عامل تصفية مهام الطباعة هذا غير معروف. اختر حالة من القائمة.",
   "errors.invalidPaginationOffset": "هذه الصفحة بعيدة جدًا. ضيّق عوامل التصفية ثم حاول مرة أخرى.",
   "errors.invalidPaginationLimit": "حجم الصفحة غير صالح. استخدم عددًا صحيحًا موجبًا ثم حاول مرة أخرى.",
+  "errors.invalidPagination": "حجم الصفحة أو موضعها غير صالح. راجع إعدادات القائمة وحاول مرة أخرى.",
   "errors.invalidJobSearchLength": "استخدم من حرفين إلى 64 حرفًا للبحث في مهام الطباعة.",
   "errors.invalidPrinterSearchLength": "يجب أن يتكون بحث الطابعة من حرفين إلى 64 حرفًا.",
   "errors.billingBlocked": "الطباعة موقوفة حتى تُعالَج حالة اشتراك مساحة العمل. افتح الفوترة ثم حاول مرة أخرى.",
