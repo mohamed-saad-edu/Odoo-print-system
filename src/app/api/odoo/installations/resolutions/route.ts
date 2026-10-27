@@ -5,7 +5,7 @@ import { db } from "../../../../../db";
 import { validateWorkspaceManager } from "../../../../../lib/manager-auth";
 import { requireManagerPermission } from "../../../../../lib/authorization";
 import { requireManagerActorInTransaction, ManagerMutationAuthorityChangedError } from "../../../../../lib/manager-mutation-authorization";
-import { requireActiveTenantInTransaction } from "../../../../../lib/tenant-guard";
+import { requireActiveTenantInTransaction, TenantSuspendedError, TenantDeletedError } from "../../../../../lib/tenant-guard";
 import { writeAuditEvent } from "../../../../../lib/audit";
 import { idempotencyDigest } from "../../../../../lib/print-job-service";
 import { makeLegacyOdooKey, makeV2OdooKey, isValidOdooV2OperationId, isCanonicalOdooV2InstallationId } from "../../../../../lib/odoo-idempotency";
@@ -57,30 +57,53 @@ async function authorizedManager(req: Request, manage: boolean) {
   return manager;
 }
 
+const PREVIEW_HEADERS = { "Cache-Control": "private, no-store" };
+
 export async function GET(req: Request) {
   const manager = await authorizedManager(req, false);
-  if (!manager) return NextResponse.json({ error: "Unauthorized or forbidden" }, { status: 403 });
+  if (!manager) return NextResponse.json({ error: "Unauthorized or forbidden" }, { status: 403, headers: PREVIEW_HEADERS });
   const parsed = operationSchema.safeParse(Object.fromEntries(new URL(req.url).searchParams));
-  if (!parsed.success) return NextResponse.json({ error: "Invalid source operation identity" }, { status: 400 });
+  if (!parsed.success) return NextResponse.json({ error: "Invalid source operation identity" }, { status: 400, headers: PREVIEW_HEADERS });
   const { installationId, sourceCompanyId, sourceOperationId } = parsed.data;
   const legacyKey = makeLegacyOdooKey(sourceCompanyId, sourceOperationId);
   const v2Key = makeV2OdooKey(installationId, sourceCompanyId, sourceOperationId);
-  const rows = await db.execute(sql`
-    SELECT id FROM odoo_installations
-    WHERE id = ${installationId} AND tenant_id = ${manager.tenantId} AND enabled = TRUE
-  `);
-  if (!rows.rows.length) return NextResponse.json({ error: "Installation not registered" }, { status: 404 });
-  const candidate = await findLegacyHistory(db, manager.tenantId, legacyKey);
-  const decision = await db.execute(sql`
-    SELECT disposition, legacy_job_id, legacy_fingerprint, approved_at
-    FROM odoo_legacy_resolutions WHERE tenant_id = ${manager.tenantId}
-      AND installation_id = ${installationId} AND idempotency_key = ${v2Key}
-  `);
-  return NextResponse.json({
-    installationId, v2Key, legacyKey, history: candidate,
-    resolution: decision.rows[0] ?? null,
-    warning: "A matching fingerprint is not proof of installation ownership. Review the original business intent and physical outcome.",
-  }, { headers: { "Cache-Control": "no-store" } });
+
+  try {
+    // Reconciliation previews expose immutable job IDs and fingerprints.
+    // Authentication only at the HTTP boundary can outlive a concurrent
+    // tenant suspension or session revoke; fence the complete preview read.
+    const result = await db.transaction(async tx => {
+      await requireActiveTenantInTransaction(tx, manager.tenantId);
+      await requireManagerActorInTransaction(tx, manager, "integrations.read");
+      const rows = await tx.execute(sql`
+        SELECT id FROM odoo_installations
+        WHERE id = ${installationId} AND tenant_id = ${manager.tenantId} AND enabled = TRUE
+      `);
+      if (!rows.rows.length) return null;
+      const candidate = await findLegacyHistory(tx, manager.tenantId, legacyKey);
+      const decision = await tx.execute(sql`
+        SELECT disposition, legacy_job_id, legacy_fingerprint, approved_at
+        FROM odoo_legacy_resolutions WHERE tenant_id = ${manager.tenantId}
+          AND installation_id = ${installationId} AND idempotency_key = ${v2Key}
+      `);
+      return { candidate, resolution: decision.rows[0] ?? null };
+    });
+    if (!result) return NextResponse.json({ error: "Installation not registered" }, { status: 404, headers: PREVIEW_HEADERS });
+    return NextResponse.json({
+      installationId, v2Key, legacyKey, history: result.candidate,
+      resolution: result.resolution,
+      warning: "A matching fingerprint is not proof of installation ownership. Review the original business intent and physical outcome.",
+    }, { headers: PREVIEW_HEADERS });
+  } catch (error) {
+    if (error instanceof ManagerMutationAuthorityChangedError) {
+      return NextResponse.json({ error: error.message, code: error.code }, { status: error.status, headers: PREVIEW_HEADERS });
+    }
+    if (error instanceof TenantSuspendedError || error instanceof TenantDeletedError) {
+      return NextResponse.json({ error: error.message, code: error.code }, { status: 403, headers: PREVIEW_HEADERS });
+    }
+    logError("odoo.legacy_resolution_preview_failed", { error: error instanceof Error ? error.message : "unknown" });
+    return NextResponse.json({ error: "Resolution preview unavailable" }, { status: 503, headers: PREVIEW_HEADERS });
+  }
 }
 
 export async function POST(req: Request) {
