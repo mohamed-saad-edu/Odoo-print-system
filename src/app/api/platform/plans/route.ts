@@ -18,6 +18,12 @@ export async function POST(req:Request) {
   const raw=await readWorkspaceSecurityJson(req) as Record<string,unknown>;
   const plan=parseManualPlan(raw),digest=requestDigest(plan);
   await db.transaction(async tx=>{
+   // One idempotency key is one operation for this Platform Owner, even if
+   // raced requests carry DIFFERENT new plan IDs. Plan-ID locking alone allows
+   // both transactions to observe no matching audit row and create two plans.
+   // Acquire the actor+key lock first, then the existing plan-ID lock, so
+   // identical retries serialize and divergent bodies return a conflict.
+   await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${'manual-plan:create:'+actor.userId+':'+key},0))`);
    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${'manual-plan:'+plan.id},0))`);
    await requirePlatformActorInTransaction(tx,actor);
    const previous=await tx.execute(sql`SELECT metadata FROM audit_events WHERE actor_type='platform' AND actor_id=${actor.userId} AND action='plan.created' AND request_id=${key} LIMIT 1`);
