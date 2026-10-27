@@ -40,11 +40,32 @@ describe("shared printer geometry fixtures", () => {
   });
 
   it("does not expose geometry until both applied and observed desired state converge", () => {
-    const base = { id: "receipt-printer", capabilities: { geometry: fixtures.geometryCases[0].geometry, supported_protocols: ["escpos"] }, managementSource: "manager", desiredRevision: 3 };
+    const base = { id: "receipt-printer", capabilities: { geometry: fixtures.geometryCases[0].geometry, supported_protocols: ["escpos"] }, config: { geometry_profile: { printable_width_dots: 576, raster_command: "gs_v_0" } }, managementSource: "manager", desiredRevision: 3 };
     expect(currentPrinterGeometry({ ...base, appliedDesiredRevision: 2, observedDesiredRevision: 2 })).toBeNull();
     expect(currentPrinterGeometry({ ...base, appliedDesiredRevision: 3, observedDesiredRevision: 2 })).toBeNull();
     expect(currentPrinterGeometry({ ...base, appliedDesiredRevision: 3, observedDesiredRevision: 3 })?.printable_width_dots).toBe(576);
     expect(capabilitiesWithCurrentGeometry(base)).toEqual({ supported_protocols: ["escpos"] });
+  });
+
+  it("drops stale configured geometry after the operator removes its profile", () => {
+    const geometry = fixtures.geometryCases[0].geometry;
+    const state = {
+      id: geometry.printer_id,
+      capabilities: { geometry, supported_protocols: ["escpos"] },
+      config: {},
+      managementSource: "manager",
+      desiredRevision: 4,
+      appliedDesiredRevision: 4,
+      observedDesiredRevision: 4,
+    };
+    expect(currentPrinterGeometry(state)).toBeNull();
+    expect(capabilitiesWithCurrentGeometry(state)).toEqual({ supported_protocols: ["escpos"] });
+    expect(currentPrinterGeometry({ ...state, config: {
+      geometry_profile: { printable_width_dots: 576, raster_command: "gs_v_0" },
+    } })?.printable_width_dots).toBe(576);
+    expect(currentPrinterGeometry({ ...state, config: {
+      geometry_profile: { printable_width_dots: 384, raster_command: "gs_v_0" },
+    } })).toBeNull();
   });
 
   it("hides a pre-alias geometry without rewriting its Agent provenance", () => {

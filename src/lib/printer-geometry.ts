@@ -131,8 +131,10 @@ export function currentPrinterGeometry(printer: GeometryPrinterState): PrinterGe
   // A configured snapshot is the exact profile the Agent applied. Even a
   // reordered desired-state ACK cannot make the previous profile current.
   // Live driver/IPP measurements remain authoritative over fallback profiles.
-  if (geometry?.source === "validated_profile" && printer.config?.geometry_profile !== undefined) {
-    const profile = validatePrinterGeometryProfile(printer.config.geometry_profile);
+  if (geometry?.source === "validated_profile") {
+    // Driver/IPP observations remain independent; configured geometry must
+    // never outlive the exact profile that explicitly authorized it.
+    const profile = validatePrinterGeometryProfile(printer.config?.geometry_profile);
     if (!profile.ok || contract.profileFields.some((field) => {
       const key = field as keyof PrinterGeometryProfile;
       return profile.value[key] !== geometry[key];
