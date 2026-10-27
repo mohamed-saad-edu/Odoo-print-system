@@ -77,7 +77,7 @@ export default function UpgradeLimitDialog({
       open={open}
       onClose={onClose}
       title={t(technicalCapacity ? "v4.experience.limit.technical" : copy.title)}
-      description={t("limit.modalDescription")}
+      description={technicalCapacity ? undefined : t("limit.modalDescription")}
     >
       <div className="space-y-5">
         <div className="flex items-start gap-3 rounded-md border border-warn-edge bg-warn-bg px-4 py-3.5 text-sm text-warn">
