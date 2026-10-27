@@ -79,6 +79,7 @@ import {
   printerAgentView,
   errMsg,
   friendlyPrinterError,
+  friendlyDiagnosticAdmissionError,
   jobFailurePresentation,
   humanConnection,
   humanType,
@@ -666,14 +667,8 @@ export default function App() {
         // HTTP errors, JSON errors and transport loss are all inconclusive
         // about a prior committed job. Keep the identical key for retry.
         diagnosticOps.current.uncertain(scope);
-        const status = (e as { status?: unknown } | null)?.status;
-        const code = (e as { code?: unknown } | null)?.code;
         setMsg({
-          text: code === "CAPABILITY_MISMATCH" ? t("errors.capabilityMismatch") :
-                code === "PRINTER_NOT_SHARED" ? t("printer.presentation.notSharedReason") : status === 401 ? t("diagnostic.authRequired") :
-                status === 403 ? t("diagnostic.permissionDenied") :
-                status === 429 ? friendlyPrinterError(errMsg(e), locale) :
-                t("diagnostic.admissionUnknown"),
+          text: friendlyDiagnosticAdmissionError(e, locale),
           type: "error",
         });
       } finally {
