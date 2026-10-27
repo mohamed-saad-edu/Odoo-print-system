@@ -43,3 +43,15 @@ export function generateIdempotencyKey(): string {
     "Secure random generator unavailable: crypto.randomUUID() and crypto.getRandomValues() are both unavailable. Idempotency key requires CSPRNG."
   );
 }
+
+
+/**
+ * Opaque replay identities must never be silently normalized. Trimming a
+ * malformed incoming key could reveal or reuse someone else's accepted job
+ * instead of rejecting the invalid caller identity.
+ */
+export function isExactIdempotencyKey(value: unknown): value is string {
+  return typeof value === "string" && value.length >= 1 && value.length <= 200
+    && value === value.trim()
+    && !/[\u0000-\u001f\u007f-\u009f]/.test(value);
+}
