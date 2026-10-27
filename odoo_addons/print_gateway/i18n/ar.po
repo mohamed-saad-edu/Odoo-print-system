@@ -4973,11 +4973,13 @@ msgstr "لا يتطلب إيصال نقاط البيع طابعة Odoo أو تق
 
 
 #. module: print_gateway
+#. odoo-python
 #: code:addons/print_gateway/models/print_job.py:0
 msgid "This POS ticket is over 30 minutes old and was not sent. Review it and use Reprint explicitly if still needed."
-msgstr "إيصال نقطة البيع ده أقدم من 30 دقيقة ولم يتم إرساله للطابعة. راجع العملية واستخدم إعادة الطباعة يدويًا إذا كان ما زال مطلوبًا."
+msgstr "هذا الإيصال من نقطة البيع أقدم من 30 دقيقة ولم يتم إرساله للطابعة. راجع العملية واستخدم إعادة الطباعة يدويًا إذا كان ما زال مطلوبًا."
 
 #. module: print_gateway
+#. odoo-python
 #: code:addons/print_gateway/customer_presentation.py:0
 msgid "This old POS ticket was not sent. Review the sale and explicitly reprint only if needed."
 msgstr "لم يُرسل إيصال نقطة البيع القديم للطابعة. راجع البيع وأعد طباعته يدويًا فقط إذا كان مطلوبًا."
