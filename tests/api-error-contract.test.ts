@@ -69,6 +69,18 @@ describe("API error contract", () => {
     expect(translate("ar", "errors.printQuotaExceeded")).toMatch(/[\u0600-\u06FF]/u);
   });
 
+  it("localizes invalid approved printer endpoints without telling operators to delete the printer", () => {
+    expect(codeMessageKey("MISSING_PRINTER_ENDPOINT")).toBe("errors.printerEndpointMissing");
+    expect(codeMessageKey("INVALID_PRINTER_ENDPOINT")).toBe("errors.printerEndpointInvalid");
+    for (const locale of ["en", "ar"] as const) {
+      const message = translate(locale, apiMessageKey("INVALID_PRINTER_ENDPOINT", 422));
+      expect(message).not.toBe(translate(locale, "errors.printerEndpointMissing"));
+      expect(message).not.toMatch(/remove it and add it again|أزلها ثم أعد إضافتها/i);
+    }
+    expect(translate("en", apiMessageKey("INVALID_PRINTER_ENDPOINT", 422))).toMatch(/review|verify/i);
+    expect(translate("ar", apiMessageKey("INVALID_PRINTER_ENDPOINT", 422))).toMatch(/[\u0600-\u06ff]/u);
+  });
+
   it("resolves the ambiguous-invitation-delivery code", () => {
     // This code exists because the 503 is NOT a failure: the invitation row
     // was created and deliberately not revoked. Before it was added the
