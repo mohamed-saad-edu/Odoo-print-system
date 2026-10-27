@@ -13,7 +13,7 @@ import {
   sha256,
 } from "./helpers/pg";
 import { POST as printJobsPOST, GET as printJobsGET } from "../src/app/api/print/jobs/route";
-import { POST as printJobsV2POST } from "../src/app/api/print/jobs/v2/route";
+import { POST as printJobsV2POST, GET as printJobsV2GET } from "../src/app/api/print/jobs/v2/route";
 import { createPrintJobForPrinter } from "../src/lib/print-job-service";
 
 const suite = describe.skipIf(!hasTestDatabase);
@@ -309,6 +309,36 @@ suite("print idempotency (Odoo → Gateway)", () => {
     } finally {
       vi.unstubAllEnvs();
     }
+  });
+
+  it("uses exact opaque IDs for legacy and v2 status polling after accepted print admission", async () => {
+    const result = await create(jobBody("status-exact-lookup"));
+    expect(result.status).toBe(201);
+    const jobId = (await result.json()).jobId as string;
+    for (const handler of [printJobsGET, printJobsV2GET]) {
+      for (const [field, value] of [
+        ["id", ` ${jobId}`], ["id", `${jobId} `],
+        ["idempotencyKey", " status-exact-lookup"], ["idempotencyKey", "status-exact-lookup "],
+        ["idempotencyKey", ""], ["idempotencyKey", " "],
+      ] as const) {
+        const url = new URL("http://gateway.test/api/print/jobs");
+        url.searchParams.set(field, value);
+        const response = await handler(new Request(url, { headers: { Authorization: `Bearer ${f.odooKey}` } }));
+        expect(response.status).toBe(400);
+      }
+      const both = new URL("http://gateway.test/api/print/jobs");
+      both.searchParams.set("id", jobId);
+      both.searchParams.set("idempotencyKey", "");
+      expect((await handler(new Request(both, { headers: { Authorization: `Bearer ${f.odooKey}` } }))).status).toBe(400);
+      for (const [field, value] of [["id", jobId], ["idempotencyKey", "status-exact-lookup"]] as const) {
+        const url = new URL("http://gateway.test/api/print/jobs");
+        url.searchParams.set(field, value);
+        const response = await handler(new Request(url, { headers: { Authorization: `Bearer ${f.odooKey}` } }));
+        expect(response.status).toBe(200);
+        expect((await response.json()).jobId).toBe(jobId);
+      }
+    }
+    expect(await jobCount()).toBe(1);
   });
 
   it("concurrent duplicate submissions with the same key create one job", async () => {
