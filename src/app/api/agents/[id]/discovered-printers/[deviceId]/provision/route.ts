@@ -72,19 +72,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
     await requireManagerActorInTransaction(tx, claims, "printers.manage");
 
-    if (row.candidate_status === "provisioned" && row.provisioned_printer_id) {
-      // A prior approval is not authority to resurrect a registration after
-      // an operator retired or unshared it. Check the live tenant+Agent owner.
-      const linked = await tx.query.printers.findFirst({
-        where: and(eq(printers.id, row.provisioned_printer_id),
-          eq(printers.tenantId, claims.tenantId), eq(printers.agentId, agentId)),
-        columns: { lifecycle: true, sharedWithGateway: true },
-      });
-      if (!linked || linked.lifecycle === "retired" || linked.sharedWithGateway === false)
-        return { kind: "invalid_endpoint" as const, error: "This physical endpoint was removed or withheld from the Gateway" };
-      return { kind: "already" as const, printerId: row.provisioned_printer_id };
-    }
-    if (row.verification !== "verified" || row.candidate_status !== "verified") {
+    // Replayed approvals must re-validate the *physical endpoint* rather than
+    // trusting a stored printer ID after an operator edits the queue/transport.
+    const previouslyProvisioned = row.candidate_status === "provisioned" && Boolean(row.provisioned_printer_id);
+    if (!previouslyProvisioned && (row.verification !== "verified" || row.candidate_status !== "verified")) {
       return { kind: "not_approved" as const };
     }
 
@@ -139,7 +130,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       return { kind: "invalid_endpoint" as const, error: "Discovery IPP URI does not match observed printer IP, port, or transport security" };
     }
 
-    if (device.ipAddress && device.port) {
+    if (!previouslyProvisioned && device.ipAddress && device.port) {
       // Compute the canonical IPP URL before dedup: IPP printers persist
       // { address: "ipp://ip:port/ipp/print" } with no ip/port fields, so an
       // ip/port-only comparison never converges for IPP and re-provisioning
@@ -192,6 +183,30 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         : { ip: device.ipAddress ?? undefined, port: device.port ?? undefined };
     const configError = validateConnectionConfig(transport.connectionType, printerConfig, transport.protocol);
     if (configError) return { kind: "invalid_endpoint" as const, error: configError };
+
+    if (previouslyProvisioned) {
+      // A stable printer ID does not prove a stable physical target. The
+      // approved discovery endpoint, protocol, current tenant and Agent must
+      // still match exactly before returning an idempotent "already" response.
+      const linked = await tx.query.printers.findFirst({
+        where: and(eq(printers.id, row.provisioned_printer_id!),
+          eq(printers.tenantId, claims.tenantId), eq(printers.agentId, agentId)),
+        columns: { lifecycle: true, sharedWithGateway: true, connectionType: true, protocol: true, config: true },
+      });
+      const approvedIdentity = physicalPrinterIdentityKey({
+        connectionType: transport.connectionType, protocol: transport.protocol, config: printerConfig,
+      });
+      const currentIdentity = linked ? physicalPrinterIdentityKey({
+        connectionType: linked.connectionType, protocol: linked.protocol, config: linked.config,
+      }) : null;
+      if (!linked || linked.lifecycle !== "active" || linked.sharedWithGateway !== true
+        || linked.connectionType !== transport.connectionType || linked.protocol !== transport.protocol
+        || !approvedIdentity || currentIdentity !== approvedIdentity) {
+        return { kind: "invalid_endpoint" as const,
+          error: "The previously approved printer endpoint changed or was withdrawn; verify the current printer before provisioning" };
+      }
+      return { kind: "already" as const, printerId: row.provisioned_printer_id! };
+    }
 
     // Spooler queues and stable Agent identities need convergence as well as
     // network endpoint dedupe; never create a second runtime target for one queue.
