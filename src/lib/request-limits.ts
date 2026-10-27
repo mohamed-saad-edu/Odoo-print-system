@@ -12,8 +12,10 @@ export function parseStrictContentLength(raw: string | string[]): number | null 
  * clamped only the ceiling.
  */
 export function clampListLimit(raw: string | null | undefined, fallback: number, max: number): number {
-  const parsed = parseInt(raw ?? "", 10);
-  const value = Number.isNaN(parsed) ? fallback : parsed;
+  // Complete decimal integers only: parseInt("10junk") must not turn a
+  // malformed query value into a valid pagination limit.
+  const parsed = typeof raw === "string" && /^-?\d+$/.test(raw) ? Number(raw) : NaN;
+  const value = Number.isSafeInteger(parsed) ? parsed : fallback;
   return Math.min(Math.max(1, value), max);
 }
 
