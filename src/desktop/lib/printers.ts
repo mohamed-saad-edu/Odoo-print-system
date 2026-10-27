@@ -30,6 +30,7 @@ import {
 } from "../../shared/job-vocabulary";
 import { DEFAULT_LOCALE, type Locale } from "../../i18n/config";
 import { translate, type MessageKey } from "../../i18n/translate";
+import { codeMessageKey } from "../../lib/api-error-keys";
 
 /**
  * All operator-facing text in this module goes through the shared catalog so
@@ -433,6 +434,35 @@ export function friendlyPrinterError(raw: string, locale: Locale = DEFAULT_LOCAL
   }
 
   return tr(locale, "desktop.printer.operationFailed");
+}
+
+/**
+ * Diagnostic HTTP admission errors are not hardware failures. Use their
+ * stable machine codes rather than the unlocalized Gateway error string;
+ * a print quota hold is never a printer outage or proof of paper output.
+ * An unrecognized/ambiguous response continues to keep the same operation
+ * identity in the calling component until a definitive result is observed.
+ */
+export function friendlyDiagnosticAdmissionError(raw: unknown, locale: Locale = DEFAULT_LOCALE): string {
+  const row = raw && typeof raw === "object" ? raw as { status?: unknown; code?: unknown } : null;
+  const status = typeof row?.status === "number" ? row.status : null;
+  const code = typeof row?.code === "string" ? row.code : undefined;
+  if (status === 401) return tr(locale, "diagnostic.authRequired");
+  if (code && [
+    "CAPABILITY_MISMATCH",
+    "PRINTER_NOT_SHARED",
+    "PRINT_QUOTA_EXCEEDED",
+    "TENANT_ENTITLEMENT_EXCEEDED",
+    "TENANT_SUBSCRIPTION_REQUIRED",
+    "TENANT_ENTITLEMENT_UNAVAILABLE",
+    "TENANT_ENTITLEMENT_CONFIG_ERROR",
+  ].includes(code)) {
+    const key = codeMessageKey(code);
+    if (key) return tr(locale, key);
+  }
+  if (status === 403) return tr(locale, "diagnostic.permissionDenied");
+  if (status === 429) return tr(locale, "errors.tooManyAttempts");
+  return tr(locale, "diagnostic.admissionUnknown");
 }
 
 /* ---------- Job field accessors (gateway payloads are loosely typed) ---------- */
