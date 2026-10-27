@@ -85,3 +85,35 @@ func TestManualIPPAliasDoesNotChooseBetweenLegacyIdentities(t *testing.T) {
 		t.Fatalf("ambiguous legacy aliases were changed or a third identity was invented: rows=%+v error=%v", rows, err)
 	}
 }
+
+func TestLegacySecureDefaultQueueIDCannotBeReboundToPlainIPP(t *testing.T) {
+	host := "192.168.1.20"
+	legacyID := StableIDFromNetwork(host, 631)
+	secureEndpoint := "ipps://" + host + ":631/ipp/print"
+	path := filepath.Join(t.TempDir(), "printers.json")
+	legacy := DeviceInfo{
+		ID: legacyID, Name: "Saved secure queue",
+		PrinterType: "physical", ConnectionType: "ipps", Protocol: "ipps",
+		Endpoint: secureEndpoint, NetworkAddress: host, Port: 631,
+		Enabled: false, Status: "online",
+	}
+	if err := SaveRegistry(path, []DeviceInfo{legacy}); err != nil {
+		t.Fatal(err)
+	}
+	// A plain endpoint discovered by an older TCP scanner has the same
+	// historical generated ID. It must not overwrite the secure endpoint,
+	// upgrade the saved opt-out, or claim fresh health evidence for it.
+	rows, err := UpsertRegistry(path, []DeviceInfo{{
+		Name: "Untrusted plain discovery", PrinterType: "physical",
+		ConnectionType: "ipp", Protocol: "ipp",
+		Endpoint: "ipp://" + host + ":631/ipp/print",
+		NetworkAddress: host, Port: 631, Enabled: true, Status: "online",
+	}})
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("unsafe legacy ID reconciliation: rows=%+v err=%v", rows, err)
+	}
+	if rows[0].ID != legacyID || rows[0].Endpoint != secureEndpoint ||
+		rows[0].Enabled || rows[0].Status != "unknown" {
+		t.Fatalf("insecure discovery silently took over saved secure queue: %+v", rows[0])
+	}
+}
