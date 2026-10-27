@@ -308,7 +308,7 @@ func (p *USBPrinter) Print(ctx context.Context, data []byte) error {
 		}
 		written += int(n)
 	}
-	log.Printf("Direct USB printed %d bytes to %s (%s)", written, p.DevicePath, p.Identify())
+	log.Printf("Direct USB transport accepted %d bytes for %s (%s; physical output unconfirmed)", written, p.DevicePath, p.Identify())
 	return nil
 }
 
