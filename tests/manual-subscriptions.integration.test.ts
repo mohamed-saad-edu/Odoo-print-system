@@ -411,6 +411,25 @@ suite('V4 manual subscriptions security and accounting',()=>{
   }else expect(final).toBe('approved');
  });
 
+ it('scopes concurrent plan creation idempotency to the actor and request key',async()=>{
+  // Two different plan IDs must not be created under one operation identity.
+  // An ID-scoped advisory lock alone fails to serialize this collision.
+  const key=randomUUID();
+  const candidate=(id:string)=>({id,name:id,description:'',monthlyQuota:600,isActive:true,isPublic:true,displayOrder:1});
+  const [first,second]=await Promise.all([
+    createPlan(request('/api/platform/plans',candidate('plan_key_first'),platformCookie,key)),
+    createPlan(request('/api/platform/plans',candidate('plan_key_second'),platformCookie,key)),
+  ]);
+  expect([first.status,second.status].sort()).toEqual([201,409]);
+  const persisted=await pool().query("SELECT id FROM plans WHERE id IN ($1,$2)",
+    ['plan_key_first','plan_key_second']);
+  expect(persisted.rows).toHaveLength(1);
+  const audit=await pool().query(
+    "SELECT id FROM audit_events WHERE actor_type='platform' AND actor_id='platform' AND action='plan.created' AND request_id=$1",
+    [key]);
+  expect(audit.rows).toHaveLength(1);
+ });
+
  it('persists and edits published USD/SAR prices without mutating subscriptions',async()=>{
   const plan={id:'priced',name:'Published plan',description:'',monthlyQuota:500,priceAmount:'19.95',priceCurrency:'USD',isActive:true,isPublic:true,displayOrder:1};
   const key=randomUUID();
