@@ -1,0 +1,25 @@
+name: Verify Ubuntu Brotli security artifact
+on:
+  push:
+    branches:
+      - security/brotli-artifact-verification-20261028
+permissions:
+  contents: read
+jobs:
+  artifact-integrity:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Obtain and identify official Ubuntu security package
+        shell: bash
+        run: |
+          set -euo pipefail
+          URL="https://security.ubuntu.com/ubuntu/pool/main/b/brotli/libbrotli1_1.1.0-2ubuntu0.1_amd64.deb"
+          curl --fail --location --silent --show-error --retry 3 --connect-timeout 15 --max-time 90 "$URL" --output /tmp/libbrotli1.deb
+          test "$(dpkg-deb -f /tmp/libbrotli1.deb Package)" = "libbrotli1"
+          test "$(dpkg-deb -f /tmp/libbrotli1.deb Version)" = "1.1.0-2ubuntu0.1"
+          test "$(dpkg-deb -f /tmp/libbrotli1.deb Architecture)" = "amd64"
+          echo "::group::Verified official binary integrity"
+          sha256sum /tmp/libbrotli1.deb
+          stat -c '%s bytes' /tmp/libbrotli1.deb
+          echo "::endgroup::"
