@@ -176,10 +176,11 @@ jobs:
   build-windows:
     needs: changes
     if: github.event_name != 'pull_request' && needs.changes.outputs.windows == 'true'
-    # Cancel only an eligible duplicate job, never on an unrelated push.
+    # Preserve a running main/merge-queue release build and its immutable SHA
+    # evidence. A newer push queues separately; PR smoke keeps supersession.
     concurrency:
       group: windows-build-${{ github.ref }}
-      cancel-in-progress: true
+      cancel-in-progress: false
     runs-on: windows-latest
     timeout-minutes: 45
     permissions:
