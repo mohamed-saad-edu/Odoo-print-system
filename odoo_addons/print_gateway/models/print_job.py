@@ -1774,16 +1774,20 @@ class PrintGatewayJob(models.Model):
                                 grace_body = {}
                             namespace_code = str(grace_body.get("code") or "").strip()
                             if namespace_code in ("RECONCILIATION_REQUIRED", "UPGRADE_REQUIRED"):
-                                # Gateway explicitly admitted ZERO new bytes.
-                                # A historical operation may nevertheless have
-                                # printed: keep its original wire key and mark
-                                # the physical outcome unknown while awaiting
-                                # operator proof, never rotate its identity.
-                                values = self._billing_retry_values(
-                                    job,
-                                    "UNKNOWN_SUBMISSION_OUTCOME: %s (operator must reconcile old receipts before re-arming)" % namespace_code,
-                                    BILLING_PARK_RETRY_SECONDS,
-                                )
+                                # Gateway admitted no NEW bytes, but the
+                                # historical operation may already have printed.
+                                # A queued billing retry would replay this
+                                # ambiguous intent automatically after cutover:
+                                # preserve its wire key and terminate UNKNOWN.
+                                # Only status/idempotency lookup may reconcile
+                                # it; a second POST requires an explicit action.
+                                values = self._stable_terminal_values(job, "unknown", {
+                                    "status": "unknown",
+                                    "attempts": job.attempts + 1,
+                                    "last_error": "UNKNOWN_SUBMISSION_OUTCOME: %s (operator must reconcile historical receipts before any reprint)" % namespace_code,
+                                    "next_retry_at": False,
+                                    "completed_at": db_now_utc(self.env.cr),
+                                })
                                 persist_submit_state(values)
                                 if raise_on_failure:
                                     raise ValidationError(_(
