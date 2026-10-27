@@ -162,3 +162,12 @@ On `main@172e85866bb9cb6ef84120450399fbe19dc74869`, the native UI suite logged 6
 **ODOO-FILE-TRUTH-001:** Odoo's `job_customer_state` displayed `file_created` when `output_outcome=file_created` even on a `failed/unknown/queued` operation. Gateway's file output presenter requires success plus valid file evidence. Fix: stale/conflicting Odoo file evidence now needs review, never a success label; durable evidence is retained and ambiguous jobs never auto-retry.
 
 **Regression source:** `tests/physical-outcome.test.ts` protects Gateway/shared-client uncertainty. `tests/test_v4_odoo_customer_presentation.py` tests file success vs contradictory state. Before change, source behavior contradicted these cases; local RED execution is NOT RUN. GitHub CI on the exact resulting commit is the verification gate; physical printer and staged deployment are NOT RUN.
+
+
+## 2026-10-28 — PRINTER-ALIAS-001 native/Gateway identity boundary
+
+**Finding:** Agent heartbeat sanitizes local IDs to 120 characters, but historical `aliasPrinterIdForAgent` appended `~` + 8 SHA-256 hex chars, yielding up to 129 bytes. Native `resolvePrinterAlias` then accepted an arbitrary eight-hex suffix and used its prefix without authenticating the suffix for the actual Agent/local backend. On a collision or malformed alias this could yield an unaddressable logical printer or the wrong local backend. User policy prohibits wrong-printer fallback.
+
+**Source change:** Canonical Gateway IDs are bounded to 120 UTF-8 bytes and suffix is preserved for both short and long IDs. Go reconstructs that same alias using full local identity plus configured Agent ID, rejecting forged, foreign or non-matching aliases. Native local sharing/desired-state gates remain in effect. Existing terminal-job receipts and printer identity DB rows are not rewritten.
+
+**Tests:** Add Gateway unit regression and Go Agent tests for multibyte/long IDs, forged suffixes, agent scoping, exact local backend and legacy short aliases. CI outcome pending for the exact commit; no claim of hardware verification. Review separate deferred risk of benign local IDs that themselves equal a valid alias string under a colliding printer (exact local precedence); handle only with an explicit registry identity decision, never silent fallback.

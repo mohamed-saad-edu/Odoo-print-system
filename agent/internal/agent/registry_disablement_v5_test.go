@@ -95,6 +95,9 @@ func TestRegistryDisablementFencesLiveJobAndGatewayAlias(t *testing.T) {
 			cfg := &config.Config{}
 			device := productionNetworkDevice("local", "10.0.0.20:9100")
 			a := newRegistryDisablementAgent(t, cfg, []printer.DeviceInfo{device})
+			if strings.Contains(requestedID, "~") {
+				requestedID = gatewayAliasPrinterID(device.ID, a.cfg.Agent.ID)
+			}
 			p := &fakePrinter{}
 			a.printers[device.ID] = p // only replace the transport boundary
 			a.processJob(context.Background(), dispatchTestJob("before-disable", requestedID))

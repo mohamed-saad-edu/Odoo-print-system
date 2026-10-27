@@ -3,6 +3,7 @@ package agent
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,6 +20,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gorilla/websocket"
 	"github.com/yaseir-agent/agent/internal/config"
@@ -578,30 +580,57 @@ func (a *Agent) getPrinter(id string) (printer.Printer, bool) {
 	return p, ok
 }
 
-// resolvePrinterAlias maps a Gateway-issued cross-agent alias back to the
-// local backend. Aliases have the form "<local stable ID>~<8 hex chars>";
-// locally generated stable IDs never contain "~", so stripping the suffix
-// recovers the local device. An exact local match always wins: resolution
-// only fires when the alias itself names no local backend.
+// gatewayAliasPrinterID must match src/lib/printer-identity.ts exactly.
+// Keep the suffix unchanged for already issued aliases, and truncate only
+// on complete UTF-8 rune boundaries so long local identifiers fit the
+// Gateway's 120-byte printer ID limit.
+func gatewayAliasPrinterID(localID, agentID string) string {
+	sum := sha256.Sum256([]byte("printer-alias:" + agentID + ":" + localID))
+	prefix := localID
+	if len(prefix) > 111 {
+		prefix = prefix[:111]
+		for !utf8.ValidString(prefix) {
+			prefix = prefix[:len(prefix)-1]
+		}
+	}
+	return fmt.Sprintf("%s~%x", prefix, sum[:4])
+}
+
+// resolvePrinterAlias checks BOTH the agent identity and the complete local
+// ID hash before selecting an execution backend. Stripping an arbitrary
+// 8-hex suffix used to let a forged alias choose any matching local printer;
+// and a 120-byte local ID would create an unreportable 129-byte cloud ID.
+// Exact local IDs still win; ambiguous hash matches fail closed.
 func (a *Agent) resolvePrinterAlias(printerID string) string {
 	if _, ok := a.getPrinter(printerID); ok {
 		return printerID
 	}
-	if i := strings.LastIndexByte(printerID, '~'); i > 0 && len(printerID)-i-1 == 8 {
-		suffix := printerID[i+1:]
-		valid := true
-		for j := 0; j < len(suffix); j++ {
-			c := suffix[j]
-			if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
-				valid = false
-				break
-			}
+	i := strings.LastIndexByte(printerID, '~')
+	if i <= 0 || len(printerID)-i-1 != 8 {
+		return printerID
+	}
+	suffix := printerID[i+1:]
+	for j := 0; j < len(suffix); j++ {
+		c := suffix[j]
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
+			return printerID
 		}
-		if valid {
-			if _, ok := a.getPrinter(printerID[:i]); ok {
-				return printerID[:i]
-			}
+	}
+	prefix := printerID[:i]
+	a.printersMu.RLock()
+	defer a.printersMu.RUnlock()
+	matched := ""
+	for localID := range a.printers {
+		if !strings.HasPrefix(localID, prefix) || gatewayAliasPrinterID(localID, a.cfg.Agent.ID) != printerID {
+			continue
 		}
+		if matched != "" {
+			return printerID // no implicit choice between colliding local backends
+		}
+		matched = localID
+	}
+	if matched != "" {
+		return matched
 	}
 	return printerID
 }
