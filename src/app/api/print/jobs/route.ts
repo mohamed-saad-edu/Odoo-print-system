@@ -15,6 +15,7 @@ import { databaseNowMs } from "../../../../lib/database-clock";
 import { databaseErrorLogFields } from "../../../../lib/database-error-log";
 import { and, eq, isNotNull } from "drizzle-orm";
 import { z } from "zod";
+import { isExactPrinterId } from "../../../../lib/exact-printer-id";
 
 export const dynamic = "force-dynamic";
 
@@ -36,7 +37,7 @@ function idempotencyKeyRequired(): boolean {
 
 const MAX_BODY = 8 * 1024 * 1024;
 const bodySchema = z.object({
-  printerId: z.string().trim().min(1).max(120),
+  printerId: z.string().min(1).max(120).refine(isExactPrinterId, { message: "printerId must be the exact configured printer identity" }),
   documentType: z.string().trim().min(1).max(120),
   destination: z.string().trim().min(1).max(255).optional(),
   payload: z.unknown(),
