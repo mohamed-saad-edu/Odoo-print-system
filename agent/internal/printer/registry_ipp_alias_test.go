@@ -10,7 +10,8 @@ func TestManualIPPExecutionAliasesKeepOneRegistryIdentity(t *testing.T) {
 		name      string
 		endpoints []string
 	}{
-		{"default_resource", []string{"ipp://192.168.1.20/", "ipp://192.168.1.20/ipp/print", "http://192.168.1.20:631/ipp/print"}},
+		{"root_resource", []string{"ipp://192.168.1.20", "ipp://192.168.1.20/", "http://192.168.1.20:631/"}},
+		{"default_resource", []string{"ipp://192.168.1.20/ipp/print", "http://192.168.1.20:631/ipp/print"}},
 		{"named_resource", []string{"ipp://192.168.1.20/printers/Office", "http://192.168.1.20:631/printers/Office"}},
 		{"secure_resource", []string{"ipps://192.168.1.20/printers/Office", "https://192.168.1.20:631/printers/Office"}},
 		{"ipv6_spelling", []string{"ipp://[fd12:3456::10]/printers/Office", "ipp://[fd12:3456:0:0:0:0:0:10]/printers/Office"}},
@@ -54,6 +55,8 @@ func TestManualIPPAliasPreservesLegacyIDAndDisabledIntent(t *testing.T) {
 func TestManualIPPDistinctExecutionDestinationsStaySeparate(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "printers.json")
 	endpoints := []string{
+		"ipp://192.168.1.20/",
+		"ipp://192.168.1.20/ipp/print",
 		"ipp://192.168.1.20/printers/Office",
 		"ipp://192.168.1.20/printers/office",
 		"ipp://192.168.1.20:80/printers/Office",
