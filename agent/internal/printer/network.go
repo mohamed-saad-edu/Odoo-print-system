@@ -154,16 +154,17 @@ func writePrintPayload(ctx context.Context, conn net.Conn, data []byte, address 
 		n, err := conn.Write(chunk)
 		written += n
 		if err != nil {
-			if written > 0 {
-				return written, MarkUnknown("write %d/%d to %s: %v", written, len(data), address, err)
-			}
-			return written, fmt.Errorf("write %d/%d to %s: %w", written, len(data), address, err)
+			// Once Write was attempted, a zero byte *return count* does not
+			// prove the device received nothing. The driver could have
+			// submitted bytes before reporting failure. Keep the original
+			// attempt ambiguous regardless of the confirmed count.
+			return written, MarkUnknown("network write to %s failed after %d/%d confirmed bytes: %v", address, written, len(data), err)
 		}
 		if n == 0 {
-			if written > 0 {
-				return written, MarkUnknown("short write 0 bytes after %d/%d to %s", written, len(data), address)
-			}
-			return written, fmt.Errorf("short write 0 bytes to %s", address)
+			// A successful Write with no reported progress violates net.Conn
+			// but can still have handed data to a printer. Failing as plain
+			// not_printed could automatically duplicate a receipt.
+			return written, MarkUnknown("network Write to %s reported zero progress after %d/%d confirmed bytes", address, written, len(data))
 		}
 	}
 	// Complete the same owned TCP stream; buffered writes alone cannot make a
