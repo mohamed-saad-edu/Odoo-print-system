@@ -3,6 +3,26 @@ import { describe, expect, it } from "vitest";
 import { v4OnboardingAr, v4OnboardingEn } from "../src/i18n/messages/v4-onboarding";
 
 describe("billing renewal localization contract", () => {
+  it("keeps Workspace Owner invitations separate from Platform Owner plan activation in en/ar", () => {
+    const teamPage = readFileSync("src/app/team/page.tsx", "utf8");
+    const inviteGuard = readFileSync("src/lib/workspace-owner-invitations.ts", "utf8");
+    expect(teamPage).toContain('profile?.role === "owner"');
+    expect(inviteGuard).toContain('claims.role !== "owner"');
+
+    const enOwner = v4OnboardingEn["v4.team.ownerOnly"];
+    const arOwner = v4OnboardingAr["v4.team.ownerOnly"];
+    expect(enOwner).toContain("Workspace Owner");
+    expect(enOwner).not.toContain("Platform Owner");
+    expect(arOwner).toContain("مالك مساحة العمل");
+    expect(arOwner).not.toContain("مالك المنصة");
+
+    const enScope = v4OnboardingEn["v4.team.fullAccessBody"];
+    const arScope = v4OnboardingAr["v4.team.fullAccessBody"];
+    expect(enScope).toMatch(/Workspace Owner.*Platform Owner/);
+    expect(arScope).toContain("مالك مساحة العمل");
+    expect(arScope).toContain("مالك المنصة");
+    expect(v4OnboardingEn["v4.subscription.manualRenewal"]).toMatch(/Platform Owner/);
+  });
   it("never hardcodes English renewal copy into the localized billing page", () => {
     const source = readFileSync("src/app/billing/page.tsx", "utf8");
 
