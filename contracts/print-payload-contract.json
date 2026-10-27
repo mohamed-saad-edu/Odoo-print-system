@@ -77,5 +77,6 @@
     "source": "capabilities.geometry.config_fingerprint",
     "validation": "Must match current validated geometry for the exact execution printer, checked at Gateway admission and native execution; rerender after any change.",
     "geometryContract": "printer-geometry-contract.json"
-  }
+  },
+  "canonicalBase64": "RFC4648 padded standard alphabet only: the wire data string must exactly equal re-encoding of its decoded bytes; reject CR/LF, alternate pad bits and noncanonical spelling before submission."
 }

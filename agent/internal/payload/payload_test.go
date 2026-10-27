@@ -25,6 +25,37 @@ func TestParseValidRaw(t *testing.T) {
 	}
 }
 
+
+func TestParseRejectsNoncanonicalBase64BeforePhysicalDispatch(t *testing.T) {
+	// Gateway validates a padded RFC4648 byte-exact base64 string. The Go
+	// decoder otherwise ignores CR/LF and accepts nonzero padding bits, so
+	// identical bytes could bypass the original wire-identity contract.
+	cases := []struct {
+		name string
+		wire string
+	}{
+		{"embedded newline", "aGVs\nbG8="},
+		{"trailing CRLF", "aGVsbG8=\r\n"},
+		{"nonzero padding bits", "Zh=="},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			payload := map[string]interface{}{
+				"type": "raw", "protocol": "raw", "encoding": "base64", "data": tc.wire,
+			}
+			if _, err := Parse(payload); err == nil || !strings.Contains(err.Error(), "canonical") {
+				t.Fatalf("noncanonical wire payload admitted: %q, err=%v", tc.wire, err)
+			}
+		})
+	}
+	// Single-byte padding remains valid when its discarded bits are zero.
+	if _, err := Parse(map[string]interface{}{
+		"type": "raw", "protocol": "raw", "encoding": "base64", "data": "Zg==",
+	}); err != nil {
+		t.Fatalf("canonical padded base64 was refused: %v", err)
+	}
+}
+
 func TestParseValidEscpos(t *testing.T) {
 	data := base64.StdEncoding.EncodeToString([]byte("\x1b\x40test\x1d\x56\x01"))
 	pl, err := Parse(map[string]interface{}{

@@ -147,6 +147,13 @@ func Parse(raw interface{}) (*Payload, error) {
 	if len(decoded) == 0 || len(decoded) > MaxPayloadBytes {
 		return nil, fmt.Errorf("payload exceeds %d byte limit", MaxPayloadBytes)
 	}
+	// The Gateway rejects even decodable noncanonical wire spellings. The
+	// standard Go decoder accepts CR/LF and alternate padding bits; without
+	// a round-trip check, the Agent could execute a byte-identical payload
+	// under a different serialized identity. Never dispatch that payload.
+	if base64.StdEncoding.EncodeToString(decoded) != dataStr {
+		return nil, fmt.Errorf("payload.data must use canonical padded base64")
+	}
 
 	// PDF identity is strict and shared with the Gateway and execution layer:
 	// the signature must begin at byte zero. This also avoids rejecting a RAW
