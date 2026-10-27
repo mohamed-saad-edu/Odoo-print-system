@@ -105,7 +105,7 @@ export async function POST(req: Request) {
         expiresAt: sql`clock_timestamp() + interval '7 days'`,
       });
       await writeAuditEvent({
-        tenantId: claims.tenantId, actorType: "platform", actorId: claims.userId,
+        tenantId: claims.tenantId, actorType: "user", actorId: claims.userId,
         action: "team.invitation.created", resourceType: "tenant_invitation", resourceId: inviteId,
       }, tx);
     });
@@ -144,7 +144,7 @@ export async function DELETE(req: Request) {
         )).returning({ id: tenantInvitations.id });
       if (revoked.length !== 1) throw new ManualSubscriptionError("INVITATION_NOT_FOUND", 404);
       await writeAuditEvent({
-        tenantId: claims.tenantId, actorType: "platform", actorId: claims.userId,
+        tenantId: claims.tenantId, actorType: "user", actorId: claims.userId,
         action: "team.invitation.revoked", resourceType: "tenant_invitation", resourceId: id,
       }, tx);
     });
