@@ -299,7 +299,9 @@ func handleGatewayRequest(args []string, configPath string) {
 
 func isAllowedJobsPath(path string) bool {
 	parsed, err := url.Parse(path)
-	if err != nil || parsed.Path != "/api/jobs" || parsed.RawPath != "" || parsed.Fragment != "" {
+	if err != nil || parsed.Path != "/api/jobs" || parsed.RawPath != "" ||
+		parsed.IsAbs() || parsed.Host != "" || parsed.User != nil ||
+		parsed.Fragment != "" || strings.Contains(path, "#") || parsed.ForceQuery {
 		return false
 	}
 	if parsed.RawQuery == "" {
@@ -310,7 +312,13 @@ func isAllowedJobsPath(path string) bool {
 			return false
 		}
 	}
-	for key, values := range parsed.Query() {
+	// ParseQuery reports malformed percent escapes; URL.Query silently drops them.
+	// Reject rather than ignore untrusted filters crossing an authenticated CLI.
+	query, err := url.ParseQuery(parsed.RawQuery)
+	if err != nil {
+		return false
+	}
+	for key, values := range query {
 		if len(values) != 1 || len(values[0]) > 200 {
 			return false
 		}
