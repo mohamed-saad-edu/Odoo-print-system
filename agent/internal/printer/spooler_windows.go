@@ -507,7 +507,11 @@ func executeSpoolerSessionWithSyscallsObserved(spoolerName string, data []byte, 
 					err:     fmt.Errorf("UNKNOWN_PARTIAL_DELIVERY: WritePrinter(%q) wrote 0 bytes after %d/%d bytes", spoolerName, written, len(data)),
 				}
 			}
-			return spoolerTaskResult{written: written, jobID: jobID, err: fmt.Errorf("WritePrinter(%q) wrote 0 bytes", spoolerName)}
+			// The syscall accepted the buffer but returned no confirmed progress.
+			// Treat this as ambiguous, exactly like WritePrinter returning
+			// failure with pcWritten=0: the driver may have spooled data
+			// despite the invalid byte counter. Never auto-retry on this.
+			return spoolerTaskResult{written: written, jobID: jobID, err: MarkUnknown("WritePrinter(%q) reported success with 0 confirmed bytes; printer may have received data", spoolerName)}
 		}
 		if bytesWritten > uint32(len(chunk)) {
 			// A driver that reports more bytes than the submitted chunk is
