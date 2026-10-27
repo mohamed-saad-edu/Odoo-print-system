@@ -97,7 +97,7 @@ function sanitizePrinter(p: ReportedPrinter): {
   };
 } | { ok: false; reason: string } {
   if (!p || typeof p !== "object" || Array.isArray(p)) return { ok: false, reason: "invalid_printer" };
-  if (typeof p.id !== "string" || !p.id.trim() || p.id.length > 120) return { ok: false, reason: "invalid_id" };
+  if (typeof p.id !== "string" || !p.id.trim() || utf8ByteLength(p.id.trim()) > 120) return { ok: false, reason: "invalid_id" };
   if (typeof p.name !== "string" || !p.name.trim() || p.name.length > 100) return { ok: false, reason: "invalid_name" };
   if (p.sharedWithGateway !== undefined && p.sharedWithGateway !== true) return { ok: false, reason: "invalid_shared_with_gateway" };
   const connectionType = normalizeConnectionType(p.connectionType, p.type);
@@ -249,8 +249,8 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: "privatePrinterIds must be an array of at most 500 printer IDs" }, { status: 400 });
       }
       for (const value of body.privatePrinterIds) {
-        if (typeof value !== "string" || !value.trim() || value.length > 120) {
-          return NextResponse.json({ error: "privatePrinterIds must contain non-empty printer IDs up to 120 characters" }, { status: 400 });
+        if (typeof value !== "string" || !value.trim() || utf8ByteLength(value.trim()) > 120) {
+          return NextResponse.json({ error: "privatePrinterIds must contain non-empty printer IDs up to 120 UTF-8 bytes" }, { status: 400 });
         }
         const localId = value.trim();
         privatePrinterIds.add(localId);
@@ -270,7 +270,7 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: "too many Gateway-owned printer IDs in heartbeat" }, { status: 400 });
       }
       for (const rawId of body.gatewayOwnedPrinterIds) {
-        if (typeof rawId === "string" && rawId.trim() && rawId.length <= 120) {
+        if (typeof rawId === "string" && rawId.trim() && utf8ByteLength(rawId.trim()) <= 120) {
           gatewayOwnedPrinterIds.add(rawId.trim());
         }
       }
