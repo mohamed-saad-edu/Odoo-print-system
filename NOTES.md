@@ -1,6 +1,6 @@
 # NOTES.md — Yaseir Cloud Printing full-repository engineering coverage
 
-Source: `main@17e08a46d2869ea0a31412e583ce4bbe70ce891f`. Enumerated **1904 tracked files** in **89 directory groups** through GitHub's complete recursive tree (`truncated=false`). This is a coverage index, **not** a claim of line-by-line audit. This file is root-level, outside the Gateway/Agent/Odoo/Desktop product trees.
+Source: `main@2fa5f7454872d575dfad68a1c1f4668dea204e0e`. Re-scanned **1906 tracked files** in **89 directory groups** through GitHub's complete recursive tree (`truncated=false`). This is a coverage index, **not** a claim of line-by-line audit. This file is root-level, outside the Gateway/Agent/Odoo/Desktop product trees.
 
 **Status semantics:** `TODO` = path enumerated, code/read/verification incomplete; `DONE` = code, cross-contract and exact-commit CI tests reviewed; `BLOCKED` = cannot verify as text through GitHub API or requires real hardware/staging. These are independent of existing per-file ledger statuses. Every path stays TODO/BLOCKED until evidence is linked; counts do not imply production readiness.
 
@@ -2558,3 +2558,25 @@ Source: `main@17e08a46d2869ea0a31412e583ce4bbe70ce891f`. Enumerated **1904 track
 - Source tree was enumerated with GitHub recursive tree; all paths above included. This is not a line-by-line security audit and no module is falsely marked DONE.
 - Re-enumerate the final main SHA after every future batch; check new, deleted, or relocated paths; update this index and `docs/engineering/FILE_COVERAGE_LEDGER.md` without resetting history.
 - Until GitHub Actions for exact final SHA completes green and populated staging/Windows spooler/Odoo POS printing is verified, keep remaining work TODO/BLOCKED; mark physical tests NOT RUN.
+
+## 2026-10-28 final source re-scan and additional batches
+
+The recursive GitHub tree at `main@2fa5f7454872d575dfad68a1c1f4668dea204e0e` has **1906 paths**, no tree truncation. Since the initial inventory commit, these two tracked files were new to the inventory; no previously listed tracked path disappeared. Both are indexed here, preserving all earlier evidence.
+
+### `(root)` — newly indexed
+- TODO `NOTES.md` — audit ledger itself (index is not a verified test)
+
+### `tests` — newly indexed
+- TODO `tests/platform-audit-limit.test.ts` — Platform Owner audit pagination contract; inspect and run on exact SHA
+
+### Reviewed API semantics, stage 2
+- **API-LIMIT-003**: `4140abc0402edf42061d5415e4a17cab3510828a` rejects partial/oversized decimal query limits via complete safe-integer parsing. Unit tests cover `10junk`, decimal fractions, exponent notation and overflows. Accepts historical negative/zero clamp behavior (not a data reset).
+- **API-ERROR-004**: `0aefc2953d8a3109d59fa1d0cf5de1c56a4c44b1` returns stable `INVALID_STATUS_FILTER` machine code on both tenant/agent and Platform Owner job history. Existing `src/lib/api-error-keys.ts` maps this to translated English/Arabic UI errors; no error body is trusted as the localized UI source. Source and contract tests added.
+- **Cross-component code reviewed (selectively, not all paths)**: `agent/internal/printer/outcome.go` uses the same 5 unknown markers; `agent/internal/queue/queue.go` persists terminal local states; `odoo_addons/print_gateway/models/print_job.py` has explicit UNKNOWN states and no automatic resubmission of unknown jobs; `src-tauri/src/commands.rs` has bounded diagnostic idempotency; `src/lib/printer-model.ts` validates private printer destination and transport; `.github/workflows/ci.yml` asserts tenant-scoped foreign keys. These are partial reviews, **not** hardware verification or whole-module DONE.
+- **Known CI result:** `17e08a46...` App/Quality typecheck failed due duplicate `isJobFilterStatus` import in another concurrent test change; the later main `tests/job-status.test.ts` has the import only once. Follow exact final run; doc-only CI success may skip application jobs and cannot substitute for full application gates.
+
+### Explicit remaining work
+- **TODO**: individual inspection, cross-tenant fault injection and linked test evidence for the other indexed source files and all raw SQL, print route, and platform permission boundaries.
+- **BLOCKED / NOT RUN**: installed Windows Agent + spooler/USB/IPPS + Odoo POS, real PDF/receipt output, desktop user session, printer geometry calibration; populated staging database backup/restore and `0102` migration while writers drained.
+- **P1 architecture**: no PostgreSQL RLS defense-in-depth; verify tenant predicate coverage before any RLS rollout, and never perform a destructive production migration.
+- **Release rule**: no PASS claim for tests not executed on the exact current SHA; cancelled/skipped workflows stay CANCELLED/SKIPPED.

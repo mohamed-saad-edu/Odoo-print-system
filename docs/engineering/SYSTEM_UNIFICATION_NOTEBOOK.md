@@ -171,3 +171,15 @@ On `main@172e85866bb9cb6ef84120450399fbe19dc74869`, the native UI suite logged 6
 **Source change:** Canonical Gateway IDs are bounded to 120 UTF-8 bytes and suffix is preserved for both short and long IDs. Go reconstructs that same alias using full local identity plus configured Agent ID, rejecting forged, foreign or non-matching aliases. Native local sharing/desired-state gates remain in effect. Existing terminal-job receipts and printer identity DB rows are not rewritten.
 
 **Tests:** Add Gateway unit regression and Go Agent tests for multibyte/long IDs, forged suffixes, agent scoping, exact local backend and legacy short aliases. CI outcome pending for the exact commit; no claim of hardware verification. Review separate deferred risk of benign local IDs that themselves equal a valid alias string under a colliding printer (exact local precedence); handle only with an explicit registry identity decision, never silent fallback.
+
+## 12. 2026-10-28 API and archived-history review (continued)
+
+The root-level `NOTES.md` is now the **GitHub-only full path inventory**, organized by directory and indexed TODO/BLOCKED status. `FILE_COVERAGE_LEDGER.md` remains the historical ledger; neither claims completed line-by-line source review.
+
+- **HIST-TENANT-003**: archived receipt reader previously suppressed a tenant A receipt when a different tenant B had the same live job ID. Added the tenant equality to the correlated anti-join; regression inserts both records in PostgreSQL and tests per-tenant and platform visibility. Commit `b3cc2704177351104e564c9f1ba8c8a021a59e7a`.
+- **GEO-PROFILE-004**: old `validated_profile` geometry outlived deletion of its configured profile. Now require exact present profile and converged desired/applied/observed revisions, without invalidating independently observed Windows/IPP geometry. Regression covers removed, matching and mismatched profiles. Commit `258c1a7da29f2df3c151b44d622ba0ec88c05256`.
+- **HIST-MARKER-005**: SQL `LIKE` misinterpreted underscores in unknown outcome markers as wildcards, contradicting the literal Gateway/Go/Odoo prefixes. Use literal `LEFT(...)=marker` prefix checks. PostgreSQL regression distinguishes true marker and lookalike. Commit `17e08a46d2869ea0a31412e583ce4bbe70ce891f`.
+- **API-PAGINATION-006**: reject `parseInt` prefix parsing of malformed list limits while preserving the internal 1..max clamp, with unit tests. Commit `4140abc0402edf42061d5415e4a17cab3510828a`.
+- **API-ERROR-007**: return `INVALID_STATUS_FILTER` from both tenant and platform job history routes; `api-error-keys.ts` already maps it to localized copy. Commit `0aefc2953d8a3109d59fa1d0cf5de1c56a4c44b1`.
+
+**Test evidence:** Older `17e08a46` CI failed due a duplicate import subsequently corrected in the repo. Audit-only `bfbbd60d` CI succeeded with application jobs skipped (cannot establish runtime PASS). All updated PostgreSQL integration and native hardware acceptance still need a completed exact-current-commit run. Do not deploy from this review.
