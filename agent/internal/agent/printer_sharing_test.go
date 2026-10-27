@@ -569,8 +569,15 @@ func TestAgentSharingAdmittedJobFinishesWhileMutexWaiterIsReturned(t *testing.T)
 	if p.Calls() != 1 || !ag.queue.IsProcessed("already-admitted") || ag.queue.WasOutcomeUnknown("waiting-private") {
 		t.Fatalf("unshare cancelled admitted work or printed waiter: calls=%d", p.Calls())
 	}
-	if ag.queue.ClaimTokenFor("already-admitted") != "" || ag.queue.ClaimTokenFor("waiting-private") != "" {
-		t.Fatal("exact result/queued ACK did not clear local tokens")
+	// A durably queued waiter can finish its local dispatch goroutine
+	// before the separate pre-dispatch return outbox sends its exact
+	// claim-token hand-back. Drain that outbox explicitly; never clear the
+	// claim only because the local printer mutex became free.
+	ag.reportPendingPreDispatchReturns(context.Background())
+	successToken := ag.queue.ClaimTokenFor("already-admitted")
+	waitingToken := ag.queue.ClaimTokenFor("waiting-private")
+	if successToken != "" || waitingToken != "" {
+		t.Fatalf("exact result/queued ACK did not clear local tokens after hand-back: success=%q waiting=%q", successToken, waitingToken)
 	}
 }
 
