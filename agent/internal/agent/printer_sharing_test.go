@@ -241,13 +241,15 @@ func TestAgentSharingInvalidPrivateIDsCannotRejectWholeHeartbeat(t *testing.T) {
 	if complete || strings.Join(ids, ",") != "local" {
 		t.Fatalf("overlong local ID made transport-invalid inventory: %v complete=%v", ids, complete)
 	}
-	for _, id := range []string{"", "bad\nID", strings.Repeat("😀", 61), " trailing "} {
+	for _, id := range []string{"", "bad\nID", strings.Repeat("😀", 31), strings.Repeat("é", 61), " trailing "} {
 		if validGatewaySharingID(id) {
 			t.Fatalf("invalid published ID accepted: %q", id)
 		}
 	}
-	if !validGatewaySharingID(strings.Repeat("😀", 60)) {
-		t.Fatal("valid120 UTF-16 unit ID rejected")
+	for _, id := range []string{strings.Repeat("😀", 30), strings.Repeat("é", 60), strings.Repeat("x", 120)} {
+		if !validGatewaySharingID(id) {
+			t.Fatalf("valid120 UTF-8 byte ID rejected: %q", id)
+		}
 	}
 }
 
