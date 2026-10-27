@@ -3506,7 +3506,15 @@ func (a *Agent) processJob(ctx context.Context, job map[string]interface{}) {
 
 	if !a.isPrinterExecutionAllowed(localPrinterID) {
 		a.queue.AbortPrint(jobID, "printer_not_at_desired_state")
-		a.rejectJob(ctx, jobID, claimToken, "printer_not_at_desired_state")
+		// A successful, exact Gateway hand-back is the sole authority to
+		// clear the local queued claim. Retaining an ACKed token makes the
+		// recovery outbox return an already-refunded attempt again; clearing
+		// it on timeout would instead lose the original recovery fence.
+		if err := a.rejectJob(ctx, jobID, claimToken, "printer_not_at_desired_state"); err == nil {
+			if err := a.queue.ClearPreDispatchClaim(jobID, claimToken); err != nil {
+				log.Printf("Job %s: desired-state pre-dispatch return acknowledged but local token clear failed: %v", jobID, err)
+			}
+		}
 		return
 	}
 	if !a.isPrinterSharedWithGateway(localPrinterID) {
