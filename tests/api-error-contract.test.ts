@@ -13,6 +13,13 @@ import { en } from "../src/i18n/messages/en";
  * English text is not.
  */
 describe("API error contract", () => {
+  it("maps strict job-history pagination failures to Arabic/English catalog copy", () => {
+    expect(codeMessageKey("INVALID_OFFSET")).toBe("errors.invalidPaginationOffset");
+    expect(apiMessageKey("INVALID_OFFSET", 400)).toBe("errors.invalidPaginationOffset");
+    expect(translate("en", "errors.invalidPaginationOffset")).not.toBe("errors.requestRejected");
+    expect(translate("ar", "errors.invalidPaginationOffset")).toMatch(/\p{Script=Arabic}/u);
+  });
+
   it("localizes exhausted monthly print credits separately from blocked billing", () => {
     expect(codeMessageKey("PRINT_QUOTA_EXCEEDED")).toBe("errors.printQuotaExceeded");
     expect(apiMessageKey("PRINT_QUOTA_EXCEEDED", 429)).toBe("errors.printQuotaExceeded");
