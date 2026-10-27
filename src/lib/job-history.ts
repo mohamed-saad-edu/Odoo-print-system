@@ -138,7 +138,7 @@ export async function listPrintJobHistory(input: JobHistoryOptions = {}) {
     LEFT JOIN agents a ON a.id = h.agent_id AND a.tenant_id = h.tenant_id
     LEFT JOIN printers p ON p.id = h.printer_id AND p.tenant_id = h.tenant_id
     ${where}
-    ORDER BY h.created_at DESC, h.id DESC
+    ORDER BY h.created_at DESC, h.id DESC, h.tenant_id DESC
     LIMIT ${limit} OFFSET ${offset}
   `);
   const rows = result.rows as HistoryRow[];
