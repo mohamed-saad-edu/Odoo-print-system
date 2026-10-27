@@ -136,6 +136,51 @@ suite("Odoo runtime discovery billing boundary", () => {
   it.each([
     ["agents", agentsGET, "/api/odoo/agents"],
     ["printers", printersGET, "/api/odoo/printers"],
+  ] as const)("refuses %s inventory when Odoo integration is disabled", async (_name, handler, route) => {
+    await pool().query("UPDATE api_keys SET odoo_enabled=FALSE WHERE tenant_id=$1", [fixture.tenantId]);
+    const response = await handler(new Request("https://gateway.test" + route, {headers: {"x-api-key":fixture.odooKey}}));
+    expect(response.status).toBe(401);
+    expect(await response.json()).toMatchObject({code: "UNAUTHORIZED"});
+  });
+
+  it.each([
+    ["agents", agentsGET, "/api/odoo/agents"],
+    ["printers", printersGET, "/api/odoo/printers"],
+  ] as const)("rechecks activation after HTTP key authentication for %s inventory", async (_name, handler, route) => {
+    const blocker = await pool().connect();
+    let committed = false;
+    let pending: Promise<Response> | undefined;
+    try {
+      await blocker.query("BEGIN");
+      await blocker.query("UPDATE tenants SET lifecycle='active' WHERE id=$1", [fixture.tenantId]);
+      const blockerPid = Number((await blocker.query("SELECT pg_backend_pid() AS pid")).rows[0].pid);
+      pending = handler(new Request("https://gateway.test" + route, {headers: {"x-api-key":fixture.odooKey}}));
+      await expect.poll(async () => {
+        const waiting = await pool().query(
+          `SELECT count(*)::int AS n FROM pg_stat_activity
+           WHERE datname=current_database() AND wait_event_type='Lock'
+             AND query LIKE '%FROM tenants%' AND query LIKE '%FOR SHARE%'
+             AND $1 = ANY(pg_blocking_pids(pid))`, [blockerPid],
+        );
+        return Number(waiting.rows[0].n);
+      }, {timeout: 8_000, interval: 100}).toBeGreaterThan(0);
+      // The credential is disabled after the first HTTP auth snapshot.
+      await pool().query("UPDATE api_keys SET odoo_enabled=FALSE, odoo_enabled_revision=odoo_enabled_revision+1 WHERE tenant_id=$1", [fixture.tenantId]);
+      await blocker.query("COMMIT");
+      committed = true;
+      const response = await pending;
+      expect(response.status).toBe(401);
+      expect(await response.json()).toMatchObject({code: "UNAUTHORIZED"});
+    } finally {
+      if (!committed) await blocker.query("ROLLBACK");
+      blocker.release();
+      await pending?.catch(() => {});
+    }
+  });
+
+  it.each([
+    ["agents", agentsGET, "/api/odoo/agents"],
+    ["printers", printersGET, "/api/odoo/printers"],
   ] as const)("retains the documented read-only rotation grace for %s inventory", async (_name, handler, route) => {
     await pool().query(
       "UPDATE api_keys SET revoked_at=clock_timestamp()-interval '1 second', read_only_until=clock_timestamp()+interval '30 minutes' WHERE tenant_id=$1",

@@ -28,8 +28,9 @@ export function generateOdooApiKey(): { raw: string; hashed: string; id: string 
 /** Revocation is authoritative at inventory read time, not at the
  * earlier HTTP authentication snapshot. This shared predicate intentionally
  * mirrors validateOdooKey: a rotated key remains valid for read-only status
- * recovery only until read_only_until. No expired or revoked key can disclose
- * fresh tenant printer or Agent inventory.
+ * recovery only until read_only_until. No expired, revoked or integration-
+ * disabled key can disclose fresh tenant printer or Agent inventory.
+ * The dedicated configuration API remains available for a disabled key.
  *
  * Acquire after the tenant lifecycle fence, before the subscription fence:
  * tenant -> API credential -> subscription -> inventory.
@@ -46,6 +47,7 @@ export async function requireOdooReadKeyInTransaction(
   const matched = await tx.execute(sql`
     SELECT id FROM api_keys
     WHERE id = ${key.id} AND tenant_id = ${key.tenantId} AND hashed_key = ${key.hashedKey}
+      AND odoo_enabled = TRUE
       AND (
         (revoked_at IS NULL AND read_only_until IS NULL)
         OR (revoked_at <= clock_timestamp() AND read_only_until > clock_timestamp())
