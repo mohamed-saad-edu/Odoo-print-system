@@ -1696,10 +1696,22 @@ class PrintGatewayJob(models.Model):
                                 raise ValidationError(marker_message)
                             break
 
-                        # A persistent proxy/tenant rate limit must respect
-                        # the same bounded recovery budget as billing/auth
-                        # refusals. Otherwise this branch polls every minute
-                        # forever while all other recoverable blocks park.
+                        # A rate-limit response from an intermediary can
+                        # arrive after the Gateway already accepted the job.
+                        # Only the explicit Gateway pre-admission rate-limit
+                        # code proves no physical output. Unknown 429 shapes
+                        # must retain their identity for read-only lookup,
+                        # never schedule an automatic new physical POST.
+                        if str(rate_body.get("code") or "").strip() != "RATE_LIMIT_EXCEEDED":
+                            self._record_ambiguous_submission(
+                                job, RuntimeError("GATEWAY_HTTP_429"),
+                                "Unclassified HTTP 429; Gateway acceptance could not be excluded",
+                                raise_on_failure, claim_token,
+                            )
+                            break
+                        # An explicit pre-admission rate limit is safe to
+                        # retry with the original immutable idempotency key,
+                        # using the same bounded recovery budget as billing.
                         values = self._billing_retry_values(
                             job,
                             "GATEWAY_RATE_LIMITED: Gateway returned HTTP 429",
