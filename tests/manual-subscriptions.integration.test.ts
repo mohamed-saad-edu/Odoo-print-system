@@ -430,6 +430,26 @@ suite('V4 manual subscriptions security and accounting',()=>{
   expect(audit.rows).toHaveLength(1);
  });
 
+ it('serializes one platform plan edit key across distinct plan IDs',async()=>{
+  await db.insert(plans).values({id:'another_plan',name:'Other manual plan',entitlements});
+  const key=randomUUID();
+  const patch=(id:string,name:string)=>editPlan(new Request(origin+'/api/platform/plans/'+id,{
+    method:'PATCH',headers:{origin,'content-type':'application/json',cookie:platformCookie,'idempotency-key':key},
+    body:JSON.stringify({name,description:'',monthlyQuota:250,isActive:true,isPublic:true,displayOrder:0}),
+  }),{params:Promise.resolve({id})});
+  const [a,b]=await Promise.all([
+    patch('manual','Edited primary plan'),
+    patch('another_plan','Edited secondary plan'),
+  ]);
+  expect([a.status,b.status].sort()).toEqual([200,409]);
+  const rows=(await pool().query("SELECT id,name FROM plans WHERE id IN ('manual','another_plan')")).rows;
+  expect(rows.filter(row=>row.name.startsWith('Edited '))).toHaveLength(1);
+  const events=(await pool().query(
+    "SELECT id FROM audit_events WHERE actor_type='platform' AND actor_id='platform' AND action='plan.updated' AND request_id=$1",
+    [key])).rows;
+  expect(events).toHaveLength(1);
+ });
+
  it('persists and edits published USD/SAR prices without mutating subscriptions',async()=>{
   const plan={id:'priced',name:'Published plan',description:'',monthlyQuota:500,priceAmount:'19.95',priceCurrency:'USD',isActive:true,isPublic:true,displayOrder:1};
   const key=randomUUID();
