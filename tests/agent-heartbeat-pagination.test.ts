@@ -112,6 +112,29 @@ suite("agent heartbeat pagination contract", () => {
     expect(match.rows).toHaveLength(0);
   });
 
+  it("never normalizes padded inventory IDs into another printer's cloud identity", async () => {
+    const f = await seedFixture();
+    const rawId = " hb-padding-alias ";
+    const response = await heartbeat(f.agentAuth, snapshotHeartbeat("padded-id", true, [
+      { ...makePrinter("hb-padding-alias"), id: rawId, name: "Padded alias" },
+    ]));
+    expect(response.status).toBe(200);
+    expect((await response.json()).skippedPrinters).toContainEqual({ id: rawId, reason: "invalid_id" });
+    const rows = await pool().query("SELECT id FROM printers WHERE tenant_id=$1 AND id IN ($2,$3)",
+      [f.tenantId, rawId, rawId.trim()]);
+    expect(rows.rows).toHaveLength(0);
+  });
+
+  it("rejects padded private printer IDs rather than unsharing a different exact ID", async () => {
+    const f = await seedFixture();
+    const request = { ...snapshotHeartbeat("padded-private", true, []), privatePrinterIds: [` ${f.printerId} `] };
+    const response = await heartbeat(f.agentAuth, request);
+    expect(response.status).toBe(400);
+    const rows = await pool().query("SELECT shared_with_gateway FROM printers WHERE tenant_id=$1 AND id=$2",
+      [f.tenantId, f.printerId]);
+    expect(rows.rows[0].shared_with_gateway).toBe(true);
+  });
+
   it("rejects oversized UTF-8 private printer identifiers before changing sharing state", async () => {
     const f = await seedFixture();
     const unicodeId = "é".repeat(80);
