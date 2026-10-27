@@ -16,3 +16,15 @@ test("main CI preserves already running application and native jobs", () => {
     assert.equal(actual?.trim(), expected, "main " + group + " must never be cancelled by next push");
   }
 });
+
+test("CI keeps one running main verification and coalesces superseded pending pushes", () => {
+  const source = readFileSync(".github/workflows/ci.yml", "utf8");
+  const header = source.split("\njobs:", 1)[0];
+  // A shared workflow group must include the branch ref for push runs.
+  // Distinct manual/release and merge-group runs cannot be coalesced.
+  assert.match(header, /concurrency:\s*\n\s*group:.*github\.event_name == 'push'.*github\.ref.*github\.run_id/);
+  // A newer main push must not abort tests already executing on an older SHA.
+  assert.match(header, /cancel-in-progress:.*github\.event_name == 'pull_request'/);
+  // Per-job per-SHA scopes must remain present: running main jobs are not
+  // replaced under the old shared-ref PENDING slot.
+});
