@@ -3,6 +3,7 @@ import { and, desc, eq, sql, type SQL } from "drizzle-orm";
 import { db } from "../../../../db";
 import { agents, printers, tenants } from "../../../../db/schema";
 import { queryWithTimeout } from "../../../../db/client";
+import { parseStrictListOffset } from "../../../../lib/request-limits";
 import { requirePlatformOwner, PlatformUnauthorizedError } from "../../../../lib/platform-auth";
 import { nonVirtualPrinterPredicate } from "../../../../lib/printer-virtual-sql";
 import { databaseNowMs } from "../../../../lib/database-clock";
@@ -22,14 +23,13 @@ export async function GET(req: Request) {
   const status = q.get("status") ?? "all";
   const tenantId = (q.get("tenantId") ?? "").trim();
   const search = (q.get("search") ?? "").trim().toLowerCase();
-  const limit = Number(q.get("limit") ?? "40");
-  const offset = Number(q.get("offset") ?? "0");
+  const limit = q.get("limit") === null ? 40 : parseStrictListOffset(q.get("limit"), 100);
+  const offset = parseStrictListOffset(q.get("offset"), 10_000);
   if (!["agents", "printers"].includes(kind) ||
       !["all", "active", "disabled", "retired"].includes(status) ||
-      !Number.isSafeInteger(limit) || limit < 1 || limit > 100 ||
-      !Number.isSafeInteger(offset) || offset < 0 || offset > 10_000 ||
+      limit === null || limit < 1 || offset === null ||
       tenantId.length > 120 || (search && (search.length < 2 || search.length > 64))) {
-    return NextResponse.json({ error: "Invalid inventory filter" }, { status: 400, headers: HEADERS });
+    return NextResponse.json({ error: "Invalid inventory filter", code: "INVALID_PAGINATION" }, { status: 400, headers: HEADERS });
   }
   const term = `%${search.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_")}%`;
   const clauses: SQL[] = [];

@@ -15,6 +15,7 @@ import { eq } from "drizzle-orm";
 import { nanoid } from "../src/lib/nanoid";
 import { createVerifiedPlatformSession as createPlatformSession } from "./helpers/platform-session";
 import { GET } from "../src/app/api/platform/stats/route";
+import { GET as platformFleetGET } from "../src/app/api/platform/fleet/route";
 import { GET as subscriptionListGET } from "../src/app/api/platform/subscriptions/route";
 import { GET as tenantListGET } from "../src/app/api/platform/tenants/route";
 import { GET as tenantDetailGET } from "../src/app/api/platform/tenants/[id]/route";
@@ -125,6 +126,25 @@ suite("Platform Stats Route", () => {
     expect(response.status).toBe(200);
     const body = await response.json();
     expect(body.jobs24h).toMatchObject({ total: 1, queued: 1, success: 0 });
+  });
+
+  it("rejects malformed platform fleet pagination instead of silently coercing it", async () => {
+    for (const field of ["limit", "offset"]) {
+      for (const invalid of ["", "1e1", "1.0", " 1", "+2"]) {
+        const url = new URL("http://localhost/api/platform/fleet?kind=agents");
+        url.searchParams.set(field, invalid);
+        const response = await platformFleetGET(new Request(url, {
+          headers: { Authorization: `Bearer ${platformToken}` },
+        }));
+        expect(response.status, `${field}=${JSON.stringify(invalid)}`).toBe(400);
+        expect(await response.json()).toMatchObject({ code: "INVALID_PAGINATION" });
+      }
+    }
+    const valid = await platformFleetGET(new Request("http://localhost/api/platform/fleet?kind=agents&limit=2&offset=0", {
+      headers: { Authorization: `Bearer ${platformToken}` },
+    }));
+    expect(valid.status).toBe(200);
+    expect(await valid.json()).toMatchObject({ kind: "agents", limit: 2, offset: 0 });
   });
 
   it("keeps platform list, dashboard and runtime admission consistent for expired and blocked contracts", async () => {
