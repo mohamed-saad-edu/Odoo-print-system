@@ -229,6 +229,28 @@ func TestSpoolerWriteFailureWithZeroReportedBytesIsUnknown(t *testing.T) {
 	}
 }
 
+// A successful Win32 syscall with pcWritten=0 does not prove that the
+// document was discarded. The driver violated the write-progress contract
+// after receiving the data pointer; never promise a safe automatic retry.
+func TestSpoolerSuccessfulWriteWithZeroReportedBytesIsUnknown(t *testing.T) {
+	var log spoolerCallLog
+	sys := fakeSpoolerSyscalls(&log, func(hPrinter syscall.Handle, buf unsafe.Pointer, length int, bytesWritten *uint32) (uintptr, error) {
+		*bytesWritten = 0
+		return 1, nil
+	})
+
+	res := executeSpoolerSessionWithSyscalls("ZeroProgressPrinter", []byte("receipt payload"), nil, sys)
+	if res.err == nil || !OutcomeUnknown(res.err) {
+		t.Fatalf("successful WritePrinter with zero confirmed bytes must be UNKNOWN, got %v", res.err)
+	}
+	if res.written != 0 {
+		t.Fatalf("confirmed progress remains zero, got %d", res.written)
+	}
+	if log.endDocCalls != 0 || log.abortCalls != 1 {
+		t.Fatalf("indeterminate session must abort, not finalize: endDoc=%d abort=%d", log.endDocCalls, log.abortCalls)
+	}
+}
+
 func TestSpoolerWriteOverReportCannotSucceed(t *testing.T) {
 	mockSyscalls := defaultSpoolerSyscalls
 	mockSyscalls.openPrinterW = func(printerName *uint16, hPrinter *syscall.Handle) (uintptr, error) {
