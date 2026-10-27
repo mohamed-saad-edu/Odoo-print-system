@@ -3,7 +3,7 @@ import datetime
 
 import pytest
 
-from test_kitchen_durable_outcomes import fixture, reply
+from test_kitchen_durable_outcomes import ValidationError, fixture, reply
 
 
 @pytest.mark.parametrize('attempts', [25, 100])
@@ -52,6 +52,29 @@ def test_unclassified_rate_limit_does_not_automatically_replay(body):
     assert job.status == 'unknown'
     assert job.next_retry_at is False
     assert job.last_error.startswith('UNKNOWN_SUBMISSION_OUTCOME:')
+    assert job.physical_outcome == 'unknown'
+    assert job.idempotency_key == original_key
+    assert len(sent) == 1
+
+
+@pytest.mark.parametrize('status,body', [
+    (429, {}),
+    (500, {'code': 'INTERNAL_ERROR'}),
+    (503, {}),
+    (201, {}),  # HTTP accepted, but the Gateway operation identity is missing.
+])
+def test_interactive_ambiguous_response_cannot_be_reclassified_as_failed(status, body):
+    response = reply(status, body)
+    _router, job, _cursor, sent, _order = fixture(response)
+    original_key = job.idempotency_key
+    with pytest.raises(ValidationError, match='unknown'):
+        job._action_submit_trusted(raise_on_failure=True)
+    # The operator-facing ValidationError is not another print failure:
+    # it cannot run the generic deterministic-exception branch and turn an
+    # uncertain outcome into definitely not printed.
+    assert job.status == 'unknown'
+    assert job.last_error.startswith('UNKNOWN_SUBMISSION_OUTCOME:')
+    assert job.next_retry_at is False
     assert job.physical_outcome == 'unknown'
     assert job.idempotency_key == original_key
     assert len(sent) == 1
