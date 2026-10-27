@@ -3,7 +3,16 @@ import { PgDialect } from "drizzle-orm/pg-core";
 import type { ServerResponse } from "node:http";
 
 const mocks = vi.hoisted(() => ({ auth: vi.fn(), permission: vi.fn(), chain: { select: vi.fn(), from: vi.fn(), leftJoin: vi.fn(), where: vi.fn(), orderBy: vi.fn(), limit: vi.fn(), offset: vi.fn() } }));
-vi.mock("../src/db", () => ({ db: { select: mocks.chain.select } }));
+// Inventory GETs intentionally use a transactional tenant/session fence.
+// The unit fixture mocks DB I/O only; a separate PostgreSQL suite covers
+// revocation races and real row-lock ordering.
+vi.mock("../src/db", () => ({ db: {
+  transaction: async (callback: (tx: { select: typeof mocks.chain.select }) => Promise<unknown>) => callback({ select: mocks.chain.select }),
+} }));
+vi.mock("../src/lib/console-read-authority", () => ({
+  requireConsoleReadAuthorityInTransaction: vi.fn(),
+  ConsoleAgentAuthorityRevokedError: class ConsoleAgentAuthorityRevokedError extends Error {},
+}));
 vi.mock("../src/lib/console-auth", () => ({ validateConsoleAuth: mocks.auth }));
 vi.mock("../src/lib/manager-auth", () => ({ validateWorkspaceManager: mocks.auth }));
 vi.mock("../src/lib/authorization", () => ({ requireManagerPermission: mocks.permission }));
