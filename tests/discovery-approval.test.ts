@@ -625,10 +625,13 @@ suite("discovery trust and approval flow", () => {
   });
   it.each([
     ["retired", "network"],
+    ["disabled", "network"],
     ["unshared", "network"],
     ["retired", "ipp"],
+    ["disabled", "ipp"],
     ["unshared", "ipp"],
     ["retired", "spooler"],
+    ["disabled", "spooler"],
     ["unshared", "spooler"],
   ] as const)("will not resurrect a %s or unshared printer via legacy %s provisioning dedupe", async (state, transport) => {
     const discoveryId = await createDiscoverySession(`disc-retire-${state}-${transport}`);
@@ -642,7 +645,7 @@ suite("discovery trust and approval flow", () => {
         : { ip: address, port: 9100 };
     await pool().query(
       "UPDATE printers SET connection_type=$1, protocol=$2, config=$3::jsonb, lifecycle=$4, shared_with_gateway=$5 WHERE tenant_id=$6 AND id=$7",
-      [transport, protocol, JSON.stringify(config), state === "retired" ? "retired" : "active", state !== "unshared", f.tenantId, f.printerId],
+      [transport, protocol, JSON.stringify(config), state === "unshared" ? "active" : state, state !== "unshared", f.tenantId, f.printerId],
     );
     const deviceId = `candidate-${transport}-${state}`;
     const device = {
@@ -673,7 +676,7 @@ suite("discovery trust and approval flow", () => {
       [f.tenantId, f.printerId],
     );
     expect(printer.rows[0]).toMatchObject({
-      lifecycle: state === "retired" ? "retired" : "active",
+      lifecycle: state === "unshared" ? "active" : state,
       shared_with_gateway: state !== "unshared",
     });
     const candidate = await pool().query(
