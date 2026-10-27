@@ -147,6 +147,27 @@ suite("Platform Stats Route", () => {
     expect(await valid.json()).toMatchObject({ kind: "agents", limit: 2, offset: 0 });
   });
 
+  it("pages subscriptions without silently dropping matches after the first page", async () => {
+    const second = await seedFixture();
+    await db.update(tenantSubscriptions).set({ status: "suspended" }).where(eq(tenantSubscriptions.tenantId, second.tenantId));
+    const fetchList = async (query: string) => {
+      const r = await subscriptionListGET(new Request("http://localhost/api/platform/subscriptions?" + query,
+        { headers: { Authorization: "Bearer " + platformToken } }));
+      return { status: r.status, data: await r.json(), cache: r.headers.get("Cache-Control") };
+    };
+    const first = await fetchList("limit=1&offset=0");
+    const next = await fetchList("limit=1&offset=1");
+    expect(first).toMatchObject({ status: 200, cache: "private, no-store", data: { limit: 1, offset: 0, hasMore: true } });
+    expect(next).toMatchObject({ status: 200, data: { limit: 1, offset: 1, hasMore: false } });
+    expect(new Set([first.data.subscriptions[0].tenantId, next.data.subscriptions[0].tenantId])).size).toBe(2);
+    const filtered = await fetchList("status=suspended&limit=1");
+    expect(filtered.data).toMatchObject({ hasMore: false, subscriptions: [{ tenantId: second.tenantId, status: "suspended" }] });
+    const searched = await fetchList("status=suspended&search=" + encodeURIComponent(second.tenantId));
+    expect(searched.data.subscriptions).toHaveLength(1);
+    for (const invalid of ["offset=1e2", "limit=1.0", "status=bogus"]) {
+      expect((await fetchList(invalid)).status, invalid).toBe(400);
+    }
+  });
   it("keeps platform list, dashboard and runtime admission consistent for expired and blocked contracts", async () => {
     const [subscription] = await db.select({ planId: tenantSubscriptions.planId })
       .from(tenantSubscriptions).where(eq(tenantSubscriptions.tenantId, fixture.tenantId));
