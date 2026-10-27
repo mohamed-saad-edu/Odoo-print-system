@@ -602,9 +602,6 @@ func gatewayAliasPrinterID(localID, agentID string) string {
 // and a 120-byte local ID would create an unreportable 129-byte cloud ID.
 // Exact local IDs still win; ambiguous hash matches fail closed.
 func (a *Agent) resolvePrinterAlias(printerID string) string {
-	if _, ok := a.getPrinter(printerID); ok {
-		return printerID
-	}
 	i := strings.LastIndexByte(printerID, '~')
 	if i <= 0 || len(printerID)-i-1 != 8 {
 		return printerID
@@ -619,15 +616,22 @@ func (a *Agent) resolvePrinterAlias(printerID string) string {
 	prefix := printerID[:i]
 	a.printersMu.RLock()
 	defer a.printersMu.RUnlock()
+	// An exact local ID can also be another queue's signed Gateway alias.
+	// Never select the wrong physical backend by exact-name precedence.
+	_, exact := a.printers[printerID]
 	matched := ""
 	for localID := range a.printers {
-		if !strings.HasPrefix(localID, prefix) || gatewayAliasPrinterID(localID, a.cfg.Agent.ID) != printerID {
+		if localID == printerID || !strings.HasPrefix(localID, prefix) ||
+			gatewayAliasPrinterID(localID, a.cfg.Agent.ID) != printerID {
 			continue
 		}
-		if matched != "" {
-			return printerID // no implicit choice between colliding local backends
+		if exact || matched != "" {
+			return "" // ambiguous backend: all physical dispatch gates deny it
 		}
 		matched = localID
+	}
+	if exact {
+		return printerID
 	}
 	if matched != "" {
 		return matched
