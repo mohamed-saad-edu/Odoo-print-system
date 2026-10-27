@@ -268,7 +268,7 @@ export function AddPrinterDialog({
           limit,
         });
       } else {
-        setError(friendlyGatewayError(errMsg(e), locale));
+        setError(friendlyGatewayError(e, locale));
       }
     } finally {
       setBusy(false);
