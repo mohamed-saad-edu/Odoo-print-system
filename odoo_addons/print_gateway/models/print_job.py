@@ -2272,9 +2272,14 @@ class PrintGatewayJob(models.Model):
                 if not body.get("error"):
                     body["error"] = "GATEWAY_JOB_EXPIRED: The Gateway no longer holds the job (never claimed within its release window); nothing reached the agent"
         elif status == "partial":
-            # 'partial' is not a valid internal Odoo status; treat as
-            # 'submitted' (job is still in-progress / partially accepted).
-            status = "submitted"
+            # Partial delivery is a physically ambiguous outcome, never a
+            # progress update. The Gateway does not persist "partial", but
+            # older or external responses must not turn it into "submitted".
+            status = "unknown"
+            detail = str(body.get("error") or "").strip()
+            body["error"] = "UNKNOWN_PARTIAL_DELIVERY: " + (
+                detail or "Gateway reported partial delivery; inspect the printer before reprinting."
+            )
         if status not in {"submitted", "claimed", "printing", "success", "failed", "unknown"}:
             return False
         err_msg = body.get("error") or False

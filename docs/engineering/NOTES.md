@@ -80,3 +80,14 @@ Baseline inspected: main@65214cf7948a214843110fa2fbc1a23aec388340. This is an **
 ## Current audit limitation
 
 `MODULE_COVERAGE_LEDGER.md` is the full directory inventory; `FILE_COVERAGE_LEDGER.md` is a file enumeration. The three batches above are targeted verified-source findings, **not** a line-by-line review of all 1,900+ paths. Remain TODO/BLOCKED until the exact latest SHA's full CI and hardware/staging acceptance run. Never equate a cancelled or skipped workflow with PASS.
+
+
+## Batch 2 — Odoo/Gateway partial-delivery reconciliation
+
+**Finding (HIGH, source-confirmed):** Gateway status vocabulary has no persisted `partial` status. The Odoo read/reconciliation method `_apply_synced_status` nevertheless translated a received `partial` into `submitted`. For an already `claimed` or `printing` outbox job it could even return early without showing that output may have occurred. Gateway and the Odoo customer presenter classify partial delivery as uncertain; this path contradicted both and hid the manual-review warning.
+
+**Correction:** Treat a legacy/foreign `partial` response as terminal `unknown`, prefix the diagnostic with `UNKNOWN_PARTIAL_DELIVERY`, retain its detail, and surface the existing manual-review audit. Do not automatically print again and do not claim physical output or map it to a valid Gateway status.
+
+**Regression:** `tests/test_partial_gateway_status_reconciliation.py` invokes the actual production method via AST with controlled ORM boundaries, checking ambiguous delivery with and without a diagnostic. GitHub-only environment cannot run pytest locally; **NOT RUN** pending GitHub Actions on the exact commit. Existing tests already require `job_customer_state("partial") == "needs_review"`.
+
+**Coverage:** `odoo_addons/print_gateway/models/print_job.py` PARTIAL; `tests/test_partial_gateway_status_reconciliation.py` AUTHORED. Other directories and hardware remain TODO/BLOCKED; no claim of full-repo completion.
