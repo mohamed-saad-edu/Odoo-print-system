@@ -73,8 +73,9 @@ This runs `scripts/db-migrate.ts` which applies all pending migrations from `dri
 | 0097 | 1 | Agent-scoped discovery observation IDs; preserve IDs, approvals and runtime links |
 | 0098 | 1 | Retire external billing fields from active plan/subscription schema, archive provider records outside public, preserve manual approvals and monthly usage |
 | 0099 | 1 | Preserve original customer subscription requests and separately snapshot approved terms when Platform Owner explicitly adjusts a manual approval |
+| 0100 | 1 | Add optional USD/SAR catalog prices in integer cents/halalas without touching any existing subscription, quota, invoice or job history |
 
-**Total**: 100 forward-only SQL migrations (0000–0099), plus retained hash-versioned forward repairs in `scripts/db-migrate.ts`.
+**Total**: 101 forward-only SQL migrations (0000–0100), plus retained hash-versioned forward repairs in `scripts/db-migrate.ts`.
 
 Apply all migrations through `0094` before starting V3, with older Gateway instances stopped. Historical `0090` and `0092` remain in the journal so existing content hashes and fresh replay remain valid. V3 uses email/password login and the existing production `__Host-` access/refresh cookies. Migration `0094` does not convert stored configuration into live printer proof: existing registrations and historical queued jobs without an admitted binding remain ineligible for new execution. Deploy the matching Agent, obtain a fresh verified inventory, and reconcile retained legacy jobs explicitly. Terminal history remains available for exact result replay. See the V3 upgrade procedure below and `SECURITY.md`.
 
@@ -235,3 +236,21 @@ against this widened schema. Retain the fixed Gateway, or stop writes and plan a
 reviewed forward reconciliation; never delete observations or rename external
 IDs to force the old uniqueness back. No Odoo, Agent or desktop wire change is
 required. Updating the Gateway does not update an Odoo addon on a separate server.
+
+## 0100 — Optional public plan prices (2026-10-27)
+
+Deploy the matching Gateway after applying migration `0100_plan_prices` with the
+database migration-owner role. This forward-only migration adds nullable
+`plans.price_minor_units` and `plans.price_currency` columns and a
+pair-consistency check. Only USD and SAR are supported for catalog display;
+amounts are stored as integer cents/halalas to avoid float rounding. Existing
+plans deliberately remain unpriced and show the agreed-price message until
+the Platform Owner edits them.
+
+No historical subscription, usage ledger, invoice, approval or active customer
+entitlement is modified. Published prices are informational: activation,
+renewals and payment arrangements still require a manual Platform Owner action.
+Older binaries cannot read the new catalog price fields; finish migrating before
+promoting the matching Gateway release. Rollback requires a reviewed forward fix
+or an application build compatible with the expanded table, never deleting
+historical subscription data.
