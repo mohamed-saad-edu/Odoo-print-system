@@ -642,7 +642,7 @@ fn valid_gateway_printer_id(segment: &str) -> bool {
     };
     if identity.is_empty()
         || identity.len() > 120
-        || identity.trim() != identity
+        || identity.trim_matches(|ch: char| ch.is_whitespace() || ch == '\u{feff}') != identity
         || identity.contains("..")
         || identity.chars().any(|ch| ch.is_control() || matches!(ch, '/' | '?' | '#' | '%') || ch == char::from(92))
         || identity.chars().next().is_some_and(|ch| ch.is_ascii() && !ch.is_ascii_alphanumeric())
