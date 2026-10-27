@@ -1001,6 +1001,7 @@ export const en = {
   "errors.invalidStatusFilter": "That print job filter is not recognised. Choose a status from the list.",
   "errors.invalidPaginationOffset": "That page is too far back. Refine the filters and try again.",
   "errors.invalidPaginationLimit": "Invalid page size. Choose a positive whole-number limit and try again.",
+  "errors.invalidPagination": "Invalid page size or position. Check the list controls and try again.",
   "errors.invalidJobSearchLength": "Use 2–64 characters to search print jobs.",
   "errors.invalidPrinterSearchLength": "Printer search must contain 2 to 64 characters.",
   "errors.billingBlocked": "Printing is blocked until this workspace’s subscription is resolved. Open Billing, then try again.",
