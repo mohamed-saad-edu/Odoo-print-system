@@ -5,7 +5,7 @@ import { validateWorkspaceManager } from "../../../lib/manager-auth";
 import { validateConsoleAuth } from "../../../lib/console-auth";
 import { requireManagerPermission } from "../../../lib/authorization";
 import { and, desc, eq, lt, or } from "drizzle-orm";
-import { clampListLimit } from "../../../lib/request-limits";
+import { clampListLimit, parseStrictListOffset } from "../../../lib/request-limits";
 import { fleetCursorIdHeaders, readFleetCursorId } from "../../../lib/fleet-cursor";
 import { z } from "zod";
 import { createAgentForManager } from "../../../lib/agent-control";
@@ -30,10 +30,9 @@ export async function GET(req: Request) {
   // explicitly allow unlimited Agents; callers must paginate rather than infer a fleet limit.
   const { searchParams } = new URL(req.url);
   const limit = clampListLimit(searchParams.get("limit"), 1000, MAX_AGENTS_LIST);
-  const offsetRaw = parseInt(searchParams.get("offset") ?? "0", 10);
-  const offset = Number.isNaN(offsetRaw) ? 0 : Math.max(0, offsetRaw);
-  if (offset > MAX_AGENTS_OFFSET) {
-    return NextResponse.json({ error: `offset must be <= ${MAX_AGENTS_OFFSET}; use beforeCreatedAt + beforeId keyset pagination for deeper fleets` }, { status: 400 });
+  const offset = parseStrictListOffset(searchParams.get("offset"), MAX_AGENTS_OFFSET);
+  if (offset === null) {
+    return NextResponse.json({ error: `offset must be a non-negative decimal integer <= ${MAX_AGENTS_OFFSET}; use keyset pagination for deeper fleets`, code: "INVALID_OFFSET" }, { status: 400 });
   }
   const beforeCreatedAtRaw = searchParams.get("beforeCreatedAt");
   let beforeId: string | null;

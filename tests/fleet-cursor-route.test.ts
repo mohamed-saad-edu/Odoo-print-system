@@ -75,6 +75,25 @@ describe.each([["printers", getPrinters], ["agents", getAgents]] as const)("%s f
     expect(mocks.chain.select).not.toHaveBeenCalled();
   });
 
+  it.each(["", " ", "-1", "+1", "2.5", "1e2", "10garbage", "10001", "9007199254740992"])(
+    "rejects malformed fleet offset %s before the DB read", async (raw) => {
+      const params = new URLSearchParams({ offset: raw });
+      const response = await get(new Request(`http://gateway.test/api/${kind}?${params}`));
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({ code: "INVALID_OFFSET" });
+      expect(mocks.chain.select).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([["0", 0], ["0002", 2], ["10000", 10000]] as const)(
+    "keeps bounded numeric fleet offset %s as %s", async (raw, parsed) => {
+      rows("physical_1");
+      const response = await get(new Request(`http://gateway.test/api/${kind}?offset=${raw}`));
+      expect(response.status).toBe(200);
+      expect(mocks.chain.offset).toHaveBeenLastCalledWith(parsed);
+    },
+  );
+
   if (kind === "printers") {
     it("advances past an entirely virtual page to a physical printer", async () => {
       const hidden = { ...baseRow("virtual_1"), printerType: "virtual" };

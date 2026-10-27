@@ -7,7 +7,7 @@ import { requireManagerPermission } from "../../../lib/authorization";
 import { requireManagerActorInTransaction, ManagerMutationAuthorityChangedError } from "../../../lib/manager-mutation-authorization";
 import { requireActiveTenantInTransaction } from "../../../lib/tenant-guard";
 import { and, desc, eq, lt, or, sql } from "drizzle-orm";
-import { clampListLimit } from "../../../lib/request-limits";
+import { clampListLimit, parseStrictListOffset } from "../../../lib/request-limits";
 import { fleetCursorIdHeaders, readFleetCursorId } from "../../../lib/fleet-cursor";
 import { nanoid } from "../../../lib/nanoid";
 import { parsePrinterInput, validateConnectionConfig, validatePrinterTransportProtocol } from "../../../lib/printer-model";
@@ -38,10 +38,9 @@ export async function GET(req: Request) {
   // explicitly allow unlimited printers; callers must paginate rather than infer a fleet limit.
   const { searchParams } = new URL(req.url);
   const limit = clampListLimit(searchParams.get("limit"), 1000, MAX_PRINTERS_LIST);
-  const offsetRaw = parseInt(searchParams.get("offset") ?? "0", 10);
-  const offset = Number.isNaN(offsetRaw) ? 0 : Math.max(0, offsetRaw);
-  if (offset > MAX_PRINTERS_OFFSET) {
-    return NextResponse.json({ error: `offset must be <= ${MAX_PRINTERS_OFFSET}; use beforeCreatedAt + beforeId keyset pagination for deeper fleets` }, { status: 400 });
+  const offset = parseStrictListOffset(searchParams.get("offset"), MAX_PRINTERS_OFFSET);
+  if (offset === null) {
+    return NextResponse.json({ error: `offset must be a non-negative decimal integer <= ${MAX_PRINTERS_OFFSET}; use keyset pagination for deeper fleets`, code: "INVALID_OFFSET" }, { status: 400 });
   }
   const beforeCreatedAtRaw = searchParams.get("beforeCreatedAt");
   let beforeId: string | null;
