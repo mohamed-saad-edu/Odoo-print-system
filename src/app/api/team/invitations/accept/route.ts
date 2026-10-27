@@ -10,8 +10,8 @@ import { logError } from "../../../../../lib/log";
 import { appBaseUrl, sendTransactionalEmail } from "../../../../../lib/email";
 import { getServerLocale, makeT } from "../../../../../i18n/server";
 import { findActiveInvitation, joinWorkspaceByInvitation } from "../../../../../lib/invitation-join";
-import { validateCustomer, customerSessionCookie, customerRefreshCookie } from "../../../../../lib/customer-auth";
-import type { ManagerRole } from "../../../../../lib/manager-auth";
+import { customerSessionCookie, customerRefreshCookie } from "../../../../../lib/customer-auth";
+import { validateWorkspaceManager, type ManagerRole } from "../../../../../lib/manager-auth";
 import { issueSessionPairInTransaction, revokeSessionFamilyInTransaction, AuthenticationChangedError, type SessionPair } from "../../../../../lib/session-tokens";
 import { requireManagerActorInTransaction, ManagerMutationAuthorityChangedError } from "../../../../../lib/manager-mutation-authorization";
 import { WorkspaceSessionExpiredError, workspacePolicyResponse } from "../../../../../lib/workspace-session-security";
@@ -137,8 +137,13 @@ export async function POST(req: Request) {
     return respond({ code: "VERIFY_EMAIL_REQUIRED" }, 409);
   }
 
-  const principal = await validateCustomer(req);
-  if (!principal?.userId || principal.userId !== account.id)
+  // An invited, verified user may already have an authenticated customer OR
+  // manager workspace session. A customer-only check spuriously demanded a
+  // second password even though the matching manager session had live proof.
+  // Legacy sessions without an independently revocable v2 family cannot
+  // switch workspaces through a bearer invitation.
+  const principal = await validateWorkspaceManager(req);
+  if (!principal?.userId || principal.userId !== account.id || principal.ver !== 2 || !principal.familyId)
     return respond({ code: "SIGN_IN_REQUIRED" }, 401);
 
   let result: { membership: { tenantId: string; role: string }; session: SessionPair };
