@@ -195,7 +195,7 @@ test("billing dialog passes every placeholder through native Odoo interpolation"
   assert.match(dialogs[0].body, /Used: 15/);
   assert.match(dialogs[0].body, /Allowance: 20/);
   assert.match(dialogs[0].body, /Try again in about 2 minute\(s\)\./);
-  assert.match(dialogs[0].body, /30-day allowance resets: /);
+  assert.match(dialogs[0].body, /Monthly allowance resets \(UTC\): /);
   assert.match(dialogs[0].body, /This request was not accepted/);
   assert.doesNotMatch(dialogs[0].body, /Nothing was printed|upgrade|checkout/i);
   assert.doesNotMatch(dialogs[0].body, /%s|undefined/);

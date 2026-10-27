@@ -60,7 +60,7 @@ describe("Gateway customer and Platform Admin remain separate", () => {
     expect(platformInvitations).toContain("status: 410");
     expect(platformInvitations).not.toContain("sendTransactionalEmail");
     expect(team).toContain('fetchWithTimeout("/api/team/invitations"');
-    expect(workspaceInvites).toContain("requireWorkspacePlatformOwnerForInvites(tx, claims)");
+    expect(workspaceInvites).toContain("requireWorkspaceOwnerForInvites(tx, claims)");
     expect(workspaceInvites).toContain("INVITATION_DELIVERY_UNAVAILABLE");
   });
 });

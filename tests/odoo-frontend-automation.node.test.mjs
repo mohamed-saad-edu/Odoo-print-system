@@ -63,7 +63,7 @@ test("monthly allowance reset shows the exact UTC boundary from Saudi and wester
       entitlement: "max_prints_per_period", message: "Allowance reached",
       used: 100, limit: 100, retryAfterSeconds: null, periodEnd: "2026-11-01T00:00:00Z",
     }), true);
-    assert.match(dialogs[0].body, /30-day allowance resets: Nov 1, 2026, 12:00 AM UTC/,
+    assert.match(dialogs[0].body, /Monthly allowance resets \(UTC\): Nov 1, 2026, 12:00 AM UTC/,
       `The commercial boundary must not shift with browser timezone ${browserZone}`);
   }
 });

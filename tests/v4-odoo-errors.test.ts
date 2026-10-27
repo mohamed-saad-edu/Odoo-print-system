@@ -32,7 +32,7 @@ describe("V4 Odoo customer error boundary", () => {
     expect(details.message).not.toContain("INTERNAL_BACKEND_SECRET");
     let dialog: { body: string } | undefined;
     showGatewayBillingLimitDialog({ services: { dialog: { add(_type: unknown, options: { body: string }) { dialog = options; } } } }, details);
-    expect(dialog?.body).toContain("30-day");
+    expect(dialog?.body).toContain("monthly");
     expect(dialog?.body).not.toContain("next month");
     expect(dialog?.body).not.toContain("INTERNAL_BACKEND_SECRET");
   });

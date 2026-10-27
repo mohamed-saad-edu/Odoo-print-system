@@ -53,7 +53,6 @@ export default function SettingsPage() {
   const { t, formatDate } = useI18n();
   const [email, setEmail] = useState("");
   const [role, setRole] = useState("");
-  const [platformOwner, setPlatformOwner] = useState(false);
   const [tenantCreatedAt, setTenantCreatedAt] = useState<string | null>(null);
   const [message, setMessage] = useState<{ text: string; type: "ok" | "err" } | null>(null);
   const [busy, setBusy] = useState(false);
@@ -72,7 +71,6 @@ export default function SettingsPage() {
         if (!nameEdited.current) setName(d.tenant?.name ?? "");
         setEmail(d.email ?? "");
         setRole(d.role ?? "");
-        setPlatformOwner(d.platformOwner === true);
         setTenantCreatedAt(d.tenant?.createdAt ?? null);
       })
       .catch((e) => { if (!cancelled) setMessage({ text: e instanceof Error ? e.message : t("settings.loadFailed"), type: "err" }); })
@@ -183,7 +181,7 @@ export default function SettingsPage() {
                 <KeyValueList
                   rows={[
                     { label: t("settings.signedInAs"), value: email || "—" },
-                    { label: t("settings.role"), value: platformOwner
+                    { label: t("settings.role"), value: role === "owner"
                         ? <span className="inline-flex items-center gap-1.5 font-semibold"><Crown className="h-4 w-4 text-warn" aria-hidden />{t("team.role.owner")}</span>
                         : <span>{roleLabel(role, t)}</span> },
                     {

@@ -16,7 +16,7 @@ describe("Platform Admin has no invitation mutation surface", () => {
   it("the workspace Team page retains a scoped, guarded Full Access invitation flow", () => {
     const team = readFileSync("src/app/api/team/invitations/route.ts", "utf8");
     const platform = readFileSync("src/app/api/platform/tenants/[id]/invitations/route.ts", "utf8");
-    expect(team).toContain("requireWorkspacePlatformOwnerForInvites(tx, claims)");
+    expect(team).toContain("requireWorkspaceOwnerForInvites(tx, claims)");
     expect(team).toContain('role: "admin"');
     expect(team).toContain("INVITATION_DELIVERY_UNAVAILABLE");
     expect(platform).not.toContain("sendTransactionalEmail");

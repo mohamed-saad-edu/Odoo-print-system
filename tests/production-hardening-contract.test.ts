@@ -325,7 +325,7 @@ describe("production hardening contracts", () => {
     expect(onboarding).toContain("PLATFORM_OWNER_REQUIRED");
     expect(onboarding).not.toContain("ensurePendingManualSubscription");
     expect(privileged).toContain("FOR UPDATE");
-    expect(privileged).toContain("requireWorkspacePlatformOwnerForInvites");
+    expect(privileged).toContain("requireWorkspaceOwnerForInvites");
     const manual=read("src/lib/manual-subscriptions.ts");
     expect(manual).toContain("requirePlatformActorInTransaction(tx,actor)");
     expect(manual).toContain("SUBSCRIPTION_REVISION_CONFLICT");

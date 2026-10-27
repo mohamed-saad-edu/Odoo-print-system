@@ -577,7 +577,7 @@ def test_team_invitation_email_ambiguity_does_not_revoke_durable_token():
     assert "const revoked = await db.transaction" not in block
     assert 't("mail.invite.subject")' in block
     assert '"INVITATION_DELIVERY_UNAVAILABLE"' in block
-    assert 'requireWorkspacePlatformOwnerForInvites' in route
+    assert 'requireWorkspaceOwnerForInvites' in route
     assert 'assertPlatformTeamOrigin' in route
     assert 'invitation_delivery_ambiguous' in block
     assert 'revoke' not in block

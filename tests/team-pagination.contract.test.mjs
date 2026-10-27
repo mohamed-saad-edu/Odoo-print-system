@@ -15,7 +15,7 @@ test("workspace member list is tenant-scoped and bounded independently of invita
 test("workspace invitations are scoped and use verified owner session authorization", () => {
   const old = read("src/app/api/team/invitations/route.ts");
   const platform = read("src/app/api/platform/tenants/[id]/invitations/route.ts");
-  assert.match(old, /requireWorkspacePlatformOwnerForInvites/);
+  assert.match(old, /requireWorkspaceOwnerForInvites/);
   assert.match(old, /eq\(tenantInvitations.tenantId, claims.tenantId\)/);
   assert.match(old, /export async function GET/);
   assert.match(old, /assertPlatformTeamOrigin/);

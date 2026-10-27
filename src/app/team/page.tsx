@@ -9,9 +9,9 @@ import { fetchWithTimeout } from "../../lib/fetch-timeout";
 import { codeMessageKey } from "../../lib/api-error-keys";
 import { Avatar, Button, Card, CardHeader, Input, PageContainer, PageHeader, StatusBadge } from "../../components/ui";
 
-type Member = { userId: string; email: string; platformOwner: boolean };
+type Member = { userId: string; email: string; role: string; platformOwner: boolean };
 type Invitation = { id: string; email: string; expiresAt: string };
-type Profile = { userId: string; email: string; platformOwner: boolean; tenant: { id: string } };
+type Profile = { userId: string; email: string; role: string; platformOwner: boolean; tenant: { id: string } };
 type Notice = { kind: "ok" | "err" | "warn"; message: string };
 const PAGE_SIZE = 50;
 
@@ -57,7 +57,7 @@ export default function TeamPage() {
         ]);
         // Pending invite recipients belong to the owner-only account surface.
         let pending: { invitations: Invitation[]; hasMore: boolean } = { invitations: [], hasMore: false };
-        if (account.platformOwner && !cancelled) {
+        if (account.role === "owner" && !cancelled) {
           const invitesRes = await fetchWithTimeout(`/api/team/invitations?limit=${PAGE_SIZE}&offset=${inviteOffset}`, {
             credentials: "include", cache: "no-store",
           });
@@ -87,7 +87,7 @@ export default function TeamPage() {
 
   async function sendInvitation(event: React.FormEvent) {
     event.preventDefault();
-    if (!profile?.platformOwner || busy) return;
+    if (profile?.role !== "owner" || busy) return;
     const invitedEmail = email.trim();
     if (!invitedEmail) return;
     setBusy(true);
@@ -119,7 +119,7 @@ export default function TeamPage() {
   }
 
   async function revokeInvitation(id: string) {
-    if (!profile?.platformOwner || busy) return;
+    if (profile?.role !== "owner" || busy) return;
     setBusy(true);
     setNotice(null);
     try {
@@ -152,7 +152,7 @@ export default function TeamPage() {
             {notice.message}
           </p>}
 
-          {profile?.platformOwner && (
+          {profile?.role === "owner" && (
             <Card className="p-5">
               <div className="flex items-center gap-2">
                 <Crown className="h-4 w-4 text-brand" aria-hidden />
@@ -175,7 +175,7 @@ export default function TeamPage() {
             </Card>
           )}
 
-          <div className={profile?.platformOwner ? "grid items-start gap-5 lg:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)]" : "grid items-start gap-5"}>
+          <div className={profile?.role === "owner" ? "grid items-start gap-5 lg:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)]" : "grid items-start gap-5"}>
             <Card>
               <CardHeader title={t("team.members")} subtitle={t("v4.team.fullAccessBody")}
                 icon={<Users className="h-4 w-4" />} />
@@ -187,9 +187,9 @@ export default function TeamPage() {
                       <Avatar name={member.email} size="sm" />
                       <span className="min-w-0 break-all text-sm font-semibold">{member.email}</span>
                     </span>
-                    <StatusBadge tone={member.platformOwner ? "brand" : "info"}
-                      icon={member.platformOwner ? <Crown className="h-3.5 w-3.5 text-warn" aria-hidden /> : undefined}
-                      label={member.platformOwner ? t("team.role.owner") : t("v4.team.fullAccess")} />
+                    <StatusBadge tone={member.role === "owner" ? "brand" : "info"}
+                      icon={member.role === "owner" ? <Crown className="h-3.5 w-3.5 text-warn" aria-hidden /> : undefined}
+                      label={member.role === "owner" ? t("team.role.owner") : t("v4.team.fullAccess")} />
                   </li>
                 ))}
               </ul>
@@ -208,7 +208,7 @@ export default function TeamPage() {
                   </Button>
                 </div>}
             </Card>
-            {profile?.platformOwner && (
+            {profile?.role === "owner" && (
             <Card>
               <CardHeader title={t("team.pendingInvitations")} subtitle={t("team.invitationsHint")}
                 icon={<Mail className="h-4 w-4" />} />
@@ -220,7 +220,7 @@ export default function TeamPage() {
                       <span className="block break-all text-sm font-semibold">{invitation.email}</span>
                       <span className="block text-xs text-ink-3">{formatDate(invitation.expiresAt)}</span>
                     </span>
-                    {profile?.platformOwner && (
+                    {profile?.role === "owner" && (
                       <Button variant="secondary" size="sm" disabled={busy}
                         onClick={() => void revokeInvitation(invitation.id)}>
                         {t("team.revoke")}

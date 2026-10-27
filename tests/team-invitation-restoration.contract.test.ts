@@ -9,12 +9,14 @@ describe("restored, single-role team invitations", () => {
     expect(page).toContain('t("team.pendingInvitations")');
     expect(page).toContain('t("team.inviteSubmit")');
     expect(page).toContain('t("team.revoke")');
+    expect(page).toContain('if (profile?.role !== "owner" || busy) return;');
+    expect(page).not.toContain('!profile?.role === "owner"');
     expect(page).toContain('/api/team/invitations?limit=');
     expect(page).not.toContain("<Select");
     expect(page).not.toContain("updateRole(");
     expect(page).not.toContain('role: "viewer"');
   });
-  it("uses the verified Platform Owner workspace session without another password prompt", () => {
+  it("uses the verified workspace owner session without another password prompt", () => {
     const page = read("src/app/team/page.tsx");
     const route = read("src/app/api/team/invitations/route.ts");
     const guard = read("src/lib/workspace-owner-invitations.ts");
@@ -22,12 +24,12 @@ describe("restored, single-role team invitations", () => {
     expect(page).not.toContain("verifyPlatformOwnerPassword");
     expect(page).not.toContain('type="password"');
     expect(route).toContain("assertPlatformTeamOrigin(req)");
-    expect(route).toContain("requireWorkspacePlatformOwnerForInvites(tx, claims)");
+    expect(route).toContain("requireWorkspaceOwnerForInvites(tx, claims)");
     expect(route).toContain('role: "admin"');
     expect(route).toContain("sendTransactionalEmail");
     expect(route).toContain("INVITATION_DELIVERY_UNAVAILABLE");
     expect(guard).toContain('requireManagerActorInTransaction(tx, claims, "users.read")');
-    expect(guard).toContain("u.is_platform_owner=true");
+    expect(guard).toContain("m.role='owner'");
     expect(guard).toContain("u.email_verified_at IS NOT NULL");
     const platform = read("src/app/api/platform/tenants/[id]/invitations/route.ts");
     expect(platform).toContain("status: 410");
@@ -45,7 +47,7 @@ describe("restored, single-role team invitations", () => {
     expect(route).toContain('export async function DELETE(req: Request)');
     expect(route).not.toContain("tokenHash: tenantInvitations.tokenHash");
   });
-  it("uses database platform-owner identity for account and team badges, never workspace role=owner", () => {
+  it("uses workspace membership for the owner badge while preserving separate platform identity", () => {
     const settings = read("src/app/api/settings/route.ts");
     const members = read("src/app/api/team/members/route.ts");
     const team = read("src/app/team/page.tsx");
@@ -57,12 +59,12 @@ describe("restored, single-role team invitations", () => {
     expect(members).toContain("emailVerifiedAt");
     expect(team).toContain('t("team.role.owner")');
     expect(team).toContain('icon={<Crown className="h-3.5 w-3.5 text-warn" aria-hidden />}');
-    expect(team).toContain('label={member.platformOwner ? t("team.role.owner")');
+    expect(team).toContain('label={member.role === "owner" ? t("team.role.owner")');
     expect(team).not.toContain('label={t("team.platformOwner")}');
     expect(team).toContain('t("v4.team.fullAccess")');
     expect(account).toContain('t("team.role.owner")');
     expect(account).toContain("roleLabel(role, t)");
-    expect(team).not.toContain('member.role === "owner"');
+    expect(team).toContain('member.role === "owner"');
   });
   it("keeps the platform-owner title localized in English and Arabic", () => {
     expect(read("src/i18n/messages/en.ts")).toContain('"team.platformOwner": "Platform Owner"');

@@ -65,7 +65,7 @@ describe("invitation route honours the coded contract", () => {
     // without this field that branch is dead code.
     expect(route).toContain('code: "INVITATION_DELIVERY_UNAVAILABLE"');
     expect(route).toContain("Invitation created; delivery unconfirmed");
-    expect(route).toContain("requireWorkspacePlatformOwnerForInvites");
+    expect(route).toContain("requireWorkspaceOwnerForInvites");
   });
 
   it("never revokes the invitation when email delivery is ambiguous", () => {

@@ -153,7 +153,7 @@ test("verified owner Team page rejects stale late responses without hiding pendi
       return { ok: true, json: async () => ({ invitations: pending, hasMore: false }) };
     }
     if (url === "/api/settings") {
-      return { ok: true, json: async () => ({ userId: "me", email: "me@example.test", platformOwner: true, tenant: { id: "tenant" } }) };
+      return { ok: true, json: async () => ({ userId: "me", email: "me@example.test", role: "owner", platformOwner: false, tenant: { id: "tenant" } }) };
     }
     throw Error("Unexpected Team request: " + url);
   });
@@ -180,7 +180,7 @@ test("Full Access Team never requests or renders pending invitation recipients",
       return { ok: true, json: async () => ({ members, hasMore: false }) };
     }
     if (url === "/api/settings") {
-      return { ok: true, json: async () => ({ userId: "member", email: "member@example.test", platformOwner: false, tenant: { id: "tenant" } }) };
+      return { ok: true, json: async () => ({ userId: "member", email: "member@example.test", role: "admin", platformOwner: true, tenant: { id: "tenant" } }) };
     }
     throw Error("Full Access attempted to read owner invitation data: " + url);
   });
