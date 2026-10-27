@@ -48,8 +48,11 @@ func TestPrinterWaiterRequestsFreshAdmissionBeforeHardware(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("first print did not start")
 	}
-	// The alias names the same local backend and must share its mutex.
-	ag.dispatchJob(context.Background(), dispatchTestJob("waiter", "p1~aaaaaaaa"))
+	// Use the exact Agent-scoped Gateway alias. The old test supplied an
+	// arbitrary 8-hex suffix which the hardened resolver correctly refuses
+	// as a forged printer identity; it never reached the mutex wait path.
+	alias := gatewayAliasPrinterID("p1", ag.cfg.Agent.ID)
+	ag.dispatchJob(context.Background(), dispatchTestJob("waiter", alias))
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		count, err := ag.queue.CountByStatus("printing")
