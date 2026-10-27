@@ -116,7 +116,7 @@ func validGatewayPrinterSegment(segment string) bool {
 	}
 	identity, err := url.PathUnescape(segment)
 	if err != nil || identity == "" || len(identity) > 120 || !utf8.ValidString(identity) ||
-		strings.TrimSpace(identity) != identity || strings.Contains(identity, "..") ||
+		strings.TrimFunc(identity, func(r rune) bool { return unicode.IsSpace(r) || r == '\uFEFF' }) != identity || strings.Contains(identity, "..") ||
 		strings.ContainsAny(identity, "/?#%") || strings.ContainsRune(identity, rune(92)) ||
 		strings.ContainsFunc(identity, unicode.IsControl) {
 		return false
