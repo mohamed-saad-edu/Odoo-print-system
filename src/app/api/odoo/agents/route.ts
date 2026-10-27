@@ -6,6 +6,7 @@ import { validateOdooKey } from "../../../../lib/odoo-auth";
 import { getAgentHeartbeatFreshness, getEffectiveAgentStatus } from "../../../../lib/agent-availability";
 import { gatewayNow, refreshClockSkew } from "../../../../lib/database-clock";
 import { TenantSubscriptionRequiredError, requireTenantBillingAccess } from "../../../../lib/entitlements";
+import { requireActiveTenantInTransaction, TenantSuspendedError, TenantDeletedError } from "../../../../lib/tenant-guard";
 
 export const dynamic = "force-dynamic";
 
@@ -31,6 +32,9 @@ export async function GET(req: Request) {
   }>;
   try {
     rows = await db.transaction(async (tx) => {
+      // Authentication is outside this transaction. Fence a concurrent tenant
+      // suspension before touching subscription and inventory (lock order).
+      await requireActiveTenantInTransaction(tx, apiKey.tenantId);
       await requireTenantBillingAccess(tx, apiKey.tenantId);
       return tx
         .select({
@@ -45,6 +49,9 @@ export async function GET(req: Request) {
         .orderBy(asc(agents.name));
     });
   } catch (error) {
+    if (error instanceof TenantSuspendedError || error instanceof TenantDeletedError) {
+      return NextResponse.json({ error: error.message, code: error.code }, { status: 403, headers: { "Cache-Control": "no-store" } });
+    }
     if (error instanceof TenantSubscriptionRequiredError) {
       return NextResponse.json(
         { error: error.message, code: "SUBSCRIPTION_REQUIRED" },
