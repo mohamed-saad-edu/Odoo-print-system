@@ -76,7 +76,9 @@ export async function listPrintJobHistory(input: JobHistoryOptions = {}) {
   else if (status === "success") predicates.push(sql`h.status = 'success'`);
   else if (status === "queued" || status === "claimed" || status === "printing" || status === "expired") predicates.push(sql`h.status = ${status}`);
   else if (status === "failed" || status === "unknown" || status === "attention") {
-    const unknown = sql`(${sql.join(PHYSICAL_OUTCOME_UNKNOWN_MARKERS.map(marker => sql`COALESCE(h.error, '') LIKE ${marker + "%"}`), sql` OR `)})`;
+    // Marker tokens contain '_' characters; LIKE treats them as wildcards.
+    // Exact prefix equality must match derivePhysicalOutcome()'s startsWith().
+    const unknown = sql`(${sql.join(PHYSICAL_OUTCOME_UNKNOWN_MARKERS.map(marker => sql`LEFT(COALESCE(h.error, ''), ${marker.length}) = ${marker}`), sql` OR `)})`;
     if (status === "failed") predicates.push(sql`h.status = 'failed' AND NOT ${unknown}`);
     else predicates.push(unknown);
   } else if (status === "unassigned") {

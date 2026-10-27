@@ -13,6 +13,31 @@ describe.skipIf(!hasTestDatabase)("tenant-scoped durable print history", () => {
   beforeEach(truncateAll);
   afterAll(closePool);
 
+  it("treats unknown physical-outcome markers as literal prefixes, not LIKE patterns", async () => {
+    const fixture = await seedFixture();
+    const real = "real-execution-timeout";
+    const lookalike = "lookalike-execution-timeout";
+    const rows = [
+      [real, "AGENT_EXECUTION_TIMEOUT: spooler result uncertain"],
+      [lookalike, "AGENTxEXECUTIONxTIMEOUT: definite pre-dispatch failure"],
+    ];
+    for (const [id, error] of rows) {
+      await pool().query(`
+        INSERT INTO print_job_receipts
+          (id, tenant_id, fingerprint, printer_id, agent_id, destination,
+           document_type, status, error, created_at, updated_at)
+        VALUES ($1, $2, $3, $4, $5, 'receipt', 'receipt', 'failed', $6,
+                clock_timestamp(), clock_timestamp())
+      `, [id, fixture.tenantId, "b".repeat(64), fixture.printerId, fixture.agentId, error]);
+    }
+    const uncertain = await listPrintJobHistory({ tenantId: fixture.tenantId, status: "unknown" });
+    expect(uncertain.map(row => row.id)).toEqual([real]);
+    expect(uncertain[0].physicalOutcome).toBe("unknown");
+    const failed = await listPrintJobHistory({ tenantId: fixture.tenantId, status: "failed" });
+    expect(failed.map(row => row.id)).toEqual([lookalike]);
+    expect(failed[0].physicalOutcome).toBe("not_printed");
+  });
+
   it("retains each workspace's job under a cross-table ID collision", async () => {
     const archived = await seedFixture();
     const live = await seedFixture();
