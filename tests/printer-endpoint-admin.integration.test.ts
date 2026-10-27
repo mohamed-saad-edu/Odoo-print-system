@@ -93,6 +93,38 @@ suite("physical endpoint convergence and credential-row erasure", () => {
     },
   );
 
+  it("refuses a requested printer ID already assigned to another physical queue", async () => {
+    const f = await seedFixture();
+    const manager = await createWorkspaceManagerTestSession(f.tenantId);
+    const first = { id: "explicit-queue-a", agentId: f.agentId, name: "Queue A",
+      printerType: "physical", deviceClass: "thermal",
+      connectionType: "spooler", protocol: "spooler",
+      config: { spooler_name: "Physical POS Queue A" } };
+    const second = { ...first, id: "explicit-queue-b", name: "Queue B",
+      config: { spooler_name: "Physical POS Queue B" } };
+    expect((await post(manager.token, first)).status).toBe(201);
+    expect((await post(manager.token, second)).status).toBe(201);
+
+    // Reuse of a different existing printer's ID must not be silently
+    // redirected to whichever physical endpoint happened to match first.
+    const wrongBinding = await post(manager.token, { ...first, id: second.id });
+    expect(wrongBinding.status).toBe(409);
+    expect(await wrongBinding.json()).toMatchObject({ code: "PRINTER_ENDPOINT_CONFLICT" });
+    const stored = await pool().query(
+      "SELECT id, config->>'spooler_name' AS queue FROM printers WHERE tenant_id=$1 AND id IN ($2,$3) ORDER BY id",
+      [f.tenantId, first.id, second.id],
+    );
+    expect(stored.rows).toEqual([
+      { id: first.id, queue: first.config.spooler_name },
+      { id: second.id, queue: second.config.spooler_name },
+    ]);
+    // A genuinely new Alias ID is still allowed to converge safely to
+    // an existing endpoint; this case is specifically an occupied ID.
+    const freshAlias = await post(manager.token, { ...first, id: "unused-queue-alias" });
+    expect(freshAlias.status).toBe(200);
+    expect((await freshAlias.json()).id).toBe(first.id);
+  });
+
   it("does not register an Agent discovery duplicate of an existing manager queue", async () => {
     const f = await seedFixture();
     const manager = await createWorkspaceManagerTestSession(f.tenantId);
