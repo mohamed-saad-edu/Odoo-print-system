@@ -1,6 +1,6 @@
 # NOTES.md — Yaseir Cloud Printing full-repository engineering coverage
 
-Source: `main@97cab650baad381a4538a7f6bf9e66b9af972731`. Re-scanned **1921 tracked files** in **89 directory groups** through GitHub's complete recursive tree (`truncated=false`). This is a coverage index, **not** a claim of line-by-line audit. This file is root-level, outside the Gateway/Agent/Odoo/Desktop product trees.
+Source: `main@044da674f157f350e5702e5e44428ac7911cab00`. Re-scanned **1924 tracked files** in **89 directory groups** through GitHub's complete recursive tree (`truncated=false`). This is a coverage index, **not** a claim of line-by-line audit. This file is root-level, outside the Gateway/Agent/Odoo/Desktop product trees.
 
 **Status semantics:** `TODO` = path enumerated, code/read/verification incomplete; `DONE` = code, cross-contract and exact-commit CI tests reviewed; `BLOCKED` = cannot verify as text through GitHub API or requires real hardware/staging. These are independent of existing per-file ledger statuses. Every path stays TODO/BLOCKED until evidence is linked; counts do not imply production readiness.
 
@@ -16,6 +16,7 @@ Source: `main@97cab650baad381a4538a7f6bf9e66b9af972731`. Re-scanned **1921 track
 | INPUT-PLATFORM-01 malformed fleet paging | Platform Owner inventory treated scientific/empty/fractional offset and limit tokens as valid by `Number()` coercion | `a39455104e18de51360c3bd4131c91acd563073b`: bounded exact decimal parsing and authenticated PostgreSQL route regression | Windows / Security & Resilience / Native Backport PASS on exact SHA; CI / Docker / Static Security CANCELLED during concurrent push activity | TODO |
 | PRINTER-IPP-ROOT-01 wrong queue identity | Gateway and Go identity folded explicit root URI into `/ipp/print`, although the endpoints can address different IPP queues | `12c6ca3d39a888ec12c27e8b27c9f5d63eec247a`; formatting follow-up `d9a24f171860fc009fc863bb850d4765e5c36689`; TypeScript + native Go regressions for root, empty path, default queue and hardware identity | Exact-SHA CI unfinished or cancelled by concurrent pushes; physical printer execution NOT RUN | TODO |
 | PRINTER-IPP-ROOT-02 native transport alignment | Legacy Go `normalizeIPPURL` silently rewrote explicit root to `/ipp/print`, and `PrinterBindingDigest` merged separate queues despite new stable-ID guards | Guarded GitHub commits: `5959e1ffe90116d5aa9da01235af95582893225d` (native transport), `c15806bb600c282618d4d993e2178ce378d00058` (binding digest), `58c06d38ffef49e41a00ebb31d71ae32cbd6f0c1` (privacy regression), `94321050aee470ea9913b641c3a162cd44503f46` (registry regression). Preserves `/ipp/print` fallback for bare hosts. | Exact-SHA CI results were queued/in progress or cancelled as later commits superseded; real physical IPP hardware NOT RUN | TODO |
+| PRINTER-IPP-ROOT-03 scheme-less shortcut identity | Gateway originally hashed `192.168.1.20:631` as the root queue while native IPP executable shorthand targets `/ipp/print` | `35e4350a6b2629b972e29a3f5e3e574b824b7042`, `255906fc7caf51c77be82cbfe85564f1959783fb`, parser-safe follow-up `e809f20de529f981e472f703c4000805c0f1545e`; regression preserves root queue distinction, exact default and rejects malformed shortcut path | Final SHA CI still queued/in-progress, physical printer NOT RUN | TODO |
 | HW-01 print result | Neither Gateway `success` nor spooler submission proves physical paper | Status contract requires independent explicit physical evidence; never auto-retry unknown | No physical printer attached through GitHub API | BLOCKED |
 | DATA-01 defense in depth | PostgreSQL RLS not enabled; predicates, composite FKs and transaction locks are tenant boundary | Audit every raw query, add safe migration only after staged design/coverage | Requires comprehensive source+staging audit | TODO |
 
@@ -2191,6 +2192,7 @@ Source: `main@97cab650baad381a4538a7f6bf9e66b9af972731`. Re-scanned **1921 track
 - TODO `tests/odoo-cross-tab-reservation.node.test.mjs`
 - TODO `tests/odoo-frontend-automation.node.test.mjs`
 - TODO `tests/odoo-gateway-activation-sync.test.ts`
+- TODO `tests/odoo-installation-directory-live-authority.integration.test.ts`
 - TODO `tests/odoo-kitchen-recovery.node.test.mjs`
 - TODO `tests/odoo-replay-admission-contention.integration.test.ts`
 - TODO `tests/odoo-runtime-discovery-billing.integration.test.ts`
@@ -2327,6 +2329,7 @@ Source: `main@97cab650baad381a4538a7f6bf9e66b9af972731`. Re-scanned **1921 track
 - TODO `tests/status-evidence-presentation.contract.test.mjs`
 - TODO `tests/status-observability.contract.test.mjs`
 - TODO `tests/subscription-editor-renewal.test.ts`
+- TODO `tests/subscription-owner-directory-live-authority.integration.test.ts`
 - TODO `tests/subscription-request-lifecycle.contract.test.ts`
 - TODO `tests/subscription-saas-ux.contract.test.ts`
 - TODO `tests/sweep-limit.regression.test.mjs`
@@ -2336,6 +2339,7 @@ Source: `main@97cab650baad381a4538a7f6bf9e66b9af972731`. Re-scanned **1921 track
 - TODO `tests/team-authorization.test.ts`
 - TODO `tests/team-directory-live-authority.integration.test.ts`
 - TODO `tests/team-invitation-authority.test.ts`
+- TODO `tests/team-invitation-read-authority.integration.test.ts`
 - TODO `tests/team-invitation-restoration.contract.test.ts`
 - TODO `tests/team-pagination.contract.test.mjs`
 - TODO `tests/team-role-i18n.contract.test.ts`
