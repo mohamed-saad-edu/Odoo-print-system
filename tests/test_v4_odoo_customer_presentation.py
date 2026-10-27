@@ -78,6 +78,15 @@ def test_error_translation_resolved_for_each_reader_not_stored_locale():
 def test_http_error_codes_take_priority_over_arbitrary_response_text():
     module = presenter()
     assert module.customer_error_category("malicious private English text", code="PRINT_QUOTA_EXCEEDED", status=403) == "quota"
+    # Machine codes describe a rejected, never-admitted job. An unrelated
+    # remote diagnostic string must not change the rejection category to a
+    # physically ambiguous outcome and hide the accurate local remedy.
+    assert module.customer_error_category(
+        "UNKNOWN_PARTIAL_DELIVERY: untrusted downstream text", code="PRINT_QUOTA_EXCEEDED", status=429
+    ) == "quota"
+    assert module.customer_error_category(
+        "UNKNOWN_SUBMISSION_OUTCOME: untrusted downstream text", code="TENANT_SUBSCRIPTION_REQUIRED", status=403
+    ) == "subscription"
     assert module.customer_error_category("secret", status=401) == "credential"
     assert module.customer_error_category("secret", status=429) == "busy"
     assert module.customer_error_category("secret", status=503) == "connection"
