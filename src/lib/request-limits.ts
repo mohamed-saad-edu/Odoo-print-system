@@ -24,7 +24,7 @@ export function clampListLimit(raw: string | null | undefined, fallback: number,
  */
 export function parseStrictListOffset(raw: string | null | undefined, max: number): number | null {
   if (raw == null) return 0;
-  if (!/^\\d+$/.test(raw)) return null;
+  if (!/^\d+$/.test(raw)) return null;
   const value = Number(raw);
   return Number.isSafeInteger(value) && value <= max ? value : null;
 }
