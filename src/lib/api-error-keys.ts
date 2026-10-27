@@ -42,7 +42,7 @@ const CODE_KEYS: Record<string, MessageKey> = {
   PRINTER_TRANSITION_BLOCKED: "errors.printerTransitionBlocked",
   PRINTER_LIFECYCLE_CONFLICT: "errors.printerLifecycleConcurrent",
   MISSING_PRINTER_ENDPOINT: "errors.printerEndpointMissing",
-  INVALID_PRINTER_ENDPOINT: "errors.printerEndpointMissing",
+  INVALID_PRINTER_ENDPOINT: "errors.printerEndpointInvalid",
   CAPABILITY_MISMATCH: "errors.capabilityMismatch",
   CAPABILITY_LOOKUP_FAILED: "errors.capabilityLookupFailed",
   DEVICE_NOT_APPROVED: "errors.deviceNotApproved",
