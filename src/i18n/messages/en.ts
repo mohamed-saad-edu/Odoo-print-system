@@ -2417,6 +2417,7 @@ export const en = {
   "errors.agentQueueFull": "This agent is busy with other jobs. Wait a moment and try again.",
   "errors.deviceNotApproved": "This device has not been approved yet. Approve it on the agent, then try again.",
   "errors.printerEndpointMissing": "This printer has no usable endpoint. Remove it and add it again.",
+  "errors.printerEndpointInvalid": "This printer’s destination is invalid, changed, or no longer approved. Review the connection and verify the correct printer before trying again.",
   "errors.capabilityLookupFailed": "We couldn’t read this printer’s capabilities. Check the printer, then try again.",
   "errors.apiKeyReadOnly": "This API key is read-only. Use a key with print permissions.",
   "errors.idempotencyConflict": "That request was already sent with a different payload. Send it again with a new idempotency key.",
