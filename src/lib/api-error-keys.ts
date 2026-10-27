@@ -29,11 +29,13 @@ const CODE_KEYS: Record<string, MessageKey> = {
   AGENT_ID_REQUIRED: "errors.agentIdRequired",
   AGENT_OFFLINE: "errors.agentOffline",
   AGENT_QUEUE_FULL: "errors.agentQueueFull",
+  MAX_AGENTS_EXCEEDED: "limit.title.agents",
   AGENT_STILL_CONNECTED: "errors.agentStillConnected",
   AGENT_HAS_HISTORY: "errors.agentHasHistory",
   LIFECYCLE_CONFLICT: "errors.lifecycleConflict",
   // Printers
   PRINTER_NOT_FOUND: "errors.printerNotFound",
+  MAX_PRINTERS_EXCEEDED: "limit.title.printers",
   PRINTER_NOT_SHARED: "printer.presentation.notSharedReason",
   PRINTER_OWNER_MISSING: "errors.printerOwnerMissing",
   PRINTER_INVALID_LIFECYCLE: "errors.printerInvalidLifecycle",
