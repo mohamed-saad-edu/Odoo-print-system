@@ -115,6 +115,56 @@ suite('V4 manual subscriptions security and accounting',()=>{
   expect((await customer.json()).requests[0]).toMatchObject({id,status:'approved'});
  });
 
+
+ it('approves monthly Go over an existing yearly contract without false revision errors, and records explicit changed terms',async()=>{
+   await db.insert(plans).values({id:'go',name:'Go',entitlements:{...entitlements,max_prints_per_period:2000}});
+   await mutateManualSubscription('workspace',claims,randomUUID(),input());
+   const created=await requestActivation(request('/api/subscription-requests',{planId:'go',term:'monthly'},ownerCookie));
+   expect(created.status).toBe(201);
+   const requestId=String((await created.json()).request.id);
+   const detail=await workspaceGET(new Request(origin+'/api/platform/tenants/workspace',{headers:{cookie:platformCookie}}),{params:Promise.resolve({id:'workspace'})});
+   expect(detail.status).toBe(200);
+   const data=await detail.json();
+   expect(data.subscription.revision).toBe(1);
+   expect(data.subscription.term).toBe('yearly');
+   expect(data.requests[0]).toMatchObject({id:requestId,term:'monthly',requestedMonthlyQuota:2000});
+   const start=new Date().toISOString();
+   const end=new Date(Date.now()+32*86400000).toISOString();
+   const change=input({action:'save',expectedRevision:data.subscription.revision,requestId,planId:'go',term:'monthly',monthlyQuota:2000,startDate:start,endDate:end});
+   const wrong=input({...change,term:'yearly'});
+   const context={params:Promise.resolve({id:'workspace'})};
+   const denied=await subscriptionPOST(request('/api/platform/tenants/workspace/subscription',wrong,platformCookie),context);
+   expect(denied.status).toBe(409);
+   expect(await denied.json()).toMatchObject({code:'SUBSCRIPTION_REQUEST_TERMS_MISMATCH'});
+   const key=randomUUID();
+   const response=await subscriptionPOST(request('/api/platform/tenants/workspace/subscription',change,platformCookie,key),context);
+   expect(response.status).toBe(200);
+   expect(await response.json()).toMatchObject({replayed:false});
+   const replay=await subscriptionPOST(request('/api/platform/tenants/workspace/subscription',change,platformCookie,key),context);
+   expect(replay.status).toBe(200);
+   expect(await replay.json()).toMatchObject({replayed:true});
+   const actual=await db.query.tenantSubscriptions.findFirst();
+   expect(actual).toMatchObject({planId:'go',term:'monthly',monthlyQuota:2000,status:'active',revision:2});
+   expect((await db.query.subscriptionRequests.findFirst())).toMatchObject({
+     id:requestId,status:'approved',approvalModified:false,approvedPlanId:'go',
+     approvedTerm:'monthly',approvedMonthlyQuota:2000,
+   });
+   await expect(mutateManualSubscription('workspace',claims,randomUUID(),change)).rejects.toMatchObject({code:'SUBSCRIPTION_REQUEST_CONFLICT'});
+ });
+ it('audits a consciously overridden request rather than silently rewriting the requested terms',async()=>{
+   await db.insert(plans).values({id:'go',name:'Go',entitlements:{...entitlements,max_prints_per_period:2000}});
+   const created=await requestActivation(request('/api/subscription-requests',{planId:'go',term:'monthly'},ownerCookie));
+   const requestId=String((await created.json()).request.id);
+   const termOverride=input({requestId,planId:'go',term:'yearly',monthlyQuota:2000,
+     allowRequestChanges:true,reason:'Customer and platform owner agreed to annual contract'});
+   const result=await mutateManualSubscription('workspace',claims,randomUUID(),termOverride);
+   expect(result.subscription.term).toBe('yearly');
+   expect((await db.query.subscriptionRequests.findFirst())).toMatchObject({
+     id:requestId,term:'monthly',approvedTerm:'yearly',approvalModified:true,status:'approved',
+   });
+   const read=await requestsGET(new Request(origin+'/api/subscription-requests',{headers:{cookie:ownerCookie}}));
+   expect((await read.json()).requests[0]).toMatchObject({status:'approved',term:'monthly',approvedTerm:'yearly',approvalModified:true});
+ });
  it('approves only the linked request, records history, and replays activation without changing revision or credits',async()=>{
   const record=await seedPendingRequest();
   const key=randomUUID(),body=input({requestId:record.id,subscriptionType:'free'});

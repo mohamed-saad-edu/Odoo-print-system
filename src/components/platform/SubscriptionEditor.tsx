@@ -72,26 +72,34 @@ function actionLabel(action: Action, t: (key: string) => string, editing: boolea
 }
 
 export function SubscriptionEditor({
-  tenantId, subscription, plans, request, onSaved,
+  tenantId, subscription, plans, request, onSaved, onConflict,
 }: {
   tenantId: string;
   subscription: ManualSubscription | null;
   plans: ManualPlan[];
   request?: PendingSubscriptionRequest;
   onSaved: () => void;
+  onConflict?: (code: string) => void;
 }) {
   const { a, formatNumber, formatDate } = useAdminText();
   const active = subscription?.effectiveStatus === "active";
-  const renewalFromRequest = !!request && active && !!subscription?.currentPeriodEnd;
+  // A different requested plan or term is a new contract, not a renewal of
+  // the former annual contract. Renewal is valid only for the same terms.
+  const renewalFromRequest = !!request && active &&
+    request.planId === subscription?.planId && request.term === subscription?.term &&
+    !!subscription?.currentPeriodEnd;
   const canReactivate = subscription?.status === "suspended" &&
     (!subscription.currentPeriodEnd || day(subscription.currentPeriodEnd) > day());
   const initialAction: Action = renewalFromRequest ? "renew" : request ? "save" : canReactivate ? "reactivate" : "save";
-  const initialTerm: Term = request?.term === "yearly" || request?.term === "custom" ? request.term :
-    subscription?.term === "yearly" || subscription?.term === "custom" ? subscription.term : "monthly";
-  const initialStart = active || renewalFromRequest ? day(subscription?.currentPeriodStart) : day();
+  const initialTerm: Term = request && ["monthly", "yearly", "custom"].includes(request.term)
+    ? request.term as Term
+    : subscription?.term === "yearly" || subscription?.term === "custom"
+      ? subscription.term : "monthly";
+  const initialStart = (active && !request) || renewalFromRequest ? day(subscription?.currentPeriodStart) : day();
   const renewalBase = laterDay(subscription?.currentPeriodEnd);
-  const initialEnd = renewalFromRequest ? endFor(renewalBase, initialTerm) :
-    active && !request ? day(subscription?.currentPeriodEnd) : endFor(initialStart, initialTerm);
+  const initialEnd = renewalFromRequest ? endFor(renewalBase, initialTerm)
+    : active && !request && subscription?.currentPeriodEnd
+      ? day(subscription.currentPeriodEnd) : endFor(initialStart, initialTerm);
   const selectedRequestPlan = plans.find(plan => plan.id === request?.planId);
   const initialQuota = request?.requestedMonthlyQuota ??
     selectedRequestPlan?.entitlements.max_prints_per_period ??
@@ -107,6 +115,9 @@ export function SubscriptionEditor({
   const [reference, setReference] = useState(subscription?.internalReference ?? "");
   const [editDates, setEditDates] = useState(false);
   const [leavePending, setLeavePending] = useState(false);
+  const [allowRequestChanges, setAllowRequestChanges] = useState(false);
+  const [canRefresh, setCanRefresh] = useState(false);
+  const [lastErrorCode, setLastErrorCode] = useState("");
   const [reason, setReason] = useState("");
   const [password, setPassword] = useState("");
   const [preview, setPreview] = useState<Preview | null>(null);
@@ -119,6 +130,8 @@ export function SubscriptionEditor({
   const showTerm = full && (action === "renew" || activating || editDates);
   const showCustomDates = full && showTerm && term === "custom";
   const title = activating && leavePending && !request ? a("savePendingSubscription") : actionLabel(action, a, editing, request);
+  const requestTermsDiffer = !!request && (planId !== request.planId || term !== request.term ||
+    (request.requestedMonthlyQuota !== null && Number(quota) !== request.requestedMonthlyQuota));
 
   const extraActions: Action[] = !subscription || request ? [] : [
     ...(active && subscription.currentPeriodEnd ? ["renew", "extend"] as Action[] : []),
@@ -131,6 +144,7 @@ export function SubscriptionEditor({
 
   function selectAction(next: Action) {
     setError("");
+    setCanRefresh(false);
     setPreview(null);
     setAction(next);
     if (next === "renew" && subscription?.currentPeriodEnd) {
@@ -163,6 +177,21 @@ export function SubscriptionEditor({
       setEnd(endFor(action === "renew" ? laterDay(subscription?.currentPeriodEnd) : start, value));
     }
   }
+  function toggleRequestedTerms() {
+    if (!request) return;
+    const next = !allowRequestChanges;
+    setAllowRequestChanges(next);
+    setError("");
+    setPreview(null);
+    if (!next) {
+      setPlanId(request.planId);
+      setQuota(String(request.requestedMonthlyQuota ??
+        plans.find(plan => plan.id === request.planId)?.entitlements.max_prints_per_period ?? 1000));
+      const originalTerm: Term = ["monthly","yearly","custom"].includes(request.term) ? request.term as Term : "monthly";
+      setTerm(originalTerm);
+      setEnd(endFor(action === "renew" ? laterDay(subscription?.currentPeriodEnd) : start, originalTerm));
+    }
+  }
 
   function prepare(event: React.FormEvent) {
     event.preventDefault();
@@ -192,7 +221,7 @@ export function SubscriptionEditor({
         internalReference: reference,
       } : {}),
       ...(action === "extend" ? { endDate: instant(end) } : {}),
-      ...(request && full ? { requestId:request.id } : {}),
+      ...(request && full ? { requestId:request.id, ...(allowRequestChanges ? { allowRequestChanges: true } : {}) } : {}),
     };
     setPreview({ body, key: crypto.randomUUID() });
   }
@@ -202,6 +231,7 @@ export function SubscriptionEditor({
     if (!preview || busy || !reason.trim() || !password) return;
     setBusy(true);
     setError("");
+    setCanRefresh(false);
     const proof = password;
     setPassword("");
     try {
@@ -217,9 +247,18 @@ export function SubscriptionEditor({
       setPreview(null);
       onSaved();
     } catch (caught) {
-      const conflict = caught instanceof Error &&
-        ["SUBSCRIPTION_REVISION_CONFLICT", "SUBSCRIPTION_REQUEST_CONFLICT"].includes(caught.message);
-      setError(a(conflict ? "conflict" : "saveError"));
+      const code = caught instanceof Error ? caught.message : "";
+      const recoverable = ["SUBSCRIPTION_REVISION_CONFLICT", "SUBSCRIPTION_REQUEST_CONFLICT", "SUBSCRIPTION_REQUEST_TERMS_MISMATCH"].includes(code);
+      setCanRefresh(recoverable);
+      setLastErrorCode(code);
+      const label = code === "SUBSCRIPTION_REVISION_CONFLICT" ? "revisionConflict"
+        : code === "SUBSCRIPTION_REQUEST_CONFLICT" ? "requestConflict"
+        : code === "SUBSCRIPTION_REQUEST_TERMS_MISMATCH" ? "requestTermsMismatch"
+        : code === "PASSWORD_CONFIRMATION_FAILED" ? "incorrectPassword"
+        : code === "PLATFORM_REAUTH_REQUIRED" || code === "SESSION_EXPIRED" || code === "UNAUTHORIZED" ? "sessionExpired"
+        : code === "SUBSCRIPTION_DATES_INVALID" ? "invalidDates"
+        : code === "SUBSCRIPTION_REASON_REQUIRED" ? "reasonRequired" : "saveError";
+      setError(a(label));
     } finally {
       setBusy(false);
     }
@@ -241,7 +280,10 @@ export function SubscriptionEditor({
         {request && <p className="text-sm text-ink-3">{a("requestDecisionHint")}</p>}
       </div>
     </div>
-    {error && <p role="alert" className="mb-4 text-sm text-bad">{error}</p>}
+    {error && <div role="alert" className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-bad/20 p-3 text-sm text-bad">
+      <span>{error}</span>
+      {canRefresh && onConflict && <Button type="button" variant="secondary" onClick={() => onConflict(lastErrorCode)}>{a("refreshAndReview")}</Button>}
+    </div>}
 
     {preview ? <form onSubmit={save} className="space-y-5">
       <h3 className="font-semibold">{a("previewTitle")}</h3>
@@ -251,6 +293,14 @@ export function SubscriptionEditor({
           <div><dt className="text-ink-3">{a("plan")}</dt><dd className="mt-1 font-semibold">{plans.find(plan => plan.id === planId)?.name ?? a("notRecorded")}</dd></div>
           <div><dt className="text-ink-3">{a("quota")}</dt><dd className="mt-1 font-semibold">{formatNumber(Number(quota))}</dd></div>
           <div><dt className="text-ink-3">{a("term")}</dt><dd className="mt-1">{a(term)}</dd></div>
+          {request && <div><dt className="text-ink-3">{a("requestedTerms")}</dt>
+            <dd className="mt-1">{plans.find(plan => plan.id === request.planId)?.name ?? request.planId} · {a(request.term)}
+              {request.requestedMonthlyQuota !== null ? " · " + formatNumber(request.requestedMonthlyQuota) : ""}
+            </dd>
+          </div>}
+          {requestTermsDiffer && <div><dt className="text-ink-3">{a("approvedTerms")}</dt>
+            <dd className="mt-1 font-semibold">{plans.find(plan => plan.id === planId)?.name ?? planId} · {a(term)} · {formatNumber(Number(quota))}</dd>
+          </div>
           <div><dt className="text-ink-3">{a("type")}</dt><dd className="mt-1">{a(type)}</dd></div>
           <div><dt className="text-ink-3">{a(action === "renew" ? "contractStart" : "start")}</dt><dd className="mt-1"><time dateTime={start}>{formatDate(start)}</time></dd></div>
           {activating && leavePending && !request && <div><dt className="text-ink-3">{a("status")}</dt><dd>{a("awaiting_activation")}</dd></div>}
@@ -263,18 +313,26 @@ export function SubscriptionEditor({
           // A changed reason changes the request digest, so use a new operation key.
           setPreview(current => current ? { ...current, key: crypto.randomUUID() } : current);
         }} />)}
+      {requestTermsDiffer && <p className="text-sm text-ink-3">{a("changeReasonHint")}</p>}
       {field("password", <input className={controlClass} type="password" autoComplete="current-password"
         required maxLength={4096} value={password} onChange={event => setPassword(event.target.value)} />)}
       <div className="flex flex-wrap gap-3">
-        <Button type="submit" disabled={busy || !reason.trim() || !password} loading={busy}>{a("confirm")}</Button>
+        <Button type="submit" disabled={busy || !reason.trim() || !password || (requestTermsDiffer && reason.trim().length < 10)} loading={busy}>{a("confirm")}</Button>
         <Button type="button" variant="secondary" disabled={busy} onClick={() => {
           setPreview(null); setPassword("");
         }}>{a("cancel")}</Button>
       </div>
     </form> : <>
       {full ? <form className="space-y-4" onSubmit={prepare}>
+        {request && <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg bg-surface-2 p-3 text-sm">
+          <span>{a("requestedTerms")}: <strong>{plans.find(plan => plan.id === request.planId)?.name ?? request.planId} · {a(request.term)}</strong></span>
+          <Button type="button" variant="secondary" onClick={toggleRequestedTerms}>
+            {a(allowRequestChanges ? "restoreRequestedTerms" : "adjustRequestTerms")}
+          </Button>
+          {allowRequestChanges && <p className="w-full text-ink-3">{a("adjustRequestNotice")}</p>}
+        </div>}
         <div className="grid gap-4 sm:grid-cols-2">
-          {field("plan", <select className={controlClass} required disabled={!!request} value={planId}
+          {field("plan", <select className={controlClass} required disabled={!!request && !allowRequestChanges} value={planId}
             onChange={event => {
               setPlanId(event.target.value);
               const selected = plans.find(plan => plan.id === event.target.value);
@@ -285,9 +343,9 @@ export function SubscriptionEditor({
               <option key={plan.id} value={plan.id}>{plan.name}</option>)}
           </select>)}
           {field("quota", <input className={controlClass} required type="number" min={1} max={2147483647} step={1}
-            disabled={!!request && request.requestedMonthlyQuota !== null}
+            disabled={!!request && !allowRequestChanges && request.requestedMonthlyQuota !== null}
             value={quota} onChange={event => setQuota(event.target.value)} />)}
-          {showTerm && field("term", <select className={controlClass} value={term} disabled={!!request}
+          {showTerm && field("term", <select className={controlClass} value={term} disabled={!!request && !allowRequestChanges}
             onChange={event => changeTerm(event.target.value as Term)}>
             {(["monthly", "yearly", "custom"] as const).map(v => <option key={v} value={v}>{a(v)}</option>)}
           </select>)}

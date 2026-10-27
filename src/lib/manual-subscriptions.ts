@@ -40,6 +40,7 @@ export type ManualSubscriptionInput = {
   reason: string;
   internalReference?: string;
   requestId?: string;
+  allowRequestChanges?: boolean;
 };
 // Date.parse accepts rolled-over calendar dates and host-local timestamps.
 // Contracts need an actual calendar date with an explicit timezone before a
@@ -52,6 +53,8 @@ export function parseManualSubscriptionInput(value: unknown): ManualSubscription
   if (typeof b.action!=="string" || !["save","renew","extend","suspend","reactivate","cancel_at_end","revoke"].includes(b.action) || !Number.isSafeInteger(b.expectedRevision) || Number(b.expectedRevision)<0) throw new ManualSubscriptionError("SUBSCRIPTION_INVALID");
   if (typeof b.reason!=="string" || !b.reason.trim() || b.reason.length>500) throw new ManualSubscriptionError("SUBSCRIPTION_REASON_REQUIRED");
   for (const key of ["internalReference","requestId","planId"] as const) if (b[key]!==undefined && (typeof b[key]!=="string" || b[key].length>200)) throw new ManualSubscriptionError("SUBSCRIPTION_INVALID");
+  if (b.allowRequestChanges !== undefined && typeof b.allowRequestChanges !== "boolean") throw new ManualSubscriptionError("SUBSCRIPTION_INVALID");
+  if (b.allowRequestChanges === true && (!b.requestId || !["save","renew"].includes(String(b.action)))) throw new ManualSubscriptionError("SUBSCRIPTION_INVALID");
   if (["save","renew"].includes(b.action)) {
     if (typeof b.planId!=="string" || typeof b.subscriptionType!=="string" || !["free","paid"].includes(b.subscriptionType) || typeof b.term!=="string" || !["monthly","yearly","custom"].includes(b.term) || !Number.isSafeInteger(b.monthlyQuota) || Number(b.monthlyQuota)<1 || Number(b.monthlyQuota)>2147483647 || typeof b.status!=="string" || !["active","awaiting_activation"].includes(b.status)) throw new ManualSubscriptionError("SUBSCRIPTION_INVALID");
     if (!subscriptionDate.safeParse(b.startDate).success) throw new ManualSubscriptionError("SUBSCRIPTION_DATES_INVALID");
@@ -79,8 +82,10 @@ export async function mutateManualSubscription(tenantId: string, actor: Platform
       if (previous.requestDigest!==digest || previous.actorId!==actor.userId) throw new ManualSubscriptionError("IDEMPOTENCY_CONFLICT",409);
       return {subscription:previous.after,replayed:true};
     }
-    // A linked approval must match the customer's pending request exactly.
+    // A linked approval preserves the original customer intent; a Platform
+    // Owner may explicitly approve different terms, with a separate snapshot.
     // Unrelated subscription changes may still be made without a requestId.
+    let requestApproval: {planId:string;term:string;monthlyQuota:number|null;modified:boolean}|null=null;
     if (input.requestId) {
       if ((input.action !== "save" && input.action !== "renew") || input.status !== "active") {
         throw new ManualSubscriptionError("SUBSCRIPTION_REQUEST_CONFLICT",409);
@@ -88,10 +93,17 @@ export async function mutateManualSubscription(tenantId: string, actor: Platform
       const request=await tx.execute(sql`SELECT plan_id AS "planId",term,requested_monthly_quota AS "requestedMonthlyQuota"
         FROM subscription_requests WHERE id=${input.requestId} AND tenant_id=${tenantId} AND status='pending' FOR UPDATE`);
       const requested=request.rows[0];
-      if (!requested || input.planId !== requested.planId || input.term !== requested.term ||
-          (requested.requestedMonthlyQuota !== null && input.monthlyQuota !== Number(requested.requestedMonthlyQuota))) {
-        throw new ManualSubscriptionError("SUBSCRIPTION_REQUEST_CONFLICT",409);
+      if (!requested) throw new ManualSubscriptionError("SUBSCRIPTION_REQUEST_CONFLICT",409);
+      const requestedQuota = requested.requestedMonthlyQuota===null ? null : Number(requested.requestedMonthlyQuota);
+      const modified = input.planId !== requested.planId || input.term !== requested.term ||
+        (requestedQuota!==null && input.monthlyQuota !== requestedQuota);
+      if (modified && input.allowRequestChanges !== true) {
+        throw new ManualSubscriptionError("SUBSCRIPTION_REQUEST_TERMS_MISMATCH",409);
       }
+      if (modified && input.reason.trim().length < 10) {
+        throw new ManualSubscriptionError("SUBSCRIPTION_REASON_REQUIRED",400);
+      }
+      requestApproval = {planId:String(requested.planId),term:String(requested.term),monthlyQuota:requestedQuota,modified};
     }
     const before=await tx.query.tenantSubscriptions.findFirst({where:eq(tenantSubscriptions.tenantId,tenantId)});
     if ((before?.revision??0)!==input.expectedRevision) throw new ManualSubscriptionError("SUBSCRIPTION_REVISION_CONFLICT",409);
@@ -129,11 +141,20 @@ export async function mutateManualSubscription(tenantId: string, actor: Platform
     const after=await tx.query.tenantSubscriptions.findFirst({where:eq(tenantSubscriptions.tenantId,tenantId)});
     const snapshot=publicSnapshot(after!)!;
     if (input.requestId) {
-      const approved=await tx.update(subscriptionRequests).set({status:'approved',lastActionBy:actor.userId,lastActionAt:sql`clock_timestamp()`,lastActionReason:input.reason,subscriptionRevision:after!.revision}).where(and(eq(subscriptionRequests.id,input.requestId),eq(subscriptionRequests.tenantId,tenantId),eq(subscriptionRequests.status,'pending'))).returning({id:subscriptionRequests.id});
+      const approved=await tx.update(subscriptionRequests).set({
+        status:'approved',lastActionBy:actor.userId,lastActionAt:sql`clock_timestamp()`,
+        lastActionReason:input.reason,subscriptionRevision:after!.revision,
+        approvedPlanId:input.planId,approvedTerm:input.term,approvedMonthlyQuota:input.monthlyQuota,
+        approvalModified:requestApproval?.modified??false,
+      }).where(and(eq(subscriptionRequests.id,input.requestId),eq(subscriptionRequests.tenantId,tenantId),eq(subscriptionRequests.status,'pending'))).returning({id:subscriptionRequests.id});
       if (!approved.length || after!.status!=='active') throw new ManualSubscriptionError("SUBSCRIPTION_REQUEST_CONFLICT",409);
     }
     await tx.insert(subscriptionChanges).values({id:`chg_${nanoid(20)}`,tenantId,actorId:actor.userId,action:input.action,idempotencyKey:key,requestDigest:digest,before:publicSnapshot(before??null),after:snapshot,reason:input.reason});
-    await writeAuditEvent({tenantId,actorType:'platform',actorId:actor.userId,action:`subscription.${input.action}`,resourceType:'subscription',resourceId:tenantId,metadata:{before:publicSnapshot(before??null),after:snapshot,reason:input.reason}},tx);
+    await writeAuditEvent({tenantId,actorType:'platform',actorId:actor.userId,action:`subscription.${input.action}`,resourceType:'subscription',resourceId:tenantId,metadata:{
+      before:publicSnapshot(before??null),after:snapshot,reason:input.reason,
+      ...(input.requestId?{requestId:input.requestId,requestedTerms:requestApproval,
+        approvedTerms:{planId:input.planId,term:input.term,monthlyQuota:input.monthlyQuota}}:{}),
+    }},tx);
     return {subscription:snapshot,replayed:false};
   });
 }

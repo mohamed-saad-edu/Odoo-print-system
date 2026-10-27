@@ -694,6 +694,13 @@
       "when": 1793059200002,
       "tag": "0098_manual_only_billing",
       "breakpoints": true
+    },
+    {
+      "idx": 99,
+      "version": "7",
+      "when": 1793059200003,
+      "tag": "0099_subscription_approval_terms",
+      "breakpoints": true
     }
   ]
 }

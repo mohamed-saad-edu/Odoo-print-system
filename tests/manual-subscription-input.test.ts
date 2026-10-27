@@ -37,4 +37,12 @@ describe("manual subscription input boundary", () => {
       startDate: "2026-10-01T03:00:00+03:00", endDate: "2026-11-01T03:00:00+03:00",
     })).toMatchObject({ startDate: "2026-10-01T03:00:00+03:00" });
   });
+  it("requires an explicit linked request for adjusted approvals",()=>{
+    expect(() => parseManualSubscriptionInput({...valid,allowRequestChanges:true})).toThrow("SUBSCRIPTION_INVALID");
+    expect(() => parseManualSubscriptionInput({...valid,requestId:"req_example",allowRequestChanges:"yes"})).toThrow("SUBSCRIPTION_INVALID");
+    expect(parseManualSubscriptionInput({...valid,requestId:"req_example",allowRequestChanges:true})).toMatchObject({
+      requestId:"req_example",allowRequestChanges:true,
+    });
+  });
+
 });

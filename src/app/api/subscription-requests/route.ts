@@ -13,7 +13,13 @@ import { writeAuditEvent } from "../../../lib/audit";
 import { nanoid } from "../../../lib/nanoid";
 import { activationWhatsAppUrl } from "../../../lib/activation-contact";
 import { databaseNowMs } from "../../../lib/database-clock";
-const safeRequest=(r:typeof subscriptionRequests.$inferSelect)=>({id:r.id,reference:r.id,status:r.status,createdAt:r.createdAt,planId:r.planId,term:r.term,requestedMonthlyQuota:r.requestedMonthlyQuota,whatsappUrl:activationWhatsAppUrl(r.id)});
+const safeRequest=(r:typeof subscriptionRequests.$inferSelect)=>({
+  id:r.id,reference:r.id,status:r.status,createdAt:r.createdAt,
+  planId:r.planId,term:r.term,requestedMonthlyQuota:r.requestedMonthlyQuota,
+  approvedPlanId:r.approvedPlanId,approvedTerm:r.approvedTerm,
+  approvedMonthlyQuota:r.approvedMonthlyQuota,approvalModified:r.approvalModified,
+  whatsappUrl:activationWhatsAppUrl(r.id),
+});
 export async function GET(req:Request) {
   try {
     const actor=await validateWorkspaceManager(req);
