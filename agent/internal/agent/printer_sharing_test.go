@@ -197,6 +197,30 @@ func TestCloudDiscoverySharingUsesFreshNativeShareGroupsBeforeRegistryPersistenc
 	}
 }
 
+// A currently shared canonical cloud alias must remain shared. Revoking the
+// physical binding must then deny that exact Agent-scoped alias even if the
+// native backend has disappeared, without treating a foreign alias as local.
+func TestCloudAliasPrivacySurvivesBackendRemovalWithoutHidingSharedAliases(t *testing.T) {
+	ag, local := prepareSharingTestAgent(t, &fakePrinter{})
+	alias := gatewayAliasPrinterID(local.ID, ag.cfg.Agent.ID)
+	ag.gatewayOwned[alias] = struct{}{}
+	snapshot := ag.loadLocalPrinterSharing()
+	ids, complete := ag.privatePrinterIDs(snapshot)
+	if !complete || strings.Contains(","+strings.Join(ids, ",")+",", ","+alias+",") {
+		t.Fatalf("live shared cloud alias incorrectly denied: ids=%v complete=%v", ids, complete)
+	}
+	if err := config.SetPrinterSharing(ag.configPath, local, nil, false); err != nil {
+		t.Fatal(err)
+	}
+	// Removal of the executable backend must not erase a durable opt-out.
+	delete(ag.printers, local.ID)
+	snapshot = ag.loadLocalPrinterSharing()
+	ids, complete = ag.privatePrinterIDs(snapshot)
+	if !complete || !strings.Contains(","+strings.Join(ids, ",")+",", ","+alias+",") {
+		t.Fatalf("unshared cloud alias disappeared after backend removal: ids=%v complete=%v", ids, complete)
+	}
+}
+
 func TestAgentSharingPrivateInventoryIncludesRuntimeDesiredAndScopedAliases(t *testing.T) {
 	ag, local := prepareSharingTestAgent(t, &fakePrinter{status: "offline"})
 	if err := config.SetPrinterSharing(ag.configPath, local, nil, false); err != nil {
