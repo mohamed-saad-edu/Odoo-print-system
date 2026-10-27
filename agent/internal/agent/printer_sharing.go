@@ -144,19 +144,11 @@ func validGatewaySharingID(id string) bool {
 	if id == "" || !utf8.ValidString(id) || strings.TrimSpace(id) != id || strings.ContainsFunc(id, unicode.IsControl) {
 		return false
 	}
-	// Zod string length is UTF-16 code units. Avoid rejecting every page of a
-	// snapshot because an old local ID could never fit the Gateway contract.
-	units := 0
-	for _, r := range id {
-		units++
-		if r > 0xffff {
-			units++
-		}
-		if units > 120 {
-			return false
-		}
-	}
-	return true
+	// The Gateway's isExactPrinterId enforces 120 UTF-8 bytes, not 120
+	// UTF-16 code units. Go len measures bytes for a verified UTF-8 string.
+	// Withhold unreportable legacy IDs and flag the inventory incomplete
+	// rather than submitting a heartbeat the Gateway would reject in full.
+	return len(id) <= 120
 }
 
 func (a *Agent) localPrinterBindingDisabled(pc config.PrinterConfig) bool {
