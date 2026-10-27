@@ -152,6 +152,12 @@ func writePrintPayload(ctx context.Context, conn net.Conn, data []byte, address 
 			return written, fmt.Errorf("set printer write deadline: %w", err)
 		}
 		n, err := conn.Write(chunk)
+		if n < 0 || n > len(chunk) {
+			// Inconsistent transport counters are not byte-delivery proof.
+			// Never index with a negative offset or treat an over-report
+			// as a completed receipt. The attempted write is ambiguous.
+			return written, MarkUnknown("network write to %s returned invalid confirmed-byte count %d for %d-byte chunk after %d/%d bytes", address, n, len(chunk), written, len(data))
+		}
 		written += n
 		if err != nil {
 			// Once Write was attempted, a zero byte *return count* does not
