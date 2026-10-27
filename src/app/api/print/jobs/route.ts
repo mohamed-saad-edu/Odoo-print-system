@@ -15,6 +15,7 @@ import { databaseNowMs } from "../../../../lib/database-clock";
 import { databaseErrorLogFields } from "../../../../lib/database-error-log";
 import { and, eq, isNotNull } from "drizzle-orm";
 import { z } from "zod";
+import { isExactIdempotencyKey } from "../../../../lib/idempotency";
 import { isExactPrinterId } from "../../../../lib/exact-printer-id";
 
 export const dynamic = "force-dynamic";
@@ -42,7 +43,7 @@ const bodySchema = z.object({
   destination: z.string().trim().min(1).max(255).optional(),
   payload: z.unknown(),
   expiresAt: z.string().optional(),
-  idempotencyKey: z.string().trim().min(1).max(200).optional(),
+  idempotencyKey: z.string().min(1).max(200).refine(isExactIdempotencyKey, { message: "idempotencyKey must match the original operation exactly" }).optional(),
   // S06-006: optional only for legacy callers; v2 fields must travel together.
   idempotencyVersion: z.literal(2).optional(),
   installationId: z.string().optional(),
