@@ -2705,3 +2705,19 @@ The recursive GitHub tree at `main@2fa5f7454872d575dfad68a1c1f4668dea204e0e` has
 - **API-I18N-PAGINATION-008 (LOW):** Cross-tenant Platform fleet, jobs and integrations endpoints return `INVALID_PAGINATION` for invalid page size or cursor offsets. The Gateway `apiMessageKey` map previously omitted this code, so user-facing Arabic/English components silently received generic request-rejection copy, unlike the correctly specialized `INVALID_LIMIT` and `INVALID_OFFSET` codes.
 - **Fix:** Added `errors.invalidPagination` to both EN/AR catalogues, then mapped the exact API code without changing any server validation or auth gate. Commits `bda5b8c266d2b40c1000df21d575e1dd7593662a`, `b42b499658377e387a2076bf5f9a4b0e652581a9`, `8bcb995cfba4b4a2d5d95987632630b84b465b6c`. Added direct locale and API-code regression `tests/api-error-contract.test.ts` in `e86c71e46ca8cfed0dea94fe5608b2e68d3724ec`.
 - **Verification:** GitHub CI run `40603287580` was QUEUED at initial inspection, no PASS claimed. Current source and regression present on `main`. No local test runner, no deployment, no billing/migration change. User-facing page-size/cursor copy only; tenant isolation and printer safety untouched.
+
+## 2026-10-28 — ODOO-V2-UNICODE-009: canonical Unicode identity parity
+
+- **Root cause (source-confirmed, Gateway + Odoo):** Python `idempotency_namespace.py::wire_key(version=2)` rejects ill-formed UTF-16 surrogate sequences because they cannot be encoded as UTF-16/UTF-8. Gateway `parseOdooIdentity` previously tested only JavaScript `operation.length` (1..200 UTF-16 units). `JSON.stringify` could hash an isolated surrogate and admit a v2 operation identity the Odoo outbox would never emit. The Platform operator manual legacy reconciliation GET/POST used a separate, weaker `z.string().min(1).max(200)` boundary. Historical v1 bytes must not be changed.
+- **Regression source:** `cee40573ad4ca3a727fe9eb29ff0679ba72c66e1` adds Node tests for standalone/embedded invalid high/low surrogates and resolution schema parity, preserving valid astral Unicode. `e374af93e13375ee201ac841ddc3939ad00a2f04` adds independent Python parity cases.
+- **Fix source:** `fdee05ef0d78518e5737326051cd002213ffd62a` exports a shared pure `isValidOdooV2OperationId` rejecting isolated surrogates and preserving 200-unit limit; `9496808246b8d3427a763ef02989bf1e5a988b7d` uses that validator in Platform reconciliation requests. No data deletion, protocol fallback, v1 hashing change or deployment.
+- **Verification:** Exact-commit CI for `949680824`, run `40603425382`, was queued at latest inspection. Node/Python RED and GREEN execution, PostgreSQL reconciliation integration and physical Odoo POS/Windows printer acceptance **NOT RUN**. Keep all affected directory/module statuses TODO (source partially reviewed) until exact-SHA CI and all relevant tests complete.
+
+### Tree re-scan (untruncated)
+
+At `main@9cc31103851f642543bb51dd22353487b00f5578`, GitHub recursive tree lists **1929** tracked files, `truncated=false`. The existing note remains an inventory, not signoff. Newly observed paths (not present in previous note) are indexed **TODO**:
+- TODO `agent/internal/agent/printer_sharing_utf8_contract_test.go` — read/test this source and verify its contracts on exact main SHA
+- TODO `tests/billing-status-live-authority.integration.test.ts` — read/test this source and verify its contracts on exact main SHA
+- TODO `tests/billing-usage-live-owner.integration.test.ts` — read/test this source and verify its contracts on exact main SHA
+- TODO `tests/odoo-configuration-inventory-live-authority.integration.test.ts` — read/test this source and verify its contracts on exact main SHA
+- TODO `tests/odoo-keys-inventory-live-authority.integration.test.ts` — read/test this source and verify its contracts on exact main SHA
