@@ -37,6 +37,32 @@ test('v2 operation identity uses UTF-16 code units, not Unicode code points', ()
   }), /INVALID_INSTALLATION_IDENTITY/);
 });
 
+test('v2 refuses ill-formed UTF-16 operation ids even when a matching hash is supplied', () => {
+  // Python Odoo rejects these before durable admission: UTF-16/UTF-8
+  // cannot encode a standalone surrogate, but JS JSON.stringify can.
+  const high = String.fromCharCode(0xD800);
+  const low = String.fromCharCode(0xDC00);
+  for (const operation of [high, low, 'a' + high + 'b', 'a' + low + 'b', high + high, high + 'a' + low]) {
+    assert.throws(() => parseOdooIdentity({
+      idempotencyVersion: 2, installationId: a, installationProof: 'p'.repeat(43),
+      sourceCompanyId: '7', sourceOperationId: operation,
+      idempotencyKey: makeV2OdooKey(a, '7', operation),
+    }), /INVALID_INSTALLATION_IDENTITY/);
+  }
+  const valid = 'prefix-' + String.fromCodePoint(0x1f5a8) + '-suffix';
+  assert.equal(parseOdooIdentity({
+    idempotencyVersion: 2, installationId: a, installationProof: 'p'.repeat(43),
+    sourceCompanyId: '7', sourceOperationId: valid,
+    idempotencyKey: makeV2OdooKey(a, '7', valid),
+  }).sourceOperationId, valid);
+});
+
+test('operator reconciliation uses the same v2 Unicode identity guard as print admission', async () => {
+  const { readFileSync } = await import('node:fs');
+  const source = readFileSync('src/app/api/odoo/installations/resolutions/route.ts', 'utf8');
+  assert.match(source, /sourceOperationId:\s*z\.string\(\)\.refine\(isValidOdooV2OperationId/);
+});
+
 test('legacy history requires approved resolution and never infers owner from bytes alone', () => {
   assert.equal(classifyLegacyCollision(true,null),'RECONCILIATION_REQUIRED');
   assert.equal(classifyLegacyCollision(true,'reuse'),'reuse');
