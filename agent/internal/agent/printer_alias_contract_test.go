@@ -42,3 +42,21 @@ func TestPrinterAliasPrefixCannotChooseDifferentPrinter(t *testing.T) {
 		t.Fatalf("alias reused another printer's digest: %q", got)
 	}
 }
+
+func TestGatewayAliasCannotBeShadowedByAnotherExactLocalPrinterID(t *testing.T) {
+	ag := newTestAgent(t, "native-b", &fakePrinter{})
+	alias := gatewayAliasPrinterID("native-b", ag.cfg.Agent.ID)
+	// The local queue named by the literal alias is NOT the "native-b"
+	// backend that the Gateway meant to reach.
+	ag.printers[alias] = &fakePrinter{}
+	if got := ag.resolvePrinterAlias(alias); got != "" {
+		t.Fatalf("ambiguous cloud alias selected %q instead of failing closed", got)
+	}
+	if got := ag.resolvePrinterAlias("native-b"); got != "native-b" {
+		t.Fatalf("plain exact local ID must keep its identity: %q", got)
+	}
+	delete(ag.printers, "native-b")
+	if got := ag.resolvePrinterAlias(alias); got != alias {
+		t.Fatalf("unambiguous literal alias-shaped ID was rejected: %q", got)
+	}
+}
