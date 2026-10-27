@@ -150,10 +150,9 @@ export async function mutateManualSubscription(tenantId: string, actor: Platform
       if (end <= start) throw new ManualSubscriptionError("SUBSCRIPTION_DATES_INVALID");
       if (input.action==='renew' && (!before || !before.currentPeriodEnd || end<=before.currentPeriodEnd)) throw new ManualSubscriptionError("SUBSCRIPTION_DATES_INVALID");
       // A renewal extends the same contract and retains original start; it never
-      // replaces or resets the independent 30-day allowance ledger.
-      // The allowance clock starts when printing is first activated, not when
-      // the customer requested access or when an earlier pending row was made.
-      // Existing active subscriptions retain their immutable original anchor.
+      // replaces or resets the independent UTC calendar-month allowance ledger.
+      // Retain the historical first-activation anchor for migration/audit only;
+      // the quota ledger now uses UTC calendar-month boundaries (0102).
       const firstActivation = input.status === 'active' && (!before || before.status === 'awaiting_activation');
       let cycleAnchor = before?.printCycleAnchor ?? null;
       if (firstActivation && !cycleAnchor) {
@@ -173,7 +172,7 @@ export async function mutateManualSubscription(tenantId: string, actor: Platform
       if (input.action==='reactivate') {
         if (before.status!=='suspended') throw new ManualSubscriptionError('SUBSCRIPTION_REQUEST_CONFLICT',409);
         const now=await tx.execute(sql`SELECT clock_timestamp() AS now`);
-        if (before.currentPeriodEnd && before.currentPeriodEnd<=new Date(String(now.rows[0].now))) throw new ManualSubscriptionError("SUBSCRIPTION_EXPIRED",409);
+        if (!before.currentPeriodEnd || before.currentPeriodEnd<=new Date(String(now.rows[0].now))) throw new ManualSubscriptionError("SUBSCRIPTION_EXPIRED",409);
         changes.status='active'; changes.entitlementBlocked=false; changes.entitlementBlockedReason=null;
       }
       if (input.action==='cancel_at_end') {

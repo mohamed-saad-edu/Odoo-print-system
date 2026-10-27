@@ -335,6 +335,16 @@ suite('V4 manual subscriptions security and accounting',()=>{
       expect(parse(result.rows[0].ended).toISOString()).toBe(expectedEnd);
    }
  });
+ it('rejects reactivation of suspended contracts without an expiry and keeps billing fail-closed',async()=>{
+   await mutateManualSubscription('workspace',claims,randomUUID(),input());
+   await mutateManualSubscription('workspace',claims,randomUUID(),input({action:'suspend',expectedRevision:1}));
+   await db.update(tenantSubscriptions).set({currentPeriodEnd:null}).where(eq(tenantSubscriptions.tenantId,'workspace'));
+   await expect(mutateManualSubscription('workspace',claims,randomUUID(),input({action:'reactivate',expectedRevision:2})))
+     .rejects.toMatchObject({code:'SUBSCRIPTION_EXPIRED',status:409});
+   const record=await db.query.tenantSubscriptions.findFirst({where:eq(tenantSubscriptions.tenantId,'workspace')});
+   expect(record).toMatchObject({status:'suspended',currentPeriodEnd:null,revision:2});
+   await expect(getTenantEntitlements(db,'workspace')).rejects.toBeInstanceOf(TenantSubscriptionRequiredError);
+ });
  it('renewal/quota edits preserve usage; suspension and expiry block admission; cancel at term remains usable until expiry',async()=>{
   await mutateManualSubscription('workspace',claims,randomUUID(),input());
    const originalAnchor=(await db.query.tenantSubscriptions.findFirst())?.printCycleAnchor;
