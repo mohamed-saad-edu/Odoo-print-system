@@ -62,7 +62,7 @@ suite("permanent agent deletion lifecycle & invariants", () => {
       `INSERT INTO plans (id, name, entitlements) VALUES ('plan_agent_deletion', 'Test', '{"max_agents":"unlimited","max_printers":"unlimited","max_jobs_per_minute":"unlimited","max_concurrent_jobs":"unlimited","max_prints_per_period":"unlimited"}'::jsonb) ON CONFLICT (id) DO NOTHING`,
     );
     await pool().query(
-      `INSERT INTO tenant_subscriptions (tenant_id, plan_id, status, current_period_end) VALUES ($1, 'plan_agent_deletion', 'active', NULL) ON CONFLICT (tenant_id) DO UPDATE SET plan_id = 'plan_agent_deletion', status = 'active', current_period_end = NULL`,
+      `INSERT INTO tenant_subscriptions (tenant_id, plan_id, status, current_period_end) VALUES ($1, 'plan_agent_deletion', 'active', now() + interval '1 year') ON CONFLICT (tenant_id) DO UPDATE SET plan_id = 'plan_agent_deletion', status = 'active', current_period_end = now() + interval '1 year'`,
       [TENANT_ID],
     );
     const session = await createWorkspaceManagerTestSession(TENANT_ID);
