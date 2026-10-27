@@ -1,6 +1,6 @@
 # NOTES.md — Yaseir Cloud Printing full-repository engineering coverage
 
-Source: `main@044da674f157f350e5702e5e44428ac7911cab00`. Re-scanned **1924 tracked files** in **89 directory groups** through GitHub's complete recursive tree (`truncated=false`). This is a coverage index, **not** a claim of line-by-line audit. This file is root-level, outside the Gateway/Agent/Odoo/Desktop product trees.
+Source: `main@d20866806593a5341174f99063e603f4d84f5cb9`. Re-scanned **1939 tracked files** in **89 directory groups** through GitHub's complete recursive tree (`truncated=false`). This is a coverage index, **not** a claim of line-by-line audit. This file is root-level, outside the Gateway/Agent/Odoo/Desktop product trees.
 
 **Status semantics:** `TODO` = path enumerated, code/read/verification incomplete; `DONE` = code, cross-contract and exact-commit CI tests reviewed; `BLOCKED` = cannot verify as text through GitHub API or requires real hardware/staging. These are independent of existing per-file ledger statuses. Every path stays TODO/BLOCKED until evidence is linked; counts do not imply production readiness.
 
@@ -17,6 +17,9 @@ Source: `main@044da674f157f350e5702e5e44428ac7911cab00`. Re-scanned **1924 track
 | PRINTER-IPP-ROOT-01 wrong queue identity | Gateway and Go identity folded explicit root URI into `/ipp/print`, although the endpoints can address different IPP queues | `12c6ca3d39a888ec12c27e8b27c9f5d63eec247a`; formatting follow-up `d9a24f171860fc009fc863bb850d4765e5c36689`; TypeScript + native Go regressions for root, empty path, default queue and hardware identity | Exact-SHA CI unfinished or cancelled by concurrent pushes; physical printer execution NOT RUN | TODO |
 | PRINTER-IPP-ROOT-02 native transport alignment | Legacy Go `normalizeIPPURL` silently rewrote explicit root to `/ipp/print`, and `PrinterBindingDigest` merged separate queues despite new stable-ID guards | Guarded GitHub commits: `5959e1ffe90116d5aa9da01235af95582893225d` (native transport), `c15806bb600c282618d4d993e2178ce378d00058` (binding digest), `58c06d38ffef49e41a00ebb31d71ae32cbd6f0c1` (privacy regression), `94321050aee470ea9913b641c3a162cd44503f46` (registry regression). Preserves `/ipp/print` fallback for bare hosts. | Exact-SHA CI results were queued/in progress or cancelled as later commits superseded; real physical IPP hardware NOT RUN | TODO |
 | PRINTER-IPP-ROOT-03 scheme-less shortcut identity | Gateway originally hashed `192.168.1.20:631` as the root queue while native IPP executable shorthand targets `/ipp/print` | `35e4350a6b2629b972e29a3f5e3e574b824b7042`, `255906fc7caf51c77be82cbfe85564f1959783fb`, parser-safe follow-up `e809f20de529f981e472f703c4000805c0f1545e`; regression preserves root queue distinction, exact default and rejects malformed shortcut path | Final SHA CI still queued/in-progress, physical printer NOT RUN | TODO |
+| INPUT-HEALTH-2026-10-28 | Agent-health pagination coerced non-decimal values; authenticated diagnostics lacked non-cacheable headers | `12fd6d16cb80e0c3acb37e739c0459532c51666c` test-first, `b8420ef5387b6ad4c61afc667ec49f913c7e23e1` parser, `f4a1f806d43ce2ab4fb839801876f9059a5408d9` cache test, `83e61db6dc89a9e316f1ee799454bd1dcd4ac049` response cache policy | Source fixed and regression authored; exact-SHA CI queued or cancelled, NOT VERIFIED | TODO |
+| INPUT-PLANS-2026-10-28 | Plan quotas and ordering accepted booleans/scientific-string JSON via `Number()` | `a1746df9c5b3687257341ddf083df315be4b9797` negative tests; `52a3df673e1ae6b92f35087bb41e1c8b80f2940c` type-only integer parsing; `a5ec57212960b1c4f8bd4dca32a49be923031ce3` null/absent order distinction | Source fixed; exact-SHA CI queued, PostgreSQL and prod NOT RUN | TODO |
+| PLATFORM-ACTOR-STATE-2026-10-28 | Revoked Platform Owner could see 404/409 installation/key existence or inactive state before live transaction actor revalidation | `19c6760c8b2eb5ef93d65d11d06ece500ea7113f` test-first; `70f2e2e7478521a0ef73fa5a96a7e40d20c31e2f` revoke and `fc560fad4aa923a5e9951d9c5da5adb8d94709bb` quarantine move actor check before state response, retaining original resource-lock order | Exact-SHA CI queued, runtime RED/GREEN NOT VERIFIED | TODO |
 | HW-01 print result | Neither Gateway `success` nor spooler submission proves physical paper | Status contract requires independent explicit physical evidence; never auto-retry unknown | No physical printer attached through GitHub API | BLOCKED |
 | DATA-01 defense in depth | PostgreSQL RLS not enabled; predicates, composite FKs and transaction locks are tenant boundary | Audit every raw query, add safe migration only after staged design/coverage | Requires comprehensive source+staging audit | TODO |
 
@@ -1817,6 +1820,7 @@ Source: `main@044da674f157f350e5702e5e44428ac7911cab00`. Re-scanned **1924 track
 - TODO `src/lib/clipboard.ts`
 - TODO `src/lib/common-password-hashes.json`
 - TODO `src/lib/console-auth.ts`
+- TODO `src/lib/console-read-authority.ts`
 - TODO `src/lib/csp-report.ts`
 - TODO `src/lib/customer-auth.ts`
 - TODO `src/lib/dashboard-billing-usage.ts`
@@ -2092,6 +2096,7 @@ Source: `main@044da674f157f350e5702e5e44428ac7911cab00`. Re-scanned **1924 track
 - TODO `tests/f017-fetch-body-integration.test.mjs`
 - TODO `tests/fleet-api-pagination.contract.test.mjs`
 - TODO `tests/fleet-cursor-route.test.ts`
+- TODO `tests/fleet-live-authorization.integration.test.ts`
 - TODO `tests/font-assets.node.test.mjs`
 - TODO `tests/forgot-password-persistence.test.ts`
 - TODO `tests/form-accessibility.test.ts`
@@ -2128,6 +2133,7 @@ Source: `main@044da674f157f350e5702e5e44428ac7911cab00`. Re-scanned **1924 track
 - TODO `tests/invitation-password-login.test.ts`
 - TODO `tests/job-cleanup-behavior.integration.test.ts`
 - TODO `tests/job-cleanup-contract.test.ts`
+- TODO `tests/job-detail-live-authority.integration.test.ts`
 - TODO `tests/job-diagnostic-payload-round3.test.mjs`
 - TODO `tests/job-diagnostic-payload.test.ts`
 - TODO `tests/job-history-tenant-collision.integration.test.ts`
@@ -2230,6 +2236,7 @@ Source: `main@044da674f157f350e5702e5e44428ac7911cab00`. Re-scanned **1924 track
 - TODO `tests/platform-database-explorer.test.ts`
 - TODO `tests/platform-database-route.test.ts`
 - TODO `tests/platform-delete-integrity.integration.test.ts`
+- TODO `tests/platform-emergency-actor-fence.test.ts`
 - TODO `tests/platform-explorer-pagination.integration.test.ts`
 - TODO `tests/platform-fleet-status.contract.test.mjs`
 - TODO `tests/platform-integrations-control.node.test.mjs`
@@ -2322,6 +2329,7 @@ Source: `main@044da674f157f350e5702e5e44428ac7911cab00`. Re-scanned **1924 track
 - TODO `tests/session-refresh-recovery.test.ts`
 - TODO `tests/session-resource-repair.test.mjs`
 - TODO `tests/session-tokens.integration.test.ts`
+- TODO `tests/settings-live-authority.integration.test.ts`
 - TODO `tests/shared-ui-interaction.test.ts`
 - TODO `tests/shared-vocabulary.contract.test.ts`
 - TODO `tests/signup-api-keys-lifecycle.contract.test.ts`
@@ -2338,6 +2346,7 @@ Source: `main@044da674f157f350e5702e5e44428ac7911cab00`. Re-scanned **1924 track
 - TODO `tests/team-authority-cutover.test.ts`
 - TODO `tests/team-authorization.test.ts`
 - TODO `tests/team-directory-live-authority.integration.test.ts`
+- TODO `tests/team-invitation-audit-actor.integration.test.ts`
 - TODO `tests/team-invitation-authority.test.ts`
 - TODO `tests/team-invitation-read-authority.integration.test.ts`
 - TODO `tests/team-invitation-restoration.contract.test.ts`
