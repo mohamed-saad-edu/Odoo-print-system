@@ -317,7 +317,10 @@ fn normalize_gateway_url(raw: &str) -> Result<String, String> {
             return Err("Gateway URL must use HTTPS for remote Gateways".into());
         }
     }
-    if parsed.username() != "" || parsed.password().is_some() {
+    // An empty userinfo marker (https://@host) may serialize away before
+    // username()/password() are inspected. Reject the original authority
+    // marker like Go's url.User != nil, including empty credentials.
+    if candidate.contains('@') || parsed.username() != "" || parsed.password().is_some() {
         return Err("gateway URL cannot include embedded credentials".into());
     }
     if parsed.path() != "/" {
