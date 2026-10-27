@@ -4,6 +4,8 @@ import { db } from "../../../../db";
 import { apiKeys } from "../../../../db/schema";
 import { validateWorkspaceManager } from "../../../../lib/manager-auth";
 import { requireManagerPermission } from "../../../../lib/authorization";
+import { requireManagerActorInTransaction, ManagerMutationAuthorityChangedError } from "../../../../lib/manager-mutation-authorization";
+import { logError } from "../../../../lib/log";
 import { validateOdooKey } from "../../../../lib/odoo-auth";
 import { requireActiveTenantInTransaction, TenantSuspendedError, TenantDeletedError } from "../../../../lib/tenant-guard";
 import { writeAuditEvent } from "../../../../lib/audit";
@@ -16,31 +18,50 @@ export const dynamic = "force-dynamic";
  * The activation state shown here is a replicated Odoo business setting,
  * scoped independently to each Odoo integration API key; it is not tenant lifecycle.
  */
+const CONFIGURATION_HEADERS = { "Cache-Control": "private, no-store" };
+
 export async function GET(req: Request) {
   const manager = await validateWorkspaceManager(req);
-  if (!manager) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!manager) return NextResponse.json({ error: "Unauthorized", code: "UNAUTHORIZED" }, { status: 401, headers: CONFIGURATION_HEADERS });
   try {
     requireManagerPermission(manager, "integrations.read");
   } catch {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    return NextResponse.json({ error: "Forbidden", code: "FORBIDDEN" }, { status: 403, headers: CONFIGURATION_HEADERS });
   }
 
-  const integrations = await db.query.apiKeys.findMany({
-    where: and(eq(apiKeys.tenantId, manager.tenantId), sql`${apiKeys.hashedKey} NOT LIKE 'deleted:%'`),
-    columns: {
-      id: true,
-      name: true,
-      odooEnabled: true,
-      odooEnabledRevision: true,
-      odooEnabledUpdatedAt: true,
-      revokedAt: true,
-    },
-  });
-
-  return NextResponse.json({ integrations }, {
-    status: 200,
-    headers: { "Cache-Control": "no-store" },
-  });
+  try {
+    // Replicated activation is still tenant-private control-plane inventory.
+    // Revalidate the authenticated principal and lifecycle at the read
+    // boundary, not just before an unrelated concurrent role/session change.
+    const integrations = await db.transaction(async tx => {
+      await requireActiveTenantInTransaction(tx, manager.tenantId);
+      await requireManagerActorInTransaction(tx, manager, "integrations.read");
+      return tx.query.apiKeys.findMany({
+        where: and(eq(apiKeys.tenantId, manager.tenantId), sql`${apiKeys.hashedKey} NOT LIKE 'deleted:%'`),
+        columns: {
+          id: true,
+          name: true,
+          odooEnabled: true,
+          odooEnabledRevision: true,
+          odooEnabledUpdatedAt: true,
+          revokedAt: true,
+        },
+      });
+    });
+    return NextResponse.json({ integrations }, { status: 200, headers: CONFIGURATION_HEADERS });
+  } catch (error) {
+    if (error instanceof ManagerMutationAuthorityChangedError) {
+      return NextResponse.json({ error: error.message, code: error.code },
+        { status: error.status, headers: CONFIGURATION_HEADERS });
+    }
+    if (error instanceof TenantSuspendedError || error instanceof TenantDeletedError) {
+      return NextResponse.json({ error: error.message, code: error.code },
+        { status: 403, headers: CONFIGURATION_HEADERS });
+    }
+    logError("odoo.integration_configuration_read_failed", { error: error instanceof Error ? error.message : "unknown" });
+    return NextResponse.json({ error: "Integration configuration unavailable", code: "INTEGRATION_CONFIGURATION_UNAVAILABLE" },
+      { status: 503, headers: CONFIGURATION_HEADERS });
+  }
 }
 
 /**
