@@ -119,15 +119,21 @@ describe("entitlement limit signal (upgrade dialog contract)", () => {
     expect(signal?.retryAfterSeconds ?? 0).toBeGreaterThan(0);
   });
 
-  it("distinguishes upgrade-only capacity from a resettable allowance", () => {
+  it("distinguishes technical safety caps from the billable monthly print allowance", () => {
+    // Hardware counts and burst/concurrency controls protect execution; they
+    // never automatically mean a customer must buy another subscription.
     const agents = entitlementLimitSignal(new TenantEntitlementError("max_agents", 3, 3));
-    expect(agents).toMatchObject({ entitlement: "max_agents", retryable: false, retryAfterSeconds: null, upgradeRequired: true });
+    expect(agents).toMatchObject({ entitlement: "max_agents", retryable: false, retryAfterSeconds: null, upgradeRequired: false });
+    const printers = entitlementLimitSignal(new TenantEntitlementError("max_printers", 9, 9));
+    expect(printers).toMatchObject({ entitlement: "max_printers", retryable: false, retryAfterSeconds: null, upgradeRequired: false });
 
     const rate = entitlementLimitSignal(new TenantEntitlementError("max_jobs_per_minute", 20, 20));
-    expect(rate).toMatchObject({ entitlement: "max_jobs_per_minute", retryable: true, retryAfterSeconds: 60 });
+    expect(rate).toMatchObject({ entitlement: "max_jobs_per_minute", retryable: true, retryAfterSeconds: 60, upgradeRequired: false });
 
     const concurrency = entitlementLimitSignal(new TenantEntitlementError("max_concurrent_jobs", 5, 5));
-    expect(concurrency).toMatchObject({ entitlement: "max_concurrent_jobs", retryable: true });
+    expect(concurrency).toMatchObject({ entitlement: "max_concurrent_jobs", retryable: true, upgradeRequired: false });
+    expect(agents?.retryable).toBe(false);
+    expect(printers?.retryable).toBe(false);
   });
 
   it("returns null for anything that is not a limit trip", () => {
@@ -137,6 +143,8 @@ describe("entitlement limit signal (upgrade dialog contract)", () => {
 
   it("recognizes only a returnable signal, never an arbitrary object", () => {
     expect(isLimitSignalResult({ ok: false, limit: { entitlement: "max_prints_per_period", upgradeRequired: true } })).toBe(true);
+    expect(isLimitSignalResult({ ok: false, limit: { entitlement: "max_agents", upgradeRequired: false } })).toBe(true);
+    expect(isLimitSignalResult({ ok: false, limit: { entitlement: "max_printers", upgradeRequired: false } })).toBe(true);
     expect(isLimitSignalResult({ ok: true, id: "job_1" })).toBe(false);
     expect(isLimitSignalResult({ ok: false, limit: { entitlement: "max_agents" } })).toBe(false);
     expect(isLimitSignalResult(null)).toBe(false);
