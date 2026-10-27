@@ -290,8 +290,8 @@ contracts) and `tests/database-clock.integration.test.ts` (live calibration,
 single-reading TTL invariant, quota rollback).
 
 Manual subscriptions are changed by authorized Platform Admin operations.
-`print_monthly_usage` counts jobs per fixed 30-day UTC cycle from first activation, independently
-of monthly, yearly or custom contract dates. Provider timestamps and identifiers
+`print_monthly_usage` counts accepted logical jobs per UTC calendar month (the first at 00:00 UTC), independently
+of monthly, yearly or custom contract dates. Migration 0102 conservatively retains historic rolling-cycle usage. Provider timestamps and identifiers
 remain historical evidence; retired provider routes cannot grant or renew a
 subscription or reset consumed credits.
 

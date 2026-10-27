@@ -672,7 +672,7 @@ export const tenantSubscriptions = pgTable("tenant_subscriptions", {
   revision: integer("revision").notNull().default(0),
   currentPeriodStart: timestamp("current_period_start").notNull().defaultNow(),
   currentPeriodEnd: timestamp("current_period_end"),
-  /** First actual activation; immutable across manual renewals and plan edits. */
+  /** Retained 0101 rolling-cycle activation anchor for history; calendar-month admission no longer reads it. */
   printCycleAnchor: timestamp("print_cycle_anchor"),
   cancelAtPeriodEnd: boolean("cancel_at_period_end").notNull().default(false),
   entitlementBlocked: boolean("entitlement_blocked").notNull().default(false),
@@ -766,7 +766,7 @@ export const subscriptionChanges = pgTable("subscription_changes", {
   historyIdx: index("subscription_changes_history_idx").on(table.tenantId, table.createdAt),
 }));
 
-/** Fixed 30-day admission ledger, anchored to first activation. */
+/** UTC calendar-month admission ledger; historical rolling 30-day rows are retained after migration 0102. */
 export const printMonthlyUsage = pgTable("print_monthly_usage", {
   tenantId: text("tenant_id").notNull().references(() => tenants.id),
   periodStart: timestamp("period_start").notNull(),

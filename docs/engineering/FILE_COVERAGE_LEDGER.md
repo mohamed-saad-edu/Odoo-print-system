@@ -1968,3 +1968,38 @@ INDEXED typography/tokens.css
 ## Maintenance protocol
 
 Before editing, verify the current main HEAD, refresh this list from `git ls-files` or an untruncated Git tree, and preserve inspection statuses only for unchanged files. On each substantive change record the component contract, affected producer/consumer, migration strategy, regression test command plus actual output, and unresolved risks in [SYSTEM_UNIFICATION_NOTEBOOK.md](SYSTEM_UNIFICATION_NOTEBOOK.md). Do not mark `VERIFIED` without execution evidence tied to an exact commit, environment and test scope.
+
+
+## 2026-10-28 additive change coverage (UTC calendar-month credits)
+
+The **original snapshot counts above remain historical** for `main@4f48736f`; this addendum indexes files newly added in the forward-only change. Changes do not imply the entire repository was reviewed.
+
+```text
+AUTHORED drizzle/0102_calendar_month_print_allowance.sql
+AUTHORED drizzle/meta/0102_calendar_month_print_allowance_snapshot.json
+PARTIAL  src/lib/quota-cycle.ts
+PARTIAL  src/lib/entitlements.ts
+PARTIAL  src/app/api/platform/tenants/[id]/route.ts
+PARTIAL  src/app/api/platform/subscriptions/route.ts
+PARTIAL  src/app/billing/page.tsx
+PARTIAL  src/lib/manual-usage-report.ts
+PARTIAL  src/db/schema.ts
+PARTIAL  src/i18n/messages/v4-onboarding.ts
+PARTIAL  src/i18n/messages/v4-admin.ts
+PARTIAL  tests/print-quota.test.ts
+PARTIAL  tests/manual-subscriptions.integration.test.ts
+PARTIAL  tests/manual-only-billing-schema.contract.test.ts
+PARTIAL  tests/test_s06_migration_guards.py
+PARTIAL  tests/test_f026_operational_documentation.py
+PARTIAL  drizzle/meta/_journal.json
+PARTIAL  README.md
+PARTIAL  API.md
+PARTIAL  ARCHITECTURE.md
+PARTIAL  MIGRATION.md
+PARTIAL  OPERATIONS.md
+PARTIAL  docs/DATABASE.md
+PARTIAL  docs/engineering/SYSTEM_UNIFICATION_NOTEBOOK.md
+PARTIAL  docs/engineering/FILE_COVERAGE_LEDGER.md
+```
+
+Evidence: `tests/print-quota.test.ts` and `tests/manual-subscriptions.integration.test.ts` include actual PostgreSQL assertions and require CI; the local isolated SQL-builder RED→GREEN only proves query composition. All other tracked source files retain their existing INDEXED/PARTIAL statuses until reviewed with test evidence.

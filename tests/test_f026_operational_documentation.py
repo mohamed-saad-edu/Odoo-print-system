@@ -17,8 +17,9 @@ def test_migration_inventory_matches_current_journal():
     assert len(journal)==len(sql)
     assert journal[98]['tag']=='0098_manual_only_billing'
     assert journal[99]['tag']=='0099_subscription_approval_terms'
-    assert journal[-2]['tag']=='0100_plan_prices'
-    assert journal[-1]['tag']=='0101_rolling_print_allowance'
+    assert journal[-3]['tag']=='0100_plan_prices'
+    assert journal[-2]['tag']=='0101_rolling_print_allowance'
+    assert journal[-1]['tag']=='0102_calendar_month_print_allowance'
     assert journal[97]['tag']=='0097_agent_scoped_discovery_identity'
     assert journal[96]['tag']=='0096_retire_limited_workspace_roles'
     assert journal[84]['tag']=='0084_printer_cloud_sharing'

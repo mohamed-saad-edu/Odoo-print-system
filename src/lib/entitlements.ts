@@ -1,5 +1,5 @@
 import { sql, type SQL } from "drizzle-orm";
-import { quotaCycleStartSql, QUOTA_CYCLE_MS } from "./quota-cycle";
+import { quotaCycleStartSql, quotaCycleEndSql } from "./quota-cycle";
 import { logError } from "./log";
 import { gatewayNowMs } from "./database-clock";
 import type { EntitlementLimitSignal } from "./limit-signal";
@@ -294,6 +294,7 @@ export async function enforceTenantResourceEntitlement(tx: EntitlementTx, tenant
 type TenantPrintQuotaRow = {
   entitlements: unknown;
   periodStart: Date | string;
+  periodEnd: Date | string;
   entitlementBlocked?: boolean;
   monthlyQuota?: number | null;
 };
@@ -310,7 +311,7 @@ function parseEntitlementDate(value: Date | string | null): Date | null {
 async function getTenantPrintQuotaContext(tx: EntitlementTx, tenantId: string, lockRows = false): Promise<{ limit: number | "unlimited"; periodStart: Date; periodEnd: Date | null }> {
   if (lockRows) await lockTenantSubscription(tx, tenantId);
   const result = await tx.execute(sql`
-        SELECT p.entitlements, ts.monthly_quota AS "monthlyQuota", ${quotaCycleStartSql(sql`COALESCE(ts.print_cycle_anchor, ts.current_period_start)`)} AS "periodStart", ts.entitlement_blocked AS "entitlementBlocked"
+        SELECT p.entitlements, ts.monthly_quota AS "monthlyQuota", ${quotaCycleStartSql()} AS "periodStart", ${quotaCycleEndSql()} AS "periodEnd", ts.entitlement_blocked AS "entitlementBlocked"
         FROM tenant_subscriptions ts
         JOIN plans p ON p.id = ts.plan_id
         WHERE ${liveTenantSubscriptionWhere(sql`${tenantId}`, false)}
@@ -327,9 +328,10 @@ async function getTenantPrintQuotaContext(tx: EntitlementTx, tenantId: string, l
     throw new TenantEntitlementConfigError(PRINT_QUOTA_ENTITLEMENT);
   }
   const periodStart = parseEntitlementDate(row.periodStart);
-  if (!periodStart) throw new TenantEntitlementConfigError("subscription_period");
-  // A fixed UTC duration, not calendar months or subscription renewals.
-  const periodEnd = new Date(periodStart.getTime() + QUOTA_CYCLE_MS);
+  const periodEnd = parseEntitlementDate(row.periodEnd);
+  if (!periodStart || !periodEnd || periodEnd.getTime() <= periodStart.getTime()) {
+    throw new TenantEntitlementConfigError("subscription_period");
+  }
   return { limit: entitlements[PRINT_QUOTA_ENTITLEMENT], periodStart, periodEnd };
 }
 

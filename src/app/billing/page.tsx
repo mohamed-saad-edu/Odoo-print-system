@@ -10,7 +10,7 @@ import { hasManagerPermission } from "../../lib/authorization";
 import { customerSubscriptionState } from "../../lib/manual-subscriptions";
 import { databaseNowMs } from "../../lib/database-clock";
 import { effectiveManualEntitlements } from "../../lib/entitlements";
-import { quotaCycleStartSql } from "../../lib/quota-cycle";
+import { quotaCycleStartSql, quotaCycleEndSql } from "../../lib/quota-cycle";
 import { activationWhatsAppUrl } from "../../lib/activation-contact";
 import { getServerLocale, makeT } from "../../i18n/server";
 import { formatNumber } from "../../i18n/format";
@@ -49,9 +49,9 @@ export default async function BillingPage({ searchParams }: { searchParams: Prom
       const quota = effectiveManualEntitlements(plan.entitlements, sub.monthlyQuota).max_prints_per_period;
       // Read the same transactional monthly admission ledger used by quota enforcement,
       // even after expiry. Contract dates never determine this reporting window.
-      const cycle = quotaCycleStartSql(sql`COALESCE(s.print_cycle_anchor,s.current_period_start)`);
+      const cycle = quotaCycleStartSql();
        const row = await db.execute(sql`SELECT coalesce(m.used_prints,0)::int AS used,
-         (${cycle} + interval '30 days') AT TIME ZONE 'UTC' AS reset
+         (${quotaCycleEndSql()}) AT TIME ZONE 'UTC' AS reset
          FROM tenant_subscriptions s
          LEFT JOIN print_monthly_usage m ON m.tenant_id=s.tenant_id AND m.period_start=${cycle}
          WHERE s.tenant_id=${claims.tenantId}`);

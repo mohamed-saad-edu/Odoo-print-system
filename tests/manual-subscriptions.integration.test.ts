@@ -272,31 +272,31 @@ suite('V4 manual subscriptions security and accounting',()=>{
    expect((await pool().query("SELECT * FROM print_monthly_usage WHERE tenant_id='workspace'")).rows).toHaveLength(0);
   } finally {await locker.query('ROLLBACK');locker.release();}
  });
- it('keeps credits separated by the original activation-anchored 30-day cycle',async()=>{
+ it('keeps credits separated by UTC calendar month rather than contract renewal',async()=>{
    await mutateManualSubscription('workspace',claims,randomUUID(),input());
    const current=await getTenantPrintUsage(db,'workspace');
-   const previousStart=new Date(current.periodStart.getTime()-30*86_400_000);
+   const previousStart=new Date(Date.UTC(current.periodStart.getUTCFullYear(),current.periodStart.getUTCMonth()-1,1));
    await db.execute(sql`INSERT INTO print_monthly_usage(tenant_id,period_start,period_end,used_prints)
      VALUES('workspace',${previousStart},${current.periodStart},10)`);
    const usage=await db.transaction(tx=>reserveTenantPrintCredit(tx,'workspace'));
    expect(usage.used).toBe(1);
    expect(usage.periodStart).toEqual(current.periodStart);
-   expect(usage.periodEnd!.getTime()-usage.periodStart.getTime()).toBe(30*86_400_000);
+   expect(usage.periodEnd).toEqual(new Date(Date.UTC(current.periodStart.getUTCFullYear(),current.periodStart.getUTCMonth()+1,1)));
    expect((await db.query.tenantSubscriptions.findFirst())?.term).toBe('yearly');
  });
- it('does not reset the 30-day allowance on January 1 at UTC midnight',async()=>{
-   const {quotaCycleStartSql}=await import('../src/lib/quota-cycle');
-   const activation=sql`timestamp '2026-12-15 16:00:00'`;
-   for(const [at,expected] of [
-      ['2026-12-31 23:59:59','2026-12-15T16:00:00.000Z'],
-      ['2027-01-01 00:00:00','2026-12-15T16:00:00.000Z'],
-      ['2027-01-14 15:59:59','2026-12-15T16:00:00.000Z'],
-      ['2027-01-14 16:00:00','2027-01-14T16:00:00.000Z'],
+ it('resets the credit window at midnight UTC on January 1 and handles leap February',async()=>{
+   const {quotaCycleStartSql,quotaCycleEndSql}=await import('../src/lib/quota-cycle');
+   for(const [at,expectedStart,expectedEnd] of [
+      ['2026-12-31 23:59:59.999','2026-12-01T00:00:00.000Z','2027-01-01T00:00:00.000Z'],
+      ['2027-01-01 00:00:00','2027-01-01T00:00:00.000Z','2027-02-01T00:00:00.000Z'],
+      ['2028-02-29 23:59:59.999','2028-02-01T00:00:00.000Z','2028-03-01T00:00:00.000Z'],
+      ['2028-03-01 00:00:00','2028-03-01T00:00:00.000Z','2028-04-01T00:00:00.000Z'],
    ] as const){
-      const result=await db.execute(sql`SELECT ${quotaCycleStartSql(activation,sql`${at}::timestamp`)} AS "started"`);
-      const raw=result.rows[0].started;
-      const start=raw instanceof Date ? raw : new Date(String(raw).replace(" ","T")+"Z");
-      expect(start.toISOString()).toBe(expected);
+      const atSql=sql`${at}::timestamp`;
+      const result=await db.execute(sql`SELECT ${quotaCycleStartSql(atSql)} AS "started", ${quotaCycleEndSql(atSql)} AS "ended"`);
+      const parse=(raw:unknown)=>raw instanceof Date?raw:new Date(String(raw).replace(" ","T")+"Z");
+      expect(parse(result.rows[0].started).toISOString()).toBe(expectedStart);
+      expect(parse(result.rows[0].ended).toISOString()).toBe(expectedEnd);
    }
  });
  it('renewal/quota edits preserve usage; suspension and expiry block admission; cancel at term remains usable until expiry',async()=>{

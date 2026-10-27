@@ -44,8 +44,9 @@ def test_forward_migration_registered_in_immutable_drizzle_journal():
     assert tags == [p.stem for p in sorted((ROOT / "drizzle").glob("*.sql"))]
     assert tags[98] == '0098_manual_only_billing'
     assert tags[99] == '0099_subscription_approval_terms'
-    assert tags[-2] == '0100_plan_prices'
-    assert tags[-1] == '0101_rolling_print_allowance'
+    assert tags[-3] == '0100_plan_prices'
+    assert tags[-2] == '0101_rolling_print_allowance'
+    assert tags[-1] == '0102_calendar_month_print_allowance'
     assert tags[97] == '0097_agent_scoped_discovery_identity'
     assert tags[96] == '0096_retire_limited_workspace_roles'
     assert tags[93] == "0093_password_only_authentication"
