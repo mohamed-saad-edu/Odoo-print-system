@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "fs";
 import {
+  JOB_FILTER_STATUSES,
+  isJobFilterStatus,
   canTransition,
   isTerminal,
   isJobStatus,
