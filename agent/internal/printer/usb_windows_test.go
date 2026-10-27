@@ -146,6 +146,30 @@ func TestUSBSuccessfulZeroProgressIsUnknownWithoutRetry(t *testing.T) {
 	}
 }
 
+func TestUSBInvalidWriteProgressNeverInflatesConfirmedEvidence(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+	}{
+		{"success_over_report", nil},
+		{"failed_over_report", errors.New("driver returned invalid transfer count")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := nativeUSBPrintFixture("over-report", "OverReport", "NUL")
+			p.writeChunk = func(h windows.Handle, chunk []byte) (uint32, error) {
+				return uint32(len(chunk) + 5), tc.err
+			}
+			err := p.Print(context.Background(), []byte("receipt"))
+			if err == nil || !HasUnknownOutcomeMarker(err.Error()) {
+				t.Fatalf("invalid USB count must never count a successful print: %v", err)
+			}
+			if !strings.Contains(err.Error(), "after 0/7 confirmed bytes") {
+				t.Fatalf("corrupt counter must not become confirmed byte evidence: %v", err)
+			}
+		})
+	}
+}
+
 func TestUSBWriteExceedingBoundaryIsUnknownAndWedges(t *testing.T) {
 	old := usbChunkTimeout
 	usbChunkTimeout = 150 * time.Millisecond
