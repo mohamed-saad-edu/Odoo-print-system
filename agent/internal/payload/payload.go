@@ -171,7 +171,7 @@ func Parse(raw interface{}) (*Payload, error) {
 			tailStart = 0
 		}
 		if !bytes.Contains(decoded[tailStart:], []byte("%%EOF")) {
-			return nil, fmt.Errorf("PDF payload is incomplete (missing %%EOF trailer)")
+			return nil, fmt.Errorf("PDF payload is incomplete (missing %%%%EOF trailer)")
 		}
 	}
 	if Type(typ) == TypeImage && !looksLikeJPEG {
