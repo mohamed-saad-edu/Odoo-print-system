@@ -118,6 +118,23 @@ suite("print idempotency (Odoo → Gateway)", () => {
     expect(await jobCount()).toBe(0);
   });
 
+  it("rejects padded idempotency keys before matching an unrelated accepted job", async () => {
+    const key = "opaque-retry-operation-001";
+    const accepted = await create(jobBody(key));
+    expect(accepted.status).toBe(201);
+    const padded = ` ${key} `;
+    const legacy = await create(jobBody(padded));
+    expect(legacy.status).toBe(400);
+    const v2 = await printJobsV2POST(new Request("http://gateway.test/api/print/jobs/v2", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${f.odooKey}`, "content-type": "application/json" },
+      body: JSON.stringify(jobBody(padded)),
+    }));
+    expect(v2.status).toBe(400);
+    // A malformed opaque retry key is never an alias for the original job.
+    expect(await jobCount()).toBe(1);
+  });
+
   it("does not reuse an internal Manager job through the Odoo idempotency surface", async () => {
     const key = "op-internal-collision";
     const internal = await createPrintJobForPrinter(f.printerId, jobBody(key).payload, {
