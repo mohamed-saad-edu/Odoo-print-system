@@ -1118,11 +1118,31 @@ fn validate_local_printer_id(raw: &str) -> Result<String, String> {
         || id.trim() != id
         || id.len() > 256
         || id.starts_with('-')
-        || id.chars().any(char::is_control)
+        || id.chars().any(|ch| ch.is_control() || ch == '\u{feff}')
     {
         return Err("invalid local printer id".into());
     }
     Ok(id.to_string())
+}
+
+/// Preserve the caller-selected opaque local printer ID exactly. An invalid
+/// padded or option-shaped ID cannot silently redirect a physical test print.
+fn build_local_printer_test_command(
+    cli: &std::path::Path,
+    config: &std::path::Path,
+    root: &std::path::Path,
+    raw_id: &str,
+) -> Result<std::process::Command, String> {
+    let id = validate_local_printer_id(raw_id)?;
+    let mut command = std::process::Command::new(cli);
+    command
+        .arg("printers")
+        .arg("test")
+        .arg(id)
+        .arg("-config")
+        .arg(config)
+        .env("YASEIR_AGENT_DATA_DIR", root);
+    Ok(command)
 }
 
 fn decode_printer_sharing_reply(
@@ -1528,29 +1548,14 @@ mod audit_discovery_test;
 
 #[tauri::command]
 pub async fn test_printer(printer_id: String, app: tauri::AppHandle) -> Result<String, String> {
-    // Same trust boundary as register_printer's arg_value: the id is passed
-    // positionally to the Go CLI, whose parser treats a leading-dash value
-    // as a flag (e.g. "-config" would be swallowed as a flag name). Printer
-    // ids never legitimately start with '-'.
-    let pid = printer_id.trim().to_string();
-    if pid.is_empty() {
-        return Err("printer id is required".into());
-    }
-    if pid.starts_with('-') {
-        return Err("printer id must not start with '-'".into());
-    }
+    // No .trim(): printer IDs are exact execution targets. Reject padded,
+    // option-shaped, control-character and overlong IDs before invoking CLI.
+    let pid = validate_local_printer_id(&printer_id)?;
     run_blocking(move || {
         let cli = agent::cli_path(&app)?;
         let config = paths::agent_config_path();
         let root = paths::agent_data_root();
-        let mut test_cmd = std::process::Command::new(&cli);
-        test_cmd
-            .arg("printers")
-            .arg("test")
-            .arg(&pid)
-            .arg("-config")
-            .arg(&config)
-            .env("YASEIR_AGENT_DATA_DIR", &root);
+        let mut test_cmd = build_local_printer_test_command(&cli, &config, &root, &pid)?;
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt;
