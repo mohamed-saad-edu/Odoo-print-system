@@ -96,6 +96,9 @@ describe("quota-exhausted upgrade dialog", () => {
       const dialogs = body.querySelectorAll('[role="dialog"]');
       const dialog = dialogs[dialogs.length - 1]!;
       expect(dialog.textContent).toContain("technical safety limit");
+      // A non-billable Agent/printer safety guard must never advertise plan
+      // upgrade, even in the Modal subtitle above its technical explanation.
+      expect(dialog.textContent).not.toContain("Upgrade to do more.");
       expect(dialog.querySelector('a[href="/billing"]')).toBeNull();
     }
   });
