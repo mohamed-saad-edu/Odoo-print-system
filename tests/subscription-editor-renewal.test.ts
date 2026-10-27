@@ -160,6 +160,23 @@ describe("minimal, contextual subscription editor", () => {
     expect(host.textContent).toContain(labelText(locale, "suspend"));
   });
 
+  it.each(["en", "ar"] as const)("does not offer reactivation without finite expiry in %s", locale => {
+    renderEditor(locale, {...currentSubscription, status: "suspended", effectiveStatus: "suspended", currentPeriodEnd: null});
+    expect(host.textContent).not.toContain(labelText(locale, "reactivate"));
+  });
+
+  it.each(["en", "ar"] as const)("does not offer reactivation after same-day expiry in %s", locale => {
+    renderEditor(locale, {...currentSubscription, status: "suspended", effectiveStatus: "suspended",
+      currentPeriodEnd: new Date(Date.now() - 60_000).toISOString()});
+    expect(host.textContent).not.toContain(labelText(locale, "reactivate"));
+  });
+
+  it.each(["en", "ar"] as const)("offers reactivation for a future finite expiry in %s", locale => {
+    renderEditor(locale, {...currentSubscription, status: "suspended", effectiveStatus: "suspended",
+      currentPeriodEnd: new Date(Date.now() + 86_400_000).toISOString()});
+    expect(host.textContent).toContain(labelText(locale, "reactivate"));
+  });
+
   it.each(["en", "ar"] as const)("never carries a renewal expiry back into a plan-only edit in %s", locale => {
     renderEditor(locale);
     reveal(locale, "manageExtraActions");
