@@ -29,13 +29,18 @@ export function physicalPrinterIdentityKey(p: PrinterEndpoint): string | null {
     try {
       const ip = host(val(cfg.ip));
       const raw = conn === "network" ? `http://${ip.includes(":") ? `[${ip}]` : ip}:${cfg.port}/ipp/print` : val(cfg.address);
-      const url = new URL(raw.includes("://") ? raw : `http://${raw}`);
+      const explicitUri = raw.includes("://");
+      // A scheme-less host:port is the Agent's /ipp/print shortcut, not
+      // a declaration of the URI root; path-bearing shortcuts are invalid.
+      if (!explicitUri && /[\\/?#]/.test(raw)) return null;
+      if (!explicitUri && conn === "ipps") return null;
+      const url = new URL(explicitUri ? raw : `http://${raw}`);
       if (["ipp:", "ipps:", "http:", "https:"].includes(url.protocol) && url.hostname && !url.username && !url.password && !url.search && !url.hash) {
         const scheme = url.protocol === "ipp:" ? "http:" : url.protocol === "ipps:" ? "https:" : url.protocol;
         const defaultPort = ["ipp:", "ipps:"].includes(url.protocol) ? "631" : scheme === "https:" ? "443" : "80";
         // Root "/" is a real IPP resource, not an alias for /ipp/print.
         // Collapsing them can reuse a different queue on a multi-queue server.
-        const path = (url.pathname || "/").replace(/%[0-9a-fA-F]{2}/g, escape => {
+        const path = (explicitUri ? (url.pathname || "/") : "/ipp/print").replace(/%[0-9a-fA-F]{2}/g, escape => {
           const character = String.fromCharCode(parseInt(escape.slice(1), 16));
           return /^[A-Za-z0-9._~-]$/.test(character) ? character : escape.toUpperCase();
         });
