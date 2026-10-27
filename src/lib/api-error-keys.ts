@@ -48,7 +48,8 @@ const CODE_KEYS: Record<string, MessageKey> = {
   // Billing and plans
   // A depleted UTC calendar-month allowance is NOT an expired contract.
   PRINT_QUOTA_EXCEEDED: "errors.printQuotaExceeded",
-  TENANT_ENTITLEMENT_EXCEEDED: "errors.billingBlocked",
+  // Rate/concurrency capacity is a retryable HTTP 429, never a failed contract.
+  TENANT_ENTITLEMENT_EXCEEDED: "errors.printCapacityExceeded",
   // Real configuration failures use UNAVAILABLE; keep the older wire alias.
   TENANT_ENTITLEMENT_UNAVAILABLE: "errors.billingBlocked",
   TENANT_SUBSCRIPTION_REQUIRED: "errors.billingBlocked",

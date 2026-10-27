@@ -1004,6 +1004,7 @@ export const en = {
   "errors.invalidPrinterSearchLength": "Printer search must contain 2 to 64 characters.",
   "errors.billingBlocked": "Printing is blocked until this workspace’s subscription is resolved. Open Billing, then try again.",
   "errors.printQuotaExceeded": "This month's print credits are used up. Ask your workspace owner to request more credits.",
+  "errors.printCapacityExceeded": "A print rate or capacity limit has been reached. Check current activity and retry when capacity is available.",
   "errors.lifecycleConflict": "That change was rejected because the agent changed first. Refresh and try again.",
   "home.heroEyebrow": "Odoo · Automated printing for stores, warehouses and offices",
   "home.heroTitle1": "Print from Odoo",

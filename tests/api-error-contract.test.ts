@@ -20,6 +20,16 @@ describe("API error contract", () => {
     expect(translate("ar", "errors.invalidPaginationOffset")).toMatch(/\p{Script=Arabic}/u);
   });
 
+  it("distinguishes retryable print-rate or concurrency limits from subscription denial", () => {
+    expect(apiMessageKey("TENANT_ENTITLEMENT_EXCEEDED", 429)).toBe("errors.printCapacityExceeded");
+    for (const locale of ["en", "ar"] as const) {
+      expect(translate(locale, "errors.printCapacityExceeded")).not.toBe(translate(locale, "errors.billingBlocked"));
+      expect(translate(locale, "errors.printCapacityExceeded")).not.toBe(translate(locale, "errors.printQuotaExceeded"));
+    }
+    expect(translate("en", "errors.printCapacityExceeded")).toMatch(/capacity/i);
+    expect(translate("ar", "errors.printCapacityExceeded")).toMatch(/[\u0600-\u06FF]/u);
+  });
+
   it("localizes exhausted monthly print credits separately from blocked billing", () => {
     expect(codeMessageKey("PRINT_QUOTA_EXCEEDED")).toBe("errors.printQuotaExceeded");
     expect(apiMessageKey("PRINT_QUOTA_EXCEEDED", 429)).toBe("errors.printQuotaExceeded");
