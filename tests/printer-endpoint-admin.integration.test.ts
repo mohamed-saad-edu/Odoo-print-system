@@ -62,6 +62,37 @@ suite("physical endpoint convergence and credential-row erasure", () => {
     expect(rows.rows[0].physical_identity_key).toMatch(/^v2:[0-9a-f]{64}$/);
   });
 
+  it.each(["retired", "disabled", "unshared"] as const)(
+    "never reports success for an existing %s printer endpoint",
+    async (mode) => {
+      const f = await seedFixture();
+      const manager = await createWorkspaceManagerTestSession(f.tenantId);
+      const payload = { agentId: f.agentId, name: "Reused local queue",
+        printerType: "physical", deviceClass: "thermal",
+        connectionType: "spooler", protocol: "spooler",
+        config: { spooler_name: "Restricted POS Register" } };
+      const created = await post(manager.token, payload);
+      expect(created.status).toBe(201);
+      const { id: printerId } = await created.json();
+      await pool().query(
+        "UPDATE printers SET lifecycle=$1, shared_with_gateway=$2 WHERE tenant_id=$3 AND id=$4",
+        [mode === "unshared" ? "active" : mode, mode !== "unshared", f.tenantId, printerId],
+      );
+      const replay = await post(manager.token, payload);
+      expect(replay.status).toBe(409);
+      expect(await replay.json()).toMatchObject({ code: "PRINTER_ENDPOINT_CONFLICT" });
+      const rows = await pool().query(
+        "SELECT id,lifecycle,shared_with_gateway FROM printers WHERE tenant_id=$1 AND agent_id=$2 AND config->>'spooler_name'=$3",
+        [f.tenantId, f.agentId, "Restricted POS Register"],
+      );
+      expect(rows.rows).toHaveLength(1);
+      expect(rows.rows[0]).toMatchObject({
+        id: printerId, lifecycle: mode === "unshared" ? "active" : mode,
+        shared_with_gateway: mode !== "unshared",
+      });
+    },
+  );
+
   it("does not register an Agent discovery duplicate of an existing manager queue", async () => {
     const f = await seedFixture();
     const manager = await createWorkspaceManagerTestSession(f.tenantId);
