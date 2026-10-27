@@ -27,6 +27,15 @@ describe("platform audit list limit contract", () => {
     }
   });
 
+  it("does not cache authenticated audit metadata on clients or intermediaries", async () => {
+    mocks.query.mockResolvedValue([{ id: "test-audit-event" }]);
+    const response = await GET(new Request("http://gateway.test/api/platform/audit?limit=10"));
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Cache-Control")).toBe("private, no-store");
+    expect(await response.json()).toMatchObject({ auditEvents: [{ id: "test-audit-event" }] });
+    expect(mocks.query).toHaveBeenCalledTimes(1);
+  });
+
   it.each(["", " ", "0", "-1", "3junk", "2.5", "1e2", "9007199254740992"])(
     "returns INVALID_LIMIT for malformed %s without querying the audit log", async (value) => {
       const url = new URL("http://gateway.test/api/platform/audit");

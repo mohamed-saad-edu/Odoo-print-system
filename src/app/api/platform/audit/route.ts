@@ -44,5 +44,5 @@ export async function GET(req: Request) {
     "platformAuditLog",
   );
 
-  return NextResponse.json({ auditEvents: rows });
+  return NextResponse.json({ auditEvents: rows }, { headers: { "Cache-Control": "private, no-store" } });
 }
