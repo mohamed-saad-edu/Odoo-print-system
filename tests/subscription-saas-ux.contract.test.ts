@@ -25,6 +25,18 @@ describe("customer and Platform Admin subscription UX boundaries", () => {
       expect(v4OnboardingEn["v4.pricing." + key as keyof typeof v4OnboardingEn]).toBeTruthy();
     }
   });
+  it("navigates every subscription page with server-side status filtering", () => {
+    const page = read("src/app/platform/subscriptions/page.tsx");
+    expect(page).toContain("const PAGE_SIZE = 50;");
+    expect(page).toContain("setOffset(0)");
+    expect(page).toContain("setHasMore(data.hasMore)");
+    expect(page).toContain("common.previousPage");
+    expect(page).toContain("common.nextPage");
+    expect(page).toContain("common.pageRange");
+    expect(page).toContain("limit: String(PAGE_SIZE)");
+    expect(page).toContain("status: status");
+    expect(page).not.toContain("items.filter(item => status");
+  });
   it("keeps usage ratios legible in RTL and offers safe manual termination without DELETE", () => {
     const listing = read("src/app/platform/subscriptions/page.tsx");
     const detail = read("src/app/platform/tenants/[id]/page.tsx");
