@@ -7,11 +7,12 @@ import { runWithCorrelation, generateRequestId } from "../../../../server/correl
 import { parseStrictListOffset } from "../../../../lib/request-limits";
 
 export const dynamic = "force-dynamic";
+const HEADERS = { "Cache-Control": "private, no-store" };
 
 export async function GET(req: Request) {
   const claims = await validateWorkspaceManager(req);
-  if (!claims) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  try { requireManagerPermission(claims, "agents.read"); } catch { return NextResponse.json({ error: "Forbidden" }, { status: 403 }); }
+  if (!claims) return NextResponse.json({ error: "Unauthorized" }, { status: 401, headers: HEADERS });
+  try { requireManagerPermission(claims, "agents.read"); } catch { return NextResponse.json({ error: "Forbidden" }, { status: 403, headers: HEADERS }); }
 
   const requestId = requestIdFrom(req) || generateRequestId();
   const url = new URL(req.url);
@@ -20,8 +21,8 @@ export async function GET(req: Request) {
   return runWithCorrelation({ requestId, tenantId: claims.tenantId, agentId: agentId ?? undefined }, async () => {
     if (agentId) {
       const health = await getAgentHealth(claims.tenantId, agentId);
-      if (!health) return NextResponse.json({ error: "Not found" }, { status: 404, headers: { "x-request-id": requestId } });
-      return NextResponse.json(health, { headers: { "x-request-id": requestId } });
+      if (!health) return NextResponse.json({ error: "Not found" }, { status: 404, headers: { ...HEADERS, "x-request-id": requestId } });
+      return NextResponse.json(health, { headers: { ...HEADERS, "x-request-id": requestId } });
     }
     const rawLimit = url.searchParams.get("limit");
     const rawOffset = url.searchParams.get("offset");
@@ -30,13 +31,14 @@ export async function GET(req: Request) {
     if (limit === null || limit < 1 || limit > 200 || offset === null || offset > 100_000) {
       return NextResponse.json(
         { error: "Invalid pagination", code: "INVALID_PAGINATION" },
-        { status: 400, headers: { "x-request-id": requestId } },
+        { status: 400, headers: { ...HEADERS, "x-request-id": requestId } },
       );
     }
     const page = await getAllAgentsHealth(claims.tenantId, limit + 1, offset);
     const hasMore = page.length > limit;
     const all = hasMore ? page.slice(0, limit) : page;
     return NextResponse.json(all, { headers: {
+      ...HEADERS,
       "x-request-id": requestId,
       "x-page-limit": String(limit),
       "x-page-offset": String(offset),
