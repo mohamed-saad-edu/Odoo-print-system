@@ -33,25 +33,24 @@ func TestIPPIdentityDefaultsMatchExecutionPort(t *testing.T) {
 
 
 func TestIPPRootResourceIsNotTheDefaultIPPPrintQueue(t *testing.T) {
-    const host = "192.168.1.20"
-    root := StableIDFromIPPURI("ipp://192.168.1.20:631/", host, 631)
-    implicitRoot := StableIDFromIPPURI("ipp://192.168.1.20:631", host, 631)
-    defaultQueue := StableIDFromIPPURI("ipp://192.168.1.20:631/ipp/print", host, 631)
-    if root != implicitRoot || root == defaultQueue {
-        t.Fatalf("root URI must remain one identity, distinct from /ipp/print: root=%s implicit=%s default=%s", root, implicitRoot, defaultQueue)
-    }
-    device := DeviceInfo{
-        ConnectionType: "ipp", Protocol: "ipp", Endpoint: "ipp://192.168.1.20:631/",
-        Capabilities: map[string]interface{}{"serial": "queue-server-123"},
-    }
-    rootKey, rootOK := physicalIdentityKey(device)
-    device.Endpoint = "ipp://192.168.1.20:631/ipp/print"
-    defaultKey, defaultOK := physicalIdentityKey(device)
-    if !rootOK || !defaultOK || rootKey == defaultKey {
-        t.Fatalf("strong hardware evidence cannot erase the IPP queue resource: root=%q default=%q", rootKey, defaultKey)
-    }
+	const host = "192.168.1.20"
+	root := StableIDFromIPPURI("ipp://192.168.1.20:631/", host, 631)
+	implicitRoot := StableIDFromIPPURI("ipp://192.168.1.20:631", host, 631)
+	defaultQueue := StableIDFromIPPURI("ipp://192.168.1.20:631/ipp/print", host, 631)
+	if root != implicitRoot || root == defaultQueue {
+		t.Fatalf("root URI must remain one identity, distinct from /ipp/print: root=%s implicit=%s default=%s", root, implicitRoot, defaultQueue)
+	}
+	device := DeviceInfo{
+		ConnectionType: "ipp", Protocol: "ipp", Endpoint: "ipp://192.168.1.20:631/",
+		Capabilities: map[string]interface{}{"serial": "queue-server-123"},
+	}
+	rootKey, rootOK := physicalIdentityKey(device)
+	device.Endpoint = "ipp://192.168.1.20:631/ipp/print"
+	defaultKey, defaultOK := physicalIdentityKey(device)
+	if !rootOK || !defaultOK || rootKey == defaultKey {
+		t.Fatalf("strong hardware evidence cannot erase the IPP queue resource: root=%q default=%q", rootKey, defaultKey)
+	}
 }
-
 
 func TestManualIPPPortsRemainSeparateDestinations(t *testing.T) {
 	for _, tc := range []struct {
