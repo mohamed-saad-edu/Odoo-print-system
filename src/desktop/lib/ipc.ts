@@ -9,6 +9,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { decodeDiagnosticResult, type DiagnosticResult } from "../../shared/diagnostic-test";
 import { readGatewayPaginationHeaders } from "./gateway-headers";
+import { fetchWithTimeout as sharedFetchWithTimeout } from "../../lib/fetch-timeout";
 
 /** Tauri v2 injects __TAURI_INTERNALS__ only inside the real desktop shell. */
 export const isTauri =
@@ -100,13 +101,10 @@ async function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit = {}
   if (isTauri) {
     throw new Error("Tauri Gateway requests must use the paired Agent boundary");
   }
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-  try {
-    return await fetch(input, { ...init, signal: controller.signal });
-  } finally {
-    clearTimeout(timer);
-  }
+  // A fetch() promise resolves at HEADERS, not at the end of the response
+  // body. Reuse the shared deadline so stream reads remain abortable and
+  // caller cancellation is not discarded after headers arrive.
+  return sharedFetchWithTimeout(input, init, REQUEST_TIMEOUT_MS);
 }
 
 interface GatewayResponse {
