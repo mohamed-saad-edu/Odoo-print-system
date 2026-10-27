@@ -44,6 +44,8 @@ func TestAllowedGatewayConsolePath(t *testing.T) {
 		{"jobs invalid percent escape", "/api/jobs?search=%ZZ", "GET", false},
 		{"jobs invalid escaped hidden unknown query", "/api/jobs?status=queued&evil=%ZZ", "GET", false},
 		{"jobs empty query marker", "/api/jobs?", "GET", false},
+		{"jobs absolute URL", "https://attacker.example/api/jobs", "GET", false},
+		{"jobs protocol-relative URL", "//attacker.example/api/jobs", "GET", false},
 		{"jobs empty fragment marker", "/api/jobs#", "GET", false},
 		{"jobs empty fragment after query", "/api/jobs?status=queued#", "GET", false},
 		{"list agents", "/api/agents", "GET", true},
