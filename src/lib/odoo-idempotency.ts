@@ -23,6 +23,11 @@ export type V2OdooIdentity = {
 };
 
 const uuidV4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
+/** Match the lower-case, RFC 4122 UUIDv4 that Odoo persists in its own enrollment proof. */
+export function isCanonicalOdooV2InstallationId(value: unknown): value is string {
+  return typeof value === "string" && uuidV4.test(value);
+}
 const proofPattern = /^[A-Za-z0-9_-]{43}$/;
 
 /**
@@ -63,7 +68,7 @@ export function parseOdooIdentity(input: {
   const proof = input.installationProof ?? "";
   const company = input.sourceCompanyId ?? "";
   const operation = input.sourceOperationId ?? "";
-  if (!uuidV4.test(installationId) || !proofPattern.test(proof) ||
+  if (!isCanonicalOdooV2InstallationId(installationId) || !proofPattern.test(proof) ||
       !/^[1-9][0-9]{0,17}$/.test(company) || !isValidOdooV2OperationId(operation)) {
     throw new Error("INVALID_INSTALLATION_IDENTITY");
   }
