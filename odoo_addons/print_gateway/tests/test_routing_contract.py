@@ -536,6 +536,47 @@ class TestPrintGatewayRoutingContract(TransactionCase):
             cr.rollback()
             cr.close()
 
+    def test_namespace_reconciliation_never_resubmits_ambiguous_historical_operation(self):
+        """A 409 namespace collision may refer to paper already printed elsewhere.
+
+        Retrying the queued outbox would reissue the same business intent after
+        history reconciliation/cutover. The ONLY safe automatic action is a
+        status/idempotency-key lookup, never a second physical POST.
+        """
+        for code in ("RECONCILIATION_REQUIRED", "UPGRADE_REQUIRED"):
+            with self.subTest(code=code):
+                job_id = self._job("namespace-block-%s-%s" % (code.lower(), uuid.uuid4().hex[:8]))
+                cr = self.env.registry.cursor()
+                try:
+                    env = api.Environment(cr, self.env.uid, dict(self.env.context))
+                    company = env["res.company"].browse(self.durable_company_id).exists()
+                    job = env["print_gateway.print_job"].with_company(company).browse(job_id).exists()
+                    response = Mock(status_code=409)
+                    response.json.return_value = {"code": code}
+                    with patch("odoo.addons.print_gateway.models.print_job.requests.post", return_value=response) as post:
+                        job.action_submit(raise_on_failure=False)
+                        post.assert_called_once()
+                    cr.rollback()
+                finally:
+                    cr.close()
+
+                cr = self.env.registry.cursor()
+                try:
+                    env = api.Environment(cr, self.env.uid, dict(self.env.context))
+                    company = env["res.company"].browse(self.durable_company_id).exists()
+                    job = env["print_gateway.print_job"].with_company(company).browse(job_id).exists()
+                    self.assertEqual(job.status, "unknown", code)
+                    self.assertFalse(job.next_retry_at, code)
+                    self.assertTrue(job.last_error.startswith("UNKNOWN_SUBMISSION_OUTCOME:"), code)
+                    self.assertEqual(job.physical_outcome, "unknown", code)
+                    self.assertTrue(job._needs_gateway_status_reconciliation(job))
+                    with patch("odoo.addons.print_gateway.models.print_job.requests.post") as post:
+                        job.action_submit(raise_on_failure=False)
+                        post.assert_not_called()
+                finally:
+                    cr.rollback()
+                    cr.close()
+
     def test_gateway_timeout_persists_unknown_outcome(self):
         job_id = self._job("timeout-contract-key")
         cr = self.env.registry.cursor()
