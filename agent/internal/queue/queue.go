@@ -1,6 +1,7 @@
 package queue
 
 import (
+	"bytes"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -25,6 +26,11 @@ var ErrTerminalState = errors.New("local ledger state is terminal; refusing to r
 // attempt. A duplicate delivery must be ignored, not treated as a new physical
 // print attempt.
 var ErrAlreadyPrinting = errors.New("local ledger already printing this claim; duplicate dispatch suppressed")
+
+// ErrJobIdentityMismatch means an existing durable job ID has different
+// printer ownership or payload bytes. A new claim never authorizes rewriting
+// the original operation, including after a provable zero-byte failure.
+var ErrJobIdentityMismatch = errors.New("local job identity differs from recorded printer or payload")
 
 // Queue is the Agent's local durable delivery queue. It is distinct from the
 // Gateway's PostgreSQL job table:
@@ -281,9 +287,11 @@ func (q *Queue) ReserveBeforeDispatch(id, printerID string, payload []byte, clai
 	// untouched would lose the new token on crash and strand the Gateway claim.
 	// Unknown outcomes retain their terminal row under every legacy policy value.
 	// Success and live printing rows must never be mutated here.
-	var status string
+	var status, storedPrinterID string
+	var storedPayload []byte
 	var lastErr sql.NullString
-	if err := tx.QueryRow(`SELECT status, last_error FROM print_jobs WHERE id = ?`, id).Scan(&status, &lastErr); err != nil {
+	if err := tx.QueryRow(`SELECT status, last_error, printer_id, payload FROM print_jobs WHERE id = ?`, id).
+		Scan(&status, &lastErr, &storedPrinterID, &storedPayload); err != nil {
 		return err
 	}
 	if status == "failed" {
@@ -292,6 +300,14 @@ func (q *Queue) ReserveBeforeDispatch(id, printerID string, payload []byte, clai
 				return tx.Commit()
 			}
 		}
+	}
+	// A claim token may be refreshed only for the original immutable operation.
+	// Never overwrite a queued/zero-byte-failed row's printer or payload.
+	if (status == "queued" || status == "failed") &&
+		(storedPrinterID != printerID || !bytes.Equal(storedPayload, payload)) {
+		return ErrJobIdentityMismatch
+	}
+	if status == "failed" {
 		if _, err := tx.Exec(`UPDATE print_jobs
 			SET status = 'queued', claim_token = ?, execution_claim_token = NULL, execution_transport = NULL, output_evidence = NULL, last_error = NULL, spooler_job_id = NULL, updated_at = CURRENT_TIMESTAMP
 			WHERE id = ? AND status = 'failed'`, token, id); err != nil {
@@ -511,13 +527,14 @@ func (q *Queue) BeginPrint(id, printerID string, payload []byte, claimToken stri
 	if err != nil {
 		return err
 	}
-	var status string
+	var status, storedPrinterID string
 	var storedToken sql.NullString
 	var lastErr sql.NullString
+	var storedPayload []byte
 	if err := tx.QueryRow(
-		`SELECT status, claim_token, last_error FROM print_jobs WHERE id = ?`,
+		`SELECT status, claim_token, last_error, printer_id, payload FROM print_jobs WHERE id = ?`,
 		id,
-	).Scan(&status, &storedToken, &lastErr); err != nil {
+	).Scan(&status, &storedToken, &lastErr, &storedPrinterID, &storedPayload); err != nil {
 		return err
 	}
 
@@ -555,6 +572,12 @@ func (q *Queue) BeginPrint(id, printerID string, payload []byte, claimToken stri
 		if unknown {
 			return ErrTerminalState
 		}
+	}
+	if (status == "queued" || status == "failed") &&
+		(storedPrinterID != printerID || !bytes.Equal(storedPayload, payload)) {
+		// Even a direct BeginPrint caller cannot bypass the earlier reservation
+		// fence. Roll back without touching claim tokens, retries or evidence.
+		return ErrJobIdentityMismatch
 	}
 
 	// Only queued and retryable failed rows may enter printing. The UPDATE is
