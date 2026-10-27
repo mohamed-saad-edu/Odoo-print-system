@@ -323,6 +323,16 @@ fn normalize_gateway_url(raw: &str) -> Result<String, String> {
     if candidate.contains('@') || parsed.username() != "" || parsed.password().is_some() {
         return Err("gateway URL cannot include embedded credentials".into());
     }
+    // url::Url can normalize an authority with an empty trailing port
+    // (https://host:/). Go rejects this source spelling and port 0 before
+    // constructing Agent endpoints. Preserve that exact origin contract.
+    let raw_authority = candidate
+        .split_once("://")
+        .map(|(_, remainder)| remainder.split(['/', '?', '#']).next().unwrap_or(""))
+        .unwrap_or("");
+    if raw_authority.ends_with(':') || parsed.port() == Some(0) {
+        return Err("gateway URL port must be between 1 and 65535".into());
+    }
     if parsed.path() != "/" {
         return Err("gateway URL must use the origin root".into());
     }
