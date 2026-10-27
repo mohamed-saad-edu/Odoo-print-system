@@ -69,7 +69,15 @@ jobs:
         run: |
           set -euo pipefail
           go mod verify
-          test -z "$(gofmt -l .)" || { echo 'gofmt required on:'; gofmt -l .; exit 1; }
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo 'gofmt required on:'
+            printf '%s\n' "$unformatted"
+            # Include the exact canonical formatting delta in failed job logs.
+            # This remains a hard failure: no autofix and no scanner bypass.
+            gofmt -d . | sed -n '1,240p'
+            exit 1
+          fi
       - name: Agent race tests and vet
         working-directory: agent
         run: go test -mod=readonly -race -vet=all ./...
