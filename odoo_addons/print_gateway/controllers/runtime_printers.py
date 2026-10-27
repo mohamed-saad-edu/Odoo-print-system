@@ -261,6 +261,9 @@ class PrintGatewayRuntimePrinterController(http.Controller):
         if (not isinstance(agent_id, str) or not agent_id
                 or agent_id != agent_id.strip()
                 or agent_id.startswith("\ufeff") or agent_id.endswith("\ufeff")
+                # An unpaired JSON surrogate cannot be encoded in UTF-8.
+                # Reject it before measuring bytes instead of raising a 500.
+                or any(0xD800 <= ord(ch) <= 0xDFFF for ch in agent_id)
                 or len(agent_id.encode("utf-8")) > 120
                 or any(ord(ch) < 32 or 127 <= ord(ch) <= 159 for ch in agent_id)):
             return {'enabled': True, 'selectedAgentId': False, 'printers': []}
