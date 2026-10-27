@@ -2003,3 +2003,13 @@ PARTIAL  docs/engineering/FILE_COVERAGE_LEDGER.md
 ```
 
 Evidence: `tests/print-quota.test.ts` and `tests/manual-subscriptions.integration.test.ts` include actual PostgreSQL assertions and require CI; the local isolated SQL-builder RED→GREEN only proves query composition. All other tracked source files retain their existing INDEXED/PARTIAL statuses until reviewed with test evidence.
+
+
+#### 2026-10-28 monthly history follow-up
+
+```text
+PARTIAL src/lib/manual-usage-report.ts — calendar-only history projection; preserves raw 0101 ledger
+PARTIAL tests/manual-subscriptions.integration.test.ts — seeded overlapping rolling/calendar history regression
+```
+
+Both paths are **PARTIAL** until actual PostgreSQL integration CI results are attached; this is not a sign-off of all customer usage reports.

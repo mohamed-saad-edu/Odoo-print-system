@@ -1,7 +1,9 @@
 import { sql } from "drizzle-orm";
 import { db } from "../db";
 /** Logical admissions are persistent job IDs, never status rows or page counts.
- * A receipt may overlap its live row during retention; exclude that overlap. */
+ * A receipt may overlap its live row during retention; exclude that overlap.
+ * History shows only exact UTC calendar-month buckets: 0101 rolling buckets
+ * remain stored as evidence but must not appear as duplicate calendar months. */
 export async function logicalUsageReport(tenantId: string|null=null) {
  const result=await db.execute(sql`
  WITH admissions AS (
@@ -14,6 +16,6 @@ export async function logicalUsageReport(tenantId: string|null=null) {
  count(*) FILTER(WHERE created_at>=date_trunc('year',boundaries.now))::int AS year
  FROM admissions CROSS JOIN boundaries WHERE created_at<=boundaries.now
  `);
- const history=await db.execute(sql`SELECT period_start AS "periodStart",sum(used_prints)::bigint AS used FROM print_monthly_usage WHERE (${tenantId}::text IS NULL OR tenant_id=${tenantId}) AND period_start>=date_trunc('year',clock_timestamp() AT TIME ZONE 'UTC')-interval '1 year' GROUP BY period_start ORDER BY period_start DESC LIMIT 24`);
+ const history=await db.execute(sql`SELECT period_start AS "periodStart",sum(used_prints)::bigint AS used FROM print_monthly_usage WHERE (${tenantId}::text IS NULL OR tenant_id=${tenantId}) AND period_start>=date_trunc('year',clock_timestamp() AT TIME ZONE 'UTC')-interval '1 year' AND period_start=date_trunc('month',period_start) AND period_end=period_start+interval '1 month' GROUP BY period_start ORDER BY period_start DESC LIMIT 24`);
  return {...result.rows[0],monthlyHistory:history.rows,timezone:'UTC',unit:'accepted_logical_job',source:'live jobs plus durable receipts, deduplicated by tenant and job ID',quotaSource:'transactional UTC calendar-month admission ledger; cutover 0102 preserves earlier consumed credits conservatively and retains historical rolling rows'};
 }

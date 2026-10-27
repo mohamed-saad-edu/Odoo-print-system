@@ -272,6 +272,22 @@ suite('V4 manual subscriptions security and accounting',()=>{
    expect((await pool().query("SELECT * FROM print_monthly_usage WHERE tenant_id='workspace'")).rows).toHaveLength(0);
   } finally {await locker.query('ROLLBACK');locker.release();}
  });
+ it('keeps admin monthly history free of overlapping archived rolling windows',async()=>{
+   const current=(await pool().query("SELECT date_trunc('month', clock_timestamp() AT TIME ZONE 'UTC') AS start")).rows[0].start;
+   const monthStart=new Date(current);
+   const monthEnd=new Date(Date.UTC(monthStart.getUTCFullYear(),monthStart.getUTCMonth()+1,1));
+   const rollingStart=new Date(monthStart.getTime()+4*86_400_000);
+   const rollingEnd=new Date(rollingStart.getTime()+30*86_400_000);
+   await pool().query(
+     "INSERT INTO print_monthly_usage (tenant_id,period_start,period_end,used_prints) VALUES ('workspace',$1,$2,4),('workspace',$3,$4,8)",
+     [monthStart,monthEnd,rollingStart,rollingEnd],
+   );
+   const history=(await logicalUsageReport('workspace')).monthlyHistory as Array<{periodStart:Date|string;used:number|string}>;
+   expect(history).toHaveLength(1);
+   expect(new Date(history[0].periodStart).toISOString()).toBe(monthStart.toISOString());
+   expect(Number(history[0].used)).toBe(4);
+ });
+
  it('keeps credits separated by UTC calendar month rather than contract renewal',async()=>{
    await mutateManualSubscription('workspace',claims,randomUUID(),input());
    const current=await getTenantPrintUsage(db,'workspace');

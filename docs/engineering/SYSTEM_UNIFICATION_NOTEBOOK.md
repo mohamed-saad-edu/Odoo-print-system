@@ -137,3 +137,12 @@ On `main@172e85866bb9cb6ef84120450399fbe19dc74869`, the native UI suite logged 6
 **ODOO-QUOTA-002:** Odoo customer-facing EN/AR quota messages and pending-reset dialog now describe the **UTC calendar month** rather than a fixed 30-day interval, consistent with Gateway current policy. This does not change Odoo's manual-reprint requirement for billing-denied POS and kitchen receipts or assert that physical paper printed.
 
 **Verification ledger:** All source edits and tests were authored against live GitHub sources. Local execution is unavailable in the current environment; record exact GitHub Actions results for the eventual commit, and do not mark hardware, populated-database migration, Windows spooler or all-repository coverage as verified. If CI fails, keep the failure visible and trace its root cause rather than weakening quality gates.
+
+
+### 2026-10-28 follow-up: monthly history and archived 30-day rows
+
+**ISSUE BILL-HIST-001:** The Platform Admin workspace History renderer consumes `logicalUsageReport().monthlyHistory`. Its old SQL grouped every `print_monthly_usage.period_start`, so preserved 0101 rolling windows appeared next to new 0102 calendar windows as additional “months,” potentially duplicating entries. The source was the retained historical ledger, not a duplicate print admission.
+
+**Correction:** Keep every historical row in PostgreSQL, but scope the monthly chart query to exactly aligned UTC month boundaries (`period_start = date_trunc('month',period_start)` and `period_end = period_start + interval '1 month'`). The operational today/month/year counters still use deduplicated live jobs and receipts. An integration test seeds a calendar bucket plus a rolling window overlapping it and expects one monthly record. Historical months with only archived rolling windows will be absent from the calendar chart; their ledger evidence remains in the DB. This does not certify historic calendar attribution when job timestamps have been purged.
+
+**Verification:** source-level RED→GREEN assertion executed in isolation; PostgreSQL regression and full CI must run on the exact follow-up commit before release. No customer data, historical migrations, or print attempts were changed.
