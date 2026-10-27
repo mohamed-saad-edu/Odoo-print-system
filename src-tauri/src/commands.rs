@@ -594,10 +594,60 @@ pub struct AgentGatewayRequestArgs {
     pub idempotency_key: Option<String>,
 }
 
-fn valid_gateway_printer_id(id: &str) -> bool {
-    let mut chars = id.chars();
-    matches!(chars.next(), Some(c) if c.is_ascii_alphanumeric())
-        && chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-' | '~'))
+// This is one canonical encodeURIComponent(printerId) path segment from
+// the WebView. No second decode or path normalization is permitted.
+fn valid_gateway_printer_id(segment: &str) -> bool {
+    if segment.is_empty() || segment.len() > 360 {
+        return false;
+    }
+    let input = segment.as_bytes();
+    let mut decoded = Vec::with_capacity(input.len());
+    let mut i = 0;
+    while i < input.len() {
+        if input[i] == b'%' {
+            if i + 2 >= input.len() {
+                return false;
+            }
+            let Ok(hex) = std::str::from_utf8(&input[i + 1..i + 3]) else {
+                return false;
+            };
+            let Ok(byte) = u8::from_str_radix(hex, 16) else {
+                return false;
+            };
+            decoded.push(byte);
+            i += 3;
+        } else {
+            if !input[i].is_ascii() {
+                return false;
+            }
+            decoded.push(input[i]);
+            i += 1;
+        }
+    }
+    let Ok(identity) = std::str::from_utf8(&decoded) else {
+        return false;
+    };
+    if identity.is_empty()
+        || identity.len() > 120
+        || identity.trim() != identity
+        || identity.contains("..")
+        || identity.chars().any(|ch| ch.is_control() || matches!(ch, '/' | '?' | '#' | '%') || ch == char::from(92))
+        || identity.chars().next().is_some_and(|ch| ch.is_ascii() && !ch.is_ascii_alphanumeric())
+    {
+        return false;
+    }
+    const HEX: &[u8] = b"0123456789ABCDEF";
+    let mut canonical = String::with_capacity(segment.len());
+    for byte in decoded {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'!' | b'~' | b'*' | b'(' | b')' | 39) {
+            canonical.push(char::from(byte));
+        } else {
+            canonical.push('%');
+            canonical.push(char::from(HEX[(byte >> 4) as usize]));
+            canonical.push(char::from(HEX[(byte & 15) as usize]));
+        }
+    }
+    canonical == segment
 }
 
 fn gateway_printer_action_path(path: &str, action: &str) -> bool {
@@ -1991,6 +2041,31 @@ mod agent_console_path_tests {
         ));
         assert!(!gateway_printer_action_path(
             "/api/printers/-p1/test-print",
+            "test-print"
+        ));
+        for path in [
+            "/api/printers/%D8%B7%D8%A7%D8%A8%D8%B9%D8%A9~1234abcd/test-print",
+            "/api/printers/Receipt%20Printer/test-print",
+        ] {
+            assert!(gateway_printer_action_path(path, "test-print"), "{path}");
+        }
+        for path in [
+            "/api/printers/p%2Fother/test-print",
+            "/api/printers/p%5Cother/test-print",
+            "/api/printers/p%3Fother/test-print",
+            "/api/printers/p%252Fother/test-print",
+            "/api/printers/%2E%2E/test-print",
+            "/api/printers/p%70/test-print",
+            "/api/printers/%FF/test-print",
+            "/api/printers/%d8%b7/test-print",
+            "/api/printers/Bad%00Name/test-print",
+            "/api/printers/p%ZZ/test-print",
+            "/api/printers/p1/test-print?target=/api/other",
+        ] {
+            assert!(!gateway_printer_action_path(path, "test-print"), "{path}");
+        }
+        assert!(!gateway_printer_action_path(
+            &format!("/api/printers/{}/test-print", "p".repeat(121)),
             "test-print"
         ));
     }
