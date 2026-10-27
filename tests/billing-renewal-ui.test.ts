@@ -20,6 +20,11 @@ describe("workspace subscription page", () => {
     expect(dashboard).toContain('v4.subscription.quotaBlockedTitle');
     expect(dashboard).toContain('v4.subscription.expiringSoonTitle');
   });
+  it("exposes the missing-expiry warning for denied legacy active paid contracts", () => {
+    expect(billing).toContain('status === "expired" && sub?.status === "active" && sub?.subscriptionType === "paid" && !sub.currentPeriodEnd');
+    expect(billing).not.toContain('legacyEndMissing = status === "active"');
+  });
+
   it("preserves the requested plan and displays manual request controls", () => {
     expect(billing).toContain("selectedPlanId");
     expect(billing).toContain("<BillingActions");
