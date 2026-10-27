@@ -59,7 +59,7 @@ export function matchingPhysicalPrinter<T extends PrinterEndpoint & { id: string
   rows: readonly T[], incoming: PrinterEndpoint, excludeId?: string,
 ): T | undefined {
   const key = physicalPrinterIdentityKey(incoming);
-  return key ? rows.find(r => r.id !== excludeId && (physicalPrinterIdentityKey(r) ?? r.physicalIdentityKey) === key) : undefined;
+  return key ? rows.find(r => r.id !== excludeId && physicalPrinterIdentityKey(r) === key) : undefined;
 }
 export function samePrinterProtocol(a: PrinterEndpoint, b: PrinterEndpoint): boolean {
   const norm = (p: string) => p.toLowerCase() === "windows_spooler" ? "spooler" : p.toLowerCase();
