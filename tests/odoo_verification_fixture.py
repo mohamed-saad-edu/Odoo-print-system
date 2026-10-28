@@ -16,11 +16,16 @@ def with_verification(printer):
     protocol = result.setdefault("protocol", "spooler")
     file_output = connection == "pdf_output"
     method = "pdf_output" if file_output else "windows_queue" if connection == "spooler" else "ipp_attributes" if connection in ("ipp", "ipps") or protocol in ("ipp", "ipps") else "usb_interface" if connection == "usb" else "snmp_printer"
+    # Fixture proof must use the same method-specific evidence strength as the
+    # live native Agent. A network/SNMP report is never a Windows queue.
+    method_strength = {"windows_queue": "queue", "ipp_attributes": "service",
+                       "usb_interface": "device", "snmp_printer": "device",
+                       "pdf_output": "service"}
     stamp = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
     result.update(verificationState="verified", verificationVerifiedAt=stamp, verificationReceivedAt=stamp,
                   outputMedium="file" if file_output else "physical", printerType="file" if file_output else "physical")
     result["capabilities"] = {**result.get("capabilities", {}), "operational_verification": {
         "version": 1, "verified_at": stamp, "printer_id": result["id"], "binding_digest": "a" * 64,
-        "logical_queue_key": "a" * 64, "method": method, "identity_strength": "service" if file_output else "queue",
+        "logical_queue_key": "a" * 64, "method": method, "identity_strength": method_strength[method],
         "output_medium": result["outputMedium"]}}
     return result
