@@ -111,6 +111,44 @@ test('contradictory or incomplete unbound reply cannot reopen native PDF or lose
   }
 });
 
+
+test('bound RPC boolean flags must be actual booleans before an operation is settled', async () => {
+  for (const reply of [
+    { has_binding: true, dispatched: 'true', success: true, status: 'submitted' },
+    { has_binding: true, dispatched: true, success: 'true', status: 'success' },
+    { has_binding: true, dispatched: 'false', success: false, status: 'queued' },
+    { has_binding: true, dispatched: undefined, success: true, status: 'claimed' },
+  ]) {
+    const h = await harness();
+    h.setResponse(async () => reply);
+    assert.equal(await h.handler(h.action, { active_ids: [99] }, h.env), true);
+    const notice = h.seen.notifications.at(-1);
+    assert.equal(notice.options.type, 'warning', 'untrusted truthy flags cannot grant admission');
+    assert.equal(notice.options.sticky, true);
+    assert.match(notice.message, /no reliable status/);
+    assert.equal(await h.handler(h.action, { active_ids: [99] }, h.env), true);
+    assert.equal(h.seen.submissions[0].kwargs.operation_id, h.seen.submissions[1].kwargs.operation_id);
+  }
+});
+
+test('report notifications never echo untrusted RPC error or progress content', async () => {
+  const cases = [
+    { status: 'failed', dispatched: false, success: false, code: 'PRINTER_OFFLINE', error: 'SQL password=PRIVATE_DATABASE_SECRET' },
+    { status: 'unexpected', dispatched: false, success: false, error: 'SQL password=PRIVATE_DATABASE_SECRET' },
+    { status: 'queued', dispatched: true, success: false, message: 'SQL password=PRIVATE_DATABASE_SECRET' },
+    { status: 'submitted', dispatched: true, success: true, message: 'SQL password=PRIVATE_DATABASE_SECRET' },
+  ];
+  for (const reply of cases) {
+    const h = await harness();
+    h.setResponse(async () => ({ has_binding: true, ...reply }));
+    assert.equal(await h.handler(h.action, { active_ids: [99] }, h.env), true);
+    const notice = h.seen.notifications.at(-1);
+    assert.equal(typeof notice.message, 'string');
+    assert.doesNotMatch(notice.message, /SQL|password|PRIVATE_DATABASE_SECRET/);
+    assert.match(notice.message, /Print|printer|printing/);
+  }
+});
+
 test('overlapping report actions coalesce during async server dispatch', async () => {
   const h = await harness();
   let release;

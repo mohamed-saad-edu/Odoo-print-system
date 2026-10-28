@@ -170,6 +170,18 @@ async function silentPrintReportHandler(action, options, env) {
             res.dispatched === false &&
             (res.status == null || res.status === "no_binding") &&
             res.success !== true && !res.billing_limit && !res.error;
+        // The server contract produces booleans, not truthy strings. Treat
+        // malformed flags as an unresolved submission, never as successful
+        // acceptance that releases the operation ID for a new physical print.
+        if (res.has_binding === true &&
+            (typeof res.dispatched !== "boolean" ||
+             (res.success !== undefined && typeof res.success !== "boolean"))) {
+            notification.add(
+                _t("Print request returned no reliable status. Native PDF download cancelled. Check Print Activity and the printer before retrying."),
+                { type: "warning", sticky: true, buttons: [openJobsButton(env)] }
+            );
+            return true;
+        }
         if (res.has_binding === false && !definitelyUnbound) {
             notification.add(
                 _t("Print routing returned conflicting status. Native PDF download cancelled. Check Print Activity and the printer before retrying."),
@@ -189,21 +201,21 @@ async function silentPrintReportHandler(action, options, env) {
             const admitted = ["submitted", "claimed", "printing", "success"].includes(res.status);
             if (res.status === "failed") {
                 notification.add(
-                    res.error || res.message || _t("Gateway print failed for bound printer. Native download cancelled."),
+                    gatewayServerMessage({ data: { code: res.code, message: res.error || res.message } }) || _t("Gateway print failed for bound printer. Native download cancelled."),
                     { type: "danger", sticky: true, buttons: [openJobs] }
                 );
             } else if (res.status === "queued" && res.dispatched) {
                 // Keep the same operation ID: another click is a retry of
                 // the durable outbox entry, not permission to print twice.
                 notification.add(
-                    res.message || _t("Print job queued in Odoo. Check Print Activity before reprinting."),
+                    _t("Print job queued in Odoo. Check Print Activity before reprinting."),
                     { type: "warning", sticky: true, buttons: [openJobs] }
                 );
             } else if (admitted && res.dispatched && res.success !== false) {
                 finishPrintOperation(recoveryKey, operation.request.operation_id);
                 operations.delete(operationKey);
                 notification.add(
-                    res.message || _t("Printing service is processing this job; paper output is not yet confirmed."),
+                    _t("Printing service is processing this job; paper output is not yet confirmed."),
                     { type: "info", buttons: [openJobs] }
                 );
             } else if (["unknown", "partial"].includes(res.status) || res.dispatched) {
@@ -215,7 +227,7 @@ async function silentPrintReportHandler(action, options, env) {
                 );
             } else {
                 notification.add(
-                    res.error || _t("Gateway print failed for bound printer. Native download cancelled."),
+                    gatewayServerMessage({ data: { code: res.code, message: res.error || res.message } }) || _t("Gateway print failed for bound printer. Native download cancelled."),
                     { type: "danger", sticky: true, buttons: [openJobs] }
                 );
             }
