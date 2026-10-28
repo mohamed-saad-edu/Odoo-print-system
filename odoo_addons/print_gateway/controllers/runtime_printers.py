@@ -5,7 +5,7 @@ from werkzeug.exceptions import Forbidden
 from odoo import http
 from odoo.http import request
 from odoo.exceptions import ValidationError
-from ..runtime_policy import is_gateway_shared_printer
+from ..runtime_policy import is_gateway_shared_printer, is_exact_gateway_printer_id
 from ..printer_geometry import validated_printer_geometry
 from ..printer_verification import is_verified_runtime_printer
 
@@ -213,7 +213,7 @@ class PrintGatewayRuntimePrinterController(http.Controller):
                 continue
             agent_id = agent.get('id')
             lifecycle = agent.get('lifecycle') if isinstance(agent.get('lifecycle'), str) else ''
-            if not isinstance(agent_id, str) or not agent_id.strip() or lifecycle != 'active':
+            if not is_exact_gateway_printer_id(agent_id) or lifecycle != 'active':
                 continue
             raw_name = agent.get('name') if isinstance(agent.get('name'), str) and agent.get('name').strip() else agent_id
             status = agent.get('status') if isinstance(agent.get('status'), str) else 'unknown'
@@ -258,14 +258,7 @@ class PrintGatewayRuntimePrinterController(http.Controller):
         # labels. A padded/control-bearing RPC value must not be normalized
         # into a different, assigned Agent's printer inventory. This matches
         # the Gateway 120-byte UTF-8 identity envelope at the Odoo boundary.
-        if (not isinstance(agent_id, str) or not agent_id
-                or agent_id != agent_id.strip()
-                or agent_id.startswith("\ufeff") or agent_id.endswith("\ufeff")
-                # An unpaired JSON surrogate cannot be encoded in UTF-8.
-                # Reject it before measuring bytes instead of raising a 500.
-                or any(0xD800 <= ord(ch) <= 0xDFFF for ch in agent_id)
-                or len(agent_id.encode("utf-8")) > 120
-                or any(ord(ch) < 32 or 127 <= ord(ch) <= 159 for ch in agent_id)):
+        if not is_exact_gateway_printer_id(agent_id):
             return {'enabled': True, 'selectedAgentId': False, 'printers': []}
         config, root_company = self._get_config(company)
         if not config:
