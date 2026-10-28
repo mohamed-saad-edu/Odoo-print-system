@@ -9,7 +9,9 @@ from datetime import datetime, timedelta, timezone
 
 MAX_AUTO_POS_AGE_SECONDS = 30 * 60
 _POS_SOURCE_MODELS = frozenset(("pos.order", "pos.session"))
-_POS_DOCUMENT_TYPES = frozenset(("receipt", "kitchen"))
+# Preserve the historical names still recognized by print_job's receipt guard.
+# Otherwise a never-admitted legacy POS row can print days after plan renewal.
+_POS_DOCUMENT_TYPES = frozenset(("receipt", "kitchen", "pos_receipt", "pos_kitchen"))
 
 
 def _utc_naive(value):
