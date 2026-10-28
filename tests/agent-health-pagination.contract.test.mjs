@@ -6,7 +6,7 @@ const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf
 
 test("agent health collection bounds fleet cardinality before per-Agent fan-out", () => {
   const health = read("src/lib/agent-health.ts");
-  assert.match(health, /getAllAgentsHealth\(tenantId: string, limit = 100, offset = 0\)/);
+  assert.match(health, /getAllAgentsHealth\(tenantId: string, limit = 100, offset = 0, tx\?: DbTx\)/);
   assert.match(health, /\.orderBy\(asc\(agents\.id\)\)/);
   assert.match(health, /\.limit\(boundedLimit\)/);
   assert.match(health, /\.offset\(boundedOffset\)/);
@@ -22,8 +22,11 @@ test("agent health route preserves array response while exposing bounded paginat
   const route = read("src/app/api/agents/health/route.ts");
   assert.match(route, /limit > 200/);
   assert.match(route, /offset > 100_000/);
-  assert.match(route, /getAllAgentsHealth\(claims\.tenantId, limit \+ 1, offset\)/);
+  assert.match(route, /getAllAgentsHealth\(claims\.tenantId, limit! \+ 1, offset!, tx\)/);
+  assert.match(route, /requireActiveTenantInTransaction\(tx, claims\.tenantId\)/);
+  assert.match(route, /requireManagerActorInTransaction\(tx, claims, "agents\.read"\)/);
+  assert.match(route, /page\.length > limit!/);
   assert.match(route, /"x-has-more": String\(hasMore\)/);
-  assert.match(route, /"x-next-offset": String\(offset \+ limit\)/);
+  assert.match(route, /"x-next-offset": String\(offset! \+ limit!\)/);
   assert.match(route, /return NextResponse\.json\(all,/);
 });

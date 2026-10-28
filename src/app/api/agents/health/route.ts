@@ -47,7 +47,7 @@ export async function GET(req: Request) {
         }
         // The branch above does not use pagination; the check before the
         // transaction establishes these two numeric bounds for list mode.
-        const page = await getAllAgentsHealth(claims.tenantId, limit!, offset!, tx);
+        const page = await getAllAgentsHealth(claims.tenantId, limit! + 1, offset!, tx);
         const hasMore = page.length > limit!;
         const all = hasMore ? page.slice(0, limit!) : page;
         return NextResponse.json(all, { headers: {

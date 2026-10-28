@@ -5,6 +5,10 @@ const mocks = vi.hoisted(() => ({
   permission: vi.fn(),
   list: vi.fn(),
   detail: vi.fn(),
+  transaction: vi.fn(),
+  tenantGuard: vi.fn(),
+  actorGuard: vi.fn(),
+  tx: {},
 }));
 
 vi.mock("../src/lib/manager-auth", () => ({
@@ -16,6 +20,18 @@ vi.mock("../src/lib/authorization", () => ({
 vi.mock("../src/lib/agent-health", () => ({
   getAllAgentsHealth: mocks.list,
   getAgentHealth: mocks.detail,
+}));
+vi.mock("../src/db", () => ({ db: { transaction: mocks.transaction } }));
+vi.mock("../src/lib/tenant-guard", () => ({
+  requireActiveTenantInTransaction: mocks.tenantGuard,
+  TenantSuspendedError: class TenantSuspendedError extends Error { readonly code = "TENANT_SUSPENDED"; readonly status = 403; },
+  TenantDeletedError: class TenantDeletedError extends Error { readonly code = "TENANT_DELETED"; readonly status = 403; },
+}));
+vi.mock("../src/lib/manager-mutation-authorization", () => ({
+  requireManagerActorInTransaction: mocks.actorGuard,
+  ManagerMutationAuthorityChangedError: class ManagerMutationAuthorityChangedError extends Error {
+    response() { return Response.json({ code: "SESSION_EXPIRED" }, { status: 401 }); }
+  },
 }));
 
 import { GET } from "../src/app/api/agents/health/route";
@@ -29,6 +45,11 @@ const urlFor = (field: "limit" | "offset", value: string) => {
 describe("agent health read pagination", () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    // Keep the real route/guard call sequence, but supply a transaction
+    // harness so this unit test does not require a production PostgreSQL DB.
+    mocks.transaction.mockImplementation(async (fn: (tx: object) => Promise<unknown>) => fn(mocks.tx));
+    mocks.tenantGuard.mockResolvedValue(undefined);
+    mocks.actorGuard.mockResolvedValue(undefined);
     mocks.authenticate.mockResolvedValue({ tenantId: "tenant-a", role: "full_access" });
     mocks.permission.mockImplementation(() => {});
     mocks.list.mockResolvedValue([{ agentId: "first", tenantId: "tenant-a" }]);
@@ -58,12 +79,34 @@ describe("agent health read pagination", () => {
   it("keeps the existing default and accepted explicit page bounds", async () => {
     const defaults = await GET(new Request("http://gateway.test/api/agents/health"));
     expect(defaults.status).toBe(200);
-    expect(mocks.list).toHaveBeenCalledWith("tenant-a", 101, 0);
+    expect(mocks.list).toHaveBeenCalledWith("tenant-a", 101, 0, mocks.tx);
     const valid = await GET(new Request("http://gateway.test/api/agents/health?limit=200&offset=100000"));
     expect(valid.status).toBe(200);
-    expect(mocks.list).toHaveBeenLastCalledWith("tenant-a", 201, 100_000);
+    expect(mocks.list).toHaveBeenLastCalledWith("tenant-a", 201, 100_000, mocks.tx);
     expect(valid.headers.get("x-page-limit")).toBe("200");
     expect(valid.headers.get("x-page-offset")).toBe("100000");
+  });
+
+  it("returns only the requested page and advertises the next page when a lookahead Agent exists", async () => {
+    mocks.list.mockResolvedValueOnce([
+      { agentId: "agent-2", tenantId: "tenant-a" },
+      { agentId: "agent-3", tenantId: "tenant-a" },
+    ]);
+    const first = await GET(new Request("http://gateway.test/api/agents/health?limit=1&offset=2"));
+    expect(first.status).toBe(200);
+    expect(mocks.list).toHaveBeenLastCalledWith("tenant-a", 2, 2, mocks.tx);
+    expect(mocks.tenantGuard).toHaveBeenCalledWith(mocks.tx, "tenant-a");
+    expect(mocks.actorGuard).toHaveBeenCalledWith(mocks.tx, expect.objectContaining({ tenantId: "tenant-a" }), "agents.read");
+    expect((await first.json())).toEqual([{ agentId: "agent-2", tenantId: "tenant-a" }]);
+    expect(first.headers.get("x-has-more")).toBe("true");
+    expect(first.headers.get("x-next-offset")).toBe("3");
+
+    mocks.list.mockResolvedValueOnce([{ agentId: "agent-3", tenantId: "tenant-a" }]);
+    const last = await GET(new Request("http://gateway.test/api/agents/health?limit=1&offset=3"));
+    expect(last.status).toBe(200);
+    expect((await last.json())).toEqual([{ agentId: "agent-3", tenantId: "tenant-a" }]);
+    expect(last.headers.get("x-has-more")).toBe("false");
+    expect(last.headers.get("x-next-offset")).toBeNull();
   });
 
   it.each(["limit=0", "limit=201", "offset=100001"])(
