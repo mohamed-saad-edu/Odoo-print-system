@@ -1756,6 +1756,29 @@ class PrintGatewayJob(models.Model):
                                 raise ValidationError(marker_message)
                             break
 
+                        # Only the two live job-admission resource counters
+                        # yield this explicit typed, retryable 429 at Gateway.
+                        # Everything else, including device limits, a forged
+                        # boolean, or a generic proxy response, is ambiguous.
+                        technical_capacity = (
+                            rate_body.get("code") == "TENANT_ENTITLEMENT_EXCEEDED"
+                            and rate_body.get("retryable") is True
+                            and rate_body.get("upgradeRequired") is False
+                            and entitlement in ("max_jobs_per_minute", "max_concurrent_jobs")
+                        )
+                        if technical_capacity:
+                            values = self._billing_retry_values(
+                                job,
+                                "GATEWAY_RATE_LIMITED: %s" % entitlement,
+                                retry_after,
+                            )
+                            persist_submit_state(values)
+                            if raise_on_failure:
+                                raise ValidationError(_(
+                                    "Gateway admission is temporarily limited. The print request remains queued for safe retry."
+                                ))
+                            break
+
                         # A rate-limit response from an intermediary can
                         # arrive after the Gateway already accepted the job.
                         # Only the explicit Gateway pre-admission rate-limit
