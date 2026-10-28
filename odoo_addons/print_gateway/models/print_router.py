@@ -859,11 +859,19 @@ class PrintGatewayRouter(models.AbstractModel):
         # caller asked for new paper output, so it must not be deduplicated.
         if not idempotency_key and not reprint:
             binding_id = route.get("binding") and route["binding"].id or 0
+            # Odoo can update an order's write_date for sync/payment metadata
+            # without creating a new kitchen ticket. Derive the fallback
+            # operation from the exact validated image bytes instead: a lost
+            # RPC response with identical content cannot mint more paper, while
+            # a new preparation delta with different rendered content remains
+            # a distinct operation. Deliberate identical reprints require the
+            # explicit reprint path/key rather than incidental Odoo writes.
+            image_digest = hashlib.sha256(image_base64.encode("ascii")).hexdigest()
             raw_token = "kitchen:%s:%s:%s:%s" % (
                 order.id,
                 binding_id,
                 explicit_destination.id if explicit_destination else 0,
-                getattr(order, "write_date", ""),
+                image_digest,
             )
             idempotency_key = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
         replayed = self._replay_receipt_operation(route, order, image_base64, geometry_fingerprint, idempotency_key)
