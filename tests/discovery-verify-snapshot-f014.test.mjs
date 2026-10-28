@@ -60,6 +60,9 @@ const dep={
  '/lib/tenant-guard':mk({TenantSuspendedError:TestTenantSuspendedError,TenantDeletedError:TestTenantDeletedError,requireActiveTenantInTransaction:async(t,tenantId)=>{const rows=await t.execute(sql`SELECT lifecycle FROM tenants WHERE id = ${tenantId} FOR SHARE`);if(rows.rows[0]?.lifecycle!=='active')throw new TestTenantSuspendedError('TENANT_SUSPENDED')}}),
  '/db':mk({db}),
  '/db/schema':schema,
+ // The discovery details handler logs unexpected read failures. Keep the
+ // production handler real and stub only this external logger dependency.
+ '/lib/log':mk({logError:()=>{}}),
 };
 async function load(filename){const mod=new vm.SourceTextModule(transpile(filename),{context:ctx});await mod.link((n)=>{if(n.endsWith('/lib/authorization'))return auth;if(n.endsWith('/lib/manager-mutation-authorization'))return guard;for(const [k,value] of Object.entries(dep))if(n===k||n.endsWith(k))return value;throw Error('Unexpected import '+n+' in '+filename)});await mod.evaluate();return mod.namespace;}
 let observation;
