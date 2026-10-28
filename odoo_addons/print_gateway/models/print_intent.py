@@ -267,7 +267,20 @@ class PrintGatewayIntent(models.Model):
             # cron: never print that old business event under a different
             # model/event/filter or a now-disabled rule.
             policy = intent.policy_id
-            if (not policy or not policy.active
+            # The Odoo postcommit callback or recovery cron can run long
+            # after this event was captured. Rechecking active/model/filter
+            # alone is insufficient: a report, printer, protocol or raw
+            # template may have changed without altering those fields.
+            # In that case do not reinterpret an old event under a new route.
+            captured_at = intent.create_date
+            rule_changed_after_capture = bool(
+                captured_at and policy and (
+                    (policy.write_date and policy.write_date > captured_at)
+                    or (policy.binding_id and policy.binding_id.write_date
+                        and policy.binding_id.write_date > captured_at)
+                )
+            )
+            if (not policy or not policy.active or rule_changed_after_capture
                     or policy.model_name != res_model or policy.event_type != intent.event_type):
                 cls._finalize_intent_state(
                     env, intent_id, claim_token,
