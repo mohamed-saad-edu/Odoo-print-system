@@ -4,7 +4,7 @@ import { printers, agents } from "../../../../../db/schema";
 import { validateConsoleAuth } from "../../../../../lib/console-auth";
 import { requireManagerPermission } from "../../../../../lib/authorization";
 import { requireConsoleReadAuthorityInTransaction, ConsoleAgentAuthorityRevokedError } from "../../../../../lib/console-read-authority";
-import { requireActiveTenantInTransaction, TenantSuspendedError, TenantDeletedError } from "../../../../../lib/tenant-guard";
+import { TenantSuspendedError, TenantDeletedError } from "../../../../../lib/tenant-guard";
 import { ManagerMutationAuthorityChangedError } from "../../../../../lib/manager-mutation-authorization";
 import { logError } from "../../../../../lib/log";
 import { and, eq } from "drizzle-orm";
