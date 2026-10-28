@@ -134,24 +134,23 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       // Certify's physical test is also a test_page in the authenticated
       // Gateway envelope, so Windows Agent can use live selected driver paper.
       const documentType = testPage ? "test_page" : (typeof body.documentType === "string" ? body.documentType : "raw");
-      // Idempotency: header preferred, then body, then deterministic fallback per certification session.
-      // Keys are opaque operation identities. Never trim a body key (or
-      // substitute an auto-key for an explicitly empty/malformed one), because
-      // that can turn a distinct caller operation into a duplicate print.
+      // Certification prints real paper. A server-derived minute key changes
+      // across a boundary while the previous response can still be ambiguous.
+      // Require a caller-persisted identity before admitting any physical job.
       const headerKey = req.headers.get("Idempotency-Key");
       const bodyKeyPresent = Object.prototype.hasOwnProperty.call(body, "idempotencyKey");
       const providedKeyPresent = headerKey !== null || bodyKeyPresent;
+      if (!providedKeyPresent) {
+        setStep("queue", "error", "Idempotency-Key required", "missing-operation-identity");
+        return NextResponse.json({ error: "Idempotency-Key required for certification", code: "IDEMPOTENCY_KEY_REQUIRED", retryable: false, steps }, { status: 400, headers: { "x-request-id": requestId, "Cache-Control": "no-store" } });
+      }
       const providedKey = headerKey !== null ? headerKey : body.idempotencyKey;
-      if (providedKeyPresent && (!isExactIdempotencyKey(providedKey) || providedKey.length < 8)) {
+      if (!isExactIdempotencyKey(providedKey) || providedKey.length < 8) {
         const evidence = typeof providedKey === "string" ? `length=${providedKey.length}` : "invalid-key-type";
         setStep("queue", "error", "Invalid Idempotency-Key", evidence);
-        return NextResponse.json({ error: "invalid Idempotency-Key", code: "INVALID_REQUEST", steps }, { status: 400, headers: { "x-request-id": requestId } });
+        return NextResponse.json({ error: "invalid Idempotency-Key", code: "INVALID_REQUEST", retryable: false, steps }, { status: 400, headers: { "x-request-id": requestId } });
       }
-      // If the client provides a key, preserve it exactly across retries.
-      // Otherwise the short-lived auto-key deduplicates accidental double-clicks.
-      const minuteBucket = Math.floor(certificationNowMs / 60000);
-      const autoKey = `cert:${printerId}:${tenantId}:${minuteBucket}`;
-      const idempotencyKey = providedKeyPresent && typeof providedKey === "string" ? providedKey : autoKey;
+      const idempotencyKey = providedKey;
 
       // Build payload YASEIR TEST PAGE in the LANGUAGE THE PRINTER SPEAKS.
       // The printable payload MUST be deterministic for one idempotency key.

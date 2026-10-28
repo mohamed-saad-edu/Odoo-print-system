@@ -57,6 +57,20 @@ describe("certification evidence and request handling", () => {
     },
   );
 
+  it("refuses a physical certification without a caller-owned idempotency key", async () => {
+    replyRows({ id: "job", status: "queued" });
+    const response = await POST(new Request("https://gateway.test/api/printers/selected/certify", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ testPage: true }),
+    }), { params: Promise.resolve({ id: "selected" }) });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({
+      code: "IDEMPOTENCY_KEY_REQUIRED", retryable: false,
+      steps: expect.arrayContaining([expect.objectContaining({ id: "queue", status: "error" })]),
+    });
+    expect(mocks.createJob).not.toHaveBeenCalled();
+  });
+
   it("accepts an empty POST without Content-Length using the same canonical diagnostic pipeline", async () => {
     replyRows({ id: "job", status: "queued" });
     const response = await certify();

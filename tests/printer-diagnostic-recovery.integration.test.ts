@@ -46,6 +46,19 @@ suite("diagnostic retry identity and live-Agent admission", () => {
   };
 
   it.each(["manager", "agent"] as const)(
+    "requires an explicit operation key from a %s before admitting a physical diagnostic", async actor => {
+      const request = new Request(`https://gateway.test/api/printers/${f.printerId}/test-print`, {
+        method: "POST",
+        headers: { Authorization: actor === "agent" ? f.agentAuth : `Bearer ${manager.token}` },
+      });
+      const response = await testPrint(request, { params: Promise.resolve({ id: f.printerId }) });
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({ code: "IDEMPOTENCY_KEY_REQUIRED", retryable: false });
+      expect(await jobCount()).toBe(0);
+    },
+  );
+
+  it.each(["manager", "agent"] as const)(
     "rejects malformed %s diagnostic keys rather than aliasing an accepted physical operation", async actor => {
       const original = await accept("strict-diagnostic-identity", actor);
       // NBSP is not normalized by HTTP headers, but String.trim used to alias the key.

@@ -2206,3 +2206,16 @@ Source changes are committed on GitHub main. Code path review checked that Gatew
 | AUTHORED / NOT RUN | `tests/certification-reconciliation.contract.test.mjs` | Client i18n source contract |
 
 Source review only; full CI, PostgreSQL admission and actual Odoo/Agent/printer validation **NOT RUN**. Baseline `64f436bde2e864fef546eec642988b272c5384bf`. Preserve existing TODO and BLOCKED inventory.
+
+
+#### DIAGNOSTIC-KEY-REQUIRED — 2026-10-28
+
+| Status | Path | Contract |
+| --- | --- | --- |
+| PARTIAL | `src/app/api/printers/[id]/test-print/route.ts` | Manager and Agent must provide stable exact operation key for real paper |
+| PARTIAL | `src/app/api/printers/[id]/certify/route.ts` | No implicit minute-bucket key; explicit body/header identity required |
+| AUTHORED / NOT RUN | `tests/printer-diagnostic-recovery.integration.test.ts` | Reject missing Manager/Agent keys before job insertion |
+| AUTHORED / NOT RUN | `tests/certification-evidence.test.ts` | Reject missing certification key without executing mock printer path |
+| UPDATED / NOT RUN | `tests/deep-review-contract.test.ts`, `tests/print-certification.test.ts` | Assert retired implicit bucket never returns |
+
+Baseline `17a2892c2668865f807ea1696dcee75db21dfbdb`. No database reset or deployment; CI and physical acceptance still unverified.

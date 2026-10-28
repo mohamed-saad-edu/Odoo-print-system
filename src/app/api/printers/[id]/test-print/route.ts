@@ -52,7 +52,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // Fail closed for Agent diagnostics without a client-owned retry identity.
   // Prefix/hash it with the authenticated Agent and printer to isolate it from
   // ordinary workspace jobs and prevent cross-Agent idempotency collisions.
-  if (pairedAgent && (!idempotencyKey || !/^[A-Za-z0-9._:-]+$/.test(idempotencyKey))) {
+  // Even a Manager must name the physical diagnostic attempt; otherwise a
+  // lost response followed by a new POST can print twice without reconciliation.
+  if (idempotencyKey === null) {
+    return NextResponse.json({ error: "Diagnostic printing requires an Idempotency-Key", code: "IDEMPOTENCY_KEY_REQUIRED", retryable: false }, { status: 400 });
+  }
+  if (pairedAgent && !/^[A-Za-z0-9._:-]+$/.test(idempotencyKey)) {
     return NextResponse.json({ error: "Agent diagnostic requires a valid Idempotency-Key", code: "INVALID_REQUEST", retryable: false }, { status: 400 });
   }
   const effectiveKey = pairedAgent && idempotencyKey
