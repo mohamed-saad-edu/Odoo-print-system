@@ -58,7 +58,7 @@ def validated_printer_geometry(value, printer_id=None, fingerprint=None):
     for key in ("paper_width_mm", "paper_height_mm"):
         if key in value:
             number = value[key]
-            if type(number) not in (int, float) or not math.isfinite(number) or not 0 < number <= 10000:
+            if type(number) not in (int, float) or not 0 < number <= 10000 or not math.isfinite(number):
                 return None
             result[key] = number
     if "raster_command" in value:
