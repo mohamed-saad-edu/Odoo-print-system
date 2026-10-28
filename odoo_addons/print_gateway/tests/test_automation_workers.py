@@ -227,10 +227,26 @@ class TestAutomationJobWorkers(TransactionCase):
         try:
             for zone in ['UTC', 'America/New_York', 'Pacific/Auckland', 'Asia/Riyadh']:
                 cr.execute('SET LOCAL TIME ZONE %s', (zone,))
+                cr.execute("SELECT clock_timestamp() AT TIME ZONE 'UTC'")
+                lower = cr.fetchone()[0]
                 observed = db_now_utc(cr)
-                cr.execute("SELECT NOW() AT TIME ZONE 'UTC'")
-                self.assertEqual(observed, cr.fetchone()[0])
+                cr.execute("SELECT clock_timestamp() AT TIME ZONE 'UTC'")
+                upper = cr.fetchone()[0]
+                self.assertLessEqual(lower, observed)
+                self.assertLessEqual(observed, upper)
                 self.assertIsNone(observed.tzinfo)
+        finally:
+            cr.rollback()
+            cr.close()
+
+    def test_database_utc_clock_advances_inside_a_long_running_transaction(self):
+        """Leases and retry windows must not freeze at PostgreSQL BEGIN."""
+        cr = self.env.registry.cursor()
+        try:
+            before = db_now_utc(cr)
+            cr.execute("SELECT pg_sleep(0.03)")
+            after = db_now_utc(cr)
+            self.assertGreater((after - before).total_seconds(), 0.01)
         finally:
             cr.rollback()
             cr.close()
