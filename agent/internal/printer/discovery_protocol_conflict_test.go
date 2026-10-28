@@ -60,7 +60,6 @@ func TestDiscoveryAllowsUnknownNetworkLanguageToBecomeKnown(t *testing.T) {
 	}
 }
 
-
 func TestSameIDTCPProtocolConflictWithoutOptionalNetworkAddress(t *testing.T) {
 	// Manual registry rows may have only an exact host:port Endpoint. They
 	// must still reject a conflicting byte language before any cloud dispatch.
