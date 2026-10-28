@@ -1092,7 +1092,17 @@ func sameNetworkEndpoint(a, b DeviceInfo) bool {
 	if a.NetworkAddress == "" || b.NetworkAddress == "" || a.Port <= 0 || b.Port <= 0 {
 		return false
 	}
-	if !strings.EqualFold(a.NetworkAddress, b.NetworkAddress) || a.Port != b.Port {
+	// The same IPv6 address has multiple valid textual spellings. Normalize
+	// only the independently reported host identity; URI path, effective
+	// port and security scheme are still checked below for IPP transports.
+	normalizedHost := func(value string) string {
+		host := strings.ToLower(strings.Trim(strings.TrimSpace(value), "[]"))
+		if ip := net.ParseIP(host); ip != nil {
+			return ip.String()
+		}
+		return host
+	}
+	if normalizedHost(a.NetworkAddress) != normalizedHost(b.NetworkAddress) || a.Port != b.Port {
 		return false
 	}
 	ipp := func(d DeviceInfo) bool {
