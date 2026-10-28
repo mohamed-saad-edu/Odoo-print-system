@@ -246,6 +246,27 @@ def test_gateway_failed_with_unknown_evidence_never_exposes_safe_station_retry(m
     assert cursor.commits == 1 and cursor.closed
 
 
+@pytest.mark.parametrize("remote_response", [
+    {"jobId": "gateway-original", "id": "gateway-other", "status": "success"},
+    {"jobId": "gateway-original", "id": " gateway-original", "status": "success"},
+    {"jobId": "", "id": "gateway-original", "status": "success"},
+    {"jobId": None, "id": "gateway-original", "status": "success"},
+    {"jobId": "gateway-original", "id": None, "status": "success"},
+])
+def test_conflicting_gateway_submission_job_ids_remain_unknown(remote_response):
+    """201 transport acknowledgment with disagreeing aliases is not safe
+    evidence to bind the Odoo operation to a physical Gateway print job.
+    """
+    router, job, cursor, sent, _order = fixture(reply(201, remote_response))
+    result = router._submit_durable_job(7, structured_outcome=True)
+    assert result["status"] == "unknown"
+    assert result["can_retry"] is False
+    assert job.status == "unknown"
+    assert job.gateway_job_id is False
+    assert str(job.last_error).startswith("UNKNOWN_SUBMISSION_OUTCOME:")
+    assert len(sent) == 1 and cursor.closed
+
+
 @pytest.mark.parametrize("response,transport", [
     (None, Timeout("read response lost")),
     (reply(200, {}), None),
