@@ -231,35 +231,34 @@ class PrintGatewayIntent(models.Model):
             if not intent or intent.claim_token != claim_token:
                 _logger.warning("Intent %s claim token mismatch before routing; skipping.", intent_id)
                 return
+            # Source record rules may hide a branch document when the cron
+            # user's default company is its parent/root. Use the ORIGINAL
+            # persisted intent company *before* looking up the source.
+            # Environment is callable with context= on Odoo; it has no
+            # with_context(). The framework enforces allowed-company access.
+            captured_company = intent.company_id
+            if captured_company and captured_company.id != new_env.company.id:
+                new_env = new_env(context=dict(new_env.context, allowed_company_ids=[captured_company.id]))
+                intent = intent.with_env(new_env)
             record = new_env[res_model].browse(res_id).exists()
             if not record:
                 cls._finalize_intent_state(
                     env, intent_id, claim_token,
                     status="skipped",
-                    last_error="Source record no longer exists",
+                    last_error="Source record no longer exists or is no longer accessible in its original company",
                 )
                 return
-            # The routing boundary asserts env.company == record.company_id.
-            # In the post-commit path the operator's env already matches, but
-            # the cron recovery path runs under the cron user's default
-            # company, which permanently stranded branch-scoped intents
-            # (marked failed after max_attempts). Route under the record's
-            # own company so recovery works for every scope; it is a no-op
-            # where the env already matches. Odoo 19 resolves env.company
-            # from allowed_company_ids[0] (Environment has no with_company),
-            # and narrowing the allowed list below the operator's own scope
-            # can only ever restrict access, never widen it.
+            # Never re-scope a captured print intent to a record that was
+            # later moved into another company: that would send old business
+            # data to a different branch's printer. Require explicit review.
             record_company = record.company_id if hasattr(record, "company_id") else False
-            if record_company and record_company.id != new_env.company.id:
-                # NOTE: Environment has NO with_context (it is Model-only;
-                # calling new_env.with_context(...) raises AttributeError on
-                # Odoo 19). The env-level API is __call__(context=...), which
-                # returns a new Environment with the replaced context, so
-                # env.company resolves from the record's company. Verified
-                # against the Odoo 19 runtime (CI odoo19 job).
-                new_env = new_env(context=dict(new_env.context, allowed_company_ids=[record_company.id]))
-                intent = intent.with_env(new_env)
-                record = record.with_env(new_env)
+            if captured_company and record_company and record_company.id != captured_company.id:
+                cls._finalize_intent_state(
+                    env, intent_id, claim_token,
+                    status="skipped",
+                    last_error="Source record company changed after intent capture; printing was not sent",
+                )
+                return
             router = new_env["print_gateway.print_router"]
             try:
                 # A failed ORM/SQL statement must not poison the transaction
