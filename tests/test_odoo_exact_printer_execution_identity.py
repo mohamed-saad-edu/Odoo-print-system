@@ -61,7 +61,7 @@ def _actual_method(filename, class_name, method_name):
 
 INVALID_IDS = [
     "", " printer", "printer ", "\u00a0printer", "-not-an-issue ",
-    "printer\x00another", "printer\u0085another", "\ud800",
+    "printer\x00another", "printer\u0085another", "\ufeffprinter", "printer\ufeff", "\ud800",
     "\udc00", "é" * 61, "😀" * 31,
 ]
 
@@ -72,7 +72,7 @@ def test_shared_runtime_policy_refuses_printer_ids_that_change_on_gateway_wire(p
 
 
 @pytest.mark.parametrize("printer_id", [
-    "printer-1", "طابعة-حرارية", "printer receipt 1", "é" * 60, "😀" * 30,
+    "printer-1", "طابعة-حرارية", "printer receipt 1", "printer\ufeffID", "é" * 60, "😀" * 30,
 ])
 def test_shared_runtime_policy_preserves_canonical_utf8_printer_ids(printer_id):
     assert _runtime_policy().is_exact_gateway_printer_id(printer_id) is True
