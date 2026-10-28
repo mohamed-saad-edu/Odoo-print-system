@@ -84,12 +84,15 @@ describe.skipIf(!hasTestDatabase)("session-backed workspace owner invitations", 
     expect(response.invitations[0]).not.toHaveProperty("tokenHash");
   });
 
-  it("loss of owner email verification denies later invitation reads from the same session", async () => {
+  it("loss of owner email verification invalidates the existing invitation-reading session", async () => {
     const owner = await cookieFor("member@example.test");
     await pool().query("UPDATE users SET email_verified_at=NULL WHERE id='member'");
     const denied = await listInvites(request("/api/team/invitations", "GET", owner));
-    expect(denied.status).toBe(403);
-    expect(await denied.json()).toMatchObject({ code: "OWNER_REQUIRED" });
+    // Authentication rejects an account that has lost mailbox verification
+    // before owner-only authorization can run. A revoked session is 401,
+    // whereas a valid Full Access member without owner rights gets 403.
+    expect(denied.status).toBe(401);
+    expect(await denied.json()).toMatchObject({ code: "UNAUTHORIZED" });
   });
 
   it("denies a verified Platform Owner who has only Full Access in this workspace", async () => {
@@ -101,11 +104,12 @@ describe.skipIf(!hasTestDatabase)("session-backed workspace owner invitations", 
     expect(mail.send).not.toHaveBeenCalled();
   });
 
-  it("loss of email verification denies invitation writes from the existing owner session", async () => {
+  it("loss of email verification invalidates invitation-writing authentication", async () => {
     const cookie = await cookieFor("member@example.test");
     await pool().query("UPDATE users SET email_verified_at=NULL WHERE id='member'");
     const res = await invite(request("/api/team/invitations","POST",cookie,{email:"guest@example.test"}));
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(401);
+    expect(await res.json()).toMatchObject({ code: "UNAUTHORIZED" });
     expect(await countPending()).toHaveLength(0);
   });
 
