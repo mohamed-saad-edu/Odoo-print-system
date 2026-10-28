@@ -395,6 +395,104 @@
         "output_medium": "physical"
       },
       "valid": false
+    },
+    {
+      "name": "windows-queue-cannot-claim-device-identity",
+      "printer": {
+        "id": "verified-office-queue",
+        "connectionType": "spooler",
+        "protocol": "spooler"
+      },
+      "proof": {
+        "version": 1,
+        "verified_at": "2026-10-24T13:30:00Z",
+        "printer_id": "verified-office-queue",
+        "binding_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "logical_queue_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "method": "windows_queue",
+        "identity_strength": "device",
+        "output_medium": "physical",
+        "physical_device_key": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "valid": false
+    },
+    {
+      "name": "ipp-service-cannot-claim-physical-device-identity",
+      "printer": {
+        "id": "verified-office-queue",
+        "connectionType": "ipps",
+        "protocol": "ipps"
+      },
+      "proof": {
+        "version": 1,
+        "verified_at": "2026-10-24T13:30:00Z",
+        "printer_id": "verified-office-queue",
+        "binding_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "logical_queue_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "method": "ipp_attributes",
+        "identity_strength": "device",
+        "output_medium": "physical",
+        "physical_device_key": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "valid": false
+    },
+    {
+      "name": "usb-device-cannot-be-labeled-queue",
+      "printer": {
+        "id": "verified-office-queue",
+        "connectionType": "usb",
+        "protocol": "escpos"
+      },
+      "proof": {
+        "version": 1,
+        "verified_at": "2026-10-24T13:30:00Z",
+        "printer_id": "verified-office-queue",
+        "binding_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "logical_queue_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "method": "usb_interface",
+        "identity_strength": "queue",
+        "output_medium": "physical"
+      },
+      "valid": false
+    },
+    {
+      "name": "snmp-device-cannot-be-labeled-service",
+      "printer": {
+        "id": "verified-office-queue",
+        "connectionType": "network",
+        "protocol": "raw"
+      },
+      "proof": {
+        "version": 1,
+        "verified_at": "2026-10-24T13:30:00Z",
+        "printer_id": "verified-office-queue",
+        "binding_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "logical_queue_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "method": "snmp_printer",
+        "identity_strength": "service",
+        "output_medium": "physical"
+      },
+      "valid": false
+    },
+    {
+      "name": "approved-file-profile-is-service-not-device",
+      "printer": {
+        "id": "verified-office-queue",
+        "connectionType": "pdf_output",
+        "protocol": "pdf"
+      },
+      "proof": {
+        "version": 1,
+        "verified_at": "2026-10-24T13:30:00Z",
+        "printer_id": "verified-office-queue",
+        "binding_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "logical_queue_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "method": "pdf_output",
+        "identity_strength": "device",
+        "output_medium": "file",
+        "physical_device_key": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "valid": false
     }
   ],
   "fileOutputCases": [
