@@ -541,7 +541,9 @@ def test_odoo_cron_reconciles_ambiguous_submissions_without_stale_not_found_writ
     assert 'def _lookup_gateway_job_for_ambiguous_submission(self, job):' in jobs
     assert 'params={"idempotencyKey": job._gateway_idempotency_key()}' in jobs
     assert 'self._mark_gateway_job_missing(' in jobs
-    assert 'job.write({"gateway_job_id": remote_id.strip(), "next_retry_at": False})' in jobs
+    assert 'if not is_exact_gateway_job_id(remote_id):' in jobs
+    assert 'job.write({"gateway_job_id": remote_id, "next_retry_at": False})' in jobs
+    assert 'job.write({"gateway_job_id": remote_id.strip()' not in jobs
 
 
 def test_odoo_gateway_status_reconciliation_uses_authoritative_row_fences():
