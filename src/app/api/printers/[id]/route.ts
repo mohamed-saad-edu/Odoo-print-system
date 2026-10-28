@@ -5,6 +5,8 @@ import { agents, printers } from "../../../../db/schema";
 import { validateConsoleAuth } from "../../../../lib/console-auth";
 import { requireManagerPermission } from "../../../../lib/authorization";
 import { requireManagerActorInTransaction, ManagerMutationAuthorityChangedError } from "../../../../lib/manager-mutation-authorization";
+import { requireConsoleReadAuthorityInTransaction, ConsoleAgentAuthorityRevokedError } from "../../../../lib/console-read-authority";
+import { TenantSuspendedError, TenantDeletedError } from "../../../../lib/tenant-guard";
 import { and, eq, sql, type SQL } from "drizzle-orm";
 import { z } from "zod";
 import { canTransitionLifecycle } from "../../../../lib/lifecycle";
@@ -20,6 +22,7 @@ import { isVirtualPrinterRecord } from "../../../../lib/printer-virtual";
 import { matchingPhysicalPrinter, physicalPrinterIdentityKey } from "../../../../lib/physical-printer-identity";
 
 export const dynamic = "force-dynamic";
+const PRIVATE_HEADERS = { "Cache-Control": "private, no-store" };
 
 const patchSchema = z.object({
   name: z.string().trim().min(1).max(100).optional(),
@@ -47,24 +50,48 @@ const patchSchema = z.object({
 
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const auth = await validateConsoleAuth(req);
-  if (!auth) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!auth) return NextResponse.json({ error: "Unauthorized" }, { status: 401, headers: PRIVATE_HEADERS });
   if (auth.kind === "manager") {
-    try { requireManagerPermission(auth.claims, "printers.read"); } catch { return NextResponse.json({ error: "Forbidden" }, { status: 403 }); }
+    try { requireManagerPermission(auth.claims, "printers.read"); } catch { return NextResponse.json({ error: "Forbidden" }, { status: 403, headers: PRIVATE_HEADERS }); }
   }
   const tenantId = auth.kind === "manager" ? auth.claims.tenantId : auth.agent.tenantId;
   const { id } = await params;
-  const row = await db.query.printers.findFirst({
-    where: auth.kind === "agent"
-      ? and(eq(printers.id, id), eq(printers.tenantId, tenantId), eq(printers.agentId, auth.agent.id))
-      : and(eq(printers.id, id), eq(printers.tenantId, tenantId)),
-  });
-  if (!row || isVirtualPrinterRecord(row)) return NextResponse.json({ error: "Not found" }, { status: 404 });
-
-  const ownerAgent = await db.query.agents.findFirst({
-    where: and(eq(agents.id, row.agentId), eq(agents.tenantId, tenantId)),
-  });
   await refreshClockSkew();
   const now = gatewayNow();
+
+  // The initial manager/Agent credential check is only a preflight.
+  // Tenant suspension, logout, role changes and Agent secret rotation must
+  // serialize before both detail and owner-health reads, just as they do for
+  // the fleet list. Otherwise a stale credential can disclose private device
+  // metadata between validation and the unguarded SELECT.
+  let detail;
+  try {
+    detail = await db.transaction(async tx => {
+      await requireConsoleReadAuthorityInTransaction(tx, auth, "printers.read");
+      const row = await tx.query.printers.findFirst({
+        where: auth.kind === "agent"
+          ? and(eq(printers.id, id), eq(printers.tenantId, tenantId), eq(printers.agentId, auth.agent.id))
+          : and(eq(printers.id, id), eq(printers.tenantId, tenantId)),
+      });
+      if (!row || isVirtualPrinterRecord(row)) return null;
+      const ownerAgent = await tx.query.agents.findFirst({
+        where: and(eq(agents.id, row.agentId), eq(agents.tenantId, tenantId)),
+      });
+      return { row, ownerAgent };
+    });
+  } catch (error) {
+    if (error instanceof TenantSuspendedError || error instanceof TenantDeletedError) {
+      return NextResponse.json({ error: error.message, code: error.code }, { status: error.status, headers: PRIVATE_HEADERS });
+    }
+    if (error instanceof ManagerMutationAuthorityChangedError) return error.response();
+    if (error instanceof ConsoleAgentAuthorityRevokedError) {
+      return NextResponse.json({ error: error.message, code: error.code }, { status: error.status, headers: PRIVATE_HEADERS });
+    }
+    logError("printer.detail_read_failed", { printerId: id, tenantId, error: error instanceof Error ? error.message : "unknown" });
+    return NextResponse.json({ error: "Printer details unavailable", code: "PRINTER_DETAILS_UNAVAILABLE" }, { status: 503, headers: PRIVATE_HEADERS });
+  }
+  if (!detail) return NextResponse.json({ error: "Not found" }, { status: 404, headers: PRIVATE_HEADERS });
+  const { row, ownerAgent } = detail;
   return NextResponse.json({
     ...row,
     capabilities: capabilitiesWithCurrentGeometry(row),
@@ -79,7 +106,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
     agentLifecycle: ownerAgent?.lifecycle ?? null,
     agentLastSeenAt: ownerAgent?.lastSeenAt ?? null,
     agentStaleThresholdSeconds: agentStaleThresholdSeconds(),
-  });
+  }, { headers: PRIVATE_HEADERS });
 }
 
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
