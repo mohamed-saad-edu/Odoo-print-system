@@ -382,3 +382,12 @@ Each directory below has an **explicit state**; direct file counts exclude neste
 | `odoo_addons/print_gateway/static/src/js` | TODO (fix present) | Browser report interception and POS submission/recovery | Odoo `has_binding/dispatched/status` response, Gateway physical attempt, native PDF fallback | Contradictory no-binding response reopened native printing despite a possible Gateway submission | `097e6041` guards explicit no-dispatch; `tests/current-run-report.node.test.mjs` asserts fail-closed identity reuse; CI pending |
 | `odoo_addons/print_gateway/i18n` | TODO (translation added) | Arabic customer errors | Odoo `_t` catalogue and active locale | New fail-closed notice would otherwise fall back to English | `ar.po` occurrence; full translation checker CI pending |
 | `tests` | TODO (focused regression added) | Browser regression suite | Real registry callback using mocked RPC boundary | Earlier unbound test accepted incomplete response with no dispatch field | Updated good fixture and added six contradictory cases; exact run NOT RUN |
+
+
+### 2026-10-28 Homepage authority + Odoo structured RPC follow-up
+
+| Module | State | Logic | Shared contracts | Source-confirmed inconsistency | Fix / regression evidence |
+|---|---|---|---|---|---|
+| `src/app` / `src/app/page.tsx` | TODO (targeted fix present) | Authenticated homepage data isolation, marketing fallback | Workspace session, tenant lock, subscription status and live database clock | JSX returned inside an exception handler; CI ESLint `react-hooks/error-boundaries` failure on previous commit | `c9ff1f169`: render after the async try/catch; source contract test; new lint result pending |
+| `odoo_addons/print_gateway/static/src/js` | TODO (targeted fix present) | Report interception + recovery + translated notifications | RPC boolean flags, operation ID reuse, print-outcome uncertainty, ar/en customer copy | Truthy nonboolean dispatch/success and raw remote diagnostic could misleadingly resolve an ambiguous print or leak credentials | `196f84da`: exact boolean gate and mapped, localized error boundary; real report-handler Node regressions; full CI incomplete |
+| `docs/engineering` | TODO (audit ledger updated) | Review traceability / status reporting | Current main + required per-SHA CI, no source-of-truth substitution | High rate of concurrent main pushes has cancelled many CI runs before full gates finished | Record exact commits/results; never mark a module DONE without its tests and integration evidence |

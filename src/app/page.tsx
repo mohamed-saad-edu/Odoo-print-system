@@ -60,32 +60,32 @@ export default async function Home() {
     // handled by the component boundary, never by a database fallback.
     const view = await (async () => {
       try {
-      const { tenant, subscription, canBilling, plan } = await db.transaction(async tx => {
-        // Authenticated SSR content is not exempt from durable authorization.
-        // Keep the tenant lifecycle and current principal/session fenced while
-        // reading workspace identity, plan metadata and contract expiry.
-        await requireActiveTenantInTransaction(tx, claims.tenantId);
-        await requireManagerActorInTransaction(tx, claims, "tenant.read");
-        const [tenant, subscription] = await Promise.all([
-          tx.query.tenants.findFirst({
-            where: eq(tenants.id, claims.tenantId),
-            columns: { name: true, lifecycle: true },
-          }),
-          tx.query.tenantSubscriptions.findFirst({
-            where: eq(tenantSubscriptions.tenantId, claims.tenantId),
-            columns: { planId: true, status: true, currentPeriodStart: true, currentPeriodEnd: true, entitlementBlocked: true },
-          }),
-        ]);
-        const canBilling = hasManagerPermission(claims, "billing.read");
-        const plan = canBilling && subscription
-          ? await tx.query.plans.findFirst({
-              where: eq(plans.id, subscription.planId),
-              columns: { name: true },
-            })
-          : null;
-        return { tenant, subscription, canBilling, plan };
-      });
-      const subscriptionStatus = customerSubscriptionState(subscription, tenant?.lifecycle, await databaseNowMs());
+        const { tenant, subscription, canBilling, plan } = await db.transaction(async tx => {
+          // Authenticated SSR content is not exempt from durable authorization.
+          // Keep the tenant lifecycle and current principal/session fenced while
+          // reading workspace identity, plan metadata and contract expiry.
+          await requireActiveTenantInTransaction(tx, claims.tenantId);
+          await requireManagerActorInTransaction(tx, claims, "tenant.read");
+          const [tenant, subscription] = await Promise.all([
+            tx.query.tenants.findFirst({
+              where: eq(tenants.id, claims.tenantId),
+              columns: { name: true, lifecycle: true },
+            }),
+            tx.query.tenantSubscriptions.findFirst({
+              where: eq(tenantSubscriptions.tenantId, claims.tenantId),
+              columns: { planId: true, status: true, currentPeriodStart: true, currentPeriodEnd: true, entitlementBlocked: true },
+            }),
+          ]);
+          const canBilling = hasManagerPermission(claims, "billing.read");
+          const plan = canBilling && subscription
+            ? await tx.query.plans.findFirst({
+                where: eq(plans.id, subscription.planId),
+                columns: { name: true },
+              })
+            : null;
+          return { tenant, subscription, canBilling, plan };
+        });
+        const subscriptionStatus = customerSubscriptionState(subscription, tenant?.lifecycle, await databaseNowMs());
         return { tenant, subscription, canBilling, plan, subscriptionStatus };
       } catch (error) {
         // A workspace can be suspended or the session revoked between the
