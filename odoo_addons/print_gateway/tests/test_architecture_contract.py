@@ -495,7 +495,7 @@ class TestPrintGatewayArchitectureContract(TransactionCase):
         self.assertIn("New branch bindings do not use this field as their source of truth.", source)
         # A strict printer-id validator may be imported for safety; this
         # configuration model must not own a printer_id field/selection.
-        self.assertNotRegex(source, r"(?m)^[ \\t]{4}printer_id\\s*=")
+        self.assertNotRegex(source, r"(?m)^    printer_id\s*=")
 
     def test_binding_model_enforces_root_company_invariant(self):
         source = (MODELS / "binding.py").read_text(encoding="utf-8")

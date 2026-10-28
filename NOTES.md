@@ -3036,3 +3036,12 @@ At `main@9cc31103851f642543bb51dd22353487b00f5578`, GitHub recursive tree lists 
 **Change:** `odoo_addons/print_gateway/tests/test_architecture_contract.py` now verifies bounded retry claims, disallows an authoritative config-level printer assignment rather than any identifier text, and enforces the unknown-partial classifier and physical marker. No test disabled, no production/printing logic relaxed; older failover and Odoo runtime tests remain TODO until verified/fixed.
 
 **Ledger:** PARTIAL `odoo_addons/print_gateway/tests/test_architecture_contract.py`, `odoo_addons/print_gateway/models/print_intent.py`, `odoo_addons/print_gateway/models/print_job.py` (source consulted, test changed); TODO all other Odoo controller/model/browser cases and live Odoo CI/hardware. No checked-in build artifacts, no deployment, CI unverified for this commit.
+
+
+### ODOO-MAXIMUM-KEY-2026-10-28
+
+**Root cause from real Odoo 19 CI:** `TestPrintGatewayRoutingContract.test_force_reprint_of_maximum_length_operation_preserves_routing` tried an allowed 200-character idempotency key but the common fixture also used those 200 characters as part of its `printer_id`, violating the independent 120-UTF-8-byte printer execution identity constraint. No production weakening is appropriate.
+
+**Fix:** in `odoo_addons/print_gateway/tests/test_routing_contract.py`, keep short existing printer identities for test continuity and deterministically hash only overlength fixture printer IDs, while retaining the full original idempotency key. Assert the physical printer fixture's byte bound. Also fix the Python raw-regex escape of the architecture test, preserving the no-printer-selection-field assertion instead of mis-matching all inputs.
+
+**Coverage:** PARTIAL `odoo_addons/print_gateway/tests/test_routing_contract.py` and `test_architecture_contract.py`, unchanged `models/print_job.py` exact-printer-id gate. The remaining Odoo runtime tests still need live verification and separate fixes; source review/test edits only, CI NOT RUN for this exact change until GitHub Actions finishes.

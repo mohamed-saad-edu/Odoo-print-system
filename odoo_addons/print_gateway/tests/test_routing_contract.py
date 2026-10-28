@@ -1,5 +1,6 @@
 from unittest.mock import patch, Mock
 import uuid
+import hashlib
 
 import requests
 
@@ -195,11 +196,19 @@ class TestPrintGatewayRoutingContract(TransactionCase):
             config = env["print_gateway.gateway_config"].browse(self.durable_config_id).exists()
             if not config:
                 raise AssertionError("Durable test gateway config is not visible on fresh cursor")
+            # The physical printer identity has a separate 120-byte wire
+            # budget from the 200-byte operation key being tested here.
+            # Never turn a valid maximum-length operation into an invalid
+            # printer id: keep the full operation key in idempotency_key.
+            printer_id = "printer_runtime_%s" % key
+            if len(printer_id.encode("utf-8")) > 120:
+                printer_id = "printer_runtime_hash_%s" % hashlib.sha256(key.encode("utf-8")).hexdigest()
+            self.assertLessEqual(len(printer_id.encode("utf-8")), 120)
             job_id = router._persist_durable_job(
                 {
                     "company": company,
                     "gateway_config": config,
-                    "printer_id": "printer_runtime_%s" % key,
+                    "printer_id": printer_id,
                     "destination": "Sales",
                     "document_type": "order",
                     "payload": {"type": "raw", "protocol": "raw", "encoding": "base64", "data": "aGVsbG8="},
