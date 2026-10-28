@@ -85,7 +85,7 @@ function fixture() {
   };
   return {rows,events,locks,globals,setClaims:value=>{claims=value;}};
 }
-class ActionError extends Error {constructor(message,status){super(message);this.status=status;}}
+class ActionError extends Error {constructor(message,status,code){super(message);this.status=status;this.code=code;}}
 async function deletion(f) {return actual('src/app/actions.ts',f.globals,s=>s.slice(s.indexOf('export async function deleteAgent('),s.indexOf('export async function createPrintJob(')));}
 function job(id,status='queued') {return {id,tenantId:'t',agentId:'a',printerId:'p',apiKeyId:'key',status,idempotencyKey:`op-${id}`,payload:{type:'raw',protocol:'raw',data:'aA=='},createdAt:new Date(0),updatedAt:new Date(0)};}
 

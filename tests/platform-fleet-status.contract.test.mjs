@@ -10,11 +10,12 @@ test("platform printer aggregates use printer evidence instead of Agent reachabi
   // Transaction-scoped stats intentionally use tx.select(), not the old
   // unfenced db.select(). Anchor the assertion on semantic SQL rather than
   // the name/indentation of its Drizzle selector.
-  const printerStart = source.indexOf("total: sql<number>`count(*) filter (where ${printers.inventoryPresent}");
+  const printerStart = source.indexOf("total: sql<number>`count(*) filter (where ${printers.inventoryPresent} = true");
   assert.ok(printerStart >= 0, "printer aggregate block missing");
   const nextJobStart = source.indexOf("queued: sql<number>`count(*) FILTER (WHERE ${printJobs.status}", printerStart);
   assert.ok(nextJobStart > printerStart, "missing job aggregate boundary");
   const beforeJobs = source.slice(printerStart, nextJobStart);
+  assert.match(beforeJobs, /total: sql<number>`count\(\*\) filter \(where \$\{printers\.inventoryPresent\} = true\)::int`/);
   assert.match(beforeJobs, /\$\{printers\.lastSeenAt\} >= now\(\) - make_interval\(secs => \$\{printerStaleThresholdSeconds\(\)\}\)/);
   assert.match(beforeJobs, /\$\{printers\.status\} = 'online'/);
   assert.match(beforeJobs, /\$\{printers\.status\} = 'busy'/);
@@ -29,7 +30,7 @@ test("platform printer aggregates use printer evidence instead of Agent reachabi
 test("platform agent aggregates do not label stale, missing, or inactive evidence Offline", () => {
   const source = read("src/app/api/platform/stats/route.ts");
   const agentStart = source.indexOf("active: sql<number>`count(*) filter (where ${agents.lifecycle} = 'active')");
-  const printerStart = source.indexOf("total: sql<number>`count(*) filter (where ${printers.inventoryPresent}");
+  const printerStart = source.indexOf("total: sql<number>`count(*) filter (where ${printers.inventoryPresent} = true");
   assert.ok(agentStart >= 0 && printerStart > agentStart);
   const agentBlock = source.slice(agentStart, printerStart);
   assert.match(agentBlock, /offline:[\s\S]*\$\{agents\.status\} = 'offline'/);
