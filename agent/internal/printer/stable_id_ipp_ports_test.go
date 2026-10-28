@@ -107,6 +107,25 @@ func TestIPPMultiQueueIPv6TextualFormsShareIdentity(t *testing.T) {
 	}
 }
 
+// The URI is the execution authority. Stale mDNS/SNMP enrichment must not
+// stamp a different URI host or HTTP port with an existing printer ID before
+// the later sameNetworkEndpoint checks ever run.
+func TestIPPStableIDFencesStaleReportedHostAndPort(t *testing.T) {
+	canonical := DeviceInfo{ConnectionType: "ipp", Protocol: "ipp",
+		NetworkAddress: "192.168.1.20", Port: 631,
+		Endpoint: "ipp://192.168.1.20:631/printers/office"}
+	for _, stale := range []string{
+		"http://192.168.1.20:80/printers/office",
+		"ipp://192.168.1.21:631/printers/office",
+	} {
+		incorrect := canonical
+		incorrect.Endpoint = stale
+		if StableIDForDevice(canonical) == StableIDForDevice(incorrect) {
+			t.Fatalf("URI host/port mismatch reused another physical queue ID: %s", stale)
+		}
+	}
+}
+
 func TestIPPIdentityDefaultsMatchExecutionPort(t *testing.T) {
 	for _, tc := range []struct {
 		scheme string
