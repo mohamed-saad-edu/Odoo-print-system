@@ -42,7 +42,13 @@ def _method(filename, cls_name, method_name, **injections):
     node = copy.deepcopy(node)
     node.decorator_list.clear()
     program = ast.fix_missing_locations(ast.Module(body=[node], type_ignores=[]))
+    policy_spec = importlib.util.spec_from_file_location(
+        "exact_odoo_runtime_policy", ADDON / "runtime_policy.py"
+    )
+    policy = importlib.util.module_from_spec(policy_spec)
+    policy_spec.loader.exec_module(policy)
     ns = {
+        "is_exact_gateway_printer_id": policy.is_exact_gateway_printer_id,
         "_": lambda text: text,
         "ValidationError": ValidationError,
         "json": json, "uuid": uuid, "base64": base64,
