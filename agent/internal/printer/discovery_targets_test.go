@@ -165,7 +165,7 @@ func TestAutomaticDiscoveryDeduplicatesOverlappingSubnetMasks(t *testing.T) {
 }
 
 func TestDiscoveryInterfaceExclusionShared(t *testing.T) {
-	excluded := []string{"veth1234", "docker0", "br-abc123", "tailscale0", "tap0", "tun0", "VETH1", "Docker1", "Tailscale0"}
+	excluded := []string{"veth1234", "docker0", "br-abc123", "tailscale0", "tap0", "tun0", "wg0", "WireGuard0", "utun3", "zt0", "VETH1", "Docker1", "Tailscale0"}
 	for _, name := range excluded {
 		if !isDiscoveryInterfaceExcluded(name) {
 			t.Errorf("interface %q must be excluded from discovery budget", name)
