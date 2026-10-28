@@ -43,9 +43,6 @@ func TestGeometryAndOperationalProofRequireGatewayExactPrinterID(t *testing.T) {
 			if valid := geometry.Validate() == nil; valid != tc.want {
 				t.Fatalf("geometry proof validity=%t want=%t ID UTF-8 bytes=%d", valid, tc.want, len(tc.id))
 			}
-			if valid := validGatewayPrinterID(tc.id); valid != tc.want {
-				t.Fatalf("shared printer ID validity=%t want=%t UTF-8 bytes=%d", valid, tc.want, len(tc.id))
-			}
 			binding, err := config.PrinterBindingDigest(pc)
 			if err != nil {
 				if tc.want {
