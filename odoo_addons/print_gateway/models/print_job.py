@@ -2014,11 +2014,21 @@ class PrintGatewayJob(models.Model):
                         raise RuntimeError("GATEWAY_HTTP_%s" % response.status_code)
                     try:
                         body = response.json()
-                        remote_id = (body.get("jobId") or body.get("id")) if isinstance(body, dict) else None
-                        # HTTP 200 alone cannot establish physical output.
-                        # The returned remote job identity must be byte-exact;
-                        # trimming could attach this outbox row to a different
-                        # Gateway job and falsely resolve an ambiguous attempt.
+                        if not isinstance(body, dict):
+                            raise ValueError("GATEWAY_INVALID_RESPONSE")
+                        # HTTP acceptance does not prove physical paper output.
+                        # A response with jobId and legacy id MUST present the
+                        # same exact identity in both fields. Never bind a
+                        # queued Odoo operation to one side of a conflict.
+                        has_job_id = "jobId" in body
+                        has_alias = "id" in body
+                        primary = body.get("jobId") if has_job_id else None
+                        alias = body.get("id") if has_alias else None
+                        if (has_job_id and not is_exact_gateway_job_id(primary)
+                                or has_alias and not is_exact_gateway_job_id(alias)
+                                or has_job_id and has_alias and primary != alias):
+                            raise ValueError("GATEWAY_INVALID_RESPONSE")
+                        remote_id = primary if has_job_id else alias
                         if not is_exact_gateway_job_id(remote_id):
                             raise ValueError("GATEWAY_INVALID_RESPONSE")
                     except (ValueError, TypeError) as exc:
