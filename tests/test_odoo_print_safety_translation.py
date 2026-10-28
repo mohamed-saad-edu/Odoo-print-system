@@ -13,6 +13,17 @@ ROOT = Path(__file__).resolve().parents[1] / "odoo_addons" / "print_gateway"
 CATALOG = ROOT / "i18n" / "ar.po"
 
 
+def test_gettext_matcher_accepts_multiline_calls_but_not_plain_literals():
+    # A literal double-backslash in the Python raw regex would match a
+    # backslash instead of the gettext call, silently failing every source.
+    english = "Exact printer proof is required."
+    pattern = r'_\(\s*"' + re.escape(english) + r'"\s*\)'
+    assert re.search(pattern, '_("Exact printer proof is required.")')
+    assert re.search(pattern, '_(\n  "Exact printer proof is required."\n)')
+    assert not re.search(pattern, '"Exact printer proof is required."')
+    assert not re.search(pattern, '_("An exact printer proof is required.")')
+
+
 @pytest.mark.parametrize("source,english", [
     ("models/print_router.py", "The print operation key is invalid."),
     ("models/binding.py", "A valid Gateway Runtime Printer must be selected."),
@@ -24,7 +35,7 @@ def test_print_safety_error_exists_and_is_translated_to_arabic(source, english):
     original = (ROOT / source).read_text(encoding="utf-8")
     # Odoo also accepts multiline _("...") invocations. Protect the real
     # gettext call rather than requiring one specific source layout.
-    expression = r'_\\(\\s*"' + re.escape(english) + r'"\\s*\\)'
+    expression = r'_\(\s*"' + re.escape(english) + r'"\s*\)'
     assert re.search(expression, original), f"{source}: error must stay translatable"
     catalog = CATALOG.read_text(encoding="utf-8")
     # Use the exact untranslated ID; we must not accept a broad substring
