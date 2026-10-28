@@ -81,6 +81,15 @@ describe("capability collection keyset contract", () => {
     expect(mocks.page).not.toHaveBeenCalled();
   });
 
+  it("rejects an explicitly empty printer ID instead of expanding a detail lookup into tenant-wide inventory", async () => {
+    const response = await GET(new Request("http://gateway.test/api/printers/capabilities?printerId="));
+    expect(response.status).toBe(400);
+    expect(response.headers.get("Cache-Control")).toBe("private, no-store");
+    expect(mocks.transaction).not.toHaveBeenCalled();
+    expect(mocks.page).not.toHaveBeenCalled();
+    expect(mocks.single).not.toHaveBeenCalled();
+  });
+
   it("keeps exact direct lookup tenant-scoped behind the same live authorization", async () => {
     const response = await GET(new Request("http://gateway.test/api/printers/capabilities?printerId=printer-a"));
     expect(response.status).toBe(200);
