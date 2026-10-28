@@ -37,6 +37,29 @@ describe("canonical operational proof and file-result fixtures", () => {
     expect(validatePrinterOperationalVerification(entry.proof, entry.printer, new Date(fixtures.now)).ok).toBe(entry.valid);
   });
   for (const entry of fixtures.fileOutputCases) it(entry.name, () => expect(Boolean(validateFileOutputEvidence(entry.evidence))).toBe(entry.valid));
+  it("rejects apparently matching but wire-invalid printer identities before marking proof verified", () => {
+    const first = fixtures.proofCases[0];
+    if (!first.proof) throw new Error("missing canonical Windows queue proof fixture");
+    const cases: Array<[string, string, boolean]> = [
+      ["120-byte Arabic", "ط".repeat(60), true],
+      ["122-byte Arabic", "ط".repeat(61), false],
+      ["120-byte emoji", "🖨".repeat(30), true],
+      ["124-byte emoji", "🖨".repeat(31), false],
+      ["leading BOM", "\uFEFFqueue", false],
+      ["isolated surrogate", "\uD800", false],
+      ["interior BOM is exact", "que\uFEFFue", true],
+    ];
+    for (const [name, id, allowed] of cases) {
+      // A proof can match the database row byte-for-byte and still contain
+      // a printer ID the Agent/Gateway inventory protocol cannot encode.
+      const owner = { id, connectionType: "spooler", protocol: "spooler" };
+      const proof = { ...first.proof, printer_id: id };
+      expect(validatePrinterOperationalVerification(proof, owner, new Date(fixtures.now)).ok, name).toBe(allowed);
+      expect(operationalVerificationProjection(proof, owner, new Date(fixtures.now)).verificationState, name)
+        .toBe(allowed ? "verified" : "pending");
+    }
+  });
+
   it("requires both server receipt and source timestamps; refreshing only a receipt cannot renew proof", () => {
     const now = new Date(fixtures.now), entry = fixtures.proofCases[0];
     const current = { ...entry.printer, ...operationalVerificationProjection(entry.proof, entry.printer, now) };
