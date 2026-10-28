@@ -320,11 +320,18 @@ export async function getDashboardState(options: DashboardFleetOptions = {}) {
     throw new ActionError(t("errors.invalidStatusFilter"), 400);
   }
 
-  return loadDashboardStateForTenant(manager.tenantId, {
-    agentOffset: options.agentOffset,
-    printerOffset: options.printerOffset,
-    printerSearch: search,
-    printerStatus: status,
+  // A successful cookie validation is only a preflight. Hold the live
+  // tenant, membership and session locks while the full fleet and archived
+  // print history are assembled; role changes cannot race this read.
+  return db.transaction(async tx => {
+    await requireActiveTenantInTransaction(tx, manager.tenantId);
+    await requireManagerActorInTransaction(tx, manager, "jobs.read");
+    return loadDashboardStateForTenant(manager.tenantId, {
+      agentOffset: options.agentOffset,
+      printerOffset: options.printerOffset,
+      printerSearch: search,
+      printerStatus: status,
+    }, tx);
   });
 }
 
@@ -366,12 +373,16 @@ export async function getDashboardJobs(options?: {
 
   // Keep both current dispatches and durable payload-free terminal receipts.
   // The shared read model applies search and pagination AFTER the union.
-  return listPrintJobHistory({
-    tenantId: manager.tenantId,
-    status: statusParam,
-    search: searchParam,
-    limit,
-    offset,
+  return db.transaction(async tx => {
+    await requireActiveTenantInTransaction(tx, manager.tenantId);
+    await requireManagerActorInTransaction(tx, manager, "jobs.read");
+    return listPrintJobHistory({
+      tenantId: manager.tenantId,
+      status: statusParam,
+      search: searchParam,
+      limit,
+      offset,
+    }, tx);
   });
 }
 
