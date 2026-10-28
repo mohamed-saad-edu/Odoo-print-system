@@ -48,6 +48,10 @@ def customer_error_category(value=None, *, code=None, status=None):
     text = (stable_code + " " + str(value or "")[:4000]).upper()
     if any(token in text for token in ("UNKNOWN_", "UNCERTAIN", "PARTIAL_DELIVERY", "AMBIGUOUS")):
         return "uncertain"
+    if str(value or "").upper().startswith((
+        "PRINT_RULE_CHANGED:", "PRINT_RULE_NOT_MATCHED:", "PRINT_SOURCE_COMPANY_CHANGED:",
+    )):
+        return "routing_changed"
     if "GATEWAY_REJECTED_STALE_POS_OPERATION" in text:
         return "stale_pos"
     if "GATEWAY_REJECTED_BILLING_HOLD" in text:
@@ -79,6 +83,8 @@ def customer_error_message(_, value=None, *, code=None, status=None):
     category = customer_error_category(value, code=code, status=status)
     if category == "uncertain":
         return _("The print result needs review. Check the printer before starting another print to avoid duplicate output.")
+    if category == "routing_changed":
+        return _("The print rule or source company changed after this event. No print was sent. Ask an administrator to review the route and submit a new request if needed.")
     if category == "stale_pos":
         return _("This old POS ticket was not sent. Review the sale and explicitly reprint only if needed.")
     if category == "billing_receipt":
