@@ -182,15 +182,18 @@ export function showGatewayBillingLimitDialog(env, errorOrDetails) {
     const details = errorOrDetails?.entitlement && errorOrDetails?.message
         ? errorOrDetails
         : parseGatewayBillingLimit(errorOrDetails);
-    if (!details) return false;
+    // Direct RPC detail objects bypass parseGatewayBillingLimit. Keep the
+    // same allowlist and numeric validation on this second entry point:
+    // malformed backend metadata must not crash or mislabel the print dialog.
+    if (!details || !ALLOWED_ENTITLEMENTS.has(details.entitlement)) return false;
 
     const copy = billingCopy()[details.entitlement];
     if (!copy) return false;
     const facts = [];
-    if (details.used !== null) {
+    if (typeof details.used === "number" && Number.isSafeInteger(details.used) && details.used >= 0) {
         facts.push(_t("Used: %s", details.used.toLocaleString()));
     }
-    if (details.limit !== null) {
+    if (typeof details.limit === "number" && Number.isSafeInteger(details.limit) && details.limit > 0) {
         facts.push(_t("Allowance: %s", details.limit.toLocaleString()));
     }
 
