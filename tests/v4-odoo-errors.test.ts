@@ -98,6 +98,21 @@ describe("V4 Odoo customer error boundary", () => {
     expect(blocked).not.toContain("monthly allowance");
   });
 
+
+  it("does not misclassify explicitly uncertain submissions as definite quota refusal", () => {
+    const marker = 'GATEWAY_BILLING_LIMIT:{"code":"PRINT_QUOTA_EXCEEDED","entitlement":"max_prints_per_period","limit":5,"used":5}';
+    expect(parseGatewayBillingLimit({ data: { code: "UNKNOWN_SUBMISSION_OUTCOME", message: marker } })).toBeNull();
+    const invalid = 'GATEWAY_BILLING_LIMIT:{"code":"UNKNOWN_SUBMISSION_OUTCOME","entitlement":"max_prints_per_period","limit":5,"used":5}';
+    expect(parseGatewayBillingLimit(invalid)).toBeNull();
+    const wrongEntitlement = 'GATEWAY_BILLING_LIMIT:{"code":"PRINT_QUOTA_EXCEEDED","entitlement":"max_concurrent_jobs","limit":5,"used":5}';
+    expect(parseGatewayBillingLimit(wrongEntitlement)).toBeNull();
+    let opened = 0;
+    const env = { services: { dialog: { add() { opened += 1; } } } };
+    expect(showGatewayBillingLimitDialog(env, { code: "UNKNOWN_SUBMISSION_OUTCOME", entitlement: "max_prints_per_period", message: "PRIVATE" })).toBe(false);
+    expect(opened).toBe(0);
+    expect(parseGatewayBillingLimit(marker)).toMatchObject({ code: "PRINT_QUOTA_EXCEEDED", entitlement: "max_prints_per_period" });
+  });
+
   it("parses a bounded structured quota marker before a trailing RPC traceback", () => {
     const marker = JSON.stringify({
       code: "PRINT_QUOTA_EXCEEDED", entitlement: "max_prints_per_period",

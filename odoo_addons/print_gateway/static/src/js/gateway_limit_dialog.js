@@ -183,7 +183,25 @@ function billingMarkerJson(candidate, markerIndex) {
     return null;
 }
 
+/** A limit dialog asserts definite pre-admission refusal. Never infer that
+ * from an unrelated UNKNOWN outcome marker or an arbitrary billing-shaped RPC
+ * payload; legacy markers without a code keep their historical interpretation. */
+function validBillingLimitEvidence(details) {
+    if (!details || typeof details !== "object" || !ALLOWED_ENTITLEMENTS.has(details.entitlement)) return false;
+    if (details.code === undefined) return true;
+    if (details.code === "PRINT_QUOTA_EXCEEDED" || details.code === "MAX_PRINTS_PER_PERIOD") {
+        return details.entitlement === "max_prints_per_period";
+    }
+    return details.code === "TENANT_ENTITLEMENT_EXCEEDED";
+}
+
 export function parseGatewayBillingLimit(error) {
+    const stableCode = gatewayMachineCode(error);
+    if (stableCode && !["PRINT_QUOTA_EXCEEDED", "MAX_PRINTS_PER_PERIOD", "TENANT_ENTITLEMENT_EXCEEDED"].includes(stableCode)) {
+        // A definite non-limit code, especially UNKNOWN_SUBMISSION_OUTCOME,
+        // overrides a billing-shaped string found in an old RPC traceback.
+        return null;
+    }
     for (const candidate of candidateMessages(error)) {
         const markerIndex = candidate.indexOf(PREFIX);
         if (markerIndex < 0) continue;
@@ -192,7 +210,8 @@ export function parseGatewayBillingLimit(error) {
         try {
             const details = JSON.parse(raw);
             const entitlement = typeof details?.entitlement === "string" ? details.entitlement : "";
-            if (!ALLOWED_ENTITLEMENTS.has(entitlement)) continue;
+            if (!validBillingLimitEvidence(details)) continue;
+            if (stableCode && details.code && stableCode !== details.code) continue;
             return {
                 code: typeof details.code === "string" ? details.code : "TENANT_ENTITLEMENT_EXCEEDED",
                 entitlement,
@@ -241,7 +260,7 @@ export function showGatewayBillingLimitDialog(env, errorOrDetails) {
     // Direct RPC detail objects bypass parseGatewayBillingLimit. Keep the
     // same allowlist and numeric validation on this second entry point:
     // malformed backend metadata must not crash or mislabel the print dialog.
-    if (!details || !ALLOWED_ENTITLEMENTS.has(details.entitlement)) return false;
+    if (!validBillingLimitEvidence(details)) return false;
 
     const copy = billingCopy()[details.entitlement];
     if (!copy) return false;
