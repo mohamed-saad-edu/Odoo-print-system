@@ -31,6 +31,23 @@ func TestNetworkIdentityIsPinnedByHostAndPort(t *testing.T) {
 	}
 }
 
+// RAW printer identity is an IP address + port, not the exact textual
+// compression of that address. Preserve separate queues on different ports.
+func TestNetworkRawIPv6AliasesDeduplicateWithoutCrossingPort(t *testing.T) {
+	expanded := DeviceInfo{ConnectionType: "network", Protocol: "raw",
+		NetworkAddress: "fd12:3456:0:0:0:0:0:10", Port: 9100, Endpoint: "[fd12:3456:0:0:0:0:0:10]:9100"}
+	compressed := DeviceInfo{ConnectionType: "network", Protocol: "raw",
+		NetworkAddress: "[fd12:3456::10]", Port: 9100, Endpoint: "[fd12:3456::10]:9100"}
+	if StableIDForDevice(expanded) != StableIDForDevice(compressed) || !sameNetworkEndpoint(expanded, compressed) {
+		t.Fatal("same IPv6 RAW printer created duplicate discovered identities")
+	}
+	otherPort := compressed
+	otherPort.Port, otherPort.Endpoint = 9101, "[fd12:3456::10]:9101"
+	if StableIDForDevice(expanded) == StableIDForDevice(otherPort) || sameNetworkEndpoint(expanded, otherPort) {
+		t.Fatal("separate RAW TCP destinations merged by IP alone")
+	}
+}
+
 func TestNetworkIdentityIgnoresDisplayName(t *testing.T) {
 	// The display name is the least durable attribute and must not feed the id
 	// once a host+port is known.
