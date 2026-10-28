@@ -2157,3 +2157,14 @@ AUTHORED tests/test_odoo_printer_evidence_exact_identity.py — real pure-parser
 ```
 
 The old indexed-file snapshot above is historical. This additive review is **not** a full correctness/CI signoff. All originating workflow attempts cancelled, so native Odoo/Python/Gateway/Agent/physical-printer verification is NOT RUN.
+
+#### ODOO-REMOTE-JOB-ID-2026-10-28
+
+```text
+PARTIAL odoo_addons/print_gateway/models/print_job.py — ambiguous-response remote job identity only
+PARTIAL odoo_addons/print_gateway/runtime_policy.py — pure exact job ID predicate
+PARTIAL tests/test_odoo_exact_operation_key_replay.py — actual Odoo lookup AST regression
+PARTIAL tests/test_final_security_hardening.py — exact lookup static security assertion
+```
+
+Review remains PARTIAL; no completed exact-SHA integration or physical test evidence, hence no VERIFIED or DONE claim.
