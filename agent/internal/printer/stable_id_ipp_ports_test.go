@@ -72,9 +72,12 @@ func TestUppercaseIPPStableIDPreservesMultiQueueResource(t *testing.T) {
 			Endpoint: "ipp://192.168.1.20:631/printers/office"}
 		second := first
 		second.Endpoint = "ipp://192.168.1.20:631/printers/warehouse"
-		if proto == "IpPs" {
-			first.Endpoint = "ipps://192.168.1.20:631/printers/office"
-			second.Endpoint = "ipps://192.168.1.20:631/printers/warehouse"
+		if proto == "IPP" {
+			first.Endpoint = "http://192.168.1.20:631/printers/office"
+			second.Endpoint = "http://192.168.1.20:631/printers/warehouse"
+		} else if proto == "IpPs" {
+			first.Endpoint = "https://192.168.1.20:631/printers/office"
+			second.Endpoint = "https://192.168.1.20:631/printers/warehouse"
 		}
 		if StableIDForDevice(first) == StableIDForDevice(second) {
 			t.Fatalf("case-insensitive protocol %q collapsed two separate queues", proto)
