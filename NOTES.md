@@ -2974,3 +2974,11 @@ At `main@9cc31103851f642543bb51dd22353487b00f5578`, GitHub recursive tree lists 
 - Root-cause fix: fail closed with `409 IDEMPOTENCY_CONFLICT` and `retryable:false` before payload creation/print admission when both identities differ; matching explicit identities still use the same key, preserving existing frontend flows and tenant authorization.
 - Direct route regressions added in `tests/certification-evidence.test.ts`: mismatched header/body produces no job or event, identical pair reaches the print service with the unchanged key. This is AUTHORED/NOT RUN pending completed exact-commit CI; static source inspection is not a test PASS.
 - Module statuses: `src/app/api/printers/[id]/certify` PARTIAL, `tests/certification-evidence.test.ts` AUTHORED/NOT RUN, Gateway/Odoo/Agent/Windows integrated physical output BLOCKED.
+
+## ODOO-INTENT-BUDGET-2026-10-28 — pending attempt ceiling
+
+- Module: `odoo_addons/print_gateway/models` — **PARTIAL**, not DONE.
+- Contract: Odoo intent claim/cron retry budget shares durable attempt ceiling; stale claims must not produce a second ambiguous physical submission.
+- Source finding: `print_intent.py::_claim_intent` and `cron_recover_pending_intents` enforced `attempts < max_attempts` only for `claimed` and `failed`, not `pending`. An exhausted pending row (legacy/corrupt/manual state) could be claimed again, incrementing beyond its budget.
+- Regression authored: `b8b9dae6253fc5697ffba95cf55e2fa94b94d129` (`tests/test_odoo19_printing_static.py`). Production source: `62e86a597b53d36f804492170946e98254affb7b` adds claim and cron predicate guards; the normal successful post-commit route is unchanged.
+- **Verification: NOT RUN** at note authoring; CI `40614064532` was pending. **Follow-up P1:** an already-exhausted `pending` row is now safely not dispatched but may need a separate terminalize/re-arm UX to avoid indefinite pending display. Assess with DB/Odoo integration tests before changing its state. No migration, deletion or deployment.
