@@ -25,7 +25,7 @@ export async function GET(req:Request,context:{params:Promise<{id:string}>}) {
    tx.execute(sql`SELECT id,actor_id AS "actorId",action,created_at AS "createdAt" FROM audit_events WHERE tenant_id=${id} ORDER BY created_at DESC LIMIT 50`),
    tx.execute(sql`SELECT c.id,c.action,c.actor_id AS "actorId",u.email AS "actorEmail",c."before",c."after",c.reason,c.created_at AS "createdAt" FROM subscription_changes c LEFT JOIN users u ON u.id=c.actor_id WHERE c.tenant_id=${id} ORDER BY c.created_at DESC LIMIT 100`),
    tx.execute(sql`SELECT id,status,requester_user_id AS "requesterUserId",requester_name AS "requesterName",requester_email AS "requesterEmail",requester_verified_at AS "requesterVerifiedAt",plan_id AS "planId",term,requested_monthly_quota AS "requestedMonthlyQuota",approved_plan_id AS "approvedPlanId",approved_term AS "approvedTerm",approved_monthly_quota AS "approvedMonthlyQuota",approval_modified AS "approvalModified",created_at AS "createdAt",last_action_at AS "lastActionAt",last_action_reason AS "lastActionReason",subscription_revision AS "subscriptionRevision" FROM subscription_requests WHERE tenant_id=${id} ORDER BY created_at DESC LIMIT 100`),
-   logicalUsageReport(id),
+   logicalUsageReport(id,tx),
   ]);
   const stored=subscription.rows[0] as {status:string;billingMode:string;currentPeriodStart:string;currentPeriodEnd:string|null;entitlementBlocked:boolean}|undefined;
   const databaseClock=new Date(await databaseNowMs());
