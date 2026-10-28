@@ -2791,11 +2791,20 @@ class PrintGatewayJob(models.Model):
                             body = response.json()
                             if not isinstance(body, dict) or not isinstance(body.get("jobs"), list):
                                 raise ValueError("Gateway batch-status response missing jobs list")
-                            returned = {
-                                item["jobId"]: item
-                                for item in body["jobs"]
-                                if isinstance(item, dict) and isinstance(item.get("jobId"), str) and item["jobId"].strip()
-                            }
+                            # The response must not overwrite an earlier
+                            # row for the same opaque job ID, accept a foreign
+                            # ID, or silently discard malformed identity
+                            # evidence. All such cases use exact per-job GETs
+                            # rather than trusting a potentially wrong status.
+                            returned = {}
+                            requested_ids = set(job_ids)
+                            for item in body["jobs"]:
+                                remote_id = item.get("jobId") if isinstance(item, dict) else None
+                                if (not is_exact_gateway_job_id(remote_id)
+                                        or remote_id not in requested_ids
+                                        or remote_id in returned):
+                                    raise ValueError("Gateway batch-status identities are ambiguous")
+                                returned[remote_id] = item
                     except Exception as exc:
                         _logger.warning("Batch status sync failed for config %s: %s; falling back to per-job sync", config.id, exc)
 
