@@ -1703,13 +1703,6 @@ class PrintGatewayJob(models.Model):
                             rate_body = {}
 
                         entitlement = str(rate_body.get("entitlement") or "").strip()
-                        allowed_entitlements = {
-                            "max_agents",
-                            "max_printers",
-                            "max_jobs_per_minute",
-                            "max_concurrent_jobs",
-                            "max_prints_per_period",
-                        }
                         # A proxy can return 429 with arbitrary JSON after
                         # Gateway acceptance. Only the exact typed monthly
                         # print-credit denial is proof that no new job was
