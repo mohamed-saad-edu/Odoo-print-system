@@ -3054,3 +3054,12 @@ At `main@9cc31103851f642543bb51dd22353487b00f5578`, GitHub recursive tree lists 
 **Fix:** fake proof helper maps method→identity strength, preserving all timestamps, matching printer ID, binding digest and output medium; test matrix exercises actual production verifier for spooler, IPP, USB, network, PDF and forged-strength refusal. No production fallback or physical output claim. Extra Odoo sync cases still TODO. This batch is source-authored only; exact-SHA CI NOT RUN until completed.
 
 **Coverage:** PARTIAL `odoo_addons/print_gateway/tests/printer_fixtures.py`, `tests/test_branch_runtime_binding.py`, `tests/test_control_plane.py`, `controllers/runtime_printers.py`, `models/binding.py`, `printer_verification.py`; TODO remaining Odoo/Gateway/Agent/Desktop modules and CI; BLOCKED physical printer verification.
+
+
+### ODOO-STATUS-EXACT-RECEIPT-2026-10-28
+
+**Observed:** Real Odoo 19 CI failures in `test_sync_maps_failed_with_unknown_markers_to_unknown` and `test_sync_gateway_requeue_keeps_ahead_state_and_syncs_remaining_jobs` resulted from mocked Gateway success/failure status bodies omitting **required exact `jobId`**. Production `_apply_synced_status` correctly rejected missing, malformed or mismatched remote identity rather than stealing another print's physical status. Relaxing the production guard would breach tenant/printer integrity.
+
+**Fix:** fixture bodies now include the exact original remote job id while preserving the existing failure/unknown/requeue assertions. New negative regression `test_sync_never_adopts_another_remote_jobs_success` proves a foreign successful status does not move the local job or overwrite its immutable remote identity.
+
+**Coverage:** PARTIAL Odoo `tests/test_routing_contract.py` and `models/print_job.py` status reconciliation, Gateway `src/lib/job-status.ts` status vocabulary; unchanged production authority. Tests are authored but exact-SHA Odoo CI NOT RUN until completed. Other Odoo end-to-end/hardware verification TODO/BLOCKED; no deployment.

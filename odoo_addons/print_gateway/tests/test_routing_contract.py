@@ -1024,13 +1024,17 @@ class TestPrintGatewayRoutingContract(TransactionCase):
                 job.write({"gateway_job_id": "gw-%s" % key, "status": "submitted"})
                 mock_resp = MagicMock()
                 mock_resp.status_code = 200
+                # The Gateway status contract now binds every receipt to the
+                # exact original job ID; a status-only body is NOT authority.
                 if marker:
                     mock_resp.json.return_value = {
+                        "jobId": "gw-%s" % key,
                         "status": "failed",
                         "error": "%s: simulated ambiguous execution" % marker,
                     }
                 else:
                     mock_resp.json.return_value = {
+                        "jobId": "gw-%s" % key,
                         "status": "failed",
                         "error": "CONNECTION_ERROR: simulated refused connection",
                     }
@@ -1047,6 +1051,33 @@ class TestPrintGatewayRoutingContract(TransactionCase):
             finally:
                 cr.rollback()
                 cr.close()
+
+    def test_sync_never_adopts_another_remote_jobs_success(self):
+        from unittest.mock import MagicMock
+        key = "sync-reject-foreign-receipt"
+        job_id = self._job(key)
+        cr = self.env.registry.cursor()
+        try:
+            env = api.Environment(cr, self.env.uid, dict(self.env.context))
+            company = env["res.company"].browse(self.durable_company_id).exists()
+            job = env["print_gateway.print_job"].with_company(company).browse(job_id).exists()
+            job.write({"gateway_job_id": "gw-own-operation", "status": "submitted"})
+            foreign = MagicMock()
+            foreign.status_code = 200
+            foreign.json.return_value = {
+                "jobId": "gw-other-operation", "status": "success", "error": False,
+            }
+            with patch.object(PrintGatewayConfig, "_validate_gateway_host"), patch(
+                "odoo.addons.print_gateway.models.print_job.requests.get",
+                return_value=foreign,
+            ):
+                job.action_sync_status()
+            job.invalidate_recordset(["status", "gateway_job_id"])
+            self.assertEqual(job.status, "submitted")
+            self.assertEqual(job.gateway_job_id, "gw-own-operation")
+        finally:
+            cr.rollback()
+            cr.close()
 
     def test_sync_gateway_requeue_keeps_ahead_state_and_syncs_remaining_jobs(self):
         """A Gateway 'queued' observation while Odoo already holds 'claimed'
@@ -1075,9 +1106,13 @@ class TestPrintGatewayRoutingContract(TransactionCase):
                 resp.status_code = 200
                 if (params or {}).get("id") == "gw-requeue-race-1":
                     # Gateway requeued the lease after Odoo observed 'claimed'.
-                    resp.json.return_value = {"status": "queued", "error": False}
+                    resp.json.return_value = {
+                        "jobId": "gw-requeue-race-1", "status": "queued", "error": False,
+                    }
                 else:
-                    resp.json.return_value = {"status": "success", "error": False}
+                    resp.json.return_value = {
+                        "jobId": "gw-requeue-race-2", "status": "success", "error": False,
+                    }
                 return resp
 
             with patch.object(PrintGatewayConfig, "_validate_gateway_host"), patch(
