@@ -24,8 +24,13 @@ func TestQuickDiscoveryMustFenceTwoDistinctSpoolerQueuesWithSameLegacyID(t *test
 	// Config and registry complete concurrently, in either order. Neither
 	// source's selection priority may silently hide the second live queue.
 	cfg := &config.Config{Printers: []config.PrinterConfig{{
-		ID: other.ID, Name: other.Name, Type: "spooler", Protocol: "spooler",
-		Endpoint: other.SpoolerName, SpoolerName: other.SpoolerName, PrinterType: "physical",
+		ID:          other.ID,
+		Name:        other.Name,
+		Type:        "spooler",
+		Protocol:    "spooler",
+		Endpoint:    other.SpoolerName,
+		SpoolerName: other.SpoolerName,
+		PrinterType: "physical",
 	}}}
 	for i := 0; i < 10; i++ {
 		result := DiscoverQuick(cfg, path)
