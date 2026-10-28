@@ -213,6 +213,25 @@ suite("print idempotency (Odoo → Gateway)", () => {
     expect(await jobCount()).toBe(1);
   });
 
+  it.each(["", "2026-10-28T12:00:00", "2026-02-30T10:00:00.000Z", "tomorrow"])(
+    "rejects malformed explicit expiresAt %j on both Odoo print endpoints",
+    async expiresAt => {
+      const body = jobBody("same-safe-expiry-key", { expiresAt });
+      for (const [url, post] of [
+        ["http://gateway.test/api/print/jobs", printJobsPOST],
+        ["http://gateway.test/api/print/jobs/v2", printJobsV2POST],
+      ] as const) {
+        const response = await post(new Request(url, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${f.odooKey}`, "content-type": "application/json" },
+          body: JSON.stringify(body),
+        }));
+        expect(response.status).toBe(400);
+      }
+      expect(await jobCount()).toBe(0);
+    },
+  );
+
   it("v2 rejects a submission without an idempotency key", async () => {
     const body = jobBody("unused");
     delete (body as Record<string, unknown>).idempotencyKey;

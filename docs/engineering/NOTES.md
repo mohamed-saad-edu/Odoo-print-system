@@ -456,3 +456,9 @@ Baseline inspected: main@65214cf7948a214843110fa2fbc1a23aec388340. This is an **
 **Change:** `097e6041c91d738ed3b09b00d98b3f9c453aa376` guards the actual `report_interceptor.js` registry route and updates `tests/current-run-report.node.test.mjs` with contradictory and partial RPC responses, sticky warning and exact operation-key replay. Arabic translation is catalogued in `odoo_addons/print_gateway/i18n/ar.po` in this follow-up.
 
 **Verification:** GitHub Actions for this SHA were pending when authored. Real Odoo/browser/physical-printer tests NOT RUN; no staging or deployment. Other module TODO entries remain and should not be marked DONE before per-SHA test evidence.
+
+## Gateway v1/v2 explicit print-expiry validation — 2026-10-28
+
+**P1 root cause:** The two Odoo print POST routes duplicated a permissive `parseExpiresAt` helper that returned `undefined` for an explicitly empty string, making the service replace that caller-supplied deadline with its default. JavaScript `Date` parsing also accepted timezone-less, normalized/nonexistent dates contrary to the documented ISO contract. This could extend a stale logical print operation and split the two endpoints' future behavior.
+
+**Fix:** Use one strict, timezone-qualified ISO datetime parser for v1/v2. Only the truly omitted field receives the database-clock default. Retain transactional TTL/future bounds in `createPrintJobForPrinter` and the existing idempotency/tenant/printer authority fences. **Regressions:** `tests/print-expiration.test.ts` (valid offsets/leap day, invalid dates/blank/naive), `tests/print-idempotency.test.ts` (both real route handlers reject malformed explicit timestamps without inserting a job). **Verification:** GitHub Actions exact commit pending; tests are authored, **NOT RUN** here.

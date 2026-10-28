@@ -17,6 +17,7 @@ import { and, eq, isNotNull } from "drizzle-orm";
 import { z } from "zod";
 import { isExactIdempotencyKey } from "../../../../../lib/idempotency";
 import { isExactPrinterId } from "../../../../../lib/exact-printer-id";
+import { parsePrintExpiration } from "../../../../../lib/print-expiration";
 
 export const dynamic = "force-dynamic";
 
@@ -34,16 +35,6 @@ const bodySchema = z.object({
   sourceCompanyId: z.string().optional(),
   sourceOperationId: z.string().optional(),
 }).strict();
-
-function parseExpiresAt(value?: string) {
-  if (!value) return undefined;
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) throw new Error("expiresAt must be a valid ISO-8601 timestamp");
-  // Relative TTL/future validation belongs to the Gateway database clock in
-  // createPrintJobForPrinter. This parser only validates syntax so an app-host
-  // clock drift can never reject/accept a job inconsistently with the DB.
-  return parsed;
-}
 
 function responseForRow(row: Pick<typeof printJobs.$inferSelect, "id" | "status" | "printerId" | "agentId" | "destination" | "documentType" | "error" | "outputMedium" | "outputEvidence">) {
   return {
@@ -99,7 +90,7 @@ export async function POST(req: Request) {
   catch (error) { return NextResponse.json({ error: error instanceof Error ? error.message : "Invalid payload" }, { status: 400 }); }
 
   let expiresAt: Date | undefined;
-  try { expiresAt = parseExpiresAt(parsed.data.expiresAt); }
+  try { expiresAt = parsePrintExpiration(parsed.data.expiresAt); }
   catch (error) { return NextResponse.json({ error: error instanceof Error ? error.message : "Invalid expiresAt" }, { status: 400 }); }
 
   // No early GET-and-return: between validateOdooKey() and this write an
