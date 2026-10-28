@@ -1,7 +1,13 @@
 import { NextResponse } from "next/server";
+import { db } from "../../../../db";
+import { agents } from "../../../../db/schema";
+import { and, eq } from "drizzle-orm";
+import { isValidAgentId } from "../../../../lib/agent-auth";
+import { requireActiveTenantInTransaction, TenantSuspendedError, TenantDeletedError } from "../../../../lib/tenant-guard";
+import { requireManagerActorInTransaction, ManagerMutationAuthorityChangedError } from "../../../../lib/manager-mutation-authorization";
 import { validateWorkspaceManager } from "../../../../lib/manager-auth";
 import { requireManagerPermission } from "../../../../lib/authorization";
-import { requestIdFrom } from "../../../../lib/log";
+import { requestIdFrom, logError } from "../../../../lib/log";
 import { runWithCorrelation } from "../../../../server/correlation";
 
 export const dynamic = "force-dynamic";
@@ -20,8 +26,30 @@ export async function GET(req: Request) {
   const requestId = requestIdFrom(req);
   const url = new URL(req.url);
   const agentId = url.searchParams.get("agentId");
+  if (!isValidAgentId(agentId)) return NextResponse.json({ error: "Valid agentId required", code: "INVALID_AGENT_ID" }, { status: 400 });
 
   return runWithCorrelation({ requestId, tenantId: claims.tenantId, agentId: agentId ?? undefined }, async () => {
+    // The endpoint cannot inspect a remote Windows SCM, but it MUST still
+    // validate the exact requested Agent is owned by the authenticated tenant.
+    // A forged or stale ID must never produce plausible status metadata.
+    try {
+      const owned = await db.transaction(async tx => {
+        await requireActiveTenantInTransaction(tx, claims.tenantId);
+        await requireManagerActorInTransaction(tx, claims, "agents.read");
+        return tx.query.agents.findFirst({
+          where: and(eq(agents.id, agentId), eq(agents.tenantId, claims.tenantId)),
+          columns: { id: true },
+        });
+      });
+      if (!owned) return NextResponse.json({ error: "Agent not found", code: "AGENT_NOT_FOUND" }, { status: 404 });
+    } catch (error) {
+      if (error instanceof TenantSuspendedError || error instanceof TenantDeletedError) {
+        return NextResponse.json({ error: error.message, code: error.code }, { status: error.status });
+      }
+      if (error instanceof ManagerMutationAuthorityChangedError) return error.response();
+      logError("agent.service_status_read_failed", { error: error instanceof Error ? error.message : "unknown" });
+      return NextResponse.json({ error: "Service status unavailable", code: "SERVICE_STATUS_UNAVAILABLE" }, { status: 503 });
+    }
     // This endpoint does not query the remote Agent's SCM on any host.
     // Recovery timings below are configured defaults, not observed policy.
     // Service identity must match the actual registration in
@@ -31,8 +59,8 @@ export async function GET(req: Request) {
     // reset counter. The status body remains BLOCKED until live observations exist,
     // but it must never state a different service name or recovery schedule
     // than the one the installers actually apply.
-    const mockStatus = {
-      agentId: agentId ?? "unknown",
+    const blockedStatus = {
+      agentId,
       serviceName: "YaseirAgent",
       displayName: "Yaseir Agent",
       state: "UNKNOWN" as const,
@@ -59,6 +87,6 @@ export async function GET(req: Request) {
       correlation: { requestId, tenantId: claims.tenantId, agentId },
     };
 
-    return NextResponse.json(mockStatus, { headers: { "x-request-id": requestId } });
+    return NextResponse.json(blockedStatus, { headers: { "x-request-id": requestId } });
   });
 }

@@ -1,3 +1,4 @@
+import { hasBodyOverLimit } from "../../../lib/request-limits";
 import { NextResponse } from "next/server";
 import { requireConsoleReadAuthorityInTransaction, ConsoleAgentAuthorityRevokedError } from "../../../lib/console-read-authority";
 import { TenantSuspendedError, TenantDeletedError } from "../../../lib/tenant-guard";
@@ -108,6 +109,7 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
+  if (hasBodyOverLimit(req, 16 * 1024)) return NextResponse.json({ error: "Request body too large", code: "INVALID_REQUEST" }, { status: 413 });
   const claims = await validateWorkspaceManager(req);
   if (!claims) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   try { requireManagerPermission(claims, "agents.pair"); } catch { const e = new ActionError("Forbidden", 403, "FORBIDDEN"); return NextResponse.json({ error: e.message, code: e.code, ...(e.details ?? {}) }, { status: e.status }); }

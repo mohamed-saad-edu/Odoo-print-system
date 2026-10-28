@@ -159,6 +159,7 @@ export async function POST(req: Request) {
         SET pairing_code_hash = NULL,
             pairing_code_expires_at = NULL,
             secret = ${hashSecret(secret)},
+            lifecycle_revision = lifecycle_revision + 1,
             status = 'online',
             metadata = ${JSON.stringify(meta)}::jsonb,
             last_seen_at = clock_timestamp(),
@@ -168,12 +169,19 @@ export async function POST(req: Request) {
           AND pairing_code_hash = ${hashedCode}
           AND lifecycle = 'active'
           AND pairing_code_expires_at > clock_timestamp()
-        RETURNING id
+        RETURNING id, lifecycle_revision
       `);
 
       if (updated.rows.length !== 1) {
         return { kind: "consumed" as const };
       }
+
+      const nextRevision = Number(updated.rows[0].lifecycle_revision);
+      if (!Number.isSafeInteger(nextRevision) || nextRevision < 1) {
+        throw new Error("Agent session revision did not advance during re-pairing");
+      }
+      await tx.execute(sql`SELECT pg_notify('print_gateway_agent_sessions',
+        ${JSON.stringify({ agentId: agent.id, lifecycleRevision: nextRevision })}::text)`);
 
       // Record the real pairing only after the one-time code was consumed and
       // the runtime credential persisted. Keep it in the SAME transaction so

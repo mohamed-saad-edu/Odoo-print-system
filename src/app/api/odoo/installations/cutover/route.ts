@@ -1,3 +1,4 @@
+import { hasBodyOverLimit } from "../../../../../lib/request-limits";
 import { NextResponse } from "next/server";
 import { sql } from "drizzle-orm";
 import { z } from "zod";
@@ -19,6 +20,7 @@ const schema = z.object({
 
 /** One-way by design: reverting to legacy new admission could print historical intents again. */
 export async function POST(req: Request) {
+  if (hasBodyOverLimit(req, 16 * 1024)) return NextResponse.json({ error: "Request body too large", code: "INVALID_REQUEST" }, { status: 413 });
   const manager = await validateWorkspaceManager(req);
   if (!manager) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   try { requireManagerPermission(manager, "integrations.manage"); }

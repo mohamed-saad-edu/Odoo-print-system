@@ -15,7 +15,7 @@ const NAV_ITEMS: TopNavItem[] = [
  {href:"/platform/subscription-requests",labelKey:"v4.admin.requests",icon:ListChecks},
  {href:"/platform/subscriptions",labelKey:"v4.admin.subscriptions",icon:CreditCard},
  {href:"/platform/operations",labelKey:"v4.admin.operations",icon:Printer},
- {href:"/platform/security",labelKey:"v4.admin.advanced",icon:Shield},
+ {href:"/platform/security",labelKey:"platform.section.security",icon:Shield},
 ];
 
 export default function PlatformLayout({ children }: { children: React.ReactNode }) {

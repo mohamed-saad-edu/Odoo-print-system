@@ -349,9 +349,11 @@ patch(PosStore.prototype, {
             const sessionId = this.session?.id;
             let gatewayEnabled = false;
             try {
-                gatewayEnabled = sessionId
-                    ? await gatewayDataCall(this, "pos.session", "is_gateway_printing_enabled", [[sessionId]], {}, true)
-                    : false;
+                if (!Number.isSafeInteger(sessionId) || sessionId <= 0) {
+                    this.notification.add(_t("Open a POS session before printing."), { type: "danger", sticky: true });
+                    return false;
+                }
+                gatewayEnabled = await gatewayDataCall(this, "pos.session", "is_gateway_printing_enabled", [[sessionId]], {}, true);
             } catch (probeError) {
                 // The enablement probe is a local read that submits nothing, so
                 // its failure PROVES that no receipt was sent to the Gateway
@@ -610,9 +612,11 @@ patch(PosStore.prototype, {
             const sessionId = this.session?.id;
             let gatewayEnabled;
             try {
-                gatewayEnabled = sessionId
-                    ? await gatewayDataCall(this, "pos.session", "is_gateway_printing_enabled", [[sessionId]], {}, true)
-                    : false;
+                if (!Number.isSafeInteger(sessionId) || sessionId <= 0) {
+                    this.notification.add(_t("Open a POS session before printing."), { type: "danger", sticky: true });
+                    return false;
+                }
+                gatewayEnabled = await gatewayDataCall(this, "pos.session", "is_gateway_printing_enabled", [[sessionId]], {}, true);
             } catch (error) {
                 this.notification.add(gatewayServerMessage(error) || _t("Kitchen / Preparation printing failed."), { type: "danger" });
                 return false;
@@ -739,9 +743,11 @@ patch(PosStore.prototype, {
             const sessionId = this.session?.id;
             let gatewayEnabled;
             try {
-                gatewayEnabled = sessionId
-                    ? await gatewayDataCall(this, "pos.session", "is_gateway_printing_enabled", [[sessionId]], {}, true)
-                    : false;
+                if (!Number.isSafeInteger(sessionId) || sessionId <= 0) {
+                    this.notification.add(_t("Open a POS session before printing."), { type: "danger", sticky: true });
+                    return false;
+                }
+                gatewayEnabled = await gatewayDataCall(this, "pos.session", "is_gateway_printing_enabled", [[sessionId]], {}, true);
             } catch (error) {
                 this.notification.add(gatewayServerMessage(error) || _t("Kitchen / Preparation printing failed."), { type: "danger" });
                 return false;
@@ -1036,9 +1042,12 @@ patch(PosStore.prototype, {
 
         let gatewayEnabled;
         try {
-            gatewayEnabled = sessionId
-                ? await gatewayDataCall(this, "pos.session", "is_gateway_printing_enabled", [[sessionId]], {}, true)
-                : false;
+            if (!Number.isSafeInteger(sessionId) || sessionId <= 0) {
+                const message = _t("Open a POS session before printing.");
+                this.notification.add(message, { type: "danger", sticky: true });
+                return { successful: false, canRetry: true, message: { title: _t("Printing Service"), body: message } };
+            }
+            gatewayEnabled = await gatewayDataCall(this, "pos.session", "is_gateway_printing_enabled", [[sessionId]], {}, true);
         } catch (error) {
             this.notification.add(gatewayServerMessage(error) || _t("Kitchen / Preparation printing failed."), { type: "danger" });
             return { successful: false, canRetry: true, message: { title: _t("Printing Service"), body: gatewayServerMessage(error) || _t("Kitchen / Preparation printing failed.") } };

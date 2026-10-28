@@ -11,6 +11,9 @@ import {
   type PrinterGeometryProfile,
 } from "../lib/printer-geometry";
 
+/** Only explicitly localized errors may be displayed to the operator. */
+export class LocalizedGeometrySaveError extends Error {}
+
 type GeometryPrinter = GeometryPrinterState & {
   config?: Record<string, unknown> | null;
   connectionType?: string | null;
@@ -76,7 +79,7 @@ export function PrinterGeometryProfileEditor({ printer, onSave }: {
       setSaved(true);
       setConfirmed(false);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : t("printer.geometry.saveFailed"));
+      setError(cause instanceof LocalizedGeometrySaveError ? cause.message : t("printer.geometry.saveFailed"));
     } finally {
       setBusy(false);
     }
@@ -91,7 +94,7 @@ export function PrinterGeometryProfileEditor({ printer, onSave }: {
       for (const [field] of fields) if (values[field].trim() !== "") profile[field] = Number(values[field]);
       if (raster) profile.raster_command = "gs_v_0";
       const parsed = validatePrinterGeometryProfile(profile);
-      if (!parsed.ok) { setError(`${t("printer.geometry.invalid")}: ${parsed.reason}`); return; }
+      if (!parsed.ok) { setError(t("printer.geometry.invalid")); return; }
       void save(parsed.value);
     }}>
       <p className="text-sm leading-relaxed text-ink-3">{t("printer.geometry.profileHelp")}</p>

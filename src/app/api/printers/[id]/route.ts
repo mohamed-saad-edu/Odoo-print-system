@@ -1,3 +1,4 @@
+import { hasBodyOverLimit } from "../../../../lib/request-limits";
 import { operationalVerificationPresentation } from "../../../../lib/printer-operational-verification";
 import { NextResponse } from "next/server";
 import { db } from "../../../../db";
@@ -110,6 +111,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
 }
 
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  if (hasBodyOverLimit(req, 64 * 1024)) return NextResponse.json({ error: "Request body too large", code: "INVALID_REQUEST" }, { status: 413 });
   const auth = await validateConsoleAuth(req);
   if (!auth) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   // Printer desired-state mutation is a manager control-plane operation.

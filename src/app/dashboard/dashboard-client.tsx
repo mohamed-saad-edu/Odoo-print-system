@@ -98,7 +98,7 @@ import { useI18n } from "../../i18n/react";
 import { getPrinterLanguageBadges } from "../../lib/printer-capability";
 import PrintCertificationWizard from "../../components/PrintCertificationWizard";
 import JobTimeline from "../../components/JobTimeline";
-import { PrinterGeometryDetails, PrinterGeometryProfileEditor } from "../../components/PrinterGeometrySettings";
+import { LocalizedGeometrySaveError, PrinterGeometryDetails, PrinterGeometryProfileEditor } from "../../components/PrinterGeometrySettings";
 import UpgradeLimitDialog, { type UpgradeLimitResource } from "../../components/UpgradeLimitDialog";
 import { isLimitSignalResult, limitSignalDisplayDetails, type EntitlementLimitSignal } from "../../lib/limit-signal";
 import { isServerActionVersionMismatch } from "../../lib/server-action-version";
@@ -277,18 +277,23 @@ function isJobInFlight(status: string): boolean {
   return IN_FLIGHT_JOB_STATUSES.has(status.toLowerCase());
 }
 
-async function sendGatewayReprint(jobId: string): Promise<{ jobId?: string }> {
+async function sendGatewayReprint(jobId: string, operationKey: string): Promise<{ jobId: string }> {
   const response = await fetchWithTimeout(`/api/jobs/${encodeURIComponent(jobId)}/reprint`, {
     method: "POST",
     credentials: "same-origin",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", "Idempotency-Key": operationKey },
   });
   const body = await response.json().catch(() => null) as Record<string, unknown> | null;
   if (!response.ok) {
     const code = typeof body?.code === "string" ? body.code : "HTTP_ERROR";
     throw new DashboardApiError(apiMessageKey(code, response.status, "errors.reprintFailed"), code, body ?? {});
   }
-  return { jobId: typeof body?.jobId === "string" ? body.jobId : undefined };
+  // A lost/truncated acknowledgement is not proof that a new physical print
+  // was rejected. Keep the confirmation key for an exact replay.
+  if (body?.ok !== true || typeof body.jobId !== "string" || !body.jobId) {
+    throw new DashboardApiError("errors.reprintFailed", "INVALID_REPRINT_RESPONSE", body ?? {});
+  }
+  return { jobId: body.jobId };
 }
 
 function upgradeLimitResourceForEntitlement(entitlement: unknown): UpgradeLimitResource | null {
@@ -505,6 +510,9 @@ export default function DashboardClient({
   const [agentToDelete, setAgentToDelete] = useState<Agent | null>(null);
   const [pendingAgentAction, setPendingAgentAction] = useState<{ agent: Agent; next: "disabled" | "retired" } | null>(null);
   const [reprintCandidate, setReprintCandidate] = useState<Job | null>(null);
+  // Keep this confirmation identity after a lost response. Only explicit
+  // cancellation or a confirmed success starts a fresh physical intent.
+  const reprintOperationRef = React.useRef<{ jobId: string; key: string } | null>(null);
   const [registerOpen, setRegisterOpen] = useState(false);
   const [upgradeLimit, setUpgradeLimit] = useState<{
     resource: UpgradeLimitResource;
@@ -652,7 +660,7 @@ export default function DashboardClient({
         } catch { /* A notification failure cannot retry or change the result. */ }
         throw new Error(t("workspaceSecurity.required"));
       }
-      throw new Error(result.error ?? t(apiMessageKey(result.code, result.status, "errors.operationFailed")));
+      throw new Error(t(apiMessageKey(result.code, result.status, "errors.operationFailed")));
     }
     return result.data;
   }, [router, t]);
@@ -892,7 +900,7 @@ export default function DashboardClient({
         });
       }
         } catch (error) {
-          setMessage({ text: isServerActionVersionMismatch(error) ? t("errors.pageUpdatedReload") : error instanceof Error ? error.message : t("errors.operationFailed"), type: "err" });
+          setMessage({ text: isServerActionVersionMismatch(error) ? t("errors.pageUpdatedReload") : error instanceof Error && (error.message === t("errors.sessionExpired") || error.message === t("workspaceSecurity.required")) ? error.message : t("errors.operationFailed"), type: "err" });
         }
 
         const queued = queuedFleetQueryRef.current;
@@ -1013,7 +1021,7 @@ export default function DashboardClient({
       return result;
     } catch (error) {
       setMessage({
-        text: isServerActionVersionMismatch(error) ? t("errors.pageUpdatedReload") : error instanceof Error ? error.message : t("errors.operationFailed"),
+        text: isServerActionVersionMismatch(error) ? t("errors.pageUpdatedReload") : error instanceof Error && (error.message === t("errors.sessionExpired") || error.message === t("workspaceSecurity.required")) ? error.message : t("errors.operationFailed"),
         type: "err",
       });
       return undefined;
@@ -1073,30 +1081,37 @@ export default function DashboardClient({
     }
   };
 
-  /**
-   * Reprint is the ONE mutation that deliberately creates a NEW physical
-   * print, so it must be double-submit guarded at the UI boundary.
-   *
-   * The server already converges concurrent reprints of the same job onto
-   * one row (print-job-service reuses an active reprint job), so this guard
-   * is about state/UX correctness, not a duplicate-print hole.
-   */
+  const closeReprint = () => {
+    if (busy) return;
+    reprintOperationRef.current = null;
+    setReprintCandidate(null);
+  };
+
   const confirmReprint = async () => {
     const job = reprintCandidate;
     if (!job || busy || !canMutate.jobsRetry) return;
-    setReprintCandidate(null);
+    // A retry of THIS confirmation carries the same key even if the first
+    // POST actually committed and its HTTP response was lost. Never silently
+    // generate another physical request after an ambiguous transport error.
     setMessage(null);
     setBusy(true);
     try {
-      const result = await sendGatewayReprint(job.id);
+      if (reprintOperationRef.current?.jobId !== job.id) {
+        reprintOperationRef.current = { jobId: job.id, key: generateIdempotencyKey() };
+      }
+      const operationKey = reprintOperationRef.current?.key;
+      if (!operationKey) throw new Error("Could not create a stable reprint operation key");
+      const result = await sendGatewayReprint(job.id, operationKey);
+      reprintOperationRef.current = null;
+      setReprintCandidate(null);
       setMessage({
-        text: result.jobId
-          ? t("success.reprintQueuedWithJob", { printer: job.printerId, job: result.jobId.slice(0, 12) })
-          : t("success.reprintQueued", { printer: job.printerId }),
+        text: t("success.reprintQueuedWithJob", { printer: job.printerId, job: result.jobId.slice(0, 12) }),
         type: "ok",
       });
       void refreshData();
     } catch (error) {
+      // Preserve the key AND the confirmation dialog. An explicit retry can
+      // reconcile an accepted operation but may never create a duplicate.
       if (error instanceof DashboardApiError) {
         const limit = upgradeLimitFromApiError(error);
         if (limit) {
@@ -2433,9 +2448,14 @@ export default function DashboardClient({
                   method: "PATCH", headers: { "Content-Type": "application/json" }, credentials: "include",
                   body: JSON.stringify({ config: { geometry_profile: profile } }),
                 });
-                const body = await response.json();
-                if (!response.ok) throw new Error(typeof body.error === "string" ? body.error : t("printer.geometry.saveFailed"));
-                setPrinters((current) => current.map((printer) => printer.id === selectedPrinterView.id ? { ...printer, ...body } : printer));
+                const body: unknown = await response.json().catch(() => null);
+                const payload = body && typeof body === "object" && !Array.isArray(body) ? body as Record<string, unknown> : null;
+                if (!response.ok) throw new LocalizedGeometrySaveError(t(apiMessageKey(
+                  typeof payload?.code === "string" ? payload.code : undefined, response.status, "printer.geometry.saveFailed",
+                )));
+                // Never merge an unverified or differently scoped printer row.
+                if (payload?.id !== selectedPrinterView.id) throw new LocalizedGeometrySaveError(t("printer.geometry.saveFailed"));
+                setPrinters((current) => current.map((printer) => printer.id === selectedPrinterView.id ? { ...printer, ...payload } : printer));
                 void refreshData();
               }} />}
             {canMutate.printersTest && <Button variant="secondary" disabled={selectedPrinterView.sharedWithGateway === false} onClick={() => { setSelectedPrinter(null); setCertifyPrinter(selectedPrinterView); }} icon={<ShieldCheck className="h-4 w-4" />}>{t("printer.certify")}</Button>}
@@ -2492,12 +2512,12 @@ export default function DashboardClient({
       {/* ── Reprint confirmation ──────────────────────────────────── */}
       <Modal
         open={reprintCandidate !== null}
-        onClose={() => setReprintCandidate(null)}
+        onClose={closeReprint}
         title={t("job.reprintTitle")}
         description={t("job.reprintBody")}
         footer={
           <>
-            <Button variant="secondary" onClick={() => setReprintCandidate(null)} disabled={busy}>
+            <Button variant="secondary" onClick={closeReprint} disabled={busy}>
               {t("common.cancel")}
             </Button>
             <Button

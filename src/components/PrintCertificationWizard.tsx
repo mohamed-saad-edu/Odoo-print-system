@@ -220,17 +220,24 @@ function CertificationSession({ printerId }: { printerId: string }) {
       if (Array.isArray(data?.steps)) setSteps(data.steps);
       if (!res.ok) {
         const code = typeof data?.code === "string" ? data.code : undefined;
-        throw new Error(t(apiMessageKey(code, res.status, "cert.failedBody")));
+        setError(t(apiMessageKey(code, res.status, "cert.failedBody")));
+        return;
       }
-      if (!Array.isArray(data.steps)) throw new Error(t("cert.failedBody"));
+      if (!Array.isArray(data.steps)) {
+        setError(t("cert.failedBody"));
+        return;
+      }
       setJobId(data.jobId);
       setRequestId(data.requestId);
       setCertified(data.certified);
       setBlocked(data.blocked);
       setTimelineUrl(data.timelineUrl ?? (data.jobId ? `/api/jobs/${data.jobId}/timeline` : null));
-    } catch (e) {
+    } catch {
       if (controller.signal.aborted) return;
-      setError(e instanceof Error ? e.message : t("cert.failedBody"));
+      // Transport/JSON exceptions are not localized API errors and can
+      // contain internal details. A submission whose reply was lost is
+      // ambiguous; preserve the same operation key for reconciliation.
+      setError(t("cert.failedBody"));
     } finally {
       certificationInFlight.current = false;
       if (!controller.signal.aborted) setLoading(false);

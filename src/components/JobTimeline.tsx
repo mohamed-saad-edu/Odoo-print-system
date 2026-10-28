@@ -126,7 +126,7 @@ function TimelineSession({ jobId }: { jobId: string }) {
         if (!["success", "failed", "expired"].includes(String(data.job?.status ?? data.status ?? ""))) timer = setTimeout(() => { void load(); }, 3000);
       } catch (e) {
         if (controller.signal.aborted) return;
-        setError(e instanceof Error ? e.message : String(e));
+        setError(t("timeline.unavailable"));
       } finally {
         if (!controller.signal.aborted) setLoading(false);
       }

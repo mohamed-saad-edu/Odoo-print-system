@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/yaseir-agent/agent/internal/config"
 )
 
 // discoverNetworkPrinters performs active LAN discovery for RAW TCP printers
@@ -279,11 +281,32 @@ func mergeNetworkDevices(devices []DeviceInfo) []DeviceInfo {
 		if key == "" {
 			key = StableIDForDevice(d)
 		}
+		if key == "" {
+			// No endpoint, durable hardware identity or existing ID: names
+			// cannot distinguish two printers on a scan.
+			continue
+		}
 
-		// Also check by IP:Port to ensure TCP 9100 and WSD (with UUID) merge on same host
+		// Identity hints from a chassis do not merge independent print
+		// sockets/resources. Network discovery records are scoped to their
+		// actual execution endpoint before any metadata enrichment.
 		ipPortKey := ""
 		if d.NetworkAddress != "" && d.Port > 0 {
 			ipPortKey = fmt.Sprintf("ip:%s:%d", strings.ToLower(d.NetworkAddress), d.Port)
+		}
+		// A binding digest is a SHA-256 hex string, not a tagged "ipp:"
+		// name. Inspect the actual transport before constructing aliases:
+		// two IPP queues on the same host:port can have different resource
+		// paths, and neither may alias the host's RAW byte socket.
+		protocol := strings.ToLower(strings.TrimSpace(d.Protocol))
+		connection := strings.ToLower(strings.TrimSpace(d.ConnectionType))
+		if protocol == "ipp" || protocol == "ipps" || connection == "ipp" || connection == "ipps" {
+			ipPortKey = ""
+		}
+		if binding, err := config.PrinterBindingDigest(SharingConfigForDevice(d)); err == nil {
+			key = "execution:" + binding
+		} else if ipPortKey != "" {
+			key = ipPortKey
 		}
 
 		existing, ok := merged[key]
@@ -299,11 +322,23 @@ func mergeNetworkDevices(devices []DeviceInfo) []DeviceInfo {
 			if dCopy.ID == "" {
 				dCopy.ID = StableIDForDevice(dCopy)
 			}
+			if dCopy.ID == "" {
+				// A hostname without a printer service/port, interface or
+				// durable identity is not an executable destination.
+				continue
+			}
 			merged[key] = &dCopy
 			if ipPortKey != "" && ipPortKey != key {
 				merged[ipPortKey] = &dCopy
 			}
 			order = append(order, key)
+			continue
+		}
+
+		// A verified chassis UUID is not permission to select a different
+		// transport or incompatible printer language at the same socket.
+		if conflictingNetworkExecutionBinding(*existing, d) || conflictingNetworkPrintLanguage(*existing, d) {
+			*existing = withRegistryIdentityCollision(*existing, "network_discovery_execution_conflict")
 			continue
 		}
 
@@ -351,14 +386,26 @@ func mergeNetworkDevices(devices []DeviceInfo) []DeviceInfo {
 		existing.ID = StableIDForDevice(*existing)
 	}
 
-	seen := make(map[string]bool)
+	seen := make(map[string]int)
 	var out []DeviceInfo
 	for _, k := range order {
 		dev := merged[k]
-		if dev != nil && !seen[dev.ID] {
-			seen[dev.ID] = true
-			out = append(out, *dev)
+		if dev == nil {
+			continue
 		}
+		if idx, found := seen[dev.ID]; found {
+			// The final ID pass can reunite observations that had different
+			// execution-digest keys (for example RAW and ESC/POS at one
+			// socket). Do not discard the second declared language as an
+			// ordinary duplicate: the ID is ambiguous until reconciled.
+			if conflictingNetworkExecutionBinding(out[idx], *dev) ||
+				conflictingNetworkPrintLanguage(out[idx], *dev) {
+				out[idx] = withRegistryIdentityCollision(out[idx], "network_discovery_same_id_collision")
+			}
+			continue
+		}
+		seen[dev.ID] = len(out)
+		out = append(out, *dev)
 	}
 	return out
 }

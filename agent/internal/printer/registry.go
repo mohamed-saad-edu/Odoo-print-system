@@ -169,6 +169,10 @@ func loadRegistryPartitionedLocked(registryPath string) (production, hidden []De
 			return nil, nil, 0, fmt.Errorf("registry %s printer %s enabled must be a boolean when present", registryPath, d.ID)
 		}
 		d = discoveredDeviceNames(d)
+		if d.ID == "" {
+			log.Printf("[registry] refusing printer %q without distinct execution identity", d.Name)
+			continue
+		}
 		if !isValidDiscoveredPrinter(d) {
 			// Not a printer at all — drop the stale entry.
 			removed++
@@ -361,6 +365,10 @@ func mutateRegistry(registryPath string, discovered []DeviceInfo, completeSource
 		if d.ID == "" {
 			d.ID = StableIDForDevice(d)
 		}
+		if d.ID == "" {
+			log.Printf("[registry] refusing printer %q without a distinct execution identity", d.Name)
+			continue
+		}
 		if !isValidDiscoveredPrinter(d) {
 			continue
 		}
@@ -447,6 +455,11 @@ func mutateRegistry(registryPath string, discovered []DeviceInfo, completeSource
 			}
 		}
 		if idx, ok := byID[d.ID]; ok {
+			if operatorTargetID != existing[idx].ID && conflictingNetworkExecutionBinding(existing[idx], d) {
+				existing[idx] = withRegistryIdentityCollision(existing[idx], "same_id_different_network_binding")
+				log.Printf("[registry] conflicting network execution destinations share printer ID %q", d.ID)
+				continue
+			}
 			if conflictingUSBExecutionInterface(existing[idx], d) && operatorTargetID != existing[idx].ID {
 				// The legacy VID/PID-only ID is not a physical USB device identity.
 				// Keep the original endpoint and operator policy; reject a second
@@ -569,6 +582,12 @@ func mutateRegistry(registryPath string, discovered []DeviceInfo, completeSource
 			if len(matches) == 1 {
 				idx := matches[0]
 				prior := existing[idx]
+				if conflictingNetworkExecutionBinding(prior, d) {
+					// A hardware identity cannot silently rebind a logical queue.
+					// Retain its old ID and require explicit operator reconciliation.
+					existing[idx] = withRegistryIdentityCollision(prior, "same_hardware_different_network_binding")
+					continue
+				}
 				d = preserveRegistryObservationEvidence(prior, d)
 				d.ID, d.Enabled = prior.ID, prior.Enabled
 				existing[idx] = d

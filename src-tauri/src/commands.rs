@@ -1034,7 +1034,8 @@ pub fn set_gateway_config(url: String, app: tauri::AppHandle) -> Result<String, 
     let state = GATEWAY_CONFIG_LOCK
         .lock()
         .map_err(|_| "gateway config lock poisoned")?;
-    let previous = get_gateway_config().map(|cfg| cfg.url).unwrap_or_default();
+    // A corrupt or inaccessible existing origin must not be treated as an unset origin.
+    let previous = get_gateway_config()?.url;
     let root = paths::ensure_manager_data_root()
         .map_err(|e| format!("manager data directory is not secure or accessible: {e}"))?;
     let path = root.join("settings.json");

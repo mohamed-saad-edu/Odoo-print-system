@@ -1,3 +1,4 @@
+import { hasBodyOverLimit } from "../../../../../lib/request-limits";
 import { NextResponse } from "next/server";
 import { db } from "../../../../../db";
 import { agents, discoverySessions } from "../../../../../db/schema";
@@ -15,6 +16,7 @@ export const dynamic = "force-dynamic";
 
 // Discovery is runtime infrastructure only. It never receives or creates Odoo business ownership.
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  if (hasBodyOverLimit(req, 64 * 1024)) return NextResponse.json({ error: "Request body too large", code: "INVALID_REQUEST" }, { status: 413 });
   const claims = await validateWorkspaceManager(req);
   if (!claims) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   try { requireManagerPermission(claims, "agents.pair"); } catch { return NextResponse.json({ error: "Forbidden" }, { status: 403 }); }

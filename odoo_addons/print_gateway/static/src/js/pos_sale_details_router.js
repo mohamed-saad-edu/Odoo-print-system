@@ -52,8 +52,9 @@ function gatewayOperationUuid() {
 patch(SaleDetailsButton.prototype, {
     async onClick() {
         const sessionId = this.pos.session?.id;
-        if (!sessionId) {
-            return super.onClick();
+        if (!Number.isSafeInteger(sessionId) || sessionId <= 0) {
+            this.env.services.notification.add(_t("Open a POS session before printing."), { type: "danger", sticky: true });
+            return false;
         }
 
         // Guard the entire click, including metadata and image rendering.

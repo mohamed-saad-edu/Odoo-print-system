@@ -24,6 +24,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (auth.kind !== "manager") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   try { requireManagerPermission(auth.claims, "jobs.retry"); } catch { return NextResponse.json({ error: "Forbidden" }, { status: 403 }); }
 
+  const operationKey = req.headers.get("Idempotency-Key");
+  // An HTTP timeout is not proof that a physical operation was rejected.
+  // Require a stable, caller-owned confirmation identity on EVERY reprint.
+  if (!operationKey || !isExactIdempotencyKey(operationKey) || operationKey.length < 8) {
+    return NextResponse.json({ error: "Reprint requires an Idempotency-Key", code: "IDEMPOTENCY_KEY_REQUIRED", retryable: false },
+      { status: 400, headers: { "Cache-Control": "no-store" } });
+  }
   const { id: jobId } = await params;
   // This ID chooses the original physical job. Never trim/normalize it into
   // another stored job before allocating an intentional reprint.
@@ -54,6 +61,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       requestedBy: "manager-reprint",
       managerAuthority: { claims: auth.claims, permission: "jobs.retry" },
       reprintOfJobId: job.id,
+      idempotencyKey: operationKey,
       destination: job.destination,
       documentType: job.documentType ?? undefined,
       tenantId: auth.claims.tenantId,

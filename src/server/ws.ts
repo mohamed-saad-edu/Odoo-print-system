@@ -25,6 +25,8 @@ type AgentSocket = WebSocket & {
   agentId?: string;
   tenantId?: string;
   lifecycleRevision?: number;
+  // Hashed credential snapshot; never keep the raw pairing secret in memory.
+  credentialHash?: string;
   isAlive?: boolean;
   socketCounted?: boolean;
 };
@@ -234,13 +236,14 @@ async function verifyAndTrackAgentSocket(
       transactionOpen = false;
       return false;
     }
-    const result = await client.query<{ lifecycle: string; lifecycle_revision: number | string }>(
-      "SELECT lifecycle, lifecycle_revision FROM agents WHERE id = $1 AND tenant_id = $2 FOR SHARE",
+    const result = await client.query<{ lifecycle: string; lifecycle_revision: number | string; secret: string | null }>(
+      "SELECT lifecycle, lifecycle_revision, secret FROM agents WHERE id = $1 AND tenant_id = $2 FOR SHARE",
       [agentId, ws.tenantId],
     );
     const row = result.rows[0];
     const revision = row ? Number(row.lifecycle_revision) : undefined;
-    if (!shouldAcceptAgentSocketForLifecycleState(authenticatedRevision, revision, row?.lifecycle)) {
+    if (!shouldAcceptAgentSocketForLifecycleState(authenticatedRevision, revision, row?.lifecycle) ||
+        !row?.secret || row.secret !== ws.credentialHash) {
       await client.query("ROLLBACK");
       transactionOpen = false;
       return false;
@@ -483,11 +486,12 @@ export function hasOpenAgentSocket(agentId: string): boolean {
 
 type JobSendOutcome = "sent" | "not_sent" | "ambiguous";
 
-function sendJobToAgent(agentId: string, message: unknown, serializedPayload?: string): JobSendOutcome {
+function sendJobToAgent(agentId: string, message: unknown,
+  allowedSocket: (socket: AgentSocket) => boolean, serializedPayload?: string): JobSendOutcome {
   const set = agentSockets.get(agentId);
   if (!set || set.size === 0) return "not_sent";
   const open = [...set]
-    .filter((ws) => ws.readyState === WebSocket.OPEN)
+    .filter((ws) => ws.readyState === WebSocket.OPEN && allowedSocket(ws))
     .reverse();
   if (open.length === 0) return "not_sent";
 
@@ -516,8 +520,56 @@ function sendJobToAgent(agentId: string, message: unknown, serializedPayload?: s
   return "not_sent";
 }
 
-export function sendToAgent(agentId: string, message: unknown): boolean {
-  return sendJobToAgent(agentId, message) === "sent";
+// Hold the same shared row locks used by lifecycle/re-pairing writers through
+// the actual synchronous socket send. A stale socket cannot hand off work
+// after rotation commits, and an untrusted NOTIFY never grants authority.
+async function sendToAuthorizedAgent(agentId: string, message: unknown, serializedPayload?: string): Promise<JobSendOutcome> {
+  const client = await pool.connect();
+  let begun = false;
+  let sendOutcome: JobSendOutcome = "not_sent";
+  try {
+    await client.query("BEGIN");
+    begun = true;
+    // Tenant lock must precede the Agent row lock: registration and lifecycle
+    // mutations use that same order, avoiding a send/re-pair deadlock.
+    const lookup = await client.query<{ tenant_id: string }>(
+      "SELECT tenant_id FROM agents WHERE id = $1", [agentId]);
+    const tenantId = lookup.rows[0]?.tenant_id;
+    if (tenantId) {
+      const tenant = await client.query<{ lifecycle: string }>(
+        "SELECT lifecycle FROM tenants WHERE id = $1 FOR SHARE", [tenantId]);
+      if (tenant.rows[0]?.lifecycle === "active") {
+        const result = await client.query<{
+          tenant_id: string; lifecycle: string; lifecycle_revision: number | string; secret: string | null;
+        }>("SELECT tenant_id, lifecycle, lifecycle_revision, secret FROM agents WHERE id = $1 AND tenant_id = $2 FOR SHARE",
+          [agentId, tenantId]);
+        const agent = result.rows[0];
+        if (agent?.lifecycle === "active" && agent.secret) {
+          const revision = Number(agent.lifecycle_revision);
+          sendOutcome = sendJobToAgent(agentId, message, ws =>
+            ws.tenantId === agent.tenant_id && ws.credentialHash === agent.secret &&
+            ws.lifecycleRevision === revision, serializedPayload);
+        }
+      }
+    }
+    await client.query("COMMIT");
+    begun = false;
+    return sendOutcome;
+  } catch (error) {
+    logWarn("[ws] authorized send failed", { agentId, error });
+    if (begun) {
+      try { await client.query("ROLLBACK"); } catch { /* connection may be gone */ }
+    }
+    // Once the WebSocket send was attempted, a DB failure cannot prove that
+    // no paper was sent. Never turn a potentially delivered job into a retry.
+    return sendOutcome === "sent" || sendOutcome === "ambiguous" ? "ambiguous" : "not_sent";
+  } finally {
+    client.release();
+  }
+}
+
+export async function sendToAgent(agentId: string, message: unknown): Promise<boolean> {
+  return (await sendToAuthorizedAgent(agentId, message)) === "sent";
 }
 
 export type JobDeliveryEnvelope = {
@@ -638,7 +690,7 @@ export async function claimAndPushJobToAgent(job: { id: string; agentId: string 
   const sendStartedAt = Date.now();
   const sendOutcome = serializedPayload === null || wireBytes > MAX_WS_JOB_ENVELOPE_BYTES
     ? "not_sent" as const
-    : sendJobToAgent(job.agentId, envelope, serializedPayload);
+    : await sendToAuthorizedAgent(job.agentId, envelope, serializedPayload);
   const sendLatencyMs = Date.now() - sendStartedAt;
   if (sendOutcome === "not_sent") {
     const outcome = await releaseUndeliveredClaim(job.id, claimed.tenantId, job.agentId, claimToken, "websocket delivery failed before send; job requeued for redelivery");
@@ -722,6 +774,37 @@ export async function handleAgentMessage(agentId: string, tenantId: string, raw:
   const token = typeof claimToken === "string" && claimToken ? claimToken : null;
   const known = await recordJobAck(jobId, tenantId, agentId, token);
   if (!known) logWarn("ws.job_ack_no_live_claim", { agentId, jobId });
+}
+
+async function handleAuthorizedSocketMessage(ws: AgentSocket, raw: string): Promise<void> {
+  if (!ws.agentId || !ws.tenantId || !ws.credentialHash) return;
+  const client = await pool.connect();
+  let begun = false;
+  try {
+    await client.query("BEGIN");
+    begun = true;
+    const tenant = await client.query<{ lifecycle: string }>(
+      "SELECT lifecycle FROM tenants WHERE id = $1 FOR SHARE", [ws.tenantId]);
+    const agent = await client.query<{
+      lifecycle: string; lifecycle_revision: number | string; secret: string | null;
+    }>("SELECT lifecycle, lifecycle_revision, secret FROM agents WHERE id = $1 AND tenant_id = $2 FOR SHARE",
+      [ws.agentId, ws.tenantId]);
+    const current = agent.rows[0];
+    if (tenant.rows[0]?.lifecycle !== "active" || current?.lifecycle !== "active" ||
+        !current.secret || current.secret !== ws.credentialHash ||
+        Number(current.lifecycle_revision) !== ws.lifecycleRevision) {
+      ws.close(4001, "agent credential has changed");
+      return;
+    }
+    await handleAgentMessage(ws.agentId, ws.tenantId, raw);
+  } finally {
+    if (begun) {
+      try { await client.query("COMMIT"); } catch (error) {
+        logWarn("[ws] agent message authorization transaction failed", { error });
+      }
+    }
+    client.release();
+  }
 }
 
 async function startJobNotificationListener(): Promise<() => Promise<void>> {
@@ -868,8 +951,10 @@ async function startJobNotificationListener(): Promise<() => Promise<void>> {
         if (!hasOpenAgentSocket(message.agentId)) return;
         // Push discovery trigger instantly via WebSocket (10-50ms latency per 2025 docs)
         // instead of waiting for agent's 10s discovery poll.
-        const delivered = sendToAgent(message.agentId, { type: "discovery", discoveryId: message.discoveryId });
-        logInfo("print.discovery.ws_push", { agentId: message.agentId, discoveryId: message.discoveryId, delivered });
+        trackNotificationTask(sendToAgent(message.agentId, { type: "discovery", discoveryId: message.discoveryId })
+          .then(delivered => logInfo("print.discovery.ws_push", {
+            agentId: message.agentId, discoveryId: message.discoveryId, delivered,
+          })).catch(error => logWarn("print.discovery.ws_push_failed", { agentId: message.agentId, error })));
       } catch {
         logWarn("[ws] ignored malformed discovery notification");
       }
@@ -1200,6 +1285,7 @@ export function attachAgentWSS(server: HttpServer, options: AgentWSSOptions = {}
           aws.tenantId = agent!.tenantId;
           aws.on("pong", () => { aws.isAlive = true; });
           aws.lifecycleRevision = agent!.lifecycleRevision;
+          aws.credentialHash = agent!.secret ?? undefined;
           // Handshake completion precedes asynchronous lifecycle admission.
           // Capture bounded frames/errors immediately so early ACKs are retained.
           const earlyMessages: RawData[] = [];
@@ -1316,7 +1402,7 @@ export function attachAgentWSS(server: HttpServer, options: AgentWSSOptions = {}
         else wsMessageInFlightByAgentId.set(agentId, remaining);
         return;
       }
-      trackAcceptedTask(handleAgentMessage(agentId, tenantId, raw)
+      trackAcceptedTask(handleAuthorizedSocketMessage(ws, raw)
         .catch((e) => logWarn(`[ws] failed to handle message from agent ${agentId}:`, { error: e }))
         .finally(() => {
           const remaining = (wsMessageInFlightByAgentId.get(agentId) ?? 1) - 1;

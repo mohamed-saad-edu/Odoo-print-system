@@ -1,4 +1,14 @@
-"""Gateway printer permissions, independent of local device health."""
+"""Gateway runtime identity permissions, independent of local device health."""
+
+import re
+
+# Keep in sync with src/lib/agent-auth.ts (AGENT_ID_PATTERN). An Agent ID
+# is not an arbitrary printer queue ID: mis-typed values must not be enrolled.
+_AGENT_ID_PATTERN = re.compile(r"agt_[A-Za-z0-9_-]{8}\Z")
+
+
+def is_exact_gateway_agent_id(value):
+    return isinstance(value, str) and _AGENT_ID_PATTERN.fullmatch(value) is not None
 
 
 def is_exact_gateway_printer_id(value):
@@ -61,6 +71,6 @@ def inventory_has_shared_printer(body, printer_id):
             continue
         agent = printer.get("agent")
         if (printer.get("lifecycle") == "active" and is_gateway_shared_printer(printer)
-                and isinstance(agent, dict) and is_exact_gateway_printer_id(agent.get("id"))):
+                and isinstance(agent, dict) and is_exact_gateway_agent_id(agent.get("id"))):
             return True
     return False

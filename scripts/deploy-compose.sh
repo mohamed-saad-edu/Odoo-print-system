@@ -8,8 +8,10 @@ Usage: scripts/deploy-compose.sh [--resume] [--repair-caddy-storage] [-- COMPOSE
 
 Require YASEIR_DEPLOYMENT_ID set to the reviewed source/release identity.
 Back up PostgreSQL and review forward-migration rollback boundaries first.
-Default: build services sequentially, then run the ordered database gates and
-start Gateway/Caddy. Build failures leave existing running services untouched.
+Default: build services sequentially, then stop public ingress and drain the
+old Gateway before the ordered database gates; finally start Gateway/Caddy.
+Build failures leave existing running services untouched. Migration failures
+leave ingress offline rather than restart incompatible old admissions.
 --resume: start Gateway/Caddy without builds or replaying successful migrations.
 Requires healthy PostgreSQL and successful database gate containers labeled
 with the same YASEIR_DEPLOYMENT_ID. Use identical Compose options and images.
@@ -72,6 +74,13 @@ else
     compose build "$service"
   done
   compose up -d --no-build --wait --wait-timeout 120 postgres
+  # Migration 0102 changes quota attribution. Any pre-cutover admission writer
+  # still running while gates execute can consume the wrong period. Stop new
+  # ingress first, then permit up to 60 seconds for the old Gateway to drain
+  # in-flight HTTP/WebSocket work before touching the database schema.
+  # Never silently roll back to old binaries after a successful migration.
+  printf 'Draining old ingress and Gateway before database migration\n'
+  compose stop -t 60 caddy gateway
   for service in database_roles migrate database_verify; do
     printf 'Running release gate: %s\n' "$service"
     compose up --no-build --no-deps --exit-code-from "$service" "$service"

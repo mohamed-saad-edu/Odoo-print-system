@@ -48,7 +48,7 @@ export function SessionInventory({ platform = false, canRevoke = true }: { platf
       // 100 device records, even for an account with a long session history.
       setSessions(body.sessions); setNextCursor(body.nextCursor); setPageNumber(number);
     } catch (err) {
-      if (mounted.current && !controller.signal.aborted && generation.current === ownGeneration) setError(err instanceof Error ? err.message : t("security.sessionsFailed"));
+      if (mounted.current && !controller.signal.aborted && generation.current === ownGeneration) setError(t("security.sessionsFailed"));
     } finally {
       if (mounted.current && generation.current === ownGeneration) setLoading(false);
     }
@@ -88,9 +88,9 @@ export function SessionInventory({ platform = false, canRevoke = true }: { platf
       if (!mounted.current || controller.signal.aborted) return;
       if (!response.ok) {
         if (data.code === "PLATFORM_SESSION_STEP_UP_REQUIRED") {
-          setPlatformStepUp(true); throw new Error(t("security.platformSessionStepUp"));
+          setPlatformStepUp(true); setError(t("security.platformSessionStepUp")); return;
         }
-        throw new Error(t("security.sessionsFailed"));
+        setError(t("security.sessionsFailed")); return;
       }
       // The committed account sweep consumes pre-existing management
       // challenges, including this device's. Publish no credential or ID.
@@ -98,7 +98,7 @@ export function SessionInventory({ platform = false, canRevoke = true }: { platf
       if (data.signedOut) { router.replace(platform ? "/platform/login" : "/login"); router.refresh(); return; }
       await showPage(null, 1);
     } catch (err) {
-      if (mounted.current && !controller.signal.aborted) setError(err instanceof Error ? err.message : t("security.sessionsFailed"));
+      if (mounted.current && !controller.signal.aborted) setError(t("security.sessionsFailed"));
     } finally {
       actionInFlight.current = false;
       if (mounted.current) { setBusy(false); setPassword(""); setConfirmAll(false); }

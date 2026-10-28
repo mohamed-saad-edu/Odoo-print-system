@@ -106,13 +106,17 @@ export default function TeamPage() {
         else refresh();
         return;
       }
-      if (!response.ok) throw new Error(t(codeMessageKey(result.code) ?? "team.invitationFailed"));
+      if (!response.ok) {
+        setNotice({ kind: "err", message: t(codeMessageKey(result.code) ?? "team.invitationFailed") });
+        return;
+      }
       setEmail("");
       setNotice({ kind: "ok", message: t("success.invitationSent") });
       if (inviteOffset !== 0) setInviteOffset(0);
       else refresh();
-    } catch (error) {
-      setNotice({ kind: "err", message: error instanceof Error ? error.message : t("team.invitationFailed") });
+    } catch {
+      // Browser transport errors are not stable, translated API messages.
+      setNotice({ kind: "err", message: t("team.invitationFailed") });
     } finally {
       setBusy(false);
     }

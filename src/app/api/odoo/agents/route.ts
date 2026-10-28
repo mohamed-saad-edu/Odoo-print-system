@@ -16,13 +16,13 @@ export async function GET(req: Request) {
 
   // Agent discovery is part of the runtime control plane and must use the
   // exact same database-authoritative billing predicate as pairing, printing,
-  // and resource admission. This intentionally keeps past_due tenants usable
-  // during Stripe recovery even after the nominal period end.
+  // and resource admission. Only explicitly active, unexpired manual
+  // contracts authorize access; there is no provider recovery grace.
   //
   // The billing decision and the inventory read run in ONE transaction, so a
   // subscription that lapses between them cannot still expose tenant runtime
   // inventory. The subscription row lock the check takes is held until the
-  // read completes, and the webhook that revokes access waits for it.
+  // read completes, and a Platform Owner subscription change waits for it.
   let rows: Array<{
     id: string;
     name: string;

@@ -10,6 +10,7 @@ import { validateOdooKey } from "../../../../lib/odoo-auth";
 import { requireActiveTenantInTransaction, TenantSuspendedError, TenantDeletedError } from "../../../../lib/tenant-guard";
 import { writeAuditEvent } from "../../../../lib/audit";
 import { isTenantBillingError, requireTenantBillingAccess } from "../../../../lib/entitlements";
+import { hasBodyOverLimit } from "../../../../lib/request-limits";
 
 export const dynamic = "force-dynamic";
 
@@ -70,6 +71,7 @@ export async function GET(req: Request) {
  * a stale state after a newer toggle has already reached the Gateway.
  */
 export async function PATCH(req: Request) {
+  if (hasBodyOverLimit(req, 16 * 1024)) return NextResponse.json({ error: "Request body too large", code: "INVALID_REQUEST" }, { status: 413, headers: CONFIGURATION_HEADERS });
   const apiKey = await validateOdooKey(req, { requireIntegrationEnabled: false });
   if (!apiKey) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   if (apiKey.readOnly) {
@@ -118,7 +120,7 @@ export async function PATCH(req: Request) {
       // Enabling Gateway printing is a billable/executable runtime state.
       // Keep the entitlement decision and activation mutation in the SAME
       // transaction. requireTenantBillingAccess() locks the subscription row
-      // and therefore serializes this decision with Stripe webhook updates.
+      // and therefore serializes this decision with Platform Owner manual subscription updates.
       // Disabling remains available after subscription expiry/cancellation so
       // Odoo can always converge the replicated state to OFF.
       if (enabled) {
@@ -166,13 +168,26 @@ export async function PATCH(req: Request) {
       });
     }
 
-    const current = await db.query.apiKeys.findFirst({
-      where: and(eq(apiKeys.id, apiKey.id), eq(apiKeys.tenantId, apiKey.tenantId), eq(apiKeys.hashedKey, apiKey.hashedKey), sql`${apiKeys.revokedAt} IS NULL`, sql`${apiKeys.readOnlyUntil} IS NULL`),
-      columns: {
-        odooEnabled: true,
-        odooEnabledRevision: true,
-        odooEnabledUpdatedAt: true,
-      },
+    // A stale revision is an authorized read of the CURRENT integration
+    // state, not an exemption from a key rotation or workspace suspension.
+    // Perform the follow-up lookup behind the same tenant -> key row fences
+    // used by the mutation; a revoked bearer must not get configuration
+    // metadata merely because its earlier UPDATE affected zero rows.
+    const current = await db.transaction(async (tx) => {
+      await requireActiveTenantInTransaction(tx, apiKey.tenantId);
+      const live = await tx.execute(sql`SELECT id FROM api_keys
+        WHERE id = ${apiKey.id} AND tenant_id = ${apiKey.tenantId}
+          AND hashed_key = ${apiKey.hashedKey} AND revoked_at IS NULL
+          AND read_only_until IS NULL FOR SHARE`);
+      if (!live.rows.length) return null;
+      return tx.query.apiKeys.findFirst({
+        where: and(eq(apiKeys.id, apiKey.id), eq(apiKeys.tenantId, apiKey.tenantId)),
+        columns: {
+          odooEnabled: true,
+          odooEnabledRevision: true,
+          odooEnabledUpdatedAt: true,
+        },
+      });
     });
     if (!current) return NextResponse.json({ error: "API key is no longer active", code: "UNAUTHORIZED" }, { status: 401 });
 

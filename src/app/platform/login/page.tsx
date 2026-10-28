@@ -85,15 +85,16 @@ export default function PlatformLoginPage() {
       if (!mounted.current || controller.signal.aborted || flight.current !== controller) return;
 
       if (!res.ok) {
-        throw new Error(t(codeMessageKey(typeof data.code === "string" ? data.code : undefined)
+        setError(t(codeMessageKey(typeof data.code === "string" ? data.code : undefined)
           ?? (res.status === 429 ? "errors.tooManyAttempts" : "auth.signIn.failed")));
+        return;
       }
 
       router.replace(afterLoginDestination());
       router.refresh();
     } catch (err: unknown) {
       if (mounted.current && !controller.signal.aborted && flight.current === controller) {
-        setError(err instanceof Error ? err.message : t("auth.signIn.failed"));
+        setError(t("auth.signIn.failed"));
       }
     } finally {
       if (flight.current === controller) {

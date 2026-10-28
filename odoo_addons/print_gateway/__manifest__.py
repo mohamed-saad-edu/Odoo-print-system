@@ -57,6 +57,10 @@ create an agent assignment or send a print job.
             'print_gateway/static/src/js/gateway_config_auto_sync.js',
             'print_gateway/static/src/js/gateway_limit_dialog.js',
             'print_gateway/static/src/js/report_interceptor.js',
+        ],
+        # Regression tours are available only with Odoo's debug=tests asset
+        # mode, never in the ordinary customer-facing backend bundle.
+        'web.assets_tests': [
             'print_gateway/static/src/js/tours/binding_cascade_tour.js',
         ],
     },

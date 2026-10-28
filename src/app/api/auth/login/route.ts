@@ -22,6 +22,9 @@ export async function POST(req: Request) {
   if (body.inviteToken !== undefined && (typeof body.inviteToken !== "string" || !body.inviteToken || body.inviteToken.length > 256))
     return NextResponse.json({ error: "Invitation is invalid or expired", code: "INVITATION_INVALID" }, { status: 400 });
   const inviteToken = typeof body.inviteToken === "string" ? body.inviteToken : "";
+  // Two different workspace authorities must never silently override one another.
+  if (tenantId && inviteToken)
+    return NextResponse.json({ error: "Select either a workspace or an invitation", code: "INVALID_REQUEST" }, { status: 400 });
   if (!email || !password || password.length > 4096) return NextResponse.json({ error: "Email and password are required" }, { status: 400 });
   const ip = clientIpFrom(req);
   let pre: Awaited<ReturnType<typeof reserveAuthAttempt>>;
@@ -53,7 +56,7 @@ export async function POST(req: Request) {
     return setRateLimitHeaders(res, pre);
   }
   await recordAuthSuccess(ip, email).catch((error) => logWarn("auth.login.rate_limit_clear_failed", { ip, error: error instanceof Error ? error.message : "unknown" }));
-  if ("selectionToken" in identity && identity.multipleTenants) {
+  if (!inviteToken && "selectionToken" in identity && identity.multipleTenants) {
     return setRateLimitHeaders(NextResponse.json({
       error: "Choose a workspace",
       selectionToken: identity.selectionToken,
@@ -65,7 +68,9 @@ export async function POST(req: Request) {
     let resolvedTenantId = "tenantId" in identity ? identity.tenantId : undefined;
     let resolvedRole: ManagerRole | undefined = "role" in identity ? identity.role : undefined;
     let invitationSession: SessionPair | undefined;
-    if (!resolvedTenantId && inviteToken) {
+    // A verified offer always targets the invited workspace, regardless of
+    // whether the user belongs to one or multiple other workspaces.
+    if (inviteToken) {
       const joined = await joinInvitationWithPassword(inviteToken, identity, {
         ipAddress: ip, userAgent: req.headers.get("user-agent"), replaceCurrent: sessionReplacementFromRequest(req, "customer"),
       });

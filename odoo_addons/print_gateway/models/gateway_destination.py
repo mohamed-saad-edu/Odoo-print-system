@@ -20,6 +20,19 @@ class GatewayResolutionError(ValueError):
     """Name resolution failed before any socket or request could be created."""
 
 
+# Cloud metadata endpoints must remain unreachable even when an operator
+# allowlists a PRIVATE Gateway origin. AWS ECS also exposes task credentials
+# on 169.254.170.2, while EC2 supports an IPv6 ULA metadata endpoint.
+# Forbid all link-local destinations: these cannot be trusted remote Gateways.
+_CLOUD_METADATA_IPS = frozenset({"100.100.100.200", "fd00:ec2::254"})
+_CLOUD_METADATA_HOSTNAMES = frozenset({"metadata.google.internal"})
+
+
+def _is_forbidden_metadata_destination(address):
+    effective_ip = getattr(address, "ipv4_mapped", None) or address
+    return effective_ip.is_link_local or str(effective_ip) in _CLOUD_METADATA_IPS
+
+
 def canonical_hostname(hostname):
     """Use the same UTS46/IDNA2008 spelling as Requests' PreparedRequest."""
     host = (hostname or "").lower().rstrip(".")
@@ -111,14 +124,16 @@ def validate_gateway_host(hostname, *, resolve=False, allow_private=False):
     if literal is not None:
         # IPv4-mapped IPv6 literals inherit their embedded IPv4 classification.
         effective_ip = getattr(literal, "ipv4_mapped", None) or literal
-        if str(effective_ip) in ("169.254.169.254", "100.100.100.200"):
-            raise ValueError("Gateway metadata endpoints are never allowed")
+        if _is_forbidden_metadata_destination(literal):
+            raise ValueError("Gateway metadata and link-local endpoints are never allowed")
         if literal.is_unspecified or literal.is_multicast:
             raise ValueError("Gateway hostname is not a connectable destination")
         if not effective_ip.is_global and not allow_private:
             raise ValueError("Gateway address is not publicly routable")
         return (str(literal),)
     host = canonical_hostname(host)
+    if host in _CLOUD_METADATA_HOSTNAMES:
+        raise ValueError("Gateway metadata hostnames are never allowed")
     if (
         host == "localhost"
         or host.endswith((".localhost", ".local", ".internal"))
@@ -156,8 +171,8 @@ def validate_gateway_host(hostname, *, resolve=False, allow_private=False):
         except (ValueError, IndexError, TypeError) as exc:
             raise ValueError("Gateway hostname resolved to an invalid address") from exc
         effective_ip = getattr(address, "ipv4_mapped", None) or address
-        if str(effective_ip) in ("169.254.169.254", "100.100.100.200"):
-            raise ValueError("Gateway hostname resolved to a metadata endpoint")
+        if _is_forbidden_metadata_destination(address):
+            raise ValueError("Gateway hostname resolved to a metadata or link-local endpoint")
         if address.is_unspecified or address.is_multicast:
             raise ValueError("Gateway hostname resolved to an unusable address")
         if not effective_ip.is_global and not allow_private:

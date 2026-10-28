@@ -23,6 +23,9 @@ const CODE_KEYS: Record<string, MessageKey> = {
   JOB_NOT_FOUND: "errors.jobNotFound",
   JOB_NOT_TERMINAL: "errors.jobStillInProgress",
   JOB_REPRINT_NOT_ALLOWED: "errors.jobNotEligibleForReprint",
+  JOB_REPRINT_SOURCE_CHANGED: "errors.reprintSourceChanged",
+  REPRINT_ALREADY_ACTIVE: "errors.reprintAlreadyActive",
+  IDEMPOTENCY_KEY_REQUIRED: "errors.idempotencyKeyRequired",
   INVALID_STATUS_FILTER: "errors.invalidStatusFilter",
   // Agents
   AGENT_NOT_FOUND: "errors.agentNotFound",

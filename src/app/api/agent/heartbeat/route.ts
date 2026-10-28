@@ -306,19 +306,22 @@ export async function POST(req: Request) {
       // complete heartbeat makes status, lease refresh, desired-state ACKs and
       // printer observations linearize before OR after a disable/retire.
       const lockedAgent = await tx.execute(sql`
-        SELECT id, lifecycle, inventory_snapshot_id, inventory_snapshot_version, inventory_snapshot_page_count,
+        SELECT id, secret, lifecycle, inventory_snapshot_id, inventory_snapshot_version, inventory_snapshot_page_count,
                inventory_snapshot_next_page, inventory_snapshot_complete, inventory_snapshot_had_errors
         FROM agents
         WHERE id = ${agent.id} AND tenant_id = ${agent.tenantId}
         FOR UPDATE
       `);
       const currentAgent = lockedAgent.rows[0] as {
-        id?: string; lifecycle?: unknown; inventory_snapshot_id?: unknown;
+        id?: string; secret?: unknown; lifecycle?: unknown; inventory_snapshot_id?: unknown;
         inventory_snapshot_page_count?: unknown; inventory_snapshot_next_page?: unknown;
         inventory_snapshot_complete?: unknown; inventory_snapshot_had_errors?: unknown;
         inventory_snapshot_version?: string;
       } | undefined;
       if (!currentAgent?.id) return { kind: "missing" as const };
+      // The bearer credential may be rotated after HTTP authentication while
+      // this request waits on tenant/Agent locks. Recheck inside the lock.
+      if (!agent.secret || currentAgent.secret !== agent.secret) return { kind: "stale_credential" as const };
       if (currentAgent.lifecycle !== "active") return { kind: "inactive" as const, lifecycle: String(currentAgent.lifecycle) };
 
       const snapshotEnabled = inventorySnapshotId.length > 0;
@@ -436,6 +439,22 @@ export async function POST(req: Request) {
       for (let index = sanitizedPrinters.length - 1; index >= 0; index -= 1) {
         if (privatePrinterIds.has(sanitizedPrinters[index]!.id)) sanitizedPrinters.splice(index, 1);
       }
+      // An Agent can report the same opaque ID twice with different endpoints
+      // in one page. A last-write-wins upsert would silently replace the
+      // executable printer behind existing jobs, even if neither observation
+      // has a reconstructible physical identity. Quarantine *all* duplicate
+      // claims, including byte-identical duplicates, rather than choosing one.
+      const seenReportedIds = new Set<string>();
+      const ambiguousReportedIds = new Set<string>();
+      for (const printer of sanitizedPrinters) {
+        if (seenReportedIds.has(printer.id)) ambiguousReportedIds.add(printer.id);
+        seenReportedIds.add(printer.id);
+      }
+      for (let i = sanitizedPrinters.length - 1; i >= 0; i--) {
+        if (ambiguousReportedIds.has(sanitizedPrinters[i]!.id)) sanitizedPrinters.splice(i, 1);
+      }
+      for (const id of ambiguousReportedIds) skipped.push({ id, reason: "duplicate_printer_id_in_snapshot_page" });
+
       // Check the physical endpoint, not only the Agent-generated row ID:
       // manual registration and discovery can report identical printers under
       // different IDs. Preserve the existing row and all accepted job history.
@@ -493,6 +512,32 @@ export async function POST(req: Request) {
         where: and(eq(printers.tenantId, agent.tenantId), inArray(printers.id, inventoryIds)),
       }) : [];
       const inventoryById = new Map(inventoryRows.map(p => [p.id, p]));
+      // A versioned inventory may span several ordered pages. The same row
+      // cannot be claimed a second time on a later page of the same snapshot;
+      // otherwise conflicting per-page observations still become last-write-
+      // wins and could reactivate an unintended execution binding.
+      if (snapshotEnabled && heartbeatPage > 1) {
+        for (let i = sanitizedPrinters.length - 1; i >= 0; i--) {
+          const id = sanitizedPrinters[i]!.id;
+          const prior = inventoryById.get(id);
+          if (prior?.agentId === agent.id && prior.inventorySnapshotId === inventorySnapshotId) {
+            ambiguousReportedIds.add(id);
+            sanitizedPrinters.splice(i, 1);
+            skipped.push({ id, reason: "duplicate_printer_id_across_snapshot_pages" });
+          }
+        }
+      }
+      if (ambiguousReportedIds.size > 0) {
+        // Preserve all historical rows and accepted jobs, but revoke the old
+        // verified binding until a *new*, unambiguous inventory re-verifies
+        // the queue. Claim predicates reject pending verification.
+        await tx.update(printers).set({
+          status: "unknown", verificationState: "pending", verificationVerifiedAt: null,
+          verificationReceivedAt: null, verificationBindingDigest: null,
+          verificationReason: "verification_ambiguous_inventory_id",
+        }).where(and(eq(printers.tenantId, agent.tenantId), eq(printers.agentId, agent.id),
+          inArray(printers.id, [...ambiguousReportedIds])));
+      }
       const clockRow = await tx.execute(sql`SELECT clock_timestamp() AS verification_now`);
       const verificationNowMs = parseDbTimeMs(clockRow.rows[0]?.verification_now as Date | string | null);
       if (verificationNowMs === null) throw new Error("Database verification clock unavailable");
@@ -800,6 +845,7 @@ export async function POST(req: Request) {
       };
     });
 
+    if (result.kind === "stale_credential") return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     if (result.kind === "missing") return NextResponse.json({ error: "Agent not found" }, { status: 401 });
     if (result.kind === "inactive") return NextResponse.json({ error: `Agent is ${result.lifecycle}` }, { status: 409 });
     if (result.kind === "inventory_conflict") return NextResponse.json({

@@ -457,7 +457,11 @@ func discoverUSBPrinters() ([]DeviceInfo, error) {
 	}
 
 	var infos []DeviceInfo
-	seenIDs := make(map[string]bool)
+	// Stable IDs preserve existing bindings, but one serial-backed ID can be
+	// reported by multiple Windows device instances (for example a composite
+	// printer). Never let scan order silently choose its execution interface.
+	seenIDs := make(map[string]string)
+	ambiguousIDs := make(map[string]bool)
 
 	for idx := 0; primaryAvailable; idx++ {
 		var devInfo spDevInfoData
@@ -517,10 +521,14 @@ func discoverUSBPrinters() ([]DeviceInfo, error) {
 		vidStr := fmt.Sprintf("%04x", vid)
 		pidStr := fmt.Sprintf("%04x", pid)
 		id := StableIDFromUSBFull(vidStr, pidStr, serial, location, instanceID)
-		if seenIDs[id] {
+		if previous, seen := seenIDs[id]; seen {
+			if !strings.EqualFold(previous, instanceID) {
+				ambiguousIDs[id] = true
+				diagnostics = append(diagnostics, fmt.Errorf("USB identity %q belongs to different device instances; refusing automatic binding", id))
+			}
 			continue
 		}
-		seenIDs[id] = true
+		seenIDs[id] = instanceID
 
 		deviceInterface := pathMap[instanceID]
 		devicePath := deviceInterface.path
@@ -656,10 +664,14 @@ func discoverUSBPrinters() ([]DeviceInfo, error) {
 				vidStr := fmt.Sprintf("%04x", vid)
 				pidStr := fmt.Sprintf("%04x", pid)
 				id := StableIDFromUSBFull(vidStr, pidStr, serial, location, instanceID)
-				if seenIDs[id] {
+				if previous, seen := seenIDs[id]; seen {
+					if !strings.EqualFold(previous, instanceID) {
+						ambiguousIDs[id] = true
+						diagnostics = append(diagnostics, fmt.Errorf("USB identity %q belongs to different device instances; refusing automatic binding", id))
+					}
 					continue
 				}
-				seenIDs[id] = true
+				seenIDs[id] = instanceID
 				deviceInterface := pathMap[instanceID]
 				devicePath := deviceInterface.path
 				if devicePath == "" {
@@ -734,6 +746,17 @@ func discoverUSBPrinters() ([]DeviceInfo, error) {
 		} else {
 			diagnostics = append(diagnostics, fmt.Errorf("USB fallback SetupDiGetClassDevsW failed: %v", fallbackErr))
 		}
+	}
+	if len(ambiguousIDs) > 0 {
+		// Remove the original matching row too. Returning the first row would
+		// make a different USB interface appear to be a verified old binding.
+		unambiguous := infos[:0]
+		for _, info := range infos {
+			if !ambiguousIDs[info.ID] {
+				unambiguous = append(unambiguous, info)
+			}
+		}
+		infos = unambiguous
 	}
 	log.Printf("[discovery] USB discovery completed: %d devices", len(infos))
 	return infos, errors.Join(diagnostics...)
