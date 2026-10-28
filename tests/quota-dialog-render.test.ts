@@ -103,6 +103,17 @@ describe("quota-exhausted upgrade dialog", () => {
     }
   });
 
+  it("never suggests a timed retry for fixed technical device capacity", () => {
+    for (const resource of ["agents", "printers"] as const) {
+      const body = renderDialog({ open: true, resource, used: 200, limit: 200, retryAfterSeconds: 60 });
+      const dialogs = body.querySelectorAll('[role="dialog"]');
+      const detail = dialogs[dialogs.length - 1]?.textContent ?? "";
+      expect(detail).toContain("technical safety limit");
+      expect(detail).not.toContain("Try again in about 1 minute");
+      expect(detail).not.toContain("Upgrade to do more.");
+    }
+  });
+
   it("explains a rolling rate limit and a concurrency limit differently", () => {
     const body = renderDialog({ open: true, resource: "rate", used: 20, limit: 20, retryAfterSeconds: 60 });
     // Each render appends a new portal; scope to the last dialog root.
