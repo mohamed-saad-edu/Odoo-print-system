@@ -233,11 +233,15 @@ export async function GET(req: Request) {
   if (id === null && idempotencyKey === null) {
     return NextResponse.json({ error: "id or idempotencyKey query param required" }, { status: 400 });
   }
+  // Capture lengths BEFORE a failed `value is string` type guard; inside
+  // its false branch TypeScript correctly narrows a known string to never.
+  const jobIdLength = id?.length ?? 0;
+  const operationKeyLength = idempotencyKey?.length ?? 0;
   if (id !== null && !isExactPrinterId(id)) {
-    return NextResponse.json({ error: id.length > 120 ? "id is too long" : "Invalid exact job id" }, { status: 400 });
+    return NextResponse.json({ error: jobIdLength > 120 ? "id is too long" : "Invalid exact job id" }, { status: 400 });
   }
   if (idempotencyKey !== null && !isExactIdempotencyKey(idempotencyKey)) {
-    return NextResponse.json({ error: idempotencyKey.length > 200 ? "idempotencyKey is too long" : "Invalid exact idempotencyKey" }, { status: 400 });
+    return NextResponse.json({ error: operationKeyLength > 200 ? "idempotencyKey is too long" : "Invalid exact idempotencyKey" }, { status: 400 });
   }
   try {
     const row = await readOdooJobStatus(odoo, identity, id !== null ? { id } : { idempotencyKey: idempotencyKey! });

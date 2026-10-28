@@ -2261,3 +2261,14 @@ Baseline `c96482626e48983649f7020ac268dfbe226b8f32`; source-reviewed only; exist
 | OBSERVED FAILED / PENDING RECHECK | Docker run `40614127955` | `npm run build` stopped at TS1005 line 162 / TS1128 line 244; next commit must be rechecked |
 
 Source baseline `f753a984a71651868b71feb2f9c8d751f9e7e8ab`; do not mark CI PASS until exact-HEAD evidence exists.
+
+
+#### CI-ODOO-STATUS-INVALID-TYPE-NARROWING — 2026-10-28
+
+| Status | Path | Finding / fix |
+| --- | --- | --- |
+| PARTIAL | `src/app/api/print/jobs/route.ts`, `src/app/api/print/jobs/v2/route.ts` | Capture input lengths before exact-ID type guard narrows invalid input to never; preserve HTTP 400 messages |
+| AUTHORED / NOT RUN | `tests/print-idempotency.test.ts` | Extend both routes' status-reconciliation tests with 121/201-character overlong IDs |
+| OBSERVED FAILED / PENDING RECHECK | Docker `40614749699` | TS2339 in both routes; unrelated desktop TS2304 was fixed by concurrent commit |
+
+GitHub main baseline `4ba18e5e00c8a5d86f42bfc55c2e576c2b621a77`; full CI/Postgres/physical print unverified.

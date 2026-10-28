@@ -2996,3 +2996,11 @@ At `main@9cc31103851f642543bb51dd22353487b00f5578`, GitHub recursive tree lists 
 
 - Source baseline `f753a984a71651868b71feb2f9c8d751f9e7e8ab`. GitHub Actions **Docker** on commit `0362f2acc325d2f55300068a286264435f184af5`, run `40614127955`, job `122572575036`, failed during `npm run build` TypeScript parsing: `tests/platform-stats.test.ts:162:102 TS1005`, and `:244 TS1128`. The actual cause was a mismatched closing parenthesis in an assertion involving `new Set([...]).size`; the trailing TS1128 diagnostics were secondary parse fallout.
 - Fix: correct only the assertion syntax, preserving the two-page subscription pagination test and all security/CI gates. No unrelated test disabled. Verification remains **NOT RUN** until a new exact-commit typecheck or Docker build completes; the observed earlier build was a real FAILURE, never PASS.
+
+
+### 2026-10-28 — CI-ODOO-STATUS-INVALID-TYPE-NARROWING
+
+- Baseline `4ba18e5e00c8a5d86f42bfc55c2e576c2b621a77`. Observed exact GitHub **Docker** job failure for `e4e6b25965df24fd96d676ea0d575aedaaaf50d9`, run `40614749699`, job `122574543745`: TypeScript TS2339 at `src/app/api/print/jobs/route.ts:284/287` and `v2/route.ts:237/240` (`length` on `never`), plus TS2304 desktop missing `sameLocalCloudPrinterBinding` which was already corrected by a concurrent main commit `4ba18e5e00c8a5d86f42bfc55c2e576c2b621a77`.
+- Root cause: the guards `isExactPrinterId` and `isExactIdempotencyKey` are type predicates. Within `id !== null && !guard(id)`, TypeScript correctly knows a pre-narrowed `string` cannot be anything other than `never`, so using `id.length` in that failure branch is a type error.
+- Fix: compute `jobIdLength` and `operationKeyLength` before narrowing in BOTH legacy/v2 HTTP GET handlers, preserving every validation predicate and wire error. Extend the existing PostgreSQL `tests/print-idempotency.test.ts` matrix with 121-byte job IDs and 201-character replay keys to assert exact `400` and stable human error category. **NOT RUN** until a new commit build/test actually completes.
+- Status: `src/app/api/print/jobs`, `src/app/api/print/jobs/v2` PARTIAL; `tests/print-idempotency.test.ts` AUTHORED/NOT RUN; CI previous Docker run FAILED and must be retested, not mislabeled PASS.

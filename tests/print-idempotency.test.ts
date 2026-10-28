@@ -320,11 +320,17 @@ suite("print idempotency (Odoo → Gateway)", () => {
         ["id", ` ${jobId}`], ["id", `${jobId} `],
         ["idempotencyKey", " status-exact-lookup"], ["idempotencyKey", "status-exact-lookup "],
         ["idempotencyKey", ""], ["idempotencyKey", " "],
+        ["id", "x".repeat(121)], ["idempotencyKey", "x".repeat(201)],
       ] as const) {
         const url = new URL("http://gateway.test/api/print/jobs");
         url.searchParams.set(field, value);
         const response = await handler(new Request(url, { headers: { Authorization: `Bearer ${f.odooKey}` } }));
         expect(response.status).toBe(400);
+        if (value.length > (field === "id" ? 120 : 200)) {
+          expect(await response.json()).toMatchObject({
+            error: field === "id" ? "id is too long" : "idempotencyKey is too long",
+          });
+        }
       }
       const both = new URL("http://gateway.test/api/print/jobs");
       both.searchParams.set("id", jobId);
