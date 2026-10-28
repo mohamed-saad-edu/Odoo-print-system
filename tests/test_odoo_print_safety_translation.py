@@ -31,3 +31,23 @@ def test_print_safety_error_exists_and_is_translated_to_arabic(source, english):
                          catalog, flags=re.MULTILINE)
     assert len(matches) == 1, f"Expected exactly one Arabic catalog entry for {english}"
     assert re.search(r"[\u0600-\u06ff]", matches[0]), f"Missing Arabic remedy for {english}"
+
+
+def test_source_occurrence_and_retired_messages_match_current_print_contract():
+    # The same exact-key rejection now lives in both the Odoo print router
+    # and durable print job sender. PO extraction must index both locations
+    # for correct runtime translation on either path.
+    catalog = CATALOG.read_text(encoding="utf-8")
+    target = 'msgid "The print operation key is invalid."'
+    assert catalog.count(target) == 1
+    source_header = catalog.split(target, 1)[0].rsplit("#. module: print_gateway", 1)[-1]
+    assert "code:addons/print_gateway/models/print_router.py:0" in source_header
+    assert "code:addons/print_gateway/models/print_job.py:0" in source_header
+    obsolete = (
+        "A Gateway Runtime Printer must be selected.",
+        "Gateway is temporarily rate-limiting print submissions. The job was safely re-queued for retry.",
+        "Printer is required.",
+        "A non-empty Gateway runtime agent ID is required.",
+    )
+    for message in obsolete:
+        assert f'msgid "{message}"' not in catalog

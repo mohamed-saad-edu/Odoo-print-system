@@ -49,12 +49,6 @@ msgstr "يلزم وجود Agent للـ Gateway عند الربط على مستو
 #. module: print_gateway
 #. odoo-python
 #: code:addons/print_gateway/models/binding.py:0
-msgid "A Gateway Runtime Printer must be selected."
-msgstr "يجب اختيار طابعة من طابعات الـ Gateway."
-
-#. module: print_gateway
-#. odoo-python
-#: code:addons/print_gateway/models/binding.py:0
 msgid "A POS Shop is required for a POS Receipt binding."
 msgstr "يلزم تحديد متجر POS لربط إيصالات POS."
 
@@ -81,12 +75,6 @@ msgstr "يجب اختيار تقرير لهذا النوع من الوجهات."
 #: code:addons/print_gateway/models/binding.py:0
 msgid "A deterministic Odoo print destination is required."
 msgstr "يلزم تحديد وجهة طباعة محددة في Odoo."
-
-#. module: print_gateway
-#. odoo-python
-#: code:addons/print_gateway/models/runtime_assignment.py:0
-msgid "A non-empty Gateway runtime agent ID is required."
-msgstr "يلزم معرّف Agent غير فارغ من الـ Gateway."
 
 #. module: print_gateway
 #. odoo-javascript
@@ -1430,12 +1418,6 @@ msgstr "لم يُفعّل الانتقال إلى هوية التثبيت في G
 #: model:ir.model.fields,field_description:print_gateway.field_print_gateway_print_job__gateway_installation_id
 msgid "Gateway installation id"
 msgstr "معرّف تثبيت Gateway"
-
-#. module: print_gateway
-#. odoo-python
-#: code:addons/print_gateway/models/print_job.py:0
-msgid "Gateway is temporarily rate-limiting print submissions. The job was safely re-queued for retry."
-msgstr "الـ Gateway يقيّد معدل إرسال الطباعة مؤقتًا. تمت إعادة المهمة إلى قائمة الانتظار بأمان لإعادة المحاولة."
 
 #. module: print_gateway
 #. odoo-python
@@ -3012,12 +2994,6 @@ msgstr "إعداد الطابعة"
 #: model_terms:ir.ui.view,arch_db:print_gateway.diagnostic_report
 msgid "Printer Test Page"
 msgstr "صفحة اختبار الطابعة"
-
-#. module: print_gateway
-#. odoo-python
-#: code:addons/print_gateway/models/print_job.py:0
-msgid "Printer is required."
-msgstr "الطابعة مطلوبة."
 
 #. module: print_gateway
 #. odoo-python
@@ -5054,6 +5030,7 @@ msgstr "تحذير: نتيجة إرسال مهمة الطباعة رقم %s إل
 #. module: print_gateway
 #. odoo-python
 #: code:addons/print_gateway/models/print_router.py:0
+#: code:addons/print_gateway/models/print_job.py:0
 msgid "The print operation key is invalid."
 msgstr "معرّف عملية الطباعة غير صالح. تحقّق من المعرّف الأصلي قبل إعادة الإرسال."
 
