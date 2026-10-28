@@ -668,7 +668,7 @@ class TestPrintGatewayRoutingContract(TransactionCase):
                     company = env["res.company"].browse(self.durable_company_id).exists()
                     job = env["print_gateway.print_job"].with_company(company).browse(job_id).exists()
                     response = Mock(status_code=503)
-                    response.json.return_value = {"code": code, "error": "temporary upstream error"}
+                    response.json.return_value = {"code": code, "error": "temporary upstream error", "retryable": code in ("AGENT_QUEUE_FULL", "AGENT_QUEUED_QUEUE_FULL")}
                     with patch("odoo.addons.print_gateway.models.print_job.requests.post", return_value=response) as post:
                         job.action_submit(raise_on_failure=False)
                         post.assert_called_once()
