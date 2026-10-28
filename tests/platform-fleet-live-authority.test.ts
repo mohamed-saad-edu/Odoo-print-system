@@ -31,9 +31,14 @@ describe("cross-tenant Platform fleet inventory read fence", () => {
     mocks.guard.mockResolvedValue(undefined);
     mocks.clock.mockResolvedValue(Date.now());
     mocks.query.mockImplementation(async (fn: () => unknown) => fn());
-    mocks.select.mockReturnValue({ from: () => ({ innerJoin: () => ({
-      where: () => ({ orderBy: () => ({ limit: () => ({ offset: async () => [] }) }) }),
-    }) }) });
+    const chain = {
+      innerJoin: () => chain,
+      where: () => chain,
+      orderBy: () => chain,
+      limit: () => chain,
+      offset: async () => [],
+    };
+    mocks.select.mockReturnValue({ from: () => chain });
     mocks.transaction.mockImplementation(async (fn: (tx: {select: typeof mocks.select}) => unknown) => fn({ select: mocks.select }));
   });
 
