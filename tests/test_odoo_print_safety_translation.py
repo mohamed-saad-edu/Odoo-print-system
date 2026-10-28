@@ -22,7 +22,10 @@ CATALOG = ROOT / "i18n" / "ar.po"
 ])
 def test_print_safety_error_exists_and_is_translated_to_arabic(source, english):
     original = (ROOT / source).read_text(encoding="utf-8")
-    assert f'_("{english}")' in original, f"{source}: error must stay translatable"
+    # Odoo also accepts multiline _("...") invocations. Protect the real
+    # gettext call rather than requiring one specific source layout.
+    expression = r'_\\(\\s*"' + re.escape(english) + r'"\\s*\\)'
+    assert re.search(expression, original), f"{source}: error must stay translatable"
     catalog = CATALOG.read_text(encoding="utf-8")
     # Use the exact untranslated ID; we must not accept a broad substring
     # or an empty/English msgstr when print admission has failed.

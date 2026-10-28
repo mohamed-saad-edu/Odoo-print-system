@@ -24,8 +24,12 @@ def production_method(name):
     node = copy.deepcopy(next(node for node in cls.body
                if isinstance(node, ast.FunctionDef) and node.name == name))
     node.decorator_list = []
+    # The method uses a top-level helper. Compile the REAL selector beside it
+    # instead of replacing it or leaving an unresolved Python global.
+    helper = copy.deepcopy(next(n for n in tree.body if isinstance(n, ast.FunctionDef)
+                               and n.name == "_exact_pos_printer_id"))
     scope = {"ValidationError": ValidationError, "_": lambda message: message}
-    exec(compile(ast.fix_missing_locations(ast.Module(body=[node], type_ignores=[])), str(SOURCE), "exec"), scope)
+    exec(compile(ast.fix_missing_locations(ast.Module(body=[helper, node], type_ignores=[])), str(SOURCE), "exec"), scope)
     return scope[name]
 
 

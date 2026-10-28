@@ -79,8 +79,8 @@ def checked_assignment(raw):
 
 
 @pytest.mark.parametrize("malformed", [
-    " agent", "agent ", "\\ufeffagent", "agent\\ufeff",
-    "agent\\x00other", "agent\\u0085other", "\\ud800",
+    " agent", "agent ", "\ufeffagent", "agent\ufeff",
+    "agent\x00other", "agent\u0085other", "\ud800",
     "é" * 61, "x" * 121,
 ])
 def test_assignment_validator_refuses_identity_that_gateway_cannot_execute(malformed):
@@ -98,7 +98,7 @@ def test_lookup_never_upgrades_a_padded_stored_agent_to_another_exact_agent():
 
 def test_lookup_rejects_malformed_caller_even_when_exact_stored_agent_exists():
     model, company = fake_assignment(["agent"])
-    for malformed in (" agent", "agent ", "agent\\x00suffix", "\\ufeffagent", "a" * 121):
+    for malformed in (" agent", "agent ", "agent\x00suffix", "\ufeffagent", "a" * 121):
         assert model.is_agent_assigned(company, False, malformed) is False
     assert model.is_agent_assigned(company, False, "agent") is True
 

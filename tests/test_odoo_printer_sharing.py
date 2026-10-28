@@ -53,8 +53,8 @@ def test_fallback_proof_requires_exact_owned_primary_without_inventing_health(ro
 
 
 @pytest.mark.parametrize("bad_agent", [
-    " owner", "owner ", "owner\\x00suffix", "owner\\u0085suffix",
-    "\\ufeffowner", "owner\\ufeff", "\\ud800", "x" * 121,
+    " owner", "owner ", "owner\x00suffix", "owner\u0085suffix",
+    "\ufeffowner", "owner\ufeff", "\ud800", "x" * 121,
     True, 7,
 ])
 def test_fallback_proof_rejects_noncanonical_agent_and_primary_ids(bad_agent):
@@ -65,7 +65,7 @@ def test_fallback_proof_rejects_noncanonical_agent_and_primary_ids(bad_agent):
     assert policy.inventory_has_shared_printer({"printers": [record]}, "primary") is False
 
 
-@pytest.mark.parametrize("bad_primary", [" primary", "primary ", "\\ufeffprimary", "primary\\x00", "é" * 61])
+@pytest.mark.parametrize("bad_primary", [" primary", "primary ", "\ufeffprimary", "primary\x00", "é" * 61])
 def test_fallback_proof_rejects_malformed_primary_even_if_inventory_echoes_it(bad_primary):
     assert policy.inventory_has_shared_printer({"printers": [
         {"id": bad_primary, "lifecycle": "active", "agent": {"id": "owner"}}

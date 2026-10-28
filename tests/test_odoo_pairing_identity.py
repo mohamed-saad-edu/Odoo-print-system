@@ -119,9 +119,9 @@ def test_malformed_inventory_row_cannot_crash_missing_agent_feedback():
 
 
 @pytest.mark.parametrize("bad_target", [
-    " agent-selected", "agent-selected ", "\\ufeffagent-selected",
-    "agent-selected\\ufeff", "agent-selected\\x00other",
-    "\\ud800", "é" * 61, "a" * 121,
+    " agent-selected", "agent-selected ", "\ufeffagent-selected",
+    "agent-selected\ufeff", "agent-selected\x00other",
+    "\ud800", "é" * 61, "a" * 121,
 ])
 def test_pairing_refuses_malformed_selected_agent_before_normalized_lookup(bad_target):
     wizard, assignments = pairing([

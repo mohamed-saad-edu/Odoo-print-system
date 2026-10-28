@@ -19,7 +19,11 @@ def load_sync_method():
     cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "PrintGatewayJob")
     method = next(n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name == "_apply_synced_status")
     method.decorator_list = []
+    policy_source = SOURCE.parent.parent / "runtime_policy.py"
+    policy_scope = {}
+    exec(compile(policy_source.read_text(encoding="utf-8"), str(policy_source), "exec"), policy_scope)
     namespace = {
+        "is_exact_gateway_job_id": policy_scope["is_exact_gateway_job_id"],
         "gateway_output_values": lambda _job, _body, _status: {},
         "db_now_utc": lambda _cr: datetime.datetime(2026, 10, 28, 0, 0, 0),
         "_": lambda message: message,

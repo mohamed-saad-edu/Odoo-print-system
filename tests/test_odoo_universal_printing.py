@@ -38,6 +38,7 @@ def production_methods(filename, names, namespace=None):
     policy = importlib.util.module_from_spec(policy_spec)
     policy_spec.loader.exec_module(policy)
     scope["is_exact_gateway_job_id"] = policy.is_exact_gateway_job_id
+    scope["is_exact_gateway_printer_id"] = policy.is_exact_gateway_printer_id
     scope.update(namespace or {})
     nodes = []
     for node in ast.walk(ast.parse((ADDON / filename).read_text())):

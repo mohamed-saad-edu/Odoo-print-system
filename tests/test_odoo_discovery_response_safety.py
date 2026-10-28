@@ -192,8 +192,8 @@ def test_oversized_discovery_responses_fail_closed(monkeypatch):
 
 
 @pytest.mark.parametrize("malformed", [
-    " agent", "agent ", "\\ufeffagent", "agent\\x00another",
-    "agent\\u0085another", "\\ud800", "x" * 121, "é" * 61,
+    " agent", "agent ", "\ufeffagent", "agent\x00another",
+    "agent\u0085another", "\ud800", "x" * 121, "é" * 61,
 ])
 def test_runtime_agent_picker_never_exposes_nonexact_gateway_execution_identity(monkeypatch, malformed):
     controller, _, get = discovery(monkeypatch, agents=[

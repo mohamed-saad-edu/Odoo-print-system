@@ -83,7 +83,11 @@ def test_runtime_printer_picker_rejects_noncanonical_agent_ids_before_inventory(
     method.decorator_list = []
     cls = ast.ClassDef(name="RuntimePicker", bases=[], keywords=[], body=[method], decorator_list=[])
     module = ast.fix_missing_locations(ast.Module(body=[cls], type_ignores=[]))
-    namespace = {}
+    # Exercise the production ID validator, not an unbound AST global.
+    policy_source = CONTROLLER.parent.parent / "runtime_policy.py"
+    policy_scope = {}
+    exec(compile(policy_source.read_text(encoding="utf8"), str(policy_source), "exec"), policy_scope)
+    namespace = {"is_exact_gateway_printer_id": policy_scope["is_exact_gateway_printer_id"]}
     exec(compile(module, str(CONTROLLER), "exec"), namespace)
     picker = namespace["RuntimePicker"]()
     picker._require_runtime_admin = lambda: None

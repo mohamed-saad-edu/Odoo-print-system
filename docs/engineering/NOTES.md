@@ -588,3 +588,12 @@ Baseline inspected: main@65214cf7948a214843110fa2fbc1a23aec388340. This is an **
 | ERROR-I18N | PRINTER_OFFLINE's 503 fell back to generic service outage; printer verification/owner and suspended-workspace codes fell back to generic HTTP guidance | This batch: stable code mappings and Arabic/English safe operator copy | Source and contract regressions added; CI pending |
 
 **Evidence limits:** GitHub Actions previously reported an App/Quality failure in the native discovery test from the dropped cache-control header; this batch repairs the test harness without removing production guards. No local test, physical printer, Windows spooler, installed Odoo or populated production database acceptance was performed. Do not mark those PASS.
+
+
+## 2026-10-28 — Current Odoo App / Quality red run, fixture/identity audit
+
+- **Evidence:** `main@cd958eee7955de898377b01a792484a6568d1a7b` inherits a failed Odoo Python contract stage from GitHub Actions `40633862657` / App / Quality `122637848771`: 88 failed, 1523 passed. Names and stack traces identify Python AST test harnesses executing real methods without importing their production top-level `is_exact_gateway_printer_id`, `is_exact_gateway_job_id`, or `_exact_pos_printer_id` dependencies. These produce `NameError` rather than exercising the intended admission guard.
+- **Ruling:** Fix only the detached AST test environments by loading the actual unmodified helpers. Do not change or bypass production authorization, printer/Agent identity or job idempotency semantics to make fixtures pass.
+- **Malformed identity vectors:** Several test files stored literal doubled backslash escape sequences (e.g. a backslash plus `u` and hexadecimal digits) while asserting rejection of actual Unicode BOM, C0/C1 controls, and lone surrogates. The Gateway permits an ordinary literal backslash as an opaque ID character; replace malformed test inputs with the intended Python escapes, not a divergence in Odoo's policy.
+- **Additional fixture fixes:** Compile the real POS top-level selector with its two RPCs; use the kitchen harness's actual `ValidationError` class; accept both single-line and multiline gettext wrappers in source-language assertions.
+- **Verification:** CI was RED before this batch. This is a GitHub-only test-harness patch; RED→GREEN, actual Odoo deployment, PostgreSQL runtime and paper verification remain **NOT RUN / CI pending** at commit time. Other independent failures (status polling fairness, policy AST guards, etc.) remain TODO until reproduced separately.

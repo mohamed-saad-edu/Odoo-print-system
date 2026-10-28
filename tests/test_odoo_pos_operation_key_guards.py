@@ -8,7 +8,7 @@ import pytest
 
 from test_f010_report_binding_identity import BRANCH, POS_CONFIG, ValidationError, ref
 from test_f031_pos_outcome_identity import SimulatedRouter
-from test_kitchen_idempotency_fallback import FakeRouter, make_order, route
+from test_kitchen_idempotency_fallback import FakeRouter, make_order, route, ValidationError as KitchenValidationError
 
 
 BAD_KEYS = (0, 2, [], {}, True, "   ")
@@ -31,7 +31,8 @@ def test_receipt_and_sale_details_reject_invalid_explicit_identity_before_submis
 @pytest.mark.parametrize("operation_key", BAD_KEYS)
 def test_kitchen_rejects_invalid_explicit_identity_before_submission(operation_key):
     router = FakeRouter()
-    with pytest.raises(ValidationError, match="operation key"):
+    # The kitchen AST harness owns its own Odoo ValidationError substitute.
+    with pytest.raises(KitchenValidationError, match="operation key"):
         route(router, make_order(), idempotency_key=operation_key)
     assert router.submitted == []
 
