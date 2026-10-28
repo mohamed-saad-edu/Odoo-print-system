@@ -68,6 +68,27 @@ test("monthly allowance reset shows the exact UTC boundary from Saudi and wester
   }
 });
 
+test("mock verification uses native queue/service/device proof instead of claiming all hardware is a Windows queue", async () => {
+  const { validatedOperationalVerification } = await load("js/printer_verification.js");
+  for (const [id, connectionType, protocol, method, identityStrength] of [
+    ["spooler-native", "spooler", "spooler", "windows_queue", "queue"],
+    ["network-native", "network", "escpos", "snmp_printer", "device"],
+    ["usb-native", "usb", "escpos", "usb_interface", "device"],
+    ["ipp-native", "ipp", "ipp", "ipp_attributes", "service"],
+    ["file-native", "pdf_output", "pdf", "pdf_output", "service"],
+  ]) {
+    const printer = verifiedPrinter({ id, connectionType, protocol, capabilities: { geometry: receiptGeometry(384, 203, id) } });
+    const proof = printer.capabilities.operational_verification;
+    assert.equal(proof.method, method);
+    assert.equal(proof.identity_strength, identityStrength);
+    assert.equal(validatedOperationalVerification(proof, printer)?.method, method);
+    if (identityStrength !== "queue") {
+      assert.equal(validatedOperationalVerification({ ...proof, identity_strength: "queue" }, printer), null,
+        "forged Windows-queue proof cannot represent a different physical transport");
+    }
+  }
+});
+
 test("POS picker offers only physical JPEG transports and declared ESC/POS raster capability", async () => {
   const { RuntimePrinterField } = await load("components/runtime_printer_field.js");
   const field = Object.create(RuntimePrinterField.prototype);
