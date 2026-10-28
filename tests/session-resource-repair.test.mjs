@@ -200,7 +200,13 @@ test('expired workspace probe provides only refresh routing and team reads retur
   const result=await probe.GET(new Request('https://gateway/api/auth/me',{headers:{cookie:'mgr_session=expired'}}));
   assert.equal(result.status,401);assert.equal((await result.json()).refreshKind,'manager');
   for(const resource of ['members','invitations']) {
-    const api=await actual(`src/app/api/team/${resource}/route.ts`,globals,s=>s.slice(s.indexOf('export async function GET'),s.indexOf('export async function '+(resource==='members'?'PATCH':'POST'))));
+    const api=await actual(`src/app/api/team/${resource}/route.ts`,globals,s=>s.slice(
+      // The security-sensitive response uses a module-level no-store header.
+      // Keep its actual definition in the selected production source; a VM
+      // snippet beginning at GET alone leaves PRIVATE_HEADERS undefined.
+      s.includes('const PRIVATE_HEADERS =') ? s.indexOf('const PRIVATE_HEADERS =') : s.indexOf('export async function GET'),
+      s.indexOf('export async function '+(resource==='members'?'PATCH':'POST')),
+    ));
     assert.equal((await api.GET(new Request(`https://gateway/api/team/${resource}`))).status,401);
   }
 });
