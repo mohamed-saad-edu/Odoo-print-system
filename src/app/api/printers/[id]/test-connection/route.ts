@@ -81,7 +81,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       live: false,
       ...agentState,
       error: "printer disabled",
-    });
+    }, { headers: PRIVATE_HEADERS });
   }
 
   const cfg = (printer.config ?? {}) as Record<string, unknown>;
