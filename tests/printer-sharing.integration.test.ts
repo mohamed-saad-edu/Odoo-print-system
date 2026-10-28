@@ -70,6 +70,34 @@ suite("local-owner printer sharing across Gateway/Odoo boundaries", () => {
     body: JSON.stringify({ jobId, status: next, claimToken, reason }),
   }));
 
+  it("never promotes a forged device-strength spooler proof through the real heartbeat", async () => {
+    const observed = sharedObservation();
+    const original = observed.capabilities.operational_verification;
+    expect((await printerRow()).verification_state).toBe("verified");
+
+    const forged = await heartbeat({ printers: [{
+      ...observed,
+      capabilities: {
+        ...observed.capabilities,
+        operational_verification: {
+          ...original,
+          identity_strength: "device",
+          physical_device_key: "b".repeat(64),
+        },
+      },
+    }] });
+    expect(forged.status).toBe(200);
+    const stored = await printerRow();
+    expect(stored.verification_state).toBe("pending");
+    expect(stored.verification_binding_digest).toBeNull();
+    expect(stored.capabilities?.operational_verification).toBeUndefined();
+    // Sharing policy remains an independent owner choice. Denial of forged
+    // physical evidence must not silently disable or rebind this printer.
+    expect(stored.shared_with_gateway).toBe(true);
+    expect(stored.id).toBe(f.printerId);
+    expect(stored.agent_id).toBe(f.agentId);
+  });
+
   it("forward migration preserves legacy sharing without changing printer lifecycle", async () => {
     expect(await printerRow()).toMatchObject({ shared_with_gateway: true, lifecycle: "active", status: "online" });
     const column = await pool().query("SELECT is_nullable, column_default FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'printers' AND column_name = 'shared_with_gateway'");
