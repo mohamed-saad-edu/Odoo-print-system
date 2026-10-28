@@ -1493,6 +1493,35 @@ class PrintGatewayJob(models.Model):
         return self._action_submit_trusted(raise_on_failure=raise_on_failure)
 
     @api.private
+    @api.model
+    @api.private
+    def _classify_gateway_submission_status(self, raw_status, remote_error):
+        """Classify a Gateway POST result without hiding possible paper output.
+
+        A partially delivered or unrecognized remote status is never merely
+        "submitted": an admitted job may already have emitted physical data.
+        This mirrors the partial/failed-marker classification in status sync.
+        """
+        status = str(raw_status or "queued").strip().lower()
+        detail = str(remote_error or "").strip()
+        if status == "completed":
+            status = "success"
+        if status == "partial":
+            return "unknown", "UNKNOWN_PARTIAL_DELIVERY: " + (
+                detail or "Gateway reported partial delivery; check the printer before any reprint."
+            )
+        if status == "failed" and detail.startswith(self._GATEWAY_UNKNOWN_MARKERS):
+            return "unknown", detail
+        if status == "unknown":
+            return "unknown", detail or (
+                "UNKNOWN_SUBMISSION_OUTCOME: Gateway did not confirm the physical output"
+            )
+        if status not in {"queued", "submitted", "claimed", "printing", "success", "failed"}:
+            return "unknown", (
+                "UNKNOWN_SUBMISSION_OUTCOME: Gateway returned an unsupported job status %r" % status[:100]
+            )
+        return ("submitted" if status == "queued" else status), (detail or False)
+
     def _action_submit_trusted(self, raise_on_failure=False):
         """Trusted internal submission (not reachable via RPC).
 
@@ -2038,8 +2067,6 @@ class PrintGatewayJob(models.Model):
                         break
                     remote_status = str(body.get("status") or "queued").strip().lower()
                     remote_error = body.get("error")
-                    if remote_status == "completed":
-                        remote_status = "success"
                     if remote_status == "expired":
                         # The Gateway terminalized the job (its lease window
                         # elapsed). Mirror the physical outcome honestly.
@@ -2058,19 +2085,15 @@ class PrintGatewayJob(models.Model):
                             break
                         job._post_source_audit(_("Print Job #%s expired at the Gateway (%s).") % (remote_id or job.id, expired_status))
                         break
-                    # 'partial' is not a valid internal Odoo status (not in
-                    # _FORWARD_CHAIN); map it to 'submitted' so the job remains
-                    # active for reconciliation rather than crashing _advance_status.
-                    if remote_status == "partial":
-                        remote_status = "submitted"
-                    if remote_status not in {"queued", "submitted", "claimed", "printing", "success", "failed", "unknown"}:
-                        remote_status = "submitted"
+                    remote_status, remote_error = job._classify_gateway_submission_status(
+                        remote_status, remote_error,
+                    )
                     values = {
                         "gateway_job_id": str(remote_id),
                         "attempts": job.attempts + 1, "last_error": False, "next_retry_at": False,
                     }
                     values.update(gateway_output_values(job, body, remote_status))
-                    if remote_status == "failed" and remote_error:
+                    if remote_status in ("failed", "unknown") and remote_error:
                         values["last_error"] = str(remote_error)[:4000]
                     if remote_status in {"success", "failed", "unknown"}:
                         values["completed_at"] = db_now_utc(self.env.cr)
@@ -2081,8 +2104,14 @@ class PrintGatewayJob(models.Model):
                     if not advance_submit_status("submitted" if remote_status == "queued" else remote_status, values):
                         _logger.info("Submission lease lost while finalizing Odoo print job %s.", job.id)
                         break
-                    job._post_source_audit(_("Print Job #%s queued to Gateway for '%s'") % (remote_id or job.id, job.printer_id))
-                    break  # Success
+                    if remote_status == "unknown":
+                        job._post_source_audit(
+                            _("WARNING: Print Job #%s returned ambiguous delivery on '%s'. Verify physical output before any reprint.")
+                            % (remote_id or job.id, job.printer_id)
+                        )
+                    else:
+                        job._post_source_audit(_("Print Job #%s queued to Gateway for '%s'") % (remote_id or job.id, job.printer_id))
+                    break  # Gateway response handled
                 except requests.exceptions.Timeout as exc:
                     if self._is_pre_dispatch_error(exc):
                         # Connect-phase timeout only: the request provably
