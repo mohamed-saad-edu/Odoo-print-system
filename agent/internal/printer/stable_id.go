@@ -308,7 +308,13 @@ func StableIDFromIPPURI(endpoint string, host string, port int) string {
 	case "https":
 		scheme = "ipps"
 	}
-	key := "ipp-queue:" + scheme + "://" + net.JoinHostPort(strings.ToLower(host), fmt.Sprint(port)) + resource + "?" + u.RawQuery
+	// URI authority can arrive as expanded, compressed or bracketed IPv6.
+	// These textual forms are the same endpoint, not new printer IDs.
+	canonicalHost := strings.ToLower(strings.Trim(strings.TrimSpace(host), "[]"))
+	if ip := net.ParseIP(canonicalHost); ip != nil {
+		canonicalHost = ip.String()
+	}
+	key := "ipp-queue:" + scheme + "://" + net.JoinHostPort(canonicalHost, fmt.Sprint(port)) + resource + "?" + u.RawQuery
 	h := sha256.Sum256([]byte(key))
 	return fmt.Sprintf("printer_ep_%x", h[:8])
 }
