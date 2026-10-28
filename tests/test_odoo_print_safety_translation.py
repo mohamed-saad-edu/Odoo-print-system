@@ -16,6 +16,9 @@ CATALOG = ROOT / "i18n" / "ar.po"
 @pytest.mark.parametrize("source,english", [
     ("models/print_router.py", "The print operation key is invalid."),
     ("models/binding.py", "A valid Gateway Runtime Printer must be selected."),
+    ("models/print_job.py", "Printer identity is invalid. Select an exact Gateway Runtime Printer."),
+    ("models/print_job.py", "Gateway admission is temporarily limited. The print request remains queued for safe retry."),
+    ("models/runtime_assignment.py", "A valid exact Gateway runtime agent ID is required."),
 ])
 def test_print_safety_error_exists_and_is_translated_to_arabic(source, english):
     original = (ROOT / source).read_text(encoding="utf-8")
