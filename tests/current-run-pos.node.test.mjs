@@ -309,3 +309,28 @@ test('kitchen gateway rejects accepted-looking status with invalid gateway owner
   assert.equal(response.gatewayOutcome, 'unknown');
   assert.equal(response.canRetry, false);
 });
+
+
+for (const canRetry of [undefined, false, "false", 0]) {
+  test(`receipt failed status with can_retry=${String(canRetry)} keeps original operation rather than minting new paper`, async () => {
+    const h = harness();
+    await h.init('pos_print_router.js');
+    const original = h.store.data.call;
+    let count = 0;
+    h.store.data.call = async (model, method, args, kwargs) => {
+      if (method !== 'action_print_gateway_receipt') return original(model, method, args, kwargs);
+      h.seen.submissions.push(kwargs);
+      count += 1;
+      return count === 1
+        ? { gateway_enabled: true, status: 'failed', ...(canRetry === undefined ? {} : { can_retry: canRetry }) }
+        : { gateway_enabled: true, status: 'queued', can_retry: false };
+    };
+    assert.equal(await h.store.printReceipt(), false, 'an unproven failed status never counts as accepted output');
+    assert.equal(h.store.currentOrder.nb_print, 0);
+    assert.equal(await h.store.printReceipt(), true, 'recovery only replays the original durable print intent');
+    assert.equal(h.seen.submissions.length, 2);
+    assert.equal(h.seen.submissions[0].operation_id, h.seen.submissions[1].operation_id);
+    assert.equal(h.seen.submissions[0].image, h.seen.submissions[1].image);
+    assert.equal(h.seen.submissions[0].geometry_fingerprint, h.seen.submissions[1].geometry_fingerprint);
+  });
+}
