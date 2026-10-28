@@ -297,7 +297,18 @@ func StableIDFromIPPURI(endpoint string, host string, port int) string {
 	if resource == "" {
 		resource = "/"
 	}
-	key := "ipp-queue:" + strings.ToLower(u.Scheme) + "://" + net.JoinHostPort(strings.ToLower(host), fmt.Sprint(port)) + resource + "?" + u.RawQuery
+	// IPP is HTTP and IPPS is HTTPS at the same explicit authority.
+	// Discovery can observe the same non-default print resource using either
+	// scheme spelling. Keep TLS separate and retain the case-sensitive
+	// resource path; only canonicalize the transport spelling.
+	scheme := strings.ToLower(u.Scheme)
+	switch scheme {
+	case "http":
+		scheme = "ipp"
+	case "https":
+		scheme = "ipps"
+	}
+	key := "ipp-queue:" + scheme + "://" + net.JoinHostPort(strings.ToLower(host), fmt.Sprint(port)) + resource + "?" + u.RawQuery
 	h := sha256.Sum256([]byte(key))
 	return fmt.Sprintf("printer_ep_%x", h[:8])
 }
