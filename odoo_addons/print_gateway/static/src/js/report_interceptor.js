@@ -162,7 +162,22 @@ async function silentPrintReportHandler(action, options, env) {
             return true;
         }
 
-        if (!res.has_binding || (res.status === "failed" && res.dispatched === false)) {
+        // Only an explicit, internally consistent "no binding / no dispatch"
+        // response may reopen Odoo's native PDF fallback. A contradictory or
+        // partial RPC reply may mean bytes were already submitted; retaining
+        // the operation identity prevents a second independent print attempt.
+        const definitelyUnbound = res.has_binding === false &&
+            res.dispatched === false &&
+            (res.status == null || res.status === "no_binding") &&
+            res.success !== true && !res.billing_limit && !res.error;
+        if (res.has_binding === false && !definitelyUnbound) {
+            notification.add(
+                _t("Print routing returned conflicting status. Native PDF download cancelled. Check Print Activity and the printer before retrying."),
+                { type: "warning", sticky: true, buttons: [openJobsButton(env)] }
+            );
+            return true;
+        }
+        if (definitelyUnbound || (res.has_binding && res.status === "failed" && res.dispatched === false)) {
             finishPrintOperation(recoveryKey, operation.request.operation_id);
             operations.delete(operationKey);
         }
