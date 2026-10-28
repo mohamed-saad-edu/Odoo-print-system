@@ -363,7 +363,9 @@ func isAllowedGatewayConsolePath(path, method string) bool {
 
 func isAllowedFleetPath(path string) bool {
 	parsed, err := url.Parse(path)
-	if err != nil || (parsed.Path != "/api/printers" && parsed.Path != "/api/agents") || parsed.RawPath != "" || parsed.Fragment != "" || parsed.IsAbs() || parsed.Host != "" {
+	if err != nil || (parsed.Path != "/api/printers" && parsed.Path != "/api/agents") ||
+		parsed.RawPath != "" || parsed.Fragment != "" || strings.Contains(path, "#") ||
+		parsed.ForceQuery || parsed.IsAbs() || parsed.Host != "" || parsed.User != nil {
 		return false
 	}
 	if parsed.RawQuery == "" {
