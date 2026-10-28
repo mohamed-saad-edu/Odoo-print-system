@@ -535,6 +535,13 @@ class PrintGatewayRouter(models.AbstractModel):
         source_record_id=None, idempotency_key=None, structured_outcome=False,
     ):
         self._assert_current_company(company)
+        # Only None/False/"" are Odoo's optional-operation sentinels.
+        # The previous truthy-or-uuid fallback turned 0, [] or {} into
+        # a NEW print identity, so retrying malformed RPC input could send
+        # duplicate paper instead of failing closed.
+        if not (idempotency_key is None or idempotency_key is False or idempotency_key == ""):
+            if not isinstance(idempotency_key, str) or not idempotency_key.strip():
+                raise ValidationError(_("The print operation key is invalid."))
         binding = route.get("binding")
         if binding and isinstance(payload, dict):
             ptype = str(payload.get("type") or "").strip().lower()
