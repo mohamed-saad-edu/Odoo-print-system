@@ -65,11 +65,23 @@ export function physicalPrinterIdentityKey(p: PrinterEndpoint): string | null {
   if (conn === "pdf_output" && typeof cfg.output_profile_id === "string" && cfg.output_profile_id === cfg.output_profile_id.trim() && /^[A-Za-z0-9_-]{1,64}$/.test(cfg.output_profile_id)) endpoint = `pdf-output:${cfg.output_profile_id}`;
   return endpoint ? "v2:" + createHash("sha256").update(endpoint, "utf8").digest("hex") : null;
 }
+/**
+ * No match is undefined; multiple matching persisted identities are null.
+ * Never grant physical execution/registration authority by the arbitrary
+ * ordering of duplicate legacy rows, including a disabled first match.
+ */
 export function matchingPhysicalPrinter<T extends PrinterEndpoint & { id: string; physicalIdentityKey?: string | null }>(
   rows: readonly T[], incoming: PrinterEndpoint, excludeId?: string,
-): T | undefined {
+): T | null | undefined {
   const key = physicalPrinterIdentityKey(incoming);
-  return key ? rows.find(r => r.id !== excludeId && physicalPrinterIdentityKey(r) === key) : undefined;
+  if (!key) return undefined;
+  let matched: T | undefined;
+  for (const row of rows) {
+    if (row.id === excludeId || physicalPrinterIdentityKey(row) !== key) continue;
+    if (matched) return null;
+    matched = row;
+  }
+  return matched;
 }
 export function samePrinterProtocol(a: PrinterEndpoint, b: PrinterEndpoint): boolean {
   const norm = (p: string) => p.toLowerCase() === "windows_spooler" ? "spooler" : p.toLowerCase();

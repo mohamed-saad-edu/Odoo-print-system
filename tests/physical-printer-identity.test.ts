@@ -83,6 +83,26 @@ describe("physical printer identity", () => {
     expect(key({ connectionType: "usb", protocol: "unknown", config: { vid: 100, pid: 200, serial: "a" } }))
       .not.toBe(key({ connectionType: "usb", protocol: "unknown", config: { vid: 100, pid: 200, serial: "b" } }));
   });
+  it("fails closed on multiple persisted IDs for a single physical endpoint", () => {
+    const endpoint = { connectionType: "network", protocol: "raw", config: { ip: "10.20.30.40", port: 9100 } };
+    const first = { id: "first", ...endpoint };
+    const second = { ...first, id: "second" };
+    expect(matchingPhysicalPrinter([first, second], endpoint)).toBeNull();
+    // Stable persisted input order must never decide the chosen physical row.
+    expect(matchingPhysicalPrinter([second, first], endpoint)).toBeNull();
+    // An explicit edit excludes its own printer ID, then an exact other row
+    // is a regular conflicting match; no match is unambiguously undefined.
+    expect(matchingPhysicalPrinter([first, second], endpoint, first.id)?.id).toBe(second.id);
+    expect(matchingPhysicalPrinter([first], endpoint, first.id)).toBeUndefined();
+    expect(matchingPhysicalPrinter([first, second], { ...endpoint, config: { ip: "10.20.30.41", port: 9100 } })).toBeUndefined();
+    const createRoute = readFileSync("src/app/api/printers/route.ts", "utf8");
+    const editRoute = readFileSync("src/app/api/printers/[id]/route.ts", "utf8");
+    const provisionRoute = readFileSync("src/app/api/agents/[id]/discovered-printers/[deviceId]/provision/route.ts", "utf8");
+    expect(createRoute).toContain("if (matching === null)");
+    expect(provisionRoute).toContain("if (matching === null)");
+    expect(editRoute).toContain("matchingPhysicalPrinter(siblings, { connectionType, protocol, config: cfg }, id) !== undefined");
+  });
+
   it("never reuses a stale database identity key when the stored endpoint is incomplete or malformed", () => {
     const incoming = { connectionType: "network", protocol: "raw", config: { ip: "10.20.30.40", port: 9100 } };
     const staleKey = key(incoming);

@@ -206,7 +206,9 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       const siblings = await tx.query.printers.findMany({
         where: and(eq(printers.tenantId, tenantId), eq(printers.agentId, owner.agentId)),
       });
-      if (matchingPhysicalPrinter(siblings, { connectionType, protocol, config: cfg }, id)) {
+      // Both one matching sibling and ambiguous legacy duplicates block
+      // reassignment. Null is the explicit ambiguous-identity sentinel.
+      if (matchingPhysicalPrinter(siblings, { connectionType, protocol, config: cfg }, id) !== undefined) {
         return { kind: "conflict" as const, message: "Printer endpoint already belongs to another row on this Agent" };
       }
     }

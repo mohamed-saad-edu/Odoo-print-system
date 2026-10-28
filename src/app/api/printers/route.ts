@@ -190,6 +190,9 @@ export async function POST(req: Request) {
           where: and(eq(printers.tenantId, tenantId), eq(printers.agentId, data.agentId)),
         });
         const matching = matchingPhysicalPrinter(known, { connectionType, protocol, config });
+        if (matching === null) {
+          return { kind: "conflict" as const, error: "Multiple stored printers share this physical endpoint; reconcile their identities before registration" };
+        }
         // An explicit printer ID may be occupied by another logical queue
         // (including a different Agent inside this tenant). Never return
         // 200 for an unrelated matching physical endpoint while silently
