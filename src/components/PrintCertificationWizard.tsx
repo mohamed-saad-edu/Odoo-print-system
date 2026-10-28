@@ -13,6 +13,7 @@ import {
 } from "./ui";
 import JobTimeline from "./JobTimeline";
 import { derivePhysicalOutcome } from "../lib/job-status";
+import { apiMessageKey } from "../lib/api-error-keys";
 import { useI18n } from "../i18n/react";
 import type { Translator } from "../i18n/translate";
 import type { MessageKey } from "../i18n/messages/en";
@@ -216,8 +217,11 @@ function CertificationSession({ printerId }: { printerId: string }) {
       });
       const data = await res.json();
       if (controller.signal.aborted) return;
-      if (Array.isArray(data.steps)) setSteps(data.steps);
-      if (!res.ok) throw new Error(t("cert.failedBody"));
+      if (Array.isArray(data?.steps)) setSteps(data.steps);
+      if (!res.ok) {
+        const code = typeof data?.code === "string" ? data.code : undefined;
+        throw new Error(t(apiMessageKey(code, res.status, "cert.failedBody")));
+      }
       if (!Array.isArray(data.steps)) throw new Error(t("cert.failedBody"));
       setJobId(data.jobId);
       setRequestId(data.requestId);

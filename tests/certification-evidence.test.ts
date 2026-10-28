@@ -16,6 +16,7 @@ vi.mock("../src/lib/database-clock", async (original) => ({
 vi.mock("../src/lib/job-timeline", () => ({ recordJobEvent: mocks.event }));
 
 import { POST } from "../src/app/api/printers/[id]/certify/route";
+import { TenantPrintQuotaExceededError } from "../src/lib/entitlements";
 
 const now = new Date("2026-10-15T12:00:00Z");
 const printer = { id: "selected", tenantId: "tenant", agentId: "agent", name: "Installed queue",
@@ -64,6 +65,25 @@ describe("certification evidence and request handling", () => {
     const result = await response.json();
     expect(result).toMatchObject({ jobId: "job", certified: false, blocked: true });
     expect(JSON.stringify(result)).not.toContain("sandbox has no printer");
+  });
+
+  it("maps a depleted monthly quota to an explicit 429 instead of an internal failure", async () => {
+    replyRows({ id: "job", status: "queued" });
+    const cycleStart = new Date("2026-10-01T00:00:00.000Z");
+    const cycleEnd = new Date("2026-11-01T00:00:00.000Z");
+    mocks.createJob.mockRejectedValueOnce(new TenantPrintQuotaExceededError(5, 5, cycleStart, cycleEnd));
+    const response = await certify("{}");
+    expect(response.status).toBe(429);
+    expect(response.headers.get("Cache-Control")).toBe("no-store");
+    expect(response.headers.get("Retry-After")).toBe(String(Math.ceil((cycleEnd.getTime() - now.getTime()) / 1000)));
+    expect(await response.json()).toMatchObject({
+      code: "PRINT_QUOTA_EXCEEDED",
+      entitlement: "max_prints_per_period",
+      limit: 5, used: 5, remaining: 0, upgradeRequired: true, retryable: false,
+      periodStart: cycleStart.toISOString(), periodEnd: cycleEnd.toISOString(),
+      steps: expect.arrayContaining([expect.objectContaining({ id: "queue", status: "blocked" })]),
+    });
+    expect(mocks.event).not.toHaveBeenCalled();
   });
 
   it("keeps malformed nonempty JSON from creating any physical intent", async () => {

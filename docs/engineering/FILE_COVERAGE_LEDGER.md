@@ -2194,3 +2194,15 @@ AUTHORED agent/internal/printer/stable_id_ipp_ports_test.go — resource/port/TL
 ```
 
 Source changes are committed on GitHub main. Code path review checked that Gateway absence reconciliation requires `inventoryComplete=true` on a final error-free snapshot. Go race tests, CI and physical Windows/IPP print confirmation remain NOT VERIFIED; do not mark DONE or PASS without exact-SHA evidence.
+
+
+#### CERTIFICATION-QUOTA-429 — 2026-10-28
+
+| Status | Path | Contract and work |
+| --- | --- | --- |
+| PARTIAL | `src/app/api/printers/[id]/certify/route.ts` | Map exact monthly quota exhaustion to HTTP 429; no print admission; retain UTC period and Retry-After |
+| PARTIAL | `src/components/PrintCertificationWizard.tsx` | Translate stable admission code via en/ar lookup instead of generic failure |
+| AUTHORED / NOT RUN | `tests/certification-evidence.test.ts` | Mocked quota rejection with no timeline event |
+| AUTHORED / NOT RUN | `tests/certification-reconciliation.contract.test.mjs` | Client i18n source contract |
+
+Source review only; full CI, PostgreSQL admission and actual Odoo/Agent/printer validation **NOT RUN**. Baseline `64f436bde2e864fef546eec642988b272c5384bf`. Preserve existing TODO and BLOCKED inventory.

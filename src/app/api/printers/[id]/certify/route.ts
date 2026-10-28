@@ -11,7 +11,7 @@ import { runWithCorrelation, generateRequestId, generateAttemptId } from "../../
 import { requestIdFrom, logError, logWarn } from "../../../../../lib/log";
 import { getPrinterCapabilityMatrix } from "../../../../../lib/printer-health";
 import { createPrintJobForPrinter, AgentQueueFullError, AgentQueuedJobsFullError, PrintJobCapabilityError, PrintJobInputError } from "../../../../../lib/print-job-service";
-import { TenantEntitlementError, TenantSubscriptionRequiredError, TenantEntitlementConfigError } from "../../../../../lib/entitlements";
+import { TenantEntitlementError, TenantPrintQuotaExceededError, TenantSubscriptionRequiredError, TenantEntitlementConfigError } from "../../../../../lib/entitlements";
 import { MAX_AGENT_IN_FLIGHT_JOBS } from "../../../../../lib/job-delivery";
 import { databaseNowMs, parseDbTimeMs } from "../../../../../lib/database-clock";
 import { getAgentAvailability } from "../../../../../lib/agent-availability";
@@ -214,6 +214,29 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       }
 
     } catch (e) {
+      // A depleted UTC calendar-month allowance is a typed admission hold,
+      // never a hardware failure or an internal server error.
+      if (e instanceof TenantPrintQuotaExceededError) {
+        setStep("queue", "blocked", e.message, `code=${e.code}`);
+        const headers = new Headers({ "x-request-id": requestId, "Cache-Control": "no-store" });
+        if (e.periodEnd) {
+          headers.set("Retry-After", String(Math.max(1, Math.ceil((e.periodEnd.getTime() - certificationNowMs) / 1000))));
+        }
+        return NextResponse.json({
+          error: e.message,
+          code: e.code,
+          entitlement: e.entitlement,
+          limit: e.limit,
+          used: e.used,
+          remaining: 0,
+          periodStart: e.periodStart.toISOString(),
+          periodEnd: e.periodEnd?.toISOString() ?? null,
+          upgradeRequired: true,
+          retryable: false,
+          steps,
+          capability,
+        }, { status: 429, headers });
+      }
       // Map canonical errors to steps
       if (e instanceof TenantEntitlementError) {
         setStep("queue", "error", `Entitlement: ${e.message}`, `code=${e.code}`);
