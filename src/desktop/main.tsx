@@ -431,6 +431,10 @@ export default function App() {
     } catch (e) {
       if (!current()) return false;
       setPairedOrigin(null);
+      // A failed or internally inconsistent cloud refresh cannot leave the
+      // previous Gateway snapshot eligible for a new diagnostic print.
+      // Native local printers remain visible from their independent evidence.
+      setPrinters([]);
       setPrintersError(friendlyPrinterError(errMsg(e), locale));
       return false;
     } finally {

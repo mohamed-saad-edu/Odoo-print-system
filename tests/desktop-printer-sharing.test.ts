@@ -181,6 +181,23 @@ describe("local health and sharing stay independent of cloud evidence", () => {
     expect(eligibleGatewayTestPrinterIds([cloud], [shared, shared], true, now).has(local.id)).toBe(false);
   });
 
+  it("rejects duplicate Gateway printer identities instead of trusting the last cloud owner", () => {
+    const native = { ...local, sharedWithGateway: true };
+    const conflict = { ...cloud, agentId: "foreign-agent", name: "Other printer", verificationBindingDigest: "b".repeat(64) };
+    const merged = mergePrinterInventories([cloud, conflict], [native]);
+    expect(merged).toHaveLength(1);
+    expect(merged[0].agentId).toBeUndefined();
+    expect(merged[0].localObservedAt).toBe(now);
+    // Even identical duplicate records cannot establish a unique route.
+    expect(mergePrinterInventories([cloud, { ...cloud }], [])).toEqual([]);
+    for (const duplicate of [conflict, { ...cloud }]) {
+      expect(eligibleGatewayTestPrinterIds([cloud, duplicate], [native], true, now).has(local.id)).toBe(false);
+      expect(eligibleGatewayTestPrinterIds([cloud, duplicate], [], true, now).has(local.id)).toBe(false);
+    }
+    // Distinct cloud printer IDs continue to work normally.
+    expect(eligibleGatewayTestPrinterIds([cloud], [native], true, now).has(local.id)).toBe(true);
+  });
+
   it("does not guess an identity match from identical queue names", () => {
     const rows = mergePrinterInventories([{ ...cloud, id: "historical-alias" }], [local]);
     expect(rows.map((p) => p.id)).toEqual(["historical-alias", local.id]);

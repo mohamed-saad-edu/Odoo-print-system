@@ -158,8 +158,21 @@ export function printerPresentation(p: PrinterInfo, agent?: Parameters<typeof ga
   }
 }
 
+/** Duplicate cloud IDs are conflicting route evidence, even if payloads look
+ * identical. Never let Map overwrite a different Agent's printer authority. */
+function conflictingCloudPrinterIds(rows: readonly PrinterInfo[]): ReadonlySet<string> {
+  const seen = new Set<string>();
+  const conflicts = new Set<string>();
+  for (const row of rows) {
+    if (seen.has(row.id)) conflicts.add(row.id);
+    seen.add(row.id);
+  }
+  return conflicts;
+}
+
 export function mergePrinterInventories(cloud: PrinterInfo[], local: PrinterInfo[]): PrinterInfo[] {
-  const rows = new Map(cloud.filter(isProductionPrinter).map((p) => [p.id, p]));
+  const conflicts = conflictingCloudPrinterIds(cloud);
+  const rows = new Map(cloud.filter((p) => isProductionPrinter(p) && !conflicts.has(p.id)).map((p) => [p.id, p]));
   for (const printer of local.filter((p) => isProductionPrinter(p) && !isLocalSetupCandidate(p))) {
     const remote = rows.get(printer.id);
     const matched = remote && printer.sharedWithGateway !== false && sameLocalCloudPrinterBinding(printer, remote);
@@ -175,6 +188,7 @@ export function mergePrinterInventories(cloud: PrinterInfo[], local: PrinterInfo
 
 /** Unknown native health may be admitted, but local readiness grants no cloud route. */
 export function eligibleGatewayTestPrinterIds(cloud: PrinterInfo[], local: PrinterInfo[], connected: boolean, nowMs: number): ReadonlySet<string> {
+  const conflictingCloudIds = conflictingCloudPrinterIds(cloud);
   const localById = new Map(local.map(p => [p.id, p]));
   // A duplicate local identity is conflicting evidence; never authorize a
   // cloud test through whichever duplicate happened to be last in the array.
@@ -185,7 +199,7 @@ export function eligibleGatewayTestPrinterIds(cloud: PrinterInfo[], local: Print
     seenLocalIds.add(p.id);
   }
   return new Set(connected ? cloud.filter((p) => {
-    if (conflictingLocalIds.has(p.id) || p.sharedWithGateway === false) return false;
+    if (conflictingCloudIds.has(p.id) || conflictingLocalIds.has(p.id) || p.sharedWithGateway === false) return false;
     const native = localById.get(p.id);
     if (native && (native.sharedWithGateway === false || isLocalSetupCandidate(native)
       || !sameLocalCloudPrinterBinding(native, p)

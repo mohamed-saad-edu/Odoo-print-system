@@ -201,6 +201,7 @@ async function gatewayConsoleRequest(
 async function fetchGatewayFleet(gatewayUrl: string, path: "/api/printers" | "/api/agents"): Promise<Array<Record<string, unknown>>> {
   const rows: Array<Record<string, unknown>> = [];
   const seenCursors = new Set<string>();
+  const seenIds = new Set<string>();
   let params = new URLSearchParams({ limit: "100" });
   let pageCount = 0;
   while (true) {
@@ -214,6 +215,14 @@ async function fetchGatewayFleet(gatewayUrl: string, path: "/api/printers" | "/a
       throw new Error("Invalid Gateway fleet response");
     }
     if (page.length > MAX_FLEET_ROWS - rows.length) throw new Error("Gateway fleet inventory limit exceeded");
+    // Duplication within or across pages can hide a conflicting physical
+    // queue/Agent mapping. Reject the entire snapshot rather than selecting
+    // whichever object happened to be last in a Map or filtered view.
+    for (const row of page) {
+      const id = row.id as string;
+      if (seenIds.has(id)) throw new Error("Duplicate Gateway fleet identity");
+      seenIds.add(id);
+    }
     rows.push(...page);
     const hasMore = headers?.["x-has-more"];
     const hasCursor = Boolean(headers?.["x-next-before-created-at"]

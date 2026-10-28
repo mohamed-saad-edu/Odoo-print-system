@@ -145,6 +145,26 @@ describe("desktop complete fleet traversal", () => {
       .rejects.toThrow("Invalid Gateway fleet cursor");
   });
 
+  it("rejects repeated printer identities within a page, even if duplicate payloads match", async () => {
+    mocks.invoke.mockResolvedValueOnce(envelope([{ id: "printer-x", name: "First queue" }, { id: "printer-x", name: "Another queue" }]));
+    await expect(ipc.fetchGatewayPrinters("https://gateway.example")).rejects.toThrow("Duplicate Gateway fleet identity");
+    expect(mocks.invoke).toHaveBeenCalledTimes(1);
+    mocks.invoke.mockReset();
+    mocks.invoke.mockResolvedValueOnce(envelope([{ id: "printer-x" }, { id: "printer-x" }]));
+    await expect(ipc.fetchGatewayPrinters("https://gateway.example")).rejects.toThrow("Duplicate Gateway fleet identity");
+  });
+
+  it("rejects a repeated Agent/printer ID from a later page before returning partial inventory", async () => {
+    for (const kind of ["agent", "printer"] as const) {
+      mocks.invoke.mockReset();
+      mocks.invoke.mockResolvedValueOnce(envelope([{ id: "reused-identity", name: "First" }], next("reused-identity")))
+        .mockResolvedValueOnce(envelope([{ id: "reused-identity", name: "Other owner" }], { "x-has-more": "false" }));
+      const read = kind === "agent" ? ipc.fetchGatewayAgents : ipc.fetchGatewayPrinters;
+      await expect(read("https://gateway.example")).rejects.toThrow("Duplicate Gateway fleet identity");
+      expect(mocks.invoke).toHaveBeenCalledTimes(2);
+    }
+  });
+
   it("rejects a repeated cursor instead of looping forever", async () => {
     mocks.invoke.mockResolvedValue(envelope([], next("same")));
     await expect(ipc.fetchGatewayPrinters("https://gateway.example")).rejects.toThrow("cursor did not advance");
