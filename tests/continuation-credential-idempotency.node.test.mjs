@@ -227,7 +227,7 @@ async function httpFixture({ reused, revokedAfterAuthentication = false, conflic
     '../../../../lib/log': { logError: noop, logWarn: noop, requestIdFrom: () => 'req' },
     '../../../../lib/database-clock': { databaseNowMs: () => Date.now() },
     'drizzle-orm': { and: (...v) => v, eq: (a,b) => `${a}=${b}`, isNotNull: (x) => x, sql },
-    'zod': { z: { ZodError: class extends Error {}, object: () => ({ strict: () => ({ safeParse: (value) => ({ success: true, data: value }) }) }), string: () => ({ trim() { return this; }, min() {return this;}, max() {return this;}, optional() {return this;} }), literal: () => ({ optional() { return this; } }), unknown: () => ({}) } },
+    'zod': { z: { ZodError: class extends Error {}, object: () => ({ strict: () => ({ safeParse: (value) => ({ success: true, data: value }) }) }), string: () => ({ trim() { return this; }, min() {return this;}, max() {return this;}, refine() {return this;}, optional() {return this;} }), literal: () => ({ optional() { return this; } }), unknown: () => ({}) } },
   });
   const req = new Request('https://gateway.test/api/print/jobs', { method: 'POST',
     body: JSON.stringify({ printerId: 'printer-c', documentType: 'receipt', idempotencyKey: 'id-1', payload: { type: 'raw', protocol: 'raw', encoding: 'base64', data: 'aGVsbG8=' } }),

@@ -30,7 +30,13 @@ const sendSource = between(dashboard, 'async function sendGatewayTestPage(', '/*
 const dashHandler = between(dashboard, '  const handleGatewayTestPrint = async', '  /**\n   * Reprint');
 const desktopHandler = between(desktop, '  const handleTest = useCallback(', '  const startAgent = useCallback');
 const ipcSource = between(ipc, 'export async function testGatewayPrinter(', 'export function cleanupLocalJobs');
-const desktopEligibility = between(read('src/desktop/lib/printers.ts'), 'export function eligibleGatewayTestPrinterIds(', '/** Single advancing-clock').replace(/^export /, '');
+const desktopPrinterSource = read('src/desktop/lib/printers.ts');
+// Exercise the actual cloud/local collision check used by Desktop admission,
+// rather than loading eligibleGatewayTestPrinterIds without its dependency.
+const desktopIdentityHelpers = between(desktopPrinterSource,
+  'function conflictingCloudPrinterIds(', 'export function mergePrinterInventories(');
+const desktopEligibility = between(desktopPrinterSource,
+  'export function eligibleGatewayTestPrinterIds(', '/** Single advancing-clock').replace(/^export /, '');
 const desktopAdmission = between(read('src/desktop/lib/printers.ts'), 'export function friendlyDiagnosticAdmissionError(', '/* ---------- Job field accessors').replace(/^export /, '');
 const verificationExports = {};
 vm.runInNewContext(ts.transpileModule(read('src/lib/printer-operational-verification.ts'), { compilerOptions: {
@@ -81,7 +87,7 @@ function gatewayResponse(body, status=201) {
   return {ok:status>=200&&status<300,status,json:async()=>body};
 }
 const good = (status='queued', id='printer1', extras={})=>({ok:true,jobId:`job-${id}`,printerId:id,status,...extras});
-function makeDesktop(send,{url='https://gateway.example.com',sharedWithGateway=true,ready=true,verification='fresh'}={}) {
+function makeDesktop(send,{url='https://gateway.example.com',sharedWithGateway=true,ready=true,verification='fresh',duplicateCloudId=false}={}) {
   let serial=0;
   const messages=[]; const requests=[];
   const ops=new model.DiagnosticOperations(()=>`desktop-operation-${++serial}`);
@@ -100,7 +106,7 @@ function makeDesktop(send,{url='https://gateway.example.com',sharedWithGateway=t
   const context=vm.createContext({
     ...model, isPrinterOperationallyVerified: verificationExports.isPrinterOperationallyVerified,
     useCallback:fn=>fn, diagnosticOps:{current:ops},savedGatewayUrl:url,
-    printers:[printer("printer1"),printer("printer2")],localPrinters:[],localInventoryReadyRef:{current:ready},
+    printers:duplicateCloudId ? [printer("printer1"),printer("printer1")] : [printer("printer1"),printer("printer2")],localPrinters:[],localInventoryReadyRef:{current:ready},
     health:{ok:true},healthError:null,checkedGatewayUrl:url,normalizeGatewayUrl:v=>v,
     isMainInventoryPrinter:p=>p.inventoryPresent===true,printerAgentView:()=>({tone:"ok"}),printerObservationFreshness:()=>"fresh",
     window:{},setRepeatDiagnosticPrinterId:v=>{pendingRepeat=v;},
@@ -109,7 +115,7 @@ function makeDesktop(send,{url='https://gateway.example.com',sharedWithGateway=t
     t:key=>key,friendlyPrinterError:v=>v,errMsg:e=>String(e),locale:'en',
     DEFAULT_LOCALE:'en',tr:(_locale,key)=>key,codeMessageKey:()=>undefined,
   });
-  vm.runInContext(compile(desktopEligibility),context);
+  vm.runInContext(compile(`${desktopIdentityHelpers}\n${desktopEligibility}`),context);
   // Execute the actual desktop admission presenter. Only the i18n lookup is
   // replaced by an identity translation so tests assert stable message keys.
   vm.runInContext(compile(`${desktopAdmission}\n${desktopHandler}\nglobalThis.runDiagnostic=handleTest;`),context);
@@ -138,6 +144,13 @@ test('desktop refuses diagnostics before local inventory proof, cloud sharing or
     assert.equal(fixture.requests.length,0);
     assert.equal(fixture.messages.at(-1).text,'desktop.printers.cloudTestUnavailable');
   }
+});
+
+test('desktop refuses diagnostic printing when two cloud rows claim the same printer identity', async () => {
+  const fixture = makeDesktop(async () => ({ status: 200, body: JSON.stringify(good()) }), { duplicateCloudId: true });
+  await fixture.run();
+  assert.equal(fixture.requests.length, 0);
+  assert.equal(fixture.messages.at(-1).text, 'desktop.printers.cloudTestUnavailable');
 });
 
 test('strict decoder rejects malformed2xx and wrong printer/status/optional fields',()=>{
