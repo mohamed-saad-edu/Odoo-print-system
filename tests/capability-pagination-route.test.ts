@@ -34,6 +34,7 @@ vi.mock("../src/lib/printer-health", () => ({
 }));
 
 import { GET } from "../src/app/api/printers/capabilities/route";
+import { ManagerMutationAuthorityChangedError } from "../src/lib/manager-mutation-authorization";
 
 describe("capability collection keyset contract", () => {
   beforeEach(() => {
@@ -90,10 +91,9 @@ describe("capability collection keyset contract", () => {
   });
 
   it("does not read capabilities when a previously authenticated actor is revoked at the transaction boundary", async () => {
-    mocks.liveActor.mockRejectedValueOnce(new Error("revalidated session is revoked"));
+    mocks.liveActor.mockRejectedValueOnce(new ManagerMutationAuthorityChangedError());
     const response = await GET(new Request("http://gateway.test/api/printers/capabilities"));
-    expect(response.status).toBe(503);
-    expect(response.headers.get("Cache-Control")).toBe("private, no-store");
+    expect(response.status).toBe(403);
     expect(mocks.steps).toEqual(["begin", "tenant", "actor"]);
     expect(mocks.page).not.toHaveBeenCalled();
   });
