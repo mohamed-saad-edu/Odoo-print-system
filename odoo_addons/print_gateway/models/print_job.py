@@ -2314,8 +2314,21 @@ class PrintGatewayJob(models.Model):
         self._lock_status_row(job)
         if job.gateway_job_id != expected_remote_id:
             return False
-        remote_id = body.get("jobId") or body.get("id")
-        if remote_id and remote_id != job.gateway_job_id:
+        # A status can only reconcile the exact authenticated Gateway job.
+        # Missing IDs, malformed IDs and disagreeing legacy aliases are
+        # ambiguous observations, never proof that this operation succeeded.
+        has_job_id = "jobId" in body
+        has_alias = "id" in body
+        primary = body.get("jobId") if has_job_id else None
+        alias = body.get("id") if has_alias else None
+        if has_job_id and not is_exact_gateway_job_id(primary):
+            return False
+        if has_alias and not is_exact_gateway_job_id(alias):
+            return False
+        remote_id = primary if has_job_id else alias
+        if (not is_exact_gateway_job_id(remote_id)
+                or remote_id != job.gateway_job_id
+                or (has_job_id and has_alias and primary != alias)):
             return False
         status = str(body.get("status") or "").strip().lower()
         if status in ("completed", "success"):
