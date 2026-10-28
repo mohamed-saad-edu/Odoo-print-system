@@ -5014,3 +5014,15 @@ msgstr "لم تتم طباعة هذا الإيصال. بعد التجديد، أ
 #: code:addons/print_gateway/models/print_router.py:0
 msgid "The kitchen reprint option must be a boolean."
 msgstr "يجب أن يكون خيار إعادة طباعة المطبخ قيمة منطقية (صحيح أو خطأ)."
+
+#. module: print_gateway
+#. odoo-python
+#: code:addons/print_gateway/models/print_router.py:0
+msgid "The print binding destination changed before the durable job could be created."
+msgstr "تغيّرت وجهة ربط الطباعة قبل إنشاء مهمة الطباعة المحفوظة؛ أعد اختيار الوجهة."
+
+#. module: print_gateway
+#. odoo-python
+#: code:addons/print_gateway/models/print_router.py:0
+msgid "The print binding document type changed before the durable job could be created."
+msgstr "تغيّر نوع المستند في ربط الطباعة قبل إنشاء المهمة المحفوظة؛ تحقّق من إعدادات الربط."

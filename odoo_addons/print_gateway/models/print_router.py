@@ -393,6 +393,21 @@ class PrintGatewayRouter(models.AbstractModel):
                     raise ValidationError(_("The print binding was disabled before the durable job could be created."))
                 if selected_binding.printer_id != durable_values.get("printer_id"):
                     raise ValidationError(_("The print binding was repointed to another printer before the durable job could be created."))
+                # Routing was resolved before this independent persistence
+                # transaction. Re-read the actual *business destination* and
+                # document type, not only the physical printer ID: an operator
+                # can reassign the binding to a different POS/report while
+                # the first request is rendering. Never print the original
+                # source through that changed assignment.
+                bound_destination = selected_binding.destination_ref
+                bound_destination_key = (
+                    "%s,%s" % (bound_destination._name, bound_destination.id)
+                    if bound_destination else False
+                )
+                if bound_destination_key != durable_values.get("destination_key"):
+                    raise ValidationError(_("The print binding destination changed before the durable job could be created."))
+                if selected_binding.document_type != durable_values.get("document_type"):
+                    raise ValidationError(_("The print binding document type changed before the durable job could be created."))
                 if target_company:
                     router = env["print_gateway.print_router"]
                     gateway_company, branch = router._binding_scope(target_company)
