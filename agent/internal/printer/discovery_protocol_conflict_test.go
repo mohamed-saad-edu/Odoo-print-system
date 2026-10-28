@@ -59,3 +59,19 @@ func TestDiscoveryAllowsUnknownNetworkLanguageToBecomeKnown(t *testing.T) {
 		t.Fatalf("unknown discovery evidence must not block a later explicit protocol: %+v", got)
 	}
 }
+
+
+func TestSameIDTCPProtocolConflictWithoutOptionalNetworkAddress(t *testing.T) {
+	// Manual registry rows may have only an exact host:port Endpoint. They
+	// must still reject a conflicting byte language before any cloud dispatch.
+	prior := DeviceInfo{
+		ID: "manual-net-id", Name: "Kitchen", ConnectionType: "network",
+		Protocol: "raw", Endpoint: "10.20.30.40:9100", PrinterType: "physical",
+	}
+	later := prior
+	later.Protocol = "zpl"
+	got := mergeDiscoveredSameID(prior, later)
+	if got.Capabilities["identity_collision"] != "same_endpoint_different_print_language" || IsRuntimeDiscoveryPrinter(got) {
+		t.Fatalf("unenriched manual endpoint silently accepted conflicting print language: %+v", got)
+	}
+}
