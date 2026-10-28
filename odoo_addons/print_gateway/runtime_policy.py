@@ -35,6 +35,8 @@ def is_gateway_shared_printer(printer):
 
 def inventory_has_shared_printer(body, printer_id):
     """Fresh authenticated inventory must prove the exact primary identity."""
+    if not is_exact_gateway_printer_id(printer_id):
+        return False
     printers = body.get("printers") if isinstance(body, dict) else None
     if not isinstance(printers, list):
         return False
@@ -43,6 +45,6 @@ def inventory_has_shared_printer(body, printer_id):
             continue
         agent = printer.get("agent")
         if (printer.get("lifecycle") == "active" and is_gateway_shared_printer(printer)
-                and isinstance(agent, dict) and isinstance(agent.get("id"), str) and agent["id"].strip()):
+                and isinstance(agent, dict) and is_exact_gateway_printer_id(agent.get("id"))):
             return True
     return False
