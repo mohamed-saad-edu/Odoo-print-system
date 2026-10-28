@@ -73,6 +73,13 @@ def production_methods(file, names):
         'REPORT_DOCUMENT_TYPES': {'pos.order': 'receipt'},
         '_logger': logging.getLogger('test-kitchen-idempotency'),
     }
+    if file == 'pos_order.py':
+        # The real POS RPC now delegates to this exact-ID selector. Exercise
+        # its implementation rather than mocking it out of the test harness.
+        helper = next(node for node in tree.body if isinstance(node, ast.FunctionDef)
+                      and node.name == '_exact_pos_printer_id')
+        exec(compile(ast.fix_missing_locations(ast.Module(body=[helper], type_ignores=[])),
+                     str(path), 'exec'), ns)
     exec(compile(ast.fix_missing_locations(ast.Module(body=[expression], type_ignores=[])), str(path), 'exec'), ns)
     return ns['Production']
 
