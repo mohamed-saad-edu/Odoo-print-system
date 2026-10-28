@@ -3470,6 +3470,7 @@ func (a *Agent) processJob(ctx context.Context, job map[string]interface{}) {
 	}
 
 	kind := string(pl.Type)
+	const identityConflict = "JOB_IDENTITY_MISMATCH: local durable record has another printer or payload; no bytes sent"
 
 	log.Printf("Printing job %s on printer %s (%d bytes, type=%s, path=%s)", jobID, printerID, len(pl.Data), pl.Type, kind)
 
@@ -3480,6 +3481,16 @@ func (a *Agent) processJob(ctx context.Context, job map[string]interface{}) {
 	// deliveries. BeginPrint provides the durable physical-attempt fence only
 	// after all local scheduling waits have completed.
 	if err := a.queue.ReserveBeforeDispatch(jobID, printerID, pl.Data, claimToken); err != nil {
+		if errors.Is(err, queue.ErrJobIdentityMismatch) {
+			// This is NOT a transient ledger error: requeueing a mismatched
+			// operation would repeat indefinitely, or could later print new
+			// bytes under a job ID with old physical evidence.
+			log.Printf("Job %s: local job identity mismatch; refusing a different printer or payload before hardware", jobID)
+			if reportErr := a.updateJobStatus(ctx, jobID, "failed", identityConflict, claimToken, ""); reportErr != nil {
+				log.Printf("Job %s: could not report immutable identity rejection: %v", jobID, reportErr)
+			}
+			return
+		}
 		log.Printf("Job %s: local durable pending row unavailable; refusing dispatch (no bytes sent): %v", jobID, err)
 		a.rejectJob(ctx, jobID, claimToken, "ledger_unavailable")
 		return
@@ -3631,6 +3642,13 @@ func (a *Agent) processJob(ctx context.Context, job map[string]interface{}) {
 			}
 			if getErr != nil || !present {
 				log.Printf("Job %s: original terminal reconciliation unavailable: %v", jobID, getErr)
+			}
+			return
+		}
+		if errors.Is(err, queue.ErrJobIdentityMismatch) {
+			log.Printf("Job %s: local job identity changed after reservation; refusing physical execution", jobID)
+			if reportErr := a.updateJobStatus(ctx, jobID, "failed", identityConflict, claimToken, ""); reportErr != nil {
+				log.Printf("Job %s: could not report immutable identity rejection: %v", jobID, reportErr)
 			}
 			return
 		}
