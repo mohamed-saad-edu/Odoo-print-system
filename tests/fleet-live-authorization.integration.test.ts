@@ -6,6 +6,7 @@ import { GET as getAgentDetail } from "../src/app/api/agents/[id]/route";
 import { GET as getPrinterDetail } from "../src/app/api/printers/[id]/route";
 import { GET as getCapabilities } from "../src/app/api/printers/capabilities/route";
 import { POST as testPrinterConnection } from "../src/app/api/printers/[id]/test-connection/route";
+import { GET as getJobTimelineDetail } from "../src/app/api/jobs/[id]/timeline/route";
 import { createWorkspaceManagerTestSession } from "./helpers/workspace-session";
 import { applyMigrations, closePool, hasTestDatabase, insertQueuedJob, pool, seedFixture, truncateAll, type Fixture } from "./helpers/pg";
 
@@ -224,6 +225,34 @@ describe.skipIf(!hasTestDatabase)("fleet and job history listings recheck curren
     expect(response.status).toBe(401);
     expect(response.headers.get("Cache-Control")).toContain("no-store");
     expect(await response.json()).toMatchObject({ code: "UNAUTHORIZED" });
+  });
+
+  const jobTimelineDetail = (req: Request) =>
+    getJobTimelineDetail(req, { params: Promise.resolve({ id: "fleet-read-job" }) });
+
+  it("current owner can inspect exact workspace job timeline without claim-token disclosure", async () => {
+    const response = await jobTimelineDetail(new Request(
+      "https://gateway.test/api/jobs/fleet-read-job/timeline", {
+        headers: { Authorization: "Bearer " + managerToken },
+      },
+    ));
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Cache-Control")).toContain("no-store");
+    expect(await response.json()).toMatchObject({ jobId: "fleet-read-job", tenantId: fixture.tenantId });
+  });
+
+  it("job timeline cannot disclose after concurrent manager logout", async () => {
+    const response = await race(jobTimelineDetail, "/api/jobs/fleet-read-job/timeline", "manager", "revoke");
+    expect(response.status).toBe(401);
+    expect(response.headers.get("Cache-Control")).toContain("no-store");
+    expect(await response.json()).toMatchObject({ code: "SESSION_EXPIRED" });
+  });
+
+  it("job timeline cannot disclose after concurrent tenant suspension", async () => {
+    const response = await race(jobTimelineDetail, "/api/jobs/fleet-read-job/timeline", "manager", "suspend");
+    expect(response.status).toBe(403);
+    expect(response.headers.get("Cache-Control")).toContain("no-store");
+    expect(await response.json()).toMatchObject({ code: "TENANT_SUSPENDED" });
   });
 
   it.each(routes)("%s cannot disclose Agent-owned inventory after the Agent is disabled", async (_name, handler, route) => {
