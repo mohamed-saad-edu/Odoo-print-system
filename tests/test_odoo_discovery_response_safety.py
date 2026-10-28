@@ -69,6 +69,35 @@ PRINTER = {"id": "printer", "lifecycle": "active", "agent": {"id": "agent"},
            "connectionType": "network", "protocol": "escpos"}
 
 
+
+def test_duplicate_exact_agent_ids_do_not_create_ambiguous_setup_choices(monkeypatch):
+    duplicate = dict(AGENTS[0], name="Branch computer")
+    controller, _, _ = discovery(monkeypatch, agents=[duplicate, dict(duplicate)])
+    observed = controller.runtime_agents()
+    assert [agent["id"] for agent in observed["agents"]] == ["agent"]
+    assert observed["registeredAgentCount"] == 1
+    assert observed["selectedAgentId"] == "agent"
+
+    conflicted = dict(duplicate, name="Wrong workstation")
+    controller, _, _ = discovery(monkeypatch, agents=[duplicate, conflicted])
+    observed = controller.runtime_agents()
+    assert observed["agents"] == []
+    assert observed["selectedAgentId"] is False
+
+
+def test_conflicting_duplicate_printer_ids_are_not_offered_as_a_print_destination(monkeypatch):
+    first = dict(PRINTER, name="Cashier thermal")
+    second = dict(PRINTER, name="Unrelated queue")
+    controller, _, _ = discovery(monkeypatch, agents=AGENTS, printers=[first, second])
+    observed = controller.runtime_printers(agent_id="agent")
+    assert observed["printers"] == []
+
+    distinct = dict(PRINTER, id="printer-two", name="Cashier thermal")
+    controller, _, _ = discovery(monkeypatch, agents=AGENTS, printers=[first, distinct])
+    observed = controller.runtime_printers(agent_id="agent")
+    assert [printer["id"] for printer in observed["printers"]] == ["printer", "printer-two"]
+
+
 def test_picker_preserves_selected_geometry_and_strips_another_printer_profile(monkeypatch):
     profile = receipt_geometry()
     controller, _, _ = discovery(monkeypatch, agents=AGENTS, printers=[dict(PRINTER, capabilities={"geometry": profile})])

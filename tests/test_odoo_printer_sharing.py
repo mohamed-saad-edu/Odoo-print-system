@@ -72,6 +72,24 @@ def test_fallback_proof_rejects_malformed_primary_even_if_inventory_echoes_it(ba
     ]}, bad_primary) is False
 
 
+
+def test_conflicting_duplicate_primary_cannot_prove_fallback():
+    """An active sharing row cannot override contradictory exact-ID inventory."""
+    live = {"id": "primary", "lifecycle": "active", "agent": {"id": "owner"}, "sharedWithGateway": True}
+    disabled = dict(live, sharedWithGateway=False)
+    other_agent = dict(live, agent={"id": "another-owner"})
+    assert policy.inventory_has_shared_printer({"printers": [live, live.copy()]}, "primary")
+    assert not policy.inventory_has_shared_printer({"printers": [live, disabled]}, "primary")
+    assert not policy.inventory_has_shared_printer({"printers": [other_agent, live]}, "primary")
+
+
+def test_unambiguous_inventory_keeps_identical_ids_once_and_distinct_ids_with_same_name():
+    one = {"id": "queue-A", "name": "Receipt"}
+    two = {"id": "queue-B", "name": "Receipt"}
+    assert policy.unambiguous_inventory_rows([one, dict(one), two]) == [one, two]
+    assert policy.unambiguous_inventory_rows([one, dict(one, name="Different")]) == []
+
+
 def test_fallback_proof_keeps_valid_unicode_owner_and_exact_primary():
     assert policy.inventory_has_shared_printer({"printers": [
         {"id": "طابعة", "lifecycle": "active", "sharedWithGateway": True,
