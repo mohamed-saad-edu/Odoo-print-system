@@ -66,6 +66,22 @@ func TestIPPDedupRejectsInconsistentReportedPortAndResource(t *testing.T) {
 	}
 }
 
+func TestUppercaseIPPStableIDPreservesMultiQueueResource(t *testing.T) {
+	for _, proto := range []string{"ipp", "IPP", "IpPs"} {
+		first := DeviceInfo{ConnectionType: proto, Protocol: proto, NetworkAddress: "192.168.1.20", Port: 631,
+			Endpoint: "ipp://192.168.1.20:631/printers/office"}
+		second := first
+		second.Endpoint = "ipp://192.168.1.20:631/printers/warehouse"
+		if proto == "IpPs" {
+			first.Endpoint = "ipps://192.168.1.20:631/printers/office"
+			second.Endpoint = "ipps://192.168.1.20:631/printers/warehouse"
+		}
+		if StableIDForDevice(first) == StableIDForDevice(second) {
+			t.Fatalf("case-insensitive protocol %q collapsed two separate queues", proto)
+		}
+	}
+}
+
 func TestIPPIdentityDefaultsMatchExecutionPort(t *testing.T) {
 	for _, tc := range []struct {
 		scheme string
