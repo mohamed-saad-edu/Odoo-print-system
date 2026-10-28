@@ -78,6 +78,7 @@ def production_methods(file, names):
 
 
 Router = production_methods('print_router.py', ['route_kitchen_print', '_receipt_image_payload'])
+PosOrder = production_methods('pos_order.py', ['action_print_gateway_kitchen'])
 
 
 class FakeOrder(SimpleNamespace):
@@ -127,6 +128,42 @@ def make_order(**kw):
 
 def route(router, order, **kw):
     return router.route_kitchen_print(order, 'KITCHEN_JPEG', geometry_fingerprint='a' * 64, **kw)
+
+
+@pytest.mark.parametrize('value', ['false', 'true', 0, 1, None, [], {}])
+def test_kitchen_reprint_flag_rejects_non_booleans_at_rpc_and_router(value):
+    """RPC truthiness must not manufacture a deliberate, non-idempotent reprint."""
+    submitted = []
+    record = SimpleNamespace(
+        ensure_one=lambda: None,
+        check_access=lambda mode: mode == 'read',
+        env={'print_gateway.print_router': SimpleNamespace(
+            route_kitchen_print=lambda _order, _image, **kwargs: submitted.append(kwargs)
+        )},
+    )
+    with pytest.raises(ValidationError, match='boolean'):
+        PosOrder.action_print_gateway_kitchen(record, 'KITCHEN_JPEG', reprint=value)
+    router = FakeRouter()
+    with pytest.raises(ValidationError, match='boolean'):
+        route(router, make_order(), reprint=value)
+    assert submitted == []
+    assert router.submitted == []
+
+
+@pytest.mark.parametrize('value', [True, False])
+def test_kitchen_rpc_preserves_exact_boolean_reprint_flags(value):
+    forwarded = []
+    record = SimpleNamespace(
+        ensure_one=lambda: None,
+        check_access=lambda mode: mode == 'read',
+        env={'print_gateway.print_router': SimpleNamespace(
+            route_kitchen_print=lambda _order, _image, **kwargs: forwarded.append(kwargs)
+        )},
+    )
+    PosOrder.action_print_gateway_kitchen(record, 'KITCHEN_JPEG', reprint=value, operation_id='click-key')
+    assert len(forwarded) == 1
+    assert forwarded[0]['reprint'] is value
+    assert forwarded[0]['idempotency_key'] == 'click-key'
 
 
 def test_kitchen_without_key_is_deterministic():
