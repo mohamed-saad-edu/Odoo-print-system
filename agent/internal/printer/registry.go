@@ -795,8 +795,31 @@ func RegisterManual(registryPath string, info DeviceInfo) ([]DeviceInfo, error) 
 	} else {
 		info.Capabilities = maps.Clone(info.Capabilities)
 	}
-	for _, key := range []string{"operational_verification", "verification", "ipp_verified", "snmp_verified", "print_endpoint_verified", "windows_queue_guid", "windows_queue_guid_verified"} {
+	// Manual input is a configured destination, never a physical observation.
+	// In particular, only Get-Printer-Attributes may establish an IPP service
+	// UUID, and only a live driver/IPP probe may publish measured geometry.
+	// Treat these incoming fields as untrusted even when a UI re-submits a
+	// previously discovered candidate. Existing verified evidence is retained
+	// separately by the registry merge when the saved binding is unchanged.
+	for _, key := range []string{
+		"operational_verification", "geometry", "verification",
+		"ipp_verified", "ipp_printer_uuid", "printer_uuid", "uuid",
+		"snmp_verified", "print_endpoint_verified",
+		"windows_queue_guid", "windows_queue_guid_verified",
+	} {
 		delete(info.Capabilities, key)
+	}
+	if ippCaps, ok := info.Capabilities["ipp_capabilities"].(map[string]interface{}); ok {
+		// Preserve helpful format hints while preventing a nested claimed UUID
+		// from being interpreted as a verified transport identity. Clone before
+		// editing so an API/CLI caller's map is not mutated.
+		filtered := maps.Clone(ippCaps)
+		delete(filtered, "printer_uuid")
+		if len(filtered) == 0 {
+			delete(info.Capabilities, "ipp_capabilities")
+		} else {
+			info.Capabilities["ipp_capabilities"] = filtered
+		}
 	}
 	info.Capabilities["verification"] = "pending"
 	info.Capabilities["registration_source"] = "manual"
