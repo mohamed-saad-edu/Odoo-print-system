@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
 // @ts-expect-error Odoo JS is exercised through the existing @web test adapter.
 import { gatewayServerMessage, parseGatewayBillingLimit, showGatewayBillingLimitDialog } from "../odoo_addons/print_gateway/static/src/js/gateway_limit_dialog";
 
@@ -69,6 +70,27 @@ describe("V4 Odoo customer error boundary", () => {
     expect(unknown).not.toContain("monthly allowance");
   });
 
+
+  it("keeps Odoo POS receipt and kitchen notices behind the safe localized error presenter", () => {
+    const source = readFileSync("odoo_addons/print_gateway/static/src/js/pos_print_router.js", "utf8");
+    const receiptNotices = source.slice(
+      source.indexOf('// Truthful feedback: "submitted"'),
+      source.indexOf("// Count only accepted/known print outcomes"),
+    );
+    expect(receiptNotices).toContain('gatewayServerMessage({');
+    expect(receiptNotices).toContain('code: result?.code, message: result?.message');
+    expect(receiptNotices).not.toContain("result?.outputMedium === \"file\" ? result.message");
+    expect(receiptNotices).not.toMatch(/result\?\.message\s*\|\|\s*_t/);
+    expect(source).toContain("const explicitlyUnknownCode = [");
+    expect(source).toContain("result?.can_retry !== true || explicitlyUnknownCode");
+    const kitchenResult = source.slice(source.indexOf("async printOrderChanges("));
+    expect(kitchenResult).toContain('body: gatewayServerMessage({ data: { code: result?.code, message: result?.message } })');
+    expect(kitchenResult).not.toContain('body: result?.message || _t("Kitchen / Preparation printing failed.")');
+    // Machine code takes precedence even over deceptive unknown-submission prose.
+    expect(gatewayServerMessage({
+      data: { code: "PRINTER_OFFLINE", message: "SQL password=DO_NOT_SHOW" },
+    })).toContain("printer is unavailable");
+  });
 
   it("keeps technical print-capacity failures distinct from quota and subscription holds", () => {
     const failures = [
