@@ -9,6 +9,7 @@ import { POST as testPrinterConnection } from "../src/app/api/printers/[id]/test
 import { GET as getJobTimelineDetail } from "../src/app/api/jobs/[id]/timeline/route";
 import { GET as listAgentDiscovery } from "../src/app/api/agents/[id]/discovery/route";
 import { GET as getAgentDiscoveryDetail } from "../src/app/api/agents/[id]/discovery/[discoveryId]/route";
+import { GET as readAgentHealth } from "../src/app/api/agents/health/route";
 import { createWorkspaceManagerTestSession } from "./helpers/workspace-session";
 import { applyMigrations, closePool, hasTestDatabase, insertQueuedJob, pool, seedFixture, truncateAll, type Fixture } from "./helpers/pg";
 
@@ -301,6 +302,33 @@ describe.skipIf(!hasTestDatabase)("fleet and job history listings recheck curren
     await seedDiscovery();
     const { route, handler } = discoveryRequest(kind);
     const response = await race(handler, route, "manager", "suspend");
+    expect(response.status).toBe(403);
+    expect(response.headers.get("Cache-Control")).toContain("no-store");
+    expect(await response.json()).toMatchObject({ code: "TENANT_SUSPENDED" });
+  });
+
+  it.each(["detail", "fleet"] as const)("%s agent health includes only current scoped observations", async kind => {
+    const route = kind === "detail" ? `/api/agents/health?agentId=${fixture.agentId}` : "/api/agents/health?limit=10";
+    const response = await readAgentHealth(new Request("https://gateway.test" + route, {
+      headers: { Authorization: "Bearer " + managerToken },
+    }));
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Cache-Control")).toContain("no-store");
+    const body = await response.json();
+    expect(kind === "detail" ? body.agentId : body[0]?.agentId).toBe(fixture.agentId);
+  });
+
+  it.each(["detail", "fleet"] as const)("%s agent health cannot disclose after concurrent logout", async kind => {
+    const route = kind === "detail" ? `/api/agents/health?agentId=${fixture.agentId}` : "/api/agents/health?limit=10";
+    const response = await race(readAgentHealth, route, "manager", "revoke");
+    expect(response.status).toBe(401);
+    expect(response.headers.get("Cache-Control")).toContain("no-store");
+    expect(await response.json()).toMatchObject({ code: "SESSION_EXPIRED" });
+  });
+
+  it.each(["detail", "fleet"] as const)("%s agent health cannot disclose after concurrent suspension", async kind => {
+    const route = kind === "detail" ? `/api/agents/health?agentId=${fixture.agentId}` : "/api/agents/health?limit=10";
+    const response = await race(readAgentHealth, route, "manager", "suspend");
     expect(response.status).toBe(403);
     expect(response.headers.get("Cache-Control")).toContain("no-store");
     expect(await response.json()).toMatchObject({ code: "TENANT_SUSPENDED" });
