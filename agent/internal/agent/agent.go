@@ -3615,7 +3615,10 @@ func (a *Agent) processJob(ctx context.Context, job map[string]interface{}) {
 	// transition BEFORE the first hardware byte (never after) so a crash
 	// beyond this boundary conservatively remains UNKNOWN.
 	ledgerStart := time.Now()
-	if err := a.queue.BeginPrint(jobID, printerID, pl.Data, claimToken, false); err != nil {
+	// The durable ledger reservation used the exact Gateway printer ID before
+	// resolving the local alias. Preserve that same immutable ID here; the
+	// physical backend still uses the validated local printer ID above.
+	if err := a.queue.BeginPrint(jobID, fields.PrinterID, pl.Data, claimToken, false); err != nil {
 		if errors.Is(err, queue.ErrAlreadyPrinting) {
 			log.Printf("Job %s: duplicate delivery for the live local claim; suppressing a second physical dispatch", jobID)
 			return
