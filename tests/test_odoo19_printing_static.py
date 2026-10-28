@@ -725,6 +725,8 @@ def test_partial_status_never_downgrades_to_submitted_on_either_gateway_path():
     assert "remote_status, remote_error = job._classify_gateway_submission_status(" in job
     assert '"UNKNOWN_PARTIAL_DELIVERY: "' in job
     assert 'remote_status = "submitted"' not in job
+    assert 'str(body.get("status") or "queued")' not in job
+    assert 'raw_status or "queued"' not in job
     assert 'elif status == "partial"' in job or 'status == "partial"' in job
 
 
