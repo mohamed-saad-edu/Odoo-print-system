@@ -1,16 +1,14 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
-import { and, asc, desc, eq, sql } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 import { CalendarDays, CreditCard } from "lucide-react";
 import { db } from "../../db";
-import { plans, tenantSubscriptions, tenants, subscriptionRequests } from "../../db/schema";
+import { plans } from "../../db/schema";
 import { sessionCookieName } from "../../lib/session-config";
 import { getManagerCookieName, verifyWorkspaceTokenFromCookieValues } from "../../lib/manager-auth";
 import { hasManagerPermission } from "../../lib/authorization";
 import { customerSubscriptionState } from "../../lib/manual-subscriptions";
 import { databaseNowMs } from "../../lib/database-clock";
-import { effectiveManualEntitlements } from "../../lib/entitlements";
-import { quotaCycleStartSql, quotaCycleEndSql } from "../../lib/quota-cycle";
 import { activationWhatsAppUrl } from "../../lib/activation-contact";
 import { getServerLocale, makeT } from "../../i18n/server";
 import { formatNumber } from "../../i18n/format";
@@ -19,7 +17,9 @@ import { billingTermLabel } from "../../lib/billing-labels";
 import { formatPlanPrice } from "../../lib/plan-price";
 import { BillingActions } from "../../components/BillingActions";
 import { Button, Callout, Card, CardHeader, PageContainer, PageHeader, Progress, StatusBadge, type Tone } from "../../components/ui";
-import { logWarn } from "../../lib/log";
+import { loadOwnerBillingPageSnapshot } from "../../lib/billing-page-snapshot";
+import { ManagerMutationAuthorityChangedError } from "../../lib/manager-mutation-authorization";
+import { TenantSuspendedError, TenantDeletedError } from "../../lib/tenant-guard";
 
 export const dynamic = "force-dynamic";
 export default async function BillingPage({ searchParams }: { searchParams: Promise<{ plan?: string | string[] }> }) {
@@ -29,38 +29,36 @@ export default async function BillingPage({ searchParams }: { searchParams: Prom
   if (!claims.userId || !hasManagerPermission(claims, "billing.read")) redirect("/dashboard");
   const locale = await getServerLocale(); const t = makeT(locale);
   const params = await searchParams;
-  const [sub, tenant, availablePlans, requests, now] = await Promise.all([
-    db.query.tenantSubscriptions.findFirst({ where: eq(tenantSubscriptions.tenantId, claims.tenantId) }),
-    db.query.tenants.findFirst({ where: eq(tenants.id, claims.tenantId), columns: { lifecycle: true } }),
-    db.select({ id: plans.id, name: plans.name, entitlements: plans.entitlements }).from(plans).where(and(eq(plans.isActive, true), eq(plans.isPublic, true))).orderBy(asc(plans.displayOrder), asc(plans.name)),
-    claims.role === "owner" ? db.query.subscriptionRequests.findMany({ where: eq(subscriptionRequests.tenantId, claims.tenantId), orderBy: desc(subscriptionRequests.createdAt), limit: 1 }) : Promise.resolve([]),
+  const [availablePlans, now] = await Promise.all([
+    db.select({ id: plans.id, name: plans.name, entitlements: plans.entitlements })
+      .from(plans).where(and(eq(plans.isActive, true), eq(plans.isPublic, true)))
+      .orderBy(asc(plans.displayOrder), asc(plans.name)),
     databaseNowMs(),
   ]);
-  const plan = sub ? await db.query.plans.findFirst({ where: eq(plans.id, sub.planId), columns: { name: true, entitlements: true, priceMinorUnits: true, priceCurrency: true } }) : null;
+  let snapshot: Awaited<ReturnType<typeof loadOwnerBillingPageSnapshot>>;
+  try {
+    // SSR is a data disclosure boundary too. Cookie preflight alone must not
+    // expose the former owner's contract after a logout, role downgrade or
+    // workspace suspension. The snapshot keeps the current authority locks
+    // held until its subscription, history and monthly-usage reads finish.
+    snapshot = await loadOwnerBillingPageSnapshot(claims);
+  } catch (error) {
+    if (error instanceof ManagerMutationAuthorityChangedError) {
+      if (error.status === 401) redirect("/login?next=%2Fbilling");
+      redirect("/dashboard");
+    }
+    if (error instanceof TenantSuspendedError || error instanceof TenantDeletedError) {
+      redirect("/dashboard");
+    }
+    throw error;
+  }
+  const { sub, tenant, requests, plan, usage } = snapshot;
   const status = customerSubscriptionState(sub, tenant?.lifecycle, now);
   // Published list price is not the manually agreed price of this subscription.
   const publishedPlanPrice = sub?.subscriptionType === "paid" && plan
     ? formatPlanPrice(plan.priceMinorUnits, plan.priceCurrency, locale) : null;
   const statusKey = { active: "v4.onboarding.active", awaiting_activation: "v4.onboarding.pending", expired: "v4.onboarding.expired", suspended: "v4.onboarding.suspended" } as const;
   const tone: Tone = status === "active" ? "ok" : status === "suspended" ? "bad" : "warn";
-  let usage: { used: number; limit: number | "unlimited"; remaining: number | "unlimited"; reset: Date } | null = null;
-  try {
-    if (sub && plan) {
-      const quota = effectiveManualEntitlements(plan.entitlements, sub.monthlyQuota).max_prints_per_period;
-      // Read the same transactional monthly admission ledger used by quota enforcement,
-      // even after expiry. Contract dates never determine this reporting window.
-      const cycle = quotaCycleStartSql();
-       const row = await db.execute(sql`SELECT coalesce(m.used_prints,0)::int AS used,
-         (${quotaCycleEndSql()}) AT TIME ZONE 'UTC' AS reset
-         FROM tenant_subscriptions s
-         LEFT JOIN print_monthly_usage m ON m.tenant_id=s.tenant_id AND m.period_start=${cycle}
-         WHERE s.tenant_id=${claims.tenantId}`);
-      const used = Number(row.rows[0]?.used);
-      const reset = new Date(String(row.rows[0]?.reset));
-      if (!Number.isSafeInteger(used) || used < 0 || !Number.isFinite(reset.getTime())) throw new Error("Usage unavailable");
-      usage = { used, limit: quota, remaining: quota === "unlimited" ? "unlimited" : Math.max(0, quota - used), reset };
-    }
-  } catch { logWarn("billing.monthly_usage_unavailable", { tenantId: claims.tenantId }); }
   const date = (value: Date | null | undefined) => formatManualCalendarDate(value, locale) ?? t("v4.subscription.notSet");
   const resetInstant = (value: Date | null | undefined) => value ? new Intl.DateTimeFormat(locale === "ar" ? "ar-EG" : "en-US", { dateStyle:"medium", timeStyle:"short", timeZone:"UTC" }).format(value) : t("v4.subscription.notSet");
   const quotaExhausted = status === "active" && usage?.remaining === 0;
