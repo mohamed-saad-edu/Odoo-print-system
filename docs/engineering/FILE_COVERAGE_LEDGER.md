@@ -2117,3 +2117,20 @@ PARTIAL vitest.test-groups.mts — 17 formerly orphaned DB suites plus 2 newly a
 ```
 
 Complete repository tree audit (untruncated) found all 71 integration-named files registered at the recorded head; tests still require PostgreSQL CI PASS. No source or schema-wide VERIFIED claim is implied. See [SYSTEM_UNIFICATION_NOTEBOOK.md](SYSTEM_UNIFICATION_NOTEBOOK.md) SSR/ACTIONS-LIVE-READ-001 for change references and residual risks.
+
+
+#### ODOO-EXACT-EXEC-2026-10-28 (partial behavior review, not release verified)
+
+These entries augment the original git-tree snapshot; the historical counts and indexed-but-unread paths above are not inflated to VERIFIED.
+
+```text
+PARTIAL odoo_addons/print_gateway/runtime_policy.py — exact UTF-8 printer ID and sharing predicates
+PARTIAL odoo_addons/print_gateway/models/binding.py — ORM printer target admission guard only
+PARTIAL odoo_addons/print_gateway/models/print_job.py — durable create_operation printer/key preservation only
+PARTIAL odoo_addons/print_gateway/models/print_router.py — fresh-cursor binding and receipt replay equality only
+AUTHORED tests/test_odoo_exact_printer_execution_identity.py — standalone AST behavioral regression
+AUTHORED tests/test_odoo_exact_operation_key_replay.py — standalone actual-method operation/replay and cursor regression
+PARTIAL tests/test_payload_admission_round3.py — preserve AST fixture imports after validator extraction
+```
+
+Producer/consumer, test design and source commits are in SYSTEM_UNIFICATION_NOTEBOOK.md and root NOTES.md. All production/runtime and exact-HEAD CI checks remain NOT RUN or unverified; never classify full Odoo addon/Agent/Gateway integration as DONE solely because these source paths were inspected.
