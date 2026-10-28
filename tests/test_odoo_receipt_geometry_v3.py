@@ -110,6 +110,18 @@ def load_geometry_module():
 SHARED_CASES = json.loads((ROOT / "contracts/printer-geometry-fixtures.json").read_text())["geometryCases"]
 
 
+@pytest.mark.parametrize("field", ["paper_width_mm", "paper_height_mm"])
+def test_adversarial_arbitrary_precision_paper_dimension_fails_closed(field):
+    """JSON-backed printer profiles must never crash Odoo on enormous ints.
+
+    Reject the untrusted measurement before converting arbitrary-precision
+    Python integers to C doubles inside math.isfinite().
+    """
+    candidate = geometry()
+    candidate[field] = 10 ** 1000
+    assert load_geometry_module().validated_printer_geometry(candidate, "selected-printer") is None
+
+
 @pytest.mark.parametrize("case", SHARED_CASES, ids=lambda case: case["name"])
 def test_python_matches_shared_gateway_agent_geometry_vectors(case):
     expected = case.get("expected", {})
