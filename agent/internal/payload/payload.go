@@ -109,7 +109,9 @@ func Parse(raw interface{}) (*Payload, error) {
 			return nil, fmt.Errorf("protocol %q is incompatible with escpos payload", protocol)
 		}
 	case TypePDF, TypeImage:
-		if protocol != "" {
+		// Gateway's optional protocol enum admits absence, not an explicitly
+		// supplied empty string. Neither PDF nor image may declare a protocol.
+		if _, present := m["protocol"]; present {
 			return nil, fmt.Errorf("protocol is not applicable for %s payloads", typ)
 		}
 	}
