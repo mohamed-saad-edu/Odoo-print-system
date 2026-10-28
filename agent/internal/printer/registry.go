@@ -447,6 +447,14 @@ func mutateRegistry(registryPath string, discovered []DeviceInfo, completeSource
 			}
 		}
 		if idx, ok := byID[d.ID]; ok {
+			if conflictingUSBExecutionInterface(existing[idx], d) && operatorTargetID != existing[idx].ID {
+				// The legacy VID/PID-only ID is not a physical USB device identity.
+				// Keep the original endpoint and operator policy; reject a second
+				// distinct interface until an explicit manual reconciliation.
+				existing[idx] = withRegistryIdentityCollision(existing[idx], "same_id_different_usb_interface")
+				log.Printf("[registry] conflicting USB interfaces share persisted ID %q; operator reconciliation required", d.ID)
+				continue
+			}
 			// Pre-upgrade auto-discovery could give HTTPS/IPPS and plaintext
 			// /ipp/print on port 631 the same generated stable ID. An ID
 			// collision is NOT permission to replace an established print
@@ -487,6 +495,17 @@ func mutateRegistry(registryPath string, discovered []DeviceInfo, completeSource
 				// change policy. Alias/auto-ID continuity and discovery source
 				// strings cannot silently enable a different saved registration.
 				merged.Enabled = d.Enabled
+				priorBinding, priorErr := config.PrinterBindingDigest(SharingConfigForDevice(existing[idx]))
+				currentBinding, currentErr := config.PrinterBindingDigest(SharingConfigForDevice(d))
+				if priorErr != nil || currentErr != nil || priorBinding != currentBinding {
+					// Operator deliberately changed the execution destination.
+					// Do not transfer measured geometry, supported document
+					// languages or an old identity-collision fence to the newly
+					// selected binding. Fresh native probe evidence is required.
+					for _, key := range []string{"geometry", "operational_verification", "supported_protocols", "geometry_error", "identity_collision"} {
+						delete(merged.Capabilities, key)
+					}
+				}
 			}
 			if d.Name != "" {
 				merged.Name = d.Name
