@@ -14,7 +14,7 @@ describe("server-rendered billing page owner privacy", () => {
     const subscription = snapshot.indexOf("tx.query.tenantSubscriptions.findFirst");
     const requests = snapshot.indexOf("tx.query.subscriptionRequests.findMany");
     const quota = snapshot.indexOf("await tx.execute(sql");
-    expect(snapshot).toContain("await db.transaction(async tx => {");
+    expect(snapshot).toContain("return db.transaction(async tx => {");
     expect(tenant).toBeGreaterThan(0);
     expect(tenant).toBeLessThan(actor);
     expect(actor).toBeLessThan(subscription);

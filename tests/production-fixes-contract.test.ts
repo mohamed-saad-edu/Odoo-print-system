@@ -154,7 +154,7 @@ describe("production fixes contracts (2026-09)", () => {
     const migration = read("drizzle/0061_print_usage_quota.sql");
     expect(entitlements).toContain('"max_prints_per_period"');
     expect(entitlements).toContain("reserveTenantPrintCredit");
-    expect(service).toContain("reserveTenantPrintCredit(tx, tenantId)");
+    expect(service).toContain("reserveTenantPrintCredit(tx, tenantId, dbNow)");
     expect(route).toContain("TenantPrintQuotaExceededError");
     expect(testPrint).toContain("TenantPrintQuotaExceededError");
     expect(testPrint).toContain("upgradeRequired: true");
@@ -290,10 +290,12 @@ describe("production fixes — presence sweep and Gateway test-page HTTP path", 
 
   it("printer connection diagnostics keeps Agent availability independent from printer lifecycle/config state", () => {
     const source = read("src/app/api/printers/[id]/test-connection/route.ts");
-    const agentLookup = source.indexOf("const agent = await db.query.agents.findFirst");
+    const authority = source.indexOf('await requireConsoleReadAuthorityInTransaction(tx, auth, "printers.test")');
+    const agentLookup = source.indexOf("const agent = await tx.query.agents.findFirst");
     const lifecycleCheck = source.indexOf('if (printer.lifecycle !== "active")');
     const configCheck = source.indexOf('if (printer.connectionType === "network"');
-    expect(agentLookup).toBeGreaterThanOrEqual(0);
+    expect(authority).toBeGreaterThanOrEqual(0);
+    expect(agentLookup).toBeGreaterThan(authority);
     expect(lifecycleCheck).toBeGreaterThan(agentLookup);
     expect(source).toContain("lastHeartbeatAt: agent.lastSeenAt");
     expect(source).toContain("agentOnline: availability.available");

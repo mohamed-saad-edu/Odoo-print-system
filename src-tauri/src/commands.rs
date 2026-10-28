@@ -2007,7 +2007,7 @@ mod autostart_choice_tests {
 mod agent_console_path_tests {
     use super::{
         allowed_agent_gateway_path, gateway_printer_action_path, valid_fleet_query,
-        valid_jobs_query,
+        valid_jobs_query, unsafe_gateway_route_path,
     };
 
     #[test]

@@ -79,7 +79,7 @@ describe("Odoo addon static contracts", () => {
   it("validates runtime printer ownership at the Odoo binding boundary", () => {
     const binding = read("models/binding.py");
     const router = read("models/print_router.py");
-    expect(binding).toContain("A Gateway Runtime Printer must be selected.");
+    expect(binding).toContain("A valid Gateway Runtime Printer must be selected.");
     expect(binding).toContain("Odoo Destination belongs to another company/branch context.");
     expect(router).toContain("The selected records resolve to different Print Bindings");
     expect(router).toContain("printer_id");
@@ -159,7 +159,7 @@ describe("Odoo addon static contracts", () => {
   it("persists outbox jobs under the active branch company, not the root gateway company", () => {
     const router = read("models/print_router.py");
     const submitIdx = router.indexOf("def _submit_route");
-    const submitBlock = router.slice(submitIdx, submitIdx + 1200);
+    const submitBlock = router.slice(submitIdx, submitIdx + 2600);
     // The company passed to _persist_durable_job must be the caller's company, not route["company"]
     expect(submitBlock).toContain('"company": company');
     expect(submitBlock).not.toContain('"company": route["company"]');

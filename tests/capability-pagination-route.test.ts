@@ -100,7 +100,7 @@ describe("capability collection keyset contract", () => {
   });
 
   it("does not read capabilities when a previously authenticated actor is revoked at the transaction boundary", async () => {
-    mocks.liveActor.mockRejectedValueOnce(new ManagerMutationAuthorityChangedError());
+    mocks.liveActor.mockImplementationOnce(async () => { mocks.steps.push("actor"); throw new ManagerMutationAuthorityChangedError(); });
     const response = await GET(new Request("http://gateway.test/api/printers/capabilities"));
     expect(response.status).toBe(403);
     expect(mocks.steps).toEqual(["begin", "tenant", "actor"]);

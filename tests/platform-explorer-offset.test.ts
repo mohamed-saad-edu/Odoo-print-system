@@ -1,16 +1,20 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({ owner: vi.fn(), explore: vi.fn() }));
+const mocks = vi.hoisted(() => ({ owner: vi.fn(), explore: vi.fn(), authority: vi.fn(), transaction: vi.fn() }));
 vi.mock("../src/lib/platform-auth", () => ({
   requirePlatformOwner: mocks.owner,
+  requirePlatformReadAuthorityInTransaction: mocks.authority,
   PlatformUnauthorizedError: class PlatformUnauthorizedError extends Error {},
 }));
 vi.mock("../src/lib/platform-data-explorer", () => ({ readPlatformDatabase: mocks.explore }));
+vi.mock("../src/db", () => ({ db: { transaction: mocks.transaction } }));
 import { GET } from "../src/app/api/platform/database/route";
 
 describe("platform database explorer offset contract", () => {
   beforeEach(() => {
-    mocks.owner.mockReset().mockResolvedValue(undefined);
+    mocks.owner.mockReset().mockResolvedValue({ id: "owner" });
+    mocks.authority.mockReset().mockResolvedValue(undefined);
+    mocks.transaction.mockReset().mockImplementation(async (callback: (tx: object) => Promise<unknown>) => callback({}));
     mocks.explore.mockReset().mockResolvedValue({ selected: "tenants", rows: [], tables: [] });
   });
 
@@ -30,5 +34,7 @@ describe("platform database explorer offset contract", () => {
     expect(ok.status).toBe(200);
     expect(mocks.explore).toHaveBeenCalledWith({ table: "tenants", search: undefined, offset: 3 });
     expect(mocks.owner).toHaveBeenCalledTimes(1);
+    expect(mocks.authority).toHaveBeenCalledTimes(1);
+    expect(mocks.transaction).toHaveBeenCalledTimes(1);
   });
 });

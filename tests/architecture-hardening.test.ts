@@ -230,7 +230,9 @@ describe("architecture hardening", () => {
 describe("ambiguous Odoo submission recovery", () => {
   it("exposes an authenticated idempotency-key lookup without crossing the Odoo provenance boundary", () => {
     const route = readFileSync("src/app/api/print/jobs/route.ts", "utf8");
-    expect(route).toContain('const idempotencyKey = params.get("idempotencyKey")?.trim();');
+    expect(route).toContain('const idempotencyKey = params.get("idempotencyKey");');
+    expect(route).toContain("!isExactIdempotencyKey(idempotencyKey)");
+    expect(route).not.toContain('params.get("idempotencyKey")?.trim()');
     expect(route).toContain("Provide exactly one lookup key");
     expect(route).toContain("readOdooJobStatus(odoo, identity,");
     const status = readFileSync("src/lib/odoo-status-scope.ts", "utf8");

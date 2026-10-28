@@ -48,7 +48,8 @@ describe("desktop Agent Gateway response contract", () => {
   it("allows the bare jobs endpoint while rejecting malformed query pairs", () => {
     const source = read("agent/cmd/cli/gateway.go");
     expect(source).toContain('if parsed.RawQuery == "" {');
-    expect(source).toContain('pair == "" || !strings.Contains(pair, "=")');
+    expect(source).toContain('rawKey, _, found := strings.Cut(pair, "=")');
+    expect(source).toContain('if !found {');
   });
 });
 

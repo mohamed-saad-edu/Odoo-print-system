@@ -23,11 +23,25 @@ vi.mock("../src/lib/database-clock", () => ({
   refreshClockSkew: async () => 0,
   gatewayNowMs: () => fixture.now,
 }));
-vi.mock("../src/db", () => ({ db: { query: {
-  tenants: { findFirst: async () => ({ name: "Home workspace", lifecycle: fixture.lifecycle }) },
-  tenantSubscriptions: { findFirst: async () => fixture.subscription },
-  plans: { findFirst: async () => { fixture.planReads += 1; return { name: "Private contract title" }; } },
-} } }));
+vi.mock("../src/db", () => {
+  const query = {
+    tenants: { findFirst: async () => ({ name: "Home workspace", lifecycle: fixture.lifecycle }) },
+    tenantSubscriptions: { findFirst: async () => fixture.subscription },
+    plans: { findFirst: async () => { fixture.planReads += 1; return { name: "Private contract title" }; } },
+  };
+  return { db: { query, transaction: async (callback: (tx: { query: typeof query }) => Promise<unknown>) =>
+    callback({ query }) } };
+});
+
+vi.mock("../src/lib/tenant-guard", () => ({
+  requireActiveTenantInTransaction: async () => {},
+  TenantSuspendedError: class TenantSuspendedError extends Error {},
+  TenantDeletedError: class TenantDeletedError extends Error {},
+}));
+vi.mock("../src/lib/manager-mutation-authorization", () => ({
+  requireManagerActorInTransaction: async () => {},
+  ManagerMutationAuthorityChangedError: class ManagerMutationAuthorityChangedError extends Error {},
+}));
 
 import Home from "../src/app/page";
 
