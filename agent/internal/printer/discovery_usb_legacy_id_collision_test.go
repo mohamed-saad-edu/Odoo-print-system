@@ -49,3 +49,25 @@ func TestLegacyUSBFallbackIDCollisionCannotSelectAnotherInterface(t *testing.T) 
 		t.Fatalf("registry silently replaced an old USB interface under the same ID: %+v", rows[0])
 	}
 }
+
+
+func TestExplicitManualUSBInterfaceChangeRevokesOldGeometryEvidence(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "printers.json")
+	prior := legacyUSBPrinterForCollision("USBPRINT\\VID_1234&PID_5678\\INSTANCE_A", "usb-interface-a")
+	prior.ID = "operator-usb"
+	prior.Capabilities["registration_source"] = "manual"
+	if err := SaveRegistry(path, []DeviceInfo{prior}); err != nil {
+		t.Fatal(err)
+	}
+	updated := prior
+	updated.Endpoint = "usb-interface-b"
+	updated.Capabilities = map[string]interface{}{}
+	rows, err := RegisterManual(path, updated)
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("manual USB interface change failed: %+v %v", rows, err)
+	}
+	if rows[0].Endpoint != updated.Endpoint || rows[0].Capabilities["geometry"] != nil ||
+		rows[0].Capabilities["operational_verification"] != nil {
+		t.Fatalf("manual interface change retained old physical measurement or route: %+v", rows[0])
+	}
+}
