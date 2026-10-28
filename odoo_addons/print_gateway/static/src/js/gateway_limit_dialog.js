@@ -149,7 +149,7 @@ export function gatewayServerMessage(error) {
  */
 function billingMarkerJson(candidate, markerIndex) {
     const payload = candidate.slice(markerIndex + PREFIX.length, markerIndex + PREFIX.length + 8192);
-    const leading = payload.match(/^\\s*/)[0].length;
+    const leading = payload.match(/^\s*/)[0].length;
     if (payload[leading] !== "{") return null;
     let depth = 0;
     let quoted = false;
@@ -158,7 +158,7 @@ function billingMarkerJson(candidate, markerIndex) {
         const ch = payload[i];
         if (quoted) {
             if (escaped) escaped = false;
-            else if (ch === "\\\\") escaped = true;
+            else if (ch === "\\") escaped = true;
             else if (ch === '"') quoted = false;
         } else if (ch === '"') {
             quoted = true;

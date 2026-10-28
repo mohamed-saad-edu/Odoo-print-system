@@ -76,7 +76,7 @@ describe("V4 Odoo customer error boundary", () => {
       message: "PRIVATE_BACKEND_SECRET {quoted object text}",
     });
     const error = { message: "Odoo Server Error", data: {
-      message: `ValidationError: GATEWAY_BILLING_LIMIT:${marker}\\nRPC traceback: UNKNOWN_OLD_OPERATION`,
+      message: `ValidationError: GATEWAY_BILLING_LIMIT:   ${marker}\nRPC traceback: UNKNOWN_OLD_OPERATION`,
     } };
     const details = parseGatewayBillingLimit(error);
     expect(details).toMatchObject({
