@@ -30,6 +30,14 @@ def production_methods(filename, names, namespace=None):
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         scope.update({key: getattr(module, key) for key in dir(module) if not key.startswith("_")})
+    # Status reconciliation must use the real immutable-id validation policy,
+    # not a permissive mock that silently accepts another Gateway job.
+    policy_spec = importlib.util.spec_from_file_location(
+        "odoo_runtime_status_identity", ADDON / "runtime_policy.py"
+    )
+    policy = importlib.util.module_from_spec(policy_spec)
+    policy_spec.loader.exec_module(policy)
+    scope["is_exact_gateway_job_id"] = policy.is_exact_gateway_job_id
     scope.update(namespace or {})
     nodes = []
     for node in ast.walk(ast.parse((ADDON / filename).read_text())):
@@ -238,3 +246,30 @@ def test_file_result_reader_matches_shared_gateway_agent_vectors(case):
 def test_missing_later_file_evidence_cannot_erase_an_original_verified_artifact():
     job = synced_file({"status": "success", "outputMedium": "file", "outputOutcome": "unknown", "outputEvidence": None}, existing=FILE_EVIDENCE)
     assert job.output_evidence == FILE_EVIDENCE
+
+
+def test_gateway_sync_requires_unambiguous_exact_job_identity_before_reporting_success():
+    """A 200 response with missing or contradictory identities cannot advance paper state."""
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("unbound Gateway status must not read output evidence or mutate a job")
+
+    method = production_methods(
+        "models/print_job.py", ["_apply_synced_status"],
+        {"gateway_output_values": forbidden, "db_now_utc": forbidden},
+    )()
+    method.env = SimpleNamespace(cr=None)
+    method._lock_status_row = lambda _job: None
+    method._advance_status = forbidden
+    method._apply_gateway_late_success = forbidden
+    job = SimpleNamespace(gateway_job_id="remote-original", status="printing")
+    for remote_response in [
+        {"status": "success"},
+        {"jobId": None, "status": "success"},
+        {"jobId": "", "status": "success"},
+        {"id": "remote-original", "jobId": "other-job", "status": "success"},
+        {"jobId": "remote-original", "id": "another-job", "status": "success"},
+        {"jobId": "remote-original", "id": "", "status": "success"},
+        {"jobId": "remote-original", "status": "completed", "id": 7},
+    ]:
+        assert method._apply_synced_status(job, remote_response) is False, remote_response
+        assert job.status == "printing"
