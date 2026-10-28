@@ -81,6 +81,26 @@ class TestUniversalPrinting(TransactionCase):
             with self.subTest(key=key):
                 self.assertFalse(self._binding()._runtime_printer_accepts_image(printer))
 
+    def test_gateway_submission_status_never_hides_ambiguous_physical_output(self):
+        job = self.env["print_gateway.print_job"]
+        cases = [
+            ("partial", "paper may have left", "unknown", "UNKNOWN_PARTIAL_DELIVERY:"),
+            ("unexpected_future_state", None, "unknown", "UNKNOWN_SUBMISSION_OUTCOME:"),
+            ("failed", "AGENT_EXECUTION_TIMEOUT: no final report", "unknown", "AGENT_EXECUTION_TIMEOUT:"),
+            ("unknown", None, "unknown", "UNKNOWN_SUBMISSION_OUTCOME:"),
+            ("completed", None, "success", None),
+            ("claimed", None, "claimed", None),
+            ("queued", None, "submitted", None),
+        ]
+        for remote_status, remote_error, expected, marker in cases:
+            with self.subTest(remote_status=remote_status, remote_error=remote_error):
+                classified, reason = job._classify_gateway_submission_status(remote_status, remote_error)
+                self.assertEqual(classified, expected)
+                if marker:
+                    self.assertTrue(str(reason).startswith(marker), reason)
+                else:
+                    self.assertFalse(reason)
+
     def test_actual_sync_persists_verified_file_without_claiming_physical_print(self):
         job, body = self._job(), self._body()
         self.assertTrue(job._apply_synced_status(job, body))
