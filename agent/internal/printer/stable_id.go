@@ -362,7 +362,7 @@ func StableIDForDevice(d DeviceInfo) string {
 				// to HTTP(S) above must not change the execution destination
 				// represented by this identity.
 				if host != "" {
-					if strings.HasPrefix(lowerEP, "ipp://") || strings.HasPrefix(lowerEP, "ipps://") || d.Protocol == "ipp" || d.Protocol == "ipps" {
+					if strings.HasPrefix(lowerEP, "ipp://") || strings.HasPrefix(lowerEP, "ipps://") || strings.EqualFold(d.Protocol, "ipp") || strings.EqualFold(d.Protocol, "ipps") {
 						return StableIDFromIPPURI(d.Endpoint, host, port)
 					}
 					return StableIDFromNetwork(host, port)
