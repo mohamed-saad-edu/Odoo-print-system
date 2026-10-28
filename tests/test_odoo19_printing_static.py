@@ -858,3 +858,12 @@ def test_dispatch_exception_keeps_the_original_detail_server_side():
     binding = read("models/binding.py")
     assert 'exc_info=True' in binding
     assert "Failed to execute silent print route" in binding
+
+
+def test_intent_attempt_ceiling_fences_pending_at_claim_and_cron_selection():
+    # An exhausted pending intent must not acquire another print attempt.
+    source = read("models/print_intent.py")
+    claim = source[source.index("def _claim_intent"):source.index("def _finalize_intent_state")]
+    assert "(status = 'pending' AND attempts < max_attempts" in claim
+    cron = source[source.index("def cron_recover_pending_intents"):]
+    assert "(status = 'pending' AND attempts < max_attempts" in cron
