@@ -1,7 +1,7 @@
 import { operationalVerificationPresentation } from "./printer-operational-verification";
 import { printerOperationalVerificationPredicate } from "./printer-verification-sql";
 import { capabilitiesWithCurrentGeometry } from "./printer-geometry";
-import { db } from "../db";
+import { db, type DbTx } from "../db";
 import { agents, printers } from "../db/schema";
 import { listPrintJobHistory } from "./job-history";
 import { and, count, desc, eq, or, sql, type SQL } from "drizzle-orm";
@@ -124,7 +124,12 @@ function printerFilterConditions(
 export async function loadDashboardStateForTenant(
   tenantId: string,
   options: DashboardFleetOptions = {},
+  tx?: DbTx,
 ) {
+  // Callers that render authenticated tenant-private data provide a live
+  // tenant/session-fenced transaction. Standalone internal diagnostics retain
+  // the original db-backed read signature for their existing consumers.
+  const executor = tx ?? db;
   const now = gatewayNow();
   const staleThresholdSeconds = agentStaleThresholdSeconds();
   const agentOffset = safeOffset(options.agentOffset);
@@ -132,7 +137,7 @@ export async function loadDashboardStateForTenant(
   const printerConditions = printerFilterConditions(tenantId, options, now);
 
   const [agentRows, printerRows, allJobs, agentSummaryRows, printerSummaryRows] = await Promise.all([
-    db
+    executor
       .select({
         id: agents.id,
         name: agents.name,
@@ -153,7 +158,7 @@ export async function loadDashboardStateForTenant(
       .orderBy(desc(agents.createdAt), desc(agents.id))
       .limit(DASHBOARD_FLEET_PAGE_SIZE + 1)
       .offset(agentOffset),
-    db
+    executor
       .select({
         id: printers.id,
         agentId: printers.agentId,
@@ -194,15 +199,15 @@ export async function loadDashboardStateForTenant(
       .offset(printerOffset),
     // Terminal history moves to print_job_receipts; never present a
     // live-only initial list while the history tab can show archived rows.
-    listPrintJobHistory({ tenantId, limit: 50 }),
-    db
+    listPrintJobHistory({ tenantId, limit: 50 }, tx),
+    executor
       .select({
         total: count(),
         online: sql<number>`COUNT(*) FILTER (WHERE ${agents.lifecycle} = 'active' AND ${agents.status} = 'online' AND ${agents.lastSeenAt} IS NOT NULL AND ${agents.lastSeenAt} >= ${new Date(now.getTime() - staleThresholdSeconds * 1000)} AND ${agents.lastSeenAt} <= ${now})`,
       })
       .from(agents)
       .where(eq(agents.tenantId, tenantId)),
-    db
+    executor
       .select({
         total: sql<number>`COUNT(*) FILTER (WHERE ${printers.lifecycle} = 'active' AND ${printers.inventoryPresent} = true)`,
         saved: sql<number>`COUNT(*) FILTER (WHERE ${printers.lifecycle} <> 'active' OR ${printers.inventoryPresent} = false)`,
