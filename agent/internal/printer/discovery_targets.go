@@ -45,7 +45,14 @@ func generateHosts(ipNet *net.IPNet) []net.IP {
 		total = 1024 // safety cap
 	}
 	base := ipToUint32(network)
-	for i := 1; i < total-1 && len(hosts) < 254; i++ {
+	first, end := 1, total-1
+	if ones == 31 {
+		// RFC 3021: a /31 is a two-host point-to-point link. There is no
+		// network/broadcast reservation; the caller removes local NIC IPs,
+		// leaving the peer as a discoverable printer destination.
+		first, end = 0, 2
+	}
+	for i := first; i < end && len(hosts) < 254; i++ {
 		h := uint32ToIP(base + uint32(i))
 		if h != nil {
 			hosts = append(hosts, h)
