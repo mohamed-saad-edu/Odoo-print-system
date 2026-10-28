@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"golang.org/x/text/unicode/norm"
@@ -278,6 +279,32 @@ func StableIDFromIPPURI(endpoint string, host string, port int) string {
 	u, err := url.Parse(endpoint)
 	if err != nil || u.Hostname() == "" {
 		return StableIDFromEndpoint(endpoint)
+	}
+	// A discovered host/port is an observation, not the URI's print
+	// authority. Use the actual HTTP(S)/IPP(S) effective port, and use
+	// literal URI IPs over stale SNMP address enrichment. Preserve the
+	// historical resolved-IP identity for DNS hostnames when one exists.
+	switch strings.ToLower(u.Scheme) {
+	case "ipp", "ipps":
+		port = 631
+	case "http":
+		port = 80
+	case "https":
+		port = 443
+	default:
+		return StableIDFromEndpoint(endpoint)
+	}
+	if explicit := u.Port(); explicit != "" {
+		parsed, parseErr := strconv.Atoi(explicit)
+		if parseErr != nil || parsed < 1 || parsed > 65535 {
+			return StableIDFromEndpoint(endpoint)
+		}
+		port = parsed
+	}
+	if uriIP := net.ParseIP(u.Hostname()); uriIP != nil {
+		host = uriIP.String()
+	} else if strings.TrimSpace(host) == "" {
+		host = u.Hostname()
 	}
 	// Legacy plaintext IPP /ipp/print shares the TCP 631 scan ID.
 	// An IPPS/HTTPS endpoint on that SAME port is a different executable
