@@ -22,6 +22,12 @@ def source_function(filename, name):
     node = next(node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name == name)
     node.decorator_list = []
     namespace = {"_": lambda text: text, "AccessError": AccessError, "ValidationError": ValidationError}
+    # Execute the real dependency in AST-isolated assignment tests. A mock
+    # would miss the exact-identity checks used by the actual Odoo model.
+    policy_path = MODELS.parent / "runtime_policy.py"
+    policy_scope = {}
+    exec(compile(policy_path.read_text(encoding="utf-8"), str(policy_path), "exec"), policy_scope)
+    namespace["is_exact_gateway_printer_id"] = policy_scope["is_exact_gateway_printer_id"]
     exec(compile(ast.fix_missing_locations(ast.Module(body=[node], type_ignores=[])), str(MODELS / filename), "exec"), namespace)
     return namespace[name]
 
