@@ -33,6 +33,13 @@ def _class_methods(file, cls_name, method_names, extra=None):
     extracted = ast.Module(body=[ast.ClassDef(name='Target', bases=[], keywords=[], body=methods, decorator_list=[])], type_ignores=[])
     ast.fix_missing_locations(extracted)
     namespace = {'ValidationError': ValidationError, '_': lambda v: v, '_logger': logging.getLogger(__name__)}
+    if file == "runtime_assignment.py":
+        # The production constraint delegates to the actual shared exact-ID
+        # policy. Keep this AST test coupled to that real dependency.
+        path = BASE.parent / "runtime_policy.py"
+        policy = {}
+        exec(compile(path.read_text(encoding="utf-8"), str(path), "exec"), policy)
+        namespace["is_exact_gateway_printer_id"] = policy["is_exact_gateway_printer_id"]
     namespace.update(extra or {})
     exec(compile(extracted, str(BASE/file), 'exec'), namespace)
     return namespace['Target']
