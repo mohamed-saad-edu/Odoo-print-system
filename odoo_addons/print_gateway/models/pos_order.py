@@ -129,6 +129,8 @@ class PosOrderGatewayPrinting(models.Model):
     def action_print_gateway_kitchen(self, image, reprint=False, operation_id=None, pos_printer_id=None, geometry_fingerprint=None):
         self.ensure_one()
         self.check_access("read")
+        if type(reprint) is not bool:
+            raise ValidationError(_("The kitchen reprint option must be a boolean."))
         if not image:
             raise ValidationError(_("The rendered POS Kitchen / Preparation image is required."))
         pos_printer = False
@@ -142,7 +144,7 @@ class PosOrderGatewayPrinting(models.Model):
             if pos_printer not in preparation_printers:
                 raise ValidationError(_("The selected Odoo Preparation Printer does not belong to this POS."))
         return self.env["print_gateway.print_router"].route_kitchen_print(
-            self, image, reprint=bool(reprint), idempotency_key=operation_id,
+            self, image, reprint=reprint, idempotency_key=operation_id,
             pos_printer=pos_printer,
             geometry_fingerprint=geometry_fingerprint,
         )

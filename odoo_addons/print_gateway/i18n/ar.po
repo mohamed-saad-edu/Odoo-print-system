@@ -5007,3 +5007,10 @@ msgstr "لم تتم طباعة الإيصال لأن الاشتراك منعها
 #: code:addons/print_gateway/static/src/js/gateway_limit_dialog.js:0
 msgid "This receipt was not printed. After renewal, reprint it explicitly only if still needed."
 msgstr "لم تتم طباعة هذا الإيصال. بعد التجديد، أعد طباعته بشكل صريح فقط عند الحاجة."
+
+#. module: print_gateway
+#. odoo-python
+#: code:addons/print_gateway/models/pos_order.py:0
+#: code:addons/print_gateway/models/print_router.py:0
+msgid "The kitchen reprint option must be a boolean."
+msgstr "يجب أن يكون خيار إعادة طباعة المطبخ قيمة منطقية (صحيح أو خطأ)."

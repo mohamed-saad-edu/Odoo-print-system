@@ -789,6 +789,8 @@ class PrintGatewayRouter(models.AbstractModel):
     @api.private
     def route_kitchen_print(self, order, image_base64, *, reprint=False, idempotency_key=None, pos_printer=None, geometry_fingerprint=None):
         order.ensure_one()
+        if type(reprint) is not bool:
+            raise ValidationError(_("The kitchen reprint option must be a boolean."))
         self._assert_current_company(order.company_id, record=order)
         company = self.env.company
         self._validate_jpeg_base64(image_base64)
