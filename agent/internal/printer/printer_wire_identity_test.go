@@ -10,8 +10,8 @@ import (
 // that the Gateway will reject or alias during JSON/UTF-8 conversion.
 func TestPrinterEvidenceIdentityMatchesGatewayUTF8Boundary(t *testing.T) {
 	cases := []struct {
-		name string
-		id string
+		name   string
+		id     string
 		accept bool
 	}{
 		{"ascii", "printer_frontdesk", true},
