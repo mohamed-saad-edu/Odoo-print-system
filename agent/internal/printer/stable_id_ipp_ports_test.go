@@ -126,6 +126,20 @@ func TestIPPStableIDFencesStaleReportedHostAndPort(t *testing.T) {
 	}
 }
 
+// IPP resources on HTTP virtual hosts can route to different print queues
+// even if the DNS names currently resolve to the same observed IP address.
+// Legacy /ipp/print retains its established IP+port continuity, but a custom
+// queue URL must be bound to the actual URI authority.
+func TestIPPNonDefaultQueueVirtualHostsStaySeparate(t *testing.T) {
+	first := DeviceInfo{ConnectionType: "ipp", Protocol: "ipp", NetworkAddress: "192.168.1.20", Port: 631,
+		Endpoint: "ipp://frontdesk.local:631/printers/receipt"}
+	second := first
+	second.Endpoint = "ipp://warehouse.local:631/printers/receipt"
+	if StableIDForDevice(first) == StableIDForDevice(second) || sameNetworkEndpoint(first, second) {
+		t.Fatal("distinct IPP HTTP virtual hosts were collapsed by a shared observed IP")
+	}
+}
+
 func TestIPPIdentityDefaultsMatchExecutionPort(t *testing.T) {
 	for _, tc := range []struct {
 		scheme string
