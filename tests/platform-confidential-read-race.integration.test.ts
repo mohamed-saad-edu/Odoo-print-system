@@ -5,6 +5,7 @@ import { createVerifiedPlatformSession } from "./helpers/platform-session";
 import { applyMigrations, closePool, hasTestDatabase, pool, seedFixture, truncateAll } from "./helpers/pg";
 import { GET as subscriptionsGET } from "../src/app/api/platform/subscriptions/route";
 import { GET as plansGET } from "../src/app/api/platform/plans/route";
+import { GET as auditGET } from "../src/app/api/platform/audit/route";
 import { GET as requestsGET } from "../src/app/api/platform/subscription-requests/route";
 
 const suite = describe.skipIf(!hasTestDatabase);
@@ -29,22 +30,22 @@ suite("Platform commercial GET live-session transaction fences", () => {
   });
   afterAll(closePool);
 
-  const read = (kind: "subscriptions" | "requests" | "plans") =>
-    (kind === "subscriptions" ? subscriptionsGET : kind === "plans" ? plansGET : requestsGET)(
+  const read = (kind: "subscriptions" | "requests" | "plans" | "audit") =>
+    (kind === "subscriptions" ? subscriptionsGET : kind === "plans" ? plansGET : kind === "audit" ? auditGET : requestsGET)(
       new Request("http://localhost/api/platform/" +
-        (kind === "subscriptions" ? "subscriptions?limit=1" : kind === "plans" ? "plans" : "subscription-requests"),
+        (kind === "subscriptions" ? "subscriptions?limit=1" : kind === "plans" ? "plans" : kind === "audit" ? "audit?limit=1" : "subscription-requests"),
       { headers: { Authorization: "Bearer " + token } }),
     );
 
-  it.each(["subscriptions", "requests", "plans"] as const)("returns %s only to a live verified Platform Owner", async kind => {
+  it.each(["subscriptions", "requests", "plans", "audit"] as const)("returns %s only to a live verified Platform Owner", async kind => {
     const response = await read(kind);
     expect(response.status).toBe(200);
     expect(response.headers.get("Cache-Control")).toBe("private, no-store");
     const payload = await response.json();
-    expect(payload).toHaveProperty(kind === "subscriptions" ? "subscriptions" : kind === "plans" ? "plans" : "requests");
+    expect(payload).toHaveProperty(kind === "subscriptions" ? "subscriptions" : kind === "plans" ? "plans" : kind === "audit" ? "auditEvents" : "requests");
   });
 
-  it.each(["subscriptions", "requests", "plans"] as const)(
+  it.each(["subscriptions", "requests", "plans", "audit"] as const)(
     "denies %s if owner removal commits while the confidential-read lock is waiting",
     async kind => {
       const gate = await pool().connect();
@@ -71,7 +72,7 @@ suite("Platform commercial GET live-session transaction fences", () => {
         const response = await pending;
         expect(response.status).toBe(401);
         expect(response.headers.get("Cache-Control")).toBe("private, no-store");
-        expect(await response.json()).not.toHaveProperty(kind === "subscriptions" ? "subscriptions" : kind === "plans" ? "plans" : "requests");
+        expect(await response.json()).not.toHaveProperty(kind === "subscriptions" ? "subscriptions" : kind === "plans" ? "plans" : kind === "audit" ? "auditEvents" : "requests");
       } finally {
         if (!committed) await gate.query("ROLLBACK");
         gate.release();
