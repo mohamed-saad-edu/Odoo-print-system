@@ -149,8 +149,14 @@ suite("heartbeat cross-agent printer identity", () => {
     expect(rows.find(row => row.id === alias)).toMatchObject({
       agent_id: second.agentId, shared_with_gateway: false, inventory_present: true,
     });
-    // Unversioned legacy heartbeat cannot silently re-share the private alias.
-    expect((await heartbeat(second.agentAuth, [makePrinter(localId)])).status).toBe(200);
+    // Once a versioned private snapshot owns the Agent's inventory, the
+    // earlier unversioned writer cannot roll back its privacy decision.
+    // This is a 409 fence, not an accepted no-op heartbeat (200).
+    const legacy = await heartbeat(second.agentAuth, [makePrinter(localId)]);
+    expect(legacy.status).toBe(409);
+    expect(await legacy.json()).toMatchObject({
+      code: "INVENTORY_SNAPSHOT_CONFLICT", minimumSnapshotVersion: "100",
+    });
     const after = await pool().query(
       "SELECT shared_with_gateway FROM printers WHERE tenant_id=$1 AND id=$2",
       [f.tenantId, alias],
