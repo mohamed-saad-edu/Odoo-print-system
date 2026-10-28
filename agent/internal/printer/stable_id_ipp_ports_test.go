@@ -49,6 +49,23 @@ func TestIPPDedupDoesNotTreatUppercaseProtocolAsRAW(t *testing.T) {
 	}
 }
 
+func TestIPPDedupRejectsInconsistentReportedPortAndResource(t *testing.T) {
+	original := DeviceInfo{ConnectionType: "ipp", Protocol: "ipp", NetworkAddress: "192.168.1.20", Port: 631,
+		Endpoint: "ipp://192.168.1.20:631/printers/office"}
+	for _, changedEndpoint := range []string{
+		"http://192.168.1.20:80/printers/office", // advertised 631 is not execution port 80
+		"ipp://192.168.1.21:631/printers/office", // same stale reported NetworkAddress, different URI authority
+		"ipp://192.168.1.20:631/printers/office2",
+		"ipp://192.168.1.20:631/printers/office?debug=1",
+	} {
+		altered := original
+		altered.Endpoint = changedEndpoint
+		if sameNetworkEndpoint(original, altered) {
+			t.Fatalf("IPP queue identity merged an inconsistent address or resource: %s", changedEndpoint)
+		}
+	}
+}
+
 func TestIPPIdentityDefaultsMatchExecutionPort(t *testing.T) {
 	for _, tc := range []struct {
 		scheme string
