@@ -110,6 +110,24 @@ func TestAutomaticDiscoveryClampsWideCIDRAroundActualHost(t *testing.T) {
 	}
 }
 
+// RFC 3021 assigns both IPv4 addresses in a /31 to point-to-point peers.
+// The previous generic network/broadcast exclusion yielded zero candidates,
+// so a printer reachable across a two-host link was never discovered.
+func TestAutomaticDiscoveryHandlesPointToPoint31Peer(t *testing.T) {
+	for _, tc := range []struct{ local, peer string }{
+		{"10.45.2.10", "10.45.2.11"},
+		{"10.45.2.11", "10.45.2.10"},
+	} {
+		t.Run(tc.local, func(t *testing.T) {
+			nic := privateSubnet(t, tc.local, "10.45.2.10/31")
+			hosts, partial := privateDiscoveryTargetsWithBudget([]*net.IPNet{nic}, maxAutomaticDiscoveryTargets)
+			if partial || len(hosts) != 1 || hosts[0] != tc.peer {
+				t.Fatalf("/31 peer discovery missing or scanned own address: hosts=%v partial=%v", hosts, partial)
+			}
+		})
+	}
+}
+
 func TestAutomaticDiscoveryZeroBudgetIsPartialUnlessNoHosts(t *testing.T) {
 	subnet := privateSubnet(t, "10.45.2.20", "10.45.2.0/24")
 	hosts, partial := privateDiscoveryTargetsWithBudget([]*net.IPNet{subnet}, 0)
