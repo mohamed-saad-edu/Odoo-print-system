@@ -201,3 +201,50 @@ def test_replay_still_reuses_exact_authorized_key_without_new_physical_work():
         "gateway_enabled": True, "native": False,
         "job_id": 71, "status": "unknown",
     }
+
+
+
+def test_durable_cursor_recheck_rejects_repointed_padded_printer_alias():
+    # A change between the first routing transaction and the durable
+    # outbox transaction must never trim another printer ID into a match.
+    calls = []
+    binding = SimpleNamespace(
+        id=9, enabled=True, printer_id=" printer-1 ", runtime_agent_id=False,
+    )
+
+    class BindingModel:
+        def sudo(self):
+            return self
+        def browse(self, binding_id):
+            assert binding_id == 9
+            return self
+        def exists(self):
+            return binding
+
+    class OutboxModel:
+        def create_operation(self, **_values):
+            calls.append("admitted")
+            return SimpleNamespace(id=101)
+
+    class FakeEnv:
+        def __getitem__(self, name):
+            if name == "print_gateway.binding":
+                return BindingModel()
+            if name == "print_gateway.print_job":
+                return OutboxModel()
+            raise AssertionError(name)
+
+    cursor = SimpleNamespace(close=lambda: None, commit=lambda: calls.append("commit"))
+    router = SimpleNamespace(env=SimpleNamespace(
+        registry=SimpleNamespace(cursor=lambda: cursor), uid=5, context={}
+    ))
+    persist = _method(
+        "print_router.py", "PrintGatewayRouter", "_persist_durable_job",
+        api=SimpleNamespace(Environment=lambda *_args: FakeEnv()),
+    )
+    with pytest.raises(ValidationError, match="repointed"):
+        persist(router, {
+            "company": False, "gateway_config": False,
+            "binding": SimpleNamespace(id=9), "printer_id": "printer-1",
+        })
+    assert calls == []
