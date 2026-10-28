@@ -295,6 +295,8 @@ function upgradeLimitResourceForEntitlement(entitlement: unknown): UpgradeLimitR
   switch (entitlement) {
     case "max_agents": return "agents";
     case "max_printers": return "printers";
+    case "max_jobs_per_minute": return "rate";
+    case "max_concurrent_jobs": return "concurrency";
     case "max_prints_per_period": return "prints";
     default: return null;
   }
