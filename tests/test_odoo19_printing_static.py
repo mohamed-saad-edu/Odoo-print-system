@@ -717,13 +717,14 @@ def test_raw_wire_types_match_gateway_contract():
     assert "'type': 'tspl'" not in router
 
 
-def test_partial_status_maps_to_submitted_on_both_paths():
+def test_partial_status_never_downgrades_to_submitted_on_either_gateway_path():
     job = (ADDON / "models/print_job.py").read_text(encoding="utf-8")
-    # 'partial' is not an internal Odoo status: both the submit path and the
-    # sync path must map it to 'submitted' instead of crashing _advance_status
-    # or silently dropping the observation.
-    assert job.count('remote_status = "submitted"') >= 1
-    assert 'if remote_status == "partial"' in job
+    # A Gateway partial outcome is physically ambiguous and must not
+    # masquerade as an in-flight submission.
+    assert "def _classify_gateway_submission_status(" in job
+    assert "remote_status, remote_error = job._classify_gateway_submission_status(" in job
+    assert '"UNKNOWN_PARTIAL_DELIVERY:"' in job
+    assert 'remote_status = "submitted"' not in job
     assert 'elif status == "partial"' in job or 'status == "partial"' in job
 
 
