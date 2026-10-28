@@ -320,6 +320,13 @@ func StableIDFromIPPURI(endpoint string, host string, port int) string {
 			u.Scheme = "ipps"
 		}
 	}
+	// A custom IPP resource may be hosted under a virtual HTTP authority.
+	// Two URI hostnames can route to different queues even when SNMP reports
+	// the same backing IP. Keep the URI host for custom resources; only the
+	// historical default /ipp/print retains its legacy host/port ID.
+	if u.Path != "/ipp/print" || u.RawQuery != "" {
+		host = u.Hostname()
+	}
 	resource := u.EscapedPath()
 	if resource == "" {
 		resource = "/"
