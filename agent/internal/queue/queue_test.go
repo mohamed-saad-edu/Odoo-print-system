@@ -956,7 +956,7 @@ func TestRetryableFailureReservesNewPreDispatchClaim(t *testing.T) {
 	if err := q.ClearClaimToken("safe-retry", "old-claim"); err != nil {
 		t.Fatal(err)
 	}
-	if err := q.ReserveBeforeDispatch("safe-retry", "p1", []byte("new"), "new-claim"); err != nil {
+	if err := q.ReserveBeforeDispatch("safe-retry", "p1", []byte("old"), "new-claim"); err != nil {
 		t.Fatal(err)
 	}
 	_, status, _, err := q.Get("safe-retry")
