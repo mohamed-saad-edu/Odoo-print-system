@@ -84,7 +84,6 @@ func TestRegisterManualNormalizesUSBSpoolerToDocumentTransport(t *testing.T) {
 	}
 }
 
-
 func TestManualRegistrationCannotInventObservedIPPIdentityOrGeometry(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "printers.json")
 	const claimed = "urn:uuid:11111111-2222-3333-4444-555555555555"
