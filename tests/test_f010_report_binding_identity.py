@@ -45,6 +45,7 @@ def production_methods(file, names):
     policy_ns = {}
     exec(compile(policy_path.read_text(), str(policy_path), 'exec'), policy_ns)
     ns['inventory_has_shared_printer'] = policy_ns['inventory_has_shared_printer']
+    ns['is_exact_gateway_job_id'] = policy_ns['is_exact_gateway_job_id']
     output_path = ROOT.parent / 'print_output.py'
     output_ns = {}
     exec(compile(output_path.read_text(), str(output_path), 'exec'), output_ns)
