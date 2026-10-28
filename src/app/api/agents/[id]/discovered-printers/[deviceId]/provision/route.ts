@@ -281,7 +281,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         code: "MAX_PRINTERS_EXCEEDED",
         entitlement: error.entitlement,
         limit: error.limit,
-        upgradeRequired: true,
+        upgradeRequired: false,
       }, { status: 429, headers });
     }
     if (isTenantBillingError(error)) {
