@@ -144,6 +144,11 @@ export function liveTenantSubscriptionWhere(tenantId: SQL, requireUnblocked = tr
     : sql``;
   return sql`
     ts.tenant_id = ${tenantId}
+    AND EXISTS (
+      SELECT 1 FROM tenants entitlement_tenant
+      WHERE entitlement_tenant.id = ts.tenant_id
+        AND entitlement_tenant.lifecycle = 'active'
+    )
     AND ts.status = 'active' AND ts.current_period_start <= clock_timestamp()
     AND ts.current_period_end > clock_timestamp()
     ${unblocked}
