@@ -259,6 +259,28 @@ class PrintGatewayIntent(models.Model):
                     last_error="Source record company changed after intent capture; printing was not sent",
                 )
                 return
+            # The intent was captured against one authorized rule. Admins may
+            # disable, re-scope, or edit a rule while queued work waits for the
+            # cron: never print that old business event under a different
+            # model/event/filter or a now-disabled rule.
+            policy = intent.policy_id
+            if (not policy or not policy.active
+                    or policy.model_name != res_model or policy.event_type != intent.event_type):
+                cls._finalize_intent_state(
+                    env, intent_id, claim_token,
+                    status="skipped",
+                    last_error="Print automation rule changed or was disabled after intent capture; no job was sent",
+                )
+                return
+            with cr.savepoint():
+                policy_still_matches = policy.matches_record(record)
+            if not policy_still_matches:
+                cls._finalize_intent_state(
+                    env, intent_id, claim_token,
+                    status="skipped",
+                    last_error="Print automation rule no longer matches the source; no job was sent",
+                )
+                return
             router = new_env["print_gateway.print_router"]
             try:
                 # A failed ORM/SQL statement must not poison the transaction
