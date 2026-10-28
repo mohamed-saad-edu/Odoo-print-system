@@ -192,8 +192,15 @@ suite("Odoo runtime discovery billing boundary", () => {
 
   it("publishes bounded selected roll media separately from printable dots", async () => {
     await pool().query(
-      "UPDATE printers SET capabilities = $1::jsonb WHERE tenant_id = $2 AND id = $3",
-      [JSON.stringify({ geometry: { ...geometryFixtures.geometryCases.find((entry) => entry.name === "physical-384-dots-203-dpi-58-mm")!.geometry, printer_id: fixture.printerId }, supported_protocols: ["pdf", "image"] }), fixture.tenantId, fixture.printerId],
+      "UPDATE printers SET capabilities = $1::jsonb, config = COALESCE(config,'{}'::jsonb) || $2::jsonb WHERE tenant_id = $3 AND id = $4",
+      [
+        JSON.stringify({ geometry: { ...geometryFixtures.geometryCases.find((entry) => entry.name === "physical-384-dots-203-dpi-58-mm")!.geometry, printer_id: fixture.printerId }, supported_protocols: ["pdf", "image"] }),
+        // This is a configured profile, not an independently observed driver
+        // measurement. Publish it only when the selected desired profile
+        // matches the claimed dimensions (the production trust boundary).
+        JSON.stringify({ geometry_profile: { printable_width_dots: 384, dpi_x: 203, dpi_y: 203, paper_width_mm: 58, raster_command: "gs_v_0" } }),
+        fixture.tenantId, fixture.printerId,
+      ],
     );
     const request = () => new Request("https://gateway.test/api/odoo/printers", { headers: { "x-api-key": fixture.odooKey } });
     const response = await printersGET(request());
