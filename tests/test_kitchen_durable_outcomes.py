@@ -206,6 +206,7 @@ def test_quota_blocked_kitchen_receipt_is_not_replayed_automatically():
     (10, "10"),
     (0, 0),
     (10, -1),
+    (10, 9),  # A typed response with available credits is not exhausted.
     (2**40, 1),
     (10, float("nan")),
 ])
@@ -225,6 +226,33 @@ def test_untrusted_quota_429_counters_never_prove_pre_admission_rejection(limit,
     assert result["can_retry"] is False
     assert job.status == "unknown"
     assert job.gateway_job_id is False
+    assert not job.next_retry_at
+    assert str(job.last_error).startswith("UNKNOWN_SUBMISSION_OUTCOME:")
+    assert len(sent) == 1 and cursor.closed
+
+
+@pytest.mark.parametrize("additional", [
+    {"remaining": 1},
+    {"remaining": True},
+    {"remaining": "0"},
+    {"retryable": True},
+    {"retryable": "false"},
+])
+def test_contradictory_quota_response_keeps_ambiguous_print_for_review(additional):
+    # Even with plausible integer counters, a proxy can return contradictory
+    # retry or remaining-credit fields after the Gateway accepted a job.
+    reply_body = {
+        "code": "PRINT_QUOTA_EXCEEDED",
+        "upgradeRequired": True,
+        "entitlement": "max_prints_per_period",
+        "limit": 10, "used": 10,
+        **additional,
+    }
+    router, job, cursor, sent, _order = fixture(reply(429, reply_body))
+    result = router._submit_durable_job(7, structured_outcome=True)
+    assert result["status"] == "unknown"
+    assert result["can_retry"] is False
+    assert job.status == "unknown"
     assert not job.next_retry_at
     assert str(job.last_error).startswith("UNKNOWN_SUBMISSION_OUTCOME:")
     assert len(sent) == 1 and cursor.closed

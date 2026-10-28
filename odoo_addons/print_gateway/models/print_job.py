@@ -1719,7 +1719,20 @@ class PrintGatewayJob(models.Model):
                         # a safe-to-retry billing hold.
                         valid_quota_counters = (
                             type(raw_limit) is int and 1 <= raw_limit <= 2147483647
-                            and type(raw_used) is int and 0 <= raw_used <= 2147483647
+                            and type(raw_used) is int and raw_limit <= raw_used <= 2147483647
+                            # The canonical Gateway emits no available credits
+                            # and no automatic retry for quota exhaustion.
+                            # Missing optional fields are supported for older
+                            # Gateways; contradictory supplied values are not.
+                            and (
+                                "remaining" not in rate_body
+                                or type(rate_body["remaining"]) is int
+                                and rate_body["remaining"] == 0
+                            )
+                            and (
+                                "retryable" not in rate_body
+                                or rate_body["retryable"] is False
+                            )
                         )
                         billing_limit = (
                             rate_body.get("code") == "PRINT_QUOTA_EXCEEDED"
