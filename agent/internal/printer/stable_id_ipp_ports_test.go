@@ -79,6 +79,13 @@ func TestUppercaseIPPStableIDPreservesMultiQueueResource(t *testing.T) {
 		if StableIDForDevice(first) == StableIDForDevice(second) {
 			t.Fatalf("case-insensitive protocol %q collapsed two separate queues", proto)
 		}
+		// Legacy registry observations may retain only Endpoint. Missing
+		// NetworkAddress/Port must still preserve distinct print resources.
+		first.NetworkAddress, first.Port = "", 0
+		second.NetworkAddress, second.Port = "", 0
+		if StableIDForDevice(first) == StableIDForDevice(second) {
+			t.Fatalf("legacy endpoint-only protocol %q collapsed two separate IPP queues", proto)
+		}
 	}
 }
 
