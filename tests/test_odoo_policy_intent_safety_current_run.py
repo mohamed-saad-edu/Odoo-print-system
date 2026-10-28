@@ -239,6 +239,72 @@ def test_each_business_policy_hook_catches_only_after_savepoint():
                    for n in ast.walk(handler))
 
 
+
+def test_recovery_scopes_to_captured_intent_company_before_reading_the_source():
+    # Model record rules can hide a valid branch source until the Environment
+    # has allowed_company_ids for the ORIGINAL committed intent company.
+    # The old method read .exists() under the cron user's root company and
+    # incorrectly finalized a valid branch operation as 'source disappeared'.
+    from contextlib import nullcontext
+
+    root = SimpleNamespace(id=801)
+    branch = SimpleNamespace(id=802)
+    reads, routes, finalizations, failures = [], [], [], []
+
+    class Cursor:
+        def savepoint(self):
+            return nullcontext()
+        def close(self):
+            pass
+
+    cursor = Cursor()
+    intent = SimpleNamespace(
+        claim_token='held-lease', company_id=branch, intent_key='outbox-lease',
+        with_env=lambda scoped_env: intent,
+    )
+    record = SimpleNamespace(
+        company_id=branch, with_env=lambda scoped_env: record,
+    )
+
+    class Source:
+        def __init__(self, scope):
+            self.scope = scope
+        def browse(self, _id):
+            return self
+        def exists(self):
+            reads.append(self.scope.company.id)
+            return record if self.scope.company.id == branch.id else False
+
+    class FakeEnvironment:
+        def __init__(self, cr, uid, context):
+            self.cr, self.uid, self.context = cr, uid, context
+            self.company = branch if context.get('allowed_company_ids') == [branch.id] else root
+        def __call__(self, *, context):
+            return FakeEnvironment(self.cr, self.uid, context)
+        def __getitem__(self, model):
+            if model == 'print_gateway.intent':
+                return SimpleNamespace(browse=lambda _id: SimpleNamespace(exists=lambda: intent))
+            if model == 'stock.picking':
+                return Source(self)
+            if model == 'print_gateway.print_router':
+                return SimpleNamespace(route_intent=lambda _intent, _record: routes.append(self.company.id) or {'job_id': 29})
+            raise AssertionError('Unexpected model: ' + model)
+
+    addon = _class_methods('print_intent.py', 'PrintGatewayIntent',
+                           {'_execute_dispatched_route'},
+                           {'api': SimpleNamespace(Environment=FakeEnvironment)})
+    addon._finalize_intent_state = classmethod(lambda cls, *args, **kwargs: finalizations.append(kwargs))
+    addon._finalize_route_failure = classmethod(lambda cls, *args: failures.append(args))
+    calling_env = SimpleNamespace(uid=1, context={}, registry=SimpleNamespace(cursor=lambda: cursor))
+    addon._execute_dispatched_route(addon, calling_env, 41, 'stock.picking', 15, 'held-lease')
+    assert not failures, failures
+    assert reads == [branch.id], 'Source must be checked under captured company before .exists()'
+    assert routes == [branch.id], 'A valid branch intent must not be silently skipped'
+    assert len(finalizations) == 1
+    assert finalizations[0]['status'] == 'dispatched'
+    assert finalizations[0]['print_job_id'] == 29
+
+
 def test_intent_route_requires_durable_job_or_explicit_skip_and_savepoint():
     tree = ast.parse((BASE / 'print_intent.py').read_text(encoding='utf-8'))
     cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == 'PrintGatewayIntent')
