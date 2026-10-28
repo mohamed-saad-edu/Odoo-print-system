@@ -342,3 +342,11 @@ Baseline inspected: main@65214cf7948a214843110fa2fbc1a23aec388340. This is an **
 **Fix:** Acquire the existing canonical Platform Owner read authority in one Drizzle transaction before both cache lookup and fresh global aggregates; hold owner/session/password shared locks until snapshot response is composed. All aggregate and business/verification SQL now use that same transaction. logicalUsageReport accepts an optional DB transaction and tenant-detail forwards its existing transaction; standalone customers preserve the old call shape. No mutation step-up or subscription/printing business-policy changes.
 
 **Tests authored:** tests/platform-stats-live-authority.integration.test.ts verifies source ordering, authorized stats JSON and a real PG owner-demotion race. **NOT RUN / CI pending** until exact-SHA result; do not claim RED-GREEN or successful concurrency gate. Populated migration, hardware and full suite remain BLOCKED/NOT RUN.
+
+## Batch — exact Odoo batch-status operation identity (2026-10-28)
+
+**Finding:** `POST /api/print/jobs/batch-status` used Zod `.trim()` on opaque job IDs. A caller could ask for `" accepted-id"` and silently receive another accepted operation, unlike `GET /api/print/jobs/v2`, which explicitly rejects normalized identities. Tenant/API key and Odoo installation scope still prevent unrelated-tenant disclosure; this is an *exact operation authority* mismatch, not evidence of cross-tenant access.
+
+**Fix:** Use the existing opaque UTF-8 ID validator for every batch member, reject mixed valid/invalid batches in their entirety, and keep the batch and single-GET identity rules consistent. Regression `tests/batch-status.test.ts` exercises exact accepted IDs, leading/trailing spaces, C0/C1 controls, 121-character IDs, multibyte IDs over 120 bytes and mixed batches. Update `docs/SECURITY_INPUT_VALIDATION.md`. No data rewrite, migration, replay or changed billing authority.
+
+**Verification:** Committed against main@974315c3b005ec6e12fe97c34df01675ffb6b9b5. GitHub-only source review; exact-SHA workflow and PostgreSQL regression outcomes must be collected. Local RED/GREEN, PostgreSQL and physical printer execution **NOT RUN**.
