@@ -7,6 +7,48 @@ import (
 	"testing"
 )
 
+// Alternate URI spellings must not create duplicate local identities for the
+// same IPP resource. Only the URI spelling changes; authority (host, effective
+// port, TLS) and the case-sensitive multi-queue resource remain identical.
+func TestIPPQueueAliasSchemeStableIdentity(t *testing.T) {
+	for _, tc := range []struct {
+		name, alias, canonical, otherQueue string
+	}{
+		{"plaintext", "http://192.168.1.20:631/printers/office", "ipp://192.168.1.20:631/printers/office", "ipp://192.168.1.20:631/printers/warehouse"},
+		{"TLS", "https://192.168.1.20:631/printers/office", "ipps://192.168.1.20:631/printers/office", "ipps://192.168.1.20:631/printers/warehouse"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			proto := "ipp"
+			if tc.name == "TLS" {
+				proto = "ipps"
+			}
+			device := func(endpoint string) DeviceInfo {
+				return DeviceInfo{ConnectionType: proto, Protocol: proto, NetworkAddress: "192.168.1.20", Port: 631, Endpoint: endpoint}
+			}
+			a, b, different := device(tc.alias), device(tc.canonical), device(tc.otherQueue)
+			if StableIDForDevice(a) != StableIDForDevice(b) || !sameNetworkEndpoint(a, b) {
+				t.Fatalf("equivalent URI spellings forked a printer: %q / %q", StableIDForDevice(a), StableIDForDevice(b))
+			}
+			if StableIDForDevice(a) == StableIDForDevice(different) || sameNetworkEndpoint(a, different) {
+				t.Fatal("different IPP queue resources were merged")
+			}
+		})
+	}
+	plain := DeviceInfo{ConnectionType: "ipp", Protocol: "ipp", NetworkAddress: "192.168.1.20", Port: 631, Endpoint: "ipp://192.168.1.20:631/printers/office"}
+	secure := DeviceInfo{ConnectionType: "ipps", Protocol: "ipps", NetworkAddress: "192.168.1.20", Port: 631, Endpoint: "ipps://192.168.1.20:631/printers/office"}
+	if StableIDForDevice(plain) == StableIDForDevice(secure) || sameNetworkEndpoint(plain, secure) {
+		t.Fatal("plaintext IPP and IPPS TLS must never share an execution identity")
+	}
+}
+
+func TestIPPDedupDoesNotTreatUppercaseProtocolAsRAW(t *testing.T) {
+	ipp := DeviceInfo{ConnectionType: "ipp", Protocol: "IPP", Endpoint: "ipp://192.168.1.20:631/ipp/print", NetworkAddress: "192.168.1.20", Port: 631}
+	raw := DeviceInfo{ConnectionType: "network", Protocol: "raw", Endpoint: "192.168.1.20:631", NetworkAddress: "192.168.1.20", Port: 631}
+	if sameNetworkEndpoint(ipp, raw) || sameNetworkEndpoint(raw, ipp) {
+		t.Fatal("a mixed-case IPP declaration was merged with a distinct RAW transport")
+	}
+}
+
 func TestIPPIdentityDefaultsMatchExecutionPort(t *testing.T) {
 	for _, tc := range []struct {
 		scheme string
