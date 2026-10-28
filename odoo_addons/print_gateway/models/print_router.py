@@ -713,7 +713,9 @@ class PrintGatewayRouter(models.AbstractModel):
             # rules remain an independent boundary, including company scope.
             job = env["print_gateway.print_job"].search([
                 ("company_id", "=", company.id),
-                ("idempotency_key", "=", idempotency_key.strip()),
+                # Exact caller operation identity: a padded v2 key must not
+                # replay an already-sent physical job under a different key.
+                ("idempotency_key", "=", idempotency_key),
             ], limit=1)
             if not job:
                 return None
@@ -733,7 +735,7 @@ class PrintGatewayRouter(models.AbstractModel):
                 stored_payload = None
             exact = (
                 job.gateway_config_id.id == route["config"].id
-                and job.printer_id == str(route["binding"].printer_id).strip()
+                and job.printer_id == route["binding"].printer_id
                 and job.destination == str(destination.display_name).strip()
                 and job.destination_key == "%s,%s" % (destination._name, destination.id)
                 and job.document_type == str(route["document_type"]).strip().lower()
