@@ -1,6 +1,6 @@
 # NOTES.md — Yaseir Cloud Printing full-repository engineering coverage
 
-Source: `main@d20866806593a5341174f99063e603f4d84f5cb9`. Re-scanned **1939 tracked files** in **89 directory groups** through GitHub's complete recursive tree (`truncated=false`). This is a coverage index, **not** a claim of line-by-line audit. This file is root-level, outside the Gateway/Agent/Odoo/Desktop product trees.
+Source: `main@2fdbd535d514303ebc292a9fd2f3da9125952385`. Re-scanned **1941 tracked files** in **89 directory groups** through GitHub's complete recursive tree (`truncated=false`). This is a coverage index, **not** a claim of line-by-line audit. This file is root-level, outside the Gateway/Agent/Odoo/Desktop product trees.
 
 **Status semantics:** `TODO` = path enumerated, code/read/verification incomplete; `DONE` = code, cross-contract and exact-commit CI tests reviewed; `BLOCKED` = cannot verify as text through GitHub API or requires real hardware/staging. These are independent of existing per-file ledger statuses. Every path stays TODO/BLOCKED until evidence is linked; counts do not imply production readiness.
 
@@ -20,6 +20,8 @@ Source: `main@d20866806593a5341174f99063e603f4d84f5cb9`. Re-scanned **1939 track
 | INPUT-HEALTH-2026-10-28 | Agent-health pagination coerced non-decimal values; authenticated diagnostics lacked non-cacheable headers | `12fd6d16cb80e0c3acb37e739c0459532c51666c` test-first, `b8420ef5387b6ad4c61afc667ec49f913c7e23e1` parser, `f4a1f806d43ce2ab4fb839801876f9059a5408d9` cache test, `83e61db6dc89a9e316f1ee799454bd1dcd4ac049` response cache policy | Source fixed and regression authored; exact-SHA CI queued or cancelled, NOT VERIFIED | TODO |
 | INPUT-PLANS-2026-10-28 | Plan quotas and ordering accepted booleans/scientific-string JSON via `Number()` | `a1746df9c5b3687257341ddf083df315be4b9797` negative tests; `52a3df673e1ae6b92f35087bb41e1c8b80f2940c` type-only integer parsing; `a5ec57212960b1c4f8bd4dca32a49be923031ce3` null/absent order distinction | Source fixed; exact-SHA CI queued, PostgreSQL and prod NOT RUN | TODO |
 | PLATFORM-ACTOR-STATE-2026-10-28 | Revoked Platform Owner could see 404/409 installation/key existence or inactive state before live transaction actor revalidation | `19c6760c8b2eb5ef93d65d11d06ece500ea7113f` test-first; `70f2e2e7478521a0ef73fa5a96a7e40d20c31e2f` revoke and `fc560fad4aa923a5e9951d9c5da5adb8d94709bb` quarantine move actor check before state response, retaining original resource-lock order | Exact-SHA CI queued, runtime RED/GREEN NOT VERIFIED | TODO |
+| PLATFORM-PLAN-FORM-2026-10-28 | Admin form accepted IDs and commercial values outside the authoritative plan parser, causing post-reauth submission errors | `5c03f8054bbc8248d61452768bdff7d5e870e661` test-first; `06b10889230300c94650a0203bd28d86690f0e2e` HTML ID/quota/order/price-format constraints | Exact-SHA CI cancelled/superseded; backend remains final price-size authority | TODO |
+| SUBSCRIPTIONS-PAGING-2026-10-28 | Platform Admin only rendered first 300 subscriptions; status was filtered in browser after the 300-row truncation, silently hiding other customer contracts | `76a35da8ea1b9806cf63cceb26bfb4fbf1374275` PostgreSQL test-first; `dfeef0972e1036af4ebcc5efbe6b6624de98288b` SQL status filtering with stable pagination; `f96a56a563d275f693d1c7ee54b4e4aecd4d0904` UI contract test; `95af283801aa52014e451b7c63bbcd394c0c0994` localized paging UI | Exact-SHA CI cancelled on next concurrent main push; PostgreSQL regression NOT RUN in this GitHub-only session | TODO |
 | HW-01 print result | Neither Gateway `success` nor spooler submission proves physical paper | Status contract requires independent explicit physical evidence; never auto-retry unknown | No physical printer attached through GitHub API | BLOCKED |
 | DATA-01 defense in depth | PostgreSQL RLS not enabled; predicates, composite FKs and transaction locks are tenant boundary | Audit every raw query, add safe migration only after staged design/coverage | Requires comprehensive source+staging audit | TODO |
 
@@ -520,6 +522,7 @@ Source: `main@d20866806593a5341174f99063e603f4d84f5cb9`. Re-scanned **1939 track
 
 - TODO `agent/internal/queue/cleanup.go`
 - TODO `agent/internal/queue/cleanup_test.go`
+- TODO `agent/internal/queue/job_identity_immutability_test.go`
 - TODO `agent/internal/queue/legacy_status_test.go`
 - TODO `agent/internal/queue/output_evidence_v3_test.go`
 - TODO `agent/internal/queue/path_test.go`
@@ -2127,6 +2130,7 @@ Source: `main@d20866806593a5341174f99063e603f4d84f5cb9`. Re-scanned **1939 track
 - TODO `tests/i18n-date-only.test.ts`
 - TODO `tests/i18n-own-properties.test.ts`
 - TODO `tests/icon-assets-contract.test.ts`
+- TODO `tests/idempotency-wire-identity.test.ts`
 - TODO `tests/inventory-snapshot-heartbeat.test.ts`
 - TODO `tests/inventory-snapshot-version.test.ts`
 - TODO `tests/invitation-onboarding.integration.test.ts`
