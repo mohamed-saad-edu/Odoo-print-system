@@ -4,9 +4,6 @@ import (
 	"fmt"
 	"log"
 	"sort"
-	"strings"
-	"unicode"
-	"unicode/utf8"
 
 	"github.com/yaseir-agent/agent/internal/config"
 	"github.com/yaseir-agent/agent/internal/printer"
@@ -149,22 +146,9 @@ func (a *Agent) privatePrinterIDs(snapshot localPrinterSharingSnapshot) ([]strin
 	return ids, complete
 }
 
+// Same wire identity contract as native geometry and operational evidence.
 func validGatewaySharingID(id string) bool {
-	// Match JavaScript String.trim() used by Gateway isExactPrinterId.
-	// Unicode White_Space differs only at the BOM boundary: JS trims U+FEFF,
-	// while Go strings.TrimSpace does not. Neither side may normalize an
-	// opaque printer execution ID into a different identity.
-	hasEdgeWhitespace := strings.TrimFunc(id, func(r rune) bool {
-		return unicode.IsSpace(r) || r == '\uFEFF'
-	}) != id
-	if id == "" || !utf8.ValidString(id) || hasEdgeWhitespace || strings.ContainsFunc(id, unicode.IsControl) {
-		return false
-	}
-	// The Gateway's isExactPrinterId enforces 120 UTF-8 bytes, not 120
-	// UTF-16 code units. Go len measures bytes for a verified UTF-8 string.
-	// Withhold unreportable legacy IDs and flag the inventory incomplete
-	// rather than submitting a heartbeat the Gateway would reject in full.
-	return len(id) <= 120
+	return printer.ValidGatewayPrinterID(id)
 }
 
 func (a *Agent) localPrinterBindingDisabled(pc config.PrinterConfig) bool {
