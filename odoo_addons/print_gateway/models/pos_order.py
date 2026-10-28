@@ -9,6 +9,20 @@ from odoo.exceptions import ValidationError
 _logger = logging.getLogger(__name__)
 
 
+def _exact_pos_printer_id(value):
+    """Optional preparation printer: only an exact positive Odoo record ID.
+
+    None/False are Odoo's explicit no-selection sentinels. Never coerce
+    booleans, floats or numeric-looking strings to another printer, and never
+    interpret any invalid explicit value as permission for POS fallback.
+    """
+    if value is None or value is False:
+        return None
+    if type(value) is not int or not 0 < value <= 2**63 - 1:
+        raise ValidationError(_("A valid Odoo Preparation Printer ID is required."))
+    return value
+
+
 class PosOrderGatewayPrinting(models.Model):
     _inherit = "pos.order"
 
@@ -47,13 +61,10 @@ class PosOrderGatewayPrinting(models.Model):
     def has_gateway_kitchen_binding(self, pos_printer_id=None):
         self.ensure_one()
         self.check_access("read")
+        selected_printer_id = _exact_pos_printer_id(pos_printer_id)
         destination = self.config_id
-        if pos_printer_id is not None and pos_printer_id is not False:
-            # A supplied ID is an exact Odoo record identity. Zero, boolean
-            # True and coercible numeric aliases must not select POS fallback.
-            if type(pos_printer_id) is not int or pos_printer_id <= 0:
-                raise ValidationError(_("A valid Odoo Preparation Printer ID is required."))
-            destination = self.env["pos.printer"].browse(pos_printer_id).exists()
+        if selected_printer_id is not None:
+            destination = self.env["pos.printer"].browse(selected_printer_id).exists()
             if not destination:
                 return False
             preparation_printers = getattr(self.config_id, "preparation_printer_ids", None)
@@ -137,11 +148,10 @@ class PosOrderGatewayPrinting(models.Model):
             raise ValidationError(_("The kitchen reprint option must be a boolean."))
         if not image:
             raise ValidationError(_("The rendered POS Kitchen / Preparation image is required."))
+        selected_printer_id = _exact_pos_printer_id(pos_printer_id)
         pos_printer = False
-        if pos_printer_id is not None and pos_printer_id is not False:
-            if type(pos_printer_id) is not int or pos_printer_id <= 0:
-                raise ValidationError(_("A valid Odoo Preparation Printer ID is required."))
-            pos_printer = self.env["pos.printer"].browse(pos_printer_id).exists()
+        if selected_printer_id is not None:
+            pos_printer = self.env["pos.printer"].browse(selected_printer_id).exists()
             if not pos_printer:
                 raise ValidationError(_("The selected Odoo Preparation Printer does not belong to this POS."))
             preparation_printers = getattr(self.config_id, "preparation_printer_ids", None)
