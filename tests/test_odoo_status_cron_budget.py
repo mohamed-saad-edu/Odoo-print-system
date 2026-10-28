@@ -45,6 +45,7 @@ class StatusCron(Production):
         self.commits = []
         self.rollbacks = 0
         self.apply_failure = None
+        self.apply_rejection = None
         self.returned_ids = None
         self.poll_stamp = 0
         owner = self
@@ -185,6 +186,9 @@ class StatusCron(Production):
         if self.apply_failure == job.id:
             self.apply_failure = None
             raise ValueError('One result failed its isolated application')
+        if self.apply_rejection == job.id:
+            self.apply_rejection = None
+            return False  # Real _apply_synced_status rejects a stale or contradictory reply.
         job.write({'status': body['status']})
         return True
 
@@ -280,6 +284,18 @@ def test_one_failed_batch_result_falls_back_only_that_job_and_keeps_other_update
     assert [kwargs['params']['id'] for method, _url, kwargs in cron.calls if method == 'GET'] == ['gw-2']
     assert [job.status for job in cron.jobs.values()] == ['unknown'] * 3
     assert cron.rollbacks == 1
+    assert not cron.pending_write
+
+
+def test_rejected_batch_result_falls_back_to_exact_individual_lookup(monkeypatch):
+    """A clean HTTP 200 with rejected status evidence is not a successful sync."""
+    cron = StatusCron(monkeypatch, count=3, bulk_status=200)
+    cron.apply_rejection = 2  # E.g. _apply_synced_status rejected a mismatched legacy id alias.
+    assert cron.cron_sync_status() == 3
+    assert [method for method, _url, _kwargs in cron.calls] == ['POST', 'GET']
+    assert [kwargs['params']['id'] for method, _url, kwargs in cron.calls if method == 'GET'] == ['gw-2']
+    assert [job.status for job in cron.jobs.values()] == ['unknown', 'unknown', 'unknown']
+    assert all(job.last_status_polled_at is not None for job in cron.jobs.values())
     assert not cron.pending_write
 
 
