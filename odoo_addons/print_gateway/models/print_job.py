@@ -2832,7 +2832,12 @@ class PrintGatewayJob(models.Model):
                             try:
                                 if job.gateway_job_id in returned:
                                     with self.env.cr.savepoint():
-                                        self._apply_synced_status(job, returned[job.gateway_job_id])
+                                        if not self._apply_synced_status(job, returned[job.gateway_job_id]):
+                                            # A valid JSON/status row can still be rejected by
+                                            # identity or terminal-state reconciliation. Treat
+                                            # that as an ambiguous batch result and query the
+                                            # original job individually rather than counting it.
+                                            raise ValueError("Gateway batch status could not be applied")
                                 else:
                                     # A missing remote ID is not proof that
                                     # no paper came out. Mark UNKNOWN under a
