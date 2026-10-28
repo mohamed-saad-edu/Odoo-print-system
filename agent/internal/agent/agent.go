@@ -2616,10 +2616,19 @@ func (a *Agent) printerStatusPayload() []map[string]interface{} {
 }
 
 func (a *Agent) printerStatusPayloadWithSharing(sharing localPrinterSharingSnapshot) []map[string]interface{} {
+	rows, _ := a.printerStatusPayloadWithSharingResult(sharing)
+	return rows
+}
+
+// The returned completeness bit is about whether local operator disablement
+// could be read before AND after status probes. No rows + an unreadable policy
+// is not evidence that the fleet was removed: the Gateway must retain its
+// previous inventory instead of applying an authoritative empty snapshot.
+func (a *Agent) printerStatusPayloadWithSharingResult(sharing localPrinterSharingSnapshot) ([]map[string]interface{}, bool) {
 	disabled, err := printer.LoadLocalPrinterDisablement(a.cfg, a.registryPath)
 	if err != nil {
 		log.Printf("Printer inventory proof withheld: local disablement could not be read: %v", err)
-		return nil
+		return nil, false
 	}
 	// Snapshot the printer map under the read lock: the async discovery
 	// goroutine may add printers while heartbeats probe statuses.
@@ -2797,7 +2806,7 @@ func (a *Agent) printerStatusPayloadWithSharing(sharing localPrinterSharingSnaps
 	disabled, err = printer.LoadLocalPrinterDisablement(a.cfg, a.registryPath)
 	if err != nil {
 		log.Printf("Printer inventory proof withheld after probes: local disablement could not be read: %v", err)
-		return nil
+		return nil, false
 	}
 
 	observedCapabilityStateChanged := false
@@ -2940,7 +2949,7 @@ func (a *Agent) printerStatusPayloadWithSharing(sharing localPrinterSharingSnaps
 			log.Printf("WARNING: failed to persist observed printer capabilities: %v", err)
 		}
 	}
-	return result
+	return result, true
 }
 
 // Heartbeat names are display metadata, bounded to the Gateway's UTF-16
@@ -3201,7 +3210,15 @@ func (a *Agent) sendHeartbeatContext(parent context.Context) {
 		inventoryComplete = false
 		log.Printf("Heartbeat sharing inventory incomplete: local policy or execution binding could not be read")
 	}
-	printerPayload := a.printerStatusPayloadWithSharing(sharing)
+	printerPayload, policyComplete := a.printerStatusPayloadWithSharingResult(sharing)
+	if !policyComplete {
+		// Local disablement may change between registry reload and status
+		// probes. An unreadable policy is not proof the printers vanished.
+		// Keep presence/desired ACKs flowing, but forbid Gateway absence
+		// reconciliation for this heartbeat snapshot.
+		inventoryComplete = false
+		log.Printf("Heartbeat inventory incomplete: local printer disablement could not be read")
+	}
 	desiredAcks := a.desiredStateAcksPayload()
 	gatewayOwnedIDs := a.gatewayOwnedPrinterIDs()
 
