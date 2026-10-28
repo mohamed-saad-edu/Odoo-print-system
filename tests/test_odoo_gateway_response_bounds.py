@@ -113,6 +113,35 @@ def test_oversized_post_response_is_ambiguous_and_never_retried(gateway_response
     assert calls == ["/chunked"]
 
 
+def test_streaming_keeps_pinned_session_alive_until_response_close(gateway_response_server, monkeypatch):
+    """A pooled TLS/HTTP connection must outlive the inventory reader.
+
+    The caller is responsible for reading and closing an explicitly streamed
+    response. Closing the request-scoped session first destroys its pinned
+    pool before that reader has finished.
+    """
+    transport = load_module("gateway_http")
+    origin, calls = gateway_response_server
+    closed = []
+    real_close = requests.Session.close
+
+    def record_close(session):
+        closed.append(session)
+        return real_close(session)
+
+    monkeypatch.setattr(requests.Session, "close", record_close)
+    response = transport.get(origin + "/framed", timeout=2, stream=True)
+    assert closed == [], "pinned transport must remain alive while stream is open"
+    try:
+        assert next(response.iter_content(chunk_size=16)) == b"x" * 16
+    finally:
+        response.close()
+    assert len(closed) == 1, "caller closing the stream must release its session exactly once"
+    response.close()
+    assert len(closed) == 1
+    assert calls == ["/framed"]
+
+
 def test_explicit_streaming_retains_caller_owned_inventory_bound(gateway_response_server):
     transport = load_module("gateway_http")
     origin, calls = gateway_response_server
