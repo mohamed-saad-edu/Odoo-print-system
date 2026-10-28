@@ -14,6 +14,7 @@ import {
 } from "../../../../../lib/entitlements";
 import { and, eq } from "drizzle-orm";
 import { databaseNowMs } from "../../../../../lib/database-clock";
+import { isExactIdempotencyKey } from "../../../../../lib/idempotency";
 
 export const dynamic = "force-dynamic";
 
@@ -23,9 +24,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (auth.kind !== "manager") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   try { requireManagerPermission(auth.claims, "jobs.retry"); } catch { return NextResponse.json({ error: "Forbidden" }, { status: 403 }); }
 
-  const { id } = await params;
-  const jobId = typeof id === "string" ? id.trim() : "";
-  if (!jobId) return NextResponse.json({ error: "job id is required", code: "INVALID_REQUEST" }, { status: 400 });
+  const { id: jobId } = await params;
+  // This ID chooses the original physical job. Never trim/normalize it into
+  // another stored job before allocating an intentional reprint.
+  if (!isExactIdempotencyKey(jobId)) {
+    return NextResponse.json({ error: "Invalid exact job identity", code: "INVALID_REQUEST", retryable: false },
+      { status: 400, headers: { "Cache-Control": "no-store" } });
+  }
 
   const job = await db.query.printJobs.findFirst({
     where: and(eq(printJobs.id, jobId), eq(printJobs.tenantId, auth.claims.tenantId)),

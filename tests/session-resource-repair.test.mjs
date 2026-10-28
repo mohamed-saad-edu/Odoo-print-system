@@ -185,6 +185,39 @@ test('Dashboard expected failures cross the action boundary as explicit data',as
   const failure=await api.deleteAgentResult('a');assert.equal(failure.status,500);assert.equal(failure.error,null);assert.ok(!JSON.stringify(failure).includes('secret'));
 });
 
+
+test('reprint Server Action rejects aliased source jobs before selecting a printer',async()=>{
+  const validation=await actual('src/lib/idempotency.ts');
+  const rows=[];
+  const payload={type:'raw',protocol:'raw',encoding:'base64',data:'SGVsbG8='};
+  const stored={id:'job_original',tenantId:'tenant',printerId:'printer-exact',payload,status:'failed',destination:'receipt',documentType:'receipt'};
+  const eq=(column,value)=>({field:column.field,value});
+  const api=await actual('src/app/actions.ts',{
+    ActionError,
+    requireManager:async()=>({tenantId:'tenant',userId:'owner',role:'owner'}),
+    requireManagerPermission:()=>{},
+    getServerLocale:async()=>'en',makeT:()=>key=>key,
+    isExactIdempotencyKey:validation.isExactIdempotencyKey,
+    printJobs:{id:{field:'id'},tenantId:{field:'tenantId'}},eq,and:(...args)=>args,
+    db:{query:{printJobs:{findFirst:async(opts)=>{rows.push(opts.where);return stored;}}}},
+    isTerminal:status=>['failed','success','expired'].includes(status),
+    createPrintJobForPrinter:async(printer,body,options)=>{
+      assert.equal(printer,'printer-exact');assert.deepEqual(body,payload);
+      assert.equal(options.reprintOfJobId,stored.id);assert.equal(options.tenantId,'tenant');
+      return {id:'new-reprint',isReused:false};
+    },
+    revalidatePath:()=>{},entitlementLimitSignal:()=>null,isTenantBillingError:()=>false,
+  },s=>s.slice(s.indexOf('export async function reprintJob('),s.indexOf('export async function setPrinterLifecycle(')));
+  for(const input of ['',undefined,' job_original','job_original ','\u00a0job_original','job_original\u00a0','bad\njob','\ud800']){
+    await assert.rejects(api.reprintJob(input),err=>err instanceof ActionError&&err.status===400&&err.code==='INVALID_REQUEST');
+  }
+  assert.equal(rows.length,0);
+  const response=await api.reprintJob(stored.id);
+  assert.deepEqual(response,{ok:true,id:'new-reprint',reused:false});
+  assert.equal(rows.length,1);
+  assert.deepEqual(rows[0],[{field:'id',value:'job_original'},{field:'tenantId',value:'tenant'}]);
+});
+
 async function odooSave(changes,{removeKey=false,navigate=false}={}) {
   const calls=[];let controller;
   class Record {constructor(){this.resModel='print_gateway.gateway_config';this.resId=7;this.data={gateway_api_key:false};}

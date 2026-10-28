@@ -2240,3 +2240,14 @@ Baseline `c24e2eef1acfaffc788132f7c5816b7e48f112b2`. CI and physical printer ver
 | AUTHORED / NOT RUN | `tests/certification-evidence.test.ts` | Source-backed direct route cases for conflict/no-job and exact matching key |
 
 Baseline `863088b65daae40228c08691065e034e76018e9a`; CI and physical paper tests unverified. Original TODO/BLOCKED directory inventory remains open.
+
+
+#### EXACT-REPRINT-SOURCE-IDENTITY — 2026-10-28
+
+| Status | Module | Contract |
+| --- | --- | --- |
+| PARTIAL | `src/app/actions.ts`, `src/app/api/jobs/[id]/reprint/route.ts` | Require exact existing job identity before authorizing intentional reprint; preserve tenant fence |
+| AUTHORED / NOT RUN | `tests/session-resource-repair.test.mjs` | Execute real reprint Server Action with malformed and canonical keys |
+| AUTHORED / NOT RUN | `tests/reprint-exact-source.test.ts` | Direct HTTP route regression of 400/no enqueue and exact valid job |
+
+Baseline `c96482626e48983649f7020ac268dfbe226b8f32`; source-reviewed only; existing TODO and BLOCKED remain.

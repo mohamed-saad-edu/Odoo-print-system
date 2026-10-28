@@ -2982,3 +2982,11 @@ At `main@9cc31103851f642543bb51dd22353487b00f5578`, GitHub recursive tree lists 
 - Source finding: `print_intent.py::_claim_intent` and `cron_recover_pending_intents` enforced `attempts < max_attempts` only for `claimed` and `failed`, not `pending`. An exhausted pending row (legacy/corrupt/manual state) could be claimed again, incrementing beyond its budget.
 - Regression authored: `b8b9dae6253fc5697ffba95cf55e2fa94b94d129` (`tests/test_odoo19_printing_static.py`). Production source: `62e86a597b53d36f804492170946e98254affb7b` adds claim and cron predicate guards; the normal successful post-commit route is unchanged.
 - **Verification: NOT RUN** at note authoring; CI `40614064532` was pending. **Follow-up P1:** an already-exhausted `pending` row is now safely not dispatched but may need a separate terminalize/re-arm UX to avoid indefinite pending display. Assess with DB/Odoo integration tests before changing its state. No migration, deletion or deployment.
+
+
+### 2026-10-28 — EXACT-REPRINT-SOURCE-IDENTITY
+
+- Baseline `c96482626e48983649f7020ac268dfbe226b8f32`. The reprint HTTP route and the still-exported `reprintJob` Server Action both silently `trim()`med a caller's source job ID before retrieving its payload/printer. A malformed identity could therefore select a different accepted physical job and issue an intentional new print without matching the original caller bytes.
+- Fix: reuse the canonical opaque-identity validator (`isExactIdempotencyKey`), which rejects whitespace aliases, controls, bad Unicode and unbounded input, before any job lookup; pass the exact original value without mutation. Retain tenant-scoped SQL and explicit operator reprint controls.
+- Authored Node VM regression in `tests/session-resource-repair.test.mjs` executing the actual Server Action, asserting invalid IDs are rejected before DB access and the exact ID selects the stored job. Direct HTTP regression added in `tests/reprint-exact-source.test.ts` with mocked auth/DB/admission and zero enqueue for malformed IDs. **NOT RUN** on GitHub-only execution; no passed suite claimed.
+- Status: `src/app/actions.ts`, `src/app/api/jobs/[id]/reprint/route.ts` PARTIAL; new/updated regressions AUTHORED/NOT RUN; Agent, Odoo, PostgreSQL production and paper validation remain open.

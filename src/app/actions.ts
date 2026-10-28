@@ -163,8 +163,10 @@ export async function reprintJob(jobId: string) {
   const t = makeT(await getServerLocale());
   const manager = await requireManager();
   requireManagerPermission(manager, "jobs.retry");
-  if (typeof jobId !== "string" || !jobId.trim()) throw new ActionError(t("errors.jobIdRequired"), 400);
-  const job = await db.query.printJobs.findFirst({ where: and(eq(printJobs.id, jobId.trim()), eq(printJobs.tenantId, manager.tenantId)) });
+  // Reprints are new physical intents: reject malformed source identities,
+  // rather than trimming into a different existing job's printer and payload.
+  if (!isExactIdempotencyKey(jobId)) throw new ActionError(t("errors.jobIdRequired"), 400, "INVALID_REQUEST");
+  const job = await db.query.printJobs.findFirst({ where: and(eq(printJobs.id, jobId), eq(printJobs.tenantId, manager.tenantId)) });
   if (!job) throw new ActionError(t("errors.jobNotFound"), 404);
   if (!isTerminal(job.status as JobStatus)) {
     throw new ActionError(t("errors.jobStillInProgress"), 409);
