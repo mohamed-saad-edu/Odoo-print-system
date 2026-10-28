@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 	"unicode"
-	"unicode/utf16"
+	"unicode/utf8"
 
 	"github.com/yaseir-agent/agent/internal/config"
 )
@@ -267,7 +267,15 @@ func CurrentGeometry(ctx context.Context, p Printer, cfg config.PrinterConfig) (
 }
 
 func validGeometryPrinterID(id string) bool {
-	return id != "" && len(utf16.Encode([]rune(id))) <= 120 && strings.TrimSpace(id) == id && !strings.ContainsFunc(id, unicode.IsControl)
+	// Geometry and operational verification are sent as JSON to the Gateway.
+	// Its opaque printer ID boundary is 120 UTF-8 bytes, not 120 UTF-16
+	// code units: a multi-byte ID must not acquire evidence that the Gateway
+	// would reject. Invalid UTF-8 is also lossy during JSON serialization.
+	// JavaScript String.trim() additionally strips BOM at either edge.
+	return id != "" && len(id) <= 120 && utf8.ValidString(id) &&
+		strings.TrimSpace(id) == id &&
+		!strings.HasPrefix(id, "\uFEFF") && !strings.HasSuffix(id, "\uFEFF") &&
+		!strings.ContainsFunc(id, unicode.IsControl)
 }
 
 func (g *Geometry) PhysicalImageReady() bool {
