@@ -126,6 +126,36 @@ def test_outbox_persists_exact_local_operation_key_and_v2_wire_identity(operatio
     )
 
 
+@pytest.mark.parametrize("malformed_key", [
+    0, 1, [], {}, True, b"not-an-opaque-string", " ",
+])
+def test_submit_route_rejects_explicit_falsy_nonstring_operation_id(malformed_key):
+    """A malformed operation id must not become a fresh random print attempt."""
+    source = _method(
+        "print_router.py", "PrintGatewayRouter", "_submit_route",
+        time=SimpleNamespace(monotonic=lambda: 1.0),
+    )
+    touched = []
+    printer = SimpleNamespace(printer_id="printer-1")
+    destination = SimpleNamespace(id=12, _name="pos.config", display_name="POS Receipt")
+    router = SimpleNamespace(
+        _assert_current_company=lambda _company: None,
+        _persist_durable_job=lambda values: touched.append(values) or 77,
+        _submit_durable_job=lambda *_args, **_kwargs: "queued",
+        _submission_message=lambda *_args: "queued",
+    )
+    with pytest.raises(ValidationError, match="operation key"):
+        source(
+            router,
+            route={"config": SimpleNamespace(id=3), "binding": printer,
+                   "destination": destination, "document_type": "receipt"},
+            payload={"type": "image", "encoding": "base64", "data": "YQ=="},
+            company=SimpleNamespace(id=42),
+            idempotency_key=malformed_key,
+        )
+    assert touched == [], "A corrupt operation ID cannot create a durable job or print"
+
+
 def _replay_fixture(key):
     company = SimpleNamespace(id=42)
     source = SimpleNamespace(
