@@ -17,7 +17,9 @@ vi.mock("../src/lib/print-job-service", () => ({
 import { POST } from "../src/app/api/jobs/[id]/reprint/route";
 
 const request = (jobId: string) => POST(
-  new Request("https://gateway.test/api/jobs/" + encodeURIComponent(jobId) + "/reprint", { method: "POST" }),
+  // Route params are supplied separately by Next.js; keep the URL valid even
+  // when exercising a malformed raw route parameter (e.g. an unpaired surrogate).
+  new Request("https://gateway.test/api/jobs/placeholder/reprint", { method: "POST" }),
   { params: Promise.resolve({ id: jobId }) },
 );
 

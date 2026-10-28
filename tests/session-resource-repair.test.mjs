@@ -213,7 +213,11 @@ test('reprint Server Action rejects aliased source jobs before selecting a print
   }
   assert.equal(rows.length,0);
   const response=await api.reprintJob(stored.id);
-  assert.deepEqual(response,{ok:true,id:'new-reprint',reused:false});
+  // A Server Action result originates in a separate VM realm: assert data,
+  // not an unrelated realm's object prototype.
+  assert.equal(response.ok,true);
+  assert.equal(response.id,'new-reprint');
+  assert.equal(response.reused,false);
   assert.equal(rows.length,1);
   assert.deepEqual(rows[0],[{field:'id',value:'job_original'},{field:'tenantId',value:'tenant'}]);
 });
