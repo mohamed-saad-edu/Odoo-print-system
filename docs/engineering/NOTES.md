@@ -597,3 +597,10 @@ Baseline inspected: main@65214cf7948a214843110fa2fbc1a23aec388340. This is an **
 - **Malformed identity vectors:** Several test files stored literal doubled backslash escape sequences (e.g. a backslash plus `u` and hexadecimal digits) while asserting rejection of actual Unicode BOM, C0/C1 controls, and lone surrogates. The Gateway permits an ordinary literal backslash as an opaque ID character; replace malformed test inputs with the intended Python escapes, not a divergence in Odoo's policy.
 - **Additional fixture fixes:** Compile the real POS top-level selector with its two RPCs; use the kitchen harness's actual `ValidationError` class; accept both single-line and multiline gettext wrappers in source-language assertions.
 - **Verification:** CI was RED before this batch. This is a GitHub-only test-harness patch; RED→GREEN, actual Odoo deployment, PostgreSQL runtime and paper verification remain **NOT RUN / CI pending** at commit time. Other independent failures (status polling fairness, policy AST guards, etc.) remain TODO until reproduced separately.
+
+
+### P1 — 2026-10-28 rejected batch status must never leak a partial trusted map
+
+- **RED evidence:** GitHub App / Quality job `122637848771` (`40633862657`), `tests/test_odoo_status_cron_budget.py::test_corrupt_batch_status_falls_back_to_exact_individual_lookups` failed on four cases. For a duplicate, foreign, padded or malformed remote ID, response validation raised `ValueError` but left the mutable `returned` dict containing earlier rows; cron applied earlier rows from a rejected response and issued only one exact-ID GET instead of two.
+- **Fix:** `models/print_job.py::cron_sync_status` discards the entire map (`returned = None`) on *any* malformed or failed bulk response. Its existing per-job fallback must independently read each exact original job; the current red behavioral test already asserts both GETs and no unauthorized receipt.
+- **Scope:** No automatic POST/reprint, no physical success inference, and no change to the supported 100-job selection window. Production fix committed directly on main; green CI **pending**, Odoo install/paper **NOT RUN**.

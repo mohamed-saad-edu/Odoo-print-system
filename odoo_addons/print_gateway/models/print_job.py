@@ -2896,6 +2896,11 @@ class PrintGatewayJob(models.Model):
                                     raise ValueError("Gateway batch-status identities are ambiguous")
                                 returned[remote_id] = item
                     except Exception as exc:
+                        # An invalid later row revokes trust in ALL earlier rows
+                        # from this response. Otherwise a partly populated map
+                        # would update one job from rejected batch evidence and
+                        # individually check only the remaining jobs.
+                        returned = None
                         _logger.warning("Batch status sync failed for config %s: %s; falling back to per-job sync", config.id, exc)
 
                     # One bulk request has attempted every known job. Persist
