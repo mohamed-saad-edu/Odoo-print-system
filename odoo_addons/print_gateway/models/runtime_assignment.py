@@ -3,6 +3,7 @@
 
 from odoo import api, fields, models, _
 from odoo.exceptions import AccessError, ValidationError
+from ..runtime_policy import is_exact_gateway_printer_id
 
 
 class PrintGatewayRuntimeAgentAssignment(models.Model):
@@ -88,18 +89,20 @@ class PrintGatewayRuntimeAgentAssignment(models.Model):
                 ("branch_id.parent_id", "=", company.id),
                 *domain,
             ]
+        # An assignment is an opaque physical execution identity: never
+        # strip a legacy malformed record into a different Agent's authority.
         return {
-            record.runtime_agent_id.strip()
+            record.runtime_agent_id
             for record in self.sudo().search(domain)
-            if isinstance(record.runtime_agent_id, str) and record.runtime_agent_id.strip()
+            if is_exact_gateway_printer_id(record.runtime_agent_id)
         }
 
     @api.model
     @api.private
     def is_agent_assigned(self, company, branch, runtime_agent_id):
-        if not isinstance(runtime_agent_id, str) or not runtime_agent_id.strip():
+        if not is_exact_gateway_printer_id(runtime_agent_id):
             return False
-        return runtime_agent_id.strip() in self.assigned_agent_ids(company, branch)
+        return runtime_agent_id in self.assigned_agent_ids(company, branch)
 
     def _check_admin(self):
         if not (self.env.is_superuser() or self.env.user.has_group("base.group_system")):
@@ -160,5 +163,5 @@ class PrintGatewayRuntimeAgentAssignment(models.Model):
                     raise ValidationError(_("The selected Odoo Branch is not available to the current user."))
                 if not record.branch_id.parent_id or record.branch_id.parent_id != record.company_id:
                     raise ValidationError(_("Odoo Branch must belong directly to the selected Odoo Company."))
-            if not isinstance(record.runtime_agent_id, str) or not record.runtime_agent_id.strip():
-                raise ValidationError(_("A non-empty Gateway runtime agent ID is required."))
+            if not is_exact_gateway_printer_id(record.runtime_agent_id):
+                raise ValidationError(_("A valid exact Gateway runtime agent ID is required."))
