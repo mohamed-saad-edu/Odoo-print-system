@@ -66,8 +66,12 @@ test('operator reconciliation uses the same v2 Unicode identity guard as print a
 test('operator reconciliation and print admission require the same canonical v4 installation ID', async () => {
   assert.equal(isCanonicalOdooV2InstallationId(a), true);
   assert.equal(isCanonicalOdooV2InstallationId(b), true);
+  // The original all-numeric UUID is identical under toUpperCase().
+  // Use a valid UUIDv4 with alphabetic hex to exercise non-canonical case.
+  const alphabeticLower = 'abcdef01-2345-4abc-8abc-0123456789ab';
+  assert.equal(isCanonicalOdooV2InstallationId(alphabeticLower), true);
   const unsupported = [
-    a.toUpperCase(),
+    alphabeticLower.toUpperCase(),
     '00000000-0000-1000-8000-000000000001',
     '00000000-0000-5000-8000-000000000001',
     'not-a-uuid',
