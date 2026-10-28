@@ -90,7 +90,12 @@ def test_changed_automation_rule_is_actionable_in_arabic_and_english(diagnostic)
     arabic = module.customer_error_message(lambda value: "عربي: " + value, diagnostic)
     assert arabic == "عربي: " + english
     catalog = (ROOT / "odoo_addons/print_gateway/i18n/ar.po").read_text(encoding="utf-8")
-    assert 'msgid "' + english + '"\\nmsgstr "' in catalog
+    # Gettext entries use a real newline, not a literal backslash+n string.
+    # Require a nonempty Arabic translation of the exact safe operator copy.
+    import re
+    entry = re.search(r'^msgid "' + re.escape(english) + r'"\nmsgstr "([^"\n]+)"',
+                      catalog, flags=re.MULTILINE)
+    assert entry is not None and re.search(r'[\u0600-\u06FF]', entry.group(1))
 
 
 def test_http_error_codes_take_priority_over_arbitrary_response_text():

@@ -9,7 +9,10 @@ def test_offline_503_requeues_with_backoff():
     marker = 'if reject_code in ("PRINTER_OFFLINE", "PRINTER_UNAVAILABLE", "AGENT_UNAVAILABLE"):'
     assert marker in src
     block = src[src.index(marker):]
-    block = block[: block.index("# Any other 503")]
+    # Keep this contract scoped to the proven pre-dispatch printer refusal.
+    # The generic 503 branch deliberately has a different (uncertain) outcome
+    # and must not be considered a reason to replay physical printing.
+    block = block[: block.index("# The Gateway's typed capacity denials occur")]
     # Must not unconditionally terminally fail a transient offline: requeue
     # with retry, terminalizing only after bounded attempts.
     assert '"failed" if terminal else "queued"' in block, "offline 503 must requeue, terminalizing only when bounded"

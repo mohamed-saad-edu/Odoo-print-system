@@ -525,7 +525,11 @@ def test_odoo_ambiguous_submission_has_idempotency_key_recovery_path():
     route = read("src/app/api/print/jobs/route.ts")
     assert 'params={"idempotencyKey": job._gateway_idempotency_key()}' in jobs
     assert 'job.status == "unknown" and str(job.last_error or "").startswith("UNKNOWN_SUBMISSION_OUTCOME:")' in jobs
-    assert 'const idempotencyKey = params.get("idempotencyKey")?.trim();' in route
+    # Exact wire replay keys are opaque; trimming would alias another
+    # accepted operation after an ambiguous network response.
+    assert 'const idempotencyKey = params.get("idempotencyKey");' in route
+    assert '!isExactIdempotencyKey(idempotencyKey)' in route
+    assert 'params.get("idempotencyKey")?.trim()' not in route
     assert "isNotNull(printJobs.apiKeyId)" in route
 
 

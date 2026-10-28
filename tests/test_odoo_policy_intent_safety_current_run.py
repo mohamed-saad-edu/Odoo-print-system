@@ -395,9 +395,16 @@ def test_intent_route_requires_durable_job_or_explicit_skip_and_savepoint():
     savepoints = [n for n in ast.walk(route) if isinstance(n, ast.With) and
                   any(isinstance(i.context_expr, ast.Call) and isinstance(i.context_expr.func, ast.Attribute)
                       and i.context_expr.func.attr == 'savepoint' for i in n.items)]
-    assert len(savepoints) == 1
-    assert any(isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
-               and n.func.attr == 'route_intent' for n in ast.walk(savepoints[0]))
+    # One savepoint protects the business-rule match read and another the
+    # durable route. New isolation is stronger, not a regression: verify
+    # both guards rather than requiring an obsolete exact savepoint count.
+    matching = [sp for sp in savepoints if any(
+        isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+        and n.func.attr == 'matches_record' for n in ast.walk(sp))]
+    dispatch = [sp for sp in savepoints if any(
+        isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+        and n.func.attr == 'route_intent' for n in ast.walk(sp))]
+    assert len(matching) == len(dispatch) == 1 and matching[0] is not dispatch[0]
     assert any(isinstance(n, ast.Raise) and isinstance(n.exc, ast.Call)
                and isinstance(n.exc.func, ast.Name) and n.exc.func.id == 'ValueError'
-               for n in ast.walk(savepoints[0]))
+               for n in ast.walk(dispatch[0]))

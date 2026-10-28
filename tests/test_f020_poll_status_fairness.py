@@ -87,7 +87,11 @@ def test_real_cron_eventually_polls_101st_unresolved_job_after_bounded_page():
         def _require_cron_runner(self): return True
         def browse(self, ids): return JobSet(job_records[i] for i in ids)
         def sudo(self): return JobSet()
-        def _apply_synced_status(self, _job, _status): return False
+        # The batch contains an exact authorized status: its application is
+        # successful. Returning False would *force* an individual fallback
+        # whose fake job has no action_sync_status method, and measure a
+        # nonexistent fixture failure instead of the 101st-job fairness rule.
+        def _apply_synced_status(self, _job, _status): return True
         def _mark_gateway_job_missing(self, *_args): raise AssertionError('Unexpected remote job missing')
 
     CronProduction.cron_sync_status.__globals__['requests'] = SimpleNamespace(post=post)

@@ -113,7 +113,7 @@ def attempt_persist(*, destination_id=31, document_type='receipt',
 
 @pytest.mark.parametrize('changes,expected', [
     ({'destination_id': 32}, 'destination'),
-    ({'document_type': 'kitchen'}, 'document type'),
+    ({'destination_id': 30, 'document_type': 'kitchen'}, 'document type'),
 ])
 def test_changed_binding_cannot_create_outbox_job_at_persistence_boundary(changes, expected):
     router, values, cursor, jobs = attempt_persist(**changes)

@@ -123,7 +123,10 @@ def test_platform_owner_routes_distinguish_invalid_auth_from_platform_dependency
         else:
             assert "PlatformUnauthorizedError" in source, route
             assert "Platform authentication temporarily unavailable" in source, route
-            assert "status: 503" in source, route
+            # A typed ternary is an equally explicit 503 dependency-failure
+            # result, and distinguishes revoked owner authority as 401.
+            assert ('status: 503' in source or
+                    'status: error instanceof PlatformUnauthorizedError ? 401 : 503' in source), route
 
 def test_workspace_subscription_is_scoped_to_authenticated_owner_and_manual_approval():
     page = read("src/app/billing/page.tsx")
