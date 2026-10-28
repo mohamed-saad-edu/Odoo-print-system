@@ -159,7 +159,7 @@ suite("Platform Stats Route", () => {
     const next = await fetchList("limit=1&offset=1");
     expect(first).toMatchObject({ status: 200, cache: "private, no-store", data: { limit: 1, offset: 0, hasMore: true } });
     expect(next).toMatchObject({ status: 200, data: { limit: 1, offset: 1, hasMore: false } });
-    expect(new Set([first.data.subscriptions[0].tenantId, next.data.subscriptions[0].tenantId])).size).toBe(2);
+    expect(new Set([first.data.subscriptions[0].tenantId, next.data.subscriptions[0].tenantId]).size).toBe(2);
     const filtered = await fetchList("status=suspended&limit=1");
     expect(filtered.data).toMatchObject({ hasMore: false, subscriptions: [{ tenantId: second.tenantId, status: "suspended" }] });
     const searched = await fetchList("status=suspended&search=" + encodeURIComponent(second.tenantId));

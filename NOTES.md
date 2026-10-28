@@ -2990,3 +2990,9 @@ At `main@9cc31103851f642543bb51dd22353487b00f5578`, GitHub recursive tree lists 
 - Fix: reuse the canonical opaque-identity validator (`isExactIdempotencyKey`), which rejects whitespace aliases, controls, bad Unicode and unbounded input, before any job lookup; pass the exact original value without mutation. Retain tenant-scoped SQL and explicit operator reprint controls.
 - Authored Node VM regression in `tests/session-resource-repair.test.mjs` executing the actual Server Action, asserting invalid IDs are rejected before DB access and the exact ID selects the stored job. Direct HTTP regression added in `tests/reprint-exact-source.test.ts` with mocked auth/DB/admission and zero enqueue for malformed IDs. **NOT RUN** on GitHub-only execution; no passed suite claimed.
 - Status: `src/app/actions.ts`, `src/app/api/jobs/[id]/reprint/route.ts` PARTIAL; new/updated regressions AUTHORED/NOT RUN; Agent, Odoo, PostgreSQL production and paper validation remain open.
+
+
+### 2026-10-28 — CI-PLATFORM-STATS-TS-SYNTAX
+
+- Source baseline `f753a984a71651868b71feb2f9c8d751f9e7e8ab`. GitHub Actions **Docker** on commit `0362f2acc325d2f55300068a286264435f184af5`, run `40614127955`, job `122572575036`, failed during `npm run build` TypeScript parsing: `tests/platform-stats.test.ts:162:102 TS1005`, and `:244 TS1128`. The actual cause was a mismatched closing parenthesis in an assertion involving `new Set([...]).size`; the trailing TS1128 diagnostics were secondary parse fallout.
+- Fix: correct only the assertion syntax, preserving the two-page subscription pagination test and all security/CI gates. No unrelated test disabled. Verification remains **NOT RUN** until a new exact-commit typecheck or Docker build completes; the observed earlier build was a real FAILURE, never PASS.

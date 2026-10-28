@@ -2251,3 +2251,13 @@ Baseline `863088b65daae40228c08691065e034e76018e9a`; CI and physical paper tests
 | AUTHORED / NOT RUN | `tests/reprint-exact-source.test.ts` | Direct HTTP route regression of 400/no enqueue and exact valid job |
 
 Baseline `c96482626e48983649f7020ac268dfbe226b8f32`; source-reviewed only; existing TODO and BLOCKED remain.
+
+
+#### CI-PLATFORM-STATS-TS-SYNTAX — 2026-10-28
+
+| Status | Path | Finding / fix |
+| --- | --- | --- |
+| PARTIAL | `tests/platform-stats.test.ts` | Restore TypeScript parsing of existing pagination regression without changing assertions or business rules |
+| OBSERVED FAILED / PENDING RECHECK | Docker run `40614127955` | `npm run build` stopped at TS1005 line 162 / TS1128 line 244; next commit must be rechecked |
+
+Source baseline `f753a984a71651868b71feb2f9c8d751f9e7e8ab`; do not mark CI PASS until exact-HEAD evidence exists.
