@@ -309,7 +309,7 @@ class TestPrintGatewayArchitectureContract(TransactionCase):
         source = (MODELS / "print_intent.py").read_text(encoding="utf-8")
         # Recovery is implemented with raw SQL so it can claim legacy rows atomically
         # across workers; assert the SQL predicates instead of an obsolete ORM-domain string.
-        self.assertIn("(status = 'pending' AND (next_retry_at IS NULL OR next_retry_at <= %s))", source)
+        self.assertIn("(status = 'pending' AND attempts < max_attempts AND (next_retry_at IS NULL OR next_retry_at <= %s))", source)
         self.assertIn("(status = 'claimed' AND attempts < max_attempts AND (claimed_at IS NULL OR claimed_at <= %s))", source)
         self.assertIn("(status = 'failed' AND attempts < max_attempts AND (next_retry_at IS NULL OR next_retry_at <= %s))", source)
 
@@ -493,7 +493,9 @@ class TestPrintGatewayArchitectureContract(TransactionCase):
         self.assertIn("gateway_api_key", source)
         self.assertIn("runtime_agent_id", source)
         self.assertIn("New branch bindings do not use this field as their source of truth.", source)
-        self.assertNotIn("printer_id", source)
+        # A strict printer-id validator may be imported for safety; this
+        # configuration model must not own a printer_id field/selection.
+        self.assertNotRegex(source, r"(?m)^[ \\t]{4}printer_id\\s*=")
 
     def test_binding_model_enforces_root_company_invariant(self):
         source = (MODELS / "binding.py").read_text(encoding="utf-8")
@@ -911,22 +913,23 @@ class TestPrintGatewayArchitectureContract(TransactionCase):
     # ------------------------------------------------------------------
     # P1-3 Regression: partial status maps to submitted in both paths
     # ------------------------------------------------------------------
-    def test_partial_gateway_status_maps_to_submitted_not_passed_to_advance_status(self):
-        """A Gateway status of 'partial' must be pre-mapped to 'submitted' so
-        it never reaches _advance_status (which would raise ValidationError)."""
+    def test_partial_gateway_status_remains_unknown_without_paper_evidence(self):
+        """Partial Gateway delivery must never appear as a safe submission.
+
+        The source-side classifier is the only way a successful HTTP POST can
+        produce the outbox state. An ambiguous remote status must be terminal
+        unknown, not submitted, to prevent automatic duplicate physical prints.
+        """
         source = (MODELS / "print_job.py").read_text(encoding="utf-8")
-        import re
-        # partial must be pre-mapped to submitted before the allowlist.
-        self.assertIn('if remote_status == "partial":', source)
-        self.assertIn('remote_status = "submitted"', source)
-        # 'partial' must not appear raw in the submit allowlist set.
-        allowlist_match = re.search(
-            r'remote_status not in \{[^}]+\}',
-            source,
-        )
-        if allowlist_match:
-            self.assertNotIn('"partial"', allowlist_match.group(0),
-                             "partial must not be in submit allowlist; it must be pre-mapped to submitted")
+        classifier = source.split("def _classify_gateway_submission_status(", 1)[1].split(
+            "def _action_submit_trusted(", 1
+        )[0]
+        self.assertIn('if status == "partial":', classifier)
+        self.assertIn('return "unknown", "UNKNOWN_PARTIAL_DELIVERY: "', classifier)
+        self.assertNotIn('return "submitted", "UNKNOWN_PARTIAL_DELIVERY: "', classifier)
+        # Reconciliation of a legacy Gateway GET uses the same physical rule.
+        self.assertIn('elif status == "partial":', source)
+        self.assertIn('status = "unknown"', source)
 
     def test_internal_routing_and_policy_helpers_are_odoo19_rpc_private(self):
         """Only explicit, guarded actions may be called through call_kw."""

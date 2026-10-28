@@ -3027,3 +3027,12 @@ At `main@9cc31103851f642543bb51dd22353487b00f5578`, GitHub recursive tree lists 
 **Root fixes:** `tests/odoo-cutover-locking.integration.test.ts` and `tests/odoo-manual-enrollment.integration.test.ts` now set/remove per-suite signing-secret fixtures without disabling production authentication. `src/lib/odoo-auth.ts` introduces an opt-out for its live integration-enabled fence ONLY for the authenticated Odoo health endpoint; `src/app/api/odoo/health/route.ts` uses it, preserving tenant lifecycle, key id/hash, revocation, rotation and live database locks. `tests/odoo-health-fencing.integration.test.ts` adds a direct disabled health regression. All printer/Agent inventory reads retain required enabled integration.
 
 **Coverage by module:** PARTIAL `tests/odoo-*integration.test.ts`, `src/lib/odoo-auth.ts`, `src/app/api/odoo/health` (source reviewed, regressions authored); TODO `src/app/api/*`, `src/lib/*`, `src/desktop`, `agent`, `odoo_addons`, `src-tauri`, `drizzle`, `contracts`; BLOCKED exact-SHA PostgreSQL/Go/Odoo/Windows/physical verification until CI. NO tests reported PASS without a completed run, no production deployment.
+
+
+### ODOO-ARCHITECTURE-CONTRACT-2026-10-28
+
+**Observed:** the full hardened Odoo GitHub Action at `ad8b391366da5fb2add0726c05d2dc91f17d33fe` failed the legacy architecture source assertions (not a successful test). The asserted presence of unbounded pending intent claims contradicted the recently added `attempts < max_attempts` fence; the ban on the literal substring `printer_id` falsely blocked the exact-identity validator imported into Gateway config; and a test demanded converting physical partial delivery to `submitted` instead of the newer safe `unknown` state.
+
+**Change:** `odoo_addons/print_gateway/tests/test_architecture_contract.py` now verifies bounded retry claims, disallows an authoritative config-level printer assignment rather than any identifier text, and enforces the unknown-partial classifier and physical marker. No test disabled, no production/printing logic relaxed; older failover and Odoo runtime tests remain TODO until verified/fixed.
+
+**Ledger:** PARTIAL `odoo_addons/print_gateway/tests/test_architecture_contract.py`, `odoo_addons/print_gateway/models/print_intent.py`, `odoo_addons/print_gateway/models/print_job.py` (source consulted, test changed); TODO all other Odoo controller/model/browser cases and live Odoo CI/hardware. No checked-in build artifacts, no deployment, CI unverified for this commit.
