@@ -43,6 +43,7 @@ class PrintGatewayPosController(PosController):
                 ('Cache-Control', 'no-store'),
             ],
         )
-        # Use 202 for accepted (queued) jobs, 200 for completed/synchronous results
-        response.status_code = 202 if result.get('status') in ('queued', 'claimed', 'printing') else 200
+        # Gateway acceptance is asynchronous (including 'submitted'); a
+        # 200 response must not falsely signal synchronous completion.
+        response.status_code = 202 if result.get('status') in ('queued', 'submitted', 'claimed', 'printing') else 200
         return response
