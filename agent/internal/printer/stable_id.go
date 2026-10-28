@@ -317,7 +317,8 @@ func StableIDFromIPPURI(endpoint string, host string, port int) string {
 // physical identity first. Endpoint/name fallbacks remain for devices that do
 // not expose a durable identity.
 func StableIDForDevice(d DeviceInfo) string {
-	if (d.Protocol == "ipp" || d.Protocol == "ipps") && d.Endpoint != "" && d.NetworkAddress != "" && d.Port > 0 {
+	if (strings.EqualFold(d.Protocol, "ipp") || strings.EqualFold(d.Protocol, "ipps")) &&
+		d.Endpoint != "" && d.NetworkAddress != "" && d.Port > 0 {
 		return StableIDFromIPPURI(d.Endpoint, d.NetworkAddress, d.Port)
 	}
 	if key, ok := physicalIdentityKey(d); ok {
