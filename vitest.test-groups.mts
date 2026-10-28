@@ -112,6 +112,7 @@ export const integrationVitestTestFiles = [
   "tests/team-invitation-audit-actor.integration.test.ts",
   "tests/team-invitation-read-authority.integration.test.ts",
   "tests/billing-page-snapshot-live-owner.integration.test.ts",
+  "tests/dashboard-current-authority.integration.test.ts",
 ] as const;
 
 export const integrationTestFiles = [
