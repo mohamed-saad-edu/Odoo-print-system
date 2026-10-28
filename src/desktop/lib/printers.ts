@@ -161,20 +161,42 @@ export function printerPresentation(p: PrinterInfo, agent?: Parameters<typeof ga
 export function mergePrinterInventories(cloud: PrinterInfo[], local: PrinterInfo[]): PrinterInfo[] {
   const rows = new Map(cloud.filter(isProductionPrinter).map((p) => [p.id, p]));
   for (const printer of local.filter((p) => isProductionPrinter(p) && !isLocalSetupCandidate(p))) {
-    rows.set(printer.id, { ...rows.get(printer.id), ...printer, lifecycle: printer.lifecycle, inventoryPresent: printer.inventoryPresent, sharedWithGateway: printer.sharedWithGateway ?? true });
+    const remote = rows.get(printer.id);
+    const matched = remote && printer.sharedWithGateway !== false && sameLocalCloudPrinterBinding(printer, remote);
+    // Local-only health may be displayed independently even when the Gateway
+    // is stale or withheld. Never carry a foreign cloud agentId/verification
+    // into that local row; the test-print gate below uses the same proof.
+    rows.set(printer.id, matched
+      ? { ...remote, ...printer, lifecycle: printer.lifecycle, inventoryPresent: printer.inventoryPresent, sharedWithGateway: printer.sharedWithGateway ?? true }
+      : { ...printer, sharedWithGateway: printer.sharedWithGateway ?? true });
   }
   return [...rows.values()];
 }
 
 /** Unknown native health may be admitted, but local readiness grants no cloud route. */
 export function eligibleGatewayTestPrinterIds(cloud: PrinterInfo[], local: PrinterInfo[], connected: boolean, nowMs: number): ReadonlySet<string> {
-  const privateIds = new Set(local.filter((p) => p.sharedWithGateway === false).map((p) => p.id));
-  return new Set(connected ? cloud.filter((p) => !privateIds.has(p.id) && p.sharedWithGateway !== false
-    && isMainInventoryPrinter(p) && p.inventoryPresent === true && !!p.agentId && p.configurationConverged !== false
-    && p.agentFreshness !== "stale" && p.agentFreshness !== "missing" && p.freshness !== "stale" && p.freshness !== "missing"
-    && isPrinterOperationallyVerified(p, new Date(nowMs))
-    && printerAgentView(p, nowMs).tone === "ok"
-    && printerObservationFreshness(p.lastSeenAt, nowMs) === "fresh").map((p) => p.id) : []);
+  const localById = new Map(local.map(p => [p.id, p]));
+  // A duplicate local identity is conflicting evidence; never authorize a
+  // cloud test through whichever duplicate happened to be last in the array.
+  const conflictingLocalIds = new Set<string>();
+  const seenLocalIds = new Set<string>();
+  for (const p of local) {
+    if (seenLocalIds.has(p.id)) conflictingLocalIds.add(p.id);
+    seenLocalIds.add(p.id);
+  }
+  return new Set(connected ? cloud.filter((p) => {
+    if (conflictingLocalIds.has(p.id) || p.sharedWithGateway === false) return false;
+    const native = localById.get(p.id);
+    if (native && (native.sharedWithGateway === false || isLocalSetupCandidate(native)
+      || !sameLocalCloudPrinterBinding(native, p)
+      || !validatePrinterOperationalVerification(native.capabilities?.operational_verification,
+        { id: native.id, connectionType: native.connectionType ?? native.connection_type, protocol: native.protocol }, new Date(nowMs)).ok)) return false;
+    return isMainInventoryPrinter(p) && p.inventoryPresent === true && !!p.agentId && p.configurationConverged !== false
+      && p.agentFreshness !== "stale" && p.agentFreshness !== "missing" && p.freshness !== "stale" && p.freshness !== "missing"
+      && isPrinterOperationallyVerified(p, new Date(nowMs))
+      && printerAgentView(p, nowMs).tone === "ok"
+      && printerObservationFreshness(p.lastSeenAt, nowMs) === "fresh";
+  }).map((p) => p.id) : []);
 }
 
 /** Single advancing-clock projection used by every Desktop status summary. */

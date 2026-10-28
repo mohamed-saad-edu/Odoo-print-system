@@ -159,6 +159,28 @@ describe("local health and sharing stay independent of cloud evidence", () => {
     expect(cloudPresentation({ ...cloud, sharedWithGateway: false }, undefined, now)).toMatchObject({ state: "unavailable", reasonKey: "printer.presentation.notSharedReason" });
     expect(cloud.status).toBe("online");
   });
+  it("does not blend foreign cloud ownership or enable a remote test when a local ID collides", () => {
+    const shared = { ...local, sharedWithGateway: true };
+    const unrelated = { ...cloud, name: "Different physical endpoint", agentId: "foreign-agent",
+      verificationBindingDigest: "b".repeat(64), logicalQueueKey: "b".repeat(64) };
+    const rows = mergePrinterInventories([unrelated], [shared]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].name).toBe(local.name);
+    expect(rows[0].agentId).toBeUndefined();
+    expect(rows[0].localObservedAt).toBe(now);
+    expect(eligibleGatewayTestPrinterIds([unrelated], [shared], true, now).has(local.id)).toBe(false);
+    // Real matching proofs still retain the authenticated Gateway association.
+    expect(mergePrinterInventories([cloud], [shared])[0].agentId).toBe(cloud.agentId);
+    expect(eligibleGatewayTestPrinterIds([cloud], [shared], true, now).has(local.id)).toBe(true);
+  });
+
+  it("does not accept a withdrawn local share or duplicate local ID as Gateway print authority", () => {
+    const privateRows = mergePrinterInventories([cloud], [local]);
+    expect(privateRows[0].agentId).toBeUndefined();
+    const shared = { ...local, sharedWithGateway: true };
+    expect(eligibleGatewayTestPrinterIds([cloud], [shared, shared], true, now).has(local.id)).toBe(false);
+  });
+
   it("does not guess an identity match from identical queue names", () => {
     const rows = mergePrinterInventories([{ ...cloud, id: "historical-alias" }], [local]);
     expect(rows.map((p) => p.id)).toEqual(["historical-alias", local.id]);
