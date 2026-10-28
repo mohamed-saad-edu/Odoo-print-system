@@ -216,6 +216,11 @@ async function httpFixture({ reused, revokedAfterAuthentication = false, conflic
     },
     '../../../../lib/entitlements': { TenantEntitlementError: class extends Error {}, TenantPrintQuotaExceededError: class extends Error {}, isTenantBillingError: () => false },
     '../../../../lib/request-limits': { hasBodyOverLimit: () => false },
+    '../../../../lib/print-expiration': {
+      // The HTTP-replay fixture omits expiresAt; the real strict parser's
+      // valid/invalid wire behavior is covered by print-expiration tests.
+      parsePrintExpiration: (value) => { assert.equal(value, undefined); return undefined; },
+    },
     '../../../../lib/log': { logError: noop, logWarn: noop, requestIdFrom: () => 'req' },
     '../../../../lib/database-clock': { databaseNowMs: () => Date.now() },
     'drizzle-orm': { and: (...v) => v, eq: (a,b) => `${a}=${b}`, isNotNull: (x) => x, sql },
