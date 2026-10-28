@@ -3,13 +3,29 @@ import { NextResponse } from "next/server";
 import { asc,eq,sql } from "drizzle-orm";
 import { db } from "../../../../db";
 import { plans } from "../../../../db/schema";
-import { requirePlatformOwner,requirePlatformActorInTransaction } from "../../../../lib/platform-auth";
+import { requirePlatformOwner,requirePlatformActorInTransaction ,requirePlatformReadAuthorityInTransaction } from "../../../../lib/platform-auth";
 import { manualApiError } from "../../../../lib/manual-api-error";
 import { parseManualPlan } from "../../../../lib/manual-plans";
 import { ManualSubscriptionError,requireIdempotencyKey,requestDigest } from "../../../../lib/manual-subscriptions";
 import { writeAuditEvent } from "../../../../lib/audit";
 export async function GET(req:Request) {
- try {await requirePlatformOwner(req);return NextResponse.json({plans:await db.select({id:plans.id,name:plans.name,description:plans.description,priceMinorUnits:plans.priceMinorUnits,priceCurrency:plans.priceCurrency,entitlements:plans.entitlements,isActive:plans.isActive,isPublic:plans.isPublic,displayOrder:plans.displayOrder}).from(plans).orderBy(asc(plans.displayOrder),asc(plans.name))},{headers:{'Cache-Control':'private, no-store'}});}catch(e){return manualApiError(e);}
+ try {
+  const actor=await requirePlatformOwner(req);
+  const rows=await db.transaction(async tx=>{
+   await requirePlatformReadAuthorityInTransaction(tx,actor);
+   return tx.select({
+    id:plans.id,name:plans.name,description:plans.description,
+    priceMinorUnits:plans.priceMinorUnits,priceCurrency:plans.priceCurrency,
+    entitlements:plans.entitlements,isActive:plans.isActive,
+    isPublic:plans.isPublic,displayOrder:plans.displayOrder,
+   }).from(plans).orderBy(asc(plans.displayOrder),asc(plans.name));
+  });
+  return NextResponse.json({plans:rows},{headers:{'Cache-Control':'private, no-store'}});
+ } catch(e) {
+  const response=manualApiError(e);
+  response.headers.set('Cache-Control','private, no-store');
+  return response;
+ }
 }
 export async function POST(req:Request) {
  try {
