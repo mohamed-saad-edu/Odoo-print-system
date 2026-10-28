@@ -48,6 +48,13 @@ def wire_key(version, company_id, operation_id, installation_id=None):
         raise ValueError("Durable local operation key is required") from None
     if length_bytes > 400:
         raise ValueError("Durable local operation key is required")
+    # Gateway parseOdooIdentity requires canonical positive decimal Odoo
+    # company IDs with at most 18 ASCII digits. Reject noncanonical local
+    # namespace values BEFORE saving an outbox intent that Gateway cannot
+    # ever admit. Keep historical v1 digests untouched.
+    company = str(company_id)
+    if not re.fullmatch(r"[1-9][0-9]{0,17}", company):
+        raise ValueError("Canonical Odoo source company ID is required")
     try:
         parsed = uuid.UUID(str(installation_id))
         if parsed.version != 4 or str(parsed) != installation_id:

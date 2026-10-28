@@ -32,6 +32,28 @@ def test_v2_different_installations_same_local_operation_are_distinct():
     assert ka == hashlib.sha256(json.dumps(["yaseir-odoo-v2",a,"7","operation-123"], separators=(",", ":")).encode()).hexdigest()
 
 
+def test_v2_company_scope_requires_canonical_gateway_decimal_identity():
+    import pytest
+
+    m = impl()
+    installation = "00000000-0000-4000-8000-000000000001"
+    for company in ("0", 0, "00", "07", "+7", " 7", "7 ", "-1", "7.0",
+                    "١", "7" * 19, None, False, True):
+        with pytest.raises(ValueError, match="Canonical Odoo source company ID"):
+            m.wire_key(2, company, "operation-123", installation)
+
+    # Odoo's persisted res.company integer ID and its canonical string have
+    # the same Gateway v2 key; full 18-digit values remain representable.
+    for company in (1, 7, 999999999999999999):
+        assert m.wire_key(2, company, "operation-123", installation) == (
+            m.wire_key(2, str(company), "operation-123", installation)
+        )
+
+    # A v1 historical key must remain byte-identical, including a previously
+    # stored noncanonical company spelling.
+    assert m.wire_key(1, "07", "operation-123") == m.legacy_key("07", "operation-123")
+
+
 def test_v2_unicode_operation_length_matches_gateway_utf16_units():
     """Gateway JS enforces 200 UTF-16 code units; astral symbols use two.
 
