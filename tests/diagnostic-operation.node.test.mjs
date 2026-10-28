@@ -30,6 +30,7 @@ const dashHandler = between(dashboard, '  const handleGatewayTestPrint = async',
 const desktopHandler = between(desktop, '  const handleTest = useCallback(', '  const startAgent = useCallback');
 const ipcSource = between(ipc, 'export async function testGatewayPrinter(', 'export function cleanupLocalJobs');
 const desktopEligibility = between(read('src/desktop/lib/printers.ts'), 'export function eligibleGatewayTestPrinterIds(', '/** Single advancing-clock').replace(/^export /, '');
+const desktopAdmission = between(read('src/desktop/lib/printers.ts'), 'export function friendlyDiagnosticAdmissionError(', '/* ---------- Job field accessors').replace(/^export /, '');
 const verificationExports = {};
 vm.runInNewContext(ts.transpileModule(read('src/lib/printer-operational-verification.ts'), { compilerOptions: {
   target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS,
@@ -102,9 +103,12 @@ function makeDesktop(send,{url='https://gateway.example.com',sharedWithGateway=t
     testGatewayPrinter:ipcContext.send,
     setBusyBoth:()=>{},setMsg:v=>messages.push(v),refreshJobs:()=>{},
     t:key=>key,friendlyPrinterError:v=>v,errMsg:e=>String(e),locale:'en',
+    DEFAULT_LOCALE:'en',tr:(_locale,key)=>key,codeMessageKey:()=>undefined,
   });
   vm.runInContext(compile(desktopEligibility),context);
-  vm.runInContext(compile(`${desktopHandler}\nglobalThis.runDiagnostic=handleTest;`),context);
+  // Execute the actual desktop admission presenter. Only the i18n lookup is
+  // replaced by an identity translation so tests assert stable message keys.
+  vm.runInContext(compile(`${desktopAdmission}\n${desktopHandler}\nglobalThis.runDiagnostic=handleTest;`),context);
   return {
     run:(id='printer1')=>context.runDiagnostic(id),
     pendingRepeat:()=>pendingRepeat,
