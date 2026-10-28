@@ -57,6 +57,13 @@ describe("canonical operational proof and file-result fixtures", () => {
       expect(validatePrinterOperationalVerification(proof, owner, new Date(fixtures.now)).ok, name).toBe(allowed);
       expect(operationalVerificationProjection(proof, owner, new Date(fixtures.now)).verificationState, name)
         .toBe(allowed ? "verified" : "pending");
+      // Persisted legacy verified state cannot bypass the current ID contract
+      // just because a prior Agent recorded current timestamps and a digest.
+      const known = { ...first.printer,
+        ...operationalVerificationProjection(first.proof, first.printer, new Date(fixtures.now)),
+        id,
+      };
+      expect(isPrinterOperationallyVerified(known, new Date(fixtures.now)), name + " persisted proof").toBe(allowed);
     }
   });
 
