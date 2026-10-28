@@ -355,7 +355,11 @@ def test_post_dispatch_timeout_or_malformed_reply_keeps_unknown_operation(respon
     assert cursor.closed
 
 
-@pytest.mark.parametrize("http_status,body", [(401, {}), (429, {"code": "RATE_LIMIT_EXCEEDED"})])
+@pytest.mark.parametrize("http_status,body", [(401, {}), (429, {
+    "code": "TENANT_ENTITLEMENT_EXCEEDED",
+    "entitlement": "max_jobs_per_minute", "limit": 3, "used": 3,
+    "upgradeRequired": False, "retryable": True,
+})])
 def test_automatic_backoff_is_accepted_as_the_same_durable_operation(http_status, body):
     router, job, cursor, sent, _order = fixture(reply(http_status, body))
     result = router._submit_durable_job(7, structured_outcome=True)
@@ -369,6 +373,7 @@ def test_automatic_backoff_is_accepted_as_the_same_durable_operation(http_status
 
 @pytest.mark.parametrize("response_body", [
     {},
+    {"code": "RATE_LIMIT_EXCEEDED"},
     {"code": "PROXY_429", "upgradeRequired": True,
      "entitlement": "max_prints_per_period", "limit": 10, "used": 10},
     {"code": "PRINT_QUOTA_EXCEEDED", "upgradeRequired": "true",

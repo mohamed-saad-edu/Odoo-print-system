@@ -8,7 +8,12 @@ from test_kitchen_durable_outcomes import ValidationError, fixture, reply
 
 @pytest.mark.parametrize('attempts', [25, 100])
 def test_persistent_rate_limit_parks_same_operation_instead_of_retrying_every_minute(attempts):
-    response = reply(429, {'code': 'RATE_LIMIT_EXCEEDED'})
+    response = reply(429, {
+        "code": "TENANT_ENTITLEMENT_EXCEEDED",
+        "entitlement": "max_jobs_per_minute",
+        "limit": 3, "used": 3,
+        "upgradeRequired": False, "retryable": True,
+    })
     response.headers['Retry-After'] = '5'
     _router, job, _cursor, sent, _order = fixture(response)
     job.attempts = attempts
@@ -23,7 +28,12 @@ def test_persistent_rate_limit_parks_same_operation_instead_of_retrying_every_mi
 
 
 def test_transient_rate_limit_respects_retry_after_and_preserves_operation():
-    response = reply(429, {'code': 'RATE_LIMIT_EXCEEDED'})
+    response = reply(429, {
+        "code": "TENANT_ENTITLEMENT_EXCEEDED",
+        "entitlement": "max_jobs_per_minute",
+        "limit": 3, "used": 3,
+        "upgradeRequired": False, "retryable": True,
+    })
     response.headers['Retry-After'] = '120'
     _router, job, _cursor, sent, _order = fixture(response)
     original_key = job.idempotency_key
@@ -62,6 +72,14 @@ def test_gateway_typed_technical_job_limits_are_safe_to_retry(entitlement):
      "limit": 3, "used": 3, "upgradeRequired": False, "retryable": False},
     {"code": "TENANT_ENTITLEMENT_EXCEEDED", "entitlement": "max_jobs_per_minute",
      "limit": 3, "used": 3, "upgradeRequired": "false", "retryable": True},
+    {"code": "TENANT_ENTITLEMENT_EXCEEDED", "entitlement": "max_jobs_per_minute",
+     "limit": 3, "used": 2, "upgradeRequired": False, "retryable": True},
+    {"code": "TENANT_ENTITLEMENT_EXCEEDED", "entitlement": "max_concurrent_jobs",
+     "limit": True, "used": 3, "upgradeRequired": False, "retryable": True},
+    {"code": "TENANT_ENTITLEMENT_EXCEEDED", "entitlement": "max_concurrent_jobs",
+     "limit": 3, "used": "3", "upgradeRequired": False, "retryable": True},
+    {"code": "TENANT_ENTITLEMENT_EXCEEDED", "entitlement": "max_jobs_per_minute",
+     "limit": 3, "used": 3, "remaining": 1, "upgradeRequired": False, "retryable": True},
 ])
 def test_inconsistent_technical_entitlement_429_is_ambiguous(response_body):
     response = reply(429, response_body)
@@ -76,12 +94,13 @@ def test_inconsistent_technical_entitlement_429_is_ambiguous(response_body):
 
 @pytest.mark.parametrize('body', [
     {}, {'code': 'INTERNAL_ERROR'}, {'error': 'upstream response interrupted'},
+    {'code': 'RATE_LIMIT_EXCEEDED'},
 ])
 def test_unclassified_rate_limit_does_not_automatically_replay(body):
     """An HTTP status alone cannot prove that upstream admitted zero jobs.
 
-    Preserve safe automatic backoff only for the Gateway's explicit
-    RATE_LIMIT_EXCEEDED pre-admission signal, not an untyped intermediary 429.
+    Preserve safe automatic backoff only for exact typed Gateway burst
+    capacity denials, never generic or intermediary 429 shapes.
     """
     response = reply(429, body)
     response.headers['Retry-After'] = '60'

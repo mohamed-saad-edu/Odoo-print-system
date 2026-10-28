@@ -1717,18 +1717,19 @@ class PrintGatewayJob(models.Model):
                         # float infinity or a quoted number) cannot prove
                         # definite pre-admission refusal. Do not treat it as
                         # a safe-to-retry billing hold.
-                        valid_quota_counters = (
+                        valid_limit_counters = (
                             type(raw_limit) is int and 1 <= raw_limit <= 2147483647
                             and type(raw_used) is int and raw_limit <= raw_used <= 2147483647
-                            # The canonical Gateway emits no available credits
-                            # and no automatic retry for quota exhaustion.
-                            # Missing optional fields are supported for older
-                            # Gateways; contradictory supplied values are not.
                             and (
                                 "remaining" not in rate_body
                                 or type(rate_body["remaining"]) is int
                                 and rate_body["remaining"] == 0
                             )
+                        )
+                        valid_quota_counters = (
+                            valid_limit_counters
+                            # Exhausted monthly credits must never claim a
+                            # retryable admission or a positive remainder.
                             and (
                                 "retryable" not in rate_body
                                 or rate_body["retryable"] is False
@@ -1790,6 +1791,7 @@ class PrintGatewayJob(models.Model):
                             and rate_body.get("retryable") is True
                             and rate_body.get("upgradeRequired") is False
                             and entitlement in ("max_jobs_per_minute", "max_concurrent_jobs")
+                            and valid_limit_counters
                         )
                         if technical_capacity:
                             values = self._billing_retry_values(
@@ -1804,29 +1806,15 @@ class PrintGatewayJob(models.Model):
                                 ))
                             break
 
-                        # A rate-limit response from an intermediary can
-                        # arrive after the Gateway already accepted the job.
-                        # Only the explicit Gateway pre-admission rate-limit
-                        # code proves no physical output. Unknown 429 shapes
-                        # must retain their identity for read-only lookup,
-                        # never schedule an automatic new physical POST.
-                        if str(rate_body.get("code") or "").strip() != "RATE_LIMIT_EXCEEDED":
-                            persist_ambiguous_response(
-                                RuntimeError("GATEWAY_HTTP_429"),
-                                "Unclassified HTTP 429; Gateway acceptance could not be excluded",
-                            )
-                            break
-                        # An explicit pre-admission rate limit is safe to
-                        # retry with the original immutable idempotency key,
-                        # using the same bounded recovery budget as billing.
-                        values = self._billing_retry_values(
-                            job,
-                            "GATEWAY_RATE_LIMITED: Gateway returned HTTP 429",
-                            retry_after,
+                        # "RATE_LIMIT_EXCEEDED" is a legacy intermediary
+                        # shape, not a code emitted by the current Gateway
+                        # print-admission routes. It may arrive AFTER a job
+                        # was committed: unlike exact typed Gateway capacity
+                        # denials above, it is NOT safe-retry proof.
+                        persist_ambiguous_response(
+                            RuntimeError("GATEWAY_HTTP_429"),
+                            "Unclassified HTTP 429; Gateway acceptance could not be excluded",
                         )
-                        persist_submit_state(values)
-                        if raise_on_failure:
-                            raise ValidationError(_("Gateway is temporarily rate-limiting print submissions. The job was safely re-queued for retry."))
                         break
 
                     if response.status_code not in (200, 201):
