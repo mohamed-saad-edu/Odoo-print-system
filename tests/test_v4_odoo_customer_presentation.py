@@ -75,6 +75,24 @@ def test_error_translation_resolved_for_each_reader_not_stored_locale():
     assert module.customer_error_message(lambda value: value, None) == ""
 
 
+@pytest.mark.parametrize("diagnostic", [
+    "PRINT_RULE_CHANGED: the admin disabled this automatic print rule",
+    "PRINT_RULE_NOT_MATCHED: this automation no longer selects the document",
+    "PRINT_SOURCE_COMPANY_CHANGED: source company changed after capture",
+])
+def test_changed_automation_rule_is_actionable_in_arabic_and_english(diagnostic):
+    module = presenter()
+    assert module.customer_error_category(diagnostic) == "routing_changed"
+    english = module.customer_error_message(lambda value: value, diagnostic)
+    assert "No print was sent." in english
+    assert diagnostic not in english
+    assert "company changed after capture" not in english
+    arabic = module.customer_error_message(lambda value: "عربي: " + value, diagnostic)
+    assert arabic == "عربي: " + english
+    catalog = (ROOT / "odoo_addons/print_gateway/i18n/ar.po").read_text(encoding="utf-8")
+    assert 'msgid "' + english + '"\\nmsgstr "' in catalog
+
+
 def test_http_error_codes_take_priority_over_arbitrary_response_text():
     module = presenter()
     assert module.customer_error_category("malicious private English text", code="PRINT_QUOTA_EXCEEDED", status=403) == "quota"
