@@ -50,13 +50,16 @@ func requiredStringField(m map[string]interface{}, key string) (string, error) {
 }
 
 func optionalStringField(m map[string]interface{}, key string) (string, error) {
-	raw, ok := m[key]
-	if !ok || raw == nil {
+	raw, present := m[key]
+	if !present {
 		return "", nil
 	}
+	// Zod's optional string/enum fields permit an absent property, never
+	// explicit JSON null. Keeping that distinction prevents a differently
+	// serialized payload from bypassing Gateway admission in the Agent.
 	value, ok := raw.(string)
 	if !ok {
-		return "", fmt.Errorf("payload.%s must be a string", key)
+		return "", fmt.Errorf("payload.%s must be a string when present", key)
 	}
 	return value, nil
 }
