@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
+import { parseDbTimeMs } from "../src/lib/database-timestamp";
 import {
   __setClockSkewForTests,
   clockSkewMs,
@@ -254,6 +255,20 @@ describe("clock authority is enforced in the source", () => {
       expect(source).not.toMatch(/now = new Date\(\)/);
       expect(source).toContain("gatewayNow");
     }
+  });
+
+  it("uses the shared UTC parser for raw PostgreSQL job clock strings, not the host timezone", () => {
+    const source = read("src/lib/print-job-service.ts");
+    expect(source).toContain("const dbNowMs = parseDbTimeMs(rawNow)");
+    expect(source).toContain("const dbNow = new Date(dbNowMs)");
+    expect(source).not.toContain('rawNow.trim().replace(" ", "T")');
+    // Both UTC-naive and explicit-offset PostgreSQL representations of the
+    // same instant must create the same physical print expiry timestamp.
+    const naive = "2026-10-28 04:00:00";
+    const expected = Date.parse("2026-10-28T04:00:00Z");
+    expect(parseDbTimeMs(naive)).toBe(expected);
+    expect(parseDbTimeMs("2026-10-28T07:00:00+03:00")).toBe(expected);
+    expect(parseDbTimeMs("2026-10-28 04:00:00+00")).toBe(expected);
   });
 
   it("stamps job lifetime timestamps from the single database clock read", () => {

@@ -538,14 +538,14 @@ async function insertQueuedJobAtomically({
     const clockResult = await tx.execute(sql`SELECT clock_timestamp() AS now`);
     const clockRows = (clockResult as unknown as { rows?: Array<{ now?: Date | string }> }).rows ?? [];
     const rawNow = clockRows[0]?.now;
-    const dbNow = rawNow instanceof Date
-      ? rawNow
-      : new Date(typeof rawNow === "string"
-        ? rawNow.trim().replace(" ", "T").replace(/([+-]\d{2})$/, "$1:00")
-        : "");
-    if (Number.isNaN(dbNow.getTime())) {
+    // Raw PostgreSQL timestamps may arrive as UTC-naive strings. Date.parse
+    // interprets those as host-local time, shifting TTL and created_at when
+    // the Gateway host is not in UTC. Reuse the database-wide parser.
+    const dbNowMs = parseDbTimeMs(rawNow);
+    if (dbNowMs === null) {
       throw new PrintJobInputError("Database clock is unavailable", "INTERNAL_ERROR", 500);
     }
+    const dbNow = new Date(dbNowMs);
     const effectiveExpiresAt = expiresAt ?? new Date(dbNow.getTime() + 60 * 60 * 1000);
     if (!(effectiveExpiresAt instanceof Date) || Number.isNaN(effectiveExpiresAt.getTime()) || effectiveExpiresAt.getTime() <= dbNow.getTime()) {
       throw new PrintJobInputError("expiresAt must be in the future", "INVALID_REQUEST", 400);
