@@ -1446,6 +1446,7 @@ class TestControlPlane(TransactionCase):
             "last_error": "AGENT_EXECUTION_TIMEOUT: physical output is unknown",
         })
         job._apply_synced_status(job, {
+            "jobId": job.gateway_job_id,
             "status": "success",
             "error": "LATE_SUCCESS: agent completed after Gateway timeout",
         })
@@ -1466,11 +1467,13 @@ class TestControlPlane(TransactionCase):
             "idempotency_key": "no-late-success-odoo-%s" % uuid.uuid4().hex[:10],
         })
         job.write({"status": "failed", "last_error": "CONNECTION_ERROR: printer offline"})
-        with self.assertRaises(ValidationError):
-            job._apply_synced_status(job, {
-                "status": "success",
-                "error": "LATE_SUCCESS: fabricated marker on a non-unknown failure",
-            })
+        # An unauthenticated-to-job status document cannot upgrade a failed
+        # operation, even if it claims an eventual success marker.
+        self.assertFalse(job._apply_synced_status(job, {
+            "status": "success",
+            "error": "LATE_SUCCESS: fabricated marker on a non-unknown failure",
+        }))
+        self.assertEqual(job.status, "failed")
 
     def test_21_raw_payload_requires_explicit_protocol(self):
         """Verify raw payload creation strictly requires explicit printer protocol without fallback inference."""
