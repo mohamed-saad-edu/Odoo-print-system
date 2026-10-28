@@ -482,6 +482,10 @@ class TestPrintGatewayArchitectureContract(TransactionCase):
         # Routed jobs still return explicit JSON and 202 for queued output.
         self.assertIn("json.dumps(result, default=str)", source)
         self.assertIn("response.status_code = 202 if result.get('status')", source)
+        # The Gateway may return 'submitted' for an accepted job before
+        # Agent execution. HTTP 200 must not imply synchronous completion.
+        self.assertIn("('queued', 'submitted', 'claimed', 'printing')", source)
+
 
     def test_gateway_config_keeps_legacy_agent_reference_non_authoritative(self):
         source = (MODELS / "gateway_config.py").read_text(encoding="utf-8")
