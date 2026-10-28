@@ -100,7 +100,7 @@ import PrintCertificationWizard from "../../components/PrintCertificationWizard"
 import JobTimeline from "../../components/JobTimeline";
 import { PrinterGeometryDetails, PrinterGeometryProfileEditor } from "../../components/PrinterGeometrySettings";
 import UpgradeLimitDialog, { type UpgradeLimitResource } from "../../components/UpgradeLimitDialog";
-import { isLimitSignalResult } from "../../lib/limit-signal";
+import { isLimitSignalResult, limitSignalDisplayDetails, type EntitlementLimitSignal } from "../../lib/limit-signal";
 import { isServerActionVersionMismatch } from "../../lib/server-action-version";
 
 export type Agent = {
@@ -318,29 +318,18 @@ function upgradeLimitFromApiError(error: DashboardApiError): {
   };
 }
 
-function upgradeLimitFromLimitSignal(limit: {
-  entitlement: string;
-  message: string;
-  used?: number | null;
-  max?: number | "unlimited" | null;
-  periodEnd?: string | null;
-  retryAfterSeconds?: number | null;
-}): {
+function upgradeLimitFromLimitSignal(signal: EntitlementLimitSignal): {
   resource: UpgradeLimitResource;
   used?: number | null;
   limit?: number | "unlimited" | null;
   periodEnd?: string | null;
   retryAfterSeconds?: number | null;
 } | null {
-  const resource = upgradeLimitResourceForEntitlement(limit.entitlement);
+  const resource = upgradeLimitResourceForEntitlement(signal.entitlement);
   if (!resource) return null;
-  return {
-    resource,
-    used: limit.used ?? null,
-    limit: limit.max ?? null,
-    periodEnd: limit.periodEnd ?? null,
-    retryAfterSeconds: limit.retryAfterSeconds ?? null,
-  };
+  // The canonical wire field is `limit`, not the old `max` alias.
+  // Do not hide a real monthly allowance or device cap behind an empty value.
+  return { resource, ...limitSignalDisplayDetails(signal) };
 }
 
 async function sendGatewayTestPage(printerId: string, operationKey: string): Promise<DiagnosticResult> {
