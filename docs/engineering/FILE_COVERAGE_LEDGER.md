@@ -2082,3 +2082,15 @@ PARTIAL  tests/ci-main-preserve-running-gates.test.mjs — workflow policy regre
 ```
 
 Source and contract: SYSTEM_UNIFICATION_NOTEBOOK.md CONSOLE-READ-AUTHORITY-010. Do not mark a path DONE/VERIFIED merely because the GitHub Contents API accepted a commit; transactional PostgreSQL RED/GREEN, typecheck, Go/Windows, Odoo and full latest-HEAD gates are not yet proven. No hardware printing or populated rollback rehearsal.
+
+
+#### AGENT-LEDGER-IMMUTABILITY-2026-10-28
+
+```text
+PARTIAL agent/internal/queue/queue.go — observed SQLite reservation and printing identity invariants, sentinel fix; no full-file signoff
+PARTIAL agent/internal/agent/agent.go — aligned Gateway-raw printer ledger identity across local alias conversion; no full-file signoff
+PARTIAL agent/internal/queue/queue_test.go — changed zero-byte retry fixture to use original immutable payload
+AUTHORED agent/internal/queue/job_identity_immutability_test.go — direct SQLite queued/failed identity and ACK-token regression (CI cancelled/unverified)
+```
+
+Evidence is detailed in [SYSTEM_UNIFICATION_NOTEBOOK.md](SYSTEM_UNIFICATION_NOTEBOOK.md) (`LEDGER-JOB-ID-IMMUTABILITY-2026-10-28`). Exact-head Go/Windows tests and physical print execution are NOT VERIFIED, so none of these paths is marked DONE.
