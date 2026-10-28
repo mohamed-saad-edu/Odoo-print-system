@@ -1492,7 +1492,6 @@ class PrintGatewayJob(models.Model):
         self._require_outbox_write()
         return self._action_submit_trusted(raise_on_failure=raise_on_failure)
 
-    @api.private
     @api.model
     @api.private
     def _classify_gateway_submission_status(self, raw_status, remote_error):
@@ -1522,6 +1521,7 @@ class PrintGatewayJob(models.Model):
             )
         return ("submitted" if status == "queued" else status), (detail or False)
 
+    @api.private
     def _action_submit_trusted(self, raise_on_failure=False):
         """Trusted internal submission (not reachable via RPC).
 
