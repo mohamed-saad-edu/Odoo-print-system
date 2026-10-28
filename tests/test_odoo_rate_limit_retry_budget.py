@@ -35,6 +35,45 @@ def test_transient_rate_limit_respects_retry_after_and_preserves_operation():
     assert len(sent) == 1
 
 
+@pytest.mark.parametrize("entitlement", ["max_jobs_per_minute", "max_concurrent_jobs"])
+def test_gateway_typed_technical_job_limits_are_safe_to_retry(entitlement):
+    # The Gateway rejects these inside admission locks, before inserting
+    # print jobs. A bounded retry can resume without manufacturing paper.
+    response = reply(429, {
+        "code": "TENANT_ENTITLEMENT_EXCEEDED",
+        "entitlement": entitlement,
+        "limit": 3, "used": 3,
+        "upgradeRequired": False, "retryable": True,
+    })
+    _router, job, _cursor, sent, _order = fixture(response)
+    prior_key = job.idempotency_key
+    job._action_submit_trusted()
+    assert job.status == "queued"
+    assert job.gateway_job_id is False
+    assert job.next_retry_at
+    assert job.idempotency_key == prior_key
+    assert len(sent) == 1
+
+
+@pytest.mark.parametrize("response_body", [
+    {"code": "TENANT_ENTITLEMENT_EXCEEDED", "entitlement": "max_agents",
+     "limit": 3, "used": 3, "upgradeRequired": False, "retryable": True},
+    {"code": "TENANT_ENTITLEMENT_EXCEEDED", "entitlement": "max_jobs_per_minute",
+     "limit": 3, "used": 3, "upgradeRequired": False, "retryable": False},
+    {"code": "TENANT_ENTITLEMENT_EXCEEDED", "entitlement": "max_jobs_per_minute",
+     "limit": 3, "used": 3, "upgradeRequired": "false", "retryable": True},
+])
+def test_inconsistent_technical_entitlement_429_is_ambiguous(response_body):
+    response = reply(429, response_body)
+    _router, job, _cursor, sent, _order = fixture(response)
+    job._action_submit_trusted()
+    assert job.status == "unknown"
+    assert job.gateway_job_id is False
+    assert job.next_retry_at is False
+    assert job.last_error.startswith("UNKNOWN_SUBMISSION_OUTCOME:")
+    assert len(sent) == 1
+
+
 @pytest.mark.parametrize('body', [
     {}, {'code': 'INTERNAL_ERROR'}, {'error': 'upstream response interrupted'},
 ])
