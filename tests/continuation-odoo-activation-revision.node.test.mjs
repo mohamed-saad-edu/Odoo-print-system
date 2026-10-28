@@ -45,6 +45,12 @@ async function configFixture({ readOnly = false, lifecycle = 'active' } = {}) {
     '../../../../db': { db }, '../../../../db/schema': { apiKeys: table },
     '../../../../lib/manager-auth': { validateWorkspaceManager: async () => null },
     '../../../../lib/authorization': { requireManagerPermission: noop },
+    // PATCH imports the transaction authority guard; all mutation semantics
+    // remain in the actual production handler used by this test.
+    '../../../../lib/manager-mutation-authorization': {
+      requireManagerActorInTransaction: noop,
+      ManagerMutationAuthorityChangedError: class extends Error {},
+    },
     '../../../../lib/odoo-auth': { validateOdooKey: async () => ({ id: 'key', tenantId: 'tenant', hashedKey: 'valid', readOnly }) },
     '../../../../lib/audit': { writeAuditEvent: async () => events.push('audit') },
     '../../../../lib/log': { logError: noop },

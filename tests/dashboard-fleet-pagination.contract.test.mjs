@@ -18,7 +18,9 @@ test("dashboard fleet reads are page bounded while unlimited plans remain valid"
 });
 
 test("SSR and polling share the bounded fleet query instead of selecting whole fleets", () => {
-  assert.match(page, /loadDashboardStateForTenant\(claims\.tenantId\)/);
+  assert.match(page, /loadDashboardStateForTenant\(claims\.tenantId, \{\}, tx\)/);
+  assert.match(page, /requireActiveTenantInTransaction\(tx, claims\.tenantId\)/);
+  assert.match(page, /requireManagerActorInTransaction\(tx, claims, "jobs\.read"\)/);
   assert.doesNotMatch(page, /\.from\(agents\)/);
   assert.doesNotMatch(page, /\.from\(printers\)/);
   assert.match(actions, /getDashboardState\(options: DashboardFleetOptions = \{\}\)/);

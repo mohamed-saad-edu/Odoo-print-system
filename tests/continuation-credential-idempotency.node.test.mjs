@@ -5,6 +5,7 @@ import { SourceTextModule, SyntheticModule, createContext } from 'node:vm';
 import { createHash } from 'node:crypto';
 import test from 'node:test';
 import { printingContractModules } from './helpers/printing-contract-vm.mjs';
+import { parsePrintExpiration } from '../src/lib/print-expiration.ts';
 
 // Exercise the real production service and HTTP handler. Only unavailable
 // database/Next/Drizzle dependencies are substituted. The credential check
@@ -203,6 +204,8 @@ async function httpFixture({ reused, revokedAfterAuthentication = false, conflic
     },
     '../../../../lib/odoo-v2-admission': { OdooNamespaceError: class extends Error {}, verifyOdooInstallation: () => { throw Error('unexpected v2 admission in legacy test'); } },
     '../../../../lib/payload': { validatePrintJobPayload: (value) => value },
+    // Preserve the real strict ISO-expiration validator at the HTTP boundary.
+    '../../../../lib/print-expiration': { parsePrintExpiration },
     '../../../../lib/print-job-service': {
       AgentQueueFullError: class extends Error {}, AgentQueuedJobsFullError: class extends Error {}, PrintJobCapabilityError: class extends Error {}, PrintJobInputError,
       idempotencyDigest: () => 'digest', idempotencyFingerprint: fingerprint,
