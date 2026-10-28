@@ -13,6 +13,7 @@ export const integrationVitestTestFiles = [
   "tests/manual-subscriptions.integration.test.ts",
   "tests/password-only-auth.integration.test.ts",
   "tests/platform-owner-invitation-session.integration.test.ts",
+  "tests/platform-confidential-read-race.integration.test.ts",
   "tests/password-auth-migration.integration.test.ts",
   "tests/email-auth-token-lifetime.integration.test.ts",
   "tests/metrics-machine-auth.integration.test.ts",
