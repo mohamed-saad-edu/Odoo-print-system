@@ -50,3 +50,30 @@ def test_controller_and_exact_binding_use_the_same_permission_gate():
 def test_fallback_proof_requires_exact_owned_primary_without_inventing_health(rows, expected):
     assert policy.inventory_has_shared_printer({"printers": rows}, "primary") is expected
     assert policy.inventory_has_shared_printer(None, "primary") is False
+
+
+@pytest.mark.parametrize("bad_agent", [
+    " owner", "owner ", "owner\\x00suffix", "owner\\u0085suffix",
+    "\\ufeffowner", "owner\\ufeff", "\\ud800", "x" * 121,
+    True, 7,
+])
+def test_fallback_proof_rejects_noncanonical_agent_and_primary_ids(bad_agent):
+    # This gate may allow automatic backup only before ANY physical write.
+    # A malformed owner cannot prove that the exact primary is still shared.
+    record = {"id": "primary", "lifecycle": "active", "sharedWithGateway": True,
+              "agent": {"id": bad_agent}}
+    assert policy.inventory_has_shared_printer({"printers": [record]}, "primary") is False
+
+
+@pytest.mark.parametrize("bad_primary", [" primary", "primary ", "\\ufeffprimary", "primary\\x00", "é" * 61])
+def test_fallback_proof_rejects_malformed_primary_even_if_inventory_echoes_it(bad_primary):
+    assert policy.inventory_has_shared_printer({"printers": [
+        {"id": bad_primary, "lifecycle": "active", "agent": {"id": "owner"}}
+    ]}, bad_primary) is False
+
+
+def test_fallback_proof_keeps_valid_unicode_owner_and_exact_primary():
+    assert policy.inventory_has_shared_printer({"printers": [
+        {"id": "طابعة", "lifecycle": "active", "sharedWithGateway": True,
+         "agent": {"id": "وكيل-1"}}
+    ]}, "طابعة") is True
