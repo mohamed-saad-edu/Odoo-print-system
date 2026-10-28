@@ -362,7 +362,7 @@ func DiscoverQuick(cfg *config.Config, registryPath string) DiscoveryResult {
 			if seen[d.ID] {
 				for i, existing := range all {
 					if existing.ID == d.ID {
-						all[i] = mergeDeviceInfo(existing, d)
+						all[i] = mergeDiscoveredSameID(existing, d)
 						break
 					}
 				}
@@ -522,7 +522,7 @@ func discoverWithContext(ctx context.Context, cfg *config.Config, registryPath s
 			// Aliases retain the index of the merged record, so later updates
 			// from either source reach that record instead of being discarded.
 			if index, ok := seen[d.ID]; ok {
-				all[index] = mergeDeviceInfo(all[index], d)
+				all[index] = mergeDiscoveredSameID(all[index], d)
 				continue
 			}
 			duplicate := false
@@ -1054,6 +1054,22 @@ func sameNetworkEndpoint(a, b DeviceInfo) bool {
 		return aIPP && bIPP && a.Protocol == b.Protocol && a.Endpoint == b.Endpoint
 	}
 	return true
+}
+
+// mergeDiscoveredSameID is used before registry reconciliation, when config,
+// saved registry and live Windows enumeration can complete in any order.
+// A legacy ID collision between distinct installed queues is NOT permission to
+// choose whichever observation won the race. Quarantine the identity until an
+// operator can reconcile the two actual Windows execution destinations.
+func mergeDiscoveredSameID(existing, incoming DeviceInfo) DeviceInfo {
+	if isSpoolerDevice(existing) && isSpoolerDevice(incoming) &&
+		strings.TrimSpace(existing.SpoolerName) != "" &&
+		strings.TrimSpace(incoming.SpoolerName) != "" &&
+		!sameSpoolerQueueDuringDetailLoss(existing, incoming) {
+		log.Printf("[discovery] distinct Windows queues collide on printer ID %q; refusing to select a live destination", existing.ID)
+		return withRegistryIdentityCollision(existing, "same_id_different_queue")
+	}
+	return mergeDeviceInfo(existing, incoming)
 }
 
 func mergeDeviceInfo(existing, incoming DeviceInfo) DeviceInfo {
