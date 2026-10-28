@@ -391,7 +391,7 @@ class PrintGatewayRouter(models.AbstractModel):
             if selected_binding:
                 if not selected_binding.enabled:
                     raise ValidationError(_("The print binding was disabled before the durable job could be created."))
-                if str(selected_binding.printer_id or "").strip() != str(durable_values.get("printer_id") or "").strip():
+                if selected_binding.printer_id != durable_values.get("printer_id"):
                     raise ValidationError(_("The print binding was repointed to another printer before the durable job could be created."))
                 if target_company:
                     router = env["print_gateway.print_router"]
