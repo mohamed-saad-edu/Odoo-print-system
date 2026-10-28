@@ -528,7 +528,7 @@ func discoverWithContext(ctx context.Context, cfg *config.Config, registryPath s
 			duplicate := false
 			for i, existing := range all {
 				if sameNetworkEndpoint(existing, d) {
-					all[i] = mergeDeviceInfo(existing, d)
+					all[i] = mergeDiscoveredSameID(existing, d)
 					seen[d.ID] = i
 					duplicate = true
 					break
@@ -1061,7 +1061,31 @@ func sameNetworkEndpoint(a, b DeviceInfo) bool {
 // A legacy ID collision between distinct installed queues is NOT permission to
 // choose whichever observation won the race. Quarantine the identity until an
 // operator can reconcile the two actual Windows execution destinations.
+// A known raw/TCP printer language is part of the selected execution
+// contract, not a generic host capability. Two declared languages at the
+// same physical socket cannot be merged by arrival order. Unknown probe
+// observations remain eligible for a later explicit protocol declaration.
+func conflictingNetworkPrintLanguage(left, right DeviceInfo) bool {
+	if !sameNetworkEndpoint(left, right) {
+		return false
+	}
+	byteStream := func(raw string) bool {
+		switch strings.ToLower(strings.TrimSpace(raw)) {
+		case "raw", "escpos", "zpl", "tspl":
+			return true
+		default:
+			return false
+		}
+	}
+	a, b := strings.ToLower(strings.TrimSpace(left.Protocol)), strings.ToLower(strings.TrimSpace(right.Protocol))
+	return a != b && byteStream(a) && byteStream(b)
+}
+
 func mergeDiscoveredSameID(existing, incoming DeviceInfo) DeviceInfo {
+	if conflictingNetworkPrintLanguage(existing, incoming) {
+		log.Printf("[discovery] conflicting byte languages for printer endpoint %q; explicit reconciliation required", existing.ID)
+		return withRegistryIdentityCollision(existing, "same_endpoint_different_print_language")
+	}
 	if isSpoolerDevice(existing) && isSpoolerDevice(incoming) &&
 		strings.TrimSpace(existing.SpoolerName) != "" &&
 		strings.TrimSpace(incoming.SpoolerName) != "" &&
