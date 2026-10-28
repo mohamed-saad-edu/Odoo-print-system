@@ -299,6 +299,8 @@ def test_each_business_policy_hook_catches_only_after_savepoint():
     (False, "event_changed"),
     (False, "model_changed"),
     (False, "filter_miss"),
+    (False, "rule_edited_after_capture"),
+    (False, "binding_edited_after_capture"),
 ])
 def test_recovery_scopes_to_captured_intent_company_before_reading_the_source(source_reassigned, policy_drift):
     # Model record rules can hide a valid branch source until the Environment
@@ -319,15 +321,21 @@ def test_recovery_scopes_to_captured_intent_company_before_reading_the_source(so
             pass
 
     cursor = Cursor()
+    captured_at = datetime.datetime(2026, 10, 28, 12, 0, 0)
+    edited_at = captured_at + datetime.timedelta(minutes=1)
+    old_revision = captured_at - datetime.timedelta(minutes=1)
     policy = SimpleNamespace(
         active=policy_drift != 'disabled',
         model_name='other.model' if policy_drift == 'model_changed' else 'stock.picking',
         event_type='other_event' if policy_drift == 'event_changed' else 'picking_validated',
         matches_record=lambda _record: policy_drift != 'filter_miss',
+        write_date=edited_at if policy_drift == 'rule_edited_after_capture' else old_revision,
+        binding_id=SimpleNamespace(write_date=edited_at if policy_drift == 'binding_edited_after_capture' else old_revision),
     )
     intent = SimpleNamespace(
         claim_token='held-lease', company_id=branch, intent_key='outbox-lease',
         event_type='picking_validated', policy_id=policy,
+        create_date=captured_at,
         with_env=lambda scoped_env: intent,
     )
     record = SimpleNamespace(
