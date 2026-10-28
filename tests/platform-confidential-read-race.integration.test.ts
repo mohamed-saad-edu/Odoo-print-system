@@ -60,7 +60,7 @@ suite("Platform commercial GET live-session transaction fences", () => {
           const waiting = await pool().query(
             "SELECT count(*)::int AS n FROM pg_stat_activity " +
             "WHERE datname = current_database() AND wait_event_type = 'Lock' " +
-            "AND query LIKE '%JOIN platform_session_security s%' " +
+            "AND query LIKE '%FROM users%' AND query LIKE '%FOR SHARE%' " +
             "AND $1 = ANY(pg_blocking_pids(pid))",
             [blockerPid],
           );
