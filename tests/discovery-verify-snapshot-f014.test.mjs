@@ -63,7 +63,7 @@ const guard=new vm.SourceTextModule(transpile('lib/manager-mutation-authorizatio
 class TestTenantSuspendedError extends Error {}
 class TestTenantDeletedError extends Error {}
 const dep={
- 'next/server':mk({NextResponse:{json:(value,{status=200}={})=>Response.json(value,{status})}}),
+ 'next/server':mk({NextResponse:{json:(value,{status=200,headers}={})=>Response.json(value,{status,headers})}}),
  'drizzle-orm':dr,
  'node:crypto':mk({createHash}),
  '/lib/manager-auth':mk({validateWorkspaceManager:async()=>claims()}),
@@ -112,6 +112,7 @@ test('GET discovery exposes a matching fingerprint sourced from committed row',a
  const response=await endpoint.GET(new Request('http://localhost/api/agents/agent/discovery/scan1'),{params:Promise.resolve({id:'agent',discoveryId:'scan1'})});
  assert.equal(response.status,200);
  const data=await response.json();assert.equal(data.devices[0].observationFingerprint,fp(state.row));
+ assert.equal(response.headers.get('Cache-Control'),'private, no-store');
  assert.equal((await call(data.devices[0].observationFingerprint)).status,200);
 });
 test('GET discovery denies a revoked Manager session before exposing any fingerprint',async()=>{
