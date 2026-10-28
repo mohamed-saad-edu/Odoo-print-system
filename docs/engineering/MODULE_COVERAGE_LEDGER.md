@@ -8,6 +8,11 @@
 
 | ID | State | Cause / authoritative contract | Fix and evidence |
 |---|---|---|---|
+| CLOCK-UTC-ADMISSION | FIX COMMITTED; CI pending | Raw PostgreSQL UTC-naive timestamps could shift job TTLs on non-UTC Gateway hosts | `372fb851` uses shared timestamp parser with regression |
+| BILL-UTC-BOUNDARY | FIX COMMITTED; CI pending | Quota reservation used another clock sample from the persisted job admission, risking wrong UTC month across midnight | `c7582186` shares DB admission instant and adds PostgreSQL Jan/Feb test |
+| PRICING-SSR-AUTH | FIX COMMITTED; CI pending | Signed-in plan redirect read subscription outside a fenced current membership/session transaction | `22569f45` rechecks tenant and principal before private read |
+| DISCOVERY-CACHE-MOCK | FIX COMMITTED; CI pending | VM response helper discarded private caching headers in actual-handler regression harness | `752a0411` forwards headers and pins successful no-store |
+| PRINTER-ADMISSION-I18N | FIX COMMITTED; CI pending | Stable printer and tenant admission denials mapped to misleading generic HTTP error copy | Map printer state/verification/owner and inactive tenant in Arabic and English |
 | BILL-TEST-001 | FIX PRESENT; CI pending | Blocked subscription fixture had null end, but runtime rejects invalid active contract first | `36114a887` finite expiry in fixture, never relax live predicate |
 | BILL-CYCLE-001 | FIX PRESENT; staging BLOCKED | Historical 0101 30-day cycles contradicted UTC calendar month policy | `5abd6458` + immutable 0102 carry migration; `fb0ca395` monthly history; populated restore NOT RUN |
 | BILL-STATUS-001 | FIX PRESENT; CI pending | Admin displayed stored status vs live runtime contract | `8b677ba`, `54b07b` shared predicate and status projection |

@@ -35,6 +35,12 @@ const CODE_KEYS: Record<string, MessageKey> = {
   LIFECYCLE_CONFLICT: "errors.lifecycleConflict",
   // Printers
   PRINTER_NOT_FOUND: "errors.printerNotFound",
+  // Admission failures require the exact hardware/identity action, not a
+  // generic 503 service outage or 409 concurrency-conflict message.
+  PRINTER_OFFLINE: "errors.printerOffline",
+  PRINTER_UNAVAILABLE: "errors.printerCloudUnavailable",
+  PRINTER_UNVERIFIED: "errors.printerVerificationRequired",
+  PRINTER_OWNER_CHANGED: "errors.printerOwnerChanged",
   MAX_PRINTERS_EXCEEDED: "limit.title.printers",
   PRINTER_NOT_SHARED: "printer.presentation.notSharedReason",
   PRINTER_OWNER_MISSING: "errors.printerOwnerMissing",
@@ -56,6 +62,11 @@ const CODE_KEYS: Record<string, MessageKey> = {
   TENANT_ENTITLEMENT_UNAVAILABLE: "errors.billingBlocked",
   TENANT_SUBSCRIPTION_REQUIRED: "errors.billingBlocked",
   TENANT_ENTITLEMENT_CONFIG_ERROR: "errors.billingBlocked",
+  // A disabled workspace is NOT the same as exhausted credits or an
+  // expired manual subscription. Keep its operator remedy distinct.
+  TENANT_UNAVAILABLE: "errors.workspaceUnavailable",
+  TENANT_SUSPENDED: "errors.workspaceUnavailable",
+  TENANT_DELETED: "errors.workspaceUnavailable",
   // Request shape
   INVALID_OFFSET: "errors.invalidPaginationOffset",
   INVALID_LIMIT: "errors.invalidPaginationLimit",

@@ -82,6 +82,32 @@ describe("API error contract", () => {
     expect(translate("ar", "errors.printQuotaExceeded")).toMatch(/[\u0600-\u06FF]/u);
   });
 
+  it("localizes definite printer admission failures without disguising them as service outages or generic conflicts", () => {
+    const expectations = [
+      ["PRINTER_OFFLINE", 503, "errors.printerOffline"],
+      ["PRINTER_UNAVAILABLE", 409, "errors.printerCloudUnavailable"],
+      ["PRINTER_UNVERIFIED", 409, "errors.printerVerificationRequired"],
+      ["PRINTER_OWNER_CHANGED", 409, "errors.printerOwnerChanged"],
+      ["TENANT_UNAVAILABLE", 403, "errors.workspaceUnavailable"],
+      ["TENANT_SUSPENDED", 403, "errors.workspaceUnavailable"],
+      ["TENANT_DELETED", 403, "errors.workspaceUnavailable"],
+    ] as const;
+    for (const [code, status, expectedKey] of expectations) {
+      expect(codeMessageKey(code)).toBe(expectedKey);
+      expect(apiMessageKey(code, status)).toBe(expectedKey);
+      for (const locale of ["en", "ar"] as const) {
+        const message = translate(locale, expectedKey);
+        expect(message, `${locale} ${code}`).not.toBe(translate(locale, "errors.conflict"));
+        expect(message, `${locale} ${code}`).not.toBe(translate(locale, "errors.serviceUnavailable"));
+        expect(message, `${locale} ${code}`).not.toBe(translate(locale, "errors.billingBlocked"));
+        expect(message, `${locale} ${code}`).not.toContain(code);
+        if (locale === "ar") expect(message).toMatch(/\p{Script=Arabic}/u);
+      }
+    }
+    expect(translate("en", "errors.printerOwnerChanged")).toMatch(/refresh.*confirm/i);
+    expect(translate("ar", "errors.printerVerificationRequired")).toMatch(/تَحَق|تحقّق/u);
+  });
+
   it("localizes invalid approved printer endpoints without telling operators to delete the printer", () => {
     expect(codeMessageKey("MISSING_PRINTER_ENDPOINT")).toBe("errors.printerEndpointMissing");
     expect(codeMessageKey("INVALID_PRINTER_ENDPOINT")).toBe("errors.printerEndpointInvalid");
