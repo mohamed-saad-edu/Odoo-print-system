@@ -136,6 +136,9 @@ describe("production fixes contracts (2026-09)", () => {
     expect(dialog).toContain('t("limit.note.prints")');
     expect(dashboard).toContain('case "max_agents": return "agents"');
     expect(dashboard).toContain('case "max_prints_per_period": return "prints"');
+    expect(dashboard).toContain('case "max_jobs_per_minute": return "rate"');
+    expect(dashboard).toContain('case "max_concurrent_jobs": return "concurrency"');
+    expect(dialog).toContain('const technicalCapacity = resource !== "prints"');
     expect(dashboard).toContain("<UpgradeLimitDialog");
     expect(agentRoute).toContain("ActionError");
     expect(agentRoute).toContain("error.details");
