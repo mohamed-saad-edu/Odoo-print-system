@@ -1,6 +1,6 @@
 # NOTES.md — Yaseir Cloud Printing full-repository engineering coverage
 
-Source: `main@33e544e9ffb5abb82debd6a0860b700ab427e4fb`. Re-scanned **1967 tracked files** in **89 directory groups** through GitHub's complete recursive tree (`truncated=false`). This is a coverage index, **not** a claim of line-by-line audit. This file is root-level, outside the Gateway/Agent/Odoo/Desktop product trees.
+Source: `main@c62e6b3ac457a37a449cf6035462dc91e4292eec`. Re-scanned **1979 tracked files** in **89 summary directory groups** (243 containing directories) through GitHub's complete recursive tree (`truncated=false`). This is a coverage index, **not** a claim of line-by-line audit. This file is root-level, outside the Gateway/Agent/Odoo/Desktop product trees.
 
 **Status semantics:** `TODO` = path enumerated, code/read/verification incomplete; `DONE` = code, cross-contract and exact-commit CI tests reviewed; `BLOCKED` = cannot verify as text through GitHub API or requires real hardware/staging. These are independent of existing per-file ledger statuses. Every path stays TODO/BLOCKED until evidence is linked; counts do not imply production readiness.
 
@@ -3079,3 +3079,43 @@ At `main@9cc31103851f642543bb51dd22353487b00f5578`, GitHub recursive tree lists 
 **Contract:** The independent non-Odoo Python behavioral suite `tests/test_odoo_universal_printing.py` also generated invalid synthetic device proofs (`identity_strength=queue` for USB/SNMP). Following Odoo native fixture repair, unify this standalone producer with the actual strict `printer_verification.is_verified_runtime_printer` consumer. Added IPP/IPPS method cases and forged-strength negative assertions. No production proof relaxation. Source-reviewed/not executed; exact GitHub CI pending.
 
 **Ledger:** PARTIAL `tests/test_odoo_universal_printing.py`, `odoo_addons/print_gateway/printer_verification.py`, `models/binding.py`; TODO exhaustive Odoo/Agent cross-layer tests; physical-device verification BLOCKED.
+
+
+## 2026-10-28 complete-tree coverage refresh and six implementation batches
+
+- GitHub complete `main@c62e6b3ac457a37a449cf6035462dc91e4292eec` tree: `truncated=false`, 1979 source/repository files, 243 containing directories. 1963 previously indexed exact paths + 16 missing paths restored below = 1979. This is a TODO index, NOT a source line-by-line review.
+- **This continuation's six code commits**: `e3567c6a4d382a3205d2ba22e25b04accc0031b6` (gofmt + CI scanner false positive), `1c83f4c7009eea98081951c66161a921bf17eac8` (production keyless print refusal), `46862cc8093353554722d80f0d4c6a9744835b75` (shared strict v1/v2 print expiry), `c59430871c8359f32bd7e7faf79e987339d9425a` (Desktop error/limit sanitization), `c3079f44a90143afae4ca5e0a7b2c6e0764c1283` (Odoo strict quota proof) and `335517b5e2bf823ec8174d1542ea96035c6be0e3` (Agent pairing audit truth). All new tests AUTHORED; full CI was pending or cancelled by concurrent pushes, **not PASS**.
+- **Independent verified gate:** Security and Resilience Gates succeeded at exact Agent-audit commit via run `40618444724`; no additional job declared passed. PostgreSQL restored-migration, full CI, Windows, printer hardware, installed Odoo POS/receipt and staging/deploy remain NOT RUN/BLOCKED.
+- **Directory responsibility contract:** `agent/internal/printer` maintains physical identity/dispatch and geometry; `src/lib` owns Gateway admission and UTC clock; `tests` covers cross-language contracts but tests alone are not release approval; `odoo_addons` owns business intent, ID and durable outbox; `src-tauri` owns native IPC; `drizzle` owns immutable migrations. Every unreviewed module still TODO.
+
+
+### agent/internal/printer — 1 previously unindexed file(s)
+
+**Logic / shared contract:** stable physical queue ID, printer transport and proof. **Inconsistency / required verification:** newly indexed code/test path; inspect contracts and confirm exact-SHA CI before DONE.
+
+- TODO `agent/internal/printer/transport_logging_contract_test.go`
+
+### src/lib — 1 previously unindexed file(s)
+
+**Logic / shared contract:** Gateway quota, session, job identity and expiry admission. **Inconsistency / required verification:** newly indexed code/test path; inspect contracts and confirm exact-SHA CI before DONE.
+
+- TODO `src/lib/print-expiration.ts`
+
+### tests — 14 previously unindexed file(s)
+
+**Logic / shared contract:** Gateway/Odoo/Agent/desktop integrations, negative acceptance and tenant isolation. **Inconsistency / required verification:** newly indexed code/test path; inspect contracts and confirm exact-SHA CI before DONE.
+
+- TODO `tests/agent-audit-contract.test.ts`
+- TODO `tests/agent-health-route-pagination.test.ts`
+- TODO `tests/desktop-gateway-empty-query-fragment.test.ts`
+- TODO `tests/odoo-legacy-resolution-inventory-live-authority.integration.test.ts`
+- TODO `tests/platform-database-live-authority.integration.test.ts`
+- TODO `tests/platform-directory-live-authority.integration.test.ts`
+- TODO `tests/platform-stats-live-authority.integration.test.ts`
+- TODO `tests/print-expiration.test.ts`
+- TODO `tests/reprint-exact-source.test.ts`
+- TODO `tests/session-inventory-live-authority.integration.test.ts`
+- TODO `tests/test_odoo_pos_operation_key_guards.py`
+- TODO `tests/test_odoo_pos_printer_identity.py`
+- TODO `tests/test_odoo_pos_printer_target_ids.py`
+- TODO `tests/test_odoo_print_safety_translation.py`
