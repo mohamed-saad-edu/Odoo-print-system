@@ -14,7 +14,7 @@ import {
   isBillingAccessStatus,
   isSubscriptionPeriodLive,
 } from "../src/lib/entitlements";
-import { isLimitSignalResult } from "../src/lib/limit-signal";
+import { isLimitSignalResult, limitSignalDisplayDetails } from "../src/lib/limit-signal";
 import { getAgentAvailability, getEffectivePrinterStatus } from "../src/lib/agent-availability";
 
 const read = (path: string) => readFileSync(path, "utf8");
@@ -117,6 +117,24 @@ describe("entitlement limit signal (upgrade dialog contract)", () => {
     });
     // Retry-After must be a positive duration derived from the Gateway clock.
     expect(signal?.retryAfterSeconds ?? 0).toBeGreaterThan(0);
+  });
+
+  it("displays the actual server-provided limit, not the obsolete max property", () => {
+    const signal = entitlementLimitSignal(new TenantEntitlementError("max_printers", 12, 12));
+    expect(signal).toBeTruthy();
+    expect(limitSignalDisplayDetails(signal!)).toEqual({
+      used: 12,
+      limit: 12,
+      periodEnd: null,
+      retryAfterSeconds: null,
+    });
+    const print = entitlementLimitSignal(new TenantPrintQuotaExceededError(
+      150, 150, new Date("2026-10-01T00:00:00Z"), new Date("2026-11-01T00:00:00Z")));
+    expect(print).toBeTruthy();
+    const detail = limitSignalDisplayDetails(print!);
+    expect(detail.limit).toBe(150);
+    expect(detail.used).toBe(150);
+    expect(detail.periodEnd).toBe("2026-11-01T00:00:00.000Z");
   });
 
   it("distinguishes technical safety caps from the billable monthly print allowance", () => {
