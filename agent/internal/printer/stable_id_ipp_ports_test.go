@@ -92,6 +92,21 @@ func TestUppercaseIPPStableIDPreservesMultiQueueResource(t *testing.T) {
 	}
 }
 
+func TestIPPMultiQueueIPv6TextualFormsShareIdentity(t *testing.T) {
+	expanded := DeviceInfo{ConnectionType: "ipp", Protocol: "ipp", NetworkAddress: "fd12:3456:0:0:0:0:0:10",
+		Port: 631, Endpoint: "ipp://[fd12:3456:0:0:0:0:0:10]:631/printers/office"}
+	short := DeviceInfo{ConnectionType: "ipp", Protocol: "ipp", NetworkAddress: "[fd12:3456::10]",
+		Port: 631, Endpoint: "ipp://[fd12:3456::10]:631/printers/office"}
+	if StableIDForDevice(expanded) != StableIDForDevice(short) || !sameNetworkEndpoint(expanded, short) {
+		t.Fatalf("same IPv6 IPP execution queue forked: %q vs %q", StableIDForDevice(expanded), StableIDForDevice(short))
+	}
+	secondQueue := short
+	secondQueue.Endpoint = "ipp://[fd12:3456::10]:631/printers/other"
+	if StableIDForDevice(expanded) == StableIDForDevice(secondQueue) || sameNetworkEndpoint(expanded, secondQueue) {
+		t.Fatal("distinct IPv6 multi-queue resources merged")
+	}
+}
+
 func TestIPPIdentityDefaultsMatchExecutionPort(t *testing.T) {
 	for _, tc := range []struct {
 		scheme string
