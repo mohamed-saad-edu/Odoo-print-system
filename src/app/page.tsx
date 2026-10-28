@@ -55,7 +55,11 @@ export default async function Home() {
   );
 
   if (claims) {
-    try {
+    // Keep a catch around the asynchronous authorization and data access only.
+    // JSX must render outside try/catch: React component render errors are
+    // handled by the component boundary, never by a database fallback.
+    const view = await (async () => {
+      try {
       const { tenant, subscription, canBilling, plan } = await db.transaction(async tx => {
         // Authenticated SSR content is not exempt from durable authorization.
         // Keep the tenant lifecycle and current principal/session fenced while
@@ -82,7 +86,19 @@ export default async function Home() {
         return { tenant, subscription, canBilling, plan };
       });
       const subscriptionStatus = customerSubscriptionState(subscription, tenant?.lifecycle, await databaseNowMs());
-
+        return { tenant, subscription, canBilling, plan, subscriptionStatus };
+      } catch (error) {
+        // A workspace can be suspended or the session revoked between the
+        // authenticated cookie preflight and the transactional read.
+        if (error instanceof TenantSuspendedError || error instanceof TenantDeletedError ||
+            error instanceof ManagerMutationAuthorityChangedError) {
+          return null;
+        }
+        throw error;
+      }
+    })();
+    if (view) {
+      const { tenant, subscription, canBilling, plan, subscriptionStatus } = view;
       return (
         <AuthenticatedHome
           t={t}
@@ -96,15 +112,6 @@ export default async function Home() {
           canTeam={hasManagerPermission(claims, "users.read")}
         />
       );
-    } catch (error) {
-      // An expired session or suspended workspace can change after a valid
-      // cookie preflight. Render only the public homepage, not stale company
-      // and owner-only commercial information.
-      if (error instanceof TenantSuspendedError || error instanceof TenantDeletedError ||
-          error instanceof ManagerMutationAuthorityChangedError) {
-        return <PublicHome t={t} locale={locale} />;
-      }
-      throw error;
     }
   }
 

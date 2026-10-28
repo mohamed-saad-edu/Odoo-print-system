@@ -19,6 +19,19 @@ describe("authenticated homepage tenant and session read boundary", () => {
     expect(source).not.toContain("db.query.plans.findFirst");
   });
 
+  it("builds authenticated JSX after asynchronous entitlement errors are caught", () => {
+    const view = source.indexOf("const view = await (async () => {");
+    const afterRead = source.indexOf("})();", view);
+    const jsx = source.indexOf("<AuthenticatedHome", view);
+    const fallback = source.indexOf("return <PublicHome", jsx);
+    expect(view).toBeGreaterThan(0);
+    expect(afterRead).toBeGreaterThan(view);
+    expect(jsx).toBeGreaterThan(afterRead);
+    expect(fallback).toBeGreaterThan(jsx);
+    expect(source.slice(view, afterRead)).not.toContain("<AuthenticatedHome");
+    expect(source.slice(view, afterRead)).not.toContain("<PublicHome");
+  });
+
   it("falls back to the public home on a suspended workspace or revoked owner session", () => {
     expect(source).toContain("error instanceof TenantSuspendedError");
     expect(source).toContain("error instanceof TenantDeletedError");
