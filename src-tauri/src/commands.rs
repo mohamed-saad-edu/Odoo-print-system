@@ -2127,6 +2127,16 @@ mod agent_console_path_tests {
     }
 
     #[test]
+    fn gateway_path_guard_rejects_traversal_but_not_query_search_dots() {
+        assert!(!unsafe_gateway_route_path("/api/jobs?search=invoice..pdf"));
+        assert!(!unsafe_gateway_route_path("/api/printers?beforeId=queue..two"));
+        assert!(unsafe_gateway_route_path("/api/printers/../agents"));
+        assert!(unsafe_gateway_route_path("/api/printers/p..q/test-print"));
+        assert!(unsafe_gateway_route_path("/api/jobs?search=a\\b"));
+        assert!(allowed_agent_gateway_path("/api/jobs?search=invoice..pdf", "GET"));
+    }
+
+    #[test]
     fn agent_console_allowlist_matches_desktop_jobs_requests() {
         assert!(allowed_agent_gateway_path("/api/printers", "POST"));
         assert!(allowed_agent_gateway_path(
