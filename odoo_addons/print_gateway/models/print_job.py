@@ -2015,9 +2015,12 @@ class PrintGatewayJob(models.Model):
                     try:
                         body = response.json()
                         remote_id = (body.get("jobId") or body.get("id")) if isinstance(body, dict) else None
-                        if not isinstance(remote_id, str) or not remote_id.strip():
+                        # HTTP 200 alone cannot establish physical output.
+                        # The returned remote job identity must be byte-exact;
+                        # trimming could attach this outbox row to a different
+                        # Gateway job and falsely resolve an ambiguous attempt.
+                        if not is_exact_gateway_job_id(remote_id):
                             raise ValueError("GATEWAY_INVALID_RESPONSE")
-                        remote_id = remote_id.strip()
                     except (ValueError, TypeError) as exc:
                         persist_ambiguous_response(
                             exc, "Gateway accepted submission but returned an invalid response",
