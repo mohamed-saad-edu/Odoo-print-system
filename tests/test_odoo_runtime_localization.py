@@ -68,6 +68,18 @@ def test_arabic_catalog_keeps_brand_identity_and_translates_picker_vocab():
         assert catalog[msgid] == msgstr
 
 
+def test_arabic_errors_for_exact_kitchen_identity_and_unknown_delivery():
+    catalog = load_catalog()
+    expected = {
+        "A valid Odoo Preparation Printer ID is required.":
+            "يجب تحديد معرّف صحيح لطابعة التحضير في Odoo دون تغيير أو تحويل.",
+        "WARNING: Print Job #%s returned ambiguous delivery on '%s'. Verify physical output before any reprint.":
+            "تحذير: نتيجة إرسال مهمة الطباعة رقم %s إلى '%s' غير مؤكدة. تحقّق من خروج الورق قبل إعادة الطباعة.",
+    }
+    for english, arabic in expected.items():
+        assert catalog.get(english) == arabic
+
+
 def test_binding_help_matches_preparation_printer_routing_contract():
     root = ET.parse(ADDON / "views" / "binding_views.xml").getroot()
     text = " ".join((node.text or "").strip() for node in root.iter() if (node.text or "").strip())
