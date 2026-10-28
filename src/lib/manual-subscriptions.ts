@@ -181,8 +181,16 @@ export async function mutateManualSubscription(tenantId: string, actor: Platform
       if (input.action==='suspend'||input.action==='revoke') changes.status='suspended';
       if (input.action==='reactivate') {
         if (before.status!=='suspended') throw new ManualSubscriptionError('SUBSCRIPTION_REQUEST_CONFLICT',409);
+        // Subscription reactivation does not override an inactive workspace.
+        if (tenant.rows[0].lifecycle !== 'active') throw new ManualSubscriptionError("WORKSPACE_NOT_ACTIVE",409);
         const now=await tx.execute(sql`SELECT clock_timestamp() AS now`);
-        if (!manualReactivationDeadlineLive(before.currentPeriodEnd, now.rows[0]?.now as Date | string | null)) throw new ManualSubscriptionError("SUBSCRIPTION_EXPIRED",409);
+        const liveNow=now.rows[0]?.now as Date | string | null;
+        if (!manualReactivationDeadlineLive(before.currentPeriodEnd,liveNow)) throw new ManualSubscriptionError("SUBSCRIPTION_EXPIRED",409);
+        const nowMs=parseDbTimeMs(liveNow);
+        if (nowMs === null || customerSubscriptionState(
+            {...before,status:'active',entitlementBlocked:false},'active',nowMs) !== 'active') {
+          throw new ManualSubscriptionError("SUBSCRIPTION_NOT_STARTED",409);
+        }
         changes.status='active'; changes.entitlementBlocked=false; changes.entitlementBlockedReason=null;
       }
       if (input.action==='cancel_at_end') {

@@ -9,7 +9,7 @@ import {
   closePool,
   type Fixture,
 } from "./helpers/pg";
-import { users, tenantSubscriptions, subscriptionRequests } from "../src/db/schema";
+import { users, tenants, tenantSubscriptions, subscriptionRequests } from "../src/db/schema";
 import { db } from "../src/db";
 import { eq } from "drizzle-orm";
 import { nanoid } from "../src/lib/nanoid";
@@ -228,6 +228,22 @@ suite("Platform Stats Route", () => {
     const live = await tenantDetailGET(req(), context);
     expect(live.status).toBe(200);
     expect((await live.json()).subscription.canReactivate).toBe(true);
+    for (const lifecycle of ["suspended", "deleted"] as const) {
+      await db.update(tenants).set({ lifecycle }).where(eq(tenants.id, id));
+      const blocked = await tenantDetailGET(req(), context);
+      expect(blocked.status).toBe(200);
+      expect((await blocked.json()).subscription).toMatchObject({effectiveStatus:"suspended",canReactivate:false});
+    }
+    await db.update(tenants).set({ lifecycle: "active" }).where(eq(tenants.id, id));
+    await db.update(tenantSubscriptions).set({currentPeriodStart:new Date(Date.now()+60_000)})
+      .where(eq(tenantSubscriptions.tenantId,id));
+    const future = await tenantDetailGET(req(),context);
+    expect(future.status).toBe(200);
+    expect((await future.json()).subscription.canReactivate).toBe(false);
+    await db.update(tenantSubscriptions).set({currentPeriodStart:new Date(Date.now()-60_000)})
+      .where(eq(tenantSubscriptions.tenantId,id));
+    const restored = await tenantDetailGET(req(),context);
+    expect((await restored.json()).subscription.canReactivate).toBe(true);
 
     await db.update(tenantSubscriptions).set({ currentPeriodEnd: new Date(Date.now() - 86_400_000) })
       .where(eq(tenantSubscriptions.tenantId, id));

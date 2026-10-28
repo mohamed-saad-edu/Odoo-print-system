@@ -4,7 +4,7 @@ import { db } from "../../../../../db";
 import { requirePlatformOwner, requirePlatformReadAuthorityInTransaction } from "../../../../../lib/platform-auth";
 import { manualApiError } from "../../../../../lib/manual-api-error";
 import { databaseNowMs } from "../../../../../lib/database-clock";
-import { customerSubscriptionState,manualReactivationDeadlineLive,ManualSubscriptionError } from "../../../../../lib/manual-subscriptions";
+import { customerSubscriptionState,ManualSubscriptionError } from "../../../../../lib/manual-subscriptions";
 import { logicalUsageReport } from "../../../../../lib/manual-usage-report";
 import { quotaCycleStartSql, quotaCycleEndSql } from "../../../../../lib/quota-cycle";
 export async function GET(req:Request,context:{params:Promise<{id:string}>}) {
@@ -30,7 +30,10 @@ export async function GET(req:Request,context:{params:Promise<{id:string}>}) {
   const stored=subscription.rows[0] as {status:string;billingMode:string;currentPeriodStart:string;currentPeriodEnd:string|null;entitlementBlocked:boolean}|undefined;
   const databaseClock=new Date(await databaseNowMs());
    const effectiveStatus=customerSubscriptionState(stored,String(workspace.rows[0].lifecycle),databaseClock.getTime());
-   const canReactivate=!!stored && stored.status==="suspended" && manualReactivationDeadlineLive(stored.currentPeriodEnd,databaseClock);
+   // A contract-only reactivation must actually be eligible for admission.
+   const canReactivate=!!stored && stored.status==="suspended" &&
+     customerSubscriptionState({...stored,status:"active",entitlementBlocked:false},
+       String(workspace.rows[0].lifecycle),databaseClock.getTime()) === "active";
   return NextResponse.json({workspace:workspace.rows[0],subscription:stored?{...stored,effectiveStatus,canReactivate}:null,members:members.rows,agents:agents.rows,printers:printers.rows,installations:installations.rows,credentials:credentials.rows,jobs:jobs.rows,events:events.rows,history:history.rows,requests:requests.rows,usage},{headers:{'Cache-Control':'private, no-store'}});
   });
  }catch(e){const response=manualApiError(e);response.headers.set('Cache-Control','private, no-store');return response;}

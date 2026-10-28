@@ -2283,3 +2283,13 @@ GitHub main baseline `4ba18e5e00c8a5d86f42bfc55c2e576c2b621a77`; full CI/Postgre
 | TODO / BLOCKED | `src-tauri/src/commands.rs`, `agent/internal/printer` | Verify full wire/Windows behavior on supported hardware |
 
 Baseline `af3656635a0b3a38f9618574b4ed36f861813747`; exact-SHA compile, Vitest, Go/Tauri and physical output remain unverified.
+
+
+#### SUBSCRIPTION-REACTIVATION-EFFECTIVE-STATUS — 2026-10-28
+
+| Status | Path | Shared contract |
+| --- | --- | --- |
+| PARTIAL | `src/app/api/platform/tenants/[id]/route.ts`, `src/lib/manual-subscriptions.ts` | Same effective live subscription definition across admin display and transactional reactivation |
+| AUTHORED / NOT RUN | `tests/platform-stats.test.ts`, `tests/manual-subscriptions.integration.test.ts` | Disabled workspace, future term, unchanged revision and valid reactivation |
+
+Baseline `5fc31e223adacf963e045b513abdf8569783496f`; CI and hardware print tests unverified; remaining TODO/BLOCKED unchanged.

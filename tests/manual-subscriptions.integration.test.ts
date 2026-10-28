@@ -345,6 +345,26 @@ suite('V4 manual subscriptions security and accounting',()=>{
    expect(record).toMatchObject({status:'suspended',currentPeriodEnd:null,revision:2});
    await expect(getTenantEntitlements(db,'workspace')).rejects.toBeInstanceOf(TenantSubscriptionRequiredError);
  });
+ it('refuses ineffective manual subscription reactivation without changing revision',async()=>{
+  await mutateManualSubscription('workspace',claims,randomUUID(),input());
+  await mutateManualSubscription('workspace',claims,randomUUID(),input({action:'suspend',expectedRevision:1}));
+  await db.update(tenants).set({lifecycle:'suspended'}).where(eq(tenants.id,'workspace'));
+  await expect(mutateManualSubscription('workspace',claims,randomUUID(),input({action:'reactivate',expectedRevision:2})))
+    .rejects.toMatchObject({code:'WORKSPACE_NOT_ACTIVE',status:409});
+  await db.update(tenants).set({lifecycle:'active'}).where(eq(tenants.id,'workspace'));
+  await db.update(tenantSubscriptions).set({currentPeriodStart:new Date(Date.now()+86_400_000)})
+    .where(eq(tenantSubscriptions.tenantId,'workspace'));
+  await expect(mutateManualSubscription('workspace',claims,randomUUID(),input({action:'reactivate',expectedRevision:2})))
+    .rejects.toMatchObject({code:'SUBSCRIPTION_NOT_STARTED',status:409});
+  expect(await db.query.tenantSubscriptions.findFirst({where:eq(tenantSubscriptions.tenantId,'workspace')}))
+    .toMatchObject({status:'suspended',revision:2});
+  await expect(requireTenantBillingAccess(db,'workspace')).rejects.toBeInstanceOf(TenantSubscriptionRequiredError);
+  await db.update(tenantSubscriptions).set({currentPeriodStart:new Date(Date.now()-60_000)})
+    .where(eq(tenantSubscriptions.tenantId,'workspace'));
+  await mutateManualSubscription('workspace',claims,randomUUID(),input({action:'reactivate',expectedRevision:2}));
+  expect((await db.query.tenantSubscriptions.findFirst({where:eq(tenantSubscriptions.tenantId,'workspace')}))?.status).toBe('active');
+  await requireTenantBillingAccess(db,'workspace');
+ });
  it('renewal/quota edits preserve usage; suspension and expiry block admission; cancel at term remains usable until expiry',async()=>{
   await mutateManualSubscription('workspace',claims,randomUUID(),input());
    const originalAnchor=(await db.query.tenantSubscriptions.findFirst())?.printCycleAnchor;
