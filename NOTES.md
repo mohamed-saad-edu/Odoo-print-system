@@ -1,6 +1,6 @@
 # NOTES.md — Yaseir Cloud Printing full-repository engineering coverage
 
-Source: `main@c21e90aff32424986e1c6aaa0f7e0bca669e66d9`. Re-scanned **1958 tracked files** in **89 directory groups** through GitHub's complete recursive tree (`truncated=false`). This is a coverage index, **not** a claim of line-by-line audit. This file is root-level, outside the Gateway/Agent/Odoo/Desktop product trees.
+Source: `main@33e544e9ffb5abb82debd6a0860b700ab427e4fb`. Re-scanned **1967 tracked files** in **89 directory groups** through GitHub's complete recursive tree (`truncated=false`). This is a coverage index, **not** a claim of line-by-line audit. This file is root-level, outside the Gateway/Agent/Odoo/Desktop product trees.
 
 **Status semantics:** `TODO` = path enumerated, code/read/verification incomplete; `DONE` = code, cross-contract and exact-commit CI tests reviewed; `BLOCKED` = cannot verify as text through GitHub API or requires real hardware/staging. These are independent of existing per-file ledger statuses. Every path stays TODO/BLOCKED until evidence is linked; counts do not imply production readiness.
 
@@ -25,6 +25,7 @@ Source: `main@c21e90aff32424986e1c6aaa0f7e0bca669e66d9`. Re-scanned **1958 track
 | PLAN-PRICE-BOUNDARY-2026-10-28 | Platform Admin accepted a syntactically valid but >INT32 minor-unit advertised price until after password confirmation, while backend rejected it | `14d48c3fdf1ce6d1d7fd219436919604043b7df4` test-first; `431bb15dc0d782c127873316e5e1bd60fc733241` shared exact parser; `8d6c6fc787f58a0e4890f482a46024a3893c1a97` backend reuse; `0be9d83b8d3d0848ef99e15891dfdd0975414ab9` / `68460fce0db0eec81f0b10779ffc078fa72c3467` localized errors; `ff39b1de2bf91a93297824d7c9ce64341f58b5bd` client pre-confirmation guard | Tests authored but exact GitHub CI pending/cancelled; no local/physical verification | TODO |
 | ODOO-HTTP500-2026-10-28 | Native Odoo test still demanded automatic queued retry for unclassified HTTP 500 despite possible post-admission physical output; operator guidance omitted the Print Activity path | `f6381ed41a505da6e0a454d2511ae90a603cf402` real-addon regression updated to assert UNKNOWN/no retry/no duplicate HTTP POST; `bd3409d3517b0bf685ff5bedfc558fcd15a006b0` localized safe operator message; `c8ca9a2b7bf616150ba8b37b4c26232d49458a50` Arabic translation | Historical native Odoo CI failure `40602721665` confirms old expectation mismatch; current exact-SHA CI CANCELLED/SUPERSEDED, installed-addon RED/GREEN NOT RUN, physical printing NOT VERIFIED | TODO |
 | PLATFORM-COMMERCIAL-READ-FENCE-2026-10-28 | Platform subscription, request and private pricing GETs checked owner before SQL but could disclose data after a session/principal revocation race | `98d2ebf8b8b87c86c154246f51ca85346ad5bab8` SQL contract test; `653025433c7be02bee7b66a58e53c0f81aa1d20a` live read guard; `b5cac57b2a398bf9ede7624f6a16e4f2802d46c8`, `87c638471ba3d3345561a6f84bf5b61b0205b784`, `00eb3eec5e60cdddbce76d1f03744f3f5c326c6e` route fixes; `824906b0d8a197220df15cf80e0ee98f6402e9a5`, `2d75c78d567ce98953868c405d07d2a0917d2c6a` mocked route regressions; `45d37ad615b20eaa70a43e07978ed5f960b8be87`, `a93d9bdd30cfe0351d3ad6701b523f25ca9a234b`, `387f5a7634be5b49eb4be0b9f6d099477ef9f190` PG revocation race suite; `ec5883763bd771d957f8e6c162e45e3972c6e726`, `5068c9984a221b4cc2bb269104b464b4b55bba87`, `92a1410896d67d4cd8da95b96ecabba14f45fcb6` canonical owner→family→token lock-order test/fix | Source and tests committed; GitHub CI per SHA mostly CANCELLED, PostgreSQL real race NOT RUN, no five-minute step-up on reads, other Platform GET endpoints not yet exhaustively audited | TODO |
+| PLATFORM-PRIVATE-DIRECTORIES-READ-2026-10-28 | Platform audit metadata, cross-tenant fleet, integration inventory, and individual tenant detail/PII previously relied on mutable preflight-only Platform Owner state | `2d882dd659075911e811f59427b5a94e5d7b1cd6` and `e738394c0a7b5ffb4464bba89a952f4b3252cc3c` audit test/fix; `932c9c117cddc62f2dccfc5b62fdab388d8eccda`, `cd4a1c54184d5dafa1b532c8bc6e649817ca2bd0` tenant detail; `e189ce549567e80d7cb7aa218d65417badfb364f`, `e15de5397c3c08d277c7d6c59b0c7ab0ba9307a4` integration keys/installation lists; `e5cb174530ae28042a3ea76eabbff03937d782ca`, `38059628d9ac840124a19a4b71096440a8a122b1`, `3c74153b3f4aadfc23fed991ad664743ad3a7518` fleet inventory; PostgreSQL race expanded through `47e2b7e99a86a7983a0fbf08af49011fc7a82c6c`, `db9e7d88fcd1828a197cf45eb15d7624c525227d`, `da3ef62693270ca583b40bbc4d68851a895c5bb0`, `bad49411cd78aa1f3be1bdf2eded03b8b77aba2b` | Source and negative tests committed; real database race, App/Gateway CI, Windows Agent and Odoo hardware NOT VERIFIED due concurrent cancelled workflows; `jobs`, tenant directory and other Platform GET routes remain TODO | TODO |
 | HW-01 print result | Neither Gateway `success` nor spooler submission proves physical paper | Status contract requires independent explicit physical evidence; never auto-retry unknown | No physical printer attached through GitHub API | BLOCKED |
 | DATA-01 defense in depth | PostgreSQL RLS not enabled; predicates, composite FKs and transaction locks are tenant boundary | Audit every raw query, add safe migration only after staged design/coverage | Requires comprehensive source+staging audit | TODO |
 
@@ -317,12 +318,14 @@ Source: `main@c21e90aff32424986e1c6aaa0f7e0bca669e66d9`. Re-scanned **1958 track
 - TODO `agent/internal/printer/discovery_legacy_id_collision_test.go`
 - TODO `agent/internal/printer/discovery_other.go`
 - TODO `agent/internal/printer/discovery_progress_test.go`
+- TODO `agent/internal/printer/discovery_protocol_conflict_test.go`
 - TODO `agent/internal/printer/discovery_resilience_test.go`
 - TODO `agent/internal/printer/discovery_scan.go`
 - TODO `agent/internal/printer/discovery_scan_test.go`
 - TODO `agent/internal/printer/discovery_targets.go`
 - TODO `agent/internal/printer/discovery_targets_test.go`
 - TODO `agent/internal/printer/discovery_test.go`
+- TODO `agent/internal/printer/discovery_usb_legacy_id_collision_test.go`
 - TODO `agent/internal/printer/discovery_windows.go`
 - TODO `agent/internal/printer/dispatch_admission.go`
 - TODO `agent/internal/printer/dispatch_admission_test.go`
@@ -351,6 +354,7 @@ Source: `main@c21e90aff32424986e1c6aaa0f7e0bca669e66d9`. Re-scanned **1958 track
 - TODO `agent/internal/printer/ipp.go`
 - TODO `agent/internal/printer/ipp_acceptance.go`
 - TODO `agent/internal/printer/ipp_acceptance_test.go`
+- TODO `agent/internal/printer/ipp_alias_registry_convergence_test.go`
 - TODO `agent/internal/printer/ipp_attributes.go`
 - TODO `agent/internal/printer/ipp_attributes_test.go`
 - TODO `agent/internal/printer/ipp_collections.go`
@@ -2245,6 +2249,7 @@ Source: `main@c21e90aff32424986e1c6aaa0f7e0bca669e66d9`. Re-scanned **1958 track
 - TODO `tests/physical-printer-identity.test.ts`
 - TODO `tests/plan-entitlements.test.ts`
 - TODO `tests/platform-action-confirmation.test.ts`
+- TODO `tests/platform-audit-live-authority.test.ts`
 - TODO `tests/platform-bootstrap-cutover.test.ts`
 - TODO `tests/platform-confidential-read-race.integration.test.ts`
 - TODO `tests/platform-control-plane.test.ts`
@@ -2254,8 +2259,10 @@ Source: `main@c21e90aff32424986e1c6aaa0f7e0bca669e66d9`. Re-scanned **1958 track
 - TODO `tests/platform-delete-integrity.integration.test.ts`
 - TODO `tests/platform-emergency-actor-fence.test.ts`
 - TODO `tests/platform-explorer-pagination.integration.test.ts`
+- TODO `tests/platform-fleet-live-authority.test.ts`
 - TODO `tests/platform-fleet-status.contract.test.mjs`
 - TODO `tests/platform-integrations-control.node.test.mjs`
+- TODO `tests/platform-integrations-live-authority.test.ts`
 - TODO `tests/platform-live-queue.node.test.mjs`
 - TODO `tests/platform-login-cancellation.node.test.mjs`
 - TODO `tests/platform-mutation-authorization.test.ts`
@@ -2266,6 +2273,7 @@ Source: `main@c21e90aff32424986e1c6aaa0f7e0bca669e66d9`. Re-scanned **1958 track
 - TODO `tests/platform-read-live-authority.test.ts`
 - TODO `tests/platform-stats-optimization.test.ts`
 - TODO `tests/platform-stats.test.ts`
+- TODO `tests/platform-tenant-detail-live-authority.test.ts`
 - TODO `tests/poll-claim-budget.contract.test.mjs`
 - TODO `tests/pos-receipt-font.test.ts`
 - TODO `tests/postgres-role-profile.node.test.mjs`
@@ -2423,7 +2431,9 @@ Source: `main@c21e90aff32424986e1c6aaa0f7e0bca669e66d9`. Re-scanned **1958 track
 - TODO `tests/test_odoo19_printing_static.py`
 - TODO `tests/test_odoo_activation_cron_budget.py`
 - TODO `tests/test_odoo_activation_rpc_guards.py`
+- TODO `tests/test_odoo_agent_assignment_identity.py`
 - TODO `tests/test_odoo_async_boundaries.py`
+- TODO `tests/test_odoo_binding_dispatch_snapshot.py`
 - TODO `tests/test_odoo_company_branch_scope_static.py`
 - TODO `tests/test_odoo_config_key_rotation_f015.py`
 - TODO `tests/test_odoo_diagnostic_language.py`
