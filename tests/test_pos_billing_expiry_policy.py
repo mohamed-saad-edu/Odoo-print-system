@@ -17,6 +17,16 @@ NOW = datetime(2026, 10, 27, 20, 0, 0)
 def test_old_pos_outbox_needs_explicit_reprint(source, kind):
     assert module.is_stale_pos_operation(source, kind, NOW - timedelta(minutes=31), NOW) is True
 
+@pytest.mark.parametrize("source", ["pos.order", "pos.session"])
+@pytest.mark.parametrize("kind", ["pos_receipt", "pos_kitchen"])
+def test_legacy_pos_document_aliases_never_autoprint_after_billing_recovery(source, kind):
+    # Legacy persisted document types must be as time-sensitive as current
+    # receipt/kitchen records. A renewed plan must not print a day-old ticket.
+    assert module.is_stale_pos_operation(source, kind, NOW - timedelta(days=1), NOW) is True
+    assert module.is_stale_pos_operation(source, kind, NOW - timedelta(minutes=4), NOW) is False
+    assert module.is_stale_pos_operation(source, kind, NOW - timedelta(days=1), NOW, gateway_job_id="already-admitted") is False
+
+
 @pytest.mark.parametrize("source,kind", [("account.move", "invoice"), ("pos.order", "label"), ("stock.picking", "receipt")])
 def test_other_old_documents_are_not_blocked(source, kind):
     assert module.is_stale_pos_operation(source, kind, NOW - timedelta(days=9), NOW) is False
