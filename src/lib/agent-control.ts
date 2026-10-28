@@ -95,10 +95,10 @@ export async function createAgentForManager(name: string, manager: ManagerClaims
     tenantId: manager.tenantId,
     actorType: manager.userId ? "user" : "system",
     actorId: manager.userId ?? "legacy-manager",
-    action: "agent.paired",
+    action: "agent.pairing_code_issued",
     resourceType: "agent",
     resourceId: id,
-  }).catch((error) => logWarn("audit.agent_paired_persist_failed", {
+  }).catch((error) => logWarn("audit.agent_pairing_code_persist_failed", {
     tenantId: manager.tenantId,
     agentId: id,
     error: error instanceof Error ? error.message : String(error),

@@ -1,6 +1,7 @@
 import { isTenantBillingError, requireTenantBillingAccess, TenantSubscriptionRequiredError } from "../../../../lib/entitlements";
 import { requireActiveTenantInTransaction } from "../../../../lib/tenant-guard";
 import { logError } from "../../../../lib/log";
+import { writeAuditEvent } from "../../../../lib/audit";
 import { NextResponse } from "next/server";
 import { db } from "../../../../db";
 import { sql } from "drizzle-orm";
@@ -173,6 +174,19 @@ export async function POST(req: Request) {
       if (updated.rows.length !== 1) {
         return { kind: "consumed" as const };
       }
+
+      // Record the real pairing only after the one-time code was consumed and
+      // the runtime credential persisted. Keep it in the SAME transaction so
+      // a rejected/rolled-back registration cannot leave a false success.
+      // Never include the Agent secret or pairing code in audit metadata.
+      await writeAuditEvent({
+        tenantId: agent.tenantId,
+        actorType: "agent",
+        actorId: agent.id,
+        action: "agent.paired",
+        resourceType: "agent",
+        resourceId: agent.id,
+      }, tx);
 
       return { kind: "paired" as const, agentId: agent.id, secret };
     });
