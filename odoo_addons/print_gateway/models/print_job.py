@@ -2906,18 +2906,11 @@ class PrintGatewayJob(models.Model):
                                             # original job individually rather than counting it.
                                             raise ValueError("Gateway batch status could not be applied")
                                 else:
-                                    # A missing remote ID is not proof that
-                                    # no paper came out. Mark UNKNOWN under a
-                                    # savepoint: a failing SQL/audit statement
-                                    # must not abort the cron transaction and
-                                    # poison its per-job fallback/recovery.
-                                    with self.env.cr.savepoint():
-                                        changed = self._mark_gateway_job_missing(
-                                            job,
-                                            "GATEWAY_JOB_NOT_FOUND: the Gateway no longer has this job (expired or cleaned up). Physical outcome unknown - verify at the printer, then use Force Reprint if needed.",
-                                        )
-                                        if changed:
-                                            job._post_source_audit(_("Print Job #%s is no longer known to the Gateway; outcome marked UNKNOWN for manual reconciliation.") % (job.gateway_job_id or job.id))
+                                    # A batch response is a *subset* of authorized
+                                    # rows, not per-job proof of HTTP 404. Confirm
+                                    # this exact accepted ID via read-only GET
+                                    # before marking it missing/unknown.
+                                    raise ValueError("Gateway batch status omitted a job; verify its exact identity via GET")
                                 total_synced += 1
                             except Exception as exc:
                                 _logger.warning("Batch result application failed for Gateway job %s (Odoo job %s): %s; falling back to per-job sync", job.gateway_job_id, job.id, exc)

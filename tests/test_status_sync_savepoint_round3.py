@@ -10,14 +10,21 @@ from pathlib import Path
 SRC = Path(__file__).resolve().parents[1] / "odoo_addons/print_gateway/models/print_job.py"
 
 
-def test_missing_gateway_job_reconciliation_isolated_before_batch_fallback():
+def test_missing_gateway_job_requires_exact_lookup_before_unknown_transition():
     tree = ast.parse(SRC.read_text())
     cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "PrintGatewayJob")
     cron = next(n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name == "cron_sync_status")
-    calls = [n for n in ast.walk(cron) if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr == "_mark_gateway_job_missing"]
+    manual = next(n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name == "action_sync_status")
+    # A batch omission is NOT a 404. The only terminal missing transition
+    # happens after the exact GET within the per-job savepoint.
+    assert not any(isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+        and n.func.attr == "_mark_gateway_job_missing" for n in ast.walk(cron))
+    calls = [n for n in ast.walk(manual) if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+             and n.func.attr == "_mark_gateway_job_missing"]
     assert len(calls) == 1
-    with_nodes = [n for n in ast.walk(cron) if isinstance(n, ast.With) and any(
+    with_nodes = [n for n in ast.walk(manual) if isinstance(n, ast.With) and any(
         isinstance(item.context_expr, ast.Call) and isinstance(item.context_expr.func, ast.Attribute) and
         item.context_expr.func.attr == "savepoint" for item in n.items
     )]
     assert any(w.lineno < calls[0].lineno <= w.end_lineno for w in with_nodes)
+    assert "Gateway batch status omitted a job" in SRC.read_text()

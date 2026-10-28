@@ -309,12 +309,25 @@ def test_failed_individual_poll_rotates_fairness_and_does_not_block_later_jobs(m
     assert cron.rollbacks == 3
 
 
-def test_missing_bulk_results_stay_unknown_without_reprint_or_fallback_submission(monkeypatch):
+def test_missing_bulk_results_get_exact_status_before_any_unknown_missing_marker(monkeypatch):
     cron = StatusCron(monkeypatch, count=3, bulk_status=200)
     cron.returned_ids = []
     assert cron.cron_sync_status() == 3
-    assert [method for method, _url, _kwargs in cron.calls] == ['POST']
+    assert [method for method, _url, _kwargs in cron.calls] == ['POST', 'GET', 'GET', 'GET']
+    assert [kwargs['params']['id'] for method, _url, kwargs in cron.calls if method == 'GET'] == ['gw-1', 'gw-2', 'gw-3']
     assert [job.status for job in cron.jobs.values()] == ['unknown'] * 3
+    # A successful exact lookup is not evidence of a missing operation.
+    assert all(not job.last_error.startswith('GATEWAY_JOB_NOT_FOUND:') for job in cron.jobs.values())
+    assert not cron.pending_write
+
+
+def test_missing_bulk_results_mark_unknown_only_after_explicit_exact_404(monkeypatch):
+    cron = StatusCron(monkeypatch, count=2, bulk_status=200)
+    cron.returned_ids = []
+    cron.get_status = 404
+    assert cron.cron_sync_status() == 2
+    assert [method for method, _url, _kwargs in cron.calls] == ['POST', 'GET', 'GET']
+    assert [job.status for job in cron.jobs.values()] == ['unknown'] * 2
     assert all(job.last_error.startswith('GATEWAY_JOB_NOT_FOUND:') for job in cron.jobs.values())
 
 
