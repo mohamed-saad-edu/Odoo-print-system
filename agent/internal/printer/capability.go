@@ -243,6 +243,12 @@ func SupportedProtocolsForDevice(d TransportFacts) []string {
 		}
 		return []string{"pdf"}
 	case "ipp", "ipps":
+		// An IPP protocol label alone does not establish an IPP backend.
+		// A USB/raw/LPR/unknown transport claiming "ipp" must not advertise
+		// PDF that Gateway and this Agent would refuse at job admission.
+		if accepted, _ := PayloadCompatibleForDevice("pdf", "", d); !accepted {
+			return []string{}
+		}
 		return []string{"pdf"}
 	default:
 		return []string{}
