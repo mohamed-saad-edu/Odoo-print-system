@@ -1771,6 +1771,34 @@ class TestControlPlane(TransactionCase):
         with patch("odoo.addons.print_gateway.models.gateway_http.post") as post:
             persisted._action_submit_trusted(raise_on_failure=False)
             post.assert_not_called()
+    def test_26g2_gateway_200_invalid_job_id_keeps_original_outcome_unknown(self):
+        """A successful HTTP status cannot establish a malformed remote job ID.
+
+        The Gateway may have accepted or printed. Never trim a padded id
+        into a different exact job or automatically submit new bytes.
+        """
+        for index, remote_id in enumerate((" remote-job", "remote-job ", "\ufeffremote-job", "é" * 61)):
+            with self.subTest(remote_id=repr(remote_id)):
+                job = self._submit_test_job(
+                    "test_200_invalid_identity_%s_%s" % (index, uuid.uuid4().hex[:8])
+                )
+                response = MagicMock()
+                response.status_code = 200
+                response.json.return_value = {"jobId": remote_id, "status": "success"}
+                with patch.object(type(self.gateway_config), "_validate_gateway_host", return_value=None), \
+                     patch("odoo.addons.print_gateway.models.gateway_http.post", return_value=response) as post:
+                    job._action_submit_trusted(raise_on_failure=False)
+                    job.invalidate_recordset([
+                        "status", "last_error", "next_retry_at", "gateway_job_id", "attempts",
+                    ])
+                    self.assertEqual(job.status, "unknown")
+                    self.assertFalse(job.gateway_job_id)
+                    self.assertFalse(job.next_retry_at)
+                    self.assertTrue((job.last_error or "").startswith("UNKNOWN_SUBMISSION_OUTCOME:"))
+                    self.assertEqual(job.attempts, 1)
+                    job._action_submit_trusted(raise_on_failure=False)
+                    post.assert_called_once()
+
     def test_26d_gateway_config_unlink_checks_dependencies_before_remote_shutdown(self):
         """A config with dependent print jobs must fail before any Gateway shutdown side effect."""
         config_model = self.env["print_gateway.gateway_config"]
