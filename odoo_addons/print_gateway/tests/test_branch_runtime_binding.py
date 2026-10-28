@@ -69,6 +69,31 @@ class TestBranchRuntimeBinding(TransactionCase):
     def _gets(self):
         return [Response({"agents": self.agents}), Response({"printers": [verified_printer(p) for p in self.printers]})]
 
+    def test_synthetic_runtime_proof_is_method_scoped_and_rejects_forgery(self):
+        from odoo.addons.print_gateway.printer_verification import is_verified_runtime_printer
+        transports = (
+            ("spooler", "spooler", "windows_queue", "queue"),
+            ("ipp", "ipp", "ipp_attributes", "service"),
+            ("usb", "escpos", "usb_interface", "device"),
+            ("network", "escpos", "snmp_printer", "device"),
+            ("pdf_output", "pdf", "pdf_output", "service"),
+        )
+        for connection, protocol, method, strength in transports:
+            with self.subTest(connection=connection, protocol=protocol):
+                row = verified_printer({
+                    "id": "proof-" + connection, "connectionType": connection,
+                    "protocol": protocol, "lifecycle": "active", "sharedWithGateway": True,
+                    "agent": {"id": "agent-a"},
+                })
+                proof = row["capabilities"]["operational_verification"]
+                self.assertEqual((proof["method"], proof["identity_strength"]), (method, strength))
+                self.assertTrue(is_verified_runtime_printer(row))
+                forged = verified_printer(row)
+                forged["capabilities"]["operational_verification"]["identity_strength"] = (
+                    "queue" if strength != "queue" else "device"
+                )
+                self.assertFalse(is_verified_runtime_printer(forged))
+
     def _branch_admin_env(self):
         user = self.env["res.users"].create({
             "name": "Branch printing administrator",

@@ -3045,3 +3045,12 @@ At `main@9cc31103851f642543bb51dd22353487b00f5578`, GitHub recursive tree lists 
 **Fix:** in `odoo_addons/print_gateway/tests/test_routing_contract.py`, keep short existing printer identities for test continuity and deterministically hash only overlength fixture printer IDs, while retaining the full original idempotency key. Assert the physical printer fixture's byte bound. Also fix the Python raw-regex escape of the architecture test, preserving the no-printer-selection-field assertion instead of mis-matching all inputs.
 
 **Coverage:** PARTIAL `odoo_addons/print_gateway/tests/test_routing_contract.py` and `test_architecture_contract.py`, unchanged `models/print_job.py` exact-printer-id gate. The remaining Odoo runtime tests still need live verification and separate fixes; source review/test edits only, CI NOT RUN for this exact change until GitHub Actions finishes.
+
+
+### ODOO-VERIFICATION-FIXTURE-2026-10-28
+
+**Observed:** Hardened Odoo 19 CI `ad8b391366da5fb2add0726c05d2dc91f17d33fe` rejected synthetic USB/network/IPP printers as operationally unverified. Source trace: `odoo_addons/print_gateway/tests/printer_fixtures.py::verified_printer` stamped `identity_strength='queue'` for every physical printer, but `printer_verification.py` correctly requires device for USB/SNMP, service for IPP, queue for Windows spooler. One shared synthetic-proof mistake affects live route/test/positive failover fixtures, not the strict runtime policy.
+
+**Fix:** fake proof helper maps method→identity strength, preserving all timestamps, matching printer ID, binding digest and output medium; test matrix exercises actual production verifier for spooler, IPP, USB, network, PDF and forged-strength refusal. No production fallback or physical output claim. Extra Odoo sync cases still TODO. This batch is source-authored only; exact-SHA CI NOT RUN until completed.
+
+**Coverage:** PARTIAL `odoo_addons/print_gateway/tests/printer_fixtures.py`, `tests/test_branch_runtime_binding.py`, `tests/test_control_plane.py`, `controllers/runtime_printers.py`, `models/binding.py`, `printer_verification.py`; TODO remaining Odoo/Gateway/Agent/Desktop modules and CI; BLOCKED physical printer verification.
