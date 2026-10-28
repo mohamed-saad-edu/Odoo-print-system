@@ -241,7 +241,7 @@ func TestIPPDefaultQueueConvergesTCPAndMDNSIdentity(t *testing.T) {
 	tcpID := StableIDFromNetwork("192.168.1.20", 631)
 	for _, endpoint := range []string{
 		"ipp://192.168.1.20:631/ipp/print",
-		"ipp://192.168.1.20:631",
+		"ipp://192.168.1.20/ipp/print",
 	} {
 		if got := StableIDFromIPPURI(endpoint, "192.168.1.20", 631); got != tcpID {
 			t.Fatalf("default-queue endpoint %q must share the TCP identity: got %s want %s", endpoint, got, tcpID)

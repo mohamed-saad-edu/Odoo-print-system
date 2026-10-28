@@ -4,9 +4,6 @@ import (
 	"fmt"
 	"log"
 	"sort"
-	"strings"
-	"unicode"
-	"unicode/utf8"
 
 	"github.com/yaseir-agent/agent/internal/config"
 	"github.com/yaseir-agent/agent/internal/printer"
@@ -76,9 +73,7 @@ func (a *Agent) isPrinterSharedWithGateway(id string) bool {
 func (a *Agent) privatePrinterIDs(snapshot localPrinterSharingSnapshot) ([]string, bool) {
 	configs := append([]config.PrinterConfig{}, snapshot.known...)
 	a.printersMu.RLock()
-	byID := make(map[string]config.PrinterConfig, len(a.printerConfigs))
-	for id, pc := range a.printerConfigs {
-		byID[id] = pc
+	for _, pc := range a.printerConfigs {
 		configs = append(configs, pc)
 	}
 	owned := make([]string, 0, len(a.gatewayOwned))
@@ -110,8 +105,16 @@ func (a *Agent) privatePrinterIDs(snapshot localPrinterSharingSnapshot) ([]strin
 		}
 	}
 	for _, id := range owned {
-		localID := a.resolvePrinterAlias(id)
-		if pc, exists := byID[localID]; exists {
+		// Only authoritative LOCAL binding records can identify the
+		// physical printer behind this Agent-scoped cloud alias. Include
+		// the persisted local registry even after its runtime backend was
+		// removed. Never mark a foreign Agent's unmatched alias private.
+		matchedIDs := make(map[string]struct{})
+		for _, pc := range configs {
+			if pc.ID == "" || (pc.ID != id && gatewayAliasPrinterID(pc.ID, a.cfg.Agent.ID) != id) {
+				continue
+			}
+			matchedIDs[pc.ID] = struct{}{}
 			shared, err := snapshot.shared(pc)
 			if !shared || err != nil {
 				private[id] = struct{}{}
@@ -119,7 +122,10 @@ func (a *Agent) privatePrinterIDs(snapshot localPrinterSharingSnapshot) ([]strin
 			if err != nil {
 				complete = false
 			}
-		} else if snapshot.err != nil {
+		}
+		// Multiple distinct local IDs selecting the same cloud identity
+		// are ambiguous; a damaged policy cannot authorize any owned ID.
+		if len(matchedIDs) > 1 || (len(matchedIDs) == 0 && snapshot.err != nil) {
 			private[id] = struct{}{}
 		}
 	}
@@ -140,23 +146,9 @@ func (a *Agent) privatePrinterIDs(snapshot localPrinterSharingSnapshot) ([]strin
 	return ids, complete
 }
 
+// Same wire identity contract as native geometry and operational evidence.
 func validGatewaySharingID(id string) bool {
-	if id == "" || !utf8.ValidString(id) || strings.TrimSpace(id) != id || strings.ContainsFunc(id, unicode.IsControl) {
-		return false
-	}
-	// Zod string length is UTF-16 code units. Avoid rejecting every page of a
-	// snapshot because an old local ID could never fit the Gateway contract.
-	units := 0
-	for _, r := range id {
-		units++
-		if r > 0xffff {
-			units++
-		}
-		if units > 120 {
-			return false
-		}
-	}
-	return true
+	return printer.ValidGatewayPrinterID(id)
 }
 
 func (a *Agent) localPrinterBindingDisabled(pc config.PrinterConfig) bool {

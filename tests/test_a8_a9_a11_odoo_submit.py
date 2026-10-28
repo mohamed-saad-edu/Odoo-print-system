@@ -36,9 +36,12 @@ def test_create_operation_canonicalizes_base64():
     create = create[: create.index("def _gateway_idempotency_key")]
     assert "b64encode(base64.b64decode" in create.replace(" ", ""), "persist canonical base64 once"
 
-def test_billing_rejection_must_not_autoprint_later_pos_receipts():
-    src = MODEL.read_text(encoding="utf-8")
-    assert "GATEWAY_REJECTED_BILLING_HOLD" in src
-    assert "def _is_billing_deferred_receipt" in src
-    assert "_is_billing_deferred_receipt(job)" in src
-    assert "next_retry_at" in src
+
+def test_subscription_denial_preserves_pos_history_without_automatic_reprint():
+    source = MODEL.read_text(encoding="utf-8")
+    assert "def _is_billing_deferred_receipt" in source
+    assert "def _is_time_sensitive_receipt" in source
+    assert "GATEWAY_REJECTED_BILLING_HOLD" in source
+    assert "_is_billing_deferred_receipt(job)" in source
+    assert '"next_retry_at": False' in source
+    assert "GATEWAY_REJECTED_STALE_POS_OPERATION" in source

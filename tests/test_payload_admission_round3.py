@@ -50,7 +50,18 @@ def _router(**kwargs):
 
 
 def _job(**kwargs):
-    return _model_methods("print_job.py", "PrintGatewayJob", {"_validate_persisted_payload", "create_operation"}, **kwargs)
+    # These tests execute the real create_operation AST outside the Odoo
+    # package. Load its actual pure printer-identity dependency too: an
+    # undefined mock name would turn an input regression into a NameError.
+    policy_path = MODELS.parent / "runtime_policy.py"
+    policy_ns = {}
+    exec(compile(policy_path.read_text(encoding="utf-8"), str(policy_path), "exec"), policy_ns)
+    return _model_methods(
+        "print_job.py", "PrintGatewayJob",
+        {"_validate_persisted_payload", "create_operation"},
+        is_exact_gateway_printer_id=policy_ns["is_exact_gateway_printer_id"],
+        **kwargs,
+    )
 
 
 @pytest.mark.parametrize("value", [b"%PDF-1.7\n1 0 obj\nendobj\n%%EOF\n", [b"%PDF-1.4\n%%EOF\n"],

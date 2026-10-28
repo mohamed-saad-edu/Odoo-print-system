@@ -39,6 +39,20 @@ describe("getPrinterLanguageBadges", () => {
     expect(getPrinterLanguageBadges("raw", "network")).not.toContain("IPP · PDF");
   });
 
+  it("rejects language labels that are unsupported by the physical backend", () => {
+    expect(getPrinterLanguageBadges("raw", "unknown")).toEqual([]);
+    expect(getPrinterLanguageBadges("raw", "spooler")).toEqual(["Spooler · PDF"]);
+    expect(getPrinterLanguageBadges("raw", "ipp")).toEqual(["IPP · PDF"]);
+    expect(getPrinterLanguageBadges("zpl", "ipp")).toEqual(["IPP · PDF"]);
+    expect(getPrinterLanguageBadges("escpos", "lpr")).toEqual([]);
+    expect(getPrinterLanguageBadges("escpos", "spooler")).toEqual(["Spooler · PDF"]);
+    expect(getPrinterLanguageBadges("tspl", "bluetooth")).toEqual([]);
+    expect(getPrinterLanguageBadges("zpl", "serial")).toEqual([]);
+    expect(getPrinterLanguageBadges("raw", "usb")).toEqual(["RAW"]);
+    expect(getPrinterLanguageBadges("ipp", "network")).toEqual(["IPP · PDF"]);
+    expect(getPrinterLanguageBadges("unknown", "ipp")).toEqual(["IPP · PDF"]);
+  });
+
   it("never invents languages for an undeclared protocol", () => {
     expect(getPrinterLanguageBadges("unknown", "network")).toEqual([]);
     expect(getPrinterLanguageBadges("", "")).toEqual([]);

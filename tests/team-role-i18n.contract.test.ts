@@ -1,9 +1,12 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { roleLabel } from "../src/lib/roles";
-const roles = ["owner", "admin", "operator", "viewer", "integration_admin", "billing_admin"];
+const roles = ["admin", "operator", "viewer", "integration_admin", "billing_admin"];
 
-describe("one translated operational Full Access label", () => {
+describe("workspace owner and one translated operational Full Access label", () => {
+  it("marks the workspace owner separately from Full Access", () => {
+    expect(roleLabel("owner", key => key)).toBe("team.role.owner");
+  });
   it.each(roles)("maps legacy %s membership to the same Full Access wording", role => {
     expect(roleLabel(role, key => key)).toBe("v4.team.fullAccess");
   });

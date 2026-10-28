@@ -12,6 +12,7 @@ import { z } from "zod";
 import { writeAuditEvent } from "../../../../lib/audit";
 import { deleteApiKeyInTransaction } from "../../../../lib/api-key-deletion";
 import { isTenantBillingError, requireTenantBillingAccess } from "../../../../lib/entitlements";
+import { logError } from "../../../../lib/log";
 
 const keyInputSchema = z.object({
   name: z.string().trim().min(1).max(120).optional(),
@@ -20,19 +21,24 @@ const keyInputSchema = z.object({
 
 export const dynamic = "force-dynamic";
 
+const ODOO_KEY_INVENTORY_HEADERS = { "Cache-Control": "private, no-store" };
+
 export async function GET(req: Request) {
   const manager = await validateWorkspaceManager(req);
-  if (!manager) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!manager) return NextResponse.json({ error: "Unauthorized", code: "UNAUTHORIZED" }, { status: 401, headers: ODOO_KEY_INVENTORY_HEADERS });
   // Same coded ActionError shape as POST/DELETE so clients parse one
   // authorization-failure contract across the route.
-  try { requireManagerPermission(manager, "integrations.read"); } catch { const e = new ActionError("Forbidden", 403, "FORBIDDEN"); return NextResponse.json({ error: e.message, code: e.code, ...(e.details ?? {}) }, { status: e.status }); }
+  try { requireManagerPermission(manager, "integrations.read"); } catch { const e = new ActionError("Forbidden", 403, "FORBIDDEN"); return NextResponse.json({ error: e.message, code: e.code, ...(e.details ?? {}) }, { status: e.status, headers: ODOO_KEY_INVENTORY_HEADERS }); }
   // Intentionally uncapped: the list page has no pagination and revoked keys
   // remain visible until explicit credential removal; deleted history anchors
   // are deliberately excluded, so
   // a limit would silently hide credentials. The table is low-cardinality and
   // tenant-scoped via api_keys_tenant_id_unique (tenantId, id).
-  const rows = await db
-    .select({
+  try {
+    const rows = await db.transaction(async tx => {
+      await requireActiveTenantInTransaction(tx, manager.tenantId);
+      await requireManagerActorInTransaction(tx, manager, "integrations.read");
+      return tx.select({
       id: apiKeys.id,
       name: apiKeys.name,
       description: apiKeys.description,
@@ -55,8 +61,21 @@ export async function GET(req: Request) {
     .from(apiKeys)
     .where(and(eq(apiKeys.tenantId, manager.tenantId), sql`${apiKeys.hashedKey} NOT LIKE 'deleted:%'`))
     .orderBy(desc(apiKeys.createdAt));
-
-  return NextResponse.json(rows);
+    });
+    return NextResponse.json(rows, { headers: ODOO_KEY_INVENTORY_HEADERS });
+  } catch (error) {
+    if (error instanceof ManagerMutationAuthorityChangedError) {
+      return NextResponse.json({ error: error.message, code: error.code },
+        { status: error.status, headers: ODOO_KEY_INVENTORY_HEADERS });
+    }
+    if (error instanceof TenantSuspendedError || error instanceof TenantDeletedError) {
+      return NextResponse.json({ error: error.message, code: error.code },
+        { status: 403, headers: ODOO_KEY_INVENTORY_HEADERS });
+    }
+    logError("odoo.api_key_inventory_failed", { error: error instanceof Error ? error.message : "unknown" });
+    return NextResponse.json({ error: "API key inventory temporarily unavailable", code: "KEY_INVENTORY_UNAVAILABLE" },
+      { status: 503, headers: ODOO_KEY_INVENTORY_HEADERS });
+  }
 }
 
 export async function POST(req: Request) {

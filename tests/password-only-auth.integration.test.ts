@@ -6,6 +6,8 @@ import { hashPassword } from "../src/lib/password";
 import { POST as customerLogin } from "../src/app/api/auth/login/route";
 import { POST as managerLogin } from "../src/app/api/auth/manager/login/route";
 import { POST as platformLogin } from "../src/app/api/platform/auth/login/route";
+import { GET as platformMe } from "../src/app/api/platform/auth/me/route";
+import { GET as managerMe } from "../src/app/api/auth/manager/me/route";
 import { POST as selectTenant } from "../src/app/api/auth/select-tenant/route";
 import { POST as reauthenticate } from "../src/app/api/auth/reauth/password/route";
 import { validateCustomer } from "../src/lib/customer-auth";
@@ -52,6 +54,31 @@ describe.skipIf(!hasTestDatabase)("password-only authentication and retained ses
     vi.unstubAllEnvs();
   });
   afterAll(closePool);
+
+  it("does not cache manager or Platform Owner session metadata or unauthenticated probes", async () => {
+    // Both authenticated metadata and 401 probes must be uncached so logout
+    // and newly signed-in sessions are never mistaken for a cached response.
+    const manager = await managerLogin(request("/api/auth/manager/login", { username: "user@example.test", password }));
+    const platform = await platformLogin(request("/api/platform/auth/login", { email: "user@example.test", password }));
+    expect(manager.status).toBe(200);
+    expect(platform.status).toBe(200);
+
+    const probes = [
+      { endpoint: managerMe, path: "/api/auth/manager/me", cookie: cookies(manager) },
+      { endpoint: platformMe, path: "/api/platform/auth/me", cookie: cookies(platform) },
+    ];
+    for (const { endpoint, path, cookie } of probes) {
+      const verified = await endpoint(request(path, undefined, cookie));
+      expect(verified.status, path).toBe(200);
+      expect(verified.headers.get("Cache-Control"), path).toContain("no-store");
+      expect(verified.headers.get("Cache-Control"), path).toContain("private");
+      expect(await verified.json()).toMatchObject({ authenticated: true, userId: "user" });
+
+      const denied = await endpoint(request(path));
+      expect(denied.status, path).toBe(401);
+      expect(denied.headers.get("Cache-Control"), path).toContain("no-store");
+    }
+  });
 
   it.each(roles)("immediately admits a %s workspace user after a correct password", async role => {
     await pool().query("UPDATE tenant_users SET role=$1 WHERE user_id='user'", [role]);

@@ -45,12 +45,14 @@ class StatusCron(Production):
         self.commits = []
         self.rollbacks = 0
         self.apply_failure = None
+        self.apply_rejection = None
         self.returned_ids = None
         self.poll_stamp = 0
         owner = self
 
         class Cursor:
             def execute(self, query):
+                owner.selection_sql = query
                 assert 'ORDER BY last_status_polled_at ASC NULLS FIRST, id ASC' in query
                 assert 'LIMIT 100' in query
 
@@ -184,6 +186,9 @@ class StatusCron(Production):
         if self.apply_failure == job.id:
             self.apply_failure = None
             raise ValueError('One result failed its isolated application')
+        if self.apply_rejection == job.id:
+            self.apply_rejection = None
+            return False  # Real _apply_synced_status rejects a stale or contradictory reply.
         job.write({'status': body['status']})
         return True
 
@@ -282,6 +287,18 @@ def test_one_failed_batch_result_falls_back_only_that_job_and_keeps_other_update
     assert not cron.pending_write
 
 
+def test_rejected_batch_result_falls_back_to_exact_individual_lookup(monkeypatch):
+    """A clean HTTP 200 with rejected status evidence is not a successful sync."""
+    cron = StatusCron(monkeypatch, count=3, bulk_status=200)
+    cron.apply_rejection = 2  # E.g. _apply_synced_status rejected a mismatched legacy id alias.
+    assert cron.cron_sync_status() == 3
+    assert [method for method, _url, _kwargs in cron.calls] == ['POST', 'GET']
+    assert [kwargs['params']['id'] for method, _url, kwargs in cron.calls if method == 'GET'] == ['gw-2']
+    assert [job.status for job in cron.jobs.values()] == ['unknown', 'unknown', 'unknown']
+    assert all(job.last_status_polled_at is not None for job in cron.jobs.values())
+    assert not cron.pending_write
+
+
 def test_failed_individual_poll_rotates_fairness_and_does_not_block_later_jobs(monkeypatch):
     cron = StatusCron(monkeypatch, count=3)
     cron.get_status = 503
@@ -292,10 +309,54 @@ def test_failed_individual_poll_rotates_fairness_and_does_not_block_later_jobs(m
     assert cron.rollbacks == 3
 
 
-def test_missing_bulk_results_stay_unknown_without_reprint_or_fallback_submission(monkeypatch):
+def test_missing_bulk_results_get_exact_status_before_any_unknown_missing_marker(monkeypatch):
     cron = StatusCron(monkeypatch, count=3, bulk_status=200)
     cron.returned_ids = []
     assert cron.cron_sync_status() == 3
-    assert [method for method, _url, _kwargs in cron.calls] == ['POST']
+    assert [method for method, _url, _kwargs in cron.calls] == ['POST', 'GET', 'GET', 'GET']
+    assert [kwargs['params']['id'] for method, _url, kwargs in cron.calls if method == 'GET'] == ['gw-1', 'gw-2', 'gw-3']
     assert [job.status for job in cron.jobs.values()] == ['unknown'] * 3
+    # A successful exact lookup is not evidence of a missing operation.
+    assert all(not job.last_error.startswith('GATEWAY_JOB_NOT_FOUND:') for job in cron.jobs.values())
+    assert not cron.pending_write
+
+
+def test_missing_bulk_results_mark_unknown_only_after_explicit_exact_404(monkeypatch):
+    cron = StatusCron(monkeypatch, count=2, bulk_status=200)
+    cron.returned_ids = []
+    cron.get_status = 404
+    assert cron.cron_sync_status() == 2
+    assert [method for method, _url, _kwargs in cron.calls] == ['POST', 'GET', 'GET']
+    assert [job.status for job in cron.jobs.values()] == ['unknown'] * 2
     assert all(job.last_error.startswith('GATEWAY_JOB_NOT_FOUND:') for job in cron.jobs.values())
+
+
+@pytest.mark.parametrize("returned_ids", [
+    ["gw-1", "gw-1", "gw-2"],   # duplicate: last item must not win
+    ["gw-1", "gw-foreign"],     # wrong-tenant/unsolicited row
+    ["gw-1", "gw-2 "],          # noncanonical opaque identity
+    ["gw-1", "\\ud800"],       # JSON can contain a lone surrogate
+])
+def test_corrupt_batch_status_falls_back_to_exact_individual_lookups(monkeypatch, returned_ids):
+    cron = StatusCron(monkeypatch, count=2, bulk_status=200)
+    cron.returned_ids = returned_ids
+    assert cron.cron_sync_status() == 2
+    assert [method for method, _url, _kwargs in cron.calls] == ["POST", "GET", "GET"]
+    assert [args["params"]["id"] for method, _url, args in cron.calls if method == "GET"] == ["gw-1", "gw-2"]
+    assert [job.status for job in cron.jobs.values()] == ["unknown", "unknown"]
+    assert all(job.last_status_polled_at is not None for job in cron.jobs.values())
+
+
+def test_reconciliation_selection_uses_exact_unknown_outcome_prefixes(monkeypatch):
+    """Match the Gateway's literal startsWith semantics; underscores are NOT SQL wildcards."""
+    cron = StatusCron(monkeypatch, count=0)
+    assert cron.cron_sync_status() == 0
+    sql = cron.selection_sql
+    for marker in (
+        'AGENT_EXECUTION_TIMEOUT', 'AGENT_RESTART_DURING_PRINT',
+        'UNKNOWN_PARTIAL_DELIVERY', 'UNKNOWN_SUBMISSION_OUTCOME',
+        'JOB_EXPIRED_DURING_PRINT', 'UNKNOWN_SUBMISSION_OUTCOME:',
+    ):
+        assert "starts_with(COALESCE(last_error, ''), '%s')" % marker in sql
+    assert 'last_error LIKE' not in sql
+

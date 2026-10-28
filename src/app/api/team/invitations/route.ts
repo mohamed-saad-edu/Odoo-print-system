@@ -4,10 +4,11 @@ import { tenantInvitations } from "../../../../db/schema";
 import { and, desc, eq, gt, isNull, sql } from "drizzle-orm";
 import { validateWorkspaceManager } from "../../../../lib/manager-auth";
 import { hasManagerPermission } from "../../../../lib/authorization";
+import { requireActiveTenantInTransaction } from "../../../../lib/tenant-guard";
 import { queryWithTimeout } from "../../../../db/client";
-import { clampListLimit } from "../../../../lib/request-limits";
+import { clampListLimit, parseStrictListOffset } from "../../../../lib/request-limits";
 import { hasBodyOverLimit } from "../../../../lib/request-limits";
-import { requireWorkspacePlatformOwnerForInvites } from "../../../../lib/workspace-owner-invitations";
+import { requireWorkspaceOwnerForInvites } from "../../../../lib/workspace-owner-invitations";
 import { assertPlatformTeamOrigin } from "../../../../lib/platform-team-security";
 import { ManualSubscriptionError } from "../../../../lib/manual-subscriptions";
 import { manualApiError } from "../../../../lib/manual-api-error";
@@ -20,37 +21,45 @@ import { logError } from "../../../../lib/log";
 
 /** Workspace-scoped pending invitations, without revealing any invitation token. */
 export async function GET(req: Request) {
-  const claims = await validateWorkspaceManager(req);
-  if (!claims?.userId) return NextResponse.json({ error: "Unauthorized", code: "UNAUTHORIZED" }, { status: 401 });
-  if (!hasManagerPermission(claims, "users.read")) {
-    return NextResponse.json({ error: "Forbidden", code: "FORBIDDEN" }, { status: 403 });
-  }
-  const { searchParams } = new URL(req.url);
-  const limit = clampListLimit(searchParams.get("limit"), 50, 100);
-  const offset = Number(searchParams.get("offset") ?? "0");
-  if (!Number.isSafeInteger(offset) || offset < 0 || offset > 1_000_000) {
-    return NextResponse.json({ error: "Invalid offset", code: "INVALID_OFFSET" }, { status: 400 });
-  }
-  const visible = and(
-    eq(tenantInvitations.tenantId, claims.tenantId),
-    isNull(tenantInvitations.acceptedAt),
-    isNull(tenantInvitations.revokedAt),
-    gt(tenantInvitations.expiresAt, sql`clock_timestamp()`),
-  );
-  const [rows, countRows] = await Promise.all([
-    queryWithTimeout(() => db.select({
-      id: tenantInvitations.id, email: tenantInvitations.email,
-      expiresAt: tenantInvitations.expiresAt, createdAt: tenantInvitations.createdAt,
-    }).from(tenantInvitations).where(visible)
-      .orderBy(desc(tenantInvitations.createdAt), desc(tenantInvitations.id))
-      .offset(offset).limit(limit + 1), 5_000, "teamInvitationsList"),
-    queryWithTimeout(() => db.select({ total: sql<number>`count(*)::int` })
-      .from(tenantInvitations).where(visible), 5_000, "teamInvitationsCount"),
-  ]);
-  return NextResponse.json({
-    invitations: rows.slice(0, limit), hasMore: rows.length > limit,
-    offset, limit, total: countRows[0]?.total ?? 0,
-  }, { headers: { "Cache-Control": "private, no-store" } });
+  try {
+    const claims = await validateWorkspaceManager(req);
+    if (!claims?.userId) return NextResponse.json({ error: "Unauthorized", code: "UNAUTHORIZED" }, { status: 401 });
+    if (!hasManagerPermission(claims, "users.read")) {
+      return NextResponse.json({ error: "Forbidden", code: "FORBIDDEN" }, { status: 403 });
+    }
+    const { searchParams } = new URL(req.url);
+    const limit = clampListLimit(searchParams.get("limit"), 50, 100);
+    const offset = parseStrictListOffset(searchParams.get("offset"), 1_000_000);
+    if (offset === null) {
+      return NextResponse.json({ error: "Invalid offset", code: "INVALID_OFFSET" }, { status: 400 });
+    }
+    const visible = and(
+      eq(tenantInvitations.tenantId, claims.tenantId),
+      isNull(tenantInvitations.acceptedAt),
+      isNull(tenantInvitations.revokedAt),
+      gt(tenantInvitations.expiresAt, sql`clock_timestamp()`),
+    );
+    // Recheck the live owner and session while holding the same database snapshot as the read.
+    const [rows, countRows] = await db.transaction(async tx => {
+      // Tenant lifecycle must be fenced BEFORE the owner/session read.
+      await requireActiveTenantInTransaction(tx, claims.tenantId);
+      await requireWorkspaceOwnerForInvites(tx, claims);
+      return Promise.all([
+      queryWithTimeout(() => tx.select({
+        id: tenantInvitations.id, email: tenantInvitations.email,
+        expiresAt: tenantInvitations.expiresAt, createdAt: tenantInvitations.createdAt,
+      }).from(tenantInvitations).where(visible)
+        .orderBy(desc(tenantInvitations.createdAt), desc(tenantInvitations.id))
+        .offset(offset).limit(limit + 1), 5_000, "teamInvitationsList"),
+      queryWithTimeout(() => tx.select({ total: sql<number>`count(*)::int` })
+        .from(tenantInvitations).where(visible), 5_000, "teamInvitationsCount"),
+      ]);
+    });
+    return NextResponse.json({
+      invitations: rows.slice(0, limit), hasMore: rows.length > limit,
+      offset, limit, total: countRows[0]?.total ?? 0,
+    }, { headers: { "Cache-Control": "private, no-store" } });
+  } catch (error) { return manualApiError(error); }
 }
 
 const active = (tenantId: string, email?: string) => and(
@@ -61,7 +70,7 @@ const active = (tenantId: string, email?: string) => and(
   ...(email ? [eq(tenantInvitations.email, email)] : []),
 );
 
-/** A valid workspace cookie plus a currently verified Platform Owner identity
+/** A valid workspace cookie plus a currently verified workspace owner identity
  * authorizes only this tenant's invitation creation, with no password prompt.
  * Platform subscription/member/ownership APIs keep their separate authority. */
 export async function POST(req: Request) {
@@ -82,7 +91,7 @@ export async function POST(req: Request) {
     await db.transaction(async tx => {
       const tenant = await tx.execute(sql`SELECT id,lifecycle FROM tenants WHERE id=${claims.tenantId} FOR UPDATE`);
       if (tenant.rows[0]?.lifecycle !== "active") throw new ManualSubscriptionError("WORKSPACE_NOT_ACTIVE", 409);
-      await requireWorkspacePlatformOwnerForInvites(tx, claims);
+      await requireWorkspaceOwnerForInvites(tx, claims);
       const pending = await tx.query.tenantInvitations.findFirst({
         where: active(claims.tenantId, email), columns: { id: true },
       });
@@ -96,7 +105,7 @@ export async function POST(req: Request) {
         expiresAt: sql`clock_timestamp() + interval '7 days'`,
       });
       await writeAuditEvent({
-        tenantId: claims.tenantId, actorType: "platform", actorId: claims.userId,
+        tenantId: claims.tenantId, actorType: "user", actorId: claims.userId,
         action: "team.invitation.created", resourceType: "tenant_invitation", resourceId: inviteId,
       }, tx);
     });
@@ -126,7 +135,7 @@ export async function DELETE(req: Request) {
     await db.transaction(async tx => {
       const tenant = await tx.execute(sql`SELECT id FROM tenants WHERE id=${claims.tenantId} FOR UPDATE`);
       if (!tenant.rows.length) throw new ManualSubscriptionError("WORKSPACE_NOT_FOUND", 404);
-      await requireWorkspacePlatformOwnerForInvites(tx, claims);
+      await requireWorkspaceOwnerForInvites(tx, claims);
       const revoked = await tx.update(tenantInvitations)
         .set({ revokedAt: sql`clock_timestamp()` })
         .where(and(
@@ -135,7 +144,7 @@ export async function DELETE(req: Request) {
         )).returning({ id: tenantInvitations.id });
       if (revoked.length !== 1) throw new ManualSubscriptionError("INVITATION_NOT_FOUND", 404);
       await writeAuditEvent({
-        tenantId: claims.tenantId, actorType: "platform", actorId: claims.userId,
+        tenantId: claims.tenantId, actorType: "user", actorId: claims.userId,
         action: "team.invitation.revoked", resourceType: "tenant_invitation", resourceId: id,
       }, tx);
     });

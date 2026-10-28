@@ -13,6 +13,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/yaseir-agent/agent/internal/config"
 )
@@ -85,9 +87,55 @@ func encodeGatewayResponse(status uint16, data []byte, headers http.Header) ([]b
 	return json.Marshal(response)
 }
 
-var gatewayPrinterActionPathRe = regexp.MustCompile("^/api/printers/[A-Za-z0-9._~-]+/test-connection$")
-var gatewayTestPrintPathRe = regexp.MustCompile("^/api/printers/[A-Za-z0-9._~-]+/test-print$")
+// Gate the exact canonical encodeURIComponent() segment from Desktop.
+const gatewayPrinterIDPattern = "(?:[A-Za-z0-9._~!'()*-]|%[0-9A-F]{2})+"
+
+var gatewayPrinterActionPathRe = regexp.MustCompile("^/api/printers/" + gatewayPrinterIDPattern + "/test-connection$")
+var gatewayTestPrintPathRe = regexp.MustCompile("^/api/printers/" + gatewayPrinterIDPattern + "/test-print$")
 var gatewayTestKeyRe = regexp.MustCompile("^[A-Za-z0-9._:-]+$")
+
+func canonicalPrinterSegment(identity string) string {
+	const hex = "0123456789ABCDEF"
+	var b strings.Builder
+	for i := 0; i < len(identity); i++ {
+		ch := identity[i]
+		if (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || strings.ContainsRune("-_.!~*'()", rune(ch)) {
+			b.WriteByte(ch)
+		} else {
+			b.WriteByte('%')
+			b.WriteByte(hex[ch>>4])
+			b.WriteByte(hex[ch&15])
+		}
+	}
+	return b.String()
+}
+
+func validGatewayPrinterSegment(segment string) bool {
+	if segment == "" || len(segment) > 360 {
+		return false
+	}
+	identity, err := url.PathUnescape(segment)
+	if err != nil || identity == "" || len(identity) > 120 || !utf8.ValidString(identity) ||
+		strings.TrimFunc(identity, func(r rune) bool { return unicode.IsSpace(r) || r == '\uFEFF' }) != identity || strings.Contains(identity, "..") ||
+		strings.ContainsAny(identity, "/?#%") || strings.ContainsRune(identity, rune(92)) ||
+		strings.ContainsFunc(identity, unicode.IsControl) {
+		return false
+	}
+	first, _ := utf8.DecodeRuneInString(identity)
+	if first < 128 && !((first >= 'A' && first <= 'Z') || (first >= 'a' && first <= 'z') || (first >= '0' && first <= '9')) {
+		return false
+	}
+	return canonicalPrinterSegment(identity) == segment
+}
+
+func gatewayPrinterActionPathAllowed(path, action string) bool {
+	prefix := "/api/printers/"
+	suffix := "/" + action
+	if !strings.HasPrefix(path, prefix) || !strings.HasSuffix(path, suffix) {
+		return false
+	}
+	return validGatewayPrinterSegment(strings.TrimSuffix(strings.TrimPrefix(path, prefix), suffix))
+}
 
 // Deliberately wider than the desktop console proxy (which allows exact
 // GET /api/agents only): the operator CLI needs single-agent fetch for
@@ -141,7 +189,7 @@ func handleGatewayRequest(args []string, configPath string) {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
 	}
-	if gatewayTestPrintPathRe.MatchString(reqPath) {
+	if gatewayTestPrintPathRe.MatchString(reqPath) && gatewayPrinterActionPathAllowed(reqPath, "test-print") {
 		if len(*idempotencyKey) < 8 || len(*idempotencyKey) > 128 || !gatewayTestKeyRe.MatchString(*idempotencyKey) {
 			fmt.Fprintln(os.Stderr, "Agent test-print requires a valid idempotency key")
 			os.Exit(2)
@@ -251,18 +299,34 @@ func handleGatewayRequest(args []string, configPath string) {
 
 func isAllowedJobsPath(path string) bool {
 	parsed, err := url.Parse(path)
-	if err != nil || parsed.Path != "/api/jobs" || parsed.RawPath != "" || parsed.Fragment != "" {
+	if err != nil || parsed.Path != "/api/jobs" || parsed.RawPath != "" ||
+		parsed.IsAbs() || parsed.Host != "" || parsed.User != nil ||
+		parsed.Fragment != "" || strings.Contains(path, "#") || parsed.ForceQuery {
 		return false
 	}
 	if parsed.RawQuery == "" {
 		return true
 	}
 	for _, pair := range strings.Split(parsed.RawQuery, "&") {
-		if pair == "" || !strings.Contains(pair, "=") {
+		rawKey, _, found := strings.Cut(pair, "=")
+		if !found {
+			return false
+		}
+		// Only the literal ASCII wire name is authorized. ParseQuery decodes
+		// se%61rch into "search", which Rust correctly refuses as a key alias.
+		switch rawKey {
+		case "limit", "offset", "status", "search", "q", "printerId", "agentId":
+		default:
 			return false
 		}
 	}
-	for key, values := range parsed.Query() {
+	// ParseQuery reports malformed percent escapes; URL.Query silently drops them.
+	// Reject rather than ignore untrusted filters crossing an authenticated CLI.
+	query, err := url.ParseQuery(parsed.RawQuery)
+	if err != nil {
+		return false
+	}
+	for key, values := range query {
 		if len(values) != 1 || len(values[0]) > 200 {
 			return false
 		}
@@ -278,7 +342,13 @@ func isAllowedJobsPath(path string) bool {
 func isAllowedGatewayConsolePath(path, method string) bool {
 	// Match the Rust WebView boundary: neither direct CLI callers nor decoded
 	// URLs may smuggle dot segments into authenticated Agent operations.
-	if strings.Contains(path, "..") || strings.Contains(path, "\\") {
+	routePath := path
+	if queryAt := strings.IndexByte(routePath, '?'); queryAt >= 0 {
+		routePath = routePath[:queryAt]
+	}
+	// Reject dot traversal in the API route, not harmless search/cursor text.
+	// Raw backslash stays disallowed throughout this authenticated request.
+	if strings.Contains(routePath, "..") || strings.Contains(path, "\\") {
 		return false
 	}
 	switch strings.ToUpper(strings.TrimSpace(method)) {
@@ -287,7 +357,9 @@ func isAllowedGatewayConsolePath(path, method string) bool {
 			isAllowedJobsPath(path) ||
 			gatewayAgentPathRe.MatchString(path)
 	case "POST":
-		return path == "/api/printers" || gatewayPrinterActionPathRe.MatchString(path) || gatewayTestPrintPathRe.MatchString(path)
+		return path == "/api/printers" ||
+			(gatewayPrinterActionPathRe.MatchString(path) && gatewayPrinterActionPathAllowed(path, "test-connection")) ||
+			(gatewayTestPrintPathRe.MatchString(path) && gatewayPrinterActionPathAllowed(path, "test-print"))
 	// Agent diagnostic print is scoped to its own printer at Gateway; it is
 	// not authorized to mutate desired state or cross-Agent printer records.
 	default:
@@ -297,7 +369,9 @@ func isAllowedGatewayConsolePath(path, method string) bool {
 
 func isAllowedFleetPath(path string) bool {
 	parsed, err := url.Parse(path)
-	if err != nil || (parsed.Path != "/api/printers" && parsed.Path != "/api/agents") || parsed.RawPath != "" || parsed.Fragment != "" || parsed.IsAbs() || parsed.Host != "" {
+	if err != nil || (parsed.Path != "/api/printers" && parsed.Path != "/api/agents") ||
+		parsed.RawPath != "" || parsed.Fragment != "" || strings.Contains(path, "#") ||
+		parsed.ForceQuery || parsed.IsAbs() || parsed.Host != "" || parsed.User != nil {
 		return false
 	}
 	if parsed.RawQuery == "" {
@@ -308,7 +382,15 @@ func isAllowedFleetPath(path string) bool {
 		return false
 	}
 	for _, pair := range strings.Split(parsed.RawQuery, "&") {
-		if pair == "" || !strings.Contains(pair, "=") {
+		rawKey, _, found := strings.Cut(pair, "=")
+		if !found {
+			return false
+		}
+		// Match the Rust/TypeScript wire contract before URL decoding:
+		// l%69mit must not be silently accepted as the "limit" key.
+		switch rawKey {
+		case "limit", "offset", "beforeCreatedAt", "beforeId", "beforeIdEncoded":
+		default:
 			return false
 		}
 	}

@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
 import { db } from "../src/db";
 import { createPrintJobForPrinter } from "../src/lib/print-job-service";
 import { POST as printJobsPOST } from "../src/app/api/print/jobs/route";
@@ -48,19 +49,45 @@ suite("tenant print quota", () => {
     expect(await print).toMatchObject({ value: expect.anything() });
   });
 
-  it("uses exact 30-day UTC credit cycles anchored to the customer's subscription start", async () => {
+  it("uses UTC calendar-month credits regardless of first activation and contract dates", async () => {
     const f = await seedFixture();
-    const activatedAt = new Date("2026-10-15T10:30:00.000Z");
     await pool().query(
-      "UPDATE tenant_subscriptions SET current_period_start=$1, current_period_end=clock_timestamp()+interval '1 year' WHERE tenant_id=$2",
-      [activatedAt, f.tenantId],
+      "UPDATE tenant_subscriptions SET current_period_start=$1, print_cycle_anchor=$1, current_period_end=clock_timestamp()+interval '1 year' WHERE tenant_id=$2",
+      [new Date("2026-10-15T10:30:00.000Z"), f.tenantId],
     );
     const observedAt = new Date((await pool().query("SELECT clock_timestamp() AS now")).rows[0].now);
-    const elapsedCycles = Math.floor((observedAt.getTime() - activatedAt.getTime()) / (30 * 86_400_000));
-    const expectedStart = new Date(activatedAt.getTime() + elapsedCycles * 30 * 86_400_000);
+    const expectedStart = new Date(Date.UTC(observedAt.getUTCFullYear(), observedAt.getUTCMonth(), 1));
+    const expectedEnd = new Date(Date.UTC(observedAt.getUTCFullYear(), observedAt.getUTCMonth() + 1, 1));
     const usage = await getTenantPrintUsage(db, f.tenantId);
-    expect(usage.periodStart.toISOString()).toBe(expectedStart.toISOString());
-    expect(usage.periodEnd?.getTime()).toBe(expectedStart.getTime() + 30 * 86_400_000);
+    expect(usage.periodStart).toEqual(expectedStart);
+    expect(usage.periodEnd).toEqual(expectedEnd);
+  });
+
+  it("preserves consumed credits during 0102 cutover without double-counting overlapping periods", async () => {
+    const f = await seedFixture();
+    const monthStart = new Date((await pool().query(
+      "SELECT date_trunc('month', clock_timestamp() AT TIME ZONE 'UTC') AS month_start",
+    )).rows[0].month_start);
+    const monthEnd = new Date(Date.UTC(monthStart.getUTCFullYear(), monthStart.getUTCMonth() + 1, 1));
+    const rollingStart = new Date(monthStart.getTime() - 8 * 86_400_000);
+    const rollingEnd = new Date(rollingStart.getTime() + 30 * 86_400_000);
+    await pool().query(
+      "INSERT INTO print_monthly_usage(tenant_id, period_start, period_end, used_prints) VALUES ($1,$2,$3,7),($1,$4,$5,3)",
+      [f.tenantId, rollingStart, rollingEnd, monthStart, monthEnd],
+    );
+    const migrationSql = readFileSync("drizzle/0102_calendar_month_print_allowance.sql", "utf8");
+    await pool().query(migrationSql);
+    await pool().query(migrationSql);
+    const usage = await getTenantPrintUsage(db, f.tenantId);
+    expect(usage.used).toBe(7);
+    expect(usage.periodStart).toEqual(monthStart);
+    expect(usage.periodEnd).toEqual(monthEnd);
+    const rows = await pool().query(
+      "SELECT period_start, used_prints FROM print_monthly_usage WHERE tenant_id=$1 ORDER BY period_start",
+      [f.tenantId],
+    );
+    expect(rows.rows).toHaveLength(2);
+    expect(rows.rows.map(row => Number(row.used_prints))).toEqual([7, 7]);
   });
 
   it("enforces a finite print quota before the job row is inserted", async () => {
@@ -272,6 +299,49 @@ suite("tenant print quota", () => {
     expect(Number((await pool().query(
       "SELECT count(*)::int AS n FROM print_jobs WHERE tenant_id = $1", [f.tenantId],
     )).rows[0].n)).toBe(1);
+  });
+
+  it("does not let expired queued jobs block a fresh admission after waiting for the tenant lock", async () => {
+    const f = await seedFixture();
+    await setPlanLimit(f.tenantId, "unlimited");
+    // Wait until admission has actually begun before inserting the rows:
+    // this makes their expiry definitively later than that transaction's
+    // now(), and definitively earlier than its post-lock wall clock.
+    const blocker = await pool().connect();
+    let result: Promise<unknown> | undefined;
+    try {
+      await blocker.query("BEGIN");
+      await blocker.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`print_jobs:tenant:${f.tenantId}`]);
+      result = createPrintJobForPrinter(f.printerId, payload("fresh-after-stale-queue"), {
+        tenantId: f.tenantId, requestedBy: "quota-test",
+        idempotencyKey: "fresh-after-stale-queue",
+      }).then(value => ({ value }), error => ({ error }));
+      await expect.poll(async () => Number((await pool().query(
+        "SELECT count(*)::int AS n FROM pg_locks WHERE locktype = 'advisory' AND NOT granted AND objid = hashtext($1)::oid",
+        [`print_jobs:tenant:${f.tenantId}`],
+      )).rows[0].n)).toBe(1);
+      // These 256 queued entries are NEWER than the waiting transaction and
+      // must expire before it can evaluate its actual capacity. If capacity
+      // uses now() from transaction start, they still count and reject it.
+      await pool().query(
+        `INSERT INTO print_jobs (id,tenant_id,agent_id,printer_id,status,payload,expires_at)
+         SELECT 'stale-queue-' || n, $1, $2, $3, 'queued',
+           '{"type":"raw","protocol":"raw","encoding":"base64","data":"cQ=="}'::jsonb,
+           clock_timestamp() + interval '500 milliseconds'
+         FROM generate_series(1, 256) AS n`,
+        [f.tenantId, f.agentId, f.printerId],
+      );
+      await blocker.query("SELECT pg_sleep(0.8)");
+      await blocker.query("COMMIT");
+      const outcome = await result as { value?: { isReused: boolean }; error?: Error };
+      expect(outcome.error).toBeUndefined();
+      expect(outcome.value?.isReused).toBe(false);
+      expect((await pool().query("SELECT count(*)::int AS n FROM print_jobs WHERE tenant_id=$1", [f.tenantId])).rows[0].n).toBe(257);
+    } finally {
+      await blocker.query("ROLLBACK");
+      blocker.release();
+      if (result) await result;
+    }
   });
 
   it("does not charge a print whose explicit expiry elapsed while admission waited for its tenant lock", async () => {

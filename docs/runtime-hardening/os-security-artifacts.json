@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "profile": "Ubuntu24.04amd64 signed security package profile + rtlcss4.3.0 source-map-js1.2.2",
-  "reviewed_at": "2026-10-24",
+  "reviewed_at": "2026-10-28",
   "ubuntu_provenance": {
     "snapshot": "https://snapshot.ubuntu.com/ubuntu/20261024T000000Z/",
     "suite": "noble-security",
@@ -88,6 +88,24 @@
       "depends": "libc6 (>= 2.34), libssl3t64 (>= 3.0.9)",
       "pre_depends": null,
       "source": null
+    },
+    {
+      "filename": "libbrotli1_1.1.0-2ubuntu0.1_amd64.deb",
+      "url": "https://security.ubuntu.com/ubuntu/pool/main/b/brotli/libbrotli1_1.1.0-2ubuntu0.1_amd64.deb",
+      "package": "libbrotli1",
+      "version": "1.1.0-2ubuntu0.1",
+      "previous_version": "1.1.0-2build2",
+      "architecture": "amd64",
+      "bytes": 330968,
+      "sha256": "70b188a86d81f30d7510aab30e25d638ed5037dded6691af1533952b71ac61de",
+      "advisories": [
+        "CVE-2026-111497"
+      ],
+      "depends": "libc6 (>= 2.29)",
+      "pre_depends": null,
+      "source": "brotli",
+      "security_notice": "https://ubuntu.com/security/notices/USN-8956-1",
+      "verification_run": "https://github.com/mohamed-saad-edu/Odoo-print-system/actions/runs/40592443466"
     },
     {
       "filename": "curl_8.5.0-2ubuntu10.16_amd64.deb",
@@ -475,5 +493,13 @@
       "npm_integrity": "sha512-KGj/8Y43x35aZVDtt+J4mK1hoLGHULMYfSkODJNQjNDC3oW1PqPoxMwo0pLUsWM/UEGzON/NxeHywEfNXNP3Vw==",
       "advisory": "CVE-2026-93749"
     }
-  ]
+  ],
+  "additional_package_provenance": {
+    "libbrotli1": {
+      "source": "Ubuntu noble-security via security.ubuntu.com HTTPS",
+      "release": "1.1.0-2ubuntu0.1",
+      "sha256_from": "independent clean GitHub Actions Ubuntu 24.04 job 40592443466",
+      "security_notice": "https://ubuntu.com/security/notices/USN-8956-1"
+    }
+  }
 }

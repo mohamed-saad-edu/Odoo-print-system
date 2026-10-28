@@ -313,12 +313,20 @@ export function getPrinterLanguageBadges(
 ): string[] {
   const conn = (connectionType ?? "").trim().toLowerCase();
   const proto = (protocol ?? "unknown").trim().toLowerCase();
+  // Badges are capability claims, not protocol-label decorations. A TCP
+  // device declaring "spooler", or an IPP interface labelled "ZPL", must not
+  // appear to support a language that actual print admission would reject.
+  // With no capabilities blob in this presentation helper, only advertise
+  // execution protocols known from the physical transport itself.
+  const printer = { protocol: proto, connectionType: conn };
+  const supports = (type: string, payloadProtocol?: string) =>
+    validatePayloadForPrinter({ type, ...(payloadProtocol ? { protocol: payloadProtocol } : {}) }, printer).ok;
   const badges: string[] = [];
-  if (proto === "escpos") badges.push("ESC/POS");
-  if (proto === "zpl") badges.push("ZPL");
-  if (proto === "tspl") badges.push("TSPL");
-  if (isIppTransport(conn, proto)) badges.push("IPP · PDF");
-  if (isSpoolerTransport(conn, proto)) badges.push("Spooler · PDF");
-  if (proto === "raw") badges.push(conn === "usb" ? "RAW" : "Raw 9100");
+  if (proto === "escpos" && supports("escpos", "escpos")) badges.push("ESC/POS");
+  if (proto === "zpl" && supports("raw", "zpl")) badges.push("ZPL");
+  if (proto === "tspl" && supports("raw", "tspl")) badges.push("TSPL");
+  if (isIppTransport(conn, proto) && supports("pdf")) badges.push("IPP · PDF");
+  if (isSpoolerTransport(conn, proto) && supports("pdf")) badges.push("Spooler · PDF");
+  if (proto === "raw" && supports("raw", "raw")) badges.push(conn === "usb" ? "RAW" : "Raw 9100");
   return badges;
 }

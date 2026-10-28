@@ -1,4 +1,5 @@
 import contract from "../../contracts/printer-geometry-contract.json";
+import { isExactPrinterId } from "./exact-printer-id";
 
 /** Physical observations and explicit operator profiles share units, never defaults. */
 export interface PrinterGeometryProfile {
@@ -87,8 +88,10 @@ export function validatePrinterGeometry(
     return { ok: false, reason: "printer geometry provenance is invalid" };
   }
   if (!validObservedAt(value.observed_at)) return { ok: false, reason: "geometry observed_at must be a valid UTC RFC3339 timestamp" };
-  if (typeof value.printer_id !== "string" || !value.printer_id || value.printer_id !== value.printer_id.trim()
-      || value.printer_id.length > 120 || /[\u0000-\u001f\u007f-\u009f]/.test(value.printer_id)) {
+  // Geometry provenance must use the *same* opaque UTF-8 printer identity
+  // guard as Gateway inventory, heartbeat and the native Agent. JS string
+  // length counts UTF-16 code units and silently accepts 121+ UTF-8 bytes.
+  if (!isExactPrinterId(value.printer_id)) {
     return { ok: false, reason: "geometry printer_id is invalid" };
   }
   if (expected?.printerId !== undefined && value.printer_id !== expected.printerId) return { ok: false, reason: "geometry belongs to a different printer" };
@@ -131,8 +134,10 @@ export function currentPrinterGeometry(printer: GeometryPrinterState): PrinterGe
   // A configured snapshot is the exact profile the Agent applied. Even a
   // reordered desired-state ACK cannot make the previous profile current.
   // Live driver/IPP measurements remain authoritative over fallback profiles.
-  if (geometry?.source === "validated_profile" && printer.config?.geometry_profile !== undefined) {
-    const profile = validatePrinterGeometryProfile(printer.config.geometry_profile);
+  if (geometry?.source === "validated_profile") {
+    // Driver/IPP observations remain independent; configured geometry must
+    // never outlive the exact profile that explicitly authorized it.
+    const profile = validatePrinterGeometryProfile(printer.config?.geometry_profile);
     if (!profile.ok || contract.profileFields.some((field) => {
       const key = field as keyof PrinterGeometryProfile;
       return profile.value[key] !== geometry[key];

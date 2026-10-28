@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { validatePlatformOwner, PlatformMutationAuthorityChangedError, clearPlatformCookieHeader, clearPlatformRefreshCookieHeader } from "../../../../../lib/platform-auth";
+import { db } from "../../../../../db";
+import { validatePlatformOwner, requirePlatformReadAuthorityInTransaction, PlatformUnauthorizedError, PlatformMutationAuthorityChangedError, clearPlatformCookieHeader, clearPlatformRefreshCookieHeader } from "../../../../../lib/platform-auth";
 import { listOwnSessions, revokeOwnSessions, SessionInventoryRequestError } from "../../../../../lib/session-inventory";
 import { WorkspaceSessionExpiredError } from "../../../../../lib/workspace-session-security";
 import { assertWorkspaceSecurityOrigin, WorkspaceSecurityRequestError } from "../../../../../lib/workspace-session-http";
@@ -16,10 +17,14 @@ export async function GET(req: Request) {
     if (!claims) return NextResponse.json({ error: "Unauthorized" }, { status: 401, headers: HEADERS });
     const cursors = new URL(req.url).searchParams.getAll("cursor");
     if (cursors.length > 1) throw new SessionInventoryRequestError();
-    return NextResponse.json(await listOwnSessions({ scope: "platform", claims }, cursors[0]), { headers: HEADERS });
+    const snapshot = await db.transaction(async tx => {
+      await requirePlatformReadAuthorityInTransaction(tx, claims);
+      return listOwnSessions({ scope: "platform", claims }, cursors[0], tx);
+    });
+    return NextResponse.json(snapshot, { headers: HEADERS });
   } catch (error) {
     if (error instanceof SessionInventoryRequestError) return NextResponse.json({ error: error.message, code: "INVALID_SESSION_CURSOR" }, { status: 400, headers: HEADERS });
-    if (error instanceof WorkspaceSessionExpiredError) return NextResponse.json({ error: "Unauthorized" }, { status: 401, headers: HEADERS });
+    if (error instanceof WorkspaceSessionExpiredError || error instanceof PlatformUnauthorizedError) return NextResponse.json({ error: "Unauthorized" }, { status: 401, headers: HEADERS });
     return NextResponse.json({ error: "Session inventory temporarily unavailable" }, { status: 503, headers: HEADERS });
   }
 }

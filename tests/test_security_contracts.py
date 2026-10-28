@@ -85,15 +85,7 @@ def test_registration_does_not_disclose_existing_account_state():
     signup = read("src/app/signup/page.tsx")
     assert "ACCOUNT_EXISTS" not in route
     assert "ACCOUNT_EXISTS" not in signup
-    # Only staging's identity-independent single-workspace admission returns
-    # 409. It runs before any account lookup, and company invitations bypass it.
-    assert route.count("status: 409") == 1
-    staging_check = route.index("if (isSingleWorkspaceStaging() && !invitation)")
-    user_lookup = route.index("const existing = await db.query.users.findFirst")
-    assert route.index("const invitation = inviteToken ?") < staging_check
-    assert staging_check < route.index('code: "STAGING_WORKSPACE_EXISTS"') < user_lookup
-    assert "stagingWorkspaceExists(db)" in route[staging_check:user_lookup]
-    assert "invitationId: invitation?.id ?? null" in route
+    assert "status: 409" not in route
     assert "if (existing) return setRateLimitHeaders(NextResponse.json(GENERIC, { status: 202 }), rate);" in route
 
 
@@ -131,7 +123,10 @@ def test_platform_owner_routes_distinguish_invalid_auth_from_platform_dependency
         else:
             assert "PlatformUnauthorizedError" in source, route
             assert "Platform authentication temporarily unavailable" in source, route
-            assert "status: 503" in source, route
+            # A typed ternary is an equally explicit 503 dependency-failure
+            # result, and distinguishes revoked owner authority as 401.
+            assert ('status: 503' in source or
+                    'status: error instanceof PlatformUnauthorizedError ? 401 : 503' in source), route
 
 def test_workspace_subscription_is_scoped_to_authenticated_owner_and_manual_approval():
     page = read("src/app/billing/page.tsx")

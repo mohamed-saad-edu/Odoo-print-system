@@ -24,7 +24,17 @@ def validated_operational_verification(value, printer, now=None):
     if type(value["version"]) is not int or value["version"] != 1:
         return None
     identity = value["printer_id"]
-    if not isinstance(identity, str) or not identity or identity != identity.strip() or len(identity) > 120 or re.search(r"[\x00-\x1f\x7f-\x9f]", identity) or identity != printer.get("id"):
+    if (not isinstance(identity, str) or not identity or identity != identity.strip()
+            or identity.startswith("\ufeff") or identity.endswith("\ufeff")
+            or re.search(r"[\x00-\x1f\x7f-\x9f]", identity)
+            or identity != printer.get("id")):
+        return None
+    # A proof's identity must be the exact executable Gateway/Agent target:
+    # UTF-8 bytes (<=120), not Python characters; no surrogate substitution.
+    try:
+        if len(identity.encode("utf-8", "strict")) > 120:
+            return None
+    except UnicodeEncodeError:
         return None
     digest = value["binding_digest"]
     if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest) or value["logical_queue_key"] != digest:
@@ -44,7 +54,20 @@ def validated_operational_verification(value, printer, now=None):
         method = "ipp_attributes"
     elif connection in ("network", "usb") and protocol in ("raw", "escpos", "zpl", "tspl"):
         method = "usb_interface" if connection == "usb" else "snmp_printer"
-    if not method or value["method"] != method or value["output_medium"] != ("file" if method == "pdf_output" else "physical"):
+    # An IPP service or Windows spooler queue is not physical chassis proof.
+    # Mirror the native Go Agent's exact method-to-identity-strength contract;
+    # a caller may not promote a service/queue to a device by forging metadata.
+    method_strength = {
+        "windows_queue": "queue",
+        "ipp_attributes": "service",
+        "usb_interface": "device",
+        "snmp_printer": "device",
+        "pdf_output": "service",
+    }
+    if (not method or value["method"] != method
+            or value["identity_strength"] != method_strength[method]
+            or ("physical_device_key" in value and method_strength[method] != "device")
+            or value["output_medium"] != ("file" if method == "pdf_output" else "physical")):
         return None
     current = now or datetime.now(timezone.utc)
     current_ms = int(current.timestamp() * 1000)

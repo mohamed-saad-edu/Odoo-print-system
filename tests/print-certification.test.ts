@@ -44,7 +44,8 @@ describe("print-certification", () => {
     const source = fs.readFileSync("src/app/api/printers/[id]/certify/route.ts", "utf8");
     expect(source).toContain("idempotencyKey");
     expect(source).toContain("IDEMPOTENCY_CONFLICT");
-    expect(source).toContain("cert:");
+    expect(source).toContain("IDEMPOTENCY_KEY_REQUIRED");
+    expect(source).not.toContain("const autoKey =");
     // Double-click must not duplicate — idempotency key reused
     expect(source).toContain("isReused");
   });

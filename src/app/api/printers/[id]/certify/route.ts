@@ -11,13 +11,14 @@ import { runWithCorrelation, generateRequestId, generateAttemptId } from "../../
 import { requestIdFrom, logError, logWarn } from "../../../../../lib/log";
 import { getPrinterCapabilityMatrix } from "../../../../../lib/printer-health";
 import { createPrintJobForPrinter, AgentQueueFullError, AgentQueuedJobsFullError, PrintJobCapabilityError, PrintJobInputError } from "../../../../../lib/print-job-service";
-import { TenantEntitlementError, TenantSubscriptionRequiredError, TenantEntitlementConfigError } from "../../../../../lib/entitlements";
+import { TenantEntitlementError, TenantPrintQuotaExceededError, TenantSubscriptionRequiredError, TenantEntitlementConfigError } from "../../../../../lib/entitlements";
 import { MAX_AGENT_IN_FLIGHT_JOBS } from "../../../../../lib/job-delivery";
 import { databaseNowMs, parseDbTimeMs } from "../../../../../lib/database-clock";
 import { getAgentAvailability } from "../../../../../lib/agent-availability";
 import { hasBodyOverLimit } from "../../../../../lib/request-limits";
 import { receiptPaperWidthMM } from "../../../../../lib/receipt-width";
 import { validatePayloadForPrinter } from "../../../../../lib/printer-capability";
+import { isExactIdempotencyKey } from "../../../../../lib/idempotency";
 
 const CERTIFY_MAX_BODY_BYTES = 16 * 1024;
 
@@ -133,22 +134,35 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       // Certify's physical test is also a test_page in the authenticated
       // Gateway envelope, so Windows Agent can use live selected driver paper.
       const documentType = testPage ? "test_page" : (typeof body.documentType === "string" ? body.documentType : "raw");
-      // Idempotency: header preferred, then body, then deterministic fallback per certification session
-      const headerKey = req.headers.get("Idempotency-Key")?.trim();
-      const bodyKey = typeof body.idempotencyKey === "string" ? body.idempotencyKey.trim() : null;
-      const providedKey = headerKey || bodyKey;
-      // If the client provides a key, preserve it across retries. Otherwise the auto-key
-      // deduplicates double-clicks for the same tenant/printer within one minute.
-      // Explicit Idempotency-Key is the contract for retry-safe response-loss recovery across time;
-      // the auto-key is intentionally short-lived convenience deduplication only
-      const minuteBucket = Math.floor(certificationNowMs / 60000);
-      const autoKey = `cert:${printerId}:${tenantId}:${minuteBucket}`;
-      const idempotencyKey = providedKey && providedKey.length >= 8 && providedKey.length <= 200 ? providedKey : autoKey;
-
-      if (providedKey && (providedKey.length < 8 || providedKey.length > 200)) {
-        setStep("queue", "error", "Invalid Idempotency-Key length", `length=${providedKey.length}`);
-        return NextResponse.json({ error: "invalid Idempotency-Key", code: "INVALID_REQUEST", steps }, { status: 400, headers: { "x-request-id": requestId } });
+      // Certification prints real paper. A server-derived minute key changes
+      // across a boundary while the previous response can still be ambiguous.
+      // Require a caller-persisted identity before admitting any physical job.
+      const headerKey = req.headers.get("Idempotency-Key");
+      const bodyKeyPresent = Object.prototype.hasOwnProperty.call(body, "idempotencyKey");
+      const providedKeyPresent = headerKey !== null || bodyKeyPresent;
+      if (!providedKeyPresent) {
+        setStep("queue", "error", "Idempotency-Key required", "missing-operation-identity");
+        return NextResponse.json({ error: "Idempotency-Key required for certification", code: "IDEMPOTENCY_KEY_REQUIRED", retryable: false, steps }, { status: 400, headers: { "x-request-id": requestId, "Cache-Control": "no-store" } });
       }
+      // Header and body identify the SAME physical intent. Silently preferring
+      // one contradictory identity could print a different operation than the
+      // caller intended after a lost response.
+      if (headerKey !== null && bodyKeyPresent && headerKey !== body.idempotencyKey) {
+        setStep("queue", "error", "Conflicting print operation identities", "header/body-key-mismatch");
+        return NextResponse.json({
+          error: "Conflicting Idempotency-Key values",
+          code: "IDEMPOTENCY_CONFLICT",
+          retryable: false,
+          steps,
+        }, { status: 409, headers: { "x-request-id": requestId, "Cache-Control": "no-store" } });
+      }
+      const providedKey = headerKey !== null ? headerKey : body.idempotencyKey;
+      if (!isExactIdempotencyKey(providedKey) || providedKey.length < 8) {
+        const evidence = typeof providedKey === "string" ? `length=${providedKey.length}` : "invalid-key-type";
+        setStep("queue", "error", "Invalid Idempotency-Key", evidence);
+        return NextResponse.json({ error: "invalid Idempotency-Key", code: "INVALID_REQUEST", retryable: false, steps }, { status: 400, headers: { "x-request-id": requestId } });
+      }
+      const idempotencyKey = providedKey;
 
       // Build payload YASEIR TEST PAGE in the LANGUAGE THE PRINTER SPEAKS.
       // The printable payload MUST be deterministic for one idempotency key.
@@ -211,6 +225,29 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       }
 
     } catch (e) {
+      // A depleted UTC calendar-month allowance is a typed admission hold,
+      // never a hardware failure or an internal server error.
+      if (e instanceof TenantPrintQuotaExceededError) {
+        setStep("queue", "blocked", e.message, `code=${e.code}`);
+        const headers = new Headers({ "x-request-id": requestId, "Cache-Control": "no-store" });
+        if (e.periodEnd) {
+          headers.set("Retry-After", String(Math.max(1, Math.ceil((e.periodEnd.getTime() - certificationNowMs) / 1000))));
+        }
+        return NextResponse.json({
+          error: e.message,
+          code: e.code,
+          entitlement: e.entitlement,
+          limit: e.limit,
+          used: e.used,
+          remaining: 0,
+          periodStart: e.periodStart.toISOString(),
+          periodEnd: e.periodEnd?.toISOString() ?? null,
+          upgradeRequired: true,
+          retryable: false,
+          steps,
+          capability,
+        }, { status: 429, headers });
+      }
       // Map canonical errors to steps
       if (e instanceof TenantEntitlementError) {
         setStep("queue", "error", `Entitlement: ${e.message}`, `code=${e.code}`);

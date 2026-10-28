@@ -20,16 +20,19 @@ describe("list endpoint bounds (offset guards)", () => {
   it("rejects offsets beyond the console list cap", () => {
     const agentsRoute = readFileSync("src/app/api/agents/route.ts", "utf8");
     expect(agentsRoute).toContain("MAX_AGENTS_OFFSET");
-    expect(agentsRoute).toContain("offset must be <=");
+    expect(agentsRoute).toContain("parseStrictListOffset");
+    expect(agentsRoute).toContain('code: "INVALID_OFFSET"');
     expect(agentsRoute).toContain(".limit(limit + 1)");
     expect(agentsRoute).toContain(".offset(beforeCreatedAt ? 0 : offset)");
-    expect(agentsRoute).toContain("beforeCreatedAt + beforeId keyset pagination");
+    expect(agentsRoute).toContain("beforeCreatedAt and beforeId must be provided together");
 
     const printersRoute = readFileSync("src/app/api/printers/route.ts", "utf8");
     expect(printersRoute).toContain("MAX_PRINTERS_OFFSET");
+    expect(printersRoute).toContain("parseStrictListOffset");
+    expect(printersRoute).toContain('code: "INVALID_OFFSET"');
     expect(printersRoute).toContain(".limit(limit + 1)");
     expect(printersRoute).toContain(".offset(beforeCreatedAt ? 0 : offset)");
-    expect(printersRoute).toContain("beforeCreatedAt + beforeId keyset pagination");
+    expect(printersRoute).toContain("beforeCreatedAt and beforeId must be provided together");
 
     const jobsRoute = readFileSync("src/app/api/jobs/route.ts", "utf8");
     expect(jobsRoute).toContain("MAX_LIST_OFFSET");

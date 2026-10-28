@@ -18,6 +18,8 @@ import { BrandMark } from "../../components/brand";
 import { ThemeToggle } from "../../components/ThemeToggle";
 import { LanguageSwitcher } from "../../components/LanguageSwitcher";
 import { logError } from "../../lib/log";
+import { requireActiveTenantInTransaction, TenantSuspendedError, TenantDeletedError } from "../../lib/tenant-guard";
+import { requireManagerActorInTransaction, ManagerMutationAuthorityChangedError } from "../../lib/manager-mutation-authorization";
 
 export const dynamic = "force-dynamic";
 
@@ -26,10 +28,36 @@ export default async function Pricing() {
   const t = makeT(locale);
   let rows: Array<{ id: string; name: string; description: string | null; priceMinorUnits: number | null; priceCurrency: string | null; entitlements: Record<string, unknown> }> = [];
   const jar = await cookies();
-  const claims = await verifyWorkspaceTokenFromCookieValues(jar.get(sessionCookieName("customer"))?.value ?? null,jar.get(getManagerCookieName())?.value ?? null);
+  let claims = await verifyWorkspaceTokenFromCookieValues(jar.get(sessionCookieName("customer"))?.value ?? null,jar.get(getManagerCookieName())?.value ?? null);
   if (claims) {
-    const [sub,tenant,now] = await Promise.all([db.query.tenantSubscriptions.findFirst({where:eq(tenantSubscriptions.tenantId,claims.tenantId)}),db.query.tenants.findFirst({where:eq(tenants.id,claims.tenantId),columns:{lifecycle:true}}),databaseNowMs()]);
-    if (customerSubscriptionState(sub,tenant?.lifecycle,now)==="active") redirect(claims.role==="owner"?"/billing":"/dashboard");
+    const member = claims;
+    let subscribed = false;
+    try {
+      // The public catalog is readable without a session, but any tenant
+      // subscription lookup and owner/member redirect must be fenced by the
+      // same live membership and session as the authenticated homepage.
+      const { sub, tenant } = await db.transaction(async tx => {
+        await requireActiveTenantInTransaction(tx, member.tenantId);
+        await requireManagerActorInTransaction(tx, member, "tenant.read");
+        const [sub, tenant] = await Promise.all([
+          tx.query.tenantSubscriptions.findFirst({ where: eq(tenantSubscriptions.tenantId, member.tenantId) }),
+          tx.query.tenants.findFirst({ where: eq(tenants.id, member.tenantId), columns: { lifecycle: true } }),
+        ]);
+        return { sub, tenant };
+      });
+      subscribed = customerSubscriptionState(sub, tenant?.lifecycle, await databaseNowMs()) === "active";
+    } catch (error) {
+      if (error instanceof ManagerMutationAuthorityChangedError ||
+          error instanceof TenantSuspendedError || error instanceof TenantDeletedError) {
+        // A revoked principal or disabled workspace is a public visitor for
+        // catalog purposes; never preserve stale owner navigation.
+        claims = null;
+      } else {
+        throw error;
+      }
+    }
+    // Next.js redirect throws. Never swallow it inside the authority catch.
+    if (claims && subscribed) redirect(claims.role === "owner" ? "/billing" : "/dashboard");
   }
   let unavailable = false;
   try {

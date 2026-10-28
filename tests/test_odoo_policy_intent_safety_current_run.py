@@ -5,6 +5,7 @@ exercise them with small record fixtures and inspect the transaction boundary.
 """
 import ast
 import copy
+import datetime
 import logging
 import tracemalloc
 import xml.etree.ElementTree as ET
@@ -33,6 +34,13 @@ def _class_methods(file, cls_name, method_names, extra=None):
     extracted = ast.Module(body=[ast.ClassDef(name='Target', bases=[], keywords=[], body=methods, decorator_list=[])], type_ignores=[])
     ast.fix_missing_locations(extracted)
     namespace = {'ValidationError': ValidationError, '_': lambda v: v, '_logger': logging.getLogger(__name__)}
+    if file == "runtime_assignment.py":
+        # The production constraint delegates to the actual shared exact-ID
+        # policy. Keep this AST test coupled to that real dependency.
+        path = BASE.parent / "runtime_policy.py"
+        policy = {}
+        exec(compile(path.read_text(encoding="utf-8"), str(path), "exec"), policy)
+        namespace["is_exact_gateway_printer_id"] = policy["is_exact_gateway_printer_id"]
     namespace.update(extra or {})
     exec(compile(extracted, str(BASE/file), 'exec'), namespace)
     return namespace['Target']
@@ -54,6 +62,50 @@ def _report_policy(binding_report_id):
         binding_id=SimpleNamespace(report_id=expected if binding_report_id == 31 else actual,
                                    display_name='Invoice printer rule'),
     )
+
+
+def test_failed_intent_retry_backoff_never_builds_unbounded_exponent():
+    """Untrusted legacy attempt counters must not force 2**huge integer work.
+
+    The exponential delay has a strict 300s ceiling. Clamp the exponent
+    *before* computing it, not merely the final delay.
+    """
+    source = (BASE / "print_intent.py").read_text(encoding="utf-8")
+    assert "2 ** min(max(0, attempts - 1), 5)" in source
+    now = datetime.datetime(2026, 10, 28)
+    model = _class_methods(
+        "print_intent.py", "PrintGatewayIntent", {"_finalize_route_failure"},
+        {"datetime": datetime, "db_now_utc": lambda _cr: now},
+    )
+    for attempts, expected_seconds in [
+        (1, 15), (2, 30), (5, 240), (6, 300), (1_000_000, 300),
+    ]:
+        recorded = []
+        class Cursor:
+            closed = False
+            committed = False
+            def execute(self, _statement, _params):
+                pass
+            def fetchone(self):
+                return (attempts, attempts + 1)
+            def commit(self):
+                self.committed = True
+            def close(self):
+                self.closed = True
+        cursor = Cursor()
+        env = SimpleNamespace(registry=SimpleNamespace(cursor=lambda: cursor))
+        def finalize(_cls, _env, intent_id, token, **values):
+            assert intent_id == 71 and token == "original-lease"
+            recorded.append(values)
+            return True
+        model._finalize_intent_state = classmethod(finalize)
+        assert model._finalize_route_failure(
+            model, env, 71, "original-lease", RuntimeError("routing unavailable")
+        )
+        assert len(recorded) == 1
+        assert recorded[0]["status"] == "pending"
+        assert (recorded[0]["next_retry_at"] - now).total_seconds() == expected_seconds
+        assert cursor.committed and cursor.closed
 
 
 def test_report_policy_rejects_another_report_on_the_same_model_before_dispatch():
@@ -239,6 +291,103 @@ def test_each_business_policy_hook_catches_only_after_savepoint():
                    for n in ast.walk(handler))
 
 
+
+@pytest.mark.parametrize("source_reassigned,policy_drift", [
+    (False, "valid"),
+    (True, "valid"),
+    (False, "disabled"),
+    (False, "event_changed"),
+    (False, "model_changed"),
+    (False, "filter_miss"),
+    (False, "rule_edited_after_capture"),
+    (False, "binding_edited_after_capture"),
+])
+def test_recovery_scopes_to_captured_intent_company_before_reading_the_source(source_reassigned, policy_drift):
+    # Model record rules can hide a valid branch source until the Environment
+    # has allowed_company_ids for the ORIGINAL committed intent company.
+    # The old method read .exists() under the cron user's root company and
+    # incorrectly finalized a valid branch operation as 'source disappeared'.
+    from contextlib import nullcontext
+
+    root = SimpleNamespace(id=801)
+    branch = SimpleNamespace(id=802)
+    moved = SimpleNamespace(id=803)
+    reads, routes, finalizations, failures = [], [], [], []
+
+    class Cursor:
+        def savepoint(self):
+            return nullcontext()
+        def close(self):
+            pass
+
+    cursor = Cursor()
+    captured_at = datetime.datetime(2026, 10, 28, 12, 0, 0)
+    edited_at = captured_at + datetime.timedelta(minutes=1)
+    old_revision = captured_at - datetime.timedelta(minutes=1)
+    policy = SimpleNamespace(
+        active=policy_drift != 'disabled',
+        model_name='other.model' if policy_drift == 'model_changed' else 'stock.picking',
+        event_type='other_event' if policy_drift == 'event_changed' else 'picking_validated',
+        matches_record=lambda _record: policy_drift != 'filter_miss',
+        write_date=edited_at if policy_drift == 'rule_edited_after_capture' else old_revision,
+        binding_id=SimpleNamespace(write_date=edited_at if policy_drift == 'binding_edited_after_capture' else old_revision),
+    )
+    intent = SimpleNamespace(
+        claim_token='held-lease', company_id=branch, intent_key='outbox-lease',
+        event_type='picking_validated', policy_id=policy,
+        create_date=captured_at,
+        with_env=lambda scoped_env: intent,
+    )
+    record = SimpleNamespace(
+        company_id=moved if source_reassigned else branch,
+        with_env=lambda scoped_env: record,
+    )
+
+    class Source:
+        def __init__(self, scope):
+            self.scope = scope
+        def browse(self, _id):
+            return self
+        def exists(self):
+            reads.append(self.scope.company.id)
+            return record if self.scope.company.id == branch.id else False
+
+    class FakeEnvironment:
+        def __init__(self, cr, uid, context):
+            self.cr, self.uid, self.context = cr, uid, context
+            self.company = branch if context.get('allowed_company_ids') == [branch.id] else root
+        def __call__(self, *, context):
+            return FakeEnvironment(self.cr, self.uid, context)
+        def __getitem__(self, model):
+            if model == 'print_gateway.intent':
+                return SimpleNamespace(browse=lambda _id: SimpleNamespace(exists=lambda: intent))
+            if model == 'stock.picking':
+                return Source(self)
+            if model == 'print_gateway.print_router':
+                return SimpleNamespace(route_intent=lambda _intent, _record: routes.append(self.company.id) or {'job_id': 29})
+            raise AssertionError('Unexpected model: ' + model)
+
+    addon = _class_methods('print_intent.py', 'PrintGatewayIntent',
+                           {'_execute_dispatched_route'},
+                           {'api': SimpleNamespace(Environment=FakeEnvironment)})
+    addon._finalize_intent_state = classmethod(lambda cls, *args, **kwargs: finalizations.append(kwargs))
+    addon._finalize_route_failure = classmethod(lambda cls, *args: failures.append(args))
+    calling_env = SimpleNamespace(uid=1, context={}, registry=SimpleNamespace(cursor=lambda: cursor))
+    addon._execute_dispatched_route(addon, calling_env, 41, 'stock.picking', 15, 'held-lease')
+    assert not failures, failures
+    assert reads == [branch.id], 'Source must be checked under captured company before .exists()'
+    assert len(finalizations) == 1
+    if source_reassigned or policy_drift != 'valid':
+        assert routes == [], 'Reassigned sources or drifted/disabled policies cannot send paper'
+        assert finalizations[0]['status'] == 'skipped'
+        expected = 'company changed' if source_reassigned else 'rule'
+        assert expected in finalizations[0]['last_error'].lower()
+    else:
+        assert routes == [branch.id], 'A valid branch intent must not be silently skipped'
+        assert finalizations[0]['status'] == 'dispatched'
+        assert finalizations[0]['print_job_id'] == 29
+
+
 def test_intent_route_requires_durable_job_or_explicit_skip_and_savepoint():
     tree = ast.parse((BASE / 'print_intent.py').read_text(encoding='utf-8'))
     cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == 'PrintGatewayIntent')
@@ -246,9 +395,16 @@ def test_intent_route_requires_durable_job_or_explicit_skip_and_savepoint():
     savepoints = [n for n in ast.walk(route) if isinstance(n, ast.With) and
                   any(isinstance(i.context_expr, ast.Call) and isinstance(i.context_expr.func, ast.Attribute)
                       and i.context_expr.func.attr == 'savepoint' for i in n.items)]
-    assert len(savepoints) == 1
-    assert any(isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
-               and n.func.attr == 'route_intent' for n in ast.walk(savepoints[0]))
+    # One savepoint protects the business-rule match read and another the
+    # durable route. New isolation is stronger, not a regression: verify
+    # both guards rather than requiring an obsolete exact savepoint count.
+    matching = [sp for sp in savepoints if any(
+        isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+        and n.func.attr == 'matches_record' for n in ast.walk(sp))]
+    dispatch = [sp for sp in savepoints if any(
+        isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+        and n.func.attr == 'route_intent' for n in ast.walk(sp))]
+    assert len(matching) == len(dispatch) == 1 and matching[0] is not dispatch[0]
     assert any(isinstance(n, ast.Raise) and isinstance(n.exc, ast.Call)
                and isinstance(n.exc.func, ast.Name) and n.exc.func.id == 'ValueError'
-               for n in ast.walk(savepoints[0]))
+               for n in ast.walk(dispatch[0]))

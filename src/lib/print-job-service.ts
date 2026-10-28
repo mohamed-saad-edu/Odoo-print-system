@@ -13,6 +13,7 @@ import { getAgentAvailability } from "./agent-availability";
 import { parseDbTimeMs } from "./database-clock";
 import type { V2OdooIdentity } from "./odoo-idempotency";
 import { reserveV2Operation, OdooNamespaceError } from "./odoo-v2-admission";
+import { isExactPrinterId } from "./exact-printer-id";
 
 import { enforceTenantJobEntitlements, reserveTenantPrintCredit } from "./entitlements";
 import { logInfo, logWarn } from "./log";
@@ -499,22 +500,38 @@ async function insertQueuedJobAtomically({
 
     await enforceTenantJobEntitlements(tx, tenantId);
 
-    // One newly-created logical print job consumes one plan print credit.
-    // Existing idempotent jobs return before this point, so retries never
-    // double-charge the same logical print.
-    await reserveTenantPrintCredit(tx, tenantId);
+    // A transaction can wait behind a tenant or Agent admission lock while
+    // older queued jobs expire. PostgreSQL now() is fixed at transaction
+    // START and would still count those expired rows as occupying capacity.
+    // Sample once after the contended locks and use the same DB timestamp
+    // for queue capacity, caller TTL, quota month and created_at.
+    const clockResult = await tx.execute(sql`SELECT clock_timestamp() AS now`);
+    const clockRows = (clockResult as unknown as { rows?: Array<{ now?: Date | string }> }).rows ?? [];
+    const rawNow = clockRows[0]?.now;
+    const dbNowMs = parseDbTimeMs(rawNow);
+    if (dbNowMs === null) {
+      throw new PrintJobInputError("Database clock is unavailable", "INTERNAL_ERROR", 500);
+    }
+    const dbNow = new Date(dbNowMs);
+    const effectiveExpiresAt = expiresAt ?? new Date(dbNow.getTime() + 60 * 60 * 1000);
+    if (!(effectiveExpiresAt instanceof Date) || Number.isNaN(effectiveExpiresAt.getTime()) || effectiveExpiresAt.getTime() <= dbNow.getTime()) {
+      throw new PrintJobInputError("expiresAt must be in the future", "INVALID_REQUEST", 400);
+    }
+    if (effectiveExpiresAt.getTime() - dbNow.getTime() > 24 * 60 * 60 * 1000) {
+      throw new PrintJobInputError("expiresAt exceeds the 24 hour maximum", "INVALID_REQUEST", 400);
+    }
 
     const counts = await tx.execute(sql`
       SELECT
-        COUNT(*) FILTER (WHERE agent_id = ${agentId} AND status = 'queued' AND expires_at > now())::int AS agent_queued,
+        COUNT(*) FILTER (WHERE agent_id = ${agentId} AND status = 'queued' AND expires_at > ${dbNow})::int AS agent_queued,
         -- pg_column_size() measures TOAST-compressed STORAGE bytes and can
         -- undercount a 5 MiB repetitive/base64 print payload by 100x+. The
         -- 128 MiB queue ceiling is a LOGICAL decoded-from-DB/HTTP memory
         -- budget: use uncompressed JSON text bytes for existing rows, just
         -- as we use JSON.stringify bytes for the incoming row. The agent
         -- lock above serializes admission, so the aggregate is atomic.
-        COALESCE(SUM(octet_length(payload::text)) FILTER (WHERE agent_id = ${agentId} AND status = 'queued' AND expires_at > now()), 0)::bigint AS agent_queued_payload_bytes,
-        COUNT(*) FILTER (WHERE agent_id = ${agentId} AND status IN ('claimed', 'printing') AND expires_at > now())::int AS agent_in_flight
+        COALESCE(SUM(octet_length(payload::text)) FILTER (WHERE agent_id = ${agentId} AND status = 'queued' AND expires_at > ${dbNow}), 0)::bigint AS agent_queued_payload_bytes,
+        COUNT(*) FILTER (WHERE agent_id = ${agentId} AND status IN ('claimed', 'printing') AND expires_at > ${dbNow})::int AS agent_in_flight
       FROM print_jobs WHERE tenant_id = ${tenantId} AND agent_id = ${agentId}
     `);
     const row = counts.rows[0] as {
@@ -530,28 +547,10 @@ async function insertQueuedJobAtomically({
     }
     if (inFlight >= MAX_AGENT_IN_FLIGHT_JOBS) throw new AgentQueueFullError(agentId, inFlight);
 
-    // Sample the admission clock after all contended tenant, credential,
-    // owner and subscription locks. A request may have expired while waiting;
-    // rejecting here rolls back its reserved credit with the job transaction.
-    // PostgreSQL is the authoritative clock for print-job lifetime.
-    const clockResult = await tx.execute(sql`SELECT clock_timestamp() AS now`);
-    const clockRows = (clockResult as unknown as { rows?: Array<{ now?: Date | string }> }).rows ?? [];
-    const rawNow = clockRows[0]?.now;
-    const dbNow = rawNow instanceof Date
-      ? rawNow
-      : new Date(typeof rawNow === "string"
-        ? rawNow.trim().replace(" ", "T").replace(/([+-]\d{2})$/, "$1:00")
-        : "");
-    if (Number.isNaN(dbNow.getTime())) {
-      throw new PrintJobInputError("Database clock is unavailable", "INTERNAL_ERROR", 500);
-    }
-    const effectiveExpiresAt = expiresAt ?? new Date(dbNow.getTime() + 60 * 60 * 1000);
-    if (!(effectiveExpiresAt instanceof Date) || Number.isNaN(effectiveExpiresAt.getTime()) || effectiveExpiresAt.getTime() <= dbNow.getTime()) {
-      throw new PrintJobInputError("expiresAt must be in the future", "INVALID_REQUEST", 400);
-    }
-    if (effectiveExpiresAt.getTime() - dbNow.getTime() > 24 * 60 * 60 * 1000) {
-      throw new PrintJobInputError("expiresAt exceeds the 24 hour maximum", "INVALID_REQUEST", 400);
-    }
+    // One new logical print consumes one credit in the month of created_at,
+    // even if the transaction had to wait across UTC midnight. Replays return
+    // earlier without charging again; any later INSERT failure rolls back this.
+    await reserveTenantPrintCredit(tx, tenantId, dbNow);
 
     await tx.insert(printJobs).values({
       id: jobId,
@@ -711,8 +710,8 @@ export async function createPrintJobForPrinter(
   payload: unknown,
   options: CreatePrintJobOptions,
 ): Promise<CreatePrintJobResult> {
-  const normalizedPrinterId = typeof printerId === "string" ? printerId.trim() : "";
-  if (!normalizedPrinterId) throw new PrintJobInputError("printer id is required", "INVALID_REQUEST", 400);
+  if (!isExactPrinterId(printerId)) throw new PrintJobInputError("printer id must be the exact configured identity", "INVALID_REQUEST", 400);
+  const normalizedPrinterId = printerId;
   if (typeof options.tenantId !== "string" || !options.tenantId.trim()) throw new PrintJobInputError("tenant context is required", "TENANT_CONTEXT_REQUIRED", 400);
   const requestedBy = normalizeRequestedBy(options.requestedBy);
   const validatedPayload = validatePrintJobPayload(payload);

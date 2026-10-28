@@ -1,5 +1,15 @@
 /** @odoo-module */
 
+import { isExactRuntimePrinterId } from "./printer_geometry";
+
+const methodIdentityStrength = Object.freeze({
+    windows_queue: "queue",
+    ipp_attributes: "service",
+    usb_interface: "device",
+    snmp_printer: "device",
+    pdf_output: "service",
+});
+
 function utcTime(value) {
     if (typeof value !== "string" || !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,9})?Z$/.test(value)) return null;
     const time = Date.parse(value);
@@ -11,8 +21,7 @@ export function validatedOperationalVerification(value, printer, now = Date.now(
     const allowed = new Set([...required, "physical_device_key"]);
     if (!value || typeof value !== "object" || Array.isArray(value) || !printer ||
         required.some(key => !Object.hasOwn(value, key)) || Object.keys(value).some(key => !allowed.has(key)) || value.version !== 1) return null;
-    if (typeof value.printer_id !== "string" || !value.printer_id || value.printer_id !== value.printer_id.trim() ||
-        value.printer_id.length > 120 || /[\u0000-\u001f\u007f-\u009f]/.test(value.printer_id) || value.printer_id !== printer.id) return null;
+    if (!isExactRuntimePrinterId(value.printer_id) || value.printer_id !== printer.id) return null;
     const hex = /^[0-9a-f]{64}$/;
     if (typeof value.binding_digest !== "string" || !hex.test(value.binding_digest) || value.logical_queue_key !== value.binding_digest ||
         !["queue", "service", "device"].includes(value.identity_strength) ||
@@ -24,7 +33,12 @@ export function validatedOperationalVerification(value, printer, now = Date.now(
         : ["ipp", "ipps"].includes(connection) || connection === "network" && ["ipp", "ipps"].includes(protocol) ? "ipp_attributes"
         : ["network", "usb"].includes(connection) && ["raw", "escpos", "zpl", "tspl"].includes(protocol)
             ? connection === "usb" ? "usb_interface" : "snmp_printer" : null;
-    if (!method || value.method !== method || value.output_medium !== (method === "pdf_output" ? "file" : "physical")) return null;
+    // Method-specific identity strength must match native Go and Gateway:
+    // an IPP service or spooler queue cannot claim chassis/device evidence.
+    if (!method || value.method !== method ||
+        value.identity_strength !== methodIdentityStrength[method] ||
+        (Object.hasOwn(value, "physical_device_key") && methodIdentityStrength[method] !== "device") ||
+        value.output_medium !== (method === "pdf_output" ? "file" : "physical")) return null;
     const verified = utcTime(value.verified_at);
     const age = now - verified;
     if (verified === null || !Number.isFinite(age) || age > 300000 || age < -60000) return null;

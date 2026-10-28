@@ -1,13 +1,14 @@
 import { operationalVerificationPresentation } from "../../../lib/printer-operational-verification";
+import { requireConsoleReadAuthorityInTransaction, ConsoleAgentAuthorityRevokedError } from "../../../lib/console-read-authority";
 import { NextResponse } from "next/server";
 import { db } from "../../../db";
 import { agents, printers } from "../../../db/schema";
 import { validateConsoleAuth } from "../../../lib/console-auth";
 import { requireManagerPermission } from "../../../lib/authorization";
 import { requireManagerActorInTransaction, ManagerMutationAuthorityChangedError } from "../../../lib/manager-mutation-authorization";
-import { requireActiveTenantInTransaction } from "../../../lib/tenant-guard";
+import { requireActiveTenantInTransaction, TenantSuspendedError, TenantDeletedError } from "../../../lib/tenant-guard";
 import { and, desc, eq, lt, or, sql } from "drizzle-orm";
-import { clampListLimit } from "../../../lib/request-limits";
+import { clampListLimit, parseStrictListOffset } from "../../../lib/request-limits";
 import { fleetCursorIdHeaders, readFleetCursorId } from "../../../lib/fleet-cursor";
 import { nanoid } from "../../../lib/nanoid";
 import { parsePrinterInput, validateConnectionConfig, validatePrinterTransportProtocol } from "../../../lib/printer-model";
@@ -38,10 +39,9 @@ export async function GET(req: Request) {
   // explicitly allow unlimited printers; callers must paginate rather than infer a fleet limit.
   const { searchParams } = new URL(req.url);
   const limit = clampListLimit(searchParams.get("limit"), 1000, MAX_PRINTERS_LIST);
-  const offsetRaw = parseInt(searchParams.get("offset") ?? "0", 10);
-  const offset = Number.isNaN(offsetRaw) ? 0 : Math.max(0, offsetRaw);
-  if (offset > MAX_PRINTERS_OFFSET) {
-    return NextResponse.json({ error: `offset must be <= ${MAX_PRINTERS_OFFSET}; use beforeCreatedAt + beforeId keyset pagination for deeper fleets` }, { status: 400 });
+  const offset = parseStrictListOffset(searchParams.get("offset"), MAX_PRINTERS_OFFSET);
+  if (offset === null) {
+    return NextResponse.json({ error: `offset must be a non-negative decimal integer <= ${MAX_PRINTERS_OFFSET}; use keyset pagination for deeper fleets`, code: "INVALID_OFFSET" }, { status: 400 });
   }
   const beforeCreatedAtRaw = searchParams.get("beforeCreatedAt");
   let beforeId: string | null;
@@ -68,13 +68,30 @@ export async function GET(req: Request) {
     ? or(lt(printers.createdAt, beforeCreatedAt), and(eq(printers.createdAt, beforeCreatedAt), lt(printers.id, beforeId)))
     : undefined;
   const where = cursorWhere ? and(ownershipWhere, cursorWhere) : ownershipWhere;
-  const rows = await db.select({ printer: printers, agent: agents })
+  let rows;
+  try {
+    rows = await db.transaction(async (tx) => {
+      await requireConsoleReadAuthorityInTransaction(tx, auth, "printers.read");
+      return tx.select({ printer: printers, agent: agents })
     .from(printers)
     .leftJoin(agents, and(eq(agents.id, printers.agentId), eq(agents.tenantId, tenantId)))
     .where(where)
     .orderBy(desc(printers.createdAt), desc(printers.id))
     .limit(limit + 1)
     .offset(beforeCreatedAt ? 0 : offset);
+    });
+  } catch (error) {
+    const headers = { "Cache-Control": "private, no-store" };
+    if (error instanceof TenantSuspendedError || error instanceof TenantDeletedError) {
+      return NextResponse.json({ error: error.message, code: error.code }, { status: error.status, headers });
+    }
+    if (error instanceof ManagerMutationAuthorityChangedError) return error.response();
+    if (error instanceof ConsoleAgentAuthorityRevokedError) {
+      return NextResponse.json({ error: error.message, code: error.code }, { status: error.status, headers });
+    }
+    logError("printers.inventory_read_failed", { tenantId, error: error instanceof Error ? error.message : "unknown" });
+    return NextResponse.json({ error: "Printer inventory unavailable", code: "FLEET_UNAVAILABLE" }, { status: 503, headers });
+  }
   const hasMore = rows.length > limit;
   const pageRows = (hasMore ? rows.slice(0, limit) : rows).filter(({ printer }) => !isVirtualPrinterRecord(printer));
   const responseRows = pageRows.map(({ printer, agent }) => ({
@@ -173,11 +190,36 @@ export async function POST(req: Request) {
           where: and(eq(printers.tenantId, tenantId), eq(printers.agentId, data.agentId)),
         });
         const matching = matchingPhysicalPrinter(known, { connectionType, protocol, config });
+        if (matching === null) {
+          return { kind: "conflict" as const, error: "Multiple stored printers share this physical endpoint; reconcile their identities before registration" };
+        }
+        // An explicit printer ID may be occupied by another logical queue
+        // (including a different Agent inside this tenant). Never return
+        // 200 for an unrelated matching physical endpoint while silently
+        // ignoring that occupied identity. Preserve unoccupied aliases:
+        // discovery can still converge their IDs onto an existing queue.
+        if (data.id !== undefined) {
+          const occupied = await tx.query.printers.findFirst({
+            where: and(eq(printers.tenantId, tenantId), eq(printers.id, id)),
+            columns: { id: true, agentId: true },
+          });
+          if (occupied && (occupied.agentId !== data.agentId || matching?.id !== occupied.id)) {
+            return { kind: "conflict" as const, error: "Printer ID is already assigned to a different endpoint" };
+          }
+        }
         if (matching) {
           if (!samePrinterProtocol(matching, { connectionType, protocol, config })) {
             return { kind: "conflict" as const, error: "Physical endpoint uses a different print protocol; change the existing printer instead" };
           }
-          // Never reactivate a disabled, retired or locally-unshared printer.
+          // An idempotent 200 is valid only for an existing executable
+          // registration. A retired/disabled or locally-withheld queue must
+          // never look like a successful re-registration: that would hide the
+          // operator's withdrawal while keeping the printer unavailable.
+          // Preserve its ID, history and local-sharing authority unchanged.
+          if (matching.lifecycle !== "active" || matching.sharedWithGateway !== true) {
+            return { kind: "conflict" as const,
+              error: "This printer endpoint was disabled, retired or withheld. Review the existing printer before registering it again." };
+          }
           return { kind: "existing" as const, row: matching };
         }
         if (known.some(row => row.id === id))
@@ -217,7 +259,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ ...outcome.row, ...operationalVerificationPresentation(outcome.row), already: outcome.kind === "existing" }, { status: outcome.kind === "existing" ? 200 : 201 });
     } catch (error) {
       if (error instanceof ManagerMutationAuthorityChangedError) return error.response();
-      if (error instanceof TenantEntitlementError) return NextResponse.json({ error: error.message, code: "MAX_PRINTERS_EXCEEDED", entitlement: error.entitlement, limit: error.limit, used: error.used, upgradeRequired: true }, { status: 429, headers: { "Retry-After": "60", "Cache-Control": "no-store" } });
+      if (error instanceof TenantEntitlementError) return NextResponse.json({ error: error.message, code: "MAX_PRINTERS_EXCEEDED", entitlement: error.entitlement, limit: error.limit, used: error.used, upgradeRequired: false }, { status: 429, headers: { "Retry-After": "60", "Cache-Control": "no-store" } });
       if (isTenantBillingError(error)) return NextResponse.json({ error: error.message, code: error.code }, { status: 403 });
       if (error instanceof Error && error.message === "agentId not found") return NextResponse.json({ error: "Agent is not paired with this Gateway workspace", code: "AGENT_NOT_FOUND" }, { status: 404 });
       if (error instanceof Error && /^agent is (disabled|retired)$/.test(error.message)) return NextResponse.json({ error: error.message, code: "AGENT_UNAVAILABLE" }, { status: 409 });

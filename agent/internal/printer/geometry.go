@@ -9,10 +9,7 @@ import (
 	"fmt"
 	"math"
 	"regexp"
-	"strings"
 	"time"
-	"unicode"
-	"unicode/utf16"
 
 	"github.com/yaseir-agent/agent/internal/config"
 )
@@ -267,7 +264,7 @@ func CurrentGeometry(ctx context.Context, p Printer, cfg config.PrinterConfig) (
 }
 
 func validGeometryPrinterID(id string) bool {
-	return id != "" && len(utf16.Encode([]rune(id))) <= 120 && strings.TrimSpace(id) == id && !strings.ContainsFunc(id, unicode.IsControl)
+	return ValidGatewayPrinterID(id)
 }
 
 func (g *Geometry) PhysicalImageReady() bool {

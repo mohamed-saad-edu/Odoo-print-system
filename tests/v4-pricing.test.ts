@@ -11,7 +11,29 @@ vi.mock("next/headers",()=>({cookies:async()=>({get:(name:string)=>({value:name=
 vi.mock("next/link",()=>({default:({children,...props}:Record<string,unknown>)=>h("a",props,children as ReactNode)}));
 vi.mock("../src/lib/manager-auth",()=>({getManagerCookieName:()=>"mgr_session",verifyWorkspaceTokenFromCookieValues:async()=>fixture.authenticated?{role:fixture.role,tenantId:"tenant"}:null}));
 vi.mock("../src/lib/database-clock",()=>({databaseNowMs:async()=>Date.parse("2030-05-15T00:00:00Z")}));
-vi.mock("../src/db",()=>({db:{query:{tenantSubscriptions:{findFirst:async()=>({planId:"manual-plan",status:fixture.status,currentPeriodStart:new Date("2030-01-01T00:00:00Z"),currentPeriodEnd:new Date("2031-01-01T00:00:00Z"),entitlementBlocked:fixture.blocked})},tenants:{findFirst:async()=>({lifecycle:"active"})}},select:()=>({from:()=>({where:(query:Parameters<PgDialect["sqlToQuery"]>[0])=>{fixture.query=new PgDialect().sqlToQuery(query).sql;return {orderBy:async()=>[{id:"manual-plan",name:"Manual public plan",description:null,priceMinorUnits:fixture.priceMinorUnits,priceCurrency:fixture.priceCurrency,entitlements:{max_prints_per_period:1000,max_agents:1,max_printers:1,max_concurrent_jobs:10,max_jobs_per_minute:10}}]};}})})}}));
+vi.mock("../src/db", () => {
+  const query = {
+    tenantSubscriptions: { findFirst: async () => ({planId:"manual-plan",status:fixture.status,currentPeriodStart:new Date("2030-01-01T00:00:00Z"),currentPeriodEnd:new Date("2031-01-01T00:00:00Z"),entitlementBlocked:fixture.blocked}) },
+    tenants: { findFirst: async () => ({lifecycle:"active"}) },
+  };
+  return { db: {
+    query,
+    transaction: async (callback: (tx: { query: typeof query }) => Promise<unknown>) => callback({ query }),
+    select: () => ({from: () => ({where: (querySql: Parameters<PgDialect["sqlToQuery"]>[0]) => {
+      fixture.query = new PgDialect().sqlToQuery(querySql).sql;
+      return {orderBy: async () => [{id:"manual-plan",name:"Manual public plan",description:null,priceMinorUnits:fixture.priceMinorUnits,priceCurrency:fixture.priceCurrency,entitlements:{max_prints_per_period:1000,max_agents:1,max_printers:1,max_concurrent_jobs:10,max_jobs_per_minute:10}}]};
+    }})}),
+  } };
+});
+vi.mock("../src/lib/tenant-guard", () => ({
+  requireActiveTenantInTransaction: async () => {},
+  TenantSuspendedError: class TenantSuspendedError extends Error {},
+  TenantDeletedError: class TenantDeletedError extends Error {},
+}));
+vi.mock("../src/lib/manager-mutation-authorization", () => ({
+  requireManagerActorInTransaction: async () => {},
+  ManagerMutationAuthorityChangedError: class ManagerMutationAuthorityChangedError extends Error {},
+}));
 import Pricing from "../src/app/pricing/page";
 beforeEach(()=>{localStorage.clear();fixture.authenticated=false;fixture.role="owner";fixture.status="active";fixture.blocked=false;fixture.locale="en";fixture.priceMinorUnits=14900;fixture.priceCurrency="SAR";document.cookie="yaseir_locale=en; path=/";fixture.query="";});
 async function render(){return renderToStaticMarkup(h(I18nProvider,{initialLocale:fixture.locale,children:await Pricing()}));}

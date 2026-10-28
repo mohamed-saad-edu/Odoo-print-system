@@ -50,7 +50,7 @@ The canonical cross-component contract is `contracts/print-payload-contract.json
 | Image geometry binding | `geometry_fingerprint`, when supplied, is exactly 64 lowercase hexadecimal characters and is allowed only on `image`. It is syntactically optional so accepted historical operations can reconcile their original payload; every **new** image admission requires an exact match to the current validated printer geometry under the printer lock. Missing/stale geometry never becomes an assumed paper width or DPI. | `src/lib/payload.ts`; `src/lib/printer-capability.ts`; `src/lib/print-job-service.ts`; `contracts/printer-geometry-contract.json` |
 | Relative job time | A syntactically parseable date is not enough. The service checks requested expiry/future lifetime against the authoritative database clock at admission. Keep date parsing separate from relative-age authority. | `src/lib/print-job-service.ts`; `src/app/api/print/jobs/v2/route.ts:36` |
 | Versioned Odoo identity | Version exactly 2; lowercase canonical UUIDv4 installation ID; 43-character base64url proof; positive decimal company ID of 1–18 digits without a leading zero; operation ID 1–200. The supplied idempotency key must equal the SHA-256 of the canonical `['yaseir-odoo-v2', installationId, companyId, operationId]` JSON encoding. The database separately verifies current enrollment and credential ownership. | `src/lib/odoo-idempotency.ts:25`; `src/lib/odoo-v2-admission.ts` |
-| Status reconciliation | Batch body is strict, with 1–100 trimmed job IDs of 1–120 characters. Namespace headers must be a coherent v2 set; incomplete headers and unsupported versions fail. Legacy status cannot disclose v2-owned jobs simply by omitting headers. Status projections exclude document payloads. | `src/app/api/print/jobs/batch-status/route.ts:16`; `src/lib/odoo-status-scope.ts:46` |
+| Status reconciliation | Batch body is strict, with 1–100 exact, untrimmed job IDs of up to 120 UTF-8 bytes; whitespace normalization, controls and malformed identities are rejected. Namespace headers must be a coherent v2 set; incomplete headers and unsupported versions fail. Legacy status cannot disclose v2-owned jobs simply by omitting headers. Status projections exclude document payloads. | `src/app/api/print/jobs/batch-status/route.ts:16`; `src/lib/odoo-status-scope.ts:46` |
 | Lifecycle/reporting | Closed stored job states: `queued`, `claimed`, `printing`, `success`, `failed`, `expired`. Physical outcome is separately `not_printed`, `printed`, `unknown`; transport success is not paper proof. Agent reports must obey the state machine and exact live claim; unknown delivery cannot silently become an automatic retry. Error text is bounded to 2000 and optional claim token to 120. | `src/lib/job-status.ts:1`; `src/app/api/agent/jobs/route.ts:299` |
 | Accepted execution binding | A new job stores the current verified `binding_digest` and output medium under the printer lock; the client does not choose either. Claims emit `bindingDigest` and require the admitted digest to match the current verified printer. Missing legacy bindings are ineligible for new execution; they are not silently backfilled. Exact authorized replay/terminal reconciliation reads the original accepted identity before current eligibility and never creates a second operation. | `src/lib/print-job-service.ts`; `src/lib/job-delivery.ts`; `src/app/api/agent/jobs/route.ts`; `contracts/printer-operational-verification-contract.json` |
 
@@ -123,7 +123,7 @@ Evidence is required for a successful job whose admitted medium is `file` and is
 | Pairing | Approved six-character alphabet `ABCDEFGHJKLMNPQRSTUVWXYZ23456789`; normalize trim/uppercase. If both camelCase/snake_case aliases are supplied they must agree. Registration object is strict; hostname ≤255, client/platform ≤100, metadata serialized ≤32768 code units. A formatted code must still match a live pending pairing record and rate-limit policy. | `src/lib/agent-auth.ts`; `src/app/api/agent/register/route.ts:20` |
 | Paired Agent credential | Agent ID format `^agt_[A-Za-z0-9_-]{8}$`; bearer value is `<agentId>:<secret>`. A structurally valid bearer must match the stored secret hash, active Agent and active tenant. | `src/lib/agent-auth.ts` |
 | Workspace/team | Workspace name trimmed 2–120. Verified Platform Owner invitations use the signed-in workspace Team endpoint and email rule, always grant Full Access (`admin`), and are separate from Platform Admin. Ordinary workspace members cannot invite; member-role/deletion/ownership endpoints deny ordinary workspace tokens. The protected `owner` marker changes only through the dedicated Platform Owner transfer flow. | `src/app/api/settings/route.ts`; `src/app/api/platform/tenants/[id]/invitations/route.ts`; `src/lib/platform-team-security.ts` |
-| Plan catalog | Create ID matches `^[a-z0-9][a-z0-9_-]{1,63}$`; nonempty trimmed name with original length ≤120; description string ≤500; monthly quota coerces to a safe integer 1–2147483647; display order coerces to a safe integer 0–1000000. Optional active/public flags must be booleans. Manual plans carry no provider price/product/currency/interval authority. Platform writes require current owner proof and actor-bound idempotency. | `src/lib/manual-plans.ts`; `src/app/api/platform/plans/route.ts`; `src/app/api/platform/plans/[id]/route.ts` |
+| Plan catalog | Create ID matches `^[a-z0-9][a-z0-9_-]{1,63}$`; nonempty trimmed name with original length ≤120; description string ≤500; monthly quota must be a JSON number that is a safe integer 1–2147483647; optional display order must be an exact JSON integer 0–1000000 (only an absent field defaults to zero; explicit null, boolean and numeric strings are rejected). Optional active/public flags must be booleans. USD/SAR catalog prices are descriptive only; no provider checkout/product/recurring billing authority exists. Platform writes require current owner proof and actor-bound idempotency. | `src/lib/manual-plans.ts`; `src/app/api/platform/plans/route.ts`; `src/app/api/platform/plans/[id]/route.ts` |
 | Entitlements | Object must define `max_agents`, `max_printers`, `max_jobs_per_minute`, `max_concurrent_jobs`, `max_prints_per_period`; each a positive safe integer or literal `unlimited`. Normalize only these declared keys. A structurally valid plan does not establish a live subscription or available quota. | `src/lib/entitlements.ts:61` |
 | Integration management | Installation enrollment and auto-enrollment use distinct schemas; names ≤120, key ID ≤128. Cutover requires `strict_v2` plus explicit true attestations. Collision resolution requires a scoped operation, `reuse/distinct`, expected legacy job/fingerprint and the exact history/physical-outcome attestation. | `src/app/api/odoo/installations/route.ts:16`; `src/app/api/odoo/installations/auto/route.ts:15`; `src/app/api/odoo/installations/cutover/route.ts:13`; `src/app/api/odoo/installations/resolutions/route.ts:15` |
 | Destructive platform actions | Strict action-specific schemas; bounded tenant/resource IDs, expected lifecycle and explicit confirmation or compatible exact confirmation ID. Reasons are bounded free text, not SQL or commands. The referenced resource is looked up and rechecked under current platform authority. | `src/app/api/platform/fleet/lifecycle/route.ts:21`; `src/app/api/platform/fleet/delete/route.ts:10`; `src/app/api/platform/integrations/remove/route.ts:14`; `src/app/api/platform/tenants/[id]/delete/route.ts:10` |
@@ -441,7 +441,7 @@ Source: `src/app/api/print/jobs/batch-status/route.ts:15`. This is the declared 
 
 ```ts
 batchQuerySchema = z.object({
-  jobIds: z.array(z.string().trim().min(1).max(120)).min(1).max(100),
+  jobIds: z.array(z.string().min(1).max(120).refine(isExactPrinterId)).min(1).max(100),
 }).strict()
 ```
 
@@ -451,12 +451,12 @@ Source: `src/app/api/print/jobs/route.ts:36`. This is the declared field structu
 
 ```ts
 bodySchema = z.object({
-  printerId: z.string().trim().min(1).max(120),
+  printerId: z.string().min(1).max(120).refine(isExactPrinterId, { message: "printerId must be the exact configured printer identity" }),
   documentType: z.string().trim().min(1).max(120),
   destination: z.string().trim().min(1).max(255).optional(),
   payload: z.unknown(),
   expiresAt: z.string().optional(),
-  idempotencyKey: z.string().trim().min(1).max(200).optional(),
+  idempotencyKey: z.string().min(1).max(200).refine(isExactIdempotencyKey, { message: "idempotencyKey must match the original operation exactly" }).optional(),
   // S06-006: optional only for legacy callers; v2 fields must travel together.
   idempotencyVersion: z.literal(2).optional(),
   installationId: z.string().optional(),
@@ -471,12 +471,12 @@ Source: `src/app/api/print/jobs/v2/route.ts:20`. This is the declared field stru
 
 ```ts
 bodySchema = z.object({
-  printerId: z.string().trim().min(1).max(120),
+  printerId: z.string().min(1).max(120).refine(isExactPrinterId, { message: "printerId must be the exact configured printer identity" }),
   documentType: z.string().trim().min(1).max(120),
   destination: z.string().trim().min(1).max(255).optional(),
   payload: z.unknown(),
   expiresAt: z.string().optional(),
-  idempotencyKey: z.string().trim().min(1).max(200),
+  idempotencyKey: z.string().min(1).max(200).refine(isExactIdempotencyKey, { message: "idempotencyKey must match the original operation exactly" }),
   // S06-006: optional only for legacy callers; v2 fields must travel together.
   idempotencyVersion: z.literal(2).optional(),
   installationId: z.string().optional(),

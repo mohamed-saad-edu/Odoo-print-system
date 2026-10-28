@@ -257,10 +257,10 @@ export function AddPrinterDialog({
         if (typeof parsed.used === "number") used = parsed.used;
         if (typeof parsed.limit === "number" || parsed.limit === "unlimited") limit = parsed.limit;
       }
-      if (
-        upgradeRequired === true &&
-        (entitlement === "max_printers" || code === "MAX_PRINTERS_EXCEEDED")
-      ) {
+      if (entitlement === "max_printers" || code === "MAX_PRINTERS_EXCEEDED") {
+        // A hardware safety limit is not a paid SaaS upgrade. It still needs
+        // the same actionable technical-capacity dialog when the backend
+        // truthfully marks upgradeRequired=false.
         setError(null);
         setUpgradeLimit({
           resource: "printers",
@@ -268,7 +268,7 @@ export function AddPrinterDialog({
           limit,
         });
       } else {
-        setError(friendlyGatewayError(errMsg(e), locale));
+        setError(friendlyGatewayError(e, locale));
       }
     } finally {
       setBusy(false);

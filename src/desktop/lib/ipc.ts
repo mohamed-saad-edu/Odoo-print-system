@@ -9,6 +9,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { decodeDiagnosticResult, type DiagnosticResult } from "../../shared/diagnostic-test";
 import { readGatewayPaginationHeaders } from "./gateway-headers";
+import { fetchWithTimeout as sharedFetchWithTimeout } from "../../lib/fetch-timeout";
 
 /** Tauri v2 injects __TAURI_INTERNALS__ only inside the real desktop shell. */
 export const isTauri =
@@ -55,8 +56,19 @@ export function normalizeGatewayUrl(raw: string): string {
     if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
       throw new Error("Gateway URL must use http:// or https://");
     }
-    if (parsed.username || parsed.password) {
+    // Check the raw marker as well: URL parsers may discard userinfo whose
+    // username and password are both empty (https://@host). The native Go
+    // origin parser rejects any such authority, even if it has no secret.
+    if (parsed.username || parsed.password || candidate.includes("@")) {
       throw new Error("Gateway URL cannot include embedded credentials");
+    }
+    // Parse the raw authority before WHATWG removes an empty port suffix.
+    // Native Go rejects both "host:" and port zero; accepting them here
+    // would make a saved/pasted Gateway work in the WebView but fail pairing.
+    // IPv6 colons are always inside brackets and never the authority suffix.
+    const rawAuthority = candidate.slice(candidate.indexOf("://") + 3).split(/[/?#]/, 1)[0] ?? "";
+    if (rawAuthority.endsWith(":") || parsed.port === "0") {
+      throw new Error("Gateway URL port must be between 1 and 65535");
     }
     // Match the packaged Tauri transport policy (commands.rs
     // normalize_gateway_url): remote Gateways must use HTTPS; plain HTTP is
@@ -69,7 +81,11 @@ export function normalizeGatewayUrl(raw: string): string {
       }
     }
     if (parsed.pathname !== "/") throw new Error("Gateway URL must use the origin root");
-    if (parsed.search || parsed.hash) {
+    // WHATWG URL.search/hash are empty strings for bare '?' and '#'.
+    // Rust/Go reject *present* markers even when their values are empty.
+    // Inspect serialized URL so the desktop cannot accept an origin that
+    // native pairing later rejects (or silently redirects to another URL).
+    if (parsed.href.includes("?") || parsed.href.includes("#")) {
       throw new Error("Gateway URL cannot include query strings or fragments");
     }
     return parsed.toString().replace(/\/+$/, "");
@@ -85,13 +101,10 @@ async function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit = {}
   if (isTauri) {
     throw new Error("Tauri Gateway requests must use the paired Agent boundary");
   }
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-  try {
-    return await fetch(input, { ...init, signal: controller.signal });
-  } finally {
-    clearTimeout(timer);
-  }
+  // A fetch() promise resolves at HEADERS, not at the end of the response
+  // body. Reuse the shared deadline so stream reads remain abortable and
+  // caller cancellation is not discarded after headers arrive.
+  return sharedFetchWithTimeout(input, init, REQUEST_TIMEOUT_MS);
 }
 
 interface GatewayResponse {
@@ -100,22 +113,11 @@ interface GatewayResponse {
   headers?: Record<string, string>;
 }
 
-function gatewayErrorMessage(body: string, fallback: string): string {
-  const raw = body.trim();
-  if (!raw) return fallback;
-  try {
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
-    for (const key of ["error", "message", "reason"]) {
-      const value = parsed?.[key];
-      if (typeof value === "string" && value.trim()) return value.trim();
-    }
-    // JSON without an operator-facing message (for example {"ok":false})
-    // is machine data, not useful UI copy. Preserve the HTTP-aware fallback.
-    return fallback;
-  } catch {
-    // Plain-text Gateway errors remain useful when they are already concise.
-  }
-  return raw.length <= 512 ? raw : fallback;
+// Remote bodies can include SQL, tokens, network endpoints and native paths.
+// Keep only trusted local HTTP context for human-facing error messages.
+// Machine fields are carried separately and localized by callers.
+function gatewayErrorMessage(_body: string, fallback: string): string {
+  return fallback;
 }
 
 /** Structured Gateway failure: message/status for display plus the machine-
@@ -140,14 +142,14 @@ function gatewayHttpError(status: number, body: string, fallback: string): Gatew
   err.status = status;
   try {
     const parsed = JSON.parse(body.trim()) as Record<string, unknown>;
-    if (parsed && typeof parsed === "object") {
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
       if (typeof readApiField(parsed, "code") === "string") err.code = readApiField(parsed, "code") as string;
       if (typeof readApiField(parsed, "entitlement") === "string") err.entitlement = readApiField(parsed, "entitlement") as string;
       if (readApiField(parsed, "upgradeRequired") === true) err.upgradeRequired = true;
       const limit = readApiField(parsed, "limit");
-      if (typeof limit === "number" || limit === "unlimited") err.limit = limit;
+      if (limit === "unlimited" || (typeof limit === "number" && Number.isSafeInteger(limit) && limit > 0)) err.limit = limit;
       const used = readApiField(parsed, "used");
-      if (typeof used === "number") err.used = used;
+      if (typeof used === "number" && Number.isSafeInteger(used) && used >= 0) err.used = used;
     }
   } catch {
     // Non-JSON bodies carry no structured fields; message/status still apply.
@@ -188,6 +190,7 @@ async function gatewayConsoleRequest(
 async function fetchGatewayFleet(gatewayUrl: string, path: "/api/printers" | "/api/agents"): Promise<Array<Record<string, unknown>>> {
   const rows: Array<Record<string, unknown>> = [];
   const seenCursors = new Set<string>();
+  const seenIds = new Set<string>();
   let params = new URLSearchParams({ limit: "100" });
   let pageCount = 0;
   while (true) {
@@ -201,8 +204,32 @@ async function fetchGatewayFleet(gatewayUrl: string, path: "/api/printers" | "/a
       throw new Error("Invalid Gateway fleet response");
     }
     if (page.length > MAX_FLEET_ROWS - rows.length) throw new Error("Gateway fleet inventory limit exceeded");
+    // Duplication within or across pages can hide a conflicting physical
+    // queue/Agent mapping. Reject the entire snapshot rather than selecting
+    // whichever object happened to be last in a Map or filtered view.
+    for (const row of page) {
+      const id = row.id as string;
+      if (seenIds.has(id)) throw new Error("Duplicate Gateway fleet identity");
+      seenIds.add(id);
+    }
     rows.push(...page);
-    if (headers?.["x-has-more"] !== "true") return rows;
+    const hasMore = headers?.["x-has-more"];
+    const hasCursor = Boolean(headers?.["x-next-before-created-at"]
+      || headers?.["x-next-before-id"] || headers?.["x-next-before-id-encoded"]
+      || headers?.["x-next-cursor"]);
+    // Legacy unpaged Gateways omit all pagination metadata. A cursor with
+    // no has-more flag means missing pages: never present a partial fleet
+    // as complete, or associate a print job with a stale device inventory.
+    if (hasMore === undefined) {
+      if (hasCursor) throw new Error("Invalid Gateway fleet pagination metadata");
+      return rows;
+    }
+    if (hasMore === "false") {
+      if (hasCursor) throw new Error("Invalid Gateway fleet cursor");
+      return rows;
+    }
+    if (hasMore !== "true" || !headers) throw new Error("Invalid Gateway fleet pagination metadata");
+
     const createdAt = headers["x-next-before-created-at"];
     const encodedId = headers["x-next-before-id-encoded"];
     const rawId = headers["x-next-before-id"];
@@ -504,9 +531,13 @@ export function discoverPrinters(): Promise<DiscoverResult> {
 
 export async function setPrinterSharing(printerId: string, sharedWithGateway: boolean): Promise<{ printerId: string; sharedWithGateway: boolean }> {
   const id = printerId;
-  if (!id || id.trim() !== id || new TextEncoder().encode(id).length > 256 || id.startsWith("-") || /[\u0000-\u001f\u007f-\u009f]/.test(id) || typeof sharedWithGateway !== "boolean") {
+  if (typeof id !== "string" || !id || id.trim() !== id || new TextEncoder().encode(id).length > 256 || id.startsWith("-") || /[\u0000-\u001f\u007f-\u009f]/.test(id) || typeof sharedWithGateway !== "boolean") {
     throw new Error("Invalid local printer sharing request");
   }
+  // TextEncoder and JSON.stringify can silently replace lone UTF-16
+  // surrogates with U+FFFD before the native Rust/Agent command executes.
+  // Reject malformed source Unicode rather than change the target queue.
+  try { encodeURIComponent(id); } catch { throw new Error("Invalid local printer sharing request"); }
   const reply = await invoke<unknown>("set_printer_sharing", { printerId: id, sharedWithGateway });
   if (!reply || typeof reply !== "object" || Array.isArray(reply)) throw new Error("Invalid local printer sharing acknowledgment");
   const value = reply as Record<string, unknown>;

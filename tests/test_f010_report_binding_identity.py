@@ -5,6 +5,7 @@ records are emulated. The production decision-making methods are not substituted
 """
 import ast
 import datetime
+import hashlib
 import json
 import logging
 import time
@@ -37,7 +38,7 @@ def production_methods(file, names):
           '_assert_report_usage_access': lambda env, report: report,
           'REPORT_DOCUMENT_TYPES': {'stock.picking': 'delivery', 'pos.order': 'receipt', 'account.move': 'invoice'},
           'datetime': datetime, 'db_now_utc': lambda cr: datetime.datetime(2026, 10, 9), '_logger': logging.getLogger('test-f010'),
-          'time': time, 'uuid': uuid, 'requests': requests, 'json': json}
+          'time': time, 'uuid': uuid, 'requests': requests, 'json': json, 'hashlib': hashlib}
     for node in tree.body:
         if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id == 'MAX_INVENTORY_RESPONSE_BYTES' for target in node.targets):
             exec(compile(ast.Module(body=[node], type_ignores=[]), str(path), 'exec'), ns)
@@ -45,6 +46,8 @@ def production_methods(file, names):
     policy_ns = {}
     exec(compile(policy_path.read_text(), str(policy_path), 'exec'), policy_ns)
     ns['inventory_has_shared_printer'] = policy_ns['inventory_has_shared_printer']
+    ns['is_exact_gateway_job_id'] = policy_ns['is_exact_gateway_job_id']
+    ns['is_exact_gateway_printer_id'] = policy_ns['is_exact_gateway_printer_id']
     output_path = ROOT.parent / 'print_output.py'
     output_ns = {}
     exec(compile(output_path.read_text(), str(output_path), 'exec'), output_ns)

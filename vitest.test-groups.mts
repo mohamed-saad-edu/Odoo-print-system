@@ -6,12 +6,14 @@
  * remain runnable without PostgreSQL, a production build or external services.
  */
 export const integrationVitestTestFiles = [
+  "tests/job-history-tenant-collision.integration.test.ts",
   "tests/physical-history-migration.integration.test.ts",
   "tests/manual-billing-history-migration.integration.test.ts",
   "tests/manual-only-billing-migration.integration.test.ts",
   "tests/manual-subscriptions.integration.test.ts",
   "tests/password-only-auth.integration.test.ts",
   "tests/platform-owner-invitation-session.integration.test.ts",
+  "tests/platform-confidential-read-race.integration.test.ts",
   "tests/password-auth-migration.integration.test.ts",
   "tests/email-auth-token-lifetime.integration.test.ts",
   "tests/metrics-machine-auth.integration.test.ts",
@@ -91,6 +93,31 @@ export const integrationVitestTestFiles = [
   "tests/tenant-scoped-session-revocation.integration.test.ts",
   "tests/agent-identity-isolation.integration.test.ts",
   "tests/ambiguous-print-outcome.integration.test.ts",
+  // Tenant/session mutation races and Odoo adoption need a real PostgreSQL
+  // phase; the unit run omits database access and cannot verify these files.
+  "tests/billing-status-live-authority.integration.test.ts",
+  "tests/billing-usage-live-owner.integration.test.ts",
+  "tests/discovery-provision-target-drift.integration.test.ts",
+  "tests/fleet-live-authorization.integration.test.ts",
+  "tests/job-detail-live-authority.integration.test.ts",
+  "tests/odoo-configuration-inventory-live-authority.integration.test.ts",
+  "tests/odoo-cutover-locking.integration.test.ts",
+  "tests/odoo-health-fencing.integration.test.ts",
+  "tests/odoo-installation-directory-live-authority.integration.test.ts",
+  "tests/odoo-keys-inventory-live-authority.integration.test.ts",
+  "tests/odoo-legacy-resolution-inventory-live-authority.integration.test.ts",
+  "tests/odoo-manual-enrollment.integration.test.ts",
+  "tests/settings-live-authority.integration.test.ts",
+  "tests/subscription-owner-directory-live-authority.integration.test.ts",
+  "tests/team-directory-live-authority.integration.test.ts",
+  "tests/team-invitation-audit-actor.integration.test.ts",
+  "tests/team-invitation-read-authority.integration.test.ts",
+  "tests/billing-page-snapshot-live-owner.integration.test.ts",
+  "tests/dashboard-current-authority.integration.test.ts",
+  "tests/platform-database-live-authority.integration.test.ts",
+  "tests/platform-directory-live-authority.integration.test.ts",
+  "tests/platform-stats-live-authority.integration.test.ts",
+  "tests/session-inventory-live-authority.integration.test.ts",
 ] as const;
 
 export const integrationTestFiles = [

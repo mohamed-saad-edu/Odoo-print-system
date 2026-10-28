@@ -289,8 +289,10 @@ func PrinterBindingDigest(pc PrinterConfig) (string, error) {
 				return "", fmt.Errorf("invalid IPP binding port")
 			}
 			path := u.EscapedPath()
-			if path == "" || path == "/" {
-				path = "/ipp/print"
+			if path == "" {
+				// Explicit root is its own print resource. Never let one
+				// queue's sharing decision apply to another resource.
+				path = "/"
 			}
 			binding = "ipp:" + scheme + "://" + net.JoinHostPort(ip.String(), strconv.Itoa(portNumber)) + canonicalSharingURIPath(path)
 		} else {

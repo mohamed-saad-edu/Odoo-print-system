@@ -3,6 +3,7 @@ import fixtures from "../contracts/printer-geometry-fixtures.json";
 import {
   capabilitiesWithCurrentGeometry,
   currentPrinterGeometry,
+  printerGeometryFromCapabilities,
   hasPhysicalReceiptGeometry,
   validatePrinterGeometry,
   validatePrinterGeometryProfile,
@@ -32,6 +33,28 @@ describe("shared printer geometry fixtures", () => {
     });
   }
 
+  it("keeps geometry evidence behind the exact Gateway printer ID wire boundary", () => {
+    // This result is consumed by Odoo and Gateway, while the native Agent
+    // sends an opaque UTF-8 printer ID. Never validate this evidence using
+    // JS UTF-16 code units or repair an invalid identity by normalization.
+    const evidence = fixtures.geometryCases[0].geometry;
+    const cases: Array<[string, string, boolean]> = [
+      ["Arabic at 120 UTF-8 bytes", "ط".repeat(60), true],
+      ["Arabic above 120 UTF-8 bytes", "ط".repeat(61), false],
+      ["Emoji at 120 UTF-8 bytes", "🖨".repeat(30), true],
+      ["Emoji above 120 UTF-8 bytes", "🖨".repeat(31), false],
+      ["leading BOM", "\uFEFFprinter", false],
+      ["lone high surrogate", "\uD800", false],
+      ["interior BOM is opaque", "prin\uFEFFter", true],
+    ];
+    for (const [name, printerId, valid] of cases) {
+      const observed = { ...evidence, printer_id: printerId };
+      expect(validatePrinterGeometry(observed).ok, name).toBe(valid);
+      const recovered = printerGeometryFromCapabilities({ geometry: observed });
+      expect(recovered !== null, name + " capability projection").toBe(valid);
+    }
+  });
+
   it("does not coerce non-finite numbers or objects into physical measurements", () => {
     const base = fixtures.geometryCases[0].geometry;
     for (const value of [NaN, Infinity, -Infinity, [], {}, { valueOf: () => 576 }]) {
@@ -40,11 +63,32 @@ describe("shared printer geometry fixtures", () => {
   });
 
   it("does not expose geometry until both applied and observed desired state converge", () => {
-    const base = { id: "receipt-printer", capabilities: { geometry: fixtures.geometryCases[0].geometry, supported_protocols: ["escpos"] }, managementSource: "manager", desiredRevision: 3 };
+    const base = { id: "receipt-printer", capabilities: { geometry: fixtures.geometryCases[0].geometry, supported_protocols: ["escpos"] }, config: { geometry_profile: { printable_width_dots: 576, raster_command: "gs_v_0" } }, managementSource: "manager", desiredRevision: 3 };
     expect(currentPrinterGeometry({ ...base, appliedDesiredRevision: 2, observedDesiredRevision: 2 })).toBeNull();
     expect(currentPrinterGeometry({ ...base, appliedDesiredRevision: 3, observedDesiredRevision: 2 })).toBeNull();
     expect(currentPrinterGeometry({ ...base, appliedDesiredRevision: 3, observedDesiredRevision: 3 })?.printable_width_dots).toBe(576);
     expect(capabilitiesWithCurrentGeometry(base)).toEqual({ supported_protocols: ["escpos"] });
+  });
+
+  it("drops stale configured geometry after the operator removes its profile", () => {
+    const geometry = fixtures.geometryCases[0].geometry;
+    const state = {
+      id: geometry.printer_id,
+      capabilities: { geometry, supported_protocols: ["escpos"] },
+      config: {},
+      managementSource: "manager",
+      desiredRevision: 4,
+      appliedDesiredRevision: 4,
+      observedDesiredRevision: 4,
+    };
+    expect(currentPrinterGeometry(state)).toBeNull();
+    expect(capabilitiesWithCurrentGeometry(state)).toEqual({ supported_protocols: ["escpos"] });
+    expect(currentPrinterGeometry({ ...state, config: {
+      geometry_profile: { printable_width_dots: 576, raster_command: "gs_v_0" },
+    } })?.printable_width_dots).toBe(576);
+    expect(currentPrinterGeometry({ ...state, config: {
+      geometry_profile: { printable_width_dots: 384, raster_command: "gs_v_0" },
+    } })).toBeNull();
   });
 
   it("hides a pre-alias geometry without rewriting its Agent provenance", () => {

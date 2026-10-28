@@ -131,7 +131,7 @@ test("candidate probe preserves HTTP failure and still rejects non-Gateway respo
     invoke: async (command, args) => { requests.push({ command, args }); return response; },
   }, () => `${slice(ipcSource, "function gatewayErrorMessage", "async function gatewayConsoleRequest")}
            ${slice(ipcSource, "export async function probeGatewayHealth", "export async function fetchGatewayHealth")}`);
-  await assert.rejects(api.probeGatewayHealth("https://print.yaseir.cloud"), (error) => error.status === 500 && error.message === "INTERNAL_ERROR");
+  await assert.rejects(api.probeGatewayHealth("https://print.yaseir.cloud"), (error) => error.status === 500 && error.message === "Gateway probe failed (500)");
   response = { status: 200, body: '{"ok":true}' };
   await assert.rejects(api.probeGatewayHealth("https://print.yaseir.cloud"), /unexpected service response/);
   response = { status: 404, body: "Not found" };
@@ -140,6 +140,34 @@ test("candidate probe preserves HTTP failure and still rejects non-Gateway respo
   assert.equal((await api.probeGatewayHealth("https://print.yaseir.cloud")).ok, true);
   assert.equal(requests.length, 4);
   assert.ok(requests.every((request) => request.command === "probe_gateway_health" && Object.keys(request.args).join() === "url"));
+});
+
+test("Gateway HTTP adapter refuses remote diagnostics and invalid usage numbers", async () => {
+  const ipcSource = await readFile("src/desktop/lib/ipc.ts", "utf8");
+  const api = await load("src/desktop/lib/ipc.ts", {}, () =>
+    `${slice(ipcSource, "function gatewayErrorMessage", "async function gatewayConsoleRequest")}\nexport { gatewayHttpError };`);
+
+  const remoteText = "SQL password=MY_PRIVATE_SECRET from C:/agent-config.json";
+  const malformed = api.gatewayHttpError(429, JSON.stringify({
+    error: remoteText, code: "PRINT_QUOTA_EXCEEDED",
+    entitlement: "max_prints_per_period", limit: -14, used: 1e309,
+    upgradeRequired: true,
+  }), "Print submission failed (429)");
+  assert.equal(malformed.message, "Print submission failed (429)");
+  assert.equal(malformed.code, "PRINT_QUOTA_EXCEEDED");
+  assert.equal(malformed.entitlement, "max_prints_per_period");
+  assert.equal(malformed.upgradeRequired, true);
+  assert.equal(malformed.limit, undefined);
+  assert.equal(malformed.used, undefined);
+  assert.doesNotMatch(malformed.message, /MY_PRIVATE_SECRET|SQL|agent-config/);
+
+  const valid = api.gatewayHttpError(429, '{"limit":15,"used":7,"error":"PRIVATE_REMOTE_TEXT"}', "Print admission failed");
+  assert.equal(valid.message, "Print admission failed");
+  assert.equal(valid.limit, 15);
+  assert.equal(valid.used, 7);
+  const plain = api.gatewayHttpError(503, "password=REMOTE_TOKEN", "Gateway temporarily unavailable");
+  assert.equal(plain.message, "Gateway temporarily unavailable");
+  assert.equal(plain.status, 503);
 });
 
 test("failed candidate check keeps configuration and presents HTTP guidance once", async () => {

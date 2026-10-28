@@ -1,5 +1,6 @@
 from unittest.mock import patch, Mock
 import uuid
+import hashlib
 
 import requests
 
@@ -195,11 +196,19 @@ class TestPrintGatewayRoutingContract(TransactionCase):
             config = env["print_gateway.gateway_config"].browse(self.durable_config_id).exists()
             if not config:
                 raise AssertionError("Durable test gateway config is not visible on fresh cursor")
+            # The physical printer identity has a separate 120-byte wire
+            # budget from the 200-byte operation key being tested here.
+            # Never turn a valid maximum-length operation into an invalid
+            # printer id: keep the full operation key in idempotency_key.
+            printer_id = "printer_runtime_%s" % key
+            if len(printer_id.encode("utf-8")) > 120:
+                printer_id = "printer_runtime_hash_%s" % hashlib.sha256(key.encode("utf-8")).hexdigest()
+            self.assertLessEqual(len(printer_id.encode("utf-8")), 120)
             job_id = router._persist_durable_job(
                 {
                     "company": company,
                     "gateway_config": config,
-                    "printer_id": "printer_runtime_%s" % key,
+                    "printer_id": printer_id,
                     "destination": "Sales",
                     "document_type": "order",
                     "payload": {"type": "raw", "protocol": "raw", "encoding": "base64", "data": "aGVsbG8="},
@@ -536,6 +545,164 @@ class TestPrintGatewayRoutingContract(TransactionCase):
             cr.rollback()
             cr.close()
 
+    def test_unclassified_gateway_5xx_never_reposts_an_ambiguous_print(self):
+        """A reverse proxy may return 500/502/503 after an upstream admission.
+
+        The HTTP code alone does not establish pre-dispatch refusal. Retain
+        the original immutable job key for status reconciliation and prohibit
+        automated physical replay.
+        """
+        for status, code in ((500, "INTERNAL_ERROR"), (502, ""), (503, "INTERNAL_ERROR"), (503, "")):
+            with self.subTest(status=status, code=code):
+                job_id = self._job("unclassified-%d-%s" % (status, uuid.uuid4().hex[:10]))
+                cr = self.env.registry.cursor()
+                try:
+                    env = api.Environment(cr, self.env.uid, dict(self.env.context))
+                    company = env["res.company"].browse(self.durable_company_id).exists()
+                    job = env["print_gateway.print_job"].with_company(company).browse(job_id).exists()
+                    response = Mock(status_code=status)
+                    response.json.return_value = {"code": code} if code else {}
+                    with patch("odoo.addons.print_gateway.models.print_job.requests.post", return_value=response) as post:
+                        job.action_submit(raise_on_failure=False)
+                        post.assert_called_once()
+                    cr.rollback()
+                finally:
+                    cr.close()
+
+                cr = self.env.registry.cursor()
+                try:
+                    env = api.Environment(cr, self.env.uid, dict(self.env.context))
+                    company = env["res.company"].browse(self.durable_company_id).exists()
+                    job = env["print_gateway.print_job"].with_company(company).browse(job_id).exists()
+                    self.assertEqual(job.status, "unknown", (status, code))
+                    self.assertFalse(job.next_retry_at)
+                    self.assertTrue(job.last_error.startswith("UNKNOWN_SUBMISSION_OUTCOME:"))
+                    self.assertEqual(job.physical_outcome, "unknown")
+                    self.assertTrue(job._needs_gateway_status_reconciliation(job))
+                    with patch("odoo.addons.print_gateway.models.print_job.requests.post") as post:
+                        job.action_submit(raise_on_failure=False)
+                        post.assert_not_called()
+                finally:
+                    cr.rollback()
+                    cr.close()
+
+    def test_typed_gateway_queue_full_refusal_keeps_safe_503_backoff(self):
+        """A *typed* Gateway capacity rejection is a pre-admission refusal."""
+        job_id = self._job("typed-queue-full-" + uuid.uuid4().hex[:10])
+        cr = self.env.registry.cursor()
+        try:
+            env = api.Environment(cr, self.env.uid, dict(self.env.context))
+            company = env["res.company"].browse(self.durable_company_id).exists()
+            job = env["print_gateway.print_job"].with_company(company).browse(job_id).exists()
+            response = Mock(status_code=503)
+            response.json.return_value = {"code": "AGENT_QUEUE_FULL", "retryable": True}
+            with patch("odoo.addons.print_gateway.models.print_job.requests.post", return_value=response) as post:
+                job.action_submit(raise_on_failure=False)
+                post.assert_called_once()
+            cr.rollback()
+        finally:
+            cr.close()
+
+        cr = self.env.registry.cursor()
+        try:
+            env = api.Environment(cr, self.env.uid, dict(self.env.context))
+            company = env["res.company"].browse(self.durable_company_id).exists()
+            job = env["print_gateway.print_job"].with_company(company).browse(job_id).exists()
+            self.assertEqual(job.status, "queued")
+            self.assertTrue(job.next_retry_at)
+            self.assertTrue(job.last_error.startswith("GATEWAY_BUSY_503:"))
+        finally:
+            cr.rollback()
+            cr.close()
+
+    def test_namespace_reconciliation_never_resubmits_ambiguous_historical_operation(self):
+        """A 409 namespace collision may refer to paper already printed elsewhere.
+
+        Retrying the queued outbox would reissue the same business intent after
+        history reconciliation/cutover. The ONLY safe automatic action is a
+        status/idempotency-key lookup, never a second physical POST.
+        """
+        for code in ("RECONCILIATION_REQUIRED", "UPGRADE_REQUIRED"):
+            with self.subTest(code=code):
+                job_id = self._job("namespace-block-%s-%s" % (code.lower(), uuid.uuid4().hex[:8]))
+                cr = self.env.registry.cursor()
+                try:
+                    env = api.Environment(cr, self.env.uid, dict(self.env.context))
+                    company = env["res.company"].browse(self.durable_company_id).exists()
+                    job = env["print_gateway.print_job"].with_company(company).browse(job_id).exists()
+                    response = Mock(status_code=409)
+                    response.json.return_value = {"code": code}
+                    with patch("odoo.addons.print_gateway.models.print_job.requests.post", return_value=response) as post:
+                        job.action_submit(raise_on_failure=False)
+                        post.assert_called_once()
+                    cr.rollback()
+                finally:
+                    cr.close()
+
+                cr = self.env.registry.cursor()
+                try:
+                    env = api.Environment(cr, self.env.uid, dict(self.env.context))
+                    company = env["res.company"].browse(self.durable_company_id).exists()
+                    job = env["print_gateway.print_job"].with_company(company).browse(job_id).exists()
+                    self.assertEqual(job.status, "unknown", code)
+                    self.assertFalse(job.next_retry_at, code)
+                    self.assertTrue(job.last_error.startswith("UNKNOWN_SUBMISSION_OUTCOME:"), code)
+                    self.assertEqual(job.physical_outcome, "unknown", code)
+                    self.assertTrue(job._needs_gateway_status_reconciliation(job))
+                    with patch("odoo.addons.print_gateway.models.print_job.requests.post") as post:
+                        job.action_submit(raise_on_failure=False)
+                        post.assert_not_called()
+                finally:
+                    cr.rollback()
+                    cr.close()
+
+    def test_unclassified_gateway_503_cannot_replay_an_ambiguous_print(self):
+        """Only an explicitly typed pre-admission refusal proves no output.
+
+        A reverse proxy may emit an unclassified 503 after the print request
+        reached the Gateway. That is not proof that retrying cannot duplicate
+        paper, unlike a typed Gateway capacity / unavailable-printer refusal.
+        """
+        for code, expected_status in (
+            ("AGENT_QUEUE_FULL", "queued"),
+            ("AGENT_QUEUED_QUEUE_FULL", "queued"),
+            ("INTERNAL_ERROR", "unknown"),
+            ("", "unknown"),
+        ):
+            with self.subTest(code=code):
+                job_id = self._job("http503-%s-%s" % (code.lower() or "generic", uuid.uuid4().hex[:8]))
+                cr = self.env.registry.cursor()
+                try:
+                    env = api.Environment(cr, self.env.uid, dict(self.env.context))
+                    company = env["res.company"].browse(self.durable_company_id).exists()
+                    job = env["print_gateway.print_job"].with_company(company).browse(job_id).exists()
+                    response = Mock(status_code=503)
+                    response.json.return_value = {"code": code, "error": "temporary upstream error", "retryable": code in ("AGENT_QUEUE_FULL", "AGENT_QUEUED_QUEUE_FULL")}
+                    with patch("odoo.addons.print_gateway.models.print_job.requests.post", return_value=response) as post:
+                        job.action_submit(raise_on_failure=False)
+                        post.assert_called_once()
+                    cr.rollback()
+                finally:
+                    cr.close()
+                cr = self.env.registry.cursor()
+                try:
+                    env = api.Environment(cr, self.env.uid, dict(self.env.context))
+                    company = env["res.company"].browse(self.durable_company_id).exists()
+                    job = env["print_gateway.print_job"].with_company(company).browse(job_id).exists()
+                    self.assertEqual(job.status, expected_status)
+                    if expected_status == "unknown":
+                        self.assertFalse(job.next_retry_at)
+                        self.assertTrue(job.last_error.startswith("UNKNOWN_SUBMISSION_OUTCOME:"))
+                        self.assertEqual(job.physical_outcome, "unknown")
+                        with patch("odoo.addons.print_gateway.models.print_job.requests.post") as post:
+                            job.action_submit(raise_on_failure=False)
+                            post.assert_not_called()
+                    else:
+                        self.assertTrue(job.next_retry_at)
+                finally:
+                    cr.rollback()
+                    cr.close()
+
     def test_gateway_timeout_persists_unknown_outcome(self):
         job_id = self._job("timeout-contract-key")
         cr = self.env.registry.cursor()
@@ -857,13 +1024,17 @@ class TestPrintGatewayRoutingContract(TransactionCase):
                 job.write({"gateway_job_id": "gw-%s" % key, "status": "submitted"})
                 mock_resp = MagicMock()
                 mock_resp.status_code = 200
+                # The Gateway status contract now binds every receipt to the
+                # exact original job ID; a status-only body is NOT authority.
                 if marker:
                     mock_resp.json.return_value = {
+                        "jobId": "gw-%s" % key,
                         "status": "failed",
                         "error": "%s: simulated ambiguous execution" % marker,
                     }
                 else:
                     mock_resp.json.return_value = {
+                        "jobId": "gw-%s" % key,
                         "status": "failed",
                         "error": "CONNECTION_ERROR: simulated refused connection",
                     }
@@ -880,6 +1051,33 @@ class TestPrintGatewayRoutingContract(TransactionCase):
             finally:
                 cr.rollback()
                 cr.close()
+
+    def test_sync_never_adopts_another_remote_jobs_success(self):
+        from unittest.mock import MagicMock
+        key = "sync-reject-foreign-receipt"
+        job_id = self._job(key)
+        cr = self.env.registry.cursor()
+        try:
+            env = api.Environment(cr, self.env.uid, dict(self.env.context))
+            company = env["res.company"].browse(self.durable_company_id).exists()
+            job = env["print_gateway.print_job"].with_company(company).browse(job_id).exists()
+            job.write({"gateway_job_id": "gw-own-operation", "status": "submitted"})
+            foreign = MagicMock()
+            foreign.status_code = 200
+            foreign.json.return_value = {
+                "jobId": "gw-other-operation", "status": "success", "error": False,
+            }
+            with patch.object(PrintGatewayConfig, "_validate_gateway_host"), patch(
+                "odoo.addons.print_gateway.models.print_job.requests.get",
+                return_value=foreign,
+            ):
+                job.action_sync_status()
+            job.invalidate_recordset(["status", "gateway_job_id"])
+            self.assertEqual(job.status, "submitted")
+            self.assertEqual(job.gateway_job_id, "gw-own-operation")
+        finally:
+            cr.rollback()
+            cr.close()
 
     def test_sync_gateway_requeue_keeps_ahead_state_and_syncs_remaining_jobs(self):
         """A Gateway 'queued' observation while Odoo already holds 'claimed'
@@ -908,9 +1106,13 @@ class TestPrintGatewayRoutingContract(TransactionCase):
                 resp.status_code = 200
                 if (params or {}).get("id") == "gw-requeue-race-1":
                     # Gateway requeued the lease after Odoo observed 'claimed'.
-                    resp.json.return_value = {"status": "queued", "error": False}
+                    resp.json.return_value = {
+                        "jobId": "gw-requeue-race-1", "status": "queued", "error": False,
+                    }
                 else:
-                    resp.json.return_value = {"status": "success", "error": False}
+                    resp.json.return_value = {
+                        "jobId": "gw-requeue-race-2", "status": "success", "error": False,
+                    }
                 return resp
 
             with patch.object(PrintGatewayConfig, "_validate_gateway_host"), patch(

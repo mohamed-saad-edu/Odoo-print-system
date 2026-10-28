@@ -50,7 +50,7 @@ The platform owner manages plans at `/platform/plans` and reviews traceable acti
 
 A new workspace starts pending. Its authenticated Workspace Owner can view the current contract at `/billing` and submit an idempotent plan-change or activation request at `/api/subscription-requests`; other workspace members cannot request or inspect private commercial terms. The Platform Owner reviews requests in `/platform/subscription-requests` and, after external business settlement or an explicit free grant, confirms the dated manual subscription with recent password proof, a reason, a stale-record fence and immutable before/after history. A customer request cannot activate printing; signup and provider callbacks do not activate a workspace.
 
-Print credits renew every 30×24 hours from the first subscription activation instant (UTC), independently of the contract term. A yearly term does not provide a year-long quota bucket, and editing or renewing a subscription does not reset current-cycle usage. Accepted duplicate logical requests are counted once. Expired, pending, canceled, suspended or blocked workspaces cannot admit new print jobs; historical records and uncertain-output evidence are retained.
+Print credits renew at 00:00 UTC on the first day of every calendar month, independently of the manual contract term. A yearly term does not provide a year-long quota bucket, and editing or renewing a subscription does not reset current-cycle usage. Accepted duplicate logical requests are counted once. Expired, pending, canceled, suspended or blocked workspaces cannot admit new print jobs; historical records and uncertain-output evidence are retained.
 
 Plans have active/public catalog flags and no provider price requirement. Use `YASEIR_PLAN_CATALOG` with `npm run db:provision-plans` for an optional initial catalog; existing managed plans are preserved. The legacy checkout, portal, webhook, cancel and resume endpoints return HTTP 410 and perform no payment or subscription mutation. Retained provider metadata is historical evidence. An operator must separately reconcile any external recurring charges when migrating a real deployment.
 
@@ -76,3 +76,7 @@ PostgreSQL, Odoo 19, Windows, and physical-printer E2E are release gates and mus
 For a production server first deployment and end-to-end smoke test, follow [SERVER_FIRST_RUN.md](SERVER_FIRST_RUN.md).
 
 See [API.md](API.md), [INSTALLATION.md](INSTALLATION.md), [DEPLOYMENT.md](DEPLOYMENT.md), [OPERATIONS.md](OPERATIONS.md), [SECURITY.md](SECURITY.md), [TYPOGRAPHY.md](TYPOGRAPHY.md).
+
+## Engineering review and cross-component contracts
+
+See the [unified system logic notebook](docs/engineering/SYSTEM_UNIFICATION_NOTEBOOK.md) and [complete tracked-file coverage ledger](docs/engineering/FILE_COVERAGE_LEDGER.md). These are evidence-scoped, living audit records, **not** a claim that all integration or hardware release gates passed.

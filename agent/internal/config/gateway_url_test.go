@@ -42,7 +42,7 @@ func TestGatewayEndpointsPreserveOriginAndCanonicalAPIPaths(t *testing.T) {
 func TestGatewayURLContractRejectsUnsupportedOrSecretBearingOrigins(t *testing.T) {
 	for _, raw := range []string{
 		"https://gateway.example.com/base", "https://gateway.example.com/api/", "https://gateway.example.com//",
-		"https://gateway.example.com/%2f", "https://user:test-secret@gateway.example.com/",
+		"https://gateway.example.com/%2f", "https://@gateway.example.com/", "https://:@gateway.example.com/", "https://user:test-secret@gateway.example.com/",
 		"https://user:test-secret@gateway.example.com:invalid/", "https://gateway.example.com/?token=test-secret",
 		"https://gateway.example.com/?", "https://gateway.example.com/#", "https://gateway.example.com/#fragment",
 		"https://gateway.example.com:0/", "https://gateway.example.com:65536/", "https://gateway.example.com:/",

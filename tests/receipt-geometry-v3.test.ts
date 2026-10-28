@@ -44,6 +44,22 @@ describe("Odoo receipt geometry v1", () => {
     expect(Boolean(result)).toBe(testCase.valid);
     if (result) expect(result.printable_width_dots).toBe(testCase.rasterWidth);
   });
+  it.each([
+    ["120-byte ASCII", "a".repeat(120), true],
+    ["121-byte ASCII", "a".repeat(121), false],
+    ["120-byte Arabic", "ط".repeat(60), true],
+    ["122-byte Arabic", "ط".repeat(61), false],
+    ["120-byte emoji", "🖨".repeat(30), true],
+    ["124-byte emoji", "🖨".repeat(31), false],
+    ["leading BOM", "\uFEFFqueue", false],
+    ["isolated high surrogate", "\uD800", false],
+    ["isolated low surrogate", "\uDC00", false],
+    ["interior BOM is exact", "que\uFEFFue", true],
+  ] as const)("uses exact UTF-8 bytes and valid Unicode for geometry printer IDs: %s", (_label, id, allowed) => {
+    const selected = { ...geometry(), printer_id: id };
+    expect(Boolean(validatedPrinterGeometry(selected, id))).toBe(allowed);
+  });
+
   it.each([undefined, null, {}, 512, { ...geometry(), dpi_x: undefined },
     { ...geometry(), dpi_y: 0 }, { ...geometry(), paper_width_mm: "80" },
     { ...geometry(), config_fingerprint: "unbound" }, { ...geometry(), printer_id: "" },

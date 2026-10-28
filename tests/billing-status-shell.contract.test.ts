@@ -16,12 +16,8 @@ describe("customer billing scope and bounded status", () => {
     expect(status).not.toContain("monthlyQuota");
     expect(status).not.toContain("planId");
     expect(status).toContain("Cache-Control");
-  });
-  it("exposes contract expiry only to billing-authorized owners", () => {
-    expect(status).toContain('hasManagerPermission(member, "billing.read")');
-    expect(status).toContain("currentPeriodEnd:");
-    expect(status).toContain("subscription?.currentPeriodEnd?.toISOString()");
-    expect(status).not.toContain("monthlyQuota");
+    expect(status).toContain('member.role === "owner" ? { currentPeriodEnd:');
+    expect(status).not.toContain("priceMinorUnits");
   });
   it("only the workspace owner can read commercial usage, not activate a plan", () => {
     expect(usage).toContain('requireManagerPermission(manager, "billing.read")');

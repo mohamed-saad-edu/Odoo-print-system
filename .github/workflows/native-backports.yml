@@ -2,7 +2,7 @@ name: Native Backport Safety
 
 on:
   push:
-    branches: [main]
+    branches: [main, test/http-server-ready]
   pull_request:
     branches: [main]
   merge_group:
@@ -10,6 +10,13 @@ on:
 
 permissions:
   contents: read
+
+# Preserve running main verification while retaining only the latest pending
+# push for this workflow. Never coalesce manual or merge-queue release gates.
+# PR retries may cancel older attempts of the same PR only.
+concurrency:
+  group: native-backports-run-${{ github.event_name == 'push' && github.ref || github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   gtk-backports:

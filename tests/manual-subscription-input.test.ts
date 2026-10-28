@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseManualSubscriptionInput } from "../src/lib/manual-subscriptions";
+import { endOfCalendarTermUTC, parseManualSubscriptionInput } from "../src/lib/manual-subscriptions";
 
 const valid = {
   action: "save", expectedRevision: 0, planId: "manual", subscriptionType: "paid",
@@ -37,7 +37,15 @@ describe("manual subscription input boundary", () => {
       startDate: "2026-10-01T03:00:00+03:00", endDate: "2026-11-01T03:00:00+03:00",
     })).toMatchObject({ startDate: "2026-10-01T03:00:00+03:00" });
   });
-  it("requires an explicit linked request for adjusted approvals",()=>{
+  it.each([
+    ["2027-01-31T14:25:36.123Z", "monthly", "2027-02-28T14:25:36.123Z"],
+    ["2028-01-31T14:25:36.123Z", "monthly", "2028-02-29T14:25:36.123Z"],
+    ["2028-02-29T14:25:36.123Z", "yearly", "2029-02-28T14:25:36.123Z"],
+    ["2026-10-29T14:25:36.123Z", "monthly", "2026-11-29T14:25:36.123Z"],
+  ] as const)("calculates %s + %s using a UTC calendar term and preserves the approval clock", (start, term, end) => {
+    expect(endOfCalendarTermUTC(new Date(start), term).toISOString()).toBe(end);
+  });
+    it("requires an explicit linked request for adjusted approvals",()=>{
     expect(() => parseManualSubscriptionInput({...valid,allowRequestChanges:true})).toThrow("SUBSCRIPTION_INVALID");
     expect(() => parseManualSubscriptionInput({...valid,requestId:"req_example",allowRequestChanges:"yes"})).toThrow("SUBSCRIPTION_INVALID");
     expect(parseManualSubscriptionInput({...valid,requestId:"req_example",allowRequestChanges:true})).toMatchObject({

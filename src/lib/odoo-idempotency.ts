@@ -23,7 +23,35 @@ export type V2OdooIdentity = {
 };
 
 const uuidV4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
+/** Match the lower-case, RFC 4122 UUIDv4 that Odoo persists in its own enrollment proof. */
+export function isCanonicalOdooV2InstallationId(value: unknown): value is string {
+  return typeof value === "string" && uuidV4.test(value);
+}
 const proofPattern = /^[A-Za-z0-9_-]{43}$/;
+
+/**
+ * V2 source operation IDs are UTF-16 length bounded in Gateway and must be
+ * encodable as valid Unicode by Python Odoo. Reject isolated high/low
+ * surrogates before hashing: JSON.stringify would otherwise escape them and
+ * make an identity the upstream outbox cannot produce.
+ *
+ * Keep the immutable legacy v1 hash contract separate from this predicate.
+ */
+export function isValidOdooV2OperationId(value: unknown): value is string {
+  if (typeof value !== "string" || value.length < 1 || value.length > 200) return false;
+  for (let i = 0; i < value.length; i++) {
+    const point = value.charCodeAt(i);
+    if (point >= 0xd800 && point <= 0xdbff) {
+      if (i + 1 >= value.length) return false;
+      const next = value.charCodeAt(++i);
+      if (next < 0xdc00 || next > 0xdfff) return false;
+    } else if (point >= 0xdc00 && point <= 0xdfff) {
+      return false;
+    }
+  }
+  return true;
+}
 
 /** Pure input contract; the DB validates live proof, enrollment and credential in the enqueue transaction. */
 export function parseOdooIdentity(input: {
@@ -40,8 +68,8 @@ export function parseOdooIdentity(input: {
   const proof = input.installationProof ?? "";
   const company = input.sourceCompanyId ?? "";
   const operation = input.sourceOperationId ?? "";
-  if (!uuidV4.test(installationId) || !proofPattern.test(proof) ||
-      !/^[1-9][0-9]{0,17}$/.test(company) || operation.length < 1 || operation.length > 200) {
+  if (!isCanonicalOdooV2InstallationId(installationId) || !proofPattern.test(proof) ||
+      !/^[1-9][0-9]{0,17}$/.test(company) || !isValidOdooV2OperationId(operation)) {
     throw new Error("INVALID_INSTALLATION_IDENTITY");
   }
   const key = makeV2OdooKey(installationId, company, operation);

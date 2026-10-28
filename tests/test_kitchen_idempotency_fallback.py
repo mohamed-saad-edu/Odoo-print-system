@@ -73,11 +73,19 @@ def production_methods(file, names):
         'REPORT_DOCUMENT_TYPES': {'pos.order': 'receipt'},
         '_logger': logging.getLogger('test-kitchen-idempotency'),
     }
+    if file == 'pos_order.py':
+        # The real POS RPC now delegates to this exact-ID selector. Exercise
+        # its implementation rather than mocking it out of the test harness.
+        helper = next(node for node in tree.body if isinstance(node, ast.FunctionDef)
+                      and node.name == '_exact_pos_printer_id')
+        exec(compile(ast.fix_missing_locations(ast.Module(body=[helper], type_ignores=[])),
+                     str(path), 'exec'), ns)
     exec(compile(ast.fix_missing_locations(ast.Module(body=[expression], type_ignores=[])), str(path), 'exec'), ns)
     return ns['Production']
 
 
 Router = production_methods('print_router.py', ['route_kitchen_print', '_receipt_image_payload'])
+PosOrder = production_methods('pos_order.py', ['action_print_gateway_kitchen'])
 
 
 class FakeOrder(SimpleNamespace):
@@ -101,7 +109,7 @@ class FakeRouter(Router):
         return None
 
     def _validate_jpeg_base64(self, data):
-        assert data == 'KITCHEN_JPEG'
+        assert data in ('KITCHEN_JPEG', 'KITCHEN_JPEG_CHANGED')
 
     def resolve_binding(self, **kw):
         assert kw['document_type'] == 'kitchen'
@@ -125,8 +133,44 @@ def make_order(**kw):
     return order
 
 
-def route(router, order, **kw):
-    return router.route_kitchen_print(order, 'KITCHEN_JPEG', geometry_fingerprint='a' * 64, **kw)
+def route(router, order, *, image='KITCHEN_JPEG', **kw):
+    return router.route_kitchen_print(order, image, geometry_fingerprint='a' * 64, **kw)
+
+
+@pytest.mark.parametrize('value', ['false', 'true', 0, 1, None, [], {}])
+def test_kitchen_reprint_flag_rejects_non_booleans_at_rpc_and_router(value):
+    """RPC truthiness must not manufacture a deliberate, non-idempotent reprint."""
+    submitted = []
+    record = SimpleNamespace(
+        ensure_one=lambda: None,
+        check_access=lambda mode: mode == 'read',
+        env={'print_gateway.print_router': SimpleNamespace(
+            route_kitchen_print=lambda _order, _image, **kwargs: submitted.append(kwargs)
+        )},
+    )
+    with pytest.raises(ValidationError, match='boolean'):
+        PosOrder.action_print_gateway_kitchen(record, 'KITCHEN_JPEG', reprint=value)
+    router = FakeRouter()
+    with pytest.raises(ValidationError, match='boolean'):
+        route(router, make_order(), reprint=value)
+    assert submitted == []
+    assert router.submitted == []
+
+
+@pytest.mark.parametrize('value', [True, False])
+def test_kitchen_rpc_preserves_exact_boolean_reprint_flags(value):
+    forwarded = []
+    record = SimpleNamespace(
+        ensure_one=lambda: None,
+        check_access=lambda mode: mode == 'read',
+        env={'print_gateway.print_router': SimpleNamespace(
+            route_kitchen_print=lambda _order, _image, **kwargs: forwarded.append(kwargs)
+        )},
+    )
+    PosOrder.action_print_gateway_kitchen(record, 'KITCHEN_JPEG', reprint=value, operation_id='click-key')
+    assert len(forwarded) == 1
+    assert forwarded[0]['reprint'] is value
+    assert forwarded[0]['idempotency_key'] == 'click-key'
 
 
 def test_kitchen_without_key_is_deterministic():
@@ -141,11 +185,22 @@ def test_kitchen_without_key_is_deterministic():
 
 
 def test_kitchen_key_is_stable_across_write_date_only_changes():
+    """Odoo's incidental order write_date updates must not create more paper."""
     router = FakeRouter()
     route(router, make_order())
     first = router.submitted[0]
     route(router, make_order(write_date='2026-10-09 12:05:00'))
-    assert router.submitted[-1] != first, 'a changed order must be a new ticket'
+    assert router.submitted[-1] == first, 'same kitchen image must reuse the original operation'
+
+
+def test_kitchen_changed_rendered_content_gets_a_distinct_ticket():
+    """A different preparation delta remains independently printable without a caller key."""
+    router = FakeRouter()
+    route(router, make_order(), image='KITCHEN_JPEG')
+    route(router, make_order(), image='KITCHEN_JPEG_CHANGED')
+    assert router.submitted[0] != router.submitted[1]
+
+
 
 
 def test_kitchen_distinct_preparation_printers_get_distinct_tickets():
@@ -186,8 +241,9 @@ def test_kitchen_reprint_with_explicit_key_is_honoured():
 def test_kitchen_key_matches_the_documented_derivation():
     router = FakeRouter()
     route(router, make_order())
+    image_hash = hashlib.sha256(b'KITCHEN_JPEG').hexdigest()
     expected = hashlib.sha256(
-        'kitchen:777:501:24:2026-10-09 12:00:00'.encode('utf-8')).hexdigest()
+        f'kitchen:777:501:24:{image_hash}'.encode('utf-8')).hexdigest()
     assert router.submitted[0] == expected
 
 

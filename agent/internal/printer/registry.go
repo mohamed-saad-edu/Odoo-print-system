@@ -447,6 +447,27 @@ func mutateRegistry(registryPath string, discovered []DeviceInfo, completeSource
 			}
 		}
 		if idx, ok := byID[d.ID]; ok {
+			if conflictingUSBExecutionInterface(existing[idx], d) && operatorTargetID != existing[idx].ID {
+				// The legacy VID/PID-only ID is not a physical USB device identity.
+				// Keep the original endpoint and operator policy; reject a second
+				// distinct interface until an explicit manual reconciliation.
+				existing[idx] = withRegistryIdentityCollision(existing[idx], "same_id_different_usb_interface")
+				log.Printf("[registry] conflicting USB interfaces share persisted ID %q; operator reconciliation required", d.ID)
+				continue
+			}
+			// Pre-upgrade auto-discovery could give HTTPS/IPPS and plaintext
+			// /ipp/print on port 631 the same generated stable ID. An ID
+			// collision is NOT permission to replace an established print
+			// resource or downgrade its transport. Only a deliberate manual
+			// update targeting this precise saved ID may rebind it.
+			if priorBinding, priorOK := ippRegistryBinding(existing[idx]); priorOK {
+				if incomingBinding, incomingOK := ippRegistryBinding(d); incomingOK &&
+					incomingBinding != priorBinding && operatorTargetID != existing[idx].ID {
+					existing[idx] = withRegistryIdentityCollision(existing[idx], "same_id_different_ipp_queue")
+					log.Printf("[registry] conflicting IPP execution destinations share saved ID %q; operator reconciliation required", d.ID)
+					continue
+				}
+			}
 			if isSpoolerDevice(existing[idx]) && isSpoolerDevice(d) && !sameSpoolerQueueDuringDetailLoss(existing[idx], d) {
 				oldGUID, newGUID := verifiedWindowsQueueGUID(existing[idx]), verifiedWindowsQueueGUID(d)
 				source, _ := d.Capabilities["registration_source"].(string)
@@ -474,6 +495,17 @@ func mutateRegistry(registryPath string, discovered []DeviceInfo, completeSource
 				// change policy. Alias/auto-ID continuity and discovery source
 				// strings cannot silently enable a different saved registration.
 				merged.Enabled = d.Enabled
+				priorBinding, priorErr := config.PrinterBindingDigest(SharingConfigForDevice(existing[idx]))
+				currentBinding, currentErr := config.PrinterBindingDigest(SharingConfigForDevice(d))
+				if priorErr != nil || currentErr != nil || priorBinding != currentBinding {
+					// Operator deliberately changed the execution destination.
+					// Do not transfer measured geometry, supported document
+					// languages or an old identity-collision fence to the newly
+					// selected binding. Fresh native probe evidence is required.
+					for _, key := range []string{"geometry", "operational_verification", "supported_protocols", "geometry_error", "identity_collision"} {
+						delete(merged.Capabilities, key)
+					}
+				}
 			}
 			if d.Name != "" {
 				merged.Name = d.Name
@@ -782,8 +814,31 @@ func RegisterManual(registryPath string, info DeviceInfo) ([]DeviceInfo, error) 
 	} else {
 		info.Capabilities = maps.Clone(info.Capabilities)
 	}
-	for _, key := range []string{"operational_verification", "verification", "ipp_verified", "snmp_verified", "print_endpoint_verified", "windows_queue_guid", "windows_queue_guid_verified"} {
+	// Manual input is a configured destination, never a physical observation.
+	// In particular, only Get-Printer-Attributes may establish an IPP service
+	// UUID, and only a live driver/IPP probe may publish measured geometry.
+	// Treat these incoming fields as untrusted even when a UI re-submits a
+	// previously discovered candidate. Existing verified evidence is retained
+	// separately by the registry merge when the saved binding is unchanged.
+	for _, key := range []string{
+		"operational_verification", "geometry", "verification",
+		"ipp_verified", "ipp_printer_uuid", "printer_uuid", "uuid",
+		"snmp_verified", "print_endpoint_verified",
+		"windows_queue_guid", "windows_queue_guid_verified",
+	} {
 		delete(info.Capabilities, key)
+	}
+	if ippCaps, ok := info.Capabilities["ipp_capabilities"].(map[string]interface{}); ok {
+		// Preserve helpful format hints while preventing a nested claimed UUID
+		// from being interpreted as a verified transport identity. Clone before
+		// editing so an API/CLI caller's map is not mutated.
+		filtered := maps.Clone(ippCaps)
+		delete(filtered, "printer_uuid")
+		if len(filtered) == 0 {
+			delete(info.Capabilities, "ipp_capabilities")
+		} else {
+			info.Capabilities["ipp_capabilities"] = filtered
+		}
 	}
 	info.Capabilities["verification"] = "pending"
 	info.Capabilities["registration_source"] = "manual"
@@ -802,6 +857,9 @@ func withRegistryIdentityCollision(device DeviceInfo, reason string) DeviceInfo 
 	}
 	device.Capabilities["identity_collision"] = reason
 	delete(device.Capabilities, "operational_verification")
+	// Geometry belonged to one of the colliding destinations. Keeping it
+	// would advertise stale dimensions for a queue we can no longer identify.
+	delete(device.Capabilities, "geometry")
 	device.Status = "unknown"
 	return device
 }

@@ -13,6 +13,8 @@ import { getTenantPrintUsage,getTenantEntitlements,getTenantEntitlementLimit,req
 import { POST as requestActivation,GET as requestsGET } from "../src/app/api/subscription-requests/route";
 import { POST as subscriptionPOST } from "../src/app/api/platform/tenants/[id]/subscription/route";
 import { GET as workspaceGET } from "../src/app/api/platform/tenants/[id]/route";
+import { GET as billingStatusGET } from "../src/app/api/billing/status/route";
+import { GET as platformSubscriptionsGET } from "../src/app/api/platform/subscriptions/route";
 import { POST as rejectRequest, GET as listPlatformRequests } from "../src/app/api/platform/subscription-requests/route";
 import { PATCH as editPlan } from "../src/app/api/platform/plans/[id]/route";
 import { POST as createPlan,GET as listAdminPlans } from "../src/app/api/platform/plans/route";
@@ -57,6 +59,42 @@ suite('V4 manual subscriptions security and accounting',()=>{
   const platform=await createVerifiedPlatformSession('platform','platform@manual.test');platformCookie=`${sessionCookieName('platform')}=${platform.token}`;claims=verifyPlatformTokenSignature(platform.token)!;
   const owner=await issueWorkspaceTestSession({kind:'manager',tenantId:'workspace',userId:'owner',role:'owner'});ownerCookie=`${sessionCookieName('manager')}=${owner.accessToken}`;
   const member=await issueWorkspaceTestSession({kind:'manager',tenantId:'workspace',userId:'member',role:'admin'});memberCookie=`${sessionCookieName('manager')}=${member.accessToken}`;
+ });
+
+ it('returns the subscription end date only to the owner and uses DB time for expiry',async()=>{
+  await mutateManualSubscription('workspace',claims,randomUUID(),input());
+  const owner = await billingStatusGET(new Request(origin+'/api/billing/status',{headers:{cookie:ownerCookie}}));
+  const member = await billingStatusGET(new Request(origin+'/api/billing/status',{headers:{cookie:memberCookie}}));
+  expect(owner.status).toBe(200);expect(member.status).toBe(200);
+  const ownData = await owner.json();
+  const memberData = await member.json();
+  expect(ownData).toMatchObject({hasSubscription:true,customerState:'active',currentPeriodEnd:expect.any(String)});
+  expect(Date.parse(ownData.currentPeriodEnd)).toBeGreaterThan(Date.now());
+  expect(memberData).not.toHaveProperty('currentPeriodEnd');
+  expect(memberData).not.toHaveProperty('planId');
+  expect(memberData).not.toHaveProperty('monthlyQuota');
+  await db.update(tenantSubscriptions).set({currentPeriodEnd:new Date(Date.now()-1000)}).where(eq(tenantSubscriptions.tenantId,'workspace'));
+  const expired = await billingStatusGET(new Request(origin+'/api/billing/status',{headers:{cookie:ownerCookie}}));
+  expect((await expired.json())).toMatchObject({hasSubscription:false,customerState:'expired',currentPeriodEnd:expect.any(String)});
+ });
+ it('admin status matches runtime admission when contracts expire or lack a deadline', async () => {
+  await mutateManualSubscription('workspace', claims, randomUUID(), input());
+  const list = () => platformSubscriptionsGET(new Request(origin + '/api/platform/subscriptions', {headers: {cookie: platformCookie}}));
+  const active = await list();
+  expect(active.status).toBe(200);
+  expect((await active.json()).subscriptions[0].status).toBe('active');
+  await requireTenantBillingAccess(db, 'workspace');
+
+  await db.update(tenantSubscriptions).set({currentPeriodEnd: null}).where(eq(tenantSubscriptions.tenantId, 'workspace'));
+  const missing = await list();
+  expect(missing.status).toBe(200);
+  expect((await missing.json()).subscriptions[0].status).toBe('expired');
+  await expect(requireTenantBillingAccess(db, 'workspace')).rejects.toBeInstanceOf(TenantSubscriptionRequiredError);
+
+  await db.update(tenantSubscriptions).set({currentPeriodEnd: new Date(Date.now() - 60_000)}).where(eq(tenantSubscriptions.tenantId, 'workspace'));
+  const expired = await list();
+  expect((await expired.json()).subscriptions[0].status).toBe('expired');
+  await expect(requireTenantBillingAccess(db, 'workspace')).rejects.toBeInstanceOf(TenantSubscriptionRequiredError);
  });
  it('deduplicates concurrent customer requests and requires independent Platform Owner approval',async()=>{
   const key=randomUUID();
@@ -118,6 +156,51 @@ suite('V4 manual subscriptions security and accounting',()=>{
  });
 
 
+ it.each(["monthly", "yearly"] as const)("begins a delayed %s subscription at actual approval, not the customer's request or stale form date",async term=>{
+    const created=await requestActivation(request('/api/subscription-requests',{planId:'manual',term},ownerCookie));
+    expect(created.status).toBe(201);
+    const id=String((await created.json()).request.id);
+    await db.update(subscriptionRequests).set({createdAt:new Date(Date.now()-2*86400000)}).where(eq(subscriptionRequests.id,id));
+    const staleInput=input({requestId:id,term,startDate:"2026-01-01T00:00:00.000Z",endDate:"2027-01-01T00:00:00.000Z"});
+    const key=randomUUID();
+    const lower=new Date((await pool().query("SELECT clock_timestamp() AS now")).rows[0].now).getTime();
+    const result=await mutateManualSubscription('workspace',claims,key,staleInput);
+    const upper=new Date((await pool().query("SELECT clock_timestamp() AS now")).rows[0].now).getTime();
+    const start=new Date(String(result.subscription.currentPeriodStart));
+    const end=new Date(String(result.subscription.currentPeriodEnd));
+    expect(start.getTime()).toBeGreaterThanOrEqual(lower);
+    expect(start.getTime()).toBeLessThanOrEqual(upper);
+    const expected=new Date(start);
+    const originalDay=expected.getUTCDate();
+    expected.setUTCDate(1);
+    expected.setUTCMonth(expected.getUTCMonth()+(term==="monthly"?1:12));
+    const finalDay=new Date(Date.UTC(expected.getUTCFullYear(),expected.getUTCMonth()+1,0)).getUTCDate();
+    expected.setUTCDate(Math.min(originalDay,finalDay));
+    expect(end.toISOString()).toBe(expected.toISOString());
+    const approved=await db.query.subscriptionRequests.findFirst({where:eq(subscriptionRequests.id,id)});
+    expect(approved?.lastActionAt?.toISOString()).toBe(start.toISOString());
+    const replay=await mutateManualSubscription('workspace',claims,key,staleInput);
+    expect(replay.replayed).toBe(true);
+    expect(replay.subscription).toEqual(result.subscription);
+  });
+
+ it("keeps paid time remaining when a customer renewal is approved after a delay",async()=>{
+    const contractStart="2026-03-15T13:15:00.000Z";
+    const originalEnd="2027-03-15T13:15:00.000Z";
+    await mutateManualSubscription('workspace',claims,randomUUID(),input({startDate:contractStart,endDate:originalEnd}));
+    const created=await requestActivation(request('/api/subscription-requests',{planId:'manual',term:'yearly'},ownerCookie));
+    expect(created.status).toBe(201);
+    const id=String((await created.json()).request.id);
+    const approved=await mutateManualSubscription('workspace',claims,randomUUID(),input({
+      action:'renew',expectedRevision:1,requestId:id,term:'yearly',
+      startDate:contractStart,endDate:"2027-03-16T00:00:00.000Z",
+    }));
+    expect(approved.subscription.currentPeriodStart).toBe(contractStart);
+    expect(approved.subscription.currentPeriodEnd).toBe("2028-03-15T13:15:00.000Z");
+    const record=await db.query.subscriptionRequests.findFirst({where:eq(subscriptionRequests.id,id)});
+    expect(record?.lastActionAt).not.toBeNull();
+    expect(record?.lastActionAt?.getTime()).toBeGreaterThan(new Date("2026-10-27T00:00:00Z").getTime());
+  });
  it('approves monthly Go over an existing yearly contract without false revision errors, and records explicit changed terms',async()=>{
    await db.insert(plans).values({id:'go',name:'Go',entitlements:{...entitlements,max_prints_per_period:2000}});
    await mutateManualSubscription('workspace',claims,randomUUID(),input());
@@ -209,32 +292,78 @@ suite('V4 manual subscriptions security and accounting',()=>{
    expect((await pool().query("SELECT * FROM print_monthly_usage WHERE tenant_id='workspace'")).rows).toHaveLength(0);
   } finally {await locker.query('ROLLBACK');locker.release();}
  });
- it('keeps credits separated by the original activation-anchored 30-day cycle',async()=>{
+ it('keeps admin monthly history free of overlapping archived rolling windows',async()=>{
+   const current=(await pool().query("SELECT date_trunc('month', clock_timestamp() AT TIME ZONE 'UTC') AS start")).rows[0].start;
+   const monthStart=new Date(current);
+   const monthEnd=new Date(Date.UTC(monthStart.getUTCFullYear(),monthStart.getUTCMonth()+1,1));
+   const rollingStart=new Date(monthStart.getTime()+4*86_400_000);
+   const rollingEnd=new Date(rollingStart.getTime()+30*86_400_000);
+   await pool().query(
+     "INSERT INTO print_monthly_usage (tenant_id,period_start,period_end,used_prints) VALUES ('workspace',$1,$2,4),('workspace',$3,$4,8)",
+     [monthStart,monthEnd,rollingStart,rollingEnd],
+   );
+   const history=(await logicalUsageReport('workspace')).monthlyHistory as Array<{periodStart:Date|string;used:number|string}>;
+   expect(history).toHaveLength(1);
+   expect(new Date(history[0].periodStart).toISOString()).toBe(monthStart.toISOString());
+   expect(Number(history[0].used)).toBe(4);
+ });
+
+ it('keeps credits separated by UTC calendar month rather than contract renewal',async()=>{
    await mutateManualSubscription('workspace',claims,randomUUID(),input());
    const current=await getTenantPrintUsage(db,'workspace');
-   const previousStart=new Date(current.periodStart.getTime()-30*86_400_000);
+   const previousStart=new Date(Date.UTC(current.periodStart.getUTCFullYear(),current.periodStart.getUTCMonth()-1,1));
    await db.execute(sql`INSERT INTO print_monthly_usage(tenant_id,period_start,period_end,used_prints)
      VALUES('workspace',${previousStart},${current.periodStart},10)`);
    const usage=await db.transaction(tx=>reserveTenantPrintCredit(tx,'workspace'));
    expect(usage.used).toBe(1);
    expect(usage.periodStart).toEqual(current.periodStart);
-   expect(usage.periodEnd!.getTime()-usage.periodStart.getTime()).toBe(30*86_400_000);
+   expect(usage.periodEnd).toEqual(new Date(Date.UTC(current.periodStart.getUTCFullYear(),current.periodStart.getUTCMonth()+1,1)));
    expect((await db.query.tenantSubscriptions.findFirst())?.term).toBe('yearly');
  });
- it('does not reset the 30-day allowance on January 1 at UTC midnight',async()=>{
-   const {quotaCycleStartSql}=await import('../src/lib/quota-cycle');
-   const activation=sql`timestamp '2026-12-15 16:00:00'`;
-   for(const [at,expected] of [
-      ['2026-12-31 23:59:59','2026-12-15T16:00:00.000Z'],
-      ['2027-01-01 00:00:00','2026-12-15T16:00:00.000Z'],
-      ['2027-01-14 15:59:59','2026-12-15T16:00:00.000Z'],
-      ['2027-01-14 16:00:00','2027-01-14T16:00:00.000Z'],
+ it('resets the credit window at midnight UTC on January 1 and handles leap February',async()=>{
+   const {quotaCycleStartSql,quotaCycleEndSql}=await import('../src/lib/quota-cycle');
+   for(const [at,expectedStart,expectedEnd] of [
+      ['2026-12-31 23:59:59.999','2026-12-01T00:00:00.000Z','2027-01-01T00:00:00.000Z'],
+      ['2027-01-01 00:00:00','2027-01-01T00:00:00.000Z','2027-02-01T00:00:00.000Z'],
+      ['2028-02-29 23:59:59.999','2028-02-01T00:00:00.000Z','2028-03-01T00:00:00.000Z'],
+      ['2028-03-01 00:00:00','2028-03-01T00:00:00.000Z','2028-04-01T00:00:00.000Z'],
    ] as const){
-      const result=await db.execute(sql`SELECT ${quotaCycleStartSql(activation,sql`${at}::timestamp`)} AS "started"`);
-      const raw=result.rows[0].started;
-      const start=raw instanceof Date ? raw : new Date(String(raw).replace(" ","T")+"Z");
-      expect(start.toISOString()).toBe(expected);
+      const atSql=sql`${at}::timestamp`;
+      const result=await db.execute(sql`SELECT ${quotaCycleStartSql(atSql)} AS "started", ${quotaCycleEndSql(atSql)} AS "ended"`);
+      const parse=(raw:unknown)=>raw instanceof Date?raw:new Date(String(raw).replace(" ","T")+"Z");
+      expect(parse(result.rows[0].started).toISOString()).toBe(expectedStart);
+      expect(parse(result.rows[0].ended).toISOString()).toBe(expectedEnd);
    }
+ });
+ it('rejects reactivation of suspended contracts without an expiry and keeps billing fail-closed',async()=>{
+   await mutateManualSubscription('workspace',claims,randomUUID(),input());
+   await mutateManualSubscription('workspace',claims,randomUUID(),input({action:'suspend',expectedRevision:1}));
+   await db.update(tenantSubscriptions).set({currentPeriodEnd:null}).where(eq(tenantSubscriptions.tenantId,'workspace'));
+   await expect(mutateManualSubscription('workspace',claims,randomUUID(),input({action:'reactivate',expectedRevision:2})))
+     .rejects.toMatchObject({code:'SUBSCRIPTION_EXPIRED',status:409});
+   const record=await db.query.tenantSubscriptions.findFirst({where:eq(tenantSubscriptions.tenantId,'workspace')});
+   expect(record).toMatchObject({status:'suspended',currentPeriodEnd:null,revision:2});
+   await expect(getTenantEntitlements(db,'workspace')).rejects.toBeInstanceOf(TenantSubscriptionRequiredError);
+ });
+ it('refuses ineffective manual subscription reactivation without changing revision',async()=>{
+  await mutateManualSubscription('workspace',claims,randomUUID(),input());
+  await mutateManualSubscription('workspace',claims,randomUUID(),input({action:'suspend',expectedRevision:1}));
+  await db.update(tenants).set({lifecycle:'suspended'}).where(eq(tenants.id,'workspace'));
+  await expect(mutateManualSubscription('workspace',claims,randomUUID(),input({action:'reactivate',expectedRevision:2})))
+    .rejects.toMatchObject({code:'WORKSPACE_NOT_ACTIVE',status:409});
+  await db.update(tenants).set({lifecycle:'active'}).where(eq(tenants.id,'workspace'));
+  await db.update(tenantSubscriptions).set({currentPeriodStart:new Date(Date.now()+86_400_000)})
+    .where(eq(tenantSubscriptions.tenantId,'workspace'));
+  await expect(mutateManualSubscription('workspace',claims,randomUUID(),input({action:'reactivate',expectedRevision:2})))
+    .rejects.toMatchObject({code:'SUBSCRIPTION_NOT_STARTED',status:409});
+  expect(await db.query.tenantSubscriptions.findFirst({where:eq(tenantSubscriptions.tenantId,'workspace')}))
+    .toMatchObject({status:'suspended',revision:2});
+  await expect(requireTenantBillingAccess(db,'workspace')).rejects.toBeInstanceOf(TenantSubscriptionRequiredError);
+  await db.update(tenantSubscriptions).set({currentPeriodStart:new Date(Date.now()-60_000)})
+    .where(eq(tenantSubscriptions.tenantId,'workspace'));
+  await mutateManualSubscription('workspace',claims,randomUUID(),input({action:'reactivate',expectedRevision:2}));
+  expect((await db.query.tenantSubscriptions.findFirst({where:eq(tenantSubscriptions.tenantId,'workspace')}))?.status).toBe('active');
+  await requireTenantBillingAccess(db,'workspace');
  });
  it('renewal/quota edits preserve usage; suspension and expiry block admission; cancel at term remains usable until expiry',async()=>{
   await mutateManualSubscription('workspace',claims,randomUUID(),input());
@@ -300,6 +429,45 @@ suite('V4 manual subscriptions security and accounting',()=>{
    expect((await rejectRequest(request('/api/platform/subscription-requests',{...body,reason:'Different reason'},platformCookie,key))).status).toBe(409);
    expect((await rejectRequest(request('/api/platform/subscription-requests',body,platformCookie,randomUUID()))).status).toBe(409);
   }else expect(final).toBe('approved');
+ });
+
+ it('scopes concurrent plan creation idempotency to the actor and request key',async()=>{
+  // Two different plan IDs must not be created under one operation identity.
+  // An ID-scoped advisory lock alone fails to serialize this collision.
+  const key=randomUUID();
+  const candidate=(id:string)=>({id,name:id,description:'',monthlyQuota:600,isActive:true,isPublic:true,displayOrder:1});
+  const [first,second]=await Promise.all([
+    createPlan(request('/api/platform/plans',candidate('plan_key_first'),platformCookie,key)),
+    createPlan(request('/api/platform/plans',candidate('plan_key_second'),platformCookie,key)),
+  ]);
+  expect([first.status,second.status].sort()).toEqual([201,409]);
+  const persisted=await pool().query("SELECT id FROM plans WHERE id IN ($1,$2)",
+    ['plan_key_first','plan_key_second']);
+  expect(persisted.rows).toHaveLength(1);
+  const audit=await pool().query(
+    "SELECT id FROM audit_events WHERE actor_type='platform' AND actor_id='platform' AND action='plan.created' AND request_id=$1",
+    [key]);
+  expect(audit.rows).toHaveLength(1);
+ });
+
+ it('serializes one platform plan edit key across distinct plan IDs',async()=>{
+  await db.insert(plans).values({id:'another_plan',name:'Other manual plan',entitlements});
+  const key=randomUUID();
+  const patch=(id:string,name:string)=>editPlan(new Request(origin+'/api/platform/plans/'+id,{
+    method:'PATCH',headers:{origin,'content-type':'application/json',cookie:platformCookie,'idempotency-key':key},
+    body:JSON.stringify({name,description:'',monthlyQuota:250,isActive:true,isPublic:true,displayOrder:0}),
+  }),{params:Promise.resolve({id})});
+  const [a,b]=await Promise.all([
+    patch('manual','Edited primary plan'),
+    patch('another_plan','Edited secondary plan'),
+  ]);
+  expect([a.status,b.status].sort()).toEqual([200,409]);
+  const rows=(await pool().query("SELECT id,name FROM plans WHERE id IN ('manual','another_plan')")).rows;
+  expect(rows.filter(row=>row.name.startsWith('Edited '))).toHaveLength(1);
+  const events=(await pool().query(
+    "SELECT id FROM audit_events WHERE actor_type='platform' AND actor_id='platform' AND action='plan.updated' AND request_id=$1",
+    [key])).rows;
+  expect(events).toHaveLength(1);
  });
 
  it('persists and edits published USD/SAR prices without mutating subscriptions',async()=>{

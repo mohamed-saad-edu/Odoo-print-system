@@ -9,6 +9,22 @@ describe("workspace subscription page", () => {
     expect(billing).toContain('redirect("/login?next=%2Fbilling")');
     expect(billing).not.toContain('redirect("/platform/subscriptions")');
   });
+  it("warns on exhausted quota, imminent expiry and paid contracts without an end date", () => {
+    const dashboard = readFileSync("src/app/dashboard/dashboard-client.tsx", "utf8");
+    expect(billing).toContain("quotaExhausted");
+    expect(billing).toContain("expiringSoon");
+    expect(billing).toContain("legacyEndMissing");
+    expect(billing).toContain('href="#billing-actions"');
+    expect(dashboard).toContain("printsLimitReached && subscription?.customerState");
+    expect(dashboard).toContain('href="/billing"');
+    expect(dashboard).toContain('v4.subscription.quotaBlockedTitle');
+    expect(dashboard).toContain('v4.subscription.expiringSoonTitle');
+  });
+  it("exposes the missing-expiry warning for denied legacy active paid contracts", () => {
+    expect(billing).toContain('status === "expired" && sub?.status === "active" && sub?.subscriptionType === "paid" && !sub.currentPeriodEnd');
+    expect(billing).not.toContain('legacyEndMissing = status === "active"');
+  });
+
   it("preserves the requested plan and displays manual request controls", () => {
     expect(billing).toContain("selectedPlanId");
     expect(billing).toContain("<BillingActions");
@@ -16,15 +32,5 @@ describe("workspace subscription page", () => {
     expect(billing).toContain('t("v4.subscription.catalogPrice")');
     expect(billing).toContain("initialRequest=");
     expect(billing).toContain("currentPeriodEnd");
-  });
-  it("offers clear quota and expiry actions without silently adding credits", () => {
-    const dash = readFileSync("src/app/dashboard/dashboard-client.tsx", "utf8");
-    const admin = readFileSync("src/components/platform/SubscriptionEditor.tsx", "utf8");
-    expect(dash).toContain('v4.subscription.quotaPausedTitle');
-    expect(dash).toContain('v4.subscription.expiringSoonTitle');
-    expect(billing).toContain('v4.subscription.quotaPausedBody');
-    expect(admin).toContain("renewalKeepsUsage");
-    expect(dash).toContain("!canReadBillingUsage && subscription.customerState");
-    expect(dash).toContain("billingAccess={canReadBillingUsage}");
   });
 });

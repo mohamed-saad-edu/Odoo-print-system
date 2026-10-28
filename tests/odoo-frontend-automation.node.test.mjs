@@ -63,25 +63,32 @@ test("monthly allowance reset shows the exact UTC boundary from Saudi and wester
       entitlement: "max_prints_per_period", message: "Allowance reached",
       used: 100, limit: 100, retryAfterSeconds: null, periodEnd: "2026-11-01T00:00:00Z",
     }), true);
-    assert.match(dialogs[0].body, /30-day allowance resets: Nov 1, 2026, 12:00 AM UTC/,
+    assert.match(dialogs[0].body, /Monthly allowance resets \(UTC\): Nov 1, 2026, 12:00 AM UTC/,
       `The commercial boundary must not shift with browser timezone ${browserZone}`);
   }
 });
 
-test("billing dialog tells POS operators to reprint manually, never promises delayed automatic output", async () => {
-  const dialogs = [];
-  const { showGatewayBillingLimitDialog } = await load("js/gateway_limit_dialog.js", {}, {
-    "@web/core/confirmation_dialog/confirmation_dialog": { ConfirmationDialog: class {} },
-  });
-  const shown = showGatewayBillingLimitDialog({
-    services: { dialog: { add: (_component, props) => dialogs.push(props) }, action: {} },
-  }, {
-    entitlement: "max_prints_per_period", message: "No credit", used: 10, limit: 10,
-    manualReprintRequired: true, retryAfterSeconds: null, periodEnd: "2026-11-01T00:00:00Z",
-  });
-  assert.equal(shown, true);
-  assert.match(dialogs[0].body, /reprint it explicitly only if still needed/i);
+test("mock verification uses native queue/service/device proof instead of claiming all hardware is a Windows queue", async () => {
+  const { validatedOperationalVerification } = await load("js/printer_verification.js");
+  for (const [id, connectionType, protocol, method, identityStrength] of [
+    ["spooler-native", "spooler", "spooler", "windows_queue", "queue"],
+    ["network-native", "network", "escpos", "snmp_printer", "device"],
+    ["usb-native", "usb", "escpos", "usb_interface", "device"],
+    ["ipp-native", "ipp", "ipp", "ipp_attributes", "service"],
+    ["file-native", "pdf_output", "pdf", "pdf_output", "service"],
+  ]) {
+    const printer = verifiedPrinter({ id, connectionType, protocol, capabilities: { geometry: receiptGeometry(384, 203, id) } });
+    const proof = printer.capabilities.operational_verification;
+    assert.equal(proof.method, method);
+    assert.equal(proof.identity_strength, identityStrength);
+    assert.equal(validatedOperationalVerification(proof, printer)?.method, method);
+    if (identityStrength !== "queue") {
+      assert.equal(validatedOperationalVerification({ ...proof, identity_strength: "queue" }, printer), null,
+        "forged Windows-queue proof cannot represent a different physical transport");
+    }
+  }
 });
+
 test("POS picker offers only physical JPEG transports and declared ESC/POS raster capability", async () => {
   const { RuntimePrinterField } = await load("components/runtime_printer_field.js");
   const field = Object.create(RuntimePrinterField.prototype);

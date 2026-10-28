@@ -7,7 +7,8 @@ import { eq } from "drizzle-orm";
 import { listOwnSessions, revokeOwnSessions, SessionInventoryRequestError, PlatformSessionStepUpRequiredError } from "../../../../lib/session-inventory";
 import { validatePlatformOwner, clearPlatformCookieHeader, clearPlatformRefreshCookieHeader } from "../../../../lib/platform-auth";
 import { assertWorkspaceSecurityOrigin, WorkspaceSecurityRequestError } from "../../../../lib/workspace-session-http";
-import { ManagerMutationAuthorityChangedError } from "../../../../lib/manager-mutation-authorization";
+import { ManagerMutationAuthorityChangedError, requireManagerActorInTransaction } from "../../../../lib/manager-mutation-authorization";
+import { requireActiveTenantInTransaction, TenantSuspendedError, TenantDeletedError } from "../../../../lib/tenant-guard";
 import { AuthenticationChangedError, accessCookieHeader, refreshCookieHeader, clearAccessCookieHeader, clearRefreshCookieHeader } from "../../../../lib/session-tokens";
 import { clearLegacySessionCookies } from "../../../../lib/session-config";
 import { hasBodyOverLimit } from "../../../../lib/request-limits";
@@ -26,10 +27,17 @@ export async function GET(req: Request) {
     if (!claims?.userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401, headers: HEADERS });
     const cursors = new URL(req.url).searchParams.getAll("cursor");
     if (cursors.length > 1) throw new SessionInventoryRequestError();
-    return NextResponse.json(await listOwnSessions({ scope: "workspace", claims }, cursors[0]), { headers: HEADERS });
+    const snapshot = await db.transaction(async tx => {
+      await requireActiveTenantInTransaction(tx, claims.tenantId);
+      await requireManagerActorInTransaction(tx, claims, "tenant.read");
+      return listOwnSessions({ scope: "workspace", claims }, cursors[0], tx);
+    });
+    return NextResponse.json(snapshot, { headers: HEADERS });
   } catch (error) {
     if (error instanceof SessionInventoryRequestError) return NextResponse.json({ error: error.message, code: "INVALID_SESSION_CURSOR" }, { status: 400, headers: HEADERS });
     if (error instanceof WorkspaceSessionExpiredError) return workspacePolicyResponse(error);
+    if (error instanceof ManagerMutationAuthorityChangedError) return NextResponse.json({ error: error.message, code: error.code }, { status: error.status, headers: HEADERS });
+    if (error instanceof TenantSuspendedError || error instanceof TenantDeletedError) return NextResponse.json({ error: error.message, code: error.code }, { status: error.status, headers: HEADERS });
     return NextResponse.json({ error: "Session inventory temporarily unavailable" }, { status: 503, headers: HEADERS });
   }
 }

@@ -122,7 +122,7 @@ class PrintGatewayIntent(models.Model):
                     UPDATE print_gateway_intent
                     SET status = 'claimed', claimed_at = %s, claim_token = %s, attempts = attempts + 1
                     WHERE id = %s AND (
-                        (status = 'pending' AND (next_retry_at IS NULL OR next_retry_at <= %s)) OR
+                        (status = 'pending' AND attempts < max_attempts AND (next_retry_at IS NULL OR next_retry_at <= %s)) OR
                         (status = 'claimed' AND attempts < max_attempts AND (claimed_at IS NULL OR claimed_at <= %s)) OR
                         (status = 'failed' AND attempts < max_attempts AND (next_retry_at IS NULL OR next_retry_at <= %s))
                     )
@@ -199,7 +199,10 @@ class PrintGatewayIntent(models.Model):
             attempts, max_attempts = attempt_row
             next_retry = None
             if attempts < max_attempts:
-                delay_sec = min(300, 15 * (2 ** max(0, attempts - 1)))
+                # The 300s maximum is reached at six attempts. Clamp the
+                # exponent BEFORE pow: a corrupted/legacy attempt count must
+                # never allocate an arbitrarily large integer to compute retry.
+                delay_sec = min(300, 15 * (2 ** min(max(0, attempts - 1), 5)))
                 next_retry = db_now_utc(failure_cr) + datetime.timedelta(seconds=delay_sec)
             finalized = cls._finalize_intent_state(
                 env, intent_id, claim_token,
@@ -231,35 +234,69 @@ class PrintGatewayIntent(models.Model):
             if not intent or intent.claim_token != claim_token:
                 _logger.warning("Intent %s claim token mismatch before routing; skipping.", intent_id)
                 return
+            # Source record rules may hide a branch document when the cron
+            # user's default company is its parent/root. Use the ORIGINAL
+            # persisted intent company *before* looking up the source.
+            # Environment is callable with context= on Odoo; it has no
+            # with_context(). The framework enforces allowed-company access.
+            captured_company = intent.company_id
+            if captured_company and captured_company.id != new_env.company.id:
+                new_env = new_env(context=dict(new_env.context, allowed_company_ids=[captured_company.id]))
+                intent = intent.with_env(new_env)
             record = new_env[res_model].browse(res_id).exists()
             if not record:
                 cls._finalize_intent_state(
                     env, intent_id, claim_token,
                     status="skipped",
-                    last_error="Source record no longer exists",
+                    last_error="Source record no longer exists or is no longer accessible in its original company",
                 )
                 return
-            # The routing boundary asserts env.company == record.company_id.
-            # In the post-commit path the operator's env already matches, but
-            # the cron recovery path runs under the cron user's default
-            # company, which permanently stranded branch-scoped intents
-            # (marked failed after max_attempts). Route under the record's
-            # own company so recovery works for every scope; it is a no-op
-            # where the env already matches. Odoo 19 resolves env.company
-            # from allowed_company_ids[0] (Environment has no with_company),
-            # and narrowing the allowed list below the operator's own scope
-            # can only ever restrict access, never widen it.
+            # Never re-scope a captured print intent to a record that was
+            # later moved into another company: that would send old business
+            # data to a different branch's printer. Require explicit review.
             record_company = record.company_id if hasattr(record, "company_id") else False
-            if record_company and record_company.id != new_env.company.id:
-                # NOTE: Environment has NO with_context (it is Model-only;
-                # calling new_env.with_context(...) raises AttributeError on
-                # Odoo 19). The env-level API is __call__(context=...), which
-                # returns a new Environment with the replaced context, so
-                # env.company resolves from the record's company. Verified
-                # against the Odoo 19 runtime (CI odoo19 job).
-                new_env = new_env(context=dict(new_env.context, allowed_company_ids=[record_company.id]))
-                intent = intent.with_env(new_env)
-                record = record.with_env(new_env)
+            if captured_company and record_company and record_company.id != captured_company.id:
+                cls._finalize_intent_state(
+                    env, intent_id, claim_token,
+                    status="skipped",
+                    last_error="PRINT_SOURCE_COMPANY_CHANGED: Source record company changed after intent capture; printing was not sent",
+                )
+                return
+            # The intent was captured against one authorized rule. Admins may
+            # disable, re-scope, or edit a rule while queued work waits for the
+            # cron: never print that old business event under a different
+            # model/event/filter or a now-disabled rule.
+            policy = intent.policy_id
+            # The Odoo postcommit callback or recovery cron can run long
+            # after this event was captured. Rechecking active/model/filter
+            # alone is insufficient: a report, printer, protocol or raw
+            # template may have changed without altering those fields.
+            # In that case do not reinterpret an old event under a new route.
+            captured_at = intent.create_date
+            rule_changed_after_capture = bool(
+                captured_at and policy and (
+                    (policy.write_date and policy.write_date > captured_at)
+                    or (policy.binding_id and policy.binding_id.write_date
+                        and policy.binding_id.write_date > captured_at)
+                )
+            )
+            if (not policy or not policy.active or rule_changed_after_capture
+                    or policy.model_name != res_model or policy.event_type != intent.event_type):
+                cls._finalize_intent_state(
+                    env, intent_id, claim_token,
+                    status="skipped",
+                    last_error="PRINT_RULE_CHANGED: Print automation rule changed or was disabled after intent capture; no job was sent",
+                )
+                return
+            with cr.savepoint():
+                policy_still_matches = policy.matches_record(record)
+            if not policy_still_matches:
+                cls._finalize_intent_state(
+                    env, intent_id, claim_token,
+                    status="skipped",
+                    last_error="PRINT_RULE_NOT_MATCHED: Print automation rule no longer matches the source; no job was sent",
+                )
+                return
             router = new_env["print_gateway.print_router"]
             try:
                 # A failed ORM/SQL statement must not poison the transaction
@@ -408,7 +445,7 @@ class PrintGatewayIntent(models.Model):
             SELECT id
             FROM print_gateway_intent
             WHERE
-                (status = 'pending' AND (next_retry_at IS NULL OR next_retry_at <= %s))
+                (status = 'pending' AND attempts < max_attempts AND (next_retry_at IS NULL OR next_retry_at <= %s))
                 OR
                 (status = 'claimed' AND (claimed_at IS NULL OR claimed_at <= %s))
                 OR

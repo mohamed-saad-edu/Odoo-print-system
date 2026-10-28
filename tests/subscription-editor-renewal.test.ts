@@ -160,6 +160,29 @@ describe("minimal, contextual subscription editor", () => {
     expect(host.textContent).toContain(labelText(locale, "suspend"));
   });
 
+  it.each(["en", "ar"] as const)("does not offer reactivation without finite expiry in %s", locale => {
+    renderEditor(locale, {...currentSubscription, status: "suspended", effectiveStatus: "suspended", currentPeriodEnd: null, canReactivate: false});
+    expect(host.textContent).not.toContain(labelText(locale, "reactivate"));
+  });
+
+  it.each(["en", "ar"] as const)("does not offer reactivation after same-day expiry in %s", locale => {
+    renderEditor(locale, {...currentSubscription, status: "suspended", effectiveStatus: "suspended",
+      currentPeriodEnd: new Date(Date.now() - 60_000).toISOString(), canReactivate: false});
+    expect(host.textContent).not.toContain(labelText(locale, "reactivate"));
+  });
+
+  it.each(["en", "ar"] as const)("does not invent reactivation from a future date without Gateway confirmation in %s", locale => {
+    renderEditor(locale, {...currentSubscription, status: "suspended", effectiveStatus: "suspended",
+      currentPeriodEnd: new Date(Date.now() + 86_400_000).toISOString(), canReactivate: false});
+    expect(host.textContent).not.toContain(labelText(locale, "reactivate"));
+  });
+
+  it.each(["en", "ar"] as const)("offers reactivation for a future finite expiry in %s", locale => {
+    renderEditor(locale, {...currentSubscription, status: "suspended", effectiveStatus: "suspended",
+      currentPeriodEnd: new Date(Date.now() + 86_400_000).toISOString(), canReactivate: true});
+    expect(host.textContent).toContain(labelText(locale, "reactivate"));
+  });
+
   it.each(["en", "ar"] as const)("never carries a renewal expiry back into a plan-only edit in %s", locale => {
     renderEditor(locale);
     reveal(locale, "manageExtraActions");
@@ -172,6 +195,15 @@ describe("minimal, contextual subscription editor", () => {
     expect(host.querySelector('time[datetime="2029-01-31"]')).toBeNull();
   });
 
+  it.each(["en","ar"] as const)("labels new subscription timing as approval-based instead of a stale date in %s", locale => {
+    renderEditor(locale, null, request);
+    expect(host.textContent).toContain(labelText(locale, "approvalDateNotice"));
+    press(locale, "preview");
+    expect(host.textContent).toContain(labelText(locale, "startsAtApproval"));
+    expect(host.textContent).toContain(labelText(locale, "endsFromApproval"));
+    expect(host.querySelector('time[datetime="2026-10-27"]')).toBeNull();
+  });
+
   it.each(["en","ar"] as const)("does not replace a monthly Go request with an existing yearly subscription in %s",locale=>{
     renderEditor(locale,currentSubscription,{...request,term:"monthly",planId:"requested",requestedMonthlyQuota:250});
     expect(input(locale,"plan")?.value).toBe("requested");
@@ -181,7 +213,9 @@ describe("minimal, contextual subscription editor", () => {
     expect(host.textContent).not.toContain(labelText(locale,"renewRequested"));
     press(locale,"preview");
     expect(host.textContent).toContain(labelText(locale,"monthly"));
-    expect(host.querySelectorAll('time[datetime]').length).toBeGreaterThanOrEqual(2);
+    // A linked approval cannot advertise client-side form dates as contractual.
+    expect(host.textContent).toContain(labelText(locale, "startsAtApproval"));
+    expect(host.textContent).toContain(labelText(locale, "endsFromApproval"));
     expect(host.textContent).not.toContain("—");
   });
 

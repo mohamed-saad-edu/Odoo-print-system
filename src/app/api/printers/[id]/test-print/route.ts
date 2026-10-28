@@ -14,6 +14,7 @@ import { buildTestPrintPayloadForPrinter } from "../../../../../lib/payload";
 import { MAX_AGENT_IN_FLIGHT_JOBS } from "../../../../../lib/job-delivery";
 import { logError } from "../../../../../lib/log";
 import { databaseNowMs } from "../../../../../lib/database-clock";
+import { isExactIdempotencyKey } from "../../../../../lib/idempotency";
 import { isVirtualPrinterRecord } from "../../../../../lib/printer-virtual";
 
 export const dynamic = "force-dynamic";
@@ -43,15 +44,21 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   });
   if (!printer || isVirtualPrinterRecord(printer)) return NextResponse.json({ error: "Printer not found" }, { status: 404 });
 
-  const idempotencyKey = req.headers.get("Idempotency-Key")?.trim() || null;
-  if (idempotencyKey && (idempotencyKey.length < 8 || idempotencyKey.length > 200)) {
+  // The header identifies a physical operation; never trim it into another identity.
+  const idempotencyKey = req.headers.get("Idempotency-Key");
+  if (idempotencyKey !== null && (!isExactIdempotencyKey(idempotencyKey) || idempotencyKey.length < 8)) {
     return NextResponse.json({ error: "invalid Idempotency-Key", code: "INVALID_REQUEST", retryable: false }, { status: 400 });
   }
   // Fail closed for Agent diagnostics without a client-owned retry identity.
   // Prefix/hash it with the authenticated Agent and printer to isolate it from
   // ordinary workspace jobs and prevent cross-Agent idempotency collisions.
-  if (pairedAgent && (!idempotencyKey || !/^[A-Za-z0-9._:-]+$/.test(idempotencyKey))) {
-    return NextResponse.json({ error: "Agent diagnostic requires a valid Idempotency-Key" }, { status: 400 });
+  // Even a Manager must name the physical diagnostic attempt; otherwise a
+  // lost response followed by a new POST can print twice without reconciliation.
+  if (idempotencyKey === null) {
+    return NextResponse.json({ error: "Diagnostic printing requires an Idempotency-Key", code: "IDEMPOTENCY_KEY_REQUIRED", retryable: false }, { status: 400 });
+  }
+  if (pairedAgent && !/^[A-Za-z0-9._:-]+$/.test(idempotencyKey)) {
+    return NextResponse.json({ error: "Agent diagnostic requires a valid Idempotency-Key", code: "INVALID_REQUEST", retryable: false }, { status: 400 });
   }
   const effectiveKey = pairedAgent && idempotencyKey
     ? "agent-diagnostic:" + createHash("sha256").update(JSON.stringify([tenantId, pairedAgent.id, id, idempotencyKey])).digest("hex")
@@ -143,7 +150,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         entitlement: e.entitlement,
         limit: e.limit,
         used: e.used,
-        upgradeRequired: true,
+        upgradeRequired: false,
         retryable: true,
       }, { status: 429, headers: { "Retry-After": "60", "Cache-Control": "no-store" } });
     }

@@ -59,6 +59,11 @@ def pairing(agents, target="agent-selected", records=()):
     namespace = {"_": lambda text: text, "ValidationError": ValidationError,
                  "AccessError": PermissionError, "requests": transport,
                  "_gateway_redirect_message": lambda *args: None}
+    # Exercise the actual shared ID contract when extracting the wizard method.
+    policy_path = source.parent.parent / "runtime_policy.py"
+    policy = {}
+    exec(compile(policy_path.read_text(encoding="utf-8"), str(policy_path), "exec"), policy)
+    namespace["is_exact_gateway_printer_id"] = policy["is_exact_gateway_printer_id"]
     exec(compile(ast.fix_missing_locations(ast.Module(body=[node], type_ignores=[])),
                  str(source), "exec"), namespace)
     wizard = SimpleNamespace(ensure_one=lambda: None, agent_id=target,
@@ -111,3 +116,26 @@ def test_malformed_inventory_row_cannot_crash_missing_agent_feedback():
     with pytest.raises(ValidationError, match="not found"):
         wizard.confirm()
     assert assignments.records == []
+
+
+@pytest.mark.parametrize("bad_target", [
+    " agent-selected", "agent-selected ", "\ufeffagent-selected",
+    "agent-selected\ufeff", "agent-selected\x00other",
+    "\ud800", "é" * 61, "a" * 121,
+])
+def test_pairing_refuses_malformed_selected_agent_before_normalized_lookup(bad_target):
+    wizard, assignments = pairing([
+        {"id": "agent-selected", "lifecycle": "active"},
+    ], target=bad_target)
+    with pytest.raises(ValidationError, match="valid Runtime Agent ID"):
+        wizard.confirm()
+    assert assignments.records == []
+
+
+def test_pairing_preserves_exact_arabic_gateway_agent_identity():
+    wizard, assignments = pairing([
+        {"id": "وكيل-فرع", "name": "طابعة الفرع", "lifecycle": "active"},
+    ], target="وكيل-فرع")
+    result = wizard.confirm()
+    assert [record.runtime_agent_id for record in assignments.records] == ["وكيل-فرع"]
+    assert result["params"]["type"] == "success"

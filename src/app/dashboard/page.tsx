@@ -10,6 +10,9 @@ import { Activity, Database } from "lucide-react";
 import { Callout, PageContainer, PageHeader, StatusBadge } from "../../components/ui";
 import { getServerLocale, makeT } from "../../i18n/server";
 import { loadDashboardStateForTenant } from "../../lib/dashboard-state";
+import { db } from "../../db";
+import { requireActiveTenantInTransaction, TenantSuspendedError, TenantDeletedError } from "../../lib/tenant-guard";
+import { requireManagerActorInTransaction, ManagerMutationAuthorityChangedError } from "../../lib/manager-mutation-authorization";
 
 export const dynamic = "force-dynamic";
 
@@ -35,8 +38,20 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
   let databaseError: string | null = null;
 
   try {
-    dashboardState = await loadDashboardStateForTenant(claims.tenantId);
+    dashboardState = await db.transaction(async tx => {
+      // Initial SSR props are an authenticated data export: the API's live
+      // authority fence must cover the entire fleet and job-history snapshot.
+      await requireActiveTenantInTransaction(tx, claims.tenantId);
+      await requireManagerActorInTransaction(tx, claims, "jobs.read");
+      return loadDashboardStateForTenant(claims.tenantId, {}, tx);
+    });
   } catch (error: unknown) {
+    if (error instanceof ManagerMutationAuthorityChangedError) {
+      redirect(error.status === 401 ? "/login?next=%2Fdashboard" : "/");
+    }
+    if (error instanceof TenantSuspendedError || error instanceof TenantDeletedError) {
+      redirect("/");
+    }
     // Dotted event name (aggregation-safe) and a string message — a live
     // Error would serialize as {} and lose the failure reason.
     logError("dashboard.database_load_failed", { error: error instanceof Error ? error.message : String(error) });

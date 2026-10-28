@@ -12,6 +12,7 @@ import { getTenantEntitlementLimit, isTenantBillingError, TenantEntitlementError
 import { requireActiveTenantInTransaction } from "../../../../lib/tenant-guard";
 import { aliasPrinterIdForAgent } from "../../../../lib/printer-identity";
 import { physicalPrinterIdentityKey, samePrinterProtocol } from "../../../../lib/physical-printer-identity";
+import { isExactPrinterId } from "../../../../lib/exact-printer-id";
 import { inventoryVersionAllowsPage, parseInventorySnapshotVersion } from "../../../../lib/inventory-snapshot";
 import { getDesiredPrinterPage } from "../../../../lib/desired-state-page";
 import { isVirtualPrinterRecord } from "../../../../lib/printer-virtual";
@@ -97,7 +98,7 @@ function sanitizePrinter(p: ReportedPrinter): {
   };
 } | { ok: false; reason: string } {
   if (!p || typeof p !== "object" || Array.isArray(p)) return { ok: false, reason: "invalid_printer" };
-  if (typeof p.id !== "string" || !p.id.trim() || p.id.length > 120) return { ok: false, reason: "invalid_id" };
+  if (!isExactPrinterId(p.id)) return { ok: false, reason: "invalid_id" };
   if (typeof p.name !== "string" || !p.name.trim() || p.name.length > 100) return { ok: false, reason: "invalid_name" };
   if (p.sharedWithGateway !== undefined && p.sharedWithGateway !== true) return { ok: false, reason: "invalid_shared_with_gateway" };
   const connectionType = normalizeConnectionType(p.connectionType, p.type);
@@ -127,7 +128,7 @@ function sanitizePrinter(p: ReportedPrinter): {
   }
   let capabilities = p.capabilities && typeof p.capabilities === "object" ? { ...(p.capabilities as Record<string, unknown>) } : null;
   if (capabilities && "geometry" in capabilities) {
-    const geometry = validatePrinterGeometry(capabilities.geometry, { printerId: p.id.trim() });
+    const geometry = validatePrinterGeometry(capabilities.geometry, { printerId: p.id });
     if (geometry.ok) {
       capabilities.geometry = geometry.value;
       delete capabilities.geometry_error;
@@ -168,7 +169,7 @@ function sanitizePrinter(p: ReportedPrinter): {
   if (configErr) return { ok: false, reason: `invalid_connection_config: ${configErr}` };
   const transportProtocolErr = validatePrinterTransportProtocol(canonicalConnectionType, protocol);
   if (transportProtocolErr) return { ok: false, reason: `invalid_transport_protocol: ${transportProtocolErr}` };
-  return { ok: true, printer: { id: p.id.trim(), name: p.name.trim(), printerType, deviceClass, connectionType: canonicalConnectionType, protocol, status, config, capabilities, ...(p.sharedWithGateway === true ? { sharedWithGateway: true as const } : {}) } };
+  return { ok: true, printer: { id: p.id, name: p.name.trim(), printerType, deviceClass, connectionType: canonicalConnectionType, protocol, status, config, capabilities, ...(p.sharedWithGateway === true ? { sharedWithGateway: true as const } : {}) } };
 }
 
 export async function POST(req: Request) {
@@ -249,10 +250,18 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: "privatePrinterIds must be an array of at most 500 printer IDs" }, { status: 400 });
       }
       for (const value of body.privatePrinterIds) {
-        if (typeof value !== "string" || !value.trim() || value.length > 120) {
-          return NextResponse.json({ error: "privatePrinterIds must contain non-empty printer IDs up to 120 characters" }, { status: 400 });
+        if (!isExactPrinterId(value)) {
+          return NextResponse.json({ error: "privatePrinterIds must contain non-empty printer IDs up to 120 UTF-8 bytes" }, { status: 400 });
         }
-        privatePrinterIds.add(value.trim());
+        const localId = value;
+        privatePrinterIds.add(localId);
+        // Negative local sharing authority must follow the canonical ID the
+        // Gateway assigned after a cross-Agent collision. The reporting Agent
+        // deliberately keeps its original local ID; it does not know whether
+        // that ID is the bare tenant ID or its per-Agent cloud alias.
+        // The UPDATE below remains scoped to this authenticated tenant+Agent,
+        // so a denied ID can never hide another Agent's physical printer.
+        privatePrinterIds.add(aliasPrinterIdForAgent(localId, agent.id));
       }
     }
 
@@ -262,8 +271,8 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: "too many Gateway-owned printer IDs in heartbeat" }, { status: 400 });
       }
       for (const rawId of body.gatewayOwnedPrinterIds) {
-        if (typeof rawId === "string" && rawId.trim() && rawId.length <= 120) {
-          gatewayOwnedPrinterIds.add(rawId.trim());
+        if (isExactPrinterId(rawId)) {
+          gatewayOwnedPrinterIds.add(rawId);
         }
       }
     }
@@ -349,7 +358,9 @@ export async function POST(req: Request) {
       for (const rawAck of desiredStateAcks) {
         if (!rawAck || typeof rawAck !== "object") continue;
         const ack = rawAck as DesiredStateAck;
-        const printerId = typeof ack.printerId === "string" ? ack.printerId.trim() : "";
+        // Printer IDs are opaque. Never trim a malformed ACK into another
+        // manager-controlled queue's exact identity.
+        const printerId = isExactPrinterId(ack.printerId) ? ack.printerId : "";
         const applied = typeof ack.appliedDesiredRevision === "number" && Number.isSafeInteger(ack.appliedDesiredRevision) && ack.appliedDesiredRevision >= 0 ? ack.appliedDesiredRevision : -1;
         const observed = typeof ack.observedDesiredRevision === "number" && Number.isSafeInteger(ack.observedDesiredRevision) && ack.observedDesiredRevision >= 0 ? ack.observedDesiredRevision : -1;
         if (!printerId || applied < 0 || observed < 0) continue;
@@ -378,7 +389,7 @@ export async function POST(req: Request) {
       for (const raw of reportedPrinters) {
         const rawId = typeof raw?.id === "string" ? raw.id : "(unknown)";
         // Explicit denial wins a contradictory report; do not adopt its name.
-        if (typeof rawId === "string" && privatePrinterIds.has(rawId.trim())) continue;
+        if (typeof rawId === "string" && privatePrinterIds.has(rawId)) continue;
         const res = sanitizePrinter(raw);
         if (!res.ok) {
           skipped.push({ id: rawId, reason: res.reason });
@@ -453,7 +464,10 @@ export async function POST(req: Request) {
       });
       const knownByEndpoint = new Map<string, (typeof knownPhysicalPrinters)[number]>();
       for (const row of knownPhysicalPrinters) {
-        const endpoint = physicalPrinterIdentityKey(row) ?? row.physicalIdentityKey;
+        // Stored identity hashes are only hints: if the live endpoint cannot
+        // be reconstructed, do not suppress or bind an observation to an
+        // unrelated printer using a stale historical key.
+        const endpoint = physicalPrinterIdentityKey(row);
         if (endpoint && !knownByEndpoint.has(endpoint)) knownByEndpoint.set(endpoint, row);
       }
       const seenEndpoints = new Set<string>();
@@ -833,7 +847,7 @@ export async function POST(req: Request) {
         entitlement: error.entitlement,
         limit: error.limit,
         used: error.used,
-        upgradeRequired: true,
+        upgradeRequired: false,
       }, { status: 429, headers: { "Retry-After": "60", "Cache-Control": "no-store" } });
     }
     if (isTenantBillingError(error)) {

@@ -11,6 +11,39 @@ import (
 	"github.com/yaseir-agent/agent/internal/config"
 )
 
+// The Gateway's isExactPrinterId rejects IDs beyond 120 UTF-8 bytes and
+// JavaScript edge-trim BOM. Geometry must not assert a fingerprint for a
+// destination that heartbeat inventory and print-job routing cannot name.
+func TestGeometryPrinterIDMatchesGatewayOpaqueUTF8Contract(t *testing.T) {
+	for _, tc := range []struct {
+		name, id string
+		accepted bool
+	}{
+		{"120 ASCII bytes", strings.Repeat("p", 120), true},
+		{"121 ASCII bytes", strings.Repeat("p", 121), false},
+		{"60 Arabic letters", strings.Repeat("ط", 60), true},
+		{"61 Arabic letters", strings.Repeat("ط", 61), false},
+		{"30 emoji", strings.Repeat("😀", 30), true},
+		{"31 emoji", strings.Repeat("😀", 31), false},
+		{"leading BOM", "\uFEFFprinter", false},
+		{"trailing BOM", "printer\uFEFF", false},
+		{"interior BOM", "prin\uFEFFter", true},
+		{"invalid UTF-8", string([]byte{0xff}), false},
+		{"newline", "printer\nother", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := validGeometryPrinterID(tc.id); got != tc.accepted {
+				t.Fatalf("geometry accepted=%v, Gateway contract=%v for ID %q (%d bytes)", got, tc.accepted, tc.id, len(tc.id))
+			}
+			cfg := config.PrinterConfig{ID: tc.id, Type: "network", Protocol: "escpos", Endpoint: "192.168.1.20:9100"}
+			_, err := NewGeometry(cfg, config.GeometryProfile{PrintableWidthDots: 512}, "validated_profile", "configured", "operator_profile")
+			if (err == nil) != tc.accepted {
+				t.Fatalf("geometry creation differs from Gateway identity authority: accepted=%v, err=%v", tc.accepted, err)
+			}
+		})
+	}
+}
+
 func TestGeometrySharedContractFixtures(t *testing.T) {
 	data, err := os.ReadFile("../../../contracts/printer-geometry-fixtures.json")
 	if err != nil {

@@ -41,9 +41,12 @@ export async function POST(req: Request) {
     const result = await db.transaction(async tx => {
       const rows = await tx.select({ id: apiKeys.id, revokedAt: apiKeys.revokedAt, readOnlyUntil: apiKeys.readOnlyUntil })
         .from(apiKeys).where(and(eq(apiKeys.tenantId, tenantId), eq(apiKeys.id, id))).for("update");
+      // Keep the resource FOR UPDATE before the session/user lock for
+      // consistent writer lock ordering, but never reveal resource state to
+      // a principal revoked after the HTTP authorization preflight.
+      await requirePlatformActorInTransaction(tx, actor);
       if (!rows[0]) return { status: 404, error: "API key not found" } as const;
       if (rows[0].revokedAt && !rows[0].readOnlyUntil) return { status: 409, error: "API key has no remaining access" } as const;
-      await requirePlatformActorInTransaction(tx, actor);
       // Revocation must be immediately final: remove any old read-only rotation
       // grace, otherwise the credential could still read historical receipts.
       const revoked = await tx.update(apiKeys)

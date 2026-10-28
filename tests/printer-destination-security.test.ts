@@ -37,6 +37,10 @@ describe("printer destination security policy", () => {
     expect(validateConnectionConfig("ipp", { address: "https://192.168.1.60/ipp/print?q=1" })).toContain("query strings");
     expect(validateConnectionConfig("ipp", { address: "ipp://user:pass@192.168.1.60/ipp/print" })).toContain("embedded credentials");
     expect(validateConnectionConfig("ipps", { address: "https://user:pass@192.168.1.60/ipp/print" })).toContain("embedded credentials");
+    // Go's net/url preserves even an empty URL.User; WHATWG URL drops it.
+    // Both validators must reject it to avoid approving a queue the Agent refuses.
+    expect(validateConnectionConfig("ipp", { address: "ipp://@192.168.1.60:631/ipp/print" })).toContain("embedded credentials");
+    expect(validateConnectionConfig("ipps", { address: "https://@192.168.1.60:631/ipp/print" })).toContain("embedded credentials");
     expect(validateConnectionConfig("ipps", { address: "http://192.168.1.60:631/ipp/print" })).toContain("HTTPS/IPPS address");
   });
 
@@ -137,4 +141,6 @@ it("fences discovery IPP URL to the endpoint and transport the operator approved
   expect(discoveryIppUriMatchesEndpoint("http://192.168.8.34:631/ipp/print", "192.168.8.34", 631, "ipps")).toBe(false);
   expect(discoveryIppUriMatchesEndpoint("ipps://192.168.8.34:631/ipp/print", "192.168.8.34", 631, "ipp")).toBe(false);
   expect(discoveryIppUriMatchesEndpoint("ipp://user:secret@192.168.8.34:631/ipp/print", "192.168.8.34", 631, "ipp")).toBe(false);
+  expect(discoveryIppUriMatchesEndpoint("ipp://@192.168.8.34:631/ipp/print", "192.168.8.34", 631, "ipp")).toBe(false);
+  expect(discoveryIppUriMatchesEndpoint("https://@192.168.8.34:631/ipp/print", "192.168.8.34", 631, "ipps")).toBe(false);
 });

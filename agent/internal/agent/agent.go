@@ -3,6 +3,7 @@ package agent
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,6 +20,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gorilla/websocket"
 	"github.com/yaseir-agent/agent/internal/config"
@@ -578,30 +580,61 @@ func (a *Agent) getPrinter(id string) (printer.Printer, bool) {
 	return p, ok
 }
 
-// resolvePrinterAlias maps a Gateway-issued cross-agent alias back to the
-// local backend. Aliases have the form "<local stable ID>~<8 hex chars>";
-// locally generated stable IDs never contain "~", so stripping the suffix
-// recovers the local device. An exact local match always wins: resolution
-// only fires when the alias itself names no local backend.
+// gatewayAliasPrinterID must match src/lib/printer-identity.ts exactly.
+// Keep the suffix unchanged for already issued aliases, and truncate only
+// on complete UTF-8 rune boundaries so long local identifiers fit the
+// Gateway's 120-byte printer ID limit.
+func gatewayAliasPrinterID(localID, agentID string) string {
+	sum := sha256.Sum256([]byte("printer-alias:" + agentID + ":" + localID))
+	prefix := localID
+	if len(prefix) > 111 {
+		prefix = prefix[:111]
+		for !utf8.ValidString(prefix) {
+			prefix = prefix[:len(prefix)-1]
+		}
+	}
+	return fmt.Sprintf("%s~%x", prefix, sum[:4])
+}
+
+// resolvePrinterAlias checks BOTH the agent identity and the complete local
+// ID hash before selecting an execution backend. Stripping an arbitrary
+// 8-hex suffix used to let a forged alias choose any matching local printer;
+// and a 120-byte local ID would create an unreportable 129-byte cloud ID.
+// Exact local IDs still win; ambiguous hash matches fail closed.
 func (a *Agent) resolvePrinterAlias(printerID string) string {
-	if _, ok := a.getPrinter(printerID); ok {
+	i := strings.LastIndexByte(printerID, '~')
+	if i <= 0 || len(printerID)-i-1 != 8 {
 		return printerID
 	}
-	if i := strings.LastIndexByte(printerID, '~'); i > 0 && len(printerID)-i-1 == 8 {
-		suffix := printerID[i+1:]
-		valid := true
-		for j := 0; j < len(suffix); j++ {
-			c := suffix[j]
-			if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
-				valid = false
-				break
-			}
+	suffix := printerID[i+1:]
+	for j := 0; j < len(suffix); j++ {
+		c := suffix[j]
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
+			return printerID
 		}
-		if valid {
-			if _, ok := a.getPrinter(printerID[:i]); ok {
-				return printerID[:i]
-			}
+	}
+	prefix := printerID[:i]
+	a.printersMu.RLock()
+	defer a.printersMu.RUnlock()
+	// An exact local ID can also be another queue's signed Gateway alias.
+	// Never select the wrong physical backend by exact-name precedence.
+	_, exact := a.printers[printerID]
+	matched := ""
+	for localID := range a.printers {
+		if localID == printerID || !strings.HasPrefix(localID, prefix) ||
+			gatewayAliasPrinterID(localID, a.cfg.Agent.ID) != printerID {
+			continue
 		}
+		if exact || matched != "" {
+			return "" // ambiguous backend: all physical dispatch gates deny it
+		}
+		matched = localID
+	}
+	if exact {
+		return printerID
+	}
+	if matched != "" {
+		return matched
 	}
 	return printerID
 }
@@ -2583,10 +2616,19 @@ func (a *Agent) printerStatusPayload() []map[string]interface{} {
 }
 
 func (a *Agent) printerStatusPayloadWithSharing(sharing localPrinterSharingSnapshot) []map[string]interface{} {
+	rows, _ := a.printerStatusPayloadWithSharingResult(sharing)
+	return rows
+}
+
+// The returned completeness bit is about whether local operator disablement
+// could be read before AND after status probes. No rows + an unreadable policy
+// is not evidence that the fleet was removed: the Gateway must retain its
+// previous inventory instead of applying an authoritative empty snapshot.
+func (a *Agent) printerStatusPayloadWithSharingResult(sharing localPrinterSharingSnapshot) ([]map[string]interface{}, bool) {
 	disabled, err := printer.LoadLocalPrinterDisablement(a.cfg, a.registryPath)
 	if err != nil {
 		log.Printf("Printer inventory proof withheld: local disablement could not be read: %v", err)
-		return nil
+		return nil, false
 	}
 	// Snapshot the printer map under the read lock: the async discovery
 	// goroutine may add printers while heartbeats probe statuses.
@@ -2764,7 +2806,7 @@ func (a *Agent) printerStatusPayloadWithSharing(sharing localPrinterSharingSnaps
 	disabled, err = printer.LoadLocalPrinterDisablement(a.cfg, a.registryPath)
 	if err != nil {
 		log.Printf("Printer inventory proof withheld after probes: local disablement could not be read: %v", err)
-		return nil
+		return nil, false
 	}
 
 	observedCapabilityStateChanged := false
@@ -2907,7 +2949,7 @@ func (a *Agent) printerStatusPayloadWithSharing(sharing localPrinterSharingSnaps
 			log.Printf("WARNING: failed to persist observed printer capabilities: %v", err)
 		}
 	}
-	return result
+	return result, true
 }
 
 // Heartbeat names are display metadata, bounded to the Gateway's UTF-16
@@ -3168,7 +3210,15 @@ func (a *Agent) sendHeartbeatContext(parent context.Context) {
 		inventoryComplete = false
 		log.Printf("Heartbeat sharing inventory incomplete: local policy or execution binding could not be read")
 	}
-	printerPayload := a.printerStatusPayloadWithSharing(sharing)
+	printerPayload, policyComplete := a.printerStatusPayloadWithSharingResult(sharing)
+	if !policyComplete {
+		// Local disablement may change between registry reload and status
+		// probes. An unreadable policy is not proof the printers vanished.
+		// Keep presence/desired ACKs flowing, but forbid Gateway absence
+		// reconciliation for this heartbeat snapshot.
+		inventoryComplete = false
+		log.Printf("Heartbeat inventory incomplete: local printer disablement could not be read")
+	}
 	desiredAcks := a.desiredStateAcksPayload()
 	gatewayOwnedIDs := a.gatewayOwnedPrinterIDs()
 
@@ -3437,6 +3487,7 @@ func (a *Agent) processJob(ctx context.Context, job map[string]interface{}) {
 	}
 
 	kind := string(pl.Type)
+	const identityConflict = "JOB_IDENTITY_MISMATCH: local durable record has another printer or payload; no bytes sent"
 
 	log.Printf("Printing job %s on printer %s (%d bytes, type=%s, path=%s)", jobID, printerID, len(pl.Data), pl.Type, kind)
 
@@ -3447,6 +3498,16 @@ func (a *Agent) processJob(ctx context.Context, job map[string]interface{}) {
 	// deliveries. BeginPrint provides the durable physical-attempt fence only
 	// after all local scheduling waits have completed.
 	if err := a.queue.ReserveBeforeDispatch(jobID, printerID, pl.Data, claimToken); err != nil {
+		if errors.Is(err, queue.ErrJobIdentityMismatch) {
+			// This is NOT a transient ledger error: requeueing a mismatched
+			// operation would repeat indefinitely, or could later print new
+			// bytes under a job ID with old physical evidence.
+			log.Printf("Job %s: local job identity mismatch; refusing a different printer or payload before hardware", jobID)
+			if reportErr := a.updateJobStatus(ctx, jobID, "failed", identityConflict, claimToken, ""); reportErr != nil {
+				log.Printf("Job %s: could not report immutable identity rejection: %v", jobID, reportErr)
+			}
+			return
+		}
 		log.Printf("Job %s: local durable pending row unavailable; refusing dispatch (no bytes sent): %v", jobID, err)
 		a.rejectJob(ctx, jobID, claimToken, "ledger_unavailable")
 		return
@@ -3473,7 +3534,15 @@ func (a *Agent) processJob(ctx context.Context, job map[string]interface{}) {
 
 	if !a.isPrinterExecutionAllowed(localPrinterID) {
 		a.queue.AbortPrint(jobID, "printer_not_at_desired_state")
-		a.rejectJob(ctx, jobID, claimToken, "printer_not_at_desired_state")
+		// A successful, exact Gateway hand-back is the sole authority to
+		// clear the local queued claim. Retaining an ACKed token makes the
+		// recovery outbox return an already-refunded attempt again; clearing
+		// it on timeout would instead lose the original recovery fence.
+		if err := a.rejectJob(ctx, jobID, claimToken, "printer_not_at_desired_state"); err == nil {
+			if err := a.queue.ClearPreDispatchClaim(jobID, claimToken); err != nil {
+				log.Printf("Job %s: desired-state pre-dispatch return acknowledged but local token clear failed: %v", jobID, err)
+			}
+		}
 		return
 	}
 	if !a.isPrinterSharedWithGateway(localPrinterID) {
@@ -3574,7 +3643,10 @@ func (a *Agent) processJob(ctx context.Context, job map[string]interface{}) {
 	// transition BEFORE the first hardware byte (never after) so a crash
 	// beyond this boundary conservatively remains UNKNOWN.
 	ledgerStart := time.Now()
-	if err := a.queue.BeginPrint(jobID, printerID, pl.Data, claimToken, false); err != nil {
+	// The durable ledger reservation used the exact Gateway printer ID before
+	// resolving the local alias. Preserve that same immutable ID here; the
+	// physical backend still uses the validated local printer ID above.
+	if err := a.queue.BeginPrint(jobID, fields.PrinterID, pl.Data, claimToken, false); err != nil {
 		if errors.Is(err, queue.ErrAlreadyPrinting) {
 			log.Printf("Job %s: duplicate delivery for the live local claim; suppressing a second physical dispatch", jobID)
 			return
@@ -3587,6 +3659,13 @@ func (a *Agent) processJob(ctx context.Context, job map[string]interface{}) {
 			}
 			if getErr != nil || !present {
 				log.Printf("Job %s: original terminal reconciliation unavailable: %v", jobID, getErr)
+			}
+			return
+		}
+		if errors.Is(err, queue.ErrJobIdentityMismatch) {
+			log.Printf("Job %s: local job identity changed after reservation; refusing physical execution", jobID)
+			if reportErr := a.updateJobStatus(ctx, jobID, "failed", identityConflict, claimToken, ""); reportErr != nil {
+				log.Printf("Job %s: could not report immutable identity rejection: %v", jobID, reportErr)
 			}
 			return
 		}

@@ -38,6 +38,9 @@ describe("clean-room audit regression contracts (2026-09-29)", () => {
     expect(clampListLimit("5000", 1000, 1000)).toBe(1000);
     expect(clampListLimit(null, 1000, 1000)).toBe(1000);
     expect(clampListLimit("garbage", 200, 1000)).toBe(200);
+    for (const malformed of ["10junk", "2.5", "1e2", " 10", "9999999999999999999999999"]) {
+      expect(clampListLimit(malformed, 200, 1000)).toBe(200);
+    }
   });
 
   it("clear-cookie headers mirror the Secure attribute", () => {

@@ -1,12 +1,13 @@
 import { logicalUsageReport } from "../../../../lib/manual-usage-report";
 import { NextResponse } from "next/server";
-import { requirePlatformOwner, PlatformUnauthorizedError } from "../../../../lib/platform-auth";
+import { requirePlatformOwner, requirePlatformReadAuthorityInTransaction, PlatformUnauthorizedError } from "../../../../lib/platform-auth";
 import { db } from "../../../../db";
 import { queryWithTimeout } from "../../../../db/client";
 import { tenants, tenantSubscriptions, users, agents, printers, printJobs, apiKeys, odooInstallations } from "../../../../db/schema";
 import { sql, eq, and, inArray } from "drizzle-orm";
 import { agentStaleThresholdSeconds, printerStaleThresholdSeconds } from "../../../../lib/agent-availability";
 import { nonVirtualPrinterPredicate } from "../../../../lib/printer-virtual-sql";
+import { effectiveSubscriptionStatusSql } from "../../../../lib/effective-subscription-status";
 
 import { getCachedPlatformStats, setCachedPlatformStats } from "../../../../lib/platform-stats-cache";
 
@@ -20,16 +21,23 @@ type PlatformHourlyJobStatsRow = {
   expired: number | string | null;
 };
 
+const PRIVATE_HEADERS = { "Cache-Control": "private, no-store" };
 export async function GET(req: Request) {
+  let actor: Awaited<ReturnType<typeof requirePlatformOwner>>;
   try {
-    await requirePlatformOwner(req);
+    actor = await requirePlatformOwner(req);
   } catch (error) {
     if (error instanceof PlatformUnauthorizedError) {
-      return NextResponse.json({ error: "Platform Owner authentication required" }, { status: 401 });
+      return NextResponse.json({ error: "Platform Owner authentication required" }, { status: 401, headers: PRIVATE_HEADERS });
     }
-    return NextResponse.json({ error: "Platform authentication temporarily unavailable" }, { status: 503 });
+    return NextResponse.json({ error: "Platform authentication temporarily unavailable" }, { status: 503, headers: PRIVATE_HEADERS });
   }
 
+  try {
+  return await db.transaction(async tx => {
+  // Hold verified owner, family and password-version shared locks throughout
+  // the cached or fresh snapshot. A preflight token is never enough.
+  await requirePlatformReadAuthorityInTransaction(tx, actor);
   const bypassCache = req.headers.get("x-cache-bypass") === "1" || req.headers.get("cache-control") === "no-cache";
   const cached = getCachedPlatformStats(bypassCache);
   if (cached) {
@@ -37,6 +45,14 @@ export async function GET(req: Request) {
       headers: { "X-Cache": "HIT", "Cache-Control": "private, no-store" },
     });
   }
+
+  const projectedSubscriptionStatus = effectiveSubscriptionStatusSql({
+    tenantId: sql`${tenants.id}`,
+    tenantLifecycle: sql`${tenants.lifecycle}`,
+    subscriptionStatus: sql`${tenantSubscriptions.status}`,
+    entitlementBlocked: sql`${tenantSubscriptions.entitlementBlocked}`,
+    currentPeriodStart: sql`${tenantSubscriptions.currentPeriodStart}`,
+  });
 
   const [
     tenantStats,
@@ -50,30 +66,28 @@ export async function GET(req: Request) {
     installationStats,
   ] = await queryWithTimeout(
     () => Promise.all([
-      db.select({
+      tx.select({
         total: sql<number>`count(*)::int`,
         active: sql<number>`count(*) filter (where ${tenants.lifecycle} = 'active')::int`,
         suspended: sql<number>`count(*) filter (where ${tenants.lifecycle} = 'suspended')::int`,
         deleted: sql<number>`count(*) filter (where ${tenants.lifecycle} = 'deleted')::int`,
       }).from(tenants),
 
-      db.select({
+      tx.select({
         total: sql<number>`count(*)::int`,
-        active: sql<number>`count(*) filter (where ${tenantSubscriptions.status} = 'active')::int`,
-        awaitingActivation: sql<number>`count(*) filter (where ${tenantSubscriptions.status} = 'awaiting_activation')::int`,
-        expired: sql<number>`count(*) filter (where ${tenantSubscriptions.status} = 'expired')::int`,
-        suspended: sql<number>`count(*) filter (where ${tenantSubscriptions.status} = 'suspended')::int`,
-        // Requests awaiting owner approval and expired contracts require review.
-        // An owner-suspended subscription is an intentional administrative state.
-        attention: sql<number>`count(*) filter (where ${tenantSubscriptions.status} in ('awaiting_activation','expired'))::int`,
-      }).from(tenantSubscriptions),
+        active: sql<number>`count(*) filter (where ${projectedSubscriptionStatus} = 'active')::int`,
+        awaitingActivation: sql<number>`count(*) filter (where ${projectedSubscriptionStatus} = 'awaiting_activation')::int`,
+        expired: sql<number>`count(*) filter (where ${projectedSubscriptionStatus} = 'expired')::int`,
+        suspended: sql<number>`count(*) filter (where ${projectedSubscriptionStatus} = 'suspended')::int`,
+        attention: sql<number>`count(*) filter (where ${projectedSubscriptionStatus} IN ('awaiting_activation', 'expired'))::int`,
+      }).from(tenantSubscriptions).innerJoin(tenants, eq(tenants.id, tenantSubscriptions.tenantId)),
 
-      db.select({
+      tx.select({
         total: sql<number>`count(*)::int`,
         verified: sql<number>`count(*) filter (where ${users.emailVerifiedAt} is not null)::int`,
       }).from(users),
 
-      db.select({
+      tx.select({
         total: sql<number>`count(*)::int`,
         active: sql<number>`count(*) filter (where ${agents.lifecycle} = 'active')::int`,
         online: sql<number>`count(*) filter (
@@ -102,7 +116,7 @@ export async function GET(req: Request) {
         inactive: sql<number>`count(*) filter (where ${agents.lifecycle} <> 'active')::int`,
       }).from(agents),
 
-      db.select({
+      tx.select({
         total: sql<number>`count(*) filter (where ${printers.inventoryPresent} = true)::int`,
         active: sql<number>`count(*) filter (
           where ${printers.inventoryPresent} = true and ${printers.lifecycle} = 'active'
@@ -159,7 +173,7 @@ export async function GET(req: Request) {
         .leftJoin(agents, and(eq(printers.agentId, agents.id), eq(printers.tenantId, agents.tenantId)))
         .where(and(eq(printers.sharedWithGateway, true), nonVirtualPrinterPredicate())),
 
-      db.execute(sql<PlatformHourlyJobStatsRow>`
+      tx.execute(sql<PlatformHourlyJobStatsRow>`
         WITH observation AS (SELECT clock_timestamp() AS at),
         hours AS (
           SELECT generate_series(
@@ -178,7 +192,7 @@ export async function GET(req: Request) {
           SELECT r.id, r.created_at, r.status
           FROM print_job_receipts r
           WHERE r.created_at >= (SELECT at FROM observation) - interval '24 hours'
-            AND NOT EXISTS (SELECT 1 FROM print_jobs live WHERE live.id = r.id)
+            AND NOT EXISTS (SELECT 1 FROM print_jobs live WHERE live.id = r.id AND live.tenant_id = r.tenant_id)
         )
         SELECT
           hours.bucket AS bucket,
@@ -197,11 +211,11 @@ export async function GET(req: Request) {
       `),
       // Current backlog is independent of the historical 24-hour chart.
       // In particular, old queued or claimed jobs still count as open.
-      db.select({
+      tx.select({
         queued: sql<number>`count(*) FILTER (WHERE ${printJobs.status} = 'queued')::int`,
         inFlight: sql<number>`count(*) FILTER (WHERE ${printJobs.status} IN ('claimed','printing'))::int`,
       }).from(printJobs).where(inArray(printJobs.status, ["queued", "claimed", "printing"])),
-      db.select({
+      tx.select({
         total: sql<number>`count(*)::int`,
         // A rotated key can remain valid for read-only receipt lookup during
         // a grace window. It is NOT fully revoked until that window ends.
@@ -209,7 +223,7 @@ export async function GET(req: Request) {
         grace: sql<number>`count(*) filter (where ${apiKeys.revokedAt} is not null and ${apiKeys.readOnlyUntil} > clock_timestamp())::int`,
         revoked: sql<number>`count(*) filter (where ${apiKeys.revokedAt} is not null and (${apiKeys.readOnlyUntil} is null or ${apiKeys.readOnlyUntil} <= clock_timestamp()))::int`,
       }).from(apiKeys),
-      db.select({
+      tx.select({
         total: sql<number>`count(*)::int`,
         enabled: sql<number>`count(*) filter (where ${odooInstallations.enabled} = true)::int`,
         quarantined: sql<number>`count(*) filter (where ${odooInstallations.enabled} = false)::int`,
@@ -232,13 +246,10 @@ export async function GET(req: Request) {
     { total: 0, success: 0, failed: 0, queued: 0, inFlight: 0, expired: 0 },
   );
 
-  const logicalUsage = await logicalUsageReport();
-  const business = await db.execute(sql`WITH states AS (
+  const logicalUsage = await logicalUsageReport(null, tx);
+  const business = await tx.execute(sql`WITH states AS (
     SELECT s.subscription_type,s.current_period_end,
-    CASE WHEN t.lifecycle<>'active' OR s.status='suspended' OR s.entitlement_blocked THEN 'suspended'
-      WHEN s.status='awaiting_activation' OR s.current_period_start>clock_timestamp() THEN 'awaiting_activation'
-      WHEN s.status='active' AND (s.current_period_end IS NULL OR s.current_period_end>clock_timestamp()) THEN 'active'
-      ELSE 'expired' END AS effective_status
+    ${effectiveSubscriptionStatusSql({tenantId:sql`t.id`,tenantLifecycle:sql`t.lifecycle`,subscriptionStatus:sql`s.status`,entitlementBlocked:sql`s.entitlement_blocked`,currentPeriodStart:sql`s.current_period_start`})} AS effective_status
     FROM tenant_subscriptions s JOIN tenants t ON t.id=s.tenant_id
   ) SELECT
     (SELECT count(*)::int FROM subscription_requests WHERE status='pending') AS "pendingRequests",
@@ -247,7 +258,7 @@ export async function GET(req: Request) {
     count(*) FILTER(WHERE effective_status='active' AND current_period_end<=clock_timestamp()+interval '30 days')::int AS "expiringSoon",
     count(*) FILTER(WHERE effective_status='suspended')::int AS suspended,
     count(*) FILTER(WHERE effective_status='active')::int AS active FROM states`);
-  const verified = await db.execute(sql`SELECT count(*) FILTER(WHERE verification_state='verified' AND inventory_present=true AND lifecycle='active')::int AS verified FROM printers`);
+  const verified = await tx.execute(sql`SELECT count(*) FILTER(WHERE verification_state='verified' AND inventory_present=true AND lifecycle='active')::int AS verified FROM printers`);
   const responseBody = {
     business:business.rows[0], logicalUsage, verifiedPrinters:verified.rows[0]?.verified??0,
     tenants: tenantStats[0] ?? { total: 0, active: 0, suspended: 0, deleted: 0 },
@@ -277,4 +288,9 @@ export async function GET(req: Request) {
   return NextResponse.json(responseBody, {
     headers: { "X-Cache": "MISS", "Cache-Control": "private, no-store" },
   });
+  });
+  } catch (error) {
+    return NextResponse.json({ error: error instanceof PlatformUnauthorizedError ? "Unauthorized" : "Platform statistics temporarily unavailable" },
+      { status: error instanceof PlatformUnauthorizedError ? 401 : 503, headers: PRIVATE_HEADERS });
+  }
 }

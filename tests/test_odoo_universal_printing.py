@@ -30,6 +30,15 @@ def production_methods(filename, names, namespace=None):
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         scope.update({key: getattr(module, key) for key in dir(module) if not key.startswith("_")})
+    # Status reconciliation must use the real immutable-id validation policy,
+    # not a permissive mock that silently accepts another Gateway job.
+    policy_spec = importlib.util.spec_from_file_location(
+        "odoo_runtime_status_identity", ADDON / "runtime_policy.py"
+    )
+    policy = importlib.util.module_from_spec(policy_spec)
+    policy_spec.loader.exec_module(policy)
+    scope["is_exact_gateway_job_id"] = policy.is_exact_gateway_job_id
+    scope["is_exact_gateway_printer_id"] = policy.is_exact_gateway_printer_id
     scope.update(namespace or {})
     nodes = []
     for node in ast.walk(ast.parse((ADDON / filename).read_text())):
@@ -44,7 +53,8 @@ def production_methods(filename, names, namespace=None):
 def verified_printer(connection="spooler", protocol="spooler", now=None):
     now = now or datetime.now(timezone.utc)
     stamp = now.isoformat(timespec="milliseconds").replace("+00:00", "Z")
-    method = {"spooler": "windows_queue", "pdf_output": "pdf_output", "usb": "usb_interface", "network": "snmp_printer"}[connection]
+    method = {"spooler": "windows_queue", "pdf_output": "pdf_output", "usb": "usb_interface", "network": "snmp_printer", "ipp": "ipp_attributes", "ipps": "ipp_attributes"}[connection]
+    strength = {"windows_queue": "queue", "ipp_attributes": "service", "usb_interface": "device", "snmp_printer": "device", "pdf_output": "service"}[method]
     medium = "file" if connection == "pdf_output" else "physical"
     return {"id": "selected-printer", "connectionType": connection, "protocol": protocol,
             "printerType": "file" if medium == "file" else "physical", "deviceClass": "laser",
@@ -55,12 +65,34 @@ def verified_printer(connection="spooler", protocol="spooler", now=None):
                 "operational_verification": {"version": 1, "verified_at": stamp,
                     "printer_id": "selected-printer", "binding_digest": "a" * 64,
                     "logical_queue_key": "a" * 64, "method": method,
-                    "identity_strength": "service" if medium == "file" else "queue", "output_medium": medium},
+                    "identity_strength": strength, "output_medium": medium},
                 "geometry": {"version": 1, "source": "validated_profile", "validation": "configured",
                     "observed_at": stamp, "printer_id": "selected-printer", "config_fingerprint": "b" * 64,
                     "paper_width_mm": 210, "paper_height_mm": 297, "dpi_x": 300, "dpi_y": 300,
                     "printable_width_dots": 2244, "printable_height_dots": 3271,
                     "offset_x_dots": 118, "offset_y_dots": 118}}}
+
+
+def test_all_synthetic_evidence_strengths_match_production_runtime_validator():
+    # This standalone verifier exercises the same Odoo function that guards
+    # real printer discovery; fake identities must not rely on weaker proof.
+    verifier = production_methods(
+        "models/binding.py", ["_validate_runtime_target"]
+    )._validate_runtime_target.__globals__["is_verified_runtime_printer"]
+    for connection, protocol, method, strength in (
+        ("spooler", "spooler", "windows_queue", "queue"),
+        ("ipp", "ipp", "ipp_attributes", "service"),
+        ("ipps", "ipps", "ipp_attributes", "service"),
+        ("usb", "escpos", "usb_interface", "device"),
+        ("network", "escpos", "snmp_printer", "device"),
+        ("pdf_output", "pdf", "pdf_output", "service"),
+    ):
+        printer = verified_printer(connection, protocol)
+        proof = printer["capabilities"]["operational_verification"]
+        assert (proof["method"], proof["identity_strength"]) == (method, strength)
+        assert verifier(printer)
+        proof["identity_strength"] = "queue" if strength != "queue" else "device"
+        assert not verifier(printer)
 
 
 def binding(printer):
@@ -238,3 +270,30 @@ def test_file_result_reader_matches_shared_gateway_agent_vectors(case):
 def test_missing_later_file_evidence_cannot_erase_an_original_verified_artifact():
     job = synced_file({"status": "success", "outputMedium": "file", "outputOutcome": "unknown", "outputEvidence": None}, existing=FILE_EVIDENCE)
     assert job.output_evidence == FILE_EVIDENCE
+
+
+def test_gateway_sync_requires_unambiguous_exact_job_identity_before_reporting_success():
+    """A 200 response with missing or contradictory identities cannot advance paper state."""
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("unbound Gateway status must not read output evidence or mutate a job")
+
+    method = production_methods(
+        "models/print_job.py", ["_apply_synced_status"],
+        {"gateway_output_values": forbidden, "db_now_utc": forbidden},
+    )()
+    method.env = SimpleNamespace(cr=None)
+    method._lock_status_row = lambda _job: None
+    method._advance_status = forbidden
+    method._apply_gateway_late_success = forbidden
+    job = SimpleNamespace(gateway_job_id="remote-original", status="printing")
+    for remote_response in [
+        {"status": "success"},
+        {"jobId": None, "status": "success"},
+        {"jobId": "", "status": "success"},
+        {"id": "remote-original", "jobId": "other-job", "status": "success"},
+        {"jobId": "remote-original", "id": "another-job", "status": "success"},
+        {"jobId": "remote-original", "id": "", "status": "success"},
+        {"jobId": "remote-original", "status": "completed", "id": 7},
+    ]:
+        assert method._apply_synced_status(job, remote_response) is False, remote_response
+        assert job.status == "printing"

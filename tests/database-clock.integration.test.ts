@@ -55,6 +55,23 @@ suite("gateway clock authority against PostgreSQL", () => {
     expect(row.updated_delta).toBe(0);
   });
 
+  it("charges both sides of UTC midnight to their own calendar month using the exact admission timestamp", async () => {
+    const f = await seedFixture();
+    const beforeMidnight = new Date("2026-01-31T23:59:59.999Z");
+    const afterMidnight = new Date("2026-02-01T00:00:00.000Z");
+    const before = await db.transaction(tx => reserveTenantPrintCredit(tx, f.tenantId, beforeMidnight));
+    const after = await db.transaction(tx => reserveTenantPrintCredit(tx, f.tenantId, afterMidnight));
+    expect(before.periodStart.toISOString()).toBe("2026-01-01T00:00:00.000Z");
+    expect(before.periodEnd?.toISOString()).toBe("2026-02-01T00:00:00.000Z");
+    expect(after.periodStart.toISOString()).toBe("2026-02-01T00:00:00.000Z");
+    expect(after.periodEnd?.toISOString()).toBe("2026-03-01T00:00:00.000Z");
+    const rows = await pool().query("SELECT period_start, period_end, used_prints FROM print_monthly_usage WHERE tenant_id=$1 ORDER BY period_start", [f.tenantId]);
+    expect(rows.rows).toHaveLength(2);
+    expect(rows.rows.map(r => Number(r.used_prints))).toEqual([1, 1]);
+    expect(rows.rows[0].period_start).toEqual(before.periodStart);
+    expect(rows.rows[1].period_start).toEqual(after.periodStart);
+  });
+
   it("keeps the print_jobs column defaults on the wall clock", async () => {
     const defaults = await pool().query(
       `SELECT a.attname AS column,

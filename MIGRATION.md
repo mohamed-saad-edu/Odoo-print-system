@@ -74,8 +74,10 @@ This runs `scripts/db-migrate.ts` which applies all pending migrations from `dri
 | 0098 | 1 | Retire external billing fields from active plan/subscription schema, archive provider records outside public, preserve manual approvals and monthly usage |
 | 0099 | 1 | Preserve original customer subscription requests and separately snapshot approved terms when Platform Owner explicitly adjusts a manual approval |
 | 0100 | 1 | Add optional USD/SAR catalog prices in integer cents/halalas without touching any existing subscription, quota, invoice or job history |
+| 0101 | 1 | Add immutable 30-day print-allowance anchor from first activation, migrate overlapping historical usage conservatively without resetting credits |
+| 0102 | 1 | Restore UTC calendar-month admission and conservatively carry overlapping already-consumed credits without deleting rolling history |
 
-**Total**: 101 forward-only SQL migrations (0000–0100), plus retained hash-versioned forward repairs in `scripts/db-migrate.ts`.
+**Total**: 103 forward-only SQL migrations (0000–0102), plus retained hash-versioned forward repairs in `scripts/db-migrate.ts`.
 
 Apply all migrations through `0094` before starting V3, with older Gateway instances stopped. Historical `0090` and `0092` remain in the journal so existing content hashes and fresh replay remain valid. V3 uses email/password login and the existing production `__Host-` access/refresh cookies. Migration `0094` does not convert stored configuration into live printer proof: existing registrations and historical queued jobs without an admitted binding remain ineligible for new execution. Deploy the matching Agent, obtain a fresh verified inventory, and reconcile retained legacy jobs explicitly. Terminal history remains available for exact result replay. See the V3 upgrade procedure below and `SECURITY.md`.
 
@@ -197,7 +199,7 @@ Drain older Gateway instances during this policy cutover so they cannot continue
 
 0095 preserves all historical Stripe columns, receipts, job identities and prior `print_usage_periods`. It records a `subscription_changes` before/after snapshot per existing subscription. Only previously usable active/trialing/past_due records with an unexpired or open-ended contract retain active access; paused becomes suspended and all other legacy statuses become expired. New subscriptions default to awaiting activation. Finite inherited quotas are frozen as workspace overrides.
 
-`print_monthly_usage` was introduced as a UTC calendar-month admission ledger in 0095; migration 0101 switches the active policy to fixed 30-day cycles from original activation. Receipt/live overlap is deduplicated by persistent logical job ID. For the cutover month, an overlapping legacy usage allowance is conservatively retained when it exceeds reconstructed evidence. Migration 0101 also carries overlapping legacy monthly consumption conservatively into the first 30-day cycle to avoid granting unearned fresh credits. An owner may review evidence and increase the monthly quota; historical counters are never reset. Do not delete old usage records.
+`print_monthly_usage` was introduced as a UTC calendar-month admission ledger in 0095; migration 0101 historically introduced fixed 30-day windows, superseded by forward-only migration 0102 restoring UTC calendar-month admission. Receipt/live overlap is deduplicated by persistent logical job ID. For the cutover month, an overlapping legacy usage allowance is conservatively retained when it exceeds reconstructed evidence. Migration 0101 also carries overlapping legacy monthly consumption conservatively into the first 30-day cycle to avoid granting unearned fresh credits. An owner may review evidence and increase the monthly quota; historical counters are never reset. Do not delete old usage records.
 
 Every annual or custom contract uses monthly credits. Renewals and quota changes retain the existing monthly ledger. Accepted jobs consume one credit even if canceled/failed/uncertain; rejection before admission and idempotent replay consume none. Provider endpoints now return 410 and never mutate subscription state. Catalog bootstrap uses `YASEIR_PLAN_CATALOG`, with no payment provider configuration.
 
@@ -259,3 +261,12 @@ historical subscription data.
 ### 0101 — fixed 30-day print quota cycles
 
 Every workspace receives a 30-day allowance window measured from its first actual subscription activation (UTC). The immutable `print_cycle_anchor` stays unchanged by plan changes, suspension, renewal, and extension. Contracts are still renewed manually. The forward-only migration preserves previous calendar-month ledger rows and conservatively carries overlapping consumption into the first rolling window; it never clears usage or historical records. This can temporarily overestimate consumption when old per-job timestamps are no longer retained; the Platform Owner can explicitly adjust the quota after checking historical evidence. 
+
+
+### 0102 — UTC calendar-month print allowance (supersedes 0101 runtime policy)
+
+New logical print jobs count against the UTC calendar month beginning at 00:00 on day 1. The manual contract still must be active and unexpired; activating, renewing or changing a plan does not reset usage within that month. The previous `print_cycle_anchor` column and all 0101 rolling rows are retained as evidence, but no longer determine the live allowance.
+
+**Cutover safety:** Drain every Gateway writer and Odoo admission source, back up PostgreSQL and prove restore before applying 0102. The data-only, forward migration seeds the current calendar bucket with the **maximum** already-consumed credits among overlapping legacy buckets (rather than summing calendar and rolling rows that can describe identical jobs). Re-running the SQL does not decrease the counter. Exact current-month attribution can be unavailable after retention, so the first partial calendar month may conservatively overstate usage, including prior-month rolling work. Review discrepancies with job/receipt evidence and an explicit Platform Owner allowance adjustment; **never delete or decrement historical ledgers**. A brand-new calendar month starts a new counter at 00:00 UTC, not after 30 days. A renewed contract is not automatically activated by rollover.
+
+Do not deploy old 0101-based Gateway binaries after migrating to 0102, or mix old/new admission writers in a rolling update. Require a populated staging upgrade, month-boundary tests, both English/Arabic subscription screens, Odoo deferred-document tests, and a successful full CI run on the exact commit before production promotion.

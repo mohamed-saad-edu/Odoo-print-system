@@ -5,7 +5,7 @@ on:
     branches: [main]
     types: [opened, synchronize, reopened, ready_for_review]
   push:
-    branches: [main]
+    branches: [main, test/http-server-ready]
   merge_group:
   workflow_dispatch:
   schedule:
@@ -14,6 +14,13 @@ on:
 permissions:
   contents: read
 
+
+# Preserve running main verification while retaining only the latest pending
+# push for this workflow. Never coalesce manual or merge-queue release gates.
+# PR retries may cancel older attempts of the same PR only.
+concurrency:
+  group: static-security-run-${{ github.event_name == 'push' && github.ref || github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   changes:
@@ -57,10 +64,10 @@ jobs:
     name: CodeQL / ${{ matrix.language }}
     needs: changes
     if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && (needs.changes.outputs.codeql_js == 'true' || needs.changes.outputs.codeql_py == 'true' || needs.changes.outputs.codeql_go == 'true')
-    # Cancel only an eligible duplicate job, never on an unrelated push.
+    # Preserve live main CodeQL analyses; cancel only older PR versions.
     concurrency:
       group: static-codeql-${{ matrix.language }}-${{ github.ref }}
-      cancel-in-progress: true
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -159,10 +166,10 @@ jobs:
   gitleaks:
     name: Secret Scan
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
-    # Cancel only an eligible duplicate job, never on an unrelated push.
+    # Preserve full-history main secret scans until their exact SHA result exists.
     concurrency:
       group: static-secrets-${{ github.ref }}
-      cancel-in-progress: true
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:

@@ -5,6 +5,7 @@ import { SourceTextModule, SyntheticModule, createContext } from 'node:vm';
 import { createHash } from 'node:crypto';
 import test from 'node:test';
 import { printingContractModules } from './helpers/printing-contract-vm.mjs';
+import { parsePrintExpiration } from '../src/lib/print-expiration.ts';
 
 // Exercise the real production service and HTTP handler. Only unavailable
 // database/Next/Drizzle dependencies are substituted. The credential check
@@ -31,6 +32,29 @@ async function evaluate(path, deps) {
   await mod.evaluate();
   return mod.namespace;
 }
+
+test('native VM exercises the actual exact idempotency key contract, never a permissive mock', async () => {
+  const context = createContext({ Buffer, Date, Error, console, Request, Response, URL, process });
+  const contracts = await printingContractModules(context, sql);
+  const exactKey = contracts.get('idempotency')?.namespace.isExactIdempotencyKey;
+  assert.equal(typeof exactKey, 'function');
+  assert.equal(exactKey('receipt-operation-2026'), true);
+  assert.equal(exactKey('طلب_طباعة_١'), true);
+  for (const invalid of [' receipt-operation-2026', 'receipt-operation-2026 ', 'op-\uD800', '\uDC00-op']) {
+    assert.equal(exactKey(invalid), false, 'invalid wire key accepted');
+  }
+});
+
+test('native VM exercises the actual exact printer ID contract, never a permissive mock', async () => {
+  const context = createContext({ Buffer, Date, Error, console, Request, Response, URL, process });
+  const contracts = await printingContractModules(context, sql);
+  const validator = contracts.get('exact-printer-id')?.namespace.isExactPrinterId;
+  assert.equal(typeof validator, 'function');
+  assert.equal(validator('printer-c'), true);
+  for (const invalid of [' printer-c', 'printer-c ', 'printer-c\n', '🖨'.repeat(40)]) {
+    assert.equal(validator(invalid), false, `invalid opaque printer identity: ${JSON.stringify(invalid)}`);
+  }
+});
 
 async function serviceFixture({ keyActive = true, tenantActive = true, printerPresent = true, agentPresent = true, resultFrom = 'receipt', fingerprintValid = true } = {}) {
   const events = [];
@@ -180,6 +204,8 @@ async function httpFixture({ reused, revokedAfterAuthentication = false, conflic
     },
     '../../../../lib/odoo-v2-admission': { OdooNamespaceError: class extends Error {}, verifyOdooInstallation: () => { throw Error('unexpected v2 admission in legacy test'); } },
     '../../../../lib/payload': { validatePrintJobPayload: (value) => value },
+    // Preserve the real strict ISO-expiration validator at the HTTP boundary.
+    '../../../../lib/print-expiration': { parsePrintExpiration },
     '../../../../lib/print-job-service': {
       AgentQueueFullError: class extends Error {}, AgentQueuedJobsFullError: class extends Error {}, PrintJobCapabilityError: class extends Error {}, PrintJobInputError,
       idempotencyDigest: () => 'digest', idempotencyFingerprint: fingerprint,
@@ -193,10 +219,15 @@ async function httpFixture({ reused, revokedAfterAuthentication = false, conflic
     },
     '../../../../lib/entitlements': { TenantEntitlementError: class extends Error {}, TenantPrintQuotaExceededError: class extends Error {}, isTenantBillingError: () => false },
     '../../../../lib/request-limits': { hasBodyOverLimit: () => false },
+    '../../../../lib/print-expiration': {
+      // The HTTP-replay fixture omits expiresAt; the real strict parser's
+      // valid/invalid wire behavior is covered by print-expiration tests.
+      parsePrintExpiration: (value) => { assert.equal(value, undefined); return undefined; },
+    },
     '../../../../lib/log': { logError: noop, logWarn: noop, requestIdFrom: () => 'req' },
     '../../../../lib/database-clock': { databaseNowMs: () => Date.now() },
     'drizzle-orm': { and: (...v) => v, eq: (a,b) => `${a}=${b}`, isNotNull: (x) => x, sql },
-    'zod': { z: { ZodError: class extends Error {}, object: () => ({ strict: () => ({ safeParse: (value) => ({ success: true, data: value }) }) }), string: () => ({ trim() { return this; }, min() {return this;}, max() {return this;}, optional() {return this;} }), literal: () => ({ optional() { return this; } }), unknown: () => ({}) } },
+    'zod': { z: { ZodError: class extends Error {}, object: () => ({ strict: () => ({ safeParse: (value) => ({ success: true, data: value }) }) }), string: () => ({ trim() { return this; }, min() {return this;}, max() {return this;}, refine() {return this;}, optional() {return this;} }), literal: () => ({ optional() { return this; } }), unknown: () => ({}) } },
   });
   const req = new Request('https://gateway.test/api/print/jobs', { method: 'POST',
     body: JSON.stringify({ printerId: 'printer-c', documentType: 'receipt', idempotencyKey: 'id-1', payload: { type: 'raw', protocol: 'raw', encoding: 'base64', data: 'aGVsbG8=' } }),

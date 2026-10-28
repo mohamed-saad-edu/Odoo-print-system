@@ -21,6 +21,7 @@ from psycopg2 import sql
 from ..runtime_clock import db_now_utc
 from ..idempotency_namespace import local_identity, deployment_proof
 from ..customer_presentation import customer_error_message
+from ..runtime_policy import is_exact_gateway_printer_id
 
 from .crypto import (
     CredentialDecryptError,
@@ -2324,8 +2325,10 @@ class PrintGatewayPairAgentWizard(models.TransientModel):
         self.ensure_one()
         if not (getattr(self.env, "is_superuser", lambda: False)() or self.env.user.has_group("base.group_system")):
             raise AccessError(_("Only Odoo system administrators can change Gateway configuration."))
-        target = (self.agent_id or "").strip()
-        if not target:
+        # An execution identity is opaque. Never trim the selected Agent
+        # into a different valid workstation before pairing it to a Branch.
+        target = self.agent_id
+        if not is_exact_gateway_printer_id(target):
             raise ValidationError(_("Please provide a valid Runtime Agent ID."))
         config = self.config_id
         is_su = getattr(self.env, "is_superuser", lambda: False)()
@@ -2379,7 +2382,7 @@ class PrintGatewayPairAgentWizard(models.TransientModel):
             )
             if not matched:
                 available = [a["id"] for a in agents_list if isinstance(a, dict)
-                             and isinstance(a.get("id"), str) and a["id"]]
+                             and is_exact_gateway_printer_id(a.get("id"))]
                 raise ValidationError(
                     _("Agent '%s' not found on Central Gateway. Registered active agents: %s")
                     % (target, ", ".join(available) if available else _("none"))

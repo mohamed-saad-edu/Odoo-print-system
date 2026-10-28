@@ -8,7 +8,7 @@ from . import gateway_http as requests
 
 from odoo import api, fields, models, _
 from odoo.exceptions import AccessError, ValidationError
-from ..runtime_policy import is_gateway_shared_printer
+from ..runtime_policy import is_gateway_shared_printer, is_exact_gateway_printer_id
 from ..printer_geometry import validated_printer_geometry, validated_page_geometry
 from ..printer_verification import is_verified_runtime_printer
 
@@ -593,6 +593,10 @@ class PrintGatewayBinding(models.Model):
     @api.constrains("destination_type", "destination_pos_config_id", "destination_pos_printer_id", "destination_picking_type_id", "destination_report_id", "report_id", "printer_id", "printer_protocol", "company_id", "branch_id", "effective_company_id")
     def _check_binding(self):
         for record in self:
+            # Binding IDs are opaque physical targets, never labels to strip.
+            # Reject wrong-typed, padded and non-UTF-8 IDs at ORM write time.
+            if not is_exact_gateway_printer_id(record.printer_id):
+                raise ValidationError(_("A valid Gateway Runtime Printer must be selected."))
             destination = record.destination_ref
             if not destination:
                 raise ValidationError(_("A valid Odoo Destination is required."))
@@ -652,8 +656,7 @@ class PrintGatewayBinding(models.Model):
                 raise ValidationError(_("POS receipts must use a POS or report destination."))
             if record.report_id and record.report_id.model == "stock.picking" and record.destination_type not in ("picking_type", "report"):
                 raise ValidationError(_("Stock reports must use an operation type or report destination."))
-            if not isinstance(record.printer_id, str) or not record.printer_id.strip():
-                raise ValidationError(_("A Gateway Runtime Printer must be selected."))
+            # Exact printer identity is checked at the start of this constraint.
 
     def action_send_test_print(self):
         """Construct a standardized diagnostic test page and submit via the Outbox pipeline."""

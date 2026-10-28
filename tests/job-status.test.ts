@@ -1,9 +1,11 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "fs";
 import {
+  JOB_FILTER_STATUSES,
   canTransition,
   isTerminal,
   isJobStatus,
+  isJobFilterStatus,
   isLateSuccessAllowed,
   LATE_SUCCESS_MAX_AGE_MS,
   PHYSICAL_OUTCOME_UNKNOWN_MARKERS,
@@ -13,7 +15,22 @@ import {
   type JobStatus,
 } from "../src/lib/job-status";
 
+describe("physical-output filter policy", () => {
+  it("never labels submission success as a physically printed job", () => {
+    expect(isJobFilterStatus("success")).toBe(true);
+    expect(isJobFilterStatus("printed")).toBe(false);
+    expect(JOB_FILTER_STATUSES).not.toContain("printed");
+    const source = readFileSync("src/lib/job-history.ts", "utf8");
+    expect(source).not.toContain('status === "printed"');
+  });
+});
+
 describe("job-status", () => {
+  it("only narrows canonical job filter statuses after callers normalize input", () => {
+    for (const status of ["all", "queued", "in_flight", "success", "unknown", "attention"]) expect(isJobFilterStatus(status)).toBe(true);
+    for (const status of ["QUEUED", "Queued", "printed", " printed ", "in-FLIGHT", "", "unknown_filter", null, 7]) expect(isJobFilterStatus(status)).toBe(false);
+  });
+
   it("unknown-outcome markers stay in lockstep across all layers", () => {
     // The marker TEXT is the wire protocol between the Go agent, this
     // gateway, Odoo, and the desktop UX: a marker renamed in one layer

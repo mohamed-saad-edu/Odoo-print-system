@@ -33,7 +33,7 @@ def gateway_output_values(job, body, status):
             raise ValueError("Gateway file artifact evidence changed for the original operation")
         return {}
     outcome = "file_created" if evidence else "unknown"
-    if not evidence and status in ("queued", "submitted") and body.get("outputOutcome") == "pending":
+    if not evidence and status in ("queued", "submitted", "claimed", "printing") and body.get("outputOutcome") == "pending":
         outcome = "pending"
     elif not evidence and status == "failed" and body.get("outputOutcome") == "not_created":
         outcome = "not_created"

@@ -52,6 +52,20 @@ suite("POST /api/print/jobs/batch-status", () => {
     expect(ids).toEqual(["batch_owned_1", "batch_rotated_1"]);
   });
 
+  it("rejects normalized or malformed opaque job IDs instead of reading a different accepted operation", async () => {
+    const keyId = await keyIdFor(f.odooKey);
+    await insertJob("exact_reference", keyId);
+    const exact = await post(f.odooKey, { jobIds: ["exact_reference"] });
+    expect(exact.status).toBe(200);
+    expect(((await exact.json()) as { jobs: { jobId: string }[] }).jobs.map(row => row.jobId)).toContain("exact_reference");
+    for (const candidate of [" exact_reference", "exact_reference ", "exact_reference\n", "exact_reference\u0085", "x".repeat(121), "é".repeat(61)]) {
+      const bad = await post(f.odooKey, { jobIds: [candidate] });
+      expect(bad.status).toBe(400);
+      expect((await bad.json()).code).toBe("INVALID_PAYLOAD");
+    }
+    expect((await post(f.odooKey, { jobIds: ["exact_reference", " exact_reference"] })).status).toBe(400);
+  });
+
   it("rejects invalid keys and malformed bodies", async () => {
     expect((await post("odoo_wrongkey", { jobIds: ["x"] })).status).toBe(401);
     expect((await post(f.odooKey, { jobIds: [] })).status).toBe(400);

@@ -50,13 +50,16 @@ func requiredStringField(m map[string]interface{}, key string) (string, error) {
 }
 
 func optionalStringField(m map[string]interface{}, key string) (string, error) {
-	raw, ok := m[key]
-	if !ok || raw == nil {
+	raw, present := m[key]
+	if !present {
 		return "", nil
 	}
+	// Zod's optional string/enum fields permit an absent property, never
+	// explicit JSON null. Keeping that distinction prevents a differently
+	// serialized payload from bypassing Gateway admission in the Agent.
 	value, ok := raw.(string)
 	if !ok {
-		return "", fmt.Errorf("payload.%s must be a string", key)
+		return "", fmt.Errorf("payload.%s must be a string when present", key)
 	}
 	return value, nil
 }
@@ -106,7 +109,9 @@ func Parse(raw interface{}) (*Payload, error) {
 			return nil, fmt.Errorf("protocol %q is incompatible with escpos payload", protocol)
 		}
 	case TypePDF, TypeImage:
-		if protocol != "" {
+		// Gateway's optional protocol enum admits absence, not an explicitly
+		// supplied empty string. Neither PDF nor image may declare a protocol.
+		if _, present := m["protocol"]; present {
 			return nil, fmt.Errorf("protocol is not applicable for %s payloads", typ)
 		}
 	}
@@ -147,6 +152,13 @@ func Parse(raw interface{}) (*Payload, error) {
 	if len(decoded) == 0 || len(decoded) > MaxPayloadBytes {
 		return nil, fmt.Errorf("payload exceeds %d byte limit", MaxPayloadBytes)
 	}
+	// The Gateway rejects even decodable noncanonical wire spellings. The
+	// standard Go decoder accepts CR/LF and alternate padding bits; without
+	// a round-trip check, the Agent could execute a byte-identical payload
+	// under a different serialized identity. Never dispatch that payload.
+	if base64.StdEncoding.EncodeToString(decoded) != dataStr {
+		return nil, fmt.Errorf("payload.data must use canonical padded base64")
+	}
 
 	// PDF identity is strict and shared with the Gateway and execution layer:
 	// the signature must begin at byte zero. This also avoids rejecting a RAW
@@ -155,6 +167,17 @@ func Parse(raw interface{}) (*Payload, error) {
 	looksLikeJPEG := len(decoded) >= 3 && decoded[0] == 0xff && decoded[1] == 0xd8 && decoded[2] == 0xff
 	if Type(typ) == TypePDF && !looksLikePDF {
 		return nil, fmt.Errorf("PDF payload must start with the %%PDF- signature")
+	}
+	if Type(typ) == TypePDF {
+		// Mirror the Gateway's syntax admission: native driver validation is
+		// a later boundary, never a substitute for an incomplete PDF refusal.
+		tailStart := len(decoded) - 4096
+		if tailStart < 0 {
+			tailStart = 0
+		}
+		if !bytes.Contains(decoded[tailStart:], []byte("%%EOF")) {
+			return nil, fmt.Errorf("PDF payload is incomplete (missing %%%%EOF trailer)")
+		}
 	}
 	if Type(typ) == TypeImage && !looksLikeJPEG {
 		return nil, fmt.Errorf("image payload must be a JPEG")

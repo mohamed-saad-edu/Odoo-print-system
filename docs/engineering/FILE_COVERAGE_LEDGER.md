@@ -1,0 +1,2295 @@
+# Yaseir source coverage ledger
+
+**Baseline**: `main@4f48736f100a438609a0a9bbdc7866bff5495f73` (tracked Git tree, 2026-10-28 UTC). **Snapshot**: 1892 tracked files before this documentation change, plus 2 newly authored ledger files. Git tree indexing is **not** equivalent to individual source-code review or verification.
+
+Status key: `INDEXED` = path enumerated only; `PARTIAL` = excerpts or sections inspected; `READ` = file content read at least once without a correctness guarantee; `AUTHORED` = created during this documentation run. A file's successful component/integration test must be tracked separately in the notebook, not inferred from READ. No source file is marked functionally VERIFIED by this inventory alone.
+
+**Status counts after the 2026-10-28 live review**: {"INDEXED":1837,"PARTIAL":29,"READ":26,"AUTHORED":2}.. Coverage: 1892 existing tracked files indexed, 0 of 1892 independently signed off as production-ready.
+
+## .github (8)
+
+```text
+INDEXED .github/CODEOWNERS
+INDEXED .github/dependabot.yml
+INDEXED .github/workflows/build-windows.yml
+PARTIAL .github/workflows/ci.yml
+PARTIAL .github/workflows/docker.yml
+INDEXED .github/workflows/native-backports.yml
+PARTIAL .github/workflows/security-supply-chain.yml
+PARTIAL .github/workflows/static-security.yml
+```
+
+## (root files) (46)
+
+```text
+INDEXED .dockerignore
+INDEXED .env.example
+INDEXED .gitignore
+INDEXED .npmrc
+INDEXED .nvmrc
+INDEXED .oxlintrc.json
+PARTIAL ADR.md
+PARTIAL API.md
+PARTIAL ARCHITECTURE.md
+INDEXED Caddyfile
+INDEXED DEPLOYMENT.md
+INDEXED Dockerfile
+PARTIAL Dockerfile.odoo-hardened
+INDEXED Dockerfile.secure-images
+INDEXED INSTALLATION.md
+INDEXED LICENSE
+PARTIAL MIGRATION.md
+INDEXED ODOO_INTEGRATION.md
+INDEXED OPERATIONS.md
+INDEXED PRINTERS.md
+READ    README.md
+PARTIAL SECURITY.md
+INDEXED SERVER_FIRST_RUN.md
+INDEXED THIRD_PARTY_NOTICES.md
+INDEXED TROUBLESHOOTING.md
+INDEXED TYPOGRAPHY.md
+INDEXED docker-compose.acceptance.yml
+INDEXED docker-compose.ci.yml
+INDEXED docker-compose.metrics.yml
+INDEXED docker-compose.yml
+INDEXED drizzle.config.ts
+INDEXED eslint.config.mjs
+INDEXED next-env.d.ts
+INDEXED next.config.ts
+INDEXED package-lock.json
+PARTIAL package.json
+INDEXED postcss.config.mjs
+INDEXED proxy.ts
+INDEXED requirements-test.txt
+INDEXED server.ts
+INDEXED tsconfig.json
+INDEXED vite.desktop.config.mts
+INDEXED vitest.config.mts
+INDEXED vitest.integration.config.mts
+INDEXED vitest.test-groups.mts
+INDEXED vitest.unit.config.mts
+```
+
+## agent (359)
+
+```text
+INDEXED agent/Makefile
+INDEXED agent/cmd/agent/main.go
+INDEXED agent/cmd/agent/main_test.go
+INDEXED agent/cmd/agent/restart_release_test.go
+INDEXED agent/cmd/agent/runtime_singleton_other.go
+INDEXED agent/cmd/agent/runtime_singleton_windows.go
+INDEXED agent/cmd/agent/service_install_other.go
+INDEXED agent/cmd/agent/service_install_windows.go
+INDEXED agent/cmd/agent/service_ownership_windows_test.go
+INDEXED agent/cmd/agent/uninstall_userdata_windows_test.go
+INDEXED agent/cmd/agent/uninstall_v5_test.go
+INDEXED agent/cmd/cli/cleanup.go
+INDEXED agent/cmd/cli/cleanup_test.go
+INDEXED agent/cmd/cli/cli_integration_test.go
+INDEXED agent/cmd/cli/diagnose.go
+INDEXED agent/cmd/cli/diagnose_audit_test.go
+INDEXED agent/cmd/cli/diagnose_test.go
+INDEXED agent/cmd/cli/diagnostic_message_test.go
+INDEXED agent/cmd/cli/gateway.go
+INDEXED agent/cmd/cli/gateway_body_test.go
+INDEXED agent/cmd/cli/gateway_test.go
+INDEXED agent/cmd/cli/helpers.go
+INDEXED agent/cmd/cli/main.go
+INDEXED agent/cmd/cli/manual_identity_test.go
+INDEXED agent/cmd/cli/printer_mutations_v5_test.go
+INDEXED agent/cmd/cli/printer_sharing.go
+INDEXED agent/cmd/cli/printer_sharing_test.go
+INDEXED agent/cmd/cli/printers_add_alias_test.go
+INDEXED agent/configs/config.yaml.example
+INDEXED agent/go.mod
+INDEXED agent/go.sum
+INDEXED agent/internal/agent/admission_wait_test.go
+INDEXED agent/internal/agent/agent.go
+INDEXED agent/internal/agent/agent_test.go
+INDEXED agent/internal/agent/attempt_evidence_integration_test.go
+INDEXED agent/internal/agent/attempt_evidence_test.go
+INDEXED agent/internal/agent/audit_admission_test.go
+INDEXED agent/internal/agent/audit_regressions_test.go
+INDEXED agent/internal/agent/backend_generation_test.go
+INDEXED agent/internal/agent/backend_retirement_test.go
+INDEXED agent/internal/agent/desired_capability_fence_test.go
+INDEXED agent/internal/agent/desired_state.go
+INDEXED agent/internal/agent/desired_state_budget_test.go
+INDEXED agent/internal/agent/desired_state_pagination.go
+INDEXED agent/internal/agent/desired_state_pagination_test.go
+INDEXED agent/internal/agent/desired_state_test.go
+INDEXED agent/internal/agent/device_class.go
+INDEXED agent/internal/agent/device_class_test.go
+INDEXED agent/internal/agent/discovery_abandoned_cap_test.go
+INDEXED agent/internal/agent/discovery_ack_v5_test.go
+INDEXED agent/internal/agent/discovery_bounded_test.go
+INDEXED agent/internal/agent/discovery_manager.go
+INDEXED agent/internal/agent/discovery_manager_test.go
+INDEXED agent/internal/agent/discovery_response_test.go
+INDEXED agent/internal/agent/discovery_semaphore_test.go
+INDEXED agent/internal/agent/discovery_startup_v5_test.go
+INDEXED agent/internal/agent/dispatch_test.go
+INDEXED agent/internal/agent/gateway_transport_test.go
+INDEXED agent/internal/agent/gateway_url_test.go
+INDEXED agent/internal/agent/geometry_projection_test.go
+INDEXED agent/internal/agent/heartbeat_budget_test.go
+INDEXED agent/internal/agent/heartbeat_observation_test.go
+INDEXED agent/internal/agent/heartbeat_pagination.go
+INDEXED agent/internal/agent/heartbeat_pagination_test.go
+INDEXED agent/internal/agent/inventory_version_test.go
+INDEXED agent/internal/agent/ipp_identity_persistence.go
+INDEXED agent/internal/agent/ipp_identity_persistence_test.go
+INDEXED agent/internal/agent/job_ack_audit_test.go
+INDEXED agent/internal/agent/lifecycle_fence_test.go
+INDEXED agent/internal/agent/manual_identity_test.go
+INDEXED agent/internal/agent/nominal_paper_width_test.go
+INDEXED agent/internal/agent/operational_verification_test.go
+INDEXED agent/internal/agent/output_evidence.go
+INDEXED agent/internal/agent/output_replay_v3_test.go
+INDEXED agent/internal/agent/pairing.go
+INDEXED agent/internal/agent/pairing_test.go
+INDEXED agent/internal/agent/pdf_output_heartbeat_contract_test.go
+INDEXED agent/internal/agent/poll_response.go
+INDEXED agent/internal/agent/poll_response_test.go
+INDEXED agent/internal/agent/print_transport_status_test.go
+INDEXED agent/internal/agent/printer_sharing.go
+INDEXED agent/internal/agent/printer_sharing_test.go
+INDEXED agent/internal/agent/registry_disablement_v5_test.go
+INDEXED agent/internal/agent/registry_recovery_v5_test.go
+INDEXED agent/internal/agent/runtime_verification.go
+INDEXED agent/internal/agent/shutdown_lock_test.go
+INDEXED agent/internal/agent/spooler_jobid_test.go
+INDEXED agent/internal/agent/terminal_outbox_fairness_test.go
+INDEXED agent/internal/agent/terminal_rereport_test.go
+INDEXED agent/internal/agent/transport_observation_test.go
+INDEXED agent/internal/agent/usb_config_contract_test.go
+INDEXED agent/internal/agent/ws_delivery_test.go
+INDEXED agent/internal/agent/ws_reconnect.go
+INDEXED agent/internal/agent/ws_reconnect_test.go
+INDEXED agent/internal/config/config.go
+INDEXED agent/internal/config/config_test.go
+INDEXED agent/internal/config/endpoint_redaction_test.go
+INDEXED agent/internal/config/gateway_url.go
+INDEXED agent/internal/config/gateway_url_test.go
+INDEXED agent/internal/config/geometry.go
+INDEXED agent/internal/config/paths.go
+INDEXED agent/internal/config/paths_test.go
+INDEXED agent/internal/config/pdf_output.go
+INDEXED agent/internal/config/pdf_output_test.go
+INDEXED agent/internal/config/printer_sharing.go
+INDEXED agent/internal/config/printer_sharing_test.go
+INDEXED agent/internal/config/replace_file.go
+INDEXED agent/internal/config/replace_file_posix.go
+INDEXED agent/internal/config/replace_file_windows.go
+INDEXED agent/internal/config/reprint_policy_test.go
+INDEXED agent/internal/config/security_other.go
+INDEXED agent/internal/config/security_windows.go
+INDEXED agent/internal/config/usb_identity_test.go
+INDEXED agent/internal/integration/crash_test.go
+INDEXED agent/internal/integration/failure_test.go
+INDEXED agent/internal/integration/mock_e2e_test.go
+INDEXED agent/internal/payload/payload.go
+INDEXED agent/internal/payload/payload_bench_test.go
+INDEXED agent/internal/payload/payload_test.go
+INDEXED agent/internal/printer/admission_transport_test.go
+INDEXED agent/internal/printer/admission_windows_test.go
+INDEXED agent/internal/printer/audit_regressions_test.go
+INDEXED agent/internal/printer/audit_usb_windows_test.go
+INDEXED agent/internal/printer/capability.go
+INDEXED agent/internal/printer/capability_test.go
+INDEXED agent/internal/printer/capability_transport_test.go
+INDEXED agent/internal/printer/classify.go
+INDEXED agent/internal/printer/classify_device.go
+INDEXED agent/internal/printer/classify_device_test.go
+INDEXED agent/internal/printer/disablement.go
+INDEXED agent/internal/printer/disablement_v5_test.go
+INDEXED agent/internal/printer/discovery.go
+INDEXED agent/internal/printer/discovery_destination_test.go
+INDEXED agent/internal/printer/discovery_extended.go
+INDEXED agent/internal/printer/discovery_extended_test.go
+INDEXED agent/internal/printer/discovery_identity_test.go
+INDEXED agent/internal/printer/discovery_other.go
+INDEXED agent/internal/printer/discovery_progress_test.go
+INDEXED agent/internal/printer/discovery_resilience_test.go
+INDEXED agent/internal/printer/discovery_scan.go
+INDEXED agent/internal/printer/discovery_scan_test.go
+INDEXED agent/internal/printer/discovery_targets.go
+INDEXED agent/internal/printer/discovery_targets_test.go
+INDEXED agent/internal/printer/discovery_test.go
+INDEXED agent/internal/printer/discovery_windows.go
+INDEXED agent/internal/printer/dispatch_admission.go
+INDEXED agent/internal/printer/dispatch_admission_test.go
+INDEXED agent/internal/printer/document.go
+INDEXED agent/internal/printer/document_test.go
+INDEXED agent/internal/printer/document_timeout_test.go
+INDEXED agent/internal/printer/factory.go
+INDEXED agent/internal/printer/factory_usb_identity_test.go
+INDEXED agent/internal/printer/geometry.go
+INDEXED agent/internal/printer/geometry_contract_test.go
+INDEXED agent/internal/printer/hardening_test.go
+INDEXED agent/internal/printer/health.go
+INDEXED agent/internal/printer/health_framing_test.go
+INDEXED agent/internal/printer/health_test.go
+INDEXED agent/internal/printer/hotpath_bench_test.go
+INDEXED agent/internal/printer/identity_capability_types_test.go
+INDEXED agent/internal/printer/identity_placeholder_test.go
+INDEXED agent/internal/printer/image.go
+INDEXED agent/internal/printer/image_pdf_color_test.go
+INDEXED agent/internal/printer/image_pdf_pages.go
+INDEXED agent/internal/printer/image_test.go
+INDEXED agent/internal/printer/inventory.go
+INDEXED agent/internal/printer/inventory_test.go
+INDEXED agent/internal/printer/ipp.go
+INDEXED agent/internal/printer/ipp_acceptance.go
+INDEXED agent/internal/printer/ipp_acceptance_test.go
+INDEXED agent/internal/printer/ipp_attributes.go
+INDEXED agent/internal/printer/ipp_attributes_test.go
+INDEXED agent/internal/printer/ipp_collections.go
+INDEXED agent/internal/printer/ipp_discovery.go
+INDEXED agent/internal/printer/ipp_formats.go
+INDEXED agent/internal/printer/ipp_formats_test.go
+INDEXED agent/internal/printer/ipp_identity.go
+INDEXED agent/internal/printer/ipp_identity_persistence.go
+INDEXED agent/internal/printer/ipp_identity_persistence_test.go
+INDEXED agent/internal/printer/ipp_identity_test.go
+INDEXED agent/internal/printer/ipp_ipv6_normalization_test.go
+INDEXED agent/internal/printer/ipp_jfif.go
+INDEXED agent/internal/printer/ipp_jfif_test.go
+INDEXED agent/internal/printer/ipp_jpeg_geometry.go
+INDEXED agent/internal/printer/ipp_jpeg_geometry_test.go
+INDEXED agent/internal/printer/ipp_lifecycle_test.go
+INDEXED agent/internal/printer/ipp_mdns_families_test.go
+INDEXED agent/internal/printer/ipp_media.go
+INDEXED agent/internal/printer/ipp_media_regression_test.go
+INDEXED agent/internal/printer/ipp_media_selection_test.go
+INDEXED agent/internal/printer/ipp_pdf_geometry.go
+INDEXED agent/internal/printer/ipp_probe_response_limit_test.go
+INDEXED agent/internal/printer/ipp_pwg_other.go
+INDEXED agent/internal/printer/ipp_pwg_windows.go
+INDEXED agent/internal/printer/ipp_pwg_windows_test.go
+INDEXED agent/internal/printer/ipp_raster_fallback_windows_test.go
+INDEXED agent/internal/printer/ipp_raster_prepare.go
+INDEXED agent/internal/printer/ipp_raster_prepare_test.go
+INDEXED agent/internal/printer/ipp_render_other.go
+INDEXED agent/internal/printer/ipp_render_windows.go
+INDEXED agent/internal/printer/ipp_render_windows_test.go
+INDEXED agent/internal/printer/ipp_secret_redaction_test.go
+INDEXED agent/internal/printer/ipp_status_severity_test.go
+INDEXED agent/internal/printer/ipp_test.go
+INDEXED agent/internal/printer/local_identity_admission_test.go
+INDEXED agent/internal/printer/local_test_v5_test.go
+INDEXED agent/internal/printer/manual_registry_contract_test.go
+INDEXED agent/internal/printer/mdns_ipp_verification_test.go
+INDEXED agent/internal/printer/mdns_result_limit_test.go
+INDEXED agent/internal/printer/network.go
+INDEXED agent/internal/printer/network_discovery.go
+INDEXED agent/internal/printer/network_discovery_health_test.go
+INDEXED agent/internal/printer/network_integration_test.go
+INDEXED agent/internal/printer/network_lifecycle_test.go
+INDEXED agent/internal/printer/network_status_evidence_test.go
+INDEXED agent/internal/printer/network_test.go
+INDEXED agent/internal/printer/network_test_fastpath_test.go
+INDEXED agent/internal/printer/nil_uuid_encodings_test.go
+INDEXED agent/internal/printer/outcome.go
+INDEXED agent/internal/printer/outcome_test.go
+INDEXED agent/internal/printer/outcome_wrapping_test.go
+INDEXED agent/internal/printer/output_evidence.go
+INDEXED agent/internal/printer/output_evidence_test.go
+INDEXED agent/internal/printer/pdf.go
+INDEXED agent/internal/printer/pdf_bitmap_windows.go
+INDEXED agent/internal/printer/pdf_devmode_windows.go
+INDEXED agent/internal/printer/pdf_fit_test.go
+INDEXED agent/internal/printer/pdf_gdi.go
+INDEXED agent/internal/printer/pdf_gdi_test.go
+INDEXED agent/internal/printer/pdf_gdi_windows_test.go
+INDEXED agent/internal/printer/pdf_geometry.go
+INDEXED agent/internal/printer/pdf_geometry_test.go
+INDEXED agent/internal/printer/pdf_other.go
+INDEXED agent/internal/printer/pdf_output.go
+INDEXED agent/internal/printer/pdf_output_cold_test.go
+INDEXED agent/internal/printer/pdf_output_files.go
+INDEXED agent/internal/printer/pdf_output_security_other.go
+INDEXED agent/internal/printer/pdf_output_security_windows.go
+INDEXED agent/internal/printer/pdf_output_test.go
+INDEXED agent/internal/printer/pdf_receipt.go
+INDEXED agent/internal/printer/pdf_receipt_test.go
+INDEXED agent/internal/printer/pdf_render_bounds.go
+INDEXED agent/internal/printer/pdf_render_bounds_test.go
+INDEXED agent/internal/printer/pdf_render_wait.go
+INDEXED agent/internal/printer/pdf_render_wait_test.go
+INDEXED agent/internal/printer/pdf_test.go
+INDEXED agent/internal/printer/pdf_windows.go
+INDEXED agent/internal/printer/pdf_windows_test.go
+INDEXED agent/internal/printer/pdfium_pool.go
+INDEXED agent/internal/printer/pdfium_pool_test.go
+INDEXED agent/internal/printer/pdfium_warmup.go
+INDEXED agent/internal/printer/peripherals.go
+INDEXED agent/internal/printer/peripherals_test.go
+INDEXED agent/internal/printer/physical_only.go
+INDEXED agent/internal/printer/preflight_ownership_windows_test.go
+INDEXED agent/internal/printer/printer.go
+INDEXED agent/internal/printer/printer_sharing.go
+INDEXED agent/internal/printer/printer_sharing_test.go
+INDEXED agent/internal/printer/production_audit_test.go
+INDEXED agent/internal/printer/pwg_options.go
+INDEXED agent/internal/printer/pwg_raster.go
+INDEXED agent/internal/printer/pwg_raster_test.go
+INDEXED agent/internal/printer/pwg_unavailable_test.go
+INDEXED agent/internal/printer/raster_capability.go
+INDEXED agent/internal/printer/raster_capability_test.go
+INDEXED agent/internal/printer/raster_document.go
+INDEXED agent/internal/printer/receipt_page_break.go
+INDEXED agent/internal/printer/receipt_page_break_test.go
+INDEXED agent/internal/printer/receipt_pagination_test.go
+INDEXED agent/internal/printer/registration_identity_v3_test.go
+INDEXED agent/internal/printer/registry.go
+INDEXED agent/internal/printer/registry_atomic_replace_test.go
+INDEXED agent/internal/printer/registry_budget_test.go
+INDEXED agent/internal/printer/registry_ipp_alias_test.go
+INDEXED agent/internal/printer/registry_ipp_uuid_test.go
+INDEXED agent/internal/printer/registry_missing_test.go
+INDEXED agent/internal/printer/registry_recovery_v5_test.go
+INDEXED agent/internal/printer/results_close_race_test.go
+INDEXED agent/internal/printer/simulated_outcome_test.go
+INDEXED agent/internal/printer/snmp_discovery.go
+INDEXED agent/internal/printer/snmp_get_test.go
+INDEXED agent/internal/printer/snmp_identity_evidence_test.go
+INDEXED agent/internal/printer/spooler_evidence.go
+INDEXED agent/internal/printer/spooler_evidence_test.go
+INDEXED agent/internal/printer/spooler_evidence_windows_test.go
+INDEXED agent/internal/printer/spooler_identity_continuity_test.go
+INDEXED agent/internal/printer/spooler_image_geometry_windows.go
+INDEXED agent/internal/printer/spooler_jobid_test.go
+INDEXED agent/internal/printer/spooler_liveness_windows_test.go
+INDEXED agent/internal/printer/spooler_query.go
+INDEXED agent/internal/printer/spooler_query_test.go
+INDEXED agent/internal/printer/spooler_query_windows_test.go
+INDEXED agent/internal/printer/spooler_queue_guid_windows.go
+INDEXED agent/internal/printer/spooler_receipt.go
+INDEXED agent/internal/printer/spooler_receipt_test.go
+INDEXED agent/internal/printer/spooler_receipt_windows.go
+INDEXED agent/internal/printer/spooler_receipt_windows_test.go
+INDEXED agent/internal/printer/spooler_scope.go
+INDEXED agent/internal/printer/spooler_scope_test.go
+INDEXED agent/internal/printer/spooler_status_detail.go
+INDEXED agent/internal/printer/spooler_status_detail_test.go
+INDEXED agent/internal/printer/spooler_stub.go
+INDEXED agent/internal/printer/spooler_test.go
+INDEXED agent/internal/printer/spooler_windows.go
+INDEXED agent/internal/printer/spooler_windows_test.go
+INDEXED agent/internal/printer/stable_id.go
+INDEXED agent/internal/printer/stable_id_ipp_ports_test.go
+INDEXED agent/internal/printer/stable_id_test.go
+INDEXED agent/internal/printer/stable_id_unicode_test.go
+INDEXED agent/internal/printer/stable_id_uuid_case_test.go
+INDEXED agent/internal/printer/standard_pdf_safety_test.go
+INDEXED agent/internal/printer/test_page.go
+INDEXED agent/internal/printer/test_page_test.go
+INDEXED agent/internal/printer/test_page_windows.go
+INDEXED agent/internal/printer/test_page_windows_test.go
+INDEXED agent/internal/printer/testdata/cmyk-patches.jpg
+INDEXED agent/internal/printer/testdata/receipt-geometry.jpg
+INDEXED agent/internal/printer/testdata/receipt-geometry.md
+INDEXED agent/internal/printer/thermal_receipt_geometry_test.go
+INDEXED agent/internal/printer/transport_observation_windows_test.go
+INDEXED agent/internal/printer/usb_binding.go
+INDEXED agent/internal/printer/usb_binding_test.go
+INDEXED agent/internal/printer/usb_binding_windows_test.go
+INDEXED agent/internal/printer/usb_other.go
+INDEXED agent/internal/printer/usb_registry.go
+INDEXED agent/internal/printer/usb_registry_test.go
+INDEXED agent/internal/printer/usb_windows.go
+INDEXED agent/internal/printer/usb_windows_test.go
+INDEXED agent/internal/printer/v3_geometry_regressions_test.go
+INDEXED agent/internal/printer/vendor_fax_queue_test.go
+INDEXED agent/internal/printer/verification.go
+INDEXED agent/internal/printer/verification_ipp.go
+INDEXED agent/internal/printer/verification_network.go
+INDEXED agent/internal/printer/verification_other.go
+INDEXED agent/internal/printer/verification_test.go
+INDEXED agent/internal/printer/verification_windows.go
+INDEXED agent/internal/printer/wsd_completion_evidence_test.go
+INDEXED agent/internal/printer/wsd_discovery.go
+INDEXED agent/internal/printer/wsd_probe_test.go
+INDEXED agent/internal/queue/cleanup.go
+INDEXED agent/internal/queue/cleanup_test.go
+INDEXED agent/internal/queue/legacy_status_test.go
+INDEXED agent/internal/queue/output_evidence_v3_test.go
+INDEXED agent/internal/queue/path_test.go
+INDEXED agent/internal/queue/queue.go
+INDEXED agent/internal/queue/queue_bench_test.go
+INDEXED agent/internal/queue/queue_test.go
+INDEXED agent/internal/storage/at_rest_warning_test.go
+INDEXED agent/internal/storage/replace_file_posix.go
+INDEXED agent/internal/storage/replace_file_windows.go
+INDEXED agent/internal/storage/secure.go
+INDEXED agent/internal/storage/secure_posix.go
+INDEXED agent/internal/storage/secure_test.go
+INDEXED agent/internal/storage/secure_windows.go
+INDEXED agent/internal/storage/security_other.go
+INDEXED agent/internal/storage/security_windows.go
+INDEXED agent/internal/storage/security_windows_test.go
+INDEXED agent/internal/testutil/mock_printer.go
+INDEXED agent/internal/testutil/mock_printer_test.go
+```
+
+## contracts (8)
+
+```text
+READ    contracts/gateway-console-contract.json
+INDEXED contracts/print-payload-contract.json
+INDEXED contracts/printer-geometry-contract.json
+INDEXED contracts/printer-geometry-fixtures.json
+INDEXED contracts/printer-operational-verification-contract.json
+INDEXED contracts/printer-operational-verification-fixtures.json
+INDEXED contracts/printer-presentation-contract.json
+INDEXED contracts/printer-sharing-contract.json
+```
+
+## docs (43)
+
+```text
+INDEXED docs/CONTAINER_RUNTIME.md
+PARTIAL docs/DATABASE.md
+INDEXED docs/DATABASE_ROLES.md
+INDEXED docs/IPP_PRINT_COMPATIBILITY.md
+INDEXED docs/LINT_TOOLCHAIN.md
+INDEXED docs/MANUAL_ONLY_DATABASE.md
+INDEXED docs/METRICS_COLLECTION.md
+INDEXED docs/ODOO_RECEIPT_GEOMETRY.md
+INDEXED docs/OPERATIONS_ACCEPTANCE.md
+INDEXED docs/PASSWORD_AUTHENTICATION.md
+INDEXED docs/RECEIPT_GEOMETRY_RELIABILITY.md
+PARTIAL docs/RELEASE_GATES.md
+INDEXED docs/SECURITY_AUTHORIZATION.md
+INDEXED docs/SECURITY_COMMUNICATIONS.md
+INDEXED docs/SECURITY_INPUT_VALIDATION.md
+INDEXED docs/V5_RELEASE_NOTES.md
+INDEXED docs/WINDOWS_RELEASE_ACCEPTANCE.md
+INDEXED docs/WINDOWS_SERVICE_RECOVERY.md
+INDEXED docs/WINDOWS_TOOLCHAIN_ACCEPTANCE.md
+INDEXED docs/acceptance/2026-10-26-gateway-regressions.md
+INDEXED docs/acceptance/windows-result-template.json
+INDEXED docs/runtime-hardening/README.md
+INDEXED docs/runtime-hardening/alpine-security-artifacts.json
+INDEXED docs/runtime-hardening/apply-odoo19-pdf-bounds.py
+READ    docs/runtime-hardening/apply-os-security-profile.py
+INDEXED docs/runtime-hardening/artifacts-python312-linux-x86_64.json
+INDEXED docs/runtime-hardening/build-tools-artifacts.json
+INDEXED docs/runtime-hardening/build-tools.lock
+INDEXED docs/runtime-hardening/caddy/dependency_security_test.go
+INDEXED docs/runtime-hardening/caddy/go.mod
+INDEXED docs/runtime-hardening/caddy/go.sum
+INDEXED docs/runtime-hardening/container-bases.json
+INDEXED docs/runtime-hardening/gosu/dependency_security_test.go
+INDEXED docs/runtime-hardening/gosu/go.mod
+INDEXED docs/runtime-hardening/gosu/go.sum
+INDEXED docs/runtime-hardening/odoo19-pypdf-bounds.patch
+INDEXED docs/runtime-hardening/os-security-artifacts.json
+INDEXED docs/runtime-hardening/requirements-python312-linux-x86_64.lock
+INDEXED docs/runtime-hardening/verify-odoo19-pdf-bounds.py
+INDEXED docs/runtime-hardening/verify-source-map-js-security.cjs
+INDEXED docs/superpowers/plans/2026-10-25-v5-scope-tls-verification.md
+AUTHORED docs/engineering/SYSTEM_UNIFICATION_NOTEBOOK.md
+AUTHORED docs/engineering/FILE_COVERAGE_LEDGER.md
+```
+
+## drizzle (136)
+
+```text
+INDEXED drizzle/0000_simple_tigra.sql
+INDEXED drizzle/0001_phase1_branch_foundation.sql
+INDEXED drizzle/0002_add_document_types.sql
+INDEXED drizzle/0003_add_idempotency_key.sql
+INDEXED drizzle/0004_add_job_delivery_tracking.sql
+INDEXED drizzle/0005_auth_rate_limits.sql
+INDEXED drizzle/0006_architecture_hardening.sql
+INDEXED drizzle/0007_auth_rate_limit_retention.sql
+INDEXED drizzle/0008_remove_pcl_contract.sql
+INDEXED drizzle/0009_runtime_invariant_guard.sql
+INDEXED drizzle/0010_discovery.sql
+INDEXED drizzle/0011_worker_schema_fk_hardening.sql
+INDEXED drizzle/0012_runtime_state_checks.sql
+INDEXED drizzle/0013_runtime_state_constraint_scope_fix.sql
+INDEXED drizzle/0014_discovery_state_checks.sql
+INDEXED drizzle/0015_metrics_and_agent_notifications.sql
+INDEXED drizzle/0016_print_job_rate_limits.sql
+INDEXED drizzle/0017_notify_requeued_jobs.sql
+INDEXED drizzle/0018_global_print_job_idempotency.sql
+INDEXED drizzle/0019_drop_legacy_print_destination_fk.sql
+INDEXED drizzle/0020_remove_gateway_business_ownership.sql
+INDEXED drizzle/0021_scope_print_jobs_to_api_key.sql
+INDEXED drizzle/0022_pairing_code_hash.sql
+INDEXED drizzle/0023_internal_print_job_idempotency.sql
+INDEXED drizzle/0024_claim_fencing_and_payload_contract.sql
+INDEXED drizzle/0025_constraint_scope_and_protocol_contract_fix.sql
+INDEXED drizzle/0026_printer_type_default_alignment.sql
+INDEXED drizzle/0027_printers_protocol_check_windows_spooler.sql
+INDEXED drizzle/0028_add_multi_tenancy.sql
+INDEXED drizzle/0029_enforce_tenant_id_not_null.sql
+INDEXED drizzle/0030_tenant_domains_and_manager_sessions.sql
+INDEXED drizzle/0031_enforce_tenant_cross_table_foreign_keys.sql
+INDEXED drizzle/0032_pairing_code_hash_unique.sql
+INDEXED drizzle/0033_manager_identity.sql
+INDEXED drizzle/0034_saas_control_plane.sql
+INDEXED drizzle/0035_tenant_membership_role_check.sql
+INDEXED drizzle/0036_print_job_request_id.sql
+INDEXED drizzle/0037_customer_identity_billing.sql
+INDEXED drizzle/0038_trial_state.sql
+INDEXED drizzle/0039_billing_event_ordering.sql
+INDEXED drizzle/0040_tenant_lifecycle.sql
+INDEXED drizzle/0041_fix_composite_fk_prerequisites.sql
+INDEXED drizzle/0042_dos_indexes.sql
+INDEXED drizzle/0043_add_platform_owner.sql
+INDEXED drizzle/0044_single_platform_owner_idx.sql
+INDEXED drizzle/0045_audit_events_platform_scope.sql
+INDEXED drizzle/0046_scope_internal_print_job_idempotency.sql
+INDEXED drizzle/0047_desired_printer_reconciliation.sql
+INDEXED drizzle/0048_discovery_running_agent_unique.sql
+INDEXED drizzle/0049_tenant_scoped_idempotency_and_owner_unique.sql
+INDEXED drizzle/0050_billing_single_flight_state.sql
+INDEXED drizzle/0051_agent_lifecycle_revision.sql
+INDEXED drizzle/0052_plan_catalog_management.sql
+INDEXED drizzle/0053_discovery_spooler_name.sql
+INDEXED drizzle/0054_odoo_gateway_activation_state.sql
+INDEXED drizzle/0055_job_events_and_spooler_job_id.sql
+INDEXED drizzle/0056_discovered_device_class_not_null.sql
+INDEXED drizzle/0057_api_key_composite_index.sql
+INDEXED drizzle/0058_scope_odoo_activation_to_api_key.sql
+INDEXED drizzle/0059_remove_api_key_restrictions.sql
+INDEXED drizzle/0060_preserve_stripe_subscription_states.sql
+INDEXED drizzle/0061_print_usage_quota.sql
+INDEXED drizzle/0062_subscription_period_start_default.sql
+INDEXED drizzle/0063_job_events_tenant_fk.sql
+INDEXED drizzle/0064_odoo_key_rotation_grace.sql
+INDEXED drizzle/0065_api_key_rotation_state_check.sql
+INDEXED drizzle/0066_job_events_cascade.sql
+INDEXED drizzle/0067_print_job_wall_clock.sql
+INDEXED drizzle/0068_billing_entitlement_block.sql
+INDEXED drizzle/0069_redact_legacy_claim_ids.sql
+INDEXED drizzle/0070_discovered_device_identity.sql
+INDEXED drizzle/0071_remove_print_job_rate_limits.sql
+INDEXED drizzle/0072_tenant_scoped_printer_identity.sql
+INDEXED drizzle/0073_refresh_tokens.sql
+INDEXED drizzle/0074_token_cascade_cleanup.sql
+INDEXED drizzle/0075_discovery_checks_cleanup.sql
+INDEXED drizzle/0076_discovery_candidate_status_check.sql
+INDEXED drizzle/0077_agent_inventory_snapshots.sql
+INDEXED drizzle/0078_hot_path_query_indexes.sql
+INDEXED drizzle/0079_team_collection_pagination_indexes.sql
+INDEXED drizzle/0080_inventory_snapshot_version.sql
+INDEXED drizzle/0081_physical_printers_only.sql
+INDEXED drizzle/0082_audit_repairs_and_maintenance_indexes.sql
+INDEXED drizzle/0083_e2e_capture_runs.sql
+INDEXED drizzle/0084_printer_cloud_sharing.sql
+INDEXED drizzle/0085_odoo_installation_idempotency.sql
+INDEXED drizzle/0086_printer_identity_and_api_key_deletion.sql
+INDEXED drizzle/0087_odoo_auto_enrollment.sql
+INDEXED drizzle/0088_retire_e2e_capture.sql
+INDEXED drizzle/0089_invitation_verification_binding.sql
+INDEXED drizzle/0090_platform_mfa_sessions.sql
+INDEXED drizzle/0091_workspace_session_security.sql
+INDEXED drizzle/0092_workspace_mfa.sql
+INDEXED drizzle/0093_password_only_authentication.sql
+INDEXED drizzle/0094_printer_operational_verification.sql
+INDEXED drizzle/0095_manual_subscriptions.sql
+INDEXED drizzle/0096_retire_limited_workspace_roles.sql
+INDEXED drizzle/0097_agent_scoped_discovery_identity.sql
+INDEXED drizzle/0098_manual_only_billing.sql
+INDEXED drizzle/0099_subscription_approval_terms.sql
+INDEXED drizzle/0100_plan_prices.sql
+INDEXED drizzle/0101_rolling_print_allowance.sql
+INDEXED drizzle/meta/0000_snapshot.json
+INDEXED drizzle/meta/0028_snapshot.json
+INDEXED drizzle/meta/0071_remove_print_job_rate_limits_snapshot.json
+INDEXED drizzle/meta/0072_tenant_scoped_printer_identity_snapshot.json
+INDEXED drizzle/meta/0073_refresh_tokens_snapshot.json
+INDEXED drizzle/meta/0074_token_cascade_cleanup_snapshot.json
+INDEXED drizzle/meta/0075_discovery_checks_cleanup_snapshot.json
+INDEXED drizzle/meta/0076_discovery_candidate_status_check_snapshot.json
+INDEXED drizzle/meta/0077_agent_inventory_snapshots_snapshot.json
+INDEXED drizzle/meta/0078_hot_path_query_indexes_snapshot.json
+INDEXED drizzle/meta/0079_team_collection_pagination_indexes_snapshot.json
+INDEXED drizzle/meta/0080_inventory_snapshot_version_snapshot.json
+INDEXED drizzle/meta/0081_physical_printers_only_snapshot.json
+INDEXED drizzle/meta/0082_audit_repairs_and_maintenance_indexes_snapshot.json
+INDEXED drizzle/meta/0083_e2e_capture_runs_snapshot.json
+INDEXED drizzle/meta/0084_printer_cloud_sharing_snapshot.json
+INDEXED drizzle/meta/0085_odoo_installation_idempotency_snapshot.json
+INDEXED drizzle/meta/0086_printer_identity_and_api_key_deletion_snapshot.json
+INDEXED drizzle/meta/0087_odoo_auto_enrollment_snapshot.json
+INDEXED drizzle/meta/0088_retire_e2e_capture_snapshot.json
+INDEXED drizzle/meta/0089_invitation_verification_binding_snapshot.json
+INDEXED drizzle/meta/0090_platform_mfa_sessions_snapshot.json
+INDEXED drizzle/meta/0091_workspace_session_security_snapshot.json
+INDEXED drizzle/meta/0092_workspace_mfa_snapshot.json
+INDEXED drizzle/meta/0093_password_only_authentication_snapshot.json
+INDEXED drizzle/meta/0094_printer_operational_verification_snapshot.json
+INDEXED drizzle/meta/0095_manual_subscriptions_snapshot.json
+INDEXED drizzle/meta/0096_retire_limited_workspace_roles_snapshot.json
+INDEXED drizzle/meta/0097_agent_scoped_discovery_identity_snapshot.json
+INDEXED drizzle/meta/0098_manual_only_billing_snapshot.json
+INDEXED drizzle/meta/0099_subscription_approval_terms_snapshot.json
+INDEXED drizzle/meta/0100_plan_prices_snapshot.json
+INDEXED drizzle/meta/0101_rolling_print_allowance_snapshot.json
+INDEXED drizzle/meta/_journal.json
+```
+
+## odoo_addons (105)
+
+```text
+INDEXED odoo_addons/print_gateway/__init__.py
+INDEXED odoo_addons/print_gateway/__manifest__.py
+INDEXED odoo_addons/print_gateway/controllers/__init__.py
+INDEXED odoo_addons/print_gateway/controllers/pos.py
+INDEXED odoo_addons/print_gateway/controllers/runtime_printers.py
+INDEXED odoo_addons/print_gateway/customer_presentation.py
+INDEXED odoo_addons/print_gateway/data/cron.xml
+INDEXED odoo_addons/print_gateway/i18n/ar.po
+INDEXED odoo_addons/print_gateway/idempotency_namespace.py
+INDEXED odoo_addons/print_gateway/migrations/1.1.0/__init__.py
+INDEXED odoo_addons/print_gateway/migrations/1.1.0/pre-migrate.py
+INDEXED odoo_addons/print_gateway/migrations/19.0.1.1.0/__init__.py
+INDEXED odoo_addons/print_gateway/migrations/19.0.1.1.0/pre-migrate.py
+INDEXED odoo_addons/print_gateway/migrations/19.0.2.1.0/__init__.py
+INDEXED odoo_addons/print_gateway/migrations/19.0.2.1.0/post-migrate.py
+INDEXED odoo_addons/print_gateway/migrations/19.0.2.10.0/__init__.py
+INDEXED odoo_addons/print_gateway/migrations/19.0.2.10.0/post-migrate.py
+INDEXED odoo_addons/print_gateway/migrations/19.0.2.14.0/pre-migrate.py
+INDEXED odoo_addons/print_gateway/migrations/19.0.2.21.0/post-migrate.py
+INDEXED odoo_addons/print_gateway/migrations/19.0.2.29.0/post-migrate.py
+INDEXED odoo_addons/print_gateway/migrations/19.0.2.3.0/__init__.py
+INDEXED odoo_addons/print_gateway/migrations/19.0.2.3.0/post-migrate.py
+INDEXED odoo_addons/print_gateway/migrations/19.0.2.30.0/pre-migrate.py
+INDEXED odoo_addons/print_gateway/migrations/19.0.2.4.0/__init__.py
+INDEXED odoo_addons/print_gateway/migrations/19.0.2.4.0/post-migrate.py
+INDEXED odoo_addons/print_gateway/migrations/19.0.2.6.0/__init__.py
+INDEXED odoo_addons/print_gateway/migrations/19.0.2.6.0/post-migrate.py
+INDEXED odoo_addons/print_gateway/migrations/19.0.2.7.0/__init__.py
+INDEXED odoo_addons/print_gateway/migrations/19.0.2.7.0/post-migrate.py
+INDEXED odoo_addons/print_gateway/migrations/19.0.2.8.0/__init__.py
+INDEXED odoo_addons/print_gateway/migrations/19.0.2.8.0/post-migrate.py
+INDEXED odoo_addons/print_gateway/migrations/__init__.py
+INDEXED odoo_addons/print_gateway/models/__init__.py
+INDEXED odoo_addons/print_gateway/models/account_move.py
+INDEXED odoo_addons/print_gateway/models/binding.py
+INDEXED odoo_addons/print_gateway/models/crypto.py
+INDEXED odoo_addons/print_gateway/models/gateway_config.py
+INDEXED odoo_addons/print_gateway/models/gateway_destination.py
+INDEXED odoo_addons/print_gateway/models/gateway_http.py
+INDEXED odoo_addons/print_gateway/models/ir_actions_report.py
+INDEXED odoo_addons/print_gateway/models/pos_order.py
+INDEXED odoo_addons/print_gateway/models/pos_session.py
+INDEXED odoo_addons/print_gateway/models/print_intent.py
+INDEXED odoo_addons/print_gateway/models/print_job.py
+INDEXED odoo_addons/print_gateway/models/print_policy.py
+INDEXED odoo_addons/print_gateway/models/print_router.py
+INDEXED odoo_addons/print_gateway/models/runtime_assignment.py
+INDEXED odoo_addons/print_gateway/models/stock_picking.py
+INDEXED odoo_addons/print_gateway/pos_retry_policy.py
+INDEXED odoo_addons/print_gateway/print_output.py
+INDEXED odoo_addons/print_gateway/printer_geometry.py
+INDEXED odoo_addons/print_gateway/printer_verification.py
+INDEXED odoo_addons/print_gateway/runtime_clock.py
+INDEXED odoo_addons/print_gateway/runtime_policy.py
+INDEXED odoo_addons/print_gateway/security/ir.model.access.csv
+INDEXED odoo_addons/print_gateway/security/security.xml
+INDEXED odoo_addons/print_gateway/static/description/icon.png
+INDEXED odoo_addons/print_gateway/static/fonts/OFL.txt
+INDEXED odoo_addons/print_gateway/static/fonts/ibm-plex-sans-arabic-400.ttf
+INDEXED odoo_addons/print_gateway/static/fonts/ibm-plex-sans-arabic-500.ttf
+INDEXED odoo_addons/print_gateway/static/fonts/ibm-plex-sans-arabic-600.ttf
+INDEXED odoo_addons/print_gateway/static/fonts/ibm-plex-sans-arabic-700.ttf
+INDEXED odoo_addons/print_gateway/static/fonts/ibm-plex-sans-variable.ttf
+INDEXED odoo_addons/print_gateway/static/src/components/language_switcher.js
+INDEXED odoo_addons/print_gateway/static/src/components/language_switcher.xml
+INDEXED odoo_addons/print_gateway/static/src/components/runtime_agent_field.js
+INDEXED odoo_addons/print_gateway/static/src/components/runtime_printer_field.js
+INDEXED odoo_addons/print_gateway/static/src/css/receipt_raster.css
+INDEXED odoo_addons/print_gateway/static/src/css/typography_fonts.css
+INDEXED odoo_addons/print_gateway/static/src/css/typography_tokens.css
+INDEXED odoo_addons/print_gateway/static/src/js/async_control.js
+INDEXED odoo_addons/print_gateway/static/src/js/gateway_config_auto_sync.js
+INDEXED odoo_addons/print_gateway/static/src/js/gateway_limit_dialog.js
+INDEXED odoo_addons/print_gateway/static/src/js/operation_recovery.js
+INDEXED odoo_addons/print_gateway/static/src/js/pos_print_router.js
+INDEXED odoo_addons/print_gateway/static/src/js/pos_sale_details_router.js
+INDEXED odoo_addons/print_gateway/static/src/js/printer_geometry.js
+INDEXED odoo_addons/print_gateway/static/src/js/printer_verification.js
+INDEXED odoo_addons/print_gateway/static/src/js/receipt_raster.js
+INDEXED odoo_addons/print_gateway/static/src/js/report_interceptor.js
+INDEXED odoo_addons/print_gateway/static/src/js/tours/binding_cascade_tour.js
+INDEXED odoo_addons/print_gateway/static/src/scss/print_gateway_backend.scss
+INDEXED odoo_addons/print_gateway/static/src/scss/print_gateway_tokens.scss
+INDEXED odoo_addons/print_gateway/tests/__init__.py
+INDEXED odoo_addons/print_gateway/tests/printer_fixtures.py
+INDEXED odoo_addons/print_gateway/tests/test_architecture_contract.py
+INDEXED odoo_addons/print_gateway/tests/test_automation_workers.py
+INDEXED odoo_addons/print_gateway/tests/test_branch_activity_visibility.py
+INDEXED odoo_addons/print_gateway/tests/test_branch_runtime_binding.py
+INDEXED odoo_addons/print_gateway/tests/test_control_plane.py
+INDEXED odoo_addons/print_gateway/tests/test_diagnostic_localization.py
+INDEXED odoo_addons/print_gateway/tests/test_durable_identity_security.py
+INDEXED odoo_addons/print_gateway/tests/test_gateway_url_transport.py
+INDEXED odoo_addons/print_gateway/tests/test_intent_recovery.py
+INDEXED odoo_addons/print_gateway/tests/test_migration_upgrade.py
+INDEXED odoo_addons/print_gateway/tests/test_receipt_geometry.py
+INDEXED odoo_addons/print_gateway/tests/test_routing_contract.py
+INDEXED odoo_addons/print_gateway/tests/test_universal_printing.py
+INDEXED odoo_addons/print_gateway/views/binding_views.xml
+INDEXED odoo_addons/print_gateway/views/gateway_config_views.xml
+INDEXED odoo_addons/print_gateway/views/menu.xml
+INDEXED odoo_addons/print_gateway/views/print_intent_views.xml
+INDEXED odoo_addons/print_gateway/views/print_job_views.xml
+INDEXED odoo_addons/print_gateway/views/print_policy_views.xml
+INDEXED odoo_addons/print_gateway/views/runtime_assignment_views.xml
+```
+
+## scripts (65)
+
+```text
+INDEXED scripts/acceptance/Caddyfile
+INDEXED scripts/acceptance/cgroup-memory.cjs
+INDEXED scripts/acceptance/container-release.py
+INDEXED scripts/acceptance/coop-browser.mts
+INDEXED scripts/acceptance/csp-report-browser.mts
+INDEXED scripts/acceptance/gateway-memory-probe.cjs
+INDEXED scripts/acceptance/gateway-soak-accounting.mjs
+INDEXED scripts/acceptance/gateway-soak-payloads.mjs
+INDEXED scripts/acceptance/gateway-soak-source.mjs
+INDEXED scripts/acceptance/gateway-soak.mjs
+INDEXED scripts/acceptance/manual-admin-accessibility-browser.mjs
+INDEXED scripts/acceptance/manual-admin-browser.mjs
+INDEXED scripts/acceptance/manual-customer-browser.mjs
+INDEXED scripts/acceptance/odoo-receipt-browser.mjs
+INDEXED scripts/acceptance/odoo-standard-page-browser.mjs
+INDEXED scripts/acceptance/platform-browser.mjs
+INDEXED scripts/acceptance/postgres-restore-drill.mjs
+INDEXED scripts/acceptance/postgres-roles.mjs
+INDEXED scripts/acceptance/provision-windows-acceptance.ps1
+INDEXED scripts/acceptance/registration-transport.fixture.mjs
+INDEXED scripts/acceptance/summarize-gateway-heaps.py
+INDEXED scripts/acceptance/verify-odoo-receipt-codes.py
+INDEXED scripts/acceptance/workspace-browser.mjs
+INDEXED scripts/audit-gate.mjs
+INDEXED scripts/audit-runtime-privileges.sql
+INDEXED scripts/bootstrap-platform-owner.ts
+INDEXED scripts/build-web-fonts.py
+INDEXED scripts/build-windows-installer.ps1
+INDEXED scripts/check-codeql-sarif.py
+INDEXED scripts/check-compose-build-contexts.py
+READ    scripts/check-db-docs.py
+INDEXED scripts/check-i18n.ts
+INDEXED scripts/check-native-backports.py
+INDEXED scripts/check-odoo-translations.py
+INDEXED scripts/check-proxy-boundary.py
+INDEXED scripts/check-public-gateway.mjs
+READ    scripts/check-trivy-baseline.py
+INDEXED scripts/check-typography-tokens.py
+INDEXED scripts/check-ui-copy.py
+INDEXED scripts/ci-change-scopes.sh
+INDEXED scripts/ci-postgres.sh
+INDEXED scripts/count-ignored-results.sh
+INDEXED scripts/db-generate.ts
+INDEXED scripts/db-migrate.ts
+INDEXED scripts/deploy-compose.sh
+INDEXED scripts/generate-icons.mjs
+INDEXED scripts/lint/react-deprecations.mjs
+INDEXED scripts/odoo-hardened-entrypoint.py
+INDEXED scripts/odoo-healthcheck.py
+INDEXED scripts/pg-concurrent-claim.sh
+INDEXED scripts/pg-notify-failure-injection.ts
+INDEXED scripts/postgres-backup.sh
+INDEXED scripts/postgres-restore.sh
+INDEXED scripts/postgres-role-profile.mjs
+INDEXED scripts/print-latency-report.mjs
+INDEXED scripts/provision-plans.ts
+INDEXED scripts/restore_v5_original_font_assets.py
+INDEXED scripts/setup-tauri-linux.sh
+INDEXED scripts/smoke-test-windows.ps1
+INDEXED scripts/test-native-macro-diagnostics.py
+INDEXED scripts/verify-common-passwords.py
+INDEXED scripts/verify-fresh-source.sh
+INDEXED scripts/verify-npm-audit-fixture.mjs
+INDEXED scripts/verify-odoo-test-results.py
+INDEXED scripts/verify-windows-release.ps1
+```
+
+## security (7)
+
+```text
+INDEXED security/CROSS_ORIGIN_OPENER_POLICY.md
+INDEXED security/CSP_REPORTING.md
+INDEXED security/PASSWORD_SCREENING.md
+INDEXED security/common-passwords-LICENSE.txt
+INDEXED security/common-passwords-provenance.json
+READ security/image-vulnerability-baseline.json
+INDEXED security/odoo19-image-review-2026-10-26.md
+```
+
+## src (355)
+
+```text
+INDEXED src/app/actions.ts
+INDEXED src/app/api-keys/page.tsx
+INDEXED src/app/api/admin/tenants/[id]/lifecycle/route.ts
+INDEXED src/app/api/agent/desired-state/route.ts
+INDEXED src/app/api/agent/discovery/route.ts
+INDEXED src/app/api/agent/heartbeat/route.ts
+INDEXED src/app/api/agent/jobs/route.ts
+INDEXED src/app/api/agent/probe/route.ts
+INDEXED src/app/api/agent/register/route.ts
+INDEXED src/app/api/agents/[id]/discovered-printers/[deviceId]/provision/route.ts
+INDEXED src/app/api/agents/[id]/discovered-printers/[deviceId]/verify/route.ts
+INDEXED src/app/api/agents/[id]/discovery/[discoveryId]/cancel/route.ts
+INDEXED src/app/api/agents/[id]/discovery/[discoveryId]/route.ts
+INDEXED src/app/api/agents/[id]/discovery/route.ts
+INDEXED src/app/api/agents/[id]/route.ts
+INDEXED src/app/api/agents/health/route.ts
+INDEXED src/app/api/agents/route.ts
+INDEXED src/app/api/agents/service-status/route.ts
+INDEXED src/app/api/auth/activity/route.ts
+INDEXED src/app/api/auth/forgot-password/route.ts
+INDEXED src/app/api/auth/login/route.ts
+INDEXED src/app/api/auth/logout/route.ts
+INDEXED src/app/api/auth/manager/login/route.ts
+INDEXED src/app/api/auth/manager/logout/route.ts
+INDEXED src/app/api/auth/manager/me/route.ts
+INDEXED src/app/api/auth/manager/refresh/route.ts
+INDEXED src/app/api/auth/me/route.ts
+INDEXED src/app/api/auth/reauth/password/route.ts
+INDEXED src/app/api/auth/reauth/status/route.ts
+INDEXED src/app/api/auth/refresh/route.ts
+INDEXED src/app/api/auth/register/route.ts
+INDEXED src/app/api/auth/resend-verification/route.ts
+INDEXED src/app/api/auth/reset-password/route.ts
+INDEXED src/app/api/auth/select-tenant/route.ts
+INDEXED src/app/api/auth/sessions/route.ts
+INDEXED src/app/api/auth/verify-email/route.ts
+INDEXED src/app/api/billing/cancel/route.ts
+INDEXED src/app/api/billing/checkout/route.ts
+INDEXED src/app/api/billing/plans/route.ts
+INDEXED src/app/api/billing/portal/route.ts
+INDEXED src/app/api/billing/resume/route.ts
+INDEXED src/app/api/billing/status/route.ts
+INDEXED src/app/api/billing/usage/route.ts
+INDEXED src/app/api/billing/webhook/route.ts
+INDEXED src/app/api/health/route.ts
+INDEXED src/app/api/jobs/[id]/reprint/route.ts
+INDEXED src/app/api/jobs/[id]/route.ts
+INDEXED src/app/api/jobs/[id]/timeline/route.ts
+INDEXED src/app/api/jobs/route.ts
+INDEXED src/app/api/live/route.ts
+INDEXED src/app/api/metrics/route.ts
+INDEXED src/app/api/odoo/agents/route.ts
+INDEXED src/app/api/odoo/configuration/route.ts
+INDEXED src/app/api/odoo/health/route.ts
+INDEXED src/app/api/odoo/installations/auto/route.ts
+INDEXED src/app/api/odoo/installations/cutover/route.ts
+INDEXED src/app/api/odoo/installations/resolutions/route.ts
+INDEXED src/app/api/odoo/installations/route.ts
+INDEXED src/app/api/odoo/keys/[id]/rotate/route.ts
+INDEXED src/app/api/odoo/keys/route.ts
+INDEXED src/app/api/odoo/printers/route.ts
+INDEXED src/app/api/onboarding/route.ts
+INDEXED src/app/api/platform/audit/route.ts
+INDEXED src/app/api/platform/auth/login/route.ts
+INDEXED src/app/api/platform/auth/logout/route.ts
+INDEXED src/app/api/platform/auth/me/route.ts
+INDEXED src/app/api/platform/auth/reauth/route.ts
+INDEXED src/app/api/platform/auth/refresh/route.ts
+INDEXED src/app/api/platform/auth/sessions/route.ts
+INDEXED src/app/api/platform/database/route.ts
+INDEXED src/app/api/platform/fleet/delete/route.ts
+INDEXED src/app/api/platform/fleet/lifecycle/route.ts
+INDEXED src/app/api/platform/fleet/route.ts
+INDEXED src/app/api/platform/integrations/quarantine/route.ts
+INDEXED src/app/api/platform/integrations/remove/route.ts
+INDEXED src/app/api/platform/integrations/revoke/route.ts
+INDEXED src/app/api/platform/integrations/route.ts
+INDEXED src/app/api/platform/jobs/route.ts
+INDEXED src/app/api/platform/plans/[id]/route.ts
+INDEXED src/app/api/platform/plans/route.ts
+INDEXED src/app/api/platform/stats/route.ts
+INDEXED src/app/api/platform/subscription-requests/route.ts
+INDEXED src/app/api/platform/subscriptions/route.ts
+INDEXED src/app/api/platform/tenants/[id]/delete/route.ts
+READ    src/app/api/platform/tenants/[id]/invitations/route.ts
+INDEXED src/app/api/platform/tenants/[id]/members/route.ts
+INDEXED src/app/api/platform/tenants/[id]/ownership/route.ts
+INDEXED src/app/api/platform/tenants/[id]/reactivate/route.ts
+INDEXED src/app/api/platform/tenants/[id]/route.ts
+INDEXED src/app/api/platform/tenants/[id]/subscription/route.ts
+INDEXED src/app/api/platform/tenants/[id]/suspend/route.ts
+INDEXED src/app/api/platform/tenants/route.ts
+INDEXED src/app/api/print/jobs/batch-status/route.ts
+INDEXED src/app/api/print/jobs/route.ts
+INDEXED src/app/api/print/jobs/v2/route.ts
+INDEXED src/app/api/printers/[id]/certify/route.ts
+INDEXED src/app/api/printers/[id]/route.ts
+INDEXED src/app/api/printers/[id]/test-connection/route.ts
+INDEXED src/app/api/printers/[id]/test-print/route.ts
+INDEXED src/app/api/printers/capabilities/route.ts
+INDEXED src/app/api/printers/route.ts
+INDEXED src/app/api/security/csp-report/route.ts
+PARTIAL src/app/api/settings/route.ts
+INDEXED src/app/api/subscription-requests/route.ts
+INDEXED src/app/api/team/invitations/accept/route.ts
+INDEXED src/app/api/team/invitations/preview/route.ts
+READ    src/app/api/team/invitations/route.ts
+READ src/app/api/team/members/route.ts
+INDEXED src/app/api/team/ownership/route.ts
+PARTIAL src/app/billing/page.tsx
+INDEXED src/app/dashboard/dashboard-client.tsx
+INDEXED src/app/dashboard/page.tsx
+INDEXED src/app/error.tsx
+INDEXED src/app/fonts/OFL.txt
+INDEXED src/app/fonts/ibm-plex-sans-arabic-400.ttf
+INDEXED src/app/fonts/ibm-plex-sans-arabic-400.woff2
+INDEXED src/app/fonts/ibm-plex-sans-arabic-500.ttf
+INDEXED src/app/fonts/ibm-plex-sans-arabic-500.woff2
+INDEXED src/app/fonts/ibm-plex-sans-arabic-600.ttf
+INDEXED src/app/fonts/ibm-plex-sans-arabic-600.woff2
+INDEXED src/app/fonts/ibm-plex-sans-arabic-700.ttf
+INDEXED src/app/fonts/ibm-plex-sans-arabic-700.woff2
+INDEXED src/app/fonts/ibm-plex-sans-variable.ttf
+INDEXED src/app/fonts/ibm-plex-sans-variable.woff2
+INDEXED src/app/forgot-password/page.tsx
+INDEXED src/app/globals.css
+INDEXED src/app/icon.svg
+INDEXED src/app/invite/page.tsx
+INDEXED src/app/layout.tsx
+INDEXED src/app/loading.tsx
+INDEXED src/app/login/page.tsx
+INDEXED src/app/not-found.tsx
+INDEXED src/app/onboarding/page.tsx
+INDEXED src/app/page.tsx
+INDEXED src/app/platform/audit/page.tsx
+INDEXED src/app/platform/dashboard/page.tsx
+INDEXED src/app/platform/database/page.tsx
+INDEXED src/app/platform/fleet/page.tsx
+INDEXED src/app/platform/integrations/page.tsx
+INDEXED src/app/platform/jobs/page.tsx
+INDEXED src/app/platform/layout.tsx
+INDEXED src/app/platform/login/page.tsx
+INDEXED src/app/platform/operations/page.tsx
+INDEXED src/app/platform/page.tsx
+INDEXED src/app/platform/plans/page.tsx
+INDEXED src/app/platform/release-readiness/page.tsx
+INDEXED src/app/platform/release-readiness/release-readiness-client.tsx
+INDEXED src/app/platform/security/page.tsx
+INDEXED src/app/platform/subscription-requests/page.tsx
+INDEXED src/app/platform/subscriptions/page.tsx
+INDEXED src/app/platform/tenants/[id]/page.tsx
+INDEXED src/app/platform/tenants/page.tsx
+INDEXED src/app/pricing/page.tsx
+INDEXED src/app/reset-password/page.tsx
+INDEXED src/app/settings/page.tsx
+INDEXED src/app/signup/page.tsx
+READ src/app/team/page.tsx
+INDEXED src/app/verify-email/page.tsx
+INDEXED src/components/AppShell.tsx
+INDEXED src/components/AuthShell.tsx
+INDEXED src/components/BillingActions.tsx
+INDEXED src/components/CommandPalette.tsx
+INDEXED src/components/CspStyleNonce.tsx
+INDEXED src/components/JobCleanupButton.tsx
+INDEXED src/components/JobTimeline.tsx
+INDEXED src/components/LanguageSwitcher.tsx
+INDEXED src/components/MobileAppBar.tsx
+INDEXED src/components/PrintCertificationWizard.tsx
+INDEXED src/components/PrinterGeometrySettings.tsx
+INDEXED src/components/PrinterVerificationDetails.tsx
+INDEXED src/components/SessionInventory.tsx
+INDEXED src/components/ThemeToggle.tsx
+INDEXED src/components/TopNavbar.tsx
+INDEXED src/components/UpgradeLimitDialog.tsx
+INDEXED src/components/WorkspaceSecurity.tsx
+INDEXED src/components/brand.tsx
+INDEXED src/components/marketing/LandingMotion.tsx
+INDEXED src/components/marketing/MobileNavigation.tsx
+INDEXED src/components/marketing/SpotlightSurface.tsx
+INDEXED src/components/platform/ManualAdmin.tsx
+INDEXED src/components/platform/PlatformSidebar.tsx
+INDEXED src/components/platform/SubscriptionEditor.tsx
+INDEXED src/components/platform/WorkspaceLifecycle.tsx
+INDEXED src/components/ui.tsx
+INDEXED src/components/visual-system.tsx
+INDEXED src/db/client.ts
+INDEXED src/db/index.ts
+INDEXED src/db/schema.ts
+INDEXED src/desktop/components/AddPrinterDialog.tsx
+INDEXED src/desktop/components/AdminPrivilegeDialog.tsx
+INDEXED src/desktop/components/DesktopLink.tsx
+INDEXED src/desktop/components/JobTimeline.tsx
+INDEXED src/desktop/components/PrinterSharingControl.tsx
+INDEXED src/desktop/components/SetupGuide.tsx
+INDEXED src/desktop/components/Sidebar.tsx
+INDEXED src/desktop/icon.svg
+INDEXED src/desktop/index.html
+INDEXED src/desktop/lib/gateway-connectivity.ts
+INDEXED src/desktop/lib/gateway-headers.ts
+INDEXED src/desktop/lib/ipc.ts
+INDEXED src/desktop/lib/printers.ts
+INDEXED src/desktop/main.tsx
+INDEXED src/desktop/pages/Jobs.tsx
+INDEXED src/desktop/pages/Overview.tsx
+INDEXED src/desktop/pages/Printers.tsx
+INDEXED src/desktop/pages/Settings.tsx
+INDEXED src/desktop/preview.html
+INDEXED src/desktop/preview/main.ts
+INDEXED src/desktop/preview/mock-tauri.ts
+INDEXED src/desktop/public/theme-init.css
+INDEXED src/desktop/public/theme-init.js
+INDEXED src/desktop/theme-light.css
+INDEXED src/desktop/types.ts
+INDEXED src/desktop/ui.tsx
+INDEXED src/i18n/config.ts
+INDEXED src/i18n/format.ts
+INDEXED src/i18n/messages/ar.ts
+INDEXED src/i18n/messages/en.ts
+INDEXED src/i18n/messages/v4-admin.ts
+PARTIAL src/i18n/messages/v4-experience.ts
+PARTIAL src/i18n/messages/v4-onboarding.ts
+INDEXED src/i18n/react.tsx
+INDEXED src/i18n/server.ts
+INDEXED src/i18n/translate.ts
+INDEXED src/lib/action-error.ts
+INDEXED src/lib/activation-contact.ts
+INDEXED src/lib/agent-auth.ts
+INDEXED src/lib/agent-availability.ts
+INDEXED src/lib/agent-control.ts
+INDEXED src/lib/agent-health.ts
+INDEXED src/lib/agent-lifecycle.ts
+INDEXED src/lib/agent-presence-maintenance.ts
+INDEXED src/lib/api-error-keys.ts
+INDEXED src/lib/api-key-deletion.ts
+INDEXED src/lib/application-origin.ts
+INDEXED src/lib/audit.ts
+INDEXED src/lib/auth-rate-limit.ts
+READ    src/lib/authorization.ts
+PARTIAL src/lib/billing-labels.ts
+INDEXED src/lib/bounded-query.ts
+INDEXED src/lib/cache.ts
+INDEXED src/lib/canonicalize.ts
+INDEXED src/lib/circuit-breaker.ts
+INDEXED src/lib/clipboard.ts
+INDEXED src/lib/common-password-hashes.json
+INDEXED src/lib/console-auth.ts
+INDEXED src/lib/csp-report.ts
+INDEXED src/lib/customer-auth.ts
+INDEXED src/lib/dashboard-billing-usage.ts
+INDEXED src/lib/dashboard-state.ts
+INDEXED src/lib/database-clock.ts
+INDEXED src/lib/database-error-log.ts
+INDEXED src/lib/database-timestamp.ts
+INDEXED src/lib/desired-state-page.ts
+INDEXED src/lib/discovery-observation.ts
+INDEXED src/lib/discovery-session-expiry.ts
+INDEXED src/lib/discovery.ts
+INDEXED src/lib/email-auth-token-policy.ts
+INDEXED src/lib/email.ts
+PARTIAL src/lib/entitlements.ts
+INDEXED src/lib/fetch-timeout.ts
+INDEXED src/lib/fleet-cursor.ts
+INDEXED src/lib/idempotency.ts
+INDEXED src/lib/inventory-snapshot.ts
+INDEXED src/lib/invitation-join.ts
+INDEXED src/lib/job-delivery.ts
+INDEXED src/lib/job-diagnostic-payload.ts
+INDEXED src/lib/job-fencing.ts
+INDEXED src/lib/job-history.ts
+INDEXED src/lib/job-maintenance.ts
+PARTIAL src/lib/job-status.ts
+INDEXED src/lib/job-timeline-presentation.ts
+INDEXED src/lib/job-timeline.ts
+INDEXED src/lib/lifecycle-labels.ts
+INDEXED src/lib/lifecycle.ts
+INDEXED src/lib/limit-signal.ts
+INDEXED src/lib/log.ts
+PARTIAL src/lib/manager-auth.ts
+READ src/lib/manager-mutation-authorization.ts
+READ src/lib/manual-api-error.ts
+INDEXED src/lib/manual-calendar-date.ts
+INDEXED src/lib/manual-plans.ts
+PARTIAL src/lib/manual-subscriptions.ts
+READ    src/lib/manual-usage-report.ts
+INDEXED src/lib/metrics-machine-auth.ts
+INDEXED src/lib/metrics.ts
+INDEXED src/lib/nanoid.ts
+INDEXED src/lib/nav.ts
+INDEXED src/lib/network-address.ts
+INDEXED src/lib/new-password-policy.ts
+INDEXED src/lib/odoo-auth.ts
+INDEXED src/lib/odoo-idempotency.ts
+INDEXED src/lib/odoo-status-scope.ts
+INDEXED src/lib/odoo-v2-admission.ts
+INDEXED src/lib/password-screening.ts
+INDEXED src/lib/password.ts
+INDEXED src/lib/payload.ts
+INDEXED src/lib/physical-printer-identity.ts
+READ    src/lib/plan-price.ts
+INDEXED src/lib/platform-action-confirmation.ts
+INDEXED src/lib/platform-auth.ts
+INDEXED src/lib/platform-data-explorer.ts
+INDEXED src/lib/platform-fleet-deletion.ts
+INDEXED src/lib/platform-session-security.ts
+INDEXED src/lib/platform-stats-cache.ts
+INDEXED src/lib/platform-team-security.ts
+INDEXED src/lib/platform-workspace-lifecycle.ts
+PARTIAL src/lib/print-job-service.ts
+INDEXED src/lib/print-output.ts
+INDEXED src/lib/printer-capability.ts
+INDEXED src/lib/printer-geometry.ts
+INDEXED src/lib/printer-health.ts
+INDEXED src/lib/printer-identity.ts
+INDEXED src/lib/printer-model.ts
+INDEXED src/lib/printer-operational-verification.ts
+INDEXED src/lib/printer-verification-sql.ts
+INDEXED src/lib/printer-virtual-sql.ts
+INDEXED src/lib/printer-virtual.ts
+READ    src/lib/quota-cycle.ts
+INDEXED src/lib/receipt-width.ts
+INDEXED src/lib/request-limits.ts
+READ    src/lib/roles.ts
+PARTIAL src/lib/routing.ts
+INDEXED src/lib/runtime-secret.ts
+INDEXED src/lib/server-action-version.ts
+INDEXED src/lib/session-config.ts
+INDEXED src/lib/session-credentials.ts
+INDEXED src/lib/session-events.ts
+INDEXED src/lib/session-inventory.ts
+INDEXED src/lib/session-tokens.ts
+INDEXED src/lib/stale-threshold.ts
+READ    src/lib/team-authorization.ts
+INDEXED src/lib/tenant-guard.ts
+INDEXED src/lib/tenant-lifecycle.ts
+INDEXED src/lib/trust-proxy-config.ts
+INDEXED src/lib/utils.ts
+INDEXED src/lib/worker-schema.ts
+READ    src/lib/workspace-owner-invitations.ts
+INDEXED src/lib/workspace-session-http.ts
+READ src/lib/workspace-session-security.ts
+INDEXED src/lib/ws-rate-limit.ts
+INDEXED src/server/api-defaults.ts
+INDEXED src/server/authorization-monitor.ts
+INDEXED src/server/content-security-policy.ts
+INDEXED src/server/correlation.ts
+INDEXED src/server/cors.ts
+INDEXED src/server/request-guard.ts
+INDEXED src/server/request-path.ts
+INDEXED src/server/trusted-proxy.ts
+INDEXED src/server/ws.ts
+INDEXED src/shared/diagnostic-test.ts
+INDEXED src/shared/document-label.ts
+INDEXED src/shared/job-retention.ts
+INDEXED src/shared/job-vocabulary.ts
+INDEXED src/shared/printer-presentation.ts
+```
+
+## src-tauri (192)
+
+```text
+INDEXED src-tauri/Cargo.lock
+INDEXED src-tauri/Cargo.toml
+INDEXED src-tauri/build.rs
+INDEXED src-tauri/capabilities/default.json
+INDEXED src-tauri/icons/128x128.png
+INDEXED src-tauri/icons/128x128@2x.png
+INDEXED src-tauri/icons/16x16.png
+INDEXED src-tauri/icons/24x24.png
+INDEXED src-tauri/icons/32x32.png
+INDEXED src-tauri/icons/48x48.png
+INDEXED src-tauri/icons/64x64.png
+INDEXED src-tauri/icons/icon-source.svg
+INDEXED src-tauri/icons/icon.ico
+INDEXED src-tauri/icons/icon.png
+INDEXED src-tauri/installer_hooks.nsh
+INDEXED src-tauri/native-regressions/Cargo.lock
+INDEXED src-tauri/native-regressions/Cargo.toml
+INDEXED src-tauri/native-regressions/src/lib.rs
+INDEXED src-tauri/rust-toolchain.toml
+INDEXED src-tauri/src/agent.rs
+INDEXED src-tauri/src/agent_status.rs
+INDEXED src-tauri/src/audit_discovery_test.rs
+INDEXED src-tauri/src/cleanup.rs
+INDEXED src-tauri/src/commands.rs
+INDEXED src-tauri/src/logging.rs
+INDEXED src-tauri/src/main.rs
+INDEXED src-tauri/src/paths.rs
+INDEXED src-tauri/src/tray.rs
+INDEXED src-tauri/tauri.conf.json
+INDEXED src-tauri/tests/audit_logging.rs
+INDEXED src-tauri/vendor/PROVENANCE.json
+INDEXED src-tauri/vendor/README.md
+INDEXED src-tauri/vendor/glib-macros/.cargo_vcs_info.json
+INDEXED src-tauri/vendor/glib-macros/COPYRIGHT
+INDEXED src-tauri/vendor/glib-macros/Cargo.toml
+INDEXED src-tauri/vendor/glib-macros/Cargo.toml.orig
+INDEXED src-tauri/vendor/glib-macros/LICENSE
+INDEXED src-tauri/vendor/glib-macros/src/boxed_derive.rs
+INDEXED src-tauri/vendor/glib-macros/src/clone.rs
+INDEXED src-tauri/vendor/glib-macros/src/closure.rs
+INDEXED src-tauri/vendor/glib-macros/src/derived_properties_attribute.rs
+INDEXED src-tauri/vendor/glib-macros/src/downgrade_derive/enums.rs
+INDEXED src-tauri/vendor/glib-macros/src/downgrade_derive/fields.rs
+INDEXED src-tauri/vendor/glib-macros/src/downgrade_derive/mod.rs
+INDEXED src-tauri/vendor/glib-macros/src/downgrade_derive/structs.rs
+INDEXED src-tauri/vendor/glib-macros/src/enum_derive.rs
+INDEXED src-tauri/vendor/glib-macros/src/error_domain_derive.rs
+INDEXED src-tauri/vendor/glib-macros/src/flags_attribute.rs
+INDEXED src-tauri/vendor/glib-macros/src/lib.rs
+INDEXED src-tauri/vendor/glib-macros/src/object_interface_attribute.rs
+INDEXED src-tauri/vendor/glib-macros/src/object_subclass_attribute.rs
+INDEXED src-tauri/vendor/glib-macros/src/properties.rs
+INDEXED src-tauri/vendor/glib-macros/src/shared_boxed_derive.rs
+INDEXED src-tauri/vendor/glib-macros/src/utils.rs
+INDEXED src-tauri/vendor/glib-macros/src/value_delegate_derive.rs
+INDEXED src-tauri/vendor/glib-macros/src/variant_derive.rs
+INDEXED src-tauri/vendor/glib-macros/tests/clone.rs
+INDEXED src-tauri/vendor/glib-macros/tests/properties.rs
+INDEXED src-tauri/vendor/glib-macros/tests/test.rs
+INDEXED src-tauri/vendor/glib-macros/tests/value_delegate_derive.rs
+INDEXED src-tauri/vendor/glib/.cargo_vcs_info.json
+INDEXED src-tauri/vendor/glib/COPYRIGHT
+INDEXED src-tauri/vendor/glib/Cargo.toml
+INDEXED src-tauri/vendor/glib/Cargo.toml.orig
+INDEXED src-tauri/vendor/glib/Gir.toml
+INDEXED src-tauri/vendor/glib/Gir_GObject.toml
+INDEXED src-tauri/vendor/glib/LICENSE
+INDEXED src-tauri/vendor/glib/README.md
+INDEXED src-tauri/vendor/glib/benches/gstring.rs
+INDEXED src-tauri/vendor/glib/src/auto/alias.rs
+INDEXED src-tauri/vendor/glib/src/auto/checksum.rs
+INDEXED src-tauri/vendor/glib/src/auto/constants.rs
+INDEXED src-tauri/vendor/glib/src/auto/date_time.rs
+INDEXED src-tauri/vendor/glib/src/auto/enums.rs
+INDEXED src-tauri/vendor/glib/src/auto/flags.rs
+INDEXED src-tauri/vendor/glib/src/auto/functions.rs
+INDEXED src-tauri/vendor/glib/src/auto/key_file.rs
+INDEXED src-tauri/vendor/glib/src/auto/main_context.rs
+INDEXED src-tauri/vendor/glib/src/auto/main_loop.rs
+INDEXED src-tauri/vendor/glib/src/auto/markup_parse_context.rs
+INDEXED src-tauri/vendor/glib/src/auto/mod.rs
+INDEXED src-tauri/vendor/glib/src/auto/source.rs
+INDEXED src-tauri/vendor/glib/src/auto/time_zone.rs
+INDEXED src-tauri/vendor/glib/src/auto/uri.rs
+INDEXED src-tauri/vendor/glib/src/auto/versions.txt
+INDEXED src-tauri/vendor/glib/src/boxed.rs
+INDEXED src-tauri/vendor/glib/src/boxed_any_object.rs
+INDEXED src-tauri/vendor/glib/src/boxed_inline.rs
+INDEXED src-tauri/vendor/glib/src/bridged_logging.rs
+INDEXED src-tauri/vendor/glib/src/byte_array.rs
+INDEXED src-tauri/vendor/glib/src/bytes.rs
+INDEXED src-tauri/vendor/glib/src/char.rs
+INDEXED src-tauri/vendor/glib/src/checksum.rs
+INDEXED src-tauri/vendor/glib/src/clone.rs
+INDEXED src-tauri/vendor/glib/src/closure.rs
+INDEXED src-tauri/vendor/glib/src/collections/list.rs
+INDEXED src-tauri/vendor/glib/src/collections/mod.rs
+INDEXED src-tauri/vendor/glib/src/collections/ptr_slice.rs
+INDEXED src-tauri/vendor/glib/src/collections/slice.rs
+INDEXED src-tauri/vendor/glib/src/collections/slist.rs
+INDEXED src-tauri/vendor/glib/src/collections/strv.rs
+INDEXED src-tauri/vendor/glib/src/control_flow.rs
+INDEXED src-tauri/vendor/glib/src/convert.rs
+INDEXED src-tauri/vendor/glib/src/date.rs
+INDEXED src-tauri/vendor/glib/src/date_time.rs
+INDEXED src-tauri/vendor/glib/src/enums.rs
+INDEXED src-tauri/vendor/glib/src/error.rs
+INDEXED src-tauri/vendor/glib/src/exit_code.rs
+INDEXED src-tauri/vendor/glib/src/future_with_timeout.rs
+INDEXED src-tauri/vendor/glib/src/gobject/auto/binding.rs
+INDEXED src-tauri/vendor/glib/src/gobject/auto/binding_group.rs
+INDEXED src-tauri/vendor/glib/src/gobject/auto/flags.rs
+INDEXED src-tauri/vendor/glib/src/gobject/auto/mod.rs
+INDEXED src-tauri/vendor/glib/src/gobject/auto/signal_group.rs
+INDEXED src-tauri/vendor/glib/src/gobject/binding.rs
+INDEXED src-tauri/vendor/glib/src/gobject/binding_group.rs
+INDEXED src-tauri/vendor/glib/src/gobject/flags.rs
+INDEXED src-tauri/vendor/glib/src/gobject/mod.rs
+INDEXED src-tauri/vendor/glib/src/gobject/signal_group.rs
+INDEXED src-tauri/vendor/glib/src/gstring.rs
+INDEXED src-tauri/vendor/glib/src/gstring_builder.rs
+INDEXED src-tauri/vendor/glib/src/key_file.rs
+INDEXED src-tauri/vendor/glib/src/lib.rs
+INDEXED src-tauri/vendor/glib/src/log.rs
+INDEXED src-tauri/vendor/glib/src/main_context.rs
+INDEXED src-tauri/vendor/glib/src/main_context_channel.rs
+INDEXED src-tauri/vendor/glib/src/main_context_futures.rs
+INDEXED src-tauri/vendor/glib/src/manual_functions.rs
+INDEXED src-tauri/vendor/glib/src/object.rs
+INDEXED src-tauri/vendor/glib/src/param_spec.rs
+INDEXED src-tauri/vendor/glib/src/prelude.rs
+INDEXED src-tauri/vendor/glib/src/property.rs
+INDEXED src-tauri/vendor/glib/src/quark.rs
+INDEXED src-tauri/vendor/glib/src/shared.rs
+INDEXED src-tauri/vendor/glib/src/signal.rs
+INDEXED src-tauri/vendor/glib/src/source.rs
+INDEXED src-tauri/vendor/glib/src/source_futures.rs
+INDEXED src-tauri/vendor/glib/src/subclass/basic.rs
+INDEXED src-tauri/vendor/glib/src/subclass/boxed.rs
+INDEXED src-tauri/vendor/glib/src/subclass/interface.rs
+INDEXED src-tauri/vendor/glib/src/subclass/mod.rs
+INDEXED src-tauri/vendor/glib/src/subclass/object.rs
+INDEXED src-tauri/vendor/glib/src/subclass/object_impl_ref.rs
+INDEXED src-tauri/vendor/glib/src/subclass/shared.rs
+INDEXED src-tauri/vendor/glib/src/subclass/signal.rs
+INDEXED src-tauri/vendor/glib/src/subclass/types.rs
+INDEXED src-tauri/vendor/glib/src/thread_guard.rs
+INDEXED src-tauri/vendor/glib/src/thread_pool.rs
+INDEXED src-tauri/vendor/glib/src/time_span.rs
+INDEXED src-tauri/vendor/glib/src/time_zone.rs
+INDEXED src-tauri/vendor/glib/src/translate.rs
+INDEXED src-tauri/vendor/glib/src/types.rs
+INDEXED src-tauri/vendor/glib/src/unichar.rs
+INDEXED src-tauri/vendor/glib/src/unicollate.rs
+INDEXED src-tauri/vendor/glib/src/utils.rs
+INDEXED src-tauri/vendor/glib/src/value.rs
+INDEXED src-tauri/vendor/glib/src/value_array.rs
+INDEXED src-tauri/vendor/glib/src/variant.rs
+INDEXED src-tauri/vendor/glib/src/variant_dict.rs
+INDEXED src-tauri/vendor/glib/src/variant_iter.rs
+INDEXED src-tauri/vendor/glib/src/variant_type.rs
+INDEXED src-tauri/vendor/glib/src/win32.rs
+INDEXED src-tauri/vendor/glib/src/wrapper.rs
+INDEXED src-tauri/vendor/glib/tests/check_gir.rs
+INDEXED src-tauri/vendor/glib/tests/clone.rs
+INDEXED src-tauri/vendor/glib/tests/derive.rs
+INDEXED src-tauri/vendor/glib/tests/log.rs
+INDEXED src-tauri/vendor/glib/tests/print.rs
+INDEXED src-tauri/vendor/glib/tests/structured_log.rs
+INDEXED src-tauri/vendor/glib/tests/subclass_compiletest.rs
+INDEXED src-tauri/vendor/glib/tests/subclass_compiletest/01-auto-send-sync.rs
+INDEXED src-tauri/vendor/glib/tests/subclass_compiletest/02-no-auto-send-sync.rs
+INDEXED src-tauri/vendor/glib/tests/subclass_compiletest/02-no-auto-send-sync.stderr
+INDEXED src-tauri/vendor/glib/tests/subclass_compiletest/03-object-no-auto-send-sync.rs
+INDEXED src-tauri/vendor/glib/tests/subclass_compiletest/03-object-no-auto-send-sync.stderr
+INDEXED src-tauri/vendor/glib/tests/subclass_compiletest/04-auto-send-sync-with-send-sync-parent.rs
+INDEXED src-tauri/vendor/glib/tests/subclass_compiletest/05-no-auto-send-sync-with-non-send-sync-parent.rs
+INDEXED src-tauri/vendor/glib/tests/subclass_compiletest/05-no-auto-send-sync-with-non-send-sync-parent.stderr
+INDEXED src-tauri/vendor/glib/tests/subclass_compiletest/06-no-auto-send-sync-with-non-send-sync-ffi-parent.rs
+INDEXED src-tauri/vendor/glib/tests/subclass_compiletest/06-no-auto-send-sync-with-non-send-sync-ffi-parent.stderr
+INDEXED src-tauri/vendor/glib/tests/value.rs
+INDEXED src-tauri/vendor/gtk3-macros/.cargo_vcs_info.json
+INDEXED src-tauri/vendor/gtk3-macros/COPYRIGHT
+INDEXED src-tauri/vendor/gtk3-macros/Cargo.toml
+INDEXED src-tauri/vendor/gtk3-macros/Cargo.toml.orig
+INDEXED src-tauri/vendor/gtk3-macros/LICENSE
+INDEXED src-tauri/vendor/gtk3-macros/src/attribute_parser.rs
+INDEXED src-tauri/vendor/gtk3-macros/src/composite_template_derive.rs
+INDEXED src-tauri/vendor/gtk3-macros/src/lib.rs
+INDEXED src-tauri/vendor/gtk3-macros/src/util.rs
+INDEXED src-tauri/vendor/patches/glib-variant-str-iterator.patch
+INDEXED src-tauri/vendor/patches/native-syn-diagnostics.patch
+```
+
+## tests (569)
+
+```text
+INDEXED tests/__mocks__/odoo.ts
+INDEXED tests/admin-privilege-dialog.test.ts
+INDEXED tests/agent-api-bearer.integration.test.ts
+INDEXED tests/agent-body-admission.round5.test.mjs
+INDEXED tests/agent-deletion.test.ts
+INDEXED tests/agent-expiry-evidence.node.test.mjs
+INDEXED tests/agent-health-db.test.ts
+INDEXED tests/agent-health-pagination.contract.test.mjs
+INDEXED tests/agent-health.test.ts
+INDEXED tests/agent-heartbeat-pagination.test.ts
+INDEXED tests/agent-identity-isolation.integration.test.ts
+INDEXED tests/agent-lifecycle.integration.test.ts
+INDEXED tests/agent-presence-sweep-query.test.ts
+INDEXED tests/agent-registration.test.ts
+INDEXED tests/ambiguous-print-outcome.integration.test.ts
+INDEXED tests/api-error-contract.test.ts
+INDEXED tests/app-base-url.test.ts
+INDEXED tests/app-shell-landmarks.test.ts
+INDEXED tests/architectural-constraints-and-statuses.test.ts
+INDEXED tests/architecture-hardening.test.ts
+INDEXED tests/architecture-pg.test.ts
+INDEXED tests/audit-barrel-imports-offline.test.mjs
+INDEXED tests/audit-desktop-gateway-offline.test.mjs
+INDEXED tests/audit-fixes-2026-09.test.ts
+INDEXED tests/audit-gateway-memory-probe.test.mjs
+INDEXED tests/audit-gateway-offline.test.mjs
+INDEXED tests/audit-pos-offline.test.mjs
+INDEXED tests/audit-pos-outcomes.test.ts
+INDEXED tests/audit-printer-lifecycle-offline.test.mjs
+INDEXED tests/audit-repair-regressions.test.ts
+INDEXED tests/auth-401-split.contract.test.ts
+INDEXED tests/auth-login-operational.test.ts
+INDEXED tests/auth-rate-limit-fail-closed.test.ts
+INDEXED tests/auth-rate-limit.test.ts
+INDEXED tests/auth-register-existing-account.test.ts
+INDEXED tests/authentication-cutover.test.ts
+INDEXED tests/authorization-denial-logging.test.ts
+INDEXED tests/batch-status.test.ts
+INDEXED tests/billing-controls.test.ts
+PARTIAL tests/billing-entitlement-access.test.ts
+INDEXED tests/billing-log-contract.test.ts
+INDEXED tests/billing-portal-idempotency.test.ts
+INDEXED tests/billing-renewal-i18n.contract.test.ts
+INDEXED tests/billing-renewal-ui.test.ts
+INDEXED tests/billing-status-shell.contract.test.ts
+INDEXED tests/billing-truth.contract.test.ts
+INDEXED tests/bounded-query.test.ts
+INDEXED tests/browser-wait-cleanup.node.test.mjs
+INDEXED tests/button-link-behavior.test.ts
+INDEXED tests/canonicalize-order.test.ts
+INDEXED tests/capability-page-query.test.ts
+INDEXED tests/capability-pagination-route.test.ts
+INDEXED tests/certification-evidence.test.ts
+INDEXED tests/certification-flight.node.test.mjs
+INDEXED tests/certification-reconciliation.contract.test.mjs
+INDEXED tests/check-public-gateway.node.test.mjs
+INDEXED tests/ci-image-mirror-current-run.node.test.mjs
+INDEXED tests/ci-postgres-fallback.test.mjs
+INDEXED tests/ci-toolchain.contract.test.ts
+INDEXED tests/ci-tripwire.check.ts
+INDEXED tests/circuit-breaker.test.ts
+INDEXED tests/claim-token-redaction.test.ts
+INDEXED tests/client-stale-threshold.contract.test.mjs
+INDEXED tests/clipboard.test.ts
+INDEXED tests/compact-page-headers.contract.test.ts
+INDEXED tests/content-security-policy.test.ts
+INDEXED tests/continuation-credential-idempotency.node.test.mjs
+INDEXED tests/continuation-odoo-activation-revision.node.test.mjs
+INDEXED tests/control-plane-concurrency.integration.test.ts
+INDEXED tests/correlation-ids.test.ts
+INDEXED tests/csp-report-handler.test.ts
+INDEXED tests/csp-reporting-policy.test.ts
+INDEXED tests/csp-style-nonce.test.ts
+INDEXED tests/csrf-origin.test.ts
+INDEXED tests/current-run-pos.node.test.mjs
+INDEXED tests/current-run-report.node.test.mjs
+INDEXED tests/current-run-sale-details.node.test.mjs
+INDEXED tests/customer-platform-separation.contract.test.ts
+INDEXED tests/customer-recovery-ui.test.ts
+INDEXED tests/customer-ux-contract.test.ts
+INDEXED tests/customer-workspace-options.integration.test.ts
+INDEXED tests/customer-workspace-options.test.ts
+INDEXED tests/dashboard-active-job-evidence.test.ts
+INDEXED tests/dashboard-billing-usage.test.ts
+INDEXED tests/dashboard-copy-localization.contract.test.mjs
+INDEXED tests/dashboard-date-i18n.contract.test.ts
+INDEXED tests/dashboard-feedback-ui.test.ts
+INDEXED tests/dashboard-fleet-pagination.contract.test.mjs
+INDEXED tests/dashboard-payload-projection.test.ts
+INDEXED tests/dashboard-printer-authority.test.ts
+INDEXED tests/dashboard-query-bounds.contract.test.mjs
+INDEXED tests/dashboard-reprint-contract.test.ts
+INDEXED tests/database-clock.integration.test.ts
+INDEXED tests/database-clock.test.ts
+INDEXED tests/debugging-robustness.contract.test.ts
+INDEXED tests/deep-review-contract.test.ts
+INDEXED tests/defect-remediation-exhaustive.test.ts
+INDEXED tests/deployment-security-contract.test.ts
+INDEXED tests/desired-state-heartbeat-negotiation.test.ts
+INDEXED tests/desired-state-pagination.test.ts
+INDEXED tests/desktop-admin-recovery.contract.test.ts
+INDEXED tests/desktop-agent-date-direction.contract.test.ts
+INDEXED tests/desktop-auth-contract.test.ts
+INDEXED tests/desktop-bounded-startup.contract.test.ts
+INDEXED tests/desktop-browser-headers.test.mjs
+INDEXED tests/desktop-error-messages.test.ts
+INDEXED tests/desktop-file-output.test.ts
+INDEXED tests/desktop-fleet-count.contract.test.mjs
+INDEXED tests/desktop-fleet-pagination.test.ts
+INDEXED tests/desktop-health-ui.contract.test.ts
+INDEXED tests/desktop-job-response.test.ts
+INDEXED tests/desktop-job-timeline.test.ts
+INDEXED tests/desktop-live-details.test.ts
+INDEXED tests/desktop-preview-startup.test.mjs
+INDEXED tests/desktop-printer-sharing.test.ts
+INDEXED tests/desktop-printer-type.test.ts
+INDEXED tests/desktop-refresh-reliability.contract.test.ts
+INDEXED tests/desktop-subscription-navigation.contract.test.ts
+INDEXED tests/desktop-ui-smoke.test.ts
+INDEXED tests/diagnostic-operation.node.test.mjs
+INDEXED tests/diagnostic-payload-parity.test.ts
+INDEXED tests/dialog-certification-ux.test.ts
+INDEXED tests/dialog-isolation.test.ts
+INDEXED tests/discovery-agent-ownership.contract.test.ts
+INDEXED tests/discovery-approval.test.ts
+INDEXED tests/discovery-commit-f013.test.mjs
+INDEXED tests/discovery-identity.integration.test.ts
+INDEXED tests/discovery-ipp-identity.round5.test.mjs
+INDEXED tests/discovery-report-fencing.round5.test.mjs
+INDEXED tests/discovery-security.test.ts
+INDEXED tests/discovery-unit.test.ts
+INDEXED tests/discovery-verify-snapshot-f014.test.mjs
+INDEXED tests/dos-hardening-contract.test.ts
+INDEXED tests/e2e-job-flow.test.ts
+INDEXED tests/email-auth-token-lifetime.integration.test.ts
+INDEXED tests/email-retry-idempotency.round5.test.mjs
+INDEXED tests/entitlement-labels.test.ts
+INDEXED tests/f017-fetch-body-integration.test.mjs
+INDEXED tests/fixtures/odoo19-native-order-change.mjs
+INDEXED tests/fixtures/odoo19-native-update-last-order-change.txt
+INDEXED tests/fixtures/receipt-geometry.html
+INDEXED tests/fleet-api-pagination.contract.test.mjs
+INDEXED tests/fleet-cursor-route.test.ts
+INDEXED tests/font-assets.node.test.mjs
+INDEXED tests/forgot-password-persistence.test.ts
+INDEXED tests/form-accessibility.test.ts
+INDEXED tests/forwarded-ip.test.ts
+INDEXED tests/fresh-printing-admission.test.mjs
+INDEXED tests/gateway-agent-console.contract.test.ts
+PARTIAL tests/gateway-auth-ui.node.test.mjs
+INDEXED tests/gateway-connectivity-state.test.ts
+INDEXED tests/gateway-console-metadata.test.ts
+INDEXED tests/gateway-control-lock-order.test.ts
+INDEXED tests/gateway-image-healthcheck.node.test.mjs
+INDEXED tests/gateway-maintenance-and-input.node.test.mjs
+INDEXED tests/gateway-origin-printer-capability.node.test.mjs
+INDEXED tests/gateway-runtime-architecture.test.ts
+INDEXED tests/gateway-server-message.test.ts
+INDEXED tests/gateway-shutdown-after.node.test.mjs
+INDEXED tests/gateway-soak-accounting.node.test.mjs
+INDEXED tests/gateway-soak-payloads.node.test.mjs
+INDEXED tests/gateway-soak-source.node.test.mjs
+INDEXED tests/gateway-ws-authority.test.ts
+INDEXED tests/health-and-installer-safety.contract.test.mjs
+INDEXED tests/health-freshness-contract.test.ts
+INDEXED tests/health.test.ts
+INDEXED tests/heartbeat-billing-degraded.integration.test.ts
+INDEXED tests/heartbeat-cross-agent-identity.test.ts
+INDEXED tests/heartbeat-enabled.test.ts
+INDEXED tests/heartbeat-printer-alias.unit.test.ts
+INDEXED tests/helpers/authorization-vm.mjs
+INDEXED tests/helpers/odoo-printer-geometry.mjs
+INDEXED tests/helpers/odoo-recovery-indexeddb.mjs
+INDEXED tests/helpers/pg.ts
+INDEXED tests/helpers/platform-session.ts
+INDEXED tests/helpers/printer-geometry.ts
+INDEXED tests/helpers/printer-verification.ts
+INDEXED tests/helpers/printing-contract-vm.mjs
+INDEXED tests/helpers/test-secrets.ts
+INDEXED tests/helpers/workspace-session-vm.mjs
+INDEXED tests/helpers/workspace-session.ts
+INDEXED tests/i18n-date-only.test.ts
+INDEXED tests/i18n-own-properties.test.ts
+INDEXED tests/icon-assets-contract.test.ts
+INDEXED tests/inventory-snapshot-heartbeat.test.ts
+INDEXED tests/inventory-snapshot-version.test.ts
+INDEXED tests/invitation-onboarding.integration.test.ts
+INDEXED tests/invitation-password-login.test.ts
+INDEXED tests/job-cleanup-behavior.integration.test.ts
+INDEXED tests/job-cleanup-contract.test.ts
+INDEXED tests/job-diagnostic-payload-round3.test.mjs
+INDEXED tests/job-diagnostic-payload.test.ts
+INDEXED tests/job-maintenance.test.ts
+INDEXED tests/job-payload-authorization.test.ts
+INDEXED tests/job-release-guard.integration.test.ts
+INDEXED tests/job-search-normalization.test.ts
+INDEXED tests/job-status-browser.test.ts
+INDEXED tests/job-status-postgres-concurrency.test.ts
+INDEXED tests/job-status.test.ts
+INDEXED tests/job-timeline.test.ts
+INDEXED tests/kitchen-edit-in-flight-f012.test.mjs
+INDEXED tests/kitchen-lifecycle-runtime.test.mjs
+INDEXED tests/kitchen-ownership-runtime.test.mjs
+INDEXED tests/legacy-print-authorization.test.ts
+INDEXED tests/lifecycle-delivery.test.ts
+INDEXED tests/lint-coverage.node.test.mjs
+INDEXED tests/lint-react-deprecations.node.test.mjs
+INDEXED tests/locale-cookie-security.test.ts
+INDEXED tests/log-credential-redaction.test.mjs
+INDEXED tests/log-level.test.ts
+INDEXED tests/login-workspace-choice.test.ts
+INDEXED tests/logout-fail-safe.test.ts
+INDEXED tests/mailbox-owner-password-setup.test.ts
+INDEXED tests/manager-actor-commit-f013.contract.test.mjs
+INDEXED tests/manager-auth.test.ts
+INDEXED tests/manager-producer-commit-f013.test.mjs
+INDEXED tests/manual-billing-history-migration.integration.test.ts
+INDEXED tests/manual-calendar-date.test.ts
+INDEXED tests/manual-only-billing-migration.integration.test.ts
+INDEXED tests/manual-only-billing-schema.contract.test.ts
+INDEXED tests/manual-plan-pricing.test.ts
+INDEXED tests/manual-subscription-input.test.ts
+INDEXED tests/manual-subscription-state.test.ts
+INDEXED tests/manual-subscriptions.integration.test.ts
+INDEXED tests/metadata-destination.round5.test.mjs
+INDEXED tests/metrics-failure.test.ts
+INDEXED tests/metrics-machine-auth.integration.test.ts
+INDEXED tests/metrics-machine-auth.test.ts
+INDEXED tests/metrics-sanitize.test.ts
+INDEXED tests/metrics-startup.node.test.mjs
+INDEXED tests/migration-hash-audit.test.ts
+INDEXED tests/migration-journal.test.ts
+INDEXED tests/migration-upgrade.integration.test.ts
+INDEXED tests/mobile-appbar.contract.node.test.mjs
+INDEXED tests/multi-instance-gateway.test.ts
+INDEXED tests/multi-tenant-selection.test.ts
+INDEXED tests/native_odoo_scope_regressions.py
+INDEXED tests/nav.test.ts
+INDEXED tests/network-address.test.ts
+INDEXED tests/new-password-unicode-policy.test.ts
+INDEXED tests/o-as1-save-deadline.regression.test.mjs
+INDEXED tests/o9-print-recovery.regression.test.mjs
+INDEXED tests/odoo-accepted-replay-purity.integration.test.ts
+INDEXED tests/odoo-addon-static.test.ts
+INDEXED tests/odoo-auth-database-optional.test.ts
+INDEXED tests/odoo-auto-enrollment.integration.test.ts
+INDEXED tests/odoo-auto-enrollment.test.ts
+INDEXED tests/odoo-billing-boundary.contract.test.ts
+INDEXED tests/odoo-configuration-billing-race.integration.test.ts
+INDEXED tests/odoo-cross-tab-reservation.node.test.mjs
+INDEXED tests/odoo-frontend-automation.node.test.mjs
+INDEXED tests/odoo-gateway-activation-sync.test.ts
+INDEXED tests/odoo-kitchen-recovery.node.test.mjs
+INDEXED tests/odoo-replay-admission-contention.integration.test.ts
+INDEXED tests/odoo-runtime-discovery-billing.integration.test.ts
+INDEXED tests/odoo-simulation.test.ts
+INDEXED tests/odoo-status-authority.test.ts
+INDEXED tests/odoo-status-concurrency.integration.test.ts
+INDEXED tests/odoo-status-identity.integration.test.ts
+INDEXED tests/odoo-universal-printing.node.test.mjs
+INDEXED tests/odoo-version-neutral-copy.test.ts
+INDEXED tests/odoo-view-architecture.test.ts
+INDEXED tests/odoo-workspace-contract.test.ts
+INDEXED tests/odoo_geometry_fixture.py
+INDEXED tests/odoo_verification_fixture.py
+INDEXED tests/onboarding-state-hydration.contract.test.mjs
+INDEXED tests/pairing-code-contract.test.ts
+INDEXED tests/pairing-code-fence.integration.test.ts
+INDEXED tests/pairing-origin.contract.test.ts
+INDEXED tests/password-auth-migration.integration.test.ts
+INDEXED tests/password-only-auth.integration.test.ts
+INDEXED tests/password-only-login.routes.node.test.mjs
+INDEXED tests/password-screening-routes.test.ts
+INDEXED tests/password-screening.test.ts
+INDEXED tests/payload.test.ts
+INDEXED tests/perf-cache-query-improvements.test.ts
+INDEXED tests/pg-concurrent-claim.mjs
+INDEXED tests/phase2-routing-fallback.test.ts
+INDEXED tests/physical-history-migration.integration.test.ts
+INDEXED tests/physical-outcome.test.ts
+INDEXED tests/physical-printer-identity.test.ts
+INDEXED tests/plan-entitlements.test.ts
+INDEXED tests/platform-action-confirmation.test.ts
+INDEXED tests/platform-bootstrap-cutover.test.ts
+INDEXED tests/platform-control-plane.test.ts
+INDEXED tests/platform-dashboard-integrity.test.ts
+INDEXED tests/platform-database-explorer.test.ts
+INDEXED tests/platform-database-route.test.ts
+INDEXED tests/platform-delete-integrity.integration.test.ts
+INDEXED tests/platform-explorer-pagination.integration.test.ts
+INDEXED tests/platform-fleet-status.contract.test.mjs
+INDEXED tests/platform-integrations-control.node.test.mjs
+INDEXED tests/platform-live-queue.node.test.mjs
+INDEXED tests/platform-login-cancellation.node.test.mjs
+INDEXED tests/platform-mutation-authorization.test.ts
+INDEXED tests/platform-operations-history.node.test.mjs
+INDEXED tests/platform-operations-ui.test.ts
+READ tests/platform-owner-invitation-session.integration.test.ts
+INDEXED tests/platform-stats-optimization.test.ts
+INDEXED tests/platform-stats.test.ts
+INDEXED tests/poll-claim-budget.contract.test.mjs
+INDEXED tests/pos-receipt-font.test.ts
+INDEXED tests/postgres-role-profile.node.test.mjs
+INDEXED tests/print-admission-presentation.node.test.mjs
+INDEXED tests/print-certification.test.ts
+INDEXED tests/print-e2e-regression.test.ts
+INDEXED tests/print-idempotency.test.ts
+INDEXED tests/print-job-database-error-logging.test.ts
+INDEXED tests/print-latency-report.node.test.mjs
+INDEXED tests/print-paths-runtime.regression.test.mjs
+INDEXED tests/print-payload-contract.test.ts
+INDEXED tests/print-quota.test.ts
+INDEXED tests/print-responsive-screens.contract.test.mjs
+INDEXED tests/printer-capability-matrix.test.ts
+INDEXED tests/printer-desired-state.test.ts
+INDEXED tests/printer-destination-security.test.ts
+INDEXED tests/printer-diagnostic-recovery.integration.test.ts
+INDEXED tests/printer-eligibility.test.ts
+INDEXED tests/printer-endpoint-admin.integration.test.ts
+INDEXED tests/printer-geometry-contract.test.ts
+INDEXED tests/printer-geometry-regression.test.ts
+INDEXED tests/printer-geometry-settings.test.ts
+INDEXED tests/printer-geometry.integration.test.ts
+INDEXED tests/printer-language-badges.test.ts
+INDEXED tests/printer-model-alias.test.ts
+INDEXED tests/printer-operational-verification-ui.test.ts
+INDEXED tests/printer-operational-verification.integration.test.ts
+INDEXED tests/printer-operational-verification.test.ts
+INDEXED tests/printer-presentation.test.ts
+INDEXED tests/printer-sharing-validation.test.ts
+INDEXED tests/printer-sharing.integration.test.ts
+INDEXED tests/printer-virtual.test.ts
+INDEXED tests/printing-protocol-end-to-end.contract.test.mjs
+INDEXED tests/production-audit-regressions.test.ts
+INDEXED tests/production-fixes-contract.test.ts
+INDEXED tests/production-hardening-contract.test.ts
+INDEXED tests/production-source-audit.py
+INDEXED tests/production-type-safety.contract.test.ts
+INDEXED tests/queue-payload-budget.test.ts
+INDEXED tests/queue-uncompressed-budget.regression.test.mjs
+INDEXED tests/quota-dialog-render.test.ts
+INDEXED tests/receipt-geometry-v3.test.ts
+INDEXED tests/receipt-width.test.ts
+INDEXED tests/release-readiness-access.test.ts
+INDEXED tests/release-readiness-copy.contract.test.mjs
+INDEXED tests/release-readiness-truth.contract.test.ts
+INDEXED tests/reporters/skip-summary.ts
+INDEXED tests/request-guard-http.test.ts
+INDEXED tests/requeue-notify-contract.test.ts
+INDEXED tests/resend-verification-persistence.test.ts
+INDEXED tests/resend-verification.test.ts
+INDEXED tests/reset-password-recovery-ui.test.ts
+INDEXED tests/responsive-layout.contract.node.test.mjs
+INDEXED tests/routing-availability.test.ts
+INDEXED tests/routing-doctype-parity.test.ts
+INDEXED tests/routing-virtual-regression.test.ts
+INDEXED tests/rtl-agreement.test.ts
+INDEXED tests/runtime-agent-picker.contract.test.ts
+INDEXED tests/runtime-constraints.test.ts
+INDEXED tests/runtime-secret-cache.test.ts
+INDEXED tests/s06-identity-policy.node.test.mjs
+INDEXED tests/saas-control-plane-contract.test.ts
+INDEXED tests/saas-copy-progressive-disclosure.test.ts
+INDEXED tests/saas-unified-ux.test.ts
+INDEXED tests/security-credential-response.contract.test.ts
+INDEXED tests/security-scan-offline-workflows.contract.test.ts
+INDEXED tests/server-http-acceptance.test.ts
+INDEXED tests/server-http-boundary.test.ts
+INDEXED tests/service-status-observation.test.ts
+INDEXED tests/session-account-inventory.integration.test.ts
+INDEXED tests/session-account-ui.test.ts
+INDEXED tests/session-admission-client.test.ts
+INDEXED tests/session-body-timeout.round5.test.mjs
+INDEXED tests/session-cookie-security.test.ts
+INDEXED tests/session-inventory.integration.test.ts
+INDEXED tests/session-legacy-fallback.integration.test.ts
+INDEXED tests/session-login-replacement.integration.test.ts
+INDEXED tests/session-logout.integration.test.ts
+INDEXED tests/session-refresh-recovery.test.ts
+INDEXED tests/session-resource-repair.test.mjs
+INDEXED tests/session-tokens.integration.test.ts
+INDEXED tests/shared-ui-interaction.test.ts
+INDEXED tests/shared-vocabulary.contract.test.ts
+INDEXED tests/signup-api-keys-lifecycle.contract.test.ts
+INDEXED tests/stale-threshold.test.ts
+INDEXED tests/status-evidence-presentation.contract.test.mjs
+INDEXED tests/status-observability.contract.test.mjs
+INDEXED tests/subscription-editor-renewal.test.ts
+INDEXED tests/subscription-request-lifecycle.contract.test.ts
+INDEXED tests/subscription-saas-ux.contract.test.ts
+INDEXED tests/sweep-limit.regression.test.mjs
+INDEXED tests/system-contracts.test.ts
+INDEXED tests/tailgrids-ui-current-run.node.test.mjs
+INDEXED tests/team-authority-cutover.test.ts
+PARTIAL tests/team-authorization.test.ts
+READ tests/team-invitation-authority.test.ts
+READ tests/team-invitation-restoration.contract.test.ts
+INDEXED tests/team-pagination.contract.test.mjs
+PARTIAL tests/team-role-i18n.contract.test.ts
+INDEXED tests/tenant-batch-fencing.integration.test.ts
+INDEXED tests/tenant-batch-fencing.test.ts
+INDEXED tests/tenant-isolation-extended.integration.test.ts
+INDEXED tests/tenant-isolation.test.ts
+INDEXED tests/tenant-lifecycle.integration.test.ts
+INDEXED tests/tenant-lifecycle.unit.test.ts
+INDEXED tests/tenant-scoped-session-revocation.integration.test.ts
+INDEXED tests/tenant-suspension-socket.test.ts
+INDEXED tests/test-print-identity.contract.test.ts
+INDEXED tests/test-suite-classification.contract.test.ts
+INDEXED tests/test_a2_offline_requeue.py
+INDEXED tests/test_a8_a9_a11_odoo_submit.py
+INDEXED tests/test_agent_print_diagnostic_media.py
+INDEXED tests/test_audit_repair_regressions.py
+INDEXED tests/test_ci_audit_fixture.py
+INDEXED tests/test_ci_change_scopes.py
+INDEXED tests/test_ci_proxy_boundary.py
+INDEXED tests/test_codeql_sarif_gate.py
+INDEXED tests/test_complete_audit_permissions.py
+INDEXED tests/test_compose_build_contexts.py
+INDEXED tests/test_compose_release_orchestration.py
+READ    tests/test_db_docs_scanner.py
+INDEXED tests/test_desktop_agent_version_round3.py
+INDEXED tests/test_desktop_gateway_draft_contract.py
+INDEXED tests/test_desktop_gateway_io.py
+INDEXED tests/test_desktop_pairing_serialization.py
+INDEXED tests/test_desktop_tray_contract.py
+INDEXED tests/test_docker_context_hygiene.py
+INDEXED tests/test_f010_report_binding_identity.py
+INDEXED tests/test_f016_raw_label_binding.py
+INDEXED tests/test_f018_odoo_outcome_truth.py
+INDEXED tests/test_f019_physical_outcome_proof.py
+INDEXED tests/test_f020_poll_status_fairness.py
+INDEXED tests/test_f021_gateway_pending_clock.py
+INDEXED tests/test_f022_f023_windows_delivery_guards.py
+INDEXED tests/test_f024_desktop_health_projection.py
+INDEXED tests/test_f025_desktop_billing_route.py
+READ    tests/test_f026_operational_documentation.py
+INDEXED tests/test_f031_pos_outcome_identity.py
+INDEXED tests/test_f032_style_documentation.py
+INDEXED tests/test_final_security_hardening.py
+INDEXED tests/test_gateway_activation_robustness.py
+INDEXED tests/test_gateway_destination_policy.py
+INDEXED tests/test_go_cleanup_sql_round3.py
+INDEXED tests/test_kitchen_durable_outcomes.py
+INDEXED tests/test_kitchen_idempotency_fallback.py
+INDEXED tests/test_manual_status_sync_isolation.py
+INDEXED tests/test_o1_sale_details_fallback.py
+INDEXED tests/test_o2_binding_revalidation.py
+INDEXED tests/test_o6_intent_retention.py
+INDEXED tests/test_o7_gateway_url_opt_in.py
+INDEXED tests/test_odoo19_printing_static.py
+INDEXED tests/test_odoo_activation_cron_budget.py
+INDEXED tests/test_odoo_activation_rpc_guards.py
+INDEXED tests/test_odoo_async_boundaries.py
+INDEXED tests/test_odoo_company_branch_scope_static.py
+INDEXED tests/test_odoo_config_key_rotation_f015.py
+INDEXED tests/test_odoo_diagnostic_language.py
+INDEXED tests/test_odoo_discovery_response_safety.py
+INDEXED tests/test_odoo_dispatch_exception_phase.py
+INDEXED tests/test_odoo_durable_identity_security.py
+INDEXED tests/test_odoo_fallback_authorization.py
+INDEXED tests/test_odoo_force_reprint_key_bounds.py
+INDEXED tests/test_odoo_gateway_origin_identity.py
+INDEXED tests/test_odoo_gateway_pinned_transport.py
+INDEXED tests/test_odoo_gateway_real_tls.py
+INDEXED tests/test_odoo_gateway_response_bounds.py
+INDEXED tests/test_odoo_global_scope_rules.py
+INDEXED tests/test_odoo_hardened_entrypoint.py
+INDEXED tests/test_odoo_healthcheck.py
+INDEXED tests/test_odoo_intent_company_upgrade.py
+INDEXED tests/test_odoo_migration_cache.py
+INDEXED tests/test_odoo_os_security_profile.py
+INDEXED tests/test_odoo_pairing_identity.py
+INDEXED tests/test_odoo_policy_intent_safety_current_run.py
+INDEXED tests/test_odoo_printer_protocol_alias.py
+INDEXED tests/test_odoo_printer_sharing.py
+INDEXED tests/test_odoo_rate_limit_retry_budget.py
+INDEXED tests/test_odoo_raw_command_admission_round4.py
+INDEXED tests/test_odoo_receipt_geometry_v3.py
+INDEXED tests/test_odoo_receipt_replay_geometry.py
+INDEXED tests/test_odoo_reconciliation_audit.py
+INDEXED tests/test_odoo_report_error_language.py
+INDEXED tests/test_odoo_runtime_capabilities_round3.py
+INDEXED tests/test_odoo_runtime_localization.py
+INDEXED tests/test_odoo_status_cron_budget.py
+INDEXED tests/test_odoo_status_installation_auth.py
+INDEXED tests/test_odoo_submission_cron_isolation.py
+INDEXED tests/test_odoo_test_results.py
+INDEXED tests/test_odoo_transport_error_secrets.py
+INDEXED tests/test_odoo_universal_printing.py
+INDEXED tests/test_payload_admission_round3.py
+INDEXED tests/test_policy_fanout_key_resilience.py
+INDEXED tests/test_pos_billing_expiry_policy.py
+INDEXED tests/test_pos_receipt_font_rendering.py
+INDEXED tests/test_postgres_dr_contract.py
+INDEXED tests/test_production_audit_regressions.py
+INDEXED tests/test_receipts_repair_parity.py
+INDEXED tests/test_report_outcome_regression.py
+INDEXED tests/test_s06_auto_enrollment.py
+READ    tests/test_s06_migration_guards.py
+INDEXED tests/test_s06_odoo_outbox_freeze.py
+INDEXED tests/test_s06_versioned_keys.py
+INDEXED tests/test_secure_image_dependency_locks.py
+INDEXED tests/test_security_contracts.py
+INDEXED tests/test_server_first_run_runtime_commands.py
+INDEXED tests/test_status_sync_savepoint_round3.py
+INDEXED tests/test_tauri_command_acl_contract.py
+INDEXED tests/test_tauri_std_audit.py
+INDEXED tests/test_translation_occurrences_audit.py
+INDEXED tests/test_translation_xml_security.py
+INDEXED tests/test_trivy_baseline.py
+INDEXED tests/test_ui_copy_checker.py
+INDEXED tests/test_ui_overlay_regressions.py
+INDEXED tests/test_v4_odoo_customer_presentation.py
+INDEXED tests/test_v5_original_font_restoration.py
+INDEXED tests/test_v5_runtime_scope_hardening.py
+INDEXED tests/test_windows_change_filter_recovery.py
+INDEXED tests/test_windows_installer_lifecycle_trace.py
+INDEXED tests/test_windows_release_builder_guards.py
+INDEXED tests/test_windows_release_validation.py
+INDEXED tests/theme-consistency.test.ts
+INDEXED tests/token-endpoint-rate-scope.test.ts
+INDEXED tests/tooltip-overlay.test.ts
+INDEXED tests/top-navbar-responsive.contract.test.ts
+INDEXED tests/transport-budget.contract.test.ts
+INDEXED tests/trusted-proxy.test.ts
+INDEXED tests/typography-system.test.ts
+INDEXED tests/ui-axe.test.ts
+INDEXED tests/ui-experience.contract.test.ts
+INDEXED tests/ui-overlay-and-job-evidence.contract.test.ts
+INDEXED tests/v4-arabic-fallback.test.ts
+INDEXED tests/v4-customer-experience.test.ts
+INDEXED tests/v4-desktop-setup.test.ts
+INDEXED tests/v4-home-subscription.test.ts
+INDEXED tests/v4-odoo-errors.test.ts
+INDEXED tests/v4-onboarding.test.ts
+INDEXED tests/v4-pricing.test.ts
+INDEXED tests/verify-email-feedback-ui.test.ts
+INDEXED tests/virtual-writer-version-skew.test.ts
+INDEXED tests/web-request-deadline.test.mjs
+INDEXED tests/windows-desktop-admin-startup.contract.test.ts
+INDEXED tests/windows-installer-process-ownership.contract.test.mjs
+INDEXED tests/windows-native-exit-guards.ps1
+INDEXED tests/windows-release-builder-helpers.ps1
+INDEXED tests/windows-release-evidence-helpers.ps1
+INDEXED tests/windows-service-ownership.contract.test.mjs
+INDEXED tests/windows-service-recovery-native.contract.test.mjs
+INDEXED tests/windows-service-recovery.test.ts
+INDEXED tests/windows-service-registration-ownership.contract.test.mjs
+INDEXED tests/windows-smoke-acl.contract.test.ts
+INDEXED tests/windows-uninstall-ownership-f011.contract.test.mjs
+INDEXED tests/windows-uninstall-resilience.contract.test.mjs
+INDEXED tests/workspace-full-access-policy.test.ts
+PARTIAL tests/workspace-invitation-independent.integration.test.ts
+INDEXED tests/workspace-route-isolation.test.ts
+INDEXED tests/workspace-security-fetch.node.test.mjs
+INDEXED tests/workspace-security-ui.node.test.mjs
+INDEXED tests/workspace-session-security.integration.test.ts
+INDEXED tests/ws-ack-tenant-fence.integration.test.ts
+INDEXED tests/ws-claim-delivery.test.ts
+INDEXED tests/ws-envelope-budget.test.ts
+INDEXED tests/ws-listener-setup-race.test.ts
+INDEXED tests/ws-notification-admission.test.ts
+INDEXED tests/ws-notify-fence.test.ts
+INDEXED tests/ws-response-security-headers.test.ts
+INDEXED tests/ws-route-ownership.test.ts
+INDEXED tests/ws-session-fencing.test.ts
+INDEXED tests/ws-shutdown-drain.integration.test.ts
+INDEXED tests/ws-socket-cap.test.ts
+```
+
+## typography (1)
+
+```text
+INDEXED typography/tokens.css
+```
+
+## Maintenance protocol
+
+Before editing, verify the current main HEAD, refresh this list from `git ls-files` or an untruncated Git tree, and preserve inspection statuses only for unchanged files. On each substantive change record the component contract, affected producer/consumer, migration strategy, regression test command plus actual output, and unresolved risks in [SYSTEM_UNIFICATION_NOTEBOOK.md](SYSTEM_UNIFICATION_NOTEBOOK.md). Do not mark `VERIFIED` without execution evidence tied to an exact commit, environment and test scope.
+
+
+## 2026-10-28 additive change coverage (UTC calendar-month credits)
+
+The **original snapshot counts above remain historical** for `main@4f48736f`; this addendum indexes files newly added in the forward-only change. Changes do not imply the entire repository was reviewed.
+
+```text
+AUTHORED drizzle/0102_calendar_month_print_allowance.sql
+AUTHORED drizzle/meta/0102_calendar_month_print_allowance_snapshot.json
+PARTIAL  src/lib/quota-cycle.ts
+PARTIAL  src/lib/entitlements.ts
+PARTIAL  src/app/api/platform/tenants/[id]/route.ts
+PARTIAL  src/app/api/platform/subscriptions/route.ts
+PARTIAL  src/app/billing/page.tsx
+PARTIAL  src/lib/manual-usage-report.ts
+PARTIAL  src/db/schema.ts
+PARTIAL  src/i18n/messages/v4-onboarding.ts
+PARTIAL  src/i18n/messages/v4-admin.ts
+PARTIAL  tests/print-quota.test.ts
+PARTIAL  tests/manual-subscriptions.integration.test.ts
+PARTIAL  tests/manual-only-billing-schema.contract.test.ts
+PARTIAL  tests/test_s06_migration_guards.py
+PARTIAL  tests/test_f026_operational_documentation.py
+PARTIAL  drizzle/meta/_journal.json
+PARTIAL  README.md
+PARTIAL  API.md
+PARTIAL  ARCHITECTURE.md
+PARTIAL  MIGRATION.md
+PARTIAL  OPERATIONS.md
+PARTIAL  docs/DATABASE.md
+PARTIAL  docs/engineering/SYSTEM_UNIFICATION_NOTEBOOK.md
+PARTIAL  docs/engineering/FILE_COVERAGE_LEDGER.md
+```
+
+Evidence: `tests/print-quota.test.ts` and `tests/manual-subscriptions.integration.test.ts` include actual PostgreSQL assertions and require CI; the local isolated SQL-builder RED→GREEN only proves query composition. All other tracked source files retain their existing INDEXED/PARTIAL statuses until reviewed with test evidence.
+
+
+#### 2026-10-28 monthly history follow-up
+
+```text
+PARTIAL src/lib/manual-usage-report.ts — calendar-only history projection; preserves raw 0101 ledger
+PARTIAL tests/manual-subscriptions.integration.test.ts — seeded overlapping rolling/calendar history regression
+```
+
+Both paths are **PARTIAL** until actual PostgreSQL integration CI results are attached; this is not a sign-off of all customer usage reports.
+
+
+### AUTH-LIVE-DIRECTORY-2026-10-28 partial route coverage
+
+Original full-path inventory counts above are historical and remain unchanged; reviewed behavior is specifically the authenticated GET/read boundary, not the complete route implementation. These files must not be marked DONE or VERIFIED on code inspection alone.
+
+```text
+PARTIAL src/app/api/team/members/route.ts — tenant+session fenced GET; PATCH/DELETE not audited here
+PARTIAL src/app/api/odoo/installations/route.ts — installation inventory GET guarded; POST reviewed earlier for billing/key assignment
+PARTIAL src/app/api/subscription-requests/route.ts — commercial owner GET fenced; POST previously protected
+PARTIAL src/app/api/billing/status/route.ts — owner-only contract expiry projection fenced
+AUTHORED tests/team-directory-live-authority.integration.test.ts — PostgreSQL session and lifecycle race
+PARTIAL tests/team-platform-list-contract.test.ts — bounded directory unit compatibility
+AUTHORED tests/odoo-installation-directory-live-authority.integration.test.ts — PostgreSQL installation read races
+AUTHORED tests/subscription-owner-directory-live-authority.integration.test.ts — owner/member session downgrade race
+AUTHORED tests/billing-status-live-authority.integration.test.ts — commercial field role isolation race
+```
+
+Source commits and residual risk are recorded in [SYSTEM_UNIFICATION_NOTEBOOK.md](SYSTEM_UNIFICATION_NOTEBOOK.md) under AUTH-LIVE-DIRECTORY-2026-10-28. Every integration test still needs exact-SHA CI output. No live customer data or historical migration was rewritten.
+
+
+#### AUTH-LIVE-DIRECTORY-FOLLOWUP-2026-10-28
+
+```text
+PARTIAL src/app/api/odoo/keys/route.ts — GET live actor/tenant read and no-store metadata; write routes not exhaustively reviewed
+PARTIAL src/app/api/odoo/configuration/route.ts — GET fenced; PATCH existing revision flow not fully verified
+PARTIAL src/app/api/billing/usage/route.ts — owner-only GET transactional plan, quotas, counters
+AUTHORED tests/odoo-keys-inventory-live-authority.integration.test.ts — PG revoke/suspend and private caching boundary
+AUTHORED tests/odoo-configuration-inventory-live-authority.integration.test.ts — PG activation directory races
+AUTHORED tests/billing-usage-live-owner.integration.test.ts — owner role/session/lifecycle races
+```
+
+Those paths remain **PARTIAL/AUTHORED**, not VERIFIED; full PostgreSQL, native Windows printer, real POS and Odoo integration execution remains outstanding. See engineering notebook follow-up for exact commits.
+
+
+#### AUTH-ODOO-LEGACY-PREVIEW-2026-10-28
+
+```text
+PARTIAL src/app/api/odoo/installations/resolutions/route.ts — transactionally fenced GET reconciliation preview only; POST not exhaustively reviewed
+AUTHORED tests/odoo-legacy-resolution-inventory-live-authority.integration.test.ts — PostgreSQL suspend and session revocation race
+```
+
+Historical receipt lookup rules are unchanged. Exact-SHA PostgreSQL CI confirmation and multi-worker collision tests remain NOT RUN; see SYSTEM_UNIFICATION_NOTEBOOK.md.
+
+#### CONSOLE-READ-AUTHORITY-010 additive files / existing read routes
+
+Current main changes do not change the historical full-tree inventory count above. Only the listed GET/read boundaries were code-reviewed; none is VERIFIED without exact-SHA CI.
+
+```text
+AUTHORED src/lib/console-read-authority.ts — shared tenant/manager/Agent locked read guard
+PARTIAL  src/app/api/agents/route.ts — Agent fleet GET fenced only
+PARTIAL  src/app/api/printers/route.ts — printer fleet GET fenced only
+PARTIAL  src/app/api/jobs/route.ts — job-history GET fenced; DELETE still separate
+PARTIAL  src/app/api/jobs/[id]/route.ts — live/archived detail + payload GET
+PARTIAL  src/lib/job-history.ts — optional transactional SQL executor
+PARTIAL  src/app/api/agents/[id]/route.ts — detail GET source separately updated on main
+PARTIAL  src/app/api/printers/[id]/route.ts — detail GET source separately updated on main
+AUTHORED tests/job-detail-live-authority.integration.test.ts — real PostgreSQL suspension/revocation and print payload policy
+AUTHORED tests/fleet-live-authorization.integration.test.ts — Agent/printer/job history + individual detail auth races
+PARTIAL  .github/workflows/ci.yml — bounded pending main workflow and per-SHA job rules
+PARTIAL  .github/workflows/docker.yml — bounded pending workflow, image verification retained
+PARTIAL  .github/workflows/build-windows.yml — bounded pending workflow, native tests retained
+PARTIAL  .github/workflows/security-supply-chain.yml — bounded pending workflow, security retained
+PARTIAL  .github/workflows/static-security.yml — bounded pending workflow, security retained
+PARTIAL  .github/workflows/native-backports.yml — bounded pending workflow, native tests retained
+PARTIAL  tests/ci-main-preserve-running-gates.test.mjs — workflow policy regression, CI pending
+```
+
+Source and contract: SYSTEM_UNIFICATION_NOTEBOOK.md CONSOLE-READ-AUTHORITY-010. Do not mark a path DONE/VERIFIED merely because the GitHub Contents API accepted a commit; transactional PostgreSQL RED/GREEN, typecheck, Go/Windows, Odoo and full latest-HEAD gates are not yet proven. No hardware printing or populated rollback rehearsal.
+
+
+#### AGENT-LEDGER-IMMUTABILITY-2026-10-28
+
+```text
+PARTIAL agent/internal/queue/queue.go — observed SQLite reservation and printing identity invariants, sentinel fix; no full-file signoff
+PARTIAL agent/internal/agent/agent.go — aligned Gateway-raw printer ledger identity across local alias conversion; no full-file signoff
+PARTIAL agent/internal/queue/queue_test.go — changed zero-byte retry fixture to use original immutable payload
+AUTHORED agent/internal/queue/job_identity_immutability_test.go — direct SQLite queued/failed identity and ACK-token regression (CI cancelled/unverified)
+```
+
+Evidence is detailed in [SYSTEM_UNIFICATION_NOTEBOOK.md](SYSTEM_UNIFICATION_NOTEBOOK.md) (`LEDGER-JOB-ID-IMMUTABILITY-2026-10-28`). Exact-head Go/Windows tests and physical print execution are NOT VERIFIED, so none of these paths is marked DONE.
+
+
+### SSR/ACTIONS-LIVE-READ-001 — authenticated read-path partial coverage (2026-10-28)
+
+```text
+PARTIAL src/lib/billing-page-snapshot.ts — new owner-only tenant/session-fenced subscription and quota snapshot
+PARTIAL src/app/billing/page.tsx — protected commercial SSR projection
+PARTIAL src/app/page.tsx — protected homepage workspace/owner plan SSR projection
+PARTIAL src/lib/dashboard-state.ts — single-transaction executor for fleet and live/archived job snapshot
+PARTIAL src/app/dashboard/page.tsx — protected fleet/dashboard SSR projection
+PARTIAL src/app/actions.ts — protected getDashboardState and getDashboardJobs refresh actions; other mutations not reaudited here
+PARTIAL tests/fleet-cursor-route.test.ts — repaired mock DB transaction boundary
+AUTHORED tests/billing-page-owner-snapshot.contract.test.ts — guard/order/source contract
+AUTHORED tests/billing-page-snapshot-live-owner.integration.test.ts — PG owner revoke/suspend/downgrade race
+AUTHORED tests/authenticated-home-current-authority.contract.test.ts — homepage SSR boundary
+AUTHORED tests/dashboard-current-authority.contract.test.ts — initial and refresh read fence contract
+AUTHORED tests/dashboard-current-authority.integration.test.ts — PG concurrent revocation and private job history
+PARTIAL tests/production-hardening-contract.test.ts — updated dashboard source guard expectation
+PARTIAL tests/test-suite-classification.contract.test.ts — explicit registry completeness enforcement
+PARTIAL vitest.test-groups.mts — 17 formerly orphaned DB suites plus 2 newly authored suites registered
+```
+
+Complete repository tree audit (untruncated) found all 71 integration-named files registered at the recorded head; tests still require PostgreSQL CI PASS. No source or schema-wide VERIFIED claim is implied. See [SYSTEM_UNIFICATION_NOTEBOOK.md](SYSTEM_UNIFICATION_NOTEBOOK.md) SSR/ACTIONS-LIVE-READ-001 for change references and residual risks.
+
+
+#### ODOO-EXACT-EXEC-2026-10-28 (partial behavior review, not release verified)
+
+These entries augment the original git-tree snapshot; the historical counts and indexed-but-unread paths above are not inflated to VERIFIED.
+
+```text
+PARTIAL odoo_addons/print_gateway/runtime_policy.py — exact UTF-8 printer ID and sharing predicates
+PARTIAL odoo_addons/print_gateway/models/binding.py — ORM printer target admission guard only
+PARTIAL odoo_addons/print_gateway/models/print_job.py — durable create_operation printer/key preservation only
+PARTIAL odoo_addons/print_gateway/models/print_router.py — fresh-cursor binding and receipt replay equality only
+AUTHORED tests/test_odoo_exact_printer_execution_identity.py — standalone AST behavioral regression
+AUTHORED tests/test_odoo_exact_operation_key_replay.py — standalone actual-method operation/replay and cursor regression
+PARTIAL tests/test_payload_admission_round3.py — preserve AST fixture imports after validator extraction
+```
+
+Producer/consumer, test design and source commits are in SYSTEM_UNIFICATION_NOTEBOOK.md and root NOTES.md. All production/runtime and exact-HEAD CI checks remain NOT RUN or unverified; never classify full Odoo addon/Agent/Gateway integration as DONE solely because these source paths were inspected.
+
+
+#### AGENT-CLAIM-MISMATCH-RETRY-2026-10-28 and CAPABILITY-READ-ROUTE-TEST-2026
+
+```text
+PARTIAL agent/internal/agent/agent.go — fail-closed exact durable job identity mismatch on Reserve/Begin, with terminal pre-execution report
+AUTHORED agent/internal/agent/job_identity_mismatch_test.go — actual SQLite/HTTP Agent integration regression, authored but NOT VERIFIED
+PARTIAL agent/internal/queue/queue.go — typed immutable printer/payload mismatches; NOT VERIFIED on Go race/Windows
+PARTIAL src/app/api/printers/capabilities/route.ts — explicit empty detail printerId rejects before full fleet query
+PARTIAL tests/capability-pagination-route.test.ts — current transactional tenant/session guard, direct/page/cursor and denial unit tests
+```
+
+Exact commits and CI cancellation evidence are in the [system notebook](SYSTEM_UNIFICATION_NOTEBOOK.md); RED/GREEN executions and hardware certification **NOT RUN**. These are source-path review statuses, not signed-off components.
+
+#### ODOO-EVIDENCE-EXACT-2026-10-28
+
+```text
+PARTIAL odoo_addons/print_gateway/printer_geometry.py — byte-bound identity proof admission only
+PARTIAL odoo_addons/print_gateway/printer_verification.py — byte-bound physical proof admission only
+AUTHORED tests/test_odoo_printer_evidence_exact_identity.py — real pure-parser Unicode and BOM regression
+```
+
+The old indexed-file snapshot above is historical. This additive review is **not** a full correctness/CI signoff. All originating workflow attempts cancelled, so native Odoo/Python/Gateway/Agent/physical-printer verification is NOT RUN.
+
+#### ODOO-REMOTE-JOB-ID-2026-10-28
+
+```text
+PARTIAL odoo_addons/print_gateway/models/print_job.py — ambiguous-response remote job identity only
+PARTIAL odoo_addons/print_gateway/runtime_policy.py — pure exact job ID predicate
+PARTIAL tests/test_odoo_exact_operation_key_replay.py — actual Odoo lookup AST regression
+PARTIAL tests/test_final_security_hardening.py — exact lookup static security assertion
+```
+
+Review remains PARTIAL; no completed exact-SHA integration or physical test evidence, hence no VERIFIED or DONE claim.
+
+#### ODOO-HTTP-200-JOB-ID-2026-10-28
+
+```text
+PARTIAL odoo_addons/print_gateway/models/print_job.py — successful HTTP 200 remote-ID exactness
+AUTHORED odoo_addons/print_gateway/tests/test_control_plane.py — HTTP 200 invalid-ID ambiguous/no-retry integration case
+```
+
+Source and tests committed; exact SHA live Odoo/physical verification NOT RUN.
+
+
+### AGENT-PRINTER-DISCOVERY-2026-10-28 — native discovery, local policy and IPP identity (all PARTIAL)
+
+```text
+PARTIAL agent/internal/printer/discovery_targets.go — exclude every local NIC IP; /31 peer support; VPN/tunnel adapters excluded
+AUTHORED agent/internal/printer/discovery_targets_test.go — overlapping NIC addresses, /31 peers, VPN exclusions
+PARTIAL agent/internal/agent/agent.go — propagate unreadable local printer disablement as heartbeat inventoryComplete=false
+AUTHORED agent/internal/agent/heartbeat_disablement_completeness_test.go — before/during status-probe corrupt registry and HTTP heartbeat regression
+PARTIAL agent/internal/printer/geometry.go — shared UTF-8 120-byte printer identity (concurrent main fix preserved)
+AUTHORED agent/internal/printer/geometry_contract_test.go — explicit Arabic/emoji, BOM and invalid UTF-8 geometry evidence boundaries
+PARTIAL agent/internal/printer/stable_id.go — canonical IPP/http, IPPS/https nondefault resources and mixed-case legacy IPP protocols
+PARTIAL agent/internal/printer/discovery.go — dedupe IPP aliases only with exact resource, TLS and verified effective URI port
+AUTHORED agent/internal/printer/stable_id_ipp_ports_test.go — resource/port/TLS separation, mixed-case, endpoint-only fallback
+```
+
+Source changes are committed on GitHub main. Code path review checked that Gateway absence reconciliation requires `inventoryComplete=true` on a final error-free snapshot. Go race tests, CI and physical Windows/IPP print confirmation remain NOT VERIFIED; do not mark DONE or PASS without exact-SHA evidence.
+
+
+#### CERTIFICATION-QUOTA-429 — 2026-10-28
+
+| Status | Path | Contract and work |
+| --- | --- | --- |
+| PARTIAL | `src/app/api/printers/[id]/certify/route.ts` | Map exact monthly quota exhaustion to HTTP 429; no print admission; retain UTC period and Retry-After |
+| PARTIAL | `src/components/PrintCertificationWizard.tsx` | Translate stable admission code via en/ar lookup instead of generic failure |
+| AUTHORED / NOT RUN | `tests/certification-evidence.test.ts` | Mocked quota rejection with no timeline event |
+| AUTHORED / NOT RUN | `tests/certification-reconciliation.contract.test.mjs` | Client i18n source contract |
+
+Source review only; full CI, PostgreSQL admission and actual Odoo/Agent/printer validation **NOT RUN**. Baseline `64f436bde2e864fef546eec642988b272c5384bf`. Preserve existing TODO and BLOCKED inventory.
+
+
+#### DIAGNOSTIC-KEY-REQUIRED — 2026-10-28
+
+| Status | Path | Contract |
+| --- | --- | --- |
+| PARTIAL | `src/app/api/printers/[id]/test-print/route.ts` | Manager and Agent must provide stable exact operation key for real paper |
+| PARTIAL | `src/app/api/printers/[id]/certify/route.ts` | No implicit minute-bucket key; explicit body/header identity required |
+| AUTHORED / NOT RUN | `tests/printer-diagnostic-recovery.integration.test.ts` | Reject missing Manager/Agent keys before job insertion |
+| AUTHORED / NOT RUN | `tests/certification-evidence.test.ts` | Reject missing certification key without executing mock printer path |
+| UPDATED / NOT RUN | `tests/deep-review-contract.test.ts`, `tests/print-certification.test.ts` | Assert retired implicit bucket never returns |
+
+Baseline `17a2892c2668865f807ea1696dcee75db21dfbdb`. No database reset or deployment; CI and physical acceptance still unverified.
+
+
+#### MANAGER-ACTION-PRINT-IDEMPOTENCY — 2026-10-28
+
+| Status | Path | Contract |
+| --- | --- | --- |
+| PARTIAL | `src/app/actions.ts` | Require caller-owned exact key for manager print Server Action; forward without normalization |
+| REVIEWED | `src/lib/idempotency.ts` | Shared key validator reused; no production modifications |
+| AUTHORED / NOT RUN | `tests/session-resource-repair.test.mjs` | Execute actual isolated Server Action and reject unkeyed/aliased identities |
+
+Baseline `c24e2eef1acfaffc788132f7c5816b7e48f112b2`. CI and physical printer verification unobserved; preserve TODO and BLOCKED from earlier full directory ledger.
+
+
+#### CERTIFICATION-DUAL-KEY-AMBIGUITY — 2026-10-28
+
+| Status | Module | Finding / fix |
+| --- | --- | --- |
+| PARTIAL | `src/app/api/printers/[id]/certify/route.ts` | Reject contradictory explicit header/body keys with stable no-retry conflict before physical intent |
+| AUTHORED / NOT RUN | `tests/certification-evidence.test.ts` | Source-backed direct route cases for conflict/no-job and exact matching key |
+
+Baseline `863088b65daae40228c08691065e034e76018e9a`; CI and physical paper tests unverified. Original TODO/BLOCKED directory inventory remains open.
+
+
+#### EXACT-REPRINT-SOURCE-IDENTITY — 2026-10-28
+
+| Status | Module | Contract |
+| --- | --- | --- |
+| PARTIAL | `src/app/actions.ts`, `src/app/api/jobs/[id]/reprint/route.ts` | Require exact existing job identity before authorizing intentional reprint; preserve tenant fence |
+| AUTHORED / NOT RUN | `tests/session-resource-repair.test.mjs` | Execute real reprint Server Action with malformed and canonical keys |
+| AUTHORED / NOT RUN | `tests/reprint-exact-source.test.ts` | Direct HTTP route regression of 400/no enqueue and exact valid job |
+
+Baseline `c96482626e48983649f7020ac268dfbe226b8f32`; source-reviewed only; existing TODO and BLOCKED remain.
+
+
+#### CI-PLATFORM-STATS-TS-SYNTAX — 2026-10-28
+
+| Status | Path | Finding / fix |
+| --- | --- | --- |
+| PARTIAL | `tests/platform-stats.test.ts` | Restore TypeScript parsing of existing pagination regression without changing assertions or business rules |
+| OBSERVED FAILED / PENDING RECHECK | Docker run `40614127955` | `npm run build` stopped at TS1005 line 162 / TS1128 line 244; next commit must be rechecked |
+
+Source baseline `f753a984a71651868b71feb2f9c8d751f9e7e8ab`; do not mark CI PASS until exact-HEAD evidence exists.
+
+
+#### CI-ODOO-STATUS-INVALID-TYPE-NARROWING — 2026-10-28
+
+| Status | Path | Finding / fix |
+| --- | --- | --- |
+| PARTIAL | `src/app/api/print/jobs/route.ts`, `src/app/api/print/jobs/v2/route.ts` | Capture input lengths before exact-ID type guard narrows invalid input to never; preserve HTTP 400 messages |
+| AUTHORED / NOT RUN | `tests/print-idempotency.test.ts` | Extend both routes' status-reconciliation tests with 121/201-character overlong IDs |
+| OBSERVED FAILED / PENDING RECHECK | Docker `40614749699` | TS2339 in both routes; unrelated desktop TS2304 was fixed by concurrent commit |
+
+GitHub main baseline `4ba18e5e00c8a5d86f42bfc55c2e576c2b621a77`; full CI/Postgres/physical print unverified.
+
+
+#### DESKTOP-TAURI-LOCAL-PRINTER-UNICODE-IDENTITY — 2026-10-28
+
+| Status | Module | Contract |
+| --- | --- | --- |
+| PARTIAL | `src/desktop/lib/ipc.ts` | Reject unpaired UTF-16 in exact local sharing printer ID before invoking Rust; avoid wrong-target mutation |
+| AUTHORED / NOT RUN | `tests/desktop-printer-sharing.test.ts` | Invalid high/low surrogate IDs cannot reach native invocation; valid astral Unicode succeeds |
+| TODO / BLOCKED | `src-tauri/src/commands.rs`, `agent/internal/printer` | Verify full wire/Windows behavior on supported hardware |
+
+Baseline `af3656635a0b3a38f9618574b4ed36f861813747`; exact-SHA compile, Vitest, Go/Tauri and physical output remain unverified.
+
+
+#### SUBSCRIPTION-REACTIVATION-EFFECTIVE-STATUS — 2026-10-28
+
+| Status | Path | Shared contract |
+| --- | --- | --- |
+| PARTIAL | `src/app/api/platform/tenants/[id]/route.ts`, `src/lib/manual-subscriptions.ts` | Same effective live subscription definition across admin display and transactional reactivation |
+| AUTHORED / NOT RUN | `tests/platform-stats.test.ts`, `tests/manual-subscriptions.integration.test.ts` | Disabled workspace, future term, unchanged revision and valid reactivation |
+
+Baseline `5fc31e223adacf963e045b513abdf8569783496f`; CI and hardware print tests unverified; remaining TODO/BLOCKED unchanged.

@@ -4,11 +4,12 @@ import { NextResponse } from "next/server";
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "../../../../db";
 import { agents, printers } from "../../../../db/schema";
-import { validateOdooKey } from "../../../../lib/odoo-auth";
+import { validateOdooKey, requireOdooReadKeyInTransaction, OdooReadKeyUnavailableError } from "../../../../lib/odoo-auth";
 import { getAgentHeartbeatFreshness, getEffectivePrinterStatus, getPrinterObservationFreshness } from "../../../../lib/agent-availability";
 import { gatewayNow, refreshClockSkew } from "../../../../lib/database-clock";
 import { receiptPaperWidthMM, receiptRasterWidthDots } from "../../../../lib/receipt-width";
 import { TenantSubscriptionRequiredError, requireTenantBillingAccess } from "../../../../lib/entitlements";
+import { requireActiveTenantInTransaction, TenantSuspendedError, TenantDeletedError } from "../../../../lib/tenant-guard";
 import { isVirtualPrinterRecord } from "../../../../lib/printer-virtual";
 import { getSupportedDocumentTypes, type ProtocolType, type TransportType } from "../../../../lib/printer-capability";
 import { capabilitiesWithCurrentGeometry, printerGeometryFromCapabilities } from "../../../../lib/printer-geometry";
@@ -86,6 +87,11 @@ export async function GET(req: Request) {
   }>;
   try {
     rows = await db.transaction(async (tx) => {
+      // Authentication is outside this transaction. Fence a concurrent tenant
+      // suspension before touching subscription and inventory (lock order).
+      await requireActiveTenantInTransaction(tx, apiKey.tenantId);
+      // Key rotation and full revocation are fenced after initial auth.
+      await requireOdooReadKeyInTransaction(tx, apiKey);
       await requireTenantBillingAccess(tx, apiKey.tenantId);
       return tx
         .select({
@@ -125,6 +131,12 @@ export async function GET(req: Request) {
         .orderBy(printers.name);
     });
   } catch (error) {
+    if (error instanceof OdooReadKeyUnavailableError) {
+      return NextResponse.json({ error: error.message, code: error.code }, { status: 401, headers: { "Cache-Control": "no-store" } });
+    }
+    if (error instanceof TenantSuspendedError || error instanceof TenantDeletedError) {
+      return NextResponse.json({ error: error.message, code: error.code }, { status: 403, headers: { "Cache-Control": "no-store" } });
+    }
     if (error instanceof TenantSubscriptionRequiredError) {
       return NextResponse.json(
         { error: error.message, code: "SUBSCRIPTION_REQUIRED" },

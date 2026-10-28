@@ -1,4 +1,5 @@
 import { db, queryWithTimeout } from "../db/client";
+import type { DbTx } from "../db";
 import { jobEvents, printJobs } from "../db/schema";
 import { eq, and } from "drizzle-orm";
 import { nanoid } from "./nanoid";
@@ -67,6 +68,14 @@ export async function recordJobEvent(input: RecordJobEventInput): Promise<void> 
     // Timeline must never break main flow
     logInfo("job_timeline_event_failed", { jobId: input.jobId, stage: input.stage, error: String(e).slice(0, 200) });
   }
+}
+
+/** Read history on the same PostgreSQL connection as the caller's live
+ * tenant/session fence, not through a second pool checkout. */
+export async function getJobTimelineInTransaction(tx: DbTx, tenantId: string, jobId: string) {
+  return tx.select().from(jobEvents)
+    .where(and(eq(jobEvents.tenantId, tenantId), eq(jobEvents.jobId, jobId)))
+    .orderBy(jobEvents.createdAt);
 }
 
 export async function getJobTimeline(tenantId: string, jobId: string) {

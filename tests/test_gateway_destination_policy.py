@@ -80,6 +80,16 @@ def test_invalid_allowlist_entries_fail_closed(unsafe):
         destination.origin_is_allowlisted("https://print.example.com", unsafe)
 
 
+@pytest.mark.parametrize("unsafe", [
+    "https://@print.example.com",
+    "https://print.example.com?",
+    "https://print.example.com#",
+])
+def test_empty_authority_query_and_fragment_markers_are_not_clean_origins(unsafe):
+    with pytest.raises(ValueError):
+        destination.canonical_origin(unsafe)
+
+
 def test_gateway_config_enforces_policy_at_all_credential_sending_boundaries():
     source = (MODEL_DIR / "gateway_config.py").read_text(encoding="utf8")
     assert "origin_is_allowlisted(" in source

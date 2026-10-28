@@ -98,7 +98,7 @@ func TestResolvePrinterAliasRecoversLocalBackend(t *testing.T) {
 	if got := ag.resolvePrinterAlias("printer_net_abcdef12"); got != "printer_net_abcdef12" {
 		t.Fatalf("exact local ID must win, got %q", got)
 	}
-	if got := ag.resolvePrinterAlias("printer_net_abcdef12~1234abcd"); got != "printer_net_abcdef12" {
+	if got := ag.resolvePrinterAlias(gatewayAliasPrinterID("printer_net_abcdef12", ag.cfg.Agent.ID)); got != "printer_net_abcdef12" {
 		t.Fatalf("gateway alias must resolve to the local backend, got %q", got)
 	}
 	if got := ag.resolvePrinterAlias("printer_net_abcdef12~ZZZZZZZZ"); got != "printer_net_abcdef12~ZZZZZZZZ" {

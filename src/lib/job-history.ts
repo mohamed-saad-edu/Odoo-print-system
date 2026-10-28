@@ -1,4 +1,4 @@
-import { db } from "../db";
+import { db, type DbTx } from "../db";
 import { sql, type SQL } from "drizzle-orm";
 import { printOutputPresentation } from "./print-output";
 import { isJobFilterStatus, PHYSICAL_OUTCOME_UNKNOWN_MARKERS } from "./job-status";
@@ -55,7 +55,7 @@ function scopedWhere(alias: "j" | "r", tenantId: string | undefined): SQL {
     : sql`WHERE TRUE`;
 }
 
-export async function listPrintJobHistory(input: JobHistoryOptions = {}) {
+export async function listPrintJobHistory(input: JobHistoryOptions = {}, tx?: DbTx) {
   const limit = input.limit ?? 50;
   const offset = input.offset ?? 0;
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > 201 || !Number.isSafeInteger(offset) || offset < 0 || offset > 10_000) {
@@ -73,10 +73,12 @@ export async function listPrintJobHistory(input: JobHistoryOptions = {}) {
   if (input.agentId) predicates.push(sql`h.agent_id = ${input.agentId}`);
   if (input.printerId) predicates.push(sql`h.printer_id = ${input.printerId}`);
   if (status === "active" || status === "in_flight") predicates.push(sql`h.status IN ('queued','claimed','printing')`);
-  else if (status === "success" || status === "printed") predicates.push(sql`h.status = 'success'`);
+  else if (status === "success") predicates.push(sql`h.status = 'success'`);
   else if (status === "queued" || status === "claimed" || status === "printing" || status === "expired") predicates.push(sql`h.status = ${status}`);
   else if (status === "failed" || status === "unknown" || status === "attention") {
-    const unknown = sql`(${sql.join(PHYSICAL_OUTCOME_UNKNOWN_MARKERS.map(marker => sql`COALESCE(h.error, '') LIKE ${marker + "%"}`), sql` OR `)})`;
+    // Marker tokens contain '_' characters; LIKE treats them as wildcards.
+    // Exact prefix equality must match derivePhysicalOutcome()'s startsWith().
+    const unknown = sql`(${sql.join(PHYSICAL_OUTCOME_UNKNOWN_MARKERS.map(marker => sql`LEFT(COALESCE(h.error, ''), ${marker.length}) = ${marker}`), sql` OR `)})`;
     if (status === "failed") predicates.push(sql`h.status = 'failed' AND NOT ${unknown}`);
     else predicates.push(unknown);
   } else if (status === "unassigned") {
@@ -102,7 +104,7 @@ export async function listPrintJobHistory(input: JobHistoryOptions = {}) {
     )`);
   }
   const where = predicates.length ? sql`WHERE ${sql.join(predicates, sql` AND `)}` : sql``;
-  const result = await db.execute(sql<HistoryRow>`
+  const query = sql<HistoryRow>`
     WITH history AS (
       SELECT j.id, j.tenant_id, j.destination, j.document_type,
         j.agent_id, j.printer_id, j.requested_by, j.status, j.error,
@@ -118,7 +120,9 @@ export async function listPrintJobHistory(input: JobHistoryOptions = {}) {
         r.acked_at, NULL::timestamp AS expires_at, r.created_at, r.updated_at, r.output_medium, r.output_evidence,
         TRUE AS archived
       FROM print_job_receipts r ${scopedWhere("r", input.tenantId)}
-      AND NOT EXISTS (SELECT 1 FROM print_jobs live WHERE live.id = r.id)
+      -- Job IDs belong to separate archival/live tables; only suppress
+      -- the receipt when its own tenant has the matching live row.
+      AND NOT EXISTS (SELECT 1 FROM print_jobs live WHERE live.id = r.id AND live.tenant_id = r.tenant_id)
     )
     SELECT h.id, h.tenant_id AS "tenantId", t.name AS "tenantName",
       h.agent_id AS "agentId", a.name AS "agentName",
@@ -134,9 +138,12 @@ export async function listPrintJobHistory(input: JobHistoryOptions = {}) {
     LEFT JOIN agents a ON a.id = h.agent_id AND a.tenant_id = h.tenant_id
     LEFT JOIN printers p ON p.id = h.printer_id AND p.tenant_id = h.tenant_id
     ${where}
-    ORDER BY h.created_at DESC, h.id DESC
+    ORDER BY h.created_at DESC, h.id DESC, h.tenant_id DESC
     LIMIT ${limit} OFFSET ${offset}
-  `);
+  `;
+  // Console routes pass their fenced read transaction. Platform summaries
+  // retain the original standalone executor and shared SQL projection.
+  const result = tx ? await tx.execute(query) : await db.execute(query);
   const rows = result.rows as HistoryRow[];
   return rows.map(row => ({ ...row, ...printOutputPresentation(row) }));
 }

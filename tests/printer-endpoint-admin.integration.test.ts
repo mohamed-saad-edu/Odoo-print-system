@@ -62,6 +62,93 @@ suite("physical endpoint convergence and credential-row erasure", () => {
     expect(rows.rows[0].physical_identity_key).toMatch(/^v2:[0-9a-f]{64}$/);
   });
 
+  it.each(["retired", "disabled", "unshared"] as const)(
+    "never reports success for an existing %s printer endpoint",
+    async (mode) => {
+      const f = await seedFixture();
+      const manager = await createWorkspaceManagerTestSession(f.tenantId);
+      const payload = { agentId: f.agentId, name: "Reused local queue",
+        printerType: "physical", deviceClass: "thermal",
+        connectionType: "spooler", protocol: "spooler",
+        config: { spooler_name: "Restricted POS Register" } };
+      const created = await post(manager.token, payload);
+      expect(created.status).toBe(201);
+      const { id: printerId } = await created.json();
+      await pool().query(
+        "UPDATE printers SET lifecycle=$1, shared_with_gateway=$2 WHERE tenant_id=$3 AND id=$4",
+        [mode === "unshared" ? "active" : mode, mode !== "unshared", f.tenantId, printerId],
+      );
+      const replay = await post(manager.token, payload);
+      expect(replay.status).toBe(409);
+      expect(await replay.json()).toMatchObject({ code: "PRINTER_ENDPOINT_CONFLICT" });
+      const rows = await pool().query(
+        "SELECT id,lifecycle,shared_with_gateway FROM printers WHERE tenant_id=$1 AND agent_id=$2 AND config->>'spooler_name'=$3",
+        [f.tenantId, f.agentId, "Restricted POS Register"],
+      );
+      expect(rows.rows).toHaveLength(1);
+      expect(rows.rows[0]).toMatchObject({
+        id: printerId, lifecycle: mode === "unshared" ? "active" : mode,
+        shared_with_gateway: mode !== "unshared",
+      });
+    },
+  );
+
+  it("refuses a requested printer ID already assigned to another physical queue", async () => {
+    const f = await seedFixture();
+    const manager = await createWorkspaceManagerTestSession(f.tenantId);
+    const first = { id: "explicit-queue-a", agentId: f.agentId, name: "Queue A",
+      printerType: "physical", deviceClass: "thermal",
+      connectionType: "spooler", protocol: "spooler",
+      config: { spooler_name: "Physical POS Queue A" } };
+    const second = { ...first, id: "explicit-queue-b", name: "Queue B",
+      config: { spooler_name: "Physical POS Queue B" } };
+    expect((await post(manager.token, first)).status).toBe(201);
+    expect((await post(manager.token, second)).status).toBe(201);
+
+    // Reuse of a different existing printer's ID must not be silently
+    // redirected to whichever physical endpoint happened to match first.
+    const wrongBinding = await post(manager.token, { ...first, id: second.id });
+    expect(wrongBinding.status).toBe(409);
+    expect(await wrongBinding.json()).toMatchObject({ code: "PRINTER_ENDPOINT_CONFLICT" });
+    const stored = await pool().query(
+      "SELECT id, config->>'spooler_name' AS queue FROM printers WHERE tenant_id=$1 AND id IN ($2,$3) ORDER BY id",
+      [f.tenantId, first.id, second.id],
+    );
+    expect(stored.rows).toEqual([
+      { id: first.id, queue: first.config.spooler_name },
+      { id: second.id, queue: second.config.spooler_name },
+    ]);
+    // A genuinely new Alias ID is still allowed to converge safely to
+    // an existing endpoint; this case is specifically an occupied ID.
+    const freshAlias = await post(manager.token, { ...first, id: "unused-queue-alias" });
+    expect(freshAlias.status).toBe(200);
+    expect((await freshAlias.json()).id).toBe(first.id);
+  });
+
+  it("refuses an ID owned by a different Agent even if the endpoint matches locally", async () => {
+    const f = await seedFixture();
+    const manager = await createWorkspaceManagerTestSession(f.tenantId);
+    await pool().query("INSERT INTO agents(id,tenant_id,name) VALUES ($1,$2,$3)",
+      ["other-agent-in-workspace", f.tenantId, "Other Branch"]);
+    const first = { id: "first-branch-queue", agentId: f.agentId, name: "First Branch",
+      printerType: "physical", deviceClass: "thermal",
+      connectionType: "spooler", protocol: "spooler",
+      config: { spooler_name: "First Branch POS Queue" } };
+    const other = { ...first, id: "other-branch-queue", agentId: "other-agent-in-workspace",
+      name: "Other Branch", config: { spooler_name: "Other Branch POS Queue" } };
+    expect((await post(manager.token, first)).status).toBe(201);
+    expect((await post(manager.token, other)).status).toBe(201);
+    const replay = await post(manager.token, { ...first, id: other.id });
+    expect(replay.status).toBe(409);
+    expect(await replay.json()).toMatchObject({ code: "PRINTER_ENDPOINT_CONFLICT" });
+    const stored = await pool().query("SELECT agent_id, id FROM printers WHERE tenant_id=$1 AND id IN ($2,$3) ORDER BY id",
+      [f.tenantId, first.id, other.id]);
+    expect(stored.rows).toEqual([
+      { agent_id: f.agentId, id: first.id },
+      { agent_id: other.agentId, id: other.id },
+    ]);
+  });
+
   it("does not register an Agent discovery duplicate of an existing manager queue", async () => {
     const f = await seedFixture();
     const manager = await createWorkspaceManagerTestSession(f.tenantId);

@@ -391,8 +391,32 @@ class PrintGatewayRouter(models.AbstractModel):
             if selected_binding:
                 if not selected_binding.enabled:
                     raise ValidationError(_("The print binding was disabled before the durable job could be created."))
-                if str(selected_binding.printer_id or "").strip() != str(durable_values.get("printer_id") or "").strip():
+                if selected_binding.printer_id != durable_values.get("printer_id"):
                     raise ValidationError(_("The print binding was repointed to another printer before the durable job could be created."))
+                # Routing was resolved before this independent persistence
+                # transaction. Re-read the actual *business destination* and
+                # document type, not only the physical printer ID: an operator
+                # can reassign the binding to a different POS/report while
+                # the first request is rendering. Never print the original
+                # source through that changed assignment.
+                bound_destination = selected_binding.destination_ref
+                bound_destination_key = (
+                    "%s,%s" % (bound_destination._name, bound_destination.id)
+                    if bound_destination else False
+                )
+                if bound_destination_key != durable_values.get("destination_key"):
+                    raise ValidationError(_("The print binding destination changed before the durable job could be created."))
+                if selected_binding.document_type != durable_values.get("document_type"):
+                    raise ValidationError(_("The print binding document type changed before the durable job could be created."))
+                # A report-specific route was authorized against this exact
+                # ir.actions.report action. Two reports can share one document
+                # type and operational destination; do not let a later binding
+                # change send the earlier report to a now-unauthorized target.
+                # Report-less direct diagnostics may legitimately test a
+                # report-bound printer, so only constrain captured report work.
+                original_report = durable_values.get("report")
+                if original_report and selected_binding.report_id != original_report:
+                    raise ValidationError(_("The print binding report changed before the durable job could be created."))
                 if target_company:
                     router = env["print_gateway.print_router"]
                     gateway_company, branch = router._binding_scope(target_company)
@@ -511,6 +535,13 @@ class PrintGatewayRouter(models.AbstractModel):
         source_record_id=None, idempotency_key=None, structured_outcome=False,
     ):
         self._assert_current_company(company)
+        # Only None/False/"" are Odoo's optional-operation sentinels.
+        # The previous truthy-or-uuid fallback turned 0, [] or {} into
+        # a NEW print identity, so retrying malformed RPC input could send
+        # duplicate paper instead of failing closed.
+        if not (idempotency_key is None or idempotency_key is False or idempotency_key == ""):
+            if not isinstance(idempotency_key, str) or not idempotency_key.strip():
+                raise ValidationError(_("The print operation key is invalid."))
         binding = route.get("binding")
         if binding and isinstance(payload, dict):
             ptype = str(payload.get("type") or "").strip().lower()
@@ -713,7 +744,9 @@ class PrintGatewayRouter(models.AbstractModel):
             # rules remain an independent boundary, including company scope.
             job = env["print_gateway.print_job"].search([
                 ("company_id", "=", company.id),
-                ("idempotency_key", "=", idempotency_key.strip()),
+                # Exact caller operation identity: a padded v2 key must not
+                # replay an already-sent physical job under a different key.
+                ("idempotency_key", "=", idempotency_key),
             ], limit=1)
             if not job:
                 return None
@@ -733,7 +766,7 @@ class PrintGatewayRouter(models.AbstractModel):
                 stored_payload = None
             exact = (
                 job.gateway_config_id.id == route["config"].id
-                and job.printer_id == str(route["binding"].printer_id).strip()
+                and job.printer_id == route["binding"].printer_id
                 and job.destination == str(destination.display_name).strip()
                 and job.destination_key == "%s,%s" % (destination._name, destination.id)
                 and job.document_type == str(route["document_type"]).strip().lower()
@@ -752,6 +785,12 @@ class PrintGatewayRouter(models.AbstractModel):
     @api.private
     def route_pos_receipt(self, order, image_base64, *, idempotency_key=None, geometry_fingerprint=None):
         order.ensure_one()
+        # Preserve the exact caller-owned print identity at the first route
+        # boundary. Unlike a missing Odoo field, 0, [], {} or whitespace
+        # cannot silently become a different deterministic operation.
+        if not (idempotency_key is None or idempotency_key is False or idempotency_key == ""):
+            if not isinstance(idempotency_key, str) or not idempotency_key.strip():
+                raise ValidationError(_("The print operation key is invalid."))
         self._assert_current_company(order.company_id, record=order)
         self._validate_jpeg_base64(image_base64)
         route = self.resolve_binding(record=order, company=self.env.company, document_type="receipt")
@@ -766,7 +805,10 @@ class PrintGatewayRouter(models.AbstractModel):
         # retry is also safe.
         if not idempotency_key:
             binding_id = route.get("binding") and route["binding"].id or 0
-            raw_token = f"receipt:{order.id}:{binding_id}:{getattr(order, 'write_date', '')}"
+            # write_date mutates after normal POS synchronization and payment
+            # metadata updates. It is NOT a second-print authorization.
+            # Only a new explicit operation key may request a reprint.
+            raw_token = f"receipt:{order.id}:{binding_id}"
             idempotency_key = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
         replayed = self._replay_receipt_operation(route, order, image_base64, geometry_fingerprint, idempotency_key)
         if replayed is not None:
@@ -784,6 +826,14 @@ class PrintGatewayRouter(models.AbstractModel):
     @api.private
     def route_kitchen_print(self, order, image_base64, *, reprint=False, idempotency_key=None, pos_printer=None, geometry_fingerprint=None):
         order.ensure_one()
+        if type(reprint) is not bool:
+            raise ValidationError(_("The kitchen reprint option must be a boolean."))
+        # Preserve the exact caller-owned print identity at the first route
+        # boundary. Unlike a missing Odoo field, 0, [], {} or whitespace
+        # cannot silently become a different deterministic operation.
+        if not (idempotency_key is None or idempotency_key is False or idempotency_key == ""):
+            if not isinstance(idempotency_key, str) or not idempotency_key.strip():
+                raise ValidationError(_("The print operation key is invalid."))
         self._assert_current_company(order.company_id, record=order)
         company = self.env.company
         self._validate_jpeg_base64(image_base64)
@@ -821,11 +871,19 @@ class PrintGatewayRouter(models.AbstractModel):
         # caller asked for new paper output, so it must not be deduplicated.
         if not idempotency_key and not reprint:
             binding_id = route.get("binding") and route["binding"].id or 0
+            # Odoo can update an order's write_date for sync/payment metadata
+            # without creating a new kitchen ticket. Derive the fallback
+            # operation from the exact validated image bytes instead: a lost
+            # RPC response with identical content cannot mint more paper, while
+            # a new preparation delta with different rendered content remains
+            # a distinct operation. Deliberate identical reprints require the
+            # explicit reprint path/key rather than incidental Odoo writes.
+            image_digest = hashlib.sha256(image_base64.encode("ascii")).hexdigest()
             raw_token = "kitchen:%s:%s:%s:%s" % (
                 order.id,
                 binding_id,
                 explicit_destination.id if explicit_destination else 0,
-                getattr(order, "write_date", ""),
+                image_digest,
             )
             idempotency_key = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
         replayed = self._replay_receipt_operation(route, order, image_base64, geometry_fingerprint, idempotency_key)
@@ -847,6 +905,12 @@ class PrintGatewayRouter(models.AbstractModel):
         # /pos/sale_details_report HTTP endpoint remains a separate PDF/report
         # path and intentionally resolves an ir.actions.report binding.
         session.ensure_one()
+        # Preserve the exact caller-owned print identity at the first route
+        # boundary. Unlike a missing Odoo field, 0, [], {} or whitespace
+        # cannot silently become a different deterministic operation.
+        if not (idempotency_key is None or idempotency_key is False or idempotency_key == ""):
+            if not isinstance(idempotency_key, str) or not idempotency_key.strip():
+                raise ValidationError(_("The print operation key is invalid."))
         self._assert_current_company(session.company_id, record=session)
         self._validate_jpeg_base64(image_base64)
         route = self.resolve_binding(
@@ -861,7 +925,10 @@ class PrintGatewayRouter(models.AbstractModel):
         # Deterministic key so an RPC retry cannot produce a second physical print.
         if not idempotency_key:
             binding_id = route.get("binding") and route["binding"].id or 0
-            raw_token = f"sale_details:{session.id}:{binding_id}:{getattr(session, 'write_date', '')}"
+            # A POS session's write_date changes throughout its lifetime.
+            # Never mint a fresh paper-output attempt from that mutation.
+            # Multiple deliberate sale-detail prints supply explicit keys.
+            raw_token = f"sale_details:{session.id}:{binding_id}"
             idempotency_key = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
         replayed = self._replay_receipt_operation(route, session, image_base64, geometry_fingerprint, idempotency_key)
         if replayed is not None:

@@ -100,7 +100,7 @@ import PrintCertificationWizard from "../../components/PrintCertificationWizard"
 import JobTimeline from "../../components/JobTimeline";
 import { PrinterGeometryDetails, PrinterGeometryProfileEditor } from "../../components/PrinterGeometrySettings";
 import UpgradeLimitDialog, { type UpgradeLimitResource } from "../../components/UpgradeLimitDialog";
-import { isLimitSignalResult } from "../../lib/limit-signal";
+import { isLimitSignalResult, limitSignalDisplayDetails, type EntitlementLimitSignal } from "../../lib/limit-signal";
 import { isServerActionVersionMismatch } from "../../lib/server-action-version";
 
 export type Agent = {
@@ -295,6 +295,8 @@ function upgradeLimitResourceForEntitlement(entitlement: unknown): UpgradeLimitR
   switch (entitlement) {
     case "max_agents": return "agents";
     case "max_printers": return "printers";
+    case "max_jobs_per_minute": return "rate";
+    case "max_concurrent_jobs": return "concurrency";
     case "max_prints_per_period": return "prints";
     default: return null;
   }
@@ -318,29 +320,18 @@ function upgradeLimitFromApiError(error: DashboardApiError): {
   };
 }
 
-function upgradeLimitFromLimitSignal(limit: {
-  entitlement: string;
-  message: string;
-  used?: number | null;
-  max?: number | "unlimited" | null;
-  periodEnd?: string | null;
-  retryAfterSeconds?: number | null;
-}): {
+function upgradeLimitFromLimitSignal(signal: EntitlementLimitSignal): {
   resource: UpgradeLimitResource;
   used?: number | null;
   limit?: number | "unlimited" | null;
   periodEnd?: string | null;
   retryAfterSeconds?: number | null;
 } | null {
-  const resource = upgradeLimitResourceForEntitlement(limit.entitlement);
+  const resource = upgradeLimitResourceForEntitlement(signal.entitlement);
   if (!resource) return null;
-  return {
-    resource,
-    used: limit.used ?? null,
-    limit: limit.max ?? null,
-    periodEnd: limit.periodEnd ?? null,
-    retryAfterSeconds: limit.retryAfterSeconds ?? null,
-  };
+  // The canonical wire field is `limit`, not the old `max` alias.
+  // Do not hide a real monthly allowance or device cap behind an empty value.
+  return { resource, ...limitSignalDisplayDetails(signal) };
 }
 
 async function sendGatewayTestPage(printerId: string, operationKey: string): Promise<DiagnosticResult> {
@@ -1383,12 +1374,9 @@ export default function DashboardClient({
 
   const prints = billingUsage?.resources.prints;
   const printsLimitReached = prints && prints.limit !== "unlimited" && prints.remaining !== "unlimited" && prints.remaining === 0;
+  const contractExpiresSoon = subscription?.customerState === "active" && !!subscription.currentPeriodEnd && Date.parse(subscription.currentPeriodEnd) > nowMs && Date.parse(subscription.currentPeriodEnd) - nowMs <= 7 * 86_400_000;
   const printsPercent =
     prints && prints.limit !== "unlimited" ? (prints.used / Math.max(1, prints.limit)) * 100 : null;
-  const remainingContractMs = subscription?.customerState === "active" && subscription.currentPeriodEnd
-    ? Date.parse(subscription.currentPeriodEnd) - nowMs : null;
-  const subscriptionExpiresSoon = remainingContractMs !== null && remainingContractMs > 0 &&
-    remainingContractMs <= 7 * 24 * 60 * 60 * 1000;
   const printerStatusOptions = ["all", "ready", "printing", "attention", "unavailable", "saved"] as const;
 
   const onlineAgentsLabel =
@@ -1416,13 +1404,13 @@ export default function DashboardClient({
       {subscription && !canReadBillingUsage && subscription.customerState !== "active" && <Callout tone="warn" title={t(`v4.experience.subscription.${subscription.customerState}`)}>
         {t("v4.subscription.memberPausedBody")}
       </Callout>}
-      {canReadBillingUsage && printsLimitReached && subscription?.customerState === "active" && <Callout tone="bad" title={t("v4.subscription.quotaPausedTitle")}>
-        <p>{t("v4.subscription.quotaPausedBody")}</p>
-        <div className="mt-3"><Button href="/billing" variant="secondary">{t("v4.subscription.renewalRequest")}</Button></div>
+      {printsLimitReached && subscription?.customerState === "active" && <Callout tone="warn" title={t("v4.subscription.quotaBlockedTitle")}>
+        <p>{t("v4.subscription.quotaBlockedBody")}</p>
+        <div className="mt-3"><Button size="sm" variant="secondary" href="/billing">{t("v4.subscription.quotaBlockedAction")}</Button></div>
       </Callout>}
-      {canReadBillingUsage && subscriptionExpiresSoon && subscription?.currentPeriodEnd && <Callout tone="warn" title={t("v4.subscription.expiringSoonTitle")}>
-        <p>{t("v4.subscription.expiringSoonBody", { date: formatManualCalendarDate(subscription.currentPeriodEnd, locale) ?? t("common.notAvailable") })}</p>
-        <div className="mt-3"><Button href="/billing" variant="secondary">{t("v4.subscription.renewalRequest")}</Button></div>
+      {!printsLimitReached && contractExpiresSoon && <Callout tone="warn" title={t("v4.subscription.expiringSoonTitle")}>
+        <p>{t("v4.subscription.expiringSoonBody", { date: formatManualCalendarDate(subscription?.currentPeriodEnd, locale) ?? t("common.notAvailable") })}</p>
+        <div className="mt-3"><Button size="sm" variant="secondary" href="/billing">{t("v4.subscription.renewRequestAction")}</Button></div>
       </Callout>}
       {view === "home" && <Card className="space-y-5 p-5 sm:p-6">
         <div className="flex flex-wrap items-start justify-between gap-4">

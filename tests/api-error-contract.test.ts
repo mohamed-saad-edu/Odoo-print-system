@@ -13,6 +13,129 @@ import { en } from "../src/i18n/messages/en";
  * English text is not.
  */
 describe("API error contract", () => {
+  it("localizes combined page-size and offset errors from platform lists", () => {
+    expect(codeMessageKey("INVALID_PAGINATION")).toBe("errors.invalidPagination");
+    expect(apiMessageKey("INVALID_PAGINATION", 400)).toBe("errors.invalidPagination");
+    for (const locale of ["en", "ar"] as const) {
+      const combined = translate(locale, "errors.invalidPagination");
+      expect(combined).not.toBe(translate(locale, "errors.requestRejected"));
+      expect(combined).not.toBe(translate(locale, "errors.invalidPaginationLimit"));
+      expect(combined).not.toContain("INVALID_PAGINATION");
+    }
+    expect(translate("en", "errors.invalidPagination")).toMatch(/page size or position/i);
+    expect(translate("ar", "errors.invalidPagination")).toMatch(/[\u0600-\u06FF]/u);
+  });
+
+  it("maps strict job-history pagination failures to Arabic/English catalog copy", () => {
+    expect(codeMessageKey("INVALID_OFFSET")).toBe("errors.invalidPaginationOffset");
+    expect(apiMessageKey("INVALID_OFFSET", 400)).toBe("errors.invalidPaginationOffset");
+    expect(translate("en", "errors.invalidPaginationOffset")).not.toBe("errors.requestRejected");
+    expect(translate("ar", "errors.invalidPaginationOffset")).toMatch(/\p{Script=Arabic}/u);
+  });
+
+  it("translates malformed pagination limits rather than calling them offset errors", () => {
+    const platformAudit = fs.readFileSync("src/app/api/platform/audit/route.ts", "utf8");
+    expect(platformAudit).toContain('code: "INVALID_LIMIT"');
+    expect(codeMessageKey("INVALID_LIMIT")).toBe("errors.invalidPaginationLimit");
+    expect(apiMessageKey("INVALID_LIMIT", 400)).toBe("errors.invalidPaginationLimit");
+    expect(translate("en", "errors.invalidPaginationLimit")).toMatch(/page size|limit/i);
+    expect(translate("ar", "errors.invalidPaginationLimit")).toMatch(/\p{Script=Arabic}/u);
+    expect(translate("en", "errors.invalidPaginationLimit")).not.toBe(translate("en", "errors.invalidPaginationOffset"));
+  });
+
+  it("explains Agent and printer safety limits without claiming too many login attempts", () => {
+    expect(apiMessageKey("MAX_AGENTS_EXCEEDED", 429)).toBe("limit.title.agents");
+    expect(apiMessageKey("MAX_PRINTERS_EXCEEDED", 429)).toBe("limit.title.printers");
+    for (const locale of ["en", "ar"] as const) {
+      for (const code of ["MAX_AGENTS_EXCEEDED", "MAX_PRINTERS_EXCEEDED"]) {
+        const key = codeMessageKey(code);
+        expect(key).toBeTruthy();
+        const localized = translate(locale, key!);
+        expect(localized).not.toBe(translate(locale, "errors.tooManyAttempts"));
+        expect(localized).not.toBe(translate(locale, "errors.printQuotaExceeded"));
+      }
+    }
+    expect(translate("en", "limit.title.agents")).toMatch(/agent limit/i);
+    expect(translate("ar", "limit.title.printers")).toMatch(/[\u0600-\u06FF]/u);
+  });
+
+  it("distinguishes retryable print-rate or concurrency limits from subscription denial", () => {
+    expect(apiMessageKey("TENANT_ENTITLEMENT_EXCEEDED", 429)).toBe("errors.printCapacityExceeded");
+    for (const locale of ["en", "ar"] as const) {
+      expect(translate(locale, "errors.printCapacityExceeded")).not.toBe(translate(locale, "errors.billingBlocked"));
+      expect(translate(locale, "errors.printCapacityExceeded")).not.toBe(translate(locale, "errors.printQuotaExceeded"));
+    }
+    expect(translate("en", "errors.printCapacityExceeded")).toMatch(/capacity/i);
+    expect(translate("ar", "errors.printCapacityExceeded")).toMatch(/[\u0600-\u06FF]/u);
+  });
+
+  it("localizes exhausted monthly print credits separately from blocked billing", () => {
+    expect(codeMessageKey("PRINT_QUOTA_EXCEEDED")).toBe("errors.printQuotaExceeded");
+    expect(apiMessageKey("PRINT_QUOTA_EXCEEDED", 429)).toBe("errors.printQuotaExceeded");
+    expect(codeMessageKey("TENANT_ENTITLEMENT_UNAVAILABLE")).toBe("errors.billingBlocked");
+    for (const locale of ["en", "ar"] as const) {
+      const quota = translate(locale, "errors.printQuotaExceeded");
+      expect(quota).not.toBe(translate(locale, "errors.billingBlocked"));
+      expect(quota).not.toContain("PRINT_QUOTA_EXCEEDED");
+    }
+    expect(translate("en", "errors.printQuotaExceeded")).toMatch(/month.*credit/i);
+    expect(translate("ar", "errors.printQuotaExceeded")).toMatch(/[\u0600-\u06FF]/u);
+  });
+
+  it("localizes definite printer admission failures without disguising them as service outages or generic conflicts", () => {
+    const expectations = [
+      ["PRINTER_OFFLINE", 503, "errors.printerOffline"],
+      ["PRINTER_UNAVAILABLE", 409, "errors.printerCloudUnavailable"],
+      ["PRINTER_UNVERIFIED", 409, "errors.printerVerificationRequired"],
+      ["PRINTER_OWNER_CHANGED", 409, "errors.printerOwnerChanged"],
+      ["TENANT_UNAVAILABLE", 403, "errors.workspaceUnavailable"],
+      ["TENANT_SUSPENDED", 403, "errors.workspaceUnavailable"],
+      ["TENANT_DELETED", 403, "errors.workspaceUnavailable"],
+    ] as const;
+    for (const [code, status, expectedKey] of expectations) {
+      expect(codeMessageKey(code)).toBe(expectedKey);
+      expect(apiMessageKey(code, status)).toBe(expectedKey);
+      for (const locale of ["en", "ar"] as const) {
+        const message = translate(locale, expectedKey);
+        expect(message, `${locale} ${code}`).not.toBe(translate(locale, "errors.conflict"));
+        expect(message, `${locale} ${code}`).not.toBe(translate(locale, "errors.serviceUnavailable"));
+        expect(message, `${locale} ${code}`).not.toBe(translate(locale, "errors.billingBlocked"));
+        expect(message, `${locale} ${code}`).not.toContain(code);
+        if (locale === "ar") expect(message).toMatch(/\p{Script=Arabic}/u);
+      }
+    }
+    expect(translate("en", "errors.printerOwnerChanged")).toMatch(/refresh.*confirm/i);
+    expect(translate("ar", "errors.printerVerificationRequired")).toMatch(/تَحَق|تحقّق/u);
+  });
+
+  it("localizes invalid approved printer endpoints without telling operators to delete the printer", () => {
+    expect(codeMessageKey("MISSING_PRINTER_ENDPOINT")).toBe("errors.printerEndpointMissing");
+    expect(codeMessageKey("INVALID_PRINTER_ENDPOINT")).toBe("errors.printerEndpointInvalid");
+    for (const locale of ["en", "ar"] as const) {
+      const message = translate(locale, apiMessageKey("INVALID_PRINTER_ENDPOINT", 422));
+      expect(message).not.toBe(translate(locale, "errors.printerEndpointMissing"));
+      expect(message).not.toMatch(/remove it and add it again|أزلها ثم أعد إضافتها/i);
+    }
+    expect(translate("en", apiMessageKey("INVALID_PRINTER_ENDPOINT", 422))).toMatch(/review|verify/i);
+    expect(translate("ar", apiMessageKey("INVALID_PRINTER_ENDPOINT", 422))).toMatch(/[\u0600-\u06ff]/u);
+  });
+
+  it("guides workspace approval and unsupported printer transport without blaming the Agent", () => {
+    expect(codeMessageKey("DEVICE_NOT_APPROVED")).toBe("errors.deviceNotApproved");
+    expect(codeMessageKey("UNSUPPORTED_DISCOVERY_TRANSPORT")).toBe("errors.unsupportedDiscoveryTransport");
+    const pending = translate("en", apiMessageKey("DEVICE_NOT_APPROVED", 409));
+    const unsupported = translate("en", apiMessageKey("UNSUPPORTED_DISCOVERY_TRANSPORT", 422));
+    expect(pending).toMatch(/workspace|approve/i);
+    expect(pending).not.toMatch(/on the agent/i);
+    expect(unsupported).toMatch(/transport|protocol/i);
+    expect(unsupported).not.toMatch(/update the agent/i);
+    for (const code of ["DEVICE_NOT_APPROVED", "UNSUPPORTED_DISCOVERY_TRANSPORT"]) {
+      const localized = translate("ar", apiMessageKey(code, code === "DEVICE_NOT_APPROVED" ? 409 : 422));
+      expect(localized).toMatch(/[\u0600-\u06ff]/u);
+      expect(localized).not.toBe(translate("ar", "errors.operationFailed"));
+    }
+  });
+
   it("resolves the ambiguous-invitation-delivery code", () => {
     // This code exists because the 503 is NOT a failure: the invitation row
     // was created and deliberately not revoked. Before it was added the
@@ -65,7 +188,7 @@ describe("invitation route honours the coded contract", () => {
     // without this field that branch is dead code.
     expect(route).toContain('code: "INVITATION_DELIVERY_UNAVAILABLE"');
     expect(route).toContain("Invitation created; delivery unconfirmed");
-    expect(route).toContain("requireWorkspacePlatformOwnerForInvites");
+    expect(route).toContain("requireWorkspaceOwnerForInvites");
   });
 
   it("never revokes the invitation when email delivery is ambiguous", () => {

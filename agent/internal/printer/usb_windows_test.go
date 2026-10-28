@@ -127,6 +127,49 @@ func TestUSBWriteZeroByteFailureIsUnknown(t *testing.T) {
 	}
 }
 
+// Win32 WriteFile can return success with an invalid zero byte count.
+// The kernel write was attempted, so zero CONFIRMED bytes is not a proof
+// that no document data was handed to the USB printer.
+func TestUSBSuccessfulZeroProgressIsUnknownWithoutRetry(t *testing.T) {
+	p := nativeUSBPrintFixture("zero-success", "ZeroSuccess", "NUL")
+	var writes atomic.Int32
+	p.writeChunk = func(h windows.Handle, chunk []byte) (uint32, error) {
+		writes.Add(1)
+		return 0, nil
+	}
+	err := p.Print(context.Background(), []byte("receipt"))
+	if err == nil || !HasUnknownOutcomeMarker(err.Error()) {
+		t.Fatalf("USB zero-progress success cannot safely promise an unprinted document: %v", err)
+	}
+	if writes.Load() != 1 {
+		t.Fatalf("one logical attempt made %d kernel writes", writes.Load())
+	}
+}
+
+func TestUSBInvalidWriteProgressNeverInflatesConfirmedEvidence(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+	}{
+		{"success_over_report", nil},
+		{"failed_over_report", errors.New("driver returned invalid transfer count")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := nativeUSBPrintFixture("over-report", "OverReport", "NUL")
+			p.writeChunk = func(h windows.Handle, chunk []byte) (uint32, error) {
+				return uint32(len(chunk) + 5), tc.err
+			}
+			err := p.Print(context.Background(), []byte("receipt"))
+			if err == nil || !HasUnknownOutcomeMarker(err.Error()) {
+				t.Fatalf("invalid USB count must never count a successful print: %v", err)
+			}
+			if !strings.Contains(err.Error(), "after 0/7 confirmed bytes") {
+				t.Fatalf("corrupt counter must not become confirmed byte evidence: %v", err)
+			}
+		})
+	}
+}
+
 func TestUSBWriteExceedingBoundaryIsUnknownAndWedges(t *testing.T) {
 	old := usbChunkTimeout
 	usbChunkTimeout = 150 * time.Millisecond

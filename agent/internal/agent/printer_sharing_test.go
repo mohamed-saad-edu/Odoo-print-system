@@ -197,6 +197,30 @@ func TestCloudDiscoverySharingUsesFreshNativeShareGroupsBeforeRegistryPersistenc
 	}
 }
 
+// A currently shared canonical cloud alias must remain shared. Revoking the
+// physical binding must then deny that exact Agent-scoped alias even if the
+// native backend has disappeared, without treating a foreign alias as local.
+func TestCloudAliasPrivacySurvivesBackendRemovalWithoutHidingSharedAliases(t *testing.T) {
+	ag, local := prepareSharingTestAgent(t, &fakePrinter{})
+	alias := gatewayAliasPrinterID(local.ID, ag.cfg.Agent.ID)
+	ag.gatewayOwned[alias] = struct{}{}
+	snapshot := ag.loadLocalPrinterSharing()
+	ids, complete := ag.privatePrinterIDs(snapshot)
+	if !complete || strings.Contains(","+strings.Join(ids, ",")+",", ","+alias+",") {
+		t.Fatalf("live shared cloud alias incorrectly denied: ids=%v complete=%v", ids, complete)
+	}
+	if err := config.SetPrinterSharing(ag.configPath, local, nil, false); err != nil {
+		t.Fatal(err)
+	}
+	// Removal of the executable backend must not erase a durable opt-out.
+	delete(ag.printers, local.ID)
+	snapshot = ag.loadLocalPrinterSharing()
+	ids, complete = ag.privatePrinterIDs(snapshot)
+	if !complete || !strings.Contains(","+strings.Join(ids, ",")+",", ","+alias+",") {
+		t.Fatalf("unshared cloud alias disappeared after backend removal: ids=%v complete=%v", ids, complete)
+	}
+}
+
 func TestAgentSharingPrivateInventoryIncludesRuntimeDesiredAndScopedAliases(t *testing.T) {
 	ag, local := prepareSharingTestAgent(t, &fakePrinter{status: "offline"})
 	if err := config.SetPrinterSharing(ag.configPath, local, nil, false); err != nil {
@@ -208,14 +232,15 @@ func TestAgentSharingPrivateInventoryIncludesRuntimeDesiredAndScopedAliases(t *t
 	other.ID, other.Endpoint = "other", "192.168.10.11:9100"
 	ag.printerConfigs[alias.ID], ag.printerConfigs[other.ID] = alias, other
 	ag.printers[alias.ID], ag.printers[other.ID] = &fakePrinter{}, &fakePrinter{}
-	ag.gatewayOwned["local~aaaaaaaa"] = struct{}{}
+	ownedAlias := gatewayAliasPrinterID(local.ID, ag.cfg.Agent.ID)
+	ag.gatewayOwned[ownedAlias] = struct{}{}
 	ag.desiredStates["desired-alias"] = desiredPrinterRecord{Desired: testDesiredPrinter("desired-alias", 1, "active")}
 	row := ag.desiredStates["desired-alias"]
 	row.Desired.Config["ip"] = "192.168.10.10"
 	ag.desiredStates["desired-alias"] = row
 	snapshot := ag.loadLocalPrinterSharing()
 	ids, complete := ag.privatePrinterIDs(snapshot)
-	if !complete || strings.Join(ids, ",") != "cloud-alias,desired-alias,local,local~aaaaaaaa" {
+	if !complete || strings.Join(ids, ",") != "cloud-alias,desired-alias,local,"+ownedAlias {
 		t.Fatalf("private alias IDs lost: %v complete=%v", ids, complete)
 	}
 	rows := ag.printerStatusPayloadWithSharing(snapshot)
@@ -225,6 +250,35 @@ func TestAgentSharingPrivateInventoryIncludesRuntimeDesiredAndScopedAliases(t *t
 	// The runtime backend still exists for local status/diagnostics.
 	if p, exists := ag.getPrinter("local"); !exists || p.Status() != "offline" {
 		t.Fatal("unshare removed/forced health on local backend")
+	}
+}
+
+func TestPrivateCloudAliasRemainsWithheldAfterLocalRuntimeBackendIsRemoved(t *testing.T) {
+	ag, local := prepareSharingTestAgent(t, &fakePrinter{})
+	if err := config.SetPrinterSharing(ag.configPath, local, nil, false); err != nil {
+		t.Fatal(err)
+	}
+	ownedAlias := gatewayAliasPrinterID(local.ID, ag.cfg.Agent.ID)
+	ag.gatewayOwned[ownedAlias] = struct{}{}
+	// A foreign Agent's alias can coexist in historical Gateway IDs, but
+	// must never inherit this Agent's local private-printing decision.
+	foreignAlias := gatewayAliasPrinterID(local.ID, "unrelated-agent")
+	ag.gatewayOwned[foreignAlias] = struct{}{}
+	// A transient backend retirement must never erase the old cloud alias's
+	// privacy report. Gateway-owned state is never independent authority
+	// to re-share a locally denied destination.
+	delete(ag.printers, local.ID)
+	delete(ag.printerConfigs, local.ID)
+	ids, complete := ag.privatePrinterIDs(ag.loadLocalPrinterSharing())
+	if !complete {
+		t.Fatalf("durable denied binding should still be complete: %v", ids)
+	}
+	got := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		got[id] = true
+	}
+	if !got[local.ID] || !got[ownedAlias] || len(got) != 2 {
+		t.Fatalf("denied cloud alias not preserved after backend retirement: %v", ids)
 	}
 }
 
@@ -240,13 +294,15 @@ func TestAgentSharingInvalidPrivateIDsCannotRejectWholeHeartbeat(t *testing.T) {
 	if complete || strings.Join(ids, ",") != "local" {
 		t.Fatalf("overlong local ID made transport-invalid inventory: %v complete=%v", ids, complete)
 	}
-	for _, id := range []string{"", "bad\nID", strings.Repeat("😀", 61), " trailing "} {
+	for _, id := range []string{"", "bad\nID", strings.Repeat("😀", 31), strings.Repeat("é", 61), " trailing "} {
 		if validGatewaySharingID(id) {
 			t.Fatalf("invalid published ID accepted: %q", id)
 		}
 	}
-	if !validGatewaySharingID(strings.Repeat("😀", 60)) {
-		t.Fatal("valid120 UTF-16 unit ID rejected")
+	for _, id := range []string{strings.Repeat("😀", 30), strings.Repeat("é", 60), strings.Repeat("x", 120)} {
+		if !validGatewaySharingID(id) {
+			t.Fatalf("valid120 UTF-8 byte ID rejected: %q", id)
+		}
 	}
 }
 
@@ -321,7 +377,10 @@ func TestAgentSharingRejectsClaimBeforePrintingAndAllowsStoredResultReplay(t *te
 	if err := config.SetPrinterSharing(ag.configPath, local, nil, false); err != nil {
 		t.Fatal(err)
 	}
-	ag.processJob(context.Background(), sharingDispatchTestJob(ag, "private-job", "local~aaaaaaaa"))
+	// A verified alias reaches the real sharing guard; a forged hash must
+	// never be resolved into another physical printer's binding.
+	privateAlias := gatewayAliasPrinterID(local.ID, ag.cfg.Agent.ID)
+	ag.processJob(context.Background(), sharingDispatchTestJob(ag, "private-job", privateAlias))
 	if p.Calls() != 0 {
 		t.Fatal("unshared alias reached printer")
 	}
@@ -427,7 +486,17 @@ func (*verifiedNetworkSharingFixture) VerifyOperational(ctx context.Context, pc 
 
 func sharingDispatchTestJob(a *Agent, id, printerID string) map[string]interface{} {
 	job := dispatchTestJob(id, printerID)
-	job["bindingDigest"] = testPrinterBinding(a.printerConfigs[a.resolvePrinterAlias(printerID)])
+	// The Gateway assigned the job's binding before local sharing could
+	// change. Resolving its target AGAIN through current local policy turns
+	// a deliberately denied alias into an empty test config and panics,
+	// preventing the test from reaching the actual fail-closed dispatch gate.
+	// These sharing fixtures use one known local printer; keep its original
+	// binding and leave the potentially forged/denied wire ID untouched.
+	local, ok := a.printerConfigs["local"]
+	if !ok || len(a.printerConfigs) != 1 {
+		panic("sharing dispatch fixture requires exactly one local printer")
+	}
+	job["bindingDigest"] = testPrinterBinding(local)
 	return job
 }
 
@@ -471,7 +540,11 @@ func TestAgentSharingAdmittedJobFinishesWhileMutexWaiterIsReturned(t *testing.T)
 	case <-time.After(5 * time.Second):
 		t.Fatal("initial physical attempt never admitted")
 	}
-	ag.dispatchJob(context.Background(), sharingDispatchTestJob(ag, "waiting-private", "local~aaaaaaaa"))
+	// Exercise the real printer mutex with the Agent-scoped canonical
+	// cloud alias. A forged suffix cannot resolve a backend and tests the
+	// alias security fence, not the fresh admission of a queued waiter.
+	waitingAlias := gatewayAliasPrinterID(local.ID, ag.cfg.Agent.ID)
+	ag.dispatchJob(context.Background(), sharingDispatchTestJob(ag, "waiting-private", waitingAlias))
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		_, status, found, err := ag.queue.Get("waiting-private")
@@ -500,8 +573,36 @@ func TestAgentSharingAdmittedJobFinishesWhileMutexWaiterIsReturned(t *testing.T)
 	if p.Calls() != 1 || !ag.queue.IsProcessed("already-admitted") || ag.queue.WasOutcomeUnknown("waiting-private") {
 		t.Fatalf("unshare cancelled admitted work or printed waiter: calls=%d", p.Calls())
 	}
-	if ag.queue.ClaimTokenFor("already-admitted") != "" || ag.queue.ClaimTokenFor("waiting-private") != "" {
-		t.Fatal("exact result/queued ACK did not clear local tokens")
+	// A durably queued waiter can finish its local dispatch goroutine
+	// before the separate pre-dispatch return outbox sends its exact
+	// claim-token hand-back. Drain that outbox explicitly; never clear the
+	// claim only because the local printer mutex became free.
+	ag.reportPendingPreDispatchReturns(context.Background())
+	successToken := ag.queue.ClaimTokenFor("already-admitted")
+	waitingToken := ag.queue.ClaimTokenFor("waiting-private")
+	if successToken != "" || waitingToken != "" {
+		t.Fatalf("exact result/queued ACK did not clear local tokens after hand-back: success=%q waiting=%q", successToken, waitingToken)
+	}
+}
+
+func TestPreDispatchDesiredStateRefusalClearsAcceptedHandBackClaim(t *testing.T) {
+	p := &fakePrinter{}
+	ag, _ := prepareSharingTestAgent(t, p)
+	// The native runtime has a queue, but the local YAML authority was
+	// removed before the first synced Gateway desired-state snapshot.
+	// This must be rejected *before* any physical attempt.
+	ag.cfg.Printers = nil
+	ag.desiredStateSynced = false
+	ag.processJob(context.Background(), sharingDispatchTestJob(ag, "unsynced-private", "local"))
+	if p.Calls() != 0 {
+		t.Fatal("unverified desired-state queue reached hardware")
+	}
+	_, status, found, err := ag.queue.Get("unsynced-private")
+	if err != nil || !found || status != "queued" {
+		t.Fatalf("pre-dispatch refusal did not remain queued: status=%q found=%v err=%v", status, found, err)
+	}
+	if token := ag.queue.ClaimTokenFor("unsynced-private"); token != "" {
+		t.Fatalf("Gateway-acknowledged desired-state hand-back retained a stale local claim: %q", token)
 	}
 }
 

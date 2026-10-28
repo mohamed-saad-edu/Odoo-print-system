@@ -1,11 +1,14 @@
 import { NextResponse } from "next/server";
+import { requireConsoleReadAuthorityInTransaction, ConsoleAgentAuthorityRevokedError } from "../../../lib/console-read-authority";
+import { TenantSuspendedError, TenantDeletedError } from "../../../lib/tenant-guard";
+import { ManagerMutationAuthorityChangedError } from "../../../lib/manager-mutation-authorization";
 import { db } from "../../../db";
 import { agents } from "../../../db/schema";
 import { validateWorkspaceManager } from "../../../lib/manager-auth";
 import { validateConsoleAuth } from "../../../lib/console-auth";
 import { requireManagerPermission } from "../../../lib/authorization";
 import { and, desc, eq, lt, or } from "drizzle-orm";
-import { clampListLimit } from "../../../lib/request-limits";
+import { clampListLimit, parseStrictListOffset } from "../../../lib/request-limits";
 import { fleetCursorIdHeaders, readFleetCursorId } from "../../../lib/fleet-cursor";
 import { z } from "zod";
 import { createAgentForManager } from "../../../lib/agent-control";
@@ -30,10 +33,9 @@ export async function GET(req: Request) {
   // explicitly allow unlimited Agents; callers must paginate rather than infer a fleet limit.
   const { searchParams } = new URL(req.url);
   const limit = clampListLimit(searchParams.get("limit"), 1000, MAX_AGENTS_LIST);
-  const offsetRaw = parseInt(searchParams.get("offset") ?? "0", 10);
-  const offset = Number.isNaN(offsetRaw) ? 0 : Math.max(0, offsetRaw);
-  if (offset > MAX_AGENTS_OFFSET) {
-    return NextResponse.json({ error: `offset must be <= ${MAX_AGENTS_OFFSET}; use beforeCreatedAt + beforeId keyset pagination for deeper fleets` }, { status: 400 });
+  const offset = parseStrictListOffset(searchParams.get("offset"), MAX_AGENTS_OFFSET);
+  if (offset === null) {
+    return NextResponse.json({ error: `offset must be a non-negative decimal integer <= ${MAX_AGENTS_OFFSET}; use keyset pagination for deeper fleets`, code: "INVALID_OFFSET" }, { status: 400 });
   }
   const beforeCreatedAtRaw = searchParams.get("beforeCreatedAt");
   let beforeId: string | null;
@@ -58,10 +60,30 @@ export async function GET(req: Request) {
   const where = cursorWhere ? and(ownershipWhere, cursorWhere) : ownershipWhere;
   await refreshClockSkew();
   const now = gatewayNow();
-  const rows = await db.select({
+  // Preflight credentials can be revoked while a fleet query waits.
+  // The tenant/manager/Agent locks protect both read and pagination metadata.
+  let rows;
+  try {
+    rows = await db.transaction(async (tx) => {
+      await requireConsoleReadAuthorityInTransaction(tx, auth, "agents.read");
+      return tx.select({
     id: agents.id, name: agents.name, status: agents.status, lifecycle: agents.lifecycle,
     metadata: agents.metadata, lastSeenAt: agents.lastSeenAt, createdAt: agents.createdAt,
-  }).from(agents).where(where).orderBy(desc(agents.createdAt), desc(agents.id)).limit(limit + 1).offset(beforeCreatedAt ? 0 : offset);
+      }).from(agents).where(where).orderBy(desc(agents.createdAt), desc(agents.id))
+        .limit(limit + 1).offset(beforeCreatedAt ? 0 : offset);
+    });
+  } catch (error) {
+    const headers = { "Cache-Control": "private, no-store" };
+    if (error instanceof TenantSuspendedError || error instanceof TenantDeletedError) {
+      return NextResponse.json({ error: error.message, code: error.code }, { status: error.status, headers });
+    }
+    if (error instanceof ManagerMutationAuthorityChangedError) return error.response();
+    if (error instanceof ConsoleAgentAuthorityRevokedError) {
+      return NextResponse.json({ error: error.message, code: error.code }, { status: error.status, headers });
+    }
+    logError("agents.inventory_read_failed", { tenantId, error: error instanceof Error ? error.message : "unknown" });
+    return NextResponse.json({ error: "Agent inventory unavailable", code: "FLEET_UNAVAILABLE" }, { status: 503, headers });
+  }
   const hasMore = rows.length > limit;
   const pageRows = hasMore ? rows.slice(0, limit) : rows;
   const staleThresholdSeconds = agentStaleThresholdSeconds();

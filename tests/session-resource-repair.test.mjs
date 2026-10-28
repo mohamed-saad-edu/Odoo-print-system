@@ -85,7 +85,7 @@ function fixture() {
   };
   return {rows,events,locks,globals,setClaims:value=>{claims=value;}};
 }
-class ActionError extends Error {constructor(message,status){super(message);this.status=status;}}
+class ActionError extends Error {constructor(message,status,code){super(message);this.status=status;this.code=code;}}
 async function deletion(f) {return actual('src/app/actions.ts',f.globals,s=>s.slice(s.indexOf('export async function deleteAgent('),s.indexOf('export async function createPrintJob(')));}
 function job(id,status='queued') {return {id,tenantId:'t',agentId:'a',printerId:'p',apiKeyId:'key',status,idempotencyKey:`op-${id}`,payload:{type:'raw',protocol:'raw',data:'aA=='},createdAt:new Date(0),updatedAt:new Date(0)};}
 
@@ -122,6 +122,36 @@ test('Agent deletion rolls back runtime and receipt writes when audit fails',asy
   const api=await deletion(f);await assert.rejects(api.deleteAgent('a'),/audit unavailable/);
   assert.equal(f.rows.agents.length,2);assert.equal(f.rows.printJobs.length,1);assert.equal(f.rows.printJobReceipts.length,0);
 });
+
+test('real Manager print action rejects missing or altered operation IDs before enqueue and passes exact retry identity',async()=>{
+  const validation=await actual('src/lib/idempotency.ts');
+  const calls=[];
+  class PrintActionError extends Error { constructor(message,status,code){super(message);this.status=status;this.code=code;} }
+  const api=await actual('src/app/actions.ts',{
+    ActionError:PrintActionError,
+    requireManager:async()=>({tenantId:'tenant',userId:'owner',role:'owner'}),
+    requireManagerPermission:()=>{},
+    getServerLocale:async()=>'en',makeT:()=>key=>key,
+    isExactIdempotencyKey:validation.isExactIdempotencyKey,
+    createPrintJobForPrinter:async (...args)=>{calls.push(args);return {id:'job-existing',isReused:calls.length>1};},
+    revalidatePath:()=>{},entitlementLimitSignal:()=>null,isTenantBillingError:()=>false,
+  },s=>s.slice(s.indexOf('export async function createPrintJob('),s.indexOf('/**\n * Deliberate operator reprint')));
+  const payload={type:'raw',protocol:'raw',encoding:'base64',data:'SGVsbG8='};
+  for(const [key,code] of [[undefined,'IDEMPOTENCY_KEY_REQUIRED'],['','INVALID_REQUEST'],['  valid-key','INVALID_REQUEST'],['valid-key\u00a0','INVALID_REQUEST'],['short','INVALID_REQUEST'],['\ud800broken-key','INVALID_REQUEST']]){
+    await assert.rejects(api.createPrintJob('printer',payload,key),err=>err.status===400 && err.code===code);
+  }
+  assert.equal(calls.length,0,'invalid operation identities must not enqueue');
+  const key='manager-owned-original-operation';
+  const first=await api.createPrintJob('printer',payload,key);
+  const repeated=await api.createPrintJob('printer',payload,key);
+  assert.equal(first.ok,true);assert.equal(first.reused,false);
+  assert.equal(repeated.id,first.id);assert.equal(repeated.reused,true);
+  assert.equal(calls.length,2);
+  assert.deepEqual(calls.map(([printer,body,options])=>[printer,body,options.idempotencyKey,options.tenantId]),[
+    ['printer',payload,key,'tenant'],['printer',payload,key,'tenant'],
+  ]);
+});
+
 async function keyDeletionApi(f) {
   const helper = await actual('src/lib/api-key-deletion.ts', f.globals,
     s => s.slice(s.indexOf('export async function deleteApiKeyInTransaction')));
@@ -153,6 +183,43 @@ test('Dashboard expected failures cross the action boundary as explicit data',as
   const auth=await api.getDashboardStateResult();assert.equal(auth.status,401);assert.equal(auth.ok,false);
   const denial=await api.getDashboardJobsResult();assert.equal(denial.code,'FORBIDDEN');
   const failure=await api.deleteAgentResult('a');assert.equal(failure.status,500);assert.equal(failure.error,null);assert.ok(!JSON.stringify(failure).includes('secret'));
+});
+
+
+test('reprint Server Action rejects aliased source jobs before selecting a printer',async()=>{
+  const validation=await actual('src/lib/idempotency.ts');
+  const rows=[];
+  const payload={type:'raw',protocol:'raw',encoding:'base64',data:'SGVsbG8='};
+  const stored={id:'job_original',tenantId:'tenant',printerId:'printer-exact',payload,status:'failed',destination:'receipt',documentType:'receipt'};
+  const eq=(column,value)=>({field:column.field,value});
+  const api=await actual('src/app/actions.ts',{
+    ActionError,
+    requireManager:async()=>({tenantId:'tenant',userId:'owner',role:'owner'}),
+    requireManagerPermission:()=>{},
+    getServerLocale:async()=>'en',makeT:()=>key=>key,
+    isExactIdempotencyKey:validation.isExactIdempotencyKey,
+    printJobs:{id:{field:'id'},tenantId:{field:'tenantId'}},eq,and:(...args)=>args,
+    db:{query:{printJobs:{findFirst:async(opts)=>{rows.push(opts.where);return stored;}}}},
+    isTerminal:status=>['failed','success','expired'].includes(status),
+    createPrintJobForPrinter:async(printer,body,options)=>{
+      assert.equal(printer,'printer-exact');assert.deepEqual(body,payload);
+      assert.equal(options.reprintOfJobId,stored.id);assert.equal(options.tenantId,'tenant');
+      return {id:'new-reprint',isReused:false};
+    },
+    revalidatePath:()=>{},entitlementLimitSignal:()=>null,isTenantBillingError:()=>false,
+  },s=>s.slice(s.indexOf('export async function reprintJob('),s.indexOf('export async function setPrinterLifecycle(')));
+  for(const input of ['',undefined,' job_original','job_original ','\u00a0job_original','job_original\u00a0','bad\njob','\ud800']){
+    await assert.rejects(api.reprintJob(input),err=>err instanceof ActionError&&err.status===400&&err.code==='INVALID_REQUEST');
+  }
+  assert.equal(rows.length,0);
+  const response=await api.reprintJob(stored.id);
+  // A Server Action result originates in a separate VM realm: assert data,
+  // not an unrelated realm's object prototype.
+  assert.equal(response.ok,true);
+  assert.equal(response.id,'new-reprint');
+  assert.equal(response.reused,false);
+  assert.equal(rows.length,1);
+  assert.deepEqual(rows[0],[{field:'id',value:'job_original'},{field:'tenantId',value:'tenant'}]);
 });
 
 async function odooSave(changes,{removeKey=false,navigate=false}={}) {
@@ -200,7 +267,13 @@ test('expired workspace probe provides only refresh routing and team reads retur
   const result=await probe.GET(new Request('https://gateway/api/auth/me',{headers:{cookie:'mgr_session=expired'}}));
   assert.equal(result.status,401);assert.equal((await result.json()).refreshKind,'manager');
   for(const resource of ['members','invitations']) {
-    const api=await actual(`src/app/api/team/${resource}/route.ts`,globals,s=>s.slice(s.indexOf('export async function GET'),s.indexOf('export async function '+(resource==='members'?'PATCH':'POST'))));
+    const api=await actual(`src/app/api/team/${resource}/route.ts`,globals,s=>s.slice(
+      // The security-sensitive response uses a module-level no-store header.
+      // Keep its actual definition in the selected production source; a VM
+      // snippet beginning at GET alone leaves PRIVATE_HEADERS undefined.
+      s.includes('const PRIVATE_HEADERS =') ? s.indexOf('const PRIVATE_HEADERS =') : s.indexOf('export async function GET'),
+      s.indexOf('export async function '+(resource==='members'?'PATCH':'POST')),
+    ));
     assert.equal((await api.GET(new Request(`https://gateway/api/team/${resource}`))).status,401);
   }
 });

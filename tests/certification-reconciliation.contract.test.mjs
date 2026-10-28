@@ -36,3 +36,11 @@ test("unknown accepted outcome keeps physical rerun disabled and offers explicit
     assert.match(catalog, /"cert\.retryStatus"/);
   }
 });
+
+
+test("certification translates typed quota rejection in the wizard without new physical submission", () => {
+  assert.match(source, /import \{ apiMessageKey \} from "\.\.\/lib\/api-error-keys"/);
+  assert.match(source, /t\(apiMessageKey\(code, res\.status, "cert\.failedBody"\)\)/);
+  assert.match(source, /const code = typeof data\?\.code === "string" \? data\.code : undefined;/);
+  for (const catalog of [en, ar]) assert.match(catalog, /"errors\.printQuotaExceeded"/);
+});

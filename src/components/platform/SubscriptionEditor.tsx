@@ -20,6 +20,8 @@ export type ManualSubscription = {
   revision: number;
   monthlyUsed: number;
   nextReset: string;
+  /** Computed by Gateway from the authoritative database clock, never render time. */
+  canReactivate?: boolean;
 };
 export type ManualPlan = {
   id: string;
@@ -91,8 +93,9 @@ export function SubscriptionEditor({
   const renewalFromRequest = !!request && active &&
     request.planId === subscription?.planId && request.term === subscription?.term &&
     !!subscription?.currentPeriodEnd;
-  const canReactivate = subscription?.status === "suspended" &&
-    (!subscription.currentPeriodEnd || day(subscription.currentPeriodEnd) > day());
+  // Gateway evaluates the finite deadline with PostgreSQL time. Rendering must
+  // never use Date.now() to guess whether this subscription is reactivatable.
+  const canReactivate = subscription?.status === "suspended" && subscription.canReactivate === true;
   const initialAction: Action = !request && active && preferredAction === "revoke"
     ? "revoke" : renewalFromRequest ? "renew" : request ? "save"
     : canReactivate ? "reactivate" : "save";
@@ -132,6 +135,8 @@ export function SubscriptionEditor({
   const full = action === "save" || action === "renew";
   const editing = action === "save" && active && !request;
   const activating = action === "save" && !editing;
+  const linkedActivation = !!request && action === "save";
+  const linkedTermEnd = !!request && full && term !== "custom";
   const showTerm = full && (action === "renew" || activating || editDates);
   const showCustomDates = full && showTerm && term === "custom";
   const title = activating && leavePending && !request ? a("savePendingSubscription") : actionLabel(action, a, editing, request);
@@ -308,10 +313,10 @@ export function SubscriptionEditor({
             <dd className="mt-1 font-semibold">{plans.find(plan => plan.id === planId)?.name ?? planId} · {a(term)} · {formatNumber(Number(quota))}</dd>
           </div>}
           <div><dt className="text-ink-3">{a("type")}</dt><dd className="mt-1">{a(type)}</dd></div>
-          <div><dt className="text-ink-3">{a(action === "renew" ? "contractStart" : "start")}</dt><dd className="mt-1"><time dateTime={start}>{formatDate(start)}</time></dd></div>
+          <div><dt className="text-ink-3">{a(action === "renew" ? "contractStart" : "start")}</dt><dd className="mt-1">{linkedActivation ? a("startsAtApproval") : <time dateTime={start}>{formatDate(start)}</time>}</dd></div>
           {activating && leavePending && !request && <div><dt className="text-ink-3">{a("status")}</dt><dd>{a("awaiting_activation")}</dd></div>}
         </>}
-        {(full || action === "extend") && <div><dt className="text-ink-3">{a("end")}</dt><dd className="mt-1"><time dateTime={end}>{formatDate(end)}</time></dd></div>}
+        {(full || action === "extend") && <div><dt className="text-ink-3">{a("end")}</dt><dd className="mt-1">{linkedTermEnd ? a("endsFromApproval") : <time dateTime={end}>{formatDate(end)}</time>}</dd></div>}
       </dl>
       {field("reason", <textarea className={controlClass} required maxLength={500} rows={2}
         value={reason} onChange={event => {
@@ -355,20 +360,20 @@ export function SubscriptionEditor({
             onChange={event => changeTerm(event.target.value as Term)}>
             {(["monthly", "yearly", "custom"] as const).map(v => <option key={v} value={v}>{a(v)}</option>)}
           </select>)}
-          {showCustomDates && action === "save" && field("start", <input className={controlClass}
+          {showCustomDates && action === "save" && !request && field("start", <input className={controlClass}
             type="date" required value={start} onChange={event => setStart(event.target.value)} />)}
           {showCustomDates && field("end", <input className={controlClass} type="date" required value={end}
             onChange={event => setEnd(event.target.value)} />)}
         </div>
 
-        {action === "renew" && <p className="text-sm leading-6 text-ink-3">{a("renewalKeepsUsage")}</p>}
-
         {showTerm && !showCustomDates && <div className="flex flex-wrap items-center gap-2 rounded-lg bg-surface-2 p-3 text-sm">
           <CalendarClock className="h-4 w-4 text-brand" aria-hidden />
           <span className="text-ink-3">{a("end")}:</span>
-          <time dateTime={end} className="font-semibold">{formatDate(end)}</time>
+          {request ? <span className="font-semibold">{a("endsFromApproval")}</span>
+            : <time dateTime={end} className="font-semibold">{formatDate(end)}</time>}
         </div>}
 
+        {request && full && <p className="text-sm leading-6 text-ink-3">{a(action === "renew" ? "renewalTimeNotice" : term === "custom" ? "customDeadlineOnApproval" : "approvalDateNotice")}</p>}
         <details className="rounded-lg border border-edge-subtle px-4 py-3">
           <summary className="cursor-pointer text-sm font-medium text-ink-2">{a("optionalDetails")}</summary>
           <div className="mt-4 grid gap-4 sm:grid-cols-2">

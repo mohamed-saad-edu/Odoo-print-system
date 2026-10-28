@@ -23,7 +23,11 @@ func isDiscoveryInterfaceExcluded(ifaceName string) bool {
 		strings.HasPrefix(lower, "br-") ||
 		strings.HasPrefix(lower, "tailscale") ||
 		strings.HasPrefix(lower, "tap") ||
-		strings.HasPrefix(lower, "tun")
+		strings.HasPrefix(lower, "tun") ||
+		strings.HasPrefix(lower, "utun") ||
+		strings.HasPrefix(lower, "wg") ||
+		strings.HasPrefix(lower, "wireguard") ||
+		strings.HasPrefix(lower, "zt")
 }
 
 func generateHosts(ipNet *net.IPNet) []net.IP {
@@ -45,7 +49,14 @@ func generateHosts(ipNet *net.IPNet) []net.IP {
 		total = 1024 // safety cap
 	}
 	base := ipToUint32(network)
-	for i := 1; i < total-1 && len(hosts) < 254; i++ {
+	first, end := 1, total-1
+	if ones == 31 {
+		// RFC 3021: a /31 is a two-host point-to-point link. There is no
+		// network/broadcast reservation; the caller removes local NIC IPs,
+		// leaving the peer as a discoverable printer destination.
+		first, end = 0, 2
+	}
+	for i := first; i < end && len(hosts) < 254; i++ {
 		h := uint32ToIP(base + uint32(i))
 		if h != nil {
 			hosts = append(hosts, h)
@@ -80,7 +91,24 @@ func privateDiscoveryTargets(subnets []*net.IPNet) []string {
 func privateDiscoveryTargetsWithBudget(subnets []*net.IPNet, budget int) ([]string, bool) {
 	var groups [][]string
 	seenSubnets := make(map[string]bool)
+	// Exclude every local interface address, not just the one used to
+	// construct a deduplicated subnet. Multiple NICs/VLAN addresses may
+	// inhabit the same /24, and probing another local address can invent a
+	// false print candidate on the Agent machine itself.
+	localIPs := make(map[string]struct{}, len(subnets))
 	for _, subnet := range subnets {
+		if subnet == nil {
+			continue
+		}
+		ip := subnet.IP.To4()
+		if ip != nil && ip.IsPrivate() && !ip.IsLoopback() {
+			localIPs[ip.String()] = struct{}{}
+		}
+	}
+	for _, subnet := range subnets {
+		if subnet == nil {
+			continue
+		}
 		ip := subnet.IP.To4()
 		if ip == nil || !ip.IsPrivate() || ip.IsLoopback() {
 			continue
@@ -104,9 +132,10 @@ func privateDiscoveryTargetsWithBudget(subnets []*net.IPNet, budget int) ([]stri
 		seenSubnets[key] = true
 		var group []string
 		for _, host := range generateHosts(local) {
-			if !host.Equal(ip) {
-				group = append(group, host.String())
+			if _, isLocal := localIPs[host.String()]; isLocal {
+				continue
 			}
+			group = append(group, host.String())
 		}
 		groups = append(groups, group)
 	}

@@ -16,6 +16,7 @@ import { capabilitiesWithCurrentGeometry } from "./printer-geometry";
  */
 
 import { db, queryWithTimeout } from "../db/client";
+import type { DbTx } from "../db";
 import { agents, printers } from "../db/schema";
 import { eq, and, asc, gt } from "drizzle-orm";
 import { clampListLimit } from "./request-limits";
@@ -145,15 +146,24 @@ export function normalizePrinterStatus(
 }
 
 export async function getPrinterCapabilityMatrix(tenantId: string, printerId: string): Promise<PrinterCapabilityMatrix | null> {
-  const rows = await queryWithTimeout(
-    () => db.select({ printer: printers, agent: agents })
-      .from(printers)
-      .leftJoin(agents, and(eq(agents.id, printers.agentId), eq(agents.tenantId, tenantId)))
-      .where(and(eq(printers.tenantId, tenantId), eq(printers.id, printerId)))
-      .limit(1),
+  return queryWithTimeout(
+    () => db.transaction(tx => getPrinterCapabilityMatrixInTransaction(tx, tenantId, printerId)),
     3000,
-    "getPrinterCapability"
+    "getPrinterCapability",
   );
+}
+
+/** Use the SAME transaction as current workspace/session authorization on HTTP reads. */
+export async function getPrinterCapabilityMatrixInTransaction(
+  tx: DbTx,
+  tenantId: string,
+  printerId: string,
+): Promise<PrinterCapabilityMatrix | null> {
+  const rows = await tx.select({ printer: printers, agent: agents })
+    .from(printers)
+    .leftJoin(agents, and(eq(agents.id, printers.agentId), eq(agents.tenantId, tenantId)))
+    .where(and(eq(printers.tenantId, tenantId), eq(printers.id, printerId)))
+    .limit(1);
   if (rows.length === 0) return null;
   const row = rows[0];
   return row && !isVirtualPrinterRecord(row.printer) ? buildPrinterCapabilityMatrix(row.printer, row.agent) : null;
@@ -166,7 +176,9 @@ export function buildPrinterCapabilityMatrix(p: typeof printers.$inferSelect, ag
   // Legacy rows may carry keys outside the schema $type (e.g. driver_name);
   // read those through a string bag instead of erasing the whole row to any.
   const configBag = config as Record<string, unknown>;
-  const caps: Record<string, unknown> = p.capabilities ?? {};
+  // Geometry admitted for a prior desired configuration must not be exposed
+  // to clients after that configuration was revoked or changed.
+  const caps: Record<string, unknown> = capabilitiesWithCurrentGeometry(p) ?? {};
 
   // DB text columns infer as string; narrow to the checked vocabularies
   // (the CHECK constraints bound the values). Unlike `as any`, a wrong
@@ -174,7 +186,7 @@ export function buildPrinterCapabilityMatrix(p: typeof printers.$inferSelect, ag
   const documentTypes = getSupportedDocumentTypes(
     p.protocol as ProtocolType,
     p.connectionType as TransportType,
-    capabilitiesWithCurrentGeometry(p),
+    caps,
   );
 
   const statusInfo = normalizePrinterStatus(p.status, {
@@ -216,7 +228,12 @@ export function buildPrinterCapabilityMatrix(p: typeof printers.$inferSelect, ag
   }
 
   // Spooler health: evidence-based, NOT from DB printer state alone
-  const spoolerName = config.spooler_name;
+  // Gateway permits either spooler_name or address for a Windows queue; the
+  // Go Agent also resolves spooler_name first, then the configured endpoint.
+  // The health projection must identify that same queue before honoring probes.
+  const spoolerName = capStr(configBag, "spooler_name")?.trim()
+    || capStr(configBag, "address")?.trim()
+    || undefined;
   const spoolerProbe = capStr(caps, "spooler_status");
   let spoolerStatus: "ok" | "error" | "unknown" = "unknown";
   let spoolerMessage = "Not using spooler transport or no spooler evidence";
@@ -270,16 +287,25 @@ export async function getPrinterCapabilityPage(
   tenantId: string,
   options: { limit?: number; afterId?: string } = {},
 ): Promise<{ items: PrinterCapabilityMatrix[]; hasMore: boolean; nextCursor?: string }> {
-  const limit = clampListLimit(String(options.limit ?? 100), 100, 1000);
-  const rows = await queryWithTimeout(
-    () => db.select({ printer: printers, agent: agents }).from(printers)
-      .leftJoin(agents, and(eq(agents.id, printers.agentId), eq(agents.tenantId, tenantId)))
-      .where(and(eq(printers.tenantId, tenantId), eq(printers.sharedWithGateway, true), nonVirtualPrinterPredicate(), options.afterId ? gt(printers.id, options.afterId) : undefined))
-      .orderBy(asc(printers.id))
-      .limit(limit + 1),
+  return queryWithTimeout(
+    () => db.transaction(tx => getPrinterCapabilityPageInTransaction(tx, tenantId, options)),
     3000,
     "getPrinterCapabilityPage",
   );
+}
+
+/** Keep cursor, filtering and evidence projections identical for authorized route reads. */
+export async function getPrinterCapabilityPageInTransaction(
+  tx: DbTx,
+  tenantId: string,
+  options: { limit?: number; afterId?: string } = {},
+): Promise<{ items: PrinterCapabilityMatrix[]; hasMore: boolean; nextCursor?: string }> {
+  const limit = clampListLimit(String(options.limit ?? 100), 100, 1000);
+  const rows = await tx.select({ printer: printers, agent: agents }).from(printers)
+    .leftJoin(agents, and(eq(agents.id, printers.agentId), eq(agents.tenantId, tenantId)))
+    .where(and(eq(printers.tenantId, tenantId), eq(printers.sharedWithGateway, true), nonVirtualPrinterPredicate(), options.afterId ? gt(printers.id, options.afterId) : undefined))
+    .orderBy(asc(printers.id))
+    .limit(limit + 1);
   const hasMore = rows.length > limit;
   const page = rows.slice(0, limit);
   const now = gatewayNow();

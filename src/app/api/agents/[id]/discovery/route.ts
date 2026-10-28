@@ -102,14 +102,42 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   return NextResponse.json({ discoveryId, agentId, status: "running" }, { status: 201 });
 }
 
+const PRIVATE_HEADERS = { "Cache-Control": "private, no-store" };
+
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const claims = await validateWorkspaceManager(req);
-  if (!claims) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  try { requireManagerPermission(claims, "agents.read"); } catch { return NextResponse.json({ error: "Forbidden" }, { status: 403 }); }
+  if (!claims) return NextResponse.json({ error: "Unauthorized" }, { status: 401, headers: PRIVATE_HEADERS });
+  try { requireManagerPermission(claims, "agents.read"); } catch {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403, headers: PRIVATE_HEADERS });
+  }
   const { id: agentId } = await params;
-  const agent = await db.query.agents.findFirst({ where: and(eq(agents.id, agentId), eq(agents.tenantId, claims.tenantId)) });
-  if (!agent) return NextResponse.json({ error: "Agent not found" }, { status: 404 });
-  await expireStaleAgentDiscovery((query) => db.execute(query), claims.tenantId, agentId);
-  const rows = await db.query.discoverySessions.findMany({ where: and(eq(discoverySessions.agentId, agentId), eq(discoverySessions.tenantId, claims.tenantId)), orderBy: [desc(discoverySessions.createdAt)], limit: 20 });
-  return NextResponse.json(rows);
+  let result;
+  try {
+    result = await db.transaction(async tx => {
+      await requireActiveTenantInTransaction(tx, claims.tenantId);
+      // Read-time authority must agree with the current workspace session.
+      // Take the Agent lock before the actor lock, matching discovery POST's
+      // Tenant -> Agent -> Actor order and avoiding conflicting scan starts.
+      const locked = await tx.execute(sql`SELECT id FROM agents
+        WHERE id = ${agentId} AND tenant_id = ${claims.tenantId} FOR SHARE`);
+      if (!locked.rows.length) return null;
+      await requireManagerActorInTransaction(tx, claims, "agents.read");
+      // Expiry is a write: it must not mutate another Agent's session after
+      // the requesting manager was revoked or the tenant was suspended.
+      await expireStaleAgentDiscovery(query => tx.execute(query), claims.tenantId, agentId);
+      return tx.query.discoverySessions.findMany({
+        where: and(eq(discoverySessions.agentId, agentId), eq(discoverySessions.tenantId, claims.tenantId)),
+        orderBy: [desc(discoverySessions.createdAt)], limit: 20,
+      });
+    });
+  } catch (error) {
+    if (error instanceof TenantSuspendedError || error instanceof TenantDeletedError)
+      return NextResponse.json({ error: error.message, code: error.code }, { status: error.status, headers: PRIVATE_HEADERS });
+    if (error instanceof ManagerMutationAuthorityChangedError) return error.response();
+    logError("agent.discovery_read_failed", { agentId, error: error instanceof Error ? error.message : "unknown" });
+    return NextResponse.json({ error: "Discovery history unavailable", code: "DISCOVERY_HISTORY_UNAVAILABLE" },
+      { status: 503, headers: PRIVATE_HEADERS });
+  }
+  if (!result) return NextResponse.json({ error: "Agent not found" }, { status: 404, headers: PRIVATE_HEADERS });
+  return NextResponse.json(result, { headers: PRIVATE_HEADERS });
 }

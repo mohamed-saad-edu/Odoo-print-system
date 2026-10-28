@@ -3,13 +3,16 @@ import { db } from "../../../../../db";
 import { jobEvents, printJobs, printJobReceipts } from "../../../../../db/schema";
 import { validateWorkspaceManager } from "../../../../../lib/manager-auth";
 import { requireManagerPermission } from "../../../../../lib/authorization";
+import { requireActiveTenantInTransaction, TenantSuspendedError, TenantDeletedError } from "../../../../../lib/tenant-guard";
+import { requireManagerActorInTransaction, ManagerMutationAuthorityChangedError } from "../../../../../lib/manager-mutation-authorization";
 import { and, eq } from "drizzle-orm";
-import { getJobTimeline } from "../../../../../lib/job-timeline";
+import { getJobTimelineInTransaction } from "../../../../../lib/job-timeline";
 import { persistedTimelinePresentation } from "../../../../../lib/job-timeline-presentation";
 import { runWithCorrelation, generateRequestId } from "../../../../../server/correlation";
-import { requestIdFrom, logWarn, redactClaimToken } from "../../../../../lib/log";
+import { requestIdFrom, logError, logWarn, redactClaimToken } from "../../../../../lib/log";
 
 export const dynamic = "force-dynamic";
+const PRIVATE_HEADERS = { "Cache-Control": "private, no-store" };
 
 type JobEventRow = typeof jobEvents.$inferSelect;
 type TimelineEntry = {
@@ -34,23 +37,63 @@ type TimelineEntry = {
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const auth = await validateWorkspaceManager(req);
-  if (!auth) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!auth) return NextResponse.json({ error: "Unauthorized" }, { status: 401, headers: PRIVATE_HEADERS });
   try { requireManagerPermission(auth, "jobs.read"); } catch {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    return NextResponse.json({ error: "Forbidden" }, { status: 403, headers: PRIVATE_HEADERS });
   }
 
   const tenantId = auth.tenantId;
-
   const requestId = requestIdFrom(req) || generateRequestId();
   const correlation = { requestId, tenantId, jobId: id };
 
   return runWithCorrelation(correlation, async () => {
-    const rows = await db.query.printJobs.findMany({
-      where: and(eq(printJobs.tenantId, tenantId), eq(printJobs.id, id)),
-      columns: { payload: false }, limit: 1,
-    });
+    // Print history, archived receipts, event messages and claim correlations
+    // are confidential. Preflight login cannot authorize reads after a
+    // concurrent owner-role change, logout or tenant suspension. Hold the
+    // exact current tenant/session fence through every SELECT.
+    let snapshot;
+    try {
+      snapshot = await db.transaction(async tx => {
+        await requireActiveTenantInTransaction(tx, tenantId);
+        await requireManagerActorInTransaction(tx, auth, "jobs.read");
+        const rows = await tx.query.printJobs.findMany({
+          where: and(eq(printJobs.tenantId, tenantId), eq(printJobs.id, id)),
+          columns: { payload: false }, limit: 1,
+        });
+        const receipt = rows.length === 0
+          ? await tx.query.printJobReceipts.findFirst({
+              where: and(eq(printJobReceipts.tenantId, tenantId), eq(printJobReceipts.id, id)),
+            })
+          : null;
+        let events: JobEventRow[] = [];
+        if (rows.length) {
+          try {
+            // A nested savepoint keeps the established degraded-mode fallback:
+            // failure to load audit events never discards the available job
+            // row, while a broken event SELECT cannot poison the outer read.
+            events = await tx.transaction(savepoint =>
+              getJobTimelineInTransaction(savepoint, tenantId, id));
+          } catch (error) {
+            logWarn("job.timeline_lookup_failed", { requestId, tenantId, jobId: id,
+              error: error instanceof Error ? error.message : "unknown" });
+          }
+        }
+        return { rows, receipt, events };
+      });
+    } catch (error) {
+      if (error instanceof TenantSuspendedError || error instanceof TenantDeletedError) {
+        return NextResponse.json({ error: error.message, code: error.code },
+          { status: error.status, headers: { ...PRIVATE_HEADERS, "x-request-id": requestId } });
+      }
+      if (error instanceof ManagerMutationAuthorityChangedError) return error.response();
+      logError("job.timeline_read_failed", { requestId, tenantId, jobId: id,
+        error: error instanceof Error ? error.message : "unknown" });
+      return NextResponse.json({ error: "Print timeline unavailable", code: "JOB_TIMELINE_UNAVAILABLE" },
+        { status: 503, headers: { ...PRIVATE_HEADERS, "x-request-id": requestId } });
+    }
+
+    const { rows, receipt, events } = snapshot;
     if (rows.length === 0) {
-      const receipt = await db.query.printJobReceipts.findFirst({ where: and(eq(printJobReceipts.tenantId, tenantId), eq(printJobReceipts.id, id)) });
       if (receipt) return NextResponse.json({ jobId: id, tenantId, status: receipt.status, archived: true,
         timeline: [],
         evidence: {
@@ -65,20 +108,10 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
           },
         },
         correlation: { requestId, jobId: id, tenantId, agentId: receipt.agentId, printerId: receipt.printerId },
-      }, { headers: { "x-request-id": requestId } });
-      return NextResponse.json({ error: "Not found" }, { status: 404, headers: { "x-request-id": requestId } });
+      }, { headers: { ...PRIVATE_HEADERS, "x-request-id": requestId } });
+      return NextResponse.json({ error: "Not found" }, { status: 404, headers: { ...PRIVATE_HEADERS, "x-request-id": requestId } });
     }
     const job = rows[0];
-
-    let events: JobEventRow[] = [];
-    try {
-      events = await getJobTimeline(tenantId, id);
-    } catch (error) {
-      // The job-row fallback is intentional degraded mode, but the database
-      // failure must remain observable instead of looking like an empty timeline.
-      logWarn("job.timeline_lookup_failed", { requestId, tenantId, jobId: id, error: error instanceof Error ? error.message : "unknown" });
-      events = [];
-    }
 
     const timeline: TimelineEntry[] = events.map((e: JobEventRow) => ({
       id: e.id,
@@ -138,7 +171,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
           spoolerJobId: job.spoolerJobId,
         },
       },
-      { headers: { "x-request-id": requestId } }
+      { headers: { ...PRIVATE_HEADERS, "x-request-id": requestId } }
     );
     return res;
   });

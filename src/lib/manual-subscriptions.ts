@@ -24,6 +24,16 @@ export function customerSubscriptionState(sub: {status: string; currentPeriodSta
   if (sub.status !== "active" || !sub.currentPeriodEnd || (parseDbTimeMs(sub.currentPeriodEnd) ?? -Infinity) <= now) return "expired";
   return "active";
 }
+/** PostgreSQL timestamps without a zone are UTC in this application.
+ * Convert through the shared database parser: new Date(rawSQLString) would
+ * interpret naive clock strings in the Node host's local timezone. */
+export function manualReactivationDeadlineLive(
+  expiry: Date | string | null, databaseClock: Date | string | null,
+): boolean {
+  const nowMs = parseDbTimeMs(databaseClock);
+  const expiryMs = parseDbTimeMs(expiry);
+  return nowMs !== null && expiryMs !== null && expiryMs > nowMs;
+}
 export async function ensurePendingManualSubscription(tx: DbTx, tenantId: string, planId: string): Promise<void> {
   await tx.insert(tenantSubscriptions).values({tenantId,planId,status:"awaiting_activation",subscriptionType:"paid"}).onConflictDoNothing();
 }
@@ -42,6 +52,18 @@ export type ManualSubscriptionInput = {
   requestId?: string;
   allowRequestChanges?: boolean;
 };
+/** Contract months are calendar months, never 30-day blocks. Keep the approval
+ * instant (hour/minute included), clamping 31st and leap days at month-end. */
+export function endOfCalendarTermUTC(start: Date, term: "monthly" | "yearly"): Date {
+  const end = new Date(start.getTime());
+  if (!Number.isFinite(end.getTime())) throw new ManualSubscriptionError("SUBSCRIPTION_DATES_INVALID");
+  const dayOfMonth = end.getUTCDate();
+  end.setUTCDate(1);
+  end.setUTCMonth(end.getUTCMonth() + (term === "monthly" ? 1 : 12));
+  const lastDay = new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth() + 1, 0)).getUTCDate();
+  end.setUTCDate(Math.min(dayOfMonth, lastDay));
+  return end;
+}
 // Date.parse accepts rolled-over calendar dates and host-local timestamps.
 // Contracts need an actual calendar date with an explicit timezone before a
 // Date is constructed or persisted. Keep valid ISO instants from existing API
@@ -108,20 +130,43 @@ export async function mutateManualSubscription(tenantId: string, actor: Platform
     const before=await tx.query.tenantSubscriptions.findFirst({where:eq(tenantSubscriptions.tenantId,tenantId)});
     if ((before?.revision??0)!==input.expectedRevision) throw new ManualSubscriptionError("SUBSCRIPTION_REVISION_CONFLICT",409);
     let changes: Partial<typeof tenantSubscriptions.$inferInsert>={revision:(before?.revision??0)+1};
+    // Only a successfully approved, linked customer request fixes the term
+    // start from the authoritative database clock, not the request's creation
+    // date, browser time, or a stale admin form. Keep one timestamp for the
+    // contract start and approval audit event.
+    let approvedAt: Date | null = null;
     if (input.action==='save'||input.action==='renew') {
       const plan=await tx.query.plans.findFirst({where:and(eq(plans.id,input.planId!),eq(plans.isActive,true))});
       if (!plan) throw new ManualSubscriptionError("PLAN_NOT_FOUND",404);
       normalizePlanEntitlements(plan.entitlements);
-      const start=new Date(input.startDate!),end=new Date(input.endDate!);
+      let start=new Date(input.startDate!), end=new Date(input.endDate!);
+      if (input.requestId) {
+        const clock = await tx.execute(sql`SELECT EXTRACT(EPOCH FROM clock_timestamp()) * 1000 AS "approvalMs"`);
+        const approvalMs = Number(clock.rows[0]?.approvalMs);
+        if (!Number.isFinite(approvalMs)) throw new ManualSubscriptionError("SUBSCRIPTION_DATES_INVALID");
+        approvedAt = new Date(approvalMs);
+        if (input.action === 'save') {
+          start = approvedAt;
+          // Custom contracts retain the explicitly agreed deadline; automatic
+          // monthly/yearly contracts get their full duration after approval.
+          if (input.term !== 'custom') end = endOfCalendarTermUTC(start, input.term!);
+        } else if (input.term !== 'custom' && before?.currentPeriodEnd) {
+          // Renewals preserve time already paid for. When the old term has
+          // elapsed, count the renewed term from this actual approval instead.
+          const base = before.currentPeriodEnd > approvedAt ? before.currentPeriodEnd : approvedAt;
+          end = endOfCalendarTermUTC(base, input.term!);
+        }
+      }
+      if (end <= start) throw new ManualSubscriptionError("SUBSCRIPTION_DATES_INVALID");
       if (input.action==='renew' && (!before || !before.currentPeriodEnd || end<=before.currentPeriodEnd)) throw new ManualSubscriptionError("SUBSCRIPTION_DATES_INVALID");
       // A renewal extends the same contract and retains original start; it never
-      // replaces or resets the independent 30-day allowance ledger.
-      // Fix the allowance clock once, at first activation. A pending record's
-      // creation date and any later edited contract start must not re-anchor it.
+      // replaces or resets the independent UTC calendar-month allowance ledger.
+      // Retain the historical first-activation anchor for migration/audit only;
+      // the quota ledger now uses UTC calendar-month boundaries (0102).
       const firstActivation = input.status === 'active' && (!before || before.status === 'awaiting_activation');
       let cycleAnchor = before?.printCycleAnchor ?? null;
       if (firstActivation && !cycleAnchor) {
-        const clock = new Date(Number((await tx.execute(sql`SELECT EXTRACT(EPOCH FROM clock_timestamp()) * 1000 AS ms`)).rows[0]?.ms));
+        const clock = approvedAt ?? new Date(Number((await tx.execute(sql`SELECT EXTRACT(EPOCH FROM clock_timestamp()) * 1000 AS ms`)).rows[0]?.ms));
         if (!Number.isFinite(clock.getTime())) throw new ManualSubscriptionError("SUBSCRIPTION_DATES_INVALID");
         cycleAnchor = new Date(Math.max(clock.getTime(), start.getTime()));
       }
@@ -136,8 +181,16 @@ export async function mutateManualSubscription(tenantId: string, actor: Platform
       if (input.action==='suspend'||input.action==='revoke') changes.status='suspended';
       if (input.action==='reactivate') {
         if (before.status!=='suspended') throw new ManualSubscriptionError('SUBSCRIPTION_REQUEST_CONFLICT',409);
+        // Subscription reactivation does not override an inactive workspace.
+        if (tenant.rows[0].lifecycle !== 'active') throw new ManualSubscriptionError("WORKSPACE_NOT_ACTIVE",409);
         const now=await tx.execute(sql`SELECT clock_timestamp() AS now`);
-        if (before.currentPeriodEnd && before.currentPeriodEnd<=new Date(String(now.rows[0].now))) throw new ManualSubscriptionError("SUBSCRIPTION_EXPIRED",409);
+        const liveNow=now.rows[0]?.now as Date | string | null;
+        if (!manualReactivationDeadlineLive(before.currentPeriodEnd,liveNow)) throw new ManualSubscriptionError("SUBSCRIPTION_EXPIRED",409);
+        const nowMs=parseDbTimeMs(liveNow);
+        if (nowMs === null || customerSubscriptionState(
+            {...before,status:'active',entitlementBlocked:false},'active',nowMs) !== 'active') {
+          throw new ManualSubscriptionError("SUBSCRIPTION_NOT_STARTED",409);
+        }
         changes.status='active'; changes.entitlementBlocked=false; changes.entitlementBlockedReason=null;
       }
       if (input.action==='cancel_at_end') {
@@ -151,7 +204,7 @@ export async function mutateManualSubscription(tenantId: string, actor: Platform
     const snapshot=publicSnapshot(after!)!;
     if (input.requestId) {
       const approved=await tx.update(subscriptionRequests).set({
-        status:'approved',lastActionBy:actor.userId,lastActionAt:sql`clock_timestamp()`,
+        status:'approved',lastActionBy:actor.userId,lastActionAt:approvedAt ?? sql`clock_timestamp()`,
         lastActionReason:input.reason,subscriptionRevision:after!.revision,
         approvedPlanId:input.planId,approvedTerm:input.term,approvedMonthlyQuota:input.monthlyQuota,
         approvalModified:requestApproval?.modified??false,

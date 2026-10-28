@@ -120,8 +120,9 @@ describe("production fixes contracts (2026-09)", () => {
   it("print quota applies at logical job admission and does not make Agent discovery the enforcement point", () => {
     const service = read("src/lib/print-job-service.ts");
     const agentJobs = read("src/app/api/agent/jobs/route.ts");
-    expect(service.indexOf("reserveTenantPrintCredit(tx, tenantId)")).toBeGreaterThan(service.indexOf("if (effectiveIdempotencyKey)"));
-    expect(service.indexOf("await tx.insert(printJobs).values")).toBeGreaterThan(service.indexOf("reserveTenantPrintCredit(tx, tenantId)"));
+    expect(service.indexOf("reserveTenantPrintCredit(tx, tenantId, dbNow)")).toBeGreaterThan(service.indexOf("if (effectiveIdempotencyKey)"));
+    expect(service.indexOf("reserveTenantPrintCredit(tx, tenantId, dbNow)")).toBeGreaterThan(service.indexOf("const dbNow = new Date(dbNowMs)"));
+    expect(service.indexOf("await tx.insert(printJobs).values")).toBeGreaterThan(service.indexOf("reserveTenantPrintCredit(tx, tenantId, dbNow)"));
     expect(agentJobs).not.toContain("max_prints_per_period");
     expect(service).toContain("MAX_AGENT_IN_FLIGHT_JOBS");
     expect(service).toContain("MAX_AGENT_QUEUED_JOBS");
@@ -136,6 +137,9 @@ describe("production fixes contracts (2026-09)", () => {
     expect(dialog).toContain('t("limit.note.prints")');
     expect(dashboard).toContain('case "max_agents": return "agents"');
     expect(dashboard).toContain('case "max_prints_per_period": return "prints"');
+    expect(dashboard).toContain('case "max_jobs_per_minute": return "rate"');
+    expect(dashboard).toContain('case "max_concurrent_jobs": return "concurrency"');
+    expect(dialog).toContain('const technicalCapacity = resource !== "prints"');
     expect(dashboard).toContain("<UpgradeLimitDialog");
     expect(agentRoute).toContain("ActionError");
     expect(agentRoute).toContain("error.details");
@@ -150,7 +154,7 @@ describe("production fixes contracts (2026-09)", () => {
     const migration = read("drizzle/0061_print_usage_quota.sql");
     expect(entitlements).toContain('"max_prints_per_period"');
     expect(entitlements).toContain("reserveTenantPrintCredit");
-    expect(service).toContain("reserveTenantPrintCredit(tx, tenantId)");
+    expect(service).toContain("reserveTenantPrintCredit(tx, tenantId, dbNow)");
     expect(route).toContain("TenantPrintQuotaExceededError");
     expect(testPrint).toContain("TenantPrintQuotaExceededError");
     expect(testPrint).toContain("upgradeRequired: true");
@@ -286,10 +290,12 @@ describe("production fixes — presence sweep and Gateway test-page HTTP path", 
 
   it("printer connection diagnostics keeps Agent availability independent from printer lifecycle/config state", () => {
     const source = read("src/app/api/printers/[id]/test-connection/route.ts");
-    const agentLookup = source.indexOf("const agent = await db.query.agents.findFirst");
+    const authority = source.indexOf('await requireConsoleReadAuthorityInTransaction(tx, auth, "printers.test")');
+    const agentLookup = source.indexOf("const agent = await tx.query.agents.findFirst");
     const lifecycleCheck = source.indexOf('if (printer.lifecycle !== "active")');
     const configCheck = source.indexOf('if (printer.connectionType === "network"');
-    expect(agentLookup).toBeGreaterThanOrEqual(0);
+    expect(authority).toBeGreaterThanOrEqual(0);
+    expect(agentLookup).toBeGreaterThan(authority);
     expect(lifecycleCheck).toBeGreaterThan(agentLookup);
     expect(source).toContain("lastHeartbeatAt: agent.lastSeenAt");
     expect(source).toContain("agentOnline: availability.available");

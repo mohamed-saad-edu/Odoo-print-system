@@ -15,6 +15,16 @@ describe("browser-safe job status and timestamps", () => {
     expect(derivePhysicalOutcome("failed", "connection refused")).toBe("not_printed");
   });
 
+  it("fails closed on any unrecognized status instead of suggesting a safe reprint", () => {
+    for (const value of ["cancelled", "pending", "", "unrecognized", "SUCCESS"]) {
+      expect(derivePhysicalOutcome(value, null), value).toBe("unknown");
+    }
+    // Known pre-dispatch outcomes retain their precise no-print meaning.
+    expect(derivePhysicalOutcome("queued", null)).toBe("not_printed");
+    expect(derivePhysicalOutcome("failed", "CAPABILITY_MISMATCH")).toBe("not_printed");
+    expect(derivePhysicalOutcome("expired", "NOT_DISPATCHED")).toBe("not_printed");
+  });
+
   it("normalizes naive UTC and PostgreSQL offset timestamps consistently", () => {
     const expected = Date.parse("2026-10-04T05:00:00Z");
     expect(parseDbTimeMs("2026-10-04 05:00:00")).toBe(expected);

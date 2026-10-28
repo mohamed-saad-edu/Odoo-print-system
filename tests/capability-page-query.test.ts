@@ -2,7 +2,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { PgDialect } from "drizzle-orm/pg-core";
 
 const chain = vi.hoisted(() => ({ select: vi.fn(), from: vi.fn(), leftJoin: vi.fn(), where: vi.fn(), orderBy: vi.fn(), limit: vi.fn() }));
-vi.mock("../src/db/client", () => ({ db: { select: chain.select }, queryWithTimeout: (query: () => Promise<unknown>) => query() }));
+vi.mock("../src/db/client", () => ({
+  db: {
+    select: chain.select,
+    transaction: async (callback: (tx: { select: typeof chain.select }) => Promise<unknown>) =>
+      callback({ select: chain.select }),
+  },
+  queryWithTimeout: (query: () => Promise<unknown>) => query(),
+}));
 import { getPrinterCapabilityPage, getPrinterCapabilityMatrix } from "../src/lib/printer-health";
 import { nonVirtualPrinterPredicate } from "../src/lib/printer-virtual-sql";
 

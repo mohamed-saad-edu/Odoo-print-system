@@ -14,6 +14,14 @@ CronProduction = production_methods('print_job.py', ['cron_sync_status'])
 def test_real_cron_eventually_polls_101st_unresolved_job_after_bounded_page():
     db = sqlite3.connect(':memory:')
     db.create_function('now', 0, lambda: '2026-10-09 10:00:00')
+    # Production PostgreSQL uses starts_with() instead of LIKE: percent and
+    # underscore inside stored errors are literal, never wildcard operators.
+    # Keep the SQLite behavioral emulator equivalent without reverting the
+    # production guard to an unsafe pattern match.
+    db.create_function('starts_with', 2, lambda text, prefix: int((text or '').startswith(prefix)))
+    assert db.execute(
+        "SELECT starts_with('UNKNOWNXOUTCOME:printer', 'UNKNOWN%OUTCOME:')"
+    ).fetchone()[0] == 0
     db.execute('''CREATE TABLE print_gateway_print_job (
         id INTEGER PRIMARY KEY, gateway_job_id TEXT, status TEXT,
         last_error TEXT, next_retry_at TEXT, last_status_polled_at TEXT
@@ -79,7 +87,11 @@ def test_real_cron_eventually_polls_101st_unresolved_job_after_bounded_page():
         def _require_cron_runner(self): return True
         def browse(self, ids): return JobSet(job_records[i] for i in ids)
         def sudo(self): return JobSet()
-        def _apply_synced_status(self, _job, _status): return False
+        # The batch contains an exact authorized status: its application is
+        # successful. Returning False would *force* an individual fallback
+        # whose fake job has no action_sync_status method, and measure a
+        # nonexistent fixture failure instead of the 101st-job fairness rule.
+        def _apply_synced_status(self, _job, _status): return True
         def _mark_gateway_job_missing(self, *_args): raise AssertionError('Unexpected remote job missing')
 
     CronProduction.cron_sync_status.__globals__['requests'] = SimpleNamespace(post=post)

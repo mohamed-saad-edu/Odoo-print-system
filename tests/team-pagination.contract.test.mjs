@@ -7,7 +7,7 @@ test("workspace member list is tenant-scoped and bounded independently of invita
   const source = read("src/app/api/team/members/route.ts");
   for (const pattern of [
     /clampListLimit\(searchParams\.get\("limit"\), 50, 100\)/,
-    /Number\.isSafeInteger\(offset\)/, /\.orderBy\(/, /\.offset\(offset\)/,
+    /parseStrictListOffset\(searchParams\.get\("offset"\), 1_000_000\)/, /\.orderBy\(/, /\.offset\(offset\)/,
     /\.limit\(limit \+ 1\)/, /queryWithTimeout\(/,
     /hasMore: rows\.length > limit/, /total: countRows\[0\]\?\.total \?\? 0/
   ]) assert.match(source, pattern);
@@ -15,7 +15,7 @@ test("workspace member list is tenant-scoped and bounded independently of invita
 test("workspace invitations are scoped and use verified owner session authorization", () => {
   const old = read("src/app/api/team/invitations/route.ts");
   const platform = read("src/app/api/platform/tenants/[id]/invitations/route.ts");
-  assert.match(old, /requireWorkspacePlatformOwnerForInvites/);
+  assert.match(old, /requireWorkspaceOwnerForInvites/);
   assert.match(old, /eq\(tenantInvitations.tenantId, claims.tenantId\)/);
   assert.match(old, /export async function GET/);
   assert.match(old, /assertPlatformTeamOrigin/);

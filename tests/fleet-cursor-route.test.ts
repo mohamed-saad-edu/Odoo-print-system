@@ -3,7 +3,16 @@ import { PgDialect } from "drizzle-orm/pg-core";
 import type { ServerResponse } from "node:http";
 
 const mocks = vi.hoisted(() => ({ auth: vi.fn(), permission: vi.fn(), chain: { select: vi.fn(), from: vi.fn(), leftJoin: vi.fn(), where: vi.fn(), orderBy: vi.fn(), limit: vi.fn(), offset: vi.fn() } }));
-vi.mock("../src/db", () => ({ db: { select: mocks.chain.select } }));
+// Inventory GETs intentionally use a transactional tenant/session fence.
+// The unit fixture mocks DB I/O only; a separate PostgreSQL suite covers
+// revocation races and real row-lock ordering.
+vi.mock("../src/db", () => ({ db: {
+  transaction: async (callback: (tx: { select: typeof mocks.chain.select }) => Promise<unknown>) => callback({ select: mocks.chain.select }),
+} }));
+vi.mock("../src/lib/console-read-authority", () => ({
+  requireConsoleReadAuthorityInTransaction: vi.fn(),
+  ConsoleAgentAuthorityRevokedError: class ConsoleAgentAuthorityRevokedError extends Error {},
+}));
 vi.mock("../src/lib/console-auth", () => ({ validateConsoleAuth: mocks.auth }));
 vi.mock("../src/lib/manager-auth", () => ({ validateWorkspaceManager: mocks.auth }));
 vi.mock("../src/lib/authorization", () => ({ requireManagerPermission: mocks.permission }));
@@ -74,6 +83,25 @@ describe.each([["printers", getPrinters], ["agents", getAgents]] as const)("%s f
     expect((await get(new Request(`http://gateway.test/api/${kind}?beforeIdEncoded=!`))).status).toBe(403);
     expect(mocks.chain.select).not.toHaveBeenCalled();
   });
+
+  it.each(["", " ", "-1", "+1", "2.5", "1e2", "10garbage", "10001", "9007199254740992"])(
+    "rejects malformed fleet offset %s before the DB read", async (raw) => {
+      const params = new URLSearchParams({ offset: raw });
+      const response = await get(new Request(`http://gateway.test/api/${kind}?${params}`));
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({ code: "INVALID_OFFSET" });
+      expect(mocks.chain.select).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([["0", 0], ["0002", 2], ["10000", 10000]] as const)(
+    "keeps bounded numeric fleet offset %s as %s", async (raw, parsed) => {
+      rows("physical_1");
+      const response = await get(new Request(`http://gateway.test/api/${kind}?offset=${raw}`));
+      expect(response.status).toBe(200);
+      expect(mocks.chain.offset).toHaveBeenLastCalledWith(parsed);
+    },
+  );
 
   if (kind === "printers") {
     it("advances past an entirely virtual page to a physical printer", async () => {

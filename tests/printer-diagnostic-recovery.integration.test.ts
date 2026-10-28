@@ -45,6 +45,33 @@ suite("diagnostic retry identity and live-Agent admission", () => {
     return response.json() as Promise<{ jobId: string }>;
   };
 
+  it.each(["manager", "agent"] as const)(
+    "requires an explicit operation key from a %s before admitting a physical diagnostic", async actor => {
+      const request = new Request(`https://gateway.test/api/printers/${f.printerId}/test-print`, {
+        method: "POST",
+        headers: { Authorization: actor === "agent" ? f.agentAuth : `Bearer ${manager.token}` },
+      });
+      const response = await testPrint(request, { params: Promise.resolve({ id: f.printerId }) });
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({ code: "IDEMPOTENCY_KEY_REQUIRED", retryable: false });
+      expect(await jobCount()).toBe(0);
+    },
+  );
+
+  it.each(["manager", "agent"] as const)(
+    "rejects malformed %s diagnostic keys rather than aliasing an accepted physical operation", async actor => {
+      const original = await accept("strict-diagnostic-identity", actor);
+      // NBSP is not normalized by HTTP headers, but String.trim used to alias the key.
+      for (const key of ["\u00a0strict-diagnostic-identity", "strict-diagnostic-identity\u00a0", "        "]) {
+        const response = await diagnostic(key, actor);
+        expect(response.status).toBe(400);
+        expect(await response.json()).toMatchObject({ code: "INVALID_REQUEST", retryable: false });
+      }
+      expect(await jobCount()).toBe(1);
+      expect((await jobRow(original.jobId)).id).toBe(original.jobId);
+    },
+  );
+
   it.each(["manager", "agent"] as const)("returns the accepted operation to the same %s after its Agent disconnects", async (actor) => {
     const first = await accept("same-diagnostic-key", actor);
     await pool().query("UPDATE agents SET status = 'offline' WHERE id = $1", [f.agentId]);

@@ -13,7 +13,7 @@ import {
   sha256,
 } from "./helpers/pg";
 import { POST as printJobsPOST, GET as printJobsGET } from "../src/app/api/print/jobs/route";
-import { POST as printJobsV2POST } from "../src/app/api/print/jobs/v2/route";
+import { POST as printJobsV2POST, GET as printJobsV2GET } from "../src/app/api/print/jobs/v2/route";
 import { createPrintJobForPrinter } from "../src/lib/print-job-service";
 
 const suite = describe.skipIf(!hasTestDatabase);
@@ -101,6 +101,40 @@ suite("print idempotency (Odoo → Gateway)", () => {
     }
   });
 
+  it("never reroutes a padded opaque printer identity through Odoo or direct service admission", async () => {
+    const padded = ` ${f.printerId} `;
+    const legacy = await create(jobBody("padded-legacy-target", { printerId: padded }));
+    expect(legacy.status).toBe(400);
+    const v2 = await printJobsV2POST(new Request("http://gateway.test/api/print/jobs/v2", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${f.odooKey}`, "content-type": "application/json" },
+      body: JSON.stringify(jobBody("padded-v2-target", { printerId: padded })),
+    }));
+    expect(v2.status).toBe(400);
+    await expect(createPrintJobForPrinter(padded, jobBody("direct-padded-target").payload, {
+      requestedBy: "internal-service", tenantId: f.tenantId,
+      idempotencyKey: "direct-padded-target", destination: "POS", documentType: "invoice",
+    })).rejects.toMatchObject({ code: "INVALID_REQUEST", status: 400 });
+    expect(await jobCount()).toBe(0);
+  });
+
+  it("rejects padded idempotency keys before matching an unrelated accepted job", async () => {
+    const key = "opaque-retry-operation-001";
+    const accepted = await create(jobBody(key));
+    expect(accepted.status).toBe(201);
+    const padded = ` ${key} `;
+    const legacy = await create(jobBody(padded));
+    expect(legacy.status).toBe(400);
+    const v2 = await printJobsV2POST(new Request("http://gateway.test/api/print/jobs/v2", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${f.odooKey}`, "content-type": "application/json" },
+      body: JSON.stringify(jobBody(padded)),
+    }));
+    expect(v2.status).toBe(400);
+    // A malformed opaque retry key is never an alias for the original job.
+    expect(await jobCount()).toBe(1);
+  });
+
   it("does not reuse an internal Manager job through the Odoo idempotency surface", async () => {
     const key = "op-internal-collision";
     const internal = await createPrintJobForPrinter(f.printerId, jobBody(key).payload, {
@@ -178,6 +212,25 @@ suite("print idempotency (Odoo → Gateway)", () => {
     expect(await v2.json()).toMatchObject({ jobId: created.jobId });
     expect(await jobCount()).toBe(1);
   });
+
+  it.each(["", "2026-10-28T12:00:00", "2026-02-30T10:00:00.000Z", "tomorrow"])(
+    "rejects malformed explicit expiresAt %j on both Odoo print endpoints",
+    async expiresAt => {
+      const body = jobBody("same-safe-expiry-key", { expiresAt });
+      for (const [url, post] of [
+        ["http://gateway.test/api/print/jobs", printJobsPOST],
+        ["http://gateway.test/api/print/jobs/v2", printJobsV2POST],
+      ] as const) {
+        const response = await post(new Request(url, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${f.odooKey}`, "content-type": "application/json" },
+          body: JSON.stringify(body),
+        }));
+        expect(response.status).toBe(400);
+      }
+      expect(await jobCount()).toBe(0);
+    },
+  );
 
   it("v2 rejects a submission without an idempotency key", async () => {
     const body = jobBody("unused");
@@ -275,6 +328,65 @@ suite("print idempotency (Odoo → Gateway)", () => {
     } finally {
       vi.unstubAllEnvs();
     }
+  });
+
+  it("cannot disable production v1 idempotency with the old unsafe opt-out", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("YASEIR_REQUIRE_IDEMPOTENCY_KEY", "0");
+    try {
+      const withoutKey = jobBody("unused");
+      delete (withoutKey as Record<string, unknown>).idempotencyKey;
+      const rejected = await create(withoutKey);
+      expect(rejected.status).toBe(400);
+      expect(await rejected.json()).toMatchObject({ code: "IDEMPOTENCY_KEY_REQUIRED", retryable: false });
+      expect(await jobCount()).toBe(0);
+
+      // The disabled opt-out must not prevent correctly identified printing.
+      const accepted = await create(jobBody("safe-keyed-production-replay"));
+      expect(accepted.status).toBe(201);
+      const replay = await create(jobBody("safe-keyed-production-replay"));
+      expect(replay.status).toBe(200);
+      expect((await replay.json()).jobId).toBe((await accepted.json()).jobId);
+      expect(await jobCount()).toBe(1);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("uses exact opaque IDs for legacy and v2 status polling after accepted print admission", async () => {
+    const result = await create(jobBody("status-exact-lookup"));
+    expect(result.status).toBe(201);
+    const jobId = (await result.json()).jobId as string;
+    for (const handler of [printJobsGET, printJobsV2GET]) {
+      for (const [field, value] of [
+        ["id", ` ${jobId}`], ["id", `${jobId} `],
+        ["idempotencyKey", " status-exact-lookup"], ["idempotencyKey", "status-exact-lookup "],
+        ["idempotencyKey", ""], ["idempotencyKey", " "],
+        ["id", "x".repeat(121)], ["idempotencyKey", "x".repeat(201)],
+      ] as const) {
+        const url = new URL("http://gateway.test/api/print/jobs");
+        url.searchParams.set(field, value);
+        const response = await handler(new Request(url, { headers: { Authorization: `Bearer ${f.odooKey}` } }));
+        expect(response.status).toBe(400);
+        if (value.length > (field === "id" ? 120 : 200)) {
+          expect(await response.json()).toMatchObject({
+            error: field === "id" ? "id is too long" : "idempotencyKey is too long",
+          });
+        }
+      }
+      const both = new URL("http://gateway.test/api/print/jobs");
+      both.searchParams.set("id", jobId);
+      both.searchParams.set("idempotencyKey", "");
+      expect((await handler(new Request(both, { headers: { Authorization: `Bearer ${f.odooKey}` } }))).status).toBe(400);
+      for (const [field, value] of [["id", jobId], ["idempotencyKey", "status-exact-lookup"]] as const) {
+        const url = new URL("http://gateway.test/api/print/jobs");
+        url.searchParams.set(field, value);
+        const response = await handler(new Request(url, { headers: { Authorization: `Bearer ${f.odooKey}` } }));
+        expect(response.status).toBe(200);
+        expect((await response.json()).jobId).toBe(jobId);
+      }
+    }
+    expect(await jobCount()).toBe(1);
   });
 
   it("concurrent duplicate submissions with the same key create one job", async () => {

@@ -445,7 +445,18 @@ patch(PosStore.prototype, {
             // An accepted-looking status without the server's positive Gateway
             // route marker is a contradictory response, not print admission.
             // Keep the original operation ID and raster for reconciliation.
-            const status = result?.gateway_enabled === true ? result?.status : "unknown";
+            const observedStatus = result?.gateway_enabled === true ? result?.status : "unknown";
+            // A bare "failed" token proves neither non-admission nor zero
+            // physical bytes. Only the durable Outbox's explicit safe-retry
+            // verdict may close the original operation and permit a new key.
+            const explicitlyUnknownCode = [
+                "UNKNOWN_SUBMISSION_OUTCOME", "UNKNOWN_PARTIAL_DELIVERY",
+                "AGENT_EXECUTION_TIMEOUT", "AGENT_RESTART_DURING_PRINT",
+                "JOB_EXPIRED_DURING_PRINT",
+            ].includes(result?.code);
+            const status = observedStatus === "failed" &&
+                (result?.can_retry !== true || explicitlyUnknownCode)
+                ? "unknown" : observedStatus;
             const terminal = ["submitted", "claimed", "printing", "success", "failed"].includes(status);
             if (terminal) finishPrintOperation(recoveryKey, operationId);
             receiptOps.set(orderId, {
@@ -462,24 +473,28 @@ patch(PosStore.prototype, {
             // printed; "unknown" means the outcome cannot be trusted. Only
             // allowlisted accepted statuses render informational admission;
             // an absent or unexpected status must never claim success.
+            // Backend diagnostics are evidence, not translated UI copy.
+            // Never surface an arbitrary RPC message, even when it claims
+            // success or a file path; the machine code is the only presenter
+            // input and the physical result must remain explicit.
+            const safeFailure = gatewayServerMessage({
+                data: { code: result?.code, message: result?.message },
+            }) || _t("Couldn't print the receipt. See Print Activity.");
             if (["unknown", "partial"].includes(status)) {
                 this.notification.add(
-                    result?.outputMedium === "file" ? result.message : _t("Print status is unknown. Check the printer before trying again."),
+                    _t("Print status is unknown. Check the printer before trying again."),
                     { type: "warning", sticky: true }
                 );
             } else if (status === "failed") {
-                this.notification.add(
-                    result?.message || _t("Couldn't print the receipt. See Print Activity."),
-                    { type: "danger" }
-                );
+                this.notification.add(safeFailure, { type: "danger" });
             } else if (["queued", "submitted", "claimed", "printing", "success"].includes(status)) {
                 this.notification.add(
-                    result?.message || _t("Receipt accepted by the printing service. Paper output is not confirmed."),
+                    _t("Receipt accepted by the printing service. Paper output is not confirmed."),
                     { type: "info" }
                 );
             } else {
                 this.notification.add(
-                    result?.message || _t("Couldn't print the receipt. See Print Activity."),
+                    _t("Couldn't print the receipt. See Print Activity."),
                     { type: "danger" }
                 );
             }
@@ -1068,9 +1083,13 @@ patch(PosStore.prototype, {
             // uncertain response; automatic physical retry is forbidden.
             const status = result?.gateway_enabled === true ? result?.status : "unknown";
             const accepted = ["queued", "submitted", "claimed", "printing", "success"].includes(status);
-            if (!accepted && status !== "failed") {
-                // Missing/unrecognized responses give no proof of refusal.
-                // They must not expose a fresh-operation retry.
+            // A bare failed token is not evidence that no physical bytes were
+            // sent. Only the durable Odoo Outbox can positively authorize a
+            // fresh operation with can_retry === true after nonprinting proof.
+            const provenFailure = status === "failed" && result?.can_retry === true;
+            if (!accepted && !provenFailure) {
+                // Missing/unrecognized/unsafe failure responses give no
+                // pre-admission proof. Never offer a new print operation.
                 const outcome = status === "partial" ? "partial" : "unknown";
                 return {
                     successful: false,
@@ -1088,12 +1107,13 @@ patch(PosStore.prototype, {
             if (result?.message) showGatewayBillingLimitDialog(this.env, result.message);
             return {
                 successful: accepted,
-                canRetry: !accepted && result?.can_retry !== false,
+                canRetry: provenFailure,
                 warningCode: undefined,
                 gatewayOutcome: status,
                 message: accepted ? undefined : {
                     title: _t("Printing Service"),
-                    body: result?.message || _t("Kitchen / Preparation printing failed."),
+                    body: gatewayServerMessage({ data: { code: result?.code, message: result?.message } })
+                        || _t("Kitchen / Preparation printing failed."),
                 },
             };
         } catch (error) {

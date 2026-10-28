@@ -37,6 +37,36 @@ describe("canonical operational proof and file-result fixtures", () => {
     expect(validatePrinterOperationalVerification(entry.proof, entry.printer, new Date(fixtures.now)).ok).toBe(entry.valid);
   });
   for (const entry of fixtures.fileOutputCases) it(entry.name, () => expect(Boolean(validateFileOutputEvidence(entry.evidence))).toBe(entry.valid));
+  it("rejects apparently matching but wire-invalid printer identities before marking proof verified", () => {
+    const first = fixtures.proofCases[0];
+    if (!first.proof) throw new Error("missing canonical Windows queue proof fixture");
+    const cases: Array<[string, string, boolean]> = [
+      ["120-byte Arabic", "ط".repeat(60), true],
+      ["122-byte Arabic", "ط".repeat(61), false],
+      ["120-byte emoji", "🖨".repeat(30), true],
+      ["124-byte emoji", "🖨".repeat(31), false],
+      ["leading BOM", "\uFEFFqueue", false],
+      ["isolated surrogate", "\uD800", false],
+      ["interior BOM is exact", "que\uFEFFue", true],
+    ];
+    for (const [name, id, allowed] of cases) {
+      // A proof can match the database row byte-for-byte and still contain
+      // a printer ID the Agent/Gateway inventory protocol cannot encode.
+      const owner = { id, connectionType: "spooler", protocol: "spooler" };
+      const proof = { ...first.proof, printer_id: id };
+      expect(validatePrinterOperationalVerification(proof, owner, new Date(fixtures.now)).ok, name).toBe(allowed);
+      expect(operationalVerificationProjection(proof, owner, new Date(fixtures.now)).verificationState, name)
+        .toBe(allowed ? "verified" : "pending");
+      // Persisted legacy verified state cannot bypass the current ID contract
+      // just because a prior Agent recorded current timestamps and a digest.
+      const known = { ...first.printer,
+        ...operationalVerificationProjection(first.proof, first.printer, new Date(fixtures.now)),
+        id,
+      };
+      expect(isPrinterOperationallyVerified(known, new Date(fixtures.now)), name + " persisted proof").toBe(allowed);
+    }
+  });
+
   it("requires both server receipt and source timestamps; refreshing only a receipt cannot renew proof", () => {
     const now = new Date(fixtures.now), entry = fixtures.proofCases[0];
     const current = { ...entry.printer, ...operationalVerificationProjection(entry.proof, entry.printer, now) };
@@ -58,7 +88,10 @@ describe("canonical operational proof and file-result fixtures", () => {
     expect(validatePayloadForPrinter({ type: "pdf" }, printer).ok).toBe(true);
     expect(validatePayloadForPrinter({ type: "raw", protocol: "raw" }, printer).ok).toBe(false);
     expect(validatePayloadForPrinter({ type: "image", geometry_fingerprint: digestForImage }, printer).ok).toBe(false);
-    const measured = { ...printer, capabilities: { geometry: { version: 1, source: "validated_profile", validation: "configured", observed_at: fixtures.now,
+    const measured = { ...printer, config: { geometry_profile: {
+      printable_width_dots: 2400, printable_height_dots: 3400, dpi_x: 300, dpi_y: 300,
+      paper_width_mm: 210, paper_height_mm: 297, offset_x_dots: 40, offset_y_dots: 40,
+    } }, capabilities: { geometry: { version: 1, source: "validated_profile", validation: "configured", observed_at: fixtures.now,
       printer_id: printer.id, config_fingerprint: digestForImage, printable_width_dots: 2400, printable_height_dots: 3400,
       dpi_x: 300, dpi_y: 300, paper_width_mm: 210, paper_height_mm: 297, offset_x_dots: 40, offset_y_dots: 40 } } };
     expect(validatePayloadForPrinter({ type: "image", geometry_fingerprint: digestForImage }, measured).ok).toBe(true);

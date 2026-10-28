@@ -236,10 +236,15 @@ func newTestAgent(t *testing.T, printerID string, p printer.Printer) *Agent {
 	ag.printers = map[string]printer.Printer{printerID: p}
 	ag.printerConfigs = map[string]config.PrinterConfig{printerID: {ID: printerID, Name: "Test", Type: "network", Endpoint: "10.0.0.20:9100", Protocol: "raw"}}
 	t.Cleanup(func() {
-		server.Close()
+		// Keep the fake Gateway alive until the Agent has joined every
+		// finished worker and closed its durable SQLite queue. Closing the
+		// server first races an in-flight terminal/status acknowledgement
+		// on slow Windows test runners, leaving stale claim tokens and
+		// sometimes a queue.db file locked during TempDir cleanup.
 		if err := ag.Close(); err != nil {
 			t.Logf("Agent.Close() error: %v", err)
 		}
+		server.Close()
 	})
 	return ag
 }

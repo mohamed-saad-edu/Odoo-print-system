@@ -140,6 +140,13 @@ describe("Desktop overview evidence boundaries", () => {
 });
 
 describe("local health and sharing stay independent of cloud evidence", () => {
+  it("the local/cloud execution binding validator exists and fails closed on missing proof", () => {
+    const localWithoutProof = { ...local, capabilities: {} };
+    const remote = { ...cloud, sharedWithGateway: true };
+    expect(mergePrinterInventories([remote], [{ ...localWithoutProof, sharedWithGateway: true }])[0].agentId).toBeUndefined();
+    expect(eligibleGatewayTestPrinterIds([remote], [{ ...localWithoutProof, sharedWithGateway: true }], true, now).has(local.id)).toBe(false);
+  });
+
   it.each(["active", "disabled", "retired"] as const)("keeps private fresh local health with cloud lifecycle %s and absent inventory", (lifecycle) => {
     const remote = { ...cloud, lifecycle, inventoryPresent: false };
     const rows = mergePrinterInventories([remote], [local]);
@@ -159,6 +166,45 @@ describe("local health and sharing stay independent of cloud evidence", () => {
     expect(cloudPresentation({ ...cloud, sharedWithGateway: false }, undefined, now)).toMatchObject({ state: "unavailable", reasonKey: "printer.presentation.notSharedReason" });
     expect(cloud.status).toBe("online");
   });
+  it("does not blend foreign cloud ownership or enable a remote test when a local ID collides", () => {
+    const shared = { ...local, sharedWithGateway: true };
+    const unrelated = { ...cloud, name: "Different physical endpoint", agentId: "foreign-agent",
+      verificationBindingDigest: "b".repeat(64), logicalQueueKey: "b".repeat(64) };
+    const rows = mergePrinterInventories([unrelated], [shared]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].name).toBe(local.name);
+    expect(rows[0].agentId).toBeUndefined();
+    expect(rows[0].localObservedAt).toBe(now);
+    expect(eligibleGatewayTestPrinterIds([unrelated], [shared], true, now).has(local.id)).toBe(false);
+    // Real matching proofs still retain the authenticated Gateway association.
+    expect(mergePrinterInventories([cloud], [shared])[0].agentId).toBe(cloud.agentId);
+    expect(eligibleGatewayTestPrinterIds([cloud], [shared], true, now).has(local.id)).toBe(true);
+  });
+
+  it("does not accept a withdrawn local share or duplicate local ID as Gateway print authority", () => {
+    const privateRows = mergePrinterInventories([cloud], [local]);
+    expect(privateRows[0].agentId).toBeUndefined();
+    const shared = { ...local, sharedWithGateway: true };
+    expect(eligibleGatewayTestPrinterIds([cloud], [shared, shared], true, now).has(local.id)).toBe(false);
+  });
+
+  it("rejects duplicate Gateway printer identities instead of trusting the last cloud owner", () => {
+    const native = { ...local, sharedWithGateway: true };
+    const conflict = { ...cloud, agentId: "foreign-agent", name: "Other printer", verificationBindingDigest: "b".repeat(64) };
+    const merged = mergePrinterInventories([cloud, conflict], [native]);
+    expect(merged).toHaveLength(1);
+    expect(merged[0].agentId).toBeUndefined();
+    expect(merged[0].localObservedAt).toBe(now);
+    // Even identical duplicate records cannot establish a unique route.
+    expect(mergePrinterInventories([cloud, { ...cloud }], [])).toEqual([]);
+    for (const duplicate of [conflict, { ...cloud }]) {
+      expect(eligibleGatewayTestPrinterIds([cloud, duplicate], [native], true, now).has(local.id)).toBe(false);
+      expect(eligibleGatewayTestPrinterIds([cloud, duplicate], [], true, now).has(local.id)).toBe(false);
+    }
+    // Distinct cloud printer IDs continue to work normally.
+    expect(eligibleGatewayTestPrinterIds([cloud], [native], true, now).has(local.id)).toBe(true);
+  });
+
   it("does not guess an identity match from identical queue names", () => {
     const rows = mergePrinterInventories([{ ...cloud, id: "historical-alias" }], [local]);
     expect(rows.map((p) => p.id)).toEqual(["historical-alias", local.id]);
@@ -266,13 +312,19 @@ describe("native sharing IPC DTO boundary", () => {
   });
   it("rejects non-exact, flag-smuggling, control and oversize UTF8 IDs before native invocation", async () => {
     const { setPrinterSharing } = await import("../src/desktop/lib/ipc");
-    for (const id of ["", " local", "local ", "-config", "local\nqueue", "local\u0085queue", "ط".repeat(129)]) {
+    for (const id of ["", " local", "local ", "-config", "local\nqueue", "local\u0085queue", "ط".repeat(129),
+      "\uD800", "\uDC00", "printer\uD800id", "printer\uDC00id"]) {
       await expect(setPrinterSharing(id, true)).rejects.toThrow("Invalid local printer sharing request");
     }
     expect(boundary.invoke).not.toHaveBeenCalled();
     const id = "ط".repeat(128);
     boundary.invoke.mockResolvedValue({ printerId: id, sharedWithGateway: true });
     await expect(setPrinterSharing(id, true)).resolves.toEqual({ printerId: id, sharedWithGateway: true });
+    // A valid pair remains a single exact UTF-8 identity; reject only
+    // malformed lone surrogates, never real Arabic/emoji printer names.
+    const astral = "queue-\uD83D\uDDA8";
+    boundary.invoke.mockResolvedValueOnce({ printerId: astral, sharedWithGateway: true });
+    await expect(setPrinterSharing(astral, true)).resolves.toEqual({ printerId: astral, sharedWithGateway: true });
   });
   it("normalizes legacy absence, preserves private health and never trusts supplied local completion", async () => {
     const { getPrinters } = await import("../src/desktop/lib/ipc");

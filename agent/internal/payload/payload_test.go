@@ -25,6 +25,36 @@ func TestParseValidRaw(t *testing.T) {
 	}
 }
 
+func TestParseRejectsNoncanonicalBase64BeforePhysicalDispatch(t *testing.T) {
+	// Gateway validates a padded RFC4648 byte-exact base64 string. The Go
+	// decoder otherwise ignores CR/LF and accepts nonzero padding bits, so
+	// identical bytes could bypass the original wire-identity contract.
+	cases := []struct {
+		name string
+		wire string
+	}{
+		{"embedded newline", "aGVs\nbG8="},
+		{"trailing CRLF", "aGVsbG8=\r\n"},
+		{"nonzero padding bits", "Zh=="},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			payload := map[string]interface{}{
+				"type": "raw", "protocol": "raw", "encoding": "base64", "data": tc.wire,
+			}
+			if _, err := Parse(payload); err == nil || !strings.Contains(err.Error(), "canonical") {
+				t.Fatalf("noncanonical wire payload admitted: %q, err=%v", tc.wire, err)
+			}
+		})
+	}
+	// Single-byte padding remains valid when its discarded bits are zero.
+	if _, err := Parse(map[string]interface{}{
+		"type": "raw", "protocol": "raw", "encoding": "base64", "data": "Zg==",
+	}); err != nil {
+		t.Fatalf("canonical padded base64 was refused: %v", err)
+	}
+}
+
 func TestParseValidEscpos(t *testing.T) {
 	data := base64.StdEncoding.EncodeToString([]byte("\x1b\x40test\x1d\x56\x01"))
 	pl, err := Parse(map[string]interface{}{
@@ -42,13 +72,38 @@ func TestParseValidEscpos(t *testing.T) {
 }
 
 func TestParseValidPDF(t *testing.T) {
-	data := base64.StdEncoding.EncodeToString([]byte("%PDF-1.4 fake"))
+	data := base64.StdEncoding.EncodeToString([]byte("%PDF-1.4\ntrailer\n%%EOF\n"))
 	pl, err := Parse(map[string]interface{}{"type": "pdf", "encoding": "base64", "data": data})
 	if err != nil {
 		t.Fatalf("unexpected error for pdf: %v", err)
 	}
 	if pl.Type != TypePDF {
 		t.Fatalf("expected pdf, got %s", pl.Type)
+	}
+}
+
+func TestPDFPayloadRequiresEOFInFinal4096Bytes(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		data []byte
+	}{
+		{"missing eof", []byte("%PDF-1.4\n1 0 obj\nendobj\n")},
+		{"eof outside trailer window", []byte("%PDF-1.4\n%%EOF\n" + strings.Repeat("A", 4096))},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Parse(map[string]interface{}{
+				"type": "pdf", "encoding": "base64", "data": base64.StdEncoding.EncodeToString(tc.data),
+			})
+			if err == nil || !strings.Contains(err.Error(), "EOF trailer") {
+				t.Fatalf("missing PDF EOF trailer was not rejected with a clear error: %v", err)
+			}
+		})
+	}
+	if _, err := Parse(map[string]interface{}{
+		"type": "pdf", "encoding": "base64",
+		"data": base64.StdEncoding.EncodeToString([]byte("%PDF-1.4\n%%EOF\n")),
+	}); err != nil {
+		t.Fatalf("PDF with trailer should be admitted: %v", err)
 	}
 }
 
@@ -60,6 +115,34 @@ func TestPDFSignaturePolicyMatchesGateway(t *testing.T) {
 	rawWithMarker := base64.StdEncoding.EncodeToString([]byte("label %PDF- text"))
 	if _, err := Parse(map[string]interface{}{"type": "raw", "protocol": "raw", "encoding": "base64", "data": rawWithMarker}); err != nil {
 		t.Fatalf("RAW marker text after byte zero must remain valid: %v", err)
+	}
+}
+
+// The Gateway's optional Zod protocol field allows absence, not JSON null.
+// A null protocol must not be silently converted into an absent field by
+// the native Agent parser for a PDF or image.
+func TestParseRejectsExplicitNullOptionalProtocol(t *testing.T) {
+	cases := []struct {
+		name string
+		kind string
+		data string
+	}{
+		{"PDF", "pdf", base64.StdEncoding.EncodeToString([]byte("%PDF-1.4\n%%EOF\n"))},
+		{"JPEG", "image", base64.StdEncoding.EncodeToString([]byte{0xff, 0xd8, 0xff, 0xd9})},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			job := map[string]interface{}{"type": tc.kind, "encoding": "base64", "data": tc.data}
+			if _, err := Parse(job); err != nil {
+				t.Fatalf("absent optional protocol was refused: %v", err)
+			}
+			for _, invalid := range []interface{}{nil, ""} {
+				job["protocol"] = invalid
+				if _, err := Parse(job); err == nil || !strings.Contains(err.Error(), "protocol") {
+					t.Fatalf("explicit invalid protocol %v admitted; must match Gateway: %v", invalid, err)
+				}
+			}
+		})
 	}
 }
 

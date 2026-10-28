@@ -6,7 +6,7 @@ on:
     types: [opened, synchronize, reopened, ready_for_review]
   merge_group:
   push:
-    branches: [main]
+    branches: [main, test/http-server-ready]
   workflow_dispatch:
   schedule:
     - cron: '41 3 * * 0'  # Re-evaluate dependency advisories weekly
@@ -14,6 +14,13 @@ on:
 permissions:
   contents: read
 
+
+# Preserve running main verification while retaining only the latest pending
+# push for this workflow. Never coalesce manual or merge-queue release gates.
+# PR retries may cancel older attempts of the same PR only.
+concurrency:
+  group: security-supply-run-${{ github.event_name == 'push' && github.ref || github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   changes:
@@ -40,10 +47,10 @@ jobs:
   supply-chain:
     needs: changes
     if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && needs.changes.outputs.supply == 'true'
-    # Cancel only an eligible duplicate job, never on an unrelated push.
+    # Preserve running main supply-chain scans; supersede only older PR runs.
     concurrency:
       group: security-supply-${{ github.ref }}
-      cancel-in-progress: true
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -208,10 +215,10 @@ jobs:
   postgres-failure-injection:
     needs: changes
     if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && needs.changes.outputs.postgres == 'true'
-    # Cancel only an eligible duplicate job, never on an unrelated push.
+    # Preserve PostgreSQL failure-injection evidence for the exact main SHA.
     concurrency:
       group: security-postgres-${{ github.ref }}
-      cancel-in-progress: true
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:

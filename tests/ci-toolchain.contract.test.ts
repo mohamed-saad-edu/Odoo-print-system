@@ -143,6 +143,41 @@ describe("CI/runtime alignment", () => {
     }
   });
 
+  it("preserves in-progress main Windows installer evidence across subsequent pushes", () => {
+    const windows = readFileSync(path.join(root, ".github/workflows/build-windows.yml"), "utf8");
+    const release = windows.split("\n  build-windows:")[1];
+    const pullRequest = windows.split("\n  windows-pr-smoke:")[1]?.split("\n  build-windows:")[0];
+    expect(release).toBeDefined();
+    expect(pullRequest).toBeDefined();
+    // A newer main commit must not cancel a Windows release gate before its
+    // artifact and smoke tests finish. PR smoke can supersede older PR edits.
+    expect(release).toContain("group: windows-build-${{ github.ref }}");
+    expect(release).toContain("cancel-in-progress: false");
+    expect(pullRequest).toContain("group: windows-pr-smoke-${{ github.ref }}");
+    expect(pullRequest).toContain("cancel-in-progress: true");
+  });
+
+  it("keeps running main Docker and security checks instead of cancelling every new push", () => {
+    const cases: Array<[string, string, string]> = [
+      [".github/workflows/docker.yml", "docker-scan-${{ matrix.variant }}-${{ github.ref }}", "cancel-in-progress: ${{ github.event_name == 'pull_request' }}"],
+      [".github/workflows/docker.yml", "docker-runtime-${{ github.ref }}", "cancel-in-progress: false"],
+      [".github/workflows/static-security.yml", "static-codeql-${{ matrix.language }}-${{ github.ref }}", "cancel-in-progress: ${{ github.event_name == 'pull_request' }}"],
+      [".github/workflows/static-security.yml", "static-secrets-${{ github.ref }}", "cancel-in-progress: ${{ github.event_name == 'pull_request' }}"],
+      [".github/workflows/security-supply-chain.yml", "security-supply-${{ github.ref }}", "cancel-in-progress: ${{ github.event_name == 'pull_request' }}"],
+      [".github/workflows/security-supply-chain.yml", "security-postgres-${{ github.ref }}", "cancel-in-progress: ${{ github.event_name == 'pull_request' }}"],
+    ];
+    for (const [workflow, group, policy] of cases) {
+      const source = readFileSync(path.join(root, workflow), "utf8");
+      const at = source.indexOf("group: " + group);
+      expect(at, workflow + ": " + group).toBeGreaterThanOrEqual(0);
+      const nextLine = source.slice(at).split("\n")[1]?.trim();
+      expect(nextLine, workflow + ": " + group).toBe(policy);
+    }
+    // Only PR-specific smoke/preflight should cancel another PR attempt.
+    const docker = readFileSync(path.join(root, ".github/workflows/docker.yml"), "utf8");
+    expect(docker).toContain("group: docker-pr-${{ github.ref }}\n      cancel-in-progress: true");
+  });
+
   it("keeps Caddy's forwarded-header security contract warning-free", () => {
     const caddy = readFileSync(path.join(root, "Caddyfile"), "utf8");
     expect(caddy).toContain("header_up X-Forwarded-For {http.request.remote.host}");

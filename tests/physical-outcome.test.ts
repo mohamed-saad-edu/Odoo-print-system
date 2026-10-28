@@ -26,11 +26,25 @@ describe("physical print outcome semantics", () => {
     expect(translate("ar", "job.timeline.successUnverified")).toContain("خروج الورق غير مؤكد");
   });
 
+  it("localizes Desktop success and reprint denial without claiming a physical print", () => {
+    expect(derivePhysicalOutcome("success", null)).toBe("unknown");
+    expect(translate("en", "desktop.drawer.printSucceeded")).toMatch(/paper output not verified/i);
+    expect(translate("ar", "desktop.drawer.printSucceeded")).toContain("خروج الورق غير مؤكد");
+    expect(translate("en", "errors.jobNotEligibleForReprint")).toMatch(/paper output is not verified/i);
+    expect(translate("ar", "errors.jobNotEligibleForReprint")).toContain("خروج الورق غير مؤكد");
+    expect(translate("en", "errors.jobNotEligibleForReprint")).not.toMatch(/printed successfully/i);
+  });
+
   it.each(["claimed", "printing"])("keeps %s physical output unknown while execution may be in flight", (status) => {
     expect(derivePhysicalOutcome(status, null)).toBe("unknown");
     expect(deriveOutcome(status, null)).toBe("unknown");
     expect(jobTone(status, "unknown")).toBe("info");
     expect(jobGuidance(status, "unknown", "en")).toBe(translate("en", `job.guidance.${status as "claimed" | "printing"}`));
+  });
+
+  it.each(["unknown", "partial"])("never labels an explicit %s operation as definitely not printed", (status) => {
+    expect(derivePhysicalOutcome(status, null)).toBe("unknown");
+    expect(deriveOutcome(status, null)).toBe("unknown");
   });
 
   it("retains not-printed evidence before admission and on pre-dispatch failure", () => {

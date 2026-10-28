@@ -5,7 +5,7 @@ from werkzeug.exceptions import Forbidden
 from odoo import http
 from odoo.http import request
 from odoo.exceptions import ValidationError
-from ..runtime_policy import is_gateway_shared_printer
+from ..runtime_policy import is_gateway_shared_printer, is_exact_gateway_printer_id, unambiguous_inventory_rows
 from ..printer_geometry import validated_printer_geometry
 from ..printer_verification import is_verified_runtime_printer
 
@@ -213,7 +213,7 @@ class PrintGatewayRuntimePrinterController(http.Controller):
                 continue
             agent_id = agent.get('id')
             lifecycle = agent.get('lifecycle') if isinstance(agent.get('lifecycle'), str) else ''
-            if not isinstance(agent_id, str) or not agent_id.strip() or lifecycle != 'active':
+            if not is_exact_gateway_printer_id(agent_id) or lifecycle != 'active':
                 continue
             raw_name = agent.get('name') if isinstance(agent.get('name'), str) and agent.get('name').strip() else agent_id
             status = agent.get('status') if isinstance(agent.get('status'), str) else 'unknown'
@@ -228,6 +228,7 @@ class PrintGatewayRuntimePrinterController(http.Controller):
                 'freshness': freshness,
                 'lastSeenAt': agent.get('lastSeenAt') if isinstance(agent.get('lastSeenAt'), str) else False,
             })
+        sanitized = unambiguous_inventory_rows(sanitized)
         # Binding pickers must only expose Agents explicitly assigned to the
         # selected Odoo scope. With no Branch selected, a company-wide binding
         # may use any Agent assigned to the root Company or one of its direct
@@ -254,15 +255,17 @@ class PrintGatewayRuntimePrinterController(http.Controller):
     def runtime_printers(self, company_id=None, branch_id=None, agent_id=None):
         self._require_runtime_admin()
         company, branch = self._scope(company_id, branch_id)
-        if not isinstance(agent_id, str) or not agent_id.strip():
+        # Agent IDs are opaque Gateway execution identities, not display
+        # labels. A padded/control-bearing RPC value must not be normalized
+        # into a different, assigned Agent's printer inventory. This matches
+        # the Gateway 120-byte UTF-8 identity envelope at the Odoo boundary.
+        if not is_exact_gateway_printer_id(agent_id):
             return {'enabled': True, 'selectedAgentId': False, 'printers': []}
         config, root_company = self._get_config(company)
         if not config:
             return {'enabled': False, 'selectedAgentId': False, 'printers': []}
 
-        selected_agent_id = agent_id.strip()
-        if not selected_agent_id:
-            return {'enabled': True, 'selectedAgentId': False, 'printers': []}
+        selected_agent_id = agent_id
 
         # A branch-scoped printer inventory is an object-level discovery surface:
         # a valid tenant Agent is not automatically authorized for every Odoo
@@ -378,4 +381,5 @@ class PrintGatewayRuntimePrinterController(http.Controller):
                 'agentId': returned_agent_id,
                 'agentName': agent.get('name') if isinstance(agent.get('name'), str) else selected_agent_id,
             })
+        sanitized = unambiguous_inventory_rows(sanitized)
         return {'enabled': True, 'selectedAgentId': selected_agent_id, 'printers': sanitized}

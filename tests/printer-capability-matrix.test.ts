@@ -133,6 +133,80 @@ describe("printer-capability-matrix", () => {
     expect(matrix.driver.evidence).toContain("no ACTUAL DRIVER STATUS");
   });
 
+  it("uses the executable spooler address when spooler_name is absent without fabricating health", () => {
+    const now = new Date("2026-10-28T00:00:00.000Z");
+    const seen = new Date(now.getTime() - 5_000);
+    const base = {
+      id: "queue-address-only",
+      tenantId: "tenant-one",
+      agentId: "agent-one",
+      name: "Office Printer",
+      deviceClass: "laser",
+      connectionType: "spooler",
+      protocol: "spooler",
+      status: "online",
+      lifecycle: "active",
+      config: { address: " Office Queue " },
+      capabilities: { spooler_status: "ok" },
+      lastSeenAt: seen,
+    } as unknown as Parameters<typeof buildPrinterCapabilityMatrix>[0];
+    const agent = {
+      id: "agent-one", tenantId: "tenant-one", status: "online", lifecycle: "active",
+      lastSeenAt: seen,
+    } as unknown as NonNullable<Parameters<typeof buildPrinterCapabilityMatrix>[1]>;
+    const verified = buildPrinterCapabilityMatrix(base, agent, now);
+    expect(verified.spooler.name).toBe("Office Queue");
+    expect(verified.spooler.status).toBe("ok");
+    expect(verified.spooler.evidence).toContain("spooler_status=ok");
+
+    const noProbe = buildPrinterCapabilityMatrix({ ...base, capabilities: {} }, agent, now);
+    expect(noProbe.spooler.name).toBe("Office Queue");
+    expect(noProbe.spooler.status).toBe("unknown");
+
+    const stale = buildPrinterCapabilityMatrix(base, { ...agent, lastSeenAt: new Date(now.getTime() - 300_000) }, now);
+    expect(stale.spooler.status).toBe("unknown");
+  });
+
+  it("never exposes stale or removed configured geometry in the capability API response", () => {
+    const now = new Date("2026-10-28T00:00:00.000Z");
+    const geometry = {
+      version: 1,
+      source: "validated_profile",
+      validation: "configured",
+      printer_id: "matrix-printer",
+      observed_at: "2026-10-28T00:00:00Z",
+      config_fingerprint: "a".repeat(64),
+      printable_width_dots: 576,
+    };
+    const configured = {
+      id: "matrix-printer", tenantId: "tenant", agentId: "agent",
+      name: "Thermal queue", printerType: "physical", deviceClass: "thermal",
+      connectionType: "spooler", protocol: "spooler", status: "online", lifecycle: "active",
+      managementSource: "manager", desiredRevision: 4, appliedDesiredRevision: 3, observedDesiredRevision: 3,
+      config: { spooler_name: "Thermal queue", geometry_profile: { printable_width_dots: 576 } },
+      capabilities: { supported_protocols: ["escpos"], geometry },
+      lastSeenAt: now,
+    } as unknown as Parameters<typeof buildPrinterCapabilityMatrix>[0];
+    const agent = {
+      id: "agent", tenantId: "tenant", status: "online", lifecycle: "active", lastSeenAt: now,
+    } as unknown as Parameters<typeof buildPrinterCapabilityMatrix>[1];
+
+    const stale = buildPrinterCapabilityMatrix(configured, agent, now);
+    expect(stale.capabilities).not.toHaveProperty("geometry");
+    expect(stale.capabilities.supported_protocols).toEqual(["escpos"]);
+
+    const converged = buildPrinterCapabilityMatrix({
+      ...configured, appliedDesiredRevision: 4, observedDesiredRevision: 4,
+    }, agent, now);
+    expect(converged.capabilities).toHaveProperty("geometry.printable_width_dots", 576);
+
+    const removed = buildPrinterCapabilityMatrix({
+      ...configured, appliedDesiredRevision: 4, observedDesiredRevision: 4,
+      config: { spooler_name: "Thermal queue" },
+    }, agent, now);
+    expect(removed.capabilities).not.toHaveProperty("geometry");
+  });
+
   it("driver and spooler health are evidence-based, not from DB status alone", () => {
     const source = fs.readFileSync("src/lib/printer-health.ts", "utf8");
     // Must check for actual spooler_status evidence, not just DB status

@@ -362,7 +362,7 @@ func DiscoverQuick(cfg *config.Config, registryPath string) DiscoveryResult {
 			if seen[d.ID] {
 				for i, existing := range all {
 					if existing.ID == d.ID {
-						all[i] = mergeDeviceInfo(existing, d)
+						all[i] = mergeDiscoveredSameID(existing, d)
 						break
 					}
 				}
@@ -522,13 +522,13 @@ func discoverWithContext(ctx context.Context, cfg *config.Config, registryPath s
 			// Aliases retain the index of the merged record, so later updates
 			// from either source reach that record instead of being discarded.
 			if index, ok := seen[d.ID]; ok {
-				all[index] = mergeDeviceInfo(all[index], d)
+				all[index] = mergeDiscoveredSameID(all[index], d)
 				continue
 			}
 			duplicate := false
 			for i, existing := range all {
 				if sameNetworkEndpoint(existing, d) {
-					all[i] = mergeDeviceInfo(existing, d)
+					all[i] = mergeDiscoveredSameID(existing, d)
 					seen[d.ID] = i
 					duplicate = true
 					break
@@ -1035,6 +1035,53 @@ func endpointHasNetworkAddress(endpoint, networkAddress string) bool {
 	return false
 }
 
+// A discovered IPP queue is an HTTP resource bound to a specific transport,
+// host and *effective* port. It is not merely the IP address reported by
+// network discovery. Map ipp/http and ipps/https to the same transport only
+// when the URI's port agrees with the independently observed port. Retain the
+// case-sensitive resource path to avoid merging queues on multi-queue servers.
+func normalizedDiscoveryIPPQueue(d DeviceInfo) (string, bool) {
+	u, err := url.Parse(d.Endpoint)
+	if err != nil || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.ForceQuery ||
+		u.Fragment != "" || u.RawFragment != "" {
+		return "", false
+	}
+	scheme := strings.ToLower(u.Scheme)
+	effectivePort := 631
+	transport := "http"
+	switch scheme {
+	case "ipp":
+	case "http":
+		effectivePort = 80
+	case "ipps":
+		transport = "https"
+	case "https":
+		effectivePort = 443
+		transport = "https"
+	default:
+		return "", false
+	}
+	if u.Port() != "" {
+		p, err := strconv.Atoi(u.Port())
+		if err != nil || p < 1 || p > 65535 {
+			return "", false
+		}
+		effectivePort = p
+	}
+	if effectivePort != d.Port {
+		return "", false
+	}
+	host := strings.ToLower(u.Hostname())
+	if ip := net.ParseIP(host); ip != nil {
+		host = ip.String()
+	}
+	resource := u.EscapedPath()
+	if resource == "" {
+		resource = "/"
+	}
+	return transport + "://" + net.JoinHostPort(host, strconv.Itoa(effectivePort)) + resource, true
+}
+
 func sameNetworkEndpoint(a, b DeviceInfo) bool {
 	// An installed queue is a distinct execution destination, even when its
 	// port references the same host as a directly discovered byte endpoint.
@@ -1045,15 +1092,103 @@ func sameNetworkEndpoint(a, b DeviceInfo) bool {
 	if a.NetworkAddress == "" || b.NetworkAddress == "" || a.Port <= 0 || b.Port <= 0 {
 		return false
 	}
-	if !strings.EqualFold(a.NetworkAddress, b.NetworkAddress) || a.Port != b.Port {
+	// The same IPv6 address has multiple valid textual spellings. Normalize
+	// only the independently reported host identity; URI path, effective
+	// port and security scheme are still checked below for IPP transports.
+	normalizedHost := func(value string) string {
+		host := strings.ToLower(strings.Trim(strings.TrimSpace(value), "[]"))
+		if ip := net.ParseIP(host); ip != nil {
+			return ip.String()
+		}
+		return host
+	}
+	if normalizedHost(a.NetworkAddress) != normalizedHost(b.NetworkAddress) || a.Port != b.Port {
 		return false
 	}
-	aIPP := a.Protocol == "ipp" || a.Protocol == "ipps"
-	bIPP := b.Protocol == "ipp" || b.Protocol == "ipps"
+	ipp := func(d DeviceInfo) bool {
+		return strings.EqualFold(d.Protocol, "ipp") || strings.EqualFold(d.Protocol, "ipps") ||
+			strings.EqualFold(d.ConnectionType, "ipp") || strings.EqualFold(d.ConnectionType, "ipps")
+	}
+	aIPP, bIPP := ipp(a), ipp(b)
 	if aIPP || bIPP {
-		return aIPP && bIPP && a.Protocol == b.Protocol && a.Endpoint == b.Endpoint
+		if !aIPP || !bIPP || !strings.EqualFold(a.Protocol, b.Protocol) {
+			return false
+		}
+		aResource, aOK := normalizedDiscoveryIPPQueue(a)
+		bResource, bOK := normalizedDiscoveryIPPQueue(b)
+		return aOK && bOK && aResource == bResource
 	}
 	return true
+}
+
+// mergeDiscoveredSameID is used before registry reconciliation, when config,
+// saved registry and live Windows enumeration can complete in any order.
+// A legacy ID collision between distinct installed queues is NOT permission to
+// choose whichever observation won the race. Quarantine the identity until an
+// operator can reconcile the two actual Windows execution destinations.
+// A known raw/TCP printer language is part of the selected execution
+// contract, not a generic host capability. Two declared languages at the
+// same physical socket cannot be merged by arrival order. Unknown probe
+// observations remain eligible for a later explicit protocol declaration.
+func conflictingNetworkPrintLanguage(left, right DeviceInfo) bool {
+	// Some older and manual registry rows carry only the exact endpoint
+	// without the optional NetworkAddress and Port enrichment. They still
+	// identify the same local socket and must not bypass the language fence.
+	if !sameNetworkEndpoint(left, right) &&
+		(strings.TrimSpace(left.Endpoint) == "" ||
+			strings.TrimSpace(right.Endpoint) == "" ||
+			!strings.EqualFold(strings.TrimSpace(left.Endpoint), strings.TrimSpace(right.Endpoint))) {
+		return false
+	}
+	byteStream := func(raw string) bool {
+		switch strings.ToLower(strings.TrimSpace(raw)) {
+		case "raw", "escpos", "zpl", "tspl":
+			return true
+		default:
+			return false
+		}
+	}
+	a, b := strings.ToLower(strings.TrimSpace(left.Protocol)), strings.ToLower(strings.TrimSpace(right.Protocol))
+	return a != b && byteStream(a) && byteStream(b)
+}
+
+// A legacy VID/PID-only USB ID may describe two different physical
+// interfaces of the same model. Matching that old ID must not bypass the
+// stronger instance/serial/location proof required by sameUSBDevice.
+func conflictingUSBExecutionInterface(left, right DeviceInfo) bool {
+	isDirectUSB := func(d DeviceInfo) bool {
+		connection := d.ConnectionType
+		if strings.TrimSpace(connection) == "" {
+			connection = d.Type
+		}
+		return strings.EqualFold(connection, "usb") && !isSpoolerDevice(d)
+	}
+	if !isDirectUSB(left) || !isDirectUSB(right) ||
+		strings.TrimSpace(left.Endpoint) == "" ||
+		strings.TrimSpace(right.Endpoint) == "" ||
+		strings.EqualFold(left.Endpoint, right.Endpoint) {
+		return false
+	}
+	return !sameUSBDevice(left, right)
+}
+
+func mergeDiscoveredSameID(existing, incoming DeviceInfo) DeviceInfo {
+	if conflictingUSBExecutionInterface(existing, incoming) {
+		log.Printf("[discovery] distinct USB interfaces collide on printer ID %q; explicit reconciliation required", existing.ID)
+		return withRegistryIdentityCollision(existing, "same_id_different_usb_interface")
+	}
+	if conflictingNetworkPrintLanguage(existing, incoming) {
+		log.Printf("[discovery] conflicting byte languages for printer endpoint %q; explicit reconciliation required", existing.ID)
+		return withRegistryIdentityCollision(existing, "same_endpoint_different_print_language")
+	}
+	if isSpoolerDevice(existing) && isSpoolerDevice(incoming) &&
+		strings.TrimSpace(existing.SpoolerName) != "" &&
+		strings.TrimSpace(incoming.SpoolerName) != "" &&
+		!sameSpoolerQueueDuringDetailLoss(existing, incoming) {
+		log.Printf("[discovery] distinct Windows queues collide on printer ID %q; refusing to select a live destination", existing.ID)
+		return withRegistryIdentityCollision(existing, "same_id_different_queue")
+	}
+	return mergeDeviceInfo(existing, incoming)
 }
 
 func mergeDeviceInfo(existing, incoming DeviceInfo) DeviceInfo {

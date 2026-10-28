@@ -11,8 +11,12 @@ into the interface. There is deliberately no import-time translation cache.
 def job_customer_state(status, physical_outcome, output_medium=None, output_outcome=None):
     if output_medium == "file":
         if output_outcome == "file_created":
-            return "file_created"
-        if output_outcome == "not_created" and status in ("failed", "unknown", "partial"):
+            # Stale file markers cannot override a failed or uncertain operation.
+            return "file_created" if status == "success" else "needs_review"
+        # "not_created" is only proof for a deterministic failed operation.
+        # A stale flag on explicit unknown/partial must never become a negative
+        # artifact claim; an operator must reconcile that original attempt.
+        if output_outcome == "not_created" and status == "failed":
             return "failed_before_output"
         if status in ("success", "failed", "unknown", "partial"):
             return "needs_review"
@@ -30,9 +34,26 @@ def job_customer_state(status, physical_outcome, output_medium=None, output_outc
 def customer_error_category(value=None, *, code=None, status=None):
     # Bound processing of historical diagnostics. Only the chosen category,
     # never these strings, is returned or translated.
-    text = (str(code or "") + " " + str(value or "")[:4000]).upper()
+    # A known Gateway machine code is stronger evidence than arbitrary
+    # diagnostic prose. Billing-denied operations never reached a printer;
+    # misleading UNKNOWN_ text must not turn them into physical ambiguities.
+    stable_code = str(code or "").upper()
+    if stable_code in ("PRINT_QUOTA_EXCEEDED", "MAX_PRINTS_PER_PERIOD"):
+        return "quota"
+    if stable_code in (
+        "TENANT_SUBSCRIPTION_REQUIRED", "TENANT_SUSPENDED",
+        "TENANT_DELETED", "TENANT_ENTITLEMENT_UNAVAILABLE",
+    ):
+        return "subscription"
+    text = (stable_code + " " + str(value or "")[:4000]).upper()
     if any(token in text for token in ("UNKNOWN_", "UNCERTAIN", "PARTIAL_DELIVERY", "AMBIGUOUS")):
         return "uncertain"
+    if str(value or "").upper().startswith((
+        "PRINT_RULE_CHANGED:", "PRINT_RULE_NOT_MATCHED:", "PRINT_SOURCE_COMPANY_CHANGED:",
+    )):
+        return "routing_changed"
+    if "GATEWAY_REJECTED_STALE_POS_OPERATION" in text:
+        return "stale_pos"
     if "GATEWAY_REJECTED_BILLING_HOLD" in text:
         return "billing_receipt"
     if "PRINT_QUOTA_EXCEEDED" in text or "MAX_PRINTS_PER_PERIOD" in text:
@@ -62,10 +83,14 @@ def customer_error_message(_, value=None, *, code=None, status=None):
     category = customer_error_category(value, code=code, status=status)
     if category == "uncertain":
         return _("The print result needs review. Check the printer before starting another print to avoid duplicate output.")
+    if category == "routing_changed":
+        return _("The print rule or source company changed after this event. No print was sent. Ask an administrator to review the route and submit a new request if needed.")
+    if category == "stale_pos":
+        return _("This old POS ticket was not sent. Review the sale and explicitly reprint only if needed.")
     if category == "billing_receipt":
         return _("The receipt was not printed because the subscription blocked it. After renewal, choose an explicit reprint only if still needed.")
     if category == "quota":
-        return _("The current 30-day print allowance has been used. Wait for the next reset or contact the workspace owner.")
+        return _("The current monthly print allowance has been used. Wait for the next UTC reset or contact the workspace owner.")
     if category == "subscription":
         return _("Printing is not active for this workspace. Ask the workspace owner to review its subscription in Yaseir.")
     if category == "credential":

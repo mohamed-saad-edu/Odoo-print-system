@@ -22,6 +22,16 @@ describe("customer subscriptions are separate from Platform Admin approval", () 
     const pricing = read("src/app/pricing/page.tsx");
     expect(pricing).toContain("tenantSubscriptions.findFirst");
     expect(pricing).not.toContain("currentPlanId");
+    // A signed-in pricing redirect cannot use an orphaned cookie snapshot:
+    // unlike public plan cards, private subscription status needs live
+    // membership, tenant lifecycle and session locks in the same transaction.
+    expect(pricing).toContain("await db.transaction(async tx =>");
+    expect(pricing).toContain("await requireActiveTenantInTransaction(tx, member.tenantId)");
+    expect(pricing).toContain('await requireManagerActorInTransaction(tx, member, "tenant.read")');
+    expect(pricing).toContain("tx.query.tenantSubscriptions.findFirst");
+    expect(pricing).not.toContain("db.query.tenantSubscriptions.findFirst");
+    expect(pricing).toContain("claims = null;");
+    expect(pricing).toContain("if (claims && subscribed) redirect(");
     expect(pricing).toContain('/billing?plan=');
     const home = read("src/app/page.tsx");
     expect(home).toContain('const canBilling = hasManagerPermission(claims, "billing.read")');

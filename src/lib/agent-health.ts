@@ -11,6 +11,7 @@ import { printerOperationalVerificationPredicate } from "./printer-verification-
  */
 
 import { db, queryWithTimeout } from "../db/client";
+import type { DbTx } from "../db";
 import { agents, printers, printJobs } from "../db/schema";
 import { eq, and, count, sql, asc, inArray } from "drizzle-orm";
 import { logWarn } from "./log";
@@ -197,9 +198,19 @@ function buildHealth(agent: AgentHealthRow, now: Date, evidence: HealthEvidence)
   };
 }
 
-export async function getAgentHealth(tenantId: string, agentId: string): Promise<AgentHealth | null> {
-  const agentRows = await queryWithTimeout(
-    () => db.select().from(agents).where(and(eq(agents.tenantId, tenantId), eq(agents.id, agentId))).limit(1),
+// Keep the existing bounded diagnostic query budget for background consumers.
+// A route holding tenant/session locks must instead query on that SAME
+// PostgreSQL connection. Savepoints preserve the established degraded-mode
+// behavior when an optional queue/printer aggregate fails mid-transaction.
+async function healthRead<T>(tx: DbTx | undefined, query: () => Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  if (tx) return tx.transaction(async () => query());
+  return queryWithTimeout(query, timeoutMs, label);
+}
+
+export async function getAgentHealth(tenantId: string, agentId: string, tx?: DbTx): Promise<AgentHealth | null> {
+  const reader = tx ?? db;
+  const agentRows = await healthRead(tx,
+    () => reader.select().from(agents).where(and(eq(agents.tenantId, tenantId), eq(agents.id, agentId))).limit(1),
     3000,
     "getAgentHealth"
   );
@@ -214,8 +225,8 @@ export async function getAgentHealth(tenantId: string, agentId: string): Promise
   let queueRows: Array<{ cnt: number }> = [];
   let queueDataAvailable = true;
   try {
-    queueRows = await queryWithTimeout(
-      () => db.select({ cnt: count() }).from(printJobs).where(and(eq(printJobs.tenantId, tenantId), eq(printJobs.agentId, agentId), sql`${printJobs.status} in ('queued','claimed','printing')`)),
+    queueRows = await healthRead(tx,
+      () => reader.select({ cnt: count() }).from(printJobs).where(and(eq(printJobs.tenantId, tenantId), eq(printJobs.agentId, agentId), sql`${printJobs.status} in ('queued','claimed','printing')`)),
       3000,
       "agentQueueDepth"
     );
@@ -228,8 +239,8 @@ export async function getAgentHealth(tenantId: string, agentId: string): Promise
   let printerRows: Array<{ id: string; status: string; lifecycle: string; lastSeenAt: Date | string | null; operationallyVerified: boolean }> = [];
   let printerDataAvailable = true;
   try {
-    printerRows = await queryWithTimeout(
-      () => db.select({ id: printers.id, status: printers.status, lifecycle: printers.lifecycle, lastSeenAt: printers.lastSeenAt, operationallyVerified: sql<boolean>`COALESCE((${printerOperationalVerificationPredicate(sql`printers`)}), false)` }).from(printers).where(and(eq(printers.tenantId, tenantId), eq(printers.agentId, agentId), eq(printers.sharedWithGateway, true), eq(printers.inventoryPresent, true), eq(printers.lifecycle, "active"), nonVirtualPrinterPredicate())),
+    printerRows = await healthRead(tx,
+      () => reader.select({ id: printers.id, status: printers.status, lifecycle: printers.lifecycle, lastSeenAt: printers.lastSeenAt, operationallyVerified: sql<boolean>`COALESCE((${printerOperationalVerificationPredicate(sql`printers`)}), false)` }).from(printers).where(and(eq(printers.tenantId, tenantId), eq(printers.agentId, agentId), eq(printers.sharedWithGateway, true), eq(printers.inventoryPresent, true), eq(printers.lifecycle, "active"), nonVirtualPrinterPredicate())),
       3000,
       "agentPrinters"
     );
@@ -264,11 +275,12 @@ export async function getAgentHealth(tenantId: string, agentId: string): Promise
   });
 }
 
-export async function getAllAgentsHealth(tenantId: string, limit = 100, offset = 0): Promise<AgentHealth[]> {
+export async function getAllAgentsHealth(tenantId: string, limit = 100, offset = 0, tx?: DbTx): Promise<AgentHealth[]> {
+  const reader = tx ?? db;
   const boundedLimit = Math.max(1, Math.min(201, Math.trunc(limit)));
   const boundedOffset = Math.max(0, Math.min(100_000, Math.trunc(offset)));
-  const allAgents = await queryWithTimeout(
-    () => db.select().from(agents)
+  const allAgents = await healthRead(tx,
+    () => reader.select().from(agents)
       .where(eq(agents.tenantId, tenantId))
       .orderBy(asc(agents.id))
       .limit(boundedLimit)
@@ -286,8 +298,8 @@ export async function getAllAgentsHealth(tenantId: string, limit = 100, offset =
   let queueDataAvailable = true;
   let queueRows: Array<{ agentId: string; cnt: number }> = [];
   try {
-    queueRows = await queryWithTimeout(
-      () => db.select({ agentId: printJobs.agentId, cnt: count() })
+    queueRows = await healthRead(tx,
+      () => reader.select({ agentId: printJobs.agentId, cnt: count() })
         .from(printJobs)
         .where(and(
           eq(printJobs.tenantId, tenantId),
@@ -311,8 +323,8 @@ export async function getAllAgentsHealth(tenantId: string, limit = 100, offset =
   // observations. Timestamps are stored in UTC and the pool pins timezone UTC.
   const earliestFresh = new Date(now.getTime() - printerStaleThresholdSeconds() * 1000);
   try {
-    printerRows = await queryWithTimeout(
-      () => db.select({
+    printerRows = await healthRead(tx,
+      () => reader.select({
         agentId: printers.agentId,
         cnt: count(),
         onlineCnt: sql<number>`CAST(COUNT(*) FILTER (WHERE

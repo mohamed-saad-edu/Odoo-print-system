@@ -29,27 +29,48 @@ const CODE_KEYS: Record<string, MessageKey> = {
   AGENT_ID_REQUIRED: "errors.agentIdRequired",
   AGENT_OFFLINE: "errors.agentOffline",
   AGENT_QUEUE_FULL: "errors.agentQueueFull",
+  MAX_AGENTS_EXCEEDED: "limit.title.agents",
   AGENT_STILL_CONNECTED: "errors.agentStillConnected",
   AGENT_HAS_HISTORY: "errors.agentHasHistory",
   LIFECYCLE_CONFLICT: "errors.lifecycleConflict",
   // Printers
   PRINTER_NOT_FOUND: "errors.printerNotFound",
+  // Admission failures require the exact hardware/identity action, not a
+  // generic 503 service outage or 409 concurrency-conflict message.
+  PRINTER_OFFLINE: "errors.printerOffline",
+  PRINTER_UNAVAILABLE: "errors.printerCloudUnavailable",
+  PRINTER_UNVERIFIED: "errors.printerVerificationRequired",
+  PRINTER_OWNER_CHANGED: "errors.printerOwnerChanged",
+  MAX_PRINTERS_EXCEEDED: "limit.title.printers",
   PRINTER_NOT_SHARED: "printer.presentation.notSharedReason",
   PRINTER_OWNER_MISSING: "errors.printerOwnerMissing",
   PRINTER_INVALID_LIFECYCLE: "errors.printerInvalidLifecycle",
   PRINTER_TRANSITION_BLOCKED: "errors.printerTransitionBlocked",
   PRINTER_LIFECYCLE_CONFLICT: "errors.printerLifecycleConcurrent",
   MISSING_PRINTER_ENDPOINT: "errors.printerEndpointMissing",
-  INVALID_PRINTER_ENDPOINT: "errors.printerEndpointMissing",
+  INVALID_PRINTER_ENDPOINT: "errors.printerEndpointInvalid",
   CAPABILITY_MISMATCH: "errors.capabilityMismatch",
   CAPABILITY_LOOKUP_FAILED: "errors.capabilityLookupFailed",
   DEVICE_NOT_APPROVED: "errors.deviceNotApproved",
   UNSUPPORTED_DISCOVERY_TRANSPORT: "errors.unsupportedDiscoveryTransport",
   // Billing and plans
-  TENANT_ENTITLEMENT_EXCEEDED: "errors.billingBlocked",
+  // A depleted UTC calendar-month allowance is NOT an expired contract.
+  PRINT_QUOTA_EXCEEDED: "errors.printQuotaExceeded",
+  // Rate/concurrency capacity is a retryable HTTP 429, never a failed contract.
+  TENANT_ENTITLEMENT_EXCEEDED: "errors.printCapacityExceeded",
+  // Real configuration failures use UNAVAILABLE; keep the older wire alias.
+  TENANT_ENTITLEMENT_UNAVAILABLE: "errors.billingBlocked",
   TENANT_SUBSCRIPTION_REQUIRED: "errors.billingBlocked",
   TENANT_ENTITLEMENT_CONFIG_ERROR: "errors.billingBlocked",
+  // A disabled workspace is NOT the same as exhausted credits or an
+  // expired manual subscription. Keep its operator remedy distinct.
+  TENANT_UNAVAILABLE: "errors.workspaceUnavailable",
+  TENANT_SUSPENDED: "errors.workspaceUnavailable",
+  TENANT_DELETED: "errors.workspaceUnavailable",
   // Request shape
+  INVALID_OFFSET: "errors.invalidPaginationOffset",
+  INVALID_LIMIT: "errors.invalidPaginationLimit",
+  INVALID_PAGINATION: "errors.invalidPagination",
   INVALID_REQUEST: "errors.requestRejected",
   INVALID_BODY: "errors.requestRejected",
   INVALID_PAYLOAD: "errors.requestRejected",

@@ -80,7 +80,13 @@ def fixture(response=None, transport_error=None, unrecorded_error=None, lease_av
     output_path = ROOT.parent / "print_output.py"
     exec(compile(output_path.read_text(), str(output_path), "exec"), output_namespace)
     namespace["gateway_output_values"] = output_namespace["gateway_output_values"]
-    job_methods = methods("print_job.py", ["_action_submit_trusted", "_record_ambiguous_submission", "_is_deterministic_failure", "_persist_state", "_billing_retry_values", "_is_time_sensitive_receipt", "_is_billing_deferred_receipt", "_compute_physical_outcome"], namespace)
+    # The AST-based fake runs the real POS expiry policy, not a mocked callback.
+    from runpy import run_path
+    namespace["is_stale_pos_operation"] = run_path(str(ROOT.parent / "pos_retry_policy.py"))["is_stale_pos_operation"]
+    # The production submission branch checks the exact original Gateway
+    # receipt identity, not a stripped/mocked ID. Reuse its real wire policy.
+    namespace["is_exact_gateway_job_id"] = run_path(str(ROOT.parent / "runtime_policy.py"))["is_exact_gateway_job_id"]
+    job_methods = methods("print_job.py", ["_action_submit_trusted", "_classify_gateway_submission_status", "_record_ambiguous_submission", "_is_deterministic_failure", "_persist_state", "_billing_retry_values", "_is_time_sensitive_receipt", "_is_billing_deferred_receipt", "_compute_physical_outcome"], namespace)
     class Job:
         _TERMINAL = {"success", "failed", "unknown", "partial"}
         _GATEWAY_UNKNOWN_MARKERS = ("AGENT_EXECUTION_TIMEOUT", "AGENT_RESTART_DURING_PRINT",
@@ -166,6 +172,101 @@ def reply(status, body):
     return SimpleNamespace(status_code=status, json=lambda: body, headers={}, content=True)
 
 
+def test_stale_pos_outbox_requires_deliberate_reprint_without_gateway_post():
+    _router, job, _cursor, sent, _order = fixture(reply(201, {"jobId":"must-not-print"}))
+    job.source_model = "pos.order"
+    job.document_type = "kitchen"
+    job.create_date = datetime.datetime(2026, 10, 8, 9, 0)
+    job._action_submit_trusted()
+    assert sent == []
+    assert job.status == "failed"
+    assert job.gateway_job_id is False
+    assert str(job.last_error).startswith("GATEWAY_REJECTED_STALE_POS_OPERATION:")
+    assert job.physical_outcome == "not_printed"
+
+
+def test_quota_blocked_kitchen_receipt_is_not_replayed_automatically():
+    router, job, cursor, sent, _order = fixture(reply(429, {
+        "code": "PRINT_QUOTA_EXCEEDED", "upgradeRequired": True,
+        "entitlement": "max_prints_per_period", "limit": 10, "used": 10,
+    }))
+    result = router._submit_durable_job(7, structured_outcome=True)
+    assert result["status"] == "failed"
+    assert job.gateway_job_id is False
+    assert job.last_error.startswith("GATEWAY_REJECTED_BILLING_HOLD")
+    assert job.next_retry_at is False
+    assert len(sent) == 1 and cursor.closed
+
+
+@pytest.mark.parametrize("limit,used", [
+    (True, 1),
+    (float("inf"), 1),
+    (2.5, 2),
+    ("10", 10),
+    (10, "10"),
+    (0, 0),
+    (10, -1),
+    (10, 9),  # A typed response with available credits is not exhausted.
+    (2**40, 1),
+    (10, float("nan")),
+])
+def test_untrusted_quota_429_counters_never_prove_pre_admission_rejection(limit, used):
+    # The actual submit loop must not re-arm a previously accepted or possibly
+    # physically executing print just because an intermediary returned a
+    # quota-shaped 429 with invalid types/values.
+    router, job, cursor, sent, _order = fixture(reply(429, {
+        "code": "PRINT_QUOTA_EXCEEDED",
+        "upgradeRequired": True,
+        "entitlement": "max_prints_per_period",
+        "limit": limit,
+        "used": used,
+    }))
+    result = router._submit_durable_job(7, structured_outcome=True)
+    assert result["status"] == "unknown"
+    assert result["can_retry"] is False
+    assert job.status == "unknown"
+    assert job.gateway_job_id is False
+    assert not job.next_retry_at
+    assert str(job.last_error).startswith("UNKNOWN_SUBMISSION_OUTCOME:")
+    assert len(sent) == 1 and cursor.closed
+
+
+@pytest.mark.parametrize("additional", [
+    {"remaining": 1},
+    {"remaining": True},
+    {"remaining": "0"},
+    {"retryable": True},
+    {"retryable": "false"},
+])
+def test_contradictory_quota_response_keeps_ambiguous_print_for_review(additional):
+    # Even with plausible integer counters, a proxy can return contradictory
+    # retry or remaining-credit fields after the Gateway accepted a job.
+    reply_body = {
+        "code": "PRINT_QUOTA_EXCEEDED",
+        "upgradeRequired": True,
+        "entitlement": "max_prints_per_period",
+        "limit": 10, "used": 10,
+        **additional,
+    }
+    router, job, cursor, sent, _order = fixture(reply(429, reply_body))
+    result = router._submit_durable_job(7, structured_outcome=True)
+    assert result["status"] == "unknown"
+    assert result["can_retry"] is False
+    assert job.status == "unknown"
+    assert not job.next_retry_at
+    assert str(job.last_error).startswith("UNKNOWN_SUBMISSION_OUTCOME:")
+    assert len(sent) == 1 and cursor.closed
+
+
+def test_legacy_blocked_kitchen_receipt_never_auto_replays_after_renewal():
+    router, job, cursor, sent, _order = fixture(reply(201, {"jobId": "should-not-create"}))
+    job.last_error = "GATEWAY_BILLING_LIMIT_REACHED: max_prints_per_period"
+    result = router._submit_durable_job(7, structured_outcome=True)
+    assert result["status"] == "failed"
+    assert job.next_retry_at is False
+    assert sent == [] and cursor.closed
+
+
 def test_kitchen_definite_gateway_refusal_is_structured_after_real_submit_loop():
     # A transient printer-offline refusal requeues with backoff instead of
     # terminally failing: the outage may clear before the next cron tick.
@@ -208,6 +309,38 @@ def test_gateway_failed_with_unknown_evidence_never_exposes_safe_station_retry(m
     assert cursor.commits == 1 and cursor.closed
 
 
+def test_consistent_gateway_job_aliases_preserve_the_existing_submission_contract():
+    router, job, cursor, sent, _order = fixture(reply(201, {
+        "jobId": "gateway-original", "id": "gateway-original", "status": "queued",
+    }))
+    result = router._submit_durable_job(7, structured_outcome=True)
+    assert result["status"] in ("queued", "submitted")
+    assert job.gateway_job_id == "gateway-original"
+    assert job.status == "submitted"
+    assert len(sent) == 1 and cursor.closed
+
+
+@pytest.mark.parametrize("remote_response", [
+    {"jobId": "gateway-original", "id": "gateway-other", "status": "success"},
+    {"jobId": "gateway-original", "id": " gateway-original", "status": "success"},
+    {"jobId": "", "id": "gateway-original", "status": "success"},
+    {"jobId": None, "id": "gateway-original", "status": "success"},
+    {"jobId": "gateway-original", "id": None, "status": "success"},
+])
+def test_conflicting_gateway_submission_job_ids_remain_unknown(remote_response):
+    """201 transport acknowledgment with disagreeing aliases is not safe
+    evidence to bind the Odoo operation to a physical Gateway print job.
+    """
+    router, job, cursor, sent, _order = fixture(reply(201, remote_response))
+    result = router._submit_durable_job(7, structured_outcome=True)
+    assert result["status"] == "unknown"
+    assert result["can_retry"] is False
+    assert job.status == "unknown"
+    assert job.gateway_job_id is False
+    assert str(job.last_error).startswith("UNKNOWN_SUBMISSION_OUTCOME:")
+    assert len(sent) == 1 and cursor.closed
+
+
 @pytest.mark.parametrize("response,transport", [
     (None, Timeout("read response lost")),
     (reply(200, {}), None),
@@ -222,30 +355,11 @@ def test_post_dispatch_timeout_or_malformed_reply_keeps_unknown_operation(respon
     assert cursor.closed
 
 
-def test_quota_blocked_kitchen_receipt_is_not_replayed_automatically():
-    router, job, cursor, sent, _order = fixture(reply(429, {
-        "code": "PRINT_QUOTA_EXCEEDED", "upgradeRequired": True,
-        "entitlement": "max_prints_per_period", "limit": 10, "used": 10,
-    }))
-    result = router._submit_durable_job(7, structured_outcome=True)
-    assert result["status"] == "failed"
-    assert job.gateway_job_id is False
-    assert job.last_error.startswith("GATEWAY_REJECTED_BILLING_HOLD")
-    assert job.next_retry_at is False
-    assert len(sent) == 1 and cursor.closed
-
-
-def test_legacy_blocked_kitchen_receipt_never_auto_replays_after_renewal():
-    router, job, cursor, sent, _order = fixture(reply(201, {"jobId": "should-not-create"}))
-    job.last_error = "GATEWAY_BILLING_LIMIT_REACHED: max_prints_per_period"
-    result = router._submit_durable_job(7, structured_outcome=True)
-    assert result["status"] == "failed"
-    assert job.next_retry_at is False
-    assert sent == []
-    assert cursor.closed
-
-
-@pytest.mark.parametrize("http_status,body", [(401, {}), (429, {})])
+@pytest.mark.parametrize("http_status,body", [(401, {}), (429, {
+    "code": "TENANT_ENTITLEMENT_EXCEEDED",
+    "entitlement": "max_jobs_per_minute", "limit": 3, "used": 3,
+    "upgradeRequired": False, "retryable": True,
+})])
 def test_automatic_backoff_is_accepted_as_the_same_durable_operation(http_status, body):
     router, job, cursor, sent, _order = fixture(reply(http_status, body))
     result = router._submit_durable_job(7, structured_outcome=True)
@@ -254,6 +368,35 @@ def test_automatic_backoff_is_accepted_as_the_same_durable_operation(http_status
     assert result["can_retry"] is False
     assert "accepted by the Gateway" not in result["message"]
     assert job.next_retry_at
+    assert len(sent) == 1 and cursor.closed
+
+
+@pytest.mark.parametrize("response_body", [
+    {},
+    {"code": "RATE_LIMIT_EXCEEDED"},
+    {"code": "PROXY_429", "upgradeRequired": True,
+     "entitlement": "max_prints_per_period", "limit": 10, "used": 10},
+    {"code": "PRINT_QUOTA_EXCEEDED", "upgradeRequired": "true",
+     "entitlement": "max_prints_per_period", "limit": 10, "used": 10},
+    {"code": "PRINT_QUOTA_EXCEEDED", "upgradeRequired": True,
+     "entitlement": "max_agents", "limit": 10, "used": 10},
+])
+def test_unclassified_or_inconsistent_429_preserves_unknown_output(response_body):
+    """A proxy can replace an accepted POST response with its own 429.
+
+    Only a code/entitlement/type combination actually emitted by Gateway
+    can establish a pre-admission quota denial. Neither a truthy string nor
+    a similarly shaped intermediary body is physical non-delivery proof.
+    """
+    router, job, cursor, sent, _order = fixture(reply(429, response_body))
+    result = router._submit_durable_job(7, structured_outcome=True)
+    assert result["status"] == "unknown"
+    assert result["outcome"] == "unknown"
+    assert result["can_retry"] is False
+    assert job.status == "unknown"
+    assert job.gateway_job_id is False
+    assert not job.next_retry_at
+    assert str(job.last_error).startswith("UNKNOWN_SUBMISSION_OUTCOME:")
     assert len(sent) == 1 and cursor.closed
 
 

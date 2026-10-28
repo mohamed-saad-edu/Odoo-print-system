@@ -99,9 +99,8 @@ describe("workspace dashboard evidence and feedback", () => {
       await act(async () => document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })));
       expect(document.querySelector('[role="dialog"]')).toBeNull();
       expect(document.activeElement).toBe(trigger);
-      // Full Access users may read the privacy-safe lifecycle probe, but not
-      // owner-only quota, renewal dates or any other background endpoint.
-      expect(vi.mocked(fetchWithTimeout).mock.calls.map(([url]) => url)).toEqual(["/api/billing/status"]);
+      // A non-owner gets one non-commercial subscription status probe; no protected billing data is fetched.
+      expect(vi.mocked(fetchWithTimeout).mock.calls.map(call => call[0])).toEqual(["/api/billing/status"]);
     } finally {
       await act(async () => root.unmount());
       host.remove();

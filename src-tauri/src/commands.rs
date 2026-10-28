@@ -317,8 +317,21 @@ fn normalize_gateway_url(raw: &str) -> Result<String, String> {
             return Err("Gateway URL must use HTTPS for remote Gateways".into());
         }
     }
-    if parsed.username() != "" || parsed.password().is_some() {
+    // An empty userinfo marker (https://@host) may serialize away before
+    // username()/password() are inspected. Reject the original authority
+    // marker like Go's url.User != nil, including empty credentials.
+    if candidate.contains('@') || parsed.username() != "" || parsed.password().is_some() {
         return Err("gateway URL cannot include embedded credentials".into());
+    }
+    // url::Url can normalize an authority with an empty trailing port
+    // (https://host:/). Go rejects this source spelling and port 0 before
+    // constructing Agent endpoints. Preserve that exact origin contract.
+    let raw_authority = candidate
+        .split_once("://")
+        .map(|(_, remainder)| remainder.split(['/', '?', '#']).next().unwrap_or(""))
+        .unwrap_or("");
+    if raw_authority.ends_with(':') || parsed.port() == Some(0) {
+        return Err("gateway URL port must be between 1 and 65535".into());
     }
     if parsed.path() != "/" {
         return Err("gateway URL must use the origin root".into());
@@ -594,10 +607,60 @@ pub struct AgentGatewayRequestArgs {
     pub idempotency_key: Option<String>,
 }
 
-fn valid_gateway_printer_id(id: &str) -> bool {
-    let mut chars = id.chars();
-    matches!(chars.next(), Some(c) if c.is_ascii_alphanumeric())
-        && chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-' | '~'))
+// This is one canonical encodeURIComponent(printerId) path segment from
+// the WebView. No second decode or path normalization is permitted.
+fn valid_gateway_printer_id(segment: &str) -> bool {
+    if segment.is_empty() || segment.len() > 360 {
+        return false;
+    }
+    let input = segment.as_bytes();
+    let mut decoded = Vec::with_capacity(input.len());
+    let mut i = 0;
+    while i < input.len() {
+        if input[i] == b'%' {
+            if i + 2 >= input.len() {
+                return false;
+            }
+            let Ok(hex) = std::str::from_utf8(&input[i + 1..i + 3]) else {
+                return false;
+            };
+            let Ok(byte) = u8::from_str_radix(hex, 16) else {
+                return false;
+            };
+            decoded.push(byte);
+            i += 3;
+        } else {
+            if !input[i].is_ascii() {
+                return false;
+            }
+            decoded.push(input[i]);
+            i += 1;
+        }
+    }
+    let Ok(identity) = std::str::from_utf8(&decoded) else {
+        return false;
+    };
+    if identity.is_empty()
+        || identity.len() > 120
+        || identity.trim_matches(|ch: char| ch.is_whitespace() || ch == '\u{feff}') != identity
+        || identity.contains("..")
+        || identity.chars().any(|ch| ch.is_control() || matches!(ch, '/' | '?' | '#' | '%') || ch == char::from(92))
+        || identity.chars().next().is_some_and(|ch| ch.is_ascii() && !ch.is_ascii_alphanumeric())
+    {
+        return false;
+    }
+    const HEX: &[u8] = b"0123456789ABCDEF";
+    let mut canonical = String::with_capacity(segment.len());
+    for byte in decoded {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'!' | b'~' | b'*' | b'(' | b')' | 39) {
+            canonical.push(char::from(byte));
+        } else {
+            canonical.push('%');
+            canonical.push(char::from(HEX[(byte >> 4) as usize]));
+            canonical.push(char::from(HEX[(byte & 15) as usize]));
+        }
+    }
+    canonical == segment
 }
 
 fn gateway_printer_action_path(path: &str, action: &str) -> bool {
@@ -615,16 +678,17 @@ fn valid_jobs_query(path: &str) -> bool {
     let Some((base, query)) = path.split_once('?') else {
         return path == "/api/jobs";
     };
-    if base != "/api/jobs" || query.is_empty() {
+    if base != "/api/jobs" || query.is_empty() || query.contains('#') {
         return false;
     }
+    let mut keys = std::collections::BTreeSet::new();
     for pair in query.split('&') {
         let mut parts = pair.splitn(2, '=');
         let key = parts.next().unwrap_or("");
         let Some(value) = parts.next() else {
             return false;
         };
-        if key.is_empty() || value.len() > 200 {
+        if key.is_empty() || value.len() > 200 || !keys.insert(key) {
             return false;
         }
         if !matches!(
@@ -632,6 +696,18 @@ fn valid_jobs_query(path: &str) -> bool {
             "limit" | "offset" | "status" | "search" | "q" | "printerId" | "agentId"
         ) {
             return false;
+        }
+        // A malformed %-escape must not be normalized or ignored while
+        // the native Agent sends an authenticated Gateway request.
+        let bytes = value.as_bytes();
+        for (index, byte) in bytes.iter().enumerate() {
+            if *byte == b'%'
+                && (index + 2 >= bytes.len()
+                    || !bytes[index + 1].is_ascii_hexdigit()
+                    || !bytes[index + 2].is_ascii_hexdigit())
+            {
+                return false;
+            }
         }
     }
     true
@@ -696,6 +772,13 @@ fn allowed_agent_gateway_path(path: &str, method: &str) -> bool {
     }
 }
 
+// Validate the route part independently of safe Jobs-search/Fleet cursor
+// values; the allowlisted path and parameter names are validated below.
+fn unsafe_gateway_route_path(path: &str) -> bool {
+    let route = path.split_once('?').map(|(route, _)| route).unwrap_or(path);
+    route.contains("..") || path.contains('\\')
+}
+
 #[tauri::command]
 pub async fn gateway_agent_request(
     args: AgentGatewayRequestArgs,
@@ -703,7 +786,7 @@ pub async fn gateway_agent_request(
 ) -> Result<String, String> {
     let path = args.path.trim().to_string();
     let method = args.method.trim().to_ascii_uppercase();
-    if !path.starts_with("/api/") || path.contains("..") || path.contains('\\') {
+    if !path.starts_with("/api/") || unsafe_gateway_route_path(&path) {
         return Err("gateway request path must be an API-relative path".into());
     }
     if !allowed_agent_gateway_path(&path, &method) {
@@ -1055,11 +1138,31 @@ fn validate_local_printer_id(raw: &str) -> Result<String, String> {
         || id.trim() != id
         || id.len() > 256
         || id.starts_with('-')
-        || id.chars().any(char::is_control)
+        || id.chars().any(|ch| ch.is_control() || ch == '\u{feff}')
     {
         return Err("invalid local printer id".into());
     }
     Ok(id.to_string())
+}
+
+/// Preserve the caller-selected opaque local printer ID exactly. An invalid
+/// padded or option-shaped ID cannot silently redirect a physical test print.
+fn build_local_printer_test_command(
+    cli: &std::path::Path,
+    config: &std::path::Path,
+    root: &std::path::Path,
+    raw_id: &str,
+) -> Result<std::process::Command, String> {
+    let id = validate_local_printer_id(raw_id)?;
+    let mut command = std::process::Command::new(cli);
+    command
+        .arg("printers")
+        .arg("test")
+        .arg(id)
+        .arg("-config")
+        .arg(config)
+        .env("YASEIR_AGENT_DATA_DIR", root);
+    Ok(command)
 }
 
 fn decode_printer_sharing_reply(
@@ -1465,29 +1568,14 @@ mod audit_discovery_test;
 
 #[tauri::command]
 pub async fn test_printer(printer_id: String, app: tauri::AppHandle) -> Result<String, String> {
-    // Same trust boundary as register_printer's arg_value: the id is passed
-    // positionally to the Go CLI, whose parser treats a leading-dash value
-    // as a flag (e.g. "-config" would be swallowed as a flag name). Printer
-    // ids never legitimately start with '-'.
-    let pid = printer_id.trim().to_string();
-    if pid.is_empty() {
-        return Err("printer id is required".into());
-    }
-    if pid.starts_with('-') {
-        return Err("printer id must not start with '-'".into());
-    }
+    // No .trim(): printer IDs are exact execution targets. Reject padded,
+    // option-shaped, control-character and overlong IDs before invoking CLI.
+    let pid = validate_local_printer_id(&printer_id)?;
     run_blocking(move || {
         let cli = agent::cli_path(&app)?;
         let config = paths::agent_config_path();
         let root = paths::agent_data_root();
-        let mut test_cmd = std::process::Command::new(&cli);
-        test_cmd
-            .arg("printers")
-            .arg("test")
-            .arg(&pid)
-            .arg("-config")
-            .arg(&config)
-            .env("YASEIR_AGENT_DATA_DIR", &root);
+        let mut test_cmd = build_local_printer_test_command(&cli, &config, &root, &pid)?;
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt;
@@ -1919,7 +2007,7 @@ mod autostart_choice_tests {
 mod agent_console_path_tests {
     use super::{
         allowed_agent_gateway_path, gateway_printer_action_path, valid_fleet_query,
-        valid_jobs_query,
+        valid_jobs_query, unsafe_gateway_route_path,
     };
 
     #[test]
@@ -1993,6 +2081,34 @@ mod agent_console_path_tests {
             "/api/printers/-p1/test-print",
             "test-print"
         ));
+        for path in [
+            "/api/printers/%D8%B7%D8%A7%D8%A8%D8%B9%D8%A9~1234abcd/test-print",
+            "/api/printers/Receipt%20Printer/test-print",
+            "/api/printers/pr%EF%BB%BFinter/test-print",
+        ] {
+            assert!(gateway_printer_action_path(path, "test-print"), "{path}");
+        }
+        for path in [
+            "/api/printers/p%2Fother/test-print",
+            "/api/printers/p%5Cother/test-print",
+            "/api/printers/p%3Fother/test-print",
+            "/api/printers/p%252Fother/test-print",
+            "/api/printers/%2E%2E/test-print",
+            "/api/printers/p%70/test-print",
+            "/api/printers/%FF/test-print",
+            "/api/printers/%d8%b7/test-print",
+            "/api/printers/%EF%BB%BFprinter/test-print",
+            "/api/printers/printer%EF%BB%BF/test-print",
+            "/api/printers/Bad%00Name/test-print",
+            "/api/printers/p%ZZ/test-print",
+            "/api/printers/p1/test-print?target=/api/other",
+        ] {
+            assert!(!gateway_printer_action_path(path, "test-print"), "{path}");
+        }
+        assert!(!gateway_printer_action_path(
+            &format!("/api/printers/{}/test-print", "p".repeat(121)),
+            "test-print"
+        ));
     }
 
     #[test]
@@ -2007,6 +2123,24 @@ mod agent_console_path_tests {
         assert!(!valid_jobs_query("/api/jobs?limit=50&evil=x"));
         assert!(!valid_jobs_query("/api/jobs?limit"));
         assert!(!valid_jobs_query("/api/jobs?=50"));
+        assert!(valid_jobs_query("/api/jobs?search=receipt+%D8%A3"));
+        assert!(valid_jobs_query("/api/jobs?search=a%23b"));
+        assert!(!valid_jobs_query("/api/jobs?limit=10&limit=20"));
+        assert!(!valid_jobs_query("/api/jobs?search=%ZZ"));
+        assert!(!valid_jobs_query("/api/jobs?status=queued&evil=%ZZ"));
+        assert!(!valid_jobs_query("/api/jobs?"));
+        assert!(!valid_jobs_query("/api/jobs#"));
+        assert!(!valid_jobs_query("/api/jobs?status=queued#"));
+    }
+
+    #[test]
+    fn gateway_path_guard_rejects_traversal_but_not_query_search_dots() {
+        assert!(!unsafe_gateway_route_path("/api/jobs?search=invoice..pdf"));
+        assert!(!unsafe_gateway_route_path("/api/printers?beforeId=queue..two"));
+        assert!(unsafe_gateway_route_path("/api/printers/../agents"));
+        assert!(unsafe_gateway_route_path("/api/printers/p..q/test-print"));
+        assert!(unsafe_gateway_route_path("/api/jobs?search=a\\b"));
+        assert!(allowed_agent_gateway_path("/api/jobs?search=invoice..pdf", "GET"));
     }
 
     #[test]
@@ -2127,6 +2261,51 @@ mod security_tests {
         assert_eq!(
             normalize_gateway_url("https://gateway.example.com/").unwrap(),
             "https://gateway.example.com"
+        );
+    }
+
+    #[test]
+    fn gateway_url_rejects_empty_userinfo_before_native_pairing() {
+        for raw in [
+            "https://@gateway.example.com/",
+            "https://:@gateway.example.com/",
+            "https://user:@gateway.example.com/",
+            "https://:password@gateway.example.com/",
+        ] {
+            assert!(
+                normalize_gateway_url(raw).is_err(),
+                "embedded userinfo marker was silently normalized: {raw}"
+            );
+        }
+        assert_eq!(
+            normalize_gateway_url("https://gateway.example.com/").unwrap(),
+            "https://gateway.example.com"
+        );
+    }
+
+    #[test]
+    fn gateway_url_rejects_empty_or_zero_ports_without_normalization() {
+        for raw in [
+            "https://gateway.example.com:/",
+            "https://gateway.example.com:0/",
+            "https://gateway.example.com:00000/",
+            "http://localhost:/",
+            "http://localhost:0/",
+            "https://[::1]:/",
+            "https://[::1]:0/",
+        ] {
+            assert!(
+                normalize_gateway_url(raw).is_err(),
+                "invalid Gateway port silently normalized: {raw}"
+            );
+        }
+        assert_eq!(
+            normalize_gateway_url("https://gateway.example.com:443/").unwrap(),
+            "https://gateway.example.com"
+        );
+        assert_eq!(
+            normalize_gateway_url("https://gateway.example.com:8443/").unwrap(),
+            "https://gateway.example.com:8443"
         );
     }
 

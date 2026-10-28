@@ -80,7 +80,8 @@ export async function createAgentForManager(name: string, manager: ManagerClaims
         entitlement: error.entitlement,
         limit: error.limit,
         used: error.used,
-        upgradeRequired: error.entitlement === "max_agents",
+        // Agent count is a technical safety guard, not a priced unit.
+        upgradeRequired: false,
       });
     }
     if (isTenantBillingError(error)) throw new ActionError(error.message, 403, error.code);
@@ -94,10 +95,10 @@ export async function createAgentForManager(name: string, manager: ManagerClaims
     tenantId: manager.tenantId,
     actorType: manager.userId ? "user" : "system",
     actorId: manager.userId ?? "legacy-manager",
-    action: "agent.paired",
+    action: "agent.pairing_code_issued",
     resourceType: "agent",
     resourceId: id,
-  }).catch((error) => logWarn("audit.agent_paired_persist_failed", {
+  }).catch((error) => logWarn("audit.agent_pairing_code_persist_failed", {
     tenantId: manager.tenantId,
     agentId: id,
     error: error instanceof Error ? error.message : String(error),

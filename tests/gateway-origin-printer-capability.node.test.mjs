@@ -42,7 +42,9 @@ const guard = productionModule('src/server/request-guard.ts', {
   './request-path': requestPath,
   './authorization-monitor': authorizationMonitor,
 });
+const exactPrinterId = productionModule('src/lib/exact-printer-id.ts');
 const geometry = productionModule('src/lib/printer-geometry.ts', {
+  './exact-printer-id': exactPrinterId,
   '../../contracts/printer-geometry-contract.json': JSON.parse(readFileSync(resolve(root, 'contracts/printer-geometry-contract.json'), 'utf8')),
 });
 const capability = productionModule('src/lib/printer-capability.ts', {

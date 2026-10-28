@@ -309,6 +309,40 @@ func TestPrinterSharingDiscoveryUnknownLanguageMatchesPrivateEndpointOnly(t *tes
 	}
 }
 
+func TestIPPExplicitRootDoesNotAliasDefaultPrintQueue(t *testing.T) {
+	root := PrinterConfig{ID: "root", Type: "ipp", Protocol: "ipp", Endpoint: "ipp://192.168.1.20/"}
+	implicitRoot := root
+	implicitRoot.Endpoint = "ipp://192.168.1.20"
+	defaultQueue := root
+	defaultQueue.ID, defaultQueue.Endpoint = "default", "ipp://192.168.1.20/ipp/print"
+	rootDigest, err := PrinterBindingDigest(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	implicitDigest, err := PrinterBindingDigest(implicitRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defaultDigest, err := PrinterBindingDigest(defaultQueue)
+	if err != nil || rootDigest != implicitDigest || rootDigest == defaultDigest {
+		t.Fatalf("IPP root/default resource binding collision: root=%q implicit=%q default=%q err=%v", rootDigest, implicitDigest, defaultDigest, err)
+	}
+	path := filepath.Join(t.TempDir(), "agent.yaml")
+	if err := SetPrinterSharing(path, root, []PrinterConfig{root, defaultQueue}, false); err != nil {
+		t.Fatal(err)
+	}
+	policy, err := LoadPrinterSharing(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if shared, err := policy.Shared(implicitRoot, []PrinterConfig{root, defaultQueue}); err != nil || shared {
+		t.Fatalf("root URI spelling bypassed local deny: shared=%v err=%v", shared, err)
+	}
+	if shared, err := policy.Shared(defaultQueue, []PrinterConfig{root, defaultQueue}); err != nil || !shared {
+		t.Fatalf("root deny affected distinct /ipp/print queue: shared=%v err=%v", shared, err)
+	}
+}
+
 func TestPrinterSharingIPPPathAliasesKeepCaseAndReservedQueueSegments(t *testing.T) {
 	pc := PrinterConfig{ID: "local", Type: "ipp", Protocol: "ipp", Endpoint: "ipp://192.168.1.10/Queues/Front"}
 	path := filepath.Join(t.TempDir(), "agent.yaml")

@@ -49,12 +49,6 @@ msgstr "يلزم وجود Agent للـ Gateway عند الربط على مستو
 #. module: print_gateway
 #. odoo-python
 #: code:addons/print_gateway/models/binding.py:0
-msgid "A Gateway Runtime Printer must be selected."
-msgstr "يجب اختيار طابعة من طابعات الـ Gateway."
-
-#. module: print_gateway
-#. odoo-python
-#: code:addons/print_gateway/models/binding.py:0
 msgid "A POS Shop is required for a POS Receipt binding."
 msgstr "يلزم تحديد متجر POS لربط إيصالات POS."
 
@@ -81,12 +75,6 @@ msgstr "يجب اختيار تقرير لهذا النوع من الوجهات."
 #: code:addons/print_gateway/models/binding.py:0
 msgid "A deterministic Odoo print destination is required."
 msgstr "يلزم تحديد وجهة طباعة محددة في Odoo."
-
-#. module: print_gateway
-#. odoo-python
-#: code:addons/print_gateway/models/runtime_assignment.py:0
-msgid "A non-empty Gateway runtime agent ID is required."
-msgstr "يلزم معرّف Agent غير فارغ من الـ Gateway."
 
 #. module: print_gateway
 #. odoo-javascript
@@ -1434,12 +1422,6 @@ msgstr "معرّف تثبيت Gateway"
 #. module: print_gateway
 #. odoo-python
 #: code:addons/print_gateway/models/print_job.py:0
-msgid "Gateway is temporarily rate-limiting print submissions. The job was safely re-queued for retry."
-msgstr "الـ Gateway يقيّد معدل إرسال الطباعة مؤقتًا. تمت إعادة المهمة إلى قائمة الانتظار بأمان لإعادة المحاولة."
-
-#. module: print_gateway
-#. odoo-python
-#: code:addons/print_gateway/models/print_job.py:0
 msgid "Gateway late success is not valid for this terminal state."
 msgstr "النجاح المتأخر من الـ Gateway غير صالح لهذه الحالة النهائية."
 
@@ -1577,8 +1559,8 @@ msgstr "اكتشاف طابعات الـ Gateway غير متاح."
 #. module: print_gateway
 #. odoo-python
 #: code:addons/print_gateway/models/print_job.py:0
-msgid "Gateway submission outcome is unknown; physical outcome is ambiguous. Automated retries are paused to prevent duplicate prints. Operator reprint required."
-msgstr "نتيجة الإرسال إلى الـ Gateway غير معروفة؛ والنتيجة الفعلية غير مؤكدة. تم إيقاف المحاولات التلقائية مؤقتًا لمنع الطباعة المكررة. يلزم تدخّل المشغّل لإعادة الطباعة."
+msgid "Gateway submission outcome is unknown; physical outcome is ambiguous. Automated retries are paused to prevent duplicate prints. Check Print Activity and the printer before any explicit reprint."
+msgstr "نتيجة الإرسال إلى الـ Gateway غير معروفة؛ والنتيجة الفعلية غير مؤكدة. أُوقفت إعادة المحاولة التلقائية لمنع تكرار الطباعة. راجع سجل الطباعة والطابعة قبل أي إعادة طباعة صريحة."
 
 #. module: print_gateway
 #. odoo-python
@@ -1882,8 +1864,8 @@ msgstr "اسم النموذج"
 #. module: print_gateway
 #. odoo-javascript
 #: code:addons/print_gateway/static/src/js/gateway_limit_dialog.js:0
-msgid "30-day allowance resets: %s"
-msgstr "موعد تجديد رصيد الـ30 يومًا: %s"
+msgid "Monthly allowance resets (UTC): %s"
+msgstr "موعد تجديد الرصيد الشهري (UTC): %s"
 
 #. module: print_gateway
 #: model:ir.model.fields,field_description:print_gateway.field_print_gateway_binding__name
@@ -3012,12 +2994,6 @@ msgstr "إعداد الطابعة"
 #: model_terms:ir.ui.view,arch_db:print_gateway.diagnostic_report
 msgid "Printer Test Page"
 msgstr "صفحة اختبار الطابعة"
-
-#. module: print_gateway
-#. odoo-python
-#: code:addons/print_gateway/models/print_job.py:0
-msgid "Printer is required."
-msgstr "الطابعة مطلوبة."
 
 #. module: print_gateway
 #. odoo-python
@@ -4361,8 +4337,8 @@ msgstr "لا يمكن حذف إعداد الـ Gateway هذا بينما لا ت
 #. module: print_gateway
 #. odoo-python
 #: code:addons/print_gateway/customer_presentation.py:0
-msgid "The current 30-day print allowance has been used. Wait for the next reset or contact the workspace owner."
-msgstr "استهلكت رصيد الطباعة لدورة الـ30 يومًا الحالية. انتظر التجديد التالي أو تواصل مع مالك مساحة العمل."
+msgid "The current monthly print allowance has been used. Wait for the next UTC reset or contact the workspace owner."
+msgstr "استهلكت رصيد الطباعة للشهر الحالي. انتظر موعد التجديد التالي بتوقيت UTC أو تواصل مع مالك مساحة العمل."
 
 #. module: print_gateway
 #: model_terms:ir.ui.view,arch_db:print_gateway.diagnostic_report
@@ -4534,8 +4510,8 @@ msgstr "انتظر انتهاء المهام الحالية. تواصل مع ا�
 #. module: print_gateway
 #. odoo-javascript
 #: code:addons/print_gateway/static/src/js/gateway_limit_dialog.js:0
-msgid "Wait for the next 30-day reset or contact the workspace owner to increase the allowance."
-msgstr "انتظر موعد تجديد دورة الـ30 يومًا التالية أو تواصل مع مالك مساحة العمل لزيادة الرصيد."
+msgid "Wait for the next UTC monthly reset or contact the workspace owner to increase the allowance."
+msgstr "انتظر موعد تجديد الحصة الشهرية بتوقيت UTC أو تواصل مع مالك مساحة العمل لزيادة الرصيد."
 
 #. module: print_gateway
 #: model:ir.model.fields.selection,name:print_gateway.selection__print_gateway_print_job__customer_status__waiting
@@ -4610,14 +4586,14 @@ msgstr "ليست لديك صلاحية تنفيذ إجراء الطباعة هذ
 #. module: print_gateway
 #. odoo-javascript
 #: code:addons/print_gateway/static/src/js/gateway_limit_dialog.js:0
-msgid "You have used the current 30-day print allowance."
-msgstr "استهلكت رصيد الطباعة في دورة الـ30 يومًا الحالية."
+msgid "You have used the current monthly print allowance."
+msgstr "استهلكت رصيد الطباعة لهذا الشهر."
 
 #. module: print_gateway
 #. odoo-javascript
 #: code:addons/print_gateway/static/src/js/gateway_limit_dialog.js:0
-msgid "You have used the current 30-day allowance. Wait for the next cycle or contact the workspace owner."
-msgstr "استهلكت رصيد دورة الـ30 يومًا الحالية. انتظر موعد التجديد القادم أو تواصل مع مالك مساحة العمل."
+msgid "You have used the monthly allowance. Wait for the next UTC reset or contact the workspace owner."
+msgstr "استهلكت رصيد الطباعة لهذا الشهر. انتظر موعد التجديد القادم أو تواصل مع مالك مساحة العمل."
 
 #. module: print_gateway
 #. odoo-python
@@ -4975,6 +4951,18 @@ msgstr "لا يتطلب إيصال نقاط البيع طابعة Odoo أو تق
 #. module: print_gateway
 #. odoo-python
 #: code:addons/print_gateway/models/print_job.py:0
+msgid "This POS ticket is over 30 minutes old and was not sent. Review it and use Reprint explicitly if still needed."
+msgstr "هذا الإيصال من نقطة البيع أقدم من 30 دقيقة ولم يتم إرساله للطابعة. راجع العملية واستخدم إعادة الطباعة يدويًا إذا كان ما زال مطلوبًا."
+
+#. module: print_gateway
+#. odoo-python
+#: code:addons/print_gateway/customer_presentation.py:0
+msgid "This old POS ticket was not sent. Review the sale and explicitly reprint only if needed."
+msgstr "لم يُرسل إيصال نقطة البيع القديم للطابعة. راجع البيع وأعد طباعته يدويًا فقط إذا كان مطلوبًا."
+
+#. module: print_gateway
+#. odoo-python
+#: code:addons/print_gateway/models/print_job.py:0
 msgid "The earlier receipt was not printed because the subscription blocked it. Print it again explicitly if still needed."
 msgstr "لم تتم طباعة الإيصال السابق بسبب توقف الاشتراك. اطبعه مجددًا بشكل صريح إذا كنت لا تزال تحتاج إليه."
 
@@ -4995,3 +4983,83 @@ msgstr "لم تتم طباعة الإيصال لأن الاشتراك منعها
 #: code:addons/print_gateway/static/src/js/gateway_limit_dialog.js:0
 msgid "This receipt was not printed. After renewal, reprint it explicitly only if still needed."
 msgstr "لم تتم طباعة هذا الإيصال. بعد التجديد، أعد طباعته بشكل صريح فقط عند الحاجة."
+
+#. module: print_gateway
+#. odoo-python
+#: code:addons/print_gateway/models/pos_order.py:0
+#: code:addons/print_gateway/models/print_router.py:0
+msgid "The kitchen reprint option must be a boolean."
+msgstr "يجب أن يكون خيار إعادة طباعة المطبخ قيمة منطقية (صحيح أو خطأ)."
+
+#. module: print_gateway
+#. odoo-python
+#: code:addons/print_gateway/models/print_router.py:0
+msgid "The print binding destination changed before the durable job could be created."
+msgstr "تغيّرت وجهة ربط الطباعة قبل إنشاء مهمة الطباعة المحفوظة؛ أعد اختيار الوجهة."
+
+#. module: print_gateway
+#. odoo-python
+#: code:addons/print_gateway/models/print_router.py:0
+msgid "The print binding document type changed before the durable job could be created."
+msgstr "تغيّر نوع المستند في ربط الطباعة قبل إنشاء المهمة المحفوظة؛ تحقّق من إعدادات الربط."
+
+#. module: print_gateway
+#. odoo-python
+#: code:addons/print_gateway/models/print_router.py:0
+msgid "The print binding report changed before the durable job could be created."
+msgstr "تغيّر التقرير المحدد في ربط الطباعة قبل إنشاء المهمة المحفوظة؛ أعد اختيار التقرير."
+
+#. module: print_gateway
+#. odoo-python
+#: code:addons/print_gateway/customer_presentation.py:0
+msgid "The print rule or source company changed after this event. No print was sent. Ask an administrator to review the route and submit a new request if needed."
+msgstr "تغيّرت قاعدة الطباعة أو شركة المستند بعد تسجيل الحدث. لم يتم إرسال أي مهمة طباعة. اطلب من المسؤول مراجعة مسار الطباعة وإرسال طلب جديد عند الحاجة."
+
+#. module: print_gateway
+#. odoo-python
+#: code:addons/print_gateway/models/pos_order.py:0
+msgid "A valid Odoo Preparation Printer ID is required."
+msgstr "يجب تحديد معرّف صحيح لطابعة التحضير في Odoo دون تغيير أو تحويل."
+
+#. module: print_gateway
+#. odoo-python
+#: code:addons/print_gateway/models/print_job.py:0
+msgid "WARNING: Print Job #%s returned ambiguous delivery on '%s'. Verify physical output before any reprint."
+msgstr "تحذير: نتيجة إرسال مهمة الطباعة رقم %s إلى '%s' غير مؤكدة. تحقّق من خروج الورق قبل إعادة الطباعة."
+
+#. module: print_gateway
+#. odoo-python
+#: code:addons/print_gateway/models/print_router.py:0
+#: code:addons/print_gateway/models/print_job.py:0
+msgid "The print operation key is invalid."
+msgstr "معرّف عملية الطباعة غير صالح. تحقّق من المعرّف الأصلي قبل إعادة الإرسال."
+
+#. module: print_gateway
+#. odoo-python
+#: code:addons/print_gateway/models/binding.py:0
+msgid "A valid Gateway Runtime Printer must be selected."
+msgstr "يجب اختيار طابعة تشغيل صالحة من بوابة الطباعة قبل الإرسال."
+
+#. module: print_gateway
+#. odoo-python
+#: code:addons/print_gateway/models/print_job.py:0
+msgid "Printer identity is invalid. Select an exact Gateway Runtime Printer."
+msgstr "معرّف الطابعة غير صالح. اختر طابعة تشغيل بمعرّف مطابق تمامًا في بوابة الطباعة."
+
+#. module: print_gateway
+#. odoo-python
+#: code:addons/print_gateway/models/print_job.py:0
+msgid "Gateway admission is temporarily limited. The print request remains queued for safe retry."
+msgstr "قبول مهام الطباعة مقيّد مؤقتًا. سيبقى الطلب في قائمة الانتظار لإعادة المحاولة بشكل آمن."
+
+#. module: print_gateway
+#. odoo-python
+#: code:addons/print_gateway/models/runtime_assignment.py:0
+msgid "A valid exact Gateway runtime agent ID is required."
+msgstr "يجب إدخال معرّف صحيح ومطابق تمامًا لوكيل التشغيل في بوابة الطباعة."
+
+#. module: print_gateway
+#. odoo-javascript
+#: code:addons/print_gateway/static/src/js/report_interceptor.js:0
+msgid "Print routing returned conflicting status. Native PDF download cancelled. Check Print Activity and the printer before retrying."
+msgstr "وردت حالة متعارضة لتوجيه الطباعة. أُلغي تنزيل ملف PDF المعتاد. راجع سجل الطباعة والطابعة قبل إعادة المحاولة."

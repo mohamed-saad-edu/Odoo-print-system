@@ -57,6 +57,11 @@ suite("agent registration contract", () => {
     expect(row.pairing_code_hash).toBe(hashPairingCode(pairingCode));
     expect(row.secret).toBeNull();
     expect(row.status).toBe("offline");
+    const audit = await pool().query(
+      "SELECT 1 FROM audit_events WHERE tenant_id=$1 AND resource_id=$2 AND action='agent.paired'",
+      [f.tenantId, f.agentId],
+    );
+    expect(audit.rows).toHaveLength(0);
   });
 
   it("pairs when other tenants hold live subscriptions (existence, not count)", async () => {
@@ -147,6 +152,15 @@ suite("agent registration contract", () => {
     expect(row.secret).not.toBe(body.secret);
     expect(row.status).toBe("online");
     expect(row.metadata).toMatchObject({ hostname: "pos-01", os: "windows" });
+
+    const audits = await pool().query(
+      "SELECT actor_type, actor_id, action, metadata FROM audit_events WHERE tenant_id=$1 AND resource_id=$2 AND action='agent.paired'",
+      [f.tenantId, f.agentId],
+    );
+    expect(audits.rows).toHaveLength(1);
+    expect(audits.rows[0]).toMatchObject({
+      actor_type: "agent", actor_id: f.agentId, action: "agent.paired", metadata: {},
+    });
   });
 
   it("rejects a client-supplied legacy branchId at the registration boundary", async () => {

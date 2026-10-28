@@ -11,10 +11,11 @@ describe("deep production review contracts", () => {
     expect(source).toContain('headers.set("Retry-After", "60")');
   });
 
-  it("keeps certification expiry, idempotency bucket, and heartbeat age on the database clock", () => {
+  it("keeps certification expiry and heartbeat age on the database clock without an unsafe time-bucket retry identity", () => {
     const source = read("src/app/api/printers/[id]/certify/route.ts");
     expect(source).toContain("const certificationNowMs = await databaseNowMs();");
-    expect(source).toContain("Math.floor(certificationNowMs / 60000)");
+    expect(source).toContain('code: "IDEMPOTENCY_KEY_REQUIRED"');
+    expect(source).not.toContain("Math.floor(certificationNowMs / 60000)");
     expect(source).toContain("new Date(certificationNowMs + 5 * 60 * 1000)");
     // Naive DB timestamps are UTC; new Date(str) parses host-local, so the
     // heartbeat age uses the shared UTC normalizer (same clock, same zone).

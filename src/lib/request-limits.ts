@@ -12,9 +12,35 @@ export function parseStrictContentLength(raw: string | string[]): number | null 
  * clamped only the ceiling.
  */
 export function clampListLimit(raw: string | null | undefined, fallback: number, max: number): number {
-  const parsed = parseInt(raw ?? "", 10);
-  const value = Number.isNaN(parsed) ? fallback : parsed;
+  // Complete decimal integers only: parseInt("10junk") must not turn a
+  // malformed query value into a valid pagination limit.
+  const parsed = typeof raw === "string" && /^-?\d+$/.test(raw) ? Number(raw) : NaN;
+  const value = Number.isSafeInteger(parsed) ? parsed : fallback;
   return Math.min(Math.max(1, value), max);
+}
+
+
+/**
+ * Read list offsets exactly, rather than accepting parseInt("10junk") or
+ * silently treating invalid pagination as the first page.
+ */
+export function parseStrictListOffset(raw: string | null | undefined, max: number): number | null {
+  if (raw == null) return 0;
+  if (!/^\d+$/.test(raw)) return null;
+  const value = Number(raw);
+  return Number.isSafeInteger(value) && value <= max ? value : null;
+}
+
+/**
+ * An audit limit must be an exact safe positive decimal. Unlike general
+ * list controls, malformed input is an HTTP 400 rather than a silent fallback.
+ * Values beyond max retain the historical bounded page behavior.
+ */
+export function parseStrictListLimit(raw: string | null | undefined, fallback: number, max: number): number | null {
+  if (raw == null) return fallback;
+  if (!/^\d+$/.test(raw)) return null;
+  const value = Number(raw);
+  return Number.isSafeInteger(value) && value >= 1 ? Math.min(value, max) : null;
 }
 
 /**

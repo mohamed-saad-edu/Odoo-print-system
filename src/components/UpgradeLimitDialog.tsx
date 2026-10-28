@@ -61,14 +61,15 @@ export default function UpgradeLimitDialog({
 }) {
   const { t, tc, formatNumber, formatDate } = useI18n();
   const copy = COPY[resource];
-  const technicalCapacity = resource === "agents" || resource === "printers";
+  const technicalCapacity = resource !== "prints";
+  const fixedDeviceCapacity = resource === "agents" || resource === "printers";
   const billingUrl = copyBillingDestination?.url ?? null;
   const [copiedUrl, setCopiedUrl] = useState("");
   const usedText = typeof used === "number" ? formatNumber(used) : "—";
   const limitText = limit === "unlimited" ? t("limit.unlimited") : typeof limit === "number" ? formatNumber(limit) : "—";
   const end = periodEnd ? new Date(periodEnd) : null;
   const periodText = end && !Number.isNaN(end.getTime()) ? formatDate(end) : null;
-  const retryMinutes = typeof retryAfterSeconds === "number" && retryAfterSeconds > 0
+  const retryMinutes = !fixedDeviceCapacity && typeof retryAfterSeconds === "number" && retryAfterSeconds > 0
     ? Math.max(1, Math.ceil(retryAfterSeconds / 60))
     : null;
 
@@ -76,13 +77,13 @@ export default function UpgradeLimitDialog({
     <Modal
       open={open}
       onClose={onClose}
-      title={t(technicalCapacity ? "v4.experience.limit.technical" : copy.title)}
-      description={t("limit.modalDescription")}
+      title={t(fixedDeviceCapacity ? "v4.experience.limit.technical" : copy.title)}
+      description={technicalCapacity ? undefined : t("limit.modalDescription")}
     >
       <div className="space-y-5">
         <div className="flex items-start gap-3 rounded-md border border-warn-edge bg-warn-bg px-4 py-3.5 text-sm text-warn">
           <CircleAlert className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
-          <p className="leading-relaxed">{t(technicalCapacity ? "v4.experience.limit.technicalBody" : copy.description)}</p>
+          <p className="leading-relaxed">{t(fixedDeviceCapacity ? "v4.experience.limit.technicalBody" : copy.description)}</p>
         </div>
 
         <div className="grid grid-cols-2 gap-px overflow-hidden rounded-md border border-edge bg-edge-subtle">

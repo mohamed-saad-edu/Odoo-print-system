@@ -104,6 +104,12 @@ async function fixture({ draft = false, enabled = true, holdStage = null,
                 if (stationOutcome === "unknown" || stationOutcome === "partial") return { gateway_enabled: true, status: stationOutcome, can_retry: true };
                 if (stationOutcome === "failed") return { gateway_enabled: true, status: "failed", can_retry: true,
                     message: "The printer refused this operation before admission." };
+                if (stationOutcome === "failed-no-proof") return {
+                    gateway_enabled: true, status: "failed", message: "No pre-admission proof",
+                };
+                if (stationOutcome === "failed-denied") return {
+                    gateway_enabled: true, status: "failed", can_retry: false,
+                };
             }
             return { gateway_enabled: true, status: "submitted", can_retry: false };
         } },
@@ -197,6 +203,20 @@ for (const outcome of ["unknown", "partial", "lost-response", "malformed", "unex
         assert.equal(await f.hooks.sendOrderInPreparation.call(f.pos, f.order), false);
         assert.equal(f.submissions.length, 2);
         assert.equal(f.order.consumed, undefined);
+    });
+}
+
+for (const stationOutcome of ["failed-no-proof", "failed-denied"]) {
+    test(`${stationOutcome}: a failed status without positive safe-retry evidence cannot mint new kitchen ticket`, async () => {
+        const f = await fixture({ stationOutcome });
+        assert.equal(await f.hooks.sendOrderInPreparation.call(f.pos, f.order), false);
+        const attempts = Object.entries(f.order.uiState.gatewayKitchenAttempts);
+        const station = attempts.find(([key]) => key.startsWith("2:"))[1];
+        assert.equal(station.gatewayOutcome, "unknown");
+        assert.equal(station.canRetry, false);
+        assert.equal(f.dialogs.length, 0, "no fresh physical retry action without confirmed pre-dispatch failure");
+        assert.equal(f.order.consumed, undefined);
+        assert.equal(f.submissions.length, 2);
     });
 }
 

@@ -72,6 +72,34 @@ def test_pos_route_preserves_uncertain_physical_outcome_in_explicit_status(metho
     assert result['gateway_enabled'] is True
 
 @pytest.mark.parametrize('method', ['route_pos_receipt', 'route_pos_sale_details'])
+def test_implicit_pos_receipt_identity_survives_unrelated_record_writes(method):
+    """Changing write_date after a sale cannot mint an accidental second ticket.
+
+    The caller must supply a NEW explicit operation ID to deliberately print
+    an updated receipt. No-key retries retain the exact original identity
+    and the durable outbox rejects changed payload under the same key.
+    """
+    router = SimulatedRouter(state='queued')
+    submitted_keys = []
+
+    def capture_submit(**values):
+        submitted_keys.append(values['idempotency_key'])
+        return {'status': 'queued'}
+
+    router._submit_route = capture_submit
+    record = ref('pos.order' if method == 'route_pos_receipt' else 'pos.session', 221,
+                 company_id=BRANCH, config_id=POS_CONFIG, write_date='2026-10-28 00:00:00')
+    router_route = getattr(router, method)
+    router_route(record, 'JPEG_DATA_FROM_POS', geometry_fingerprint='a' * 64)
+    record.write_date = '2026-10-28 00:01:00'
+    router_route(record, 'JPEG_DATA_FROM_POS', geometry_fingerprint='a' * 64)
+
+    assert len(submitted_keys) == 2
+    assert submitted_keys[0] == submitted_keys[1], 'Record update must not silently create a second physical print operation'
+    assert len(submitted_keys[0]) == 64
+
+
+@pytest.mark.parametrize('method', ['route_pos_receipt', 'route_pos_sale_details'])
 def test_pos_route_preserves_definite_failure_without_fabricating_unknown(method):
     router = SimulatedRouter(state='failed')
     result = None

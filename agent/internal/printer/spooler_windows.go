@@ -479,13 +479,16 @@ func executeSpoolerSessionWithSyscallsObserved(spoolerName string, data []byte, 
 		}
 		r, writeErr := sys.writePrinter(hPrinter, unsafe.Pointer(&chunk[0]), len(chunk), &bytesWritten)
 		if r == 0 {
-			// A failed WritePrinter may still have accepted bytes. Fold them
-			// into `written` (capped at the payload size, so a driver that
-			// over-reports cannot make a truncated job look complete) so the
-			// deferred cleanup reports the same evidence the caller returns
-			// instead of under-reporting as "0 bytes".
-			if remaining := uint32(len(data)) - written; bytesWritten > remaining {
-				bytesWritten = remaining
+			// A failed Win32 syscall may still have accepted bytes, but
+			// the driver's count is trustworthy only within THIS chunk.
+			// An over-report must not be silently capped to the total
+			// payload and recorded as completed transfer evidence.
+			if bytesWritten > uint32(len(chunk)) {
+				return spoolerTaskResult{
+					written: written,
+					jobID:   jobID,
+					err:     MarkUnknown("WritePrinter(%q) failed while reporting %d bytes for a %d-byte chunk after %d/%d confirmed bytes", spoolerName, bytesWritten, len(chunk), written, len(data)),
+				}
 			}
 			written += bytesWritten
 			// The Windows spooler can have accepted or forwarded bytes even when
@@ -507,7 +510,11 @@ func executeSpoolerSessionWithSyscallsObserved(spoolerName string, data []byte, 
 					err:     fmt.Errorf("UNKNOWN_PARTIAL_DELIVERY: WritePrinter(%q) wrote 0 bytes after %d/%d bytes", spoolerName, written, len(data)),
 				}
 			}
-			return spoolerTaskResult{written: written, jobID: jobID, err: fmt.Errorf("WritePrinter(%q) wrote 0 bytes", spoolerName)}
+			// The syscall accepted the buffer but returned no confirmed progress.
+			// Treat this as ambiguous, exactly like WritePrinter returning
+			// failure with pcWritten=0: the driver may have spooled data
+			// despite the invalid byte counter. Never auto-retry on this.
+			return spoolerTaskResult{written: written, jobID: jobID, err: MarkUnknown("WritePrinter(%q) reported success with 0 confirmed bytes; printer may have received data", spoolerName)}
 		}
 		if bytesWritten > uint32(len(chunk)) {
 			// A driver that reports more bytes than the submitted chunk is
@@ -966,7 +973,7 @@ func (p *SpoolerPrinter) Print(ctx context.Context, data []byte) error {
 			return res.err
 		}
 		log.Printf("print.trace spooler_session printer=%s latency_ms=%d success=true", p.SpoolerName, time.Since(printStart).Milliseconds())
-		log.Printf("Spooler printed %d bytes to %s (job %d)", res.written, p.SpoolerName, res.jobID)
+		log.Printf("Spooler accepted %d bytes for %s (job %d; physical output unconfirmed)", res.written, p.SpoolerName, res.jobID)
 		return nil
 	}
 }

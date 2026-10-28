@@ -9,7 +9,7 @@ and records permission rollback metadata; see [PostgreSQL deployment roles](DATA
 
 ## Schema inventory
 
-There are **32 current application tables**, **99 forward-only SQL migrations (`0000`–`0098`)**, and additional versioned forward repairs in [`scripts/db-migrate.ts`](../scripts/db-migrate.ts). The migration ledger, `drizzle.__drizzle_migrations`, is separate from the application tables.
+There are **32 current application tables**, **103 forward-only SQL migrations (`0000`–`0102`)**, and additional versioned forward repairs in [`scripts/db-migrate.ts`](../scripts/db-migrate.ts). The migration ledger, `drizzle.__drizzle_migrations`, is separate from the application tables.
 
 | Table | Purpose and identity | Scope and relevant constraints |
 | --- | --- | --- |
@@ -40,8 +40,8 @@ There are **32 current application tables**, **99 forward-only SQL migrations (`
 | `gateway_metrics` | Shared operational counters | Global metric-name primary key; nonnegative value; written by the metrics service |
 | `audit_events` | Actor/action/resource audit metadata | Tenant is required except for Platform actor records; actor type CHECK and scope/time indexes |
 | `auth_rate_limits` | Authentication attempt windows, failure counters and lockout expiry | Global opaque-key primary key; account/source-IP/pairing scope is encoded by the application, not a tenant column |
-| `plans` | Public/private manual plan catalog and monthly print allowance | Global plan identity/name; active/public/display-order fields |
-| `tenant_subscriptions` | Manually approved plan, term, quota, status, revision and expiry | One row per workspace; plan reference; four allowed statuses, no provider identity or checkout columns |
+| `plans` | Public/private manual plan catalog and monthly print allowance | Global plan identity/name; active/public/display-order fields, plus optional USD/SAR display price in integer minor units |
+| `tenant_subscriptions` | Manually approved plan, term, quota, status, revision and expiry | One row per workspace; plan reference; four allowed statuses, manually approved contract dates and immutable first-activation print-cycle anchor; no provider checkout columns |
 
 Migration `0098` retires all Stripe and checkout columns from operational
 `plans` and `tenant_subscriptions`. It moves `billing_events` and
@@ -132,7 +132,7 @@ This checks current table names against schema declarations, migration creates/d
 
 - `subscription_requests`: verified authenticated requester identity snapshots, workspace/plan relationship, one pending request per workspace, request idempotency/digest, reviewer decision/reason/time and resulting subscription revision. Historical requester names remain blank if never recorded; never inferred from an email.
 - `subscription_changes`: append-only business history of every manual subscription mutation and migration, actor, old/new values, reason, request digest and per-workspace idempotency key. Every application write also records an `audit_events` entry in the same transaction.
-- `print_monthly_usage`: transactional credit consumption keyed by workspace and a fixed 30-day cycle from first activation. Separate from contract start/end and archived legacy `print_usage_periods`. Renewal and plan changes cannot reset it. Receipts and live jobs provide deduplicated logical-job reporting; migration 0101 conservatively carries consumed credits from overlapping former calendar buckets into the new cycle.
+- `print_monthly_usage`: transactional credit consumption keyed by workspace and UTC calendar-month start. Separate from contract start/end and archived legacy `print_usage_periods`. Renewal and plan changes cannot reset it. Receipts and live jobs provide deduplicated logical-job reporting; migration 0101 historically introduced rolling rows while 0102 restores UTC calendar-month admission with conservative cutover carry. Neither migration deletes historic counters.
 
 `tenant_subscriptions` stores free/paid type, optional finite monthly quota override, monthly/yearly/custom term, internal reference and revision. Migration 0098 removes the obsolete `billing_mode` column along with provider fields. New status defaults to awaiting_activation. Runtime requires explicit active status, valid start/end, unblocked entitlement and an active tenant fence. `users.display_name` is nullable for historical accounts. Retired provider columns survive only as private `legacy_billing` archive evidence.
 

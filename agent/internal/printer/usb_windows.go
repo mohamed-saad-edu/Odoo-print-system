@@ -276,6 +276,12 @@ func (p *USBPrinter) Print(ctx context.Context, data []byte) error {
 		if handleTransferred {
 			callerOwnsHandle = false
 		}
+		// Validate the reported count BEFORE recording confirmed progress,
+		// including when WriteFile also returned an error. A faulty driver
+		// could over-report bytes and poison the job's physical evidence.
+		if int64(n) > int64(len(chunk)) {
+			return MarkUnknown("WriteFile to %s over-reported %d bytes for a %d-byte chunk after %d/%d confirmed bytes", p.DevicePath, n, len(chunk), written, len(data))
+		}
 		if err != nil {
 			if n > 0 {
 				written += int(n)
@@ -291,23 +297,15 @@ func (p *USBPrinter) Print(ctx context.Context, data []byte) error {
 			return MarkUnknown("WriteFile to %s failed after %d/%d confirmed bytes (device may have received data): %v", p.DevicePath, written, len(data), err)
 		}
 		if n == 0 {
-			if written > 0 {
-				return MarkUnknown("WriteFile to %s wrote 0 bytes after %d/%d", p.DevicePath, written, len(data))
-			}
-			return fmt.Errorf("WriteFile to %s wrote 0 bytes", p.DevicePath)
-		}
-		if int64(n) > int64(len(chunk)) {
-			// A driver/helper that reports more bytes than the submitted
-			// chunk is faulty and the wire state is uncertain: report
-			// UNKNOWN with the honestly confirmed byte count (bytes
-			// accepted before this chunk). The counter is NOT advanced to
-			// the payload size — a fabricated total must never read as
-			// completion evidence.
-			return MarkUnknown("WriteFile to %s over-reported %d bytes for a %d-byte chunk after %d/%d confirmed bytes", p.DevicePath, n, len(chunk), written, len(data))
+			// The driver reported success after a kernel write but confirmed
+			// zero bytes, violating the required progress contract. As with
+			// a failed WriteFile, zero confirmed bytes cannot establish that
+			// the USB printer received nothing. Never auto-retry this job.
+			return MarkUnknown("WriteFile to %s reported success with zero confirmed bytes after %d/%d", p.DevicePath, written, len(data))
 		}
 		written += int(n)
 	}
-	log.Printf("Direct USB printed %d bytes to %s (%s)", written, p.DevicePath, p.Identify())
+	log.Printf("Direct USB transport accepted %d bytes for %s (%s; physical output unconfirmed)", written, p.DevicePath, p.Identify())
 	return nil
 }
 

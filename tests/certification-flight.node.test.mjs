@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import { createRequire } from "node:module";
 import test from "node:test";
+import { apiMessageKey } from "../src/lib/api-error-keys.ts";
 import vm from "node:vm";
 
 const require = createRequire(import.meta.url);
@@ -37,6 +38,8 @@ function fixture(send, { previousTerminal = false } = {}) {
     sessionStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value), removeItem: key => storage.delete(key) },
     crypto: { randomUUID: () => `operation-${++created}` },
     t: key => key,
+    // The actual machine-code translator is a pure production contract.
+    apiMessageKey,
     setJobId: noStateUpdateYet, setSteps: value => { steps = value; }, setTerminal: noStateUpdateYet,
     setLiveStatus: noStateUpdateYet, setReconciliationError: noStateUpdateYet,
     setLoading: noStateUpdateYet, setError: value => { failure = value; }, setRequestId: noStateUpdateYet,

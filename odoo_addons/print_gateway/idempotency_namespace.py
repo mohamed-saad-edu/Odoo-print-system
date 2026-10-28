@@ -36,8 +36,25 @@ def wire_key(version, company_id, operation_id, installation_id=None):
         return legacy_key(company_id, operation_id)
     if version != 2:
         raise ValueError("Unsupported print idempotency namespace version")
-    if not isinstance(operation_id, str) or not operation_id or len(operation_id) > 200:
+    # Gateway parseOdooIdentity uses JavaScript string.length (UTF-16 units).
+    # Python len() counts Unicode code points, so 101 astral symbols previously
+    # passed this check but were rejected by Gateway after the outbox was saved.
+    # Preserve the historical v1 path above verbatim.
+    if not isinstance(operation_id, str) or not operation_id:
         raise ValueError("Durable local operation key is required")
+    try:
+        length_bytes = len(operation_id.encode("utf-16-le"))
+    except UnicodeEncodeError:
+        raise ValueError("Durable local operation key is required") from None
+    if length_bytes > 400:
+        raise ValueError("Durable local operation key is required")
+    # Gateway parseOdooIdentity requires canonical positive decimal Odoo
+    # company IDs with at most 18 ASCII digits. Reject noncanonical local
+    # namespace values BEFORE saving an outbox intent that Gateway cannot
+    # ever admit. Keep historical v1 digests untouched.
+    company = str(company_id)
+    if not re.fullmatch(r"[1-9][0-9]{0,17}", company):
+        raise ValueError("Canonical Odoo source company ID is required")
     try:
         parsed = uuid.UUID(str(installation_id))
         if parsed.version != 4 or str(parsed) != installation_id:

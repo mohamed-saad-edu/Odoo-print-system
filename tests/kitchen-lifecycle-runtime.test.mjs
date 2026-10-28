@@ -5,7 +5,7 @@ import { readFile } from "node:fs/promises";
 import { webcrypto } from "node:crypto";
 import vm from "node:vm";
 
-async function fixture({ draft = false, failStation = false, syncError = false } = {}) {
+async function fixture({ draft = false, failStation = false, ambiguousFailure = false, syncError = false } = {}) {
   let hooks;
   const mocks = {
     patch: (_prototype, extension) => { hooks = extension; },
@@ -53,7 +53,14 @@ async function fixture({ draft = false, failStation = false, syncError = false }
       };
       assert.equal(method, "action_print_gateway_kitchen");
       submissions.push(kwargs);
-      return { gateway_enabled: true, status: failStation && kwargs.pos_printer_id === 2 ? "failed" : "submitted" };
+      const rejected = failStation && kwargs.pos_printer_id === 2;
+      return {
+        gateway_enabled: true,
+        status: rejected ? "failed" : "submitted",
+        // Only durable proof of no paper output authorizes a new retry ID.
+        // A naked "failed" status remains physically ambiguous.
+        ...(rejected && !ambiguousFailure ? { can_retry: true } : {}),
+      };
     } },
     syncAllOrders: async (options = {}) => {
       if (syncError) throw new Error("Order sync unavailable");
@@ -109,6 +116,20 @@ for (const syncFails of [false, true]) {
     }
   });
 }
+
+test("an unproven kitchen failure never offers automatic retry or resubmits the ticket", async () => {
+  const f = await fixture({ failStation: true, ambiguousFailure: true });
+  const changes = [{ new: [] }];
+  assert.equal(await f.pos.printChanges(f.order, changes), false);
+  assert.deepEqual(f.submissions.map((v) => v.pos_printer_id), [1, 2]);
+  assert.equal(f.dialogs.length, 0, "an ambiguous failed token is not pre-admission proof");
+  assert.ok(f.notifications.some(([, options]) => options.type === "warning" && options.sticky === true));
+  const initialKeys = f.submissions.map((v) => v.operation_id);
+  assert.equal(await f.pos.printChanges(f.order, changes), false);
+  assert.deepEqual(f.submissions.map((v) => v.operation_id), initialKeys,
+    "the unresolved operation must not trigger another physical submission");
+  assert.equal(f.order.consumed, undefined, "an uncertain batch cannot consume the preparation change");
+});
 
 test("preparation-display bypass does not force a new print-specific save", async () => {
   const f = await fixture({ draft: true, syncError: true });

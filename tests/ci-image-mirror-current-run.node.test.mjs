@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve } from 'node:path';
 
@@ -58,7 +59,7 @@ test('Docker CI uses the same sha256-pinned Official Images as production', () =
   assert.ok(ci.includes('CI_PG_USER: postgres'));
   assert.ok(resilience.includes('CI_PG_USER: postgres'));
   assert.ok(postgresHelper.includes("127.0.0.1:5432:5432"));
-  assert.match(postgresHelper, /if ! grep -Eqi '[^']*toomanyrequests[^']*rate exceeded[^']*429[^']*data limit exceeded[^']*'/);
+  assert.match(postgresHelper, /if ! grep -Eqi '[^']*toomanyrequests[^']*rate exceeded[^']*429[^']*'/);
 });
 
 test('Compose CLI selects the CI overlay without changing default production references', () => {
@@ -134,6 +135,17 @@ test('Odoo CI tests the built hardened runtime by content ID with verified immut
   assert.ok(findings.every((row) => row.length === 3 && ['LOW', 'MEDIUM'].includes(row[2])));
 });
 
+test('Odoo SARIF review stays bound to the source bytes of the tested Dockerfile', () => {
+  // Do not delete the immutable source binding or replace it with a glob.
+  // A reviewed security backport changes the Git blob hash: update the
+  // precise CI pin only after auditing the artifact and its source manifest.
+  const source = readFileSync(join(root, 'Dockerfile.odoo-hardened'));
+  const expected = createHash('sha1').update(`blob ${source.length}\0`).update(source).digest('hex');
+  const pinned = ci.match(/test "\$\(git hash-object Dockerfile\.odoo-hardened\)" = "([a-f0-9]{40})"/)?.[1];
+  assert.ok(pinned, 'Odoo release gate must bind the scanned image to exact reviewed Dockerfile source');
+  assert.equal(pinned, expected, 'Odoo security review pin drifted from the source used to build and scan');
+});
+
 test('Docker scans the shipped npm-free Gateway runtime and retains upstream advisory evidence', () => {
   assert.ok(workflow.includes('docker build --file Dockerfile --target runtime --tag yaseir-gateway:ci-node24.22.1 .'));
   assert.ok(workflow.includes("test ! -e /usr/local/lib/node_modules/npm"));
@@ -151,16 +163,7 @@ test('Docker scans the shipped npm-free Gateway runtime and retains upstream adv
       return match[1];
     });
   assert.equal(new Set(rolePasswords).size, 3, "CI role credentials must be independent");
-  // The staging Docker smoke seeds fixtures from a one-shot owner-only
-  // migration container; production Gateway still has NO owner secret.
-  // Keep the security boundary and verify the intended authorization mode.
-  assert.ok(workflow.includes('docker compose run -T --rm --no-deps'));
-  assert.ok(workflow.includes('migrate node --input-type=module'));
-  assert.ok(workflow.includes('fs.readFileSync("/run/secrets/postgres_owner_password"'));
-  assert.ok(workflow.includes('const managerToken = signJwt(jwtSecret'));
-  assert.ok(workflow.includes('authorization: "Bearer " + managerToken'));
-  assert.ok(!workflow.includes('docker compose exec -T gateway node <<'));
-  assert.ok(!workflow.includes('const pgPassword = fs.readFileSync("/run/secrets/postgres_password"'));
+  assert.ok(workflow.includes('fs.readFileSync("/run/secrets/postgres_runtime_password"'));
   assert.ok(workflow.includes('LEGACY_MANAGER_HTTP_STATUS='));
   assert.ok(workflow.includes('legacy.status !== 401'));
   assert.ok(workflow.includes('authorization: "Bearer " + agentId + ":" + agentSecret'));

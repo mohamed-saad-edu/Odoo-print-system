@@ -360,6 +360,8 @@ def runtime_controller(printer):
     policy_namespace = {}
     exec(compile(policy_path.read_text(), str(policy_path), "exec"), policy_namespace)
     namespace["is_gateway_shared_printer"] = policy_namespace["is_gateway_shared_printer"]
+    namespace["is_exact_gateway_printer_id"] = policy_namespace["is_exact_gateway_printer_id"]
+    namespace["unambiguous_inventory_rows"] = policy_namespace["unambiguous_inventory_rows"]
     exec(compile(ast.fix_missing_locations(ast.Module(body=[method], type_ignores=[])),
                  str(ROOT / "controllers/runtime_printers.py"), "exec"), namespace)
     config = SimpleNamespace(_gateway_base=lambda **kwargs: "https://gateway.invalid",

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
+import { parseDbTimeMs } from "../src/lib/database-timestamp";
 import {
   __setClockSkewForTests,
   clockSkewMs,
@@ -14,7 +15,7 @@ import {
   isBillingAccessStatus,
   isSubscriptionPeriodLive,
 } from "../src/lib/entitlements";
-import { isLimitSignalResult } from "../src/lib/limit-signal";
+import { isLimitSignalResult, limitSignalDisplayDetails } from "../src/lib/limit-signal";
 import { getAgentAvailability, getEffectivePrinterStatus } from "../src/lib/agent-availability";
 
 const read = (path: string) => readFileSync(path, "utf8");
@@ -119,15 +120,39 @@ describe("entitlement limit signal (upgrade dialog contract)", () => {
     expect(signal?.retryAfterSeconds ?? 0).toBeGreaterThan(0);
   });
 
-  it("distinguishes upgrade-only capacity from a resettable allowance", () => {
+  it("displays the actual server-provided limit, not the obsolete max property", () => {
+    const signal = entitlementLimitSignal(new TenantEntitlementError("max_printers", 12, 12));
+    expect(signal).toBeTruthy();
+    expect(limitSignalDisplayDetails(signal!)).toEqual({
+      used: 12,
+      limit: 12,
+      periodEnd: null,
+      retryAfterSeconds: null,
+    });
+    const print = entitlementLimitSignal(new TenantPrintQuotaExceededError(
+      150, 150, new Date("2026-10-01T00:00:00Z"), new Date("2026-11-01T00:00:00Z")));
+    expect(print).toBeTruthy();
+    const detail = limitSignalDisplayDetails(print!);
+    expect(detail.limit).toBe(150);
+    expect(detail.used).toBe(150);
+    expect(detail.periodEnd).toBe("2026-11-01T00:00:00.000Z");
+  });
+
+  it("distinguishes technical safety caps from the billable monthly print allowance", () => {
+    // Hardware counts and burst/concurrency controls protect execution; they
+    // never automatically mean a customer must buy another subscription.
     const agents = entitlementLimitSignal(new TenantEntitlementError("max_agents", 3, 3));
-    expect(agents).toMatchObject({ entitlement: "max_agents", retryable: false, retryAfterSeconds: null, upgradeRequired: true });
+    expect(agents).toMatchObject({ entitlement: "max_agents", retryable: false, retryAfterSeconds: null, upgradeRequired: false });
+    const printers = entitlementLimitSignal(new TenantEntitlementError("max_printers", 9, 9));
+    expect(printers).toMatchObject({ entitlement: "max_printers", retryable: false, retryAfterSeconds: null, upgradeRequired: false });
 
     const rate = entitlementLimitSignal(new TenantEntitlementError("max_jobs_per_minute", 20, 20));
-    expect(rate).toMatchObject({ entitlement: "max_jobs_per_minute", retryable: true, retryAfterSeconds: 60 });
+    expect(rate).toMatchObject({ entitlement: "max_jobs_per_minute", retryable: true, retryAfterSeconds: 60, upgradeRequired: false });
 
     const concurrency = entitlementLimitSignal(new TenantEntitlementError("max_concurrent_jobs", 5, 5));
-    expect(concurrency).toMatchObject({ entitlement: "max_concurrent_jobs", retryable: true });
+    expect(concurrency).toMatchObject({ entitlement: "max_concurrent_jobs", retryable: true, upgradeRequired: false });
+    expect(agents?.retryable).toBe(false);
+    expect(printers?.retryable).toBe(false);
   });
 
   it("returns null for anything that is not a limit trip", () => {
@@ -137,6 +162,8 @@ describe("entitlement limit signal (upgrade dialog contract)", () => {
 
   it("recognizes only a returnable signal, never an arbitrary object", () => {
     expect(isLimitSignalResult({ ok: false, limit: { entitlement: "max_prints_per_period", upgradeRequired: true } })).toBe(true);
+    expect(isLimitSignalResult({ ok: false, limit: { entitlement: "max_agents", upgradeRequired: false } })).toBe(true);
+    expect(isLimitSignalResult({ ok: false, limit: { entitlement: "max_printers", upgradeRequired: false } })).toBe(true);
     expect(isLimitSignalResult({ ok: true, id: "job_1" })).toBe(false);
     expect(isLimitSignalResult({ ok: false, limit: { entitlement: "max_agents" } })).toBe(false);
     expect(isLimitSignalResult(null)).toBe(false);
@@ -228,6 +255,44 @@ describe("clock authority is enforced in the source", () => {
       expect(source).not.toMatch(/now = new Date\(\)/);
       expect(source).toContain("gatewayNow");
     }
+  });
+
+  it("uses the shared UTC parser for raw PostgreSQL job clock strings, not the host timezone", () => {
+    const source = read("src/lib/print-job-service.ts");
+    expect(source).toContain("const dbNowMs = parseDbTimeMs(rawNow)");
+    expect(source).toContain("const dbNow = new Date(dbNowMs)");
+    expect(source).not.toContain('rawNow.trim().replace(" ", "T")');
+    // Both UTC-naive and explicit-offset PostgreSQL representations of the
+    // same instant must create the same physical print expiry timestamp.
+    const naive = "2026-10-28 04:00:00";
+    const expected = Date.parse("2026-10-28T04:00:00Z");
+    expect(parseDbTimeMs(naive)).toBe(expected);
+    expect(parseDbTimeMs("2026-10-28T07:00:00+03:00")).toBe(expected);
+    expect(parseDbTimeMs("2026-10-28 04:00:00+00")).toBe(expected);
+  });
+
+  it("pins the print quota bucket to the same database instant as job creation", () => {
+    const source = read("src/lib/print-job-service.ts");
+    const clock = source.indexOf("const dbNow = new Date(dbNowMs)");
+    const reservation = source.indexOf("await reserveTenantPrintCredit(tx, tenantId, dbNow)");
+    const insert = source.indexOf("await tx.insert(printJobs).values({");
+    expect(clock).toBeGreaterThan(0);
+    expect(reservation).toBeGreaterThan(clock);
+    expect(insert).toBeGreaterThan(reservation);
+    expect(read("src/lib/entitlements.ts")).toContain("quotaCycleStartSql(cycleAt)");
+  });
+
+  it("calculates Agent admission capacity from the DB clock AFTER lock waits, not transaction-start now()", () => {
+    const source = read("src/lib/print-job-service.ts");
+    const lock = source.indexOf("await enforceTenantJobEntitlements(tx, tenantId)");
+    const admissionStamp = source.indexOf("const dbNow = new Date(dbNowMs)");
+    const countsStart = source.indexOf("const counts = await tx.execute");
+    const countsEnd = source.indexOf("const row = counts.rows[0]", countsStart);
+    const filters = source.slice(countsStart, countsEnd);
+    expect(admissionStamp).toBeGreaterThan(lock);
+    expect(countsStart).toBeGreaterThan(admissionStamp);
+    expect(filters.split('expires_at > ${dbNow}')).toHaveLength(4);
+    expect(filters).not.toContain("expires_at > now()");
   });
 
   it("stamps job lifetime timestamps from the single database clock read", () => {

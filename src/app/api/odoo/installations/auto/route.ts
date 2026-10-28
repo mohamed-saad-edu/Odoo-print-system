@@ -64,6 +64,9 @@ export async function POST(req: Request) {
       // A concurrent rotate, delete, or revoke cannot create fresh authority.
       const active = await tx.select({ id: apiKeys.id }).from(apiKeys)
         .where(and(eq(apiKeys.id, key.id), eq(apiKeys.tenantId, key.tenantId),
+          // Do not authorize with the key's pre-transaction hash if the
+          // credential was replaced while enrollment waited for the tenant.
+          eq(apiKeys.hashedKey, key.hashedKey),
           isNull(apiKeys.revokedAt), isNull(apiKeys.readOnlyUntil)))
         .for("share");
       if (active.length !== 1) return "invalid_key" as const;

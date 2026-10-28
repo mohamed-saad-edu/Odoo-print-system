@@ -13,6 +13,7 @@ import { generatePairingCode } from "../lib/agent-auth";
 import { getManagerCookieName, verifyWorkspaceTokenFromCookieValues } from "../lib/manager-auth";
 import { createHash } from "node:crypto";
 import { idempotencyDigest, createPrintJobForPrinter } from "../lib/print-job-service";
+import { isExactIdempotencyKey } from "../lib/idempotency";
 import {
   isTerminal,
   isJobFilterStatus,
@@ -122,12 +123,18 @@ export async function deleteAgent(id: string) {
   return { ok: true };
 }
 
-export async function createPrintJob(printerId: string, payload: unknown) {
+/** A Manager print is a physical operation: the caller must keep its own
+ * identity across uncertain responses. No unkeyed Server Action admission. */
+export async function createPrintJob(printerId: string, payload: unknown, idempotencyKey: string) {
   const t = makeT(await getServerLocale());
   const manager = await requireManager();
   requireManagerPermission(manager, "jobs.create");
+  if (typeof idempotencyKey !== "string") throw new ActionError(t("errors.requestRejected"), 400, "IDEMPOTENCY_KEY_REQUIRED");
+  if (!isExactIdempotencyKey(idempotencyKey) || idempotencyKey.length < 8) {
+    throw new ActionError(t("errors.requestRejected"), 400, "INVALID_REQUEST");
+  }
   try {
-    const result = await createPrintJobForPrinter(printerId, payload, { requestedBy: "manager", tenantId: manager.tenantId, managerAuthority: { claims: manager, permission: "jobs.create" } });
+    const result = await createPrintJobForPrinter(printerId, payload, { requestedBy: "manager", tenantId: manager.tenantId, idempotencyKey, managerAuthority: { claims: manager, permission: "jobs.create" } });
     revalidatePath("/dashboard");
     return { ok: true as const, id: result.id, reused: result.isReused === true };
   } catch (error) {
@@ -156,8 +163,10 @@ export async function reprintJob(jobId: string) {
   const t = makeT(await getServerLocale());
   const manager = await requireManager();
   requireManagerPermission(manager, "jobs.retry");
-  if (typeof jobId !== "string" || !jobId.trim()) throw new ActionError(t("errors.jobIdRequired"), 400);
-  const job = await db.query.printJobs.findFirst({ where: and(eq(printJobs.id, jobId.trim()), eq(printJobs.tenantId, manager.tenantId)) });
+  // Reprints are new physical intents: reject malformed source identities,
+  // rather than trimming into a different existing job's printer and payload.
+  if (!isExactIdempotencyKey(jobId)) throw new ActionError(t("errors.jobIdRequired"), 400, "INVALID_REQUEST");
+  const job = await db.query.printJobs.findFirst({ where: and(eq(printJobs.id, jobId), eq(printJobs.tenantId, manager.tenantId)) });
   if (!job) throw new ActionError(t("errors.jobNotFound"), 404);
   if (!isTerminal(job.status as JobStatus)) {
     throw new ActionError(t("errors.jobStillInProgress"), 409);
@@ -320,11 +329,18 @@ export async function getDashboardState(options: DashboardFleetOptions = {}) {
     throw new ActionError(t("errors.invalidStatusFilter"), 400);
   }
 
-  return loadDashboardStateForTenant(manager.tenantId, {
-    agentOffset: options.agentOffset,
-    printerOffset: options.printerOffset,
-    printerSearch: search,
-    printerStatus: status,
+  // A successful cookie validation is only a preflight. Hold the live
+  // tenant, membership and session locks while the full fleet and archived
+  // print history are assembled; role changes cannot race this read.
+  return db.transaction(async tx => {
+    await requireActiveTenantInTransaction(tx, manager.tenantId);
+    await requireManagerActorInTransaction(tx, manager, "jobs.read");
+    return loadDashboardStateForTenant(manager.tenantId, {
+      agentOffset: options.agentOffset,
+      printerOffset: options.printerOffset,
+      printerSearch: search,
+      printerStatus: status,
+    }, tx);
   });
 }
 
@@ -366,12 +382,16 @@ export async function getDashboardJobs(options?: {
 
   // Keep both current dispatches and durable payload-free terminal receipts.
   // The shared read model applies search and pagination AFTER the union.
-  return listPrintJobHistory({
-    tenantId: manager.tenantId,
-    status: statusParam,
-    search: searchParam,
-    limit,
-    offset,
+  return db.transaction(async tx => {
+    await requireActiveTenantInTransaction(tx, manager.tenantId);
+    await requireManagerActorInTransaction(tx, manager, "jobs.read");
+    return listPrintJobHistory({
+      tenantId: manager.tenantId,
+      status: statusParam,
+      search: searchParam,
+      limit,
+      offset,
+    }, tx);
   });
 }
 

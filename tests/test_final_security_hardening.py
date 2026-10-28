@@ -525,7 +525,11 @@ def test_odoo_ambiguous_submission_has_idempotency_key_recovery_path():
     route = read("src/app/api/print/jobs/route.ts")
     assert 'params={"idempotencyKey": job._gateway_idempotency_key()}' in jobs
     assert 'job.status == "unknown" and str(job.last_error or "").startswith("UNKNOWN_SUBMISSION_OUTCOME:")' in jobs
-    assert 'const idempotencyKey = params.get("idempotencyKey")?.trim();' in route
+    # Exact wire replay keys are opaque; trimming would alias another
+    # accepted operation after an ambiguous network response.
+    assert 'const idempotencyKey = params.get("idempotencyKey");' in route
+    assert '!isExactIdempotencyKey(idempotencyKey)' in route
+    assert 'params.get("idempotencyKey")?.trim()' not in route
     assert "isNotNull(printJobs.apiKeyId)" in route
 
 
@@ -534,11 +538,16 @@ def test_odoo_cron_reconciles_ambiguous_submissions_without_stale_not_found_writ
     cron_start = jobs.index("def cron_sync_status")
     cron = jobs[cron_start:]
     assert "gateway_job_id IS NULL" in cron
-    assert 'last_error LIKE \'UNKNOWN_SUBMISSION_OUTCOME:%%\'' in cron
+    assert "starts_with(COALESCE(last_error, ''), 'UNKNOWN_SUBMISSION_OUTCOME:')" in cron
+    assert "last_error LIKE 'UNKNOWN_SUBMISSION_OUTCOME:%%'" not in cron
+    # The prefix is an opaque durable outcome marker, not a SQL LIKE
+    # pattern: a percent/underscore inside evidence must remain literal.
     assert 'def _lookup_gateway_job_for_ambiguous_submission(self, job):' in jobs
     assert 'params={"idempotencyKey": job._gateway_idempotency_key()}' in jobs
     assert 'self._mark_gateway_job_missing(' in jobs
-    assert 'job.write({"gateway_job_id": remote_id.strip(), "next_retry_at": False})' in jobs
+    assert 'if not is_exact_gateway_job_id(remote_id):' in jobs
+    assert 'job.write({"gateway_job_id": remote_id, "next_retry_at": False})' in jobs
+    assert 'job.write({"gateway_job_id": remote_id.strip()' not in jobs
 
 
 def test_odoo_gateway_status_reconciliation_uses_authoritative_row_fences():
@@ -577,7 +586,7 @@ def test_team_invitation_email_ambiguity_does_not_revoke_durable_token():
     assert "const revoked = await db.transaction" not in block
     assert 't("mail.invite.subject")' in block
     assert '"INVITATION_DELIVERY_UNAVAILABLE"' in block
-    assert 'requireWorkspacePlatformOwnerForInvites' in route
+    assert 'requireWorkspaceOwnerForInvites' in route
     assert 'assertPlatformTeamOrigin' in route
     assert 'invitation_delivery_ambiguous' in block
     assert 'revoke' not in block

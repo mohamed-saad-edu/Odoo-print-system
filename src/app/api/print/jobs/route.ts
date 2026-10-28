@@ -15,49 +15,36 @@ import { databaseNowMs } from "../../../../lib/database-clock";
 import { databaseErrorLogFields } from "../../../../lib/database-error-log";
 import { and, eq, isNotNull } from "drizzle-orm";
 import { z } from "zod";
+import { isExactIdempotencyKey } from "../../../../lib/idempotency";
+import { isExactPrinterId } from "../../../../lib/exact-printer-id";
+import { parsePrintExpiration } from "../../../../lib/print-expiration";
 
 export const dynamic = "force-dynamic";
 
 /**
- * Controlled migration switch for the v1 print-submission contract.
- *
- * Production defaults to requiring a stable `idempotencyKey`: a missing key
- * would make retries create duplicate physical prints. Development/test can
- * exercise legacy callers; explicit "0" is a temporary production escape
- * hatch that the operator must accept as an at-least-once printing risk.
- * v2 always requires the key.
+ * A stable operation key is mandatory for every production v1 print POST.
+ * An operator flag cannot waive this invariant: otherwise a transport replay
+ * with no key can enqueue a second physical job. Legacy keyless callers may be
+ * exercised in development/test only; v2 always requires a key.
  */
 function idempotencyKeyRequired(): boolean {
-  if (process.env.NODE_ENV === "production") {
-    return process.env.YASEIR_REQUIRE_IDEMPOTENCY_KEY !== "0";
-  }
-  return process.env.YASEIR_REQUIRE_IDEMPOTENCY_KEY === "1";
+  return process.env.NODE_ENV === "production" || process.env.YASEIR_REQUIRE_IDEMPOTENCY_KEY === "1";
 }
 
 const MAX_BODY = 8 * 1024 * 1024;
 const bodySchema = z.object({
-  printerId: z.string().trim().min(1).max(120),
+  printerId: z.string().min(1).max(120).refine(isExactPrinterId, { message: "printerId must be the exact configured printer identity" }),
   documentType: z.string().trim().min(1).max(120),
   destination: z.string().trim().min(1).max(255).optional(),
   payload: z.unknown(),
   expiresAt: z.string().optional(),
-  idempotencyKey: z.string().trim().min(1).max(200).optional(),
+  idempotencyKey: z.string().min(1).max(200).refine(isExactIdempotencyKey, { message: "idempotencyKey must match the original operation exactly" }).optional(),
   // S06-006: optional only for legacy callers; v2 fields must travel together.
   idempotencyVersion: z.literal(2).optional(),
   installationId: z.string().optional(),
   sourceCompanyId: z.string().optional(),
   sourceOperationId: z.string().optional(),
 }).strict();
-
-function parseExpiresAt(value?: string) {
-  if (!value) return undefined;
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) throw new Error("expiresAt must be a valid ISO-8601 timestamp");
-  // Relative TTL/future validation belongs to the Gateway database clock in
-  // createPrintJobForPrinter. This parser only validates syntax so an app-host
-  // clock drift can never reject/accept a job inconsistently with the DB.
-  return parsed;
-}
 
 function responseForRow(row: Pick<typeof printJobs.$inferSelect, "id" | "status" | "printerId" | "agentId" | "destination" | "documentType" | "error" | "outputMedium" | "outputEvidence">) {
   return {
@@ -109,11 +96,8 @@ export async function POST(req: Request) {
   }
 
   if (!parsed.data.idempotencyKey) {
-    // A submission without a stable operation id cannot be deduplicated: a
-    // retry creates a second queued job and can print twice. Callers that
-    // cannot supply a key are rejected outright once the operator opts in
-    // through the migration switch, so the duplicate risk can be removed
-    // without a breaking API change.
+    // A submission without a stable operation ID cannot be deduplicated.
+    // Production always refuses it, including when a legacy opt-out is set.
     if (idempotencyKeyRequired()) {
       logWarn("print.job.idempotency_key_required", {
         tenantId: odoo?.tenantId ?? null,
@@ -124,10 +108,8 @@ export async function POST(req: Request) {
         { status: 400, headers: { "Cache-Control": "no-store" } },
       );
     }
-    // Backward-compatible: legacy callers without a stable operation id are
-    // accepted, but retries cannot be deduplicated and may produce duplicate
-    // physical prints. New callers must supply an idempotencyKey. A future
-    // API version will require it (see ADR/migration notes).
+    // Non-production legacy test compatibility only. No transport retry of
+    // this keyless request may be treated as safe physical re-execution.
     logWarn("print.job.missing_idempotency_key", {
       tenantId: odoo?.tenantId ?? null,
       message: "Print job submitted without idempotencyKey; retry deduplication is disabled for this request.",
@@ -139,7 +121,7 @@ export async function POST(req: Request) {
   catch (error) { return NextResponse.json({ error: error instanceof Error ? error.message : "Invalid payload" }, { status: 400 }); }
 
   let expiresAt: Date | undefined;
-  try { expiresAt = parseExpiresAt(parsed.data.expiresAt); }
+  try { expiresAt = parsePrintExpiration(parsed.data.expiresAt); }
   catch (error) { return NextResponse.json({ error: error instanceof Error ? error.message : "Invalid expiresAt" }, { status: 400 }); }
 
   // No early GET-and-return: between validateOdooKey() and this write an
@@ -221,7 +203,7 @@ export async function POST(req: Request) {
         entitlement: error.entitlement,
         limit: error.limit,
         used: error.used,
-        upgradeRequired: true,
+        upgradeRequired: false,
         retryable: true,
       }, { status: 429, headers: { "Retry-After": "60", "Cache-Control": "no-store" } });
     }
@@ -266,20 +248,30 @@ export async function GET(req: Request) {
     throw error;
   }
   const params = new URL(req.url).searchParams;
-  const id = params.get("id")?.trim();
-  const idempotencyKey = params.get("idempotencyKey")?.trim();
-  if (id && id.length > 120) return NextResponse.json({ error: "id is too long" }, { status: 400 });
-  if (idempotencyKey && idempotencyKey.length > 200) {
-    return NextResponse.json({ error: "idempotencyKey is too long" }, { status: 400 });
-  }
-  if (id && idempotencyKey) {
+  const id = params.get("id");
+  const idempotencyKey = params.get("idempotencyKey");
+  // Opaque job and replay identities must match exact accepted bytes. A GET
+  // after a lost POST response must never trim a malformed key into another
+  // accepted operation; an explicitly empty second key still counts as
+  // supplying two mutually exclusive identity selectors.
+  if (id !== null && idempotencyKey !== null) {
     return NextResponse.json({ error: "Provide exactly one lookup key" }, { status: 400 });
   }
-  if (!id && !idempotencyKey) {
+  if (id === null && idempotencyKey === null) {
     return NextResponse.json({ error: "id or idempotencyKey query param required" }, { status: 400 });
   }
+  // Capture lengths BEFORE a failed `value is string` type guard; inside
+  // its false branch TypeScript correctly narrows a known string to never.
+  const jobIdLength = id?.length ?? 0;
+  const operationKeyLength = idempotencyKey?.length ?? 0;
+  if (id !== null && !isExactPrinterId(id)) {
+    return NextResponse.json({ error: jobIdLength > 120 ? "id is too long" : "Invalid exact job id" }, { status: 400 });
+  }
+  if (idempotencyKey !== null && !isExactIdempotencyKey(idempotencyKey)) {
+    return NextResponse.json({ error: operationKeyLength > 200 ? "idempotencyKey is too long" : "Invalid exact idempotencyKey" }, { status: 400 });
+  }
   try {
-    const row = await readOdooJobStatus(odoo, identity, id ? { id } : { idempotencyKey: idempotencyKey! });
+    const row = await readOdooJobStatus(odoo, identity, id !== null ? { id } : { idempotencyKey: idempotencyKey! });
     if (!row) return NextResponse.json({ error: "Not found" }, { status: 404, headers: { "Cache-Control": "no-store" } });
     return NextResponse.json(responseForRow(row), { status: 200, headers: { "Cache-Control": "no-store" } });
   } catch (error) {

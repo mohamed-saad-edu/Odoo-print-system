@@ -1,17 +1,20 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { requirePlatformOwner, PlatformUnauthorizedError } from "../../../../lib/platform-auth";
+import { requirePlatformOwner, requirePlatformReadAuthorityInTransaction, PlatformUnauthorizedError } from "../../../../lib/platform-auth";
 import { readPlatformDatabase } from "../../../../lib/platform-data-explorer";
+import { db } from "../../../../db";
+import { parseStrictListOffset } from "../../../../lib/request-limits";
 
 export const dynamic="force-dynamic";
 const headers={"Cache-Control":"private, no-store"};
 const querySchema=z.object({
   table:z.string().regex(/^[a-z][a-z0-9_]{0,90}$/).optional(),
   q:z.string().trim().min(1).max(100).optional(),
-  offset:z.coerce.number().int().min(0).max(10000).default(0),
+  offset:z.number().int().min(0).max(10000),
 });
 export async function GET(request:Request) {
-  try { await requirePlatformOwner(request); }
+  let actor: Awaited<ReturnType<typeof requirePlatformOwner>>;
+  try { actor = await requirePlatformOwner(request); }
   catch (error) {
     if (error instanceof PlatformUnauthorizedError) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401, headers });
@@ -23,12 +26,24 @@ export async function GET(request:Request) {
     );
   }
   const url=new URL(request.url);
+  const offset = parseStrictListOffset(url.searchParams.get("offset"), 10_000);
+  if (offset === null) return NextResponse.json({ error: "Invalid explorer offset", code: "INVALID_OFFSET" }, { status: 400, headers });
   const args=querySchema.safeParse({table:url.searchParams.get("table")??undefined,
-    q:url.searchParams.get("q")??undefined,offset:url.searchParams.get("offset")??"0"});
+    q:url.searchParams.get("q")??undefined,offset});
   if(!args.success) return NextResponse.json({error:"Invalid explorer filters"},{status:400,headers});
   try {
-    const result=await readPlatformDatabase({table:args.data.table,search:args.data.q,offset:args.data.offset});
+    // The catalog runs on its own READ ONLY PoolClient transaction. Keep the
+    // shared owner/session row locks on this guard transaction until that
+    // private catalog has been fully read. An owner revoked after preflight
+    // cannot be returned an index of other tenants or their printer IDs.
+    const result=await db.transaction(async tx => {
+      await requirePlatformReadAuthorityInTransaction(tx,actor);
+      return readPlatformDatabase({table:args.data.table,search:args.data.q,offset:args.data.offset});
+    });
     if(args.data.table && !result.selected) return NextResponse.json({error:"Table unavailable"},{status:404,headers});
     return NextResponse.json(result,{headers});
-  } catch { return NextResponse.json({error:"Read-only database explorer unavailable"},{status:503,headers}); }
+  } catch (error) {
+    return NextResponse.json({error:error instanceof PlatformUnauthorizedError ? "Unauthorized" : "Read-only database explorer unavailable"},
+      {status:error instanceof PlatformUnauthorizedError ? 401 : 503,headers});
+  }
 }

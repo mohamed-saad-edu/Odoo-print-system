@@ -225,6 +225,24 @@ suite("heartbeat validation and lifecycle preservation", () => {
       observed_desired_revision: "8",
     });
 
+    // A malformed ID cannot acknowledge the verified manager queue after
+    // the server has already accepted the exact ID at revision 8.
+    for (const invalidId of [` ${f.printerId}`, `${f.printerId} `, `${f.printerId}\u0000`]) {
+      expect((await beat({
+        printerId: invalidId,
+        appliedDesiredRevision: 9,
+        observedDesiredRevision: 9,
+      })).status).toBe(200);
+    }
+    row = await pool().query(
+      `SELECT applied_desired_revision, observed_desired_revision FROM printers WHERE id = $1`,
+      [f.printerId],
+    );
+    expect(row.rows[0]).toEqual({
+      applied_desired_revision: "8",
+      observed_desired_revision: "8",
+    });
+
     const other = await seedFixture();
     expect((await heartbeatPOST(new Request("http://gateway.test/api/agent/heartbeat", {
       method: "POST",

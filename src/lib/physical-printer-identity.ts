@@ -28,12 +28,22 @@ export function physicalPrinterIdentityKey(p: PrinterEndpoint): string | null {
   } else if (conn === "ipp" || conn === "ipps" || conn === "network") {
     try {
       const ip = host(val(cfg.ip));
-      const raw = conn === "network" ? `http://${ip.includes(":") ? `[${ip}]` : ip}:${cfg.port}/ipp/print` : val(cfg.address);
-      const url = new URL(raw.includes("://") ? raw : `http://${raw}`);
+      const raw = conn === "network" ? `${p.protocol.toLowerCase() === "ipps" ? "https" : "http"}://${ip.includes(":") ? `[${ip}]` : ip}:${cfg.port}/ipp/print` : val(cfg.address);
+      const explicitUri = raw.includes("://");
+      // Raw authority must be credential-free even when the URL parser
+      // discards an empty userinfo delimiter (http://@host).
+      if (explicitUri && raw.slice(raw.indexOf("://") + 3).split(/[/?#]/, 1)[0]?.includes("@")) return null;
+      // A scheme-less host:port is the Agent's /ipp/print shortcut, not
+      // a declaration of the URI root; path-bearing shortcuts are invalid.
+      if (!explicitUri && (raw.includes("/") || raw.includes("?") || raw.includes("#") || raw.includes("\\"))) return null;
+      if (!explicitUri && conn === "ipps") return null;
+      const url = new URL(explicitUri ? raw : `http://${raw}`);
       if (["ipp:", "ipps:", "http:", "https:"].includes(url.protocol) && url.hostname && !url.username && !url.password && !url.search && !url.hash) {
         const scheme = url.protocol === "ipp:" ? "http:" : url.protocol === "ipps:" ? "https:" : url.protocol;
         const defaultPort = ["ipp:", "ipps:"].includes(url.protocol) ? "631" : scheme === "https:" ? "443" : "80";
-        const path = (!url.pathname || url.pathname === "/" ? "/ipp/print" : url.pathname).replace(/%[0-9a-fA-F]{2}/g, escape => {
+        // Root "/" is a real IPP resource, not an alias for /ipp/print.
+        // Collapsing them can reuse a different queue on a multi-queue server.
+        const path = (explicitUri ? (url.pathname || "/") : "/ipp/print").replace(/%[0-9a-fA-F]{2}/g, escape => {
           const character = String.fromCharCode(parseInt(escape.slice(1), 16));
           return /^[A-Za-z0-9._~-]$/.test(character) ? character : escape.toUpperCase();
         });
@@ -55,11 +65,23 @@ export function physicalPrinterIdentityKey(p: PrinterEndpoint): string | null {
   if (conn === "pdf_output" && typeof cfg.output_profile_id === "string" && cfg.output_profile_id === cfg.output_profile_id.trim() && /^[A-Za-z0-9_-]{1,64}$/.test(cfg.output_profile_id)) endpoint = `pdf-output:${cfg.output_profile_id}`;
   return endpoint ? "v2:" + createHash("sha256").update(endpoint, "utf8").digest("hex") : null;
 }
+/**
+ * No match is undefined; multiple matching persisted identities are null.
+ * Never grant physical execution/registration authority by the arbitrary
+ * ordering of duplicate legacy rows, including a disabled first match.
+ */
 export function matchingPhysicalPrinter<T extends PrinterEndpoint & { id: string; physicalIdentityKey?: string | null }>(
   rows: readonly T[], incoming: PrinterEndpoint, excludeId?: string,
-): T | undefined {
+): T | null | undefined {
   const key = physicalPrinterIdentityKey(incoming);
-  return key ? rows.find(r => r.id !== excludeId && (physicalPrinterIdentityKey(r) ?? r.physicalIdentityKey) === key) : undefined;
+  if (!key) return undefined;
+  let matched: T | undefined;
+  for (const row of rows) {
+    if (row.id === excludeId || physicalPrinterIdentityKey(row) !== key) continue;
+    if (matched) return null;
+    matched = row;
+  }
+  return matched;
 }
 export function samePrinterProtocol(a: PrinterEndpoint, b: PrinterEndpoint): boolean {
   const norm = (p: string) => p.toLowerCase() === "windows_spooler" ? "spooler" : p.toLowerCase();

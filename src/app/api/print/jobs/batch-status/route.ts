@@ -8,13 +8,14 @@ import { odooStatusIdentity, odooStatusJobScope, odooStatusColumns, requireOdooS
 import { hasBodyOverLimit } from "../../../../../lib/request-limits";
 import { and, inArray, eq, isNotNull } from "drizzle-orm";
 import { z } from "zod";
+import { isExactPrinterId } from "../../../../../lib/exact-printer-id";
 
 export const dynamic = "force-dynamic";
 
 const MAX_BODY = 64 * 1024;
 
 const batchQuerySchema = z.object({
-  jobIds: z.array(z.string().trim().min(1).max(120)).min(1).max(100),
+  jobIds: z.array(z.string().min(1).max(120).refine(isExactPrinterId, { message: "jobId must be the exact accepted job identity" })).min(1).max(100),
 }).strict();
 
 function responseForRow(row: Pick<typeof printJobs.$inferSelect, "id" | "status" | "printerId" | "agentId" | "destination" | "documentType" | "error" | "deliveredAt" | "ackedAt" | "updatedAt" | "outputMedium" | "outputEvidence">) {

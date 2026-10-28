@@ -15,33 +15,26 @@ import { databaseNowMs } from "../../../../../lib/database-clock";
 import { databaseErrorLogFields } from "../../../../../lib/database-error-log";
 import { and, eq, isNotNull } from "drizzle-orm";
 import { z } from "zod";
+import { isExactIdempotencyKey } from "../../../../../lib/idempotency";
+import { isExactPrinterId } from "../../../../../lib/exact-printer-id";
+import { parsePrintExpiration } from "../../../../../lib/print-expiration";
 
 export const dynamic = "force-dynamic";
 
 const MAX_BODY = 8 * 1024 * 1024;
 const bodySchema = z.object({
-  printerId: z.string().trim().min(1).max(120),
+  printerId: z.string().min(1).max(120).refine(isExactPrinterId, { message: "printerId must be the exact configured printer identity" }),
   documentType: z.string().trim().min(1).max(120),
   destination: z.string().trim().min(1).max(255).optional(),
   payload: z.unknown(),
   expiresAt: z.string().optional(),
-  idempotencyKey: z.string().trim().min(1).max(200),
+  idempotencyKey: z.string().min(1).max(200).refine(isExactIdempotencyKey, { message: "idempotencyKey must match the original operation exactly" }),
   // S06-006: optional only for legacy callers; v2 fields must travel together.
   idempotencyVersion: z.literal(2).optional(),
   installationId: z.string().optional(),
   sourceCompanyId: z.string().optional(),
   sourceOperationId: z.string().optional(),
 }).strict();
-
-function parseExpiresAt(value?: string) {
-  if (!value) return undefined;
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) throw new Error("expiresAt must be a valid ISO-8601 timestamp");
-  // Relative TTL/future validation belongs to the Gateway database clock in
-  // createPrintJobForPrinter. This parser only validates syntax so an app-host
-  // clock drift can never reject/accept a job inconsistently with the DB.
-  return parsed;
-}
 
 function responseForRow(row: Pick<typeof printJobs.$inferSelect, "id" | "status" | "printerId" | "agentId" | "destination" | "documentType" | "error" | "outputMedium" | "outputEvidence">) {
   return {
@@ -97,7 +90,7 @@ export async function POST(req: Request) {
   catch (error) { return NextResponse.json({ error: error instanceof Error ? error.message : "Invalid payload" }, { status: 400 }); }
 
   let expiresAt: Date | undefined;
-  try { expiresAt = parseExpiresAt(parsed.data.expiresAt); }
+  try { expiresAt = parsePrintExpiration(parsed.data.expiresAt); }
   catch (error) { return NextResponse.json({ error: error instanceof Error ? error.message : "Invalid expiresAt" }, { status: 400 }); }
 
   // No early GET-and-return: between validateOdooKey() and this write an
@@ -175,7 +168,7 @@ export async function POST(req: Request) {
         entitlement: error.entitlement,
         limit: error.limit,
         used: error.used,
-        upgradeRequired: true,
+        upgradeRequired: false,
         retryable: true,
       }, { status: 429, headers: { "Retry-After": "60", "Cache-Control": "no-store" } });
     }
@@ -220,20 +213,29 @@ export async function GET(req: Request) {
     throw error;
   }
   const params = new URL(req.url).searchParams;
-  const id = params.get("id")?.trim();
-  const idempotencyKey = params.get("idempotencyKey")?.trim();
-  if (id && id.length > 120) return NextResponse.json({ error: "id is too long" }, { status: 400 });
-  if (idempotencyKey && idempotencyKey.length > 200) {
-    return NextResponse.json({ error: "idempotencyKey is too long" }, { status: 400 });
-  }
-  if (id && idempotencyKey) {
+  const id = params.get("id");
+  const idempotencyKey = params.get("idempotencyKey");
+  // Status reconciliation is exact for the original accepted attempt.
+  // Trimming, even on a read-only endpoint, could disclose the status of a
+  // different print operation with a normalized caller-supplied identity.
+  if (id !== null && idempotencyKey !== null) {
     return NextResponse.json({ error: "Provide exactly one lookup key" }, { status: 400 });
   }
-  if (!id && !idempotencyKey) {
+  if (id === null && idempotencyKey === null) {
     return NextResponse.json({ error: "id or idempotencyKey query param required" }, { status: 400 });
   }
+  // Capture lengths BEFORE a failed `value is string` type guard; inside
+  // its false branch TypeScript correctly narrows a known string to never.
+  const jobIdLength = id?.length ?? 0;
+  const operationKeyLength = idempotencyKey?.length ?? 0;
+  if (id !== null && !isExactPrinterId(id)) {
+    return NextResponse.json({ error: jobIdLength > 120 ? "id is too long" : "Invalid exact job id" }, { status: 400 });
+  }
+  if (idempotencyKey !== null && !isExactIdempotencyKey(idempotencyKey)) {
+    return NextResponse.json({ error: operationKeyLength > 200 ? "idempotencyKey is too long" : "Invalid exact idempotencyKey" }, { status: 400 });
+  }
   try {
-    const row = await readOdooJobStatus(odoo, identity, id ? { id } : { idempotencyKey: idempotencyKey! });
+    const row = await readOdooJobStatus(odoo, identity, id !== null ? { id } : { idempotencyKey: idempotencyKey! });
     if (!row) return NextResponse.json({ error: "Not found" }, { status: 404, headers: { "Cache-Control": "no-store" } });
     return NextResponse.json(responseForRow(row), { status: 200, headers: { "Cache-Control": "no-store" } });
   } catch (error) {

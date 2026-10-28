@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"golang.org/x/text/unicode/norm"
@@ -108,8 +109,8 @@ func ippQueueIdentitySuffix(d DeviceInfo) string {
 		return ""
 	}
 	path := u.EscapedPath()
-	if path == "" || path == "/" {
-		path = "/ipp/print"
+	if path == "" {
+		path = "/"
 	}
 	return "|ipp-resource:" + path + "?" + u.RawQuery
 }
@@ -279,12 +280,75 @@ func StableIDFromIPPURI(endpoint string, host string, port int) string {
 	if err != nil || u.Hostname() == "" {
 		return StableIDFromEndpoint(endpoint)
 	}
-	if u.Path == "" || u.Path == "/ipp/print" {
-		if u.RawQuery == "" {
+	// A discovered host/port is an observation, not the URI's print
+	// authority. Use the actual HTTP(S)/IPP(S) effective port, and use
+	// literal URI IPs over stale SNMP address enrichment. Preserve the
+	// historical resolved-IP identity for DNS hostnames when one exists.
+	switch strings.ToLower(u.Scheme) {
+	case "ipp", "ipps":
+		port = 631
+	case "http":
+		port = 80
+	case "https":
+		port = 443
+	default:
+		return StableIDFromEndpoint(endpoint)
+	}
+	if explicit := u.Port(); explicit != "" {
+		parsed, parseErr := strconv.Atoi(explicit)
+		if parseErr != nil || parsed < 1 || parsed > 65535 {
+			return StableIDFromEndpoint(endpoint)
+		}
+		port = parsed
+	}
+	if uriIP := net.ParseIP(u.Hostname()); uriIP != nil {
+		host = uriIP.String()
+	} else if strings.TrimSpace(host) == "" {
+		host = u.Hostname()
+	}
+	// Legacy plaintext IPP /ipp/print shares the TCP 631 scan ID.
+	// An IPPS/HTTPS endpoint on that SAME port is a different executable
+	// destination. Reusing its plaintext ID could silently replace a secure
+	// queue during discovery. Keep established plaintext IDs unchanged;
+	// registry alias reconciliation preserves existing secure IDs on upgrade.
+	if u.Path == "/ipp/print" && u.RawQuery == "" {
+		switch strings.ToLower(u.Scheme) {
+		case "ipp", "http":
 			return StableIDFromNetwork(host, port)
+		case "ipps", "https":
+			// Both spellings execute through the same TLS transport.
+			u.Scheme = "ipps"
 		}
 	}
-	key := "ipp-queue:" + strings.ToLower(u.Scheme) + "://" + net.JoinHostPort(strings.ToLower(host), fmt.Sprint(port)) + u.EscapedPath() + "?" + u.RawQuery
+	// A custom IPP resource may be hosted under a virtual HTTP authority.
+	// Two URI hostnames can route to different queues even when SNMP reports
+	// the same backing IP. Keep the URI host for custom resources; only the
+	// historical default /ipp/print retains its legacy host/port ID.
+	if u.Path != "/ipp/print" || u.RawQuery != "" {
+		host = u.Hostname()
+	}
+	resource := u.EscapedPath()
+	if resource == "" {
+		resource = "/"
+	}
+	// IPP is HTTP and IPPS is HTTPS at the same explicit authority.
+	// Discovery can observe the same non-default print resource using either
+	// scheme spelling. Keep TLS separate and retain the case-sensitive
+	// resource path; only canonicalize the transport spelling.
+	scheme := strings.ToLower(u.Scheme)
+	switch scheme {
+	case "http":
+		scheme = "ipp"
+	case "https":
+		scheme = "ipps"
+	}
+	// URI authority can arrive as expanded, compressed or bracketed IPv6.
+	// These textual forms are the same endpoint, not new printer IDs.
+	canonicalHost := strings.ToLower(strings.Trim(strings.TrimSpace(host), "[]"))
+	if ip := net.ParseIP(canonicalHost); ip != nil {
+		canonicalHost = ip.String()
+	}
+	key := "ipp-queue:" + scheme + "://" + net.JoinHostPort(canonicalHost, fmt.Sprint(port)) + resource + "?" + u.RawQuery
 	h := sha256.Sum256([]byte(key))
 	return fmt.Sprintf("printer_ep_%x", h[:8])
 }
@@ -293,7 +357,8 @@ func StableIDFromIPPURI(endpoint string, host string, port int) string {
 // physical identity first. Endpoint/name fallbacks remain for devices that do
 // not expose a durable identity.
 func StableIDForDevice(d DeviceInfo) string {
-	if (d.Protocol == "ipp" || d.Protocol == "ipps") && d.Endpoint != "" && d.NetworkAddress != "" && d.Port > 0 {
+	if (strings.EqualFold(d.Protocol, "ipp") || strings.EqualFold(d.Protocol, "ipps")) &&
+		d.Endpoint != "" && d.NetworkAddress != "" && d.Port > 0 {
 		return StableIDFromIPPURI(d.Endpoint, d.NetworkAddress, d.Port)
 	}
 	if key, ok := physicalIdentityKey(d); ok {
@@ -337,7 +402,7 @@ func StableIDForDevice(d DeviceInfo) string {
 				// to HTTP(S) above must not change the execution destination
 				// represented by this identity.
 				if host != "" {
-					if strings.HasPrefix(lowerEP, "ipp://") || strings.HasPrefix(lowerEP, "ipps://") || d.Protocol == "ipp" || d.Protocol == "ipps" {
+					if strings.HasPrefix(lowerEP, "ipp://") || strings.HasPrefix(lowerEP, "ipps://") || strings.EqualFold(d.Protocol, "ipp") || strings.EqualFold(d.Protocol, "ipps") {
 						return StableIDFromIPPURI(d.Endpoint, host, port)
 					}
 					return StableIDFromNetwork(host, port)

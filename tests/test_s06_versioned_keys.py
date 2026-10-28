@@ -32,6 +32,64 @@ def test_v2_different_installations_same_local_operation_are_distinct():
     assert ka == hashlib.sha256(json.dumps(["yaseir-odoo-v2",a,"7","operation-123"], separators=(",", ":")).encode()).hexdigest()
 
 
+def test_v2_company_scope_requires_canonical_gateway_decimal_identity():
+    import pytest
+
+    m = impl()
+    installation = "00000000-0000-4000-8000-000000000001"
+    for company in ("0", 0, "00", "07", "+7", " 7", "7 ", "-1", "7.0",
+                    "١", "7" * 19, None, False, True):
+        with pytest.raises(ValueError, match="Canonical Odoo source company ID"):
+            m.wire_key(2, company, "operation-123", installation)
+
+    # Odoo's persisted res.company integer ID and its canonical string have
+    # the same Gateway v2 key; full 18-digit values remain representable.
+    for company in (1, 7, 999999999999999999):
+        assert m.wire_key(2, company, "operation-123", installation) == (
+            m.wire_key(2, str(company), "operation-123", installation)
+        )
+
+    # A v1 historical key must remain byte-identical, including a previously
+    # stored noncanonical company spelling.
+    assert m.wire_key(1, "07", "operation-123") == m.legacy_key("07", "operation-123")
+
+
+def test_v2_unicode_operation_length_matches_gateway_utf16_units():
+    """Gateway JS enforces 200 UTF-16 code units; astral symbols use two.
+
+    Odoo must reject unsupported operation IDs BEFORE enqueuing a durable
+    local request. Never change v1 keys; historical operations remain valid.
+    """
+    import pytest
+
+    m = impl()
+    installation = "00000000-0000-4000-8000-000000000001"
+    accepted = "🖨" * 100  # 200 UTF-16 units
+    rejected = "🖨" * 101  # 202 UTF-16 units
+    expected = hashlib.sha256(json.dumps(
+        ["yaseir-odoo-v2", installation, "7", accepted],
+        ensure_ascii=False, separators=(",", ":")).encode("utf-8")).hexdigest()
+    assert m.wire_key(2, 7, accepted, installation) == expected
+    with pytest.raises(ValueError, match="Durable local operation key"):
+        m.wire_key(2, 7, rejected, installation)
+    assert m.wire_key(1, 7, rejected) == m.legacy_key(7, rejected)
+
+
+def test_v2_rejects_ill_formed_unicode_before_durable_request():
+    """Odoo v2 cannot encode isolated UTF-16 surrogate values.
+
+    The Gateway admission and operator reconciliation paths must enforce
+    identical Unicode validity; existing v1 history is untouched.
+    """
+    import pytest
+
+    m = impl()
+    installation = "00000000-0000-4000-8000-000000000001"
+    for malformed in (chr(0xD800), chr(0xDC00), "a" + chr(0xD800) + "b"):
+        with pytest.raises(ValueError, match="Durable local operation key"):
+            m.wire_key(2, 7, malformed, installation)
+
+
 def test_v2_is_pinned_to_saved_installation_not_a_rotating_credential():
     m = impl()
     stored = m.wire_key(2, 7, "old-queued", "00000000-0000-4000-8000-000000000001")

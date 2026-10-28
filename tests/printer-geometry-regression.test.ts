@@ -21,6 +21,7 @@ describe("printer geometry regression: never infer physical output from roll lab
   it("supports a direct USB GS v 0 raster only with its verified current profile", () => {
     expect(validatePayloadForPrinter({ type: "image", geometry_fingerprint: fingerprint }, {
       id: "receipt-printer", connectionType: "usb", protocol: "escpos",
+      config: { geometry_profile: { printable_width_dots: 576, raster_command: "gs_v_0" } },
       capabilities: { geometry: geometry(), supported_protocols: ["escpos", "image"] },
     }).ok).toBe(true);
   });
@@ -28,6 +29,7 @@ describe("printer geometry regression: never infer physical output from roll lab
   it("rejects a stale receipt layout even when the printer language is still ESC/POS", () => {
     expect(validatePayloadForPrinter({ type: "image", geometry_fingerprint: "b".repeat(64) }, {
       id: "receipt-printer", connectionType: "network", protocol: "escpos",
+      config: { geometry_profile: { printable_width_dots: 576, raster_command: "gs_v_0" } },
       capabilities: { geometry: geometry(), supported_protocols: ["escpos", "image"] },
     }).ok).toBe(false);
   });

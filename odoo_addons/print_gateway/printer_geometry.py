@@ -15,7 +15,18 @@ def validated_printer_geometry(value, printer_id=None, fingerprint=None):
     if value.get("source") not in expected_validation or value.get("validation") != expected_validation[value["source"]]:
         return None
     identity = value.get("printer_id")
-    if not isinstance(identity, str) or not identity.strip() or len(identity) > 256 or (printer_id is not None and identity != printer_id):
+    # Geometry cannot authorize a printer identity the Gateway and Go Agent
+    # cannot execute. Their opaque ID boundary is 120 UTF-8 bytes, not
+    # Python characters or UTF-16 units. Never trim or repair an identifier.
+    if (not isinstance(identity, str) or not identity or identity != identity.strip()
+            or identity.startswith("\ufeff") or identity.endswith("\ufeff")
+            or re.search(r"[\x00-\x1f\x7f-\x9f]", identity)
+            or (printer_id is not None and identity != printer_id)):
+        return None
+    try:
+        if len(identity.encode("utf-8", "strict")) > 120:
+            return None
+    except UnicodeEncodeError:
         return None
     actual_fingerprint = value.get("config_fingerprint")
     if not isinstance(actual_fingerprint, str) or not re.fullmatch(r"[0-9a-f]{64}", actual_fingerprint) or (fingerprint is not None and actual_fingerprint != fingerprint):
@@ -47,7 +58,7 @@ def validated_printer_geometry(value, printer_id=None, fingerprint=None):
     for key in ("paper_width_mm", "paper_height_mm"):
         if key in value:
             number = value[key]
-            if type(number) not in (int, float) or not math.isfinite(number) or not 0 < number <= 10000:
+            if type(number) not in (int, float) or not 0 < number <= 10000 or not math.isfinite(number):
                 return None
             result[key] = number
     if "raster_command" in value:

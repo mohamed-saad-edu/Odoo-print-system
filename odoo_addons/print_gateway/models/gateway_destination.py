@@ -38,12 +38,16 @@ def canonical_origin(value):
     """Parse only a clean HTTP(S) origin; never accept prefix or suffix matches."""
     if not isinstance(value, str):
         raise ValueError("Gateway origin must be a URL")
-    parsed = urlparse(value.strip())
+    raw = value.strip()
+    parsed = urlparse(raw)
     if (
-        parsed.scheme.lower() not in ("http", "https")
+        # Even empty userinfo/query/fragment sections violate an exact
+        # origin allowlist; urlparse exposes them as false-y empty fields.
+        "?" in raw or "#" in raw or "@" in parsed.netloc
+        or parsed.scheme.lower() not in ("http", "https")
         or not parsed.hostname
-        or parsed.username
-        or parsed.password
+        or parsed.username is not None
+        or parsed.password is not None
         or parsed.path not in ("", "/")
         or parsed.params
         or parsed.query

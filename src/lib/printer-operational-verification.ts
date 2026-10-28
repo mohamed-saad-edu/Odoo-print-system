@@ -1,5 +1,6 @@
 import contract from "../../contracts/printer-operational-verification-contract.json";
 import { parseDbTimeMs } from "./database-timestamp";
+import { isExactPrinterId } from "./exact-printer-id";
 
 export const PRINTER_VERIFICATION_MAX_AGE_SECONDS = contract.maxAgeSeconds;
 export const PRINTER_VERIFICATION_MAX_FUTURE_SKEW_SECONDS = contract.maxFutureSkewSeconds;
@@ -44,7 +45,12 @@ export type OperationalVerificationResult = { ok: true; value: PrinterOperationa
 export function validatePrinterOperationalVerification(value: unknown, printer: Pick<OperationalPrinterState, "id" | "connectionType" | "protocol">, now = new Date()): OperationalVerificationResult {
   if (!isRecord(value)) return { ok: false, reason: "verification_missing" };
   if (Object.keys(value).some(key => !fields.has(key)) || contract.requiredFields.some(key => !(key in value)) || value.version !== 1) return { ok: false, reason: "verification_invalid" };
-  if (typeof value.printer_id !== "string" || !value.printer_id || value.printer_id.length > 120 || value.printer_id !== value.printer_id.trim() || /[\u0000-\u001f\u007f-\u009f]/.test(value.printer_id) || !printer.id || value.printer_id !== printer.id) return { ok: false, reason: "verification_printer_mismatch" };
+  // Operational proof and stored verification states must use the same
+  // exact opaque UTF-8 identity as the heartbeat and geometry boundary.
+  // A matching JS UTF-16 string is not sufficient for native execution.
+  if (!isExactPrinterId(value.printer_id) || !isExactPrinterId(printer.id) || value.printer_id !== printer.id) {
+    return { ok: false, reason: "verification_printer_mismatch" };
+  }
   if (typeof value.binding_digest !== "string" || (value.binding_digest.length !== 64 || !hex.test(value.binding_digest)) || value.logical_queue_key !== value.binding_digest
       || (value.physical_device_key !== undefined && (typeof value.physical_device_key !== "string" || (value.physical_device_key.length !== 64 || !hex.test(value.physical_device_key))))) return { ok: false, reason: "verification_identity_invalid" };
   if (!(contract.methods as unknown[]).includes(value.method) || !(contract.identityStrengths as unknown[]).includes(value.identity_strength)
@@ -56,7 +62,16 @@ export function validatePrinterOperationalVerification(value: unknown, printer: 
     : (["ipp", "ipps"].includes(connection) || connection === "network" && ["ipp", "ipps"].includes(protocol)) ? "ipp_attributes"
     : connection === "usb" && ["raw", "escpos", "zpl", "tspl"].includes(protocol) ? "usb_interface"
     : connection === "network" && ["raw", "escpos", "zpl", "tspl"].includes(protocol) ? "snmp_printer" : null;
-  if (!method || method !== value.method || value.output_medium !== (method === "pdf_output" ? "file" : "physical")) return { ok: false, reason: "verification_transport_mismatch" };
+  // A live service/queue probe is not hardware chassis evidence. The native
+  // Agent binds each method to one identity strength, not arbitrary metadata.
+  // In particular, a forged device key must never upgrade an IPP service or
+  // Windows spooler queue into a physical-device identity.
+  const methodStrength = method ? contract.methodIdentityStrength[method] : null;
+  if (!method || method !== value.method || value.identity_strength !== methodStrength
+      || (value.physical_device_key !== undefined && methodStrength !== "device")
+      || value.output_medium !== (method === "pdf_output" ? "file" : "physical")) {
+    return { ok: false, reason: "verification_transport_mismatch" };
+  }
   const verified = utcTime(value.verified_at);
   if (verified === null) return { ok: false, reason: "verification_timestamp_invalid" };
   const age = now.getTime() - verified;
@@ -86,7 +101,7 @@ export function operationalVerificationProjection(value: unknown, printer: Pick<
 }
 
 export function isPrinterOperationallyVerified(printer: OperationalPrinterState, now = new Date()): boolean {
-  if (printer.verificationState !== "verified" || !printer.id || !printer.verificationBindingDigest || (printer.verificationBindingDigest.length !== 64 || !hex.test(printer.verificationBindingDigest))
+  if (printer.verificationState !== "verified" || !isExactPrinterId(printer.id) || !printer.verificationBindingDigest || (printer.verificationBindingDigest.length !== 64 || !hex.test(printer.verificationBindingDigest))
       || printer.logicalQueueKey !== printer.verificationBindingDigest) return false;
   if (printer.managementSource === "manager" && ((printer.appliedDesiredRevision ?? 0) < (printer.desiredRevision ?? 0) || (printer.observedDesiredRevision ?? 0) < (printer.desiredRevision ?? 0))) return false;
   const verified = parseDbTimeMs(printer.verificationVerifiedAt);

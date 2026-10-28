@@ -30,6 +30,7 @@ import {
 } from "../../shared/job-vocabulary";
 import { DEFAULT_LOCALE, type Locale } from "../../i18n/config";
 import { translate, type MessageKey } from "../../i18n/translate";
+import { codeMessageKey } from "../../lib/api-error-keys";
 
 /**
  * All operator-facing text in this module goes through the shared catalog so
@@ -157,23 +158,73 @@ export function printerPresentation(p: PrinterInfo, agent?: Parameters<typeof ga
   }
 }
 
+/** Duplicate cloud IDs are conflicting route evidence, even if payloads look
+ * identical. Never let Map overwrite a different Agent's printer authority. */
+function conflictingCloudPrinterIds(rows: readonly PrinterInfo[]): ReadonlySet<string> {
+  const seen = new Set<string>();
+  const conflicts = new Set<string>();
+  for (const row of rows) {
+    if (seen.has(row.id)) conflicts.add(row.id);
+    seen.add(row.id);
+  }
+  return conflicts;
+}
+
+/** A same-name local queue is never sufficient to adopt Gateway authority.
+ * Both Agent observation and Gateway projection must bind the same exact
+ * printer ID and cryptographic queue digest. */
+function sameLocalCloudPrinterBinding(local: PrinterInfo, cloud: PrinterInfo): boolean {
+  const proof = local.capabilities?.operational_verification;
+  if (!proof || typeof proof !== "object" || Array.isArray(proof)) return false;
+  const binding = (proof as Record<string, unknown>).binding_digest;
+  return typeof binding === "string" && /^[a-f0-9]{64}$/.test(binding)
+    && local.id === cloud.id && (proof as Record<string, unknown>).printer_id === local.id
+    && (proof as Record<string, unknown>).logical_queue_key === binding
+    && cloud.verificationState === "verified"
+    && cloud.verificationBindingDigest === binding && cloud.logicalQueueKey === binding;
+}
+
 export function mergePrinterInventories(cloud: PrinterInfo[], local: PrinterInfo[]): PrinterInfo[] {
-  const rows = new Map(cloud.filter(isProductionPrinter).map((p) => [p.id, p]));
+  const conflicts = conflictingCloudPrinterIds(cloud);
+  const rows = new Map(cloud.filter((p) => isProductionPrinter(p) && !conflicts.has(p.id)).map((p) => [p.id, p]));
   for (const printer of local.filter((p) => isProductionPrinter(p) && !isLocalSetupCandidate(p))) {
-    rows.set(printer.id, { ...rows.get(printer.id), ...printer, lifecycle: printer.lifecycle, inventoryPresent: printer.inventoryPresent, sharedWithGateway: printer.sharedWithGateway ?? true });
+    const remote = rows.get(printer.id);
+    const matched = remote && printer.sharedWithGateway !== false && sameLocalCloudPrinterBinding(printer, remote);
+    // Local-only health may be displayed independently even when the Gateway
+    // is stale or withheld. Never carry a foreign cloud agentId/verification
+    // into that local row; the test-print gate below uses the same proof.
+    rows.set(printer.id, matched
+      ? { ...remote, ...printer, lifecycle: printer.lifecycle, inventoryPresent: printer.inventoryPresent, sharedWithGateway: printer.sharedWithGateway ?? true }
+      : { ...printer, sharedWithGateway: printer.sharedWithGateway ?? true });
   }
   return [...rows.values()];
 }
 
 /** Unknown native health may be admitted, but local readiness grants no cloud route. */
 export function eligibleGatewayTestPrinterIds(cloud: PrinterInfo[], local: PrinterInfo[], connected: boolean, nowMs: number): ReadonlySet<string> {
-  const privateIds = new Set(local.filter((p) => p.sharedWithGateway === false).map((p) => p.id));
-  return new Set(connected ? cloud.filter((p) => !privateIds.has(p.id) && p.sharedWithGateway !== false
-    && isMainInventoryPrinter(p) && p.inventoryPresent === true && !!p.agentId && p.configurationConverged !== false
-    && p.agentFreshness !== "stale" && p.agentFreshness !== "missing" && p.freshness !== "stale" && p.freshness !== "missing"
-    && isPrinterOperationallyVerified(p, new Date(nowMs))
-    && printerAgentView(p, nowMs).tone === "ok"
-    && printerObservationFreshness(p.lastSeenAt, nowMs) === "fresh").map((p) => p.id) : []);
+  const conflictingCloudIds = conflictingCloudPrinterIds(cloud);
+  const localById = new Map(local.map(p => [p.id, p]));
+  // A duplicate local identity is conflicting evidence; never authorize a
+  // cloud test through whichever duplicate happened to be last in the array.
+  const conflictingLocalIds = new Set<string>();
+  const seenLocalIds = new Set<string>();
+  for (const p of local) {
+    if (seenLocalIds.has(p.id)) conflictingLocalIds.add(p.id);
+    seenLocalIds.add(p.id);
+  }
+  return new Set(connected ? cloud.filter((p) => {
+    if (conflictingCloudIds.has(p.id) || conflictingLocalIds.has(p.id) || p.sharedWithGateway === false) return false;
+    const native = localById.get(p.id);
+    if (native && (native.sharedWithGateway === false || isLocalSetupCandidate(native)
+      || !sameLocalCloudPrinterBinding(native, p)
+      || !validatePrinterOperationalVerification(native.capabilities?.operational_verification,
+        { id: native.id, connectionType: native.connectionType ?? native.connection_type, protocol: native.protocol }, new Date(nowMs)).ok)) return false;
+    return isMainInventoryPrinter(p) && p.inventoryPresent === true && !!p.agentId && p.configurationConverged !== false
+      && p.agentFreshness !== "stale" && p.agentFreshness !== "missing" && p.freshness !== "stale" && p.freshness !== "missing"
+      && isPrinterOperationallyVerified(p, new Date(nowMs))
+      && printerAgentView(p, nowMs).tone === "ok"
+      && printerObservationFreshness(p.lastSeenAt, nowMs) === "fresh";
+  }).map((p) => p.id) : []);
 }
 
 /** Single advancing-clock projection used by every Desktop status summary. */
@@ -433,6 +484,35 @@ export function friendlyPrinterError(raw: string, locale: Locale = DEFAULT_LOCAL
   }
 
   return tr(locale, "desktop.printer.operationFailed");
+}
+
+/**
+ * Diagnostic HTTP admission errors are not hardware failures. Use their
+ * stable machine codes rather than the unlocalized Gateway error string;
+ * a print quota hold is never a printer outage or proof of paper output.
+ * An unrecognized/ambiguous response continues to keep the same operation
+ * identity in the calling component until a definitive result is observed.
+ */
+export function friendlyDiagnosticAdmissionError(raw: unknown, locale: Locale = DEFAULT_LOCALE): string {
+  const row = raw && typeof raw === "object" ? raw as { status?: unknown; code?: unknown } : null;
+  const status = typeof row?.status === "number" ? row.status : null;
+  const code = typeof row?.code === "string" ? row.code : undefined;
+  if (status === 401) return tr(locale, "diagnostic.authRequired");
+  if (code && [
+    "CAPABILITY_MISMATCH",
+    "PRINTER_NOT_SHARED",
+    "PRINT_QUOTA_EXCEEDED",
+    "TENANT_ENTITLEMENT_EXCEEDED",
+    "TENANT_SUBSCRIPTION_REQUIRED",
+    "TENANT_ENTITLEMENT_UNAVAILABLE",
+    "TENANT_ENTITLEMENT_CONFIG_ERROR",
+  ].includes(code)) {
+    const key = codeMessageKey(code);
+    if (key) return tr(locale, key);
+  }
+  if (status === 403) return tr(locale, "diagnostic.permissionDenied");
+  if (status === 429) return tr(locale, "errors.tooManyAttempts");
+  return tr(locale, "diagnostic.admissionUnknown");
 }
 
 /* ---------- Job field accessors (gateway payloads are loosely typed) ---------- */

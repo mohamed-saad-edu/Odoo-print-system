@@ -1,5 +1,5 @@
 import { sql, type SQL } from "drizzle-orm";
-import { quotaCycleStartSql, QUOTA_CYCLE_MS } from "./quota-cycle";
+import { quotaCycleStartSql, quotaCycleEndSql } from "./quota-cycle";
 import { logError } from "./log";
 import { gatewayNowMs } from "./database-clock";
 import type { EntitlementLimitSignal } from "./limit-signal";
@@ -144,26 +144,22 @@ export function liveTenantSubscriptionWhere(tenantId: SQL, requireUnblocked = tr
     : sql``;
   return sql`
     ts.tenant_id = ${tenantId}
+    AND EXISTS (
+      SELECT 1 FROM tenants entitlement_tenant
+      WHERE entitlement_tenant.id = ts.tenant_id
+        AND entitlement_tenant.lifecycle = 'active'
+    )
     AND ts.status = 'active' AND ts.current_period_start <= clock_timestamp()
     AND ts.current_period_end > clock_timestamp()
     ${unblocked}
   `;
 }
-/** Canonical live-subscription predicate; database time is authoritative. */
+/** Reuse the same authoritative live-row policy for correlated admission. */
 export function liveTenantSubscriptionPredicate(tenantId: SQL, requireUnblocked = true): SQL {
-  const unblocked = requireUnblocked
-    ? sql`AND COALESCE(ts.entitlement_blocked, false) = false`
-    : sql``;
-  return sql`
-    EXISTS (
-      SELECT 1
-      FROM tenant_subscriptions ts
-      WHERE ts.tenant_id = ${tenantId}
-        AND ts.status = 'active' AND ts.current_period_start <= clock_timestamp()
-        AND ts.current_period_end > clock_timestamp()
-        ${unblocked}
-    )
-  `;
+  return sql`EXISTS (
+    SELECT 1 FROM tenant_subscriptions ts
+    WHERE ${liveTenantSubscriptionWhere(tenantId, requireUnblocked)}
+  )`;
 }
 
 async function lockTenantSubscription(tx: EntitlementTx, tenantId: string): Promise<void> {
@@ -243,9 +239,10 @@ export async function getTenantEntitlements(tx: EntitlementTx, tenantId: string)
  * dialog consumes. Returns null for anything that is not a limit trip, so
  * callers keep their existing error handling for every other failure mode.
  *
- * `retryable` distinguishes a periodic allowance that resets (per-minute rate,
- * concurrent jobs, billing-period quota) from a capacity that only an upgrade
- * can raise (`max_agents`, `max_printers`).
+ * `retryable` distinguishes burst limits that recover without changing
+ * capacity from technical device caps requiring an operator intervention.
+ * `upgradeRequired` is reserved for the paid monthly print-job allowance,
+ * not max_agents, max_printers, rate or concurrency safety limits.
  */
 export function entitlementLimitSignal(error: unknown): EntitlementLimitSignal | null {
   if (error instanceof TenantPrintQuotaExceededError) {
@@ -275,7 +272,10 @@ export function entitlementLimitSignal(error: unknown): EntitlementLimitSignal |
       used: error.used,
       remaining: Math.max(0, error.limit - error.used),
       retryAfterSeconds: capacity ? null : 60,
-      upgradeRequired: true,
+      // TenantEntitlementError covers technical safety capacity and burst
+      // limits. Print credits are charged ONLY via TenantPrintQuotaExceededError
+      // above; a device/rate cap cannot be resolved by paying more.
+      upgradeRequired: false,
       message: error.message,
       retryable: !capacity,
     };
@@ -294,6 +294,7 @@ export async function enforceTenantResourceEntitlement(tx: EntitlementTx, tenant
 type TenantPrintQuotaRow = {
   entitlements: unknown;
   periodStart: Date | string;
+  periodEnd: Date | string;
   entitlementBlocked?: boolean;
   monthlyQuota?: number | null;
 };
@@ -307,10 +308,18 @@ function parseEntitlementDate(value: Date | string | null): Date | null {
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
-async function getTenantPrintQuotaContext(tx: EntitlementTx, tenantId: string, lockRows = false): Promise<{ limit: number | "unlimited"; periodStart: Date; periodEnd: Date | null }> {
+async function getTenantPrintQuotaContext(tx: EntitlementTx, tenantId: string, lockRows = false, admissionAt?: Date): Promise<{ limit: number | "unlimited"; periodStart: Date; periodEnd: Date | null }> {
   if (lockRows) await lockTenantSubscription(tx, tenantId);
+  if (admissionAt !== undefined && (!(admissionAt instanceof Date) || !Number.isFinite(admissionAt.getTime()))) {
+    throw new TenantEntitlementConfigError("subscription_period");
+  }
+  // A job's created_at and quota month must derive from the SAME DB instant.
+  // Callers reading usage without an admission stamp keep the current UTC month.
+  const cycleAt = admissionAt === undefined
+    ? sql`statement_timestamp() AT TIME ZONE 'UTC'`
+    : sql`${admissionAt.toISOString()}::timestamptz AT TIME ZONE 'UTC'`;
   const result = await tx.execute(sql`
-        SELECT p.entitlements, ts.monthly_quota AS "monthlyQuota", ${quotaCycleStartSql(sql`COALESCE(ts.print_cycle_anchor, ts.current_period_start)`)} AS "periodStart", ts.entitlement_blocked AS "entitlementBlocked"
+        SELECT p.entitlements, ts.monthly_quota AS "monthlyQuota", ${quotaCycleStartSql(cycleAt)} AS "periodStart", ${quotaCycleEndSql(cycleAt)} AS "periodEnd", ts.entitlement_blocked AS "entitlementBlocked"
         FROM tenant_subscriptions ts
         JOIN plans p ON p.id = ts.plan_id
         WHERE ${liveTenantSubscriptionWhere(sql`${tenantId}`, false)}
@@ -327,15 +336,16 @@ async function getTenantPrintQuotaContext(tx: EntitlementTx, tenantId: string, l
     throw new TenantEntitlementConfigError(PRINT_QUOTA_ENTITLEMENT);
   }
   const periodStart = parseEntitlementDate(row.periodStart);
-  if (!periodStart) throw new TenantEntitlementConfigError("subscription_period");
-  // A fixed UTC duration, not calendar months or subscription renewals.
-  const periodEnd = new Date(periodStart.getTime() + QUOTA_CYCLE_MS);
+  const periodEnd = parseEntitlementDate(row.periodEnd);
+  if (!periodStart || !periodEnd || periodEnd.getTime() <= periodStart.getTime()) {
+    throw new TenantEntitlementConfigError("subscription_period");
+  }
   return { limit: entitlements[PRINT_QUOTA_ENTITLEMENT], periodStart, periodEnd };
 }
 
-/** Atomically consumes one print credit for one newly-created logical print job. */
-export async function reserveTenantPrintCredit(tx: EntitlementTx, tenantId: string): Promise<TenantPrintUsage> {
-  const context = await getTenantPrintQuotaContext(tx, tenantId, true);
+/** Atomically consumes one credit for a new logical job's DB-stamped admission month. */
+export async function reserveTenantPrintCredit(tx: EntitlementTx, tenantId: string, admissionAt?: Date): Promise<TenantPrintUsage> {
+  const context = await getTenantPrintQuotaContext(tx, tenantId, true, admissionAt);
   const limit = context.limit;
   const predicate = limit === "unlimited"
     ? sql`TRUE`

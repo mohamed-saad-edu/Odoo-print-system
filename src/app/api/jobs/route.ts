@@ -1,6 +1,8 @@
 import { requireActiveTenantInTransaction, TenantDeletedError, TenantSuspendedError } from "../../../lib/tenant-guard";
 import { requireManagerActorInTransaction, ManagerMutationAuthorityChangedError } from "../../../lib/manager-mutation-authorization";
 import { NextResponse } from "next/server";
+import { requireConsoleReadAuthorityInTransaction, ConsoleAgentAuthorityRevokedError } from "../../../lib/console-read-authority";
+import { logError } from "../../../lib/log";
 import { db } from "../../../db";
 import { idempotencyDigest } from "../../../lib/print-job-service";
 import { printJobs, printJobReceipts } from "../../../db/schema";
@@ -8,7 +10,7 @@ import { validateWorkspaceManager } from "../../../lib/manager-auth";
 import { validateConsoleAuth } from "../../../lib/console-auth";
 import { requireManagerPermission } from "../../../lib/authorization";
 import { and, eq, inArray, isNull, lt, sql } from "drizzle-orm";
-import { clampListLimit } from "../../../lib/request-limits";
+import { clampListLimit, parseStrictListOffset } from "../../../lib/request-limits";
 import { RECEIPT_MATERIALIZE_BATCH_ROWS } from "../../../shared/job-retention";
 import { isJobFilterStatus } from "../../../lib/job-status";
 import { databaseNowMs } from "../../../lib/database-clock";
@@ -24,11 +26,11 @@ const MAX_FILTER_ID_LENGTH = 2048;
 
 export async function GET(req: Request) {
   const auth = await validateConsoleAuth(req);
-  if (!auth) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!auth) return NextResponse.json({ error: "Unauthorized", code: "UNAUTHORIZED" }, { status: 401, headers: { "Cache-Control": "private, no-store" } });
 
   const tenantId = auth.kind === "manager" ? auth.claims.tenantId : auth.agent.tenantId;
   if (auth.kind === "manager") {
-    try { requireManagerPermission(auth.claims, "jobs.read"); } catch { return NextResponse.json({ error: "Forbidden" }, { status: 403 }); }
+    try { requireManagerPermission(auth.claims, "jobs.read"); } catch { return NextResponse.json({ error: "Forbidden", code: "FORBIDDEN" }, { status: 403, headers: { "Cache-Control": "private, no-store" } }); }
   }
 
   const url = new URL(req.url);
@@ -37,9 +39,9 @@ export async function GET(req: Request) {
   const printerId = url.searchParams.get("printerId")?.trim() || null;
   const agentId = url.searchParams.get("agentId")?.trim() || null;
   const limit = clampListLimit(url.searchParams.get("limit"), 50, 200);
-  const offset = Math.max(parseInt(url.searchParams.get("offset") ?? "0", 10) || 0, 0);
-  if (offset > MAX_LIST_OFFSET) {
-    return NextResponse.json({ error: `offset must be <= ${MAX_LIST_OFFSET}` }, { status: 400 });
+  const offset = parseStrictListOffset(url.searchParams.get("offset"), MAX_LIST_OFFSET);
+  if (offset === null) {
+    return NextResponse.json({ error: `offset must be <= ${MAX_LIST_OFFSET} and a non-negative decimal integer`, code: "INVALID_OFFSET" }, { status: 400 });
   }
   if (searchParam && (searchParam.length < 2 || searchParam.length > MAX_SEARCH_LENGTH)) {
     return NextResponse.json({ error: `search must be between 2 and ${MAX_SEARCH_LENGTH} characters` }, { status: 400 });
@@ -49,10 +51,14 @@ export async function GET(req: Request) {
   }
 
   if (statusParam && !isJobFilterStatus(statusParam)) {
-    return NextResponse.json({ error: "invalid status filter" }, { status: 400 });
+    return NextResponse.json({ error: "invalid status filter", code: "INVALID_STATUS_FILTER" }, { status: 400 });
   }
 
-  const rows = await listPrintJobHistory({
+  let rows;
+  try {
+    rows = await db.transaction(async (tx) => {
+      await requireConsoleReadAuthorityInTransaction(tx, auth, "jobs.read");
+      return listPrintJobHistory({
     tenantId,
     agentId: auth.kind === "agent" ? auth.agent.id : agentId ?? undefined,
     printerId: printerId ?? undefined,
@@ -60,7 +66,20 @@ export async function GET(req: Request) {
     search: searchParam,
     limit,
     offset,
-  });
+      }, tx);
+    });
+  } catch (error) {
+    const headers = { "Cache-Control": "private, no-store" };
+    if (error instanceof TenantSuspendedError || error instanceof TenantDeletedError) {
+      return NextResponse.json({ error: error.message, code: error.code }, { status: error.status, headers });
+    }
+    if (error instanceof ManagerMutationAuthorityChangedError) return error.response();
+    if (error instanceof ConsoleAgentAuthorityRevokedError) {
+      return NextResponse.json({ error: error.message, code: error.code }, { status: error.status, headers });
+    }
+    logError("jobs.history_read_failed", { tenantId, error: error instanceof Error ? error.message : "unknown" });
+    return NextResponse.json({ error: "Print history unavailable", code: "JOB_HISTORY_UNAVAILABLE" }, { status: 503, headers });
+  }
   return NextResponse.json(rows, {
     headers: { "Cache-Control": "private, no-store" },
   });

@@ -6,7 +6,7 @@ on:
     types: [opened, synchronize, reopened, ready_for_review]
   merge_group:
   push:
-    branches: [main]
+    branches: [main, test/http-server-ready]
   workflow_dispatch:
   schedule:
     - cron: '23 3 * * 0'  # Weekly pinned-image vulnerability scan
@@ -29,6 +29,13 @@ env:
   PLATFORM_TENANT_ID: ci-platform-tenant
   # Compose overlays only the registry; versions and sha256 digests stay pinned.
   COMPOSE_FILE: docker-compose.yml:docker-compose.ci.yml
+
+# Preserve running main verification while retaining only the latest pending
+# push for this workflow. Never coalesce manual or merge-queue release gates.
+# PR retries may cancel older attempts of the same PR only.
+concurrency:
+  group: docker-run-${{ github.event_name == 'push' && github.ref || github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   changes:
@@ -55,10 +62,10 @@ jobs:
   docker-image-scan:
     needs: changes
     if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && needs.changes.outputs.docker_scan == 'true'
-    # Cancel only an eligible duplicate job, never on an unrelated push.
+    # Preserve running main image scans; supersede only outdated PR scans.
     concurrency:
       group: docker-scan-${{ matrix.variant }}-${{ github.ref }}
-      cancel-in-progress: true
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -124,8 +131,8 @@ jobs:
           severity: 'UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL'
           limit-severities-for-sarif: true
           ignore-unfixed: false
-          # Scan the real release images, preserving every severity and
-          # unfixed advisory; reject unreviewed findings via the gate below.
+          # Retain every severity and unfixed advisory. The digest-bound,
+          # expiring review gate rejects every unreviewed finding.
           exit-code: '0'
 
       - name: Enforce reviewed release image vulnerability baseline
@@ -182,25 +189,15 @@ jobs:
   docker-build-runtime:
     needs: changes
     if: github.event_name != 'pull_request' && needs.changes.outputs.docker == 'true'
-    # Cancel only an eligible duplicate job, never on an unrelated push.
+    # Keep an in-progress main runtime build and smoke result tied to its SHA.
     concurrency:
       group: docker-runtime-${{ github.ref }}
-      cancel-in-progress: true
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Generate ephemeral CI database role secrets
-        shell: bash
-        run: |
-          set -euo pipefail
-          for key in POSTGRES_PASSWORD POSTGRES_OWNER_PASSWORD POSTGRES_RUNTIME_PASSWORD; do
-            secret="$(openssl rand -hex 32)"
-            echo "::add-mask::$secret"
-            printf '%s=%s\n' "$key" "$secret" >> "$GITHUB_ENV"
-          done
 
       - name: Validate Compose configuration
         run: python3 scripts/check-compose-build-contexts.py
@@ -290,60 +287,13 @@ jobs:
           set -euo pipefail
           docker compose exec -T caddy caddy validate --config /etc/caddy/Caddyfile
 
-          # Seed this isolated fixture using the migration owner's credential.
-          # The Gateway keeps its runtime-only credential and never receives
-          # the database administrator or owner password.
-          fixture_suffix="$(openssl rand -hex 8)"
-          fixture_secret="$(openssl rand -hex 32)"
-          docker compose run -T --rm --no-deps \
-            -e PHASE0_SUFFIX="$fixture_suffix" \
-            -e PHASE0_AGENT_SECRET="$fixture_secret" \
-            migrate node --input-type=module <<'NODE'
-          import fs from "node:fs";
-          import crypto from "node:crypto";
-          import { Client } from "pg";
-          const suffix = process.env.PHASE0_SUFFIX;
-          const agentSecret = process.env.PHASE0_AGENT_SECRET;
-          const tenantId = "phase0_tenant_" + suffix;
-          const agentId = "agt_" + suffix.slice(0, 8);
-          const jti = "phase0_jti_" + suffix;
-          const exp = Math.floor(Date.now() / 1000) + 3600;
-          const client = new Client({
-            host: process.env.PGHOST,
-            port: Number(process.env.PGPORT),
-            database: process.env.PGDATABASE,
-            user: process.env.PGUSER,
-            password: fs.readFileSync("/run/secrets/postgres_owner_password", "utf8").trim(),
-          });
-          await client.connect();
-          try {
-            await client.query("BEGIN");
-            await client.query("INSERT INTO tenants (id, name) VALUES ($1, $2)", [tenantId, "Phase 0 smoke tenant"]);
-            await client.query(
-              "INSERT INTO agents (id, tenant_id, name, secret, status, lifecycle, last_seen_at) VALUES ($1,$2,$3,$4,'online','active',clock_timestamp())",
-              [agentId, tenantId, "Phase 0 smoke agent", crypto.createHash("sha256").update(agentSecret).digest("hex")],
-            );
-            await client.query(
-              "INSERT INTO manager_sessions (jti, tenant_id, role, expires_at) VALUES ($1,$2,'admin',to_timestamp($3))",
-              [jti, tenantId, exp],
-            );
-            await client.query("COMMIT");
-          } catch (err) {
-            await client.query("ROLLBACK");
-            throw err;
-          } finally {
-            await client.end();
-          }
-          NODE
-
-          docker compose exec -T \
-            -e PHASE0_SUFFIX="$fixture_suffix" \
-            -e PHASE0_AGENT_SECRET="$fixture_secret" \
-            gateway node --input-type=module <<'NODE'
+          docker compose exec -T gateway node <<'NODE'
           const fs = await import("node:fs");
           const crypto = await import("node:crypto");
+          const { Client } = await import("pg");
           const { default: WebSocket } = await import("ws");
 
+          const sha256 = (v) => crypto.createHash("sha256").update(v).digest("hex");
           const b64url = (v) => Buffer.from(v).toString("base64url");
           const signJwt = (secret, claims) => {
             const header = b64url(JSON.stringify({alg:"HS256",typ:"JWT"}));
@@ -353,23 +303,55 @@ jobs:
             return data + "." + sig;
           };
 
+          // Only the restricted runtime secret is mounted in Gateway.
+          // Never grant administrator/bootstrap DB credentials to the app.
+          const pgPassword = fs.readFileSync("/run/secrets/postgres_runtime_password", "utf8").trim();
           const jwtSecret = fs.readFileSync("/run/secrets/gateway_jwt_secret", "utf8").trim();
           const proxySecret = fs.readFileSync("/run/secrets/trust_proxy_secret", "utf8").trim();
-          const suffix = process.env.PHASE0_SUFFIX;
+          const suffix = crypto.randomBytes(8).toString("hex");
           const tenantId = "phase0_tenant_" + suffix;
-          const agentId = "agt_" + suffix.slice(0, 8);
-          const agentSecret = process.env.PHASE0_AGENT_SECRET;
-          const jti = "phase0_jti_" + suffix;
+          const agentId = "agt_" + crypto.randomBytes(6).toString("base64url").slice(0, 8);
+          const agentSecret = "phase0_secret_" + crypto.randomBytes(18).toString("base64url");
+          const jti = "phase0_jti_" + crypto.randomBytes(16).toString("hex");
           const now = Math.floor(Date.now() / 1000);
           const exp = now + 3600;
 
-          // A historical V1 manager JWT must be rejected even if its
-          // legacy session fixture exists; only modern sessions are accepted.
-          // The independent Agent credential is tested against the fleet
-          // endpoint below, not used as the supposedly invalid legacy token.
+          const client = new Client({
+            host: process.env.PGHOST,
+            port: Number(process.env.PGPORT),
+            database: process.env.PGDATABASE,
+            user: process.env.PGUSER,
+            password: pgPassword,
+          });
+          await client.connect();
+          try {
+            await client.query("BEGIN");
+            await client.query(
+              "INSERT INTO tenants (id, name) VALUES ($1, $2)",
+              [tenantId, "Phase 0 smoke tenant"],
+            );
+            await client.query(
+              "INSERT INTO agents (id, tenant_id, name, secret, status, lifecycle, last_seen_at) VALUES ($1,$2,$3,$4,'online','active',clock_timestamp())",
+              [agentId, tenantId, "Phase 0 smoke agent", sha256(agentSecret)],
+            );
+            await client.query(
+              "INSERT INTO manager_sessions (jti, tenant_id, role, expires_at) VALUES ($1,$2,'admin',to_timestamp($3))",
+              [jti, tenantId, exp],
+            );
+            await client.query("COMMIT");
+          } catch (e) {
+            await client.query("ROLLBACK");
+            throw e;
+          } finally {
+            await client.end();
+          }
+
           const managerToken = signJwt(jwtSecret, {
             jti, iat: now, exp, sub: "manager", tenantId, role: "admin",
           });
+
+          // V5 deliberately rejects legacy V1 manager JWTs after the session
+          // migration. A 200 here would be a real authentication regression.
           const legacy = await fetch("http://127.0.0.1:3000/api/agents?limit=1", {
             headers: {
               authorization: "Bearer " + managerToken,

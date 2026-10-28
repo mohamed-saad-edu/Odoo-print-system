@@ -38,7 +38,8 @@ describe("print payload wire contract", () => {
 
     expect(go).toContain('case "raw", "escpos", "zpl", "tspl":');
     expect(go).toContain('if protocol != "escpos"');
-    expect(go).toContain('if protocol != ""');
+    expect(go).toContain('if protocol == "" {');
+    expect(go).toContain('if _, present := m["protocol"]; present {');
     expect(go).toContain('case "pin2", "pin5", "none":');
     expect(go).toContain('case "partial", "full", "none":');
     expect(go).toContain('case "epson_pulse", "star_bel", "none":');

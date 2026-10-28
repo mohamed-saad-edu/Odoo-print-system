@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
 import {
   errMsg,
   friendlyAgentError,
@@ -7,6 +8,17 @@ import {
 } from "../src/desktop/lib/printers";
 
 describe("desktop friendly error mapping", () => {
+  it("keeps structured Gateway HTTP status intact at printer registration", () => {
+    const route = readFileSync("src/desktop/components/AddPrinterDialog.tsx", "utf8");
+    expect(route).toContain("friendlyGatewayError(e, locale)");
+    expect(route).not.toContain("friendlyGatewayError(errMsg(e), locale)");
+
+    const serverError = Object.assign(new Error("INTERNAL_ERROR"), { status: 503, code: "SERVICE_UNAVAILABLE" });
+    expect(friendlyGatewayError(serverError, "en")).toBe("Gateway is temporarily unavailable. Try again shortly.");
+    expect(friendlyGatewayError(serverError, "ar")).toMatch(/[\u0600-\u06ff]/);
+    expect(friendlyGatewayError(serverError, "en")).not.toContain("INTERNAL_ERROR");
+  });
+
   it("keeps unserializable errors in the requested locale", () => {
     const circular: Record<string, unknown> = {};
     circular.self = circular;

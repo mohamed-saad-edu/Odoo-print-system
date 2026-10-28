@@ -31,11 +31,28 @@ export type EntitlementLimitSignal = {
   periodEnd?: string | null;
   /** Relative wait, seconds, computed on the authoritative Gateway clock. */
   retryAfterSeconds?: number | null;
-  /** Always true: tells the client to offer the upgrade path, not just an error. */
-  upgradeRequired: true;
+  /** Only billable print allowance offers a subscription change; physical
+   * Agent/printer and burst safety limits still show a bounded technical notice. */
+  upgradeRequired: boolean;
   message: string;
   retryable: boolean;
 };
+
+/** Field mapping shared by server-action and Dashboard to prevent using the
+ * removed `max` property. `limit` is the exact server/DB entitlement amount. */
+export function limitSignalDisplayDetails(signal: EntitlementLimitSignal): {
+  used: number | null;
+  limit: EntitlementValue | null;
+  periodEnd: string | null;
+  retryAfterSeconds: number | null;
+} {
+  return {
+    used: signal.used,
+    limit: signal.limit,
+    periodEnd: signal.periodEnd ?? null,
+    retryAfterSeconds: signal.retryAfterSeconds ?? null,
+  };
+}
 
 /** Returned (never thrown) by client-invoked server actions on a limit trip. */
 export type LimitSignalResult = { ok: false; limit: EntitlementLimitSignal };
@@ -45,5 +62,5 @@ export function isLimitSignalResult(value: unknown): value is LimitSignalResult 
   const candidate = value as { ok?: unknown; limit?: unknown };
   if (candidate.ok !== false || !candidate.limit || typeof candidate.limit !== "object") return false;
   const limit = candidate.limit as { entitlement?: unknown; upgradeRequired?: unknown };
-  return typeof limit.entitlement === "string" && limit.upgradeRequired === true;
+  return typeof limit.entitlement === "string" && typeof limit.upgradeRequired === "boolean";
 }

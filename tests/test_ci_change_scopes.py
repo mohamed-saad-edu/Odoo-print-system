@@ -15,13 +15,14 @@ SCOPES = {
 }
 
 
-def classify(*paths, event=None, before=None, head=None, cwd=None):
+def classify(*paths, event=None, before=None, head=None, cwd=None, ref=None):
     with tempfile.NamedTemporaryFile() as output:
         env = dict(os.environ, GITHUB_OUTPUT=output.name)
         if event:
             env["GITHUB_EVENT_NAME"] = event
             env["BEFORE_SHA"] = before or ""
             env["GITHUB_SHA"] = head or ""
+            env["GITHUB_REF"] = ref or ""
         command = ["bash", str(SCRIPT)]
         if not event:
             command += ["--paths", *paths]
@@ -37,6 +38,29 @@ def classify(*paths, event=None, before=None, head=None, cwd=None):
 def test_docs_only_has_no_expensive_jobs():
     flags = classify("README.md", "docs/setup.md", "OPERATIONS.md")
     assert not any(flags.values())
+
+
+def test_docs_only_main_push_revalidates_real_app_agent_and_odoo_jobs(tmp_path):
+    """A docs-only main HEAD must not be green solely due to skipped jobs."""
+    def git(*args):
+        return subprocess.run(["git", *args], cwd=tmp_path,
+                              capture_output=True, text=True, check=True).stdout.strip()
+
+    git("init", "-q")
+    git("config", "user.email", "ci@example.com")
+    git("config", "user.name", "CI Test")
+    (tmp_path / "README.md").write_text("baseline\n")
+    git("add", "README.md")
+    git("commit", "-q", "-m", "baseline")
+    before = git("rev-parse", "HEAD")
+    (tmp_path / "README.md").write_text("documentation change\n")
+    git("add", "README.md")
+    git("commit", "-q", "-m", "docs only")
+    head = git("rev-parse", "HEAD")
+    flags = classify(event="push", before=before, head=head, ref="refs/heads/main", cwd=tmp_path)
+    assert flags["app"] and flags["agent"] and flags["odoo"], flags
+    # Container scans remain selected by actual runtime/image changes or weekly schedule.
+    assert not flags["docker_scan"] and not flags["supply"], flags
 
 
 def test_odoo_model_runs_odoo_and_cross_layer_contracts_but_not_go_or_docker():
