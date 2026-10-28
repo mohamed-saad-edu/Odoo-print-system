@@ -2177,3 +2177,20 @@ AUTHORED odoo_addons/print_gateway/tests/test_control_plane.py — HTTP 200 inva
 ```
 
 Source and tests committed; exact SHA live Odoo/physical verification NOT RUN.
+
+
+### AGENT-PRINTER-DISCOVERY-2026-10-28 — native discovery, local policy and IPP identity (all PARTIAL)
+
+```text
+PARTIAL agent/internal/printer/discovery_targets.go — exclude every local NIC IP; /31 peer support; VPN/tunnel adapters excluded
+AUTHORED agent/internal/printer/discovery_targets_test.go — overlapping NIC addresses, /31 peers, VPN exclusions
+PARTIAL agent/internal/agent/agent.go — propagate unreadable local printer disablement as heartbeat inventoryComplete=false
+AUTHORED agent/internal/agent/heartbeat_disablement_completeness_test.go — before/during status-probe corrupt registry and HTTP heartbeat regression
+PARTIAL agent/internal/printer/geometry.go — shared UTF-8 120-byte printer identity (concurrent main fix preserved)
+AUTHORED agent/internal/printer/geometry_contract_test.go — explicit Arabic/emoji, BOM and invalid UTF-8 geometry evidence boundaries
+PARTIAL agent/internal/printer/stable_id.go — canonical IPP/http, IPPS/https nondefault resources and mixed-case legacy IPP protocols
+PARTIAL agent/internal/printer/discovery.go — dedupe IPP aliases only with exact resource, TLS and verified effective URI port
+AUTHORED agent/internal/printer/stable_id_ipp_ports_test.go — resource/port/TLS separation, mixed-case, endpoint-only fallback
+```
+
+Source changes are committed on GitHub main. Code path review checked that Gateway absence reconciliation requires `inventoryComplete=true` on a final error-free snapshot. Go race tests, CI and physical Windows/IPP print confirmation remain NOT VERIFIED; do not mark DONE or PASS without exact-SHA evidence.
