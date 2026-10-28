@@ -30,14 +30,14 @@ def actual_exact_pos_printer_id():
 
 @pytest.mark.parametrize("value,expected", [
     (None, None), (False, None), (1, 1), (2147483647, 2147483647),
-    ("7", 7), ("0007", 7), (2**63 - 1, 2**63 - 1),
+    (2**63 - 1, 2**63 - 1),
 ])
 def test_exact_pos_preparation_id_accepts_only_real_exact_ids(value, expected):
     assert actual_exact_pos_printer_id()(value) == expected
 
 
 @pytest.mark.parametrize("value", [
-    True, 0, -1, 1.0, 1.9, " ", "", " 7", "7 ", "+7", "-7",
+    True, 0, -1, 1.0, 1.9, "7", "0007", " ", "", " 7", "7 ", "+7", "-7",
     "٧", "1.0", "1e3", "0x7", "0", str(2**63), 2**63,
     [], {}, [7], "\uFEFF7",
 ])
