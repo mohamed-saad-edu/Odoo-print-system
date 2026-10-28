@@ -1152,7 +1152,31 @@ func conflictingNetworkPrintLanguage(left, right DeviceInfo) bool {
 	return a != b && byteStream(a) && byteStream(b)
 }
 
+// A legacy VID/PID-only USB ID may describe two different physical
+// interfaces of the same model. Matching that old ID must not bypass the
+// stronger instance/serial/location proof required by sameUSBDevice.
+func conflictingUSBExecutionInterface(left, right DeviceInfo) bool {
+	isDirectUSB := func(d DeviceInfo) bool {
+		connection := d.ConnectionType
+		if strings.TrimSpace(connection) == "" {
+			connection = d.Type
+		}
+		return strings.EqualFold(connection, "usb") && !isSpoolerDevice(d)
+	}
+	if !isDirectUSB(left) || !isDirectUSB(right) ||
+		strings.TrimSpace(left.Endpoint) == "" ||
+		strings.TrimSpace(right.Endpoint) == "" ||
+		strings.EqualFold(left.Endpoint, right.Endpoint) {
+		return false
+	}
+	return !sameUSBDevice(left, right)
+}
+
 func mergeDiscoveredSameID(existing, incoming DeviceInfo) DeviceInfo {
+	if conflictingUSBExecutionInterface(existing, incoming) {
+		log.Printf("[discovery] distinct USB interfaces collide on printer ID %q; explicit reconciliation required", existing.ID)
+		return withRegistryIdentityCollision(existing, "same_id_different_usb_interface")
+	}
 	if conflictingNetworkPrintLanguage(existing, incoming) {
 		log.Printf("[discovery] conflicting byte languages for printer endpoint %q; explicit reconciliation required", existing.ID)
 		return withRegistryIdentityCollision(existing, "same_endpoint_different_print_language")
