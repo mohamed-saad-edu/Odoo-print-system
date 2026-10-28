@@ -38,6 +38,22 @@ export type EntitlementLimitSignal = {
   retryable: boolean;
 };
 
+/** Field mapping shared by server-action and Dashboard to prevent using the
+ * removed `max` property. `limit` is the exact server/DB entitlement amount. */
+export function limitSignalDisplayDetails(signal: EntitlementLimitSignal): {
+  used: number | null;
+  limit: EntitlementValue | null;
+  periodEnd: string | null;
+  retryAfterSeconds: number | null;
+} {
+  return {
+    used: signal.used,
+    limit: signal.limit,
+    periodEnd: signal.periodEnd ?? null,
+    retryAfterSeconds: signal.retryAfterSeconds ?? null,
+  };
+}
+
 /** Returned (never thrown) by client-invoked server actions on a limit trip. */
 export type LimitSignalResult = { ok: false; limit: EntitlementLimitSignal };
 
