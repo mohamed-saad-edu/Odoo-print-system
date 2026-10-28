@@ -8,6 +8,8 @@ Each entry in `.gitleaksignore` is tied to the **original commit SHA, original s
 * Fourteen Alpine security provenance `key_sha256` values identify **public signing keys**. They are integrity-check digests, not private key material; their values must remain byte-exact.
 * One base64 WebSocket `sec-websocket-key` belongs to a fixed integration-test handshake fixture, not an API credential.
 
-These are the 16 fingerprints reported in the PR's Gitleaks run. If a future scan reports any further finding, treat it as unreviewed; investigate the secret and rotate if real. Do not modify this file to bypass a genuine leaked credential.
+These are the 17 reviewed fingerprints reported across the staging branch history and the earlier PR's Gitleaks run. If a future scan reports any further finding, treat it as unreviewed; investigate the secret and rotate if real. Do not modify this file to bypass a genuine leaked credential.
 
 PR scan evidence: https://github.com/mohamed-saad-edu/Odoo-print-system/actions/runs/40240014742
+
+* One additional historical regression test (commit `1c272b45e9067c50183ac991aae36679ccc0b1e7`, `tests/test_gitleaks_history_baseline.py:21`) quoted the exact same fixed synthetic RFC 6455 handshake key. This is not a deployed API credential. The currently maintained test no longer quotes the literal key. The extra `.gitleaksignore` entry covers only that specific original line and commit, leaving all new secrets detectable. Evidence: GitHub Actions push run 40642978692, Secret Scan job 122665180333.

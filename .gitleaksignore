@@ -25,3 +25,7 @@ f9d6467b22df28203cefadb916f8a4acd9df0681:tests/password-auth-migration.integrati
 
 # Fixed synthetic RFC 6455 handshake key used solely in a malformed-upgrade test.
 5bc060f79de4e1f72c7f1d360b3e6559cbed65a9:tests/ws-shutdown-drain.integration.test.ts:generic-api-key:35
+
+# Historical test-source self-check quoted that same synthetic RFC 6455 handshake key.
+# The introducing commit is immutable; only this exact file, rule and line are exempt.
+1c272b45e9067c50183ac991aae36679ccc0b1e7:tests/test_gitleaks_history_baseline.py:generic-api-key:21
