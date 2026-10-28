@@ -8,7 +8,6 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/yaseir-agent/agent/internal/queue"
 )
 
 func TestAgentIdentityConflictRefusesHardwareWithoutRequeueingAnotherPayload(t *testing.T) {
@@ -68,5 +67,4 @@ func TestAgentIdentityConflictRefusesHardwareWithoutRequeueingAnotherPayload(t *
 	if reports[0]["error"] != "JOB_IDENTITY_MISMATCH: local durable record has another printer or payload; no bytes sent" {
 		t.Fatalf("identity conflict was not reported as known pre-execution failure: %#v", reports[0])
 	}
-	_ = queue.ErrJobIdentityMismatch // ensure the same typed guard is in the Agent dependency
 }
