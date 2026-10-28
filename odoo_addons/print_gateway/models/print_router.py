@@ -408,6 +408,15 @@ class PrintGatewayRouter(models.AbstractModel):
                     raise ValidationError(_("The print binding destination changed before the durable job could be created."))
                 if selected_binding.document_type != durable_values.get("document_type"):
                     raise ValidationError(_("The print binding document type changed before the durable job could be created."))
+                # A report-specific route was authorized against this exact
+                # ir.actions.report action. Two reports can share one document
+                # type and operational destination; do not let a later binding
+                # change send the earlier report to a now-unauthorized target.
+                # Report-less direct diagnostics may legitimately test a
+                # report-bound printer, so only constrain captured report work.
+                original_report = durable_values.get("report")
+                if original_report and selected_binding.report_id != original_report:
+                    raise ValidationError(_("The print binding report changed before the durable job could be created."))
                 if target_company:
                     router = env["print_gateway.print_router"]
                     gateway_company, branch = router._binding_scope(target_company)

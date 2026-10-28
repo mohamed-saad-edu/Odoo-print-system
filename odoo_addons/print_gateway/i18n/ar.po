@@ -5026,3 +5026,9 @@ msgstr "تغيّرت وجهة ربط الطباعة قبل إنشاء مهمة �
 #: code:addons/print_gateway/models/print_router.py:0
 msgid "The print binding document type changed before the durable job could be created."
 msgstr "تغيّر نوع المستند في ربط الطباعة قبل إنشاء المهمة المحفوظة؛ تحقّق من إعدادات الربط."
+
+#. module: print_gateway
+#. odoo-python
+#: code:addons/print_gateway/models/print_router.py:0
+msgid "The print binding report changed before the durable job could be created."
+msgstr "تغيّر التقرير المحدد في ربط الطباعة قبل إنشاء المهمة المحفوظة؛ أعد اختيار التقرير."
