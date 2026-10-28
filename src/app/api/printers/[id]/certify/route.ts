@@ -144,6 +144,18 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         setStep("queue", "error", "Idempotency-Key required", "missing-operation-identity");
         return NextResponse.json({ error: "Idempotency-Key required for certification", code: "IDEMPOTENCY_KEY_REQUIRED", retryable: false, steps }, { status: 400, headers: { "x-request-id": requestId, "Cache-Control": "no-store" } });
       }
+      // Header and body identify the SAME physical intent. Silently preferring
+      // one contradictory identity could print a different operation than the
+      // caller intended after a lost response.
+      if (headerKey !== null && bodyKeyPresent && headerKey !== body.idempotencyKey) {
+        setStep("queue", "error", "Conflicting print operation identities", "header/body-key-mismatch");
+        return NextResponse.json({
+          error: "Conflicting Idempotency-Key values",
+          code: "IDEMPOTENCY_CONFLICT",
+          retryable: false,
+          steps,
+        }, { status: 409, headers: { "x-request-id": requestId, "Cache-Control": "no-store" } });
+      }
       const providedKey = headerKey !== null ? headerKey : body.idempotencyKey;
       if (!isExactIdempotencyKey(providedKey) || providedKey.length < 8) {
         const evidence = typeof providedKey === "string" ? `length=${providedKey.length}` : "invalid-key-type";

@@ -57,6 +57,36 @@ describe("certification evidence and request handling", () => {
     },
   );
 
+  it("rejects conflicting header and body operation identities before certification admission", async () => {
+    replyRows({ id: "job", status: "queued" });
+    const response = await POST(new Request("https://gateway.test/api/printers/selected/certify", {
+      method: "POST",
+      headers: { "Idempotency-Key": "header-operation", "Content-Type": "application/json" },
+      body: JSON.stringify({ idempotencyKey: "different-body-operation", testPage: true }),
+    }), { params: Promise.resolve({ id: "selected" }) });
+    expect(response.status).toBe(409);
+    expect(response.headers.get("Cache-Control")).toBe("no-store");
+    expect(await response.json()).toMatchObject({
+      code: "IDEMPOTENCY_CONFLICT",
+      retryable: false,
+      steps: expect.arrayContaining([expect.objectContaining({ id: "queue", status: "error" })]),
+    });
+    expect(mocks.createJob).not.toHaveBeenCalled();
+    expect(mocks.event).not.toHaveBeenCalled();
+  });
+
+  it("accepts identical header and body operation identities without minting a new key", async () => {
+    replyRows({ id: "job", status: "queued" });
+    const response = await POST(new Request("https://gateway.test/api/printers/selected/certify", {
+      method: "POST",
+      headers: { "Idempotency-Key": "shared-operation-id", "Content-Type": "application/json" },
+      body: JSON.stringify({ idempotencyKey: "shared-operation-id", testPage: true }),
+    }), { params: Promise.resolve({ id: "selected" }) });
+    expect(response.status).toBe(200);
+    expect(mocks.createJob).toHaveBeenCalledWith("selected", expect.anything(),
+      expect.objectContaining({ idempotencyKey: "shared-operation-id", tenantId: "tenant" }));
+  });
+
   it("refuses a physical certification without a caller-owned idempotency key", async () => {
     replyRows({ id: "job", status: "queued" });
     const response = await POST(new Request("https://gateway.test/api/printers/selected/certify", {

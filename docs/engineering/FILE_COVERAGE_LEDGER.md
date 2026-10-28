@@ -2230,3 +2230,13 @@ Baseline `17a2892c2668865f807ea1696dcee75db21dfbdb`. No database reset or deploy
 | AUTHORED / NOT RUN | `tests/session-resource-repair.test.mjs` | Execute actual isolated Server Action and reject unkeyed/aliased identities |
 
 Baseline `c24e2eef1acfaffc788132f7c5816b7e48f112b2`. CI and physical printer verification unobserved; preserve TODO and BLOCKED from earlier full directory ledger.
+
+
+#### CERTIFICATION-DUAL-KEY-AMBIGUITY — 2026-10-28
+
+| Status | Module | Finding / fix |
+| --- | --- | --- |
+| PARTIAL | `src/app/api/printers/[id]/certify/route.ts` | Reject contradictory explicit header/body keys with stable no-retry conflict before physical intent |
+| AUTHORED / NOT RUN | `tests/certification-evidence.test.ts` | Source-backed direct route cases for conflict/no-job and exact matching key |
+
+Baseline `863088b65daae40228c08691065e034e76018e9a`; CI and physical paper tests unverified. Original TODO/BLOCKED directory inventory remains open.

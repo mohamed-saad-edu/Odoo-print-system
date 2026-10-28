@@ -2966,3 +2966,11 @@ At `main@9cc31103851f642543bb51dd22353487b00f5578`, GitHub recursive tree lists 
 - Change: the Server Action now requires an unmodified caller-supplied `idempotencyKey` of at least eight characters and forwards it unchanged to the canonical transactional service. Missing/malformed IDs return a client-safe 400 before admission; no generated key or auto-retry. The action has no in-repo UI call sites; future callers must supply and retain their identity.
 - Regression: extended the existing Node VM suite `tests/session-resource-repair.test.mjs` to execute the actual extracted action and the real exact-key validator with mocked auth/DB seam, reject missing/blank/Unicode-alias identities, and assert identity forwarded verbatim on repeated calls. **NOT RUN**: GitHub API does not execute the Node runtime; exact-commit CI still required.
 - Coverage: `src/app/actions.ts` PARTIAL (manager print boundary only), `src/lib/idempotency.ts` REVIEWED; `tests/session-resource-repair.test.mjs` AUTHORED/NOT RUN. Does not imply complete action/Agent/Odoo certification.
+
+
+### 2026-10-28 — CERTIFICATION-DUAL-KEY-AMBIGUITY
+
+- GitHub main baseline `863088b65daae40228c08691065e034e76018e9a`: printer certification accepted two mutually contradictory physical operation identities (`Idempotency-Key` header and JSON `idempotencyKey`) by silently selecting the header. A caller resubmitting under a different key could unintentionally authorize another print.
+- Root-cause fix: fail closed with `409 IDEMPOTENCY_CONFLICT` and `retryable:false` before payload creation/print admission when both identities differ; matching explicit identities still use the same key, preserving existing frontend flows and tenant authorization.
+- Direct route regressions added in `tests/certification-evidence.test.ts`: mismatched header/body produces no job or event, identical pair reaches the print service with the unchanged key. This is AUTHORED/NOT RUN pending completed exact-commit CI; static source inspection is not a test PASS.
+- Module statuses: `src/app/api/printers/[id]/certify` PARTIAL, `tests/certification-evidence.test.ts` AUTHORED/NOT RUN, Gateway/Odoo/Agent/Windows integrated physical output BLOCKED.
