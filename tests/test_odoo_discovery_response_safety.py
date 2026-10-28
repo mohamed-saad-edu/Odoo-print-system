@@ -36,7 +36,14 @@ def discovery(monkeypatch, agents=None, printers=None):
                  Mock(status_code=200, content=b"json", json=lambda: {"printers": printers})]
     get = Mock(side_effect=responses)
     monkeypatch.setattr(requests, "get", get)
-    namespace = {"requests": requests, "ValidationError": ValidationError, "validated_printer_geometry": validated_printer_geometry,
+    # Use the real Odoo identity gate; an impossible Gateway Agent ID must
+    # not reach an authorized binding picker via a mocked HTTP inventory.
+    policy_path = ROOT / "runtime_policy.py"
+    policy_namespace = {}
+    exec(compile(policy_path.read_text(encoding="utf-8"), str(policy_path), "exec"), policy_namespace)
+    namespace = {"requests": requests, "ValidationError": ValidationError,
+                 "is_exact_gateway_printer_id": policy_namespace["is_exact_gateway_printer_id"],
+                 "validated_printer_geometry": validated_printer_geometry,
                  "is_verified_runtime_printer": is_verified_runtime_printer,
                  "Forbidden": ValidationError, "_": lambda text: text,
                  "is_gateway_shared_printer": lambda printer: printer.get("sharedWithGateway", True) is True,
@@ -152,3 +159,27 @@ def test_oversized_discovery_responses_fail_closed(monkeypatch):
         controller.runtime_agents()
     with pytest.raises(ValidationError, match="unavailable"):
         controller.runtime_printers(agent_id="agent")
+
+
+@pytest.mark.parametrize("malformed", [
+    " agent", "agent ", "\\ufeffagent", "agent\\x00another",
+    "agent\\u0085another", "\\ud800", "x" * 121, "é" * 61,
+])
+def test_runtime_agent_picker_never_exposes_nonexact_gateway_execution_identity(monkeypatch, malformed):
+    controller, _, get = discovery(monkeypatch, agents=[
+        {"id": malformed, "lifecycle": "active", "name": "Looks like a real agent"},
+    ])
+    result = controller.runtime_agents()
+    assert result["agents"] == []
+    assert result["registeredAgentCount"] == 0
+    assert result["selectedAgentId"] is False
+    assert get.call_count == 1
+
+
+def test_runtime_agent_picker_keeps_valid_arabic_id_and_branch_assignment(monkeypatch):
+    controller, _, _ = discovery(monkeypatch, agents=[
+        {"id": "وكيل-1", "lifecycle": "active", "name": "طابعة الفرع"},
+    ])
+    result = controller.runtime_agents()
+    assert [agent["id"] for agent in result["agents"]] == ["وكيل-1"]
+    assert result["selectedAgentId"] == "وكيل-1"
