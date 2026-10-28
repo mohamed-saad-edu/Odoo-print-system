@@ -23,3 +23,15 @@ describe("opaque printer identity wire contract", () => {
     expect(isExactPrinterId("printer\uDC00")).toBe(false);
   });
 });
+
+describe("exact printer ID validation preserves diagnostic strings", () => {
+  it("keeps the original malformed string available for length-aware errors", () => {
+    function rejection(input: string) {
+      if (!isExactPrinterId(input)) return input.length > 120 ? "too long" : "invalid";
+      return "valid";
+    }
+    expect(rejection("p".repeat(121))).toBe("too long");
+    expect(rejection(" printer ")).toBe("invalid");
+    expect(rejection("printer")).toBe("valid");
+  });
+});

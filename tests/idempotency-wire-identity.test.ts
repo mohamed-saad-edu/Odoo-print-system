@@ -23,3 +23,15 @@ describe("opaque idempotency identity on the wire", () => {
     expect(isExactIdempotencyKey("op-🖨")).toBe(true);
   });
 });
+
+describe("exact idempotency key validation preserves rejected string diagnostics", () => {
+  it("does not narrow rejected string inputs to never", () => {
+    function rejection(input: string) {
+      if (!isExactIdempotencyKey(input)) return input.length > 200 ? "too long" : "invalid";
+      return "valid";
+    }
+    expect(rejection("k".repeat(201))).toBe("too long");
+    expect(rejection(" key ")).toBe("invalid");
+    expect(rejection("a-long-enough-operation-key")).toBe("valid");
+  });
+});

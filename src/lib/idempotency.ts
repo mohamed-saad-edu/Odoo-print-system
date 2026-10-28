@@ -50,7 +50,11 @@ export function generateIdempotencyKey(): string {
  * malformed incoming key could reveal or reuse someone else's accepted job
  * instead of rejecting the invalid caller identity.
  */
-export function isExactIdempotencyKey(value: unknown): value is string {
+// Keep rejected, already-typed string values alive for diagnostic errors.
+// Only unknown input needs narrowing to a string after successful validation.
+export function isExactIdempotencyKey(value: string): boolean;
+export function isExactIdempotencyKey(value: unknown): value is string;
+export function isExactIdempotencyKey(value: unknown): boolean {
   if (typeof value !== "string" || value.length < 1 || value.length > 200
       || value !== value.trim() || /[\u0000-\u001f\u007f-\u009f]/.test(value)) return false;
   try {
