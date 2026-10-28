@@ -240,7 +240,8 @@ def test_each_business_policy_hook_catches_only_after_savepoint():
 
 
 
-def test_recovery_scopes_to_captured_intent_company_before_reading_the_source():
+@pytest.mark.parametrize("source_reassigned", [False, True])
+def test_recovery_scopes_to_captured_intent_company_before_reading_the_source(source_reassigned):
     # Model record rules can hide a valid branch source until the Environment
     # has allowed_company_ids for the ORIGINAL committed intent company.
     # The old method read .exists() under the cron user's root company and
@@ -249,6 +250,7 @@ def test_recovery_scopes_to_captured_intent_company_before_reading_the_source():
 
     root = SimpleNamespace(id=801)
     branch = SimpleNamespace(id=802)
+    moved = SimpleNamespace(id=803)
     reads, routes, finalizations, failures = [], [], [], []
 
     class Cursor:
@@ -263,7 +265,8 @@ def test_recovery_scopes_to_captured_intent_company_before_reading_the_source():
         with_env=lambda scoped_env: intent,
     )
     record = SimpleNamespace(
-        company_id=branch, with_env=lambda scoped_env: record,
+        company_id=moved if source_reassigned else branch,
+        with_env=lambda scoped_env: record,
     )
 
     class Source:
@@ -299,10 +302,15 @@ def test_recovery_scopes_to_captured_intent_company_before_reading_the_source():
     addon._execute_dispatched_route(addon, calling_env, 41, 'stock.picking', 15, 'held-lease')
     assert not failures, failures
     assert reads == [branch.id], 'Source must be checked under captured company before .exists()'
-    assert routes == [branch.id], 'A valid branch intent must not be silently skipped'
     assert len(finalizations) == 1
-    assert finalizations[0]['status'] == 'dispatched'
-    assert finalizations[0]['print_job_id'] == 29
+    if source_reassigned:
+        assert routes == [], 'A source moved to another company cannot redirect the captured intent'
+        assert finalizations[0]['status'] == 'skipped'
+        assert 'company changed' in finalizations[0]['last_error'].lower()
+    else:
+        assert routes == [branch.id], 'A valid branch intent must not be silently skipped'
+        assert finalizations[0]['status'] == 'dispatched'
+        assert finalizations[0]['print_job_id'] == 29
 
 
 def test_intent_route_requires_durable_job_or_explicit_skip_and_savepoint():
