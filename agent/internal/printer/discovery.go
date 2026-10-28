@@ -1035,6 +1035,53 @@ func endpointHasNetworkAddress(endpoint, networkAddress string) bool {
 	return false
 }
 
+// A discovered IPP queue is an HTTP resource bound to a specific transport,
+// host and *effective* port. It is not merely the IP address reported by
+// network discovery. Map ipp/http and ipps/https to the same transport only
+// when the URI's port agrees with the independently observed port. Retain the
+// case-sensitive resource path to avoid merging queues on multi-queue servers.
+func normalizedDiscoveryIPPQueue(d DeviceInfo) (string, bool) {
+	u, err := url.Parse(d.Endpoint)
+	if err != nil || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.ForceQuery ||
+		u.Fragment != "" || u.RawFragment != "" {
+		return "", false
+	}
+	scheme := strings.ToLower(u.Scheme)
+	effectivePort := 631
+	transport := "http"
+	switch scheme {
+	case "ipp":
+	case "http":
+		effectivePort = 80
+	case "ipps":
+		transport = "https"
+	case "https":
+		effectivePort = 443
+		transport = "https"
+	default:
+		return "", false
+	}
+	if u.Port() != "" {
+		p, err := strconv.Atoi(u.Port())
+		if err != nil || p < 1 || p > 65535 {
+			return "", false
+		}
+		effectivePort = p
+	}
+	if effectivePort != d.Port {
+		return "", false
+	}
+	host := strings.ToLower(u.Hostname())
+	if ip := net.ParseIP(host); ip != nil {
+		host = ip.String()
+	}
+	resource := u.EscapedPath()
+	if resource == "" {
+		resource = "/"
+	}
+	return transport + "://" + net.JoinHostPort(host, strconv.Itoa(effectivePort)) + resource, true
+}
+
 func sameNetworkEndpoint(a, b DeviceInfo) bool {
 	// An installed queue is a distinct execution destination, even when its
 	// port references the same host as a directly discovered byte endpoint.
@@ -1048,10 +1095,18 @@ func sameNetworkEndpoint(a, b DeviceInfo) bool {
 	if !strings.EqualFold(a.NetworkAddress, b.NetworkAddress) || a.Port != b.Port {
 		return false
 	}
-	aIPP := a.Protocol == "ipp" || a.Protocol == "ipps"
-	bIPP := b.Protocol == "ipp" || b.Protocol == "ipps"
+	ipp := func(d DeviceInfo) bool {
+		return strings.EqualFold(d.Protocol, "ipp") || strings.EqualFold(d.Protocol, "ipps") ||
+			strings.EqualFold(d.ConnectionType, "ipp") || strings.EqualFold(d.ConnectionType, "ipps")
+	}
+	aIPP, bIPP := ipp(a), ipp(b)
 	if aIPP || bIPP {
-		return aIPP && bIPP && a.Protocol == b.Protocol && a.Endpoint == b.Endpoint
+		if !aIPP || !bIPP || !strings.EqualFold(a.Protocol, b.Protocol) {
+			return false
+		}
+		aResource, aOK := normalizedDiscoveryIPPQueue(a)
+		bResource, bOK := normalizedDiscoveryIPPQueue(b)
+		return aOK && bOK && aResource == bResource
 	}
 	return true
 }
