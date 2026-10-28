@@ -19,6 +19,15 @@ def is_exact_gateway_printer_id(value):
         return False
 
 
+def is_exact_gateway_job_id(value):
+    """Gateway /api/print/jobs GET uses the same exact 120-byte ID contract.
+
+    An ambiguous physical submission may only bind to the exact remote
+    job identity; trimming a response can reconcile the wrong operation.
+    """
+    return is_exact_gateway_printer_id(value)
+
+
 def is_gateway_shared_printer(printer):
     """Accept legacy inventory; explicit/malformed sharing metadata fails closed."""
     return isinstance(printer, dict) and printer.get("sharedWithGateway", True) is True
