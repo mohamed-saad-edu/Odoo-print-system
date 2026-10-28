@@ -11,6 +11,7 @@ import copy
 import datetime
 import importlib.util
 import json
+import re
 import uuid
 from pathlib import Path
 from types import SimpleNamespace
@@ -60,7 +61,8 @@ def _method(filename, cls_name, method_name, **injections):
     return ns[method_name]
 
 
-def test_outbox_persists_exact_local_operation_key_and_v2_wire_identity():
+@pytest.mark.parametrize("operation_key", [" receipt-operation-7 ", None, False, ""])
+def test_outbox_persists_exact_local_operation_key_and_v2_wire_identity(operation_key):
     installation_id = "74e0895b-2508-441e-904b-f19d64fc9be7"
     company = SimpleNamespace(id=42, parent_id=False)
     config = SimpleNamespace(
@@ -101,7 +103,7 @@ def test_outbox_persists_exact_local_operation_key_and_v2_wire_identity():
         db_now_utc=lambda _cr: datetime.datetime(2026, 10, 28),
         IntegrityError=type("IntegrityError", (Exception,), {}),
     )
-    original_key = " receipt-operation-7 "
+    original_key = operation_key
     job = create(
         Model(),
         company=company,
@@ -115,9 +117,12 @@ def test_outbox_persists_exact_local_operation_key_and_v2_wire_identity():
     assert job.id == 55
     assert len(saved) == 1
     assert saved[0]["printer_id"] == "طابعة-7"
-    assert saved[0]["idempotency_key"] == original_key
+    if isinstance(original_key, str) and original_key:
+        assert saved[0]["idempotency_key"] == original_key
+    else:
+        assert re.fullmatch(r"[0-9a-f]{32}", saved[0]["idempotency_key"])
     assert saved[0]["gateway_wire_idempotency_key"] == identity.wire_key(
-        2, company.id, original_key, installation_id
+        2, company.id, saved[0]["idempotency_key"], installation_id
     )
 
 
