@@ -1802,6 +1802,44 @@ class TestControlPlane(TransactionCase):
                     job._action_submit_trusted(raise_on_failure=False)
                     post.assert_called_once()
 
+    def test_26g3_gateway_partial_ack_never_auto_reprints(self):
+        """Test actual durable HTTP 200 admission, not only a status helper.
+
+        An accepted/possibly printed operation can report partial delivery
+        on the same reply. Record UNKNOWN with the exact Gateway job ID and
+        never post the same physical attempt a second time.
+        """
+        examples = (
+            ("partial", "paper delivery incomplete", "UNKNOWN_PARTIAL_DELIVERY:"),
+            ("unrecognized_future_status", False, "UNKNOWN_SUBMISSION_OUTCOME:"),
+            ("failed", "AGENT_EXECUTION_TIMEOUT: worker lost", "AGENT_EXECUTION_TIMEOUT:"),
+        )
+        for index, (remote_status, remote_error, expected_marker) in enumerate(examples):
+            with self.subTest(remote_status=remote_status):
+                job = self._submit_test_job(
+                    "test_200_unknown_delivery_%s_%s" % (index, uuid.uuid4().hex[:8])
+                )
+                gateway_job_id = "gw_partial_check_%s" % index
+                response = MagicMock()
+                response.status_code = 200
+                response.json.return_value = {
+                    "jobId": gateway_job_id, "status": remote_status,
+                    "error": remote_error,
+                }
+                with patch.object(type(self.gateway_config), "_validate_gateway_host", return_value=None), \
+                     patch("odoo.addons.print_gateway.models.gateway_http.post", return_value=response) as post:
+                    job._action_submit_trusted(raise_on_failure=False)
+                    job.invalidate_recordset([
+                        "status", "last_error", "next_retry_at", "gateway_job_id", "attempts",
+                    ])
+                    self.assertEqual(job.status, "unknown")
+                    self.assertEqual(job.gateway_job_id, gateway_job_id)
+                    self.assertFalse(job.next_retry_at)
+                    self.assertTrue((job.last_error or "").startswith(expected_marker))
+                    self.assertEqual(job.attempts, 1)
+                    job._action_submit_trusted(raise_on_failure=False)
+                    post.assert_called_once()
+
     def test_26d_gateway_config_unlink_checks_dependencies_before_remote_shutdown(self):
         """A config with dependent print jobs must fail before any Gateway shutdown side effect."""
         config_model = self.env["print_gateway.gateway_config"]
