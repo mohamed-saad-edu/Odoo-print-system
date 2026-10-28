@@ -500,17 +500,38 @@ async function insertQueuedJobAtomically({
 
     await enforceTenantJobEntitlements(tx, tenantId);
 
+    // A transaction can wait behind a tenant or Agent admission lock while
+    // older queued jobs expire. PostgreSQL now() is fixed at transaction
+    // START and would still count those expired rows as occupying capacity.
+    // Sample once after the contended locks and use the same DB timestamp
+    // for queue capacity, caller TTL, quota month and created_at.
+    const clockResult = await tx.execute(sql`SELECT clock_timestamp() AS now`);
+    const clockRows = (clockResult as unknown as { rows?: Array<{ now?: Date | string }> }).rows ?? [];
+    const rawNow = clockRows[0]?.now;
+    const dbNowMs = parseDbTimeMs(rawNow);
+    if (dbNowMs === null) {
+      throw new PrintJobInputError("Database clock is unavailable", "INTERNAL_ERROR", 500);
+    }
+    const dbNow = new Date(dbNowMs);
+    const effectiveExpiresAt = expiresAt ?? new Date(dbNow.getTime() + 60 * 60 * 1000);
+    if (!(effectiveExpiresAt instanceof Date) || Number.isNaN(effectiveExpiresAt.getTime()) || effectiveExpiresAt.getTime() <= dbNow.getTime()) {
+      throw new PrintJobInputError("expiresAt must be in the future", "INVALID_REQUEST", 400);
+    }
+    if (effectiveExpiresAt.getTime() - dbNow.getTime() > 24 * 60 * 60 * 1000) {
+      throw new PrintJobInputError("expiresAt exceeds the 24 hour maximum", "INVALID_REQUEST", 400);
+    }
+
     const counts = await tx.execute(sql`
       SELECT
-        COUNT(*) FILTER (WHERE agent_id = ${agentId} AND status = 'queued' AND expires_at > now())::int AS agent_queued,
+        COUNT(*) FILTER (WHERE agent_id = ${agentId} AND status = 'queued' AND expires_at > ${dbNow})::int AS agent_queued,
         -- pg_column_size() measures TOAST-compressed STORAGE bytes and can
         -- undercount a 5 MiB repetitive/base64 print payload by 100x+. The
         -- 128 MiB queue ceiling is a LOGICAL decoded-from-DB/HTTP memory
         -- budget: use uncompressed JSON text bytes for existing rows, just
         -- as we use JSON.stringify bytes for the incoming row. The agent
         -- lock above serializes admission, so the aggregate is atomic.
-        COALESCE(SUM(octet_length(payload::text)) FILTER (WHERE agent_id = ${agentId} AND status = 'queued' AND expires_at > now()), 0)::bigint AS agent_queued_payload_bytes,
-        COUNT(*) FILTER (WHERE agent_id = ${agentId} AND status IN ('claimed', 'printing') AND expires_at > now())::int AS agent_in_flight
+        COALESCE(SUM(octet_length(payload::text)) FILTER (WHERE agent_id = ${agentId} AND status = 'queued' AND expires_at > ${dbNow}), 0)::bigint AS agent_queued_payload_bytes,
+        COUNT(*) FILTER (WHERE agent_id = ${agentId} AND status IN ('claimed', 'printing') AND expires_at > ${dbNow})::int AS agent_in_flight
       FROM print_jobs WHERE tenant_id = ${tenantId} AND agent_id = ${agentId}
     `);
     const row = counts.rows[0] as {
@@ -525,29 +546,6 @@ async function insertQueuedJobAtomically({
       throw new AgentQueuedJobsFullError(agentId, agentQueued);
     }
     if (inFlight >= MAX_AGENT_IN_FLIGHT_JOBS) throw new AgentQueueFullError(agentId, inFlight);
-
-    // Sample the admission clock AFTER contended resource locks, then use
-    // this exact instant for both the quota month and stored job lifetime.
-    // The UTC month must not change between two independent SQL statements.
-    // PostgreSQL is the authoritative clock for print-job lifetime.
-    const clockResult = await tx.execute(sql`SELECT clock_timestamp() AS now`);
-    const clockRows = (clockResult as unknown as { rows?: Array<{ now?: Date | string }> }).rows ?? [];
-    const rawNow = clockRows[0]?.now;
-    // Raw PostgreSQL timestamps may arrive as UTC-naive strings. Date.parse
-    // interprets those as host-local time, shifting TTL and created_at when
-    // the Gateway host is not in UTC. Reuse the database-wide parser.
-    const dbNowMs = parseDbTimeMs(rawNow);
-    if (dbNowMs === null) {
-      throw new PrintJobInputError("Database clock is unavailable", "INTERNAL_ERROR", 500);
-    }
-    const dbNow = new Date(dbNowMs);
-    const effectiveExpiresAt = expiresAt ?? new Date(dbNow.getTime() + 60 * 60 * 1000);
-    if (!(effectiveExpiresAt instanceof Date) || Number.isNaN(effectiveExpiresAt.getTime()) || effectiveExpiresAt.getTime() <= dbNow.getTime()) {
-      throw new PrintJobInputError("expiresAt must be in the future", "INVALID_REQUEST", 400);
-    }
-    if (effectiveExpiresAt.getTime() - dbNow.getTime() > 24 * 60 * 60 * 1000) {
-      throw new PrintJobInputError("expiresAt exceeds the 24 hour maximum", "INVALID_REQUEST", 400);
-    }
 
     // One new logical print consumes one credit in the month of created_at,
     // even if the transaction had to wait across UTC midnight. Replays return

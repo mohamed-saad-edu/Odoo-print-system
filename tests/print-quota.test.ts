@@ -301,6 +301,46 @@ suite("tenant print quota", () => {
     )).rows[0].n)).toBe(1);
   });
 
+  it("does not let expired queued jobs block a fresh admission after waiting for the tenant lock", async () => {
+    const f = await seedFixture();
+    await setPlanLimit(f.tenantId, "unlimited");
+    // Saturate only the temporary Agent queue, not the subscription/rate
+    // allowance. All 256 jobs expire AFTER the new transaction begins but
+    // BEFORE it acquires the tenant's admission lock.
+    await pool().query(
+      `INSERT INTO print_jobs (id,tenant_id,agent_id,printer_id,status,payload,expires_at)
+       SELECT 'stale-queue-' || n, $1, $2, $3, 'queued',
+         '{"type":"raw","protocol":"raw","encoding":"base64","data":"cQ=="}'::jsonb,
+         clock_timestamp() + interval '500 milliseconds'
+       FROM generate_series(1, 256) AS n`,
+      [f.tenantId, f.agentId, f.printerId],
+    );
+    const blocker = await pool().connect();
+    let result: Promise<unknown> | undefined;
+    try {
+      await blocker.query("BEGIN");
+      await blocker.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`print_jobs:tenant:${f.tenantId}`]);
+      result = createPrintJobForPrinter(f.printerId, payload("fresh-after-stale-queue"), {
+        tenantId: f.tenantId, requestedBy: "quota-test",
+        idempotencyKey: "fresh-after-stale-queue",
+      }).then(value => ({ value }), error => ({ error }));
+      await expect.poll(async () => Number((await pool().query(
+        "SELECT count(*)::int AS n FROM pg_locks WHERE locktype = 'advisory' AND NOT granted AND objid = hashtext($1)::oid",
+        [`print_jobs:tenant:${f.tenantId}`],
+      )).rows[0].n)).toBe(1);
+      await blocker.query("SELECT pg_sleep(0.8)");
+      await blocker.query("COMMIT");
+      const outcome = await result as { value?: { isReused: boolean }; error?: Error };
+      expect(outcome.error).toBeUndefined();
+      expect(outcome.value?.isReused).toBe(false);
+      expect((await pool().query("SELECT count(*)::int AS n FROM print_jobs WHERE tenant_id=$1", [f.tenantId])).rows[0].n).toBe(257);
+    } finally {
+      await blocker.query("ROLLBACK");
+      blocker.release();
+      if (result) await result;
+    }
+  });
+
   it("does not charge a print whose explicit expiry elapsed while admission waited for its tenant lock", async () => {
     const f = await seedFixture();
     await setPlanLimit(f.tenantId, 1);

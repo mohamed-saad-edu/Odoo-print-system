@@ -282,6 +282,19 @@ describe("clock authority is enforced in the source", () => {
     expect(read("src/lib/entitlements.ts")).toContain("quotaCycleStartSql(cycleAt)");
   });
 
+  it("calculates Agent admission capacity from the DB clock AFTER lock waits, not transaction-start now()", () => {
+    const source = read("src/lib/print-job-service.ts");
+    const lock = source.indexOf("await enforceTenantJobEntitlements(tx, tenantId)");
+    const admissionStamp = source.indexOf("const dbNow = new Date(dbNowMs)");
+    const countsStart = source.indexOf("const counts = await tx.execute");
+    const countsEnd = source.indexOf("const row = counts.rows[0]", countsStart);
+    const filters = source.slice(countsStart, countsEnd);
+    expect(admissionStamp).toBeGreaterThan(lock);
+    expect(countsStart).toBeGreaterThan(admissionStamp);
+    expect(filters.match(/expires_at > \\$\\{dbNow\\}/g)).toHaveLength(3);
+    expect(filters).not.toContain("expires_at > now()");
+  });
+
   it("stamps job lifetime timestamps from the single database clock read", () => {
     const service = read("src/lib/print-job-service.ts");
     const clockRead = service.indexOf("SELECT clock_timestamp() AS now");
