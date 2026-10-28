@@ -71,6 +71,48 @@ export class PlatformMutationAuthorityChangedError extends Error {
   }
 }
 
+/**
+ * Confidential Platform Owner reads need a live authorization fence through
+ * their final SELECT, not merely a preflight check. This read-only guard does
+ * NOT require mutation's five-minute password step-up. Lock ALL three durable
+ * authority rows together so revocation/ownership changes must serialize
+ * with the subsequent commercial-data SELECT in this same transaction.
+ */
+export async function requirePlatformReadAuthorityInTransaction(
+  tx: DbTx,
+  claims: PlatformOwnerClaims,
+): Promise<void> {
+  if (claims.ver !== 2 || claims.kind !== "platform" || !claims.familyId || !claims.sid) {
+    throw new PlatformUnauthorizedError();
+  }
+  const live = await tx.execute(sql`
+    SELECT r.id
+    FROM users u
+    JOIN refresh_tokens r ON r.user_id = u.id
+    JOIN platform_session_security s ON s.user_id = u.id AND s.family_id = r.family_id
+    WHERE u.id = ${claims.userId}
+      AND u.email = ${claims.email}
+      AND u.email_verified_at IS NOT NULL
+      AND u.is_platform_owner = true
+      AND r.family_id = ${claims.familyId}
+      AND r.id = ${claims.sid}
+      AND r.email = ${claims.email}
+      AND r.tenant_id IS NULL
+      AND r.kind = 'platform'
+      AND r.revoked_at IS NULL
+      AND r.expires_at > clock_timestamp()
+      AND ${claims.exp} > EXTRACT(EPOCH FROM clock_timestamp())
+      AND ${claims.iat} <= EXTRACT(EPOCH FROM clock_timestamp()) + 60
+      AND s.password_version = encode(sha256(convert_to(u.password_hash, 'UTF8')), 'hex')
+      AND s.revoked_at IS NULL
+      AND s.expires_at > clock_timestamp()
+      AND s.last_seen_at > clock_timestamp() - interval '30 minutes'
+      AND s.last_seen_at <= clock_timestamp()
+      AND s.password_verified_at <= clock_timestamp()
+    FOR SHARE OF u, r, s
+  `);
+  if (live.rows.length !== 1) throw new PlatformUnauthorizedError();
+}
 /** Recheck admitted platform authority after resource locks and before mutation. */
 export async function requirePlatformActorInTransaction(
   tx: DbTx,
