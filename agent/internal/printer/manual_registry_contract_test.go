@@ -83,3 +83,66 @@ func TestRegisterManualNormalizesUSBSpoolerToDocumentTransport(t *testing.T) {
 		t.Fatalf("USB driver queue must use spooler transport, got %+v", rows[0])
 	}
 }
+
+
+func TestManualRegistrationCannotInventObservedIPPIdentityOrGeometry(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "printers.json")
+	const claimed = "urn:uuid:11111111-2222-3333-4444-555555555555"
+	rows, err := RegisterManual(path, DeviceInfo{
+		Name: "Unprobed IPP printer", ConnectionType: "ipp", Protocol: "ipp",
+		Endpoint: "ipp://192.168.1.20/ipp/print", PrinterType: "physical",
+		Enabled: true, Capabilities: map[string]interface{}{
+			"ipp_printer_uuid": claimed,
+			"uuid": claimed,
+			"printer_uuid": claimed,
+			"ipp_capabilities": map[string]interface{}{
+				"printer_uuid": claimed,
+				"document_formats": []interface{}{"application/pdf"},
+			},
+			"geometry": map[string]interface{}{"printer_id": "injected", "source": "ipp"},
+			"operational_verification": map[string]interface{}{"version": 1},
+		},
+	})
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("manual registration failed: %v rows=%+v", err, rows)
+	}
+	caps := rows[0].Capabilities
+	if uuid := verifiedIPPUUIDFromCapabilities(caps); uuid != "" {
+		t.Fatalf("manual fields were accepted as a verified IPP printer UUID: %q", uuid)
+	}
+	if caps["uuid"] != nil || caps["printer_uuid"] != nil ||
+		caps["geometry"] != nil || caps["operational_verification"] != nil {
+		t.Fatalf("unverified identity/measurement became persisted physical proof: %+v", caps)
+	}
+	nested, ok := caps["ipp_capabilities"].(map[string]interface{})
+	if !ok || nested["printer_uuid"] != nil || nested["document_formats"] == nil {
+		t.Fatalf("real format hints should survive without a claimed service UUID: %+v", caps)
+	}
+	// Never mutate a caller-owned nested capability map in place.
+}
+
+func TestManualIPPCapabilityUpdateCannotReplacePreviouslyVerifiedUUID(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "printers.json")
+	prior := registryIPPIdentityFixture("established-ipp", "ipp://192.168.1.20/ipp/print", registryIPPUUIDA)
+	if err := SaveRegistry(path, []DeviceInfo{prior}); err != nil {
+		t.Fatal(err)
+	}
+	changed := DeviceInfo{
+		ID: prior.ID, Name: "Updated display label", ConnectionType: "ipp",
+		Protocol: "ipp", Endpoint: prior.Endpoint, PrinterType: "physical",
+		Enabled: false, Capabilities: map[string]interface{}{
+			"ipp_printer_uuid": registryIPPUUIDB,
+			"ipp_capabilities": map[string]interface{}{"printer_uuid": registryIPPUUIDB},
+		},
+	}
+	rows, err := RegisterManual(path, changed)
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("manual label update failed: %v rows=%+v", err, rows)
+	}
+	if got := verifiedIPPUUIDFromCapabilities(rows[0].Capabilities); got != registryIPPUUIDA {
+		t.Fatalf("untrusted update replaced saved verified identity: %q", got)
+	}
+	if rows[0].Capabilities["identity_collision"] != nil {
+		t.Fatalf("unverified operator metadata falsely disabled verified printer: %+v", rows[0].Capabilities)
+	}
+}
