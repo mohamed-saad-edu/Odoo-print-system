@@ -542,9 +542,13 @@ export function discoverPrinters(): Promise<DiscoverResult> {
 
 export async function setPrinterSharing(printerId: string, sharedWithGateway: boolean): Promise<{ printerId: string; sharedWithGateway: boolean }> {
   const id = printerId;
-  if (!id || id.trim() !== id || new TextEncoder().encode(id).length > 256 || id.startsWith("-") || /[\u0000-\u001f\u007f-\u009f]/.test(id) || typeof sharedWithGateway !== "boolean") {
+  if (typeof id !== "string" || !id || id.trim() !== id || new TextEncoder().encode(id).length > 256 || id.startsWith("-") || /[\u0000-\u001f\u007f-\u009f]/.test(id) || typeof sharedWithGateway !== "boolean") {
     throw new Error("Invalid local printer sharing request");
   }
+  // TextEncoder and JSON.stringify can silently replace lone UTF-16
+  // surrogates with U+FFFD before the native Rust/Agent command executes.
+  // Reject malformed source Unicode rather than change the target queue.
+  try { encodeURIComponent(id); } catch { throw new Error("Invalid local printer sharing request"); }
   const reply = await invoke<unknown>("set_printer_sharing", { printerId: id, sharedWithGateway });
   if (!reply || typeof reply !== "object" || Array.isArray(reply)) throw new Error("Invalid local printer sharing acknowledgment");
   const value = reply as Record<string, unknown>;

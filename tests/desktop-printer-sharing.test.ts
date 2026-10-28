@@ -312,13 +312,19 @@ describe("native sharing IPC DTO boundary", () => {
   });
   it("rejects non-exact, flag-smuggling, control and oversize UTF8 IDs before native invocation", async () => {
     const { setPrinterSharing } = await import("../src/desktop/lib/ipc");
-    for (const id of ["", " local", "local ", "-config", "local\nqueue", "local\u0085queue", "ط".repeat(129)]) {
+    for (const id of ["", " local", "local ", "-config", "local\nqueue", "local\u0085queue", "ط".repeat(129),
+      "\uD800", "\uDC00", "printer\uD800id", "printer\uDC00id"]) {
       await expect(setPrinterSharing(id, true)).rejects.toThrow("Invalid local printer sharing request");
     }
     expect(boundary.invoke).not.toHaveBeenCalled();
     const id = "ط".repeat(128);
     boundary.invoke.mockResolvedValue({ printerId: id, sharedWithGateway: true });
     await expect(setPrinterSharing(id, true)).resolves.toEqual({ printerId: id, sharedWithGateway: true });
+    // A valid pair remains a single exact UTF-8 identity; reject only
+    // malformed lone surrogates, never real Arabic/emoji printer names.
+    const astral = "queue-\uD83D\uDDA8";
+    boundary.invoke.mockResolvedValueOnce({ printerId: astral, sharedWithGateway: true });
+    await expect(setPrinterSharing(astral, true)).resolves.toEqual({ printerId: astral, sharedWithGateway: true });
   });
   it("normalizes legacy absence, preserves private health and never trusts supplied local completion", async () => {
     const { getPrinters } = await import("../src/desktop/lib/ipc");

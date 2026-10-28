@@ -3004,3 +3004,10 @@ At `main@9cc31103851f642543bb51dd22353487b00f5578`, GitHub recursive tree lists 
 - Root cause: the guards `isExactPrinterId` and `isExactIdempotencyKey` are type predicates. Within `id !== null && !guard(id)`, TypeScript correctly knows a pre-narrowed `string` cannot be anything other than `never`, so using `id.length` in that failure branch is a type error.
 - Fix: compute `jobIdLength` and `operationKeyLength` before narrowing in BOTH legacy/v2 HTTP GET handlers, preserving every validation predicate and wire error. Extend the existing PostgreSQL `tests/print-idempotency.test.ts` matrix with 121-byte job IDs and 201-character replay keys to assert exact `400` and stable human error category. **NOT RUN** until a new commit build/test actually completes.
 - Status: `src/app/api/print/jobs`, `src/app/api/print/jobs/v2` PARTIAL; `tests/print-idempotency.test.ts` AUTHORED/NOT RUN; CI previous Docker run FAILED and must be retested, not mislabeled PASS.
+
+
+### 2026-10-28 — DESKTOP-TAURI-LOCAL-PRINTER-UNICODE-IDENTITY
+
+- Baseline `af3656635a0b3a38f9618574b4ed36f861813747`. `src/desktop/lib/ipc.ts:setPrinterSharing` checked a local printer's 256 UTF-8 byte bound with `TextEncoder`, which silently replaces unpaired UTF-16 surrogates. The Tauri/Rust JSON boundary could therefore receive a printer ID different from the original WebView input. Native queue mutation must never normalize a malformed ID into a different target.
+- Fix: preserve the existing exact local queue rules and add strict Unicode round-trip validation with `encodeURIComponent` before invoking `set_printer_sharing`; reject nonstrings, lone high/low surrogate, mixed malformed identifiers. Valid Arabic and valid surrogate pairs remain supported. No credential or physical printer changes.
+- Regression: `tests/desktop-printer-sharing.test.ts` adds malformed UTF-16 reject-before-IPC cases and valid Unicode emoji success. AUTHORED/NOT RUN until actual Vitest run. `src/desktop/lib/ipc.ts` PARTIAL; `src-tauri/src/commands.rs`, native Go/Windows hardware and printer share synchronization remain TODO/BLOCKED.

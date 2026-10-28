@@ -2272,3 +2272,14 @@ Source baseline `f753a984a71651868b71feb2f9c8d751f9e7e8ab`; do not mark CI PASS 
 | OBSERVED FAILED / PENDING RECHECK | Docker `40614749699` | TS2339 in both routes; unrelated desktop TS2304 was fixed by concurrent commit |
 
 GitHub main baseline `4ba18e5e00c8a5d86f42bfc55c2e576c2b621a77`; full CI/Postgres/physical print unverified.
+
+
+#### DESKTOP-TAURI-LOCAL-PRINTER-UNICODE-IDENTITY — 2026-10-28
+
+| Status | Module | Contract |
+| --- | --- | --- |
+| PARTIAL | `src/desktop/lib/ipc.ts` | Reject unpaired UTF-16 in exact local sharing printer ID before invoking Rust; avoid wrong-target mutation |
+| AUTHORED / NOT RUN | `tests/desktop-printer-sharing.test.ts` | Invalid high/low surrogate IDs cannot reach native invocation; valid astral Unicode succeeds |
+| TODO / BLOCKED | `src-tauri/src/commands.rs`, `agent/internal/printer` | Verify full wire/Windows behavior on supported hardware |
+
+Baseline `af3656635a0b3a38f9618574b4ed36f861813747`; exact-SHA compile, Vitest, Go/Tauri and physical output remain unverified.
