@@ -5032,3 +5032,9 @@ msgstr "تغيّر نوع المستند في ربط الطباعة قبل إن�
 #: code:addons/print_gateway/models/print_router.py:0
 msgid "The print binding report changed before the durable job could be created."
 msgstr "تغيّر التقرير المحدد في ربط الطباعة قبل إنشاء المهمة المحفوظة؛ أعد اختيار التقرير."
+
+#. module: print_gateway
+#. odoo-python
+#: code:addons/print_gateway/customer_presentation.py:0
+msgid "The print rule or source company changed after this event. No print was sent. Ask an administrator to review the route and submit a new request if needed."
+msgstr "تغيّرت قاعدة الطباعة أو شركة المستند بعد تسجيل الحدث. لم يتم إرسال أي مهمة طباعة. اطلب من المسؤول مراجعة مسار الطباعة وإرسال طلب جديد عند الحاجة."
