@@ -32,6 +32,18 @@ async function evaluate(path, deps) {
   return mod.namespace;
 }
 
+test('native VM exercises the actual exact idempotency key contract, never a permissive mock', async () => {
+  const context = createContext({ Buffer, Date, Error, console, Request, Response, URL, process });
+  const contracts = await printingContractModules(context, sql);
+  const exactKey = contracts.get('idempotency')?.namespace.isExactIdempotencyKey;
+  assert.equal(typeof exactKey, 'function');
+  assert.equal(exactKey('receipt-operation-2026'), true);
+  assert.equal(exactKey('طلب_طباعة_١'), true);
+  for (const invalid of [' receipt-operation-2026', 'receipt-operation-2026 ', 'op-\uD800', '\uDC00-op']) {
+    assert.equal(exactKey(invalid), false, 'invalid wire key accepted');
+  }
+});
+
 test('native VM exercises the actual exact printer ID contract, never a permissive mock', async () => {
   const context = createContext({ Buffer, Date, Error, console, Request, Response, URL, process });
   const contracts = await printingContractModules(context, sql);
