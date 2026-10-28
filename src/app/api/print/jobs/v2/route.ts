@@ -177,7 +177,7 @@ export async function POST(req: Request) {
         entitlement: error.entitlement,
         limit: error.limit,
         used: error.used,
-        upgradeRequired: true,
+        upgradeRequired: false,
         retryable: true,
       }, { status: 429, headers: { "Retry-After": "60", "Cache-Control": "no-store" } });
     }
