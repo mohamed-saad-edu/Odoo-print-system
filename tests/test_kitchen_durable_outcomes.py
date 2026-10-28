@@ -246,6 +246,17 @@ def test_gateway_failed_with_unknown_evidence_never_exposes_safe_station_retry(m
     assert cursor.commits == 1 and cursor.closed
 
 
+def test_consistent_gateway_job_aliases_preserve_the_existing_submission_contract():
+    router, job, cursor, sent, _order = fixture(reply(201, {
+        "jobId": "gateway-original", "id": "gateway-original", "status": "queued",
+    }))
+    result = router._submit_durable_job(7, structured_outcome=True)
+    assert result["status"] in ("queued", "submitted")
+    assert job.gateway_job_id == "gateway-original"
+    assert job.status == "submitted"
+    assert len(sent) == 1 and cursor.closed
+
+
 @pytest.mark.parametrize("remote_response", [
     {"jobId": "gateway-original", "id": "gateway-other", "status": "success"},
     {"jobId": "gateway-original", "id": " gateway-original", "status": "success"},
