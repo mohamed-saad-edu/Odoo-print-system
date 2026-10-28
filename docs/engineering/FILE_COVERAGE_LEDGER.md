@@ -2094,3 +2094,26 @@ AUTHORED agent/internal/queue/job_identity_immutability_test.go — direct SQLit
 ```
 
 Evidence is detailed in [SYSTEM_UNIFICATION_NOTEBOOK.md](SYSTEM_UNIFICATION_NOTEBOOK.md) (`LEDGER-JOB-ID-IMMUTABILITY-2026-10-28`). Exact-head Go/Windows tests and physical print execution are NOT VERIFIED, so none of these paths is marked DONE.
+
+
+### SSR/ACTIONS-LIVE-READ-001 — authenticated read-path partial coverage (2026-10-28)
+
+```text
+PARTIAL src/lib/billing-page-snapshot.ts — new owner-only tenant/session-fenced subscription and quota snapshot
+PARTIAL src/app/billing/page.tsx — protected commercial SSR projection
+PARTIAL src/app/page.tsx — protected homepage workspace/owner plan SSR projection
+PARTIAL src/lib/dashboard-state.ts — single-transaction executor for fleet and live/archived job snapshot
+PARTIAL src/app/dashboard/page.tsx — protected fleet/dashboard SSR projection
+PARTIAL src/app/actions.ts — protected getDashboardState and getDashboardJobs refresh actions; other mutations not reaudited here
+PARTIAL tests/fleet-cursor-route.test.ts — repaired mock DB transaction boundary
+AUTHORED tests/billing-page-owner-snapshot.contract.test.ts — guard/order/source contract
+AUTHORED tests/billing-page-snapshot-live-owner.integration.test.ts — PG owner revoke/suspend/downgrade race
+AUTHORED tests/authenticated-home-current-authority.contract.test.ts — homepage SSR boundary
+AUTHORED tests/dashboard-current-authority.contract.test.ts — initial and refresh read fence contract
+AUTHORED tests/dashboard-current-authority.integration.test.ts — PG concurrent revocation and private job history
+PARTIAL tests/production-hardening-contract.test.ts — updated dashboard source guard expectation
+PARTIAL tests/test-suite-classification.contract.test.ts — explicit registry completeness enforcement
+PARTIAL vitest.test-groups.mts — 17 formerly orphaned DB suites plus 2 newly authored suites registered
+```
+
+Complete repository tree audit (untruncated) found all 71 integration-named files registered at the recorded head; tests still require PostgreSQL CI PASS. No source or schema-wide VERIFIED claim is implied. See [SYSTEM_UNIFICATION_NOTEBOOK.md](SYSTEM_UNIFICATION_NOTEBOOK.md) SSR/ACTIONS-LIVE-READ-001 for change references and residual risks.
