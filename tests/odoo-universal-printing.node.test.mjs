@@ -99,6 +99,30 @@ test("unknown file page boundaries, unverified endpoints and raw IPP image are e
   assert.deepEqual(Array.from(instance.filteredPrinters, p => p.id), []);
 });
 
+test("Odoo browser printer proof uses exact UTF-8 ID and method strength", async () => {
+  const { validatedOperationalVerification, isVerifiedRuntimePrinter } = await load("js/printer_verification.js");
+  for (const [label, id, expected] of [
+    ["120-byte Arabic", "ط".repeat(60), true],
+    ["122-byte Arabic", "ط".repeat(61), false],
+    ["120-byte emoji", "🖨".repeat(30), true],
+    ["124-byte emoji", "🖨".repeat(31), false],
+    ["invalid high surrogate", "\uD800", false],
+    ["invalid low surrogate", "\uDC00", false],
+    ["leading BOM", "\uFEFFprinter", false],
+    ["interior BOM", "pri\uFEFFnter", true],
+  ]) {
+    const current = printer(id, false);
+    assert.equal(Boolean(validatedOperationalVerification(current.capabilities.operational_verification, current, now)), expected, label);
+    assert.equal(isVerifiedRuntimePrinter(current, now), expected, label + " picker");
+  }
+  const forged = printer("hardware-forged", false);
+  forged.capabilities.operational_verification.identity_strength = "device";
+  assert.equal(validatedOperationalVerification(forged.capabilities.operational_verification, forged, now), null);
+  assert.equal(isVerifiedRuntimePrinter(forged, now), false);
+  const picker = await field([forged]);
+  assert.deepEqual(Array.from(picker.filteredPrinters), []);
+});
+
 const fixtures = JSON.parse(fs.readFileSync("contracts/printer-operational-verification-fixtures.json", "utf8"));
 for (const entry of fixtures.proofCases) {
   test(`operational reader matches shared Gateway/Agent vector: ${entry.name}`, async () => {
