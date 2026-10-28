@@ -5,7 +5,7 @@ from werkzeug.exceptions import Forbidden
 from odoo import http
 from odoo.http import request
 from odoo.exceptions import ValidationError
-from ..runtime_policy import is_gateway_shared_printer, is_exact_gateway_printer_id
+from ..runtime_policy import is_gateway_shared_printer, is_exact_gateway_printer_id, unambiguous_inventory_rows
 from ..printer_geometry import validated_printer_geometry
 from ..printer_verification import is_verified_runtime_printer
 
@@ -228,6 +228,7 @@ class PrintGatewayRuntimePrinterController(http.Controller):
                 'freshness': freshness,
                 'lastSeenAt': agent.get('lastSeenAt') if isinstance(agent.get('lastSeenAt'), str) else False,
             })
+        sanitized = unambiguous_inventory_rows(sanitized)
         # Binding pickers must only expose Agents explicitly assigned to the
         # selected Odoo scope. With no Branch selected, a company-wide binding
         # may use any Agent assigned to the root Company or one of its direct
@@ -380,4 +381,5 @@ class PrintGatewayRuntimePrinterController(http.Controller):
                 'agentId': returned_agent_id,
                 'agentName': agent.get('name') if isinstance(agent.get('name'), str) else selected_agent_id,
             })
+        sanitized = unambiguous_inventory_rows(sanitized)
         return {'enabled': True, 'selectedAgentId': selected_agent_id, 'printers': sanitized}

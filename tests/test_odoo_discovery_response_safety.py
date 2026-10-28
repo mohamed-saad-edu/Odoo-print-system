@@ -43,6 +43,7 @@ def discovery(monkeypatch, agents=None, printers=None):
     exec(compile(policy_path.read_text(encoding="utf-8"), str(policy_path), "exec"), policy_namespace)
     namespace = {"requests": requests, "ValidationError": ValidationError,
                  "is_exact_gateway_printer_id": policy_namespace["is_exact_gateway_printer_id"],
+                 "unambiguous_inventory_rows": policy_namespace["unambiguous_inventory_rows"],
                  "validated_printer_geometry": validated_printer_geometry,
                  "is_verified_runtime_printer": is_verified_runtime_printer,
                  "Forbidden": ValidationError, "_": lambda text: text,

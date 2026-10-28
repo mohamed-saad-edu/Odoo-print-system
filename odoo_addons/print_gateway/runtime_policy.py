@@ -33,6 +33,22 @@ def is_gateway_shared_printer(printer):
     return isinstance(printer, dict) and printer.get("sharedWithGateway", True) is True
 
 
+def unambiguous_inventory_rows(rows):
+    """Deduplicate identical opaque identities without accepting conflicts."""
+    seen = {}
+    ambiguous = set()
+    for record in rows:
+        identity = record.get("id") if isinstance(record, dict) else None
+        if not is_exact_gateway_printer_id(identity):
+            continue
+        if identity in seen:
+            if seen[identity] != record:
+                ambiguous.add(identity)
+        else:
+            seen[identity] = record
+    return [record for identity, record in seen.items() if identity not in ambiguous]
+
+
 def inventory_has_shared_printer(body, printer_id):
     """Fresh authenticated inventory must prove the exact primary identity."""
     if not is_exact_gateway_printer_id(printer_id):
@@ -40,8 +56,8 @@ def inventory_has_shared_printer(body, printer_id):
     printers = body.get("printers") if isinstance(body, dict) else None
     if not isinstance(printers, list):
         return False
-    for printer in printers:
-        if not isinstance(printer, dict) or printer.get("id") != printer_id:
+    for printer in unambiguous_inventory_rows(printers):
+        if printer.get("id") != printer_id:
             continue
         agent = printer.get("agent")
         if (printer.get("lifecycle") == "active" and is_gateway_shared_printer(printer)
