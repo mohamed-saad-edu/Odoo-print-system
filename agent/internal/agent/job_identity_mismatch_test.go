@@ -7,7 +7,6 @@ import (
 	"net/http/httptest"
 	"sync"
 	"testing"
-
 )
 
 func TestAgentIdentityConflictRefusesHardwareWithoutRequeueingAnotherPayload(t *testing.T) {
