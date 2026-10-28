@@ -246,7 +246,9 @@ describe("production hardening contracts", () => {
     const lifecycle = read("src/app/api/agents/[id]/route.ts");
     const helper = read("src/lib/agent-lifecycle.ts");
     const dashboardState = read("src/lib/dashboard-state.ts");
-    expect(dashboard).toContain("loadDashboardStateForTenant(claims.tenantId)");
+    expect(dashboard).toContain("loadDashboardStateForTenant(claims.tenantId, {}, tx)");
+    expect(dashboard).toContain("await requireActiveTenantInTransaction(tx, claims.tenantId);");
+    expect(dashboard).toContain('await requireManagerActorInTransaction(tx, claims, "jobs.read");');
     expect(dashboardState).toContain("eq(agents.tenantId, tenantId)");
     expect(dashboardState).toContain("eq(printers.tenantId, tenantId)");
     // The dashboard delegates jobs to the shared history reader. Both live
