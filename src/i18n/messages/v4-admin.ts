@@ -180,7 +180,7 @@ export const v4AdminAr = {
   "v4.admin.priceAmount": "سعر الباقة (اتركه فارغًا للاستفسار)",
   "v4.admin.priceCurrency": "العملة",
   "v4.admin.priceOnRequest": "السعر عند الطلب",
-  "v4.admin.priceInvalid": "أدخل سعرًا من ٠ إلى ٢١٬٤٧٤٬٨٣٦٫٤٧ وبمنزلتين عشريتين كحد أقصى.",
+  "v4.admin.priceInvalid": "أدخل سعرًا من 0 إلى 21,474,836.47 وبمنزلتين عشريتين كحد أقصى.",
   "v4.admin.waitingJobs": "مهام بانتظار الطباعة",
   "v4.admin.processingJobs": "مهام قيد المعالجة",
   "v4.admin.agentsAttention": "أجهزة تحتاج إلى متابعة",
