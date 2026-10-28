@@ -2056,3 +2056,29 @@ AUTHORED tests/odoo-legacy-resolution-inventory-live-authority.integration.test.
 ```
 
 Historical receipt lookup rules are unchanged. Exact-SHA PostgreSQL CI confirmation and multi-worker collision tests remain NOT RUN; see SYSTEM_UNIFICATION_NOTEBOOK.md.
+
+#### CONSOLE-READ-AUTHORITY-010 additive files / existing read routes
+
+Current main changes do not change the historical full-tree inventory count above. Only the listed GET/read boundaries were code-reviewed; none is VERIFIED without exact-SHA CI.
+
+```text
+AUTHORED src/lib/console-read-authority.ts — shared tenant/manager/Agent locked read guard
+PARTIAL  src/app/api/agents/route.ts — Agent fleet GET fenced only
+PARTIAL  src/app/api/printers/route.ts — printer fleet GET fenced only
+PARTIAL  src/app/api/jobs/route.ts — job-history GET fenced; DELETE still separate
+PARTIAL  src/app/api/jobs/[id]/route.ts — live/archived detail + payload GET
+PARTIAL  src/lib/job-history.ts — optional transactional SQL executor
+PARTIAL  src/app/api/agents/[id]/route.ts — detail GET source separately updated on main
+PARTIAL  src/app/api/printers/[id]/route.ts — detail GET source separately updated on main
+AUTHORED tests/job-detail-live-authority.integration.test.ts — real PostgreSQL suspension/revocation and print payload policy
+AUTHORED tests/fleet-live-authorization.integration.test.ts — Agent/printer/job history + individual detail auth races
+PARTIAL  .github/workflows/ci.yml — bounded pending main workflow and per-SHA job rules
+PARTIAL  .github/workflows/docker.yml — bounded pending workflow, image verification retained
+PARTIAL  .github/workflows/build-windows.yml — bounded pending workflow, native tests retained
+PARTIAL  .github/workflows/security-supply-chain.yml — bounded pending workflow, security retained
+PARTIAL  .github/workflows/static-security.yml — bounded pending workflow, security retained
+PARTIAL  .github/workflows/native-backports.yml — bounded pending workflow, native tests retained
+PARTIAL  tests/ci-main-preserve-running-gates.test.mjs — workflow policy regression, CI pending
+```
+
+Source and contract: SYSTEM_UNIFICATION_NOTEBOOK.md CONSOLE-READ-AUTHORITY-010. Do not mark a path DONE/VERIFIED merely because the GitHub Contents API accepted a commit; transactional PostgreSQL RED/GREEN, typecheck, Go/Windows, Odoo and full latest-HEAD gates are not yet proven. No hardware printing or populated rollback rehearsal.
