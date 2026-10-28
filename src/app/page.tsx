@@ -5,6 +5,8 @@ import { cookies } from "next/headers";
 import { db } from "../db";
 import { plans, tenantSubscriptions, tenants } from "../db/schema";
 import { eq } from "drizzle-orm";
+import { requireActiveTenantInTransaction, TenantSuspendedError, TenantDeletedError } from "../lib/tenant-guard";
+import { requireManagerActorInTransaction, ManagerMutationAuthorityChangedError } from "../lib/manager-mutation-authorization";
 import { ThemeToggle } from "../components/ThemeToggle";
 import { LandingMotion } from "../components/marketing/LandingMotion";
 import { MobileNavigation } from "../components/marketing/MobileNavigation";
@@ -53,40 +55,57 @@ export default async function Home() {
   );
 
   if (claims) {
-    const [tenant, subscription] = await Promise.all([
-      db.query.tenants.findFirst({
-        where: eq(tenants.id, claims.tenantId),
-        columns: { name: true, lifecycle: true },
-      }),
-      db.query.tenantSubscriptions.findFirst({
-        where: eq(tenantSubscriptions.tenantId, claims.tenantId),
-        columns: { planId: true, status: true, currentPeriodStart: true, currentPeriodEnd: true, entitlementBlocked: true },
-      }),
-    ]);
+    try {
+      const { tenant, subscription, canBilling, plan } = await db.transaction(async tx => {
+        // Authenticated SSR content is not exempt from durable authorization.
+        // Keep the tenant lifecycle and current principal/session fenced while
+        // reading workspace identity, plan metadata and contract expiry.
+        await requireActiveTenantInTransaction(tx, claims.tenantId);
+        await requireManagerActorInTransaction(tx, claims, "tenant.read");
+        const [tenant, subscription] = await Promise.all([
+          tx.query.tenants.findFirst({
+            where: eq(tenants.id, claims.tenantId),
+            columns: { name: true, lifecycle: true },
+          }),
+          tx.query.tenantSubscriptions.findFirst({
+            where: eq(tenantSubscriptions.tenantId, claims.tenantId),
+            columns: { planId: true, status: true, currentPeriodStart: true, currentPeriodEnd: true, entitlementBlocked: true },
+          }),
+        ]);
+        const canBilling = hasManagerPermission(claims, "billing.read");
+        const plan = canBilling && subscription
+          ? await tx.query.plans.findFirst({
+              where: eq(plans.id, subscription.planId),
+              columns: { name: true },
+            })
+          : null;
+        return { tenant, subscription, canBilling, plan };
+      });
+      const subscriptionStatus = customerSubscriptionState(subscription, tenant?.lifecycle, await databaseNowMs());
 
-    const canBilling = hasManagerPermission(claims, "billing.read");
-    const plan = canBilling && subscription
-      ? await db.query.plans.findFirst({
-          where: eq(plans.id, subscription.planId),
-          columns: { name: true },
-        })
-      : null;
-
-    const subscriptionStatus = customerSubscriptionState(subscription, tenant?.lifecycle, await databaseNowMs());
-
-    return (
-      <AuthenticatedHome
-        t={t}
-        locale={locale}
-        tenantName={tenant?.name ?? t("home.authWorkspace")}
-        role={claims.role}
-        planName={plan?.name ?? null}
-        subscriptionStatus={subscriptionStatus}
-        periodEnd={canBilling ? subscription?.currentPeriodEnd ?? null : null}
-        canBilling={canBilling}
-        canTeam={hasManagerPermission(claims, "users.read")}
-      />
-    );
+      return (
+        <AuthenticatedHome
+          t={t}
+          locale={locale}
+          tenantName={tenant?.name ?? t("home.authWorkspace")}
+          role={claims.role}
+          planName={plan?.name ?? null}
+          subscriptionStatus={subscriptionStatus}
+          periodEnd={canBilling ? subscription?.currentPeriodEnd ?? null : null}
+          canBilling={canBilling}
+          canTeam={hasManagerPermission(claims, "users.read")}
+        />
+      );
+    } catch (error) {
+      // An expired session or suspended workspace can change after a valid
+      // cookie preflight. Render only the public homepage, not stale company
+      // and owner-only commercial information.
+      if (error instanceof TenantSuspendedError || error instanceof TenantDeletedError ||
+          error instanceof ManagerMutationAuthorityChangedError) {
+        return <PublicHome t={t} locale={locale} />;
+      }
+      throw error;
+    }
   }
 
   return <PublicHome t={t} locale={locale} />;
