@@ -21,7 +21,9 @@ export async function GET(req: Request) {
     // to report success after the mutation has committed.
     enabled = await db.transaction(async tx => {
       await requireActiveTenantInTransaction(tx, key.tenantId);
-      await requireOdooReadKeyInTransaction(tx, key);
+      // Health is the narrowly scoped exception: report an authenticated
+      // disabled integration without relaxing credential or tenant fences.
+      await requireOdooReadKeyInTransaction(tx, key, false);
       const live = await tx.execute(sql`
         SELECT odoo_enabled AS enabled FROM api_keys
         WHERE id = ${key.id} AND tenant_id = ${key.tenantId}

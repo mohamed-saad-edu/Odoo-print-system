@@ -43,11 +43,12 @@ export class OdooReadKeyUnavailableError extends Error {
 export async function requireOdooReadKeyInTransaction(
   tx: Pick<DbTx, "execute">,
   key: Pick<typeof apiKeys.$inferSelect, "id" | "tenantId" | "hashedKey">,
+  requireIntegrationEnabled = true,
 ): Promise<void> {
   const matched = await tx.execute(sql`
     SELECT id FROM api_keys
     WHERE id = ${key.id} AND tenant_id = ${key.tenantId} AND hashed_key = ${key.hashedKey}
-      AND odoo_enabled = TRUE
+      ${requireIntegrationEnabled ? sql`AND odoo_enabled = TRUE` : sql``}
       AND (
         (revoked_at IS NULL AND read_only_until IS NULL)
         OR (revoked_at <= clock_timestamp() AND read_only_until > clock_timestamp())

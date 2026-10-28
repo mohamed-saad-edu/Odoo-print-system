@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { POST as cutoverPOST } from "../src/app/api/odoo/installations/cutover/route";
 import { createWorkspaceManagerTestSession } from "./helpers/workspace-session";
 import { applyMigrations, closePool, hasTestDatabase, pool, seedFixture, truncateAll } from "./helpers/pg";
@@ -10,7 +10,7 @@ suite("Odoo idempotency cutover locking", () => {
   let ownerToken: string;
   let memberToken: string;
 
-  beforeAll(async () => { await applyMigrations(); });
+  beforeAll(async () => { vi.stubEnv("GATEWAY_JWT_SECRET", "odoo-integration-auth-fixture-secret-32"); await applyMigrations(); });
   beforeEach(async () => {
     await truncateAll();
     const fixture = await seedFixture({ odooIdempotencyMode: "legacy" });
@@ -20,7 +20,7 @@ suite("Odoo idempotency cutover locking", () => {
     ownerToken = (await createWorkspaceManagerTestSession(tenantId, { role: "owner" })).token;
     memberToken = (await createWorkspaceManagerTestSession(tenantId, { role: "admin" })).token;
   });
-  afterAll(async () => { await closePool(); });
+  afterAll(async () => { await closePool(); vi.unstubAllEnvs(); });
 
   it("serializes simultaneous managers instead of deadlocking shared tenant lock upgrades", async () => {
     const gate = await pool().connect();

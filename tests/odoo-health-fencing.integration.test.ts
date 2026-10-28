@@ -82,6 +82,14 @@ suite("Odoo health authentication and lifecycle fences", () => {
     }
   });
 
+  it("reports a disabled Odoo integration to its still-valid credential", async () => {
+    await pool().query("UPDATE api_keys SET odoo_enabled=FALSE WHERE tenant_id=$1", [fixture.tenantId]);
+    const response = await healthGET(request());
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Cache-Control")).toBe("no-store");
+    expect(await response.json()).toMatchObject({ ok: true, enabled: false });
+  });
+
   it("keeps the documented read-only credential rotation grace for setup health", async () => {
     await pool().query(
       "UPDATE api_keys SET revoked_at=clock_timestamp()-interval '1 second', read_only_until=clock_timestamp()+interval '30 minutes' WHERE tenant_id=$1",

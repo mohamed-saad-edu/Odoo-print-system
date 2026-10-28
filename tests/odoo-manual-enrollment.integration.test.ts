@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { POST as manualEnroll } from "../src/app/api/odoo/installations/route";
 import { createWorkspaceManagerTestSession } from "./helpers/workspace-session";
@@ -11,7 +11,7 @@ suite("manual Odoo installation enrollment agrees with auto-enrollment", () => {
   let keyId: string;
   let access: string;
 
-  beforeAll(async () => { await applyMigrations(); });
+  beforeAll(async () => { vi.stubEnv("GATEWAY_JWT_SECRET", "odoo-integration-auth-fixture-secret-32"); await applyMigrations(); });
   beforeEach(async () => {
     await truncateAll();
     const f = await seedFixture({ odooIdempotencyMode: "strict_v2" });
@@ -19,7 +19,7 @@ suite("manual Odoo installation enrollment agrees with auto-enrollment", () => {
     keyId = (await pool().query("SELECT id FROM api_keys WHERE tenant_id=$1", [tenantId])).rows[0].id;
     access = (await createWorkspaceManagerTestSession(tenantId, { role: "owner" })).token;
   });
-  afterAll(async () => { await closePool(); });
+  afterAll(async () => { await closePool(); vi.unstubAllEnvs(); });
 
   const register = (name: string) => manualEnroll(new Request("https://gateway.test/api/odoo/installations", {
     method: "POST",
