@@ -1,16 +1,18 @@
 import { NextResponse } from "next/server";
-import { requirePlatformOwner, PlatformUnauthorizedError } from "../../../../lib/platform-auth";
+import { requirePlatformOwner, requirePlatformReadAuthorityInTransaction, PlatformUnauthorizedError } from "../../../../lib/platform-auth";
 import { listPrintJobHistory } from "../../../../lib/job-history";
 import { isJobFilterStatus } from "../../../../lib/job-status";
 import { parseStrictListOffset } from "../../../../lib/request-limits";
 import { queryWithTimeout } from "../../../../db/client";
+import { db } from "../../../../db";
 
 export const dynamic = "force-dynamic";
 const HEADERS = { "Cache-Control": "private, no-store" };
 
 /** Cross-tenant, metadata-only operations feed for verified platform owners. */
 export async function GET(req: Request) {
-  try { await requirePlatformOwner(req); }
+  let actor: Awaited<ReturnType<typeof requirePlatformOwner>>;
+  try { actor = await requirePlatformOwner(req); }
   catch (error) {
     return NextResponse.json({ error: error instanceof PlatformUnauthorizedError ? "Unauthorized" : "Platform authentication temporarily unavailable" },
       { status: error instanceof PlatformUnauthorizedError ? 401 : 503, headers: HEADERS });
@@ -31,15 +33,19 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "Invalid operations filter" }, { status: 400, headers: HEADERS });
   }
   try {
-    const rows = await queryWithTimeout(() => listPrintJobHistory({
+    const rows = await queryWithTimeout(() => db.transaction(async tx => {
+      await requirePlatformReadAuthorityInTransaction(tx, actor);
+      return listPrintJobHistory({
       tenantId: tenantId || undefined,
       status,
       search: search || undefined,
       limit: limit + 1,
       offset,
+    }, tx);
     }), 7_000, "platformPrintJobHistory");
     return NextResponse.json({ jobs: rows.slice(0, limit), hasMore: rows.length > limit, limit, offset }, { headers: HEADERS });
-  } catch {
-    return NextResponse.json({ error: "Print history temporarily unavailable" }, { status: 503, headers: HEADERS });
+  } catch (error) {
+    return NextResponse.json({ error: error instanceof PlatformUnauthorizedError ? "Unauthorized" : "Print history temporarily unavailable" },
+      { status: error instanceof PlatformUnauthorizedError ? 401 : 503, headers: HEADERS });
   }
 }
