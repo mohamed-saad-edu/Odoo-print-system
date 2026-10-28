@@ -10,7 +10,11 @@ import { quotaCycleStartSql, quotaCycleEndSql } from "../../../../../lib/quota-c
 export async function GET(req:Request,context:{params:Promise<{id:string}>}) {
  try {
   const actor=await requirePlatformOwner(req);const {id}=await context.params;
-  return db.transaction(async tx=>{
+  // Await inside this try: a revoked Platform Owner throws *asynchronously*
+  // from the transaction after its row lock is acquired. Returning the raw
+  // promise would skip manualApiError and reject the route handler instead
+  // of producing the required uncacheable HTTP 401 response.
+  return await db.transaction(async tx=>{
    await requirePlatformReadAuthorityInTransaction(tx,actor);
   const workspace=await tx.execute(sql`SELECT t.*,u.id AS "ownerId",u.display_name AS "ownerName",u.email AS "ownerEmail",u.email_verified_at AS "ownerVerifiedAt" FROM tenants t LEFT JOIN tenant_users tu ON tu.tenant_id=t.id AND tu.role='owner' LEFT JOIN users u ON u.id=tu.user_id WHERE t.id=${id}`);
   if(!workspace.rows.length)throw new ManualSubscriptionError('WORKSPACE_NOT_FOUND',404);

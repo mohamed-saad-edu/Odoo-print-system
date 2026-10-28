@@ -83,7 +83,13 @@ suite("Platform commercial GET live-session transaction fences", () => {
         const response = await pending;
         expect(response.status).toBe(401);
         expect(response.headers.get("Cache-Control")).toBe("private, no-store");
-        expect(await response.json()).not.toHaveProperty(kind === "subscriptions" ? "subscriptions" : kind === "plans" ? "plans" : kind === "audit" ? "auditEvents" : kind === "tenantDetail" ? "workspace" : kind === "integrationKeys" || kind === "integrationInstallations" || kind === "fleetAgents" || kind === "fleetPrinters" ? "items" : "requests");
+        const denied = await response.json();
+        if (kind === "tenantDetail") {
+          // A transaction rejection must be translated to a response, never
+          // escape the handler as an unhandled PlatformUnauthorizedError.
+          expect(denied).toMatchObject({ code: "UNAUTHORIZED" });
+        }
+        expect(denied).not.toHaveProperty(kind === "subscriptions" ? "subscriptions" : kind === "plans" ? "plans" : kind === "audit" ? "auditEvents" : kind === "tenantDetail" ? "workspace" : kind === "integrationKeys" || kind === "integrationInstallations" || kind === "fleetAgents" || kind === "fleetPrinters" ? "items" : "requests");
       } finally {
         if (!committed) await gate.query("ROLLBACK");
         gate.release();
