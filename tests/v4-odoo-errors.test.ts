@@ -53,4 +53,38 @@ describe("V4 Odoo customer error boundary", () => {
     expect(dialog?.body).not.toContain("next month");
     expect(dialog?.body).not.toContain("INTERNAL_BACKEND_SECRET");
   });
+  it("trusts the definite Gateway rejection code over unrelated traceback markers", () => {
+    const quota = gatewayServerMessage({
+      message: "Odoo Server Error",
+      data: { code: "PRINT_QUOTA_EXCEEDED", message: "UNKNOWN_SUBMISSION_OUTCOME in a previous attempt's traceback" },
+    });
+    expect(quota).toContain("monthly allowance");
+    expect(quota).not.toContain("Check the printer");
+
+    const unknown = gatewayServerMessage({
+      message: "Odoo Server Error",
+      data: { code: "UNKNOWN_SUBMISSION_OUTCOME", message: "PRINT_QUOTA_EXCEEDED from an unrelated log line" },
+    });
+    expect(unknown).toContain("Check the printer");
+    expect(unknown).not.toContain("monthly allowance");
+  });
+
+  it("parses a bounded structured quota marker before a trailing RPC traceback", () => {
+    const marker = JSON.stringify({
+      code: "PRINT_QUOTA_EXCEEDED", entitlement: "max_prints_per_period",
+      limit: 20, used: 20, manualReprintRequired: true,
+      message: "PRIVATE_BACKEND_SECRET {quoted object text}",
+    });
+    const error = { message: "Odoo Server Error", data: {
+      message: `ValidationError: GATEWAY_BILLING_LIMIT:${marker}\\nRPC traceback: UNKNOWN_OLD_OPERATION`,
+    } };
+    const details = parseGatewayBillingLimit(error);
+    expect(details).toMatchObject({
+      code: "PRINT_QUOTA_EXCEEDED", entitlement: "max_prints_per_period",
+      used: 20, limit: 20, manualReprintRequired: true,
+    });
+    expect(details?.message).not.toContain("PRIVATE_BACKEND_SECRET");
+    expect(details?.message).not.toContain("UNKNOWN_OLD_OPERATION");
+  });
+
 });
