@@ -2219,3 +2219,14 @@ Source review only; full CI, PostgreSQL admission and actual Odoo/Agent/printer 
 | UPDATED / NOT RUN | `tests/deep-review-contract.test.ts`, `tests/print-certification.test.ts` | Assert retired implicit bucket never returns |
 
 Baseline `17a2892c2668865f807ea1696dcee75db21dfbdb`. No database reset or deployment; CI and physical acceptance still unverified.
+
+
+#### MANAGER-ACTION-PRINT-IDEMPOTENCY — 2026-10-28
+
+| Status | Path | Contract |
+| --- | --- | --- |
+| PARTIAL | `src/app/actions.ts` | Require caller-owned exact key for manager print Server Action; forward without normalization |
+| REVIEWED | `src/lib/idempotency.ts` | Shared key validator reused; no production modifications |
+| AUTHORED / NOT RUN | `tests/session-resource-repair.test.mjs` | Execute actual isolated Server Action and reject unkeyed/aliased identities |
+
+Baseline `c24e2eef1acfaffc788132f7c5816b7e48f112b2`. CI and physical printer verification unobserved; preserve TODO and BLOCKED from earlier full directory ledger.

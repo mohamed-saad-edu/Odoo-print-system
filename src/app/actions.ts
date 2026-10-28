@@ -13,6 +13,7 @@ import { generatePairingCode } from "../lib/agent-auth";
 import { getManagerCookieName, verifyWorkspaceTokenFromCookieValues } from "../lib/manager-auth";
 import { createHash } from "node:crypto";
 import { idempotencyDigest, createPrintJobForPrinter } from "../lib/print-job-service";
+import { isExactIdempotencyKey } from "../lib/idempotency";
 import {
   isTerminal,
   isJobFilterStatus,
@@ -122,12 +123,18 @@ export async function deleteAgent(id: string) {
   return { ok: true };
 }
 
-export async function createPrintJob(printerId: string, payload: unknown) {
+/** A Manager print is a physical operation: the caller must keep its own
+ * identity across uncertain responses. No unkeyed Server Action admission. */
+export async function createPrintJob(printerId: string, payload: unknown, idempotencyKey: string) {
   const t = makeT(await getServerLocale());
   const manager = await requireManager();
   requireManagerPermission(manager, "jobs.create");
+  if (typeof idempotencyKey !== "string") throw new ActionError(t("errors.requestRejected"), 400, "IDEMPOTENCY_KEY_REQUIRED");
+  if (!isExactIdempotencyKey(idempotencyKey) || idempotencyKey.length < 8) {
+    throw new ActionError(t("errors.requestRejected"), 400, "INVALID_REQUEST");
+  }
   try {
-    const result = await createPrintJobForPrinter(printerId, payload, { requestedBy: "manager", tenantId: manager.tenantId, managerAuthority: { claims: manager, permission: "jobs.create" } });
+    const result = await createPrintJobForPrinter(printerId, payload, { requestedBy: "manager", tenantId: manager.tenantId, idempotencyKey, managerAuthority: { claims: manager, permission: "jobs.create" } });
     revalidatePath("/dashboard");
     return { ok: true as const, id: result.id, reused: result.isReused === true };
   } catch (error) {

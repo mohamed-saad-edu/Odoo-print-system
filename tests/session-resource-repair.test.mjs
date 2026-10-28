@@ -122,6 +122,36 @@ test('Agent deletion rolls back runtime and receipt writes when audit fails',asy
   const api=await deletion(f);await assert.rejects(api.deleteAgent('a'),/audit unavailable/);
   assert.equal(f.rows.agents.length,2);assert.equal(f.rows.printJobs.length,1);assert.equal(f.rows.printJobReceipts.length,0);
 });
+
+test('real Manager print action rejects missing or altered operation IDs before enqueue and passes exact retry identity',async()=>{
+  const validation=await actual('src/lib/idempotency.ts');
+  const calls=[];
+  class PrintActionError extends Error { constructor(message,status,code){super(message);this.status=status;this.code=code;} }
+  const api=await actual('src/app/actions.ts',{
+    ActionError:PrintActionError,
+    requireManager:async()=>({tenantId:'tenant',userId:'owner',role:'owner'}),
+    requireManagerPermission:()=>{},
+    getServerLocale:async()=>'en',makeT:()=>key=>key,
+    isExactIdempotencyKey:validation.isExactIdempotencyKey,
+    createPrintJobForPrinter:async (...args)=>{calls.push(args);return {id:'job-existing',isReused:calls.length>1};},
+    revalidatePath:()=>{},entitlementLimitSignal:()=>null,isTenantBillingError:()=>false,
+  },s=>s.slice(s.indexOf('export async function createPrintJob('),s.indexOf('/**\n * Deliberate operator reprint')));
+  const payload={type:'raw',protocol:'raw',encoding:'base64',data:'SGVsbG8='};
+  for(const [key,code] of [[undefined,'IDEMPOTENCY_KEY_REQUIRED'],['','INVALID_REQUEST'],['  valid-key','INVALID_REQUEST'],['valid-key\u00a0','INVALID_REQUEST'],['short','INVALID_REQUEST'],['\ud800broken-key','INVALID_REQUEST']]){
+    await assert.rejects(api.createPrintJob('printer',payload,key),err=>err.status===400 && err.code===code);
+  }
+  assert.equal(calls.length,0,'invalid operation identities must not enqueue');
+  const key='manager-owned-original-operation';
+  const first=await api.createPrintJob('printer',payload,key);
+  const repeated=await api.createPrintJob('printer',payload,key);
+  assert.equal(first.ok,true);assert.equal(first.reused,false);
+  assert.equal(repeated.id,first.id);assert.equal(repeated.reused,true);
+  assert.equal(calls.length,2);
+  assert.deepEqual(calls.map(([printer,body,options])=>[printer,body,options.idempotencyKey,options.tenantId]),[
+    ['printer',payload,key,'tenant'],['printer',payload,key,'tenant'],
+  ]);
+});
+
 async function keyDeletionApi(f) {
   const helper = await actual('src/lib/api-key-deletion.ts', f.globals,
     s => s.slice(s.indexOf('export async function deleteApiKeyInTransaction')));
