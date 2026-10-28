@@ -113,22 +113,11 @@ interface GatewayResponse {
   headers?: Record<string, string>;
 }
 
-function gatewayErrorMessage(body: string, fallback: string): string {
-  const raw = body.trim();
-  if (!raw) return fallback;
-  try {
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
-    for (const key of ["error", "message", "reason"]) {
-      const value = parsed?.[key];
-      if (typeof value === "string" && value.trim()) return value.trim();
-    }
-    // JSON without an operator-facing message (for example {"ok":false})
-    // is machine data, not useful UI copy. Preserve the HTTP-aware fallback.
-    return fallback;
-  } catch {
-    // Plain-text Gateway errors remain useful when they are already concise.
-  }
-  return raw.length <= 512 ? raw : fallback;
+// Remote bodies can include SQL, tokens, network endpoints and native paths.
+// Keep only trusted local HTTP context for human-facing error messages.
+// Machine fields are carried separately and localized by callers.
+function gatewayErrorMessage(_body: string, fallback: string): string {
+  return fallback;
 }
 
 /** Structured Gateway failure: message/status for display plus the machine-
@@ -153,14 +142,14 @@ function gatewayHttpError(status: number, body: string, fallback: string): Gatew
   err.status = status;
   try {
     const parsed = JSON.parse(body.trim()) as Record<string, unknown>;
-    if (parsed && typeof parsed === "object") {
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
       if (typeof readApiField(parsed, "code") === "string") err.code = readApiField(parsed, "code") as string;
       if (typeof readApiField(parsed, "entitlement") === "string") err.entitlement = readApiField(parsed, "entitlement") as string;
       if (readApiField(parsed, "upgradeRequired") === true) err.upgradeRequired = true;
       const limit = readApiField(parsed, "limit");
-      if (typeof limit === "number" || limit === "unlimited") err.limit = limit;
+      if (limit === "unlimited" || (typeof limit === "number" && Number.isSafeInteger(limit) && limit > 0)) err.limit = limit;
       const used = readApiField(parsed, "used");
-      if (typeof used === "number") err.used = used;
+      if (typeof used === "number" && Number.isSafeInteger(used) && used >= 0) err.used = used;
     }
   } catch {
     // Non-JSON bodies carry no structured fields; message/status still apply.
