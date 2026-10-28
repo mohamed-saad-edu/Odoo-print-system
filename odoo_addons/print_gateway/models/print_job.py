@@ -1501,7 +1501,9 @@ class PrintGatewayJob(models.Model):
         "submitted": an admitted job may already have emitted physical data.
         This mirrors the partial/failed-marker classification in status sync.
         """
-        status = str(raw_status or "queued").strip().lower()
+        # A missing/falsey Gateway status is NOT an admission receipt. The
+        # remote job ID can exist even when the proxy lost the status field.
+        status = raw_status.strip().lower() if isinstance(raw_status, str) else ""
         detail = str(remote_error or "").strip()
         if status == "completed":
             status = "success"
@@ -2090,7 +2092,8 @@ class PrintGatewayJob(models.Model):
                             exc, "Gateway accepted submission but returned an invalid response",
                         )
                         break
-                    remote_status = str(body.get("status") or "queued").strip().lower()
+                    raw_status = body.get("status")
+                    remote_status = raw_status.strip().lower() if isinstance(raw_status, str) else raw_status
                     remote_error = body.get("error")
                     if remote_status == "expired":
                         # The Gateway terminalized the job (its lease window
