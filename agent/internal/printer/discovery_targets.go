@@ -23,7 +23,11 @@ func isDiscoveryInterfaceExcluded(ifaceName string) bool {
 		strings.HasPrefix(lower, "br-") ||
 		strings.HasPrefix(lower, "tailscale") ||
 		strings.HasPrefix(lower, "tap") ||
-		strings.HasPrefix(lower, "tun")
+		strings.HasPrefix(lower, "tun") ||
+		strings.HasPrefix(lower, "utun") ||
+		strings.HasPrefix(lower, "wg") ||
+		strings.HasPrefix(lower, "wireguard") ||
+		strings.HasPrefix(lower, "zt")
 }
 
 func generateHosts(ipNet *net.IPNet) []net.IP {
