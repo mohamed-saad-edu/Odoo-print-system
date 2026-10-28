@@ -9,7 +9,10 @@ import { EventEmitter } from "node:events";
 // Strip types from actual source, using only Node's bundled parser. Framework
 // typechecking still needs the project's dependencies and is a separate check.
 async function loadModule(file, globals = {}, select = (source) => source) {
-  const context = vm.createContext({ console, Date, Set, process: { env: { NODE_ENV: "test" } }, ...globals });
+  // The real exact-printer-id validator counts UTF-8 bytes. Node VM contexts
+  // lack the host TextEncoder by default; missing it would silently reject
+  // every valid printer ID and misdiagnose a verified driver geometry.
+  const context = vm.createContext({ console, Date, Set, TextEncoder, process: { env: { NODE_ENV: "test" } }, ...globals });
   const modules = new Map();
   async function get(path) {
     if (modules.has(path)) return modules.get(path);
@@ -212,12 +215,16 @@ test("Test Print fail-fast response states that no queued job exists", async () 
 
 test("printer diagnostics keep Agent availability independent from lifecycle and network config", async () => {
   const source = await readFile("src/app/api/printers/[id]/test-connection/route.ts", "utf8");
-  const agentLookup = source.indexOf("const agent = await db.query.agents.findFirst");
+  const agentLookup = source.indexOf("const agent = await tx.query.agents.findFirst");
   const agentState = source.indexOf("const agentState = {");
   const lifecycle = source.indexOf('if (printer.lifecycle !== "active")');
   const networkConfig = source.indexOf('if (printer.connectionType === "network"');
   const unavailable = source.indexOf("if (!availability.available)", networkConfig);
   assert.ok(agentLookup >= 0 && agentState > agentLookup && lifecycle > agentState);
+  // The diagnostic read now shares a locked tenant, session/Agent authority
+  // transaction; returning health evidence without this fence is unsafe.
+  assert.match(source, /requireConsoleReadAuthorityInTransaction\(tx, auth, "printers\.test"\)/);
+  assert.match(source, /eq\(agents\.tenantId, tenantId\)/);
   assert.match(source.slice(lifecycle, networkConfig), /\.\.\.agentState/);
   assert.match(source.slice(networkConfig, unavailable), /\.\.\.agentState/);
   assert.match(source, /lastHeartbeatAt: agent\.lastSeenAt/);
