@@ -136,9 +136,11 @@ func TestParseRejectsExplicitNullOptionalProtocol(t *testing.T) {
 			if _, err := Parse(job); err != nil {
 				t.Fatalf("absent optional protocol was refused: %v", err)
 			}
-			job["protocol"] = nil
-			if _, err := Parse(job); err == nil || !strings.Contains(err.Error(), "protocol") {
-				t.Fatalf("explicit null protocol admitted; must match Gateway: %v", err)
+			for _, invalid := range []interface{}{nil, ""} {
+				job["protocol"] = invalid
+				if _, err := Parse(job); err == nil || !strings.Contains(err.Error(), "protocol") {
+					t.Fatalf("explicit invalid protocol %v admitted; must match Gateway: %v", invalid, err)
+				}
 			}
 		})
 	}
