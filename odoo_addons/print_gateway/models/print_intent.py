@@ -199,7 +199,10 @@ class PrintGatewayIntent(models.Model):
             attempts, max_attempts = attempt_row
             next_retry = None
             if attempts < max_attempts:
-                delay_sec = min(300, 15 * (2 ** max(0, attempts - 1)))
+                # The 300s maximum is reached at six attempts. Clamp the
+                # exponent BEFORE pow: a corrupted/legacy attempt count must
+                # never allocate an arbitrarily large integer to compute retry.
+                delay_sec = min(300, 15 * (2 ** min(max(0, attempts - 1), 5)))
                 next_retry = db_now_utc(failure_cr) + datetime.timedelta(seconds=delay_sec)
             finalized = cls._finalize_intent_state(
                 env, intent_id, claim_token,
