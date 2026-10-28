@@ -1577,8 +1577,8 @@ msgstr "اكتشاف طابعات الـ Gateway غير متاح."
 #. module: print_gateway
 #. odoo-python
 #: code:addons/print_gateway/models/print_job.py:0
-msgid "Gateway submission outcome is unknown; physical outcome is ambiguous. Automated retries are paused to prevent duplicate prints. Operator reprint required."
-msgstr "نتيجة الإرسال إلى الـ Gateway غير معروفة؛ والنتيجة الفعلية غير مؤكدة. تم إيقاف المحاولات التلقائية مؤقتًا لمنع الطباعة المكررة. يلزم تدخّل المشغّل لإعادة الطباعة."
+msgid "Gateway submission outcome is unknown; physical outcome is ambiguous. Automated retries are paused to prevent duplicate prints. Check Print Activity and the printer before any explicit reprint."
+msgstr "نتيجة الإرسال إلى الـ Gateway غير معروفة؛ والنتيجة الفعلية غير مؤكدة. أُوقفت إعادة المحاولة التلقائية لمنع تكرار الطباعة. راجع سجل الطباعة والطابعة قبل أي إعادة طباعة صريحة."
 
 #. module: print_gateway
 #. odoo-python
