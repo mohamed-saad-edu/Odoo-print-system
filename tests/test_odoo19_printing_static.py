@@ -723,9 +723,22 @@ def test_partial_status_never_downgrades_to_submitted_on_either_gateway_path():
     # masquerade as an in-flight submission.
     assert "def _classify_gateway_submission_status(" in job
     assert "remote_status, remote_error = job._classify_gateway_submission_status(" in job
-    assert '"UNKNOWN_PARTIAL_DELIVERY:"' in job
+    assert '"UNKNOWN_PARTIAL_DELIVERY: "' in job
     assert 'remote_status = "submitted"' not in job
     assert 'elif status == "partial"' in job or 'status == "partial"' in job
+
+
+def test_trusted_odoo_submission_stays_non_rpc_and_status_classifier_is_private():
+    # A helper inserted next to @api.private must not steal the decorator
+    # from _action_submit_trusted: that method elevates with sudo().
+    import ast
+
+    code = ast.parse(read("models/print_job.py"))
+    job_model = next(node for node in code.body if isinstance(node, ast.ClassDef) and node.name == "PrintGatewayJob")
+    for name in ("_action_submit_trusted", "_classify_gateway_submission_status"):
+        method = next(node for node in job_model.body if isinstance(node, ast.FunctionDef) and node.name == name)
+        decorators = [ast.unparse(d) for d in method.decorator_list]
+        assert "api.private" in decorators, (name, decorators)
 
 
 def test_picking_destination_without_report_computes_label_document_type():
