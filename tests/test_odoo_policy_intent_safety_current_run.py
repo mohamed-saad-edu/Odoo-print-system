@@ -247,8 +247,15 @@ def test_each_business_policy_hook_catches_only_after_savepoint():
 
 
 
-@pytest.mark.parametrize("source_reassigned", [False, True])
-def test_recovery_scopes_to_captured_intent_company_before_reading_the_source(source_reassigned):
+@pytest.mark.parametrize("source_reassigned,policy_drift", [
+    (False, "valid"),
+    (True, "valid"),
+    (False, "disabled"),
+    (False, "event_changed"),
+    (False, "model_changed"),
+    (False, "filter_miss"),
+])
+def test_recovery_scopes_to_captured_intent_company_before_reading_the_source(source_reassigned, policy_drift):
     # Model record rules can hide a valid branch source until the Environment
     # has allowed_company_ids for the ORIGINAL committed intent company.
     # The old method read .exists() under the cron user's root company and
@@ -267,8 +274,15 @@ def test_recovery_scopes_to_captured_intent_company_before_reading_the_source(so
             pass
 
     cursor = Cursor()
+    policy = SimpleNamespace(
+        active=policy_drift != 'disabled',
+        model_name='other.model' if policy_drift == 'model_changed' else 'stock.picking',
+        event_type='other_event' if policy_drift == 'event_changed' else 'picking_validated',
+        matches_record=lambda _record: policy_drift != 'filter_miss',
+    )
     intent = SimpleNamespace(
         claim_token='held-lease', company_id=branch, intent_key='outbox-lease',
+        event_type='picking_validated', policy_id=policy,
         with_env=lambda scoped_env: intent,
     )
     record = SimpleNamespace(
@@ -310,10 +324,11 @@ def test_recovery_scopes_to_captured_intent_company_before_reading_the_source(so
     assert not failures, failures
     assert reads == [branch.id], 'Source must be checked under captured company before .exists()'
     assert len(finalizations) == 1
-    if source_reassigned:
-        assert routes == [], 'A source moved to another company cannot redirect the captured intent'
+    if source_reassigned or policy_drift != 'valid':
+        assert routes == [], 'Reassigned sources or drifted/disabled policies cannot send paper'
         assert finalizations[0]['status'] == 'skipped'
-        assert 'company changed' in finalizations[0]['last_error'].lower()
+        expected = 'company changed' if source_reassigned else 'rule'
+        assert expected in finalizations[0]['last_error'].lower()
     else:
         assert routes == [branch.id], 'A valid branch intent must not be silently skipped'
         assert finalizations[0]['status'] == 'dispatched'
