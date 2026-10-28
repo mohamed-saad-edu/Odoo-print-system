@@ -14,9 +14,19 @@ func TestQuickDiscoveryMustFenceTwoDistinctSpoolerQueuesWithSameLegacyID(t *test
 	path := filepath.Join(t.TempDir(), "printers.json")
 	saved := continuitySpooler("Queue A", "USB001", "Office Driver")
 	other := continuitySpooler("Queue_A", "USB001", "Office Driver")
-	if saved.ID != other.ID {
-		t.Fatal("fixture must collide under legacy spooler ID normalization")
+	// Current strong IDs correctly keep distinct native queues separate.
+	// Simulate persisted pre-upgrade weak IDs explicitly: legacy normalization
+	// collapsed spaces and underscores before hashing. The collision fence
+	// must still protect users upgrading from that historical registry.
+	if saved.ID == other.ID {
+		t.Fatal("new stable spooler identity must distinguish unrelated native queues")
 	}
+	legacyID := StableIDFromSpooler(saved.SpoolerName)
+	if legacyID != StableIDFromSpooler(other.SpoolerName) {
+		t.Fatal("legacy spooler algorithm no longer reproduces the fixture collision")
+	}
+	saved.ID = legacyID
+	other.ID = legacyID
 	saved.Capabilities["geometry"] = map[string]interface{}{"printer_id": saved.ID, "source": "windows_driver"}
 	if err := SaveRegistry(path, []DeviceInfo{saved}); err != nil {
 		t.Fatal(err)
