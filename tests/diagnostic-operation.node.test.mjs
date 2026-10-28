@@ -9,6 +9,7 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import * as model from '../src/shared/diagnostic-test.ts';
 import { parseDbTimeMs } from '../src/lib/database-timestamp.ts';
+import { isExactPrinterId } from '../src/lib/exact-printer-id.ts';
 import { verifiedPrinterState } from './helpers/printer-verification.ts';
 const require = createRequire(import.meta.url);
 const ts = require('typescript');
@@ -38,6 +39,9 @@ vm.runInNewContext(ts.transpileModule(read('src/lib/printer-operational-verifica
   exports: verificationExports,
   require: specifier => {
     if (specifier === './database-timestamp') return { parseDbTimeMs };
+    // Load the same identity predicate as the Gateway; never replace it with
+    // an always-true stub in a printing regression.
+    if (specifier === './exact-printer-id') return { isExactPrinterId };
     if (specifier === '../../contracts/printer-operational-verification-contract.json') {
       return { default: JSON.parse(read('contracts/printer-operational-verification-contract.json')) };
     }
