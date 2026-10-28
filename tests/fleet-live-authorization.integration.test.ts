@@ -7,6 +7,8 @@ import { GET as getPrinterDetail } from "../src/app/api/printers/[id]/route";
 import { GET as getCapabilities } from "../src/app/api/printers/capabilities/route";
 import { POST as testPrinterConnection } from "../src/app/api/printers/[id]/test-connection/route";
 import { GET as getJobTimelineDetail } from "../src/app/api/jobs/[id]/timeline/route";
+import { GET as listAgentDiscovery } from "../src/app/api/agents/[id]/discovery/route";
+import { GET as getAgentDiscoveryDetail } from "../src/app/api/agents/[id]/discovery/[discoveryId]/route";
 import { createWorkspaceManagerTestSession } from "./helpers/workspace-session";
 import { applyMigrations, closePool, hasTestDatabase, insertQueuedJob, pool, seedFixture, truncateAll, type Fixture } from "./helpers/pg";
 
@@ -250,6 +252,55 @@ describe.skipIf(!hasTestDatabase)("fleet and job history listings recheck curren
 
   it("job timeline cannot disclose after concurrent tenant suspension", async () => {
     const response = await race(jobTimelineDetail, "/api/jobs/fleet-read-job/timeline", "manager", "suspend");
+    expect(response.status).toBe(403);
+    expect(response.headers.get("Cache-Control")).toContain("no-store");
+    expect(await response.json()).toMatchObject({ code: "TENANT_SUSPENDED" });
+  });
+
+  const discoveryRequest = (kind: "list" | "detail") => {
+    const discoveryId = "fleet-authority-snapshot";
+    const route = kind === "list"
+      ? `/api/agents/${fixture.agentId}/discovery`
+      : `/api/agents/${fixture.agentId}/discovery/${discoveryId}`;
+    const handler = (req: Request) => kind === "list"
+      ? listAgentDiscovery(req, { params: Promise.resolve({ id: fixture.agentId }) })
+      : getAgentDiscoveryDetail(req, {
+          params: Promise.resolve({ id: fixture.agentId, discoveryId }),
+        });
+    return { route, handler };
+  };
+  async function seedDiscovery(): Promise<void> {
+    await pool().query(
+      "INSERT INTO discovery_sessions (id,tenant_id,agent_id,status) VALUES ($1,$2,$3,'completed')",
+      ["fleet-authority-snapshot", fixture.tenantId, fixture.agentId],
+    );
+  }
+
+  it.each(["list", "detail"] as const)("%s discovery read returns scoped inventory to a live owner", async kind => {
+    await seedDiscovery();
+    const { route, handler } = discoveryRequest(kind);
+    const response = await handler(new Request("https://gateway.test" + route, {
+      headers: { Authorization: "Bearer " + managerToken },
+    }));
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Cache-Control")).toContain("no-store");
+    const body = await response.json();
+    expect(kind === "list" ? body[0]?.id : body.session?.id).toBe("fleet-authority-snapshot");
+  });
+
+  it.each(["list", "detail"] as const)("%s discovery read cannot expose after concurrent manager logout", async kind => {
+    await seedDiscovery();
+    const { route, handler } = discoveryRequest(kind);
+    const response = await race(handler, route, "manager", "revoke");
+    expect(response.status).toBe(401);
+    expect(response.headers.get("Cache-Control")).toContain("no-store");
+    expect(await response.json()).toMatchObject({ code: "SESSION_EXPIRED" });
+  });
+
+  it.each(["list", "detail"] as const)("%s discovery read cannot expose after concurrent workspace suspension", async kind => {
+    await seedDiscovery();
+    const { route, handler } = discoveryRequest(kind);
+    const response = await race(handler, route, "manager", "suspend");
     expect(response.status).toBe(403);
     expect(response.headers.get("Cache-Control")).toContain("no-store");
     expect(await response.json()).toMatchObject({ code: "TENANT_SUSPENDED" });
