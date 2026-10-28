@@ -1710,7 +1710,16 @@ class PrintGatewayJob(models.Model):
                             "max_concurrent_jobs",
                             "max_prints_per_period",
                         }
-                        billing_limit = bool(rate_body.get("upgradeRequired")) and entitlement in allowed_entitlements
+                        # A proxy can return 429 with arbitrary JSON after
+                        # Gateway acceptance. Only the exact typed monthly
+                        # print-credit denial is proof that no new job was
+                        # admitted. A truthy string or unrecognized code must
+                        # not re-arm a possible physical print.
+                        billing_limit = (
+                            rate_body.get("code") == "PRINT_QUOTA_EXCEEDED"
+                            and rate_body.get("upgradeRequired") is True
+                            and entitlement == "max_prints_per_period"
+                        )
                         if billing_limit:
                             raw_limit = rate_body.get("limit")
                             raw_used = rate_body.get("used")
