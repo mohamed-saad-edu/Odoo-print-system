@@ -3063,3 +3063,12 @@ At `main@9cc31103851f642543bb51dd22353487b00f5578`, GitHub recursive tree lists 
 **Fix:** fixture bodies now include the exact original remote job id while preserving the existing failure/unknown/requeue assertions. New negative regression `test_sync_never_adopts_another_remote_jobs_success` proves a foreign successful status does not move the local job or overwrite its immutable remote identity.
 
 **Coverage:** PARTIAL Odoo `tests/test_routing_contract.py` and `models/print_job.py` status reconciliation, Gateway `src/lib/job-status.ts` status vocabulary; unchanged production authority. Tests are authored but exact-SHA Odoo CI NOT RUN until completed. Other Odoo end-to-end/hardware verification TODO/BLOCKED; no deployment.
+
+
+### MANUAL-API-ERROR-NOSTORE-2026-10-28
+
+**Observed GitHub CI:** A confidential subscription-request read rejected live Platform Owner removal with 401, but `manualApiError()` omitted the `Cache-Control: private, no-store` header; successful commercial reads already sent it. This is a shared error branch, not a permission-policy failure.
+
+**Fix:** central `src/lib/manual-api-error.ts` ensures every status/classification—including native Workspace policy responses, owner revocation, malformed input and 503—is uncacheable. Preserves status codes and authorization. Test added to `tests/platform-read-live-authority.test.ts`, exercising three error classes and original body codes.
+
+**Coverage:** PARTIAL helper plus tenant and billing/Platform routes consuming it; TODO all other Platform/Agent/Desktop/Odoo files, complete CI; physical printers and database migration rehearsal BLOCKED. Exact-SHA tests NOT RUN until completed GitHub Actions, no deployment.

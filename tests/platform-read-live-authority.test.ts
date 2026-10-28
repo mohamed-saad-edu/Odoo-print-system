@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { manualApiError } from "../src/lib/manual-api-error";
+import { ManualSubscriptionError } from "../src/lib/manual-subscriptions";
 import { PgDialect } from "drizzle-orm/pg-core";
 import type { DbTx } from "../src/db";
 import {
@@ -30,6 +32,21 @@ function fixture(ownerActive = true, sessionActive = true) {
   } as unknown as DbTx;
   return { tx, statements };
 }
+describe("manual API error cache isolation", () => {
+  it("protects revoked-owner, invalid-request and unavailable-service responses", async () => {
+    for (const [error, expectedStatus, expectedCode] of [
+      [new PlatformUnauthorizedError(), 401, "UNAUTHORIZED"],
+      [new ManualSubscriptionError("INVALID_OFFSET", 400), 400, "INVALID_OFFSET"],
+      [new Error("database unavailable"), 503, "MANUAL_SUBSCRIPTION_UNAVAILABLE"],
+    ] as const) {
+      const response = manualApiError(error);
+      expect(response.status).toBe(expectedStatus);
+      expect(response.headers.get("Cache-Control")).toBe("private, no-store");
+      expect(await response.json()).toMatchObject({ code: expectedCode });
+    }
+  });
+});
+
 describe("Platform subscription-list live read authority", () => {
   it("acquires owner, then family, then credentials in the established lock order without mutation step-up", async () => {
     const { tx, statements } = fixture();
