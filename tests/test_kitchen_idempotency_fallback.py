@@ -109,7 +109,7 @@ class FakeRouter(Router):
         return None
 
     def _validate_jpeg_base64(self, data):
-        assert data == 'KITCHEN_JPEG'
+        assert data in ('KITCHEN_JPEG', 'KITCHEN_JPEG_CHANGED')
 
     def resolve_binding(self, **kw):
         assert kw['document_type'] == 'kitchen'
@@ -133,8 +133,8 @@ def make_order(**kw):
     return order
 
 
-def route(router, order, **kw):
-    return router.route_kitchen_print(order, 'KITCHEN_JPEG', geometry_fingerprint='a' * 64, **kw)
+def route(router, order, *, image='KITCHEN_JPEG', **kw):
+    return router.route_kitchen_print(order, image, geometry_fingerprint='a' * 64, **kw)
 
 
 @pytest.mark.parametrize('value', ['false', 'true', 0, 1, None, [], {}])
@@ -185,11 +185,22 @@ def test_kitchen_without_key_is_deterministic():
 
 
 def test_kitchen_key_is_stable_across_write_date_only_changes():
+    """Odoo's incidental order write_date updates must not create more paper."""
     router = FakeRouter()
     route(router, make_order())
     first = router.submitted[0]
     route(router, make_order(write_date='2026-10-09 12:05:00'))
-    assert router.submitted[-1] != first, 'a changed order must be a new ticket'
+    assert router.submitted[-1] == first, 'same kitchen image must reuse the original operation'
+
+
+def test_kitchen_changed_rendered_content_gets_a_distinct_ticket():
+    """A different preparation delta remains independently printable without a caller key."""
+    router = FakeRouter()
+    route(router, make_order(), image='KITCHEN_JPEG')
+    route(router, make_order(), image='KITCHEN_JPEG_CHANGED')
+    assert router.submitted[0] != router.submitted[1]
+
+
 
 
 def test_kitchen_distinct_preparation_printers_get_distinct_tickets():
@@ -230,8 +241,9 @@ def test_kitchen_reprint_with_explicit_key_is_honoured():
 def test_kitchen_key_matches_the_documented_derivation():
     router = FakeRouter()
     route(router, make_order())
+    image_hash = hashlib.sha256(b'KITCHEN_JPEG').hexdigest()
     expected = hashlib.sha256(
-        'kitchen:777:501:24:2026-10-09 12:00:00'.encode('utf-8')).hexdigest()
+        f'kitchen:777:501:24:{image_hash}'.encode('utf-8')).hexdigest()
     assert router.submitted[0] == expected
 
 
