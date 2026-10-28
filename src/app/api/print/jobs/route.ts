@@ -21,19 +21,13 @@ import { isExactPrinterId } from "../../../../lib/exact-printer-id";
 export const dynamic = "force-dynamic";
 
 /**
- * Controlled migration switch for the v1 print-submission contract.
- *
- * Production defaults to requiring a stable `idempotencyKey`: a missing key
- * would make retries create duplicate physical prints. Development/test can
- * exercise legacy callers; explicit "0" is a temporary production escape
- * hatch that the operator must accept as an at-least-once printing risk.
- * v2 always requires the key.
+ * A stable operation key is mandatory for every production v1 print POST.
+ * An operator flag cannot waive this invariant: otherwise a transport replay
+ * with no key can enqueue a second physical job. Legacy keyless callers may be
+ * exercised in development/test only; v2 always requires a key.
  */
 function idempotencyKeyRequired(): boolean {
-  if (process.env.NODE_ENV === "production") {
-    return process.env.YASEIR_REQUIRE_IDEMPOTENCY_KEY !== "0";
-  }
-  return process.env.YASEIR_REQUIRE_IDEMPOTENCY_KEY === "1";
+  return process.env.NODE_ENV === "production" || process.env.YASEIR_REQUIRE_IDEMPOTENCY_KEY === "1";
 }
 
 const MAX_BODY = 8 * 1024 * 1024;
@@ -111,11 +105,8 @@ export async function POST(req: Request) {
   }
 
   if (!parsed.data.idempotencyKey) {
-    // A submission without a stable operation id cannot be deduplicated: a
-    // retry creates a second queued job and can print twice. Callers that
-    // cannot supply a key are rejected outright once the operator opts in
-    // through the migration switch, so the duplicate risk can be removed
-    // without a breaking API change.
+    // A submission without a stable operation ID cannot be deduplicated.
+    // Production always refuses it, including when a legacy opt-out is set.
     if (idempotencyKeyRequired()) {
       logWarn("print.job.idempotency_key_required", {
         tenantId: odoo?.tenantId ?? null,
@@ -126,10 +117,8 @@ export async function POST(req: Request) {
         { status: 400, headers: { "Cache-Control": "no-store" } },
       );
     }
-    // Backward-compatible: legacy callers without a stable operation id are
-    // accepted, but retries cannot be deduplicated and may produce duplicate
-    // physical prints. New callers must supply an idempotencyKey. A future
-    // API version will require it (see ADR/migration notes).
+    // Non-production legacy test compatibility only. No transport retry of
+    // this keyless request may be treated as safe physical re-execution.
     logWarn("print.job.missing_idempotency_key", {
       tenantId: odoo?.tenantId ?? null,
       message: "Print job submitted without idempotencyKey; retry deduplication is disabled for this request.",

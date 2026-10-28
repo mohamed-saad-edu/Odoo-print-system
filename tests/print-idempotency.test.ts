@@ -311,6 +311,29 @@ suite("print idempotency (Odoo → Gateway)", () => {
     }
   });
 
+  it("cannot disable production v1 idempotency with the old unsafe opt-out", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("YASEIR_REQUIRE_IDEMPOTENCY_KEY", "0");
+    try {
+      const withoutKey = jobBody("unused");
+      delete (withoutKey as Record<string, unknown>).idempotencyKey;
+      const rejected = await create(withoutKey);
+      expect(rejected.status).toBe(400);
+      expect(await rejected.json()).toMatchObject({ code: "IDEMPOTENCY_KEY_REQUIRED", retryable: false });
+      expect(await jobCount()).toBe(0);
+
+      // The disabled opt-out must not prevent correctly identified printing.
+      const accepted = await create(jobBody("safe-keyed-production-replay"));
+      expect(accepted.status).toBe(201);
+      const replay = await create(jobBody("safe-keyed-production-replay"));
+      expect(replay.status).toBe(200);
+      expect((await replay.json()).jobId).toBe((await accepted.json()).jobId);
+      expect(await jobCount()).toBe(1);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("uses exact opaque IDs for legacy and v2 status polling after accepted print admission", async () => {
     const result = await create(jobBody("status-exact-lookup"));
     expect(result.status).toBe(201);
