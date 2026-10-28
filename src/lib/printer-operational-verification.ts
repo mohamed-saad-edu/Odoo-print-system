@@ -62,7 +62,18 @@ export function validatePrinterOperationalVerification(value: unknown, printer: 
     : (["ipp", "ipps"].includes(connection) || connection === "network" && ["ipp", "ipps"].includes(protocol)) ? "ipp_attributes"
     : connection === "usb" && ["raw", "escpos", "zpl", "tspl"].includes(protocol) ? "usb_interface"
     : connection === "network" && ["raw", "escpos", "zpl", "tspl"].includes(protocol) ? "snmp_printer" : null;
-  if (!method || method !== value.method || value.output_medium !== (method === "pdf_output" ? "file" : "physical")) return { ok: false, reason: "verification_transport_mismatch" };
+  // A live service/queue probe is not hardware chassis evidence. The native
+  // Agent binds each method to one identity strength, not arbitrary metadata.
+  // In particular, a forged device key must never upgrade an IPP service or
+  // Windows spooler queue into a physical-device identity.
+  const methodStrength = method === "windows_queue" ? "queue"
+    : method === "ipp_attributes" || method === "pdf_output" ? "service"
+    : method === "usb_interface" || method === "snmp_printer" ? "device" : null;
+  if (!method || method !== value.method || value.identity_strength !== methodStrength
+      || (value.physical_device_key !== undefined && methodStrength !== "device")
+      || value.output_medium !== (method === "pdf_output" ? "file" : "physical")) {
+    return { ok: false, reason: "verification_transport_mismatch" };
+  }
   const verified = utcTime(value.verified_at);
   if (verified === null) return { ok: false, reason: "verification_timestamp_invalid" };
   const age = now.getTime() - verified;
