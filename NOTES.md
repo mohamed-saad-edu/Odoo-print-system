@@ -1,6 +1,6 @@
 # NOTES.md — Yaseir Cloud Printing full-repository engineering coverage
 
-Source: `main@2fdbd535d514303ebc292a9fd2f3da9125952385`. Re-scanned **1941 tracked files** in **89 directory groups** through GitHub's complete recursive tree (`truncated=false`). This is a coverage index, **not** a claim of line-by-line audit. This file is root-level, outside the Gateway/Agent/Odoo/Desktop product trees.
+Source: `main@83172ac3a162944e01e2a9e3dae3504e971696a7`. Re-scanned **1946 tracked files** in **89 directory groups** through GitHub's complete recursive tree (`truncated=false`). This is a coverage index, **not** a claim of line-by-line audit. This file is root-level, outside the Gateway/Agent/Odoo/Desktop product trees.
 
 **Status semantics:** `TODO` = path enumerated, code/read/verification incomplete; `DONE` = code, cross-contract and exact-commit CI tests reviewed; `BLOCKED` = cannot verify as text through GitHub API or requires real hardware/staging. These are independent of existing per-file ledger statuses. Every path stays TODO/BLOCKED until evidence is linked; counts do not imply production readiness.
 
@@ -22,6 +22,7 @@ Source: `main@2fdbd535d514303ebc292a9fd2f3da9125952385`. Re-scanned **1941 track
 | PLATFORM-ACTOR-STATE-2026-10-28 | Revoked Platform Owner could see 404/409 installation/key existence or inactive state before live transaction actor revalidation | `19c6760c8b2eb5ef93d65d11d06ece500ea7113f` test-first; `70f2e2e7478521a0ef73fa5a96a7e40d20c31e2f` revoke and `fc560fad4aa923a5e9951d9c5da5adb8d94709bb` quarantine move actor check before state response, retaining original resource-lock order | Exact-SHA CI queued, runtime RED/GREEN NOT VERIFIED | TODO |
 | PLATFORM-PLAN-FORM-2026-10-28 | Admin form accepted IDs and commercial values outside the authoritative plan parser, causing post-reauth submission errors | `5c03f8054bbc8248d61452768bdff7d5e870e661` test-first; `06b10889230300c94650a0203bd28d86690f0e2e` HTML ID/quota/order/price-format constraints | Exact-SHA CI cancelled/superseded; backend remains final price-size authority | TODO |
 | SUBSCRIPTIONS-PAGING-2026-10-28 | Platform Admin only rendered first 300 subscriptions; status was filtered in browser after the 300-row truncation, silently hiding other customer contracts | `76a35da8ea1b9806cf63cceb26bfb4fbf1374275` PostgreSQL test-first; `dfeef0972e1036af4ebcc5efbe6b6624de98288b` SQL status filtering with stable pagination; `f96a56a563d275f693d1c7ee54b4e4aecd4d0904` UI contract test; `95af283801aa52014e451b7c63bbcd394c0c0994` localized paging UI | Exact-SHA CI cancelled on next concurrent main push; PostgreSQL regression NOT RUN in this GitHub-only session | TODO |
+| PLAN-PRICE-BOUNDARY-2026-10-28 | Platform Admin accepted a syntactically valid but >INT32 minor-unit advertised price until after password confirmation, while backend rejected it | `14d48c3fdf1ce6d1d7fd219436919604043b7df4` test-first; `431bb15dc0d782c127873316e5e1bd60fc733241` shared exact parser; `8d6c6fc787f58a0e4890f482a46024a3893c1a97` backend reuse; `0be9d83b8d3d0848ef99e15891dfdd0975414ab9` / `68460fce0db0eec81f0b10779ffc078fa72c3467` localized errors; `ff39b1de2bf91a93297824d7c9ce64341f58b5bd` client pre-confirmation guard | Tests authored but exact GitHub CI pending/cancelled; no local/physical verification | TODO |
 | HW-01 print result | Neither Gateway `success` nor spooler submission proves physical paper | Status contract requires independent explicit physical evidence; never auto-retry unknown | No physical printer attached through GitHub API | BLOCKED |
 | DATA-01 defense in depth | PostgreSQL RLS not enabled; predicates, composite FKs and transaction locks are tenant boundary | Audit every raw query, add safe migration only after staged design/coverage | Requires comprehensive source+staging audit | TODO |
 
@@ -1816,6 +1817,7 @@ Source: `main@2fdbd535d514303ebc292a9fd2f3da9125952385`. Re-scanned **1941 track
 - TODO `src/lib/auth-rate-limit.ts`
 - TODO `src/lib/authorization.ts`
 - TODO `src/lib/billing-labels.ts`
+- TODO `src/lib/billing-page-snapshot.ts`
 - TODO `src/lib/bounded-query.ts`
 - TODO `src/lib/cache.ts`
 - TODO `src/lib/canonicalize.ts`
@@ -1997,6 +1999,8 @@ Source: `main@2fdbd535d514303ebc292a9fd2f3da9125952385`. Re-scanned **1941 track
 - TODO `tests/billing-entitlement-access.test.ts`
 - TODO `tests/billing-live-predicate-contract.test.ts`
 - TODO `tests/billing-log-contract.test.ts`
+- TODO `tests/billing-page-owner-snapshot.contract.test.ts`
+- TODO `tests/billing-page-snapshot-live-owner.integration.test.ts`
 - TODO `tests/billing-portal-idempotency.test.ts`
 - TODO `tests/billing-renewal-i18n.contract.test.ts`
 - TODO `tests/billing-renewal-ui.test.ts`
@@ -2417,6 +2421,8 @@ Source: `main@2fdbd535d514303ebc292a9fd2f3da9125952385`. Re-scanned **1941 track
 - TODO `tests/test_odoo_discovery_response_safety.py`
 - TODO `tests/test_odoo_dispatch_exception_phase.py`
 - TODO `tests/test_odoo_durable_identity_security.py`
+- TODO `tests/test_odoo_exact_operation_key_replay.py`
+- TODO `tests/test_odoo_exact_printer_execution_identity.py`
 - TODO `tests/test_odoo_fallback_authorization.py`
 - TODO `tests/test_odoo_force_reprint_key_bounds.py`
 - TODO `tests/test_odoo_gateway_origin_identity.py`
