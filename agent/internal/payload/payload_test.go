@@ -118,6 +118,32 @@ func TestPDFSignaturePolicyMatchesGateway(t *testing.T) {
 	}
 }
 
+// The Gateway's optional Zod protocol field allows absence, not JSON null.
+// A null protocol must not be silently converted into an absent field by
+// the native Agent parser for a PDF or image.
+func TestParseRejectsExplicitNullOptionalProtocol(t *testing.T) {
+	cases := []struct {
+		name string
+		kind string
+		data string
+	}{
+		{"PDF", "pdf", base64.StdEncoding.EncodeToString([]byte("%PDF-1.4\n%%EOF\n"))},
+		{"JPEG", "image", base64.StdEncoding.EncodeToString([]byte{0xff, 0xd8, 0xff, 0xd9})},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			job := map[string]interface{}{"type": tc.kind, "encoding": "base64", "data": tc.data}
+			if _, err := Parse(job); err != nil {
+				t.Fatalf("absent optional protocol was refused: %v", err)
+			}
+			job["protocol"] = nil
+			if _, err := Parse(job); err == nil || !strings.Contains(err.Error(), "protocol") {
+				t.Fatalf("explicit null protocol admitted; must match Gateway: %v", err)
+			}
+		})
+	}
+}
+
 func TestParseInvalidCases(t *testing.T) {
 	validData := base64.StdEncoding.EncodeToString([]byte("hello"))
 	cases := []struct {
