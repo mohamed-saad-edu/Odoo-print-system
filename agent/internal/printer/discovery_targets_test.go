@@ -22,7 +22,8 @@ func TestAutomaticDiscoverySharedSubnetDedupesByNetworkNotInterfaceAddress(t *te
 	one := privateSubnet(t, "10.45.2.20", "10.45.2.0/24")
 	two := privateSubnet(t, "10.45.2.21", "10.45.2.0/24")
 	targets, truncated := privateDiscoveryTargetsWithBudget([]*net.IPNet{one, two}, maxAutomaticDiscoveryTargets)
-	if truncated || len(targets) != 253 {
+	// Two local addresses must both be removed, even though they share the /24.
+	if truncated || len(targets) != 252 {
 		t.Fatalf("duplicate adapter generated %d targets, truncated=%v", len(targets), truncated)
 	}
 	seen := map[string]bool{}
@@ -140,8 +141,8 @@ func TestAutomaticDiscoveryDeduplicatesOverlappingSubnetMasks(t *testing.T) {
 		}
 		seen[host] = true
 	}
-	if len(hosts) != 254 {
-		t.Fatalf("wanted 254 unique network hosts, got %d", len(hosts))
+	if len(hosts) != 252 {
+		t.Fatalf("wanted 252 unique remote network hosts (two local interfaces removed), got %d", len(hosts))
 	}
 }
 
