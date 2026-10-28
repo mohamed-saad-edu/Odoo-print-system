@@ -1121,7 +1121,13 @@ func sameNetworkEndpoint(a, b DeviceInfo) bool {
 // same physical socket cannot be merged by arrival order. Unknown probe
 // observations remain eligible for a later explicit protocol declaration.
 func conflictingNetworkPrintLanguage(left, right DeviceInfo) bool {
-	if !sameNetworkEndpoint(left, right) {
+	// Some older and manual registry rows carry only the exact endpoint
+	// without the optional NetworkAddress and Port enrichment. They still
+	// identify the same local socket and must not bypass the language fence.
+	if !sameNetworkEndpoint(left, right) &&
+		(strings.TrimSpace(left.Endpoint) == "" ||
+			strings.TrimSpace(right.Endpoint) == "" ||
+			!strings.EqualFold(strings.TrimSpace(left.Endpoint), strings.TrimSpace(right.Endpoint))) {
 		return false
 	}
 	byteStream := func(raw string) bool {
