@@ -261,3 +261,14 @@ Baseline inspected: main@65214cf7948a214843110fa2fbc1a23aec388340. This is an **
 **Production changes:** Go `330ea8661a7d933ca96de8bc101cb8fb73ae3de6` now uses error-reporting `url.ParseQuery` and rejects nonlocal authority/empty markers; Rust `1f09e3fe8016404399a8bb25dea47591ffa49dd9` checks duplicate names/escaped values/raw fragments; Go raw-key parity for Jobs `0faee03e6e28b84b5de6435d569857373e90b010` and Fleet `8c98f1aab0c6bbfddeb94e12d273f07d73c38931`; Go Fleet empty delimiter guard `db6949d2e522c78eede95f4edaaa0e21d287d911`.
 
 **Verification:** GitHub API writes succeeded; relevant exact-SHA App/Quality and Go tests were QUEUED or CANCELLED at observation, not PASS. No local checkout, no deploy, no customer DB writes, and no change to the authenticated per-Agent authority or printer selection. The full Gateway/Odoo/Windows and physical proof gates remain open and all unrelated ledger modules remain TODO.
+
+
+## Batch 17 — Jobs/Fleet query dot-runs versus API route traversal
+
+**Source issue:** The Desktop Jobs search uses `URLSearchParams` and can send a legitimate `search=invoice..pdf`. Native Rust `gateway_agent_request` and Go `isAllowedGatewayConsolePath` originally rejected `..` across the whole URI, even when the only path was exactly `/api/jobs` or `/api/printers`. Both independently allowlist exact API route, method, and query keys, so path traversal defenses should inspect *route path* while treating query search/cursor bytes as data.
+
+**Test-first:** Go real allowlist regression `b6c00fed5fc6881bb533e4f5d7a88ca5c0f4b4a0` for dotted Jobs search and Fleet cursor; Rust pure native path guard test `93268188f3aadc7265e7d60c81c36133f664e2ff` verifies dotted search permitted but actual route `../` and any raw backslash denied.
+
+**Correction:** Go `6cdd987c654020bc0f6c94d768f7dcff2b6c15c3` checks dot-runs only before `?`, while preserving a full-string raw-backslash block. Rust `8aff4ddaf417791d6ed92bf86820ca507bf5c8e7` introduces `unsafe_gateway_route_path`, used by `gateway_agent_request`; it keeps exact `allowed_agent_gateway_path` authorization and the same raw-backslash refusal. No POST permissions expanded, no printer-selection changes, no DB/data mutations.
+
+**Verification:** Exact-SHA Go test and Windows Rust build remain QUEUED / NOT RUN due GitHub Actions backlog and concurrent main updates. Do not claim PASS or physical printer acceptance; rest of ledger remains TODO.
