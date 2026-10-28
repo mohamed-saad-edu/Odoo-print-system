@@ -342,7 +342,13 @@ func isAllowedJobsPath(path string) bool {
 func isAllowedGatewayConsolePath(path, method string) bool {
 	// Match the Rust WebView boundary: neither direct CLI callers nor decoded
 	// URLs may smuggle dot segments into authenticated Agent operations.
-	if strings.Contains(path, "..") || strings.Contains(path, "\\") {
+	routePath := path
+	if queryAt := strings.IndexByte(routePath, '?'); queryAt >= 0 {
+		routePath = routePath[:queryAt]
+	}
+	// Reject dot traversal in the API route, not harmless search/cursor text.
+	// Raw backslash stays disallowed throughout this authenticated request.
+	if strings.Contains(routePath, "..") || strings.Contains(path, "\\") {
 		return false
 	}
 	switch strings.ToUpper(strings.TrimSpace(method)) {
