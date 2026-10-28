@@ -445,7 +445,12 @@ patch(PosStore.prototype, {
             // An accepted-looking status without the server's positive Gateway
             // route marker is a contradictory response, not print admission.
             // Keep the original operation ID and raster for reconciliation.
-            const status = result?.gateway_enabled === true ? result?.status : "unknown";
+            const observedStatus = result?.gateway_enabled === true ? result?.status : "unknown";
+            // A bare "failed" token proves neither non-admission nor zero
+            // physical bytes. Only the durable Outbox's explicit safe-retry
+            // verdict may close the original operation and permit a new key.
+            const status = observedStatus === "failed" && result?.can_retry !== true
+                ? "unknown" : observedStatus;
             const terminal = ["submitted", "claimed", "printing", "success", "failed"].includes(status);
             if (terminal) finishPrintOperation(recoveryKey, operationId);
             receiptOps.set(orderId, {
