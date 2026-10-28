@@ -303,6 +303,57 @@ def test_ambiguous_submission_lookup_rejects_unexecutable_remote_job_id(remote_i
     assert invoked == []
 
 
+
+@pytest.mark.parametrize("response_identity", [
+    {"jobId": "remote-accepted", "id": "remote-other", "status": "success"},
+    {"jobId": "remote-accepted", "id": " remote-accepted", "status": "success"},
+    {"jobId": "", "id": "remote-accepted", "status": "success"},
+    {"jobId": None, "id": "remote-accepted", "status": "success"},
+    {"jobId": "remote-accepted", "id": None, "status": "success"},
+])
+def test_ambiguous_lookup_rejects_conflicting_remote_identity_aliases_before_binding(response_identity):
+    """No print job ID may be stored if Gateway JSON aliases disagree.
+
+    The status-sync path already rejects this shape. The earlier lookup must
+    have the same rule before it binds a previously UNKNOWN Odoo operation.
+    """
+    response = SimpleNamespace(status_code=200, raise_for_status=lambda: None,
+                               json=lambda: response_identity)
+    saved, locked = [], []
+    config = SimpleNamespace(
+        _gateway_base=lambda **_kwargs: "https://gateway.test",
+        _gateway_headers=lambda: {"Authorization": "Bearer redacted"},
+    )
+    config.sudo = lambda: config
+
+    class Job(SimpleNamespace):
+        def ensure_one(self): return None
+        def sudo(self): return self
+        def write(self, values):
+            saved.append(values)
+            self.gateway_job_id = values["gateway_job_id"]
+
+    job = Job(id=59, status="unknown", gateway_job_id=False,
+              last_error="UNKNOWN_SUBMISSION_OUTCOME: original response was lost",
+              gateway_config_id=config, gateway_idempotency_version=1,
+              _gateway_idempotency_key=lambda: "operation-original")
+    lookup = _method(
+        "print_job.py", "PrintGatewayJob", "_lookup_gateway_job_for_ambiguous_submission",
+        requests=SimpleNamespace(get=lambda *_args, **_kwargs: response),
+        is_exact_gateway_job_id=_runtime_identity(),
+    )
+    controller = SimpleNamespace(
+        _lock_status_row=lambda _job: locked.append(_job.id),
+        _mark_gateway_job_missing=lambda *_args: None,
+    )
+    with pytest.raises(ValueError, match="job id"):
+        lookup(controller, job)
+    assert not saved and not locked
+    assert job.gateway_job_id is False
+    assert job.status == "unknown"
+
+
+
 def _runtime_identity():
     spec = importlib.util.spec_from_file_location(
         "reconciliation_identity_policy", ADDON / "runtime_policy.py"
