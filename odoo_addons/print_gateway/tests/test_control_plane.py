@@ -1738,10 +1738,11 @@ class TestControlPlane(TransactionCase):
         self.assertTrue(persisted.next_retry_at)
         self.assertIn("GATEWAY_BUSY_503", persisted.last_error)
 
-    def test_26g_gateway_500_stays_retryable_and_honest(self):
-        """Genuine infrastructure failures (5xx) must NOT be terminalized and
-        must NOT be hidden: the job stays queued for retry and the interactive
-        customer gets localized guidance while diagnostics retain the status."""
+    def test_26g_gateway_500_preserves_unknown_outcome_without_automatic_replay(self):
+        """A proxy can return 500 AFTER the Gateway accepted the operation.
+        Without a typed pre-admission rejection, do not retry or fail over;
+        retain the durable ambiguous identity and direct users to activity.
+        """
         job = self._submit_test_job("test_500_retry_%s" % uuid.uuid4().hex[:8])
         mock_resp = MagicMock()
         mock_resp.status_code = 500
@@ -1751,6 +1752,7 @@ class TestControlPlane(TransactionCase):
             with self.assertRaises(ValidationError) as ctx:
                 job._action_submit_trusted(raise_on_failure=True)
         self.assertNotIn("GATEWAY_HTTP_500", str(ctx.exception))
+        self.assertIn("unknown", str(ctx.exception).lower())
         self.assertIn("Print Activity", str(ctx.exception))
 
         persisted = self._submit_test_job("test_500_retry_persisted_%s" % uuid.uuid4().hex[:8])
@@ -1758,10 +1760,17 @@ class TestControlPlane(TransactionCase):
              patch("odoo.addons.print_gateway.models.gateway_http.post", return_value=mock_resp):
             persisted._action_submit_trusted(raise_on_failure=False)
         persisted.invalidate_recordset(["status", "last_error", "next_retry_at", "gateway_job_id", "attempts"])
-        self.assertEqual(persisted.status, "queued")
-        self.assertTrue(persisted.next_retry_at)
-        self.assertIn("GATEWAY_HTTP_500", persisted.last_error)
-
+        self.assertEqual(persisted.status, "unknown")
+        self.assertFalse(persisted.next_retry_at)
+        self.assertFalse(persisted.gateway_job_id)
+        self.assertEqual(persisted.attempts, 1)
+        self.assertTrue(persisted.last_error.startswith("UNKNOWN_SUBMISSION_OUTCOME:"))
+        self.assertIn("HTTP 500", persisted.last_error)
+        # Cron and post-commit recovery must not silently POST this terminal
+        # ambiguous operation a second time, regardless of retry budget.
+        with patch("odoo.addons.print_gateway.models.gateway_http.post") as post:
+            persisted._action_submit_trusted(raise_on_failure=False)
+            post.assert_not_called()
     def test_26d_gateway_config_unlink_checks_dependencies_before_remote_shutdown(self):
         """A config with dependent print jobs must fail before any Gateway shutdown side effect."""
         config_model = self.env["print_gateway.gateway_config"]
