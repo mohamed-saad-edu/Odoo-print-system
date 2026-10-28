@@ -3,6 +3,7 @@ import fixtures from "../contracts/printer-geometry-fixtures.json";
 import {
   capabilitiesWithCurrentGeometry,
   currentPrinterGeometry,
+  printerGeometryFromCapabilities,
   hasPhysicalReceiptGeometry,
   validatePrinterGeometry,
   validatePrinterGeometryProfile,
@@ -31,6 +32,28 @@ describe("shared printer geometry fixtures", () => {
       expect(validatePayloadForPrinter(fixture.payload, fixture.printer).ok).toBe(fixture.allowed);
     });
   }
+
+  it("keeps geometry evidence behind the exact Gateway printer ID wire boundary", () => {
+    // This result is consumed by Odoo and Gateway, while the native Agent
+    // sends an opaque UTF-8 printer ID. Never validate this evidence using
+    // JS UTF-16 code units or repair an invalid identity by normalization.
+    const evidence = fixtures.geometryCases[0].geometry;
+    const cases: Array<[string, string, boolean]> = [
+      ["Arabic at 120 UTF-8 bytes", "ط".repeat(60), true],
+      ["Arabic above 120 UTF-8 bytes", "ط".repeat(61), false],
+      ["Emoji at 120 UTF-8 bytes", "🖨".repeat(30), true],
+      ["Emoji above 120 UTF-8 bytes", "🖨".repeat(31), false],
+      ["leading BOM", "\uFEFFprinter", false],
+      ["lone high surrogate", "\uD800", false],
+      ["interior BOM is opaque", "prin\uFEFFter", true],
+    ];
+    for (const [name, printerId, valid] of cases) {
+      const observed = { ...evidence, printer_id: printerId };
+      expect(validatePrinterGeometry(observed).ok, name).toBe(valid);
+      const recovered = printerGeometryFromCapabilities({ geometry: observed });
+      expect(recovered !== null, name + " capability projection").toBe(valid);
+    }
+  });
 
   it("does not coerce non-finite numbers or objects into physical measurements", () => {
     const base = fixtures.geometryCases[0].geometry;
