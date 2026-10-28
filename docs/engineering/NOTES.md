@@ -365,3 +365,25 @@ Baseline inspected: main@65214cf7948a214843110fa2fbc1a23aec388340. This is an **
 **Finding:** The Go Agent validates `url.User != nil` for printer URL authorities, rejecting `ipp://@host/...` (empty userinfo). WHATWG `URL.username` and `.password` become empty for this input, so Gateway `validateIPPPrinterAddress`, discovery URI approval and `physicalPrinterIdentityKey` could silently accept/normalize a printer the Agent refuses to execute, or deduplicate it against a different configured URL. This is an authority/availability discrepancy; no confirmed physical misprint was observed.
 
 **Fix:** Inspect the raw URI authority for `@` in all three Gateway boundaries, preserving permissible `@` elsewhere in the resource path. Keep existing private-address/port/security rules and existing printer histories unchanged. Regression `tests/printer-destination-security.test.ts` and `tests/physical-printer-identity.test.ts`: empty-userinfo rejected for IPP and IPPS, never used for deduplication. Exact-SHA CI and hardware tests **NOT RUN** until workflow evidence; no local Go/Postgres runner in this GitHub-only review.
+
+
+## 2026-10-28 — POS kitchen replay identity and Arabic print-safety boundary
+
+### Batch ODOO-POS-KITCHEN-KEY (high priority)
+- Root cause: `route_kitchen_print` hashed `pos.order.write_date` into the fallback idempotency key when `operation_id` was absent. A routine order sync/payment update could produce a new physical kitchen operation for an identical rendered ticket after an RPC response was lost; this violates the no-duplicate/no-ambiguous-auto-retry rule.
+- **Test-first source:** `f61b383a87ffa35bf977cb8b06838d747b2db4d6` changed `tests/test_kitchen_idempotency_fallback.py` to require identical fallback key across write_date-only changes, distinct keys for changed rendered images, and the documented key derivation.
+- **Implementation:** `7e3d1036a1e5769a89876877bea1387f51a0aa9f` hashes the validated base64 ticket data, not mutable `write_date`, alongside exact order/binding/preparation destination; explicit operator/caller keys and deliberate reprint behavior are unchanged.
+- Ruling: A genuine independent kitchen print with identical raster requires a fresh explicit operation ID. It must not be inferred from incidental metadata changes; the POS browser already mints per-operation identities. Cost: legacy keyless extensions must provide a fresh key for a second copy with identical raster.
+
+### Batch ODOO-POS-EXPLICIT-KEY (high priority)
+- Root cause: the strict `_submit_route` operation-key validator introduced earlier could be bypassed by three POS router entry points that used `if not idempotency_key` first. Malformed explicit values like integer 0, empty dictionaries, or empty lists became `absent` and were replaced with deterministic keys before reaching the durable outbox, making the caller's intended identity untrustworthy.
+- **Test-first source:** `05144f32bed8c2e5e65405c83f83fab70421f5a5` (`tests/test_odoo_pos_operation_key_guards.py`) tests actual receipt, kitchen and Sale Details router methods with malformed identities, plus preserved `None`/`False`/`""` Odoo empty sentinels.
+- **Implementation:** `6743d842d3462c3c27906ec5c244ce3c6b0f7e3c` rejects invalid explicit identities before routing, rendering or outbox writes. No new fallback destination, printer, or retry authority.
+
+### Batch ODOO-ARABIC-PRINT-ERRORS (medium priority)
+- Root cause: a source/catalog spot check found five translatable fail-closed messages without `msgid` entries in `i18n/ar.po`. These covered malformed operation keys, printer/agent identities and temporary Gateway admission limits; Arabic users would see English where print admission failed.
+- **Test-first sources:** `6e9d7077d768d6751255e78f55b199d4e9c354b5` and `e01bc08edbc2d73425f28579f87c4f968b85e8bd` (`tests/test_odoo_print_safety_translation.py`).
+- **Implementation sources:** `d265bc0c193bc9aebd7f1ab70dec556b3644dccf` and `76cf4e2aabd91b2bbf4a146ab932b4d27b5a4ffc` provide one Arabic `msgstr` per exact English source message.
+- Static source/catalog spot checks confirmed all five exact `msgid`/Arabic `msgstr` pairs exist. These checks are **not** equivalent to running the full Odoo translation extractor, native Odoo Arabic user test or UI screenshots.
+
+**Verification/coverage:** All listed commits were accepted by the connected GitHub API on `main`. Their pushed commit CI runs were often **CANCELLED** by subsequent concurrent pushes. No offline Python, JS, Odoo or physical-printer tests were executed in this GitHub-only session; classify **NOT RUN**, never PASS. `MODULE_COVERAGE_LEDGER.md` Odoo TODO rows remain open until full native addon, migration, multi-company, POS/raster and printer verification. Do not deploy or reset customer data from this review.
