@@ -5,6 +5,7 @@ exercise them with small record fixtures and inspect the transaction boundary.
 """
 import ast
 import copy
+import datetime
 import logging
 import tracemalloc
 import xml.etree.ElementTree as ET
@@ -61,6 +62,50 @@ def _report_policy(binding_report_id):
         binding_id=SimpleNamespace(report_id=expected if binding_report_id == 31 else actual,
                                    display_name='Invoice printer rule'),
     )
+
+
+def test_failed_intent_retry_backoff_never_builds_unbounded_exponent():
+    """Untrusted legacy attempt counters must not force 2**huge integer work.
+
+    The exponential delay has a strict 300s ceiling. Clamp the exponent
+    *before* computing it, not merely the final delay.
+    """
+    source = (BASE / "print_intent.py").read_text(encoding="utf-8")
+    assert "2 ** min(max(0, attempts - 1), 5)" in source
+    now = datetime.datetime(2026, 10, 28)
+    model = _class_methods(
+        "print_intent.py", "PrintGatewayIntent", {"_finalize_route_failure"},
+        {"datetime": datetime, "db_now_utc": lambda _cr: now},
+    )
+    for attempts, expected_seconds in [
+        (1, 15), (2, 30), (5, 240), (6, 300), (1_000_000, 300),
+    ]:
+        recorded = []
+        class Cursor:
+            closed = False
+            committed = False
+            def execute(self, _statement, _params):
+                pass
+            def fetchone(self):
+                return (attempts, attempts + 1)
+            def commit(self):
+                self.committed = True
+            def close(self):
+                self.closed = True
+        cursor = Cursor()
+        env = SimpleNamespace(registry=SimpleNamespace(cursor=lambda: cursor))
+        def finalize(_cls, _env, intent_id, token, **values):
+            assert intent_id == 71 and token == "original-lease"
+            recorded.append(values)
+            return True
+        model._finalize_intent_state = classmethod(finalize)
+        assert model._finalize_route_failure(
+            model, env, 71, "original-lease", RuntimeError("routing unavailable")
+        )
+        assert len(recorded) == 1
+        assert recorded[0]["status"] == "pending"
+        assert (recorded[0]["next_retry_at"] - now).total_seconds() == expected_seconds
+        assert cursor.committed and cursor.closed
 
 
 def test_report_policy_rejects_another_report_on_the_same_model_before_dispatch():
