@@ -5038,3 +5038,15 @@ msgstr "تغيّر التقرير المحدد في ربط الطباعة قبل
 #: code:addons/print_gateway/customer_presentation.py:0
 msgid "The print rule or source company changed after this event. No print was sent. Ask an administrator to review the route and submit a new request if needed."
 msgstr "تغيّرت قاعدة الطباعة أو شركة المستند بعد تسجيل الحدث. لم يتم إرسال أي مهمة طباعة. اطلب من المسؤول مراجعة مسار الطباعة وإرسال طلب جديد عند الحاجة."
+
+#. module: print_gateway
+#. odoo-python
+#: code:addons/print_gateway/models/pos_order.py:0
+msgid "A valid Odoo Preparation Printer ID is required."
+msgstr "يجب تحديد معرّف صحيح لطابعة التحضير في Odoo دون تغيير أو تحويل."
+
+#. module: print_gateway
+#. odoo-python
+#: code:addons/print_gateway/models/print_job.py:0
+msgid "WARNING: Print Job #%s returned ambiguous delivery on '%s'. Verify physical output before any reprint."
+msgstr "تحذير: نتيجة إرسال مهمة الطباعة رقم %s إلى '%s' غير مؤكدة. تحقّق من خروج الورق قبل إعادة الطباعة."
