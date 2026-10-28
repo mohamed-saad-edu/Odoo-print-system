@@ -2168,3 +2168,12 @@ PARTIAL tests/test_final_security_hardening.py — exact lookup static security 
 ```
 
 Review remains PARTIAL; no completed exact-SHA integration or physical test evidence, hence no VERIFIED or DONE claim.
+
+#### ODOO-HTTP-200-JOB-ID-2026-10-28
+
+```text
+PARTIAL odoo_addons/print_gateway/models/print_job.py — successful HTTP 200 remote-ID exactness
+AUTHORED odoo_addons/print_gateway/tests/test_control_plane.py — HTTP 200 invalid-ID ambiguous/no-retry integration case
+```
+
+Source and tests committed; exact SHA live Odoo/physical verification NOT RUN.
