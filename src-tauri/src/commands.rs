@@ -772,6 +772,13 @@ fn allowed_agent_gateway_path(path: &str, method: &str) -> bool {
     }
 }
 
+// Validate the route part independently of safe Jobs-search/Fleet cursor
+// values; the allowlisted path and parameter names are validated below.
+fn unsafe_gateway_route_path(path: &str) -> bool {
+    let route = path.split_once('?').map(|(route, _)| route).unwrap_or(path);
+    route.contains("..") || path.contains('\\')
+}
+
 #[tauri::command]
 pub async fn gateway_agent_request(
     args: AgentGatewayRequestArgs,
@@ -779,7 +786,7 @@ pub async fn gateway_agent_request(
 ) -> Result<String, String> {
     let path = args.path.trim().to_string();
     let method = args.method.trim().to_ascii_uppercase();
-    if !path.starts_with("/api/") || path.contains("..") || path.contains('\\') {
+    if !path.starts_with("/api/") || unsafe_gateway_route_path(&path) {
         return Err("gateway request path must be an API-relative path".into());
     }
     if !allowed_agent_gateway_path(&path, &method) {
