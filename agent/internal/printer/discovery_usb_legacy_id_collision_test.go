@@ -50,7 +50,6 @@ func TestLegacyUSBFallbackIDCollisionCannotSelectAnotherInterface(t *testing.T) 
 	}
 }
 
-
 func TestExplicitManualUSBInterfaceChangeRevokesOldGeometryEvidence(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "printers.json")
 	prior := legacyUSBPrinterForCollision("USBPRINT\\VID_1234&PID_5678\\INSTANCE_A", `\\?\usb#vid_1234&pid_5678#instance-a`)
