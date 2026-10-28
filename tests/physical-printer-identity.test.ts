@@ -44,6 +44,14 @@ describe("physical printer identity", () => {
     expect(matchingPhysicalPrinter([{ id: "tls", ...explicit }], secure)?.id).toBe("tls");
   });
 
+  it("does not dedupe an empty-userinfo IPP URL onto a valid physical queue", () => {
+    const safe = { connectionType: "ipp", protocol: "ipp", config: { address: "ipp://192.168.1.60:631/ipp/print" } };
+    const malformed = { ...safe, config: { address: "ipp://@192.168.1.60:631/ipp/print" } };
+    expect(key(safe)).toMatch(/^v2:[a-f0-9]{64}$/);
+    expect(key(malformed)).toBeNull();
+    expect(matchingPhysicalPrinter([{ id: "queue", ...safe }], malformed)).toBeUndefined();
+  });
+
   it("never merges an explicit IPP root with the different /ipp/print queue", () => {
     const root = { connectionType: "ipp", protocol: "ipp", config: { address: "ipp://printserver.local/" } };
     const noPath = { ...root, config: { address: "ipp://printserver.local" } };

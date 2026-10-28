@@ -30,6 +30,9 @@ export function physicalPrinterIdentityKey(p: PrinterEndpoint): string | null {
       const ip = host(val(cfg.ip));
       const raw = conn === "network" ? `${p.protocol.toLowerCase() === "ipps" ? "https" : "http"}://${ip.includes(":") ? `[${ip}]` : ip}:${cfg.port}/ipp/print` : val(cfg.address);
       const explicitUri = raw.includes("://");
+      // Raw authority must be credential-free even when the URL parser
+      // discards an empty userinfo delimiter (http://@host).
+      if (explicitUri && raw.slice(raw.indexOf("://") + 3).split(/[/?#]/, 1)[0]?.includes("@")) return null;
       // A scheme-less host:port is the Agent's /ipp/print shortcut, not
       // a declaration of the URI root; path-bearing shortcuts are invalid.
       if (!explicitUri && (raw.includes("/") || raw.includes("?") || raw.includes("#") || raw.includes("\\"))) return null;

@@ -98,6 +98,9 @@ export function discoveryIppUriMatchesEndpoint(
     const host = observedIp.includes(":") ? `[${observedIp.replace(/^\[|\]$/g, "")}]` : observedIp;
     const observed = new URL(`ipp://${host}:${observedPort}/ipp/print`);
     const scheme = target.protocol.toLowerCase();
+    // WHATWG URL removes empty userinfo (ipp://@host); native Go still
+    // rejects that authority. Validate the original authority, not just URL.username.
+    if (uri.slice(uri.indexOf("://") + 3).split(/[/?#]/, 1)[0]?.includes("@")) return false;
     if (protocol === "ipps" ? !["ipps:", "https:"].includes(scheme) : !["ipp:", "http:"].includes(scheme)) {
       return false;
     }
@@ -139,7 +142,7 @@ function validateIPPPrinterAddress(value: string): string | null {
   if (parsed.search || parsed.hash) {
     return "IPP printer URL cannot contain query strings or fragments";
   }
-  if (parsed.username || parsed.password) {
+  if (parsed.username || parsed.password || (raw.includes("://") && raw.slice(raw.indexOf("://") + 3).split(/[/?#]/, 1)[0]?.includes("@"))) {
     return "IPP printer URL cannot contain embedded credentials";
   }
   if (!isAllowedPrinterDestination(parsed.hostname)) {
