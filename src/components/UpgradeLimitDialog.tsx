@@ -62,13 +62,14 @@ export default function UpgradeLimitDialog({
   const { t, tc, formatNumber, formatDate } = useI18n();
   const copy = COPY[resource];
   const technicalCapacity = resource !== "prints";
+  const fixedDeviceCapacity = resource === "agents" || resource === "printers";
   const billingUrl = copyBillingDestination?.url ?? null;
   const [copiedUrl, setCopiedUrl] = useState("");
   const usedText = typeof used === "number" ? formatNumber(used) : "—";
   const limitText = limit === "unlimited" ? t("limit.unlimited") : typeof limit === "number" ? formatNumber(limit) : "—";
   const end = periodEnd ? new Date(periodEnd) : null;
   const periodText = end && !Number.isNaN(end.getTime()) ? formatDate(end) : null;
-  const retryMinutes = typeof retryAfterSeconds === "number" && retryAfterSeconds > 0
+  const retryMinutes = !fixedDeviceCapacity && typeof retryAfterSeconds === "number" && retryAfterSeconds > 0
     ? Math.max(1, Math.ceil(retryAfterSeconds / 60))
     : null;
 
