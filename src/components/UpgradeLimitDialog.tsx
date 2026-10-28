@@ -61,7 +61,7 @@ export default function UpgradeLimitDialog({
 }) {
   const { t, tc, formatNumber, formatDate } = useI18n();
   const copy = COPY[resource];
-  const technicalCapacity = resource === "agents" || resource === "printers";
+  const technicalCapacity = resource !== "prints";
   const billingUrl = copyBillingDestination?.url ?? null;
   const [copiedUrl, setCopiedUrl] = useState("");
   const usedText = typeof used === "number" ? formatNumber(used) : "—";
