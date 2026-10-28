@@ -291,7 +291,7 @@ describe("clock authority is enforced in the source", () => {
     const filters = source.slice(countsStart, countsEnd);
     expect(admissionStamp).toBeGreaterThan(lock);
     expect(countsStart).toBeGreaterThan(admissionStamp);
-    expect(filters.match(/expires_at > \\$\\{dbNow\\}/g)).toHaveLength(3);
+    expect(filters.split('expires_at > ${dbNow}')).toHaveLength(4);
     expect(filters).not.toContain("expires_at > now()");
   });
 

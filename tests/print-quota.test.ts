@@ -304,17 +304,9 @@ suite("tenant print quota", () => {
   it("does not let expired queued jobs block a fresh admission after waiting for the tenant lock", async () => {
     const f = await seedFixture();
     await setPlanLimit(f.tenantId, "unlimited");
-    // Saturate only the temporary Agent queue, not the subscription/rate
-    // allowance. All 256 jobs expire AFTER the new transaction begins but
-    // BEFORE it acquires the tenant's admission lock.
-    await pool().query(
-      `INSERT INTO print_jobs (id,tenant_id,agent_id,printer_id,status,payload,expires_at)
-       SELECT 'stale-queue-' || n, $1, $2, $3, 'queued',
-         '{"type":"raw","protocol":"raw","encoding":"base64","data":"cQ=="}'::jsonb,
-         clock_timestamp() + interval '500 milliseconds'
-       FROM generate_series(1, 256) AS n`,
-      [f.tenantId, f.agentId, f.printerId],
-    );
+    // Wait until admission has actually begun before inserting the rows:
+    // this makes their expiry definitively later than that transaction's
+    // now(), and definitively earlier than its post-lock wall clock.
     const blocker = await pool().connect();
     let result: Promise<unknown> | undefined;
     try {
@@ -328,6 +320,17 @@ suite("tenant print quota", () => {
         "SELECT count(*)::int AS n FROM pg_locks WHERE locktype = 'advisory' AND NOT granted AND objid = hashtext($1)::oid",
         [`print_jobs:tenant:${f.tenantId}`],
       )).rows[0].n)).toBe(1);
+      // These 256 queued entries are NEWER than the waiting transaction and
+      // must expire before it can evaluate its actual capacity. If capacity
+      // uses now() from transaction start, they still count and reject it.
+      await pool().query(
+        `INSERT INTO print_jobs (id,tenant_id,agent_id,printer_id,status,payload,expires_at)
+         SELECT 'stale-queue-' || n, $1, $2, $3, 'queued',
+           '{"type":"raw","protocol":"raw","encoding":"base64","data":"cQ=="}'::jsonb,
+           clock_timestamp() + interval '500 milliseconds'
+         FROM generate_series(1, 256) AS n`,
+        [f.tenantId, f.agentId, f.printerId],
+      );
       await blocker.query("SELECT pg_sleep(0.8)");
       await blocker.query("COMMIT");
       const outcome = await result as { value?: { isReused: boolean }; error?: Error };
