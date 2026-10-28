@@ -2,7 +2,7 @@ import { assertWorkspaceSecurityOrigin,readWorkspaceSecurityJson } from "../../.
 import { NextResponse } from "next/server";
 import { sql } from "drizzle-orm";
 import { db } from "../../../../db";
-import { requirePlatformOwner,requirePlatformActorInTransaction } from "../../../../lib/platform-auth";
+import { requirePlatformOwner,requirePlatformActorInTransaction,requirePlatformReadAuthorityInTransaction } from "../../../../lib/platform-auth";
 import { manualApiError } from "../../../../lib/manual-api-error";
 import { ManualSubscriptionError,requireIdempotencyKey } from "../../../../lib/manual-subscriptions";
 import { writeAuditEvent } from "../../../../lib/audit";
@@ -10,14 +10,16 @@ import { effectiveSubscriptionStatusSql } from "../../../../lib/effective-subscr
 import { parseStrictListOffset } from "../../../../lib/request-limits";
 export async function GET(req:Request) {
   try {
-    await requirePlatformOwner(req);
+    const actor=await requirePlatformOwner(req);
     const params=new URL(req.url).searchParams;
     const status=params.get('status')??'pending';
     const offset=parseStrictListOffset(params.get('offset'),1_000_000);
     if(offset===null)throw new ManualSubscriptionError('INVALID_OFFSET',400);
     if(!['pending','approved','rejected','all'].includes(status))throw new ManualSubscriptionError('SUBSCRIPTION_INVALID');
-    const [rows,counts]=await Promise.all([
-      db.execute(sql`SELECT r.*,t.name AS "tenantName",p.name AS "planName",
+    const [rows,counts]=await db.transaction(async tx=>{
+      await requirePlatformReadAuthorityInTransaction(tx,actor);
+      return Promise.all([
+      tx.execute(sql`SELECT r.*,t.name AS "tenantName",p.name AS "planName",
         CASE WHEN p.entitlements->>'max_prints_per_period' ~ '^[0-9]{1,9}$'
           THEN (p.entitlements->>'max_prints_per_period')::int ELSE NULL END AS "planMonthlyQuota",
         current_plan.name AS "currentPlanName",
@@ -28,8 +30,9 @@ export async function GET(req:Request) {
         LEFT JOIN plans current_plan ON current_plan.id=current_sub.plan_id
         WHERE (${status}='all' OR r.status=${status})
         ORDER BY r.created_at DESC,r.id DESC LIMIT 101 OFFSET ${offset}`),
-      db.execute(sql`SELECT count(*)::int AS pending FROM subscription_requests WHERE status='pending'`),
-    ]);
+      tx.execute(sql`SELECT count(*)::int AS pending FROM subscription_requests WHERE status='pending'`),
+      ]);
+    });
     return NextResponse.json({requests:rows.rows.slice(0,100),hasMore:rows.rows.length>100,offset,pendingCount:Number(counts.rows[0]?.pending??0)},{headers:{'Cache-Control':'private, no-store'}});
   } catch(error){return manualApiError(error);}
 }
