@@ -1,4 +1,5 @@
 import { normalizePlanEntitlements } from "./entitlements";
+import { parsePlanPriceAmount } from "./plan-price";
 import { ManualSubscriptionError } from "./manual-subscriptions";
 export function parseManualPlan(input: unknown) {
   if(!input||typeof input!=='object'||Array.isArray(input))throw new ManualSubscriptionError('PLAN_INVALID');
@@ -16,10 +17,9 @@ export function parseManualPlan(input: unknown) {
   const amount=b.priceAmount??null, currency=b.priceCurrency??null;
   if (amount !== null || currency !== null) {
     if (typeof amount !== "string" || (currency !== "USD" && currency !== "SAR")) throw new ManualSubscriptionError("PLAN_INVALID");
-    const parsed=/^(0|[1-9][0-9]{0,9})(?:\.([0-9]{1,2}))?$/.exec(amount);
-    if (!parsed) throw new ManualSubscriptionError("PLAN_INVALID");
-    priceMinorUnits=Number(parsed[1])*100+Number((parsed[2]??"").padEnd(2,"0"));
-    if (!Number.isSafeInteger(priceMinorUnits) || priceMinorUnits>2147483647) throw new ManualSubscriptionError("PLAN_INVALID");
+    const minorUnits = parsePlanPriceAmount(amount);
+    if (minorUnits === null) throw new ManualSubscriptionError("PLAN_INVALID");
+    priceMinorUnits = minorUnits;
     priceCurrency=currency;
   }
   return {id:b.id,name:b.name.trim(),description:b.description,priceMinorUnits,priceCurrency,displayOrder,isActive:b.isActive!==false,isPublic:b.isPublic!==false,entitlements:normalizePlanEntitlements({max_agents:'unlimited',max_printers:'unlimited',max_prints_per_period:quota,max_jobs_per_minute:120,max_concurrent_jobs:100})};
