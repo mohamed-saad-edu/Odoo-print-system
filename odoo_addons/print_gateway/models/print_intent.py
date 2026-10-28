@@ -259,7 +259,7 @@ class PrintGatewayIntent(models.Model):
                 cls._finalize_intent_state(
                     env, intent_id, claim_token,
                     status="skipped",
-                    last_error="Source record company changed after intent capture; printing was not sent",
+                    last_error="PRINT_SOURCE_COMPANY_CHANGED: Source record company changed after intent capture; printing was not sent",
                 )
                 return
             # The intent was captured against one authorized rule. Admins may
@@ -272,7 +272,7 @@ class PrintGatewayIntent(models.Model):
                 cls._finalize_intent_state(
                     env, intent_id, claim_token,
                     status="skipped",
-                    last_error="Print automation rule changed or was disabled after intent capture; no job was sent",
+                    last_error="PRINT_RULE_CHANGED: Print automation rule changed or was disabled after intent capture; no job was sent",
                 )
                 return
             with cr.savepoint():
@@ -281,7 +281,7 @@ class PrintGatewayIntent(models.Model):
                 cls._finalize_intent_state(
                     env, intent_id, claim_token,
                     status="skipped",
-                    last_error="Print automation rule no longer matches the source; no job was sent",
+                    last_error="PRINT_RULE_NOT_MATCHED: Print automation rule no longer matches the source; no job was sent",
                 )
                 return
             router = new_env["print_gateway.print_router"]
