@@ -838,6 +838,9 @@ func withRegistryIdentityCollision(device DeviceInfo, reason string) DeviceInfo 
 	}
 	device.Capabilities["identity_collision"] = reason
 	delete(device.Capabilities, "operational_verification")
+	// Geometry belonged to one of the colliding destinations. Keeping it
+	// would advertise stale dimensions for a queue we can no longer identify.
+	delete(device.Capabilities, "geometry")
 	device.Status = "unknown"
 	return device
 }
