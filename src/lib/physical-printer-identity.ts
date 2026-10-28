@@ -28,7 +28,7 @@ export function physicalPrinterIdentityKey(p: PrinterEndpoint): string | null {
   } else if (conn === "ipp" || conn === "ipps" || conn === "network") {
     try {
       const ip = host(val(cfg.ip));
-      const raw = conn === "network" ? `http://${ip.includes(":") ? `[${ip}]` : ip}:${cfg.port}/ipp/print` : val(cfg.address);
+      const raw = conn === "network" ? `${p.protocol.toLowerCase() === "ipps" ? "https" : "http"}://${ip.includes(":") ? `[${ip}]` : ip}:${cfg.port}/ipp/print` : val(cfg.address);
       const explicitUri = raw.includes("://");
       // A scheme-less host:port is the Agent's /ipp/print shortcut, not
       // a declaration of the URI root; path-bearing shortcuts are invalid.

@@ -31,6 +31,19 @@ describe("physical printer identity", () => {
     expect(key(a)).not.toBe(key({ connectionType: "ipps", protocol: "ipps", config: { address: "ipps://printserver.local/printers/one" } }));
   });
 
+  it("keeps native network IPPS observations distinct from insecure IPP and matches explicit TLS URI", () => {
+    const insecure = { connectionType: "network", protocol: "ipp", config: { ip: "PRINT.LOCAL.", port: 631 } };
+    const secure = { ...insecure, protocol: "ipps" };
+    const explicit = { connectionType: "ipps", protocol: "ipps",
+      config: { address: "ipps://print.local:631/ipp/print" } };
+    expect(key(secure)).not.toBeNull();
+    expect(key(secure)).toBe(key(explicit));
+    expect(key(secure)).not.toBe(key(insecure));
+    // A duplicate-resolution lookup must never reuse a plaintext queue for a TLS queue.
+    expect(matchingPhysicalPrinter([{ id: "plaintext", ...insecure }], secure)).toBeUndefined();
+    expect(matchingPhysicalPrinter([{ id: "tls", ...explicit }], secure)?.id).toBe("tls");
+  });
+
   it("never merges an explicit IPP root with the different /ipp/print queue", () => {
     const root = { connectionType: "ipp", protocol: "ipp", config: { address: "ipp://printserver.local/" } };
     const noPath = { ...root, config: { address: "ipp://printserver.local" } };

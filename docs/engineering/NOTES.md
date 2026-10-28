@@ -312,3 +312,9 @@ Baseline inspected: main@65214cf7948a214843110fa2fbc1a23aec388340. This is an **
 - Test-first regression commit: `48af174a3e8d42e27db1cfb631b39258f68baf30` in `tests/test_gateway_destination_policy.py` rejects empty-delimiter variants.
 - Production commit: `0524d634c65a590c92ba14802932243cb29148a7` rejects explicit raw `?`/`#` markers, empty netloc userinfo and any non-empty userinfo before canonicalization.
 - Verification: GitHub API commits confirmed. RED and GREEN test commands were **NOT RUN** in this GitHub-only environment. Check exact-SHA CI before claiming PASS; live Odoo, migrated DB, POS, report and printer checks still NOT RUN. All outstanding module ledger TODO entries remain open.
+
+## Batch — Gateway IPP/IPPS endpoint identity (2026-10-28)
+
+**Root cause:** `physicalPrinterIdentityKey` synthesized `http://` for every network IPP observation, including the declared `protocol: "ipps"`. The same host+port+resource therefore had the *same* canonical identity as plain IPP, while a secure `ipps://` URI had a different identity. Heartbeat deduplication and manual registration consume this key and could incorrectly suppress a distinct TLS printer or report a protocol conflict. Fix the synthesized URI scheme to HTTPS for IPPS before normalization; preserve explicit URI resource case and both historical migration and job records. Regression in `tests/physical-printer-identity.test.ts` compares secure/insecure network observations and the explicit secure queue for both equality and rejection of unsafe reuse.
+
+**Verification:** Source authored via GitHub API against main@6da85b0b901646618910988a5efb6b60b84f057d; exact-commit CI pending. No local Go/Node/Postgres runner or physical printer was used (**NOT RUN**). Unknown-outcome/reprint and tenant scoping behavior unchanged. Other modules remain TODO in the module coverage ledger.
