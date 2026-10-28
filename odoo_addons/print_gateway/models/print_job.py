@@ -18,7 +18,7 @@ from odoo.exceptions import AccessError, ValidationError
 from ..runtime_clock import db_now_utc
 from ..pos_retry_policy import is_stale_pos_operation
 from ..idempotency_namespace import wire_key, deployment_proof
-from ..runtime_policy import inventory_has_shared_printer, is_exact_gateway_printer_id
+from ..runtime_policy import inventory_has_shared_printer, is_exact_gateway_printer_id, is_exact_gateway_job_id
 from ..print_output import gateway_output_values, validated_file_output
 
 
@@ -2290,10 +2290,10 @@ class PrintGatewayJob(models.Model):
         if not isinstance(body, dict):
             raise ValueError("Gateway ambiguous-submission lookup returned a non-object payload")
         remote_id = body.get("jobId") or body.get("id")
-        if not isinstance(remote_id, str) or not remote_id.strip():
-            raise ValueError("Gateway ambiguous-submission lookup returned no job id")
+        if not is_exact_gateway_job_id(remote_id):
+            raise ValueError("Gateway ambiguous-submission lookup returned an invalid exact job id")
         self._lock_status_row(job)
-        if job.gateway_job_id and job.gateway_job_id != remote_id.strip():
+        if job.gateway_job_id and job.gateway_job_id != remote_id:
             return None
         if not job.gateway_job_id:
             if job.status != "unknown" or not str(job.last_error or "").startswith("UNKNOWN_SUBMISSION_OUTCOME:"):
@@ -2301,7 +2301,7 @@ class PrintGatewayJob(models.Model):
             # Only this authenticated response may repair the immutable remote
             # identity; the public sync action already checked operator rights.
             job = job.sudo()
-            job.write({"gateway_job_id": remote_id.strip(), "next_retry_at": False})
+            job.write({"gateway_job_id": remote_id, "next_retry_at": False})
         return body
 
     def _apply_synced_status(self, job, body):
