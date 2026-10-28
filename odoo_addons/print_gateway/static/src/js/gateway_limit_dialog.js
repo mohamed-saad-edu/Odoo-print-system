@@ -108,7 +108,7 @@ export function gatewayDiagnosticMessage(error) {
 function gatewayMachineCode(error) {
     if (!error || typeof error !== "object") return "";
     const values = [error.data?.code, error.code];
-    return values.find((value) => typeof value === "string" && /^(?:PRINT_QUOTA_EXCEEDED|MAX_PRINTS_PER_PERIOD|TENANT_SUBSCRIPTION_REQUIRED|TENANT_ENTITLEMENT_UNAVAILABLE|TENANT_SUSPENDED|TENANT_DELETED|PRINTER_OFFLINE|PRINTER_UNAVAILABLE|PRINTER_NOT_FOUND|PRINTER_NOT_SHARED|AGENT_OFFLINE|DEVICE_NOT_APPROVED|UNKNOWN_SUBMISSION_OUTCOME|UNKNOWN_PARTIAL_DELIVERY|AGENT_EXECUTION_TIMEOUT|AGENT_RESTART_DURING_PRINT|JOB_EXPIRED_DURING_PRINT)$/.test(value)) || "";
+    return values.find((value) => typeof value === "string" && /^(?:PRINT_QUOTA_EXCEEDED|MAX_PRINTS_PER_PERIOD|TENANT_ENTITLEMENT_EXCEEDED|TENANT_SUBSCRIPTION_REQUIRED|TENANT_ENTITLEMENT_UNAVAILABLE|TENANT_SUSPENDED|TENANT_DELETED|PRINTER_OFFLINE|PRINTER_UNAVAILABLE|PRINTER_NOT_FOUND|PRINTER_NOT_SHARED|AGENT_OFFLINE|DEVICE_NOT_APPROVED|UNKNOWN_SUBMISSION_OUTCOME|UNKNOWN_PARTIAL_DELIVERY|AGENT_EXECUTION_TIMEOUT|AGENT_RESTART_DURING_PRINT|JOB_EXPIRED_DURING_PRINT)$/.test(value)) || "";
 }
 
 /** Customer boundary: remote/native exceptions are evidence, never UI copy. */
@@ -123,7 +123,18 @@ export function gatewayServerMessage(error) {
     if (/PRINT_QUOTA_EXCEEDED|MAX_PRINTS_PER_PERIOD/.test(code)) {
         return _t("You have used the monthly allowance. Wait for the next UTC reset or contact the workspace owner.");
     }
-    if (/SUBSCRIPTION|TENANT_SUSPENDED|TENANT_DELETED/.test(code)) {
+    if (/TENANT_ENTITLEMENT_EXCEEDED/.test(code)) {
+        const requested = error && typeof error === "object"
+            ? (error.data?.entitlement ?? error.entitlement)
+            : null;
+        // A throughput or concurrency safeguard is not an exhausted
+        // commercial monthly allowance. Only known entitlement keys may
+        // select a remedy, never a free-text backend message.
+        return ALLOWED_ENTITLEMENTS.has(requested)
+            ? billingCopy()[requested].reason
+            : _t("Contact your administrator to review the platform's technical capacity.");
+    }
+    if (/SUBSCRIPTION|TENANT_ENTITLEMENT_UNAVAILABLE|TENANT_SUSPENDED|TENANT_DELETED/.test(code)) {
         return _t("Printing is not active for this workspace. Ask the workspace owner to review its subscription in Yaseir.");
     }
     if (/PRINTER_OFFLINE|PRINTER_UNAVAILABLE|AGENT_OFFLINE|PRINTER_NOT_FOUND|PRINTER_NOT_SHARED/.test(code)) {

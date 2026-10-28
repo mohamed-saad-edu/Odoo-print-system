@@ -69,6 +69,35 @@ describe("V4 Odoo customer error boundary", () => {
     expect(unknown).not.toContain("monthly allowance");
   });
 
+
+  it("keeps technical print-capacity failures distinct from quota and subscription holds", () => {
+    const failures = [
+      ["max_jobs_per_minute", "Too many prints at once"],
+      ["max_concurrent_jobs", "Too many jobs printing now"],
+      ["max_agents", "technical capacity"],
+      ["max_printers", "technical capacity"],
+    ];
+    for (const [entitlement, expected] of failures) {
+      const message = gatewayServerMessage({
+        data: {
+          code: "TENANT_ENTITLEMENT_EXCEEDED",
+          entitlement,
+          message: "UNKNOWN_SUBMISSION_OUTCOME from unrelated SQL password=PRIVATE_SECRET",
+        },
+      });
+      expect(message).toContain(expected);
+      expect(message).not.toContain("monthly allowance");
+      expect(message).not.toContain("PRIVATE_SECRET");
+      expect(message).not.toContain("Check the printer");
+    }
+    const unknownCapacity = gatewayServerMessage({ data: { code: "TENANT_ENTITLEMENT_EXCEEDED", entitlement: "__proto__", message: "remote secret" } });
+    expect(unknownCapacity).toContain("technical capacity");
+    const blocked = gatewayServerMessage({ data: { code: "TENANT_ENTITLEMENT_UNAVAILABLE", message: "remote secret" } });
+    expect(blocked).toContain("not active");
+    expect(blocked).not.toContain("remote secret");
+    expect(blocked).not.toContain("monthly allowance");
+  });
+
   it("parses a bounded structured quota marker before a trailing RPC traceback", () => {
     const marker = JSON.stringify({
       code: "PRINT_QUOTA_EXCEEDED", entitlement: "max_prints_per_period",
