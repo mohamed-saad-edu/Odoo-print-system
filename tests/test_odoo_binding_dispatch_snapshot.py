@@ -54,11 +54,12 @@ class Jobs:
 
 
 class Environment:
-    def __init__(self, root, config, binding, jobs):
+    def __init__(self, root, config, binding, jobs, report):
         self.models = {
             'res.company': Lookup(root),
             'print_gateway.gateway_config': Lookup(config),
             'print_gateway.binding': Lookup(binding),
+            'ir.actions.report': Lookup(report),
             'print_gateway.print_router': SimpleNamespace(
                 _binding_scope=lambda company: (company, False)),
             'print_gateway.print_job': jobs,
@@ -68,7 +69,8 @@ class Environment:
         return self.models[model]
 
 
-def attempt_persist(*, destination_id=31, document_type='receipt'):
+def attempt_persist(*, destination_id=31, document_type='receipt',
+                    route_report_id=None, binding_report_id=None):
     root = Ref(id=21)
     config = Ref(id=22)
     fresh_binding = Ref(
@@ -76,10 +78,12 @@ def attempt_persist(*, destination_id=31, document_type='receipt'):
         enabled=True, printer_id='exact-printer-1',
         destination_ref=Ref(id=destination_id, _name='pos.config'),
         document_type=document_type,
+        report_id=Ref(id=binding_report_id) if binding_report_id else False,
     )
     jobs = Jobs()
     cursor = Cursor()
-    env = Environment(root, config, fresh_binding, jobs)
+    env = Environment(root, config, fresh_binding, jobs,
+                      Ref(id=route_report_id) if route_report_id else Ref(id=-1))
     Router = production_methods('print_router.py', ['_persist_durable_job'])
     Router._persist_durable_job.__globals__['api'] = SimpleNamespace(
         Environment=lambda *_args: env
@@ -94,7 +98,7 @@ def attempt_persist(*, destination_id=31, document_type='receipt'):
         'gateway_config': config,
         'binding': Ref(id=23),
         'fallback_binding': False,
-        'report': False,
+        'report': Ref(id=route_report_id) if route_report_id else False,
         'printer_id': 'exact-printer-1',
         'destination': 'POS Shop',
         'destination_key': 'pos.config,30',
@@ -118,6 +122,28 @@ def test_changed_binding_cannot_create_outbox_job_at_persistence_boundary(change
     assert not jobs.created, 'A changed binding must never be submitted as the earlier route'
     assert cursor.commits == 0
     assert cursor.closed
+
+
+def test_report_binding_changed_to_another_report_is_denied_before_outbox_create():
+    """Two reports on the same document model and destination cannot share authorization."""
+    router, values, cursor, jobs = attempt_persist(
+        destination_id=30, route_report_id=61, binding_report_id=62,
+    )
+    with pytest.raises(ValidationError, match='report'):
+        router._persist_durable_job(values)
+    assert jobs.created == []
+    assert cursor.commits == 0
+    assert cursor.closed
+
+
+def test_original_report_binding_remains_routable_without_drift():
+    router, values, cursor, jobs = attempt_persist(
+        destination_id=30, route_report_id=61, binding_report_id=61,
+    )
+    assert router._persist_durable_job(values) == 501
+    assert cursor.commits == 1
+    assert len(jobs.created) == 1
+    assert jobs.created[0]['report'].id == 61
 
 
 def test_matching_binding_snapshot_preserves_durable_outbox_creation():
