@@ -253,3 +253,99 @@ def test_durable_cursor_recheck_rejects_repointed_padded_printer_alias():
             "binding": SimpleNamespace(id=9), "printer_id": "printer-1",
         })
     assert calls == []
+
+
+
+@pytest.mark.parametrize("remote_id", [
+    " remote-job", "remote-job ", "\ufeffremote-job",
+    "remote-job\ufeff", "\x00remote-job", "é" * 61, "😀" * 31,
+])
+def test_ambiguous_submission_lookup_rejects_unexecutable_remote_job_id(remote_id):
+    response = SimpleNamespace(
+        status_code=200,
+        raise_for_status=lambda: None,
+        json=lambda: {"jobId": remote_id, "status": "success"},
+    )
+    invoked = []
+    config = SimpleNamespace(
+        _gateway_base=lambda **_kwargs: "https://gateway.test",
+        _gateway_headers=lambda: {"Authorization": "Bearer redacted"},
+        sudo=lambda: None,
+    )
+    config.sudo = lambda: config
+    class Job(SimpleNamespace):
+        def ensure_one(self):
+            return None
+        def sudo(self):
+            return self
+        def write(self, values):
+            invoked.append(values)
+            self.gateway_job_id = values["gateway_job_id"]
+
+    job = Job(
+        id=51, status="unknown", gateway_job_id=False,
+        last_error="UNKNOWN_SUBMISSION_OUTCOME: unresolved remote acceptance",
+        gateway_config_id=config, gateway_idempotency_version=1,
+        _gateway_idempotency_key=lambda: "original-operation",
+    )
+    policy = _runtime_identity()
+    lookup = _method(
+        "print_job.py", "PrintGatewayJob", "_lookup_gateway_job_for_ambiguous_submission",
+        requests=SimpleNamespace(get=lambda *_args, **_kwargs: response),
+        is_exact_gateway_job_id=policy,
+    )
+    controller = SimpleNamespace(
+        _lock_status_row=lambda _job: None,
+        _mark_gateway_job_missing=lambda *_args: None,
+    )
+    with pytest.raises(ValueError, match="job id"):
+        lookup(controller, job)
+    assert invoked == []
+
+
+def _runtime_identity():
+    spec = importlib.util.spec_from_file_location(
+        "reconciliation_identity_policy", ADDON / "runtime_policy.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.is_exact_gateway_job_id
+
+
+def test_ambiguous_submission_lookup_keeps_authorized_exact_remote_id():
+    identity = "طباعة-job-17"
+    response = SimpleNamespace(
+        status_code=200,
+        raise_for_status=lambda: None,
+        json=lambda: {"jobId": identity, "status": "claimed"},
+    )
+    saved = []
+    config = SimpleNamespace(
+        _gateway_base=lambda **_kwargs: "https://gateway.test",
+        _gateway_headers=lambda: {"Authorization": "Bearer redacted"},
+    )
+    config.sudo = lambda: config
+    class Job(SimpleNamespace):
+        def ensure_one(self): return None
+        def sudo(self): return self
+        def write(self, values):
+            saved.append(values)
+            self.gateway_job_id = values["gateway_job_id"]
+
+    job = Job(
+        id=52, status="unknown", gateway_job_id=False,
+        last_error="UNKNOWN_SUBMISSION_OUTCOME: no response",
+        gateway_config_id=config, gateway_idempotency_version=1,
+        _gateway_idempotency_key=lambda: "original-operation",
+    )
+    lookup = _method(
+        "print_job.py", "PrintGatewayJob", "_lookup_gateway_job_for_ambiguous_submission",
+        requests=SimpleNamespace(get=lambda *_args, **_kwargs: response),
+        is_exact_gateway_job_id=_runtime_identity(),
+    )
+    controller = SimpleNamespace(
+        _lock_status_row=lambda _job: None,
+        _mark_gateway_job_missing=lambda *_args: None,
+    )
+    assert lookup(controller, job)["jobId"] == identity
+    assert saved == [{"gateway_job_id": identity, "next_retry_at": False}]
