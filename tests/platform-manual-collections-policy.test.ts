@@ -17,7 +17,7 @@ describe("Platform Owner manual plan and subscription-request reads", () => {
     mocks.select.mockReset().mockReturnValue({ from: () => ({ orderBy: async () => [{ id: "plan-manual" }] }) });
     mocks.execute.mockReset().mockResolvedValue({ rows: [] });
     mocks.readGuard.mockReset().mockResolvedValue(undefined);
-    mocks.transaction.mockReset().mockImplementation(async (fn: (tx: { execute: typeof mocks.execute }) => unknown) => fn({ execute: mocks.execute }));
+    mocks.transaction.mockReset().mockImplementation(async (fn: (tx: { execute: typeof mocks.execute; select: typeof mocks.select }) => unknown) => fn({ execute: mocks.execute, select: mocks.select }));
   });
 
   it("does not allow authenticated plan catalog metadata to be cached", async () => {
@@ -25,8 +25,19 @@ describe("Platform Owner manual plan and subscription-request reads", () => {
     expect(response.status).toBe(200);
     expect(response.headers.get("Cache-Control")).toBe("private, no-store");
     expect(await response.json()).toMatchObject({ plans: [{ id: "plan-manual" }] });
+    expect(mocks.transaction).toHaveBeenCalledOnce();
+    expect(mocks.readGuard).toHaveBeenCalledOnce();
+    expect(mocks.readGuard.mock.invocationCallOrder[0]).toBeLessThan(mocks.select.mock.invocationCallOrder[0]);
   });
 
+  it("rejects stale Platform Owner before plan metadata can be selected", async () => {
+    const { PlatformUnauthorizedError } = await import("../src/lib/platform-auth");
+    mocks.readGuard.mockRejectedValueOnce(new PlatformUnauthorizedError());
+    const response = await readPlans(new Request("http://gateway.test/api/platform/plans"));
+    expect(response.status).toBe(401);
+    expect(mocks.transaction).toHaveBeenCalledOnce();
+    expect(mocks.select).not.toHaveBeenCalled();
+  });
   it.each(["", " ", " 2", "2 ", "+1", "-1", "2.5", "1e2", "0x20", "5garbage", "1000001", "9007199254740992"])(
     "denies malformed subscription request offset %s before database work", async invalid => {
       const url = new URL("http://gateway.test/api/platform/subscription-requests");
