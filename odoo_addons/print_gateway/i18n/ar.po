@@ -5050,3 +5050,15 @@ msgstr "يجب تحديد معرّف صحيح لطابعة التحضير في O
 #: code:addons/print_gateway/models/print_job.py:0
 msgid "WARNING: Print Job #%s returned ambiguous delivery on '%s'. Verify physical output before any reprint."
 msgstr "تحذير: نتيجة إرسال مهمة الطباعة رقم %s إلى '%s' غير مؤكدة. تحقّق من خروج الورق قبل إعادة الطباعة."
+
+#. module: print_gateway
+#. odoo-python
+#: code:addons/print_gateway/models/print_router.py:0
+msgid "The print operation key is invalid."
+msgstr "معرّف عملية الطباعة غير صالح. تحقّق من المعرّف الأصلي قبل إعادة الإرسال."
+
+#. module: print_gateway
+#. odoo-python
+#: code:addons/print_gateway/models/binding.py:0
+msgid "A valid Gateway Runtime Printer must be selected."
+msgstr "يجب اختيار طابعة تشغيل صالحة من بوابة الطباعة قبل الإرسال."
