@@ -646,7 +646,12 @@ class PrintGatewayJob(models.Model):
                     "none was declared (protocol is never inferred from the payload type)."
                 ))
 
-        key = (idempotency_key or uuid.uuid4().hex).strip()
+        # Business operation IDs are opaque v2 identities. Never trim a
+        # caller key into a different durable operation (and a different
+        # previously submitted physical attempt). Only absent keys are made.
+        key = uuid.uuid4().hex if idempotency_key is None else idempotency_key
+        if not isinstance(key, str) or not key.strip():
+            raise ValidationError(_("The print operation key is invalid."))
         # Every NEW operation is scoped to its own local Odoo database.
         # No customer-visible Installation ID or manual cutover is needed.
         namespace_version = 2
