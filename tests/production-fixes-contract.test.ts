@@ -120,8 +120,9 @@ describe("production fixes contracts (2026-09)", () => {
   it("print quota applies at logical job admission and does not make Agent discovery the enforcement point", () => {
     const service = read("src/lib/print-job-service.ts");
     const agentJobs = read("src/app/api/agent/jobs/route.ts");
-    expect(service.indexOf("reserveTenantPrintCredit(tx, tenantId)")).toBeGreaterThan(service.indexOf("if (effectiveIdempotencyKey)"));
-    expect(service.indexOf("await tx.insert(printJobs).values")).toBeGreaterThan(service.indexOf("reserveTenantPrintCredit(tx, tenantId)"));
+    expect(service.indexOf("reserveTenantPrintCredit(tx, tenantId, dbNow)")).toBeGreaterThan(service.indexOf("if (effectiveIdempotencyKey)"));
+    expect(service.indexOf("reserveTenantPrintCredit(tx, tenantId, dbNow)")).toBeGreaterThan(service.indexOf("const dbNow = new Date(dbNowMs)"));
+    expect(service.indexOf("await tx.insert(printJobs).values")).toBeGreaterThan(service.indexOf("reserveTenantPrintCredit(tx, tenantId, dbNow)"));
     expect(agentJobs).not.toContain("max_prints_per_period");
     expect(service).toContain("MAX_AGENT_IN_FLIGHT_JOBS");
     expect(service).toContain("MAX_AGENT_QUEUED_JOBS");

@@ -500,11 +500,6 @@ async function insertQueuedJobAtomically({
 
     await enforceTenantJobEntitlements(tx, tenantId);
 
-    // One newly-created logical print job consumes one plan print credit.
-    // Existing idempotent jobs return before this point, so retries never
-    // double-charge the same logical print.
-    await reserveTenantPrintCredit(tx, tenantId);
-
     const counts = await tx.execute(sql`
       SELECT
         COUNT(*) FILTER (WHERE agent_id = ${agentId} AND status = 'queued' AND expires_at > now())::int AS agent_queued,
@@ -531,9 +526,9 @@ async function insertQueuedJobAtomically({
     }
     if (inFlight >= MAX_AGENT_IN_FLIGHT_JOBS) throw new AgentQueueFullError(agentId, inFlight);
 
-    // Sample the admission clock after all contended tenant, credential,
-    // owner and subscription locks. A request may have expired while waiting;
-    // rejecting here rolls back its reserved credit with the job transaction.
+    // Sample the admission clock AFTER contended resource locks, then use
+    // this exact instant for both the quota month and stored job lifetime.
+    // The UTC month must not change between two independent SQL statements.
     // PostgreSQL is the authoritative clock for print-job lifetime.
     const clockResult = await tx.execute(sql`SELECT clock_timestamp() AS now`);
     const clockRows = (clockResult as unknown as { rows?: Array<{ now?: Date | string }> }).rows ?? [];
@@ -553,6 +548,11 @@ async function insertQueuedJobAtomically({
     if (effectiveExpiresAt.getTime() - dbNow.getTime() > 24 * 60 * 60 * 1000) {
       throw new PrintJobInputError("expiresAt exceeds the 24 hour maximum", "INVALID_REQUEST", 400);
     }
+
+    // One new logical print consumes one credit in the month of created_at,
+    // even if the transaction had to wait across UTC midnight. Replays return
+    // earlier without charging again; any later INSERT failure rolls back this.
+    await reserveTenantPrintCredit(tx, tenantId, dbNow);
 
     await tx.insert(printJobs).values({
       id: jobId,

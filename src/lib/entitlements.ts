@@ -308,10 +308,18 @@ function parseEntitlementDate(value: Date | string | null): Date | null {
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
-async function getTenantPrintQuotaContext(tx: EntitlementTx, tenantId: string, lockRows = false): Promise<{ limit: number | "unlimited"; periodStart: Date; periodEnd: Date | null }> {
+async function getTenantPrintQuotaContext(tx: EntitlementTx, tenantId: string, lockRows = false, admissionAt?: Date): Promise<{ limit: number | "unlimited"; periodStart: Date; periodEnd: Date | null }> {
   if (lockRows) await lockTenantSubscription(tx, tenantId);
+  if (admissionAt !== undefined && (!(admissionAt instanceof Date) || !Number.isFinite(admissionAt.getTime()))) {
+    throw new TenantEntitlementConfigError("subscription_period");
+  }
+  // A job's created_at and quota month must derive from the SAME DB instant.
+  // Callers reading usage without an admission stamp keep the current UTC month.
+  const cycleAt = admissionAt === undefined
+    ? sql`statement_timestamp() AT TIME ZONE 'UTC'`
+    : sql`${admissionAt.toISOString()}::timestamptz AT TIME ZONE 'UTC'`;
   const result = await tx.execute(sql`
-        SELECT p.entitlements, ts.monthly_quota AS "monthlyQuota", ${quotaCycleStartSql()} AS "periodStart", ${quotaCycleEndSql()} AS "periodEnd", ts.entitlement_blocked AS "entitlementBlocked"
+        SELECT p.entitlements, ts.monthly_quota AS "monthlyQuota", ${quotaCycleStartSql(cycleAt)} AS "periodStart", ${quotaCycleEndSql(cycleAt)} AS "periodEnd", ts.entitlement_blocked AS "entitlementBlocked"
         FROM tenant_subscriptions ts
         JOIN plans p ON p.id = ts.plan_id
         WHERE ${liveTenantSubscriptionWhere(sql`${tenantId}`, false)}
@@ -335,9 +343,9 @@ async function getTenantPrintQuotaContext(tx: EntitlementTx, tenantId: string, l
   return { limit: entitlements[PRINT_QUOTA_ENTITLEMENT], periodStart, periodEnd };
 }
 
-/** Atomically consumes one print credit for one newly-created logical print job. */
-export async function reserveTenantPrintCredit(tx: EntitlementTx, tenantId: string): Promise<TenantPrintUsage> {
-  const context = await getTenantPrintQuotaContext(tx, tenantId, true);
+/** Atomically consumes one credit for a new logical job's DB-stamped admission month. */
+export async function reserveTenantPrintCredit(tx: EntitlementTx, tenantId: string, admissionAt?: Date): Promise<TenantPrintUsage> {
+  const context = await getTenantPrintQuotaContext(tx, tenantId, true, admissionAt);
   const limit = context.limit;
   const predicate = limit === "unlimited"
     ? sql`TRUE`

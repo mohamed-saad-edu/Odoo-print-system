@@ -271,6 +271,17 @@ describe("clock authority is enforced in the source", () => {
     expect(parseDbTimeMs("2026-10-28 04:00:00+00")).toBe(expected);
   });
 
+  it("pins the print quota bucket to the same database instant as job creation", () => {
+    const source = read("src/lib/print-job-service.ts");
+    const clock = source.indexOf("const dbNow = new Date(dbNowMs)");
+    const reservation = source.indexOf("await reserveTenantPrintCredit(tx, tenantId, dbNow)");
+    const insert = source.indexOf("await tx.insert(printJobs).values({");
+    expect(clock).toBeGreaterThan(0);
+    expect(reservation).toBeGreaterThan(clock);
+    expect(insert).toBeGreaterThan(reservation);
+    expect(read("src/lib/entitlements.ts")).toContain("quotaCycleStartSql(cycleAt)");
+  });
+
   it("stamps job lifetime timestamps from the single database clock read", () => {
     const service = read("src/lib/print-job-service.ts");
     const clockRead = service.indexOf("SELECT clock_timestamp() AS now");
