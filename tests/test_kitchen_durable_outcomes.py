@@ -83,7 +83,10 @@ def fixture(response=None, transport_error=None, unrecorded_error=None, lease_av
     # The AST-based fake runs the real POS expiry policy, not a mocked callback.
     from runpy import run_path
     namespace["is_stale_pos_operation"] = run_path(str(ROOT.parent / "pos_retry_policy.py"))["is_stale_pos_operation"]
-    job_methods = methods("print_job.py", ["_action_submit_trusted", "_record_ambiguous_submission", "_is_deterministic_failure", "_persist_state", "_billing_retry_values", "_is_time_sensitive_receipt", "_is_billing_deferred_receipt", "_compute_physical_outcome"], namespace)
+    # The production submission branch checks the exact original Gateway
+    # receipt identity, not a stripped/mocked ID. Reuse its real wire policy.
+    namespace["is_exact_gateway_job_id"] = run_path(str(ROOT.parent / "runtime_policy.py"))["is_exact_gateway_job_id"]
+    job_methods = methods("print_job.py", ["_action_submit_trusted", "_classify_gateway_submission_status", "_record_ambiguous_submission", "_is_deterministic_failure", "_persist_state", "_billing_retry_values", "_is_time_sensitive_receipt", "_is_billing_deferred_receipt", "_compute_physical_outcome"], namespace)
     class Job:
         _TERMINAL = {"success", "failed", "unknown", "partial"}
         _GATEWAY_UNKNOWN_MARKERS = ("AGENT_EXECUTION_TIMEOUT", "AGENT_RESTART_DURING_PRINT",
@@ -292,7 +295,7 @@ def test_post_dispatch_timeout_or_malformed_reply_keeps_unknown_operation(respon
     assert cursor.closed
 
 
-@pytest.mark.parametrize("http_status,body", [(401, {}), (429, {})])
+@pytest.mark.parametrize("http_status,body", [(401, {}), (429, {"code": "RATE_LIMIT_EXCEEDED"})])
 def test_automatic_backoff_is_accepted_as_the_same_durable_operation(http_status, body):
     router, job, cursor, sent, _order = fixture(reply(http_status, body))
     result = router._submit_durable_job(7, structured_outcome=True)
@@ -301,6 +304,34 @@ def test_automatic_backoff_is_accepted_as_the_same_durable_operation(http_status
     assert result["can_retry"] is False
     assert "accepted by the Gateway" not in result["message"]
     assert job.next_retry_at
+    assert len(sent) == 1 and cursor.closed
+
+
+@pytest.mark.parametrize("response_body", [
+    {},
+    {"code": "PROXY_429", "upgradeRequired": True,
+     "entitlement": "max_prints_per_period", "limit": 10, "used": 10},
+    {"code": "PRINT_QUOTA_EXCEEDED", "upgradeRequired": "true",
+     "entitlement": "max_prints_per_period", "limit": 10, "used": 10},
+    {"code": "PRINT_QUOTA_EXCEEDED", "upgradeRequired": True,
+     "entitlement": "max_agents", "limit": 10, "used": 10},
+])
+def test_unclassified_or_inconsistent_429_preserves_unknown_output(response_body):
+    """A proxy can replace an accepted POST response with its own 429.
+
+    Only a code/entitlement/type combination actually emitted by Gateway
+    can establish a pre-admission quota denial. Neither a truthy string nor
+    a similarly shaped intermediary body is physical non-delivery proof.
+    """
+    router, job, cursor, sent, _order = fixture(reply(429, response_body))
+    result = router._submit_durable_job(7, structured_outcome=True)
+    assert result["status"] == "unknown"
+    assert result["outcome"] == "unknown"
+    assert result["can_retry"] is False
+    assert job.status == "unknown"
+    assert job.gateway_job_id is False
+    assert not job.next_retry_at
+    assert str(job.last_error).startswith("UNKNOWN_SUBMISSION_OUTCOME:")
     assert len(sent) == 1 and cursor.closed
 
 
