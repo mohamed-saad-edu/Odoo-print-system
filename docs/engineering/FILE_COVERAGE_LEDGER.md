@@ -2147,3 +2147,13 @@ PARTIAL tests/capability-pagination-route.test.ts — current transactional tena
 ```
 
 Exact commits and CI cancellation evidence are in the [system notebook](SYSTEM_UNIFICATION_NOTEBOOK.md); RED/GREEN executions and hardware certification **NOT RUN**. These are source-path review statuses, not signed-off components.
+
+#### ODOO-EVIDENCE-EXACT-2026-10-28
+
+```text
+PARTIAL odoo_addons/print_gateway/printer_geometry.py — byte-bound identity proof admission only
+PARTIAL odoo_addons/print_gateway/printer_verification.py — byte-bound physical proof admission only
+AUTHORED tests/test_odoo_printer_evidence_exact_identity.py — real pure-parser Unicode and BOM regression
+```
+
+The old indexed-file snapshot above is historical. This additive review is **not** a full correctness/CI signoff. All originating workflow attempts cancelled, so native Odoo/Python/Gateway/Agent/physical-printer verification is NOT RUN.
