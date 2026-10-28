@@ -52,7 +52,8 @@ def production_methods(filename, names, namespace=None):
 def verified_printer(connection="spooler", protocol="spooler", now=None):
     now = now or datetime.now(timezone.utc)
     stamp = now.isoformat(timespec="milliseconds").replace("+00:00", "Z")
-    method = {"spooler": "windows_queue", "pdf_output": "pdf_output", "usb": "usb_interface", "network": "snmp_printer"}[connection]
+    method = {"spooler": "windows_queue", "pdf_output": "pdf_output", "usb": "usb_interface", "network": "snmp_printer", "ipp": "ipp_attributes", "ipps": "ipp_attributes"}[connection]
+    strength = {"windows_queue": "queue", "ipp_attributes": "service", "usb_interface": "device", "snmp_printer": "device", "pdf_output": "service"}[method]
     medium = "file" if connection == "pdf_output" else "physical"
     return {"id": "selected-printer", "connectionType": connection, "protocol": protocol,
             "printerType": "file" if medium == "file" else "physical", "deviceClass": "laser",
@@ -63,12 +64,34 @@ def verified_printer(connection="spooler", protocol="spooler", now=None):
                 "operational_verification": {"version": 1, "verified_at": stamp,
                     "printer_id": "selected-printer", "binding_digest": "a" * 64,
                     "logical_queue_key": "a" * 64, "method": method,
-                    "identity_strength": "service" if medium == "file" else "queue", "output_medium": medium},
+                    "identity_strength": strength, "output_medium": medium},
                 "geometry": {"version": 1, "source": "validated_profile", "validation": "configured",
                     "observed_at": stamp, "printer_id": "selected-printer", "config_fingerprint": "b" * 64,
                     "paper_width_mm": 210, "paper_height_mm": 297, "dpi_x": 300, "dpi_y": 300,
                     "printable_width_dots": 2244, "printable_height_dots": 3271,
                     "offset_x_dots": 118, "offset_y_dots": 118}}}
+
+
+def test_all_synthetic_evidence_strengths_match_production_runtime_validator():
+    # This standalone verifier exercises the same Odoo function that guards
+    # real printer discovery; fake identities must not rely on weaker proof.
+    verifier = production_methods(
+        "models/binding.py", ["_validate_runtime_target"]
+    )._validate_runtime_target.__globals__["is_verified_runtime_printer"]
+    for connection, protocol, method, strength in (
+        ("spooler", "spooler", "windows_queue", "queue"),
+        ("ipp", "ipp", "ipp_attributes", "service"),
+        ("ipps", "ipps", "ipp_attributes", "service"),
+        ("usb", "escpos", "usb_interface", "device"),
+        ("network", "escpos", "snmp_printer", "device"),
+        ("pdf_output", "pdf", "pdf_output", "service"),
+    ):
+        printer = verified_printer(connection, protocol)
+        proof = printer["capabilities"]["operational_verification"]
+        assert (proof["method"], proof["identity_strength"]) == (method, strength)
+        assert verifier(printer)
+        proof["identity_strength"] = "queue" if strength != "queue" else "device"
+        assert not verifier(printer)
 
 
 def binding(printer):

@@ -3072,3 +3072,10 @@ At `main@9cc31103851f642543bb51dd22353487b00f5578`, GitHub recursive tree lists 
 **Fix:** central `src/lib/manual-api-error.ts` ensures every status/classification—including native Workspace policy responses, owner revocation, malformed input and 503—is uncacheable. Preserves status codes and authorization. Test added to `tests/platform-read-live-authority.test.ts`, exercising three error classes and original body codes.
 
 **Coverage:** PARTIAL helper plus tenant and billing/Platform routes consuming it; TODO all other Platform/Agent/Desktop/Odoo files, complete CI; physical printers and database migration rehearsal BLOCKED. Exact-SHA tests NOT RUN until completed GitHub Actions, no deployment.
+
+
+### ODOO-STANDALONE-PROOF-PARITY-2026-10-28
+
+**Contract:** The independent non-Odoo Python behavioral suite `tests/test_odoo_universal_printing.py` also generated invalid synthetic device proofs (`identity_strength=queue` for USB/SNMP). Following Odoo native fixture repair, unify this standalone producer with the actual strict `printer_verification.is_verified_runtime_printer` consumer. Added IPP/IPPS method cases and forged-strength negative assertions. No production proof relaxation. Source-reviewed/not executed; exact GitHub CI pending.
+
+**Ledger:** PARTIAL `tests/test_odoo_universal_printing.py`, `odoo_addons/print_gateway/printer_verification.py`, `models/binding.py`; TODO exhaustive Odoo/Agent cross-layer tests; physical-device verification BLOCKED.
