@@ -2292,7 +2292,19 @@ class PrintGatewayJob(models.Model):
         body = response.json()
         if not isinstance(body, dict):
             raise ValueError("Gateway ambiguous-submission lookup returned a non-object payload")
-        remote_id = body.get("jobId") or body.get("id")
+        # The response can carry both current jobId and legacy id fields.
+        # Both must be individually valid and agree BEFORE we persist a
+        # remote identity; otherwise a response-lost operation can be
+        # irreversibly linked to a different physical print job.
+        has_job_id = "jobId" in body
+        has_alias = "id" in body
+        primary = body.get("jobId") if has_job_id else None
+        alias = body.get("id") if has_alias else None
+        if (has_job_id and not is_exact_gateway_job_id(primary)
+                or has_alias and not is_exact_gateway_job_id(alias)
+                or has_job_id and has_alias and primary != alias):
+            raise ValueError("Gateway ambiguous-submission lookup returned conflicting or invalid exact job ids")
+        remote_id = primary if has_job_id else alias
         if not is_exact_gateway_job_id(remote_id):
             raise ValueError("Gateway ambiguous-submission lookup returned an invalid exact job id")
         self._lock_status_row(job)
