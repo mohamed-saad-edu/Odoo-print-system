@@ -144,7 +144,9 @@ def request(method, url, **kwargs):
         raise exceptions.InvalidURL("Gateway destination was refused: %s" % exc) from exc
     # Do not retry a request against another address. A safe connection failure
     # is handled by the existing bounded outbox/control-plane retry policy.
-    with _requests.Session() as session:
+    session = _requests.Session()
+    transferred = False
+    try:
         session.trust_env = False  # no implicit proxy or .netrc credentials
         adapter = _PinnedAdapter(origin, addresses[0])
         session.mount(scheme + "://", adapter)
@@ -152,9 +154,33 @@ def request(method, url, **kwargs):
         response = session.request(
             method, url, allow_redirects=False, verify=verify, stream=True, **kwargs
         )
-        # Explicit streaming is used only by the inventory reader, which has
-        # its own decoded-byte bound and closes the response in a with block.
-        return response if streamed else _read_control_response(response)
+        if streamed:
+            # The inventory reader owns this bounded response. Session.__exit__
+            # here would close the pinned pool BEFORE the caller reads it.
+            # Transfer pool ownership to response.close() instead; the
+            # response context manager calls close on success and errors.
+            original_close = response.close
+            released = False
+
+            def close_pinned_response():
+                nonlocal released
+                if released:
+                    return
+                released = True
+                try:
+                    original_close()
+                finally:
+                    session.close()
+
+            response.close = close_pinned_response
+            transferred = True
+            return response
+        return _read_control_response(response)
+    finally:
+        # Preserve eager response semantics and close on every exception,
+        # including failure before HTTP dispatch or ambiguous POST replies.
+        if not transferred:
+            session.close()
 
 
 def get(url, **kwargs):
