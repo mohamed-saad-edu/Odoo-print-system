@@ -80,7 +80,24 @@ func privateDiscoveryTargets(subnets []*net.IPNet) []string {
 func privateDiscoveryTargetsWithBudget(subnets []*net.IPNet, budget int) ([]string, bool) {
 	var groups [][]string
 	seenSubnets := make(map[string]bool)
+	// Exclude every local interface address, not just the one used to
+	// construct a deduplicated subnet. Multiple NICs/VLAN addresses may
+	// inhabit the same /24, and probing another local address can invent a
+	// false print candidate on the Agent machine itself.
+	localIPs := make(map[string]struct{}, len(subnets))
 	for _, subnet := range subnets {
+		if subnet == nil {
+			continue
+		}
+		ip := subnet.IP.To4()
+		if ip != nil && ip.IsPrivate() && !ip.IsLoopback() {
+			localIPs[ip.String()] = struct{}{}
+		}
+	}
+	for _, subnet := range subnets {
+		if subnet == nil {
+			continue
+		}
 		ip := subnet.IP.To4()
 		if ip == nil || !ip.IsPrivate() || ip.IsLoopback() {
 			continue
@@ -104,9 +121,10 @@ func privateDiscoveryTargetsWithBudget(subnets []*net.IPNet, budget int) ([]stri
 		seenSubnets[key] = true
 		var group []string
 		for _, host := range generateHosts(local) {
-			if !host.Equal(ip) {
-				group = append(group, host.String())
+			if _, isLocal := localIPs[host.String()]; isLocal {
+				continue
 			}
+			group = append(group, host.String())
 		}
 		groups = append(groups, group)
 	}
