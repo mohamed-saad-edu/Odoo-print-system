@@ -40,6 +40,8 @@ func TestAllowedGatewayConsolePath(t *testing.T) {
 		{"list jobs", "/api/jobs", "GET", true},
 		{"list jobs with limit", "/api/jobs?limit=50", "GET", true},
 		{"list jobs with search", "/api/jobs?limit=50&search=invoice", "GET", true},
+		{"jobs literal dots are search data", "/api/jobs?search=invoice..pdf", "GET", true},
+		{"fleet cursor literal dots are data", "/api/printers?beforeId=printer..queue", "GET", true},
 		{"jobs unknown query", "/api/jobs?evil=x", "GET", false},
 		{"jobs encoded query key alias", "/api/jobs?se%61rch=receipt", "GET", false},
 		{"jobs malformed query", "/api/jobs?limit", "GET", false},
