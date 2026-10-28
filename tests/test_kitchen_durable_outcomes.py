@@ -198,6 +198,38 @@ def test_quota_blocked_kitchen_receipt_is_not_replayed_automatically():
     assert len(sent) == 1 and cursor.closed
 
 
+@pytest.mark.parametrize("limit,used", [
+    (True, 1),
+    (float("inf"), 1),
+    (2.5, 2),
+    ("10", 10),
+    (10, "10"),
+    (0, 0),
+    (10, -1),
+    (2**40, 1),
+    (10, float("nan")),
+])
+def test_untrusted_quota_429_counters_never_prove_pre_admission_rejection(limit, used):
+    # The actual submit loop must not re-arm a previously accepted or possibly
+    # physically executing print just because an intermediary returned a
+    # quota-shaped 429 with invalid types/values.
+    router, job, cursor, sent, _order = fixture(reply(429, {
+        "code": "PRINT_QUOTA_EXCEEDED",
+        "upgradeRequired": True,
+        "entitlement": "max_prints_per_period",
+        "limit": limit,
+        "used": used,
+    }))
+    result = router._submit_durable_job(7, structured_outcome=True)
+    assert result["status"] == "unknown"
+    assert result["can_retry"] is False
+    assert job.status == "unknown"
+    assert job.gateway_job_id is False
+    assert not job.next_retry_at
+    assert str(job.last_error).startswith("UNKNOWN_SUBMISSION_OUTCOME:")
+    assert len(sent) == 1 and cursor.closed
+
+
 def test_legacy_blocked_kitchen_receipt_never_auto_replays_after_renewal():
     router, job, cursor, sent, _order = fixture(reply(201, {"jobId": "should-not-create"}))
     job.last_error = "GATEWAY_BILLING_LIMIT_REACHED: max_prints_per_period"

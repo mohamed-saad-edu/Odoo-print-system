@@ -1710,16 +1710,26 @@ class PrintGatewayJob(models.Model):
                         # print-credit denial is proof that no new job was
                         # admitted. A truthy string or unrecognized code must
                         # not re-arm a possible physical print.
+                        raw_limit = rate_body.get("limit")
+                        raw_used = rate_body.get("used")
+                        # Typed Gateway counters are int32 values. A forged or
+                        # malformed intermediary response (including bool,
+                        # float infinity or a quoted number) cannot prove
+                        # definite pre-admission refusal. Do not treat it as
+                        # a safe-to-retry billing hold.
+                        valid_quota_counters = (
+                            type(raw_limit) is int and 1 <= raw_limit <= 2147483647
+                            and type(raw_used) is int and 0 <= raw_used <= 2147483647
+                        )
                         billing_limit = (
                             rate_body.get("code") == "PRINT_QUOTA_EXCEEDED"
                             and rate_body.get("upgradeRequired") is True
                             and entitlement == "max_prints_per_period"
+                            and valid_quota_counters
                         )
                         if billing_limit:
-                            raw_limit = rate_body.get("limit")
-                            raw_used = rate_body.get("used")
-                            limit = int(raw_limit) if isinstance(raw_limit, (int, float)) and int(raw_limit) >= 1 else 0
-                            used = int(raw_used) if isinstance(raw_used, (int, float)) and int(raw_used) >= 0 else limit
+                            limit = raw_limit
+                            used = raw_used
                             period_end = rate_body.get("periodEnd")
                             period_end = str(period_end) if period_end else None
 
