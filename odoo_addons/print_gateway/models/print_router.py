@@ -768,7 +768,10 @@ class PrintGatewayRouter(models.AbstractModel):
         # retry is also safe.
         if not idempotency_key:
             binding_id = route.get("binding") and route["binding"].id or 0
-            raw_token = f"receipt:{order.id}:{binding_id}:{getattr(order, 'write_date', '')}"
+            # write_date mutates after normal POS synchronization and payment
+            # metadata updates. It is NOT a second-print authorization.
+            # Only a new explicit operation key may request a reprint.
+            raw_token = f"receipt:{order.id}:{binding_id}"
             idempotency_key = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
         replayed = self._replay_receipt_operation(route, order, image_base64, geometry_fingerprint, idempotency_key)
         if replayed is not None:
@@ -863,7 +866,10 @@ class PrintGatewayRouter(models.AbstractModel):
         # Deterministic key so an RPC retry cannot produce a second physical print.
         if not idempotency_key:
             binding_id = route.get("binding") and route["binding"].id or 0
-            raw_token = f"sale_details:{session.id}:{binding_id}:{getattr(session, 'write_date', '')}"
+            # A POS session's write_date changes throughout its lifetime.
+            # Never mint a fresh paper-output attempt from that mutation.
+            # Multiple deliberate sale-detail prints supply explicit keys.
+            raw_token = f"sale_details:{session.id}:{binding_id}"
             idempotency_key = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
         replayed = self._replay_receipt_operation(route, session, image_base64, geometry_fingerprint, idempotency_key)
         if replayed is not None:
