@@ -85,7 +85,24 @@ def test_registration_does_not_disclose_existing_account_state():
     signup = read("src/app/signup/page.tsx")
     assert "ACCOUNT_EXISTS" not in route
     assert "ACCOUNT_EXISTS" not in signup
-    assert "status: 409" not in route
+    # Registration must never leak whether an email already exists. The only
+    # allowed conflict is the isolated HTTPS staging *workspace-capacity* guard:
+    # it executes before user lookup and reports no account-specific state.
+    staging_guard = "if (isSingleWorkspaceStaging() && !invitation)"
+    if staging_guard in route:
+        start = route.index(staging_guard)
+        end = route.index("// No user-chosen password", start)
+        staging_block = route[start:end]
+        assert staging_block.count("status: 409") == 1
+        assert 'code: "STAGING_WORKSPACE_EXISTS"' in staging_block
+        assert "stagingWorkspaceExists(db)" in staging_block
+        assert "status: 409" not in route[:start] + route[end:]
+        mode = read("src/lib/staging-single-workspace.ts")
+        assert 'process.env.YASEIR_STAGING_FIXTURES_ENABLED === "1"' in mode
+        assert 'process.env.YASEIR_STAGING_SINGLE_WORKSPACE === "1"' in mode
+        assert 'process.env.APP_BASE_URL === "https://print.yaseir.cloud"' in mode
+    else:
+        assert "status: 409" not in route
     assert "if (existing) return setRateLimitHeaders(NextResponse.json(GENERIC, { status: 202 }), rate);" in route
 
 
