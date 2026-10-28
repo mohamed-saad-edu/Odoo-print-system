@@ -33,8 +33,18 @@ suite("printer geometry at authenticated database boundaries", () => {
   });
 
   async function installGeometry(patch: Record<string, unknown> = {}) {
-    await pool().query("UPDATE printers SET capabilities=COALESCE(capabilities,'{}'::jsonb) || $1::jsonb WHERE tenant_id=$2 AND id=$3", [
-      JSON.stringify({ supported_protocols: ["pdf", "image"], geometry: geometry(patch) }), fixture.tenantId, fixture.printerId,
+    // A validated_profile is authoritative only for the exact configured
+    // printer profile. The old fixture injected capability JSON without any
+    // matching desired profile, so the production API correctly suppressed
+    // the geometry and 422'd image admission.
+    const measurement = geometry(patch) as Record<string, unknown>;
+    const profileFields = ["printable_width_dots", "printable_height_dots", "dpi_x", "dpi_y",
+      "paper_width_mm", "paper_height_mm", "offset_x_dots", "offset_y_dots", "raster_command"];
+    const selectedProfile = Object.fromEntries(profileFields.filter(key => key in measurement)
+      .map(key => [key, measurement[key]]));
+    await pool().query("UPDATE printers SET capabilities=COALESCE(capabilities,'{}'::jsonb) || $1::jsonb, config=COALESCE(config,'{}'::jsonb) || $2::jsonb WHERE tenant_id=$3 AND id=$4", [
+      JSON.stringify({ supported_protocols: ["pdf", "image"], geometry: measurement }),
+      JSON.stringify({ geometry_profile: selectedProfile }), fixture.tenantId, fixture.printerId,
     ]);
   }
   async function inventory() {
@@ -98,19 +108,20 @@ suite("printer geometry at authenticated database boundaries", () => {
   it("manager profile changes clear geometry and wait for applied and observed convergence", async () => {
     await installGeometry();
     const manager = await createWorkspaceManagerTestSession(fixture.tenantId);
-    const response = await patch("Bearer " + manager.token, { config: { geometry_profile: profile } });
+    const changedProfile = { ...profile, printable_width_dots: 832, dpi_x: 300, dpi_y: 300 };
+    const response = await patch("Bearer " + manager.token, { config: { geometry_profile: changedProfile } });
     expect(response.status).toBe(200);
     const updated = await response.json();
-    expect(updated.config.geometry_profile).toEqual(profile);
+    expect(updated.config.geometry_profile).toEqual(changedProfile);
     expect(updated.capabilities).not.toHaveProperty("geometry");
     expect(await inventory()).toBeUndefined();
-    await installGeometry();
+    await installGeometry({ ...changedProfile, config_fingerprint: "b".repeat(64) });
     await pool().query("UPDATE printers SET applied_desired_revision=desired_revision, observed_desired_revision=GREATEST(0,desired_revision-1) WHERE tenant_id=$1 AND id=$2", [fixture.tenantId, fixture.printerId]);
     expect(await inventory()).toBeUndefined();
     await pool().query("UPDATE printers SET observed_desired_revision=desired_revision WHERE tenant_id=$1 AND id=$2", [fixture.tenantId, fixture.printerId]);
     expect(await inventory()).toBeUndefined(); // Revision ACK alone is not a successful live probe.
     await pool().query("UPDATE printers SET verification_state='verified',verification_verified_at=clock_timestamp(),verification_received_at=clock_timestamp(),verification_binding_digest=logical_queue_key,verification_reason=NULL WHERE tenant_id=$1 AND id=$2", [fixture.tenantId, fixture.printerId]);
-    expect((await inventory()).printableWidthDots).toBe(1664);
+    expect((await inventory()).printableWidthDots).toBe(832);
     const removed = await patch("Bearer " + manager.token, { config: { geometry_profile: null } });
     expect(removed.status).toBe(200);
     const removedBody = await removed.json();
