@@ -847,7 +847,7 @@ export async function POST(req: Request) {
         entitlement: error.entitlement,
         limit: error.limit,
         used: error.used,
-        upgradeRequired: true,
+        upgradeRequired: false,
       }, { status: 429, headers: { "Retry-After": "60", "Cache-Control": "no-store" } });
     }
     if (isTenantBillingError(error)) {
