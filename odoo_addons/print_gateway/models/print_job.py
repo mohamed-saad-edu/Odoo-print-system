@@ -18,7 +18,7 @@ from odoo.exceptions import AccessError, ValidationError
 from ..runtime_clock import db_now_utc
 from ..pos_retry_policy import is_stale_pos_operation
 from ..idempotency_namespace import wire_key, deployment_proof
-from ..runtime_policy import inventory_has_shared_printer
+from ..runtime_policy import inventory_has_shared_printer, is_exact_gateway_printer_id
 from ..print_output import gateway_output_values, validated_file_output
 
 
@@ -565,8 +565,8 @@ class PrintGatewayJob(models.Model):
         expected_config_owner = company.parent_id or company
         if gateway_config.company_id != expected_config_owner:
             raise ValidationError(_("Gateway configuration does not belong to the company hierarchy of the active Odoo company."))
-        if not printer_id or not str(printer_id).strip():
-            raise ValidationError(_("Printer is required."))
+        if not is_exact_gateway_printer_id(printer_id):
+            raise ValidationError(_("Printer identity is invalid. Select an exact Gateway Runtime Printer."))
         if not destination or not str(destination).strip():
             raise ValidationError(_("Destination is required."))
         if not document_type or not str(document_type).strip():
@@ -664,7 +664,7 @@ class PrintGatewayJob(models.Model):
 
         def same_operation(existing):
             return (
-                existing.printer_id == str(printer_id).strip()
+                existing.printer_id == printer_id
                 and existing.destination == str(destination).strip()
                 and (existing.destination_key or False) == (destination_key or False)
                 and existing.document_type == str(document_type).strip().lower()
@@ -680,7 +680,7 @@ class PrintGatewayJob(models.Model):
         values = {
             "company_id": company.id,
             "gateway_config_id": gateway_config.id,
-            "printer_id": str(printer_id).strip(),
+            "printer_id": printer_id,
             "destination": str(destination).strip(),
             "destination_key": destination_key or False,
             "document_type": str(document_type).strip().lower(),
