@@ -350,3 +350,12 @@ Baseline inspected: main@65214cf7948a214843110fa2fbc1a23aec388340. This is an **
 **Fix:** Use the existing opaque UTF-8 ID validator for every batch member, reject mixed valid/invalid batches in their entirety, and keep the batch and single-GET identity rules consistent. Regression `tests/batch-status.test.ts` exercises exact accepted IDs, leading/trailing spaces, C0/C1 controls, 121-character IDs, multibyte IDs over 120 bytes and mixed batches. Update `docs/SECURITY_INPUT_VALIDATION.md`. No data rewrite, migration, replay or changed billing authority.
 
 **Verification:** Committed against main@974315c3b005ec6e12fe97c34df01675ffb6b9b5. GitHub-only source review; exact-SHA workflow and PostgreSQL regression outcomes must be collected. Local RED/GREEN, PostgreSQL and physical printer execution **NOT RUN**.
+
+
+## 2026-10-28 — Platform database explorer owner-revocation fence
+
+**Finding P1:** The read-only Platform Admin catalog and table explorer acquired a separate PostgreSQL connection after a one-time Platform Owner preflight; a concurrent owner revocation could commit before private cross-tenant catalog rows were returned. Sensitive columns were already excluded, but metadata and tenant/printer IDs still require live authorization.
+
+**Fix:** The route now holds the existing canonical live-read authority (owner, session family and password-version locks) through the explorer's independently READ ONLY PoolClient transaction. A demoted owner receives a private 401 before catalog or row reads; a storage error remains 503. No SQL identifiers, allowlist or pagination rules were loosened. A second connection is temporarily held for this low-frequency admin operation; monitor pool pressure during acceptance.
+
+**Regression authored:** tests/platform-database-route.test.ts checks denied post-preflight identity and guard-before-read ordering; tests/platform-database-live-authority.integration.test.ts exercises a blocked UPDATE/commit using real PostgreSQL. **Tests not executed here; Actions exact SHA pending**. Other platform read paths and hardware acceptance retain TODO/NOT RUN status.
