@@ -6,6 +6,7 @@ import { applyMigrations, closePool, hasTestDatabase, pool, seedFixture, truncat
 import { GET as subscriptionsGET } from "../src/app/api/platform/subscriptions/route";
 import { GET as plansGET } from "../src/app/api/platform/plans/route";
 import { GET as auditGET } from "../src/app/api/platform/audit/route";
+import { GET as tenantDetailGET } from "../src/app/api/platform/tenants/[id]/route";
 import { GET as requestsGET } from "../src/app/api/platform/subscription-requests/route";
 
 const suite = describe.skipIf(!hasTestDatabase);
@@ -14,6 +15,7 @@ suite("Platform commercial GET live-session transaction fences", () => {
   const ownerId = "platform-owner-commercial-read";
   const email = "commercial-read-owner@example.test";
   let token: string;
+  let tenantId: string;
 
   beforeAll(async () => {
     process.env.GATEWAY_JWT_SECRET = "commercial-read-transaction-fence-test-secret-32";
@@ -21,7 +23,7 @@ suite("Platform commercial GET live-session transaction fences", () => {
   });
   beforeEach(async () => {
     await truncateAll();
-    await seedFixture();
+    tenantId = (await seedFixture()).tenantId;
     await db.insert(users).values({
       id: ownerId, email, passwordHash: "verified-test-password-hash",
       emailVerifiedAt: new Date(), isPlatformOwner: true,
@@ -30,22 +32,25 @@ suite("Platform commercial GET live-session transaction fences", () => {
   });
   afterAll(closePool);
 
-  const read = (kind: "subscriptions" | "requests" | "plans" | "audit") =>
-    (kind === "subscriptions" ? subscriptionsGET : kind === "plans" ? plansGET : kind === "audit" ? auditGET : requestsGET)(
-      new Request("http://localhost/api/platform/" +
-        (kind === "subscriptions" ? "subscriptions?limit=1" : kind === "plans" ? "plans" : kind === "audit" ? "audit?limit=1" : "subscription-requests"),
-      { headers: { Authorization: "Bearer " + token } }),
-    );
+  const read = (kind: "subscriptions" | "requests" | "plans" | "audit" | "tenantDetail") => {
+    const request = new Request("http://localhost/api/platform/" +
+      (kind === "subscriptions" ? "subscriptions?limit=1" :
+        kind === "plans" ? "plans" : kind === "audit" ? "audit?limit=1" :
+        kind === "tenantDetail" ? "tenants/" + encodeURIComponent(tenantId) : "subscription-requests"),
+      { headers: { Authorization: "Bearer " + token } });
+    if (kind === "tenantDetail") return tenantDetailGET(request, { params: Promise.resolve({ id: tenantId }) });
+    return (kind === "subscriptions" ? subscriptionsGET : kind === "plans" ? plansGET : kind === "audit" ? auditGET : requestsGET)(request);
+  };
 
-  it.each(["subscriptions", "requests", "plans", "audit"] as const)("returns %s only to a live verified Platform Owner", async kind => {
+  it.each(["subscriptions", "requests", "plans", "audit", "tenantDetail"] as const)("returns %s only to a live verified Platform Owner", async kind => {
     const response = await read(kind);
     expect(response.status).toBe(200);
     expect(response.headers.get("Cache-Control")).toBe("private, no-store");
     const payload = await response.json();
-    expect(payload).toHaveProperty(kind === "subscriptions" ? "subscriptions" : kind === "plans" ? "plans" : kind === "audit" ? "auditEvents" : "requests");
+    expect(payload).toHaveProperty(kind === "subscriptions" ? "subscriptions" : kind === "plans" ? "plans" : kind === "audit" ? "auditEvents" : kind === "tenantDetail" ? "workspace" : "requests");
   });
 
-  it.each(["subscriptions", "requests", "plans", "audit"] as const)(
+  it.each(["subscriptions", "requests", "plans", "audit", "tenantDetail"] as const)(
     "denies %s if owner removal commits while the confidential-read lock is waiting",
     async kind => {
       const gate = await pool().connect();
@@ -72,7 +77,7 @@ suite("Platform commercial GET live-session transaction fences", () => {
         const response = await pending;
         expect(response.status).toBe(401);
         expect(response.headers.get("Cache-Control")).toBe("private, no-store");
-        expect(await response.json()).not.toHaveProperty(kind === "subscriptions" ? "subscriptions" : kind === "plans" ? "plans" : kind === "audit" ? "auditEvents" : "requests");
+        expect(await response.json()).not.toHaveProperty(kind === "subscriptions" ? "subscriptions" : kind === "plans" ? "plans" : kind === "audit" ? "auditEvents" : kind === "tenantDetail" ? "workspace" : "requests");
       } finally {
         if (!committed) await gate.query("ROLLBACK");
         gate.release();
