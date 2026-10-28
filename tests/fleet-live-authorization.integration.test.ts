@@ -4,6 +4,7 @@ import { GET as listPrinters } from "../src/app/api/printers/route";
 import { GET as listJobs } from "../src/app/api/jobs/route";
 import { GET as getAgentDetail } from "../src/app/api/agents/[id]/route";
 import { GET as getPrinterDetail } from "../src/app/api/printers/[id]/route";
+import { GET as getCapabilities } from "../src/app/api/printers/capabilities/route";
 import { createWorkspaceManagerTestSession } from "./helpers/workspace-session";
 import { applyMigrations, closePool, hasTestDatabase, insertQueuedJob, pool, seedFixture, truncateAll, type Fixture } from "./helpers/pg";
 
@@ -152,6 +153,36 @@ describe.skipIf(!hasTestDatabase)("fleet and job history listings recheck curren
     expect(response.status).toBe(401);
     expect(response.headers.get("Cache-Control")).toContain("no-store");
     expect(await response.json()).toMatchObject({ code: "UNAUTHORIZED" });
+  });
+
+  const capabilities = (req: Request) =>
+    getCapabilities(req);
+  it("printer capability matrix cannot disclose after concurrent manager logout", async () => {
+    const response = await race(capabilities, `/api/printers/capabilities?printerId=${fixture.printerId}`, "manager", "revoke");
+    expect(response.status).toBe(401);
+    expect(response.headers.get("Cache-Control")).toContain("no-store");
+    expect(await response.json()).toMatchObject({ code: "SESSION_EXPIRED" });
+  });
+
+  it("printer capability matrix cannot disclose after concurrent tenant suspension", async () => {
+    const response = await race(capabilities, `/api/printers/capabilities?printerId=${fixture.printerId}`, "manager", "suspend");
+    expect(response.status).toBe(403);
+    expect(response.headers.get("Cache-Control")).toContain("no-store");
+    expect(await response.json()).toMatchObject({ code: "TENANT_SUSPENDED" });
+  });
+
+  it("printer capability page cannot disclose after concurrent manager logout", async () => {
+    const response = await race(capabilities, "/api/printers/capabilities?limit=10", "manager", "revoke");
+    expect(response.status).toBe(401);
+    expect(response.headers.get("Cache-Control")).toContain("no-store");
+    expect(await response.json()).toMatchObject({ code: "SESSION_EXPIRED" });
+  });
+
+  it("printer capability page cannot disclose after concurrent tenant suspension", async () => {
+    const response = await race(capabilities, "/api/printers/capabilities?limit=10", "manager", "suspend");
+    expect(response.status).toBe(403);
+    expect(response.headers.get("Cache-Control")).toContain("no-store");
+    expect(await response.json()).toMatchObject({ code: "TENANT_SUSPENDED" });
   });
 
   it.each(routes)("%s cannot disclose Agent-owned inventory after the Agent is disabled", async (_name, handler, route) => {
