@@ -143,7 +143,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         entitlement: e.entitlement,
         limit: e.limit,
         used: e.used,
-        upgradeRequired: true,
+        upgradeRequired: false,
         retryable: true,
       }, { status: 429, headers: { "Retry-After": "60", "Cache-Control": "no-store" } });
     }
