@@ -649,7 +649,12 @@ class PrintGatewayJob(models.Model):
         # Business operation IDs are opaque v2 identities. Never trim a
         # caller key into a different durable operation (and a different
         # previously submitted physical attempt). Only absent keys are made.
-        key = uuid.uuid4().hex if idempotency_key is None else idempotency_key
+        # Preserve Odoo's historical False/empty optional-field sentinels.
+        key = (
+            uuid.uuid4().hex
+            if idempotency_key is None or idempotency_key is False or idempotency_key == ""
+            else idempotency_key
+        )
         if not isinstance(key, str) or not key.strip():
             raise ValidationError(_("The print operation key is invalid."))
         # Every NEW operation is scoped to its own local Odoo database.
