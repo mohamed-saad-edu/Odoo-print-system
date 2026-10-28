@@ -445,3 +445,14 @@ Baseline inspected: main@65214cf7948a214843110fa2fbc1a23aec388340. This is an **
 **P1 root cause:** `POST /api/print/jobs` had a production escape hatch (`YASEIR_REQUIRE_IDEMPOTENCY_KEY=0`) that accepted print submissions without a stable logical operation key. A client retry after a transport timeout would then create another job and could print twice, contrary to the no-ambiguous-replay invariant.
 
 **Fix:** Enforce the key unconditionally in production, regardless of that historical environment variable; remove the misleading Docker Compose override and update API/environment documentation. Development/test compatibility remains available for explicit legacy coverage only. **Regression:** `tests/print-idempotency.test.ts` now exercises the actual production route with the old opt-out set to 0, verifies 400/no row, and verifies a keyed retry reuses the same job. No schema migration, data reset, printer fallback, authorization weakening or scanner bypass. **Verification:** exact new SHA PostgreSQL/CI must complete; GitHub-only authoring does not execute local tests.
+
+
+## 2026-10-28 — Odoo report native-fallback integrity (follow-up)
+
+**Finding ODOO-REPORT-FALLBACK-001 (HIGH):** The browser report interceptor checked only `has_binding` to reopen native PDF. A contradictory RPC response (`has_binding=false`, `dispatched=true`) was therefore treated as safe native fallback, potentially duplicating a report already submitted to the Gateway.
+
+**Boundary/ruling:** Odoo owns business binding selection, Gateway owns physical execution. Native PDF may resume only on a *consistent* explicit `has_binding=false, dispatched=false` reply with no success, error, billing hold or ambiguous status. Unknown/inconsistent replies stay bound to the original operation identity and require Print Activity inspection. Do not change a previously submitted print to `not_printed`.
+
+**Change:** `097e6041c91d738ed3b09b00d98b3f9c453aa376` guards the actual `report_interceptor.js` registry route and updates `tests/current-run-report.node.test.mjs` with contradictory and partial RPC responses, sticky warning and exact operation-key replay. Arabic translation is catalogued in `odoo_addons/print_gateway/i18n/ar.po` in this follow-up.
+
+**Verification:** GitHub Actions for this SHA were pending when authored. Real Odoo/browser/physical-printer tests NOT RUN; no staging or deployment. Other module TODO entries remain and should not be marked DONE before per-SHA test evidence.

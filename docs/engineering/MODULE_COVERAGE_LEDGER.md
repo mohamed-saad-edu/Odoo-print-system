@@ -373,3 +373,12 @@ Each directory below has an **explicit state**; direct file counts exclude neste
 - Directory mapping DONE (inventory only); file-level correctness remains TODO for every not-reviewed path.
 - The module table intentionally retains TODO; the no-TODO completion criterion has **not** been met. Never erase TODO to make a progress metric green.
 - On each real source batch append exact commit SHA, changed paths, root-cause boundary, RED→GREEN regression evidence, CI run/job URLs, and newly discovered TODO/BLOCKED statuses here; update the existing notebook and ledger in parallel.
+
+
+### 2026-10-28 Odoo report routing verification batch
+
+| Module | State | Business logic | Cross-layer contract | Confirmed inconsistency | Fix and verification |
+|---|---|---|---|---|---|
+| `odoo_addons/print_gateway/static/src/js` | TODO (fix present) | Browser report interception and POS submission/recovery | Odoo `has_binding/dispatched/status` response, Gateway physical attempt, native PDF fallback | Contradictory no-binding response reopened native printing despite a possible Gateway submission | `097e6041` guards explicit no-dispatch; `tests/current-run-report.node.test.mjs` asserts fail-closed identity reuse; CI pending |
+| `odoo_addons/print_gateway/i18n` | TODO (translation added) | Arabic customer errors | Odoo `_t` catalogue and active locale | New fail-closed notice would otherwise fall back to English | `ar.po` occurrence; full translation checker CI pending |
+| `tests` | TODO (focused regression added) | Browser regression suite | Real registry callback using mocked RPC boundary | Earlier unbound test accepted incomplete response with no dispatch field | Updated good fixture and added six contradictory cases; exact run NOT RUN |

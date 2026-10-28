@@ -5080,3 +5080,9 @@ msgstr "قبول مهام الطباعة مقيّد مؤقتًا. سيبقى ا�
 #: code:addons/print_gateway/models/runtime_assignment.py:0
 msgid "A valid exact Gateway runtime agent ID is required."
 msgstr "يجب إدخال معرّف صحيح ومطابق تمامًا لوكيل التشغيل في بوابة الطباعة."
+
+#. module: print_gateway
+#. odoo-javascript
+#: code:addons/print_gateway/static/src/js/report_interceptor.js:0
+msgid "Print routing returned conflicting status. Native PDF download cancelled. Check Print Activity and the printer before retrying."
+msgstr "وردت حالة متعارضة لتوجيه الطباعة. أُلغي تنزيل ملف PDF المعتاد. راجع سجل الطباعة والطابعة قبل إعادة المحاولة."
