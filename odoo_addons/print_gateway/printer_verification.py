@@ -24,7 +24,17 @@ def validated_operational_verification(value, printer, now=None):
     if type(value["version"]) is not int or value["version"] != 1:
         return None
     identity = value["printer_id"]
-    if not isinstance(identity, str) or not identity or identity != identity.strip() or len(identity) > 120 or re.search(r"[\x00-\x1f\x7f-\x9f]", identity) or identity != printer.get("id"):
+    if (not isinstance(identity, str) or not identity or identity != identity.strip()
+            or identity.startswith("\ufeff") or identity.endswith("\ufeff")
+            or re.search(r"[\x00-\x1f\x7f-\x9f]", identity)
+            or identity != printer.get("id")):
+        return None
+    # A proof's identity must be the exact executable Gateway/Agent target:
+    # UTF-8 bytes (<=120), not Python characters; no surrogate substitution.
+    try:
+        if len(identity.encode("utf-8", "strict")) > 120:
+            return None
+    except UnicodeEncodeError:
         return None
     digest = value["binding_digest"]
     if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest) or value["logical_queue_key"] != digest:
