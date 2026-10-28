@@ -21,6 +21,10 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
   const printerId = url.searchParams.get("printerId");
   const headers: Record<string, string> = { "x-request-id": requestId, "Cache-Control": "private, no-store" };
+  // An explicit detail lookup must never silently widen to a workspace page.
+  if (printerId === "") {
+    return NextResponse.json({ error: "Printer ID is required for a direct capability lookup", code: "PRINTER_ID_REQUIRED" }, { status: 400, headers });
+  }
   const cursor = url.searchParams.get("after");
   let afterId: string | undefined;
   if (!printerId && cursor !== null) {
