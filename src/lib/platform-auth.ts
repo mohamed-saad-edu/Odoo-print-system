@@ -85,31 +85,46 @@ export async function requirePlatformReadAuthorityInTransaction(
   if (claims.ver !== 2 || claims.kind !== "platform" || !claims.familyId || !claims.sid) {
     throw new PlatformUnauthorizedError();
   }
+  // Writers lock the user before the session family and credentials. Keep
+  // reads in the same order to avoid deadlocks with password reset or logout.
+  const principal = await tx.execute(sql`
+    SELECT id, email, password_hash AS "passwordHash",
+      is_platform_owner AS "isPlatformOwner", email_verified_at AS "emailVerifiedAt"
+    FROM users WHERE id = ${claims.userId} FOR SHARE
+  `);
+  const user = principal.rows[0] as {
+    email?: string; passwordHash?: string; isPlatformOwner?: boolean;
+    emailVerifiedAt?: Date | string | null;
+  } | undefined;
+  if (!user || user.email !== claims.email || user.isPlatformOwner !== true ||
+      !user.emailVerifiedAt || typeof user.passwordHash !== "string") {
+    throw new PlatformUnauthorizedError();
+  }
+  await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${claims.familyId}, 0))`);
+  const passwordVersion = createHash("sha256").update(user.passwordHash, "utf8").digest("hex");
+  // Both the refresh token AND the password-policy session must stay live
+  // until the caller's subsequent commercial SELECT commits. No five-minute
+  // password step-up: that requirement belongs to mutations only.
   const live = await tx.execute(sql`
-    SELECT r.id
-    FROM users u
-    JOIN refresh_tokens r ON r.user_id = u.id
-    JOIN platform_session_security s ON s.user_id = u.id AND s.family_id = r.family_id
-    WHERE u.id = ${claims.userId}
-      AND u.email = ${claims.email}
-      AND u.email_verified_at IS NOT NULL
-      AND u.is_platform_owner = true
+    SELECT r.id FROM refresh_tokens r
+    JOIN platform_session_security s ON s.family_id = r.family_id AND s.user_id = r.user_id
+    WHERE r.user_id = ${claims.userId}
       AND r.family_id = ${claims.familyId}
       AND r.id = ${claims.sid}
       AND r.email = ${claims.email}
+      AND s.password_version = ${passwordVersion}
       AND r.tenant_id IS NULL
       AND r.kind = 'platform'
       AND r.revoked_at IS NULL
       AND r.expires_at > clock_timestamp()
       AND ${claims.exp} > EXTRACT(EPOCH FROM clock_timestamp())
       AND ${claims.iat} <= EXTRACT(EPOCH FROM clock_timestamp()) + 60
-      AND s.password_version = encode(sha256(convert_to(u.password_hash, 'UTF8')), 'hex')
       AND s.revoked_at IS NULL
       AND s.expires_at > clock_timestamp()
       AND s.last_seen_at > clock_timestamp() - interval '30 minutes'
       AND s.last_seen_at <= clock_timestamp()
       AND s.password_verified_at <= clock_timestamp()
-    FOR SHARE OF u, r, s
+    FOR SHARE OF r, s
   `);
   if (live.rows.length !== 1) throw new PlatformUnauthorizedError();
 }
