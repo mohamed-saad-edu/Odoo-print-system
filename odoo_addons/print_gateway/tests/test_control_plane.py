@@ -1811,6 +1811,9 @@ class TestControlPlane(TransactionCase):
         """
         examples = (
             ("partial", "paper delivery incomplete", "UNKNOWN_PARTIAL_DELIVERY:"),
+            (None, None, "UNKNOWN_SUBMISSION_OUTCOME:"),
+            ("", None, "UNKNOWN_SUBMISSION_OUTCOME:"),
+            (0, None, "UNKNOWN_SUBMISSION_OUTCOME:"),
             ("unrecognized_future_status", False, "UNKNOWN_SUBMISSION_OUTCOME:"),
             ("failed", "AGENT_EXECUTION_TIMEOUT: worker lost", "AGENT_EXECUTION_TIMEOUT:"),
         )
@@ -1823,9 +1826,10 @@ class TestControlPlane(TransactionCase):
                 response = MagicMock()
                 response.status_code = 200
                 response.json.return_value = {
-                    "jobId": gateway_job_id, "status": remote_status,
-                    "error": remote_error,
+                    "jobId": gateway_job_id, "error": remote_error,
                 }
+                if remote_status is not None:
+                    response.json.return_value["status"] = remote_status
                 with patch.object(type(self.gateway_config), "_validate_gateway_host", return_value=None), \
                      patch("odoo.addons.print_gateway.models.gateway_http.post", return_value=response) as post:
                     job._action_submit_trusted(raise_on_failure=False)
