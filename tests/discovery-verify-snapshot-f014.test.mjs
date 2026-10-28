@@ -39,10 +39,20 @@ const tx={
     if(/manager_sessions/i.test(text))return {rows:state.legacyActive?[{id:'session'}]:[]};
     throw Error('Unexpected SQL '+text);
   },
-  query:{tenantUsers:{findFirst:async()=>state.memberRole?{role:state.memberRole}:null},discoveredDevices:{findFirst:async({where})=>matches(where,state.row)?{...state.row}:null}},
+  query:{
+    tenantUsers:{findFirst:async()=>state.memberRole?{role:state.memberRole}:null},
+    discoverySessions:{findFirst:async({where})=>{
+      const session={id:'scan1',tenantId:'tenant',agentId:'agent',status:'completed'};
+      return matches(where,session)?session:null;
+    }},
+    discoveredDevices:{
+      findFirst:async({where})=>state.row&&matches(where,state.row)?{...state.row}:null,
+      findMany:async({where})=>state.row&&matches(where,state.row)?[{...state.row}]:[],
+    },
+  },
   update:()=>({set:(data)=>({where:()=>({returning:async()=>{if(!state.row || state.row.candidateStatus!=='discovered')return [];state.writes++;state.row={...state.row,...data,candidateStatus:'verified',verification:'verified'};return [{id:'dev'}];}})})}),
 };
-const db={query:{agents:{findFirst:async()=>{state.preflight?.();return state.agentActive?agent:null}},discoverySessions:{findFirst:async()=>({id:'scan1',agentId:'agent',tenantId:'tenant'})},discoveredDevices:{findFirst:async()=>state.row?{...state.row}:null,findMany:async()=>state.row?[{...state.row}]:[]}},transaction:async(fn)=>fn(tx),update:()=>tx.update()};
+const db={query:{agents:{findFirst:async()=>{state.preflight?.();return state.agentActive?agent:null}},discoverySessions:{findFirst:async()=>{throw Error('Unfenced session read');}},discoveredDevices:{findFirst:async()=>{throw Error('Unfenced discovery read');},findMany:async()=>{throw Error('Unfenced discovery list');}}},transaction:async(fn)=>fn(tx),update:()=>tx.update()};
 const schema=mk({agents:{id:'id',tenantId:'tenantId'},discoveredDevices:{id:'id',agentId:'agentId',tenantId:'tenantId',candidateStatus:'candidateStatus',discoveryId:'discoveryId'},discoverySessions:{id:'id',agentId:'agentId',tenantId:'tenantId'},tenantUsers:{userId:'userId',tenantId:'tenantId'}});
 const auth=await authorizationFixture(ctx);
 const workspace=await workspaceSessionFixture(ctx,dr);
@@ -104,6 +114,26 @@ test('GET discovery exposes a matching fingerprint sourced from committed row',a
  const data=await response.json();assert.equal(data.devices[0].observationFingerprint,fp(state.row));
  assert.equal((await call(data.devices[0].observationFingerprint)).status,200);
 });
+test('GET discovery denies a revoked Manager session before exposing any fingerprint',async()=>{
+ reset({familyActive:false});
+ const endpoint=await load('app/api/agents/[id]/discovery/[discoveryId]/route.ts');
+ const response=await endpoint.GET(new Request('http://localhost/api/agents/agent/discovery/scan1'),{params:Promise.resolve({id:'agent',discoveryId:'scan1'})});
+ assert.equal(response.status,401);
+ assert.equal(response.headers.get('Cache-Control'),'private, no-store');
+ assert.equal((await response.json()).code,'SESSION_EXPIRED');
+});
+
+test('GET discovery excludes a device outside the authenticated tenant',async()=>{
+ reset();
+ state.row.tenantId='other';
+ const endpoint=await load('app/api/agents/[id]/discovery/[discoveryId]/route.ts');
+ const response=await endpoint.GET(new Request('http://localhost/api/agents/agent/discovery/scan1'),{params:Promise.resolve({id:'agent',discoveryId:'scan1'})});
+ assert.equal(response.status,200);
+ const body=await response.json();
+ assert.deepEqual(body.devices,[]);
+ assert.equal(response.headers.get('Cache-Control'),'private, no-store');
+});
+
 test('snapshot canonicalizes JSONB capabilities object key ordering and changes on destination change',()=>{
  reset();const hash=fp(state.row);state.row.capabilities={print:{color:true}};assert.equal(fp(state.row),hash);
  state.row.capabilities={z:1,a:{y:2,x:1}};const changed=fp(state.row);state.row.capabilities={a:{x:1,y:2},z:1};assert.equal(fp(state.row),changed);
