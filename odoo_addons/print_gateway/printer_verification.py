@@ -54,7 +54,20 @@ def validated_operational_verification(value, printer, now=None):
         method = "ipp_attributes"
     elif connection in ("network", "usb") and protocol in ("raw", "escpos", "zpl", "tspl"):
         method = "usb_interface" if connection == "usb" else "snmp_printer"
-    if not method or value["method"] != method or value["output_medium"] != ("file" if method == "pdf_output" else "physical"):
+    # An IPP service or Windows spooler queue is not physical chassis proof.
+    # Mirror the native Go Agent's exact method-to-identity-strength contract;
+    # a caller may not promote a service/queue to a device by forging metadata.
+    method_strength = {
+        "windows_queue": "queue",
+        "ipp_attributes": "service",
+        "usb_interface": "device",
+        "snmp_printer": "device",
+        "pdf_output": "service",
+    }
+    if (not method or value["method"] != method
+            or value["identity_strength"] != method_strength[method]
+            or ("physical_device_key" in value and method_strength[method] != "device")
+            or value["output_medium"] != ("file" if method == "pdf_output" else "physical")):
         return None
     current = now or datetime.now(timezone.utc)
     current_ms = int(current.timestamp() * 1000)
