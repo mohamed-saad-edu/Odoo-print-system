@@ -140,6 +140,13 @@ describe("Desktop overview evidence boundaries", () => {
 });
 
 describe("local health and sharing stay independent of cloud evidence", () => {
+  it("the local/cloud execution binding validator exists and fails closed on missing proof", () => {
+    const localWithoutProof = { ...local, capabilities: {} };
+    const remote = { ...cloud, sharedWithGateway: true };
+    expect(mergePrinterInventories([remote], [{ ...localWithoutProof, sharedWithGateway: true }])[0].agentId).toBeUndefined();
+    expect(eligibleGatewayTestPrinterIds([remote], [{ ...localWithoutProof, sharedWithGateway: true }], true, now).has(local.id)).toBe(false);
+  });
+
   it.each(["active", "disabled", "retired"] as const)("keeps private fresh local health with cloud lifecycle %s and absent inventory", (lifecycle) => {
     const remote = { ...cloud, lifecycle, inventoryPresent: false };
     const rows = mergePrinterInventories([remote], [local]);

@@ -170,6 +170,20 @@ function conflictingCloudPrinterIds(rows: readonly PrinterInfo[]): ReadonlySet<s
   return conflicts;
 }
 
+/** A same-name local queue is never sufficient to adopt Gateway authority.
+ * Both Agent observation and Gateway projection must bind the same exact
+ * printer ID and cryptographic queue digest. */
+function sameLocalCloudPrinterBinding(local: PrinterInfo, cloud: PrinterInfo): boolean {
+  const proof = local.capabilities?.operational_verification;
+  if (!proof || typeof proof !== "object" || Array.isArray(proof)) return false;
+  const binding = (proof as Record<string, unknown>).binding_digest;
+  return typeof binding === "string" && /^[a-f0-9]{64}$/.test(binding)
+    && local.id === cloud.id && (proof as Record<string, unknown>).printer_id === local.id
+    && (proof as Record<string, unknown>).logical_queue_key === binding
+    && cloud.verificationState === "verified"
+    && cloud.verificationBindingDigest === binding && cloud.logicalQueueKey === binding;
+}
+
 export function mergePrinterInventories(cloud: PrinterInfo[], local: PrinterInfo[]): PrinterInfo[] {
   const conflicts = conflictingCloudPrinterIds(cloud);
   const rows = new Map(cloud.filter((p) => isProductionPrinter(p) && !conflicts.has(p.id)).map((p) => [p.id, p]));
