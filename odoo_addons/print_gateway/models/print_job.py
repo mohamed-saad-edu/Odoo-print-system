@@ -1276,7 +1276,7 @@ class PrintGatewayJob(models.Model):
         job._post_source_audit(_("WARNING: Print Job #%s submission outcome is unknown on '%s'.") % (job.id, job.printer_id))
         _logger.warning("Gateway submission outcome unknown for job %s: %s", job.idempotency_key[:8], detail)
         if raise_on_failure:
-            raise ValidationError(_("Gateway submission outcome is unknown; physical outcome is ambiguous. Automated retries are paused to prevent duplicate prints. Operator reprint required.")) from exc
+            raise ValidationError(_("Gateway submission outcome is unknown; physical outcome is ambiguous. Automated retries are paused to prevent duplicate prints. Check Print Activity and the printer before any explicit reprint.")) from exc
 
     def _primary_shared_for_fallback(self, job):
         """Only current primary permission may authorize an automatic backup.
@@ -1638,7 +1638,7 @@ class PrintGatewayJob(models.Model):
                     response_state_persisted = True
                     if raise_on_failure:
                         raise ValidationError(_(
-                            "Gateway submission outcome is unknown; physical outcome is ambiguous. Automated retries are paused to prevent duplicate prints. Operator reprint required."
+                            "Gateway submission outcome is unknown; physical outcome is ambiguous. Automated retries are paused to prevent duplicate prints. Check Print Activity and the printer before any explicit reprint."
                         )) from exc
                     return True
 
