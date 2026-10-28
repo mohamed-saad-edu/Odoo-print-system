@@ -34,6 +34,34 @@ func TestAutomaticDiscoverySharedSubnetDedupesByNetworkNotInterfaceAddress(t *te
 	}
 }
 
+// A host with two active NICs in the same /24 must never probe either of
+// its own addresses. The subnet is deduplicated, but ALL local addresses
+// still need to be excluded before the automatic discovery candidates are
+// queued; probing the second NIC can misclassify an Agent-side print service
+// as a separate printer.
+func TestAutomaticDiscoveryOmitsEveryLocalAdapterAddress(t *testing.T) {
+	one := privateSubnet(t, "10.45.2.20", "10.45.2.0/24")
+	two := privateSubnet(t, "10.45.2.21", "10.45.2.0/24")
+	overlap := privateSubnet(t, "10.45.2.25", "10.45.2.0/25")
+	hosts, truncated := privateDiscoveryTargetsWithBudget([]*net.IPNet{one, two, overlap}, maxAutomaticDiscoveryTargets)
+	if truncated || len(hosts) != 251 {
+		t.Fatalf("expected 251 unique remote hosts after excluding three local NICs: count=%d truncated=%v", len(hosts), truncated)
+	}
+	seen := make(map[string]bool, len(hosts))
+	for _, host := range hosts {
+		if host == "10.45.2.20" || host == "10.45.2.21" || host == "10.45.2.25" {
+			t.Fatalf("discovery probed its own address %s", host)
+		}
+		if seen[host] {
+			t.Fatalf("duplicate destination %s", host)
+		}
+		seen[host] = true
+	}
+	if !seen["10.45.2.22"] || !seen["10.45.2.254"] {
+		t.Fatalf("remote discovery coverage was lost: first=%v end=%v", seen["10.45.2.22"], seen["10.45.2.254"])
+	}
+}
+
 func TestAutomaticDiscoveryCapsCrossSubnetCostFairlyAndSignalsPartial(t *testing.T) {
 	subnets := []*net.IPNet{
 		privateSubnet(t, "10.45.2.20", "10.45.2.0/24"),
