@@ -1068,9 +1068,13 @@ patch(PosStore.prototype, {
             // uncertain response; automatic physical retry is forbidden.
             const status = result?.gateway_enabled === true ? result?.status : "unknown";
             const accepted = ["queued", "submitted", "claimed", "printing", "success"].includes(status);
-            if (!accepted && status !== "failed") {
-                // Missing/unrecognized responses give no proof of refusal.
-                // They must not expose a fresh-operation retry.
+            // A bare failed token is not evidence that no physical bytes were
+            // sent. Only the durable Odoo Outbox can positively authorize a
+            // fresh operation with can_retry === true after nonprinting proof.
+            const provenFailure = status === "failed" && result?.can_retry === true;
+            if (!accepted && !provenFailure) {
+                // Missing/unrecognized/unsafe failure responses give no
+                // pre-admission proof. Never offer a new print operation.
                 const outcome = status === "partial" ? "partial" : "unknown";
                 return {
                     successful: false,
@@ -1088,7 +1092,7 @@ patch(PosStore.prototype, {
             if (result?.message) showGatewayBillingLimitDialog(this.env, result.message);
             return {
                 successful: accepted,
-                canRetry: !accepted && result?.can_retry !== false,
+                canRetry: provenFailure,
                 warningCode: undefined,
                 gatewayOutcome: status,
                 message: accepted ? undefined : {
