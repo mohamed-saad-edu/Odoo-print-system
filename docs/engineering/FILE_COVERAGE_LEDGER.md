@@ -2134,3 +2134,16 @@ PARTIAL tests/test_payload_admission_round3.py — preserve AST fixture imports 
 ```
 
 Producer/consumer, test design and source commits are in SYSTEM_UNIFICATION_NOTEBOOK.md and root NOTES.md. All production/runtime and exact-HEAD CI checks remain NOT RUN or unverified; never classify full Odoo addon/Agent/Gateway integration as DONE solely because these source paths were inspected.
+
+
+#### AGENT-CLAIM-MISMATCH-RETRY-2026-10-28 and CAPABILITY-READ-ROUTE-TEST-2026
+
+```text
+PARTIAL agent/internal/agent/agent.go — fail-closed exact durable job identity mismatch on Reserve/Begin, with terminal pre-execution report
+AUTHORED agent/internal/agent/job_identity_mismatch_test.go — actual SQLite/HTTP Agent integration regression, authored but NOT VERIFIED
+PARTIAL agent/internal/queue/queue.go — typed immutable printer/payload mismatches; NOT VERIFIED on Go race/Windows
+PARTIAL src/app/api/printers/capabilities/route.ts — explicit empty detail printerId rejects before full fleet query
+PARTIAL tests/capability-pagination-route.test.ts — current transactional tenant/session guard, direct/page/cursor and denial unit tests
+```
+
+Exact commits and CI cancellation evidence are in the [system notebook](SYSTEM_UNIFICATION_NOTEBOOK.md); RED/GREEN executions and hardware certification **NOT RUN**. These are source-path review statuses, not signed-off components.
