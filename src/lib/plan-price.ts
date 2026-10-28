@@ -2,6 +2,16 @@ import { intlLocale, type Locale } from "../i18n/config";
 
 export type PlanCurrency = "USD" | "SAR";
 
+/** Shared catalog input contract for the Platform Owner form and backend.
+ * No floating-point rounding, exponential notation or silent truncation. */
+export function parsePlanPriceAmount(amount: string): number | null {
+  if (typeof amount !== "string") return null;
+  const matched = /^(0|[1-9][0-9]{0,9})(?:\.([0-9]{1,2}))?$/.exec(amount);
+  if (!matched) return null;
+  const minorUnits = Number(matched[1]) * 100 + Number((matched[2] ?? "").padEnd(2, "0"));
+  return Number.isSafeInteger(minorUnits) && minorUnits <= 2_147_483_647 ? minorUnits : null;
+}
+
 /** A configured catalog price is descriptive, not proof of a paid invoice. */
 export function formatPlanPrice(
   minorUnits: number | null | undefined,
