@@ -20,7 +20,7 @@ func TestQuickDiscoveryQuarantinesContradictoryTCPPrintLanguages(t *testing.T) {
 				Endpoint: "10.20.30.40:9100", NetworkAddress: "10.20.30.40",
 				Port: 9100, PrinterType: "physical", Enabled: true, Status: "online",
 				Capabilities: map[string]interface{}{
-					"geometry": map[string]interface{}{"source": "validated_profile"},
+					"geometry":            map[string]interface{}{"source": "validated_profile"},
 					"supported_protocols": []string{pair[0]},
 				},
 			}

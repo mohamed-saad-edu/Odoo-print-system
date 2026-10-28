@@ -278,7 +278,7 @@ func TestLegacySecureIPPRegistryRetainsIDAfterStableIDUpgrade(t *testing.T) {
 	rows, err := UpsertRegistry(path, []DeviceInfo{{
 		Name: original.Name, PrinterType: "physical",
 		ConnectionType: "ipps", Protocol: "ipps",
-		Endpoint: "https://" + host + ":631/ipp/print",
+		Endpoint:       "https://" + host + ":631/ipp/print",
 		NetworkAddress: host, Port: 631, Enabled: true, Status: "online",
 	}})
 	if err != nil || len(rows) != 1 || rows[0].ID != legacyID || rows[0].Enabled {

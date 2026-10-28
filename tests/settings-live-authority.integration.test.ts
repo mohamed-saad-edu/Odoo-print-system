@@ -66,7 +66,7 @@ describe.skipIf(!hasTestDatabase)("workspace settings current tenant and session
     expect(response.headers.get("Cache-Control")).toBe("private, no-store");
     const body = await response.json();
     expect(body.tenant.id).toBe(fixture.tenantId);
-    expect(body.email).toMatch(/@/);
+    expect(body.email).toContain("@");
     expect(body.role).toBe("owner");
   });
 

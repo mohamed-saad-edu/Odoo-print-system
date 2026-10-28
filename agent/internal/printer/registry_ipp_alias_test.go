@@ -106,7 +106,7 @@ func TestLegacySecureDefaultQueueIDCannotBeReboundToPlainIPP(t *testing.T) {
 	rows, err := UpsertRegistry(path, []DeviceInfo{{
 		Name: "Untrusted plain discovery", PrinterType: "physical",
 		ConnectionType: "ipp", Protocol: "ipp",
-		Endpoint: "ipp://" + host + ":631/ipp/print",
+		Endpoint:       "ipp://" + host + ":631/ipp/print",
 		NetworkAddress: host, Port: 631, Enabled: true, Status: "online",
 	}})
 	if err != nil || len(rows) != 1 {

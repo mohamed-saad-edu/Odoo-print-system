@@ -37,7 +37,7 @@ func TestGeometryAndOperationalProofRequireGatewayExactPrinterID(t *testing.T) {
 			geometry := &Geometry{
 				Version: 1, Source: "validated_profile", Validation: "configured",
 				ObservedAt: time.Now().UTC().Format(time.RFC3339Nano),
-				PrinterID: tc.id, ConfigFingerprint: strings.Repeat("a", 64),
+				PrinterID:  tc.id, ConfigFingerprint: strings.Repeat("a", 64),
 				GeometryProfile: config.GeometryProfile{PrintableWidthDots: 576},
 			}
 			if valid := geometry.Validate() == nil; valid != tc.want {

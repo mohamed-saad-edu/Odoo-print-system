@@ -7,14 +7,14 @@ import (
 
 func legacyUSBPrinterForCollision(instance, endpoint string) DeviceInfo {
 	return DeviceInfo{
-		ID: StableIDFromUSB("1234", "5678", "", ""),
+		ID:   StableIDFromUSB("1234", "5678", "", ""),
 		Name: "USB receipt printer", PrinterType: "physical",
 		ConnectionType: "usb", Type: "usb", Protocol: "raw",
 		Endpoint: endpoint, USBVID: "1234", USBPID: "5678",
 		Enabled: true, Status: "online",
 		Capabilities: map[string]interface{}{
 			"device_instance_id": instance,
-			"geometry": map[string]interface{}{"source": "windows_driver"},
+			"geometry":           map[string]interface{}{"source": "windows_driver"},
 		},
 	}
 }

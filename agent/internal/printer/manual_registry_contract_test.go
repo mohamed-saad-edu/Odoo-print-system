@@ -92,13 +92,13 @@ func TestManualRegistrationCannotInventObservedIPPIdentityOrGeometry(t *testing.
 		Endpoint: "ipp://192.168.1.20/ipp/print", PrinterType: "physical",
 		Enabled: true, Capabilities: map[string]interface{}{
 			"ipp_printer_uuid": claimed,
-			"uuid": claimed,
-			"printer_uuid": claimed,
+			"uuid":             claimed,
+			"printer_uuid":     claimed,
 			"ipp_capabilities": map[string]interface{}{
-				"printer_uuid": claimed,
+				"printer_uuid":     claimed,
 				"document_formats": []interface{}{"application/pdf"},
 			},
-			"geometry": map[string]interface{}{"printer_id": "injected", "source": "ipp"},
+			"geometry":                 map[string]interface{}{"printer_id": "injected", "source": "ipp"},
 			"operational_verification": map[string]interface{}{"version": 1},
 		},
 	})
