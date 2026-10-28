@@ -785,6 +785,12 @@ class PrintGatewayRouter(models.AbstractModel):
     @api.private
     def route_pos_receipt(self, order, image_base64, *, idempotency_key=None, geometry_fingerprint=None):
         order.ensure_one()
+        # Preserve the exact caller-owned print identity at the first route
+        # boundary. Unlike a missing Odoo field, 0, [], {} or whitespace
+        # cannot silently become a different deterministic operation.
+        if not (idempotency_key is None or idempotency_key is False or idempotency_key == ""):
+            if not isinstance(idempotency_key, str) or not idempotency_key.strip():
+                raise ValidationError(_("The print operation key is invalid."))
         self._assert_current_company(order.company_id, record=order)
         self._validate_jpeg_base64(image_base64)
         route = self.resolve_binding(record=order, company=self.env.company, document_type="receipt")
@@ -822,6 +828,12 @@ class PrintGatewayRouter(models.AbstractModel):
         order.ensure_one()
         if type(reprint) is not bool:
             raise ValidationError(_("The kitchen reprint option must be a boolean."))
+        # Preserve the exact caller-owned print identity at the first route
+        # boundary. Unlike a missing Odoo field, 0, [], {} or whitespace
+        # cannot silently become a different deterministic operation.
+        if not (idempotency_key is None or idempotency_key is False or idempotency_key == ""):
+            if not isinstance(idempotency_key, str) or not idempotency_key.strip():
+                raise ValidationError(_("The print operation key is invalid."))
         self._assert_current_company(order.company_id, record=order)
         company = self.env.company
         self._validate_jpeg_base64(image_base64)
@@ -893,6 +905,12 @@ class PrintGatewayRouter(models.AbstractModel):
         # /pos/sale_details_report HTTP endpoint remains a separate PDF/report
         # path and intentionally resolves an ir.actions.report binding.
         session.ensure_one()
+        # Preserve the exact caller-owned print identity at the first route
+        # boundary. Unlike a missing Odoo field, 0, [], {} or whitespace
+        # cannot silently become a different deterministic operation.
+        if not (idempotency_key is None or idempotency_key is False or idempotency_key == ""):
+            if not isinstance(idempotency_key, str) or not idempotency_key.strip():
+                raise ValidationError(_("The print operation key is invalid."))
         self._assert_current_company(session.company_id, record=session)
         self._validate_jpeg_base64(image_base64)
         route = self.resolve_binding(
