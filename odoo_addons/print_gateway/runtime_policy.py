@@ -1,6 +1,23 @@
 """Gateway printer permissions, independent of local device health."""
 
 
+def is_exact_gateway_printer_id(value):
+    """Keep Odoo printer targets byte-identical to Gateway/Agent execution IDs.
+
+    The shared Gateway wire contract accepts up to 120 UTF-8 bytes; no
+    leading/trailing Unicode whitespace, C0/C1 controls or unpaired UTF-16
+    surrogates may be silently normalized into another target.
+    """
+    if not isinstance(value, str) or not value or value != value.strip():
+        return False
+    if any(ord(ch) < 32 or 127 <= ord(ch) <= 159 for ch in value):
+        return False
+    try:
+        return len(value.encode("utf-8", "strict")) <= 120
+    except UnicodeEncodeError:
+        return False
+
+
 def is_gateway_shared_printer(printer):
     """Accept legacy inventory; explicit/malformed sharing metadata fails closed."""
     return isinstance(printer, dict) and printer.get("sharedWithGateway", True) is True
