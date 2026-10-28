@@ -146,7 +146,7 @@ class TestPrintGatewayArchitectureContract(TransactionCase):
 
     def test_database_utc_clock_is_the_shared_scheduler_clock(self):
         clock = (ADDON / "runtime_clock.py").read_text(encoding="utf-8")
-        self.assertIn("SELECT NOW() AT TIME ZONE 'UTC'", clock)
+        self.assertIn("SELECT clock_timestamp() AT TIME ZONE 'UTC'", clock)
         intent = (MODELS / "print_intent.py").read_text(encoding="utf-8")
         jobs = (MODELS / "print_job.py").read_text(encoding="utf-8")
         self.assertIn("db_now_utc", intent)
