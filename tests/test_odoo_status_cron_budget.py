@@ -301,6 +301,23 @@ def test_missing_bulk_results_stay_unknown_without_reprint_or_fallback_submissio
     assert [job.status for job in cron.jobs.values()] == ['unknown'] * 3
     assert all(job.last_error.startswith('GATEWAY_JOB_NOT_FOUND:') for job in cron.jobs.values())
 
+
+@pytest.mark.parametrize("returned_ids", [
+    ["gw-1", "gw-1", "gw-2"],   # duplicate: last item must not win
+    ["gw-1", "gw-foreign"],     # wrong-tenant/unsolicited row
+    ["gw-1", "gw-2 "],          # noncanonical opaque identity
+    ["gw-1", "\\ud800"],       # JSON can contain a lone surrogate
+])
+def test_corrupt_batch_status_falls_back_to_exact_individual_lookups(monkeypatch, returned_ids):
+    cron = StatusCron(monkeypatch, count=2, bulk_status=200)
+    cron.returned_ids = returned_ids
+    assert cron.cron_sync_status() == 2
+    assert [method for method, _url, _kwargs in cron.calls] == ["POST", "GET", "GET"]
+    assert [args["params"]["id"] for method, _url, args in cron.calls if method == "GET"] == ["gw-1", "gw-2"]
+    assert [job.status for job in cron.jobs.values()] == ["unknown", "unknown"]
+    assert all(job.last_status_polled_at is not None for job in cron.jobs.values())
+
+
 def test_reconciliation_selection_uses_exact_unknown_outcome_prefixes(monkeypatch):
     """Match the Gateway's literal startsWith semantics; underscores are NOT SQL wildcards."""
     cron = StatusCron(monkeypatch, count=0)
