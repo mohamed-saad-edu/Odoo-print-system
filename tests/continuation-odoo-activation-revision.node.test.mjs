@@ -47,6 +47,7 @@ async function configFixture({ readOnly = false, lifecycle = 'active' } = {}) {
     '../../../../lib/authorization': { requireManagerPermission: noop },
     '../../../../lib/odoo-auth': { validateOdooKey: async () => ({ id: 'key', tenantId: 'tenant', hashedKey: 'valid', readOnly }) },
     '../../../../lib/audit': { writeAuditEvent: async () => events.push('audit') },
+    '../../../../lib/log': { logError: noop },
     '../../../../lib/entitlements': { isTenantBillingError: () => false, requireTenantBillingAccess: async () => events.push('bill-check') },
     '../../../../lib/tenant-guard': { TenantSuspendedError, TenantDeletedError, requireActiveTenantInTransaction: async (transaction, tenantId) => {
       const row = await transaction.execute(sql`SELECT lifecycle FROM tenants WHERE id = ${tenantId} FOR SHARE`);
@@ -145,6 +146,7 @@ async function deletionFixture() {
     'drizzle-orm': { eq: (a,b) => [a,b], and: (...args) => args, desc: noop, sql },
     'zod': { z: { object: () => ({ strict: () => ({}) }), string: () => zstring } },
     '../../../../lib/audit': { writeAuditEvent: async () => {} },
+    '../../../../lib/log': { logError: noop },
     '../../../../lib/api-key-deletion': { deleteApiKeyInTransaction: async (_tx, tenant, id) => { erased.push([tenant,id]); return true; } },
     '../../../../lib/entitlements': { isTenantBillingError: () => false, requireTenantBillingAccess: noop },
   });
