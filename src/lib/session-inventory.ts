@@ -56,7 +56,7 @@ function decodeCursor(userId: string, value?: string | null): Cursor | null {
  * tenant labels belong to the signed-in user's own live session families.
  * Filter live policy BEFORE pagination; expired newest rows cannot hide live
  * older sessions. Cursor integrity is bound to this exact account. */
-export async function listOwnSessions(owner: SessionInventoryOwner, pageCursor?: string | null): Promise<{ sessions: SessionSummary[]; truncated: boolean; nextCursor: string | null }> {
+export async function listOwnSessions(owner: SessionInventoryOwner, pageCursor?: string | null, tx?: DbTx): Promise<{ sessions: SessionSummary[]; truncated: boolean; nextCursor: string | null }> {
   const userId = owner.claims.userId;
   if (!userId) throw new WorkspaceSessionExpiredError();
   const cursor = decodeCursor(userId, pageCursor);
@@ -67,12 +67,13 @@ export async function listOwnSessions(owner: SessionInventoryOwner, pageCursor?:
       kind: owner.claims.kind === "customer" ? "customer" : "manager" }) : null;
     if (!current) throw new WorkspaceSessionExpiredError();
   }
-  const account = await db.execute(sql`SELECT password_hash FROM users WHERE id=${userId} AND email_verified_at IS NOT NULL`);
+  const accountQuery = sql`SELECT password_hash FROM users WHERE id=${userId} AND email_verified_at IS NOT NULL`;
+  const account = tx ? await tx.execute(accountQuery) : await db.execute(accountQuery);
   const passwordHash = account.rows[0]?.password_hash;
   if (typeof passwordHash !== "string") throw new WorkspaceSessionExpiredError();
   const credentialVersion = credentialVersionFor(userId, passwordHash);
   const cursorFilter = cursor ? sql`(issued_us<${cursor.t}::numeric OR (issued_us=${cursor.t}::numeric AND id<${cursor.i}))` : sql`true`;
-  const result = await db.execute(sql`
+  const inventoryQuery = sql`
     WITH latest AS (
       SELECT DISTINCT ON (r.family_id) r.* FROM refresh_tokens r
       WHERE r.user_id=${userId} AND r.revoked_at IS NULL AND r.expires_at>clock_timestamp()
@@ -99,7 +100,8 @@ export async function listOwnSessions(owner: SessionInventoryOwner, pageCursor?:
         AND w.last_seen_at>clock_timestamp()-interval '30 minutes' AND w.last_seen_at<=clock_timestamp()
         AND w.created_at<=clock_timestamp() AND w.password_verified_at<=clock_timestamp())
     ) SELECT * FROM live WHERE ${cursorFilter} ORDER BY issued_us DESC,id DESC LIMIT 101
-  `);
+  `;
+  const result = tx ? await tx.execute(inventoryQuery) : await db.execute(inventoryQuery);
   type Row = Omit<SessionSummary, "current" | "requiresPlatformStepUp" | "createdAt" | "lastRefreshedAt" | "expiresAt">
     & { created_ms: string; refreshed_ms: string; expires_ms: string; issued_us: string };
   const rows = result.rows as Row[];

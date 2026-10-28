@@ -393,3 +393,12 @@ Baseline inspected: main@65214cf7948a214843110fa2fbc1a23aec388340. This is an **
 **Finding:** Odoo's `cron_sync_status` immediately called `_mark_gateway_job_missing` when the Gateway's authenticated batch-status response omitted a requested job. A batch response is documented as an *authorized subset*, not an explicit per-ID 404; a transient/incomplete response could irreversibly mark an accepted, still-running Odoo operation `unknown` without checking its exact current status. This is not permission to resubmit a job or infer zero paper.
 
 **Fix:** Treat any omitted ID as ambiguous batch evidence. Use the existing read-only, exact-ID `action_sync_status()` lookup under per-job savepoint and scheduler budget; only its actual 404 invokes `_mark_gateway_job_missing`. A successful GET reconciles the current status, while failures remain eligible for later polling and **never trigger a physical POST**. Regressions in `tests/test_odoo_status_cron_budget.py` cover full omission followed by GET 200 and actual GET 404, with no automatic replay, and `tests/test_status_sync_savepoint_round3.py` now asserts 404 marking lives only under the per-job GET savepoint. GitHub-only source review on main@5afef7faeb91b2be3299f657a561eb007e03e9d0, CI and real Odoo/PostgreSQL **NOT RUN** until exact-commit results.
+
+
+## 2026-10-28 — Account session inventory: live transaction-bound identity
+
+**Finding P1:** GET /api/auth/sessions and GET /api/platform/auth/sessions validated a session before returning per-account inventory including IP addresses, user agents, tenant labels and current session families, but the inventory password and list queries ran as separate unfenced reads. Revoked ownership, suspended workspaces or changed passwords could race preflight and expose session metadata after revocation.
+
+**Fix:** listOwnSessions optionally executes its account credential and inventory selects within the caller's authorized DbTx. Platform and workspace GET routes hold canonical live-session and tenant/user guards through the same transaction; revocation mutations remain untouched. Stale authority responds privately rather than leaking a session list. No MFA or authentication relaxation.
+
+**Regression authored:** tests/session-inventory-live-authority.integration.test.ts covers guard ordering, authorized session list, real PostgreSQL owner-removal and tenant-suspension races. **NOT RUN / CI pending**; no assertion of test pass until actual output. Other modules, hardware and migration remain TODO/BLOCKED.
