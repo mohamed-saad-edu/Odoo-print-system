@@ -21,7 +21,7 @@ from psycopg2 import sql
 from ..runtime_clock import db_now_utc
 from ..idempotency_namespace import local_identity, deployment_proof, InstallationProofMismatch
 from ..customer_presentation import customer_error_message
-from ..runtime_policy import is_exact_gateway_printer_id, is_exact_gateway_agent_id, unambiguous_inventory_rows
+from ..runtime_policy import is_exact_gateway_agent_id, unambiguous_inventory_rows
 
 from .crypto import (
     CredentialDecryptError,
