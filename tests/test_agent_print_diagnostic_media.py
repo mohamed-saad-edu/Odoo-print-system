@@ -343,7 +343,7 @@ def runtime_controller(printer):
     method = next(node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name == "runtime_printers")
     method.decorator_list = []
     responses = iter([
-        {"agents": [{"id": "agent-a", "lifecycle": "active"}]}, {"printers": [printer]},
+        {"agents": [{"id": "agt_fixture1", "lifecycle": "active"}]}, {"printers": [printer]},
     ])
 
     def get(url, **kwargs):
@@ -361,6 +361,7 @@ def runtime_controller(printer):
     exec(compile(policy_path.read_text(), str(policy_path), "exec"), policy_namespace)
     namespace["is_gateway_shared_printer"] = policy_namespace["is_gateway_shared_printer"]
     namespace["is_exact_gateway_printer_id"] = policy_namespace["is_exact_gateway_printer_id"]
+    namespace["is_exact_gateway_agent_id"] = policy_namespace["is_exact_gateway_agent_id"]
     namespace["unambiguous_inventory_rows"] = policy_namespace["unambiguous_inventory_rows"]
     exec(compile(ast.fix_missing_locations(ast.Module(body=[method], type_ignores=[])),
                  str(ROOT / "controllers/runtime_printers.py"), "exec"), namespace)
@@ -369,18 +370,18 @@ def runtime_controller(printer):
     controller = SimpleNamespace(_require_runtime_admin=lambda: None,
                                  _scope=lambda company, branch: ("company", "branch"),
                                  _get_config=lambda company: (config, "root"),
-                                 _assigned_runtime_agent_ids=lambda root, branch: {"agent-a"})
-    return namespace["runtime_printers"](controller, company_id=1, branch_id=2, agent_id="agent-a")
+                                 _assigned_runtime_agent_ids=lambda root, branch: {"agt_fixture1"})
+    return namespace["runtime_printers"](controller, company_id=1, branch_id=2, agent_id="agt_fixture1")
 
 
 @pytest.mark.parametrize("width", [58, 80, True, "58", 58.0, None, 79])
 def test_picker_preserves_only_declared_integer_receipt_width(width):
-    printer = {"id": "printer-a", "name": "POS80", "lifecycle": "active", "agent": {"id": "agent-a"},
+    printer = {"id": "printer-a", "name": "POS80", "lifecycle": "active", "agent": {"id": "agt_fixture1"},
                "capabilities": {"supported_protocols": [" PDF ", "pdf", "spooler", "bad"],
                                 "paper_width_mm": width, "private": "do not expose"}}
     printer = with_verification(printer)
     result = runtime_controller(printer)
-    assert result["selectedAgentId"] == "agent-a"
+    assert result["selectedAgentId"] == "agt_fixture1"
     capabilities = result["printers"][0]["capabilities"]
     expected = {"supported_protocols": ["pdf", "spooler"],
                 "operational_verification": printer["capabilities"]["operational_verification"]}

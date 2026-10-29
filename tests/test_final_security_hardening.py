@@ -439,10 +439,12 @@ def test_operator_reprint_excludes_gateway_success_jobs():
     assert "idempotencyKey: operationKey" in route
     assert 'source.status !== "failed" && source.status !== "expired"' in service
     assert '"JOB_REPRINT_NOT_ALLOWED"' in service
-    assert 'if (job.status === "success")' in actions
-    # Keyed copy (i18n contract): the operator refusal resolves through the
-    # catalog, never as inline English.
-    assert 't("errors.jobNotEligibleForReprint")' in actions
+    # Manager reprint is always authorized in the transactional service.
+    # The server action must pass the exact original and caller operation key
+    # through the same security gate, not rely on an earlier status precheck.
+    assert "managerAuthority: { claims: manager, permission: \"jobs.retry\" }" in actions
+    assert "reprintOfJobId: job.id" in actions
+    assert "idempotencyKey: operationKey" in actions
     assert 'selectedJobView.status.toLowerCase() !== "success"' in dashboard
 
 

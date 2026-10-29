@@ -67,7 +67,7 @@ def discovery(monkeypatch, agents=None, printers=None):
 
 
 AGENTS = [{"id": "agt_fixture1", "lifecycle": "active"}]
-PRINTER = {"id": "printer", "lifecycle": "active", "agt_fixture1": {"id": "agt_fixture1"},
+PRINTER = {"id": "printer", "lifecycle": "active", "agent": {"id": "agt_fixture1"},
            "connectionType": "network", "protocol": "escpos"}
 
 
