@@ -40,7 +40,7 @@ function state(overrides: Partial<DesktopState> = {}): DesktopState {
     handlePrinterSharing: async () => {},
     printersLoading: false, printersError: null, printersFilter: "", setPrintersFilter: noop, statusFilter: "all",
     setStatusFilter: noop, filteredPrinters: [local], totalPrinters: 1, onlinePrinters: 1, offlinePrinters: 0,
-    nowMs: now, refreshPrinters: noop, handleDiscover: noop, handleTest: noop, showAdd: false, setShowAdd: noop,
+    nowMs: now, refreshPrinters: noop, handleDiscover: noop, showAdd: false, setShowAdd: noop,
     selectedPrinter: null, setSelectedPrinter: noop, jobs: [], jobsLoading: false, jobsError: null,
     jobTab: "all", setJobTab: noop, jobSearch: "", setJobSearch: noop, jobsFiltered: [],
     jobCounts: { all: 0, in_flight: 0, queued: 0, unassigned: 0, delivered: 0, failed: 0, unknown: 0, expired: 0 },
@@ -259,8 +259,14 @@ describe("actual Desktop sharing controls", () => {
       expect(share.getAttribute("aria-label")).toContain(local.name);
       expect(control.textContent).toContain(locale === "en" ? "Local only" : "محلية فقط");
     }
-    const tests = [...doc.querySelectorAll("button")].filter((b) => b.getAttribute("aria-label")?.includes(local.name) && !b.closest("[data-printer-sharing]") && b.disabled);
-    expect(tests).toHaveLength(2);
+    // Retain sharing and queue details without reintroducing the removed customer Test Print action.
+    const unavailableNamedActions = [...doc.querySelectorAll("button")].filter((button) =>
+      button.getAttribute("aria-label")?.includes(local.name) && !button.closest("[data-printer-sharing]") && button.disabled,
+    );
+    expect(unavailableNamedActions).toHaveLength(0);
+    expect([...doc.querySelectorAll("button")].some((button) =>
+      locale === "en" ? /\btest\b/i.test(button.textContent ?? "") : /اختبار/.test(button.textContent ?? ""),
+    )).toBe(false);
   });
   it.each([
     { canManagePrinterSharing: false }, { localInventoryReady: false }, { sharingPendingPrinterIds: new Set([local.id]) }, { nowMs: now + 3600000 },
