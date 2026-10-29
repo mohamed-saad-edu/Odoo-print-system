@@ -200,7 +200,12 @@ async function httpFixture({ reused, revokedAfterAuthentication = false, conflic
     '../../../../lib/odoo-idempotency': { parseOdooIdentity: () => null },
     '../../../../lib/odoo-status-scope': {
       odooStatusIdentity: () => { throw Error('unexpected status read in POST test'); },
-      readOdooJobStatus: () => { throw Error('unexpected status read in POST test'); },
+      readOdooJobStatus: async (_credential, _identity, selector) => {
+        // Replays must cross the live scoped status-read fence after commit.
+        calls.push('scoped-status-read');
+        assert.equal(selector.id, 'job-old');
+        return existing;
+      },
     },
     '../../../../lib/odoo-v2-admission': { OdooNamespaceError: class extends Error {}, verifyOdooInstallation: () => { throw Error('unexpected v2 admission in legacy test'); } },
     '../../../../lib/payload': { validatePrintJobPayload: (value) => value },
@@ -246,6 +251,7 @@ test('HTTP request still reports 200 with existing job after validated replay', 
   const f = await httpFixture();
   assert.equal(f.response.status, 200);
   assert.ok(f.calls.includes('transactional-service'));
+  assert.ok(f.calls.includes('scoped-status-read'), 'replay must revalidate status access');
 });
 
 test('HTTP must keep a committed fingerprint conflict as 409, never convert it into an old job success', async () => {

@@ -50,6 +50,16 @@ V4 uses manual platform-owner activation. Payment-provider credentials are not r
 | `PLATFORM_TENANT_ID` | Tenant ID for the protected platform workspace; **required in production** so platform lifecycle protection cannot fail open |
 | `STALE_AGENT_THRESHOLD_SECONDS` | Agent heartbeat staleness (default: 90) |
 
+> **Forward-only migration cutover:** Before running `scripts/deploy-compose.sh`
+> for an upgrade, arrange a maintenance window. The script builds first, then
+> stops Caddy and drains the old Gateway (up to 60 seconds) **before** running
+> database role/migration/verification gates. If a gate fails, public ingress
+> stays offline; do not restart a pre-migration Gateway against the upgraded
+> schema. Drain any *other* Gateway replicas/admission writers separately.
+> Back up the database and review migration `0102`'s cutover reconciliation
+> limitation in `MIGRATION.md` before deployment. `--resume` only reopens ingress after the gates for the
+> exact reviewed release have exited successfully.
+
 ## Deployment Steps
 
 ### 1. Database Setup

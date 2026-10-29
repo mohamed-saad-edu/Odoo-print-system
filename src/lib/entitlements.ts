@@ -389,11 +389,16 @@ export async function getTenantPrintUsage(tx: EntitlementTx, tenantId: string): 
 export async function enforceTenantJobEntitlements(tx: EntitlementTx, tenantId: string): Promise<void> {
   const minuteLimit = await getTenantEntitlementLimit(tx, tenantId, "max_jobs_per_minute", true);
   if (minuteLimit !== null) {
+    // The caller acquires tenant/agent admission locks before this query.
+    // PostgreSQL now() is fixed at transaction start, which may be MINUTES
+    // before those contended locks are granted. Use the statement's clock so
+    // old jobs have truly aged out and newer admitted jobs still count.
+    // This decision remains serialized by the caller's tenant admission lock.
     const recent = await tx.execute(sql`
       SELECT COUNT(*)::int AS count
       FROM print_jobs
       WHERE tenant_id = ${tenantId}
-        AND created_at >= now() - interval '1 minute'
+        AND created_at >= statement_timestamp() - interval '1 minute'
     `);
     const count = Number(recent.rows[0]?.count ?? 0);
     if (count >= minuteLimit) throw new TenantEntitlementError("max_jobs_per_minute", minuteLimit, count);

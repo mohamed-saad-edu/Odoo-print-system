@@ -1,3 +1,4 @@
+import { hasBodyOverLimit } from "../../../../lib/request-limits";
 import { requireActiveTenantInTransaction, TenantSuspendedError, TenantDeletedError } from "../../../../lib/tenant-guard";
 import { requireManagerActorInTransaction, ManagerMutationAuthorityChangedError } from "../../../../lib/manager-mutation-authorization";
 import { ActionError } from "../../../../lib/action-error";
@@ -79,6 +80,7 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
+  if (hasBodyOverLimit(req, 16 * 1024)) return NextResponse.json({ error: "Request body too large", code: "INVALID_REQUEST" }, { status: 413 });
   const manager = await validateWorkspaceManager(req);
   if (manager) { try { requireManagerPermission(manager, "integrations.manage"); } catch { const e = new ActionError("Forbidden", 403, "FORBIDDEN"); return NextResponse.json({ error: e.message, code: e.code, ...(e.details ?? {}) }, { status: e.status }); } }
   if (!manager) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -97,7 +99,7 @@ export async function POST(req: Request) {
     await db.transaction(async (tx) => {
       // Creating a new Odoo credential grants runtime access. Keep the
       // entitlement decision and credential insertion in the SAME transaction
-      // so Stripe subscription changes serialize with this control-plane write.
+      // so manual subscription changes serialize with this control-plane write.
       await requireActiveTenantInTransaction(tx, manager.tenantId);
       await requireManagerActorInTransaction(tx, manager, "integrations.manage");
       await requireTenantBillingAccess(tx, manager.tenantId);
@@ -140,6 +142,7 @@ export async function POST(req: Request) {
 }
 
 export async function DELETE(req: Request) {
+  if (hasBodyOverLimit(req, 16 * 1024)) return NextResponse.json({ error: "Request body too large", code: "INVALID_REQUEST" }, { status: 413 });
   const manager = await validateWorkspaceManager(req);
   if (!manager) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   try { requireManagerPermission(manager, "integrations.manage"); } catch { return NextResponse.json({ error: "Forbidden" }, { status: 403 }); }

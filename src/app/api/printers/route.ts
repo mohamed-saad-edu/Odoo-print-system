@@ -1,3 +1,4 @@
+import { hasBodyOverLimit } from "../../../lib/request-limits";
 import { operationalVerificationPresentation } from "../../../lib/printer-operational-verification";
 import { requireConsoleReadAuthorityInTransaction, ConsoleAgentAuthorityRevokedError } from "../../../lib/console-read-authority";
 import { NextResponse } from "next/server";
@@ -129,6 +130,7 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
+  if (hasBodyOverLimit(req, 64 * 1024)) return NextResponse.json({ error: "Request body too large", code: "INVALID_REQUEST" }, { status: 413 });
   const auth = await validateConsoleAuth(req);
   if (!auth) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   if (auth.kind === "manager") {

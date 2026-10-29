@@ -35,7 +35,7 @@ class Assignments:
         return record
 
 
-def pairing(agents, target="agent-selected", records=()):
+def pairing(agents, target="agt_select01", records=()):
     source = Path(__file__).resolve().parents[1] / "odoo_addons/print_gateway/models/gateway_config.py"
     tree = ast.parse(source.read_text())
     cls = next(node for node in tree.body if isinstance(node, ast.ClassDef)
@@ -64,6 +64,8 @@ def pairing(agents, target="agent-selected", records=()):
     policy = {}
     exec(compile(policy_path.read_text(encoding="utf-8"), str(policy_path), "exec"), policy)
     namespace["is_exact_gateway_printer_id"] = policy["is_exact_gateway_printer_id"]
+    namespace["is_exact_gateway_agent_id"] = policy["is_exact_gateway_agent_id"]
+    namespace["unambiguous_inventory_rows"] = policy["unambiguous_inventory_rows"]
     exec(compile(ast.fix_missing_locations(ast.Module(body=[node], type_ignores=[])),
                  str(source), "exec"), namespace)
     wizard = SimpleNamespace(ensure_one=lambda: None, agent_id=target,
@@ -74,17 +76,17 @@ def pairing(agents, target="agent-selected", records=()):
 
 def test_pairing_uses_selected_opaque_id_even_when_another_agent_has_that_name():
     wizard, assignments = pairing([
-        {"id": "agent-other", "name": "agent-selected", "lifecycle": "active"},
-        {"id": "agent-selected", "name": "Kitchen workstation", "lifecycle": "active"},
+        {"id": "agt_other001", "name": "agt_select01", "lifecycle": "active"},
+        {"id": "agt_select01", "name": "Kitchen workstation", "lifecycle": "active"},
     ])
     result = wizard.confirm()
-    assert [record.runtime_agent_id for record in assignments.records] == ["agent-selected"]
+    assert [record.runtime_agent_id for record in assignments.records] == ["agt_select01"]
     assert result["params"]["type"] == "success"
 
 
 def test_agent_display_name_cannot_authorize_an_assignment_without_the_selected_id():
     wizard, assignments = pairing([
-        {"id": "agent-other", "name": "agent-selected", "lifecycle": "active"},
+        {"id": "agt_other001", "name": "agt_select01", "lifecycle": "active"},
     ])
     with pytest.raises(ValidationError, match="not found"):
         wizard.confirm()
@@ -92,10 +94,10 @@ def test_agent_display_name_cannot_authorize_an_assignment_without_the_selected_
 
 
 def test_repairing_reenables_exact_existing_assignment_without_creating_a_duplicate():
-    disabled = Assignment(company_id=1, branch_id=2, runtime_agent_id="agent-selected", enabled=False)
-    other_branch = Assignment(company_id=1, branch_id=3, runtime_agent_id="agent-selected", enabled=False)
+    disabled = Assignment(company_id=1, branch_id=2, runtime_agent_id="agt_select01", enabled=False)
+    other_branch = Assignment(company_id=1, branch_id=3, runtime_agent_id="agt_select01", enabled=False)
     wizard, assignments = pairing([
-        {"id": "agent-selected", "name": "Kitchen workstation", "lifecycle": "active"},
+        {"id": "agt_select01", "name": "Kitchen workstation", "lifecycle": "active"},
     ], records=[disabled, other_branch])
     wizard.confirm()
     assert disabled.enabled is True
@@ -103,7 +105,7 @@ def test_repairing_reenables_exact_existing_assignment_without_creating_a_duplic
     assert assignments.records == [disabled, other_branch]
 
 
-@pytest.mark.parametrize("agents", [None, 17, True, "agent-selected", {"id": "agent-selected"}])
+@pytest.mark.parametrize("agents", [None, 17, True, "agt_select01", {"id": "agt_select01"}])
 def test_malformed_agent_inventory_is_an_actionable_validation_error(agents):
     wizard, assignments = pairing(agents)
     with pytest.raises(ValidationError, match="invalid agent discovery response"):
@@ -119,23 +121,30 @@ def test_malformed_inventory_row_cannot_crash_missing_agent_feedback():
 
 
 @pytest.mark.parametrize("bad_target", [
-    " agent-selected", "agent-selected ", "\ufeffagent-selected",
-    "agent-selected\ufeff", "agent-selected\x00other",
+    " agt_select01", "agt_select01 ", "\ufeffagt_select01",
+    "agt_select01\ufeff", "agt_select01\x00other",
     "\ud800", "é" * 61, "a" * 121,
 ])
 def test_pairing_refuses_malformed_selected_agent_before_normalized_lookup(bad_target):
     wizard, assignments = pairing([
-        {"id": "agent-selected", "lifecycle": "active"},
+        {"id": "agt_select01", "lifecycle": "active"},
     ], target=bad_target)
     with pytest.raises(ValidationError, match="valid Runtime Agent ID"):
         wizard.confirm()
     assert assignments.records == []
 
 
-def test_pairing_preserves_exact_arabic_gateway_agent_identity():
+def test_pairing_preserves_arabic_display_name_with_canonical_agent_identity():
     wizard, assignments = pairing([
-        {"id": "وكيل-فرع", "name": "طابعة الفرع", "lifecycle": "active"},
-    ], target="وكيل-فرع")
+        {"id": "agt_arabic01", "name": "طابعة الفرع", "lifecycle": "active"},
+    ], target="agt_arabic01")
     result = wizard.confirm()
-    assert [record.runtime_agent_id for record in assignments.records] == ["وكيل-فرع"]
+    assert [record.runtime_agent_id for record in assignments.records] == ["agt_arabic01"]
     assert result["params"]["type"] == "success"
+
+
+def test_pairing_rejects_unicode_display_name_as_execution_identity():
+    wizard, assignments = pairing([{"id": "agt_arabic01", "name": "طابعة الفرع", "lifecycle": "active"}], target="وكيل-فرع")
+    with pytest.raises(ValidationError, match="valid Runtime Agent ID"):
+        wizard.confirm()
+    assert assignments.records == []

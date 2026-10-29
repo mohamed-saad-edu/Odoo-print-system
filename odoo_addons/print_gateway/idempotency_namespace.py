@@ -13,6 +13,10 @@ import uuid
 _KEY_PATTERN = re.compile(r"^[A-Za-z0-9._:-]{1,200}$")
 
 
+class InstallationProofMismatch(ValueError):
+    """Out-of-database proof belongs to a different print namespace."""
+
+
 def legacy_key(company_id, operation_id):
     return hashlib.sha256(("odoo:%s:%s" % (company_id, operation_id)).encode("utf-8")).hexdigest()
 
@@ -115,17 +119,26 @@ def _read_local_identity(path):
     return {"installationId": identity, "installationProof": proof}
 
 
-def local_identity(database_name, gateway_origin, data_dir=None, company_id=None):
-    """Atomically generate stable credentials, even with concurrent Odoo workers."""
+def local_identity(database_name, gateway_origin, data_dir=None, company_id=None, expected_installation_id=None):
+    """Atomically generate stable credentials, but never mint a restored ID over history."""
     import base64
     import os
     import tempfile
 
     path = _identity_path(database_name, gateway_origin, data_dir, company_id)
     try:
-        return _read_local_identity(path)
+        current = _read_local_identity(path)
     except FileNotFoundError:
-        pass
+        if expected_installation_id:
+            # An externally provisioned proof may restore the same namespace;
+            # never generate a replacement identity over saved print history.
+            proof = deployment_proof(expected_installation_id, database_name,
+                                     gateway_origin, data_dir, company_id)
+            return {"installationId": expected_installation_id, "installationProof": proof}
+    else:
+        if expected_installation_id and current["installationId"] != expected_installation_id:
+            raise InstallationProofMismatch("Saved installation proof does not match Odoo history")
+        return current
     identity = {
         "installationId": str(uuid.uuid4()),
         "installationProof": base64.urlsafe_b64encode(os.urandom(32)).decode("ascii").rstrip("="),
@@ -143,7 +156,10 @@ def local_identity(database_name, gateway_origin, data_dir=None, company_id=None
             pass
     finally:
         os.unlink(temp_path)
-    return _read_local_identity(path)
+    current = _read_local_identity(path)
+    if expected_installation_id and current["installationId"] != expected_installation_id:
+        raise InstallationProofMismatch("Saved installation proof does not match Odoo history")
+    return current
 
 
 def deployment_proof(installation_id, database_name=None, gateway_origin=None, data_dir=None, company_id=None):

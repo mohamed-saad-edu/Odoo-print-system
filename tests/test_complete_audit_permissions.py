@@ -28,6 +28,7 @@ def source_function(filename, name):
     policy_scope = {}
     exec(compile(policy_path.read_text(encoding="utf-8"), str(policy_path), "exec"), policy_scope)
     namespace["is_exact_gateway_printer_id"] = policy_scope["is_exact_gateway_printer_id"]
+    namespace["is_exact_gateway_agent_id"] = policy_scope["is_exact_gateway_agent_id"]
     exec(compile(ast.fix_missing_locations(ast.Module(body=[node], type_ignores=[])), str(MODELS / filename), "exec"), namespace)
     return namespace[name]
 
@@ -167,7 +168,7 @@ def test_runtime_assignment_enforces_active_and_assigned_companies():
     )
     for forbidden_branch in (False, branch_b):
         records = _RecordSet(
-            [SimpleNamespace(company_id=root, branch_id=forbidden_branch, runtime_agent_id="agent-1")],
+            [SimpleNamespace(company_id=root, branch_id=forbidden_branch, runtime_agent_id="agt_fixture1")],
             branch_a_active_env,
         )
         with pytest.raises(ValidationError):
@@ -176,7 +177,7 @@ def test_runtime_assignment_enforces_active_and_assigned_companies():
     # Legitimate: branch_a active in env.companies and user.company_ids
     check(
         _RecordSet(
-            [SimpleNamespace(company_id=root, branch_id=branch_a, runtime_agent_id="agent-1")],
+            [SimpleNamespace(company_id=root, branch_id=branch_a, runtime_agent_id="agt_fixture1")],
             branch_a_active_env,
         )
     )
@@ -190,7 +191,7 @@ def test_runtime_assignment_enforces_active_and_assigned_companies():
     for allowed_branch in (False, branch_a):
         check(
             _RecordSet(
-                [SimpleNamespace(company_id=root, branch_id=allowed_branch, runtime_agent_id="agent-1")],
+                [SimpleNamespace(company_id=root, branch_id=allowed_branch, runtime_agent_id="agt_fixture1")],
                 root_active_env,
             )
         )

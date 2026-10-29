@@ -7,17 +7,20 @@ import { readFileSync } from "node:fs";
 describe.skipIf(!hasTestDatabase)("discovery identity deduplication at the actual ingestion boundary", () => {
   beforeAll(async () => { await applyMigrations(); });
   afterAll(async () => { await closePool(); });
-  it("stores one logical device for multiple observations with the same stable identity", async () => {
+  it("rejects mismatched local IDs claiming the same stable identity", async () => {
     await truncateAll();
     const fixture = await seedFixture();
     await pool().query("INSERT INTO discovery_sessions (id, tenant_id, agent_id, status, config, stats) VALUES ('disc_identity_dedupe', $1, $2, 'running', '{}'::jsonb, '{}'::jsonb)", [fixture.tenantId, fixture.agentId]);
     const response = await discoveryReport(new Request("https://gateway.test/api/agent/discovery", { method: "POST", headers: { Authorization: fixture.agentAuth, "Content-Type": "application/json" }, body: JSON.stringify({ discoveryId: "disc_identity_dedupe", status: "completed", devices: ["mdns", "ipp", "snmp"].map(source => ({ id: "observed-" + source, stableId: "same-physical-printer", source: [source], protocol: "ipp", ipAddress: "192.168.1.50", port: 631 })) }) }));
     expect(response.status).toBe(200);
     const rows = await pool().query("SELECT identity_key, source FROM discovered_devices WHERE tenant_id=$1 AND agent_id=$2", [fixture.tenantId, fixture.agentId]);
-    expect(rows.rows).toEqual([{ identity_key: "same-physical-printer", source: ["snmp"] }]);
+    expect(rows.rows).toEqual([]);
+    const rejected = await response.json();
+    expect(rejected.skipped).toHaveLength(3);
+    expect(rejected.skipped.every((d: { reason: string }) => d.reason === "discovery_identity_endpoint_conflict")).toBe(true);
   });
 
-  it("keeps colliding local device IDs independent across Agents in one workspace", async () => {
+  it("preserves Agent scope and refuses unapproved endpoint moves for a stable ID", async () => {
     const fixture = await seedFixture();
     const secondAgent = "agt_second01";
     await pool().query("INSERT INTO agents(id,tenant_id,name,status,lifecycle,secret) VALUES($1,$2,'Second Agent','online','active',$3)", [secondAgent, fixture.tenantId, hashSecret("second-agent-secret")]);
@@ -36,10 +39,12 @@ describe.skipIf(!hasTestDatabase)("discovery identity deduplication at the actua
     const responses = await Promise.all(observations.map(o => report(o, "first")));
     expect(responses.map(r => r.status)).toEqual([200, 200]);
     await pool().query("UPDATE discovered_devices SET candidate_status='verified',verification='verified' WHERE tenant_id=$1 AND agent_id=$2", [fixture.tenantId, secondAgent]);
-    expect((await report({ ...observations[0], ip: "192.168.1.51" }, "next")).status).toBe(200);
+    const move = await report({ ...observations[0], ip: "192.168.1.51" }, "next");
+    expect(move.status).toBe(200);
+    expect((await move.json()).skipped).toEqual([{ id: "same-local-id", reason: "discovery_identity_endpoint_changed" }]);
     const rows = await pool().query("SELECT id,agent_id,ip_address,candidate_status FROM discovered_devices WHERE tenant_id=$1 ORDER BY ip_address", [fixture.tenantId]);
     expect(rows.rows).toEqual([
-      { id: "same-local-id", agent_id: fixture.agentId, ip_address: "192.168.1.51", candidate_status: "discovered" },
+      { id: "same-local-id", agent_id: fixture.agentId, ip_address: "192.168.1.50", candidate_status: "discovered" },
       { id: "same-local-id", agent_id: secondAgent, ip_address: "192.168.2.50", candidate_status: "verified" },
     ]);
   });

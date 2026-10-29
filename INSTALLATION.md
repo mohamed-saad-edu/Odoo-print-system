@@ -5,7 +5,7 @@ The system has three runtime components: Gateway, Windows Agent/Desktop Manager,
 
 ### Gateway connection
 
-The Odoo addon uses HTTPS for Gateway communication by default. The `gateway_api_key` is stored as authenticated AES-256-GCM ciphertext using a deployment-managed key external to the Odoo database. The Odoo server rejects loopback, private, link-local and metadata Gateway destinations by default; request-time DNS resolution rejects hosts resolving to those addresses. For a trusted privately hosted Gateway (including a deliberately local development instance), explicitly set `YASEIR_GATEWAY_ALLOWED_ORIGINS=https://print.internal.example:8443` **in the Odoo server environment**, with the exact scheme, hostname and port from the Odoo configuration. An allowlist is restrictive: when set, every configured Gateway origin must be listed (include **both old and new origins during a Gateway migration**, until the old endpoint is disabled). Metadata endpoint addresses remain forbidden even when allowlisted. Keep a network egress firewall denying metadata endpoints: DNS can rebind between validation and connection. Never treat the allowlist as a substitute for egress controls.
+The Odoo addon uses HTTPS for Gateway communication by default. The `gateway_api_key` is stored as authenticated AES-256-GCM ciphertext using a deployment-managed key external to the Odoo database. The Odoo server rejects loopback, private, link-local and metadata Gateway destinations by default; request-time DNS resolution rejects hosts resolving to those addresses. For a trusted privately hosted Gateway (including a deliberately local development instance), explicitly set `YASEIR_GATEWAY_ALLOWED_ORIGINS=https://print.internal.example:8443` **in the Odoo server environment**, with the exact scheme, hostname and port from the Odoo configuration. An allowlist is restrictive: when set, every configured Gateway origin must be listed (include **both old and new origins during a Gateway migration**, until the old endpoint is disabled). Metadata endpoint addresses remain forbidden even when allowlisted. The addon resolves and validates every address for each request, then connects directly to a validated numeric address while retaining the original TLS certificate hostname and SNI. It does **not** perform a second hostname lookup when connecting, so a DNS change between validation and transport cannot redirect that request. Keep a network egress firewall denying metadata endpoints as defense in depth; an exact-origin allowlist does not replace egress controls.
 
 Plain HTTP is restricted to loopback and needs **both** `YASEIR_GATEWAY_ALLOW_INSECURE_HTTP=1` and a matching loopback `YASEIR_GATEWAY_ALLOWED_ORIGINS=http://127.0.0.1:3000`. Remote HTTP is rejected even when the opt-in is present. Never use HTTP for production credentials.
 
@@ -17,7 +17,7 @@ git clone https://github.com/mohamed-saad-edu/Odoo-print-system.git
 cd Odoo-print-system
 npm ci
 cp .env.example .env
-npm run db:migrate
+npm run db:migrate  # initial empty deployment only; stop all old writers before upgrades
 npm run build
 npm start
 ```
@@ -111,7 +111,7 @@ For POS, use the normal POS receipt/reprint/Print Bill controls. When Gateway pr
 
 ## 6. Upgrade
 
-Gateway: install dependencies, apply the repository migrations, rebuild and restart.
+Gateway: back up the database and schedule an admission outage. Build the new release before cutover. Stop ingress and drain **all** old Gateway instances and quota-admission writers before applying any forward-only migration, especially `0102`; deploy only the matching new Gateway against the migrated schema. For the bundled Compose deployment, use `scripts/deploy-compose.sh` (with the reviewed `YASEIR_DEPLOYMENT_ID`), which enforces build → drain → role/migration/verification gates → restart. A failed gate leaves public ingress unavailable; never restart an old Gateway against a newer schema.
 Agent: install the new signed/approved Windows build according to deployment policy.
 Odoo: run `-u print_gateway`.
 
@@ -121,7 +121,7 @@ A production release is not complete until CI, Odoo 19 installation/upgrade, Gat
 
 ## Credential encryption prerequisite
 
-Before installing or upgrading `print_gateway` to `19.0.2.4.0`, provision the deployment-managed credential encryption root outside the repository:
+Before installing or upgrading `print_gateway` (the encryption cutover was introduced in `19.0.2.4.0`), provision the deployment-managed credential encryption root outside the repository:
 
 ```text
 ODOO_PRINT_GATEWAY_CREDENTIAL_ACTIVE_VERSION=1

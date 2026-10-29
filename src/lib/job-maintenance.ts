@@ -2,6 +2,7 @@ import { db } from "../db";
 import { inArray, sql } from "drizzle-orm";
 import { printJobs, printJobReceipts } from "../db/schema";
 import { incrementMetric } from "./metrics";
+import { logWarn } from "./log";
 import { idempotencyDigest } from "./print-job-service";
 import { PRINT_JOB_RETENTION_HOURS, RECEIPT_MATERIALIZE_BATCH_ROWS } from "../shared/job-retention";
 import { agentStaleThresholdSeconds, stalePrintingSeconds } from "./stale-threshold";
@@ -49,6 +50,16 @@ export async function cleanupTerminalPrintJobs(scope: { agentId?: string } = {})
       WHERE status IN ('success','failed','expired')
         AND claim_token IS NULL
         AND updated_at <= now() - make_interval(hours => ${PRINT_JOB_RETENTION_HOURS})
+        -- A retained receipt conflicting by either primary ID OR the tenant's
+        -- idempotency key is an unresolved history collision, not authority to
+        -- delete the source. Exclude BOTH unique-index conflicts before LIMIT;
+        -- otherwise a permanent oldest key collision starves newer rows.
+        AND NOT EXISTS (SELECT 1 FROM print_job_receipts r WHERE r.id = print_jobs.id)
+        AND (print_jobs.idempotency_key IS NULL OR NOT EXISTS (
+          SELECT 1 FROM print_job_receipts r
+          WHERE r.tenant_id = print_jobs.tenant_id
+            AND r.idempotency_key = print_jobs.idempotency_key
+        ))
         ${agentFilter}
       ORDER BY updated_at ASC
       LIMIT ${limit}
@@ -63,7 +74,7 @@ export async function cleanupTerminalPrintJobs(scope: { agentId?: string } = {})
       const rows = await tx.select().from(printJobs).where(inArray(printJobs.id, batchIds));
       if (rows.length === 0) continue;
 
-      await tx.insert(printJobReceipts).values(rows.map((row) => ({
+      const insertedReceipts = await tx.insert(printJobReceipts).values(rows.map((row) => ({
         id: row.id,
         tenantId: row.tenantId,
         idempotencyKey: row.idempotencyKey,
@@ -89,9 +100,23 @@ export async function cleanupTerminalPrintJobs(scope: { agentId?: string } = {})
         ackedAt: row.ackedAt,
         createdAt: row.createdAt,
         updatedAt: row.updatedAt,
-      }))).onConflictDoNothing();
+      }))).onConflictDoNothing().returning({ id: printJobReceipts.id });
 
-      const deleted = await tx.delete(printJobs).where(inArray(printJobs.id, batchIds));
+      // ON CONFLICT DO NOTHING protects pre-existing receipts, but it is NOT
+      // evidence that the skipped receipt represents the same logical job.
+      // Deleting its live source row would silently discard the only trusted
+      // metadata / idempotency fingerprint when a conflicting receipt exists
+      // (e.g. from a restored database or an interrupted migration).
+      // Archive only rows whose receipts were durably materialized by THIS
+      // transaction. Leave conflicts intact for explicit operator review.
+      if (insertedReceipts.length !== rows.length) {
+        logWarn("print.job.retention_receipt_conflict", {
+          skippedRows: rows.length - insertedReceipts.length,
+        });
+      }
+      if (insertedReceipts.length === 0) continue;
+      const insertedIds = insertedReceipts.map(row => row.id);
+      const deleted = await tx.delete(printJobs).where(inArray(printJobs.id, insertedIds));
       const batchCount = deleted.rowCount ?? 0;
       count += batchCount;
     }
@@ -209,21 +234,16 @@ export async function sweepPrintJobs(scope: { agentId?: string } = {}): Promise<
   const stalePrinting = await db.execute(sql`
     WITH candidates AS (
       SELECT id FROM print_jobs
-      WHERE status='printing' AND updated_at < now() - make_interval(secs => ${stalePrintingSeconds()}) ${agentFilter}
+      WHERE status='printing' AND expires_at > now()
+        AND updated_at < now() - make_interval(secs => ${stalePrintingSeconds()}) ${agentFilter}
       ORDER BY updated_at ASC
       LIMIT ${SWEEP_BATCH}
       FOR UPDATE SKIP LOCKED
     )
     UPDATE print_jobs SET status='failed',
-      error=CASE WHEN expires_at <= now()
-        THEN 'JOB_EXPIRED_DURING_PRINT: physical output is unknown (full, partial or none)'
-        ELSE 'AGENT_EXECUTION_TIMEOUT: agent execution lease expired (physical output is unknown; manual reconciliation required)' END,
-      -- Preserve the original claim token for AGENT_EXECUTION_TIMEOUT so a
-      -- late success from that exact execution attempt can still be reconciled
-      -- inside the 24-hour fenced window. Expiry-at-print is not eligible for
-      -- failed->success reconciliation, so its token can be cleared normally.
-      claim_token=CASE WHEN expires_at <= now() THEN NULL ELSE claim_token END,
-      claimed_at=CASE WHEN expires_at <= now() THEN NULL ELSE claimed_at END,
+      error='AGENT_EXECUTION_TIMEOUT: agent execution lease expired (physical output is unknown; manual reconciliation required)',
+      -- Preserve the original claim for bounded late reconciliation. Expired
+      -- rows belong to the expiry sweep and its separate grace window.
       updated_at=clock_timestamp()
     FROM candidates
     WHERE print_jobs.id = candidates.id

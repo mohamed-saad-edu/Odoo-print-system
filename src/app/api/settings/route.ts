@@ -1,3 +1,4 @@
+import { hasBodyOverLimit } from "../../../lib/request-limits";
 import { requireManagerActorInTransaction, ManagerMutationAuthorityChangedError } from "../../../lib/manager-mutation-authorization";
 import { NextResponse } from "next/server";
 import { db } from "../../../db";
@@ -54,6 +55,7 @@ export async function GET(req: Request) {
 }
 
 export async function PATCH(req: Request) {
+  if (hasBodyOverLimit(req, 16 * 1024)) return NextResponse.json({ error: "Request body too large", code: "INVALID_REQUEST" }, { status: 413 });
   const claims = await validateWorkspaceManager(req);
   if (!claims?.userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   if (!hasManagerPermission(claims, "tenant.update")) return NextResponse.json({ error: "Forbidden" }, { status: 403 });

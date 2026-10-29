@@ -98,7 +98,7 @@ import { useI18n } from "../../i18n/react";
 import { getPrinterLanguageBadges } from "../../lib/printer-capability";
 import PrintCertificationWizard from "../../components/PrintCertificationWizard";
 import JobTimeline from "../../components/JobTimeline";
-import { PrinterGeometryDetails, PrinterGeometryProfileEditor } from "../../components/PrinterGeometrySettings";
+import { LocalizedGeometrySaveError, PrinterGeometryDetails, PrinterGeometryProfileEditor } from "../../components/PrinterGeometrySettings";
 import UpgradeLimitDialog, { type UpgradeLimitResource } from "../../components/UpgradeLimitDialog";
 import { isLimitSignalResult, limitSignalDisplayDetails, type EntitlementLimitSignal } from "../../lib/limit-signal";
 import { isServerActionVersionMismatch } from "../../lib/server-action-version";
@@ -277,18 +277,23 @@ function isJobInFlight(status: string): boolean {
   return IN_FLIGHT_JOB_STATUSES.has(status.toLowerCase());
 }
 
-async function sendGatewayReprint(jobId: string): Promise<{ jobId?: string }> {
+async function sendGatewayReprint(jobId: string, operationKey: string): Promise<{ jobId: string }> {
   const response = await fetchWithTimeout(`/api/jobs/${encodeURIComponent(jobId)}/reprint`, {
     method: "POST",
     credentials: "same-origin",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", "Idempotency-Key": operationKey },
   });
   const body = await response.json().catch(() => null) as Record<string, unknown> | null;
   if (!response.ok) {
     const code = typeof body?.code === "string" ? body.code : "HTTP_ERROR";
     throw new DashboardApiError(apiMessageKey(code, response.status, "errors.reprintFailed"), code, body ?? {});
   }
-  return { jobId: typeof body?.jobId === "string" ? body.jobId : undefined };
+  // A lost/truncated acknowledgement is not proof that a new physical print
+  // was rejected. Keep the confirmation key for an exact replay.
+  if (body?.ok !== true || typeof body.jobId !== "string" || !body.jobId) {
+    throw new DashboardApiError("errors.reprintFailed", "INVALID_REPRINT_RESPONSE", body ?? {});
+  }
+  return { jobId: body.jobId };
 }
 
 function upgradeLimitResourceForEntitlement(entitlement: unknown): UpgradeLimitResource | null {
@@ -496,15 +501,19 @@ export default function DashboardClient({
   const [activePairing, setActivePairing] = useState<{ id?: string; code: string; expiresAt: Date } | null>(null);
   // Agent ids known when the current pairing attempt started, keyed by the
   // pairing code so manual dismissals cannot leak a stale baseline into the
-  // next attempt. A brand-new agent has no id yet, so completion is the
-  // appearance of a NEW online identity rather than any historical
-  // heartbeat (C057).
+  // next attempt. Since YSR-0025 the creation ACK always carries the agent
+  // id, so completion is that identity observed online — never a preserved
+  // lastSeenAt from before re-enabling (C057). The id-baseline path below is
+  // defensive for a future pairing activity that cannot know the id.
   const pairingBaseline = React.useRef<{ code: string; ids: Set<string> } | null>(null);
   const [copiedCode, setCopiedCode] = useState(false);
   const [countdownText, setCountdownText] = useState("10:00");
   const [agentToDelete, setAgentToDelete] = useState<Agent | null>(null);
   const [pendingAgentAction, setPendingAgentAction] = useState<{ agent: Agent; next: "disabled" | "retired" } | null>(null);
   const [reprintCandidate, setReprintCandidate] = useState<Job | null>(null);
+  // Keep this confirmation identity after a lost response. Only explicit
+  // cancellation or a confirmed success starts a fresh physical intent.
+  const reprintOperationRef = React.useRef<{ jobId: string; key: string } | null>(null);
   const [registerOpen, setRegisterOpen] = useState(false);
   const [upgradeLimit, setUpgradeLimit] = useState<{
     resource: UpgradeLimitResource;
@@ -652,7 +661,7 @@ export default function DashboardClient({
         } catch { /* A notification failure cannot retry or change the result. */ }
         throw new Error(t("workspaceSecurity.required"));
       }
-      throw new Error(result.error ?? t(apiMessageKey(result.code, result.status, "errors.operationFailed")));
+      throw new Error(t(apiMessageKey(result.code, result.status, "errors.operationFailed")));
     }
     return result.data;
   }, [router, t]);
@@ -870,10 +879,10 @@ export default function DashboardClient({
             }
             return currentPairing;
           }
-          // New agent (id not yet known): baseline the known ids on the first
-          // tick for THIS code, then complete when a NEW online identity
-          // appears. Freshness comes from the online status itself, never
-          // from a historical lastSeenAt or a cleared expiry (C057).
+          // Defensive path only: since YSR-0025 every live setActivePairing
+          // caller supplies the agent id, so identity completion above always
+          // runs. Keep this code-keyed baseline behavior (C057) in case a
+          // future pairing activity cannot know the id.
           const baseline = pairingBaseline.current;
           if (baseline === null || baseline.code !== currentPairing.code) {
             pairingBaseline.current = { code: currentPairing.code, ids: new Set(data.agents.map((a) => a.id)) };
@@ -892,7 +901,7 @@ export default function DashboardClient({
         });
       }
         } catch (error) {
-          setMessage({ text: isServerActionVersionMismatch(error) ? t("errors.pageUpdatedReload") : error instanceof Error ? error.message : t("errors.operationFailed"), type: "err" });
+          setMessage({ text: isServerActionVersionMismatch(error) ? t("errors.pageUpdatedReload") : error instanceof Error && (error.message === t("errors.sessionExpired") || error.message === t("workspaceSecurity.required")) ? error.message : t("errors.operationFailed"), type: "err" });
         }
 
         const queued = queuedFleetQueryRef.current;
@@ -1013,7 +1022,7 @@ export default function DashboardClient({
       return result;
     } catch (error) {
       setMessage({
-        text: isServerActionVersionMismatch(error) ? t("errors.pageUpdatedReload") : error instanceof Error ? error.message : t("errors.operationFailed"),
+        text: isServerActionVersionMismatch(error) ? t("errors.pageUpdatedReload") : error instanceof Error && (error.message === t("errors.sessionExpired") || error.message === t("workspaceSecurity.required")) ? error.message : t("errors.operationFailed"),
         type: "err",
       });
       return undefined;
@@ -1073,30 +1082,37 @@ export default function DashboardClient({
     }
   };
 
-  /**
-   * Reprint is the ONE mutation that deliberately creates a NEW physical
-   * print, so it must be double-submit guarded at the UI boundary.
-   *
-   * The server already converges concurrent reprints of the same job onto
-   * one row (print-job-service reuses an active reprint job), so this guard
-   * is about state/UX correctness, not a duplicate-print hole.
-   */
+  const closeReprint = () => {
+    if (busy) return;
+    reprintOperationRef.current = null;
+    setReprintCandidate(null);
+  };
+
   const confirmReprint = async () => {
     const job = reprintCandidate;
     if (!job || busy || !canMutate.jobsRetry) return;
-    setReprintCandidate(null);
+    // A retry of THIS confirmation carries the same key even if the first
+    // POST actually committed and its HTTP response was lost. Never silently
+    // generate another physical request after an ambiguous transport error.
     setMessage(null);
     setBusy(true);
     try {
-      const result = await sendGatewayReprint(job.id);
+      if (reprintOperationRef.current?.jobId !== job.id) {
+        reprintOperationRef.current = { jobId: job.id, key: generateIdempotencyKey() };
+      }
+      const operationKey = reprintOperationRef.current?.key;
+      if (!operationKey) throw new Error("Could not create a stable reprint operation key");
+      const result = await sendGatewayReprint(job.id, operationKey);
+      reprintOperationRef.current = null;
+      setReprintCandidate(null);
       setMessage({
-        text: result.jobId
-          ? t("success.reprintQueuedWithJob", { printer: job.printerId, job: result.jobId.slice(0, 12) })
-          : t("success.reprintQueued", { printer: job.printerId }),
+        text: t("success.reprintQueuedWithJob", { printer: job.printerId, job: result.jobId.slice(0, 12) }),
         type: "ok",
       });
       void refreshData();
     } catch (error) {
+      // Preserve the key AND the confirmation dialog. An explicit retry can
+      // reconcile an accepted operation but may never create a duplicate.
       if (error instanceof DashboardApiError) {
         const limit = upgradeLimitFromApiError(error);
         if (limit) {
@@ -1140,17 +1156,20 @@ export default function DashboardClient({
       });
       const body = await response.json().catch(() => null) as Record<string, unknown> | null;
       if (!response.ok) {
+        if (response.status >= 500) {
+          throw new DashboardApiError("errors.agentCreationUnconfirmed", "AGENT_CREATION_UNCONFIRMED");
+        }
         const code = typeof body?.code === "string" ? body.code : "AGENT_CREATE_FAILED";
         throw new DashboardApiError(apiMessageKey(code, response.status, "errors.agentRegistrationFailed"), code, body ?? {});
       }
 
-      const expiresAt = typeof body?.expiresAt === "string"
-        ? new Date(body.expiresAt)
-        : typeof body?.expires_at === "string"
-          ? new Date(body.expires_at)
-          : new Date(Date.now() + 1000 * 60 * 10);
+      const expiry = typeof body?.expiresAt === "string" ? body.expiresAt : body?.expires_at;
+      const expiresAt = typeof expiry === "string" ? new Date(expiry) : null;
       const pairingCode = typeof body?.pairingCode === "string" ? body.pairingCode : "";
       const id = typeof body?.id === "string" ? body.id : undefined;
+      if (!id || !pairingCode || !expiresAt || Number.isNaN(expiresAt.getTime())) {
+        throw new DashboardApiError("errors.agentCreationUnconfirmed", "AGENT_CREATION_UNCONFIRMED");
+      }
       setAgentOffset(0);
       fleetQueryRef.current = { ...fleetQueryRef.current, agentOffset: 0 };
       setActivePairing({ id, code: pairingCode, expiresAt });
@@ -1170,7 +1189,7 @@ export default function DashboardClient({
       } else if (error instanceof DashboardApiError) {
         setMessage({ text: t(error.key), type: "err" });
       } else {
-        setMessage({ text: t("errors.agentRegistrationFailed"), type: "err" });
+        setMessage({ text: t("errors.agentCreationUnconfirmed"), type: "err" });
       }
     } finally {
       setBusy(false);
@@ -1228,11 +1247,9 @@ export default function DashboardClient({
 
   const jobActions = (job: Job): MenuItemSpec[] => {
     const outcome = deriveOutcome(job.status, job.error);
-    // Server rule (src/app/api/jobs/[id]/reprint/route.ts): reprint requires a
-    // terminal job AND rejects `success` with JOB_REPRINT_NOT_ALLOWED, because
-    // the document already printed. Offering it here would be a dead-end
-    // action that always fails, so success is excluded explicitly. Reprint is
-    // also a mutation: read-only roles don't see it (C058).
+    // A new reprint intent requires a failed or expired job; success is a
+    // transport result, not proof of paper output. An existing intent may
+    // still be replayed with its original key after late reconciliation.
     const canReprint = canMutate.jobsRetry && job.status.toLowerCase() !== "success" && !isJobInFlight(job.status);
     return [
       { key: "inspect", label: t("job.viewDetails"), icon: <Eye className="h-4 w-4" />, onSelect: () => openJobDetails(job) },
@@ -2433,9 +2450,14 @@ export default function DashboardClient({
                   method: "PATCH", headers: { "Content-Type": "application/json" }, credentials: "include",
                   body: JSON.stringify({ config: { geometry_profile: profile } }),
                 });
-                const body = await response.json();
-                if (!response.ok) throw new Error(typeof body.error === "string" ? body.error : t("printer.geometry.saveFailed"));
-                setPrinters((current) => current.map((printer) => printer.id === selectedPrinterView.id ? { ...printer, ...body } : printer));
+                const body: unknown = await response.json().catch(() => null);
+                const payload = body && typeof body === "object" && !Array.isArray(body) ? body as Record<string, unknown> : null;
+                if (!response.ok) throw new LocalizedGeometrySaveError(t(apiMessageKey(
+                  typeof payload?.code === "string" ? payload.code : undefined, response.status, "printer.geometry.saveFailed",
+                )));
+                // Never merge an unverified or differently scoped printer row.
+                if (payload?.id !== selectedPrinterView.id) throw new LocalizedGeometrySaveError(t("printer.geometry.saveFailed"));
+                setPrinters((current) => current.map((printer) => printer.id === selectedPrinterView.id ? { ...printer, ...payload } : printer));
                 void refreshData();
               }} />}
             {canMutate.printersTest && <Button variant="secondary" disabled={selectedPrinterView.sharedWithGateway === false} onClick={() => { setSelectedPrinter(null); setCertifyPrinter(selectedPrinterView); }} icon={<ShieldCheck className="h-4 w-4" />}>{t("printer.certify")}</Button>}
@@ -2492,12 +2514,12 @@ export default function DashboardClient({
       {/* ── Reprint confirmation ──────────────────────────────────── */}
       <Modal
         open={reprintCandidate !== null}
-        onClose={() => setReprintCandidate(null)}
+        onClose={closeReprint}
         title={t("job.reprintTitle")}
         description={t("job.reprintBody")}
         footer={
           <>
-            <Button variant="secondary" onClick={() => setReprintCandidate(null)} disabled={busy}>
+            <Button variant="secondary" onClick={closeReprint} disabled={busy}>
               {t("common.cancel")}
             </Button>
             <Button

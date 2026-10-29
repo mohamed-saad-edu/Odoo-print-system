@@ -14,6 +14,7 @@ import { parseDbTimeMs } from "./database-clock";
 import type { V2OdooIdentity } from "./odoo-idempotency";
 import { reserveV2Operation, OdooNamespaceError } from "./odoo-v2-admission";
 import { isExactPrinterId } from "./exact-printer-id";
+import { isExactIdempotencyKey } from "./idempotency";
 
 import { enforceTenantJobEntitlements, reserveTenantPrintCredit } from "./entitlements";
 import { logInfo, logWarn } from "./log";
@@ -91,7 +92,7 @@ export type CreatePrintJobOptions = {
   managerAuthority?: { claims: ManagerClaims; permission: ManagerPermission };
   /** A paired Agent may enqueue a diagnostic only for its own printer;
    * the transaction fences ownership again before all idempotency reuse. */
-  agentDiagnosticAuthority?: { agentId: string; tenantId: string };
+  agentDiagnosticAuthority?: { agentId: string; tenantId: string; secretHash: string };
   /** Interactive diagnostics require a live Agent only for new admission,
    * after current authority and accepted idempotency identities are checked. */
   requireAvailableAgent?: boolean;
@@ -105,7 +106,7 @@ export type CreatePrintJobOptions = {
   requestId?: string | null;
   /** Authenticated server-registered namespace (never derived from a DB name). */
   odooV2Identity?: V2OdooIdentity;
-  /** Generate a serialized operator reprint key for this original job inside the enqueue transaction. */
+  /** An intentional reprint requires a caller-owned stable key; never allocate a new key on transport retry. */
   reprintOfJobId?: string | null;
 };
 
@@ -142,7 +143,7 @@ async function insertQueuedJobAtomically({
   requestId?: string | null;
   reprintOfJobId?: string | null;
   managerAuthority?: { claims: ManagerClaims; permission: ManagerPermission };
-  agentDiagnosticAuthority?: { agentId: string; tenantId: string };
+  agentDiagnosticAuthority?: { agentId: string; tenantId: string; secretHash: string };
   requireAvailableAgent?: boolean;
   odooV2Identity?: V2OdooIdentity;
 }): Promise<{ jobId: string; status: string; agentId: string; printerId: string; isReused: boolean; outputMedium?: string }> {
@@ -175,15 +176,23 @@ async function insertQueuedJobAtomically({
     }
     // Capture claims and lifecycle mutations lock Agent before integration
     // credentials. Keep Odoo admission in that order too, including replays.
-    if (managerAuthority || rateLimitKeyId) {
+    if (managerAuthority || rateLimitKeyId || agentDiagnosticAuthority) {
       const guardedAgent = await tx.execute(sql`
-        SELECT id FROM agents WHERE id = ${agentId} AND tenant_id = ${tenantId} FOR UPDATE
+        SELECT id, secret, lifecycle FROM agents WHERE id = ${agentId} AND tenant_id = ${tenantId} FOR UPDATE
       `);
       // An Odoo retry may have read inventory just before deletion won the
       // admission lock. Its retained receipt still owns that business intent.
       // Check the current key and receipt below before rejecting new work at
       // the runtime-owner fence; Manager authority retains its existing guard.
       if (!guardedAgent.rows.length && managerAuthority) throw new PrintJobInputError("Agent no longer exists", "AGENT_NOT_FOUND", 404);
+      if (agentDiagnosticAuthority) {
+        const live = guardedAgent.rows[0] as { secret?: string | null; lifecycle?: string } | undefined;
+        // Pairing rotation and Agent disable/delete take this same row lock.
+        // A diagnostic may not enqueue or disclose a replay after revocation.
+        if (!live || live.lifecycle !== "active" || !live.secret || live.secret !== agentDiagnosticAuthority.secretHash) {
+          throw new PrintJobInputError("Agent credential is no longer active", "UNAUTHORIZED", 401);
+        }
+      }
     }
     if (managerAuthority) {
       // Identity reuse can disclose a job ID and requestedBy even without a
@@ -224,43 +233,18 @@ async function insertQueuedJobAtomically({
       if (reused) return reused;
     }
 
-    // Reprint coordination happens only after the tenant enqueue lock is
-    // held. While an earlier reprint of the same original job is still active,
-    // concurrent operator requests converge on that existing job instead of
-    // creating a second physical print. Once it is terminal, a new sequence is
-    // intentionally allocated for the next explicit reprint.
+    // A reprint is a NEW, explicitly confirmed physical operation, not a
+    // safe transport retry. The caller must provide one stable intent key so
+    // a lost HTTP response cannot allocate a SECOND print after the first
+    // attempt reaches terminal state. Hash it into the reserved server
+    // namespace to keep even 120-byte historical job IDs below the 200-byte
+    // database idempotency-key limit.
     let effectiveIdempotencyKey = idempotencyKey ?? null;
     if (reprintOfJobId) {
-      // Escape LIKE wildcards in reprintOfJobId. Job IDs use the format
-      // `job_XXXX` — the underscore (`_`) is a SQL LIKE wildcard matching any
-      // single character. Without escaping, `LIKE 'gw-reprint:job_ABC:%'` would
-      // also match `gw-reprint:jobXABC:%`. Escaping with backslash and adding
-      // ESCAPE '\\' makes the pattern exact.
-      const escapedReprintId = reprintOfJobId.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_");
-      const activeReprint = await tx.execute(sql`
-        SELECT id, printer_id, agent_id, status
-        FROM print_jobs
-        WHERE tenant_id = ${tenantId}
-          AND idempotency_key LIKE ${`gw-reprint:${escapedReprintId}:%`} ESCAPE '\\'
-          AND status IN ('queued', 'claimed', 'printing')
-        ORDER BY created_at DESC
-        LIMIT 1
-        FOR UPDATE
-      `);
-      if (activeReprint.rows.length > 0) {
-        const row = activeReprint.rows[0] as { id: string; printer_id: string; agent_id: string; status: string };
-        return { jobId: row.id, status: row.status, agentId: row.agent_id, printerId: row.printer_id, isReused: true };
+      if (!isExactIdempotencyKey(idempotencyKey) || idempotencyKey.length < 8) {
+        throw new PrintJobInputError("Reprint requires a stable Idempotency-Key", "IDEMPOTENCY_KEY_REQUIRED", 400);
       }
-
-      const countResult = await tx.execute(sql`
-        SELECT COUNT(*)::int AS count
-        FROM (SELECT tenant_id, idempotency_key FROM print_jobs
-              UNION ALL SELECT tenant_id, idempotency_key FROM print_job_receipts) history
-        WHERE tenant_id = ${tenantId}
-          AND idempotency_key LIKE ${`gw-reprint:${escapedReprintId}:%`} ESCAPE '\\'
-      `);
-      const count = Number((countResult.rows[0] as { count?: number | string } | undefined)?.count ?? 0);
-      effectiveIdempotencyKey = `gw-reprint:${reprintOfJobId}:${count + 1}`;
+      effectiveIdempotencyKey = `gw-reprint:${reprintOfJobId}:${createHash("sha256").update(idempotencyKey).digest("hex")}`;
     }
 
     if (effectiveIdempotencyKey) {
@@ -271,8 +255,9 @@ async function insertQueuedJobAtomically({
     if (effectiveIdempotencyKey) {
       const receipt = await tx.query.printJobReceipts.findFirst({ where: and(eq(printJobReceipts.tenantId, tenantId), eq(printJobReceipts.idempotencyKey, effectiveIdempotencyKey)) });
       if (receipt) {
-        if ((rateLimitKeyId && receipt.apiKeyId === null) ||
-            (managerAuthority && receipt.requestedBy !== requestedBy) ||
+        if ((rateLimitKeyId && receipt.apiKeyId !== rateLimitKeyId) ||
+            ((managerAuthority || agentDiagnosticAuthority) &&
+              (receipt.apiKeyId !== null || receipt.requestedBy !== requestedBy || receipt.agentId !== agentId)) ||
             receipt.fingerprint !== idempotencyDigest({ printerId, documentType, destination, payload: validatedPayload })) {
           throw Object.assign(new Error("IDEMPOTENCY_CONFLICT"), { code: "IDEMPOTENCY_CONFLICT" });
         }
@@ -296,8 +281,9 @@ async function insertQueuedJobAtomically({
         // internal job identity to an Odoo caller. Because the database uses a
         // tenant-wide idempotency uniqueness constraint, a collision with an
         // internal key is a deterministic conflict, not a reusable Odoo job.
-        if ((rateLimitKeyId && row.api_key_id === null) ||
-            (managerAuthority && row.requested_by !== requestedBy)) {
+        if ((rateLimitKeyId && row.api_key_id !== rateLimitKeyId) ||
+            ((managerAuthority || agentDiagnosticAuthority) &&
+              (row.api_key_id !== null || row.requested_by !== requestedBy || row.agent_id !== agentId))) {
           const conflictErr = new Error("IDEMPOTENCY_CONFLICT");
           Object.assign(conflictErr, { code: "IDEMPOTENCY_CONFLICT" });
           throw conflictErr;
@@ -327,6 +313,55 @@ async function insertQueuedJobAtomically({
         const conflictErr = new Error("IDEMPOTENCY_CONFLICT");
         Object.assign(conflictErr, { code: "IDEMPOTENCY_CONFLICT" });
         throw conflictErr;
+      }
+    }
+
+    // Route-level status checks may race with a late Agent reconciliation:
+    // an unknown/failed original can become `success` while waiting for the
+    // tenant enqueue lock. The original must still be non-success terminal
+    // when a NEW physical intent is admitted. A replay of the same accepted
+    // reprint above remains available even if the original later changes.
+    if (reprintOfJobId) {
+      const original = await tx.execute(sql`
+        SELECT printer_id, agent_id, status, destination, document_type, payload
+        FROM print_jobs
+        WHERE tenant_id = ${tenantId} AND id = ${reprintOfJobId}
+        FOR SHARE
+      `);
+      const source = original.rows[0] as {
+        printer_id: string; agent_id: string; status: string;
+        destination: string | null; document_type: string | null; payload: unknown;
+      } | undefined;
+      if (!source) throw new PrintJobInputError("Original job is no longer available", "JOB_NOT_FOUND", 404);
+      if (["queued", "claimed", "printing"].includes(source.status)) {
+        throw new PrintJobInputError("Original job is still in progress", "JOB_NOT_TERMINAL", 409);
+      }
+      if (source.status !== "failed" && source.status !== "expired") {
+        throw new PrintJobInputError("Only unsuccessful terminal jobs may be reprinted", "JOB_REPRINT_NOT_ALLOWED", 409);
+      }
+      if (source.printer_id !== printerId || source.agent_id !== agentId ||
+          idempotencyFingerprint({ printerId, destination, documentType, payload: validatedPayload }) !==
+          idempotencyFingerprint({ printerId: source.printer_id, destination: source.destination,
+            documentType: source.document_type, payload: source.payload })) {
+        throw new PrintJobInputError("Original job changed; refresh before reprinting", "JOB_REPRINT_SOURCE_CHANGED", 409);
+      }
+    }
+
+    // A DIFFERENT explicit reprint confirmation must not inherit someone
+    // else's accepted intent. Deny it while a prior reprint is in flight:
+    // returning that prior job without recording this new operation key would
+    // make a later retry (after it finishes) print unexpectedly.
+    if (reprintOfJobId) {
+      const escapedReprintId = reprintOfJobId.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_");
+      const activeReprint = await tx.execute(sql`
+        SELECT id, printer_id, agent_id, status FROM print_jobs
+        WHERE tenant_id = ${tenantId}
+          AND idempotency_key LIKE ${`gw-reprint:${escapedReprintId}:%`} ESCAPE '\\'
+          AND status IN ('queued', 'claimed', 'printing')
+        ORDER BY created_at DESC LIMIT 1 FOR UPDATE
+      `);
+      if (activeReprint.rows.length) {
+        throw new PrintJobInputError("A prior reprint is still in progress; review that job first", "REPRINT_ALREADY_ACTIVE", 409);
       }
     }
 
@@ -571,8 +606,8 @@ async function insertQueuedJobAtomically({
       // Stamp creation from the SAME clock read used for the expiry window.
       // The column default is `now()` (transaction start), which drifts from
       // the `clock_timestamp()` read above inside a long transaction and makes
-      // `created_at` disagree with `expires_at` and with the per-minute rate
-      // window (`created_at >= now() - interval '1 minute'`).
+      // `created_at` disagree with `expires_at` and with the rolling-minute
+      // rate window (evaluated after admission locks using statement_timestamp()).
       createdAt: dbNow,
       updatedAt: dbNow,
     });
@@ -693,7 +728,7 @@ async function recoverReceiptForMissingOwner(
       eq(printJobReceipts.tenantId, tenantId), eq(printJobReceipts.idempotencyKey, idempotencyKey),
     ) });
     if (!receipt) return null;
-    if (receipt.apiKeyId === null || receipt.fingerprint !== idempotencyDigest({
+    if (receipt.apiKeyId !== apiKeyId || receipt.fingerprint !== idempotencyDigest({
       printerId,
       documentType: options.documentType,
       destination: options.destination,

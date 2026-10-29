@@ -321,7 +321,7 @@ suite("discovery trust and approval flow", () => {
     const discoveryId = await createDiscoverySession();
     await agentRequest(discoveryId, [{
       id: "device-spooler-1", source: ["windows_spooler"], protocol: "spooler",
-      deviceName: "HP LaserJet Enterprise", verification: "verified", confidence: "high",
+      deviceName: "HP LaserJet Enterprise", spoolerName: "HP LaserJet Enterprise", verification: "verified", confidence: "high",
     }]);
 
     const manager = await createWorkspaceManagerTestSession(f.tenantId);
@@ -585,11 +585,11 @@ suite("discovery trust and approval flow", () => {
     expect(new Set(rows.rows.map((row: { tenant_id: string }) => row.tenant_id))).toEqual(new Set([f.tenantId, other.tenantId]));
   });
 
-  it("deduplicates repeated device identities inside one discovery report", async () => {
+  it("deduplicates exact repeated device identities without overwriting the first observation", async () => {
     const discoveryId = await createDiscoverySession("disc-intra-batch-dedupe");
     const res = await agentRequest(discoveryId, [
       { id: "device-dup-a", stableId: "printer_net_same", protocol: "raw", ipAddress: "192.168.10.70", port: 9100, deviceName: "First Observation" },
-      { id: "device-dup-b", stableId: "printer_net_same", protocol: "raw", ipAddress: "192.168.10.70", port: 9100, deviceName: "Last Observation" },
+      { id: "device-dup-a", stableId: "printer_net_same", protocol: "raw", ipAddress: "192.168.10.70", port: 9100, deviceName: "Last Observation" },
     ]);
 
     expect(res.status).toBe(200);
@@ -602,7 +602,7 @@ suite("discovery trust and approval flow", () => {
        GROUP BY identity_key, device_name`,
       [f.tenantId, f.agentId],
     );
-    expect(rows.rows).toEqual([{ count: 1, identity_key: "printer_net_same", device_name: "Last Observation" }]);
+    expect(rows.rows).toEqual([{ count: 1, identity_key: "printer_net_same", device_name: "First Observation" }]);
   });
   it("accepts valid discovery devices when another candidate in the same report is invalid", async () => {
     const discoveryId = await createDiscoverySession("disc-partial-report");

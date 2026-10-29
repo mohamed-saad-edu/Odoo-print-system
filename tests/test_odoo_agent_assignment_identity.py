@@ -35,6 +35,7 @@ def production_methods():
     scope = {
         "_": lambda text: text, "ValidationError": ValidationError,
         "is_exact_gateway_printer_id": policy.is_exact_gateway_printer_id,
+        "is_exact_gateway_agent_id": policy.is_exact_gateway_agent_id,
     }
     exec(compile(ast.fix_missing_locations(ast.Module(body=methods, type_ignores=[])), str(source), "exec"), scope)
     return scope
@@ -89,22 +90,24 @@ def test_assignment_validator_refuses_identity_that_gateway_cannot_execute(malfo
 
 
 def test_lookup_never_upgrades_a_padded_stored_agent_to_another_exact_agent():
-    model, company = fake_assignment([" agent ", "canonical"])
-    assert model.assigned_agent_ids(company) == {"canonical"}
-    assert model.is_agent_assigned(company, False, "agent") is False
+    model, company = fake_assignment([" agent ", "agt_canon001"])
+    assert model.assigned_agent_ids(company) == {"agt_canon001"}
+    assert model.is_agent_assigned(company, False, "agt_fixture1") is False
     assert model.is_agent_assigned(company, False, " agent ") is False
-    assert model.is_agent_assigned(company, False, "canonical") is True
+    assert model.is_agent_assigned(company, False, "agt_canon001") is True
 
 
 def test_lookup_rejects_malformed_caller_even_when_exact_stored_agent_exists():
-    model, company = fake_assignment(["agent"])
+    model, company = fake_assignment(["agt_fixture1"])
     for malformed in (" agent", "agent ", "agent\x00suffix", "\ufeffagent", "a" * 121):
         assert model.is_agent_assigned(company, False, malformed) is False
-    assert model.is_agent_assigned(company, False, "agent") is True
+    assert model.is_agent_assigned(company, False, "agt_fixture1") is True
 
 
-def test_valid_unicode_agent_ids_preserve_exact_requested_identity():
-    checked_assignment("وكيل-1")
-    model, company = fake_assignment(["وكيل-1", "é" * 60])
-    assert model.assigned_agent_ids(company) == {"وكيل-1", "é" * 60}
-    assert model.is_agent_assigned(company, False, "وكيل-1") is True
+def test_unicode_ids_cannot_alias_an_exact_gateway_agent():
+    with pytest.raises(ValidationError, match="Gateway|agent"):
+        checked_assignment("وكيل-1")
+    model, company = fake_assignment(["وكيل-1", "é" * 60, "agt_canon001"])
+    assert model.assigned_agent_ids(company) == {"agt_canon001"}
+    assert model.is_agent_assigned(company, False, "وكيل-1") is False
+    assert model.is_agent_assigned(company, False, "agt_canon001") is True

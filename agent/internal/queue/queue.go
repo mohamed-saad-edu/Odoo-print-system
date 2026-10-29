@@ -652,7 +652,7 @@ func (q *Queue) TerminalResultFor(id string) (TerminalReport, bool, error) {
 
 // PendingTerminalReports returns durable terminal outcomes whose Gateway
 // acknowledgement has not yet been observed. These rows are a tiny local
-// outbox: they allow Agent restart recovery to re-report a proven outcome
+// outbox: they allow Agent restart recovery to re-report a durable result
 // without ever re-running the physical printer side effect.
 func (q *Queue) PendingTerminalReports(limit int) ([]TerminalReport, error) {
 	return q.pendingTerminalReports(limit, "", "", false)

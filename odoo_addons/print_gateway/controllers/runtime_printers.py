@@ -5,7 +5,7 @@ from werkzeug.exceptions import Forbidden
 from odoo import http
 from odoo.http import request
 from odoo.exceptions import ValidationError
-from ..runtime_policy import is_gateway_shared_printer, is_exact_gateway_printer_id, unambiguous_inventory_rows
+from ..runtime_policy import is_gateway_shared_printer, is_exact_gateway_printer_id, is_exact_gateway_agent_id, unambiguous_inventory_rows
 from ..printer_geometry import validated_printer_geometry
 from ..printer_verification import is_verified_runtime_printer
 
@@ -213,7 +213,7 @@ class PrintGatewayRuntimePrinterController(http.Controller):
                 continue
             agent_id = agent.get('id')
             lifecycle = agent.get('lifecycle') if isinstance(agent.get('lifecycle'), str) else ''
-            if not is_exact_gateway_printer_id(agent_id) or lifecycle != 'active':
+            if not is_exact_gateway_agent_id(agent_id) or lifecycle != 'active':
                 continue
             raw_name = agent.get('name') if isinstance(agent.get('name'), str) and agent.get('name').strip() else agent_id
             status = agent.get('status') if isinstance(agent.get('status'), str) else 'unknown'
@@ -258,8 +258,8 @@ class PrintGatewayRuntimePrinterController(http.Controller):
         # Agent IDs are opaque Gateway execution identities, not display
         # labels. A padded/control-bearing RPC value must not be normalized
         # into a different, assigned Agent's printer inventory. This matches
-        # the Gateway 120-byte UTF-8 identity envelope at the Odoo boundary.
-        if not is_exact_gateway_printer_id(agent_id):
+        # the Gateway canonical agt_ + eight-character ID at the Odoo boundary.
+        if not is_exact_gateway_agent_id(agent_id):
             return {'enabled': True, 'selectedAgentId': False, 'printers': []}
         config, root_company = self._get_config(company)
         if not config:
@@ -299,7 +299,7 @@ class PrintGatewayRuntimePrinterController(http.Controller):
         if not isinstance(all_agents, list):
             raise ValidationError(request.env._('Gateway returned an invalid agent discovery response.'))
         matched_agent = next(
-            (a for a in all_agents or [] if isinstance(a, dict) and a.get('id') == selected_agent_id and a.get('lifecycle') == 'active'),
+            (a for a in unambiguous_inventory_rows(all_agents) if a.get('id') == selected_agent_id and a.get('lifecycle') == 'active'),
             None,
         )
         if not matched_agent:
@@ -329,7 +329,7 @@ class PrintGatewayRuntimePrinterController(http.Controller):
             if not isinstance(printer, dict):
                 continue
             printer_id = printer.get('id')
-            if not isinstance(printer_id, str) or not printer_id.strip():
+            if not is_exact_gateway_printer_id(printer_id):
                 continue
             lifecycle = printer.get('lifecycle') if isinstance(printer.get('lifecycle'), str) else ''
             agent = printer.get('agent') if isinstance(printer.get('agent'), dict) else {}

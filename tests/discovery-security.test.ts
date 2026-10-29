@@ -34,10 +34,10 @@ vi.mock("../src/db", () => ({
       discoveredDevices: { findMany: async () => [], findFirst: async () => null },
     },
     transaction: async (run: (tx: unknown) => Promise<unknown>) => run({
-      execute: async () => ({ rows: [{ id: "ds_trust_probe", status: "running", lifecycle: "active" }] }),
+      execute: async () => ({ rows: [{ id: "ds_trust_probe", status: "running", lifecycle: "active", secret: "secret-hash" }] }),
       insert: () => ({ values: (rows: Array<Record<string, unknown>>) => {
         state.acceptedRows.push(...rows);
-        const write = { returning: async () => rows.map(row => ({ id: row.id, inserted: true })) };
+        const write = { returning: async () => rows.map(row => ({ id: row.id, identityKey: row.identityKey, inserted: true })) };
         return { onConflictDoUpdate: () => write, onConflictDoNothing: () => write };
       } }),
       update: () => ({ set: () => ({ where: async () => {} }) }),
@@ -61,7 +61,7 @@ vi.mock("../src/lib/manager-auth", () => ({
   } as any : null),
 }));
 vi.mock("../src/lib/agent-auth", () => ({
-  validateAgent: async () => state.reportAuth ? { id: "agt_branchA", tenantId: "branchA", lifecycle: "active" } : null,
+  validateAgent: async () => state.reportAuth ? { id: "agt_branchA", tenantId: "branchA", lifecycle: "active", secret: "secret-hash" } : null,
 }));
 
 import { POST as startDiscovery } from "../src/app/api/agents/[id]/discovery/route";

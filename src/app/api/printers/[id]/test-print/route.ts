@@ -5,6 +5,8 @@ import { agents, printers, printJobReceipts } from "../../../../../db/schema";
 import { derivePhysicalOutcome } from "../../../../../lib/job-status";
 import { validateWorkspaceManager } from "../../../../../lib/manager-auth";
 import { validateAgent } from "../../../../../lib/agent-auth";
+import { requireConsoleReadAuthorityInTransaction, ConsoleAgentAuthorityRevokedError } from "../../../../../lib/console-read-authority";
+import { ManagerMutationAuthorityChangedError } from "../../../../../lib/manager-mutation-authorization";
 import { requireManagerPermission } from "../../../../../lib/authorization";
 import { requestIdFrom } from "../../../../../lib/log";
 import { and, eq } from "drizzle-orm";
@@ -86,7 +88,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const result = await createPrintJobForPrinter(printer.id, payload, {
       requestedBy: pairedAgent ? "agent-diagnostic" : "manager-test",
       ...(claims ? { managerAuthority: { claims, permission: "printers.test" as const } } : {}),
-      ...(pairedAgent ? { agentDiagnosticAuthority: { agentId: pairedAgent.id, tenantId: pairedAgent.tenantId } } : {}),
+      ...(pairedAgent ? { agentDiagnosticAuthority: { agentId: pairedAgent.id, tenantId: pairedAgent.tenantId, secretHash: pairedAgent.secret! } } : {}),
       requireAvailableAgent: true,
       documentType: "test_page",
       idempotencyKey: effectiveKey,
@@ -101,15 +103,28 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     let physicalOutcome: "printed" | "not_printed" | "unknown" | undefined;
     if (result.isReused && (result.status === "success" || result.status === "failed" || result.status === "expired")) {
       try {
-        const receipt = await db.query.printJobReceipts.findFirst({
-          where: and(eq(printJobReceipts.id, result.id), eq(printJobReceipts.tenantId, tenantId)),
+        const receipt = await db.transaction(async (tx) => {
+          // The original enqueue/replay committed under live authority, but
+          // credentials can rotate before this optional receipt lookup. Do
+          // not disclose historical physical-outcome metadata to a bearer
+          // revoked between the two transactions.
+          await requireConsoleReadAuthorityInTransaction(tx,
+            claims ? { kind: "manager", claims } : { kind: "agent", agent: pairedAgent! }, "printers.test");
+          return tx.query.printJobReceipts.findFirst({
+            where: and(eq(printJobReceipts.id, result.id), eq(printJobReceipts.tenantId, tenantId)),
+          });
         });
         if (receipt?.status === result.status && receipt.printerId === printer.id) {
           physicalOutcome = derivePhysicalOutcome(result.status, receipt.error);
         }
-      } catch {
-        // The job is already accepted: degrading its display metadata must not
-        // force a second physical intent. The client treats absent as UNKNOWN.
+      } catch (error) {
+        if (error instanceof ManagerMutationAuthorityChangedError) return error.response();
+        if (error instanceof ConsoleAgentAuthorityRevokedError) {
+          return NextResponse.json({ error: "Agent authorization changed", code: "UNAUTHORIZED" }, { status: 401 });
+        }
+        // The job is already accepted: degrading optional display metadata
+        // must not initiate another physical intent. The client treats an
+        // absent physical outcome as UNKNOWN.
       }
     }
     return NextResponse.json({

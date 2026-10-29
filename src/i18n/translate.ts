@@ -30,9 +30,11 @@ const PLACEHOLDER = /\{(\w+)\}/g;
 export function translate(locale: Locale, key: MessageKey, vars?: MessageVars): string {
   const catalog = Object.prototype.hasOwnProperty.call(catalogs, locale) ? catalogs[locale] : en;
   const candidate = Object.prototype.hasOwnProperty.call(catalog, key) ? catalog[key] : undefined;
+  // Unknown dynamic keys are a catalog-contract failure, not user copy.
+  // Never surface an internal dotted key in English or Arabic.
   const template = typeof candidate === "string" && candidate.trim()
     ? candidate
-    : locale === "ar" ? "النص غير متاح" : Object.prototype.hasOwnProperty.call(en, key) ? en[key] : key;
+    : locale === "ar" ? "النص غير متاح" : "Text unavailable";
   if (!vars) return template;
   return template.replace(PLACEHOLDER, (match, name: string) =>
     Object.prototype.hasOwnProperty.call(vars, name) ? String(vars[name]) : match,

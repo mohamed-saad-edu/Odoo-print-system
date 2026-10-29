@@ -16,12 +16,12 @@ vi.mock("../src/db", () => ({ pool: {
     client.query = async (text: string) => {
       if (text.startsWith("LISTEN")) harness.listener = client;
       return { rows: text.includes("FROM tenants") ? [{ lifecycle: "active" }]
-        : text.includes("FROM agents") ? [{ lifecycle: "active", lifecycle_revision: 0 }] : [] };
+        : text.includes("FROM agents") ? [{ lifecycle: "active", lifecycle_revision: 0, secret: "secret-hash" }] : [] };
     };
     return client;
   },
 } }));
-vi.mock("../src/lib/agent-auth", () => ({ validateAgent: async () => ({ id: "agt_12345678", tenantId: "tenant-1", lifecycleRevision: 0 }) }));
+vi.mock("../src/lib/agent-auth", () => ({ validateAgent: async () => ({ id: "agt_12345678", tenantId: "tenant-1", lifecycleRevision: 0, secret: "secret-hash" }) }));
 vi.mock("../src/lib/ws-rate-limit", () => ({ reserveWsUpgradeAttempt: async () => ({ allowed: true }), recordWsUpgradeSuccess: async () => {} }));
 vi.mock("../src/lib/metrics", () => ({ incrementMetric: async () => {} }));
 vi.mock("../src/lib/job-delivery", () => ({

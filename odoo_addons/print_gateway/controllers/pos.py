@@ -17,8 +17,13 @@ class PrintGatewayPosController(PosController):
     patch routes that path through the POS config's ``receipt`` binding.
     """
 
-    @http.route('/pos/sale_details_report', type='http', auth='user')
+    @http.route('/pos/sale_details_report', type='http', auth='user', methods=['GET', 'HEAD', 'POST'], csrf=True)
     def print_sale_details(self, date_start=False, date_stop=False, **kw):
+        # The native Odoo endpoint is a safe PDF GET. A link, preload, or
+        # cross-site navigation must never submit a physical print job.
+        # Odoo's authenticated POST request carries the standard CSRF token.
+        if request.httprequest.method != 'POST':
+            return super().print_sale_details(date_start=date_start, date_stop=date_stop, **kw)
         gateway = request.env['print_gateway.print_router']._gateway_config(request.env.company)
         if not gateway:
             return super().print_sale_details(date_start=date_start, date_stop=date_stop, **kw)

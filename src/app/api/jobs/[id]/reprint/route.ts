@@ -4,7 +4,6 @@ import { db } from "../../../../../db";
 import { printJobs } from "../../../../../db/schema";
 import { validateConsoleAuth } from "../../../../../lib/console-auth";
 import { requireManagerPermission } from "../../../../../lib/authorization";
-import { isTerminal, type JobStatus } from "../../../../../lib/job-status";
 import { createPrintJobForPrinter, PrintJobInputError, PrintJobCapabilityError, AgentQueueFullError, AgentQueuedJobsFullError } from "../../../../../lib/print-job-service";
 import {
   TenantEntitlementError,
@@ -24,6 +23,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (auth.kind !== "manager") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   try { requireManagerPermission(auth.claims, "jobs.retry"); } catch { return NextResponse.json({ error: "Forbidden" }, { status: 403 }); }
 
+  const operationKey = req.headers.get("Idempotency-Key");
+  // An HTTP timeout is not proof that a physical operation was rejected.
+  // Require a stable, caller-owned confirmation identity on EVERY reprint.
+  if (!operationKey || !isExactIdempotencyKey(operationKey) || operationKey.length < 8) {
+    return NextResponse.json({ error: "Reprint requires an Idempotency-Key", code: "IDEMPOTENCY_KEY_REQUIRED", retryable: false },
+      { status: 400, headers: { "Cache-Control": "no-store" } });
+  }
   const { id: jobId } = await params;
   // This ID chooses the original physical job. Never trim/normalize it into
   // another stored job before allocating an intentional reprint.
@@ -36,24 +42,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     where: and(eq(printJobs.id, jobId), eq(printJobs.tenantId, auth.claims.tenantId)),
   });
   if (!job) return NextResponse.json({ error: "Job not found", code: "JOB_NOT_FOUND" }, { status: 404 });
-  if (!isTerminal(job.status as JobStatus)) {
-    return NextResponse.json({
-      error: "Only finished, failed, or expired jobs can be reprinted. The current job is still in progress.",
-      code: "JOB_NOT_TERMINAL",
-    }, { status: 409 });
-  }
-  if (job.status === "success") {
-    return NextResponse.json({
-      error: "Successful jobs are not eligible for operator reprint; create a new intentional print instead.",
-      code: "JOB_REPRINT_NOT_ALLOWED",
-    }, { status: 409 });
-  }
-
   try {
     const result = await createPrintJobForPrinter(job.printerId, job.payload, {
       requestedBy: "manager-reprint",
       managerAuthority: { claims: auth.claims, permission: "jobs.retry" },
       reprintOfJobId: job.id,
+      idempotencyKey: operationKey,
       destination: job.destination,
       documentType: job.documentType ?? undefined,
       tenantId: auth.claims.tenantId,

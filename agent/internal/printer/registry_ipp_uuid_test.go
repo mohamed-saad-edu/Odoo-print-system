@@ -89,8 +89,14 @@ func TestRegistryIPPSameVerifiedServiceUUIDKeepsHistoricalIDAfterAddressChange(t
 	// a new endpoint. A manual declaration of the same UUID cannot do so.
 	incoming.Capabilities["registration_source"] = "discovery"
 	rows, err := UpsertRegistry(path, []DeviceInfo{incoming})
-	if err != nil || len(rows) != 1 || rows[0].ID != prior.ID || rows[0].Endpoint != incoming.Endpoint || rows[0].Enabled {
+	if err != nil || len(rows) != 1 || rows[0].ID != prior.ID || rows[0].Enabled {
 		t.Fatalf("same verified IPP service lost ID or operator intent: %+v %v", rows, err)
+	}
+	// UUID continuity across a different IPP destination cannot silently
+	// rebind the established queue: keep the registered endpoint and wait for
+	// explicit operator reconciliation.
+	if rows[0].Endpoint != prior.Endpoint || rows[0].Capabilities["identity_collision"] != "same_hardware_different_network_binding" {
+		t.Fatalf("verified UUID silently rebound to a different IPP destination: %+v", rows[0])
 	}
 }
 

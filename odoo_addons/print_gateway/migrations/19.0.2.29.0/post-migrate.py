@@ -12,18 +12,23 @@ def migrate(cr, version):
         return
     env = api.Environment(cr, SUPERUSER_ID, {})
     root = env.ref("print_gateway.menu_print_gateway_main", raise_if_not_found=False)
-    advanced = env.ref("print_gateway.menu_print_gateway_advanced", raise_if_not_found=False)
-    if advanced and advanced.exists():
-        # Preserve third-party/custom menus that were placed under Advanced.
-        children = env["ir.ui.menu"].search([("parent_id", "=", advanced.id)])
-        if children and not root:
-            raise RuntimeError("Cannot reparent legacy Yaseir menus without the root menu")
+    def retire_menu(xmlid):
+        menu = env.ref(xmlid, raise_if_not_found=False)
+        if not menu or not menu.exists():
+            return
+        # Odoo unlinks a menu by detaching its children; the old Printers
+        # menu can contain custom/inactive third-party children too.
+        children = env["ir.ui.menu"].with_context(active_test=False).search([
+            ("parent_id", "=", menu.id),
+        ])
         if children:
+            if not root or not root.exists() or root.id == menu.id:
+                raise RuntimeError("Cannot preserve legacy Yaseir submenus without a root menu")
             children.write({"parent_id": root.id})
-        advanced.unlink()
-    printer_menu = env.ref("print_gateway.menu_print_gateway_printers", raise_if_not_found=False)
-    if printer_menu and printer_menu.exists():
-        printer_menu.unlink()
+        menu.unlink()
+
+    retire_menu("print_gateway.menu_print_gateway_advanced")
+    retire_menu("print_gateway.menu_print_gateway_printers")
     old_action = env.ref("print_gateway.action_print_gateway_printers", raise_if_not_found=False)
     if old_action and old_action.exists():
         old_action.unlink()

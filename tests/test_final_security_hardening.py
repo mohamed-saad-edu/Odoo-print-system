@@ -432,12 +432,19 @@ def test_operator_reprint_excludes_gateway_success_jobs():
     actions = read("src/app/actions.ts")
     dashboard = read("src/app/dashboard/dashboard-client.tsx")
 
-    assert 'if (job.status === "success")' in route
-    assert 'code: "JOB_REPRINT_NOT_ALLOWED"' in route
-    assert 'if (job.status === "success")' in actions
-    # Keyed copy (i18n contract): the operator refusal resolves through the
-    # catalog, never as inline English.
-    assert 't("errors.jobNotEligibleForReprint")' in actions
+    # The authorization decision is now inside the transactional enqueue
+    # service, so the route cannot race a later status change before reprint.
+    service = read("src/lib/print-job-service.ts")
+    assert "reprintOfJobId: job.id" in route
+    assert "idempotencyKey: operationKey" in route
+    assert 'source.status !== "failed" && source.status !== "expired"' in service
+    assert '"JOB_REPRINT_NOT_ALLOWED"' in service
+    # Manager reprint is always authorized in the transactional service.
+    # The server action must pass the exact original and caller operation key
+    # through the same security gate, not rely on an earlier status precheck.
+    assert "managerAuthority: { claims: manager, permission: \"jobs.retry\" }" in actions
+    assert "reprintOfJobId: job.id" in actions
+    assert "idempotencyKey: operationKey" in actions
     assert 'selectedJobView.status.toLowerCase() !== "success"' in dashboard
 
 
@@ -463,7 +470,10 @@ def test_late_success_failure_markers_preserve_the_attempt_fence():
     assert "export const LATE_SUCCESS_ERROR_MARKERS" in status
     assert "LATE_SUCCESS_ERROR_MARKERS.some((marker) => nextError?.startsWith(marker))" in jobs_route
     assert "!retainsLateSuccessFence" in jobs_route
-    assert "claim_token=CASE WHEN expires_at <= now() THEN NULL ELSE claim_token END" in maintenance
+    # Unknown output retains claim evidence for a late same-attempt report.
+    assert "claim_token=CASE" in maintenance
+    assert "WHEN status='printing' AND claim_token IS NOT NULL THEN claim_token" in maintenance
+    assert "WHEN status='claimed' AND claim_token IS NOT NULL" in maintenance
     assert "AGENT_EXECUTION_TIMEOUT" in maintenance
     assert "JOB_EXPIRED_DURING_PRINT" in maintenance
 
@@ -500,16 +510,20 @@ def test_odoo_runtime_discovery_fails_closed_on_missing_lifecycle():
 
 def test_odoo_status_and_idempotency_surfaces_exclude_internal_manager_jobs_but_survive_rotation():
     route = read("src/app/api/print/jobs/route.ts")
-    assert "isNotNull(printJobs.apiKeyId)" in route
-    # The GET endpoint and every idempotency reuse lookup must not require the
-    # current API-key ID; old Odoo jobs remain readable after key rotation.
-    assert "eq(printJobs.apiKeyId, odoo.id)" not in route
-    # The reused-job lookup must retain the Odoo-originated boundary as well.
+    reader = read("src/lib/odoo-status-scope.ts")
+    assert "readOdooJobStatus(" in route
+    assert "odooStatusIdentity(req, odoo.tenantId)" in route
+    assert "isNotNull(printJobs.apiKeyId)" in reader
+    assert "isNotNull(printJobReceipts.apiKeyId)" in reader
+    assert "eq(printJobs.tenantId, key.tenantId)" in reader
+    assert "eq(printJobReceipts.tenantId, key.tenantId)" in reader
+    assert "eq(printJobs.apiKeyId, odoo.id)" not in reader
     reused_start = route.index("if (result.isReused)")
     reused_end = route.index("const responseHeaders:", reused_start)
-    assert "isNotNull(printJobs.apiKeyId)" in route[reused_start:reused_end]
-    assert "eq(printJobReceipts.tenantId, odoo.tenantId)" in route[reused_start:reused_end]
-    assert "isNotNull(printJobReceipts.apiKeyId)" in route[reused_start:reused_end]
+    assert "readOdooJobStatus(" in route[reused_start:reused_end]
+    assert "if (existing)" in route[reused_start:reused_end]
+    assert "status: 409" in route[reused_start:reused_end]
+
 
 
 def test_odoo_force_reprint_includes_failed_unknown_outcomes():
@@ -530,7 +544,9 @@ def test_odoo_ambiguous_submission_has_idempotency_key_recovery_path():
     assert 'const idempotencyKey = params.get("idempotencyKey");' in route
     assert '!isExactIdempotencyKey(idempotencyKey)' in route
     assert 'params.get("idempotencyKey")?.trim()' not in route
-    assert "isNotNull(printJobs.apiKeyId)" in route
+    reader = read("src/lib/odoo-status-scope.ts")
+    assert "readOdooJobStatus(odoo, identity" in route
+    assert "isNotNull(printJobs.apiKeyId)" in reader
 
 
 def test_odoo_cron_reconciles_ambiguous_submissions_without_stale_not_found_writes():

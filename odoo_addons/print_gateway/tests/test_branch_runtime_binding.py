@@ -50,13 +50,13 @@ class TestBranchRuntimeBinding(TransactionCase):
         self.other_branch = self.env["res.company"].create({"name": "Other Branch", "parent_id": self.other_company.id})
         self.env = self.env(context=dict(self.env.context, allowed_company_ids=[self.company.id, self.branch.id, self.other_company.id, self.other_branch.id]))
         self.agents = [
-            {"id": "agent-a", "name": "Agent A", "status": "online", "lifecycle": "active"},
-            {"id": "agent-b", "name": "Agent B", "status": "online", "lifecycle": "active"},
-            {"id": "agent-old", "name": "Retired", "status": "offline", "lifecycle": "retired"},
+            {"id": "agt_t0000001", "name": "Agent A", "status": "online", "lifecycle": "active"},
+            {"id": "agt_t0000002", "name": "Agent B", "status": "online", "lifecycle": "active"},
+            {"id": "agt_t0000012", "name": "Retired", "status": "offline", "lifecycle": "retired"},
         ]
         self.printers = [
-            {"id": "printer-a", "name": "Printer A", "status": "online", "lifecycle": "active", "protocol": "escpos", "connectionType": "usb", "agent": {"id": "agent-a", "name": "Agent A"}},
-            {"id": "printer-b", "name": "Printer B", "status": "online", "lifecycle": "active", "protocol": "escpos", "connectionType": "usb", "agent": {"id": "agent-b", "name": "Agent B"}},
+            {"id": "printer-a", "name": "Printer A", "status": "online", "lifecycle": "active", "protocol": "escpos", "connectionType": "usb", "agent": {"id": "agt_t0000001", "name": "Agent A"}},
+            {"id": "printer-b", "name": "Printer B", "status": "online", "lifecycle": "active", "protocol": "escpos", "connectionType": "usb", "agent": {"id": "agt_t0000002", "name": "Agent B"}},
         ]
         with patch("odoo.addons.print_gateway.models.gateway_config.PrintGatewayConfig._validate_gateway_host", return_value=None):
             config_model = self.env["print_gateway.gateway_config"]
@@ -83,7 +83,7 @@ class TestBranchRuntimeBinding(TransactionCase):
                 row = verified_printer({
                     "id": "proof-" + connection, "connectionType": connection,
                     "protocol": protocol, "lifecycle": "active", "sharedWithGateway": True,
-                    "agent": {"id": "agent-a"},
+                    "agent": {"id": "agt_t0000001"},
                 })
                 proof = row["capabilities"]["operational_verification"]
                 self.assertEqual((proof["method"], proof["identity_strength"]), (method, strength))
@@ -249,7 +249,7 @@ class TestBranchRuntimeBinding(TransactionCase):
     def test_branch_admin_defaults_assignment_and_automation_to_own_branch(self):
         env = self._branch_admin_env()
         assignment = env["print_gateway.runtime_agent_assignment"].create({
-            "runtime_agent_id": "branch-admin-agent",
+            "runtime_agent_id": "agt_t0000026",
         })
         self.assertEqual(assignment.company_id, self.company)
         self.assertEqual(assignment.branch_id, self.branch)
@@ -300,7 +300,7 @@ class TestBranchRuntimeBinding(TransactionCase):
             "company_id": self.company.id, "branch_id": self.branch.id,
             "destination_type": "report", "destination_report_id": report.id, "report_id": report.id,
             "printer_protocol": "escpos",
-            "runtime_agent_id": "agent-a", "printer_id": "printer-a", "enabled": True, "priority": 10,
+            "runtime_agent_id": "agt_t0000001", "printer_id": "printer-a", "enabled": True, "priority": 10,
         }
         vals.update(extra)
         if vals.get("runtime_agent_id"):
@@ -310,11 +310,11 @@ class TestBranchRuntimeBinding(TransactionCase):
 
     def test_v5_pairing_uses_selected_agent_id_instead_of_another_agent_name(self):
         wizard = self.env["print_gateway.pair_agent_wizard"].create({
-            "config_id": self.config.id, "branch_id": self.branch.id, "agent_id": "agent-b",
+            "config_id": self.config.id, "branch_id": self.branch.id, "agent_id": "agt_t0000002",
         })
         inventory = [
-            {"id": "agent-a", "name": "agent-b", "lifecycle": "active"},
-            {"id": "agent-b", "name": "Kitchen workstation", "lifecycle": "active"},
+            {"id": "agt_t0000001", "name": "agt_t0000002", "lifecycle": "active"},
+            {"id": "agt_t0000002", "name": "Kitchen workstation", "lifecycle": "active"},
         ]
         with patch("odoo.addons.print_gateway.models.gateway_config.requests.get", return_value=Response({"agents": inventory})), \
              patch("odoo.addons.print_gateway.models.gateway_config.PrintGatewayConfig._validate_gateway_host", return_value=None):
@@ -322,14 +322,14 @@ class TestBranchRuntimeBinding(TransactionCase):
         assignments = self.env["print_gateway.runtime_agent_assignment"].search([
             ("company_id", "=", self.company.id), ("branch_id", "=", self.branch.id),
         ])
-        self.assertEqual(assignments.mapped("runtime_agent_id"), ["agent-b"])
+        self.assertEqual(assignments.mapped("runtime_agent_id"), ["agt_t0000002"])
         self.assertTrue(assignments.enabled)
 
     def test_v5_pairing_reenables_existing_assignment_only_in_the_selected_scope(self):
-        selected = self._ensure_assignment("agent-a", branch=self.branch, enabled=False)
-        root = self._ensure_assignment("agent-a", enabled=False)
+        selected = self._ensure_assignment("agt_t0000001", branch=self.branch, enabled=False)
+        root = self._ensure_assignment("agt_t0000001", enabled=False)
         wizard = self.env["print_gateway.pair_agent_wizard"].create({
-            "config_id": self.config.id, "branch_id": self.branch.id, "agent_id": "agent-a",
+            "config_id": self.config.id, "branch_id": self.branch.id, "agent_id": "agt_t0000001",
         })
         with patch("odoo.addons.print_gateway.models.gateway_config.requests.get", return_value=Response({"agents": self.agents})), \
              patch("odoo.addons.print_gateway.models.gateway_config.PrintGatewayConfig._validate_gateway_host", return_value=None):
@@ -339,18 +339,18 @@ class TestBranchRuntimeBinding(TransactionCase):
         self.assertFalse(root.enabled)
         self.assertEqual(self.env["print_gateway.runtime_agent_assignment"].search_count([
             ("company_id", "=", self.company.id), ("branch_id", "=", self.branch.id),
-            ("runtime_agent_id", "=", "agent-a"),
+            ("runtime_agent_id", "=", "agt_t0000001"),
         ]), 1)
 
     def test_v5_pairing_rejects_name_only_match_and_malformed_inventory(self):
         wizard = self.env["print_gateway.pair_agent_wizard"].create({
-            "config_id": self.config.id, "branch_id": self.branch.id, "agent_id": "agent-b",
+            "config_id": self.config.id, "branch_id": self.branch.id, "agent_id": "agt_t0000002",
         })
         inventories = [
-            ([{"id": "agent-a", "name": "agent-b", "lifecycle": "active"}], "not found"),
+            ([{"id": "agt_t0000001", "name": "agt_t0000002", "lifecycle": "active"}], "not found"),
             ([{"id": 17, "lifecycle": "active"}, None], "not found"),
             (None, "invalid agent discovery response"),
-            ({"id": "agent-b"}, "invalid agent discovery response"),
+            ({"id": "agt_t0000002"}, "invalid agent discovery response"),
         ]
         for inventory, message in inventories:
             with self.subTest(inventory=inventory), \
@@ -368,7 +368,7 @@ class TestBranchRuntimeBinding(TransactionCase):
             model.create({
                 "company_id": self.company.id,
                 "branch_id": self.company.id,
-                "runtime_agent_id": "agent-root-as-branch",
+                "runtime_agent_id": "agt_t0000015",
                 "enabled": True,
             })
 
@@ -377,7 +377,7 @@ class TestBranchRuntimeBinding(TransactionCase):
         assignment_model.create({
             "company_id": self.company.id,
             "branch_id": False,
-            "runtime_agent_id": "agent-root-as-branch",
+            "runtime_agent_id": "agt_t0000015",
             "enabled": True,
         })
         report = self._report()
@@ -389,7 +389,7 @@ class TestBranchRuntimeBinding(TransactionCase):
                 "destination_report_id": report.id,
                 "report_id": report.id,
                 "printer_protocol": "escpos",
-                "runtime_agent_id": "agent-root-as-branch",
+                "runtime_agent_id": "agt_t0000015",
                 "printer_id": "printer-a",
                 "enabled": True,
                 "priority": 95,
@@ -424,30 +424,30 @@ class TestBranchRuntimeBinding(TransactionCase):
             record = self.env["print_gateway.binding"].new({
                 "company_id": self.branch.id,
                 "branch_id": False,
-                "runtime_agent_id": "agent-a",
+                "runtime_agent_id": "agt_t0000001",
                 "printer_id": "printer-a",
             })
             record._check_company_hierarchy()
 
     def test_branch_from_another_company_is_rejected(self):
         with self.assertRaises(ValidationError):
-            record = self.env["print_gateway.binding"].new({"company_id": self.company.id, "branch_id": self.other_branch.id, "runtime_agent_id": "agent-a", "printer_id": "printer-a"})
+            record = self.env["print_gateway.binding"].new({"company_id": self.company.id, "branch_id": self.other_branch.id, "runtime_agent_id": "agt_t0000001", "printer_id": "printer-a"})
             record._check_company_hierarchy()
 
     def test_unauthorized_company_is_rejected(self):
         restricted = self.env(context=dict(self.env.context, allowed_company_ids=[self.company.id]))
         with self.assertRaises(ValidationError):
-            record = restricted["print_gateway.binding"].new({"company_id": self.other_company.id, "branch_id": self.other_branch.id, "runtime_agent_id": "agent-b", "printer_id": "printer-b"})
+            record = restricted["print_gateway.binding"].new({"company_id": self.other_company.id, "branch_id": self.other_branch.id, "runtime_agent_id": "agt_t0000002", "printer_id": "printer-b"})
             record._check_runtime_scope()
 
     def test_retired_agent_is_rejected_on_hardware_verification(self):
         self.env["print_gateway.runtime_agent_assignment"].create({
             "company_id": self.company.id,
             "branch_id": self.branch.id,
-            "runtime_agent_id": "agent-old",
+            "runtime_agent_id": "agt_t0000012",
             "enabled": True,
         })
-        binding = self.env["print_gateway.binding"].create(self._values(runtime_agent_id="agent-old"))
+        binding = self.env["print_gateway.binding"].create(self._values(runtime_agent_id="agt_t0000012"))
         with patch("odoo.addons.print_gateway.models.binding.requests.get", return_value=Response({"agents": self.agents})), patch("odoo.addons.print_gateway.models.gateway_config.PrintGatewayConfig._validate_gateway_host", return_value=None):
             with self.assertRaises(ValidationError):
                 binding.action_verify_remote_hardware()
@@ -539,11 +539,11 @@ class TestBranchRuntimeBinding(TransactionCase):
     def test_printer_from_another_agent_is_rejected(self):
         self.env["print_gateway.runtime_agent_assignment"].create({
             "company_id": self.company.id, "branch_id": self.branch.id,
-            "runtime_agent_id": "agent-a", "enabled": True,
+            "runtime_agent_id": "agt_t0000001", "enabled": True,
         })
         with patch("odoo.addons.print_gateway.models.binding.requests.get", side_effect=self._gets()), patch("odoo.addons.print_gateway.models.gateway_config.PrintGatewayConfig._validate_gateway_host", return_value=None):
             with self.assertRaises(ValidationError) as rejected:
-                record = self.env["print_gateway.binding"].new({"company_id": self.company.id, "branch_id": self.branch.id, "runtime_agent_id": "agent-a", "printer_id": "printer-b"})
+                record = self.env["print_gateway.binding"].new({"company_id": self.company.id, "branch_id": self.branch.id, "runtime_agent_id": "agt_t0000001", "printer_id": "printer-b"})
                 record._validate_runtime_target()
             self.assertIn("does not belong", str(rejected.exception))
 
@@ -557,15 +557,15 @@ class TestBranchRuntimeBinding(TransactionCase):
     def test_valid_full_binding_uses_existing_branch_agent_assignment(self):
         with patch("odoo.addons.print_gateway.models.binding.requests.get", side_effect=self._gets()), patch("odoo.addons.print_gateway.models.gateway_config.PrintGatewayConfig._validate_gateway_host", return_value=None):
             binding = self.env["print_gateway.binding"].create(self._values())
-        self.assertEqual((binding.company_id.id, binding.branch_id.id, binding.runtime_agent_id, binding.printer_id), (self.company.id, self.branch.id, "agent-a", "printer-a"))
+        self.assertEqual((binding.company_id.id, binding.branch_id.id, binding.runtime_agent_id, binding.printer_id), (self.company.id, self.branch.id, "agt_t0000001", "printer-a"))
         assignment = self.env["print_gateway.runtime_agent_assignment"].search([("company_id", "=", self.company.id), ("branch_id", "=", self.branch.id)], limit=1)
-        self.assertEqual(assignment.runtime_agent_id, "agent-a")
+        self.assertEqual(assignment.runtime_agent_id, "agt_t0000001")
 
     def test_persisted_binding_reopens_with_same_context(self):
         with patch("odoo.addons.print_gateway.models.binding.requests.get", side_effect=self._gets()), patch("odoo.addons.print_gateway.models.gateway_config.PrintGatewayConfig._validate_gateway_host", return_value=None):
             binding = self.env["print_gateway.binding"].create(self._values(priority=20))
         reopened = self.env["print_gateway.binding"].browse(binding.id)
-        self.assertEqual((reopened.company_id.id, reopened.branch_id.id, reopened.runtime_agent_id, reopened.printer_id), (self.company.id, self.branch.id, "agent-a", "printer-a"))
+        self.assertEqual((reopened.company_id.id, reopened.branch_id.id, reopened.runtime_agent_id, reopened.printer_id), (self.company.id, self.branch.id, "agt_t0000001", "printer-a"))
 
     def test_find_for_prefers_branch_binding(self):
         with patch("odoo.addons.print_gateway.models.binding.requests.get", side_effect=self._gets()), patch("odoo.addons.print_gateway.models.gateway_config.PrintGatewayConfig._validate_gateway_host", return_value=None):
@@ -589,7 +589,7 @@ class TestBranchRuntimeBinding(TransactionCase):
         with patch("odoo.addons.print_gateway.models.binding.requests.get", side_effect=self._gets()), patch("odoo.addons.print_gateway.models.gateway_config.PrintGatewayConfig._validate_gateway_host", return_value=None):
             binding = self.env["print_gateway.binding"].create(self._values(priority=40))
         assignment = self.env["print_gateway.runtime_agent_assignment"].search([
-            ("company_id", "=", self.company.id), ("branch_id", "=", self.branch.id), ("runtime_agent_id", "=", "agent-a"),
+            ("company_id", "=", self.company.id), ("branch_id", "=", self.branch.id), ("runtime_agent_id", "=", "agt_t0000001"),
         ])
         self.assertTrue(assignment)
         binding.unlink()
@@ -599,21 +599,21 @@ class TestBranchRuntimeBinding(TransactionCase):
         with patch("odoo.addons.print_gateway.models.binding.requests.get", side_effect=self._gets()), patch("odoo.addons.print_gateway.models.gateway_config.PrintGatewayConfig._validate_gateway_host", return_value=None):
             binding = self.env["print_gateway.binding"].create(self._values(priority=50))
         assignment = self.env["print_gateway.runtime_agent_assignment"].search([
-            ("company_id", "=", self.company.id), ("branch_id", "=", self.branch.id), ("runtime_agent_id", "=", "agent-a"),
+            ("company_id", "=", self.company.id), ("branch_id", "=", self.branch.id), ("runtime_agent_id", "=", "agt_t0000001"),
         ])
         self.assertTrue(assignment)
         binding.write({"enabled": False})
         self.assertTrue(assignment.exists())
 
     def test_pos_receipt_binding_does_not_require_report(self):
-        self._ensure_assignment("agent-a")
+        self._ensure_assignment("agt_t0000001")
         binding = self.env["print_gateway.binding"].new({
             "company_id": self.company.id,
             "branch_id": False,
             "destination_type": "pos",
             "destination_pos_config_id": self.pos_config,
             "report_id": False,
-            "runtime_agent_id": "agent-a",
+            "runtime_agent_id": "agt_t0000001",
             "printer_id": "printer-a",
             "printer_protocol": "spooler",
             "enabled": True,
@@ -634,7 +634,7 @@ class TestBranchRuntimeBinding(TransactionCase):
             ("company_id", "in", [False, self.company.id]),
         ], limit=1)
         self.assertTrue(picking_type, "Odoo stock must supply a picking type")
-        self._ensure_assignment("agent-a")
+        self._ensure_assignment("agt_t0000001")
 
         for offset, protocol in enumerate(("zpl", "tspl", "escpos", "raw")):
             binding = self.env["print_gateway.binding"].create({
@@ -644,7 +644,7 @@ class TestBranchRuntimeBinding(TransactionCase):
                 "destination_picking_type_id": picking_type.id,
                 "report_id": False,
                 "printer_protocol": protocol,
-                "runtime_agent_id": "agent-a",
+                "runtime_agent_id": "agt_t0000001",
                 "printer_id": "printer-a",
                 "priority": 700 + offset,
             })
@@ -662,14 +662,14 @@ class TestBranchRuntimeBinding(TransactionCase):
             ("company_id", "in", [False, self.company.id]),
         ], limit=1)
         self.assertTrue(picking_type)
-        self._ensure_assignment("agent-a")
+        self._ensure_assignment("agt_t0000001")
         binding = self.env["print_gateway.binding"].create({
             "company_id": self.company.id,
             "destination_type": "picking_type",
             "destination_picking_type_id": picking_type.id,
             "report_id": False,
             "printer_protocol": "zpl",
-            "runtime_agent_id": "agent-a",
+            "runtime_agent_id": "agt_t0000001",
             "printer_id": "printer-a",
             "priority": 711,
         })
@@ -687,7 +687,7 @@ class TestBranchRuntimeBinding(TransactionCase):
             config.write({"printer_ids": [(4, printer.id)]})
 
     def test_gateway_kitchen_binding_rejects_non_preparation_printer_destination(self):
-        self._ensure_assignment("agent-a")
+        self._ensure_assignment("agt_t0000001")
         category = self.env["pos.category"].create({"name": "Non Preparation Category"})
         printer = self.env["pos.printer"].create({
             "name": "Non Preparation Printer",
@@ -709,7 +709,7 @@ class TestBranchRuntimeBinding(TransactionCase):
             "destination_pos_config_id": False,
             "destination_pos_printer_id": printer,
             "report_id": False,
-            "runtime_agent_id": "agent-a",
+            "runtime_agent_id": "agt_t0000001",
             "printer_id": "printer-a",
             "printer_protocol": "escpos",
             "enabled": True,
@@ -720,7 +720,7 @@ class TestBranchRuntimeBinding(TransactionCase):
             binding._check_binding()
 
     def test_gateway_kitchen_binding_can_target_native_preparation_printer(self):
-        self._ensure_assignment("agent-a")
+        self._ensure_assignment("agt_t0000001")
         category = self.env["pos.category"].create({"name": "Gateway Kitchen Category"})
         printer = self.env["pos.printer"].create({
             "name": "Gateway Preparation Printer",
@@ -736,7 +736,7 @@ class TestBranchRuntimeBinding(TransactionCase):
             "destination_pos_config_id": False,
             "destination_pos_printer_id": printer,
             "report_id": False,
-            "runtime_agent_id": "agent-a",
+            "runtime_agent_id": "agt_t0000001",
             "printer_id": "printer-a",
             "printer_protocol": "escpos",
             "enabled": True,
@@ -752,7 +752,7 @@ class TestBranchRuntimeBinding(TransactionCase):
         binding._check_binding()
 
     def test_gateway_kitchen_binding_does_not_require_odoo_kitchen_printer(self):
-        self._ensure_assignment("agent-a")
+        self._ensure_assignment("agt_t0000001")
         binding = self.env["print_gateway.binding"].new({
             "company_id": self.company.id,
             "branch_id": False,
@@ -760,7 +760,7 @@ class TestBranchRuntimeBinding(TransactionCase):
             "destination_pos_config_id": self.pos_config,
             "destination_pos_printer_id": False,
             "report_id": False,
-            "runtime_agent_id": "agent-a",
+            "runtime_agent_id": "agt_t0000001",
             "printer_id": "printer-a",
             "printer_protocol": "escpos",
             "enabled": True,
@@ -777,7 +777,7 @@ class TestBranchRuntimeBinding(TransactionCase):
         binding._check_binding()
 
     def test_report_binding_uses_the_single_authoritative_report_field(self):
-        self._ensure_assignment("agent-a")
+        self._ensure_assignment("agt_t0000001")
         report = self._report()
         binding = self.env["print_gateway.binding"].new({
             "company_id": self.company.id,
@@ -785,7 +785,7 @@ class TestBranchRuntimeBinding(TransactionCase):
             "destination_type": "report",
             "destination_report_id": False,
             "report_id": report,
-            "runtime_agent_id": "agent-a",
+            "runtime_agent_id": "agt_t0000001",
             "printer_id": "printer-a",
             "printer_protocol": "spooler",
             "enabled": True,
@@ -812,7 +812,7 @@ class TestBranchRuntimeBinding(TransactionCase):
             "destination_type": "report",
             "destination_report_id": other_report,
             "report_id": report,
-            "runtime_agent_id": "agent-a",
+            "runtime_agent_id": "agt_t0000001",
             "printer_id": "printer-a",
             "printer_protocol": "spooler",
             "enabled": True,
@@ -834,7 +834,7 @@ class TestBranchRuntimeBinding(TransactionCase):
                 "company_id": self.company.id,
             }),
             "report_id": False,
-            "runtime_agent_id": "agent-a",
+            "runtime_agent_id": "agt_t0000001",
             "printer_id": "printer-a",
             "printer_protocol": "escpos",
             "enabled": True,
@@ -866,7 +866,7 @@ class TestBranchRuntimeBinding(TransactionCase):
         self.env["print_gateway.runtime_agent_assignment"].create({
             "company_id": self.company.id,
             "branch_id": second_branch.id,
-            "runtime_agent_id": "agent-b",
+            "runtime_agent_id": "agt_t0000002",
             "enabled": True,
         })
         report = self._report()
@@ -878,7 +878,7 @@ class TestBranchRuntimeBinding(TransactionCase):
                 "destination_report_id": report.id,
                 "report_id": report.id,
                 "printer_protocol": "escpos",
-                "runtime_agent_id": "agent-b",
+                "runtime_agent_id": "agt_t0000002",
                 "printer_id": "printer-b",
                 "enabled": True,
                 "priority": 97,
@@ -887,8 +887,8 @@ class TestBranchRuntimeBinding(TransactionCase):
     def test_runtime_printer_discovery_rejects_agent_assigned_to_another_branch(self):
         second_branch = self.env["res.company"].create({"name": "Gateway Branch 2", "parent_id": self.company.id})
         assignment_model = self.env["print_gateway.runtime_agent_assignment"]
-        branch_agent = "agent-a-%s" % self.branch.id
-        other_branch_agent = "agent-b-%s" % second_branch.id
+        branch_agent = "agt_a%07d" % self.branch.id
+        other_branch_agent = "agt_b%07d" % second_branch.id
         assignment_model.create({
             "company_id": self.company.id,
             "branch_id": self.branch.id,
@@ -923,13 +923,13 @@ class TestBranchRuntimeBinding(TransactionCase):
         assignment_model.create({
             "company_id": self.company.id,
             "branch_id": self.branch.id,
-            "runtime_agent_id": "agent-a",
+            "runtime_agent_id": "agt_t0000001",
             "enabled": True,
         })
         assignment_model.create({
             "company_id": self.company.id,
             "branch_id": second_branch.id,
-            "runtime_agent_id": "agent-b",
+            "runtime_agent_id": "agt_t0000002",
             "enabled": True,
         })
 
@@ -946,7 +946,7 @@ class TestBranchRuntimeBinding(TransactionCase):
                     branch_id=self.branch.id,
                     assignment_only=True,
                 )
-                self.assertEqual([agent["id"] for agent in result["agents"]], ["agent-a"])
+                self.assertEqual([agent["id"] for agent in result["agents"]], ["agt_t0000001"])
 
             with patch.object(controller, "_scope", return_value=(self.company, second_branch)):
                 result = controller.runtime_agents(
@@ -954,15 +954,15 @@ class TestBranchRuntimeBinding(TransactionCase):
                     branch_id=second_branch.id,
                     assignment_only=True,
                 )
-                self.assertEqual([agent["id"] for agent in result["agents"]], ["agent-b"])
+                self.assertEqual([agent["id"] for agent in result["agents"]], ["agt_t0000002"])
 
             # Company-wide assignments are available to Company-only bindings,
             # but are not inherited by a Branch-scoped binding.
-            self.agents.append({"id": "agent-company-wide", "name": "Company Wide Agent", "status": "online", "lifecycle": "active"})
+            self.agents.append({"id": "agt_t0000005", "name": "Company Wide Agent", "status": "online", "lifecycle": "active"})
             assignment_model.create({
                 "company_id": self.company.id,
                 "branch_id": False,
-                "runtime_agent_id": "agent-company-wide",
+                "runtime_agent_id": "agt_t0000005",
                 "enabled": True,
             })
             with patch.object(controller, "_scope", return_value=(self.company, self.branch)):
@@ -973,7 +973,7 @@ class TestBranchRuntimeBinding(TransactionCase):
                 )
                 self.assertEqual(
                     [agent["id"] for agent in result["agents"]],
-                    ["agent-a"],
+                    ["agt_t0000001"],
                 )
 
             with patch.object(controller, "_scope", return_value=(self.company, False)):
@@ -984,7 +984,7 @@ class TestBranchRuntimeBinding(TransactionCase):
                 )
                 self.assertEqual(
                     [agent["id"] for agent in result["agents"]],
-                    ["agent-a", "agent-b", "agent-company-wide"],
+                    ["agt_t0000001", "agt_t0000002", "agt_t0000005"],
                 )
 
             with patch.object(controller, "_scope", return_value=(self.company, self.branch)):
@@ -995,7 +995,7 @@ class TestBranchRuntimeBinding(TransactionCase):
                 )
                 self.assertEqual(
                     [agent["id"] for agent in result["agents"]],
-                    ["agent-a", "agent-b", "agent-company-wide"],
+                    ["agt_t0000001", "agt_t0000002", "agt_t0000005"],
                 )
 
     def test_runtime_assignment_defaults_to_root_company_from_branch_context(self):
@@ -1009,13 +1009,13 @@ class TestBranchRuntimeBinding(TransactionCase):
         model.create({
             "company_id": self.company.id,
             "branch_id": self.branch.id,
-            "runtime_agent_id": "agent-branch",
+            "runtime_agent_id": "agt_t0000004",
             "enabled": True,
         })
         model.create({
             "company_id": self.company.id,
             "branch_id": False,
-            "runtime_agent_id": "agent-company-wide",
+            "runtime_agent_id": "agt_t0000005",
             "enabled": True,
         })
         second_branch = self.env["res.company"].create({
@@ -1025,28 +1025,28 @@ class TestBranchRuntimeBinding(TransactionCase):
         model.create({
             "company_id": self.company.id,
             "branch_id": second_branch.id,
-            "runtime_agent_id": "agent-other-branch",
+            "runtime_agent_id": "agt_t0000013",
             "enabled": True,
         })
 
         self.assertEqual(
             model.assigned_agent_ids(self.company, self.branch),
-            {"agent-branch"},
+            {"agt_t0000004"},
         )
         self.assertEqual(
             model.assigned_agent_ids(self.company, second_branch),
-            {"agent-other-branch"},
+            {"agt_t0000013"},
         )
         self.assertEqual(
             model.assigned_agent_ids(self.company, False),
-            {"agent-branch", "agent-other-branch", "agent-company-wide"},
+            {"agt_t0000004", "agt_t0000013", "agt_t0000005"},
         )
-        self.assertFalse(model.is_agent_assigned(self.company, self.branch, "agent-company-wide"))
-        self.assertTrue(model.is_agent_assigned(self.company, self.branch, "agent-branch"))
-        self.assertFalse(model.is_agent_assigned(self.company, self.branch, "agent-other-branch"))
-        self.assertTrue(model.is_agent_assigned(self.company, False, "agent-company-wide"))
-        self.assertTrue(model.is_agent_assigned(self.company, False, "agent-branch"))
-        self.assertTrue(model.is_agent_assigned(self.company, False, "agent-other-branch"))
+        self.assertFalse(model.is_agent_assigned(self.company, self.branch, "agt_t0000005"))
+        self.assertTrue(model.is_agent_assigned(self.company, self.branch, "agt_t0000004"))
+        self.assertFalse(model.is_agent_assigned(self.company, self.branch, "agt_t0000013"))
+        self.assertTrue(model.is_agent_assigned(self.company, False, "agt_t0000005"))
+        self.assertTrue(model.is_agent_assigned(self.company, False, "agt_t0000004"))
+        self.assertTrue(model.is_agent_assigned(self.company, False, "agt_t0000013"))
 
     def test_company_wide_binding_validates_remote_target(self):
         assignment_model = self.env["print_gateway.runtime_agent_assignment"]
@@ -1055,7 +1055,7 @@ class TestBranchRuntimeBinding(TransactionCase):
         assignment_model.create({
             "company_id": self.company.id,
             "branch_id": False,
-            "runtime_agent_id": "agent-a",
+            "runtime_agent_id": "agt_t0000001",
             "enabled": True,
         })
         with patch(
@@ -1067,7 +1067,7 @@ class TestBranchRuntimeBinding(TransactionCase):
         ):
             binding = self.env["print_gateway.binding"].create(self._values(
                 branch_id=False,
-                runtime_agent_id="agent-a",
+                runtime_agent_id="agt_t0000001",
                 printer_id="printer-a",
                 priority=99,
             ))
@@ -1083,7 +1083,7 @@ class TestBranchRuntimeBinding(TransactionCase):
                 "destination_type": "report",
                 "destination_report_id": self._report().id,
                 "report_id": self._report().id,
-                "runtime_agent_id": "agent-root-unassigned",
+                "runtime_agent_id": "agt_t0000018",
                 "printer_id": "printer-a",
                 "printer_protocol": "escpos",
                 "enabled": True,
@@ -1095,16 +1095,16 @@ class TestBranchRuntimeBinding(TransactionCase):
         self.env["print_gateway.runtime_agent_assignment"].create({
             "company_id": self.company.id,
             "branch_id": self.branch.id,
-            "runtime_agent_id": "agent-root-assigned",
+            "runtime_agent_id": "agt_t0000016",
             "enabled": True,
         })
         binding = binding_model.create(self._values(
             branch_id=False,
-            runtime_agent_id="agent-root-assigned",
+            runtime_agent_id="agt_t0000016",
             printer_id="printer-a",
             priority=97,
         ))
-        self.assertEqual(binding.runtime_agent_id, "agent-root-assigned")
+        self.assertEqual(binding.runtime_agent_id, "agt_t0000016")
 
     def test_duplicate_company_wide_print_route_priorities_are_rejected(self):
         """A NULL Branch is still one scope for the same company and source."""
@@ -1125,7 +1125,7 @@ class TestBranchRuntimeBinding(TransactionCase):
         model.create({
             "company_id": self.company.id,
             "branch_id": False,
-            "runtime_agent_id": "agent-company-wide-duplicate",
+            "runtime_agent_id": "agt_t0000006",
             "enabled": True,
         })
         with self.env.cr.savepoint():
@@ -1133,7 +1133,7 @@ class TestBranchRuntimeBinding(TransactionCase):
                 model.create({
                     "company_id": self.company.id,
                     "branch_id": False,
-                    "runtime_agent_id": "agent-company-wide-duplicate",
+                    "runtime_agent_id": "agt_t0000006",
                     "enabled": True,
                 })
             self.assertIn("company_wide", str(ctx.exception))
@@ -1143,22 +1143,22 @@ class TestBranchRuntimeBinding(TransactionCase):
         model.create({
             "company_id": self.company.id,
             "branch_id": self.branch.id,
-            "runtime_agent_id": "agent-write-a",
+            "runtime_agent_id": "agt_t0000023",
             "enabled": True,
         })
         model.create({
             "company_id": self.company.id,
             "branch_id": self.branch.id,
-            "runtime_agent_id": "agent-write-b",
+            "runtime_agent_id": "agt_t0000024",
             "enabled": True,
         })
         binding = self.env["print_gateway.binding"].create(self._values(
-            runtime_agent_id="agent-write-a",
+            runtime_agent_id="agt_t0000023",
             printer_id="printer-a",
             priority=98,
         ))
-        binding.write({"runtime_agent_id": "agent-write-b"})
-        self.assertEqual(binding.runtime_agent_id, "agent-write-b")
+        binding.write({"runtime_agent_id": "agt_t0000024"})
+        self.assertEqual(binding.runtime_agent_id, "agt_t0000024")
 
     def test_runtime_printer_scope_rejects_root_company_branch_parameter(self):
         from odoo.addons.print_gateway.controllers.runtime_printers import PrintGatewayRuntimePrinterController
@@ -1175,7 +1175,7 @@ class TestBranchRuntimeBinding(TransactionCase):
                 controller.runtime_printers(
                     company_id=self.company.id,
                     branch_id=False,
-                    agent_id="agent-unassigned",
+                    agent_id="agt_t0000022",
                 )
             remote_get.assert_not_called()
 
@@ -1184,20 +1184,20 @@ class TestBranchRuntimeBinding(TransactionCase):
             self.env["print_gateway.runtime_agent_assignment"].create({
                 "company_id": self.company.id,
                 "branch_id": self.branch.id,
-                "runtime_agent_id": "agent-b",
+                "runtime_agent_id": "agt_t0000002",
                 "enabled": True,
             })
             result = controller.runtime_printers(
                 company_id=self.company.id,
                 branch_id=False,
-                agent_id="agent-b",
+                agent_id="agt_t0000002",
             )
             self.assertEqual([printer["id"] for printer in result["printers"]], ["printer-b"])
 
     def test_runtime_agent_assignment_scope_is_exact_to_selected_branch(self):
         assignment_model = self.env["print_gateway.runtime_agent_assignment"]
-        branch_agent = "agent-a-%s" % self.branch.id
-        cross_branch_agent = "agent-b-%s" % self.branch.id
+        branch_agent = "agt_a%07d" % self.branch.id
+        cross_branch_agent = "agt_b%07d" % self.branch.id
         assignment_model.create({
             "company_id": self.company.id,
             "branch_id": self.branch.id,
@@ -1214,7 +1214,7 @@ class TestBranchRuntimeBinding(TransactionCase):
         assignment_model.create({
             "company_id": self.company.id,
             "branch_id": second_branch.id,
-            "runtime_agent_id": "agent-c-%s" % second_branch.id,
+            "runtime_agent_id": "agt_c%07d" % second_branch.id,
             "enabled": True,
         })
         from odoo.addons.print_gateway.controllers.runtime_printers import PrintGatewayRuntimePrinterController
@@ -1222,28 +1222,28 @@ class TestBranchRuntimeBinding(TransactionCase):
         assignment_model.create({
             "company_id": self.company.id,
             "branch_id": False,
-            "runtime_agent_id": "agent-company-wide",
+            "runtime_agent_id": "agt_t0000005",
             "enabled": True,
         })
         branch_agents = controller._assigned_runtime_agent_ids(self.company, self.branch, env=self.env)
         other_branch_agents = controller._assigned_runtime_agent_ids(self.company, second_branch, env=self.env)
         self.assertEqual(branch_agents, {branch_agent, cross_branch_agent})
-        self.assertEqual(other_branch_agents, {"agent-c-%s" % second_branch.id})
+        self.assertEqual(other_branch_agents, {"agt_c%07d" % second_branch.id})
 
         router = self.env["print_gateway.print_router"]
         with self.assertRaises(ValidationError):
-            router._assert_branch_agent_assignment(self.company, self.branch, "agent-company-wide")
+            router._assert_branch_agent_assignment(self.company, self.branch, "agt_t0000005")
         with self.assertRaises(ValidationError):
-            router._assert_branch_agent_assignment(self.company, self.branch, "agent-not-assigned")
-        router._assert_branch_agent_assignment(self.company, False, "agent-company-wide")
+            router._assert_branch_agent_assignment(self.company, self.branch, "agt_t0000011")
+        router._assert_branch_agent_assignment(self.company, False, "agt_t0000005")
         with self.assertRaises(ValidationError):
-            router._assert_branch_agent_assignment(self.company, False, "agent-not-assigned")
+            router._assert_branch_agent_assignment(self.company, False, "agt_t0000011")
 
     def test_branch_binding_rejects_company_wide_agent_assignment(self):
         self.env["print_gateway.runtime_agent_assignment"].create({
             "company_id": self.company.id,
             "branch_id": False,
-            "runtime_agent_id": "agent-company-wide",
+            "runtime_agent_id": "agt_t0000005",
             "enabled": True,
         })
         with self.assertRaises(ValidationError):
@@ -1253,7 +1253,7 @@ class TestBranchRuntimeBinding(TransactionCase):
                 "destination_type": "report",
                 "destination_report_id": self._report().id,
                 "report_id": self._report().id,
-                "runtime_agent_id": "agent-company-wide",
+                "runtime_agent_id": "agt_t0000005",
                 "printer_id": "printer-a",
                 "printer_protocol": "escpos",
                 "enabled": True,
@@ -1265,18 +1265,18 @@ class TestBranchRuntimeBinding(TransactionCase):
         first = model.create({
             "company_id": self.company.id,
             "branch_id": self.branch.id,
-            "runtime_agent_id": "agent-extra-a",
+            "runtime_agent_id": "agt_t0000009",
             "enabled": True,
         })
         second = model.create({
             "company_id": self.company.id,
             "branch_id": self.branch.id,
-            "runtime_agent_id": "agent-extra-b",
+            "runtime_agent_id": "agt_t0000010",
             "enabled": True,
         })
         self.assertEqual(
             {first.runtime_agent_id, second.runtime_agent_id},
-            {"agent-extra-a", "agent-extra-b"},
+            {"agt_t0000009", "agt_t0000010"},
         )
 
     def test_duplicate_same_agent_assignment_is_rejected(self):
@@ -1284,7 +1284,7 @@ class TestBranchRuntimeBinding(TransactionCase):
         model.create({
             "company_id": self.company.id,
             "branch_id": self.branch.id,
-            "runtime_agent_id": "agent-duplicate",
+            "runtime_agent_id": "agt_t0000008",
             "enabled": True,
         })
         with self.env.cr.savepoint():
@@ -1292,7 +1292,7 @@ class TestBranchRuntimeBinding(TransactionCase):
                 model.create({
                     "company_id": self.company.id,
                     "branch_id": self.branch.id,
-                    "runtime_agent_id": "agent-duplicate",
+                    "runtime_agent_id": "agt_t0000008",
                     "enabled": True,
                 })
             self.assertIn("print_gateway_runtime_agent_assignment_agent_unique", str(ctx.exception))
@@ -1303,17 +1303,17 @@ class TestBranchRuntimeBinding(TransactionCase):
             model.search_count([
                 ("company_id", "=", self.company.id),
                 ("branch_id", "=", self.branch.id),
-                ("runtime_agent_id", "=", "agent-duplicate"),
+                ("runtime_agent_id", "=", "agt_t0000008"),
             ]),
             1,
         )
         recovered = model.create({
             "company_id": self.company.id,
             "branch_id": self.branch.id,
-            "runtime_agent_id": "agent-recovered",
+            "runtime_agent_id": "agt_t0000014",
             "enabled": True,
         })
-        self.assertEqual(recovered.runtime_agent_id, "agent-recovered")
+        self.assertEqual(recovered.runtime_agent_id, "agt_t0000014")
 
 
     def test_branch_admin_cannot_mutate_root_gateway_config_or_company_wide_rules(self):
@@ -1338,7 +1338,7 @@ class TestBranchRuntimeBinding(TransactionCase):
         )
         branch_env = self.env(user=branch_admin, context={"allowed_company_ids": [self.branch.id]})
         with StandardTestCase.assertRaises(self, (AccessError, ValidationError)), self.env.cr.savepoint():
-            self.config.with_env(branch_env).write({"runtime_agent_id": "forbidden-root-agent"})
+            self.config.with_env(branch_env).write({"runtime_agent_id": "agt_t0000027"})
         policy_values = {
             "name": "Forbidden Root Policy",
             "company_id": self.company.id,

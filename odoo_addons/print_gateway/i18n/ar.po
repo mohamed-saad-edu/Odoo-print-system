@@ -2663,8 +2663,8 @@ msgstr "أعادت Print Gateway استجابة غير صالحة لتفاصيل
 #. module: print_gateway
 #. odoo-python
 #: code:addons/print_gateway/models/print_job.py:0
-msgid "Print Job #%s completed by Gateway agent on '%s'"
-msgstr "أكمل وكيل الـ Gateway مهمة الطباعة رقم %s على '%s'"
+msgid "Print Job #%s reported successful by Gateway agent on '%s'; check output."
+msgstr "أبلغ وكيل الـ Gateway بنجاح مهمة الطباعة رقم %s على '%s'؛ تحقق من الناتج."
 
 #. module: print_gateway
 #. odoo-python
@@ -5063,3 +5063,10 @@ msgstr "يجب إدخال معرّف صحيح ومطابق تمامًا لوكي
 #: code:addons/print_gateway/static/src/js/report_interceptor.js:0
 msgid "Print routing returned conflicting status. Native PDF download cancelled. Check Print Activity and the printer before retrying."
 msgstr "وردت حالة متعارضة لتوجيه الطباعة. أُلغي تنزيل ملف PDF المعتاد. راجع سجل الطباعة والطابعة قبل إعادة المحاولة."
+
+#. module: print_gateway
+#. odoo-javascript
+#: code:addons/print_gateway/static/src/js/pos_print_router.js:0
+#: code:addons/print_gateway/static/src/js/pos_sale_details_router.js:0
+msgid "Open a POS session before printing."
+msgstr "افتح جلسة نقطة بيع قبل الطباعة."

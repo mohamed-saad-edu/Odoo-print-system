@@ -7,18 +7,19 @@ import { Button, Card, EmptyState, ErrorState, Field, Modal, PageHeader, Segment
 import { fetchWithTimeout } from "../../../lib/fetch-timeout";
 import { useI18n } from "../../../i18n/react";
 import { printerLabel } from "../../../shared/job-vocabulary";
+import { apiMessageKey } from "../../../lib/api-error-keys";
 
 const LIMIT = 40;
 type FleetItem = { id: string; tenantId: string; tenantName: string; name: string; lifecycle: string; status: string; lastSeenAt: string | null; createdAt: string; agentId?: string; agentName?: string | null; protocol?: string | null; inventoryPresent?: boolean; sharedWithGateway?: boolean; };
 const strings = {
-  en: { title: "Fleet control", eyebrow: "Gateway / Fleet", desc: "Workspace-scoped inventory and authorized lifecycle actions. Live observation is distinct from administrative state.", agents: "Agents", printers: "Printers", all: "All lifecycles", active: "Active", disabled: "Disabled", retired: "Retired", search: "Search inventory / workspace", workspace: "Workspace ID (optional)", inventory: "Inventory", node: "Device", owner: "Workspace", health: "Observed", life: "Lifecycle", last: "Last seen", action: "Action", refreshed: "Refresh", empty: "No matching fleet devices", error: "Fleet inventory unavailable", reason: "Reason for change (optional)", close: "Cancel", confirm: "Apply change", confirmTitle: "Confirm a live fleet lifecycle change", explanation: "This writes to the Gateway database and audit trail. Disabling an Agent revokes its credentials and prevents work; enabling it requires a new one-time pairing code.", pairing: "One-time pairing code", pairingHelp: "Provide this code securely to the Agent operator. It is only visible in this dialog and expires after 10 minutes.", notice: "Change saved. Fleet inventory was refreshed.", audit: "Audit history", prev: "Previous", next: "Next", notNow: "No observation", warning: "Enablement also checks the workspace subscription and Agent availability.", remove: "Remove", removeTitle: "Confirm device removal", removeBody: "The Agent and its credentials are permanently deleted. Removing a printer keeps a hidden safety tombstone so heartbeat discovery cannot bring it back. Historical jobs become payload-free receipts.", removed: "Device removed; history was preserved." },
-  ar: { title: "التحكم في الأجهزة", eyebrow: "الجيتواي / الأجهزة", desc: "كل الأيجنت والطابعات للعملاء مع تحكم موثق في دورة حياتها. الحالة التشغيلية مختلفة عن الحالة الإدارية.", agents: "الأيجنت", printers: "الطابعات", all: "كل الحالات", active: "نشط", disabled: "معطل", retired: "متوقف نهائيًا", search: "بحث عن جهاز أو عميل", workspace: "معرّف العميل (اختياري)", inventory: "قائمة الأجهزة", node: "الجهاز", owner: "العميل", health: "الحالة المرصودة", life: "الحالة الإدارية", last: "آخر اتصال", action: "الإجراء", refreshed: "تحديث", empty: "لا توجد أجهزة مطابقة", error: "تعذر تحميل الأجهزة", reason: "سبب التغيير (اختياري)", close: "إلغاء", confirm: "تأكيد التغيير", confirmTitle: "تأكيد إجراء حقيقي على أجهزة الجيتواي", explanation: "الإجراء بيسجل في قاعدة البيانات وسجل التدقيق. تعطيل الأيجنت يلغي بيانات الاتصال؛ تفعيله بيحتاج كود ربط جديد يُعرض مرة واحدة.", pairing: "كود الربط لمرة واحدة", pairingHelp: "سلّم الكود لمشغل الأيجنت بأمان. يظهر في النافذة دي فقط وينتهي خلال 10 دقائق.", notice: "تم تسجيل التغيير وتحديث قائمة الأجهزة.", audit: "سجل التدقيق", prev: "السابق", next: "التالي", notNow: "لا يوجد اتصال مؤكد", warning: "إعادة التفعيل بتتحقق من الاشتراك وحالة الأيجنت المرتبط.", remove: "إزالة", removeTitle: "تأكيد إزالة الجهاز", removeBody: "الأيجنت وبيانات اتصاله هيتحذفوا نهائيًا. الطابعة بيتم إخفاؤها وحفظ سجل منع عودتها عن طريق الاكتشاف التلقائي. بنحتفظ بنتائج الطباعة القديمة بدون محتوى الملفات.", removed: "تمت إزالة الجهاز وحفظ سجل العمليات." },
+  en: { title: "Fleet control", eyebrow: "Gateway / Fleet", desc: "Workspace-scoped inventory and authorized lifecycle actions. Live observation is distinct from administrative state.", agents: "Agents", printers: "Printers", all: "All lifecycles", active: "Active", disabled: "Disabled", retired: "Retired", search: "Search inventory / workspace", workspace: "Workspace ID (optional)", inventory: "Inventory", node: "Device", owner: "Workspace", health: "Observed", life: "Lifecycle", last: "Last seen", action: "Action", refreshed: "Refresh", empty: "No matching fleet devices", error: "Fleet inventory unavailable", reason: "Reason for change (optional)", close: "Cancel", confirm: "Apply change", confirmTitle: "Confirm a live fleet lifecycle change", explanation: "This writes to the Gateway database and audit trail. Disabling an Agent revokes its credentials and prevents work; enabling it requires a new one-time pairing code.", pairing: "One-time pairing code", pairingHelp: "Provide this code securely to the Agent operator. It is only visible in this dialog and expires after 10 minutes.", notice: "Change saved. Fleet inventory was refreshed.", audit: "Audit history", prev: "Previous", next: "Next", notNow: "No observation", warning: "Enablement also checks the workspace subscription and Agent availability.", remove: "Remove", removeTitle: "Confirm device removal", removeBody: "The Agent and its credentials are permanently deleted. Removing a printer keeps a hidden safety tombstone so heartbeat discovery cannot bring it back. Historical jobs become payload-free receipts.", removed: "Device removed; history was preserved.", unconfirmed: "Could not confirm the change. Refresh inventory before deciding whether to try again." },
+  ar: { title: "التحكم في الأجهزة", eyebrow: "الجيتواي / الأجهزة", desc: "كل الأيجنت والطابعات للعملاء مع تحكم موثق في دورة حياتها. الحالة التشغيلية مختلفة عن الحالة الإدارية.", agents: "الأيجنت", printers: "الطابعات", all: "كل الحالات", active: "نشط", disabled: "معطل", retired: "متوقف نهائيًا", search: "بحث عن جهاز أو عميل", workspace: "معرّف العميل (اختياري)", inventory: "قائمة الأجهزة", node: "الجهاز", owner: "العميل", health: "الحالة المرصودة", life: "الحالة الإدارية", last: "آخر اتصال", action: "الإجراء", refreshed: "تحديث", empty: "لا توجد أجهزة مطابقة", error: "تعذر تحميل الأجهزة", reason: "سبب التغيير (اختياري)", close: "إلغاء", confirm: "تأكيد التغيير", confirmTitle: "تأكيد إجراء حقيقي على أجهزة الجيتواي", explanation: "الإجراء بيسجل في قاعدة البيانات وسجل التدقيق. تعطيل الأيجنت يلغي بيانات الاتصال؛ تفعيله بيحتاج كود ربط جديد يُعرض مرة واحدة.", pairing: "كود الربط لمرة واحدة", pairingHelp: "سلّم الكود لمشغل الأيجنت بأمان. يظهر في النافذة دي فقط وينتهي خلال 10 دقائق.", notice: "تم تسجيل التغيير وتحديث قائمة الأجهزة.", audit: "سجل التدقيق", prev: "السابق", next: "التالي", notNow: "لا يوجد اتصال مؤكد", warning: "إعادة التفعيل بتتحقق من الاشتراك وحالة الأيجنت المرتبط.", remove: "إزالة", removeTitle: "تأكيد إزالة الجهاز", removeBody: "الأيجنت وبيانات اتصاله هيتحذفوا نهائيًا. الطابعة بيتم إخفاؤها وحفظ سجل منع عودتها عن طريق الاكتشاف التلقائي. بنحتفظ بنتائج الطباعة القديمة بدون محتوى الملفات.", removed: "تمت إزالة الجهاز وحفظ سجل العمليات.", unconfirmed: "تعذر التأكد من تنفيذ الإجراء. حدّث قائمة الأجهزة قبل اتخاذ قرار إعادة المحاولة." },
 } as const;
 const lifecycleTone = (status: string): Tone => status === "active" ? "ok" : status === "disabled" ? "warn" : "neutral";
 const healthTone = (status: string): Tone => status === "online" ? "ok" : status === "busy" ? "info" : status === "error" ? "bad" : "warn";
 
 export default function PlatformFleetPage() {
-  const { locale, formatDateTime, formatNumber } = useI18n();
+  const { locale, formatDateTime, formatNumber, t: translate } = useI18n();
   const t = strings[locale];
   const [kind, setKind] = useState<"agents" | "printers">("agents");
   const [status, setStatus] = useState("all");
@@ -76,13 +77,22 @@ export default function PlatformFleetPage() {
         method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store",
         body: JSON.stringify({ kind, tenantId: selected.tenantId, id: selected.id, expectedLifecycle: selected.lifecycle, nextLifecycle, reason: reason.trim() }),
       });
-      const data = await response.json().catch(() => null) as { error?: string; pairingCode?: string | null } | null;
-      if (!response.ok) throw Error(data?.error || String(response.status));
+      const data = await response.json().catch(() => null) as { code?: string; ok?: boolean; kind?: string; tenantId?: string; id?: string; lifecycle?: string; pairingCode?: string | null } | null;
+      if (!response.ok) { setActionError(translate(apiMessageKey(data?.code, response.status, "errors.operationFailed"))); return; }
+      // A 2xx status is not evidence of which device changed, or that an
+      // Agent activation has a recoverable one-time pairing credential.
+      if (data?.ok !== true || data.kind !== kind || data.tenantId !== selected.tenantId ||
+          data.id !== selected.id || data.lifecycle !== nextLifecycle ||
+          (kind === "agents" && nextLifecycle === "active" &&
+            (typeof data.pairingCode !== "string" || data.pairingCode.length === 0)) ||
+          ((kind === "printers" || nextLifecycle !== "active") && data.pairingCode != null)) {
+        setActionError(t.unconfirmed); setRefresh(x => x + 1); return;
+      }
       setNotice(t.notice);
       setRefresh(x => x + 1);
-      setPairing(data?.pairingCode || "");
+      setPairing(data.pairingCode || "");
       if (!data?.pairingCode) { setSelected(null); setReason(""); }
-    } catch (e) { setActionError(e instanceof Error ? e.message : t.error); }
+    } catch { setActionError(t.unconfirmed); setRefresh(x => x + 1); }
     finally { setActing(false); }
   }
   async function applyDelete() {
@@ -95,12 +105,15 @@ export default function PlatformFleetPage() {
         body: JSON.stringify({ kind, tenantId: selected.tenantId, id: selected.id,
           confirmed: true, expectedLifecycle: selected.lifecycle, reason: reason.trim() }),
       });
-      const data = await response.json().catch(() => null) as { error?: string } | null;
-      if (!response.ok) throw Error(data?.error || String(response.status));
+      const data = await response.json().catch(() => null) as { code?: string; ok?: boolean; kind?: string; tenantId?: string; id?: string } | null;
+      if (!response.ok) { setActionError(translate(apiMessageKey(data?.code, response.status, "errors.operationFailed"))); return; }
+      if (data?.ok !== true || data.kind !== kind || data.tenantId !== selected.tenantId || data.id !== selected.id) {
+        setActionError(t.unconfirmed); setRefresh(x => x + 1); return;
+      }
       setNotice(t.removed);
       setSelected(null); setReason("");  setPairing("");
       setRefresh(x => x + 1);
-    } catch (e) { setActionError(e instanceof Error ? e.message : t.error); }
+    } catch { setActionError(t.unconfirmed); setRefresh(x => x + 1); }
     finally { setActing(false); }
   }
   const choices = ["all", "active", "disabled", "retired"] as const;

@@ -11,6 +11,7 @@ import { isPrivateNetworkAddress } from "../../../../lib/network-address";
 import { requireActiveTenantInTransaction } from "../../../../lib/tenant-guard";
 import { expireStaleAgentDiscovery } from "../../../../lib/discovery-session-expiry";
 import { isVirtualPrinterRecord } from "../../../../lib/printer-virtual";
+import { isExactPrinterId } from "../../../../lib/exact-printer-id";
 
 export const dynamic = "force-dynamic";
 const MAX_DISCOVERY_BODY_BYTES = 2 * 1024 * 1024;
@@ -21,8 +22,15 @@ export async function GET(req: Request) {
   const agent = await validateAgent(req.headers.get("Authorization"));
   if (!agent) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   if (agent.lifecycle !== "active") return NextResponse.json({ error: `Agent is ${agent.lifecycle}` }, { status: 409 });
-  await expireStaleAgentDiscovery((query) => db.execute(query), agent.tenantId, agent.id);
-  const rows = await db.query.discoverySessions.findMany({ where: and(eq(discoverySessions.agentId, agent.id), eq(discoverySessions.tenantId, agent.tenantId), eq(discoverySessions.status, "running")), orderBy: [desc(discoverySessions.createdAt)], limit: 5 });
+  const rows = await db.transaction(async (tx) => {
+    await requireActiveTenantInTransaction(tx, agent.tenantId);
+    const locked = await tx.execute(sql`SELECT secret FROM agents
+      WHERE id = ${agent.id} AND tenant_id = ${agent.tenantId} AND lifecycle = 'active' FOR SHARE`);
+    if (!agent.secret || locked.rows[0]?.secret !== agent.secret) return null;
+    await expireStaleAgentDiscovery((query) => tx.execute(query), agent.tenantId, agent.id);
+    return tx.query.discoverySessions.findMany({ where: and(eq(discoverySessions.agentId, agent.id), eq(discoverySessions.tenantId, agent.tenantId), eq(discoverySessions.status, "running")), orderBy: [desc(discoverySessions.createdAt)], limit: 5 });
+  });
+  if (rows === null) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   return NextResponse.json(rows);
 }
 
@@ -107,6 +115,13 @@ export async function POST(req: Request) {
       continue;
     }
     const d = parsed.data;
+    // Discovery IDs are also opaque execution identities. Trimming an
+    // invalid ID here could merge two different discovered devices.
+    if ((d.id !== undefined && !isExactPrinterId(d.id))
+      || (d.stableId !== undefined && !isExactPrinterId(d.stableId))) {
+      skippedDevices.push({ id: rawId, reason: "invalid_exact_printer_identity" });
+      continue;
+    }
     if (isVirtualPrinterRecord({ name: d.deviceName, spoolerName: d.spoolerName,
       connectionType: d.transport, protocol: d.protocol, deviceClass: d.deviceClass,
       capabilities: d.capabilities ?? d.rawMetadata, config: d.rawMetadata })) {
@@ -129,22 +144,33 @@ export async function POST(req: Request) {
   }
 
   function identityKeyForDevice(d: ReturnType<typeof deviceSchema.parse>): string | null {
-    const supplied = typeof d.stableId === "string" ? d.stableId.trim() : "";
+    const supplied = typeof d.stableId === "string" ? d.stableId : "";
     if (supplied) return supplied;
-    const explicitId = typeof d.id === "string" ? d.id.trim() : "";
+    const explicitId = typeof d.id === "string" ? d.id : "";
     if (explicitId) return explicitId;
+    // Printer names, vendor and model are not unique execution identities.
+    // Two identical printers can expose the same metadata on one Agent; an
+    // identity derived from those fields silently aliases their approvals.
+    // A missing local ID is only recoverable from an exact queue, URI,
+    // host:port transport or serial-bearing hardware observation.
+    const spooler = d.spoolerName?.trim();
+    const uri = d.uri?.trim();
+    const serial = d.serialNumber?.trim();
+    const host = d.ipAddress?.trim() || d.hostname?.trim();
+    if (!spooler && !uri && !serial && !(host && d.port)) return null;
     const fingerprint = [
       d.protocol ?? "",
+      d.transport ?? "",
       d.ipAddress ?? "",
       d.port ?? "",
-      d.uri ?? "",
-      d.spoolerName ?? "",
-      d.serialNumber ?? "",
+      uri ?? "",
+      spooler ?? "",
+      serial ?? "",
       d.hostname ?? "",
       d.manufacturer ?? "",
       d.model ?? "",
-    ].map(String).join("\u001f").trim();
-    return fingerprint.replace(/\u001f/g, "").trim() ? createHash("sha256").update(fingerprint).digest("hex") : null;
+    ].map(String).join("\u001f");
+    return createHash("sha256").update(fingerprint).digest("hex");
   }
 
   // Discovery is observation, not authorization. Approval is handled by the
@@ -178,6 +204,43 @@ export async function POST(req: Request) {
     rawMetadata: d.rawMetadata ?? null,
     tenantId: agent.tenantId,
   }));
+  // A stable ID is not proof that conflicting destinations are the same
+  // device. Detect duplicate observations across the ENTIRE page, not only
+  // each insert batch (which is otherwise last-write-wins at batch boundaries).
+  // Accept an exact repeated observation once; reject every ambiguous row.
+  const endpointOf = (row: (typeof rows)[number]): string => JSON.stringify([
+    row.protocol, row.transport, row.ipAddress, row.port, row.uri,
+    row.spoolerName, row.serialNumber,
+  ]);
+  const byIdentity = new Map<string, { endpoint: string; id: string; ambiguous: boolean }>();
+  for (const row of rows) {
+    const identity = row.identityKey;
+    if (!identity) continue;
+    const prior = byIdentity.get(identity);
+    const endpoint = endpointOf(row);
+    if (prior) {
+      if (prior.endpoint !== endpoint || prior.id !== row.id) prior.ambiguous = true;
+    } else byIdentity.set(identity, { endpoint, id: row.id, ambiguous: false });
+  }
+  const acceptedIdentity = new Set<string>();
+  const unambiguousRows = rows.filter((row) => {
+    if (!row.identityKey) {
+      // Candidate-only discovery is still untrusted inventory. Persisting a
+      // random dev_ ID for a name-only observation creates a new candidate
+      // on every scan and invites accidental approval of an unbound device.
+      // Keep its diagnostic in session stats, but no database identity.
+      skippedDevices.push({ id: row.id, reason: "missing_execution_identity" });
+      return false;
+    }
+    const evidence = byIdentity.get(row.identityKey)!;
+    if (evidence.ambiguous) {
+      skippedDevices.push({ id: row.id, reason: "discovery_identity_endpoint_conflict" });
+      return false;
+    }
+    if (acceptedIdentity.has(row.identityKey)) return false;
+    acceptedIdentity.add(row.identityKey);
+    return true;
+  });
   // A page's content must be the same across retries. A page index alone
   // cannot distinguish a lost HTTP ACK from an Agent restart/re-scan that
   // reordered devices while using the same discovery session id.
@@ -191,12 +254,15 @@ export async function POST(req: Request) {
     // report could hold the session while waiting for an Agent FK key-share
     // lock, as a manager holds that Agent while expiring this session.
     const lockedAgent = await tx.execute(sql`
-      SELECT id, lifecycle FROM agents
+      SELECT id, secret, lifecycle FROM agents
       WHERE id = ${agent.id} AND tenant_id = ${agent.tenantId}
       FOR SHARE
     `);
-    const agentRow = lockedAgent.rows[0] as { id?: string; lifecycle?: string } | undefined;
-    if (!agentRow?.id || agentRow.lifecycle !== "active") {
+    const agentRow = lockedAgent.rows[0] as { id?: string; secret?: string; lifecycle?: string } | undefined;
+    if (!agent.secret || !agentRow?.id || agentRow.secret !== agent.secret) {
+      return { kind: "stale_credential" as const };
+    }
+    if (agentRow.lifecycle !== "active") {
       return { kind: "agent_inactive" as const };
     }
     // Serialize reporting against manager cancellation on the discovery session row.
@@ -246,30 +312,27 @@ export async function POST(req: Request) {
     let insertedCount = 0;
     let updatedCount = 0;
 
-    for (let i = 0; i < rows.length; i += DISCOVERY_INSERT_BATCH) {
-      const batch = rows.slice(i, i + DISCOVERY_INSERT_BATCH);
-      // A single INSERT ... ON CONFLICT cannot update the same target row twice.
-      // Collapse duplicate identities inside one report before the database upsert.
-      const identityRows = Array.from(
-        new Map(
-          batch.filter((row) => row.identityKey).map((row) => [row.identityKey, row]),
-        ).values(),
-      );
-      const anonymousRows = batch.filter((row) => !row.identityKey);
-
-      if (anonymousRows.length > 0) {
-        const inserted = await tx.insert(discoveredDevices)
-          .values(anonymousRows)
-          .onConflictDoNothing({ target: [discoveredDevices.tenantId, discoveredDevices.agentId, discoveredDevices.id] })
-          .returning({ id: discoveredDevices.id });
-        insertedCount += inserted.length;
-      }
-
-      if (identityRows.length > 0) {
+    for (let i = 0; i < unambiguousRows.length; i += DISCOVERY_INSERT_BATCH) {
+      const batch = unambiguousRows.slice(i, i + DISCOVERY_INSERT_BATCH);
+      // Identity deduplication already occurred across the entire report, so
+      // no two batches can silently claim the same discovered destination.
+      // The identity gate above excludes anonymous observations. Every
+      // persistent row has an exact queue/URI/host:port/hardware-backed key;
+      // a display name can never consume a random, unrepeatable candidate ID.
+      if (batch.length > 0) {
         const upserted = await tx.insert(discoveredDevices)
-          .values(identityRows)
+          .values(batch)
           .onConflictDoUpdate({
             target: [discoveredDevices.tenantId, discoveredDevices.agentId, discoveredDevices.identityKey],
+            // A repeated stable ID pointing to a DIFFERENT physical endpoint
+            // is ambiguous, not an automatic destination migration. Preserve
+            // the prior candidate and its approval/provisioning history.
+            setWhere: sql`ROW(${discoveredDevices.protocol}, ${discoveredDevices.transport},
+              ${discoveredDevices.ipAddress}, ${discoveredDevices.port}, ${discoveredDevices.uri},
+              ${discoveredDevices.spoolerName}, ${discoveredDevices.serialNumber})
+              IS NOT DISTINCT FROM ROW(excluded.protocol, excluded.transport,
+              excluded.ip_address, excluded.port, excluded.uri,
+              excluded.spooler_name, excluded.serial_number)`,
             set: {
               // Preserve the provisioned runtime link as history, but invalidate
               // operator approval when the authorized destination/capabilities change.
@@ -297,7 +360,13 @@ export async function POST(req: Request) {
               updatedAt: sql`now()`,
             },
           })
-          .returning({ id: discoveredDevices.id, inserted: sql<boolean>`xmax = 0` });
+          .returning({ id: discoveredDevices.id, identityKey: discoveredDevices.identityKey, inserted: sql<boolean>`xmax = 0` });
+        const retainedKeys = new Set(upserted.map((row) => row.identityKey));
+        for (const row of batch) {
+          if (row.identityKey && !retainedKeys.has(row.identityKey)) {
+            skippedDevices.push({ id: row.id, reason: "discovery_identity_endpoint_changed" });
+          }
+        }
         insertedCount += upserted.filter((row) => row.inserted).length;
         updatedCount += upserted.filter((row) => !row.inserted).length;
       }
@@ -343,6 +412,7 @@ export async function POST(req: Request) {
   });
 
   if (result.kind === "not_found") return NextResponse.json({ error: "Discovery not found" }, { status: 404 });
+  if (result.kind === "stale_credential") return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   if (result.kind === "agent_inactive") return NextResponse.json({ error: "Agent is no longer active" }, { status: 409 });
   if (result.kind === "chunk_replay_changed") return NextResponse.json({ error: "Discovery page changed after its acknowledgment; start a new scan", code: "DISCOVERY_CHUNK_REPLAY_CHANGED" }, { status: 409 });
   if (result.kind === "not_running") return NextResponse.json({ error: `Discovery already ${result.status}` }, { status: 409 });

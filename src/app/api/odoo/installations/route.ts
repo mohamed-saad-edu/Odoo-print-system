@@ -1,3 +1,4 @@
+import { hasBodyOverLimit } from "../../../../lib/request-limits";
 import { randomBytes, randomUUID, createHash } from "node:crypto";
 import { NextResponse } from "next/server";
 import { and, eq, sql } from "drizzle-orm";
@@ -36,9 +37,10 @@ export async function GET(req: Request) {
       await requireManagerActorInTransaction(tx, manager, "integrations.read");
       return tx.execute(sql`
         SELECT i.id, i.name, i.enabled, i.created_at, i.disabled_at,
-               array_agg(c.api_key_id ORDER BY c.created_at) AS api_key_ids
+               COALESCE(array_agg(c.api_key_id ORDER BY c.created_at)
+                 FILTER (WHERE c.api_key_id IS NOT NULL), ARRAY[]::text[]) AS api_key_ids
         FROM odoo_installations i
-        JOIN odoo_installation_credentials c
+        LEFT JOIN odoo_installation_credentials c
           ON c.tenant_id = i.tenant_id AND c.installation_id = i.id
         WHERE i.tenant_id = ${manager.tenantId}
         GROUP BY i.id, i.name, i.enabled, i.created_at, i.disabled_at
@@ -60,6 +62,7 @@ export async function GET(req: Request) {
 
 /** Enrollment is operator-only. Never register automatically from a client-controlled database UUID. */
 export async function POST(req: Request) {
+  if (hasBodyOverLimit(req, 16 * 1024)) return NextResponse.json({ error: "Request body too large", code: "INVALID_REQUEST" }, { status: 413 });
   const manager = await validateWorkspaceManager(req);
   if (!manager) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   try { requireManagerPermission(manager, "integrations.manage"); }

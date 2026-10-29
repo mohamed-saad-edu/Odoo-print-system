@@ -24,8 +24,8 @@ export function appBaseUrl(req: Request): string {
     return parsed.toString().replace(/\/$/, "");
   }
   if (process.env.NODE_ENV === "production") throw new Error("APP_BASE_URL is required in production");
-  // Fail closed outside production too: deriving email/reset links or Stripe
-  // redirect URLs from the Host header lets a poisoned Host point victims at
+  // Fail closed outside production too: deriving account/invitation/reset links
+  // from the Host header lets a poisoned Host point victims at
   // an attacker origin. Local development sets APP_BASE_URL (see
   // .env.example); only an explicit opt-in restores host-derived URLs.
   if (process.env.ALLOW_HOST_FALLBACK === "1") return new URL(req.url).origin;

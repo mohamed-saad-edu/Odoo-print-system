@@ -19,9 +19,9 @@ from . import gateway_http as requests
 from psycopg2 import sql
 
 from ..runtime_clock import db_now_utc
-from ..idempotency_namespace import local_identity, deployment_proof
+from ..idempotency_namespace import local_identity, deployment_proof, InstallationProofMismatch
 from ..customer_presentation import customer_error_message
-from ..runtime_policy import is_exact_gateway_printer_id
+from ..runtime_policy import is_exact_gateway_agent_id, unambiguous_inventory_rows
 
 from .crypto import (
     CredentialDecryptError,
@@ -420,7 +420,7 @@ class PrintGatewayConfig(models.Model):
     @api.constrains("runtime_agent_id")
     def _check_runtime_agent_id(self):
         for record in self:
-            if record.runtime_agent_id and (not isinstance(record.runtime_agent_id, str) or not record.runtime_agent_id.strip()):
+            if record.runtime_agent_id and not is_exact_gateway_agent_id(record.runtime_agent_id):
                 raise ValidationError(_("Legacy Runtime Agent must be a non-empty Gateway agent ID."))
 
     def _gateway_base(self, *, for_request=False):
@@ -470,14 +470,34 @@ class PrintGatewayConfig(models.Model):
         self.ensure_one()
         gateway_url = self._gateway_base(for_request=True)
         try:
-            identity = local_identity(self.env.cr.dbname, gateway_url, company_id=self.company_id.id)
+            identity = local_identity(
+                self.env.cr.dbname, gateway_url, company_id=self.company_id.id,
+                expected_installation_id=self.installation_id or None,
+            )
+        except InstallationProofMismatch as exc:
+            raise ValidationError(_(
+                "GATEWAY_INSTALLATION_IDENTITY_CONFLICT: This saved job belongs to "
+                "another Odoo installation. Review cloned/restored print history before reprinting."
+            )) from exc
         except (ValueError, OSError, TypeError) as exc:
             raise ValidationError(_(
                 "GATEWAY_INSTALLATION_PROOF_MISSING: Automatic installation identity is "
                 "unavailable. Check the Odoo service's persistent, writable data directory."
             )) from exc
         installation_id = identity["installationId"]
-        if self.installation_id != installation_id or not self.idempotency_v2_enabled:
+        # The database identity is a durable external print namespace. A
+        # cloned/restored database whose external proof file was lost must
+        # NEVER replace an existing installation ID with a newly generated
+        # one: doing so would let new print operations bypass reconciliation
+        # while old jobs remain tied to a different physical-print history.
+        # An intentional Gateway URL/key migration clears installation_id
+        # through write() before fresh enrollment, so it remains supported.
+        if self.installation_id and self.installation_id != installation_id:
+            raise ValidationError(_(
+                "GATEWAY_INSTALLATION_IDENTITY_CONFLICT: This saved job belongs to "
+                "another Odoo installation. Review cloned/restored print history before reprinting."
+            ))
+        if not self.installation_id or not self.idempotency_v2_enabled:
             self.sudo().with_context(skip_enabled_sync=True).write({
                 "installation_id": installation_id,
                 "idempotency_v2_enabled": True,
@@ -1323,9 +1343,14 @@ class PrintGatewayConfig(models.Model):
                 vals.pop("gateway_url")
         if not vals:
             return True
-        if ("gateway_url" in vals or "gateway_api_key" in vals) and "installation_id" not in vals:
-            # Re-enroll under an updated Gateway or API key on the next use.
-            # Saved print-job identities remain unchanged.
+        if "gateway_url" in vals and "installation_id" not in vals:
+            # A new Gateway origin is a new installation enrollment boundary.
+            # Changing only the API credential for the SAME origin is not:
+            # the independent proof is keyed by database/origin/company, and
+            # Gateway auto-enrollment authorizes the replacement key for that
+            # same installation ID. Clearing the durable ID on key rotation
+            # would silently bypass restored print history if the external
+            # proof were absent, and could regress pending jobs to v1.
             vals["installation_id"] = False
             vals["idempotency_v2_enabled"] = False
         if vals.get("idempotency_v2_enabled"):
@@ -2328,7 +2353,7 @@ class PrintGatewayPairAgentWizard(models.TransientModel):
         # An execution identity is opaque. Never trim the selected Agent
         # into a different valid workstation before pairing it to a Branch.
         target = self.agent_id
-        if not is_exact_gateway_printer_id(target):
+        if not is_exact_gateway_agent_id(target):
             raise ValidationError(_("Please provide a valid Runtime Agent ID."))
         config = self.config_id
         is_su = getattr(self.env, "is_superuser", lambda: False)()
@@ -2377,12 +2402,12 @@ class PrintGatewayPairAgentWizard(models.TransientModel):
             # The picker submits an opaque ID. A mutable display name must
             # never select a different workstation with the same label.
             matched = next(
-                (a for a in agents_list if isinstance(a, dict) and a.get("id") == target),
+                (a for a in unambiguous_inventory_rows(agents_list) if a.get("id") == target),
                 None,
             )
             if not matched:
                 available = [a["id"] for a in agents_list if isinstance(a, dict)
-                             and is_exact_gateway_printer_id(a.get("id"))]
+                             and is_exact_gateway_agent_id(a.get("id"))]
                 raise ValidationError(
                     _("Agent '%s' not found on Central Gateway. Registered active agents: %s")
                     % (target, ", ".join(available) if available else _("none"))

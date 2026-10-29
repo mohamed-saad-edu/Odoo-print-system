@@ -182,6 +182,13 @@ func (a *Agent) cloudDiscoveryPayload(result printer.DiscoveryResult) ([]map[str
 		return devices, []string{"local printer sharing policy unavailable; cloud discovery metadata withheld"}
 	}
 	for _, device := range result.Printers {
+		// A local candidate with no stable ID must never acquire the shared
+		// cloud ID hash of (agent, ""). Otherwise two unrelated physical
+		// endpoints on a partial scan are reported as one discovered device.
+		// Registration will resolve a real endpoint-backed ID separately.
+		if device.ID == "" {
+			continue
+		}
 		pc, err := a.resolveLocalPrinter(printer.SharingConfigForDevice(device))
 		if err == nil && !disabled.Disabled(pc) && snapshot.view.DiscoveryShared(pc) {
 			devices = append(devices, discoveryDevicePayload(a.cfg.Agent.ID, device))

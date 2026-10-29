@@ -119,6 +119,14 @@ export default function PlatformTenantsPage() {
       options.body = JSON.stringify(dialogMode === "delete" ? {reason,confirmed:true} : {reason:reason||t(dialogMode==='reactivate'?"v4.admin.reactivateWorkspace":"v4.admin.suspendWorkspace"),expectedLifecycle:selectedTenant.lifecycle,expectedUpdatedAt:selectedTenant.updatedAt});
       const res = await fetchWithTimeout(endpoint, options);
       if (!res.ok) throw new Error(t("platform.tenants.actionFailedBody"));
+      const confirmation = await res.json().catch(() => null) as {ok?: boolean; tenantId?: string; lifecycle?: string} | null;
+      // A replay can return 200 even if a later operator has since changed
+      // the workspace again. Never report the requested state without proof.
+      if (confirmation?.ok !== true || confirmation.tenantId !== selectedTenant.id ||
+          confirmation.lifecycle !== nextLifecycle) {
+        handleRefresh();
+        throw new Error(t("platform.tenants.actionFailedBody"));
+      }
       const tenantName = selectedTenant.name;
       setSelectedTenant(null); setSuspendReason("");  setActionError(null);
       setNotice(
@@ -128,8 +136,11 @@ export default function PlatformTenantsPage() {
           : t("platform.tenants.noticeReactivated", { name: tenantName }),
       );
       handleRefresh();
-    } catch (err: unknown) {
-      setActionError(err instanceof Error ? err.message : t("platform.tenants.actionFailedBody"));
+    } catch {
+      // Network timeouts cannot prove whether a destructive action committed.
+      // Use the localized uncertainty guidance, never a raw fetch error.
+      setActionError(t("platform.tenants.actionFailedBody"));
+      handleRefresh();
     } finally { setActionLoading(false); }
   }
 

@@ -28,8 +28,8 @@ async function harness({ status = "claimed", lifecycle = {}, updatedRows = 1, to
   const job = { id: "job-1", tenantId: "tenant-1", agentId: "agt-1", printerId: "printer-1", status,
     bindingDigest, outputMedium: "physical", outputEvidence: null,
     claimToken: "claim-current", error: null, expiresAt: new Date(Date.now() + 60000), updatedAt: new Date() };
-  const active = { agent_lifecycle: "active", tenant_lifecycle: "active", printer_lifecycle: "active",
-    inventory_present: true, management_source: "manager", desired_revision: 3,
+  const active = { agent_secret: "fixture-agent-secret", agent_lifecycle: "active", tenant_lifecycle: "active", printer_lifecycle: "active",
+    inventory_present: true, management_source: "agent", desired_revision: 3,
     verification_state: proof.verificationState, verification_binding_digest: proof.verificationBindingDigest,
     verification_verified_at: proof.verificationVerifiedAt, verification_received_at: proof.verificationReceivedAt,
     logical_queue_key: proof.logicalQueueKey, output_medium: proof.outputMedium,
@@ -42,7 +42,9 @@ async function harness({ status = "claimed", lifecycle = {}, updatedRows = 1, to
     } };
   };
   const db = { query: { printJobs: { findFirst: async () => job } }, update,
-    transaction: async (fn) => fn({ update, execute: async (statement) => {
+    transaction: async (fn) => fn({ query: db.query, update, execute: async (statement) => {
+      if (statement.includes("SELECT secret FROM agents")) return { rows: [{ secret: "fixture-agent-secret" }] };
+      if (statement.includes("SELECT id FROM tenants") && !statement.includes("lifecycle =")) return { rows: [{ id: "tenant-1" }] };
       statements.push(statement);
       if (statement.includes("SELECT id FROM tenants")) {
         return { rows: active.tenant_lifecycle === "active" ? [{ id: "tenant-1" }] : [] };
@@ -62,7 +64,7 @@ async function harness({ status = "claimed", lifecycle = {}, updatedRows = 1, to
     "node:crypto": { createHash },
     "../../../../db": { db },
     "../../../../db/schema": { printJobs: table("jobs"), printJobReceipts: table("receipts") },
-    "../../../../lib/agent-auth": { validateAgent: async () => ({ id: "agt-1", tenantId: "tenant-1" }) },
+    "../../../../lib/agent-auth": { validateAgent: async () => ({ id: "agt-1", tenantId: "tenant-1", secret: "fixture-agent-secret" }) },
     "drizzle-orm": { sql, and: (...v) => v.join(" AND "), eq: (a, b) => `${a}=${b}`, isNull: (v) => `${v} IS NULL` },
     "next/server": { NextResponse: { json: (body, init) => Response.json(body, init) } },
     "../../../../lib/log": { logInfo: noop, logWarn: noop, requestIdFrom: () => "request-1" },
@@ -100,8 +102,8 @@ for (const status of ["claimed", "printing"]) {
     ["removed inventory", { inventory_present: false }],
     ["suspended tenant", { tenant_lifecycle: "suspended" }],
     ["retired agent", { agent_lifecycle: "retired" }],
-    ["unapplied desired revision", { applied_desired_revision: 2 }],
-    ["unobserved desired revision", { observed_desired_revision: 2 }],
+    ["unapplied desired revision", { management_source: "manager", applied_desired_revision: 2 }],
+    ["unobserved desired revision", { management_source: "manager", observed_desired_revision: 2 }],
   ]) {
     test(`${status} admission rejects ${name} before a job write`, async () => {
       const h = await harness({ status, lifecycle });

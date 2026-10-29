@@ -373,8 +373,30 @@ func StableIDForDevice(d DeviceInfo) string {
 	if d.SpoolerName != "" {
 		return StableIDFromSpooler(d.SpoolerName)
 	}
-	if d.USBSerial != "" || d.USBVID != "" {
-		return StableIDFromUSB(d.USBVID, d.USBPID, d.USBSerial, "")
+	if d.USBSerial != "" || d.USBVID != "" || strings.EqualFold(d.ConnectionType, "usb") {
+		// VID/PID is a model, not a physical USB device. Never manufacture a
+		// shared identity for two serial-less printers of the same model.
+		// Windows instance and location are device-specific evidence; the
+		// native interface path is an exact execution endpoint fallback.
+		serial := strings.TrimSpace(d.USBSerial)
+		if usableIdentityValue(serial) {
+			return StableIDFromUSBFull(d.USBVID, d.USBPID, serial, "", "")
+		}
+		instance := capabilityIdentityValue(d, "device_instance_id")
+		location := capabilityIdentityValue(d, "location")
+		if instance != "" || location != "" {
+			return StableIDFromUSBFull(d.USBVID, d.USBPID, "", location, instance)
+		}
+		if path := capabilityIdentityValue(d, "device_path"); path != "" {
+			return stableIDFromIdentityKey("usb-interface:" + path)
+		}
+		if endpoint := normalizeIdentityValue(d.Endpoint); usableIdentityValue(endpoint) &&
+			(strings.HasPrefix(endpoint, `\\?\usb`) || strings.HasPrefix(endpoint, `\\.\usb`)) {
+			return stableIDFromIdentityKey("usb-interface:" + endpoint)
+		}
+		// No safe identifier. Discovery/registry must not register this as a
+		// new physical destination until an operator chooses an interface.
+		return ""
 	}
 	if d.NetworkAddress != "" && d.Port != 0 {
 		return StableIDFromNetwork(d.NetworkAddress, d.Port)
@@ -417,6 +439,8 @@ func StableIDForDevice(d DeviceInfo) string {
 		return StableIDFromEndpoint(d.Endpoint)
 	}
 
-	h := sha256.Sum256([]byte("name:" + strings.ToLower(normalizeUnicode(strings.TrimSpace(d.Name)))))
-	return fmt.Sprintf("printer_%x", h[:8])
+	// A display name or model is not an execution identity. Two distinct
+	// devices can advertise identical names, especially during incomplete
+	// discovery. Leave them unregistered rather than merging their histories.
+	return ""
 }

@@ -85,7 +85,7 @@ test("unexpected activation failures return a safe fallback without exposing ser
   assert.equal(fixture.writes(), 0);
 });
 
-test("dashboard unwraps lifecycle conflicts as operator messages and redirects expired sessions", async () => {
+test("dashboard renders safe action errors without leaking raw server text and redirects expired sessions", async () => {
   const source = await readFile("src/app/dashboard/dashboard-client.tsx", "utf8");
   const start = source.indexOf("  const dashboardRequest = ");
   const end = source.indexOf("  const getDashboardJobs = ", start);
@@ -97,7 +97,7 @@ test("dashboard unwraps lifecycle conflicts as operator messages and redirects e
     t: key => key === "errors.sessionExpired" ? "Session expired" : key,
     apiMessageKey: () => "errors.operationFailed",
   });
-  await assert.rejects(api.dashboardRequest(async () => ({ ok: false, status: 409, code: "INTERNAL_ERROR", error: "Enable the owning Agent first" })), /Enable the owning Agent first/);
+  await assert.rejects(api.dashboardRequest(async () => ({ ok: false, status: 409, code: "INTERNAL_ERROR", error: "Enable the owning Agent first" })), /errors\.operationFailed/);
   await assert.rejects(api.dashboardRequest(async () => ({ ok: false, status: 401, code: "UNAUTHORIZED", error: "Session expired" })), /Session expired/);
   assert.equal(redirects[0], "/login?next=%2Fdashboard");
 });

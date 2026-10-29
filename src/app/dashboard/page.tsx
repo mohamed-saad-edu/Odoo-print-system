@@ -85,7 +85,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
             label={databaseError ? t("dashboard.page.dbUnavailableBadge") : t("dashboard.page.snapshotLoaded")}
           />
         }
-        actions={!databaseError && canMutate.jobsCancel ? <details className="rounded-lg border border-edge px-3 py-2"><summary className="cursor-pointer text-sm text-ink-2">{t("v4.experience.advanced")}</summary><div className="mt-3"><JobCleanupButton /></div></details> : undefined}
+        actions={!databaseError && canMutate.jobsCancel ? <details className="rounded-lg border border-edge px-3 py-2"><summary className="cursor-pointer text-sm text-ink-2">{t("v4.experience.cleanupHistory")}</summary><div className="mt-3"><JobCleanupButton /></div></details> : undefined}
       />
 
       <PageContainer width="wide">

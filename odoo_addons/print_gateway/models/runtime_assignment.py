@@ -3,7 +3,7 @@
 
 from odoo import api, fields, models, _
 from odoo.exceptions import AccessError, ValidationError
-from ..runtime_policy import is_exact_gateway_printer_id
+from ..runtime_policy import is_exact_gateway_agent_id
 
 
 class PrintGatewayRuntimeAgentAssignment(models.Model):
@@ -94,13 +94,13 @@ class PrintGatewayRuntimeAgentAssignment(models.Model):
         return {
             record.runtime_agent_id
             for record in self.sudo().search(domain)
-            if is_exact_gateway_printer_id(record.runtime_agent_id)
+            if is_exact_gateway_agent_id(record.runtime_agent_id)
         }
 
     @api.model
     @api.private
     def is_agent_assigned(self, company, branch, runtime_agent_id):
-        if not is_exact_gateway_printer_id(runtime_agent_id):
+        if not is_exact_gateway_agent_id(runtime_agent_id):
             return False
         return runtime_agent_id in self.assigned_agent_ids(company, branch)
 
@@ -163,5 +163,5 @@ class PrintGatewayRuntimeAgentAssignment(models.Model):
                     raise ValidationError(_("The selected Odoo Branch is not available to the current user."))
                 if not record.branch_id.parent_id or record.branch_id.parent_id != record.company_id:
                     raise ValidationError(_("Odoo Branch must belong directly to the selected Odoo Company."))
-            if not is_exact_gateway_printer_id(record.runtime_agent_id):
+            if not is_exact_gateway_agent_id(record.runtime_agent_id):
                 raise ValidationError(_("A valid exact Gateway runtime agent ID is required."))

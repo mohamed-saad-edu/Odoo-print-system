@@ -5,7 +5,7 @@ const mocks = vi.hoisted(() => ({
   execute: vi.fn(), update: vi.fn(), transaction: vi.fn(),
 }));
 vi.mock("../src/db", () => ({ db: { transaction: mocks.transaction } }));
-vi.mock("../src/lib/agent-auth", () => ({ validateAgent: vi.fn(async () => ({ id: "agent-a", tenantId: "tenant-a", lifecycle: "active" })) }));
+vi.mock("../src/lib/agent-auth", () => ({ validateAgent: vi.fn(async () => ({ id: "agent-a", tenantId: "tenant-a", lifecycle: "active", secret: "secret-hash" })) }));
 import { POST } from "../src/app/api/agent/heartbeat/route";
 
 describe("heartbeat rejects stale writers before inventory mutation", () => {
@@ -14,7 +14,7 @@ describe("heartbeat rejects stale writers before inventory mutation", () => {
     mocks.transaction.mockImplementation(async (callback) => callback({ execute: mocks.execute, update: mocks.update }));
     mocks.execute.mockResolvedValueOnce({ rows: [{ lifecycle: "active" }] })
       .mockResolvedValueOnce({ rows: [] }).mockResolvedValueOnce({ rows: [{
-      id: "agent-a", lifecycle: "active", inventory_snapshot_version: "1791392400000000002",
+      id: "agent-a", lifecycle: "active", secret: "secret-hash", inventory_snapshot_version: "1791392400000000002",
       inventory_snapshot_id: null, inventory_snapshot_next_page: 1,
     }] });
   });

@@ -17,7 +17,7 @@ export async function GET(req: Request) {
     columns: { name: true, lifecycle: true },
   });
   if (!tenant || tenant.lifecycle !== "active")
-    return NextResponse.json({ error: "Workspace unavailable" }, { status: 409, headers });
+    return NextResponse.json({ error: "Workspace unavailable", code: "WORKSPACE_UNAVAILABLE" }, { status: 409, headers });
   return NextResponse.json({
     workspaceName: tenant.name,
     email: invitation.email,

@@ -23,7 +23,7 @@ from test_odoo_discovery_response_safety import (
 def test_fallback_revalidates_current_assignment_owner_and_verification(monkeypatch, case, allowed):
     printer = dict(PRINTER)
     if case == "owner_changed":
-        printer["agent"] = {"id": "another-branch-agent"}
+        printer["agent"] = {"id": "agt_other001"}
     if case == "printer_retired":
         printer["lifecycle"] = "retired"
     if case == "printer_private":

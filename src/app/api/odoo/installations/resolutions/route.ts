@@ -1,3 +1,4 @@
+import { hasBodyOverLimit } from "../../../../../lib/request-limits";
 import { NextResponse } from "next/server";
 import { sql } from "drizzle-orm";
 import { z } from "zod";
@@ -111,6 +112,7 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
+  if (hasBodyOverLimit(req, 16 * 1024)) return NextResponse.json({ error: "Request body too large", code: "INVALID_REQUEST" }, { status: 413 });
   const manager = await authorizedManager(req, true);
   if (!manager) return NextResponse.json({ error: "Unauthorized or forbidden" }, { status: 403 });
   const parsed = approveSchema.safeParse(await req.json().catch(() => null));

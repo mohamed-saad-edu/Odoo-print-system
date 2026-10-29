@@ -6,6 +6,7 @@ import { AlertTriangle, Building2, KeyRound, LockKeyhole, RefreshCw, Search, Shi
 import { Button, Card, EmptyState, ErrorState, Field, Modal, PageHeader, SegmentedControl, StatusBadge, TableSkeleton, Textarea } from "../../../components/ui";
 import { fetchWithTimeout } from "../../../lib/fetch-timeout";
 import { useI18n } from "../../../i18n/react";
+import { apiMessageKey } from "../../../lib/api-error-keys";
 
 const PAGE_SIZE = 40;
 type KeyRecord = {
@@ -23,18 +24,18 @@ type Action = { item: RecordItem; kind: "keys" | "installations"; operation?: "r
 const wording = {
   en: {
     title: "Integration control", eyebrow: "Gateway / Security operations", subtitle: "Inspect Odoo installations and API credentials across workspaces. Emergency actions revoke access; they never expose secrets or replay print jobs.",
-    readOnlyGrace: "Rotation read-only grace", keys: "API credentials", installations: "Odoo installations", search: "Search name, ID, workspace", workspace: "Workspace ID (optional)", all: "All", active: "Active", inactive: "Inactive", refresh: "Refresh", integration: "Integration", owner: "Workspace", state: "Access", activity: "Last used / created", operation: "Control", revoke: "Revoke key", remove: "Delete key", quarantine: "Quarantine", reason: "Incident / change reason (optional)", cancel: "Cancel", confirm: "Apply security action", confirmTitle: "Confirm an irreversible access change", confirmed: "Gateway change saved and written to the audit trail.", error: "Integration inventory unavailable", empty: "No matching integrations", page: "records", previous: "Previous", next: "Next", audit: "Audit log", safety: "Revoking an API key immediately ends its authorization, including read-only grace. Quarantining an Odoo installation blocks new v2 admissions; legacy v1 credentials may still work until separately revoked. Neither operation deletes prior receipts or retries jobs. Recovery needs an authenticated integration process.", denied: "Platform Owner access is required. No secrets are visible in this page.", role: "Platform Owner access only", never: "Secret values are never retrieved by this page.", credentials: "Credential bindings", issued: "Created", neverUsed: "Never used", noData: "—",
+    readOnlyGrace: "Rotation read-only grace", keys: "API credentials", installations: "Odoo installations", search: "Search name, ID, workspace", workspace: "Workspace ID (optional)", all: "All", active: "Active", inactive: "Inactive", refresh: "Refresh", integration: "Integration", owner: "Workspace", state: "Access", activity: "Last used / created", operation: "Control", revoke: "Revoke key", remove: "Delete key", quarantine: "Quarantine", reason: "Incident / change reason (optional)", cancel: "Cancel", confirm: "Apply security action", confirmTitle: "Confirm an irreversible access change", confirmed: "Gateway change saved and written to the audit trail.", unconfirmed: "The result could not be confirmed. Refresh inventory before repeating this action.", error: "Integration inventory unavailable", empty: "No matching integrations", page: "records", previous: "Previous", next: "Next", audit: "Audit log", safety: "Revoking an API key immediately ends its authorization, including read-only grace. Quarantining an Odoo installation blocks new v2 admissions; legacy v1 credentials may still work until separately revoked. Neither operation deletes prior receipts or retries jobs. Recovery needs an authenticated integration process.", denied: "Platform Owner access is required. No secrets are visible in this page.", role: "Platform Owner access only", never: "Secret values are never retrieved by this page.", credentials: "Credential bindings", issued: "Created", neverUsed: "Never used", noData: "—",
   },
   ar: {
     title: "التحكم في التكاملات", eyebrow: "الجيتواي / أمان التشغيل", subtitle: "جرد تثبيتات Odoo ومفاتيح API لكل العملاء. إجراءات الطوارئ توقف الوصول بدون عرض أسرار أو إعادة تنفيذ مهام طباعة.",
-    readOnlyGrace: "فترة سماح للقراءة بعد التدوير", keys: "مفاتيح API", installations: "تثبيتات Odoo", search: "البحث بالاسم أو المعرّف أو العميل", workspace: "معرّف العميل (اختياري)", all: "الكل", active: "نشط", inactive: "معطّل", refresh: "تحديث", integration: "التكامل", owner: "العميل", state: "صلاحية الوصول", activity: "آخر استخدام / الإنشاء", operation: "التحكم", revoke: "إلغاء المفتاح", remove: "حذف المفتاح نهائيًا", quarantine: "حجر التثبيت", reason: "سبب الحادث أو الإجراء (اختياري)", cancel: "إلغاء", confirm: "تنفيذ إجراء الأمان", confirmTitle: "تأكيد تغيير مؤثر على صلاحيات الاتصال", confirmed: "تم تنفيذ الإجراء وتسجيله في سجل التدقيق.", error: "تعذر تحميل جرد التكاملات", empty: "لا توجد تكاملات مطابقة", page: "سجل", previous: "السابق", next: "التالي", audit: "سجل التدقيق", safety: "إلغاء مفتاح API يوقف استخدامه فورًا حتى لو كان في فترة سماح للقراءة. حجز تثبيت Odoo يمنع عمليات v2 الجديدة، لكن مفاتيح v1 القديم قد تظل فعالة ما لم تُلغَ منفصلةً. لا يتم حذف السجلات القديمة أو تكرار الطباعة. استعادة الاتصال تحتاج إجراء تكامل موثّق.", denied: "الصفحة متاحة فقط لمالك المنصة. لا تظهر الأسرار هنا.", role: "مالك المنصة فقط", never: "لا يتم تحميل بيانات المفاتيح السرية في هذه الصفحة.", credentials: "عدد بيانات الاتصال", issued: "أُنشئ", neverUsed: "لم يُستخدم", noData: "—",
+    readOnlyGrace: "فترة سماح للقراءة بعد التدوير", keys: "مفاتيح API", installations: "تثبيتات Odoo", search: "البحث بالاسم أو المعرّف أو العميل", workspace: "معرّف العميل (اختياري)", all: "الكل", active: "نشط", inactive: "معطّل", refresh: "تحديث", integration: "التكامل", owner: "العميل", state: "صلاحية الوصول", activity: "آخر استخدام / الإنشاء", operation: "التحكم", revoke: "إلغاء المفتاح", remove: "حذف المفتاح نهائيًا", quarantine: "حجر التثبيت", reason: "سبب الحادث أو الإجراء (اختياري)", cancel: "إلغاء", confirm: "تنفيذ إجراء الأمان", confirmTitle: "تأكيد تغيير مؤثر على صلاحيات الاتصال", confirmed: "تم تنفيذ الإجراء وتسجيله في سجل التدقيق.", unconfirmed: "تعذر تأكيد نتيجة الإجراء. حدّث قائمة التكاملات قبل تكراره.", error: "تعذر تحميل جرد التكاملات", empty: "لا توجد تكاملات مطابقة", page: "سجل", previous: "السابق", next: "التالي", audit: "سجل التدقيق", safety: "إلغاء مفتاح API يوقف استخدامه فورًا حتى لو كان في فترة سماح للقراءة. حجز تثبيت Odoo يمنع عمليات v2 الجديدة، لكن مفاتيح v1 القديم قد تظل فعالة ما لم تُلغَ منفصلةً. لا يتم حذف السجلات القديمة أو تكرار الطباعة. استعادة الاتصال تحتاج إجراء تكامل موثّق.", denied: "الصفحة متاحة فقط لمالك المنصة. لا تظهر الأسرار هنا.", role: "مالك المنصة فقط", never: "لا يتم تحميل بيانات المفاتيح السرية في هذه الصفحة.", credentials: "عدد بيانات الاتصال", issued: "أُنشئ", neverUsed: "لم يُستخدم", noData: "—",
   },
 } as const;
 
 function isKey(row: RecordItem): row is KeyRecord { return "odooEnabled" in row; }
 
 export default function PlatformIntegrationsPage() {
-  const { locale, formatDateTime, formatNumber } = useI18n();
+  const { locale, formatDateTime, formatNumber, t: translate } = useI18n();
   const t = wording[locale];
   const [kind, setKind] = useState<"keys" | "installations">("keys");
   const [status, setStatus] = useState("all");
@@ -98,14 +99,31 @@ export default function PlatformIntegrationsPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ tenantId: selected.item.tenantId, id: selected.item.id, confirmed: true, reason: reason.trim() }),
       });
-      const result = await response.json().catch(() => null) as { error?: string } | null;
-      if (!response.ok) throw new Error(result?.error || t.error);
+      const result = await response.json().catch(() => null) as { code?: string; ok?: boolean; tenantId?: string; id?: string; revoked?: boolean; removed?: boolean; quarantined?: boolean } | null;
+      if (!response.ok) {
+        setActionError(translate(apiMessageKey(result?.code, response.status, "errors.operationFailed")));
+        return;
+      }
+      // An HTTP 2xx alone is not evidence that the intended credential or
+      // installation was actually changed. Bind the acknowledgement to the
+      // exact selected workspace, resource, and security operation.
+      const expectedProof = selected.operation === "remove" ? "removed"
+        : selected.kind === "keys" ? "revoked" : "quarantined";
+      if (result?.ok !== true || result.tenantId !== selected.item.tenantId ||
+          result.id !== selected.item.id || result[expectedProof] !== true) {
+        setActionError(t.unconfirmed);
+        return;
+      }
       setNotice(t.confirmed);
       setSelected(null);
       setReason("");
       
       setRefresh(x => x + 1);
-    } catch (e) { setActionError(e instanceof Error ? e.message : t.error); }
+    } catch {
+      // A lost response does not prove whether revocation/deletion committed.
+      // Keep the selected action visible and let the operator refresh first.
+      setActionError(t.unconfirmed);
+    }
     finally { setActing(false); }
   }
 

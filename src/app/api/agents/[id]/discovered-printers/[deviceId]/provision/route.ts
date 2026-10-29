@@ -119,6 +119,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       && !(observedTransport === "usb" && Boolean(device.spoolerName?.trim()))) {
       return { kind: "unsupported_transport" as const, protocol: `${rawProtocol}/${observedTransport}` };
     }
+    if (transport.connectionType === "spooler" && !device.spoolerName?.trim()) {
+      // A discovered model/display name does not identify an executable
+      // Winspool queue. Refuse to turn it into a printer binding.
+      return { kind: "missing_endpoint" as const };
+    }
     if (["ipp", "ipps", "raw", "escpos", "zpl", "tspl"].includes(transport.protocol) && (!device.ipAddress || !device.port)) {
       return { kind: "missing_endpoint" as const };
     }
@@ -177,7 +182,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         ? transport.protocol + "://" + (device.ipAddress.includes(":") ? `[${device.ipAddress}]` : device.ipAddress) + ":" + String(device.port) + "/ipp/print"
         : undefined);
     const printerConfig = transport.connectionType === "spooler"
-      ? { spooler_name: device.spoolerName ?? device.deviceName ?? undefined, address: device.spoolerName ?? device.deviceName ?? undefined }
+      ? { spooler_name: device.spoolerName!.trim(), address: device.spoolerName!.trim() }
       : transport.connectionType === "ipp" || transport.connectionType === "ipps"
         ? { address: ippAddress }
         : { ip: device.ipAddress ?? undefined, port: device.port ?? undefined };
@@ -304,7 +309,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     return NextResponse.json({ error: `UNSUPPORTED_DISCOVERY_TRANSPORT: ${result.protocol}. The candidate must report an explicit executable print transport before provisioning.`, code: "UNSUPPORTED_DISCOVERY_TRANSPORT" }, { status: 422 });
   }
   if (result.kind === "missing_endpoint") {
-    return NextResponse.json({ error: "MISSING_PRINTER_ENDPOINT: network printer requires ipAddress and port", code: "MISSING_PRINTER_ENDPOINT" }, { status: 422 });
+    return NextResponse.json({ error: "MISSING_PRINTER_ENDPOINT: the discovered destination requires a verified network address/port or exact Windows queue name", code: "MISSING_PRINTER_ENDPOINT" }, { status: 422 });
   }
   if (result.kind === "invalid_endpoint") {
     return NextResponse.json({ error: `INVALID_PRINTER_ENDPOINT: ${result.error}`, code: "INVALID_PRINTER_ENDPOINT" }, { status: 422 });

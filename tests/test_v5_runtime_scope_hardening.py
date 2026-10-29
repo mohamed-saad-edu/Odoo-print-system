@@ -87,7 +87,8 @@ def test_runtime_printer_picker_rejects_noncanonical_agent_ids_before_inventory(
     policy_source = CONTROLLER.parent.parent / "runtime_policy.py"
     policy_scope = {}
     exec(compile(policy_source.read_text(encoding="utf8"), str(policy_source), "exec"), policy_scope)
-    namespace = {"is_exact_gateway_printer_id": policy_scope["is_exact_gateway_printer_id"]}
+    namespace = {"is_exact_gateway_printer_id": policy_scope["is_exact_gateway_printer_id"],
+                 "is_exact_gateway_agent_id": policy_scope["is_exact_gateway_agent_id"]}
     exec(compile(module, str(CONTROLLER), "exec"), namespace)
     picker = namespace["RuntimePicker"]()
     picker._require_runtime_admin = lambda: None
@@ -110,7 +111,7 @@ def test_runtime_printer_picker_rejects_noncanonical_agent_ids_before_inventory(
         calls.append(True)
         return (False, None)
     picker._get_config = no_config
-    assert picker.runtime_printers(agent_id="agt-one") == {
+    assert picker.runtime_printers(agent_id="agt_12345678") == {
         "enabled": False, "selectedAgentId": False, "printers": [],
     }
     assert calls == [True]

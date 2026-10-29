@@ -23,6 +23,9 @@ const CODE_KEYS: Record<string, MessageKey> = {
   JOB_NOT_FOUND: "errors.jobNotFound",
   JOB_NOT_TERMINAL: "errors.jobStillInProgress",
   JOB_REPRINT_NOT_ALLOWED: "errors.jobNotEligibleForReprint",
+  JOB_REPRINT_SOURCE_CHANGED: "errors.reprintSourceChanged",
+  REPRINT_ALREADY_ACTIVE: "errors.reprintAlreadyActive",
+  IDEMPOTENCY_KEY_REQUIRED: "errors.idempotencyKeyRequired",
   INVALID_STATUS_FILTER: "errors.invalidStatusFilter",
   // Agents
   AGENT_NOT_FOUND: "errors.agentNotFound",
@@ -80,6 +83,10 @@ const CODE_KEYS: Record<string, MessageKey> = {
   // thing unknown is email delivery. Distinct from a generic failure so the
   // operator is never told to re-send.
   INVITATION_DELIVERY_UNAVAILABLE: "errors.invitationDeliveryUnavailable",
+  INVITATION_INVALID: "invite.linkMissing",
+  INVITATION_ALREADY_MEMBER: "invite.alreadyMemberSignIn",
+  INVITATION_WORKSPACE_UNAVAILABLE: "invite.workspaceUnavailable",
+  WORKSPACE_UNAVAILABLE: "invite.workspaceUnavailable",
   API_KEY_READ_ONLY: "errors.apiKeyReadOnly",
   INTERNAL_ERROR: "errors.internalError",
 };

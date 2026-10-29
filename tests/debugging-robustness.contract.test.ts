@@ -24,10 +24,11 @@ describe("debugging / robustness contracts", () => {
     ]) {
       const source = read(path);
       expect(source).not.toMatch(/catch\s*\([^)]*:\s*any\)/);
-      // Errors must be narrowed before use, never dumped as an object. The
-      // wizard's fallback is a translated message rather than String(e), which
-      // keeps the same guarantee without surfacing "[object Object]" copy.
-      expect(source).toMatch(/e instanceof Error \? e\.message : (String\(e\)|t\(")/);
+      // Errors must be narrowed before use, never dumped as an object. Both
+      // the explicit-narrowing ternary with a translated/String fallback and
+      // the constant translated fallback (`setError(t("…"))`) keep the same
+      // guarantee: no "[object Object]" or raw exception text in the UI copy.
+      expect(source).toMatch(/e instanceof Error \? e\.message : \(String\(e\)|t\("\)|setError\(t\("/);
     }
     // V4 connection errors deliberately discard raw backend exception text.
     const connection = read("src/app/api-keys/page.tsx");

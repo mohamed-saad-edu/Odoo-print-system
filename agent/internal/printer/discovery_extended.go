@@ -54,7 +54,10 @@ func dedupeKey(di DeviceInfo) string {
 	if di.NetworkAddress != "" {
 		return "ip:" + strings.ToLower(di.NetworkAddress)
 	}
-	return "id:" + di.ID
+	if di.ID != "" {
+		return "id:" + di.ID
+	}
+	return ""
 }
 
 // SNMP discovery: safe read-only query for printer MIB.

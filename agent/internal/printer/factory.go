@@ -57,9 +57,14 @@ func New(cfg config.PrinterConfig) (Printer, error) {
 				width = geometry.PrintableWidthDots
 			}
 			return &NetworkPrinter{Address: cfg.Endpoint, Protocol: proto, RasterMaxWidth: width, Geometry: geometry}, nil
-		case "ipp", "ipps":
-			// Network printer explicitly using IPP protocol -> treat as IPP
+		case "ipp":
+			// Network IPP may be configured explicitly, but an IPPS queue must
+			// use the distinct ipps transport. Keep factory admission in sync
+			// with config.ValidatePrinterConfig instead of silently changing
+			// the declared transport at execution time.
 			return newConfiguredIPPPrinter(cfg)
+		case "ipps":
+			return nil, fmt.Errorf("printer %s: IPPS requires type ipps", cfg.ID)
 		case "unknown":
 			return nil, fmt.Errorf("printer %s: protocol is not declared; the device is inventoried but NOT routable until an operator declares its protocol in agent.yaml", cfg.ID)
 		default:
@@ -70,12 +75,18 @@ func New(cfg config.PrinterConfig) (Printer, error) {
 		}
 
 	case "spooler":
-		spoolerName := cfg.SpoolerName
-		if spoolerName == "" {
-			spoolerName = cfg.Endpoint
+		if protoErr != nil {
+			return nil, protoErr
 		}
-		if spoolerName == "" {
-			return nil, fmt.Errorf("printer %s: spooler printer requires spooler_name or endpoint", cfg.ID)
+		if proto != "spooler" {
+			return nil, fmt.Errorf("printer %s: spooler transport requires spooler protocol", cfg.ID)
+		}
+		// Endpoint can be a discovery/display alias. Only an exact, verified
+		// Windows queue name may be passed to winspool; never use endpoint
+		// as a fallback after a saved binding loses spooler_name.
+		spoolerName := cfg.SpoolerName
+		if spoolerName == "" || spoolerName != strings.TrimSpace(spoolerName) {
+			return nil, fmt.Errorf("printer %s: spooler printer requires an exact spooler_name", cfg.ID)
 		}
 		if isVirtualSpooler("", "", spoolerName) {
 			return nil, fmt.Errorf("printer %s: software printer queue is not supported", cfg.ID)
@@ -123,7 +134,14 @@ func New(cfg config.PrinterConfig) (Printer, error) {
 		}, nil
 
 	case "ipp", "ipps":
-		// IPP/IPPS transport - requires URL endpoint
+		// IPP/IPPS transport must agree with its declared protocol. Unknown
+		// or mismatched declarations are inventory only, never executable.
+		if protoErr != nil {
+			return nil, protoErr
+		}
+		if proto != t {
+			return nil, fmt.Errorf("printer %s: %s transport requires %s protocol", cfg.ID, t, t)
+		}
 		if cfg.Endpoint == "" {
 			return nil, fmt.Errorf("printer %s: IPP printer requires endpoint URL (ipp://host/ipp/print or http://host:631/ipp/print)", cfg.ID)
 		}

@@ -1,3 +1,4 @@
+import { hasBodyOverLimit } from "../../../../../../lib/request-limits";
 import { NextResponse } from "next/server";
 import { db } from "../../../../../../db";
 import { tenantUsers } from "../../../../../../db/schema";
@@ -13,6 +14,7 @@ type Ctx = { params: Promise<{ id: string }> };
 
 /** Owner is informational; only Platform Owner may change the protected marker. */
 export async function POST(req: Request, ctx: Ctx) {
+  if (hasBodyOverLimit(req, 16 * 1024)) return NextResponse.json({ error: "Request body too large", code: "INVALID_REQUEST" }, { status: 413 });
   try {
     assertPlatformTeamOrigin(req);
     const claims = await requirePlatformOwner(req);

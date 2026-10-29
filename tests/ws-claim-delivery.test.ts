@@ -681,25 +681,29 @@ suite("WS claim-before-delivery", () => {
     const claimA = await claimJobForDelivery("job_toctou", f.agentId);
     const staleToken = claimA!.claimToken!;
 
-    const queryTarget = db.query.printJobs as unknown as { findFirst: (q?: unknown) => Promise<Record<string, unknown> | undefined> };
-    const originalFindFirst = queryTarget.findFirst.bind(db.query.printJobs);
+    // PATCH reads tx.query after locking current Agent credentials. Reproduce
+    // the race at that real transaction query, not the unused db.query object.
+    const originalTransaction = db.transaction.bind(db);
     let flipped = false;
-    queryTarget.findFirst = async (query?: unknown) => {
-      const row = await originalFindFirst(query);
-      if (!flipped) {
-        flipped = true;
-        // The reclaim lands AFTER the route's read and BEFORE its write.
-        await pool().query(
-          `UPDATE print_jobs SET status='claimed', claim_token='reclaim-worker-b', updated_at=now() WHERE id='job_toctou'`,
-        );
-      }
-      return row;
-    };
+    (db as any).transaction = async (callback: any, config?: any) => originalTransaction(async (tx: any) => {
+      const queryTarget = tx.query.printJobs;
+      const originalFindFirst = queryTarget.findFirst.bind(queryTarget);
+      queryTarget.findFirst = async (query?: unknown) => {
+        const row = await originalFindFirst(query);
+        if (!flipped) {
+          flipped = true;
+          await pool().query(`UPDATE print_jobs SET status='claimed', claim_token='reclaim-worker-b', updated_at=now() WHERE id='job_toctou'`);
+        }
+        return row;
+      };
+      return callback(tx);
+    }, config);
     try {
       const res = await agentJobsPATCH(agentRequest(f, "PATCH", { jobId: "job_toctou", status: "printing", claimToken: staleToken }));
+      expect(flipped).toBe(true);
       expect(res.status).toBe(409);
     } finally {
-      queryTarget.findFirst = originalFindFirst;
+      (db as any).transaction = originalTransaction;
     }
     const row = await jobRow("job_toctou");
     expect(row.status).toBe("claimed");

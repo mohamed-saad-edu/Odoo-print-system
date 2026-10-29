@@ -26,6 +26,14 @@ def _exact_pos_printer_id(value):
 class PosOrderGatewayPrinting(models.Model):
     _inherit = "pos.order"
 
+    def _gateway_active_company(self):
+        """Keep POS receipt, kitchen selection and activation in one company."""
+        self.ensure_one()
+        company = self.config_id.company_id or self.company_id
+        if company != self.env.company:
+            raise ValidationError(_("Gateway printing must use the active Odoo company."))
+        return company
+
     def action_print_gateway_receipt(self, image, operation_id=None, geometry_fingerprint=None):
         self.ensure_one()
         self.check_access("read")
@@ -48,9 +56,7 @@ class PosOrderGatewayPrinting(models.Model):
         """
         self.ensure_one()
         self.check_access("read")
-        company = self.config_id.company_id or self.company_id
-        if company != self.env.company:
-            raise ValidationError(_("Gateway printing must use the active Odoo company."))
+        company = self._gateway_active_company()
         router = self.env["print_gateway.print_router"]
         route = router.resolve_binding(
             record=self, company=company, document_type="receipt",
@@ -61,6 +67,7 @@ class PosOrderGatewayPrinting(models.Model):
     def has_gateway_kitchen_binding(self, pos_printer_id=None):
         self.ensure_one()
         self.check_access("read")
+        company = self._gateway_active_company()
         selected_printer_id = _exact_pos_printer_id(pos_printer_id)
         destination = self.config_id
         if selected_printer_id is not None:
@@ -74,7 +81,7 @@ class PosOrderGatewayPrinting(models.Model):
                 return False
         route = self.env["print_gateway.print_router"].resolve_binding(
             record=self,
-            company=self.config_id.company_id or self.company_id,
+            company=company,
             document_type="kitchen",
             explicit_destination=destination,
             raise_if_not_found=False,
@@ -93,8 +100,8 @@ class PosOrderGatewayPrinting(models.Model):
         """
         self.ensure_one()
         self.check_access("read")
+        company = self._gateway_active_company()
         router = self.env["print_gateway.print_router"]
-        company = self.config_id.company_id or self.company_id
         preparation_printers = getattr(self.config_id, "preparation_printer_ids", None)
         if preparation_printers is None:
             preparation_printers = self.config_id.printer_ids
@@ -144,6 +151,7 @@ class PosOrderGatewayPrinting(models.Model):
     def action_print_gateway_kitchen(self, image, reprint=False, operation_id=None, pos_printer_id=None, geometry_fingerprint=None):
         self.ensure_one()
         self.check_access("read")
+        self._gateway_active_company()
         if type(reprint) is not bool:
             raise ValidationError(_("The kitchen reprint option must be a boolean."))
         if not image:
@@ -168,9 +176,7 @@ class PosOrderGatewayPrinting(models.Model):
     def is_gateway_printing_enabled(self):
         self.ensure_one()
         self.check_access("read")
-        target_company = self.config_id.company_id or self.company_id
-        if target_company != self.env.company:
-            raise ValidationError(_("Gateway printing must use the active Odoo company."))
+        target_company = self._gateway_active_company()
         return bool(self.env["print_gateway.print_router"]._gateway_config(target_company))
 
     def _action_trigger_print_policies(self):

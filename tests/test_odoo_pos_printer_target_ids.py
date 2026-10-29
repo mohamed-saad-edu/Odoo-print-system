@@ -6,7 +6,7 @@ supplied malformed or zero ID cannot select a different POS/default printer.
 import ast
 import copy
 from pathlib import Path
-from types import SimpleNamespace
+from types import MethodType, SimpleNamespace
 
 import pytest
 
@@ -56,14 +56,18 @@ def fixture():
                 return Router()
             raise AssertionError("Unexpected external model " + name)
 
-    config = SimpleNamespace(printer_ids=[selected])
+    company = SimpleNamespace(id=7)
+    config = SimpleNamespace(printer_ids=[selected], company_id=company)
+    env = Registry()
+    env.company = company
     self = SimpleNamespace(
         ensure_one=lambda: None,
         check_access=lambda scope: scope == "read",
         config_id=config,
-        company_id=SimpleNamespace(id=7),
-        env=Registry(),
+        company_id=company,
+        env=env,
     )
+    self._gateway_active_company = MethodType(production_method("_gateway_active_company"), self)
     return self, selected, called
 
 

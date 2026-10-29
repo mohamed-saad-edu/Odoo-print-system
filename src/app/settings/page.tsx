@@ -73,7 +73,7 @@ export default function SettingsPage() {
         setRole(d.role ?? "");
         setTenantCreatedAt(d.tenant?.createdAt ?? null);
       })
-      .catch((e) => { if (!cancelled) setMessage({ text: e instanceof Error ? e.message : t("settings.loadFailed"), type: "err" }); })
+      .catch(() => { if (!cancelled) setMessage({ text: t("settings.loadFailed"), type: "err" }); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => {
       cancelled = true;
@@ -92,10 +92,10 @@ export default function SettingsPage() {
         body: JSON.stringify({ name }),
       });
       const d = await r.json();
-      if (!r.ok) throw new Error(t(apiMessageKey(d.code, r.status, "settings.saveFailed")));
+      if (!r.ok) { setMessage({ text: t(apiMessageKey(d.code, r.status, "settings.saveFailed")), type: "err" }); return; }
       setMessage({ text: t("settings.nameUpdated"), type: "ok" });
-    } catch (e) {
-      setMessage({ text: e instanceof Error ? e.message : t("settings.saveFailed"), type: "err" });
+    } catch {
+      setMessage({ text: t("settings.saveFailed"), type: "err" });
     } finally {
       setBusy(false);
     }

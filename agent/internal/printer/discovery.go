@@ -347,6 +347,10 @@ func DiscoverQuick(cfg *config.Config, registryPath string) DiscoveryResult {
 			if d.ID == "" {
 				d.ID = StableIDForDevice(d)
 			}
+			if d.ID == "" {
+				log.Printf("[discovery] refusing printer %q without distinct execution identity", d.Name)
+				continue
+			}
 			if !isValidDiscoveredPrinter(d) {
 				log.Printf("[discovery] filtered non-printer device: %q type=%q conn=%q", d.Name, d.PrinterType, d.ConnectionType)
 				continue
@@ -506,6 +510,10 @@ func discoverWithContext(ctx context.Context, cfg *config.Config, registryPath s
 			d = discoveredDeviceNames(d)
 			if d.ID == "" {
 				d.ID = StableIDForDevice(d)
+			}
+			if d.ID == "" {
+				log.Printf("[discovery] refusing printer %q without distinct execution identity", d.Name)
+				continue
 			}
 			if !isValidDiscoveredPrinter(d) {
 				log.Printf("[discovery] filtered non-printer device: %q type=%q conn=%q", d.Name, d.PrinterType, d.ConnectionType)
@@ -1172,7 +1180,39 @@ func conflictingUSBExecutionInterface(left, right DeviceInfo) bool {
 	return !sameUSBDevice(left, right)
 }
 
+// An ID generated from legacy IP/serial metadata is not authority to select
+// one of two different network execution bindings. In particular, an IPP
+// HTTP-to-HTTPS change, IPP resource change, or TCP port move may address a
+// different logical queue even when a chassis UUID or MAC is identical.
+func conflictingNetworkExecutionBinding(left, right DeviceInfo) bool {
+	leftType, rightType := SharingConfigForDevice(left).NormalizedType(), SharingConfigForDevice(right).NormalizedType()
+	if leftType != "network" && leftType != "ipp" && leftType != "ipps" {
+		return false
+	}
+	if rightType != "network" && rightType != "ipp" && rightType != "ipps" {
+		return false
+	}
+	if strings.TrimSpace(left.Endpoint) == "" || strings.TrimSpace(right.Endpoint) == "" {
+		return false // a weak observation cannot assert a replacement transport
+	}
+	leftBinding, leftError := config.PrinterBindingDigest(SharingConfigForDevice(left))
+	rightBinding, rightError := config.PrinterBindingDigest(SharingConfigForDevice(right))
+	if leftError == nil && rightError == nil {
+		return leftBinding != rightBinding
+	}
+	// Unknown or undeclared execution evidence is a weak observation on BOTH
+	// call sites: it can neither assert a replacement transport nor veto an
+	// explicit one (an agent that never proved a byte language must accept the
+	// later escpos/zpl discovery). Known-binding conflicts are still covered
+	// by conflictingNetworkPrintLanguage for identical endpoints.
+	return false
+}
+
 func mergeDiscoveredSameID(existing, incoming DeviceInfo) DeviceInfo {
+	if conflictingNetworkExecutionBinding(existing, incoming) {
+		log.Printf("[discovery] distinct network execution destinations collide on printer ID %q", existing.ID)
+		return withRegistryIdentityCollision(existing, "same_id_different_network_binding")
+	}
 	if conflictingUSBExecutionInterface(existing, incoming) {
 		log.Printf("[discovery] distinct USB interfaces collide on printer ID %q; explicit reconciliation required", existing.ID)
 		return withRegistryIdentityCollision(existing, "same_id_different_usb_interface")

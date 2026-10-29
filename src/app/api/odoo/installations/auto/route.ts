@@ -9,6 +9,7 @@ import { requireActiveTenantInTransaction } from "../../../../../lib/tenant-guar
 import { isTenantBillingError, requireTenantBillingAccess } from "../../../../../lib/entitlements";
 import { writeAuditEvent } from "../../../../../lib/audit";
 import { logError } from "../../../../../lib/log";
+import { hasBodyOverLimit } from "../../../../../lib/request-limits";
 
 export const dynamic = "force-dynamic";
 const HEADERS = { "Cache-Control": "no-store" };
@@ -35,6 +36,7 @@ function proofMatches(candidate: string, storedHash: string): boolean {
  * never returned from this endpoint or persisted as plaintext on Gateway.
  */
 export async function POST(req: Request) {
+  if (hasBodyOverLimit(req, 16 * 1024)) return NextResponse.json({ error: "Request body too large" }, { status: 413, headers: HEADERS });
   const key = await validateOdooKey(req, { requireIntegrationEnabled: false });
   if (!key || key.readOnly) {
     return NextResponse.json({ error: "Active Odoo integration key required" },

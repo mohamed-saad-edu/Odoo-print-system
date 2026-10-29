@@ -80,7 +80,7 @@ function fixture() {
     ManagerMutationAuthorityChangedError:class ManagerMutationAuthorityChangedError extends Error {},
     getServerLocale:async()=> 'en',makeT:()=>key=>key,
     isTerminal:status=>['success','failed','expired'].includes(status),idempotencyDigest:input=>createHash('sha256').update(JSON.stringify(input)).digest('hex'),
-    revalidatePath:()=>{},writeAuditEvent:async event=>events.push(event),logError:()=>{},ActionError,RECEIPT_MATERIALIZE_BATCH_ROWS,
+    revalidatePath:()=>{},writeAuditEvent:async event=>events.push(event),logError:()=>{},ActionError,hasBodyOverLimit:()=>false,RECEIPT_MATERIALIZE_BATCH_ROWS,
     NextResponse:{json:(body,opts)=>response(opts?.status??200,body)},
   };
   return {rows,events,locks,globals,setClaims:value=>{claims=value;}};
@@ -212,7 +212,7 @@ test('reprint Server Action rejects aliased source jobs before selecting a print
     await assert.rejects(api.reprintJob(input),err=>err instanceof ActionError&&err.status===400&&err.code==='INVALID_REQUEST');
   }
   assert.equal(rows.length,0);
-  const response=await api.reprintJob(stored.id);
+  const response=await api.reprintJob(stored.id,'operator-reprint-job-original');
   // A Server Action result originates in a separate VM realm: assert data,
   // not an unrelated realm's object prototype.
   assert.equal(response.ok,true);
@@ -311,10 +311,10 @@ test('an activation request authenticated before key removal cannot revive that 
     and:(...values)=>values,eq:(column,value)=>{guards.push([column.field,value]);return {};},lt:()=>({}),
     isTenantBillingError:()=>false,requireTenantBillingAccess:async()=>{},requireActiveTenantInTransaction:async()=>{},
     TenantSuspendedError:class TenantSuspendedError extends Error {},TenantDeletedError:class TenantDeletedError extends Error {},
-    NextResponse:{json:(body,opts)=>response(opts?.status??200,body)},
+    NextResponse:{json:(body,opts)=>response(opts?.status??200,body)},hasBodyOverLimit:()=>false,
   },s=>s.slice(s.indexOf('export async function PATCH')));
   const result=await api.PATCH(new Request('https://gateway/api/odoo/configuration',{method:'PATCH',body:JSON.stringify({enabled:false,revision:1000})}));
   assert.equal(result.status,401);assert.equal((await result.json()).code,'UNAUTHORIZED');
-  assert.ok(guards.some(([field,value])=>field==='hashedKey'&&value==='original'));
+  assert.ok(guards.some(([text,values])=>text.includes('hashed_key =')&&values.includes('original')), 'credential fence must match the authenticated hash');
   assert.ok(guards.some(([text])=>text.includes('IS NULL')));
 });

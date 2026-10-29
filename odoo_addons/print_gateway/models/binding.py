@@ -8,7 +8,7 @@ from . import gateway_http as requests
 
 from odoo import api, fields, models, _
 from odoo.exceptions import AccessError, ValidationError
-from ..runtime_policy import is_gateway_shared_printer, is_exact_gateway_printer_id
+from ..runtime_policy import is_gateway_shared_printer, is_exact_gateway_printer_id, is_exact_gateway_agent_id, unambiguous_inventory_rows
 from ..printer_geometry import validated_printer_geometry, validated_page_geometry
 from ..printer_verification import is_verified_runtime_printer
 
@@ -499,7 +499,7 @@ class PrintGatewayBinding(models.Model):
         except (requests.RequestException, ValueError) as exc:
             raise ValidationError(_("Gateway runtime agent discovery is unavailable.")) from exc
         agents = body.get("agents") if isinstance(body, dict) else None
-        agent_match = next((agent for agent in (agents if isinstance(agents, list) else []) if isinstance(agent, dict) and agent.get("id") == self.runtime_agent_id), None)
+        agent_match = next((agent for agent in unambiguous_inventory_rows(agents) if agent.get("id") == self.runtime_agent_id), None)
         if not isinstance(agents, list) or not agent_match:
             raise ValidationError(_("The selected Gateway Runtime Agent is not found."))
         if agent_match.get("lifecycle") != "active":
@@ -517,7 +517,7 @@ class PrintGatewayBinding(models.Model):
         except (requests.RequestException, ValueError) as exc:
             raise ValidationError(_("Gateway runtime printer discovery is unavailable.")) from exc
         printers = body.get("printers") if isinstance(body, dict) else None
-        printer_match = next((printer for printer in (printers if isinstance(printers, list) else []) if isinstance(printer, dict) and printer.get("id") == self.printer_id), None)
+        printer_match = next((printer for printer in unambiguous_inventory_rows(printers) if printer.get("id") == self.printer_id), None)
         if not isinstance(printers, list) or not printer_match:
             raise ValidationError(_("The selected Gateway Runtime Printer is not found."))
         if not is_gateway_shared_printer(printer_match):
@@ -577,7 +577,7 @@ class PrintGatewayBinding(models.Model):
                     not is_su and user_companies is not None and record.branch_id not in user_companies
                 ):
                     raise ValidationError(_("Odoo Branch is not available to the current user."))
-                if not isinstance(record.runtime_agent_id, str) or not record.runtime_agent_id.strip():
+                if not is_exact_gateway_agent_id(record.runtime_agent_id):
                     raise ValidationError(_("A Gateway Runtime Agent is required for a branch binding."))
 
             if record.runtime_agent_id and not assignment_model.is_agent_assigned(

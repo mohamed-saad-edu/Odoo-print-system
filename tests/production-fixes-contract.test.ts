@@ -268,7 +268,7 @@ describe("production fixes — presence sweep and Gateway test-page HTTP path", 
     expect(route).toContain('const pairedAgent = claims ? null : await validateAgent(req.headers.get("Authorization"))');
     expect(route).toContain('const tenantId = claims ? claims.tenantId : pairedAgent!.tenantId');
     expect(route).toContain('eq(printers.agentId, pairedAgent.id)');
-    expect(route).toContain('agentDiagnosticAuthority: { agentId: pairedAgent.id, tenantId: pairedAgent.tenantId }');
+    expect(route).toContain('agentDiagnosticAuthority: { agentId: pairedAgent.id, tenantId: pairedAgent.tenantId, secretHash: pairedAgent.secret! }');
     expect(route).not.toContain("validateConsoleAuth");
     expect(route).toContain("eq(printers.tenantId, tenantId)");
     expect(route).toContain("eq(agents.tenantId, tenantId)");

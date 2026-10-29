@@ -1,7 +1,6 @@
 import { printOutputPresentation } from "../../../../lib/print-output";
 import { NextResponse } from "next/server";
-import { db } from "../../../../db";
-import { printJobs, printJobReceipts } from "../../../../db/schema";
+import type { printJobs } from "../../../../db/schema";
 import { validateOdooKey } from "../../../../lib/odoo-auth";
 import { parseOdooIdentity } from "../../../../lib/odoo-idempotency";
 import { OdooNamespaceError } from "../../../../lib/odoo-v2-admission";
@@ -13,7 +12,6 @@ import { hasBodyOverLimit } from "../../../../lib/request-limits";
 import { logError, logWarn, requestIdFrom } from "../../../../lib/log";
 import { databaseNowMs } from "../../../../lib/database-clock";
 import { databaseErrorLogFields } from "../../../../lib/database-error-log";
-import { and, eq, isNotNull } from "drizzle-orm";
 import { z } from "zod";
 import { isExactIdempotencyKey } from "../../../../lib/idempotency";
 import { isExactPrinterId } from "../../../../lib/exact-printer-id";
@@ -141,21 +139,24 @@ export async function POST(req: Request) {
       requestId: requestIdFrom(req),
     });
     if (result.isReused) {
-      const existing = await db.query.printJobs.findFirst({
-        where: and(
-          eq(printJobs.id, result.id),
-          eq(printJobs.tenantId, odoo.tenantId),
-          isNotNull(printJobs.apiKeyId),
-        ),
+      // Admission serialized this replay against the current key, but that
+      // transaction is over. A concurrent revoke, tenant suspension or v2
+      // installation quarantine must fence the FOLLOW-UP status read as well.
+      // Use the same payload-free scoped reader as GET and the v2 endpoint;
+      // historical receipts are not authority to bypass an installation cutover.
+      const existing = await readOdooJobStatus(
+        odoo,
+        v2Identity
+          ? { installationId: v2Identity.installationId, installationProof: v2Identity.installationProof }
+          : null,
+        { id: result.id },
+      );
+      if (existing) return NextResponse.json(responseForRow(existing), {
+        status: 200, headers: { "Cache-Control": "no-store" },
       });
-      if (existing) {
-        return NextResponse.json(responseForRow(existing), { status: 200 });
-      }
-      const receipt = await db.query.printJobReceipts.findFirst({ where: and(eq(printJobReceipts.id, result.id), eq(printJobReceipts.tenantId, odoo.tenantId), isNotNull(printJobReceipts.apiKeyId)) });
-      if (receipt) return NextResponse.json(responseForRow(receipt), { status: 200 });
-      // The reused job was deleted concurrently; do not fall through to a
-      // 201 describing a job that no longer exists.
-      return NextResponse.json({ error: "IDEMPOTENCY_CONFLICT", code: "IDEMPOTENCY_CONFLICT", retryable: false }, { status: 409 });
+      return NextResponse.json({ error: "IDEMPOTENCY_CONFLICT", code: "IDEMPOTENCY_CONFLICT", retryable: false }, {
+        status: 409, headers: { "Cache-Control": "no-store" },
+      });
     }
     const responseHeaders: Record<string, string> = {};
     if (!parsed.data.idempotencyKey) {

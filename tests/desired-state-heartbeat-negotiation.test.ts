@@ -6,7 +6,7 @@ import type * as LogModule from "../src/lib/log";
 
 const mocks = vi.hoisted(() => ({ execute: vi.fn(), transaction: vi.fn(), update: vi.fn(), desiredPage: vi.fn(), verificationClock: vi.fn(), logError: vi.fn() }));
 vi.mock("../src/db", () => ({ db: { transaction: mocks.transaction } }));
-vi.mock("../src/lib/agent-auth", () => ({ validateAgent: async () => ({ id: "agent-a", tenantId: "tenant-a", lifecycle: "active" }) }));
+vi.mock("../src/lib/agent-auth", () => ({ validateAgent: async () => ({ id: "agent-a", tenantId: "tenant-a", lifecycle: "active", secret: "secret-hash" }) }));
 vi.mock("../src/lib/tenant-guard", async (importOriginal) => ({
   ...await importOriginal<typeof TenantGuardModule>(),
   requireActiveTenantInTransaction: async () => {},
@@ -30,7 +30,7 @@ describe("heartbeat desired-state paging negotiation", () => {
     mocks.execute.mockImplementation(async (statement: SQL) => {
       const text = dialect.sqlToQuery(statement).sql;
       if (text.includes("SELECT pg_advisory_xact_lock(")) return { rows: [] };
-      if (/\bFROM agents\b/.test(text)) return { rows: [{ id: "agent-a", lifecycle: "active", inventory_snapshot_version: "0" }] };
+      if (/\bFROM agents\b/.test(text)) return { rows: [{ id: "agent-a", lifecycle: "active", secret: "secret-hash", inventory_snapshot_version: "0" }] };
       if (text === "SELECT clock_timestamp() AS verification_now") return mocks.verificationClock();
       throw new Error(`Unexpected SQL in desired-state fixture: ${text}`);
     });

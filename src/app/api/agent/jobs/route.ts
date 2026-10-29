@@ -1,7 +1,7 @@
 import { printOutputPresentation, validateFileOutputEvidence, sameFileOutputEvidence } from "../../../../lib/print-output";
 import { printerOperationalVerificationPredicate } from "../../../../lib/printer-verification-sql";
 import { createHash } from "node:crypto";
-import { db } from "../../../../db";
+import { db, type DbTx } from "../../../../db";
 import { printJobs, printJobReceipts } from "../../../../db/schema";
 import { validateAgent } from "../../../../lib/agent-auth";
 import { and, eq, isNull, sql, type SQL } from "drizzle-orm";
@@ -53,6 +53,30 @@ const printerEligibilityPredicate = (tenantId: SQL) => sql`
 
 const MAX_CLAIM_BATCH = 20;
 const MAX_ERROR_LENGTH = 2000;
+
+/**
+ * Terminal status reports must still be reconciled when an operator has
+ * suspended a tenant/agent, but they must not be accepted from a credential
+ * revoked by re-pairing. Lock tenant -> agent -> job in this order, matching
+ * the pairing and live-dispatch paths. Keep the locks through the DML/receipt
+ * read so a credential rotation cannot race a request already parsed.
+ */
+async function withCurrentAgentCredential<T>(
+  agent: { tenantId: string; id: string; secret: string | null },
+  operation: (tx: DbTx) => Promise<T>,
+): Promise<{ authorized: false } | { authorized: true; value: T }> {
+  return db.transaction(async (tx) => {
+    const tenant = await tx.execute(sql`SELECT id FROM tenants
+      WHERE id = ${agent.tenantId} FOR SHARE`);
+    if (tenant.rows.length !== 1) return { authorized: false as const };
+    const credential = await tx.execute(sql`SELECT secret FROM agents
+      WHERE id = ${agent.id} AND tenant_id = ${agent.tenantId} FOR SHARE`);
+    if (!agent.secret || credential.rows[0]?.secret !== agent.secret) {
+      return { authorized: false as const };
+    }
+    return { authorized: true as const, value: await operation(tx) };
+  });
+}
 
 // Select only the jobs whose combined encoded JSON payloads fit the Agent's
 // poll reader (20 x 5 MiB). This budget MUST be applied BEFORE the UPDATE:
@@ -113,7 +137,12 @@ export async function GET(req: Request) {
   const claimJobs = async (tx: { execute: typeof db.execute }) => {
     const tenant = await tx.execute(sql`SELECT id FROM tenants
       WHERE id = ${agent.tenantId} AND lifecycle = 'active' FOR SHARE`);
-    if (tenant.rows.length !== 1) return [];
+    if (tenant.rows.length !== 1) return null;
+    // Pairing rotates this stored hash while holding the Agent row. A poll
+    // authenticated before rotation must not claim a new physical attempt.
+    const credential = await tx.execute(sql`SELECT secret FROM agents
+      WHERE id = ${agent.id} AND tenant_id = ${agent.tenantId} AND lifecycle = 'active' FOR SHARE`);
+    if (!agent.secret || credential.rows[0]?.secret !== agent.secret) return null;
     await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`print_jobs:agent:${agent.id}`}))`);
 
     // Capacity accounting must include all unexpired claimed/printing jobs owned
@@ -273,6 +302,7 @@ export async function GET(req: Request) {
     ? await db.transaction((tx) => claimJobs(tx as { execute: typeof db.execute }))
     : await claimJobs(db);
 
+  if (rows === null) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const mapped = (rows as Array<Record<string, unknown>>).map((row) => ({
     ...row,
     expiresAt: toWireIso(row.expiresAt),
@@ -326,9 +356,27 @@ export async function PATCH(req: Request) {
   if (body.outputEvidence !== undefined && !outputEvidence) return NextResponse.json({ error: "Invalid file output evidence", code: "INVALID_OUTPUT_EVIDENCE" }, { status: 400 });
 
   const whereClause = and(eq(printJobs.id, jobId), eq(printJobs.tenantId, agent.tenantId), eq(printJobs.agentId, agent.id));
-  const job = await db.query.printJobs.findFirst({ where: whereClause });
+  // Parse-time authentication can predate a credential rotation. All job
+  // metadata and conflict verdicts are read under the current credential's
+  // tenant -> Agent row lock, even if no status mutation is attempted.
+  const initialRead = await withCurrentAgentCredential(agent, (tx) => tx.query.printJobs.findFirst({ where: whereClause }));
+  if (!initialRead.authorized) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const job = initialRead.value;
+  const concurrentStatusResponse = async () => {
+    const currentRead = await withCurrentAgentCredential(agent, (tx) => tx.query.printJobs.findFirst({
+      columns: { status: true }, where: whereClause,
+    }));
+    if (!currentRead.authorized) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const winnerStatus = currentRead.value?.status as JobStatus | undefined;
+    return NextResponse.json({
+      error: `Concurrent status transition rejected${winnerStatus ? `; current status is ${winnerStatus}` : ""}`,
+      status: winnerStatus ?? "unknown",
+    }, { status: 409 });
+  };
   if (!job) {
-    const receipt = await db.query.printJobReceipts.findFirst({ where: and(eq(printJobReceipts.id, jobId), eq(printJobReceipts.tenantId, agent.tenantId), eq(printJobReceipts.agentId, agent.id)) });
+    const receiptRead = await withCurrentAgentCredential(agent, (tx) => tx.query.printJobReceipts.findFirst({ where: and(eq(printJobReceipts.id, jobId), eq(printJobReceipts.tenantId, agent.tenantId), eq(printJobReceipts.agentId, agent.id)) }));
+    if (!receiptRead.authorized) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const receipt = receiptRead.value;
     if (receipt && claimToken && receipt.status === requestedStatus && receipt.closedClaimTokenHash === createHash("sha256").update(claimToken).digest("hex")) {
       if (receipt.outputMedium === "file" && requestedStatus === "success" ? !sameFileOutputEvidence(receipt.outputEvidence, outputEvidence) : outputEvidence !== null) {
         return NextResponse.json({ error: "Terminal output evidence differs from the accepted execution", code: "OUTPUT_EVIDENCE_CONFLICT" }, { status: 409 });
@@ -346,10 +394,12 @@ export async function PATCH(req: Request) {
     if (job.outputMedium === "file" && requestedStatus === "success" && !sameFileOutputEvidence(job.outputEvidence, outputEvidence)) return NextResponse.json({ error: "Terminal output evidence differs from the accepted execution", code: "OUTPUT_EVIDENCE_CONFLICT" }, { status: 409 });
     // Replay acknowledges durable evidence only. It cannot reopen execution,
     // replace an outcome, extend the late-success window, or alter spooler data.
-    const acknowledged = await db.update(printJobs)
+    const acknowledgement = await withCurrentAgentCredential(agent, (tx) => tx.update(printJobs)
       .set({ status: currentStatus })
       .where(and(whereClause, eq(printJobs.status, currentStatus), eq(printJobs.closedClaimTokenHash, closedClaimTokenHash)))
-      .returning({ status: printJobs.status, error: printJobs.error });
+      .returning({ status: printJobs.status, error: printJobs.error }));
+    if (!acknowledgement.authorized) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const acknowledged = acknowledgement.value;
     if (acknowledged.length === 1) {
       return NextResponse.json({ success: true, status: acknowledged[0].status, ...printOutputPresentation({ ...job, status: acknowledged[0].status, error: acknowledged[0].error }) });
     }
@@ -396,7 +446,7 @@ export async function PATCH(req: Request) {
       ) THEN 'UNKNOWN_PARTIAL_DELIVERY: job expired after possible delivery without an execution report'
       ELSE NULL END`;
 
-    const expired = await db.update(printJobs)
+    const expiryWrite = await withCurrentAgentCredential(agent, (tx) => tx.update(printJobs)
       .set({
         status: "expired",
         error: expiryError,
@@ -417,7 +467,9 @@ export async function PATCH(req: Request) {
         fencedJobWrite(jobId, agent.tenantId, agent.id, currentStatus, claimToken),
         sql`${printJobs.expiresAt} <= now()`,
       ))
-      .returning({ status: printJobs.status, error: printJobs.error });
+      .returning({ status: printJobs.status, error: printJobs.error }));
+    if (!expiryWrite.authorized) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const expired = expiryWrite.value;
 
     if (expired.length === 1) {
       // Returning the persisted error avoids another SELECT/UPDATE race: the
@@ -462,7 +514,7 @@ export async function PATCH(req: Request) {
     if (!AGENT_REQUEUE_REASONS.includes(reason as (typeof AGENT_REQUEUE_REASONS)[number])) {
       return NextResponse.json({ error: "Invalid status transition: claimed -> queued requires an explicit pre-execution rejection reason" }, { status: 409 });
     }
-    const updated = await db.update(printJobs)
+    const queuedWrite = await withCurrentAgentCredential(agent, (tx) => tx.update(printJobs)
       .set({
         status: "queued",
         claimToken: null,
@@ -485,11 +537,11 @@ export async function PATCH(req: Request) {
         sql`${printJobs.expiresAt} > now()`,
         sql`${printJobs.retries} < ${MAX_RETRIES}`,
       ))
-      .returning({ status: printJobs.status, error: printJobs.error });
+      .returning({ status: printJobs.status, error: printJobs.error }));
+    if (!queuedWrite.authorized) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const updated = queuedWrite.value;
     if (updated.length !== 1) {
-      const winner = await db.query.printJobs.findFirst({ where: whereClause });
-      const winnerStatus = winner?.status as JobStatus | undefined;
-      return NextResponse.json({ error: `Concurrent status transition rejected${winnerStatus ? `; current status is ${winnerStatus}` : ""}`, status: winnerStatus ?? "unknown" }, { status: 409 });
+      return concurrentStatusResponse();
     }
     incrementMetric("print_jobs_rejected_total");
     logInfo("print.job.rejected", { requestId, jobId, agentId: agent.id, reason, physicalOutcome: "not_printed" });
@@ -560,11 +612,12 @@ export async function PATCH(req: Request) {
     }
     // The five-minute grace window is enforced atomically by PostgreSQL below.
     const postExpiryError = `${LATE_SUCCESS_POST_EXPIRATION_MARKER}: print execution completed after TTL expiry${errorMessage ? ` (${errorMessage})` : ""}`.slice(0, MAX_ERROR_LENGTH);
-    const postExpired = await db.update(printJobs)
+    const expiredSuccessWrite = await withCurrentAgentCredential(agent, (tx) => tx.update(printJobs)
       .set({
         status: "success",
         error: postExpiryError,
         ...(outputEvidence ? { outputEvidence: { ...outputEvidence } } : {}),
+        ...(spoolerJobId ? { spoolerJobId } : {}),
         // Invalidate the claim token on terminal success: completed jobs must
         // not retain a live token that could confuse future status checks.
         claimToken: sql`NULL`,
@@ -579,16 +632,16 @@ export async function PATCH(req: Request) {
         // Bound by EXPIRED_LATE_SUCCESS_GRACE_MS (single source in job-status.ts).
         sql`${printJobs.expiresAt} > now() - make_interval(secs => ${Math.floor(EXPIRED_LATE_SUCCESS_GRACE_MS / 1000)})`,
       ))
-      .returning({ status: printJobs.status, error: printJobs.error });
+      .returning({ status: printJobs.status, error: printJobs.error }));
+    if (!expiredSuccessWrite.authorized) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const postExpired = expiredSuccessWrite.value;
     if (postExpired.length !== 1) {
-      const winner = await db.query.printJobs.findFirst({ where: whereClause });
-      const winnerStatus = winner?.status as JobStatus | undefined;
-      return NextResponse.json({ error: `Concurrent status transition rejected${winnerStatus ? `; current status is ${winnerStatus}` : ""}`, status: winnerStatus ?? "unknown" }, { status: 409 });
+      return concurrentStatusResponse();
     }
     const physicalOutcome = derivePhysicalOutcome("success", postExpiryError);
     incrementMetric("print_jobs_success_total");
     incrementMetric("print_jobs_late_success_total");
-    logInfo("print.job.success_post_expiration", { requestId, jobId, agentId: agent.id, physicalOutcome: LATE_SUCCESS_POST_EXPIRATION_MARKER });
+    logInfo("print.job.success_post_expiration", { requestId, jobId, agentId: agent.id, physicalOutcome, physicalDetail: LATE_SUCCESS_POST_EXPIRATION_MARKER });
     return NextResponse.json({ success: true, status: "success", ...printOutputPresentation({ ...job, status: "success", error: postExpiryError, outputEvidence }), physicalDetail: LATE_SUCCESS_POST_EXPIRATION_MARKER });
   }
 
@@ -644,7 +697,7 @@ export async function PATCH(req: Request) {
         WHERE id = ${agent.tenantId} AND lifecycle = 'active' FOR SHARE`);
       if (tenant.rows.length !== 1) return [];
       const lifecycle = await tx.execute(sql`
-        SELECT a.lifecycle AS agent_lifecycle, t.lifecycle AS tenant_lifecycle,
+        SELECT a.secret AS agent_secret, a.lifecycle AS agent_lifecycle, t.lifecycle AS tenant_lifecycle,
                pr.lifecycle AS printer_lifecycle, pr.inventory_present,
                pr.management_source, pr.desired_revision,
                pr.applied_desired_revision, pr.observed_desired_revision
@@ -659,12 +712,13 @@ export async function PATCH(req: Request) {
         FOR SHARE OF a, t, pr
       `);
       const row = lifecycle.rows[0] as {
-        agent_lifecycle?: unknown; tenant_lifecycle?: unknown;
+        agent_secret?: unknown; agent_lifecycle?: unknown; tenant_lifecycle?: unknown;
         printer_lifecycle?: unknown; inventory_present?: unknown;
         management_source?: unknown; desired_revision?: number | string;
         applied_desired_revision?: number | string; observed_desired_revision?: number | string;
       } | undefined;
-      if (row?.agent_lifecycle !== "active" || row.tenant_lifecycle !== "active"
+      if (!agent.secret || row?.agent_secret !== agent.secret
+        || row.agent_lifecycle !== "active" || row.tenant_lifecycle !== "active"
         || row.printer_lifecycle !== "active" || row.inventory_present !== true) return [];
       if (row.management_source === "manager" && (
         Number(row.applied_desired_revision) < Number(row.desired_revision)
@@ -680,13 +734,13 @@ export async function PATCH(req: Request) {
       return runStatusUpdate(tx);
     });
   } else {
-    updated = await runStatusUpdate(db);
+    const statusWrite = await withCurrentAgentCredential(agent, runStatusUpdate);
+    if (!statusWrite.authorized) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    updated = statusWrite.value;
   }
 
   if (updated.length !== 1) {
-    const winner = await db.query.printJobs.findFirst({ where: whereClause });
-    const winnerStatus = winner?.status as JobStatus | undefined;
-    return NextResponse.json({ error: `Concurrent status transition rejected${winnerStatus ? `; current status is ${winnerStatus}` : ""}`, status: winnerStatus ?? "unknown" }, { status: 409 });
+    return concurrentStatusResponse();
   }
 
   if (printingAdmissionReplay) {

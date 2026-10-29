@@ -2,8 +2,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { PgDialect } from "drizzle-orm/pg-core";
 import { DESIRED_STATE_PAGE_BYTES, DESIRED_STATE_PAGE_ROWS, getDesiredPrinterPage } from "../src/lib/desired-state-page";
 
-const mocks = vi.hoisted(() => ({ read: vi.fn(), auth: vi.fn() }));
-vi.mock("../src/db", () => ({ db: { query: { printers: { findMany: mocks.read } } } }));
+const mocks = vi.hoisted(() => ({ read: vi.fn(), auth: vi.fn(), execute: vi.fn() }));
+vi.mock("../src/db", () => ({ db: {
+  transaction: async (callback: (tx: unknown) => Promise<unknown>) => callback({ execute: mocks.execute, query: { printers: { findMany: mocks.read } } }),
+} }));
 vi.mock("../src/lib/agent-auth", () => ({ validateAgent: mocks.auth }));
 import { GET } from "../src/app/api/agent/desired-state/route";
 
@@ -12,7 +14,8 @@ const row = (id: string, config = {}) => ({ id, name: id, printerType: "physical
 describe("desired-state bounded query/response", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.auth.mockResolvedValue({ id: "agent-a", tenantId: "tenant-a" });
+    mocks.auth.mockResolvedValue({ id: "agent-a", tenantId: "tenant-a", secret: "secret-hash" });
+    mocks.execute.mockResolvedValue({ rows: [{ lifecycle: "active", secret: "secret-hash" }] });
   });
 
   it("bounds the query before projection, scopes tenant/owner/manager and carries an exact cursor", async () => {

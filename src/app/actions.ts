@@ -99,6 +99,7 @@ export async function deleteAgent(id: string) {
             printerId: row.printerId, agentId: row.agentId, apiKeyId: row.apiKeyId,
             destination: row.destination, documentType: row.documentType, requestedBy: row.requestedBy,
             status: terminal ? row.status : "failed",
+            bindingDigest: row.bindingDigest, outputMedium: row.outputMedium, outputEvidence: row.outputEvidence,
             error: terminal ? row.error : uncertain ? "UNKNOWN_PARTIAL_DELIVERY: Agent deleted during an accepted execution; inspect the physical printer before reprinting." : "AGENT_DELETED: Cancelled before delivery by workspace administrator.",
             closedClaimTokenHash: row.closedClaimTokenHash ?? (row.claimToken ? createHash("sha256").update(row.claimToken).digest("hex") : null),
             deliveredAt: row.deliveredAt, ackedAt: row.ackedAt, createdAt: row.createdAt,
@@ -159,21 +160,18 @@ export async function createPrintJob(printerId: string, payload: unknown, idempo
  * reprint sequence. Like Odoo's action_force_reprint, physical reprints of
  * unknown outcomes are always an explicit operator action.
  */
-export async function reprintJob(jobId: string) {
+export async function reprintJob(jobId: string, operationKey: string) {
   const t = makeT(await getServerLocale());
   const manager = await requireManager();
   requireManagerPermission(manager, "jobs.retry");
   // Reprints are new physical intents: reject malformed source identities,
   // rather than trimming into a different existing job's printer and payload.
   if (!isExactIdempotencyKey(jobId)) throw new ActionError(t("errors.jobIdRequired"), 400, "INVALID_REQUEST");
+  if (!isExactIdempotencyKey(operationKey) || operationKey.length < 8) {
+    throw new ActionError(t("errors.operationFailed"), 400, "IDEMPOTENCY_KEY_REQUIRED");
+  }
   const job = await db.query.printJobs.findFirst({ where: and(eq(printJobs.id, jobId), eq(printJobs.tenantId, manager.tenantId)) });
   if (!job) throw new ActionError(t("errors.jobNotFound"), 404);
-  if (!isTerminal(job.status as JobStatus)) {
-    throw new ActionError(t("errors.jobStillInProgress"), 409);
-  }
-  if (job.status === "success") {
-    throw new ActionError(t("errors.jobNotEligibleForReprint"), 409);
-  }
   try {
     // Reprint sequence allocation happens inside createPrintJobForPrinter's
     // tenant enqueue transaction, so concurrent double-clicks cannot derive
@@ -182,6 +180,7 @@ export async function reprintJob(jobId: string) {
       requestedBy: "manager-reprint",
       managerAuthority: { claims: manager, permission: "jobs.retry" },
       reprintOfJobId: job.id,
+      idempotencyKey: operationKey,
       destination: job.destination,
       documentType: job.documentType ?? undefined,
       tenantId: manager.tenantId,
