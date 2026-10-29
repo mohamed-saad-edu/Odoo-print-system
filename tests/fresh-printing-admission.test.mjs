@@ -28,7 +28,7 @@ async function harness({ status = "claimed", lifecycle = {}, updatedRows = 1, to
   const job = { id: "job-1", tenantId: "tenant-1", agentId: "agt-1", printerId: "printer-1", status,
     bindingDigest, outputMedium: "physical", outputEvidence: null,
     claimToken: "claim-current", error: null, expiresAt: new Date(Date.now() + 60000), updatedAt: new Date() };
-  const active = { agent_lifecycle: "active", tenant_lifecycle: "active", printer_lifecycle: "active",
+  const active = { agent_secret: "fixture-agent-secret", agent_lifecycle: "active", tenant_lifecycle: "active", printer_lifecycle: "active",
     inventory_present: true, management_source: "agent", desired_revision: 3,
     verification_state: proof.verificationState, verification_binding_digest: proof.verificationBindingDigest,
     verification_verified_at: proof.verificationVerifiedAt, verification_received_at: proof.verificationReceivedAt,
