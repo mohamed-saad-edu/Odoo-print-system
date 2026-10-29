@@ -168,7 +168,7 @@ function VerifyEmailContent() {
         </Callout>
       ) : (
         <div className="space-y-5">
-          <Callout
+          {!verifyError?.code?.startsWith("INVITATION_") && <Callout
             tone={state === "error" ? "warn" : "info"}
             icon={
               state === "error" ? (
@@ -182,7 +182,7 @@ function VerifyEmailContent() {
             {state === "error"
               ? t("auth.verify.linkUnusableBody")
               : t("auth.verify.linksExpireBody")}
-          </Callout>
+          </Callout>}
 
           <form onSubmit={handleResend} className="space-y-4">
             <Field label={t("auth.verify.emailAddress")} htmlFor="resend-email" hint={t("auth.verify.hint")}>

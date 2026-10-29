@@ -2472,7 +2472,7 @@ class PrintGatewayJob(models.Model):
             # only this private authenticated response path may store evidence.
             job.sudo().write(output_values)
         if status == "success":
-            job._post_source_audit(_("Print Job #%s completed by Gateway agent on '%s'") % (job.gateway_job_id or job.id, job.printer_id))
+            job._post_source_audit(_("Print Job #%s reported successful by Gateway agent on '%s'; check output.") % (job.gateway_job_id or job.id, job.printer_id))
         elif status in ("partial", "unknown"):
             job._post_source_audit(_("WARNING: Print Job #%s interrupted or ambiguous on '%s'. Manual check required.") % (job.gateway_job_id or job.id, job.printer_id))
         return True
@@ -2936,8 +2936,9 @@ class PrintGatewayJob(models.Model):
                                 return total_synced
                             try:
                                 with self.env.cr.savepoint():
-                                    job.action_sync_status()
-                                total_synced += 1
+                                    result = job.action_sync_status()
+                                if result.get("params", {}).get("type") == "success":
+                                    total_synced += 1
                             except Exception as exc:
                                 _logger.warning("Per-job status sync failed for Gateway job %s (Odoo job %s): %s", job.gateway_job_id, job.id, exc)
                         if finish_poll([job]) <= 0:

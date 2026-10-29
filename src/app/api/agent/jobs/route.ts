@@ -617,6 +617,7 @@ export async function PATCH(req: Request) {
         status: "success",
         error: postExpiryError,
         ...(outputEvidence ? { outputEvidence: { ...outputEvidence } } : {}),
+        ...(spoolerJobId ? { spoolerJobId } : {}),
         // Invalidate the claim token on terminal success: completed jobs must
         // not retain a live token that could confuse future status checks.
         claimToken: sql`NULL`,
@@ -640,7 +641,7 @@ export async function PATCH(req: Request) {
     const physicalOutcome = derivePhysicalOutcome("success", postExpiryError);
     incrementMetric("print_jobs_success_total");
     incrementMetric("print_jobs_late_success_total");
-    logInfo("print.job.success_post_expiration", { requestId, jobId, agentId: agent.id, physicalOutcome: LATE_SUCCESS_POST_EXPIRATION_MARKER });
+    logInfo("print.job.success_post_expiration", { requestId, jobId, agentId: agent.id, physicalOutcome, physicalDetail: LATE_SUCCESS_POST_EXPIRATION_MARKER });
     return NextResponse.json({ success: true, status: "success", ...printOutputPresentation({ ...job, status: "success", error: postExpiryError, outputEvidence }), physicalDetail: LATE_SUCCESS_POST_EXPIRATION_MARKER });
   }
 

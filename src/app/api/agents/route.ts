@@ -118,7 +118,7 @@ export async function POST(req: Request) {
   const parsed = createAgentSchema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: "agent name is required" }, { status: 400 });
   try {
-    return NextResponse.json(await createAgentForManager(parsed.data.name, claims), { status: 201 });
+    return NextResponse.json(await createAgentForManager(parsed.data.name, claims), { status: 201, headers: { "Cache-Control": "private, no-store" } });
   } catch (error) {
     if (error instanceof ActionError) {
       return NextResponse.json({ error: error.message, code: error.code ?? "ACTION_ERROR", ...(error.details ?? {}) }, { status: error.status,

@@ -19,5 +19,5 @@ export async function logicalUsageReport(tenantId: string|null=null, tx?: DbTx) 
  const result=tx ? await tx.execute(resultQuery) : await db.execute(resultQuery);
  const historyQuery=sql`SELECT period_start AS "periodStart",sum(used_prints)::bigint AS used FROM print_monthly_usage WHERE (${tenantId}::text IS NULL OR tenant_id=${tenantId}) AND period_start>=date_trunc('year',clock_timestamp() AT TIME ZONE 'UTC')-interval '1 year' AND period_start=date_trunc('month',period_start) AND period_end=period_start+interval '1 month' GROUP BY period_start ORDER BY period_start DESC LIMIT 24`;
  const history=tx ? await tx.execute(historyQuery) : await db.execute(historyQuery);
- return {...result.rows[0],monthlyHistory:history.rows,timezone:'UTC',unit:'accepted_logical_job',source:'live jobs plus durable receipts, deduplicated by tenant and job ID',quotaSource:'transactional UTC calendar-month admission ledger; cutover 0102 preserves earlier consumed credits conservatively and retains historical rolling rows'};
+ return {...result.rows[0],monthlyHistory:history.rows,timezone:'UTC',unit:'accepted_logical_job',source:'live jobs plus durable receipts, deduplicated by tenant and job ID',quotaSource:'transactional UTC calendar-month admission ledger; cutover 0102 carries the largest overlapping bucket and retains historical rolling rows'};
 }

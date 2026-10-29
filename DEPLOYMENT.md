@@ -56,8 +56,8 @@ V4 uses manual platform-owner activation. Payment-provider credentials are not r
 > database role/migration/verification gates. If a gate fails, public ingress
 > stays offline; do not restart a pre-migration Gateway against the upgraded
 > schema. Drain any *other* Gateway replicas/admission writers separately.
-> Back up the database and review migration `0102`'s conservative carry-forward
-> before deployment. `--resume` only reopens ingress after the gates for the
+> Back up the database and review migration `0102`'s cutover reconciliation
+> limitation in `MIGRATION.md` before deployment. `--resume` only reopens ingress after the gates for the
 > exact reviewed release have exited successfully.
 
 ## Deployment Steps

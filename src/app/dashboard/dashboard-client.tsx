@@ -501,9 +501,10 @@ export default function DashboardClient({
   const [activePairing, setActivePairing] = useState<{ id?: string; code: string; expiresAt: Date } | null>(null);
   // Agent ids known when the current pairing attempt started, keyed by the
   // pairing code so manual dismissals cannot leak a stale baseline into the
-  // next attempt. A brand-new agent has no id yet, so completion is the
-  // appearance of a NEW online identity rather than any historical
-  // heartbeat (C057).
+  // next attempt. Since YSR-0025 the creation ACK always carries the agent
+  // id, so completion is that identity observed online — never a preserved
+  // lastSeenAt from before re-enabling (C057). The id-baseline path below is
+  // defensive for a future pairing activity that cannot know the id.
   const pairingBaseline = React.useRef<{ code: string; ids: Set<string> } | null>(null);
   const [copiedCode, setCopiedCode] = useState(false);
   const [countdownText, setCountdownText] = useState("10:00");
@@ -878,10 +879,10 @@ export default function DashboardClient({
             }
             return currentPairing;
           }
-          // New agent (id not yet known): baseline the known ids on the first
-          // tick for THIS code, then complete when a NEW online identity
-          // appears. Freshness comes from the online status itself, never
-          // from a historical lastSeenAt or a cleared expiry (C057).
+          // Defensive path only: since YSR-0025 every live setActivePairing
+          // caller supplies the agent id, so identity completion above always
+          // runs. Keep this code-keyed baseline behavior (C057) in case a
+          // future pairing activity cannot know the id.
           const baseline = pairingBaseline.current;
           if (baseline === null || baseline.code !== currentPairing.code) {
             pairingBaseline.current = { code: currentPairing.code, ids: new Set(data.agents.map((a) => a.id)) };
@@ -1155,17 +1156,20 @@ export default function DashboardClient({
       });
       const body = await response.json().catch(() => null) as Record<string, unknown> | null;
       if (!response.ok) {
+        if (response.status >= 500) {
+          throw new DashboardApiError("errors.agentCreationUnconfirmed", "AGENT_CREATION_UNCONFIRMED");
+        }
         const code = typeof body?.code === "string" ? body.code : "AGENT_CREATE_FAILED";
         throw new DashboardApiError(apiMessageKey(code, response.status, "errors.agentRegistrationFailed"), code, body ?? {});
       }
 
-      const expiresAt = typeof body?.expiresAt === "string"
-        ? new Date(body.expiresAt)
-        : typeof body?.expires_at === "string"
-          ? new Date(body.expires_at)
-          : new Date(Date.now() + 1000 * 60 * 10);
+      const expiry = typeof body?.expiresAt === "string" ? body.expiresAt : body?.expires_at;
+      const expiresAt = typeof expiry === "string" ? new Date(expiry) : null;
       const pairingCode = typeof body?.pairingCode === "string" ? body.pairingCode : "";
       const id = typeof body?.id === "string" ? body.id : undefined;
+      if (!id || !pairingCode || !expiresAt || Number.isNaN(expiresAt.getTime())) {
+        throw new DashboardApiError("errors.agentCreationUnconfirmed", "AGENT_CREATION_UNCONFIRMED");
+      }
       setAgentOffset(0);
       fleetQueryRef.current = { ...fleetQueryRef.current, agentOffset: 0 };
       setActivePairing({ id, code: pairingCode, expiresAt });
@@ -1185,7 +1189,7 @@ export default function DashboardClient({
       } else if (error instanceof DashboardApiError) {
         setMessage({ text: t(error.key), type: "err" });
       } else {
-        setMessage({ text: t("errors.agentRegistrationFailed"), type: "err" });
+        setMessage({ text: t("errors.agentCreationUnconfirmed"), type: "err" });
       }
     } finally {
       setBusy(false);
@@ -1243,11 +1247,9 @@ export default function DashboardClient({
 
   const jobActions = (job: Job): MenuItemSpec[] => {
     const outcome = deriveOutcome(job.status, job.error);
-    // Server rule (src/app/api/jobs/[id]/reprint/route.ts): reprint requires a
-    // terminal job AND rejects `success` with JOB_REPRINT_NOT_ALLOWED, because
-    // the document already printed. Offering it here would be a dead-end
-    // action that always fails, so success is excluded explicitly. Reprint is
-    // also a mutation: read-only roles don't see it (C058).
+    // A new reprint intent requires a failed or expired job; success is a
+    // transport result, not proof of paper output. An existing intent may
+    // still be replayed with its original key after late reconciliation.
     const canReprint = canMutate.jobsRetry && job.status.toLowerCase() !== "success" && !isJobInFlight(job.status);
     return [
       { key: "inspect", label: t("job.viewDetails"), icon: <Eye className="h-4 w-4" />, onSelect: () => openJobDetails(job) },

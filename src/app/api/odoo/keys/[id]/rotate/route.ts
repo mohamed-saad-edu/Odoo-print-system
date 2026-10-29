@@ -60,10 +60,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         odooEnabledRevision: Number(old.odoo_enabled_revision ?? -1),
         odooEnabledUpdatedAt: old.odoo_enabled_updated_at ? new Date(old.odoo_enabled_updated_at) : null,
       });
-      // Preserve the exact enrolled installation across credential rotation.
-      // The registry's unique (tenant, api_key_id) constraint rejects a
-      // credential that is simultaneously assigned to another installation.
-      // The former association remains for auditing and read-only recovery.
+      // Preserve all enrolled installations across credential rotation; the
+      // former associations remain for auditing and read-only recovery.
       await tx.execute(sql`
         INSERT INTO odoo_installation_credentials (tenant_id, installation_id, api_key_id)
         SELECT tenant_id, installation_id, ${newId}

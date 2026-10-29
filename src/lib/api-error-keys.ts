@@ -83,6 +83,10 @@ const CODE_KEYS: Record<string, MessageKey> = {
   // thing unknown is email delivery. Distinct from a generic failure so the
   // operator is never told to re-send.
   INVITATION_DELIVERY_UNAVAILABLE: "errors.invitationDeliveryUnavailable",
+  INVITATION_INVALID: "invite.linkMissing",
+  INVITATION_ALREADY_MEMBER: "invite.alreadyMemberSignIn",
+  INVITATION_WORKSPACE_UNAVAILABLE: "invite.workspaceUnavailable",
+  WORKSPACE_UNAVAILABLE: "invite.workspaceUnavailable",
   API_KEY_READ_ONLY: "errors.apiKeyReadOnly",
   INTERNAL_ERROR: "errors.internalError",
 };

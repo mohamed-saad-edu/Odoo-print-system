@@ -8,6 +8,7 @@ import { ArrowRight, Building2, MailCheck, ShieldCheck } from "lucide-react";
 import { AuthShell } from "../../components/AuthShell";
 import { Button, Callout, Skeleton } from "../../components/ui";
 import { useI18n } from "../../i18n/react";
+import { codeMessageKey } from "../../lib/api-error-keys";
 
 type Preview = { email: string; workspaceName: string; role: string };
 type Step = "ready" | "verification" | "sign-in" | "joined" | "error";
@@ -33,10 +34,14 @@ function InviteContent() {
     fetchWithTimeout(`/api/team/invitations/preview?token=${encodeURIComponent(token)}`, {
       cache: "no-store", signal: controller.signal,
     }).then(async response => {
-      if (!response.ok) throw new Error("Invitation unavailable");
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({})) as { code?: string };
+        if (!controller.signal.aborted) setMessage(t(codeMessageKey(body.code) ?? "invite.failed"));
+        return null;
+      }
       return await response.json() as Preview;
     }).then(data => {
-      if (!controller.signal.aborted) setPreview(data);
+      if (!controller.signal.aborted && data) setPreview(data);
     }).catch(() => {
       if (!controller.signal.aborted) setMessage(t("invite.failed"));
     }).finally(() => {
@@ -88,7 +93,7 @@ function InviteContent() {
         setMessage(t("invite.alreadyMember"));
       } else {
         setStep("error");
-        setMessage(t("invite.failed"));
+        setMessage(t(codeMessageKey(payload.code) ?? "invite.failed"));
       }
     } catch {
       setStep("error");

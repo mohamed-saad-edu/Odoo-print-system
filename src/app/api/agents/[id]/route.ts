@@ -89,7 +89,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   try {
     const result = await transitionAgentLifecycle(id, lifecycle, claims.tenantId, { type: "user", id: claims.userId ?? null }, claims);
     if (!result) return NextResponse.json({ error: "Not found" }, { status: 404 });
-    return NextResponse.json({ ok: true, lifecycle: result.lifecycle, pairingCode: result.pairingCode });
+    return NextResponse.json({ ok: true, lifecycle: result.lifecycle, pairingCode: result.pairingCode }, { headers: PRIVATE_HEADERS });
   } catch (error) {
     if (error instanceof ManagerMutationAuthorityChangedError) return error.response();
     if (error instanceof LifecycleConflict) return NextResponse.json({ error: error.message }, { status: 409 });

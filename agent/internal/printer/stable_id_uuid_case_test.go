@@ -41,8 +41,14 @@ func TestRegistryUUIDCaseChangeRetainsIdentityAndDisablement(t *testing.T) {
 	if len(rows) != 1 || rows[0].ID != prior.ID || rows[0].Enabled {
 		t.Fatalf("UUID spelling duplicated or re-enabled saved printer: %+v", rows)
 	}
-	if rows[0].Endpoint != incoming.Endpoint {
-		t.Fatalf("matching identity failed to refresh DHCP destination: got %q", rows[0].Endpoint)
+	// The chassis UUID cannot silently rebind the registered network
+	// destination: a DHCP move on the same hardware keeps the old endpoint and
+	// waits for explicit operator reconciliation instead.
+	if rows[0].Endpoint != prior.Endpoint || rows[0].NetworkAddress != prior.NetworkAddress {
+		t.Fatalf("different network destination silently rebound the same hardware: got %q", rows[0].Endpoint)
+	}
+	if rows[0].Capabilities["identity_collision"] != "same_hardware_different_network_binding" {
+		t.Fatalf("moved endpoint on the same hardware must be flagged for reconciliation: %+v", rows[0])
 	}
 }
 

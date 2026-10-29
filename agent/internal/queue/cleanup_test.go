@@ -13,18 +13,36 @@ func TestCleanupTerminalRemovesOnlyTerminalJobs(t *testing.T) {
 	}
 	defer q.Close()
 
-	for _, id := range []string{"queued-job", "printing-job", "success-job", "failed-job"} {
-		if err := q.Push(id, "printer-1", []byte("payload")); err != nil {
-			t.Fatalf("Push(%s) error = %v", id, err)
-		}
-	}
-	if err := q.UpdateStatus("printing-job", "printing"); err != nil {
-		t.Fatal(err)
+	// Rows that never carried an execution claim (Push-only history) are
+	// unacknowledged under the durable report contract and must be retained by
+	// cleanup. These two simulate a full delivery: execution claim granted by
+	// the Gateway, terminal status recorded, then the report acknowledged
+	// (claim_token cleared) — exactly the rows CleanupTerminal may delete.
+	if err := q.BeginPrint("success-job", "printer-1", []byte("payload"), "claim-success-job", false); err != nil {
+		t.Fatalf("BeginPrint(success-job) error = %v", err)
 	}
 	if err := q.UpdateStatus("success-job", "success"); err != nil {
 		t.Fatal(err)
 	}
+	if err := q.ClearClaimToken("success-job", "claim-success-job"); err != nil {
+		t.Fatal(err)
+	}
+	if err := q.BeginPrint("failed-job", "printer-1", []byte("payload"), "claim-failed-job", false); err != nil {
+		t.Fatalf("BeginPrint(failed-job) error = %v", err)
+	}
 	if err := q.UpdateStatus("failed-job", "failed"); err != nil {
+		t.Fatal(err)
+	}
+	if err := q.ClearClaimToken("failed-job", "claim-failed-job"); err != nil {
+		t.Fatal(err)
+	}
+	if err := q.Push("queued-job", "printer-1", []byte("payload")); err != nil {
+		t.Fatalf("Push(%s) error = %v", "queued-job", err)
+	}
+	if err := q.Push("printing-job", "printer-1", []byte("payload")); err != nil {
+		t.Fatalf("Push(%s) error = %v", "printing-job", err)
+	}
+	if err := q.UpdateStatus("printing-job", "printing"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -90,10 +108,16 @@ func TestCleanupTerminalPreservesEveryUnknownOutcomeMarker(t *testing.T) {
 			defer q.Close()
 
 			id := "unknown-" + strings.ToLower(strings.ReplaceAll(marker, "_", "-"))
-			if err := q.Push(id, "printer-1", []byte("payload")); err != nil {
-				t.Fatalf("Push(%s) error = %v", id, err)
+			// The mark-bearing row must be a fully acknowledged terminal report
+			// (execution token retained, Gateway claim cleared): the strictest
+			// case, where only the unknown-outcome marker protects the row.
+			if err := q.BeginPrint(id, "printer-1", []byte("payload"), "claim-"+id, false); err != nil {
+				t.Fatalf("BeginPrint(%s) error = %v", id, err)
 			}
 			if err := q.UpdateStatusWithError(id, "failed", marker+": evidence detail"); err != nil {
+				t.Fatal(err)
+			}
+			if err := q.ClearClaimToken(id, "claim-"+id); err != nil {
 				t.Fatal(err)
 			}
 
@@ -130,8 +154,17 @@ func TestCleanupTerminalPreservesEveryUnknownOutcomeMarker(t *testing.T) {
 func TestCleanupTerminalOlderThanPurgesAcknowledgedHistoryAfter48Hours(t *testing.T) {
 	q := newTestQueue(t)
 
+	// Only fully acknowledged terminal rows (execution token retained, Gateway
+	// claim cleared) are eligible for time-based retention. old-unknown is
+	// removed too: 48h acknowledged history is beyond late-reconciliation.
 	for _, id := range []string{"old-success", "old-unknown", "recent-success", "active-old"} {
-		if err := q.Push(id, "printer-1", []byte("payload")); err != nil {
+		if id == "active-old" {
+			if err := q.Push(id, "printer-1", []byte("payload")); err != nil {
+				t.Fatal(err)
+			}
+			continue
+		}
+		if err := q.BeginPrint(id, "printer-1", []byte("payload"), "claim-"+id, false); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -143,6 +176,13 @@ func TestCleanupTerminalOlderThanPurgesAcknowledgedHistoryAfter48Hours(t *testin
 	}
 	if err := q.UpdateStatus("recent-success", "success"); err != nil {
 		t.Fatal(err)
+	}
+	// Keep the execution claim while clearing the Gateway report claim: the
+	// terminal report was acknowledged and the physical attempt is provable.
+	for _, id := range []string{"old-success", "old-unknown", "recent-success"} {
+		if err := q.ClearClaimToken(id, "claim-"+id); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	if _, err := q.db.Exec(`UPDATE print_jobs SET updated_at = datetime('now', '-49 hours') WHERE id IN ('old-success','old-unknown','active-old')`); err != nil {

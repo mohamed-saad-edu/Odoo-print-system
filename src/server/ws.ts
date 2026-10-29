@@ -714,11 +714,8 @@ export async function claimAndPushJobToAgent(job: { id: string; agentId: string 
     });
     return markedUnknown ? "delivery_unknown" : "not_claimable";
   }
-  // "Delivered" is a DATABASE fact, not a socket fact: only when the
-  // delivered_at evidence write lands for THIS claim token does the gateway
-  // consider the job handed over. A socket success whose evidence write
-  // misses (row expired, terminal, or reclaimed mid-send) falls back to the
-  // undelivered-release path instead of stranding a phantom delivery.
+  // Socket acceptance can be ambiguous; only a fenced evidence write records
+  // delivery, and a missed write must never release the claim for redelivery.
   const evidenceStartedAt = Date.now();
   const evidenced = await markJobDelivered(job.id, claimed.tenantId, job.agentId, claimToken);
   const evidenceLatencyMs = Date.now() - evidenceStartedAt;

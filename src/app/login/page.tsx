@@ -22,6 +22,7 @@ export default function LoginPage() {
   const { t } = useI18n();
   const [password, setPassword] = useState("");
   const [err, setErr] = useState("");
+  const [showNormalSignIn, setShowNormalSignIn] = useState(false);
   const [loading, setLoading] = useState(false);
   const [workspaces, setWorkspaces] = useState<Array<{ id: string; name?: string }>>([]);
   const [selectionToken, setSelectionToken] = useState("");
@@ -71,6 +72,7 @@ export default function LoginPage() {
     setPassword("");
     const controller = new AbortController(); flight.current = controller;
     setErr("");
+    setShowNormalSignIn(false);
     setWorkspaces([]);
     setSelectionToken("");
     setLoading(true);
@@ -105,6 +107,7 @@ export default function LoginPage() {
         return;
       }
       if (!res.ok) {
+        if (data.code === "INVITATION_ALREADY_MEMBER") setShowNormalSignIn(true);
         throw new LoginRequestError(codeMessageKey(typeof data.code === "string" ? data.code : undefined)
           ?? (res.status === 429 ? "errors.tooManyAttempts" : res.status === 503 ? "errors.serviceUnavailable" : "auth.signIn.failed"));
       }
@@ -215,6 +218,7 @@ export default function LoginPage() {
         </Field>
 
         {err && <ErrorState title={t("auth.signIn.failed")} message={err} />}
+        {showNormalSignIn && <Link href="/login?switch=1" className="text-sm font-[550] text-brand hover:underline">{t("invite.normalSignIn")}</Link>}
 
         {workspaces.length > 0 && (
           <div className="rounded-sg border border-edge-accent bg-brand-subtle p-4">

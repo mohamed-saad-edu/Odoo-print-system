@@ -99,6 +99,7 @@ export async function deleteAgent(id: string) {
             printerId: row.printerId, agentId: row.agentId, apiKeyId: row.apiKeyId,
             destination: row.destination, documentType: row.documentType, requestedBy: row.requestedBy,
             status: terminal ? row.status : "failed",
+            bindingDigest: row.bindingDigest, outputMedium: row.outputMedium, outputEvidence: row.outputEvidence,
             error: terminal ? row.error : uncertain ? "UNKNOWN_PARTIAL_DELIVERY: Agent deleted during an accepted execution; inspect the physical printer before reprinting." : "AGENT_DELETED: Cancelled before delivery by workspace administrator.",
             closedClaimTokenHash: row.closedClaimTokenHash ?? (row.claimToken ? createHash("sha256").update(row.claimToken).digest("hex") : null),
             deliveredAt: row.deliveredAt, ackedAt: row.ackedAt, createdAt: row.createdAt,
@@ -171,12 +172,6 @@ export async function reprintJob(jobId: string, operationKey: string) {
   }
   const job = await db.query.printJobs.findFirst({ where: and(eq(printJobs.id, jobId), eq(printJobs.tenantId, manager.tenantId)) });
   if (!job) throw new ActionError(t("errors.jobNotFound"), 404);
-  if (!isTerminal(job.status as JobStatus)) {
-    throw new ActionError(t("errors.jobStillInProgress"), 409);
-  }
-  if (job.status === "success") {
-    throw new ActionError(t("errors.jobNotEligibleForReprint"), 409);
-  }
   try {
     // Reprint sequence allocation happens inside createPrintJobForPrinter's
     // tenant enqueue transaction, so concurrent double-clicks cannot derive

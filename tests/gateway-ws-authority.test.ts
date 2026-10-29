@@ -29,12 +29,12 @@ vi.mock("../src/db", () => ({ pool: {
         await state.tenantWait;
         return { rows: [{ lifecycle: state.tenantLifecycle }] };
       }
-      if (query.includes("FROM agents")) return { rows: [{ lifecycle: "active", lifecycle_revision: state.agentRevision }] };
+      if (query.includes("FROM agents")) return { rows: [{ tenant_id: "tenant-a", lifecycle: "active", lifecycle_revision: state.agentRevision, secret: "secret-hash" }] };
       return { rows: [] };
     },
   })),
 } }));
-vi.mock("../src/lib/agent-auth", () => ({ validateAgent: async () => ({ id: "ws-authority-agent", tenantId: "tenant-a", lifecycleRevision: 0 }) }));
+vi.mock("../src/lib/agent-auth", () => ({ validateAgent: async () => ({ id: "ws-authority-agent", tenantId: "tenant-a", lifecycleRevision: 0, secret: "secret-hash" }) }));
 vi.mock("../src/lib/ws-rate-limit", () => ({ reserveWsUpgradeAttempt: async () => ({ allowed: true }), recordWsUpgradeSuccess: async () => {} }));
 vi.mock("../src/server/trusted-proxy", () => ({ trustProxyEnabled: () => false, isAllowedWebSocketOrigin: () => true, isTrustedProxyUpgrade: () => true }));
 vi.mock("../src/lib/metrics", () => ({ incrementMetric: async () => {} }));

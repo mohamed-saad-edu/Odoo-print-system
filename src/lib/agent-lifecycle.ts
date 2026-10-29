@@ -39,6 +39,8 @@ export async function transitionAgentLifecycle(
       WHERE id = ${agentId} AND tenant_id = ${tenantId}
       FOR UPDATE
     `);
+    if (manager.tenantId !== tenantId) throw new Error("Manager tenant identity changed");
+    await requireManagerActorInTransaction(tx, manager, next === "retired" ? "agents.retire" : "agents.disable");
     const agent = locked.rows[0] as { id?: string; lifecycle?: unknown; lifecycle_revision?: unknown } | undefined;
     if (!agent?.id) return null;
     if (typeof agent.lifecycle !== "string") throw new Error("agent has an invalid lifecycle value");
@@ -61,9 +63,6 @@ export async function transitionAgentLifecycle(
 
     const reenable = current === "disabled" && next === "active";
     let pairingCode: string | null = null;
-
-    if (manager.tenantId !== tenantId) throw new Error("Manager tenant identity changed");
-    await requireManagerActorInTransaction(tx, manager, next === "retired" ? "agents.retire" : "agents.disable");
 
     if (reenable) {
       await requireTenantBillingAccess(tx, tenantId);

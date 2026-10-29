@@ -19,7 +19,10 @@ import { POST } from "../src/app/api/jobs/[id]/reprint/route";
 const request = (jobId: string) => POST(
   // Route params are supplied separately by Next.js; keep the URL valid even
   // when exercising a malformed raw route parameter (e.g. an unpaired surrogate).
-  new Request("https://gateway.test/api/jobs/placeholder/reprint", { method: "POST" }),
+  new Request("https://gateway.test/api/jobs/placeholder/reprint", {
+    method: "POST",
+    headers: { "Idempotency-Key": "reprint-op-0" },
+  }),
   { params: Promise.resolve({ id: jobId }) },
 );
 

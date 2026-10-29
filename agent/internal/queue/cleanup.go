@@ -21,8 +21,8 @@ func unknownMarkerSQL(column string) string {
 	return strings.Join(clauses, " OR ")
 }
 
-// CleanupTerminal removes terminal local print-job records whose physical
-// outcome is PROVABLE (success, or a plain failure). Rows carrying an
+// CleanupTerminal removes acknowledged terminal local records (submission
+// success or a plain failure); submission does not prove paper output. Rows carrying an
 // unknown-outcome marker are deliberately preserved: they are the evidence
 // that a document may have printed once already, and deleting them would let
 // a later duplicate delivery reprint without any local protection (and would
@@ -32,7 +32,8 @@ func (q *Queue) CleanupTerminal(retainDays int) (int, error) {
 	if retainDays > 0 {
 		retainClause = " AND updated_at <= datetime('now', '-" + strconv.Itoa(retainDays) + " days')"
 	}
-	result, err := q.db.Exec(`DELETE FROM print_jobs WHERE claim_token IS NULL AND (status = 'success'
+	result, err := q.db.Exec(`DELETE FROM print_jobs WHERE claim_token IS NULL
+		AND execution_claim_token IS NOT NULL AND execution_claim_token <> '' AND (status = 'success'
 		OR (status = 'failed' AND (last_error IS NULL
 			OR NOT (` + unknownMarkerSQL("last_error") + `))))` + retainClause)
 	if err != nil {
@@ -48,15 +49,15 @@ func (q *Queue) CleanupTerminal(retainDays int) (int, error) {
 
 // CleanupTerminalOlderThan is the automatic storage-retention path. Unlike
 // the operator-triggered CleanupTerminal, it may remove unknown-outcome rows
-// after the retention window because claim_token IS NULL proves the Gateway
-// already acknowledged the terminal report and 48 hours is beyond the remote
-// late-reconciliation window. Active and pending-outbox rows are retained.
+// after the retention window when an execution token was retained and its
+// report token cleared. Tokenless historical rows do not prove acknowledgement.
 func (q *Queue) CleanupTerminalOlderThan(retainHours int) (int, error) {
 	if retainHours <= 0 {
 		return 0, nil
 	}
 	result, err := q.db.Exec(`DELETE FROM print_jobs
 		WHERE claim_token IS NULL
+		  AND execution_claim_token IS NOT NULL AND execution_claim_token <> ''
 		  AND status IN ('success', 'failed')
 		  AND updated_at <= datetime('now', '-` + strconv.Itoa(retainHours) + ` hours')`)
 	if err != nil {
@@ -87,6 +88,7 @@ func (q *Queue) PurgeOutcomeUnknown() (int, error) {
 	result, err := q.db.Exec(`DELETE FROM print_jobs
 		WHERE status = 'failed'
 		  AND claim_token IS NULL
+		  AND execution_claim_token IS NOT NULL AND execution_claim_token <> ''
 		  AND (` + unknownMarkerSQL("last_error") + `)`)
 	if err != nil {
 		return 0, err

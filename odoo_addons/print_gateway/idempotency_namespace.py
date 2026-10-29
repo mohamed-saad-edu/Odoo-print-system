@@ -130,10 +130,11 @@ def local_identity(database_name, gateway_origin, data_dir=None, company_id=None
         current = _read_local_identity(path)
     except FileNotFoundError:
         if expected_installation_id:
-            # A cloned/restored database retains its print history. Losing its
-            # out-of-database proof is not permission to create a new identity
-            # or even to persist a conflicting replacement proof.
-            raise ValueError("Saved installation proof is missing") from None
+            # An externally provisioned proof may restore the same namespace;
+            # never generate a replacement identity over saved print history.
+            proof = deployment_proof(expected_installation_id, database_name,
+                                     gateway_origin, data_dir, company_id)
+            return {"installationId": expected_installation_id, "installationProof": proof}
     else:
         if expected_installation_id and current["installationId"] != expected_installation_id:
             raise InstallationProofMismatch("Saved installation proof does not match Odoo history")

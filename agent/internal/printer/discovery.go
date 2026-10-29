@@ -1200,9 +1200,12 @@ func conflictingNetworkExecutionBinding(left, right DeviceInfo) bool {
 	if leftError == nil && rightError == nil {
 		return leftBinding != rightBinding
 	}
-	// A malformed claim cannot replace a usable existing destination.
-	return !strings.EqualFold(strings.TrimSpace(left.Endpoint), strings.TrimSpace(right.Endpoint)) ||
-		!strings.EqualFold(left.Protocol, right.Protocol)
+	// Unknown or undeclared execution evidence is a weak observation on BOTH
+	// call sites: it can neither assert a replacement transport nor veto an
+	// explicit one (an agent that never proved a byte language must accept the
+	// later escpos/zpl discovery). Known-binding conflicts are still covered
+	// by conflictingNetworkPrintLanguage for identical endpoints.
+	return false
 }
 
 func mergeDiscoveredSameID(existing, incoming DeviceInfo) DeviceInfo {

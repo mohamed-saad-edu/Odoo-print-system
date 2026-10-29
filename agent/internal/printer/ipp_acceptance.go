@@ -94,6 +94,9 @@ func parseIPPPrintResponse(data []byte, requestID uint32, requireJob bool) (ippJ
 					return job, fmt.Errorf("misplaced unsupported group")
 				}
 			case 0x02:
+				if !requireJob {
+					return job, fmt.Errorf("refusal response contains Job attributes")
+				}
 				if (group != 0x01 && group != 0x05) || !seenCharset || !seenLanguage || seenJobGroup {
 					return job, fmt.Errorf("repeated or misplaced Job group")
 				}

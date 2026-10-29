@@ -21,8 +21,8 @@
 //   queued -> claimed -> printing -> success
 //   claimed -> success  the agent's terminal RE-REPORT of a durable local
 //                     result: the document was already executed by this agent
-//                     and the stored outcome is reported under the live claim
-//                     token instead of printing a second time (duplicate
+//                     and the stored outcome is reported under its original
+//                     execution token instead of printing a second time (duplicate
 //                     delivery, or a printing report that never landed)
 //   claimed -> queued   ONLY via the agent's fenced, explicit rejection
 //                     reason (AGENT_REQUEUE_REASONS: the agent received the
@@ -126,17 +126,17 @@ const ALLOWED_TRANSITIONS: Record<JobStatus, ReadonlySet<JobStatus>> = {
   //
   // claimed -> success is the agent's TERMINAL RE-REPORT on a live claim. The
   // agent never re-prints a job whose durable local ledger already holds a
-  // terminal result; it re-reports that stored result under the current claim
-  // token instead (agent/internal/agent/agent.go: "already completed locally
+  // terminal result; it re-reports that stored result under its original
+  // execution token instead (agent/internal/agent/agent.go: "already completed locally
   // (success). Re-reporting terminal result instead of printing again."). That
   // path returns BEFORE the printing report, so the Gateway row is still
-  // 'claimed' — a duplicate delivery after a reclaimed stale claim, or a
-  // re-report after the printing report itself failed. This is the same
-  // physical event claimed -> printing -> success describes, reported in one
-  // step; the claim-token fence (fencedDeliveryWrite) still proves ownership,
+  // 'claimed' when the same attempt remains live and its printing report did
+  // not land. A newer claim cannot authenticate the old result. This is the same
+  // execution attempt claimed -> printing -> success describes, reported in one
+  // step; the claim-token fence (fencedJobWrite) still proves ownership,
   // and success stamps delivery evidence, so no new authority is granted:
   // the token owner could already reach success through the two-step path.
-  // Rejecting it would sweep a physically printed job into failed/unknown.
+  // Rejecting it would sweep a submitted job into failed/unknown.
   claimed: new Set(["printing", "success", "failed", "queued"]),
   printing: new Set(["success", "failed"]),
   // Terminal states have NO outgoing transitions in the general table.
@@ -150,9 +150,9 @@ const ALLOWED_TRANSITIONS: Record<JobStatus, ReadonlySet<JobStatus>> = {
 export interface TransitionOptions {
   /**
    * Authorizes the one terminal override: failed -> success, when the
-   * failure was a gateway-side wait timeout (not a real print failure) and
-   * the agent reports the true physical outcome. Callers must verify
-   * isLateSuccessAllowed BEFORE setting this.
+   * failure has eligible ambiguous-execution evidence and the original
+   * agent reports success. Callers must enforce the marker, claim and age
+   * fences; success does not prove physical output.
    */
   allowLateSuccess?: boolean;
 }

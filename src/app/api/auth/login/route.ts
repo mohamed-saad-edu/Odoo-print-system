@@ -95,6 +95,10 @@ export async function POST(req: Request) {
     clearLegacySessionCookies(response.headers, "customer");
     return setRateLimitHeaders(response, pre);
   } catch (error) {
+    if (error instanceof Error && error.message === "INVITATION_ALREADY_MEMBER")
+      return setRateLimitHeaders(NextResponse.json({ code: "INVITATION_ALREADY_MEMBER" }, { status: 409 }), pre);
+    if (error instanceof Error && error.message === "INVITATION_WORKSPACE_UNAVAILABLE")
+      return setRateLimitHeaders(NextResponse.json({ code: "INVITATION_WORKSPACE_UNAVAILABLE" }, { status: 409 }), pre);
     if (error instanceof Error && error.message.startsWith("INVITATION_"))
       return setRateLimitHeaders(NextResponse.json({ error: "Invitation is invalid or expired", code: "INVITATION_INVALID" }, { status: 409 }), pre);
     return workspaceSecurityErrorResponse(error);

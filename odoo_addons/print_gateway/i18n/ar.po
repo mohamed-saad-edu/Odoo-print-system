@@ -2663,8 +2663,8 @@ msgstr "أعادت Print Gateway استجابة غير صالحة لتفاصيل
 #. module: print_gateway
 #. odoo-python
 #: code:addons/print_gateway/models/print_job.py:0
-msgid "Print Job #%s completed by Gateway agent on '%s'"
-msgstr "أكمل وكيل الـ Gateway مهمة الطباعة رقم %s على '%s'"
+msgid "Print Job #%s reported successful by Gateway agent on '%s'; check output."
+msgstr "أبلغ وكيل الـ Gateway بنجاح مهمة الطباعة رقم %s على '%s'؛ تحقق من الناتج."
 
 #. module: print_gateway
 #. odoo-python

@@ -606,16 +606,25 @@ func TestRegistryPreservesDistinctIPPResourcesOnSameHardware(t *testing.T) {
 	if err != nil || len(merged) != 2 {
 		t.Fatalf("address change duplicated/lost queue: %+v %v", merged, err)
 	}
-	found := false
+	// The chassis UUID is not authority to rebind a different IPP
+	// destination: the established queues are retained exactly as
+	// registered and flagged for explicit operator reconciliation.
+	ids := map[string]bool{}
 	for _, item := range merged {
+		ids[item.ID] = true
 		if item.Endpoint == moved.Endpoint {
-			found = true
-			if item.ID != a.ID {
-				t.Fatal("identity-preserving move changed persisted queue ID")
+			t.Fatalf("moved endpoint silently replaced the persisted queue: %#v", item)
+		}
+		if item.ID == a.ID {
+			if item.Endpoint != a.Endpoint {
+				t.Fatalf("hardware-identity match silently followed the moved destination: %#v", item)
+			}
+			if item.Capabilities["identity_collision"] == nil {
+				t.Fatalf("hardware match with a different destination must be flagged for reconciliation: %#v", item)
 			}
 		}
 	}
-	if !found {
-		t.Fatal("moved endpoint was not persisted")
+	if !ids[a.ID] || !ids[b.ID] {
+		t.Fatalf("hardware-identity move lost an established queue: %+v", ids)
 	}
 }

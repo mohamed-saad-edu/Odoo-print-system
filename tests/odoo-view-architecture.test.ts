@@ -169,8 +169,8 @@ describe("One native print routing workflow, with every operation in the main na
     for (const old of ["menu_print_gateway_printers", "menu_print_gateway_advanced", "action_print_gateway_printers"]) {
       expect(migration).toContain(old);
     }
-    expect(migration).toContain('children.write({"parent_id": root.id})');
-    expect(migration).toContain("printer_menu.unlink()");
+    expect(migration).toContain("children.write({\"parent_id\": root.id})");
+    expect(migration).toContain("menu.unlink()");
     expect(migration).toContain("old_action.unlink()");
     expect(migration).not.toContain('env["print_gateway.binding"]');
     expect(migration).not.toContain('env["print_gateway.print_job"]');

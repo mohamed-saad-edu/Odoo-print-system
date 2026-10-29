@@ -27,8 +27,9 @@ The diagnostic migration uses no new package. An evaluated `proc-macro-error2`
 replacement was rejected because its maintainer archived it in June 2026 and
 the pinned Rust compiler reports a future compatibility problem. It is absent
 from both final lockfiles. The original diagnostic attributes are no longer
-needed: each macro either returns its normal expansion or an explicit compile
-error. Multi-error closure diagnostics are wrapped in one expression block.
+needed for the backported diagnostic paths, which return explicit compile
+errors. Other upstream paths can still panic on invalid input; multi-error
+closure diagnostics are wrapped in one expression block.
 
 ## Verification
 

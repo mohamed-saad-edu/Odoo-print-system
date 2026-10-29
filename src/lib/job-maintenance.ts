@@ -234,21 +234,16 @@ export async function sweepPrintJobs(scope: { agentId?: string } = {}): Promise<
   const stalePrinting = await db.execute(sql`
     WITH candidates AS (
       SELECT id FROM print_jobs
-      WHERE status='printing' AND updated_at < now() - make_interval(secs => ${stalePrintingSeconds()}) ${agentFilter}
+      WHERE status='printing' AND expires_at > now()
+        AND updated_at < now() - make_interval(secs => ${stalePrintingSeconds()}) ${agentFilter}
       ORDER BY updated_at ASC
       LIMIT ${SWEEP_BATCH}
       FOR UPDATE SKIP LOCKED
     )
     UPDATE print_jobs SET status='failed',
-      error=CASE WHEN expires_at <= now()
-        THEN 'JOB_EXPIRED_DURING_PRINT: physical output is unknown (full, partial or none)'
-        ELSE 'AGENT_EXECUTION_TIMEOUT: agent execution lease expired (physical output is unknown; manual reconciliation required)' END,
-      -- Preserve the original claim token for AGENT_EXECUTION_TIMEOUT so a
-      -- late success from that exact execution attempt can still be reconciled
-      -- inside the 24-hour fenced window. Expiry-at-print is not eligible for
-      -- failed->success reconciliation, so its token can be cleared normally.
-      claim_token=CASE WHEN expires_at <= now() THEN NULL ELSE claim_token END,
-      claimed_at=CASE WHEN expires_at <= now() THEN NULL ELSE claimed_at END,
+      error='AGENT_EXECUTION_TIMEOUT: agent execution lease expired (physical output is unknown; manual reconciliation required)',
+      -- Preserve the original claim for bounded late reconciliation. Expired
+      -- rows belong to the expiry sweep and its separate grace window.
       updated_at=clock_timestamp()
     FROM candidates
     WHERE print_jobs.id = candidates.id

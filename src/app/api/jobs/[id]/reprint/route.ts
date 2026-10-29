@@ -4,7 +4,6 @@ import { db } from "../../../../../db";
 import { printJobs } from "../../../../../db/schema";
 import { validateConsoleAuth } from "../../../../../lib/console-auth";
 import { requireManagerPermission } from "../../../../../lib/authorization";
-import { isTerminal, type JobStatus } from "../../../../../lib/job-status";
 import { createPrintJobForPrinter, PrintJobInputError, PrintJobCapabilityError, AgentQueueFullError, AgentQueuedJobsFullError } from "../../../../../lib/print-job-service";
 import {
   TenantEntitlementError,
@@ -43,19 +42,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     where: and(eq(printJobs.id, jobId), eq(printJobs.tenantId, auth.claims.tenantId)),
   });
   if (!job) return NextResponse.json({ error: "Job not found", code: "JOB_NOT_FOUND" }, { status: 404 });
-  if (!isTerminal(job.status as JobStatus)) {
-    return NextResponse.json({
-      error: "Only finished, failed, or expired jobs can be reprinted. The current job is still in progress.",
-      code: "JOB_NOT_TERMINAL",
-    }, { status: 409 });
-  }
-  if (job.status === "success") {
-    return NextResponse.json({
-      error: "Successful jobs are not eligible for operator reprint; create a new intentional print instead.",
-      code: "JOB_REPRINT_NOT_ALLOWED",
-    }, { status: 409 });
-  }
-
   try {
     const result = await createPrintJobForPrinter(job.printerId, job.payload, {
       requestedBy: "manager-reprint",

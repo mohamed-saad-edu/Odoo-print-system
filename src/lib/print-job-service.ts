@@ -333,6 +333,9 @@ async function insertQueuedJobAtomically({
         destination: string | null; document_type: string | null; payload: unknown;
       } | undefined;
       if (!source) throw new PrintJobInputError("Original job is no longer available", "JOB_NOT_FOUND", 404);
+      if (["queued", "claimed", "printing"].includes(source.status)) {
+        throw new PrintJobInputError("Original job is still in progress", "JOB_NOT_TERMINAL", 409);
+      }
       if (source.status !== "failed" && source.status !== "expired") {
         throw new PrintJobInputError("Only unsuccessful terminal jobs may be reprinted", "JOB_REPRINT_NOT_ALLOWED", 409);
       }

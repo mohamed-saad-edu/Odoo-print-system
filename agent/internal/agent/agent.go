@@ -1239,7 +1239,9 @@ func (a *Agent) Run(ctx context.Context) error {
 	log.Printf("Agent %s starting (ID: %s, %d printer(s) configured)", a.cfg.Agent.Name, a.cfg.Agent.ID, a.printerCount())
 
 	// Crash recovery must run before any new delivery is accepted.
-	a.recoverInterruptedJobs(ctx)
+	if err := a.recoverInterruptedJobs(ctx); err != nil {
+		return err
+	}
 	a.reportPendingTerminalStatuses(ctx)
 	a.cleanupRetainedLocalJobs()
 
@@ -1367,6 +1369,11 @@ func (a *Agent) reportPendingTerminalStatuses(ctx context.Context) {
 	}
 	defer a.terminalReportMu.Unlock()
 
+	// Keep stale terminal reports from delaying startup and claim hand-back.
+	a.reportPendingPreDispatchReturns(ctx)
+	ctx, cancel := context.WithTimeout(ctx, 4*time.Second)
+	defer cancel()
+
 	var err error
 	if a.terminalReportThroughID == "" || a.terminalReportAfterID >= a.terminalReportThroughID {
 		a.terminalReportAfterID = ""
@@ -1396,9 +1403,6 @@ func (a *Agent) reportPendingTerminalStatuses(ctx context.Context) {
 		}
 		a.terminalReportAfterID = report.ID
 	}
-	// Claim receipt is not physical execution. Recover claims that crashed or
-	// were cancelled before BeginPrint with the original fenced token.
-	a.reportPendingPreDispatchReturns(ctx)
 }
 
 // reportPendingPreDispatchReturns reserves each idle job under the SAME
@@ -1472,10 +1476,10 @@ func (a *Agent) reportPendingPreDispatchReturns(ctx context.Context) {
 // Their original output is unknown, so startup recovery only reports the stored
 // outcome under its original claim. Legacy global reprint settings never reopen
 // the operation; a deliberate new job requires reconciliation and authorization.
-func (a *Agent) recoverInterruptedJobs(ctx context.Context) {
+func (a *Agent) recoverInterruptedJobs(ctx context.Context) error {
 	interrupted, err := a.queue.MarkInterrupted()
 	if err != nil {
-		log.Printf("WARNING: could not scan the local queue for interrupted jobs: %v", err)
+		return fmt.Errorf("recover interrupted local jobs: %w", err)
 	}
 	if a.cfg != nil && a.cfg.Agent.ReprintAfterCrash != nil && *a.cfg.Agent.ReprintAfterCrash {
 		log.Printf("WARNING: deprecated reprint_after_crash=true is ignored; unknown physical output requires reconciliation and a separately authorized new operation.")
@@ -1488,6 +1492,7 @@ func (a *Agent) recoverInterruptedJobs(ctx context.Context) {
 	if len(interrupted) > 0 {
 		log.Printf("Crash recovery: %d interrupted job(s) retained as unknown; no automatic reprint is permitted.", len(interrupted))
 	}
+	return nil
 }
 
 func (a *Agent) getWSConn() *websocket.Conn {
@@ -2056,7 +2061,7 @@ func (a *Agent) dispatchJobWithContexts(executionCtx, sessionCtx context.Context
 		// (zero bytes sent) and consumes one retry instead, so a saturated
 		// agent holding a big backlog cannot burn jobs into a delivery-budget
 		// failure (see the reject gate in src/app/api/agent/jobs).
-		// Best-effort: the lease reclaim is the backstop if this PATCH fails.
+		// Best-effort: without a successful rejection the Gateway may retain an unknown outcome.
 		a.enqueueReject(sessionCtx, jobID, fields.ClaimToken, "pending_full")
 		return false
 	}
@@ -2207,10 +2212,8 @@ func (a *Agent) inFlightJobIDs(limit int) []map[string]string {
 // rejectJob hands a claimed job back to the gateway queue because the local
 // executor is saturated (pendingSlots full). This is distinct from a real
 // print failure: the agent is healthy, it just cannot accept the job right
-// now. The gateway requeues it WITHOUT incrementing the retry budget, so a
-// temporarily overloaded agent never drives a healthy backlog into
-// 'exceeded max retries'. Best-effort — the gateway's 90s claim-lease
-// reclaim remains the backstop if this request fails or races.
+// now. The gateway refunds the delivery attempt and increments the bounded
+// retry budget. If the hand-back fails, delivery may remain unknown.
 func (a *Agent) rejectJob(ctx context.Context, jobID, token, reason string) error {
 	return a.rejectJobExact(ctx, jobID, token, reason)
 }
@@ -2239,7 +2242,7 @@ func (a *Agent) rejectJobExact(ctx context.Context, jobID, token, reason string)
 	}
 	resp, err := a.doAuthorizedRequest(ctx, "PATCH", reqURL, body)
 	if err != nil {
-		log.Printf("Job %s: failed to report pre-execution rejection: %v (claim lease remains the backstop)", jobID, err)
+		log.Printf("Job %s: failed to report pre-execution rejection: %v (delivery outcome may remain unknown)", jobID, err)
 		return err
 	}
 	defer resp.Body.Close()
@@ -2277,8 +2280,8 @@ func rejectKey(jobID, token, reason string) string {
 
 // enqueueReject never performs network I/O. It registers at most one queued
 // rejection per (job, claim token, reason), then places it into a bounded
-// channel. A full queue deliberately drops the best-effort signal: the
-// Gateway's lease/reclaim path is the authoritative recovery backstop.
+// channel. A full queue drops the best-effort signal; the Gateway may retain
+// an unknown outcome until the original attempt is reconciled.
 func (a *Agent) enqueueReject(ctx context.Context, jobID, token, reason string) bool {
 	if jobID == "" {
 		return false
@@ -2301,7 +2304,7 @@ func (a *Agent) enqueueReject(ctx context.Context, jobID, token, reason string) 
 		return true
 	default:
 		a.rejectMu.Unlock()
-		log.Printf("Job %s: rejection queue full (%d); relying on gateway claim lease for recovery", jobID, maxRejectQueue)
+		log.Printf("Job %s: rejection queue full (%d); delivery outcome may remain unknown", jobID, maxRejectQueue)
 		return false
 	}
 }
@@ -2378,15 +2381,13 @@ func (a *Agent) runRejectWorker(ctx context.Context) {
 
 // waitForJobs blocks until in-flight job handlers finish (bounded by
 // shutdownGrace), so the SQLite queue is never closed mid-write on service
-// stop. Surviving the deadline is safe: WAL is crash-durable and the gateway
-// reclaims stale claimed jobs automatically.
+// stop. The durable queue and Gateway retain evidence for recovery; an
+// interrupted or possibly delivered attempt can remain physically unknown.
 //
 // Caller contract (sync.WaitGroup rule): no wg.Add may be concurrent with
 // this Wait. Production shutdown satisfies it via the inFlightMu gate in
 // dispatchJob. Tests driving delivery from a background goroutine (WS
-// handler) must first synchronize past the Add — e.g. the WS ack alone is
-// NOT enough, it is sent before dispatchJob runs; wait for the print to
-// start (see waitForPrintStarted) before calling this.
+// handler) must first synchronize past the Add before calling this.
 func (a *Agent) inFlightCount() int {
 	a.inFlightMu.Lock()
 	defer a.inFlightMu.Unlock()
@@ -3445,8 +3446,7 @@ func (a *Agent) processJob(ctx context.Context, job map[string]interface{}) {
 		// protection. If it cannot be read we cannot prove this job has not
 		// printed; refuse before dispatch (no bytes sent, safe retry).
 		log.Printf("Job %s: local queue lookup failed; refusing dispatch: %v", jobID, err)
-		// Fenced pre-execution return (never dispatched, zero bytes sent):
-		// the gateway requeues without burning the retry budget.
+		// Fenced pre-execution return refunds delivery and consumes a retry.
 		a.rejectJob(ctx, jobID, claimToken, "ledger_unavailable")
 		return
 	} else if found && localStatus == "success" {

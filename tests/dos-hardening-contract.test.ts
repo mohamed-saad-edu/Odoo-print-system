@@ -43,7 +43,7 @@ describe("DoS/resource exhaustion hardening contracts", () => {
     expect(discovery).toContain("MAX_DISCOVERY_DEVICES = 1000");
     expect(discovery).toContain("DISCOVERY_INSERT_BATCH = 250");
     expect(discovery).toContain("Too many devices in one discovery report");
-    expect(discovery).toContain("rows.slice(i, i + DISCOVERY_INSERT_BATCH)");
+    expect(discovery).toContain("unambiguousRows.slice(i, i + DISCOVERY_INSERT_BATCH)");
   });
 
   it("prevents one blocked printer from consuming all Agent pending capacity", () => {

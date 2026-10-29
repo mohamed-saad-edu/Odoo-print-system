@@ -168,7 +168,8 @@ describe("production hardening contracts", () => {
     expect(heartbeat).not.toContain("onConflictDoNothing({ target: printers.id })");
 
     const discoveryReport = read("src/app/api/agent/discovery/route.ts");
-    expect(discoveryReport).toContain("onConflictDoNothing({ target: [discoveredDevices.tenantId, discoveredDevices.agentId, discoveredDevices.id] })");
+    expect(discoveryReport).toContain(".onConflictDoUpdate({");
+    expect(discoveryReport).toContain("target: [discoveredDevices.tenantId, discoveredDevices.agentId, discoveredDevices.identityKey]");
 
     const migration = read("drizzle/0072_tenant_scoped_printer_identity.sql");
     expect(migration).toContain("DROP CONSTRAINT IF EXISTS \"printers_pkey\"");
@@ -386,7 +387,7 @@ describe("production hardening contracts", () => {
     expect(firstJobRead).toBeGreaterThan(keyFence);
     expect(printRoute).not.toContain("eq(printJobs.id, id), eq(printJobs.tenantId, odoo.tenantId), eq(printJobs.apiKeyId, odoo.id)");
     const reusedBlock = printRoute.slice(printRoute.indexOf("if (result.isReused)"), printRoute.indexOf("return NextResponse.json({\n      jobId:", printRoute.indexOf("if (result.isReused)")));
-    expect(reusedBlock).toContain("isNotNull(printJobs.apiKeyId)");
+    expect(reusedBlock).toContain("readOdooJobStatus(");
 
     const batchStatus = read("src/app/api/print/jobs/batch-status/route.ts");
     expect(batchStatus).toContain("eq(printJobs.tenantId, odoo.tenantId)");

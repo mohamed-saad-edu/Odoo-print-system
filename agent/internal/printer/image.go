@@ -164,9 +164,10 @@ func grayscale(c color.Color) uint8 {
 	return uint8((299*r + 587*g + 114*b) / (1000 * 257))
 }
 
-// JPEGToPDF wraps the already-rendered JPEG as a single-page PDF. It is used
-// for Windows print queues because the spooler implementation already has a
-// PDF-aware path, while retaining the exact rasterized POS/Kitchen content.
+// JPEGToPDF wraps the already-rendered JPEG as a single-page PDF at the
+// legacy 96-DPI image geometry. No production flow calls it today: the
+// Windows queue embeds images via JPEGToPDFGeometry and the PDF file
+// printer via JPEGToPagedPDFGeometry; this wrapper remains test/compat only.
 func JPEGToPDF(data []byte) ([]byte, error) {
 	return jpegToPDFWithReceiptPaper(data, 0, 0, 0)
 }
@@ -179,6 +180,8 @@ func JPEGToPDF(data []byte) ([]byte, error) {
 // The native Windows queue remains authoritative for paper form support:
 // the PDF backend verifies it accepts this *physical* page before StartDoc.
 // Requires an explicitly configured physical width, printable dots and DPI.
+// No production flow routes to this wrapper today; the wired image paths are
+// JPEGToPDFGeometry and JPEGToPagedPDFGeometry.
 func JPEGToPDFReceipt(data []byte, paperWidthMM, printableDots, dpi int) ([]byte, error) {
 	if paperWidthMM <= 0 || paperWidthMM > 10000 || printableDots < 1 || printableDots > MaxJPEGDimension || dpi < 1 || dpi > 9600 {
 		return nil, fmt.Errorf("receipt PDF requires explicit physical paper width, printable dots and DPI")
@@ -217,6 +220,9 @@ func jpegToPDF(data []byte, paperWidthMM float64, printableDots, dpi int, geomet
 	if cfg.Width <= 0 || cfg.Height <= 0 {
 		return nil, fmt.Errorf("invalid JPEG dimensions %dx%d", cfg.Width, cfg.Height)
 	}
+	if _, err := jpeg.Decode(bytes.NewReader(data)); err != nil {
+		return nil, fmt.Errorf("decode complete JPEG: %w", err)
+	}
 
 	w, h := cfg.Width, cfg.Height
 
@@ -228,12 +234,7 @@ func jpegToPDF(data []byte, paperWidthMM float64, printableDots, dpi int, geomet
 	if cfg.ColorModel == color.GrayModel {
 		colorSpace = "/DeviceGray"
 	} else if cfg.ColorModel == color.CMYKModel {
-		// Decode once to verify the supported Adobe color convention and the
-		// complete image body. DecodeConfig alone only validates its header.
 		// Keep the original JPEG stream; re-encoding could degrade barcodes.
-		if _, err := jpeg.Decode(bytes.NewReader(data)); err != nil {
-			return nil, fmt.Errorf("decode CMYK JPEG: %w", err)
-		}
 		colorSpace = "/DeviceCMYK"
 		imageDecode = " /Decode [1 0 1 0 1 0 1 0]"
 	}

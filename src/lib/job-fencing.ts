@@ -12,9 +12,9 @@ import type { JobStatus } from "./job-status";
  * predicate is a TOCTOU race: a stale worker's UPDATE can land after a
  * reclaim and clobber the authoritative attempt.
  *
- * `claim_token IS NOT DISTINCT FROM <token>` keeps legacy rows (claimed
- * before migration 0024, token NULL) working until their next, now
- * tokenized, claim - and fails closed the moment a row carries a token.
+ * `claim_token IS NOT DISTINCT FROM <token>` also matches tokenless legacy
+ * rows for expiry; the status route separately requires a token for every
+ * non-expiry report and never permits tokenless execution.
  */
 export function fencedJobWrite(
   jobId: string,

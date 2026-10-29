@@ -91,8 +91,14 @@ func TestUpsertRegistryPreservesLegacyIDWhenPhysicalIdentityMatches(t *testing.T
 	if len(rows) != 1 || rows[0].ID != legacy.ID {
 		t.Fatalf("expected legacy ID %q to be preserved, got %#v", legacy.ID, rows)
 	}
-	if rows[0].NetworkAddress != "10.0.0.55" {
-		t.Fatalf("expected endpoint to update to new IP, got %q", rows[0].NetworkAddress)
+	// The serial identity proves it is the same chassis, but the serial is not
+	// authority to silently rebind a different network destination. Keep the
+	// registered endpoint and wait for explicit operator reconciliation.
+	if rows[0].NetworkAddress != legacy.NetworkAddress || rows[0].Endpoint != legacy.Endpoint {
+		t.Fatalf("different endpoint silently rebound the same hardware: got %q", rows[0].NetworkAddress)
+	}
+	if rows[0].Capabilities["identity_collision"] != "same_hardware_different_network_binding" {
+		t.Fatalf("hardware-identity match with a moved endpoint must be flagged for reconciliation: %+v", rows[0])
 	}
 }
 
