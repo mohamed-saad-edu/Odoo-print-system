@@ -44,7 +44,6 @@ export function AddPrinterDialog({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [agents, setAgents] = useState<Array<{ id: string; name: string; status?: string; lifecycle?: string; lastSeenAt?: string | null; staleThresholdSeconds?: number | null }>>([]);
-  const [agentsLoading, setAgentsLoading] = useState(false);
   const [agentsError, setAgentsError] = useState(false);
   // Which gateway URL the cached agents were fetched from. The cache must
   // be keyed by URL: reusing gateway A's agents after switching to gateway
@@ -60,6 +59,11 @@ export function AddPrinterDialog({
     return () => clearInterval(timer);
   }, []);
   const [agentId, setAgentId] = useState("");
+  // Derive loading from the exact Gateway cache key. A different Gateway
+  // must not see or select agents cached for the previous destination.
+  const agentsLoading = open && Boolean(gatewayUrl) && agentsForUrl !== gatewayUrl && !agentsError;
+  const visibleAgents = agentsForUrl === gatewayUrl ? agents : [];
+  const currentAgentId = agentsForUrl === gatewayUrl ? agentId : "";
   // Only a canonical saved Gateway origin can produce a billing destination.
   // Desktop copies the URL for the system browser; never navigate the WebView.
   const billingUrl = useMemo(() => {
@@ -78,13 +82,12 @@ export function AddPrinterDialog({
     // Generation guard: a late response for a previous gateway (or an older
     // attempt) must never overwrite the current picker's list.
     const generation = ++agentsGeneration.current;
-    setAgentsLoading(true);
-    setAgentsError(false);
     try {
       const rows = await fetchGatewayAgents(gatewayUrl);
       if (agentsGeneration.current !== generation) return;
       setAgents(rows);
       setAgentsForUrl(gatewayUrl);
+      setAgentsError(false);
       const active = rows.find((row) => row.lifecycle === "active");
       // Keep the selection only if it exists on THIS gateway; otherwise
       // fall back to its active agent (or empty when none is active).
@@ -94,8 +97,6 @@ export function AddPrinterDialog({
       setAgents([]);
       setAgentsForUrl("");
       setAgentsError(true);
-    } finally {
-      if (agentsGeneration.current === generation) setAgentsLoading(false);
     }
   }, [gatewayUrl, agentsForUrl]);
   // Fetch only while visible, and reject late responses from closed sessions.
@@ -113,7 +114,6 @@ export function AddPrinterDialog({
     setAgentsForUrl("");
     setAgents([]);
     setAgentId("");
-    setAgentsLoading(false);
     setAgentsError(false);
     onClose();
   };
@@ -132,23 +132,23 @@ export function AddPrinterDialog({
   // `/api/printers` rows are camelCase too, so reading only snake_case made
   // these two lists permanently empty.
   const physicalSpoolers = useMemo(
-    () => printers.filter((p) => p.agentId === agentId && isProductionPrinter(p) && (p.spooler_name || p.spoolerName)),
-    [printers, agentId]
+    () => printers.filter((p) => p.agentId === currentAgentId && isProductionPrinter(p) && (p.spooler_name || p.spoolerName)),
+    [printers, currentAgentId]
   );
   const usbPrinters = useMemo(
     () =>
       printers.filter(
         (p) =>
-          p.agentId === agentId &&
+          p.agentId === currentAgentId &&
           ((p.connection_type || p.connectionType) || "").toLowerCase() === "usb" &&
           isProductionPrinter(p)
       ),
-    [printers, agentId]
+    [printers, currentAgentId]
   );
 
   const validate = (): string | null => {
     if (!gatewayUrl) return t("desktop.add.gatewayUrlMissing");
-    if (!agentId) return t("desktop.add.selectAgent");
+    if (!currentAgentId) return t("desktop.add.selectAgent");
     if (!name.trim()) return t("desktop.add.nameRequired");
     if (conn === "spooler" && !spoolerName.trim())
       return t("desktop.add.spoolerRequired");
@@ -224,7 +224,7 @@ export function AddPrinterDialog({
         req.protocol = conn;
       }
       if (conn === "usb") {
-        const sel = usbPrinters.find((p) => p.id === usbSel && p.agentId === agentId);
+        const sel = usbPrinters.find((p) => p.id === usbSel && p.agentId === currentAgentId);
         if (!sel) throw new Error(t("desktop.add.selectUsb"));
         if (sel) {
           const sourceConfig = sel.config && typeof sel.config === "object"
@@ -248,7 +248,7 @@ export function AddPrinterDialog({
           }
         }
       }
-      await registerGatewayPrinter(gatewayUrl, { ...req, agentId });
+      await registerGatewayPrinter(gatewayUrl, { ...req, agentId: currentAgentId });
       onSuccess();
       closeDialog();
       reset();
@@ -322,9 +322,9 @@ export function AddPrinterDialog({
           htmlFor="pp-agent"
           hint={t("desktop.add.agentHint")}
         >
-          <Select id="pp-agent" value={agentId} onFocus={loadAgents} onChange={(e) => setAgentId(e.target.value)}>
+          <Select id="pp-agent" value={currentAgentId} onFocus={loadAgents} onChange={(e) => setAgentId(e.target.value)}>
             <option value="">{agentsLoading ? t("desktop.add.loadingAgents") : t("desktop.add.selectActiveAgent")}</option>
-            {agents.filter((a) => a.lifecycle === "active").map((a) => (
+            {visibleAgents.filter((a) => a.lifecycle === "active").map((a) => (
               <option key={a.id} value={a.id}>
                 {a.name} ({agentLiveView({
                   status: a.status ?? null,
@@ -338,7 +338,7 @@ export function AddPrinterDialog({
           {agentsError && (
             <div className="mt-2 flex items-center gap-2 text-sm text-ink-3">
               <span>{t("desktop.add.agentsLoadFailed")}</span>
-              <Button variant="ghost" size="sm" onClick={() => { setAgentsForUrl(""); void loadAgents(); }}>{t("common.retry")}</Button>
+              <Button variant="ghost" size="sm" onClick={() => { setAgentsError(false); void loadAgents(); }}>{t("common.retry")}</Button>
             </div>
           )}
         </Field>
