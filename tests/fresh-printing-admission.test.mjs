@@ -102,8 +102,8 @@ for (const status of ["claimed", "printing"]) {
     ["removed inventory", { inventory_present: false }],
     ["suspended tenant", { tenant_lifecycle: "suspended" }],
     ["retired agent", { agent_lifecycle: "retired" }],
-    ["unapplied desired revision", { applied_desired_revision: 2 }],
-    ["unobserved desired revision", { observed_desired_revision: 2 }],
+    ["unapplied desired revision", { management_source: "manager", applied_desired_revision: 2 }],
+    ["unobserved desired revision", { management_source: "manager", observed_desired_revision: 2 }],
   ]) {
     test(`${status} admission rejects ${name} before a job write`, async () => {
       const h = await harness({ status, lifecycle });
