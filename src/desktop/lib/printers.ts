@@ -186,8 +186,16 @@ function sameLocalCloudPrinterBinding(local: PrinterInfo, cloud: PrinterInfo): b
 
 export function mergePrinterInventories(cloud: PrinterInfo[], local: PrinterInfo[]): PrinterInfo[] {
   const conflicts = conflictingCloudPrinterIds(cloud);
+  const conflictingLocalIds = conflictingCloudPrinterIds(local);
   const rows = new Map(cloud.filter((p) => isProductionPrinter(p) && !conflicts.has(p.id)).map((p) => [p.id, p]));
   for (const printer of local.filter((p) => isProductionPrinter(p) && !isLocalSetupCandidate(p))) {
+    if (conflictingLocalIds.has(printer.id)) {
+      // Two native observations with one ID cannot establish a unique physical
+      // queue. Do not display whichever came last as the trusted printer, or
+      // let a cloud row with that ID mask the local identity conflict.
+      rows.delete(printer.id);
+      continue;
+    }
     const remote = rows.get(printer.id);
     const matched = remote && printer.sharedWithGateway !== false && sameLocalCloudPrinterBinding(printer, remote);
     // Local-only health may be displayed independently even when the Gateway

@@ -37,7 +37,7 @@ function state(overrides: Partial<DesktopState> = {}): DesktopState {
     printers: [local], discoveredPrinters: [], localPrinters: [local], localPrintersLoading: false,
     localPrintersError: null, localInventoryReady: true, canManagePrinterSharing: true,
     sharingPendingPrinterIds: new Set(), sharingErrors: {}, refreshLocalPrinters: async () => true,
-    handlePrinterSharing: async () => {}, gatewayTestPrinterIds: new Set(),
+    handlePrinterSharing: async () => {},
     printersLoading: false, printersError: null, printersFilter: "", setPrintersFilter: noop, statusFilter: "all",
     setStatusFilter: noop, filteredPrinters: [local], totalPrinters: 1, onlinePrinters: 1, offlinePrinters: 0,
     nowMs: now, refreshPrinters: noop, handleDiscover: noop, handleTest: noop, showAdd: false, setShowAdd: noop,

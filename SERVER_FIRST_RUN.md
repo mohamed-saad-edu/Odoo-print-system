@@ -30,7 +30,9 @@ The Windows Yaseir Agent/Desktop Manager runs at the customer site, not inside t
 > stays offline; do not restart a pre-migration Gateway against the upgraded
 > schema. Drain any *other* Gateway replicas/admission writers separately.
 > Back up the database and review migration `0102`'s conservative carry-forward
-> before deployment. `--resume` only reopens ingress after the gates for the
+> before deployment. Forward-only migration `0103` adds retained spooler/attempt
+> evidence columns and must be applied before the updated Gateway reads or
+> writes those receipt fields. `--resume` only reopens ingress after the gates for the
 > exact reviewed release have exited successfully.
 
 ## 1. Prepare the server
@@ -292,7 +294,8 @@ https://gw.example.com/signup
 Create a customer using:
 
 - a real reachable email address;
-- a password of at least 12 characters.
+- a display name. The password is chosen only after email verification,
+  during the one-time password-setup step.
 
 The browser calls:
 
@@ -501,26 +504,27 @@ yaseir-agent-cli.exe printers discover
 
 The test-print path for an already selected printer does not perform a network discovery scan.
 
-## 17. Gateway test print
+## 17. Verify the production print path
 
-From the Gateway dashboard, select the printer and use its **Test Print** action.
+There is no customer-facing **Test Print** page or button. Authorized operators
+can use the privileged per-printer certification workflow where permitted, or
+submit an ordinary Odoo report/receipt after configuring the binding. A
+separate direct Agent CLI command is documented in the next section.
 
-The Gateway creates a real durable `test_page` job.
-
-The flow is:
+An actual Gateway print request follows:
 
 ```text
-Browser
-  → Gateway
-  → durable print_jobs row
+Odoo document/receipt or privileged certification
+  → Gateway admission and durable print_jobs row
   → Agent claim
   → Agent physical transport
   → Printer
 ```
 
-The dashboard should show the job moving through its runtime lifecycle.
-
-A successful HTTP submission means the job was accepted by the Gateway queue; it is not by itself proof that paper physically came out.
+The dashboard should show the job moving through its durable lifecycle. A
+successful HTTP submission or spooler acceptance is **not** proof that paper
+physically came out; check the printer and original attempt evidence before any
+manual reprint, and never auto-retry an uncertain physical outcome.
 
 ## 18. Direct Agent printer test
 
@@ -539,7 +543,7 @@ This is separate from the Gateway dashboard test path.
 
 After Gateway + Agent + Printer are healthy:
 
-1. Install/upgrade the `print_gateway` Odoo 19 addon.
+1. Install/upgrade the Odoo `print_gateway` addon.
 2. Set the Gateway URL and Gateway API key in Odoo.
 3. Test the connection.
 4. Create the required Print Binding.
@@ -608,14 +612,14 @@ Gateway
   → pair Windows Yaseir Agent
   → Agent online
   → printer visible
-  → Gateway Test Print
-  → job lifecycle visible
+  → Odoo document/receipt or authorized operator certification
+  → job lifecycle and physical evidence inspected
 ```
 
 Then verify Odoo:
 
 ```text
-Odoo 19
+Odoo
   → Gateway configuration
   → Test Connection
   → binding

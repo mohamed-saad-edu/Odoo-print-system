@@ -107,17 +107,17 @@ No Gateway branch identifier, Gateway destination object, Gateway document catal
 
 Use the normal Odoo Print action for supported backend reports.
 
-For POS, use the normal POS receipt/reprint/Print Bill controls. When Gateway printing is enabled, the addon intercepts the Odoo 19 POS print service and queues the operation through the central router without browser printing.
+For POS, use the normal POS receipt/reprint/Print Bill controls. When Gateway printing is enabled, the addon intercepts the Odoo POS print service and queues the operation through the central router without browser printing.
 
 ## 6. Upgrade
 
-Gateway: back up the database and schedule an admission outage. Build the new release before cutover. Stop ingress and drain **all** old Gateway instances and quota-admission writers before applying any forward-only migration, especially `0102`; deploy only the matching new Gateway against the migrated schema. For the bundled Compose deployment, use `scripts/deploy-compose.sh` (with the reviewed `YASEIR_DEPLOYMENT_ID`), which enforces build → drain → role/migration/verification gates → restart. A failed gate leaves public ingress unavailable; never restart an old Gateway against a newer schema.
+Gateway: back up the database and schedule an admission outage. Build the new release before cutover. Stop ingress and drain **all** old Gateway instances and quota-admission writers before applying any forward-only migration, especially `0102` and `0103`; deploy only the matching new Gateway against the migrated schema. For the bundled Compose deployment, use `scripts/deploy-compose.sh` (with the reviewed `YASEIR_DEPLOYMENT_ID`), which enforces build → drain → role/migration/verification gates → restart. A failed gate leaves public ingress unavailable; never restart an old Gateway against a newer schema.
 Agent: install the new signed/approved Windows build according to deployment policy.
 Odoo: run `-u print_gateway`.
 
 ## 7. Release validation
 
-A production release is not complete until CI, Odoo 19 installation/upgrade, Gateway/Agent integration, and physical-printer staging tests are green. The repository does not claim physical E2E from source inspection alone.
+A production release is not complete until CI, Odoo installation/upgrade, Gateway/Agent integration, and physical-printer staging tests are green. The repository does not claim physical E2E from source inspection alone.
 
 ## Credential encryption prerequisite
 

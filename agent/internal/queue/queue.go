@@ -387,10 +387,10 @@ func (q *Queue) UpdateStatus(id, status string) error {
 		// terminal report. Clearing it here creates a crash window where the
 		// local ledger durably knows the physical outcome but the restarted
 		// Agent can no longer prove which Gateway attempt produced it.
-		_, err := q.db.Exec(`UPDATE print_jobs SET status = ?, execution_claim_token = COALESCE(execution_claim_token, claim_token), claimed_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND output_evidence IS NULL`, status, id)
+		_, err := q.db.Exec(`UPDATE print_jobs SET status = ?, execution_claim_token = COALESCE(execution_claim_token, claim_token), claimed_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status IN ('queued','printing') AND output_evidence IS NULL`, status, id)
 		return err
 	}
-	_, err := q.db.Exec(`UPDATE print_jobs SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND output_evidence IS NULL`, status, id)
+	_, err := q.db.Exec(`UPDATE print_jobs SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'queued' AND output_evidence IS NULL`, status, id)
 	return err
 }
 
@@ -404,10 +404,10 @@ func (q *Queue) UpdateStatusWithError(id, status, lastErr string) error {
 	if status == "success" || status == "failed" {
 		// The terminal state is a durable outbox record for the Gateway status
 		// report. Preserve claim_token until a validated terminal acknowledgement.
-		_, err := q.db.Exec(`UPDATE print_jobs SET status = ?, last_error = ?, execution_claim_token = COALESCE(execution_claim_token, claim_token), claimed_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND output_evidence IS NULL`, status, lastErr, id)
+		_, err := q.db.Exec(`UPDATE print_jobs SET status = ?, last_error = ?, execution_claim_token = COALESCE(execution_claim_token, claim_token), claimed_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status IN ('queued','printing') AND output_evidence IS NULL`, status, lastErr, id)
 		return err
 	}
-	_, err := q.db.Exec(`UPDATE print_jobs SET status = ?, last_error = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND output_evidence IS NULL`, status, lastErr, id)
+	_, err := q.db.Exec(`UPDATE print_jobs SET status = ?, last_error = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'queued' AND output_evidence IS NULL`, status, lastErr, id)
 	return err
 }
 
@@ -448,11 +448,15 @@ func (q *Queue) UpdateTerminalResult(id, status, lastErr, spoolerJobID, transpor
 	if transport != "" {
 		transportValue = transport
 	}
+	// Only the live physical invocation may create a terminal result. The old
+	// `output_evidence IS NULL OR ...` predicate matched *every* ordinary
+	// terminal receipt (thermal/IPP/Windows normally have no JSON evidence),
+	// allowing a delayed failure to overwrite a durable success, or vice versa.
+	// Reconciliation reads that original result; it must never rewrite it.
 	result, err := q.db.Exec(`UPDATE print_jobs SET status = ?, last_error = ?, spooler_job_id = ?,
 		execution_claim_token = COALESCE(execution_claim_token, claim_token), execution_transport = ?, output_evidence = ?,
-		claimed_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?
-		AND (output_evidence IS NULL OR (status = ? AND output_evidence = ? AND COALESCE(last_error, '') = ? AND COALESCE(execution_transport, '') = ?))`,
-		status, lastErr, spoolerID, transportValue, outputValue, id, status, outputEvidence, lastErr, transport)
+		claimed_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'printing' AND output_evidence IS NULL`,
+		status, lastErr, spoolerID, transportValue, outputValue, id)
 	if err != nil {
 		return err
 	}

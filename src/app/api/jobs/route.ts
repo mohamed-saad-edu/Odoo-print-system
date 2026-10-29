@@ -148,6 +148,7 @@ export async function DELETE(req: Request) {
         bindingDigest: row.bindingDigest,
         outputMedium: row.outputMedium,
         outputEvidence: row.outputEvidence, error: row.error, closedClaimTokenHash: row.closedClaimTokenHash,
+          spoolerJobId: row.spoolerJobId, attemptId: row.attemptId,
           deliveredAt: row.deliveredAt, ackedAt: row.ackedAt, createdAt: row.createdAt, updatedAt: row.updatedAt,
         })));
       }

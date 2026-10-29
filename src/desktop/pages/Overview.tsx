@@ -95,9 +95,8 @@ export function OverviewPage({ s }: { s: DesktopState }) {
                       <div className="flex max-w-full flex-wrap items-center gap-2">
                         <StatusBadge tone={view.tone} label={t(view.labelKey)} />
                         <Button size="sm" variant="ghost" onClick={() => s.setSelectedPrinter(p)}>{t("desktop.printers.details")}</Button>
-                        <Button size="sm" variant="secondary" onClick={() => s.handleTest(p.id)} disabled={s.busy || !s.gatewayTestPrinterIds.has(p.id)} icon={<Activity className="h-3 w-3 text-brand" />} title={t("desktop.overview.testNamed", { name })}>{t("desktop.overview.test")}</Button>
                       </div>
-                      <div className="w-full min-w-0 space-y-2"><PrinterSharingControl s={s} printer={p} />{!s.gatewayTestPrinterIds.has(p.id) && <p className="text-xs text-ink-3">{t("desktop.printers.cloudTestUnavailable")}</p>}</div>
+                      <div className="w-full min-w-0 space-y-2"><PrinterSharingControl s={s} printer={p} /></div>
                     </div>
                   );
                 })}

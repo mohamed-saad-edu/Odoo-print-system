@@ -68,7 +68,6 @@ import {
   stopAgent as ipcStopAgent,
   normalizeGatewayUrl,
   discoverPrinters,
-  testGatewayPrinter,
   setAutostart,
   setTrayLocale,
   type PrinterInfo,
@@ -79,7 +78,6 @@ import {
   printerAgentView,
   errMsg,
   friendlyPrinterError,
-  friendlyDiagnosticAdmissionError,
   jobFailurePresentation,
   humanConnection,
   humanType,
@@ -104,12 +102,9 @@ import {
   printerEndpoint,
   printerIsStale,
   mergePrinterInventories,
-  eligibleGatewayTestPrinterIds,
   jobTimeMs,
   jobTimestamp,
 } from "./lib/printers";
-import { DiagnosticOperations, diagnosticScope, diagnosticMessageKey, diagnosticMessageType, diagnosticIsInProgress } from "../shared/diagnostic-test";
-import { generateIdempotencyKey } from "../lib/idempotency";
 import { lifecycleLabel } from "../lib/lifecycle-labels";
 import type {
   AgentStatusView,
@@ -213,16 +208,10 @@ export default function App() {
   const [msg, setMsg] = useState<ToastMessage>(null);
   const [confirmStop, setConfirmStop] = useState(false);
   const [confirmRestart, setConfirmRestart] = useState(false);
-  const [repeatDiagnosticPrinterId, setRepeatDiagnosticPrinterId] = useState<string | null>(null);
   const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
   const [adminDismissed, setAdminDismissed] = useState<boolean>(false);
   const [agentStartupGraceElapsed, setAgentStartupGraceElapsed] = useState(false);
-  const busyRef = useRef(false);
-  // One synchronous operation owner: uncertain Gateway outcomes preserve the
-  // key across retries, scoped to the paired Agent and saved Gateway origin.
-  const diagnosticOps = useRef(new DiagnosticOperations(generateIdempotencyKey));
   const setBusyBoth = useCallback((v: boolean) => {
-    busyRef.current = v;
     setBusy(v);
   }, []);
   const [printers, setPrinters] = useState<PrinterInfo[]>([]);
@@ -270,7 +259,7 @@ export default function App() {
     setPrinters([]); setJobs([]);
     setSelectedPrinter(null); setSelectedJob(null);
     setPairedOrigin(null); setJobPrinterFilter(null);
-    setRepeatDiagnosticPrinterId(null); setShowAdd(false);
+    setShowAdd(false);
   }, []);
   const savedOriginMatches = useCallback((targetUrl: string): boolean => {
     try {
@@ -636,53 +625,6 @@ export default function App() {
     }
   }, [refreshPrinters, refreshLocalPrinters, t, locale]);
 
-  const handleTest = useCallback(
-    async (id: string) => {
-      if (!savedGatewayUrl) {
-        setMsg({ text: t("desktop.app.gatewayUrlMissing"), type: "error" });
-        return;
-      }
-      let connected = false;
-      try { connected = health?.ok === true && !healthError && checkedGatewayUrl === normalizeGatewayUrl(savedGatewayUrl); } catch { /* invalid saved origin remains unavailable */ }
-      if (!localInventoryReadyRef.current || !eligibleGatewayTestPrinterIds(printers, localPrinters, connected, Date.now()).has(id)) {
-        setMsg({ text: t("desktop.printers.cloudTestUnavailable"), type: "error" });
-        return;
-      }
-      const scope = diagnosticScope(savedGatewayUrl, "paired-agent", id);
-      const observed = diagnosticOps.current.observed(scope);
-      if (observed && !diagnosticIsInProgress(observed)) {
-        // A verified terminal operation is a new physical print only after
-        // explicit, in-app confirmation. In-flight retries reuse the SAME key.
-        setRepeatDiagnosticPrinterId(id);
-        return;
-      }
-      const key = diagnosticOps.current.begin(scope);
-      if (!key) return; // same-tick or overlapping UI calls share one owner
-      try {
-        setBusyBoth(true);
-        const result = await testGatewayPrinter(savedGatewayUrl, id, key);
-        diagnosticOps.current.accept(scope, result);
-        setMsg({
-          text: t(diagnosticMessageKey(result), { printer: "" }),
-          type: diagnosticMessageType(result) === "ok" ? "success" : "error",
-        });
-        if (result.jobId) void refreshJobs();
-      } catch (e) {
-        // HTTP errors, JSON errors and transport loss are all inconclusive
-        // about a prior committed job. Keep the identical key for retry.
-        diagnosticOps.current.uncertain(scope);
-        setMsg({
-          text: friendlyDiagnosticAdmissionError(e, locale),
-          type: "error",
-        });
-      } finally {
-        diagnosticOps.current.uncertain(scope);
-        setBusyBoth(false);
-      }
-    },
-    [savedGatewayUrl, printers, localPrinters, health, healthError, checkedGatewayUrl, refreshJobs, setBusyBoth, t, locale]
-  );
-
   const startAgent = useCallback(async () => {
     try {
       setBusyBoth(true);
@@ -991,9 +933,6 @@ export default function App() {
       ? t("desktop.settings.reachable")
       : t("desktop.app.failedLastCheckLong");
   const physicalPrinters = useMemo(() => mergePrinterInventories(printers, localPrinters), [printers, localPrinters]);
-  const gatewayTestPrinterIds = useMemo(() => localInventoryReady
-    ? eligibleGatewayTestPrinterIds(printers, localPrinters, gatewayConnected, nowMs) : new Set<string>(),
-    [printers, localPrinters, gatewayConnected, localInventoryReady, nowMs]);
   const totalPrinters = physicalPrinters.filter(isMainInventoryPrinter).length;
   // Counts are liveness evidence, not snapshot status: a printer whose
   // observations went stale while the screen stays open must not count as
@@ -1171,7 +1110,6 @@ export default function App() {
     sharingErrors,
     refreshLocalPrinters,
     handlePrinterSharing,
-    gatewayTestPrinterIds,
     printersLoading,
     printersError,
     printersFilter,
@@ -1185,7 +1123,6 @@ export default function App() {
     nowMs,
     refreshPrinters: () => { void refreshPrinters(); void refreshLocalPrinters(); },
     handleDiscover,
-    handleTest,
     showAdd,
     setShowAdd,
     selectedPrinter: resolvedSelectedPrinter,
@@ -1389,33 +1326,6 @@ export default function App() {
         gatewayUrl={savedGatewayUrl}
       />
 
-      <Modal
-        open={repeatDiagnosticPrinterId !== null}
-        onClose={() => setRepeatDiagnosticPrinterId(null)}
-        title={t("diagnostic.repeatTitle")}
-        footer={
-          <>
-            <Button variant="secondary" onClick={() => setRepeatDiagnosticPrinterId(null)}>
-              {t("common.cancel")}
-            </Button>
-            <Button
-              variant="primary"
-              onClick={() => {
-                const id = repeatDiagnosticPrinterId;
-                setRepeatDiagnosticPrinterId(null);
-                if (!id || !savedGatewayUrl) return;
-                const scope = diagnosticScope(savedGatewayUrl, "paired-agent", id);
-                if (diagnosticOps.current.confirmRepeat(scope)) void handleTest(id);
-              }}
-            >
-              {t("common.confirm")}
-            </Button>
-          </>
-        }
-      >
-        <p className="text-sm leading-relaxed text-ink-2">{t("diagnostic.repeatConfirm")}</p>
-      </Modal>
-
       <Modal open={confirmRestart} onClose={() => setConfirmRestart(false)} title={t("v4.experience.restart.title")}
         footer={<><Button variant="secondary" onClick={() => setConfirmRestart(false)}>{t("common.cancel")}</Button><Button variant="danger" disabled={busy} onClick={() => { setConfirmRestart(false); void restartAgent(); }}>{t("desktop.agents.restart")}</Button></>}>
         <p className="text-sm leading-relaxed text-ink-2">{t("v4.experience.restart.body")}</p>
@@ -1520,14 +1430,6 @@ export default function App() {
             </details>
             <div className="flex min-w-0 flex-wrap gap-3">
               <Button
-                variant="primary"
-                disabled={busy || !gatewayTestPrinterIds.has(selectedPrinter.id)}
-                onClick={() => handleTest(selectedPrinter.id)}
-                icon={<Play className="h-4 w-4" />}
-              >
-                {t("desktop.drawer.localTest")}
-              </Button>
-              <Button
                 variant="secondary"
                 onClick={() => {
                   setJobPrinterFilter(selectedPrinter.id);
@@ -1541,10 +1443,6 @@ export default function App() {
                 {t("desktop.drawer.viewJobs")}
               </Button>
             </div>
-            {!gatewayTestPrinterIds.has(selectedPrinter.id) && <p className="text-xs text-ink-3">{t("desktop.printers.cloudTestUnavailable")}</p>}
-            <p className="text-sm leading-relaxed text-ink-3">
-              {t("desktop.drawer.testPageNote")}
-            </p>
           </div>
         )}
       </Drawer>

@@ -12,9 +12,13 @@ export async function PATCH(req:Request,context:{params:Promise<{id:string}>}) {
  try {
     assertWorkspaceSecurityOrigin(req);
   const actor=await requirePlatformOwner(req),key=requireIdempotencyKey(req),{id}=await context.params;
-  const raw=await readWorkspaceSecurityJson(req) as Record<string,unknown>;
-  const priceProvided = raw.priceAmount !== undefined || raw.priceCurrency !== undefined;
-  const plan=parseManualPlan({...raw,id}),digest=requestDigest({plan,priceProvided});
+  const raw=await readWorkspaceSecurityJson(req);
+  // JSON null and arrays are valid JSON, but not editable plan objects.
+  // Reject them as client errors before dereferencing priceAmount.
+  if(!raw||typeof raw!=="object"||Array.isArray(raw))throw new ManualSubscriptionError('PLAN_INVALID');
+  const payload=raw as Record<string,unknown>;
+  const priceProvided = payload.priceAmount !== undefined || payload.priceCurrency !== undefined;
+  const plan=parseManualPlan({...payload,id}),digest=requestDigest({plan,priceProvided});
   await db.transaction(async tx=>{
    // A single Platform Owner operation key cannot edit two different plans
    // concurrently. Acquire the actor+key lock before the resource lock so

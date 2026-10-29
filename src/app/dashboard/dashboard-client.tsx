@@ -92,7 +92,6 @@ import {
 import { printerDisplayName, printerPresentation, printerStatusDetail } from "../../shared/printer-presentation";
 import { copyTextToClipboard } from "../../lib/clipboard";
 import { generateIdempotencyKey } from "../../lib/idempotency";
-import { DiagnosticOperations, decodeDiagnosticResult, diagnosticScope, diagnosticMessageKey, diagnosticMessageType, diagnosticIsInProgress, type DiagnosticResult } from "../../shared/diagnostic-test";
 import { shortId } from "../../lib/utils";
 import { useI18n } from "../../i18n/react";
 import { getPrinterLanguageBadges } from "../../lib/printer-capability";
@@ -339,21 +338,6 @@ function upgradeLimitFromLimitSignal(signal: EntitlementLimitSignal): {
   return { resource, ...limitSignalDisplayDetails(signal) };
 }
 
-async function sendGatewayTestPage(printerId: string, operationKey: string): Promise<DiagnosticResult> {
-  const response = await fetchWithTimeout(`/api/printers/${encodeURIComponent(printerId)}/test-print`, {
-    method: "POST",
-    credentials: "same-origin",
-    headers: {
-      "content-type": "application/json",
-      "Idempotency-Key": operationKey,
-    },
-  });
-  const body = await response.json().catch(() => null) as Record<string, unknown> | null;
-  if (response.ok) return decodeDiagnosticResult(body, printerId);
-  const obj = body && typeof body === "object" ? body as Record<string, unknown> : {};
-  const code = typeof obj.code === "string" ? obj.code : "HTTP_ERROR";
-  throw new DashboardApiError(apiMessageKey(code, response.status, "errors.testPageFailed"), code, obj, response.status);
-}
 
 /* ---------- Local presentational helpers ---------- */
 
@@ -492,9 +476,6 @@ export default function DashboardClient({
 
   const [agentName, setAgentName] = useState("");
   const [busy, setBusy] = useState(false);
-  const [testingPrinterId, setTestingPrinterId] = useState<string | null>(null);
-  const [repeatDiagnosticCandidate, setRepeatDiagnosticCandidate] = useState<{ printerId: string; printerName: string } | null>(null);
-  const diagnosticOps = React.useRef(new DiagnosticOperations(generateIdempotencyKey));
   const [certifyPrinter, setCertifyPrinter] = useState<Printer | null>(null);
   const [selectedPrinter, setSelectedPrinter] = useState<Printer | null>(null);
   const [message, setMessage] = useState<{ text: string; type: "ok" | "err" } | null>(null);
@@ -1031,56 +1012,6 @@ export default function DashboardClient({
     }
   };
 
-  const handleGatewayTestPrint = async (printerId: string, printerName: string) => {
-    const target = printers.find((printer) => printer.id === printerId) ?? (selectedPrinter?.id === printerId ? selectedPrinter : null);
-    if (target?.sharedWithGateway === false) {
-      setMessage({ type: "err", text: t("printer.presentation.notSharedReason") });
-      return;
-    }
-    const scope = diagnosticScope(window.location.origin, diagnosticActorScope, printerId);
-    // A subsequent physical print after a verified Gateway outcome is NEVER
-    // a silent click/retry. A lost response retries the same existing key.
-    const observed = diagnosticOps.current.observed(scope);
-    if (observed && !diagnosticIsInProgress(observed)) {
-      // In-flight jobs refresh under their existing key. Only a terminal
-      // diagnostic can start another physical print, after modal confirmation.
-      setRepeatDiagnosticCandidate({ printerId, printerName });
-      return;
-    }
-    const key = diagnosticOps.current.begin(scope);
-    if (!key) return; // synchronous flight owner, including same-tick clicks
-    setTestingPrinterId(printerId);
-    setMessage(null);
-    try {
-      const result = await sendGatewayTestPage(printerId, key);
-      diagnosticOps.current.accept(scope, result);
-      setMessage({
-        text: t(diagnosticMessageKey(result), { printer: printerName }),
-        type: diagnosticMessageType(result),
-      });
-      void refreshData();
-    } catch (error) {
-      // A timeout/5xx/4xx or malformed 2xx is not proof of no persistence.
-      // Retain the key for explicit reconciliation via the same idempotent POST.
-      diagnosticOps.current.uncertain(scope);
-      if (error instanceof DashboardApiError) {
-        const limit = upgradeLimitFromApiError(error);
-        if (limit) {
-          setUpgradeLimit(limit);
-          return;
-        }
-        const errorKey = error.code === "CAPABILITY_MISMATCH" ? "errors.capabilityMismatch"
-          : error.code === "PRINTER_NOT_SHARED" ? "printer.presentation.notSharedReason" : error.httpStatus === 401 ? "diagnostic.authRequired"
-          : error.httpStatus === 403 ? "diagnostic.permissionDenied" : "diagnostic.admissionUnknown";
-        setMessage({ text: t(errorKey), type: "err" });
-      } else {
-        setMessage({ text: t("diagnostic.admissionUnknown"), type: "err" });
-      }
-    } finally {
-      diagnosticOps.current.uncertain(scope);
-      setTestingPrinterId(null);
-    }
-  };
 
   const closeReprint = () => {
     if (busy) return;
@@ -1278,17 +1209,6 @@ export default function DashboardClient({
     const retired = printer.lifecycle === "retired";
     return [
       { key: "details", label: t("printer.presentation.details"), icon: <Eye className="h-4 w-4" />, onSelect: () => setSelectedPrinter(printer) },
-      ...(canMutate.printersTest
-        ? [
-            {
-              key: "test",
-              label: t("printer.sendTestPage"),
-              icon: <PlayCircle className="h-4 w-4" />,
-              disabled: busy || testingPrinterId !== null || !active || printer.sharedWithGateway === false,
-              onSelect: () => void handleGatewayTestPrint(printer.id, printerDisplayName(printer, locale)),
-            },
-          ]
-        : []),
       ...(canMutate.printersTest ? [{ key: "certify", label: t("cert.run"), icon: <ShieldCheck className="h-4 w-4" />, disabled: printer.sharedWithGateway === false, onSelect: () => setCertifyPrinter(printer) }] : []),
       {
         key: "copy",
@@ -1843,7 +1763,6 @@ export default function DashboardClient({
                 const parentAgent = agentById.get(printer.agentId);
                 const presentation = printerPresentation(printer, parentAgent, nowMs);
                 const displayName = printerDisplayName(printer, locale);
-                const active = printer.lifecycle === "active" && printer.sharedWithGateway !== false;
                 return (
                   <li
                     key={printer.id}
@@ -1864,16 +1783,6 @@ export default function DashboardClient({
                     )}
 
                     <div className="mt-auto flex min-w-0 flex-wrap items-center justify-between gap-2 border-t border-edge-subtle pt-3">
-                      {canMutate.printersTest && <Button
-                        size="sm"
-                        variant="secondary"
-                        onClick={() => void handleGatewayTestPrint(printer.id, displayName)}
-                        loading={testingPrinterId === printer.id}
-                        disabled={busy || testingPrinterId !== null || !active}
-                        icon={testingPrinterId === printer.id ? undefined : <PlayCircle className="h-3.5 w-3.5" />}
-                      >
-                        {testingPrinterId === printer.id ? t("printer.sending") : t("printer.sendTestPage")}
-                      </Button>}
                       <div className="flex flex-wrap items-center gap-1">
                         <Button
                           size="sm"
@@ -1915,7 +1824,6 @@ export default function DashboardClient({
                     const parentAgent = agentById.get(printer.agentId);
                     const presentation = printerPresentation(printer, parentAgent, nowMs);
                     const displayName = printerDisplayName(printer, locale);
-                    const active = printer.lifecycle === "active" && printer.sharedWithGateway !== false;
                     return (
                       <tr key={printer.id}>
                         <td>
@@ -1931,15 +1839,6 @@ export default function DashboardClient({
                         </td>
                         <td className="text-end">
                           <div className="flex items-center justify-end gap-1.5">
-                            {canMutate.printersTest && <Button
-                              size="sm"
-                              variant="secondary"
-                              onClick={() => void handleGatewayTestPrint(printer.id, displayName)}
-                              loading={testingPrinterId === printer.id}
-                              disabled={busy || testingPrinterId !== null || !active}
-                            >
-                              {testingPrinterId === printer.id ? t("printer.sending") : t("printer.testPage")}
-                            </Button>}
                             <Menu
                               label={t("printer.moreActionsFor", { name: displayName })}
                               items={printerActions(printer)}
@@ -2483,33 +2382,6 @@ export default function DashboardClient({
         )}
       </Modal>
 
-      {/* A repeated diagnostic is a NEW print and requires explicit consent. */}
-      <Modal
-        open={repeatDiagnosticCandidate !== null}
-        onClose={() => setRepeatDiagnosticCandidate(null)}
-        title={t("diagnostic.repeatTitle")}
-        footer={
-          <>
-            <Button variant="secondary" onClick={() => setRepeatDiagnosticCandidate(null)}>{t("common.cancel")}</Button>
-            {canMutate.printersTest && <Button
-              variant="primary"
-              onClick={() => {
-                const candidate = repeatDiagnosticCandidate;
-                setRepeatDiagnosticCandidate(null);
-                if (!candidate) return;
-                const scope = diagnosticScope(window.location.origin, diagnosticActorScope, candidate.printerId);
-                if (diagnosticOps.current.confirmRepeat(scope)) {
-                  void handleGatewayTestPrint(candidate.printerId, candidate.printerName);
-                }
-              }}
-            >
-              {t("common.confirm")}
-            </Button>}
-          </>
-        }
-      >
-        <p className="text-sm leading-relaxed text-ink-2">{t("diagnostic.repeatConfirm")}</p>
-      </Modal>
 
       {/* ── Reprint confirmation ──────────────────────────────────── */}
       <Modal

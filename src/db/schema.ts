@@ -701,6 +701,10 @@ export const printJobReceipts = pgTable("print_job_receipts", {
   status: text("status").notNull(),
   outputMedium: text("output_medium").notNull().default("physical"),
   outputEvidence: jsonb("output_evidence").$type<Record<string, unknown>>(),
+  // Retention deletes print_jobs (and cascading job_events). Preserve the
+  // platform attempt/spooler correlation in its permanent payload-free receipt.
+  spoolerJobId: text("spooler_job_id"),
+  attemptId: text("attempt_id"),
   bindingDigest: text("binding_digest"),
   error: text("error"),
   closedClaimTokenHash: text("closed_claim_token_hash"),

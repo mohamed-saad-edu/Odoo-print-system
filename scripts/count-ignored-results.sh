@@ -39,9 +39,17 @@ LIST="${1:-}"
 prod_files=$(find agent -name '*.go' ! -name '*_test.go' | sort)
 test_files=$(find agent -name '*_test.go' | sort)
 
+# grep exits 1 for an empty result, which is valid for this inventory.
+# Preserve exit 2 (unreadable files or regex errors) as a real failure.
+grep_allow_no_match() {
+  local code=0
+  grep "$@" || code=$?
+  [[ "$code" -eq 0 || "$code" -eq 1 ]]
+}
+
 count() { # count <files...>
   [ -z "$1" ] && { echo 0; return; }
-  grep -hE "$PATTERNS" $1 | grep -vE '^[[:space:]]*//' | wc -l | tr -d ' '
+  grep_allow_no_match -hE "$PATTERNS" $1 | grep_allow_no_match -vE '^[[:space:]]*//' | wc -l | tr -d ' '
 }
 
 PROD=$(count "$prod_files")
@@ -55,5 +63,5 @@ if [ "$LIST" = "--list" ]; then
   # the listing can never disagree with PRODUCTION (it did: --list showed 49
   # while PRODUCTION said 48, because a line whose *content* is a comment
   # mentioning `_ = recover()` was listed but not counted).
-  grep -nE "$PATTERNS" $prod_files | grep -vE ':[0-9]+:[[:space:]]*//' | sed 's/^/  /'
+  grep_allow_no_match -nE "$PATTERNS" $prod_files | grep_allow_no_match -vE ':[0-9]+:[[:space:]]*//' | sed 's/^/  /'
 fi

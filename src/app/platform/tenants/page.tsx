@@ -85,7 +85,14 @@ export default function PlatformTenantsPage() {
         const data = await res.json();
         if (!ignore) { setTenants(Array.isArray(data.tenants) ? data.tenants : []); setHasMore(data.hasMore === true); setError(null); }
       } catch {
-        if (!ignore) setError(t("platform.tenants.loadFailed"));
+        if (!ignore) {
+          // A failed refresh must not leave stale workspace lifecycle actions
+          // available against a potentially changed control-plane state.
+          setTenants([]);
+          setHasMore(false);
+          setSelectedTenant(null);
+          setError(t("platform.tenants.loadFailed"));
+        }
       } finally { if (!ignore) setCompletedQuery(queryKey); }
     }
     void load();

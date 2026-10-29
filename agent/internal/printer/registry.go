@@ -202,6 +202,19 @@ func loadRegistryPartitionedLocked(registryPath string) (production, hidden []De
 		}
 		production = append(production, d)
 	}
+	// An imported or legacy registry can contain two saved records with the
+	// same ID but different physical execution destinations. The mutation
+	// index is keyed by ID; accepting duplicate authority would silently pick
+	// the last record and could rebind a print job to the wrong printer. Fail
+	// closed without rewriting or dropping either saved record. An operator
+	// must explicitly reconcile the registry before discovery can mutate it.
+	seenPrinterIDs := make(map[string]struct{}, len(production)+len(hidden))
+	for _, saved := range concatDevices(production, hidden) {
+		if _, exists := seenPrinterIDs[saved.ID]; exists {
+			return nil, nil, 0, fmt.Errorf("registry %s contains duplicate printer ID %q; restore or reconcile the original file before dispatch", registryPath, saved.ID)
+		}
+		seenPrinterIDs[saved.ID] = struct{}{}
+	}
 	if removed > 0 {
 		// Rewrite the registry and remove all obsolete software-printer rows.
 		if err := saveRegistryLocked(registryPath, concatDevices(production, hidden)); err != nil {

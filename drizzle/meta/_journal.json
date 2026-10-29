@@ -722,6 +722,13 @@
       "when": 1793170000001,
       "tag": "0102_calendar_month_print_allowance",
       "breakpoints": true
+    },
+    {
+      "idx": 103,
+      "version": "7",
+      "when": 1793270000000,
+      "tag": "0103_retained_print_attempt_evidence",
+      "breakpoints": true
     }
   ]
 }

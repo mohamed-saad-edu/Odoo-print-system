@@ -79,7 +79,7 @@ A Tauri 2 desktop application for Windows that provides:
 - Agent service management (start/stop/configure)
 - Printer discovery and manual registration UI
 - Pairing workflow (agent ↔ Gateway registration)
-- Local printer test printing
+- Privileged internal printer certification transport (customer Test Page controls are removed; internal diagnostics are retained)
 
 ### 2.4 Odoo 19 Addon (`print_gateway`)
 
@@ -190,7 +190,7 @@ second physical attempt.
 ### PostgreSQL + Drizzle ORM
 
 **Schema**: 32 tables defined in `src/db/schema.ts`
-**Migrations**: 103 forward-only migrations (`0000`–`0102`) in `drizzle/`
+**Migrations**: 104 forward-only migrations (`0000`–`0103`) in `drizzle/`; `0103_retained_print_attempt_evidence.sql` must run before the updated Gateway uses retained receipt columns.
 **Driver**: `pg` with connection pool; exact version is pinned in the Node manifests
 
 ### Key Design Patterns

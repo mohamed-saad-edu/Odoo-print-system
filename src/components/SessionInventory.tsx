@@ -48,7 +48,14 @@ export function SessionInventory({ platform = false, canRevoke = true }: { platf
       // 100 device records, even for an account with a long session history.
       setSessions(body.sessions); setNextCursor(body.nextCursor); setPageNumber(number);
     } catch (err) {
-      if (mounted.current && !controller.signal.aborted && generation.current === ownGeneration) setError(t("security.sessionsFailed"));
+      if (mounted.current && !controller.signal.aborted && generation.current === ownGeneration) {
+        // Do not keep outdated revocation targets or a stale pagination cursor
+        // after the authoritative session inventory read fails.
+        setSessions([]);
+        setNextCursor(null);
+        setPageNumber(1);
+        setError(t("security.sessionsFailed"));
+      }
     } finally {
       if (mounted.current && generation.current === ownGeneration) setLoading(false);
     }

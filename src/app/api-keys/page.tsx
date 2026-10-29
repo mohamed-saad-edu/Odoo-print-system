@@ -133,11 +133,11 @@ export default function ApiKeysPage() {
           void loadKeys().then((items) => {
             if (!cancelled && observedEpoch === refreshEpoch.current) setKeys(items);
           }).catch(() => {
-            if (!cancelled) setError(t("apiKeys.loadFailed"));
+            if (!cancelled) setError("apiKeys.loadFailed");
           });
         }, 30_000);
       } catch {
-        if (!cancelled) setError(t("apiKeys.loadFailed"));
+        if (!cancelled) setError("apiKeys.loadFailed");
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -147,7 +147,7 @@ export default function ApiKeysPage() {
       cancelled = true;
       if (poll) clearInterval(poll);
     };
-  }, [loadKeys, loadTick, t]);
+  }, [loadKeys, loadTick]);
 
   async function generate() {
     if (mutationInFlight.current || !canManage) return;
@@ -208,7 +208,7 @@ export default function ApiKeysPage() {
         <PageHeader icon={<KeyRound className="h-4 w-4" />} title={t("v4.connection.title")} />
         <PageContainer>
           {error && !loading
-            ? <ErrorState title={t("apiKeys.loadFailed")} message={error} retry={() => setLoadTick(tick => tick + 1)} />
+            ? <ErrorState title={t("apiKeys.loadFailed")} message={error === "apiKeys.loadFailed" ? t("apiKeys.loadFailed") : error} retry={() => setLoadTick(tick => tick + 1)} />
             : <div role="status" aria-label={t("apiKeys.loadingCredentials")} className="space-y-5" aria-busy="true">
                 <Skeleton className="h-20 w-full" />
                 <Skeleton className="h-44 w-full" />
@@ -239,11 +239,8 @@ export default function ApiKeysPage() {
           {error && (
             <ErrorState
               title={t("apiKeys.operationFailed")}
-              message={error}
-              retry={() => {
-                setError(null);
-                void loadKeys().then(setKeys).catch(() => setError(t("apiKeys.loadFailed")));
-              }}
+              message={error === "apiKeys.loadFailed" ? t("apiKeys.loadFailed") : error}
+              retry={() => { setError(null); setLoadTick(tick => tick + 1); }}
             />
           )}
 

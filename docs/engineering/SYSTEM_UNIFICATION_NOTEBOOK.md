@@ -40,7 +40,7 @@ Existing machine-readable contracts in `contracts/`: gateway-console bridge, pri
 | PRINT-03 | Job DB statuses and physical outcome labels remain distinct; unknown is never counted as proven printed | `src/lib/job-status.ts`, Go Agent durable output markers | Real Windows spooler and printer fault injection |
 | PRINT-04 | Printer identity stable through discovery/manual/agent restart; sharing and verification gates preserved | `contracts/printer-sharing-contract.json`, `src/lib/printer-identity.ts` | Windows, IPP, USB discovery and real printer |
 | DATA-01 | Tenant isolation by scoped app queries and composite FKs; PostgreSQL RLS not claimed as present | `src/db/schema.ts`, `ARCHITECTURE.md` | Unauthorized principal/query test matrix, RLS defense-in-depth review |
-| DATA-02 | 103 immutable SQL migrations through `0102`; no rewriting old applied migrations | `drizzle/meta/_journal.json`, `MIGRATION.md` | Fresh PostgreSQL replay, populated migration, backup/restore |
+| DATA-02 | 104 forward-only SQL migrations through `0103` (receipt evidence retained); no rewriting old applied migrations | `drizzle/meta/_journal.json`, `MIGRATION.md` | Fresh PostgreSQL replay, populated migration, backup/restore |
 | UX-01 | EN/AR parity, semantic RTL, bidirectional numerals and currencies; no customer test center | `src/i18n/`, `scripts/check-i18n.ts` | Browser snapshots, Odoo screen tests, desktop Windows screenshots |
 | DEPLOY-01 | Do not weaken Trivy or test gates and claim production success | `.github/workflows/`, `security/image-vulnerability-baseline.json` | Image rescans, full CI, staging, device acceptance |
 

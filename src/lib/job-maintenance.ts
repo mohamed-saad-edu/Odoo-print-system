@@ -94,6 +94,8 @@ export async function cleanupTerminalPrintJobs(scope: { agentId?: string } = {})
         bindingDigest: row.bindingDigest,
         outputMedium: row.outputMedium,
         outputEvidence: row.outputEvidence,
+        spoolerJobId: row.spoolerJobId,
+        attemptId: row.attemptId,
         error: row.error,
         closedClaimTokenHash: row.closedClaimTokenHash,
         deliveredAt: row.deliveredAt,

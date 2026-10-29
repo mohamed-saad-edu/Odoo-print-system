@@ -98,6 +98,20 @@ export function AddPrinterDialog({
       if (agentsGeneration.current === generation) setAgentsLoading(false);
     }
   }, [gatewayUrl, agentsForUrl]);
+  // A dialog can stay mounted across sessions and Gateway changes. Refresh
+  // when opened instead of reusing a stale Agent picker from a past visit.
+  // Invalidate in-flight loads on close so late responses cannot repopulate it.
+  useEffect(() => {
+    if (!open) {
+      agentsGeneration.current += 1;
+      setAgentsForUrl("");
+      setAgents([]);
+      setAgentId("");
+      setAgentsLoading(false);
+      return;
+    }
+    void loadAgents();
+  }, [open, loadAgents]);
 
 
   // Clear any previous error when dialog transitions to open

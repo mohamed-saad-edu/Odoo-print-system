@@ -365,6 +365,11 @@ func extractIPFromXAddrs(xaddrs string) string {
 }
 
 func wsdDedupKey(d DeviceInfo) string {
+	if isUnverifiedWSDObservation(d) {
+		if id := StableIDForDevice(d); id != "" {
+			return "wsd:" + id
+		}
+	}
 	if d.Capabilities != nil {
 		if uuid, ok := d.Capabilities["uuid"].(string); ok && uuid != "" {
 			return "uuid:" + uuid

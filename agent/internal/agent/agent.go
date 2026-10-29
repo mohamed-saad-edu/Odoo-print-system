@@ -2081,6 +2081,20 @@ func (a *Agent) dispatchJobWithContexts(executionCtx, sessionCtx context.Context
 				// would permit a later same-token redelivery to reopen the hardware
 				// attempt after the in-process fence is cleaned up.
 				_, localStatus, found, readErr := a.queue.Get(jobID)
+				// A panic can occur after the terminal result was durably
+				// committed but before Gateway acknowledged it. Preserve the
+				// original outcome, spooler ID and PDF output proof instead of
+				// replacing them with a new panic outcome or dropping evidence.
+				if readErr == nil && found && (localStatus == "success" || localStatus == "failed") {
+					report, present, reportErr := a.queue.TerminalResultFor(jobID)
+					if reportErr == nil && present {
+						if err := a.reportDurableTerminalResult(executionCtx, report); err != nil {
+							log.Printf("Job %s: original terminal result reconciliation after panic failed: %v", jobID, err)
+						}
+						return
+					}
+					log.Printf("Job %s: could not read original terminal result after panic: %v", jobID, reportErr)
+				}
 				status, panicMsg := classifyPanicOutcome(readErr, found, localStatus, a.queue.WasOutcomeUnknown(jobID), r)
 				if status == "failed" && strings.HasPrefix(panicMsg, "UNKNOWN_PARTIAL_DELIVERY: ") {
 					if err := a.queue.UpdateStatusWithError(jobID, "failed", panicMsg); err != nil {

@@ -115,6 +115,24 @@ func ippQueueIdentitySuffix(d DeviceInfo) string {
 	return "|ipp-resource:" + path + "?" + u.RawQuery
 }
 
+// WSD ProbeMatches are unauthenticated discovery hints, not a proven chassis
+// identity or an executable print transport. Different devices can advertise
+// the same EndpointReference/UUID. Keep discovery-only records scoped to the
+// observed endpoint and network peer until a real printer protocol is verified.
+func isUnverifiedWSDObservation(d DeviceInfo) bool {
+	return d.Capabilities["wsd_detected"] == true && d.Port == 0 &&
+		(strings.TrimSpace(d.Protocol) == "" || strings.EqualFold(d.Protocol, "unknown"))
+}
+
+func wsdObservationIdentity(d DeviceInfo) string {
+	if strings.TrimSpace(d.NetworkAddress) == "" {
+		return ""
+	}
+	return "wsd-peer:" + normalizeIdentityValue(d.NetworkAddress) +
+		"|endpoint:" + strings.TrimSpace(d.Endpoint) +
+		"|reference:" + capabilityIdentityValue(d, "endpoint_reference")
+}
+
 // physicalIdentityKey is the legacy reconciliation key. For Windows it is
 // explicitly a logical queue identity, never a chassis identity: two queues
 // can share one driver and port while choosing different forms or settings.
@@ -135,7 +153,19 @@ func physicalIdentityKey(d DeviceInfo) (string, bool) {
 		return fmt.Sprintf("windows-queue:%s|server:%s|scope:%s", normalizeIdentityValue(queue),
 			spoolerDetailValue(d, d.SpoolerServer, "server_name"), capabilityIdentityValue(d, "spooler_scope")), true
 	}
-	if uuid := capabilityIdentityValue(d, "uuid", "printer_uuid"); uuid != "" {
+	if isUnverifiedWSDObservation(d) {
+		// Do not promote a self-reported multicast UUID into durable hardware
+		// identity used by the registry to rebind another printer.
+		return "", false
+	}
+	// An unauthenticated WSD UUID remains an observation even if another
+	// discoverer later enriches this row with a usable print protocol. Only
+	// the independently proven IPP UUID may become identity evidence here.
+	if d.Capabilities["wsd_detected"] == true {
+		if uuid := verifiedIPPUUIDFromCapabilities(d.Capabilities); uuid != "" {
+			return "uuid:" + uuid + ippQueueIdentitySuffix(d), true
+		}
+	} else if uuid := capabilityIdentityValue(d, "uuid", "printer_uuid"); uuid != "" {
 		return "uuid:" + uuid + ippQueueIdentitySuffix(d), true
 	}
 
@@ -357,6 +387,12 @@ func StableIDFromIPPURI(endpoint string, host string, port int) string {
 // physical identity first. Endpoint/name fallbacks remain for devices that do
 // not expose a durable identity.
 func StableIDForDevice(d DeviceInfo) string {
+	if isUnverifiedWSDObservation(d) {
+		if key := wsdObservationIdentity(d); key != "" {
+			return stableIDFromIdentityKey(key)
+		}
+		return ""
+	}
 	if (strings.EqualFold(d.Protocol, "ipp") || strings.EqualFold(d.Protocol, "ipps")) &&
 		d.Endpoint != "" && d.NetworkAddress != "" && d.Port > 0 {
 		return StableIDFromIPPURI(d.Endpoint, d.NetworkAddress, d.Port)
