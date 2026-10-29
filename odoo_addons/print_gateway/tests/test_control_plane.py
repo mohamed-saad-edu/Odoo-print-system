@@ -54,7 +54,7 @@ class TestControlPlane(TransactionCase):
         self.env["print_gateway.runtime_agent_assignment"].create({
             "company_id": self.company.id,
             "branch_id": self.branch.id,
-            "runtime_agent_id": "agent-cp-01",
+            "runtime_agent_id": "agt_t0000007",
             "enabled": True,
         })
 
@@ -88,7 +88,7 @@ class TestControlPlane(TransactionCase):
             "destination_type": "report",
             "destination_report_id": report.id if report else False,
             "report_id": report.id if report else False,
-            "runtime_agent_id": "agent-cp-01",
+            "runtime_agent_id": "agt_t0000007",
             "printer_id": "printer-primary",
             "printer_protocol": "escpos",
             "enabled": True,
@@ -105,7 +105,7 @@ class TestControlPlane(TransactionCase):
             "destination_type": "report",
             "destination_report_id": report.id if report else False,
             "report_id": report.id if report else False,
-            "runtime_agent_id": "agent-cp-01",
+            "runtime_agent_id": "agt_t0000007",
             "printer_id": "printer-zpl",
             "printer_protocol": "zpl",
             "enabled": True,
@@ -119,7 +119,7 @@ class TestControlPlane(TransactionCase):
             "destination_type": "report",
             "destination_report_id": report.id if report else False,
             "report_id": report.id if report else False,
-            "runtime_agent_id": "agent-cp-01",
+            "runtime_agent_id": "agt_t0000007",
             "printer_id": "printer-backup",
             "printer_protocol": "escpos",
             "enabled": True,
@@ -168,7 +168,7 @@ class TestControlPlane(TransactionCase):
         import requests
         assignment = self.env["print_gateway.runtime_agent_assignment"].create({
             "company_id": self.company.id, "branch_id": self.branch.id,
-            "runtime_agent_id": "agent-backup-revoked", "enabled": True,
+            "runtime_agent_id": "agt_t0000003", "enabled": True,
         })
         self.backup_binding.runtime_agent_id = assignment.runtime_agent_id
         job = self._new_fallback_job()
@@ -204,7 +204,7 @@ class TestControlPlane(TransactionCase):
                     if url.endswith("/api/odoo/printers"):
                         printer = response.json.return_value["printers"][0]
                         if case == "other-owner":
-                            printer["agent"]["id"] = "another-branch-agent"
+                            printer["agent"]["id"] = "agt_t0000025"
                         else:
                             printer["verificationReceivedAt"] = "2020-01-01T00:00:00Z"
                     return response
@@ -646,7 +646,7 @@ class TestControlPlane(TransactionCase):
                     "destination_type": "report",
                     "destination_report_id": self.primary_binding.destination_report_id.id,
                     "report_id": self.primary_binding.report_id.id,
-                    "runtime_agent_id": "agent-cp-01",
+                    "runtime_agent_id": "agt_t0000007",
                     "printer_id": "printer-test-%s" % protocol,
                     "printer_protocol": protocol,
                     "enabled": True,
@@ -762,7 +762,7 @@ class TestControlPlane(TransactionCase):
                 "destination_type": "report",
                 "destination_report_id": picking_report.id,
                 "report_id": picking_report.id,
-                "runtime_agent_id": "agent-cp-01",
+                "runtime_agent_id": "agt_t0000007",
                 "printer_id": "printer-branch-recovery",
                 "printer_protocol": "ipp",
                 "enabled": True,
@@ -912,7 +912,7 @@ class TestControlPlane(TransactionCase):
             "destination_report_id": self.primary_binding.destination_report_id.id,
             "report_id": self.primary_binding.report_id.id,
             "printer_protocol": "escpos",
-            "runtime_agent_id": "agent-cp-01",
+            "runtime_agent_id": "agt_t0000007",
             "printer_id": "printer-chain-c",
             "enabled": True,
             "priority": 10,
@@ -925,7 +925,7 @@ class TestControlPlane(TransactionCase):
             "destination_report_id": self.primary_binding.destination_report_id.id,
             "report_id": self.primary_binding.report_id.id,
             "printer_protocol": "escpos",
-            "runtime_agent_id": "agent-cp-01",
+            "runtime_agent_id": "agt_t0000007",
             "printer_id": "printer-chain-d",
             "enabled": True,
             "priority": 5,
@@ -987,7 +987,7 @@ class TestControlPlane(TransactionCase):
             "destination_report_id": self.primary_binding.destination_report_id.id,
             "report_id": self.primary_binding.report_id.id,
             "printer_protocol": "escpos",
-            "runtime_agent_id": "agent-cp-01",
+            "runtime_agent_id": "agt_t0000007",
             "printer_id": "printer-disabled",
             "enabled": False,
             "priority": 99,
@@ -1096,7 +1096,7 @@ class TestControlPlane(TransactionCase):
             "destination_type": "report",
             "destination_report_id": self.primary_binding.destination_report_id.id,
             "report_id": self.primary_binding.report_id.id,
-            "runtime_agent_id": "agent-cp-01",
+            "runtime_agent_id": "agt_t0000007",
             "printer_id": "printer-raw",
             "printer_protocol": "raw",
             "enabled": True,
@@ -1245,7 +1245,7 @@ class TestControlPlane(TransactionCase):
         assignment = assignment_model.create({
             "company_id": self.company.id,
             "branch_id": False,
-            "runtime_agent_id": "agent-root-automation",
+            "runtime_agent_id": "agt_t0000017",
             "enabled": True,
         })
         report = self.primary_binding.report_id
@@ -1255,7 +1255,7 @@ class TestControlPlane(TransactionCase):
             "destination_type": "report",
             "destination_report_id": report.id,
             "report_id": report.id,
-            "runtime_agent_id": "agent-root-automation",
+            "runtime_agent_id": "agt_t0000017",
             "printer_id": "printer-root-automation",
             "printer_protocol": "zpl",
             "enabled": True,
@@ -2001,7 +2001,7 @@ class TestControlPlane(TransactionCase):
             "destination_type": "report",
             "destination_report_id": self.primary_binding.destination_report_id.id,
             "report_id": self.primary_binding.report_id.id,
-            "runtime_agent_id": "agent-cp-01",
+            "runtime_agent_id": "agt_t0000007",
             "printer_id": "printer-zpl-backup",
             "printer_protocol": "zpl",
             "enabled": True,
@@ -2195,28 +2195,37 @@ class TestControlPlane(TransactionCase):
             {
                 "company_id": self.company.id,
                 "branch_id": sibling_branch.id,
-                "runtime_agent_id": "agent-scope-printer-scope-sibling",
+                "runtime_agent_id": "agt_t0000021",
                 "enabled": True,
             },
             {
                 "company_id": self.company.id,
                 "branch_id": False,
-                "runtime_agent_id": "agent-scope-printer-scope-root",
+                "runtime_agent_id": "agt_t0000020",
                 "enabled": True,
             },
             {
                 "company_id": other_company.id,
                 "branch_id": False,
-                "runtime_agent_id": "agent-scope-printer-scope-other",
+                "runtime_agent_id": "agt_t0000019",
                 "enabled": True,
             },
         ])
+
+        # Test names are not Gateway identities. The real Agent wire contract
+        # requires agt_ plus eight opaque characters.
+        scope_agents = {
+            "printer-scope-sibling": "agt_scopesib",
+            "printer-scope-root": "agt_scoperot",
+            "printer-scope-other": "agt_scopeoth",
+            "printer-scope-revocable-root": "agt_scoperev",
+        }
 
         pri_counter = [50]
 
         def _binding(company, branch, printer, protocol="escpos"):
             pri_counter[0] += 1
-            agent_id = "agent-cp-01" if branch == self.branch else ("agent-scope-%s" % printer)
+            agent_id = "agt_t0000007" if branch == self.branch else scope_agents[printer]
             return self.env["print_gateway.binding"].create({
                 "company_id": company.id,
                 "branch_id": branch.id if branch else False,
@@ -2256,7 +2265,7 @@ class TestControlPlane(TransactionCase):
         # Company-wide binding even when its separate company-wide assignment
         # is disabled.
         revocable_printer = "printer-scope-revocable-root"
-        revocable_agent = "agent-scope-%s" % revocable_printer
+        revocable_agent = scope_agents[revocable_printer]
         self.env["print_gateway.runtime_agent_assignment"].create({
             "company_id": self.company.id,
             "branch_id": False,

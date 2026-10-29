@@ -669,7 +669,7 @@ class TestPrintGatewayArchitectureContract(TransactionCase):
             scope_env["print_gateway.runtime_agent_assignment"].create({
                 "company_id": scope_root.id,
                 "branch_id": scope_branch.id,
-                "runtime_agent_id": "agt-branch-submit-%s" % suffix,
+                "runtime_agent_id": "agt_%s" % suffix,
                 "enabled": True,
             })
             report = scope_env.ref("sale.action_report_saleorder", raise_if_not_found=False)
@@ -680,7 +680,7 @@ class TestPrintGatewayArchitectureContract(TransactionCase):
                 "destination_type": "report",
                 "destination_report_id": report.id,
                 "report_id": report.id,
-                "runtime_agent_id": "agt-branch-submit-%s" % suffix,
+                "runtime_agent_id": "agt_%s" % suffix,
                 "printer_id": "printer-branch-submit-%s" % suffix,
                 "printer_protocol": "escpos",
                 "enabled": True,

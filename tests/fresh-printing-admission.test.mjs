@@ -29,7 +29,7 @@ async function harness({ status = "claimed", lifecycle = {}, updatedRows = 1, to
     bindingDigest, outputMedium: "physical", outputEvidence: null,
     claimToken: "claim-current", error: null, expiresAt: new Date(Date.now() + 60000), updatedAt: new Date() };
   const active = { agent_lifecycle: "active", tenant_lifecycle: "active", printer_lifecycle: "active",
-    inventory_present: true, management_source: "manager", desired_revision: 3,
+    inventory_present: true, management_source: "agent", desired_revision: 3,
     verification_state: proof.verificationState, verification_binding_digest: proof.verificationBindingDigest,
     verification_verified_at: proof.verificationVerifiedAt, verification_received_at: proof.verificationReceivedAt,
     logical_queue_key: proof.logicalQueueKey, output_medium: proof.outputMedium,

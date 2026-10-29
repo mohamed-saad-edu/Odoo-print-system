@@ -1,5 +1,5 @@
-// The user-facing Gateway/Desktop Test Print controls were removed.
-// Retain internal protocol/operation model regressions without restoring UI.
+// Diagnostic protocol/operation model safety regressions. The live UI still
+// has legacy diagnostic actions: verify their request fencing separately.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -10,9 +10,11 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const read = relative => fs.readFileSync(path.join(root, relative), 'utf8');
 const good = (status='queued', id='printer1', extras={}) => ({ok:true,jobId:`job-${id}`,printerId:id,status,...extras});
 
-test('removed customer-facing diagnostic printing controls stay absent', () => {
-  assert.doesNotMatch(read('src/app/dashboard/dashboard-client.tsx'), /\bhandleGatewayTestPrint\b|\bsendGatewayTestPage\b/);
-  assert.doesNotMatch(read('src/desktop/main.tsx'), /\bhandleTest\s*=/);
+test('Gateway diagnostic POST requires a stable operation key', () => {
+  const dashboard = read('src/app/dashboard/dashboard-client.tsx');
+  const send = dashboard.slice(dashboard.indexOf('async function sendGatewayTestPage('), dashboard.indexOf('/* ---------- Local presentational helpers ---------- */'));
+  assert.match(send, /"Idempotency-Key": operationKey/);
+  assert.match(send, /decodeDiagnosticResult\(body, printerId\)/);
 });
 
 test('strict decoder rejects malformed2xx and wrong printer/status/optional fields',()=>{
