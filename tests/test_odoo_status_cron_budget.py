@@ -302,7 +302,8 @@ def test_rejected_batch_result_falls_back_to_exact_individual_lookup(monkeypatch
 def test_failed_individual_poll_rotates_fairness_and_does_not_block_later_jobs(monkeypatch):
     cron = StatusCron(monkeypatch, count=3)
     cron.get_status = 503
-    assert cron.cron_sync_status() == 3
+    # HTTP 503 rotates attempted polls but does not count status as synced.
+    assert cron.cron_sync_status() == 0
     assert [method for method, _url, _kwargs in cron.calls] == ['POST', 'GET', 'GET', 'GET']
     assert [job.status for job in cron.jobs.values()] == ['claimed'] * 3
     assert all(job.last_status_polled_at is not None for job in cron.jobs.values())
@@ -325,7 +326,8 @@ def test_missing_bulk_results_mark_unknown_only_after_explicit_exact_404(monkeyp
     cron = StatusCron(monkeypatch, count=2, bulk_status=200)
     cron.returned_ids = []
     cron.get_status = 404
-    assert cron.cron_sync_status() == 2
+    # HTTP 404 records an unknown/missing outcome, not a successful sync.
+    assert cron.cron_sync_status() == 0
     assert [method for method, _url, _kwargs in cron.calls] == ['POST', 'GET', 'GET']
     assert [job.status for job in cron.jobs.values()] == ['unknown'] * 2
     assert all(job.last_error.startswith('GATEWAY_JOB_NOT_FOUND:') for job in cron.jobs.values())

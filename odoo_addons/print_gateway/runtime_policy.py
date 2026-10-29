@@ -44,7 +44,14 @@ def is_gateway_shared_printer(printer):
 
 
 def unambiguous_inventory_rows(rows):
-    """Deduplicate identical opaque identities without accepting conflicts."""
+    """Deduplicate identical opaque identities without accepting conflicts.
+
+    An untrusted upstream inventory is not iterable authority. Return an
+    empty set for malformed envelopes rather than allowing a TypeError to
+    escape after a successful HTTP request.
+    """
+    if not isinstance(rows, list):
+        return []
     seen = {}
     ambiguous = set()
     for record in rows:

@@ -37,11 +37,11 @@ def test_controller_and_exact_binding_use_the_same_permission_gate():
 
 
 @pytest.mark.parametrize("rows, expected", [
-    ([{"id": "primary", "lifecycle": "active", "agent": {"id": "owner"}}], True),
-    ([{"id": "primary", "lifecycle": "active", "sharedWithGateway": True, "agent": {"id": "owner"}, "status": "offline"}], True),
-    ([{"id": "primary", "lifecycle": "active", "sharedWithGateway": False, "agent": {"id": "owner"}}], False),
-    ([{"id": "backup", "lifecycle": "active", "sharedWithGateway": True, "agent": {"id": "owner"}}], False),
-    ([{"id": "primary", "lifecycle": "disabled", "agent": {"id": "owner"}}], False),
+    ([{"id": "primary", "lifecycle": "active", "agent": {"id": "agt_owner001"}}], True),
+    ([{"id": "primary", "lifecycle": "active", "sharedWithGateway": True, "agent": {"id": "agt_owner001"}, "status": "offline"}], True),
+    ([{"id": "primary", "lifecycle": "active", "sharedWithGateway": False, "agent": {"id": "agt_owner001"}}], False),
+    ([{"id": "backup", "lifecycle": "active", "sharedWithGateway": True, "agent": {"id": "agt_owner001"}}], False),
+    ([{"id": "primary", "lifecycle": "disabled", "agent": {"id": "agt_owner001"}}], False),
     ([{"id": "primary", "lifecycle": "active", "agent": {"id": ""}}], False),
     ([{"id": "primary", "lifecycle": "active"}], False),
     ([], False),
@@ -68,16 +68,16 @@ def test_fallback_proof_rejects_noncanonical_agent_and_primary_ids(bad_agent):
 @pytest.mark.parametrize("bad_primary", [" primary", "primary ", "\ufeffprimary", "primary\x00", "é" * 61])
 def test_fallback_proof_rejects_malformed_primary_even_if_inventory_echoes_it(bad_primary):
     assert policy.inventory_has_shared_printer({"printers": [
-        {"id": bad_primary, "lifecycle": "active", "agent": {"id": "owner"}}
+        {"id": bad_primary, "lifecycle": "active", "agent": {"id": "agt_owner001"}}
     ]}, bad_primary) is False
 
 
 
 def test_conflicting_duplicate_primary_cannot_prove_fallback():
     """An active sharing row cannot override contradictory exact-ID inventory."""
-    live = {"id": "primary", "lifecycle": "active", "agent": {"id": "owner"}, "sharedWithGateway": True}
+    live = {"id": "primary", "lifecycle": "active", "agent": {"id": "agt_owner001"}, "sharedWithGateway": True}
     disabled = dict(live, sharedWithGateway=False)
-    other_agent = dict(live, agent={"id": "another-owner"})
+    other_agent = dict(live, agent={"id": "agt_owner002"})
     assert policy.inventory_has_shared_printer({"printers": [live, live.copy()]}, "primary")
     assert not policy.inventory_has_shared_printer({"printers": [live, disabled]}, "primary")
     assert not policy.inventory_has_shared_printer({"printers": [other_agent, live]}, "primary")
@@ -90,8 +90,14 @@ def test_unambiguous_inventory_keeps_identical_ids_once_and_distinct_ids_with_sa
     assert policy.unambiguous_inventory_rows([one, dict(one, name="Different")]) == []
 
 
-def test_fallback_proof_keeps_valid_unicode_owner_and_exact_primary():
+def test_fallback_proof_keeps_unicode_printer_id_with_canonical_owner():
     assert policy.inventory_has_shared_printer({"printers": [
         {"id": "طابعة", "lifecycle": "active", "sharedWithGateway": True,
-         "agent": {"id": "وكيل-1"}}
+         "agent": {"id": "agt_owner001"}}
     ]}, "طابعة") is True
+
+
+def test_fallback_proof_rejects_unicode_display_name_as_agent_id():
+    assert policy.inventory_has_shared_printer({"printers": [
+        {"id": "طابعة", "lifecycle": "active", "sharedWithGateway": True, "agent": {"id": "وكيل-1"}}
+    ]}, "طابعة") is False

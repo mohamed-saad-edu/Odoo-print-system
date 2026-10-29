@@ -343,7 +343,7 @@ def test_gateway_sale_details_uses_odoo19_component_and_props():
 
 def test_gateway_sale_details_only_falls_back_before_gateway_owns_the_print():
     source = (ADDON / "static/src/js/pos_sale_details_router.js").read_text(encoding="utf-8")
-    assert source.count("return super.onClick();") == 2
+    assert source.count("return super.onClick();") == 1
     enabled_branch = source.index("if (enabled !== true)")
     assert source.index("return super.onClick();", enabled_branch) < source.index("const saleDetails", enabled_branch)
     catch_block = source[source.index("} catch (error)") :]

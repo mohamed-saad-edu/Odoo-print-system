@@ -171,7 +171,7 @@ def test_idna_deviation_hosts_match_actual_prepared_request_and_allowlist(host):
 
 
 @pytest.mark.parametrize("scope", [7, 257])
-def test_allowlisted_scoped_ipv6_keeps_os_scope_without_changing_tls_name(socket_boundary, monkeypatch, scope):
+def test_allowlisted_scoped_link_local_ipv6_is_rejected_before_credentials_or_socket(socket_boundary, monkeypatch, scope):
     connects, resolutions = socket_boundary
     transport = load_module("gateway_http")
     monkeypatch.setenv("YASEIR_GATEWAY_ALLOWED_ORIGINS", "https://gateway.example.com")
@@ -184,8 +184,11 @@ def test_allowlisted_scoped_ipv6_keeps_os_scope_without_changing_tls_name(socket
     monkeypatch.setattr(socket, "getaddrinfo", resolve)
     with pytest.raises(requests.RequestException):
         transport.get("https://gateway.example.com/api/odoo/health", timeout=1)
-    assert connects == [("fe80::1", 443, 0, scope)]
-    assert resolutions == ["gateway.example.com", "fe80::1%%%s" % scope]
+    # The cloud metadata/link-local deny rule supersedes even an explicit
+    # private-origin allowlist. DNS resolution is allowed; the credential
+    # never reaches a socket or a second OS scope resolution.
+    assert connects == []
+    assert resolutions == ["gateway.example.com"]
     adapter = transport._PinnedAdapter(("https", "gateway.example.com", 443), "fe80::1%%%s" % scope)
     try:
         assert adapter.pinned_pool.assert_hostname == "gateway.example.com"

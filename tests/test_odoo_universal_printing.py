@@ -39,6 +39,8 @@ def production_methods(filename, names, namespace=None):
     policy_spec.loader.exec_module(policy)
     scope["is_exact_gateway_job_id"] = policy.is_exact_gateway_job_id
     scope["is_exact_gateway_printer_id"] = policy.is_exact_gateway_printer_id
+    scope["is_exact_gateway_agent_id"] = policy.is_exact_gateway_agent_id
+    scope["unambiguous_inventory_rows"] = policy.unambiguous_inventory_rows
     scope.update(namespace or {})
     nodes = []
     for node in ast.walk(ast.parse((ADDON / filename).read_text())):
@@ -58,7 +60,7 @@ def verified_printer(connection="spooler", protocol="spooler", now=None):
     medium = "file" if connection == "pdf_output" else "physical"
     return {"id": "selected-printer", "connectionType": connection, "protocol": protocol,
             "printerType": "file" if medium == "file" else "physical", "deviceClass": "laser",
-            "lifecycle": "active", "agent": {"id": "agent-a"}, "sharedWithGateway": True,
+            "lifecycle": "active", "agent": {"id": "agt_fixture1"}, "sharedWithGateway": True,
             "verificationState": "verified", "verificationVerifiedAt": stamp,
             "verificationReceivedAt": stamp, "outputMedium": medium,
             "capabilities": {"supported_protocols": ["pdf", "image"],
@@ -96,13 +98,13 @@ def test_all_synthetic_evidence_strengths_match_production_runtime_validator():
 
 
 def binding(printer):
-    responses = iter([{"agents": [{"id": "agent-a", "lifecycle": "active"}]}, {"printers": [printer]}])
+    responses = iter([{"agents": [{"id": "agt_fixture1", "lifecycle": "active"}]}, {"printers": [printer]}])
     requests = SimpleNamespace(get=lambda *_a, **_kw: SimpleNamespace(status_code=200, json=lambda: next(responses)), RequestException=OSError)
     methods = production_methods("models/binding.py", ["_canonical_runtime_printer_protocol", "_runtime_printer_accepts_image",
         "_runtime_supported_protocols", "_validate_binding_protocol_against_runtime", "_validate_runtime_target"], {"requests": requests})
     result = methods()
     result.ensure_one = lambda: None
-    result.runtime_agent_id, result.printer_id, result.branch_id = "agent-a", printer["id"], False
+    result.runtime_agent_id, result.printer_id, result.branch_id = "agt_fixture1", printer["id"], False
     result.destination_type, result.printer_protocol, result.report_id = "pos", printer["protocol"], False
     result.env = {"print_gateway.runtime_agent_assignment": SimpleNamespace(is_agent_assigned=lambda *_: True)}
     result._get_gateway_config = lambda: SimpleNamespace(company_id=1, _gateway_base=lambda **_: "https://gateway.invalid", _gateway_headers=lambda: {})
@@ -179,7 +181,7 @@ def test_explicit_pdf_report_binding_can_use_approved_file_backend():
         def __len__(self):
             return 1
     selected = OneRecord(id=1, company_id=company, branch_id=False, enabled=True,
-        runtime_agent_id="agent-a", printer_id="file-printer", printer_protocol="pdf", document_type="invoice",
+        runtime_agent_id="agt_fixture1", printer_id="file-printer", printer_protocol="pdf", document_type="invoice",
         destination_ref="report", report_id=False, status="active")
     selected.ensure_one = lambda: None
     selected.exists = lambda: selected

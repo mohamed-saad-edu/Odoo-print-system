@@ -34,13 +34,14 @@ def _class_methods(file, cls_name, method_names, extra=None):
     extracted = ast.Module(body=[ast.ClassDef(name='Target', bases=[], keywords=[], body=methods, decorator_list=[])], type_ignores=[])
     ast.fix_missing_locations(extracted)
     namespace = {'ValidationError': ValidationError, '_': lambda v: v, '_logger': logging.getLogger(__name__)}
-    if file == "runtime_assignment.py":
+    if file in ("runtime_assignment.py", "binding.py"):
         # The production constraint delegates to the actual shared exact-ID
         # policy. Keep this AST test coupled to that real dependency.
         path = BASE.parent / "runtime_policy.py"
         policy = {}
         exec(compile(path.read_text(encoding="utf-8"), str(path), "exec"), policy)
         namespace["is_exact_gateway_printer_id"] = policy["is_exact_gateway_printer_id"]
+        namespace["is_exact_gateway_agent_id"] = policy["is_exact_gateway_agent_id"]
     namespace.update(extra or {})
     exec(compile(extracted, str(BASE/file), 'exec'), namespace)
     return namespace['Target']
@@ -153,7 +154,7 @@ def test_branch_only_context_can_validate_its_binding_without_activating_parent(
     class ScopeEnv(dict):
         companies = [branch]
     records = _PolicyRecords([SimpleNamespace(company_id=root, branch_id=branch,
-                                              runtime_agent_id='branch-agent')])
+                                              runtime_agent_id='agt_branch01')])
     records.env = ScopeEnv({'print_gateway.runtime_agent_assignment': assignment})
     binding_type._check_runtime_scope(records)
 
@@ -163,7 +164,7 @@ def test_branch_only_administrator_can_validate_its_runtime_assignment():
     root = SimpleNamespace(id=1, parent_id=False)
     branch = SimpleNamespace(id=2, parent_id=root)
     records = _PolicyRecords([SimpleNamespace(company_id=root, branch_id=branch,
-                                              runtime_agent_id='branch-agent')])
+                                              runtime_agent_id='agt_branch01')])
     records.env = SimpleNamespace(user=SimpleNamespace(company_ids=[branch]))
     assignment_type._check_assignment(records)
 

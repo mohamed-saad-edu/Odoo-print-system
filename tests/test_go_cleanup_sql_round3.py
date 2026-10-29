@@ -25,15 +25,15 @@ def _canonical_sql():
 
 def test_purge_retains_pending_gateway_report_but_removes_acknowledged_ones():
     db = sqlite3.connect(":memory:")
-    db.execute("CREATE TABLE print_jobs(id TEXT PRIMARY KEY, status TEXT, claim_token TEXT, last_error TEXT)")
+    db.execute("CREATE TABLE print_jobs(id TEXT PRIMARY KEY, status TEXT, claim_token TEXT, execution_claim_token TEXT, last_error TEXT)")
     data = [
-        ("pending-unknown", "failed", "live-token", "UNKNOWN_SUBMISSION_OUTCOME: ambiguous"),
-        ("acked-unknown", "failed", None, "UNKNOWN_PARTIAL_DELIVERY: reconciled"),
-        ("acked-clean", "failed", None, "before any output"),
-        ("pending-clean", "failed", "live-token", "paper jam"),
-        ("successful", "success", None, None),
+        ("pending-unknown", "failed", "live-token", "execution-1", "UNKNOWN_SUBMISSION_OUTCOME: ambiguous"),
+        ("acked-unknown", "failed", None, "execution-2", "UNKNOWN_PARTIAL_DELIVERY: reconciled"),
+        ("acked-clean", "failed", None, "execution-3", "before any output"),
+        ("pending-clean", "failed", "live-token", "execution-4", "paper jam"),
+        ("successful", "success", None, "execution-5", None),
     ]
-    db.executemany("INSERT INTO print_jobs VALUES(?,?,?,?)", data)
+    db.executemany("INSERT INTO print_jobs VALUES(?,?,?,?,?)", data)
     db.execute(_canonical_sql())
     retained = {row[0] for row in db.execute("SELECT id FROM print_jobs")}
     assert retained == {"pending-unknown", "acked-clean", "pending-clean", "successful"}

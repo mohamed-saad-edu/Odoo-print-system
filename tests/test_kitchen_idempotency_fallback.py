@@ -85,7 +85,7 @@ def production_methods(file, names):
 
 
 Router = production_methods('print_router.py', ['route_kitchen_print', '_receipt_image_payload'])
-PosOrder = production_methods('pos_order.py', ['action_print_gateway_kitchen'])
+PosOrder = production_methods('pos_order.py', ['action_print_gateway_kitchen', '_gateway_active_company'])
 
 
 class FakeOrder(SimpleNamespace):
@@ -148,6 +148,7 @@ def test_kitchen_reprint_flag_rejects_non_booleans_at_rpc_and_router(value):
             route_kitchen_print=lambda _order, _image, **kwargs: submitted.append(kwargs)
         )},
     )
+    record._gateway_active_company = lambda: BRANCH
     with pytest.raises(ValidationError, match='boolean'):
         PosOrder.action_print_gateway_kitchen(record, 'KITCHEN_JPEG', reprint=value)
     router = FakeRouter()
@@ -167,6 +168,7 @@ def test_kitchen_rpc_preserves_exact_boolean_reprint_flags(value):
             route_kitchen_print=lambda _order, _image, **kwargs: forwarded.append(kwargs)
         )},
     )
+    record._gateway_active_company = lambda: BRANCH
     PosOrder.action_print_gateway_kitchen(record, 'KITCHEN_JPEG', reprint=value, operation_id='click-key')
     assert len(forwarded) == 1
     assert forwarded[0]['reprint'] is value

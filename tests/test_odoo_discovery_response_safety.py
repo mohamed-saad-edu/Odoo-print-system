@@ -43,6 +43,7 @@ def discovery(monkeypatch, agents=None, printers=None):
     exec(compile(policy_path.read_text(encoding="utf-8"), str(policy_path), "exec"), policy_namespace)
     namespace = {"requests": requests, "ValidationError": ValidationError,
                  "is_exact_gateway_printer_id": policy_namespace["is_exact_gateway_printer_id"],
+                 "is_exact_gateway_agent_id": policy_namespace["is_exact_gateway_agent_id"],
                  "unambiguous_inventory_rows": policy_namespace["unambiguous_inventory_rows"],
                  "validated_printer_geometry": validated_printer_geometry,
                  "is_verified_runtime_printer": is_verified_runtime_printer,
@@ -52,11 +53,11 @@ def discovery(monkeypatch, agents=None, printers=None):
     controller = SimpleNamespace(_require_runtime_admin=lambda: None,
                                  _scope=lambda *args: (1, False),
                                  _get_config=lambda *args: (config, 1),
-                                 _assigned_runtime_agent_ids=lambda *args: {"agent"})
+                                 _assigned_runtime_agent_ids=lambda *args: {"agt_fixture1"})
     controller.runtime_printers = MethodType(method("controllers/runtime_printers.py", "runtime_printers", namespace), controller)
     controller.runtime_agents = MethodType(method("controllers/runtime_printers.py", "runtime_agents", namespace), controller)
     assignment = SimpleNamespace(is_agent_assigned=lambda *args: True)
-    binding = SimpleNamespace(ensure_one=lambda: None, runtime_agent_id="agent", branch_id=False,
+    binding = SimpleNamespace(ensure_one=lambda: None, runtime_agent_id="agt_fixture1", branch_id=False,
                               printer_id="printer", env={"print_gateway.runtime_agent_assignment": assignment},
                               _get_gateway_config=lambda: config)
     binding.validate = MethodType(method("models/binding.py", "_validate_runtime_target", namespace), binding)
@@ -65,8 +66,8 @@ def discovery(monkeypatch, agents=None, printers=None):
     return controller, binding, get
 
 
-AGENTS = [{"id": "agent", "lifecycle": "active"}]
-PRINTER = {"id": "printer", "lifecycle": "active", "agent": {"id": "agent"},
+AGENTS = [{"id": "agt_fixture1", "lifecycle": "active"}]
+PRINTER = {"id": "printer", "lifecycle": "active", "agt_fixture1": {"id": "agt_fixture1"},
            "connectionType": "network", "protocol": "escpos"}
 
 
@@ -75,9 +76,9 @@ def test_duplicate_exact_agent_ids_do_not_create_ambiguous_setup_choices(monkeyp
     duplicate = dict(AGENTS[0], name="Branch computer")
     controller, _, _ = discovery(monkeypatch, agents=[duplicate, dict(duplicate)])
     observed = controller.runtime_agents()
-    assert [agent["id"] for agent in observed["agents"]] == ["agent"]
+    assert [agent["id"] for agent in observed["agents"]] == ["agt_fixture1"]
     assert observed["registeredAgentCount"] == 1
-    assert observed["selectedAgentId"] == "agent"
+    assert observed["selectedAgentId"] == "agt_fixture1"
 
     conflicted = dict(duplicate, name="Wrong workstation")
     controller, _, _ = discovery(monkeypatch, agents=[duplicate, conflicted])
@@ -90,30 +91,30 @@ def test_conflicting_duplicate_printer_ids_are_not_offered_as_a_print_destinatio
     first = dict(PRINTER, name="Cashier thermal")
     second = dict(PRINTER, name="Unrelated queue")
     controller, _, _ = discovery(monkeypatch, agents=AGENTS, printers=[first, second])
-    observed = controller.runtime_printers(agent_id="agent")
+    observed = controller.runtime_printers(agent_id="agt_fixture1")
     assert observed["printers"] == []
 
     distinct = dict(PRINTER, id="printer-two", name="Cashier thermal")
     controller, _, _ = discovery(monkeypatch, agents=AGENTS, printers=[first, distinct])
-    observed = controller.runtime_printers(agent_id="agent")
+    observed = controller.runtime_printers(agent_id="agt_fixture1")
     assert [printer["id"] for printer in observed["printers"]] == ["printer", "printer-two"]
 
 
 def test_picker_preserves_selected_geometry_and_strips_another_printer_profile(monkeypatch):
     profile = receipt_geometry()
     controller, _, _ = discovery(monkeypatch, agents=AGENTS, printers=[dict(PRINTER, capabilities={"geometry": profile})])
-    result = controller.runtime_printers(agent_id="agent")
+    result = controller.runtime_printers(agent_id="agt_fixture1")
     assert result["printers"][0]["capabilities"]["geometry"] == profile
     controller, _, _ = discovery(monkeypatch, agents=AGENTS, printers=[dict(PRINTER, capabilities={"geometry": dict(profile, printer_id="another-printer")})])
-    result = controller.runtime_printers(agent_id="agent")
+    result = controller.runtime_printers(agent_id="agt_fixture1")
     assert "geometry" not in result["printers"][0]["capabilities"]
 
 
-@pytest.mark.parametrize("malformed", [17, True, "agent", {"id": "agent"}, None])
+@pytest.mark.parametrize("malformed", [17, True, "agt_fixture1", {"id": "agt_fixture1"}, None])
 def test_invalid_agent_inventory_is_an_actionable_error(monkeypatch, malformed):
     controller, _, get = discovery(monkeypatch, agents=malformed)
     with pytest.raises(ValidationError, match="invalid agent discovery response"):
-        controller.runtime_printers(agent_id="agent")
+        controller.runtime_printers(agent_id="agt_fixture1")
     assert get.call_count == 1
     _, binding, get = discovery(monkeypatch, agents=malformed)
     with pytest.raises(ValidationError, match="Runtime Agent is not found"):
@@ -144,7 +145,7 @@ def test_invalid_printer_inventory_is_an_actionable_error(monkeypatch, malformed
 def test_picker_inventory_preserves_absent_versus_restricted_capabilities(monkeypatch, caps, expected):
     controller, binding, _ = discovery(monkeypatch, agents=AGENTS,
                                  printers=[dict(PRINTER, capabilities=caps)])
-    result = controller.runtime_printers(agent_id="agent")
+    result = controller.runtime_printers(agent_id="agt_fixture1")
     if not isinstance(caps, dict):
         assert result["printers"] == []
         return
@@ -176,7 +177,7 @@ def test_nested_remote_freshness_is_type_safe_in_both_discovery_routes(monkeypat
         assert result["agents"][0]["freshness"] == expected
         assert get.call_count == 1
     else:
-        result = controller.runtime_printers(agent_id="agent")
+        result = controller.runtime_printers(agent_id="agt_fixture1")
         assert result["printers"][0]["freshness"] == expected
         assert get.call_count == 2
 
@@ -188,7 +189,7 @@ def test_oversized_discovery_responses_fail_closed(monkeypatch):
     with pytest.raises(ValidationError, match="unavailable"):
         controller.runtime_agents()
     with pytest.raises(ValidationError, match="unavailable"):
-        controller.runtime_printers(agent_id="agent")
+        controller.runtime_printers(agent_id="agt_fixture1")
 
 
 @pytest.mark.parametrize("malformed", [
@@ -206,10 +207,10 @@ def test_runtime_agent_picker_never_exposes_nonexact_gateway_execution_identity(
     assert get.call_count == 1
 
 
-def test_runtime_agent_picker_keeps_valid_arabic_id_and_branch_assignment(monkeypatch):
+def test_runtime_agent_picker_keeps_arabic_display_name_with_exact_agent_id(monkeypatch):
     controller, _, _ = discovery(monkeypatch, agents=[
-        {"id": "وكيل-1", "lifecycle": "active", "name": "طابعة الفرع"},
+        {"id": "agt_arabic01", "lifecycle": "active", "name": "طابعة الفرع"},
     ])
     result = controller.runtime_agents()
-    assert [agent["id"] for agent in result["agents"]] == ["وكيل-1"]
-    assert result["selectedAgentId"] == "وكيل-1"
+    assert [agent["id"] for agent in result["agents"]] == ["agt_arabic01"]
+    assert result["selectedAgentId"] == "agt_arabic01"

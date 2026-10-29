@@ -48,6 +48,8 @@ def production_methods(file, names):
     ns['inventory_has_shared_printer'] = policy_ns['inventory_has_shared_printer']
     ns['is_exact_gateway_job_id'] = policy_ns['is_exact_gateway_job_id']
     ns['is_exact_gateway_printer_id'] = policy_ns['is_exact_gateway_printer_id']
+    ns['is_exact_gateway_agent_id'] = policy_ns['is_exact_gateway_agent_id']
+    ns['unambiguous_inventory_rows'] = policy_ns['unambiguous_inventory_rows']
     output_path = ROOT.parent / 'print_output.py'
     output_ns = {}
     exec(compile(output_path.read_text(), str(output_path), 'exec'), output_ns)
@@ -283,7 +285,7 @@ def failover_job(*, destination_key, report=REPORT_A, destination_name=None):
 ])
 def test_live_pre_dispatch_fallback_requires_durable_identity(key, report, name, should_switch, monkeypatch):
     monkeypatch.setattr(requests, 'get', lambda *args, **kwargs: InventoryResponse(json.dumps({
-        'printers': [{'id': 'primary', 'lifecycle': 'active', 'agent': {'id': 'owner'}}],
+        'printers': [{'id': 'primary', 'lifecycle': 'active', 'agent': {'id': 'agt_owner001'}}],
     }).encode()))
     job = failover_job(destination_key=key, report=report, destination_name=name)
     candidate = binding(90, REPORT_A, printer='backup')
@@ -306,7 +308,7 @@ def test_actual_pre_dispatch_fallback_rechecks_primary_sharing(permission, monke
         if permission == 'unavailable':
             raise requests.ConnectionError('inventory unavailable')
         rows = [] if permission == 'missing' else [{
-            'id': 'primary', 'lifecycle': 'active', 'agent': {'id': 'owner'},
+            'id': 'primary', 'lifecycle': 'active', 'agent': {'id': 'agt_owner001'},
             **({'sharedWithGateway': permission == 'shared'} if permission != 'legacy_shared' else {}),
         }]
         response = InventoryResponse(json.dumps({'printers': rows}).encode())
@@ -339,7 +341,7 @@ def test_actual_pre_dispatch_fallback_rechecks_primary_sharing(permission, monke
 def test_actual_primary_sharing_http_read_is_bounded_and_closed(response_case, monkeypatch):
     limit = JobProduction._primary_shared_for_fallback.__globals__['MAX_INVENTORY_RESPONSE_BYTES']
     valid = json.dumps({'printers': [{
-        'id': 'primary', 'lifecycle': 'active', 'sharedWithGateway': True, 'agent': {'id': 'owner'},
+        'id': 'primary', 'lifecycle': 'active', 'sharedWithGateway': True, 'agent': {'id': 'agt_owner001'},
     }]}).encode()
     body = valid
     status = 503 if response_case == 'non_200' else 200
