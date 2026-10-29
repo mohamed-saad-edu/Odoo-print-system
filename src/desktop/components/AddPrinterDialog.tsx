@@ -98,20 +98,25 @@ export function AddPrinterDialog({
       if (agentsGeneration.current === generation) setAgentsLoading(false);
     }
   }, [gatewayUrl, agentsForUrl]);
-  // A dialog can stay mounted across sessions and Gateway changes. Refresh
-  // when opened instead of reusing a stale Agent picker from a past visit.
-  // Invalidate in-flight loads on close so late responses cannot repopulate it.
+  // Fetch only while visible, and reject late responses from closed sessions.
   useEffect(() => {
     if (!open) {
       agentsGeneration.current += 1;
-      setAgentsForUrl("");
-      setAgents([]);
-      setAgentId("");
-      setAgentsLoading(false);
       return;
     }
     void loadAgents();
   }, [open, loadAgents]);
+
+  // Event-driven reset avoids synchronous setState in a React effect.
+  const closeDialog = () => {
+    agentsGeneration.current += 1;
+    setAgentsForUrl("");
+    setAgents([]);
+    setAgentId("");
+    setAgentsLoading(false);
+    setAgentsError(false);
+    onClose();
+  };
 
 
   // Clear any previous error when dialog transitions to open
@@ -245,7 +250,7 @@ export function AddPrinterDialog({
       }
       await registerGatewayPrinter(gatewayUrl, { ...req, agentId });
       onSuccess();
-      onClose();
+      closeDialog();
       reset();
     } catch (e) {
       // Prefer the structured fields preserved across the IPC transport;
@@ -293,11 +298,11 @@ export function AddPrinterDialog({
     <>
       <Modal
       open={open}
-      onClose={onClose}
+      onClose={closeDialog}
       title={t("desktop.add.title")}
       footer={
         <>
-          <Button variant="secondary" onClick={onClose}>
+          <Button variant="secondary" onClick={closeDialog}>
             {t("common.cancel")}
           </Button>
           <Button
