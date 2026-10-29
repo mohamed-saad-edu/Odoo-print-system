@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Plus } from "lucide-react";
 import {
   Button,
@@ -44,7 +44,9 @@ export function AddPrinterDialog({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [agents, setAgents] = useState<Array<{ id: string; name: string; status?: string; lifecycle?: string; lastSeenAt?: string | null; staleThresholdSeconds?: number | null }>>([]);
-  const [agentsError, setAgentsError] = useState(false);
+  // Tie errors to their exact Gateway URL so switching Gateways retries safely.
+  const [agentsFailedForUrl, setAgentsFailedForUrl] = useState<string | null>(null);
+  const agentsError = agentsFailedForUrl === gatewayUrl;
   // Which gateway URL the cached agents were fetched from. The cache must
   // be keyed by URL: reusing gateway A's agents after switching to gateway
   // B would register the printer against an agentId B never issued.
@@ -77,36 +79,33 @@ export function AddPrinterDialog({
     limit?: number | "unlimited" | null;
   } | null>(null);
 
-  const loadAgents = useCallback(async () => {
-    if (!gatewayUrl || agentsForUrl === gatewayUrl) return;
-    // Generation guard: a late response for a previous gateway (or an older
-    // attempt) must never overwrite the current picker's list.
-    const generation = ++agentsGeneration.current;
-    try {
-      const rows = await fetchGatewayAgents(gatewayUrl);
-      if (agentsGeneration.current !== generation) return;
-      setAgents(rows);
-      setAgentsForUrl(gatewayUrl);
-      setAgentsError(false);
-      const active = rows.find((row) => row.lifecycle === "active");
-      // Keep the selection only if it exists on THIS gateway; otherwise
-      // fall back to its active agent (or empty when none is active).
-      setAgentId((current) => rows.some((row) => row.id === current) ? current : (active?.id ?? ""));
-    } catch {
-      if (agentsGeneration.current !== generation) return;
-      setAgents([]);
-      setAgentsForUrl("");
-      setAgentsError(true);
-    }
-  }, [gatewayUrl, agentsForUrl]);
-  // Fetch only while visible, and reject late responses from closed sessions.
+  // This effect only starts an external request. Updates happen in its
+  // asynchronous completion callbacks, never synchronously during the effect.
   useEffect(() => {
-    if (!open) {
-      agentsGeneration.current += 1;
+    if (!open || !gatewayUrl || agentsForUrl === gatewayUrl || agentsError) {
+      if (!open) agentsGeneration.current += 1;
       return;
     }
-    void loadAgents();
-  }, [open, loadAgents]);
+    const generation = ++agentsGeneration.current;
+    let cancelled = false;
+    void fetchGatewayAgents(gatewayUrl).then((rows) => {
+      if (cancelled || agentsGeneration.current !== generation) return;
+      setAgents(rows);
+      setAgentsForUrl(gatewayUrl);
+      setAgentsFailedForUrl(null);
+      const active = rows.find((row) => row.lifecycle === "active");
+      setAgentId((current) => rows.some((row) => row.id === current) ? current : (active?.id ?? ""));
+    }).catch(() => {
+      if (cancelled || agentsGeneration.current !== generation) return;
+      setAgents([]);
+      setAgentsForUrl("");
+      setAgentsFailedForUrl(gatewayUrl);
+    });
+    return () => {
+      cancelled = true;
+      agentsGeneration.current += 1;
+    };
+  }, [open, gatewayUrl, agentsForUrl, agentsError]);
 
   // Event-driven reset avoids synchronous setState in a React effect.
   const closeDialog = () => {
@@ -114,7 +113,7 @@ export function AddPrinterDialog({
     setAgentsForUrl("");
     setAgents([]);
     setAgentId("");
-    setAgentsError(false);
+    setAgentsFailedForUrl(null);
     onClose();
   };
 
@@ -322,7 +321,7 @@ export function AddPrinterDialog({
           htmlFor="pp-agent"
           hint={t("desktop.add.agentHint")}
         >
-          <Select id="pp-agent" value={currentAgentId} onFocus={loadAgents} onChange={(e) => setAgentId(e.target.value)}>
+          <Select id="pp-agent" value={currentAgentId} onFocus={() => { if (agentsError) setAgentsFailedForUrl(null); }} onChange={(e) => setAgentId(e.target.value)}>
             <option value="">{agentsLoading ? t("desktop.add.loadingAgents") : t("desktop.add.selectActiveAgent")}</option>
             {visibleAgents.filter((a) => a.lifecycle === "active").map((a) => (
               <option key={a.id} value={a.id}>
@@ -338,7 +337,7 @@ export function AddPrinterDialog({
           {agentsError && (
             <div className="mt-2 flex items-center gap-2 text-sm text-ink-3">
               <span>{t("desktop.add.agentsLoadFailed")}</span>
-              <Button variant="ghost" size="sm" onClick={() => { setAgentsError(false); void loadAgents(); }}>{t("common.retry")}</Button>
+              <Button variant="ghost" size="sm" onClick={() => setAgentsFailedForUrl(null)}>{t("common.retry")}</Button>
             </div>
           )}
         </Field>
