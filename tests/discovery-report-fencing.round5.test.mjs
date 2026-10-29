@@ -8,6 +8,7 @@ import { createHash } from 'node:crypto';
 import vm from 'node:vm';
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { isExactPrinterId } from '../src/lib/exact-printer-id.ts';
 
 const require = createRequire(import.meta.url);
 let ts;
@@ -33,7 +34,7 @@ function reset() { state = { status: 'running', stats: {}, writes: 0, queries: [
 const tx = {
   execute: async (query) => {
     const text = exprText(query); state.queries.push(text);
-    if (/FROM agents/i.test(text)) return { rows: state.agentActive ? [{ id: 'agent', lifecycle: 'active' }] : [{ id: 'agent', lifecycle: 'disabled' }] };
+    if (/FROM agents/i.test(text)) return { rows: state.agentActive ? [{ id: 'agent', secret: 'discovery-fixture-secret', lifecycle: 'active' }] : [{ id: 'agent', secret: 'discovery-fixture-secret', lifecycle: 'disabled' }] };
     if (/FROM tenants/i.test(text)) return { rows: [{ lifecycle: state.tenantActive ? 'active' : 'suspended' }] };
     if (/FROM discovery_sessions/i.test(text)) return { rows: [{ id: 'disc', status: state.status, stats: state.stats }] };
     throw new Error('Unexpected SQL: ' + text);
@@ -53,7 +54,7 @@ const imports = {
   'zod': moduleOf({ z: validator }),
   '../../../../db': moduleOf({ db }),
   '../../../../db/schema': moduleOf(schema),
-  '../../../../lib/agent-auth': moduleOf({ validateAgent: async () => ({ id: 'agent', tenantId: 'tenant', lifecycle: 'active' }) }),
+  '../../../../lib/agent-auth': moduleOf({ validateAgent: async () => ({ id: 'agent', tenantId: 'tenant', secret: 'discovery-fixture-secret', lifecycle: 'active' }) }),
   '../../../../lib/nanoid': moduleOf({ nanoid: () => 'random' }),
   '../../../../lib/request-limits': moduleOf({ hasBodyOverLimit: () => false }),
   '../../../../lib/network-address': moduleOf({ isPrivateNetworkAddress: () => true }),
@@ -71,6 +72,8 @@ const virtualGuard = new vm.SourceTextModule(ts.transpileModule(readFileSync('sr
 await virtualGuard.link(() => { throw new Error('Unexpected virtual classifier dependency'); });
 await virtualGuard.evaluate();
 imports['../../../../lib/printer-virtual'] = virtualGuard;
+// Run the exact production opaque printer identity validator in this fixture.
+imports['../../../../lib/exact-printer-id'] = moduleOf({ isExactPrinterId });
 const route = new vm.SourceTextModule(transpiled, { context });
 await route.link((id) => {
   if (!(id in imports)) throw new Error('Unknown dependency: ' + id);

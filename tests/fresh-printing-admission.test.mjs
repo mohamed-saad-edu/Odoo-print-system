@@ -42,7 +42,7 @@ async function harness({ status = "claimed", lifecycle = {}, updatedRows = 1, to
     } };
   };
   const db = { query: { printJobs: { findFirst: async () => job } }, update,
-    transaction: async (fn) => fn({ update, execute: async (statement) => {
+    transaction: async (fn) => fn({ query: db.query, update, execute: async (statement) => {
       if (statement.includes("SELECT secret FROM agents")) return { rows: [{ secret: "fixture-agent-secret" }] };
       if (statement.includes("SELECT id FROM tenants") && !statement.includes("lifecycle =")) return { rows: [{ id: "tenant-1" }] };
       statements.push(statement);

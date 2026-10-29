@@ -64,10 +64,11 @@ const supports={
  '/lib/nanoid':mk({nanoid:()=> 'random'}),
  '/lib/discovery':mk({validateDiscoveryRequest:(payload)=>payload?.cidr?{ok:true,data:payload}:{ok:false,error:'invalid request'}}),
  '/lib/log':mk({logError:()=>{}}),
+ '/lib/request-limits':mk({hasBodyOverLimit:()=>false}),
  '/lib/tenant-guard':tenant,
 };
 const route=new vm.SourceTextModule(js(R+'app/api/agents/[id]/discovery/route.ts'),{context:ctx});
-await route.link((name)=>name.endsWith('/lib/authorization')?auth:name.endsWith('/lib/manager-mutation-authorization')?guard:name.endsWith('/db/schema')?schema:name.endsWith('/db')?supports['/db']:name.endsWith('/lib/manager-auth')?supports['/lib/manager-auth']:name.endsWith('/lib/nanoid')?supports['/lib/nanoid']:name.endsWith('/lib/discovery')?supports['/lib/discovery']:name.endsWith('/lib/log')?supports['/lib/log']:name.endsWith('/lib/tenant-guard')?tenant:name.endsWith('/lib/discovery-session-expiry')?expiry:supports[name]);
+await route.link((name)=>name.endsWith('/lib/authorization')?auth:name.endsWith('/lib/manager-mutation-authorization')?guard:name.endsWith('/db/schema')?schema:name.endsWith('/db')?supports['/db']:name.endsWith('/lib/manager-auth')?supports['/lib/manager-auth']:name.endsWith('/lib/nanoid')?supports['/lib/nanoid']:name.endsWith('/lib/discovery')?supports['/lib/discovery']:name.endsWith('/lib/log')?supports['/lib/log']:name.endsWith('/lib/tenant-guard')?tenant:name.endsWith('/lib/discovery-session-expiry')?expiry:name.endsWith('/lib/request-limits')?supports['/lib/request-limits']:supports[name]);
 await route.evaluate();
 function reset(patch={}) {state={events:[],inserted:[],notifies:0,expiries:0,role:'admin',memberRole:'admin',familyActive:true,legacySessionActive:true,activeTenant:true,userless:false,legacy:false,customer:false,...patch};}
 const call=(body)=>route.namespace.POST(new Request('http://localhost/api/agents/agent/discovery',{method:'POST',body:JSON.stringify(body)}),{params:Promise.resolve({id:'agent'})});

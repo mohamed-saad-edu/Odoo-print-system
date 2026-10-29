@@ -66,12 +66,20 @@ async function harness({ status = 'claimed', marker = null, delivered = false, a
       printJobReceipts: { findFirst: async () => null },
     },
     update,
+    // Keep status reads and writes inside the tenant/Agent credential lock.
+    transaction: async (fn) => fn({ query: db.query, update,
+      execute: async (statement) => {
+        if (statement.includes('SELECT id FROM tenants')) return { rows: [{ id: 'tenant-c' }] };
+        if (statement.includes('SELECT secret FROM agents')) return { rows: [{ secret: 'expiry-fixture-agent-secret' }] };
+        throw new Error(`Unexpected transaction query: ${statement}`);
+      },
+    }),
   };
   const mocks = {
     'node:crypto': { createHash },
     '../../../../db': { db },
     '../../../../db/schema': { printJobs: table('jobs'), printJobReceipts: table('receipts') },
-    '../../../../lib/agent-auth': { validateAgent: async () => ({ id: 'agent-c', tenantId: 'tenant-c' }) },
+    '../../../../lib/agent-auth': { validateAgent: async () => ({ id: 'agent-c', tenantId: 'tenant-c', secret: 'expiry-fixture-agent-secret' }) },
     'drizzle-orm': { sql, and: (...parts) => parts.join(' AND '), eq: (a, b) => `${a}=${b}`, isNull: (v) => `${v} IS NULL` },
     'next/server': { NextResponse: { json: (value, init) => Response.json(value, init) } },
     '../../../../lib/log': { logInfo: noop, logWarn: noop, requestIdFrom: () => 'request-c' },

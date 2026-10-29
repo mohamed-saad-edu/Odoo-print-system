@@ -315,6 +315,6 @@ test('an activation request authenticated before key removal cannot revive that 
   },s=>s.slice(s.indexOf('export async function PATCH')));
   const result=await api.PATCH(new Request('https://gateway/api/odoo/configuration',{method:'PATCH',body:JSON.stringify({enabled:false,revision:1000})}));
   assert.equal(result.status,401);assert.equal((await result.json()).code,'UNAUTHORIZED');
-  assert.ok(guards.some(([field,value])=>field==='hashedKey'&&value==='original'));
+  assert.ok(guards.some(([text,values])=>text.includes('hashed_key =')&&values.includes('original')), 'credential fence must match the authenticated hash');
   assert.ok(guards.some(([text])=>text.includes('IS NULL')));
 });
