@@ -506,7 +506,7 @@ suite("print idempotency (Odoo → Gateway)", () => {
     expect(await jobCount()).toBe(2);
   });
 
-  it("preserves idempotency and job lookup across Odoo API-key rotation", async () => {
+  it("refuses cross-key replay while preserving scoped historical job lookup after rotation", async () => {
     const otherKey = "odoo_rotated_installation";
     await pool().query(
       `INSERT INTO api_keys (id, tenant_id, name, hashed_key, odoo_enabled) VALUES ($1, $2, 'rotated installation', $3, true)`,
@@ -518,9 +518,8 @@ suite("print idempotency (Odoo → Gateway)", () => {
     const created = await first.json();
 
     const replayAfterRotation = await create(jobBody("op-installation-rotation"), otherKey);
-    expect(replayAfterRotation.status).toBe(200);
-    const replayed = await replayAfterRotation.json();
-    expect(replayed.jobId).toBe(created.jobId);
+    expect(replayAfterRotation.status).toBe(409);
+    expect((await replayAfterRotation.json()).code).toBe("IDEMPOTENCY_CONFLICT");
     expect(await jobCount()).toBe(1);
 
     const rotatedRead = await printJobsGET(new Request(`http://gateway.test/api/print/jobs?id=${created.jobId}`, {
@@ -548,6 +547,7 @@ suite("print idempotency (Odoo → Gateway)", () => {
       createPrintJobForPrinter(f.printerId, originalPayload(), {
         requestedBy: "manager-reprint",
         reprintOfJobId: original.id,
+        idempotencyKey: "operator-concurrent-reprint-operation",
         destination: "POS",
         documentType: "invoice",
         tenantId: f.tenantId,
@@ -555,6 +555,7 @@ suite("print idempotency (Odoo → Gateway)", () => {
       createPrintJobForPrinter(f.printerId, originalPayload(), {
         requestedBy: "manager-reprint",
         reprintOfJobId: original.id,
+        idempotencyKey: "operator-concurrent-reprint-operation",
         destination: "POS",
         documentType: "invoice",
         tenantId: f.tenantId,
@@ -562,6 +563,7 @@ suite("print idempotency (Odoo → Gateway)", () => {
       createPrintJobForPrinter(f.printerId, originalPayload(), {
         requestedBy: "manager-reprint",
         reprintOfJobId: original.id,
+        idempotencyKey: "operator-concurrent-reprint-operation",
         destination: "POS",
         documentType: "invoice",
         tenantId: f.tenantId,
@@ -591,6 +593,7 @@ suite("print idempotency (Odoo → Gateway)", () => {
     const first = await createPrintJobForPrinter(f.printerId, originalPayload(), {
       requestedBy: "manager-reprint",
       reprintOfJobId: original.id,
+      idempotencyKey: "operator-explicit-first-reprint",
       destination: "POS",
       documentType: "invoice",
       tenantId: f.tenantId,
@@ -601,6 +604,7 @@ suite("print idempotency (Odoo → Gateway)", () => {
     const second = await createPrintJobForPrinter(f.printerId, originalPayload(), {
       requestedBy: "manager-reprint",
       reprintOfJobId: original.id,
+      idempotencyKey: "operator-explicit-second-reprint",
       destination: "POS",
       documentType: "invoice",
       tenantId: f.tenantId,
