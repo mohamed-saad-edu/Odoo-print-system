@@ -15,12 +15,12 @@ permissions:
   contents: read
 
 
-# Preserve running main verification while retaining only the latest pending
-# push for this workflow. Never coalesce manual or merge-queue release gates.
-# PR retries may cancel older attempts of the same PR only.
+# A new main push cancels the obsolete running push verification for this workflow.
+# New PR revisions also cancel earlier attempts for that PR. Manual,
+# scheduled and merge-queue runs remain isolated by their unique run_id.
 concurrency:
   group: static-security-run-${{ github.event_name == 'push' && github.ref || github.event_name == 'pull_request' && github.ref || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: ${{ github.event_name == 'push' || github.event_name == 'pull_request' }}
 
 jobs:
   changes:
@@ -66,7 +66,7 @@ jobs:
     if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && (needs.changes.outputs.codeql_js == 'true' || needs.changes.outputs.codeql_py == 'true' || needs.changes.outputs.codeql_go == 'true')
     # Preserve live main CodeQL analyses; cancel only older PR versions.
     concurrency:
-      group: static-codeql-${{ matrix.language }}-${{ github.ref }}
+      group: static-codeql-${{ matrix.language }}-${{ github.event_name == 'pull_request' && github.ref || github.event_name == 'push' && github.sha || github.run_id }}
       cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -148,8 +148,8 @@ jobs:
     if: github.event_name == 'pull_request' && github.event.pull_request.draft == false && vars.ENABLE_DEPENDENCY_REVIEW == 'true'
     # Cancel only an eligible duplicate job, never on an unrelated push.
     concurrency:
-      group: static-deps-${{ github.ref }}
-      cancel-in-progress: true
+      group: static-deps-${{ github.event_name == 'pull_request' && github.ref || github.event_name == 'push' && github.sha || github.run_id }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -168,7 +168,7 @@ jobs:
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     # Preserve full-history main secret scans until their exact SHA result exists.
     concurrency:
-      group: static-secrets-${{ github.ref }}
+      group: static-secrets-${{ github.event_name == 'pull_request' && github.ref || github.event_name == 'push' && github.sha || github.run_id }}
       cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10

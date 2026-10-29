@@ -143,28 +143,29 @@ describe("CI/runtime alignment", () => {
     }
   });
 
-  it("preserves in-progress main Windows installer evidence across subsequent pushes", () => {
+  it("isolates manual Windows releases while cancelling superseded push workflows", () => {
     const windows = readFileSync(path.join(root, ".github/workflows/build-windows.yml"), "utf8");
     const release = windows.split("\n  build-windows:")[1];
     const pullRequest = windows.split("\n  windows-pr-smoke:")[1]?.split("\n  build-windows:")[0];
     expect(release).toBeDefined();
     expect(pullRequest).toBeDefined();
-    // A newer main commit must not cancel a Windows release gate before its
-    // artifact and smoke tests finish. PR smoke can supersede older PR edits.
-    expect(release).toContain("group: windows-build-${{ github.ref }}");
-    expect(release).toContain("cancel-in-progress: false");
+    // Main pushes replace older push runs; manual and merge-queue builds
+    // keep independent run IDs, while PR smoke supersedes older PR edits.
+    expect(release).toContain("group: windows-build-${{ github.event_name == 'pull_request' && github.ref || github.event_name == 'push' && github.sha || github.run_id }}");
+    expect(release).toContain("cancel-in-progress: ${{ github.event_name == 'pull_request' }}");
     expect(pullRequest).toContain("group: windows-pr-smoke-${{ github.ref }}");
     expect(pullRequest).toContain("cancel-in-progress: true");
   });
 
-  it("keeps running main Docker and security checks instead of cancelling every new push", () => {
+  it("separates Docker and security jobs by commit SHA or independent run ID", () => {
     const cases: Array<[string, string, string]> = [
-      [".github/workflows/docker.yml", "docker-scan-${{ matrix.variant }}-${{ github.ref }}", "cancel-in-progress: ${{ github.event_name == 'pull_request' }}"],
-      [".github/workflows/docker.yml", "docker-runtime-${{ github.ref }}", "cancel-in-progress: false"],
-      [".github/workflows/static-security.yml", "static-codeql-${{ matrix.language }}-${{ github.ref }}", "cancel-in-progress: ${{ github.event_name == 'pull_request' }}"],
-      [".github/workflows/static-security.yml", "static-secrets-${{ github.ref }}", "cancel-in-progress: ${{ github.event_name == 'pull_request' }}"],
-      [".github/workflows/security-supply-chain.yml", "security-supply-${{ github.ref }}", "cancel-in-progress: ${{ github.event_name == 'pull_request' }}"],
-      [".github/workflows/security-supply-chain.yml", "security-postgres-${{ github.ref }}", "cancel-in-progress: ${{ github.event_name == 'pull_request' }}"],
+      [".github/workflows/docker.yml", "docker-scan-${{ matrix.variant }}-${{ github.event_name == 'pull_request' && github.ref || github.event_name == 'push' && github.sha || github.run_id }}", "cancel-in-progress: ${{ github.event_name == 'pull_request' }}"],
+      [".github/workflows/docker.yml", "docker-runtime-${{ github.event_name == 'pull_request' && github.ref || github.event_name == 'push' && github.sha || github.run_id }}", "cancel-in-progress: ${{ github.event_name == 'pull_request' }}"],
+      [".github/workflows/static-security.yml", "static-codeql-${{ matrix.language }}-${{ github.event_name == 'pull_request' && github.ref || github.event_name == 'push' && github.sha || github.run_id }}", "cancel-in-progress: ${{ github.event_name == 'pull_request' }}"],
+      [".github/workflows/static-security.yml", "static-deps-${{ github.event_name == 'pull_request' && github.ref || github.event_name == 'push' && github.sha || github.run_id }}", "cancel-in-progress: ${{ github.event_name == 'pull_request' }}"],
+      [".github/workflows/static-security.yml", "static-secrets-${{ github.event_name == 'pull_request' && github.ref || github.event_name == 'push' && github.sha || github.run_id }}", "cancel-in-progress: ${{ github.event_name == 'pull_request' }}"],
+      [".github/workflows/security-supply-chain.yml", "security-supply-${{ github.event_name == 'pull_request' && github.ref || github.event_name == 'push' && github.sha || github.run_id }}", "cancel-in-progress: ${{ github.event_name == 'pull_request' }}"],
+      [".github/workflows/security-supply-chain.yml", "security-postgres-${{ github.event_name == 'pull_request' && github.ref || github.event_name == 'push' && github.sha || github.run_id }}", "cancel-in-progress: ${{ github.event_name == 'pull_request' }}"],
     ];
     for (const [workflow, group, policy] of cases) {
       const source = readFileSync(path.join(root, workflow), "utf8");
@@ -173,7 +174,7 @@ describe("CI/runtime alignment", () => {
       const nextLine = source.slice(at).split("\n")[1]?.trim();
       expect(nextLine, workflow + ": " + group).toBe(policy);
     }
-    // Only PR-specific smoke/preflight should cancel another PR attempt.
+    // PR smoke/preflight continues to replace only older runs for the same PR.
     const docker = readFileSync(path.join(root, ".github/workflows/docker.yml"), "utf8");
     expect(docker).toContain("group: docker-pr-${{ github.ref }}\n      cancel-in-progress: true");
   });

@@ -11,12 +11,12 @@ on:
 permissions:
   contents: read
 
-# Preserve running main verification while retaining only the latest pending
-# push for this workflow. Never coalesce manual or merge-queue release gates.
-# PR retries may cancel older attempts of the same PR only.
+# A new main push cancels the obsolete running push verification for this workflow.
+# New PR revisions also cancel earlier attempts for that PR. Manual,
+# scheduled and merge-queue runs remain isolated by their unique run_id.
 concurrency:
   group: native-backports-run-${{ github.event_name == 'push' && github.ref || github.event_name == 'pull_request' && github.ref || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: ${{ github.event_name == 'push' || github.event_name == 'pull_request' }}
 
 jobs:
   gtk-backports:
