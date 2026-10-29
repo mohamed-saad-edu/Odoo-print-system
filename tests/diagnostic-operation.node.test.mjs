@@ -1,5 +1,5 @@
-// Diagnostic protocol/operation model safety regressions. The live UI still
-// has legacy diagnostic actions: verify their request fencing separately.
+// Diagnostic protocol/operation model safety regressions. Customer Test Print
+// has been retired; only the internal diagnostic decoder remains supported.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -10,11 +10,16 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const read = relative => fs.readFileSync(path.join(root, relative), 'utf8');
 const good = (status='queued', id='printer1', extras={}) => ({ok:true,jobId:`job-${id}`,printerId:id,status,...extras});
 
-test('Gateway diagnostic POST requires a stable operation key', () => {
+test('customer dashboard has no Test Print POST but reprint preserves idempotency', () => {
   const dashboard = read('src/app/dashboard/dashboard-client.tsx');
-  const send = dashboard.slice(dashboard.indexOf('async function sendGatewayTestPage('), dashboard.indexOf('/* ---------- Local presentational helpers ---------- */'));
-  assert.match(send, /"Idempotency-Key": operationKey/);
-  assert.match(send, /decodeDiagnosticResult\(body, printerId\)/);
+  assert.doesNotMatch(dashboard, /sendGatewayTestPage\s*\(/);
+  assert.doesNotMatch(dashboard, /\/test-print\b/);
+  const start = dashboard.indexOf('async function sendGatewayReprint(');
+  const end = dashboard.indexOf('function upgradeLimitResourceForEntitlement', start);
+  assert.ok(start >= 0 && end > start, 'reprint must retain its own request boundary');
+  const reprint = dashboard.slice(start, end);
+  assert.match(reprint, /"Idempotency-Key": operationKey/);
+  assert.match(reprint, /\/api\/jobs\/\$\{encodeURIComponent\(jobId\)\}\/reprint/);
 });
 
 test('strict decoder rejects malformed2xx and wrong printer/status/optional fields',()=>{
