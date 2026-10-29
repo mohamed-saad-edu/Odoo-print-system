@@ -248,17 +248,19 @@ describe("production fixes — presence sweep and Gateway test-page HTTP path", 
     expect(source).not.toContain("UPDATE print_jobs");
   });
 
-  it("dashboard Send Test Page uses the authenticated HTTP endpoint for stable error contracts", () => {
+  it("dashboard hides customer Test Print and preserves same-origin idempotent Reprint", () => {
     const source = read("src/app/dashboard/dashboard-client.tsx");
-    expect(source).toContain("/api/printers/${encodeURIComponent(printerId)}/test-print");
-    expect(source).toContain("response.ok");
-    expect(source).toContain('credentials: "same-origin"');
-    expect(source).toContain("new DiagnosticOperations(generateIdempotencyKey)");
-    expect(source).toContain("diagnosticOps.current.begin(scope)");
-    expect(source).toContain('"Idempotency-Key": operationKey');
-    expect(source).toContain('testingPrinterId === printer.id');
-    expect(source).toContain('testingPrinterId === printer.id ? t("printer.sending") : t("printer.sendTestPage")');
-    expect(source).not.toContain("createTestPrintJob(printer.id)");
+    expect(source).not.toContain("/test-print");
+    expect(source).not.toContain("sendGatewayTestPage(");
+    const start = source.indexOf("async function sendGatewayReprint(");
+    const end = source.indexOf("function upgradeLimitResourceForEntitlement", start);
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(end).toBeGreaterThan(start);
+    const request = source.slice(start, end);
+    expect(request).toContain("/api/jobs/${encodeURIComponent(jobId)}/reprint");
+    expect(request).toContain('credentials: "same-origin"');
+    expect(request).toContain('"Idempotency-Key": operationKey');
+    expect(request).toContain("response.ok");
   });
 
   it("Gateway test page enforces Manager RBAC or paired own-Agent identity and bounded idempotency", () => {

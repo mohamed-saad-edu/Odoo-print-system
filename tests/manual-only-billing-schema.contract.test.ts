@@ -14,9 +14,11 @@ describe("forward-only manual billing schema", () => {
   it("preserves historical journal and advances with a single migration", () => {
     const journal = JSON.parse(read("drizzle/meta/_journal.json")) as { entries: Array<{ tag: string }> };
     expect(journal.entries.map(entry => entry.tag)).toContain("0098_manual_only_billing");
-    expect(journal.entries.at(-3)?.tag).toBe("0100_plan_prices");
-    expect(journal.entries.at(-2)?.tag).toBe("0101_rolling_print_allowance");
-    expect(journal.entries.at(-1)?.tag).toBe("0102_calendar_month_print_allowance");
+    // Immutable indices remain stable when later additive migrations follow.
+    expect(journal.entries[100]?.tag).toBe("0100_plan_prices");
+    expect(journal.entries[101]?.tag).toBe("0101_rolling_print_allowance");
+    expect(journal.entries[102]?.tag).toBe("0102_calendar_month_print_allowance");
+    expect(journal.entries[103]?.tag).toBe("0103_retained_print_attempt_evidence");
     const approvalMigration = read("drizzle/0099_subscription_approval_terms.sql");
     expect(approvalMigration).toContain("approved_term");
     expect(approvalMigration).toContain("approval_modified");

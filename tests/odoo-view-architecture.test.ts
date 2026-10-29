@@ -161,7 +161,7 @@ describe("One native print routing workflow, with every operation in the main na
     expect(routing).toContain('widget="gateway_runtime_agent_binding"');
     expect(routing).toContain('widget="gateway_runtime_printer"');
     expect(routing).toContain('string="Check registration"');
-    expect(routing).toContain('string="Print test page"');
+    expect(routing).not.toContain('string="Print test page"');
     expect(read(addon + "views/print_policy_views.xml")).toContain('string="Print Route"');
   });
   it("removes obsolete persisted Odoo actions/menus on upgrade without deleting routes or jobs", () => {

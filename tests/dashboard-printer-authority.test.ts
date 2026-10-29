@@ -56,25 +56,24 @@ describe("dashboard printer action authority", () => {
     const doc = new DOMParser().parseFromString(html, "text/html");
     expect(doc.body.textContent).toContain("Canon");
     expect(doc.body.textContent).toContain("Gateway sharing is turned off");
-    const send = [...doc.querySelectorAll("button")].find((button) => button.textContent?.trim() === "Send test page");
-    expect(send).toBeDefined();
-    expect(send!.disabled).toBe(true);
+    // Keep physical health visible without exposing the retired Test Print action.
+    expect([...doc.querySelectorAll("button")].some((button) => button.textContent?.trim() === "Send test page")).toBe(false);
     expect(printer.status).toBe("online");
   });
-  it("legacy viewer has operational printer details and test-print controls", async () => {
+  it("legacy viewer has operational printer details without Test Print controls", async () => {
     const html = await render("viewer");
     expect(html).toContain("Canon");
     expect(html).toContain("Technical details");
-    expect(html).toContain(">Send test page<");
+    expect(html).not.toContain(">Send test page<");
     expect(html).not.toContain(">Test page<");
   });
 
-  it("retains the initial card test-print control for permitted operators", async () => {
+  it("does not expose a customer Test Print action to permitted operators", async () => {
     const html = await render("operator");
-    expect(html).toContain(">Send test page<");
+    expect(html).not.toContain(">Send test page<");
   });
 
-  it.each([["viewer", true], ["operator", true]] as const)("enforces %s authority after switching to the real table view", async (role, allowed) => {
+  it.each(["viewer", "operator"] as const)("keeps Test Print retired in table view for %s", async (role) => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => new Response(JSON.stringify(
       String(input).includes("/api/auth/me") ? { exp: Math.floor(Date.now() / 1000) + 3600 } : {
@@ -101,7 +100,7 @@ describe("dashboard printer action authority", () => {
       const table = host.querySelector("table.data-table");
       expect(table).not.toBeNull();
       expect(table!.textContent).toContain("Canon");
-      expect([...table!.querySelectorAll("button")].some((button) => button.textContent?.trim() === "Test page")).toBe(allowed);
+      expect([...table!.querySelectorAll("button")].some((button) => button.textContent?.trim() === "Test page")).toBe(false);
     } finally {
       await act(async () => { root.unmount(); });
       host.remove();
@@ -136,7 +135,7 @@ describe("dashboard printer action authority", () => {
     expect(client).toMatch(/canMutate\.agentsLifecycle \? \[\{\s*key: "delete"/);
   });
 
-  it("guards every test/certification entry point with the server-projected permission", () => {
+  it("guards remaining certification entry points with the server-projected permission", () => {
     const source = ts.createSourceFile("dashboard-client.tsx", readFileSync("src/app/dashboard/dashboard-client.tsx", "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
     const entryPoints: ts.Node[] = [];
     const visit = (node: ts.Node) => {
@@ -160,7 +159,9 @@ describe("dashboard printer action authority", () => {
       ts.forEachChild(node, visit);
     };
     visit(source);
-    expect(entryPoints).toHaveLength(5);
+    expect(source.getFullText()).not.toContain("handleGatewayTestPrint");
+    // Customer Test Print was retired; two certification actions remain.
+    expect(entryPoints).toHaveLength(2);
     for (const entry of entryPoints) {
       let ancestor: ts.Node | undefined = entry.parent;
       while (ancestor && !ts.isBinaryExpression(ancestor) && !ts.isConditionalExpression(ancestor)) ancestor = ancestor.parent;

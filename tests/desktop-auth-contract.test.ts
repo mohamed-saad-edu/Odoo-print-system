@@ -18,7 +18,8 @@ describe("paired-Agent desktop security contract", () => {
     expect(rust).not.toContain("ManagerSession");
     expect(handler).not.toContain("commands::gateway_request,");
     expect(app).not.toContain("managerCanManage");
-    expect(app).toContain('diagnosticScope(savedGatewayUrl, "paired-agent", id)');
+    expect(app).not.toContain('diagnosticScope(savedGatewayUrl, "paired-agent", id)');
+    expect(app).not.toContain("testGatewayPrinter(");
   });
 
   it("routes Agent inventory and diagnostics through the paired CLI, never an arbitrary bearer", () => {

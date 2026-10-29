@@ -20,6 +20,8 @@ describe("local discovery to picker agent ownership", () => {
 
   it("filters local discovery by the selected agent instead of dropping it", () => {
     const dialog = readFileSync("src/desktop/components/AddPrinterDialog.tsx", "utf8");
-    expect(dialog).toContain("p.agentId === agentId");
+    expect(dialog).toContain("p.agentId === currentAgentId");
+    // Filter on the selected Agent from the exact currently configured Gateway.
+    expect(dialog).toContain('const currentAgentId = agentsForUrl === gatewayUrl ? agentId : "";');
   });
 });

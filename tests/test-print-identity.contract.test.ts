@@ -8,20 +8,22 @@ import { DiagnosticOperations, decodeDiagnosticResult, diagnosticScope, diagnost
 // operation key, guard in-flight requests, and reuse the key only while the
 // outcome is unobserved.
 describe("diagnostic test-print operation identity", () => {
-  it("desktop sends a preserved operation key with a per-printer flight guard", () => {
+  it("keeps internal paired CLI diagnostic idempotency but no Desktop Test Print", () => {
     const ipc = readFileSync("src/desktop/lib/ipc.ts", "utf8");
     const main = readFileSync("src/desktop/main.tsx", "utf8");
     expect(ipc).toContain('"Idempotency-Key": idempotencyKey');
-    expect(main).toContain("diagnosticOps.current.begin(scope)");
-    expect(main).toContain("diagnosticOps.current.uncertain(scope)");
-    expect(main).toContain("testGatewayPrinter(savedGatewayUrl, id, key)");
+    expect(ipc).toContain('"/api/printers/" + encodeURIComponent(printerId) + "/test-print"');
+    expect(main).not.toContain("diagnosticOps.current.begin(scope)");
+    expect(main).not.toContain("testGatewayPrinter(");
   });
 
-  it("dashboard test page sends an idempotency key under a per-printer busy guard", () => {
+  it("dashboard hides Test Print while preserving an idempotent Reprint request", () => {
     const dashboard = readFileSync("src/app/dashboard/dashboard-client.tsx", "utf8");
     expect(dashboard).toContain('"Idempotency-Key": operationKey');
-    expect(dashboard).toContain("diagnosticOps.current.begin(scope)");
-    expect(dashboard).toContain("setTestingPrinterId(printerId)");
+    expect(dashboard).toContain("async function sendGatewayReprint(");
+    expect(dashboard).not.toContain("diagnosticOps.current.begin(scope)");
+    expect(dashboard).not.toContain("setTestingPrinterId(printerId)");
+    expect(dashboard).not.toContain("/test-print");
   });
 
   it("shares a synchronous per-actor and printer identity across retries", () => {
