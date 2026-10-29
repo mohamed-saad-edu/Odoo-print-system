@@ -44,9 +44,12 @@ def test_forward_migration_registered_in_immutable_drizzle_journal():
     assert tags == [p.stem for p in sorted((ROOT / "drizzle").glob("*.sql"))]
     assert tags[98] == '0098_manual_only_billing'
     assert tags[99] == '0099_subscription_approval_terms'
-    assert tags[-3] == '0100_plan_prices'
-    assert tags[-2] == '0101_rolling_print_allowance'
-    assert tags[-1] == '0102_calendar_month_print_allowance'
+    # Enforce the immutable migration identities by stable ledger index,
+    # not position relative to the current end of the forward-only journal.
+    assert tags[100] == '0100_plan_prices'
+    assert tags[101] == '0101_rolling_print_allowance'
+    assert tags[102] == '0102_calendar_month_print_allowance'
+    assert tags[103] == '0103_retained_print_attempt_evidence'
     assert tags[97] == '0097_agent_scoped_discovery_identity'
     assert tags[96] == '0096_retire_limited_workspace_roles'
     assert tags[93] == "0093_password_only_authentication"
