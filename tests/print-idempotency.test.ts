@@ -530,11 +530,8 @@ suite("print idempotency (Odoo → Gateway)", () => {
   });
 
   it("converges concurrent operator reprints on one active reprint", async () => {
-    const original = await createPrintJobForPrinter(f.printerId, {
-      type: "pdf",
-      encoding: "base64",
-      data: pdfBase64(),
-    }, {
+    const payload = originalPayload();
+    const original = await createPrintJobForPrinter(f.printerId, payload, {
       requestedBy: "internal-service",
       tenantId: f.tenantId,
       idempotencyKey: "original-reprint-source",
@@ -542,9 +539,16 @@ suite("print idempotency (Odoo → Gateway)", () => {
       documentType: "invoice",
       rateLimitKeyId: null,
     });
+    // Reprint is a distinct, explicitly requested physical intent. Admission
+    // must refuse an original that is still queued or has an unknown outcome.
+    // This fixture represents an unsuccessful, definite pre-print failure.
+    await pool().query(
+      "UPDATE print_jobs SET status = 'failed', error = 'PRINTER_OFFLINE', updated_at = now() WHERE tenant_id = $1 AND id = $2",
+      [f.tenantId, original.id],
+    );
 
     const results = await Promise.all([
-      createPrintJobForPrinter(f.printerId, originalPayload(), {
+      createPrintJobForPrinter(f.printerId, payload, {
         requestedBy: "manager-reprint",
         reprintOfJobId: original.id,
         idempotencyKey: "operator-concurrent-reprint-operation",
@@ -552,7 +556,7 @@ suite("print idempotency (Odoo → Gateway)", () => {
         documentType: "invoice",
         tenantId: f.tenantId,
       }),
-      createPrintJobForPrinter(f.printerId, originalPayload(), {
+      createPrintJobForPrinter(f.printerId, payload, {
         requestedBy: "manager-reprint",
         reprintOfJobId: original.id,
         idempotencyKey: "operator-concurrent-reprint-operation",
@@ -560,7 +564,7 @@ suite("print idempotency (Odoo → Gateway)", () => {
         documentType: "invoice",
         tenantId: f.tenantId,
       }),
-      createPrintJobForPrinter(f.printerId, originalPayload(), {
+      createPrintJobForPrinter(f.printerId, payload, {
         requestedBy: "manager-reprint",
         reprintOfJobId: original.id,
         idempotencyKey: "operator-concurrent-reprint-operation",
@@ -577,11 +581,8 @@ suite("print idempotency (Odoo → Gateway)", () => {
   });
 
   it("allows a new explicit reprint after the previous reprint is terminal", async () => {
-    const original = await createPrintJobForPrinter(f.printerId, {
-      type: "pdf",
-      encoding: "base64",
-      data: pdfBase64(),
-    }, {
+    const payload = originalPayload();
+    const original = await createPrintJobForPrinter(f.printerId, payload, {
       requestedBy: "internal-service",
       tenantId: f.tenantId,
       idempotencyKey: "original-reprint-terminal-source",
@@ -589,8 +590,15 @@ suite("print idempotency (Odoo → Gateway)", () => {
       documentType: "invoice",
       rateLimitKeyId: null,
     });
+    // Reprint is a distinct, explicitly requested physical intent. Admission
+    // must refuse an original that is still queued or has an unknown outcome.
+    // This fixture represents an unsuccessful, definite pre-print failure.
+    await pool().query(
+      "UPDATE print_jobs SET status = 'failed', error = 'PRINTER_OFFLINE', updated_at = now() WHERE tenant_id = $1 AND id = $2",
+      [f.tenantId, original.id],
+    );
 
-    const first = await createPrintJobForPrinter(f.printerId, originalPayload(), {
+    const first = await createPrintJobForPrinter(f.printerId, payload, {
       requestedBy: "manager-reprint",
       reprintOfJobId: original.id,
       idempotencyKey: "operator-explicit-first-reprint",
@@ -601,7 +609,7 @@ suite("print idempotency (Odoo → Gateway)", () => {
 
     await pool().query("UPDATE print_jobs SET status = 'success', updated_at = now() WHERE id = $1", [first.id]);
 
-    const second = await createPrintJobForPrinter(f.printerId, originalPayload(), {
+    const second = await createPrintJobForPrinter(f.printerId, payload, {
       requestedBy: "manager-reprint",
       reprintOfJobId: original.id,
       idempotencyKey: "operator-explicit-second-reprint",

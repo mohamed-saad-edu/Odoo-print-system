@@ -2191,27 +2191,6 @@ class TestControlPlane(TransactionCase):
         # that is already assigned to the exact Odoo runtime scope. Provision
         # the non-primary scopes used by this parity test explicitly; the
         # Binding model must never create or widen these assignments itself.
-        self.env["print_gateway.runtime_agent_assignment"].create([
-            {
-                "company_id": self.company.id,
-                "branch_id": sibling_branch.id,
-                "runtime_agent_id": "agt_t0000021",
-                "enabled": True,
-            },
-            {
-                "company_id": self.company.id,
-                "branch_id": False,
-                "runtime_agent_id": "agt_t0000020",
-                "enabled": True,
-            },
-            {
-                "company_id": other_company.id,
-                "branch_id": False,
-                "runtime_agent_id": "agt_t0000019",
-                "enabled": True,
-            },
-        ])
-
         # Test names are not Gateway identities. The real Agent wire contract
         # requires agt_ plus eight opaque characters.
         scope_agents = {
@@ -2220,6 +2199,27 @@ class TestControlPlane(TransactionCase):
             "printer-scope-other": "agt_scopeoth",
             "printer-scope-revocable-root": "agt_scoperev",
         }
+
+        self.env["print_gateway.runtime_agent_assignment"].create([
+            {
+                "company_id": self.company.id,
+                "branch_id": sibling_branch.id,
+                "runtime_agent_id": scope_agents["printer-scope-sibling"],
+                "enabled": True,
+            },
+            {
+                "company_id": self.company.id,
+                "branch_id": False,
+                "runtime_agent_id": scope_agents["printer-scope-root"],
+                "enabled": True,
+            },
+            {
+                "company_id": other_company.id,
+                "branch_id": False,
+                "runtime_agent_id": scope_agents["printer-scope-other"],
+                "enabled": True,
+            },
+        ])
 
         pri_counter = [50]
 
