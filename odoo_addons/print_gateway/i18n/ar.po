@@ -5067,5 +5067,6 @@ msgstr "وردت حالة متعارضة لتوجيه الطباعة. أُلغي
 #. module: print_gateway
 #. odoo-javascript
 #: code:addons/print_gateway/static/src/js/pos_print_router.js:0
+#: code:addons/print_gateway/static/src/js/pos_sale_details_router.js:0
 msgid "Open a POS session before printing."
 msgstr "افتح جلسة نقطة بيع قبل الطباعة."
