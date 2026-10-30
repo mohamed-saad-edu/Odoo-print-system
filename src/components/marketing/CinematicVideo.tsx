@@ -107,6 +107,17 @@ export function CinematicVideo({
       aria-label={title}
       className={`yw-cinematic-frame relative aspect-video w-full overflow-hidden rounded-2xl border border-edge/80 bg-black md:rounded-3xl ${className}`}
     >
+      {posterSrc && (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={posterSrc}
+          alt=""
+          aria-hidden="true"
+          className="absolute inset-0 h-full w-full object-contain pointer-events-none"
+          loading={lazy ? "lazy" : "eager"}
+          decoding="async"
+        />
+      )}
       {isAttached && (
         <video
           ref={videoRef}
