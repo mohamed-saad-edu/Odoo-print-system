@@ -6,7 +6,7 @@ on:
     types: [opened, synchronize, reopened, ready_for_review]
   merge_group:
   push:
-    branches: [main]
+    branches: [main, test/http-server-ready]
   workflow_dispatch:
   schedule:
     - cron: '41 3 * * 0'  # Re-evaluate dependency advisories weekly
