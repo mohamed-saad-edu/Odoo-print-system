@@ -185,6 +185,7 @@ function PublicHome({ t, locale }: { t: Translator; locale: Locale }) {
                   mp4Src="/videos/yaseir-a4-scrub-1080p.mp4"
                   posterSrc="/videos/yaseir-a4-poster.webp"
                   title={t("home.productShowcaseA11yTitle")}
+                  lazy={true}
                   className="rounded-2xl border border-edge shadow-xl"
                 />
               </div>

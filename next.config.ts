@@ -25,7 +25,15 @@ const nextConfig: NextConfig = {
     if (process.env.NODE_ENV === "production") {
       headers.push({ key: "Strict-Transport-Security", value: "max-age=31536000; includeSubDomains" });
     }
-    return [{ source: "/(.*)", headers }];
+    return [
+      {
+        source: "/videos/:path*",
+        headers: [
+          { key: "Cache-Control", value: "public, max-age=31536000, immutable" },
+        ],
+      },
+      { source: "/(.*)", headers },
+    ];
   },
   async redirects() {
     return [
