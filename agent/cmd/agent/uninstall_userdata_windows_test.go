@@ -3,6 +3,8 @@
 package main
 
 import (
+	"os"
+	"time"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -85,5 +87,40 @@ func TestCallerOwnedUserDataRootsUseTheCurrentWindowsIdentity(t *testing.T) {
 		if !strings.EqualFold(dir, local) && !strings.EqualFold(dir, roaming) {
 			t.Fatalf("unexpected caller-owned root %q", p)
 		}
+	}
+}
+
+func TestPurgePathsWaitsForTransientWebViewFileLock(t *testing.T) {
+	// A held file handle represents WebView2's short-lived profile cache.
+	// This regression failed when cleanup retried just 3 times at 200ms.
+	root := filepath.Join(t.TempDir(), "com.yasser.manager")
+	if err := os.MkdirAll(root, 0700); err != nil {
+		t.Fatal(err)
+	}
+	locked := filepath.Join(root, "WebView2.lock")
+	if err := os.WriteFile(locked, []byte("in use"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	ptr, err := windows.UTF16PtrFromString(locked)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handle, err := windows.CreateFile(ptr, windows.GENERIC_READ, 0, nil, windows.OPEN_EXISTING, windows.FILE_ATTRIBUTE_NORMAL, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	released := make(chan struct{})
+	go func() {
+		time.Sleep(1100 * time.Millisecond)
+		_ = windows.CloseHandle(handle)
+		close(released)
+	}()
+	err = purgePaths([]string{root})
+	<-released
+	if err != nil {
+		t.Fatalf("exact caller-owned data root was left behind after the lock closed: %v", err)
+	}
+	if _, statErr := os.Stat(root); !os.IsNotExist(statErr) {
+		t.Fatalf("WebView2 data root was not fully removed: %v", statErr)
 	}
 }

@@ -386,8 +386,11 @@ func purgeLegacyAgentServices() error {
 // authenticated per-user uninstall helper may remove a validated exact value.
 
 func purgePaths(roots []string) error {
-	const attempts = 3
-	const retryDelay = 200 * time.Millisecond
+	// WebView2 and antivirus may still have a file open after the Manager
+	// process exits. Give only the exact product roots a bounded opportunity
+	// to become removable; never broaden the deletion scope on retry.
+	const retryBudget = 15 * time.Second
+	const retryDelay = 250 * time.Millisecond
 
 	var failures []string
 	seen := make(map[string]struct{}, len(roots))
@@ -402,33 +405,50 @@ func purgePaths(roots []string) error {
 		}
 		seen[key] = struct{}{}
 
-		// A product-named junction can redirect deletion out of the
-		// trusted Known Folder. Refuse it instead of traversing it.
 		ptr, err := windows.UTF16PtrFromString(root)
 		if err != nil {
 			failures = append(failures, fmt.Sprintf("%s: invalid path: %v", root, err))
 			continue
 		}
-		attrs, err := windows.GetFileAttributes(ptr)
-		if errors.Is(err, windows.ERROR_FILE_NOT_FOUND) || errors.Is(err, windows.ERROR_PATH_NOT_FOUND) {
-			continue
-		}
-		if err != nil {
-			failures = append(failures, fmt.Sprintf("%s: attributes: %v", root, err))
-			continue
-		}
-		if attrs&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 {
-			failures = append(failures, fmt.Sprintf("%s: refusing reparse/junction root", root))
-			continue
-		}
 
+		deadline := time.Now().Add(retryBudget)
 		var lastErr error
-		for attempt := 0; attempt < attempts; attempt++ {
+		for {
+			// Check on EACH attempt: a product-named junction could otherwise
+			// replace a locked directory between retries. Never traverse it.
+			attrs, attrErr := windows.GetFileAttributes(ptr)
+			if errors.Is(attrErr, windows.ERROR_FILE_NOT_FOUND) || errors.Is(attrErr, windows.ERROR_PATH_NOT_FOUND) {
+				lastErr = nil
+				break
+			}
+			if attrErr != nil {
+				lastErr = fmt.Errorf("read product-root attributes: %w", attrErr)
+				break
+			}
+			if attrs&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+				lastErr = fmt.Errorf("refusing reparse/junction root")
+				break
+			}
+
 			lastErr = os.RemoveAll(root)
 			if lastErr == nil {
 				break
 			}
-			if attempt+1 < attempts {
+
+			// Locked WebView2 data often reports ACCESS_DENIED while the last
+			// handles are closing. Other errors are not made safer by retries.
+			if !errors.Is(lastErr, windows.ERROR_SHARING_VIOLATION) &&
+				!errors.Is(lastErr, windows.ERROR_LOCK_VIOLATION) &&
+				!errors.Is(lastErr, windows.ERROR_ACCESS_DENIED) {
+				break
+			}
+			remaining := time.Until(deadline)
+			if remaining <= 0 {
+				break
+			}
+			if remaining < retryDelay {
+				time.Sleep(remaining)
+			} else {
 				time.Sleep(retryDelay)
 			}
 		}
