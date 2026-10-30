@@ -83,9 +83,9 @@ describe("dashboard printer action authority", () => {
     ), { status: 200 })));
     vi.mocked(getDashboardJobsResult).mockResolvedValue({ ok: true, data: [] });
     vi.mocked(getDashboardStateResult).mockResolvedValue({ ok: true, data: {
-      agents: [{ ...agent, pairingCodeExpiresAt: null, metadata: null, currentPrinterCount: 1, reportedStatus: agent.status, staleThresholdSeconds: 90 }],
+      agents: [{ ...agent, pairingCodeExpiresAt: null, metadata: null, currentPrinterCount: 1, reportedStatus: agent.status, freshness: "fresh", staleThresholdSeconds: 90 }],
       printers: [{ ...printer, agentName: agent.name, agentStatus: agent.status, agentLifecycle: agent.lifecycle, agentLastSeenAt: seen,
-        agentStaleThresholdSeconds: 90, inventoryPresent: true, deviceClass: "unknown", config: null, capabilities: null }], jobs: [], fleet,
+        agentFreshness: "fresh", agentStaleThresholdSeconds: 90, inventoryPresent: true, deviceClass: "unknown", config: null, capabilities: null }], jobs: [], fleet,
     } });
     const host = document.createElement("div");
     document.body.appendChild(host);
@@ -196,9 +196,9 @@ async function withMountedDashboard(
   vi.stubGlobal("fetch", fetchMock);
   vi.mocked(getDashboardJobsResult).mockResolvedValue({ ok: true, data: [] });
   vi.mocked(getDashboardStateResult).mockResolvedValue({ ok: true, data: {
-    agents: [{ ...agent, pairingCodeExpiresAt: null, metadata: null, currentPrinterCount: 1, reportedStatus: agent.status, staleThresholdSeconds: 90 }],
+    agents: [{ ...agent, pairingCodeExpiresAt: null, metadata: null, currentPrinterCount: 1, reportedStatus: agent.status, freshness: "fresh", staleThresholdSeconds: 90 }],
     printers: [{ ...printer, agentName: agent.name, agentStatus: agent.status, agentLifecycle: agent.lifecycle, agentLastSeenAt: seen,
-      agentStaleThresholdSeconds: 90, inventoryPresent: true, deviceClass: "unknown", config: null, capabilities: null }], jobs: [], fleet,
+      agentFreshness: "fresh", agentStaleThresholdSeconds: 90, inventoryPresent: true, deviceClass: "unknown", config: null, capabilities: null }], jobs: [], fleet,
   } });
   const host = document.createElement("div");
   document.body.appendChild(host);
