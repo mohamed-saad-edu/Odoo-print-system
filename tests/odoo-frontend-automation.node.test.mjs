@@ -228,23 +228,19 @@ test("an unavailable or stale language session never reloads with the previous l
 });
 
 
-test("Odoo Apps description includes local workflow screenshots and keeps translated manifest metadata", () => {
+test("Odoo Apps description uses translated manifest metadata without a static override", () => {
   const base = path.resolve("odoo_addons/print_gateway");
   const manifest = fs.readFileSync(path.join(base, "__manifest__.py"), "utf8");
-  const description = fs.readFileSync(path.join(base, "static/description/index.html"), "utf8");
   const catalog = fs.readFileSync(path.join(base, "i18n/ar.po"), "utf8");
   const routing = fs.readFileSync(path.join(base, "views/binding_views.xml"), "utf8");
   const config = fs.readFileSync(path.join(base, "models/gateway_config.py"), "utf8");
   const menus = fs.readFileSync(path.join(base, "views/menu.xml"), "utf8");
-  assert.match(description, /A smarter print layer for every Odoo workflow/);
+  assert.equal(fs.existsSync(path.join(base, "static/description/index.html")), false);
   for (const image of ["pos-receipt-printing.jpg", "invoice-printing.jpg"]) {
-    assert.match(description, new RegExp(`src="${image}"`));
-    assert.equal(fs.existsSync(path.join(base, "static/description", image)), true);
-    assert.match(description, new RegExp(`src="${image}"[\\s\\S]*?alt="[^"]+"`));
-    assert.match(manifest, new RegExp(`static/description/${image}`));
+    assert.equal(fs.existsSync(path.join(base, "static/description", image)), false);
+    assert.doesNotMatch(manifest, new RegExp(`static/description/${image}`));
   }
   assert.doesNotMatch(manifest, /github\.com/);
-  assert.doesNotMatch(description, /github\.com/);
   assert.match(manifest, /https:\/\/print\.yaseir\.cloud\//);
   assert.match(catalog, /model:ir\.module\.module,description:base\.module_print_gateway/);
   assert.match(catalog, /model:ir\.module\.module,summary:base\.module_print_gateway/);

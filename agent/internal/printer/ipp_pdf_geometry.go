@@ -19,6 +19,9 @@ func inspectIPPPDFPages(ctx context.Context, data []byte) ([]ippPDFPage, error) 
 // Generated file output shares the same actual PDFium page inspection. Only
 // its encoded byte budget differs; ordinary submitted PDFs retain their limit.
 func inspectBoundedPDFPages(ctx context.Context, data []byte, byteLimit int) ([]ippPDFPage, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if err := validatePDFBounded(data, byteLimit); err != nil {
 		return nil, err
 	}

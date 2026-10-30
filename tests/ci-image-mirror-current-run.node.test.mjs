@@ -41,7 +41,7 @@ test('Docker CI uses the same sha256-pinned Official Images as production', () =
   assert.ok(secure.includes('FROM ${POSTGRES_BASE} AS postgres'));
   assert.ok(secure.includes('FROM ${CADDY_BASE} AS caddy'));
   assert.ok(secure.includes('go1.26.10'));
-  assert.match(load('docs/runtime-hardening/caddy/go.mod'), /golang\.org\/x\/net v0\.61\.0(?:\s|$)/);
+  assert.match(load('docs/runtime-hardening/caddy/go.mod'), /golang\.org\/x\/net v0\.62\.0(?:\s|$)/);
   assert.ok(secure.includes('go build -mod=readonly -trimpath'));
   assert.equal(ciCompose.split(`NODE_BASE_IMAGE: ${prodNode}`).length - 1, 2);
   assert.equal((dockerfile.match(/^FROM \$\{NODE_BASE_IMAGE\} AS /gm) ?? []).length, 3);
