@@ -129,10 +129,11 @@ func handlePrintersSubcommand(args []string, defaultConfigPath string) {
 	for i := 0; i < len(rest); i++ {
 		switch rest[i] {
 		case "-config", "--config":
-			if i+1 < len(rest) {
-				configPath = rest[i+1]
-				i++
+			if i+1 >= len(rest) || rest[i+1] == "" || strings.HasPrefix(rest[i+1], "-") {
+				log.Fatal("-config requires a path")
 			}
+			configPath = rest[i+1]
+			i++
 		case "--json", "-json":
 			jsonOutput = true
 		case "--include-virtual":

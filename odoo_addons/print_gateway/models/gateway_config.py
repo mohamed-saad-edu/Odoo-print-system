@@ -307,7 +307,7 @@ class PrintGatewayConfig(models.Model):
         # Plain-HTTP LAN development is explicitly opted into (see
         # INSTALLATION.md); never allow credentials, queries, or API paths
         # regardless of scheme.
-        if parsed.username or parsed.password or parsed.query or parsed.fragment:
+        if "@" in parsed.netloc or "?" in raw or "#" in raw:
             raise ValidationError(_("Gateway URL must not contain credentials, query parameters, or fragments."))
         if parsed.path not in ("", "/"):
             raise ValidationError(_("Gateway URL must be the Gateway origin, without an API path (include the port when the Gateway does not listen on 80/443)."))
@@ -2458,4 +2458,3 @@ class PrintGatewayPairAgentWizard(models.TransientModel):
             raise
         except requests.RequestException as exc:
             raise ValidationError(str(_friendly_gateway_request_error(exc, config.gateway_url))) from exc
-

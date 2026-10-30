@@ -202,6 +202,19 @@ func loadRegistryPartitionedLocked(registryPath string) (production, hidden []De
 		}
 		production = append(production, d)
 	}
+	// An imported or legacy registry can contain two saved records with the
+	// same ID but different physical execution destinations. The mutation
+	// index is keyed by ID; accepting duplicate authority would silently pick
+	// the last record and could rebind a print job to the wrong printer. Fail
+	// closed without rewriting or dropping either saved record. An operator
+	// must explicitly reconcile the registry before discovery can mutate it.
+	seenPrinterIDs := make(map[string]struct{}, len(production)+len(hidden))
+	for _, saved := range concatDevices(production, hidden) {
+		if _, exists := seenPrinterIDs[saved.ID]; exists {
+			return nil, nil, 0, fmt.Errorf("registry %s contains duplicate printer ID %q; restore or reconcile the original file before dispatch", registryPath, saved.ID)
+		}
+		seenPrinterIDs[saved.ID] = struct{}{}
+	}
 	if removed > 0 {
 		// Rewrite the registry and remove all obsolete software-printer rows.
 		if err := saveRegistryLocked(registryPath, concatDevices(production, hidden)); err != nil {
@@ -262,6 +275,16 @@ func saveRegistryLocked(registryPath string, printers []DeviceInfo) error {
 		if !ClassifyDeviceInfo(entry).IsVirtual {
 			physical = append(physical, entry)
 		}
+	}
+	seenIDs := make(map[string]struct{}, len(physical))
+	for _, entry := range physical {
+		if entry.ID == "" {
+			continue
+		}
+		if _, exists := seenIDs[entry.ID]; exists {
+			return fmt.Errorf("registry contains duplicate printer ID %q", entry.ID)
+		}
+		seenIDs[entry.ID] = struct{}{}
 	}
 	data, err := json.MarshalIndent(physical, "", "  ")
 	if err != nil {
@@ -453,6 +476,32 @@ func mutateRegistry(registryPath string, discovered []DeviceInfo, completeSource
 					d.ID = existing[matches[0]].ID
 				}
 			}
+		}
+		// Hidden unclassified rows are retained on disk. Promote a matching
+		// observation only when its execution binding is unchanged (or an
+		// operator explicitly targets that ID); otherwise do not persist a
+		// second row that would make the registry unreadable on its next load.
+		hiddenCollision := false
+		for hiddenIndex, prior := range hidden {
+			if prior.ID != d.ID {
+				continue
+			}
+			if operatorTargetID != prior.ID {
+				priorBinding, priorErr := config.PrinterBindingDigest(SharingConfigForDevice(prior))
+				currentBinding, currentErr := config.PrinterBindingDigest(SharingConfigForDevice(d))
+				if priorErr != nil || currentErr != nil || priorBinding != currentBinding {
+					log.Printf("[registry] printer ID %q conflicts with a preserved unclassified record; retaining it without rebinding", d.ID)
+					hiddenCollision = true
+					break
+				}
+			}
+			existing = append(existing, prior)
+			byID[prior.ID] = len(existing) - 1
+			hidden = append(hidden[:hiddenIndex], hidden[hiddenIndex+1:]...)
+			break
+		}
+		if hiddenCollision {
+			continue
 		}
 		if idx, ok := byID[d.ID]; ok {
 			if operatorTargetID != existing[idx].ID && conflictingNetworkExecutionBinding(existing[idx], d) {

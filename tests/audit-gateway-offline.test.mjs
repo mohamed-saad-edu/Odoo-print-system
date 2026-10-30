@@ -94,7 +94,7 @@ test("existing Gateway i18n checker passes against both real catalogs", async ()
 test("desktop discovery preserves a failed Gateway refresh and uses translated outcome", async () => {
   const source = await readFile("src/desktop/main.tsx", "utf8");
   const start = source.indexOf("  const handleDiscover = useCallback(");
-  const end = source.indexOf("  const handleTest = useCallback(", start);
+  const end = source.indexOf("  const startAgent = useCallback(", start);
   assert.ok(start >= 0 && end > start);
   const errors = [], messages = [];
   const refresh = async () => { errors.push("Gateway unavailable"); return false; };
@@ -167,7 +167,8 @@ test("failed WebSocket handshake releases capacity and pending registration", { 
 test("desktop discovery shows only actionable persistence errors while retaining local printers", async () => {
   const source = await readFile("src/desktop/main.tsx", "utf8");
   const start = source.indexOf("  const handleDiscover = useCallback(");
-  const end = source.indexOf("  const handleTest = useCallback(", start);
+  const end = source.indexOf("  const startAgent = useCallback(", start);
+  assert.ok(start >= 0 && end > start);
   const discovered = [], messages = [];
   const api = await loadModule("src/desktop/main.tsx", {
     useCallback: (fn) => fn, isTauri: true, locale: "en",

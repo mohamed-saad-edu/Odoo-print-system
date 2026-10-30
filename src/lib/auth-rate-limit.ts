@@ -196,14 +196,9 @@ async function reserveBucketAttempt(
   curve: RateLimitCurve,
 ): Promise<RateLimitDecision> {
   return db.transaction(async (tx) => {
-    const clock = await tx.execute(sql`SELECT EXTRACT(EPOCH FROM clock_timestamp()) * 1000 AS now_ms`);
-    const nowMs = Number(clock.rows[0]?.now_ms);
-    if (!Number.isFinite(nowMs)) throw new Error("Database clock is unavailable");
-    const now = new Date(nowMs);
-    const windowStartCutoff = new Date(now.getTime() - windowMs);
     await tx.execute(sql`
       INSERT INTO auth_rate_limits (key, failures, window_started_at, locked_until, updated_at)
-      VALUES (${key}, 0, ${now}, NULL, ${now})
+      VALUES (${key}, 0, clock_timestamp(), NULL, clock_timestamp())
       ON CONFLICT (key) DO NOTHING
     `);
     const current = await tx.execute(sql`
@@ -212,6 +207,11 @@ async function reserveBucketAttempt(
       WHERE key = ${key}
       FOR UPDATE
     `);
+    const clock = await tx.execute(sql`SELECT EXTRACT(EPOCH FROM clock_timestamp()) * 1000 AS now_ms`);
+    const nowMs = Number(clock.rows[0]?.now_ms);
+    if (!Number.isFinite(nowMs)) throw new Error("Database clock is unavailable");
+    const now = new Date(nowMs);
+    const windowStartCutoff = new Date(now.getTime() - windowMs);
     const row = (current.rows[0] as {
       failures?: number | string;
       window_started_at?: Date | string;
@@ -293,15 +293,10 @@ export async function reserveAuthAttempt(ip: string, username: string): Promise<
   keys.sort();
 
   return db.transaction(async (tx) => {
-    const clock = await tx.execute(sql`SELECT EXTRACT(EPOCH FROM clock_timestamp()) * 1000 AS now_ms`);
-    const nowMs = Number(clock.rows[0]?.now_ms);
-    if (!Number.isFinite(nowMs)) throw new Error("Database clock is unavailable");
-    const now = new Date(nowMs);
-    const windowStartCutoff = new Date(now.getTime() - AUTH_RATE_WINDOW_MS);
     for (const key of keys) {
       await tx.execute(sql`
         INSERT INTO auth_rate_limits (key, failures, window_started_at, locked_until, updated_at)
-        VALUES (${key}, 0, ${now}, NULL, ${now})
+        VALUES (${key}, 0, clock_timestamp(), NULL, clock_timestamp())
         ON CONFLICT (key) DO NOTHING
       `);
     }
@@ -313,6 +308,11 @@ export async function reserveAuthAttempt(ip: string, username: string): Promise<
       ORDER BY key
       FOR UPDATE
     `);
+    const clock = await tx.execute(sql`SELECT EXTRACT(EPOCH FROM clock_timestamp()) * 1000 AS now_ms`);
+    const nowMs = Number(clock.rows[0]?.now_ms);
+    if (!Number.isFinite(nowMs)) throw new Error("Database clock is unavailable");
+    const now = new Date(nowMs);
+    const windowStartCutoff = new Date(now.getTime() - AUTH_RATE_WINDOW_MS);
 
     for (const raw of rows.rows as Array<{ key: string; failures?: number | string; window_started_at?: Date | string; locked_until?: Date | string | null }>) {
       const lockedUntilMs = parseDbTimeMs(raw.locked_until);

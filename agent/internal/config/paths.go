@@ -42,9 +42,28 @@ func LockLocalFile(path string) (func() error, error) {
 	if err := EnsureSecureDirectoryACL(filepath.Dir(path)); err != nil {
 		return nil, err
 	}
+	if info, err := os.Lstat(path); err == nil {
+		if !info.Mode().IsRegular() {
+			return nil, fmt.Errorf("refusing non-regular local lock %s", path)
+		}
+	} else if !os.IsNotExist(err) {
+		return nil, err
+	}
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0600)
 	if err != nil {
 		return nil, err
+	}
+	openedInfo, err := file.Stat()
+	pathInfo, pathErr := os.Lstat(path)
+	if err != nil || pathErr != nil || !pathInfo.Mode().IsRegular() || !os.SameFile(openedInfo, pathInfo) {
+		_ = file.Close()
+		if err != nil {
+			return nil, fmt.Errorf("inspect local lock %s: %w", path, err)
+		}
+		if pathErr != nil {
+			return nil, fmt.Errorf("inspect local lock path %s: %w", path, pathErr)
+		}
+		return nil, fmt.Errorf("local lock path %s changed while opening", path)
 	}
 	if err := EnsureSecureFileACL(path); err != nil {
 		_ = file.Close()

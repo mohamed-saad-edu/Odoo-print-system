@@ -125,7 +125,7 @@ export async function claimJobForDelivery(
       JOIN tenants t ON t.id = p.tenant_id
       WHERE p.agent_id = ${agentId}
         AND p.status IN ('claimed', 'printing')
-        AND p.expires_at > now()
+        AND p.expires_at > clock_timestamp()
         -- Same stale-claim exclusion as the poll path (agent/jobs route): a
         -- stale no-evidence claim reuses its own executor slot when reclaimed,
         -- so counting it as occupied would permanently starve reclaims at the
@@ -135,15 +135,15 @@ export async function claimJobForDelivery(
           AND p.delivered_at IS NULL
           AND p.acked_at IS NULL
           AND COALESCE(p.error, '') <> ${DELIVERY_EVIDENCE_PENDING}
-          AND p.updated_at < now() - make_interval(secs => ${agentStaleThresholdSeconds()})
+          AND p.updated_at < clock_timestamp() - make_interval(secs => ${agentStaleThresholdSeconds()})
           AND p.retries < ${MAX_RETRIES}
           AND p.delivery_attempts < ${MAX_DELIVERY_ATTEMPTS}
         )
         AND a.lifecycle = 'active'
         AND a.status = 'online'
         AND a.last_seen_at IS NOT NULL
-        AND a.last_seen_at <= now()
-        AND a.last_seen_at >= now() - make_interval(secs => ${agentStaleThresholdSeconds()})
+        AND a.last_seen_at <= clock_timestamp()
+        AND a.last_seen_at >= clock_timestamp() - make_interval(secs => ${agentStaleThresholdSeconds()})
         AND t.lifecycle = 'active'
     `);
     const inFlight = Number((live.rows[0] as { count?: number | string } | undefined)?.count ?? 0);
@@ -164,14 +164,14 @@ export async function claimJobForDelivery(
         AND p.agent_id = ${agentId}
         AND p.status = 'queued'
         AND COALESCE(p.error, '') <> ${PRINTER_NOT_SHARED_PAUSE}
-        AND p.expires_at > now()
+        AND p.expires_at > clock_timestamp()
         AND p.delivery_attempts < ${MAX_DELIVERY_ATTEMPTS}
         AND p.retries < ${MAX_RETRIES}
         AND a.lifecycle = 'active'
         AND a.status = 'online'
         AND a.last_seen_at IS NOT NULL
-        AND a.last_seen_at <= now()
-        AND a.last_seen_at >= now() - make_interval(secs => ${agentStaleThresholdSeconds()})
+        AND a.last_seen_at <= clock_timestamp()
+        AND a.last_seen_at >= clock_timestamp() - make_interval(secs => ${agentStaleThresholdSeconds()})
         AND p.binding_digest IS NOT NULL AND p.binding_digest = pr.verification_binding_digest
         AND p.output_medium = pr.output_medium
         AND ${printerOperationalVerificationPredicate(sql`pr`)}
@@ -184,8 +184,8 @@ export async function claimJobForDelivery(
           AND pr.observed_desired_revision >= pr.desired_revision
         ))
         AND pr.last_seen_at IS NOT NULL
-        AND pr.last_seen_at <= now()
-        AND pr.last_seen_at >= now() - make_interval(secs => ${printerStaleThresholdSeconds()})
+        AND pr.last_seen_at <= clock_timestamp()
+        AND pr.last_seen_at >= clock_timestamp() - make_interval(secs => ${printerStaleThresholdSeconds()})
         AND t.lifecycle = 'active'
         AND ${liveTenantSubscriptionPredicate(sql`p.tenant_id`)}
       FOR UPDATE OF p, a, pr SKIP LOCKED
@@ -207,7 +207,7 @@ export async function claimJobForDelivery(
         AND tenant_id = ${tenantId}
         AND agent_id = ${agentId}
         AND status = 'queued'
-        AND expires_at > now()
+        AND expires_at > clock_timestamp()
         AND ${liveTenantSubscriptionPredicate(sql`print_jobs.tenant_id`)}
       RETURNING ${CLAIM_RETURNING}
     `);
@@ -312,7 +312,7 @@ export async function releaseUndeliveredClaim(jobId: string, tenantId: string, a
       AND acked_at IS NULL
       AND delivery_attempts < ${MAX_DELIVERY_ATTEMPTS}
       AND retries < ${MAX_RETRIES}
-      AND expires_at > now()
+      AND expires_at > clock_timestamp()
     RETURNING id
   `);
   if (requeued.rows.length > 0) return "requeued";
@@ -332,6 +332,7 @@ export async function releaseUndeliveredClaim(jobId: string, tenantId: string, a
       AND delivered_at IS NULL
       AND acked_at IS NULL
       AND (delivery_attempts >= ${MAX_DELIVERY_ATTEMPTS} OR retries >= ${MAX_RETRIES})
+      AND expires_at > clock_timestamp()
     RETURNING id
   `);
   if (failed.rows.length > 0) return "failed";

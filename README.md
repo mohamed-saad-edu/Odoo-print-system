@@ -28,7 +28,7 @@ The destination is an existing Odoo object such as POS configuration, warehouse 
 ## Printing
 
 Backend reports use `print_gateway.print_router` from the `ir.actions.report.report_action()` integration hook.
-POS printing uses the Odoo 19 `PosStore.printReceipt()` hook, covering receipt print, POS reprint, and Restaurant Print Bill paths.
+POS printing uses the Odoo `PosStore.printReceipt()` hook, covering receipt print, POS reprint, and Restaurant Print Bill paths.
 
 When Gateway printing is enabled, printing is silent: no browser print dialog, PDF navigation, `window.print()`, or native fallback is allowed. Failures are surfaced to the user.
 
@@ -79,4 +79,4 @@ See [API.md](API.md), [INSTALLATION.md](INSTALLATION.md), [DEPLOYMENT.md](DEPLOY
 
 ## Engineering review and cross-component contracts
 
-See the [unified system logic notebook](docs/engineering/SYSTEM_UNIFICATION_NOTEBOOK.md) and [complete tracked-file coverage ledger](docs/engineering/FILE_COVERAGE_LEDGER.md). These are evidence-scoped, living audit records, **not** a claim that all integration or hardware release gates passed.
+See the [unified system logic notebook](docs/engineering/SYSTEM_UNIFICATION_NOTEBOOK.md). It is an evidence-scoped, living engineering record, **not** a claim that all integration or hardware release gates passed.

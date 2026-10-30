@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Plus } from "lucide-react";
 import {
   Button,
@@ -44,8 +44,9 @@ export function AddPrinterDialog({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [agents, setAgents] = useState<Array<{ id: string; name: string; status?: string; lifecycle?: string; lastSeenAt?: string | null; staleThresholdSeconds?: number | null }>>([]);
-  const [agentsLoading, setAgentsLoading] = useState(false);
-  const [agentsError, setAgentsError] = useState(false);
+  // Tie errors to their exact Gateway URL so switching Gateways retries safely.
+  const [agentsFailedForUrl, setAgentsFailedForUrl] = useState<string | null>(null);
+  const agentsError = agentsFailedForUrl === gatewayUrl;
   // Which gateway URL the cached agents were fetched from. The cache must
   // be keyed by URL: reusing gateway A's agents after switching to gateway
   // B would register the printer against an agentId B never issued.
@@ -60,6 +61,11 @@ export function AddPrinterDialog({
     return () => clearInterval(timer);
   }, []);
   const [agentId, setAgentId] = useState("");
+  // Derive loading from the exact Gateway cache key. A different Gateway
+  // must not see or select agents cached for the previous destination.
+  const agentsLoading = open && Boolean(gatewayUrl) && agentsForUrl !== gatewayUrl && !agentsError;
+  const visibleAgents = agentsForUrl === gatewayUrl ? agents : [];
+  const currentAgentId = agentsForUrl === gatewayUrl ? agentId : "";
   // Only a canonical saved Gateway origin can produce a billing destination.
   // Desktop copies the URL for the system browser; never navigate the WebView.
   const billingUrl = useMemo(() => {
@@ -73,31 +79,43 @@ export function AddPrinterDialog({
     limit?: number | "unlimited" | null;
   } | null>(null);
 
-  const loadAgents = useCallback(async () => {
-    if (!gatewayUrl || agentsForUrl === gatewayUrl) return;
-    // Generation guard: a late response for a previous gateway (or an older
-    // attempt) must never overwrite the current picker's list.
+  // This effect only starts an external request. Updates happen in its
+  // asynchronous completion callbacks, never synchronously during the effect.
+  useEffect(() => {
+    if (!open || !gatewayUrl || agentsForUrl === gatewayUrl || agentsError) {
+      if (!open) agentsGeneration.current += 1;
+      return;
+    }
     const generation = ++agentsGeneration.current;
-    setAgentsLoading(true);
-    setAgentsError(false);
-    try {
-      const rows = await fetchGatewayAgents(gatewayUrl);
-      if (agentsGeneration.current !== generation) return;
+    let cancelled = false;
+    void fetchGatewayAgents(gatewayUrl).then((rows) => {
+      if (cancelled || agentsGeneration.current !== generation) return;
       setAgents(rows);
       setAgentsForUrl(gatewayUrl);
+      setAgentsFailedForUrl(null);
       const active = rows.find((row) => row.lifecycle === "active");
-      // Keep the selection only if it exists on THIS gateway; otherwise
-      // fall back to its active agent (or empty when none is active).
       setAgentId((current) => rows.some((row) => row.id === current) ? current : (active?.id ?? ""));
-    } catch {
-      if (agentsGeneration.current !== generation) return;
+    }).catch(() => {
+      if (cancelled || agentsGeneration.current !== generation) return;
       setAgents([]);
       setAgentsForUrl("");
-      setAgentsError(true);
-    } finally {
-      if (agentsGeneration.current === generation) setAgentsLoading(false);
-    }
-  }, [gatewayUrl, agentsForUrl]);
+      setAgentsFailedForUrl(gatewayUrl);
+    });
+    return () => {
+      cancelled = true;
+      agentsGeneration.current += 1;
+    };
+  }, [open, gatewayUrl, agentsForUrl, agentsError]);
+
+  // Event-driven reset avoids synchronous setState in a React effect.
+  const closeDialog = () => {
+    agentsGeneration.current += 1;
+    setAgentsForUrl("");
+    setAgents([]);
+    setAgentId("");
+    setAgentsFailedForUrl(null);
+    onClose();
+  };
 
 
   // Clear any previous error when dialog transitions to open
@@ -113,23 +131,23 @@ export function AddPrinterDialog({
   // `/api/printers` rows are camelCase too, so reading only snake_case made
   // these two lists permanently empty.
   const physicalSpoolers = useMemo(
-    () => printers.filter((p) => p.agentId === agentId && isProductionPrinter(p) && (p.spooler_name || p.spoolerName)),
-    [printers, agentId]
+    () => printers.filter((p) => p.agentId === currentAgentId && isProductionPrinter(p) && (p.spooler_name || p.spoolerName)),
+    [printers, currentAgentId]
   );
   const usbPrinters = useMemo(
     () =>
       printers.filter(
         (p) =>
-          p.agentId === agentId &&
+          p.agentId === currentAgentId &&
           ((p.connection_type || p.connectionType) || "").toLowerCase() === "usb" &&
           isProductionPrinter(p)
       ),
-    [printers, agentId]
+    [printers, currentAgentId]
   );
 
   const validate = (): string | null => {
     if (!gatewayUrl) return t("desktop.add.gatewayUrlMissing");
-    if (!agentId) return t("desktop.add.selectAgent");
+    if (!currentAgentId) return t("desktop.add.selectAgent");
     if (!name.trim()) return t("desktop.add.nameRequired");
     if (conn === "spooler" && !spoolerName.trim())
       return t("desktop.add.spoolerRequired");
@@ -205,7 +223,7 @@ export function AddPrinterDialog({
         req.protocol = conn;
       }
       if (conn === "usb") {
-        const sel = usbPrinters.find((p) => p.id === usbSel && p.agentId === agentId);
+        const sel = usbPrinters.find((p) => p.id === usbSel && p.agentId === currentAgentId);
         if (!sel) throw new Error(t("desktop.add.selectUsb"));
         if (sel) {
           const sourceConfig = sel.config && typeof sel.config === "object"
@@ -229,9 +247,9 @@ export function AddPrinterDialog({
           }
         }
       }
-      await registerGatewayPrinter(gatewayUrl, { ...req, agentId });
+      await registerGatewayPrinter(gatewayUrl, { ...req, agentId: currentAgentId });
       onSuccess();
-      onClose();
+      closeDialog();
       reset();
     } catch (e) {
       // Prefer the structured fields preserved across the IPC transport;
@@ -279,11 +297,11 @@ export function AddPrinterDialog({
     <>
       <Modal
       open={open}
-      onClose={onClose}
+      onClose={closeDialog}
       title={t("desktop.add.title")}
       footer={
         <>
-          <Button variant="secondary" onClick={onClose}>
+          <Button variant="secondary" onClick={closeDialog}>
             {t("common.cancel")}
           </Button>
           <Button
@@ -303,9 +321,9 @@ export function AddPrinterDialog({
           htmlFor="pp-agent"
           hint={t("desktop.add.agentHint")}
         >
-          <Select id="pp-agent" value={agentId} onFocus={loadAgents} onChange={(e) => setAgentId(e.target.value)}>
+          <Select id="pp-agent" value={currentAgentId} onFocus={() => { if (agentsError) setAgentsFailedForUrl(null); }} onChange={(e) => setAgentId(e.target.value)}>
             <option value="">{agentsLoading ? t("desktop.add.loadingAgents") : t("desktop.add.selectActiveAgent")}</option>
-            {agents.filter((a) => a.lifecycle === "active").map((a) => (
+            {visibleAgents.filter((a) => a.lifecycle === "active").map((a) => (
               <option key={a.id} value={a.id}>
                 {a.name} ({agentLiveView({
                   status: a.status ?? null,
@@ -319,7 +337,7 @@ export function AddPrinterDialog({
           {agentsError && (
             <div className="mt-2 flex items-center gap-2 text-sm text-ink-3">
               <span>{t("desktop.add.agentsLoadFailed")}</span>
-              <Button variant="ghost" size="sm" onClick={() => { setAgentsForUrl(""); void loadAgents(); }}>{t("common.retry")}</Button>
+              <Button variant="ghost" size="sm" onClick={() => setAgentsFailedForUrl(null)}>{t("common.retry")}</Button>
             </div>
           )}
         </Field>

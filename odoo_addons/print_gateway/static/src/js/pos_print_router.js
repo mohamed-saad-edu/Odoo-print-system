@@ -1107,7 +1107,9 @@ patch(PosStore.prototype, {
                     warningCode: undefined,
                     message: {
                         title: _t("Printing Service"),
-                        body: result?.outputMedium === "file" ? result.message : outcome === "unknown"
+                        body: result?.outputMedium === "file"
+                            ? _t("PDF file output is unconfirmed. Check Print Activity and the approved output destination before retrying.")
+                            : outcome === "unknown"
                             ? _t("Kitchen print outcome is unknown. The ticket may already have printed; automatic retry is disabled.")
                             : _t("Kitchen print status is unclear. Automatic retry is paused to prevent duplicate tickets."),
                     },

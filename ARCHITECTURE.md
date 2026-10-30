@@ -79,7 +79,7 @@ A Tauri 2 desktop application for Windows that provides:
 - Agent service management (start/stop/configure)
 - Printer discovery and manual registration UI
 - Pairing workflow (agent ↔ Gateway registration)
-- Local printer test printing
+- Privileged internal printer certification transport (customer Test Page controls are removed; internal diagnostics are retained)
 
 ### 2.4 Odoo 19 Addon (`print_gateway`)
 
@@ -180,7 +180,7 @@ second physical attempt.
 ### Input Validation
 
 - API input validation is endpoint-specific: structured request payloads use Zod schemas, while simple probes and fixed/primitive inputs use explicit type and length checks.
-- Mutating `/api/*` requests require a valid `Content-Length`, are capped at 8 MiB, and reserve authenticated/unauthenticated concurrent-byte budgets until the response closes
+- Mutating `/api/*` requests with a declared body require a valid `Content-Length`; body-bearing requests are capped at 8 MiB (with smaller route caps), while only payload-bearing Agent/print endpoints reserve authenticated/unauthenticated concurrent-byte budgets until the response closes. Bodyless mutations without transfer encoding remain valid.
 - Print job payloads are validated against the shared `contracts/print-payload-contract.json` wire vocabulary. The database CHECK enforces the object/type/protocol subset; application validators enforce encoding, byte limits, signatures, and peripheral values. PDF data must begin with `%PDF-` and Gateway admission requires a `%%EOF` marker in the final 4 KiB
 - Printer protocol/capability gating prevents incompatible job routing
 - Diagnostic ZPL/TSPL/ESC/POS pages sanitize user-controlled names for their target command language
@@ -190,7 +190,7 @@ second physical attempt.
 ### PostgreSQL + Drizzle ORM
 
 **Schema**: 32 tables defined in `src/db/schema.ts`
-**Migrations**: 103 forward-only migrations (`0000`–`0102`) in `drizzle/`
+**Migrations**: 107 forward-only migrations (`0000`–`0106`) in `drizzle/`; `0103_retained_print_attempt_evidence.sql` must run before the updated Gateway uses retained receipt columns.
 **Driver**: `pg` with connection pool; exact version is pinned in the Node manifests
 
 ### Key Design Patterns
@@ -222,7 +222,7 @@ The WebSocket server (`src/server/ws.ts`) implements:
 - **Per-agent socket management**: Up to 8 concurrent sockets per agent (rolling reconnect)
 - **PostgreSQL LISTEN/NOTIFY**: Real-time job dispatch across gateway instances
 - **Agent reconnection**: Both rejected handshakes and lost sessions share 5/10/20/40/60-second retry steps with 50%–100% jitter and cancellation. A session must last at least 30 seconds to reset the budget; an accepted-then-closed connection cannot create a retry storm. HTTP polling continues during this delay.
-- **Ping/pong keep-alive**: 30s server ping interval, 90s idle timeout
+- **Ping/pong keep-alive**: 30s server ping interval; a socket is terminated on the next interval if its preceding ping received no pong
 - **Back-pressure**: 1MB buffered-amount check before sending
 - **Agent capacity fence**: Gateway claims at most 64 live claimed/printing jobs per Agent, matching the Agent local pending ceiling
 - **Rate limiting**: Per-agent token bucket (prevents WebSocket abuse)
@@ -289,7 +289,7 @@ one authority per decision:
 contracts) and `tests/database-clock.integration.test.ts` (live calibration,
 single-reading TTL invariant, quota rollback).
 
-Manual subscriptions are changed by authorized Platform Admin operations.
+Manual subscriptions are changed by authorized Platform Owner operations.
 `print_monthly_usage` counts accepted logical jobs per UTC calendar month (the first at 00:00 UTC), independently
 of monthly, yearly or custom contract dates. Migration 0102 conservatively retains historic rolling-cycle usage. Provider timestamps and identifiers
 remain historical evidence; retired provider routes cannot grant or renew a

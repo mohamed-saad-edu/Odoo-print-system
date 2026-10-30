@@ -17,9 +17,12 @@ def test_migration_inventory_matches_current_journal():
     assert len(journal)==len(sql)
     assert journal[98]['tag']=='0098_manual_only_billing'
     assert journal[99]['tag']=='0099_subscription_approval_terms'
-    assert journal[-3]['tag']=='0100_plan_prices'
-    assert journal[-2]['tag']=='0101_rolling_print_allowance'
-    assert journal[-1]['tag']=='0102_calendar_month_print_allowance'
+    # Immutable migrations keep fixed ledger positions when later forward
+    # migrations are added; the quota migration is not necessarily last.
+    assert journal[100]['tag']=='0100_plan_prices'
+    assert journal[101]['tag']=='0101_rolling_print_allowance'
+    assert journal[102]['tag']=='0102_calendar_month_print_allowance'
+    assert journal[103]['tag']=='0103_retained_print_attempt_evidence'
     assert journal[97]['tag']=='0097_agent_scoped_discovery_identity'
     assert journal[96]['tag']=='0096_retire_limited_workspace_roles'
     assert journal[84]['tag']=='0084_printer_cloud_sharing'
@@ -49,6 +52,7 @@ def test_migration_inventory_matches_current_journal():
     assert '| 0097 | 1 |' in read('MIGRATION.md')
     assert '| 0100 | 1 |' in read('MIGRATION.md')
     assert '| 0102 | 1 |' in read('MIGRATION.md')
+    assert '| 0103 | 1 |' in read('MIGRATION.md')
     latest_number=journal[-1]['tag'].split('_',1)[0]
     assert f'**Total**: {len(sql)} forward-only SQL migrations (0000–{latest_number})' in read('MIGRATION.md')
     sharing=read('drizzle/0084_printer_cloud_sharing.sql')
@@ -58,13 +62,14 @@ def test_migration_inventory_matches_current_journal():
     assert "'^[1-9][0-9]{0,18}$'" in sharing and '9223372036854775807' in sharing
 
 def test_canonical_quota_docs_match_immutable_calendar_month_migration():
-    # The migration ledger defines today's shipped quota contract. Earlier
-    # forward migrations remain immutable history, not current policy.
+    # 0102 establishes UTC calendar-month quota admission; 0103 extends
+    # unrelated receipt evidence without changing that active quota policy.
     journal = json.loads(read('drizzle/meta/_journal.json'))['entries']
-    newest = journal[-1]['tag']
-    assert newest == '0102_calendar_month_print_allowance'
+    assert journal[102]['tag'] == '0102_calendar_month_print_allowance'
+    assert journal[103]['tag'] == '0103_retained_print_attempt_evidence'
+    latest_number = journal[-1]['tag'].split('_', 1)[0]
     database = read('docs/DATABASE.md')
-    assert f"**{len(journal)} forward-only SQL migrations (`0000`–`0102`)**" in database
+    assert f"**{len(journal)} forward-only SQL migrations (`0000`–`{latest_number}`)**" in database
     notebook = read('docs/engineering/SYSTEM_UNIFICATION_NOTEBOOK.md')
     canonical = notebook.split('## 2. End-to-end flows')[0]
     invariants = notebook.split('## 3. Canonical invariants and verification owners')[1].split('## 4. Issue/evidence register')[0]
@@ -72,7 +77,7 @@ def test_canonical_quota_docs_match_immutable_calendar_month_migration():
     assert 'UTC calendar month' in canonical
     assert 'fixed 30×24-hour UTC cycles' not in canonical
     assert '| BILL-02 |' in invariants and 'UTC calendar month' in invariants
-    assert '| DATA-02 | 103 immutable SQL migrations through `0102`' in invariants
+    assert f'| DATA-02 | {len(journal)} forward-only SQL migrations through `{latest_number}`' in invariants
     assert 'Credit cycle = 30 UTC days' not in invariants
     assert '**State: OPEN / P0 policy consistency' not in notebook
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useI18n } from "../../i18n/react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -11,8 +11,7 @@ import { codeMessageKey } from "../../lib/api-error-keys";
 import { fetchWithTimeout } from "../../lib/fetch-timeout";
 
 export default function Signup() {
-  const params = typeof window === "undefined" ? null : new URLSearchParams(window.location.search);
-  const [email, setEmail] = useState(params?.get("email") ?? "");
+  const [email, setEmail] = useState("");
   const { t } = useI18n();
   const [displayName, setDisplayName] = useState("");
   const [err, setErr] = useState("");
@@ -20,6 +19,13 @@ export default function Signup() {
   const [loading, setLoading] = useState(false);
   const submitting = useRef(false);
   const router = useRouter();
+
+  useEffect(() => {
+    const queryEmail = new URLSearchParams(window.location.search).get("email") ?? "";
+    if (!queryEmail) return;
+    const frame = window.requestAnimationFrame(() => setEmail(current => current || queryEmail));
+    return () => window.cancelAnimationFrame(frame);
+  }, []);
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();

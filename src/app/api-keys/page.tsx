@@ -2,6 +2,7 @@
 
 import { fetchWithTimeout } from "../../lib/fetch-timeout";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { useI18n } from "../../i18n/react";
 import type { Translator } from "../../i18n/translate";
 import Link from "next/link";
@@ -60,6 +61,8 @@ function rotationMeta(key: ApiKey, t: Translator): { label: string; tone: Tone }
 }
 
 export default function ApiKeysPage() {
+  const router = useRouter();
+  const mounted = useRef(true);
   const refreshEpoch = useRef(0);
   const mutationInFlight = useRef(false);
   const [keys, setKeys] = useState<ApiKey[]>([]);
@@ -77,18 +80,43 @@ export default function ApiKeysPage() {
   const [copied, setCopied] = useState(false);
   const [pending, setPending] = useState<{ kind: "revoke" | "remove" | "rotate"; id: string; name: string } | null>(null);
   const [hasSubscription, setHasSubscription] = useState<boolean | null>(null);
+  const [authorityDenied, setAuthorityDenied] = useState(false);
 
   const [loadTick, setLoadTick] = useState(0);
   const [initialLoaded, setInitialLoaded] = useState(false);
 
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
+
+  const denyAccess = useCallback((status: number) => {
+    if (!mounted.current) return;
+    setAuthorityDenied(true);
+    setKeys([]);
+    setInstallations([]);
+    setCanManage(false);
+    setCanReadBilling(false);
+    setRawKey(null);
+    setRawKeyId(null);
+    setCopied(false);
+    setPending(null);
+    setHasSubscription(null);
+    router.replace(status === 401 ? "/login?next=%2Fapi-keys" : "/");
+  }, [router]);
+
   const loadKeys = useCallback(async () => {
-    if (!(await ensureCustomerSession()).authenticated) throw new Error("SESSION_EXPIRED");
+    if (!(await ensureCustomerSession()).authenticated) {
+      denyAccess(401);
+      throw new Error("SESSION_EXPIRED");
+    }
     const response = await fetchWithTimeout("/api/odoo/keys", { cache: "no-store", credentials: "include" });
+    if (response.status === 401 || response.status === 403) denyAccess(response.status);
     if (!response.ok) throw new Error("KEYS_UNAVAILABLE");
     const items: unknown = await response.json();
     if (!Array.isArray(items)) throw new Error("INVALID_KEYS_PAYLOAD");
     return items as ApiKey[];
-  }, []);
+  }, [denyAccess]);
 
   useEffect(() => {
     let cancelled = false;
@@ -99,7 +127,9 @@ export default function ApiKeysPage() {
       try {
         // Confirm or refresh the customer cookie BEFORE starting the four
         // protected requests. All four projections settle before first paint.
-        if (!(await ensureCustomerSession()).authenticated) throw new Error("SESSION_EXPIRED");
+        const session = await ensureCustomerSession();
+        if (cancelled) return;
+        if (!session.authenticated) { denyAccess(401); return; }
         const epoch = refreshEpoch.current;
         const [keysResponse, installsResponse, principalResponse, billingResponse] = await Promise.all([
           fetchWithTimeout("/api/odoo/keys", { credentials: "include", cache: "no-store" }),
@@ -107,6 +137,10 @@ export default function ApiKeysPage() {
           fetchWithTimeout("/api/auth/me", { credentials: "include", cache: "no-store" }),
           fetchWithTimeout("/api/billing/status", { credentials: "include", cache: "no-store" }),
         ]);
+        if (cancelled) return;
+        const deniedResponse = [keysResponse, installsResponse, principalResponse, billingResponse]
+          .find(response => response.status === 401 || response.status === 403);
+        if (deniedResponse) { denyAccess(deniedResponse.status); return; }
         if (!keysResponse.ok || !installsResponse.ok || !principalResponse.ok || !billingResponse.ok)
           throw new Error("CONNECTION_DATA_UNAVAILABLE");
         const [nextKeys, nextInstalls, principal, billing] = await Promise.all([
@@ -133,11 +167,11 @@ export default function ApiKeysPage() {
           void loadKeys().then((items) => {
             if (!cancelled && observedEpoch === refreshEpoch.current) setKeys(items);
           }).catch(() => {
-            if (!cancelled) setError(t("apiKeys.loadFailed"));
+            if (!cancelled) setError("apiKeys.loadFailed");
           });
         }, 30_000);
       } catch {
-        if (!cancelled) setError(t("apiKeys.loadFailed"));
+        if (!cancelled) setError("apiKeys.loadFailed");
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -147,7 +181,7 @@ export default function ApiKeysPage() {
       cancelled = true;
       if (poll) clearInterval(poll);
     };
-  }, [loadKeys, loadTick, t]);
+  }, [denyAccess, loadKeys, loadTick]);
 
   async function generate() {
     if (mutationInFlight.current || !canManage) return;
@@ -155,7 +189,7 @@ export default function ApiKeysPage() {
     ++refreshEpoch.current;
     setBusy(true); setError(null); setRawKey(null); setRawKeyId(null); setCopied(false);
     try {
-      if (!(await ensureCustomerSession()).authenticated) throw new Error(t("errors.sessionExpired"));
+      if (!(await ensureCustomerSession()).authenticated) { denyAccess(401); return; }
       const r = await fetchWithTimeout("/api/odoo/keys", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -164,6 +198,7 @@ export default function ApiKeysPage() {
           name: name.trim() || t("apiKeys.defaultName"),
         }),
       });
+      if (r.status === 401 || r.status === 403) { denyAccess(r.status); return; }
       const b = await r.json();
       if (!r.ok) { setError(t(codeMessageKey(b.code) ?? "apiKeys.operationFailed")); return; }
       setRawKey(b.apiKey);
@@ -178,10 +213,11 @@ export default function ApiKeysPage() {
     ++refreshEpoch.current;
     const cur = pending; setBusy(true); setError(null);
     try {
-      if (!(await ensureCustomerSession()).authenticated) throw new Error(t("errors.sessionExpired"));
+      if (!(await ensureCustomerSession()).authenticated) { denyAccess(401); return; }
       const r = cur.kind === "rotate"
         ? await fetchWithTimeout(`/api/odoo/keys/${encodeURIComponent(cur.id)}/rotate`, { method: "POST", credentials: "include" })
         : await fetchWithTimeout("/api/odoo/keys", { method: "DELETE", headers: { "content-type": "application/json" }, credentials: "include", body: JSON.stringify(cur.kind === "revoke" ? { id: cur.id } : { id: cur.id, remove: true }) });
+      if (r.status === 401 || r.status === 403) { denyAccess(r.status); return; }
       const b = await r.json();
       if (!r.ok) { setError(t(codeMessageKey(b.code) ?? "apiKeys.operationFailed")); return; }
       setPending(null);
@@ -202,13 +238,15 @@ export default function ApiKeysPage() {
 
   // One stable initial state: do not render the empty connection form, access
   // badges or onboarding copy before the owner and key inventory are known.
+  if (authorityDenied) return null;
+
   if (loading || !initialLoaded) {
     return (
       <>
         <PageHeader icon={<KeyRound className="h-4 w-4" />} title={t("v4.connection.title")} />
         <PageContainer>
           {error && !loading
-            ? <ErrorState title={t("apiKeys.loadFailed")} message={error} retry={() => setLoadTick(tick => tick + 1)} />
+            ? <ErrorState title={t("apiKeys.loadFailed")} message={error === "apiKeys.loadFailed" ? t("apiKeys.loadFailed") : error} retry={() => setLoadTick(tick => tick + 1)} />
             : <div role="status" aria-label={t("apiKeys.loadingCredentials")} className="space-y-5" aria-busy="true">
                 <Skeleton className="h-20 w-full" />
                 <Skeleton className="h-44 w-full" />
@@ -239,11 +277,8 @@ export default function ApiKeysPage() {
           {error && (
             <ErrorState
               title={t("apiKeys.operationFailed")}
-              message={error}
-              retry={() => {
-                setError(null);
-                void loadKeys().then(setKeys).catch(() => setError(t("apiKeys.loadFailed")));
-              }}
+              message={error === "apiKeys.loadFailed" ? t("apiKeys.loadFailed") : error}
+              retry={() => { setError(null); setLoadTick(tick => tick + 1); }}
             />
           )}
 

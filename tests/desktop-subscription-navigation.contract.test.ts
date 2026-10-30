@@ -28,7 +28,7 @@ describe("simplified desktop and owner subscription navigation", () => {
     expect(layout).toContain('encodeURIComponent(pathname)');
     expect(layout).toContain('/platform/login?next=');
     expect(login).toContain('afterLoginDestination()');
-    expect(login).toContain('subscription-requests');
+    expect(login).toContain('return "/platform/dashboard"');
     expect(appShell).toContain('href: "/billing"');
     expect(appShell).toContain('href: "/team"');
     expect(appShell).not.toContain('href: "/platform/subscriptions"');

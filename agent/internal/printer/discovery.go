@@ -90,6 +90,25 @@ func IsRuntimeDiscoveryPrinter(d DeviceInfo) bool {
 	return true
 }
 
+func isLocallyAuthorizedPDFOutput(cfg *config.Config, d DeviceInfo) bool {
+	typ := d.ConnectionType
+	if strings.TrimSpace(typ) == "" {
+		typ = d.Type
+	}
+	if !strings.EqualFold(strings.TrimSpace(typ), "pdf_output") {
+		return true
+	}
+	if cfg == nil {
+		return false
+	}
+	pc := config.PrinterConfig{
+		ID: d.ID, Type: typ, ConnectionType: typ, Protocol: d.Protocol,
+		Endpoint: d.Endpoint, OutputProfileID: d.OutputProfileID, PrinterType: d.PrinterType,
+	}
+	_, err := cfg.ResolvePDFOutput(pc)
+	return err == nil
+}
+
 // RuntimeDiscoveryPrinters returns only observations for which this Agent has
 // a production execution path. It never mutates the input slice.
 func RuntimeDiscoveryPrinters(printers []DeviceInfo) []DeviceInfo {
@@ -344,6 +363,10 @@ func DiscoverQuick(cfg *config.Config, registryPath string) DiscoveryResult {
 		for _, d := range infos {
 			d = markAutomaticDiscoveryRegistration(d)
 			d = discoveredDeviceNames(d)
+			if !isLocallyAuthorizedPDFOutput(cfg, d) {
+				log.Printf("[discovery] hiding PDF output without a current local profile: %q", d.ID)
+				continue
+			}
 			if d.ID == "" {
 				d.ID = StableIDForDevice(d)
 			}
@@ -508,6 +531,10 @@ func discoverWithContext(ctx context.Context, cfg *config.Config, registryPath s
 		for _, d := range infos {
 			d = markAutomaticDiscoveryRegistration(d)
 			d = discoveredDeviceNames(d)
+			if !isLocallyAuthorizedPDFOutput(cfg, d) {
+				log.Printf("[discovery] hiding PDF output without a current local profile: %q", d.ID)
+				continue
+			}
 			if d.ID == "" {
 				d.ID = StableIDForDevice(d)
 			}

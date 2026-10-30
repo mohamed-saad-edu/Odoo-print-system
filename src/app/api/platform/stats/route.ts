@@ -8,6 +8,7 @@ import { sql, eq, and, inArray } from "drizzle-orm";
 import { agentStaleThresholdSeconds, printerStaleThresholdSeconds } from "../../../../lib/agent-availability";
 import { nonVirtualPrinterPredicate } from "../../../../lib/printer-virtual-sql";
 import { effectiveSubscriptionStatusSql } from "../../../../lib/effective-subscription-status";
+import { printerOperationalVerificationPredicate } from "../../../../lib/printer-verification-sql";
 
 import { getCachedPlatformStats, setCachedPlatformStats } from "../../../../lib/platform-stats-cache";
 
@@ -253,12 +254,15 @@ export async function GET(req: Request) {
     FROM tenant_subscriptions s JOIN tenants t ON t.id=s.tenant_id
   ) SELECT
     (SELECT count(*)::int FROM subscription_requests WHERE status='pending') AS "pendingRequests",
-    count(*) FILTER(WHERE subscription_type='free')::int AS free,
-    count(*) FILTER(WHERE subscription_type='paid')::int AS paid,
+    count(*) FILTER(WHERE effective_status='active' AND subscription_type='free')::int AS free,
+    count(*) FILTER(WHERE effective_status='active' AND subscription_type='paid')::int AS paid,
     count(*) FILTER(WHERE effective_status='active' AND current_period_end<=clock_timestamp()+interval '30 days')::int AS "expiringSoon",
     count(*) FILTER(WHERE effective_status='suspended')::int AS suspended,
     count(*) FILTER(WHERE effective_status='active')::int AS active FROM states`);
-  const verified = await tx.execute(sql`SELECT count(*) FILTER(WHERE verification_state='verified' AND inventory_present=true AND lifecycle='active')::int AS verified FROM printers`);
+  const verified = await tx.execute(sql`SELECT count(*) FILTER(WHERE ${printers.sharedWithGateway} = true
+    AND ${printers.inventoryPresent} = true AND ${printers.lifecycle} = 'active'
+    AND ${nonVirtualPrinterPredicate()} AND ${printerOperationalVerificationPredicate(sql`printers`)})::int AS verified
+    FROM printers`);
   const responseBody = {
     business:business.rows[0], logicalUsage, verifiedPrinters:verified.rows[0]?.verified??0,
     tenants: tenantStats[0] ?? { total: 0, active: 0, suspended: 0, deleted: 0 },

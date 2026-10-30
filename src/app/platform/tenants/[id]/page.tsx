@@ -20,7 +20,7 @@ function WorkspaceDetailContent({id}:{id:string}){const searchParams=useSearchPa
    setFocusedRequestId(requested??"");
    if(requested || searchParams.get("subscriptionAction")==="revoke" || searchParams.get("tab")==="subscriptions"){setTab("subscriptions");}
  },[id,searchParams]);
- useEffect(()=>{let live=true;Promise.all([adminJson(`/api/platform/tenants/${encodeURIComponent(id)}`),adminJson('/api/platform/plans')]).then(([d,p])=>{if(live){setData(d);setPlans(p.plans);setError('');}}).catch(()=>{if(live)setError(a('loadError'));});return()=>{live=false;};},[id,tick,a]);
+ useEffect(()=>{let live=true;Promise.all([adminJson(`/api/platform/tenants/${encodeURIComponent(id)}`),adminJson('/api/platform/plans')]).then(([d,p])=>{if(live){setData(d);setPlans(p.plans);setError('');}}).catch(()=>{if(live){setData(null);setPlans([]);setSaved(false);setError(a('loadError'));}});return()=>{live=false;};},[id,tick,a]);
  function refreshed(){setError("");setSaved(true);setTick(x=>x+1);}
  function refreshOnConflict(code:string){
    setSaved(false);

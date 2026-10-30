@@ -2,6 +2,7 @@
 import Link from "next/link";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { Building2, RefreshCw, Search, X, MoreHorizontal, AlertOctagon, RotateCcw, Ban } from "lucide-react";
 import {
   Button,
@@ -50,6 +51,7 @@ const LIFECYCLE_META: Record<Tenant["lifecycle"], { tone: Tone; key: MessageKey 
 
 export default function PlatformTenantsPage() {
   const { t, tc, locale, formatNumber, formatDate } = useI18n();
+  const router = useRouter();
   const [tenants, setTenants] = useState<Tenant[]>([]);
   const [completedQuery, setCompletedQuery] = useState<string | null>(null);
   const [search, setSearchValue] = useState("");
@@ -81,16 +83,24 @@ export default function PlatformTenantsPage() {
           { cache: "no-store", signal: controller.signal },
         );
         if (ignore) return;
+        if (res.status === 401) router.replace("/platform/login?next=%2Fplatform%2Ftenants");
         if (!res.ok) throw new Error(t("platform.tenants.loadFailed"));
         const data = await res.json();
         if (!ignore) { setTenants(Array.isArray(data.tenants) ? data.tenants : []); setHasMore(data.hasMore === true); setError(null); }
       } catch {
-        if (!ignore) setError(t("platform.tenants.loadFailed"));
+        if (!ignore) {
+          // A failed refresh must not leave stale workspace lifecycle actions
+          // available against a potentially changed control-plane state.
+          setTenants([]);
+          setHasMore(false);
+          setSelectedTenant(null);
+          setError(t("platform.tenants.loadFailed"));
+        }
       } finally { if (!ignore) setCompletedQuery(queryKey); }
     }
     void load();
     return () => { ignore = true; controller.abort(); };
-  }, [reloadKey, t, offset, search, queryKey]);
+  }, [reloadKey, t, offset, search, queryKey, router]);
 
   function closeDialog() {
     if (actionLoading) return;

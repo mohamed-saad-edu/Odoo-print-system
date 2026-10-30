@@ -3,6 +3,7 @@
 import { FileOutputDetails } from "../../../components/PrinterVerificationDetails";
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { ArrowLeft, ArrowRight, Clock3, Eye, History, Printer, RefreshCw, Search, ShieldCheck } from "lucide-react";
 import { Button, Card, EmptyState, ErrorState, Modal, PageHeader, StatusBadge, TableSkeleton } from "../../../components/ui";
 import { fetchWithTimeout } from "../../../lib/fetch-timeout";
@@ -28,6 +29,7 @@ function outcome(job: PrintRecord): PhysicalOutcome { return job.physicalOutcome
 
 export default function PlatformPrintOperationsPage() {
   const { locale, formatDateTime, formatNumber } = useI18n();
+  const router = useRouter();
   const t = labels[locale];
   const [records, setRecords] = useState<PrintRecord[]>([]);
   const [selectedJob, setSelectedJob] = useState<PrintRecord | null>(null);
@@ -54,6 +56,8 @@ export default function PlatformPrintOperationsPage() {
       if (tenant.trim()) qs.set("tenantId", tenant.trim());
       try {
         const response = await fetchWithTimeout(`/api/platform/jobs?${qs}`, { cache: "no-store", signal: controller.signal });
+        if (cancelled) return;
+        if (response.status === 401) router.replace("/platform/login");
         if (!response.ok) throw Error(String(response.status));
         const data = await response.json() as { jobs?: PrintRecord[]; hasMore?: boolean };
         if (cancelled) return;
@@ -61,12 +65,12 @@ export default function PlatformPrintOperationsPage() {
         setHasMore(data.hasMore === true);
         setRefreshedAt(new Date().toISOString());
         setError("");
-      } catch { if (!cancelled) { setError(t.fail); setRecords([]); setHasMore(false); } }
+      } catch { if (!cancelled) { setError(t.fail); setRecords([]); setHasMore(false); setSelectedJob(null); } }
       finally { if (!cancelled) setLoadedKey(key); }
     }
     void load();
     return () => { cancelled = true; controller.abort(); };
-  }, [key, status, search, tenant, offset, t.fail]);
+  }, [key, status, search, tenant, offset, t.fail, router]);
 
   const stateChoices = ["all", "active", "success", "failed", "expired", "unknown"] as const;
   return (

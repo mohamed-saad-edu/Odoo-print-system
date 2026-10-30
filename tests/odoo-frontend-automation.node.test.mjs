@@ -228,7 +228,7 @@ test("an unavailable or stale language session never reloads with the previous l
 });
 
 
-test("Odoo Apps description uses translated manifest metadata, not untranslatable static HTML or repository links", () => {
+test("Odoo Apps description uses translated manifest metadata without a static override", () => {
   const base = path.resolve("odoo_addons/print_gateway");
   const manifest = fs.readFileSync(path.join(base, "__manifest__.py"), "utf8");
   const catalog = fs.readFileSync(path.join(base, "i18n/ar.po"), "utf8");
@@ -236,6 +236,10 @@ test("Odoo Apps description uses translated manifest metadata, not untranslatabl
   const config = fs.readFileSync(path.join(base, "models/gateway_config.py"), "utf8");
   const menus = fs.readFileSync(path.join(base, "views/menu.xml"), "utf8");
   assert.equal(fs.existsSync(path.join(base, "static/description/index.html")), false);
+  for (const image of ["pos-receipt-printing.jpg", "invoice-printing.jpg"]) {
+    assert.equal(fs.existsSync(path.join(base, "static/description", image)), false);
+    assert.doesNotMatch(manifest, new RegExp(`static/description/${image}`));
+  }
   assert.doesNotMatch(manifest, /github\.com/);
   assert.match(manifest, /https:\/\/print\.yaseir\.cloud\//);
   assert.match(catalog, /model:ir\.module\.module,description:base\.module_print_gateway/);

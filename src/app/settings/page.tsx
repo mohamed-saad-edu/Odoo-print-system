@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { apiMessageKey } from "../../lib/api-error-keys";
 import { fetchWithTimeout } from "../../lib/fetch-timeout";
+import { useRouter } from "next/navigation";
 import { SessionInventory } from "../../components/SessionInventory";
 import { WorkspaceSecurity } from "../../components/WorkspaceSecurity";
 import { roleLabel } from "../../lib/roles";
@@ -48,6 +49,7 @@ function subscribeSecurityDestination(onChange: () => void) {
 
 export default function SettingsPage() {
   const securityRequested = useSyncExternalStore(subscribeSecurityDestination, securityDestinationSnapshot, () => false);
+  const router = useRouter();
   const nameEdited = useRef(false);
   const [name, setName] = useState("");
   const { t, formatDate } = useI18n();
@@ -65,7 +67,17 @@ export default function SettingsPage() {
     let cancelled = false;
     fetchWithTimeout("/api/settings", { credentials: "include", cache: "no-store" })
       .then(async (r) => {
-        if (!r.ok) throw new Error(t("settings.loadFailed"));
+        if (cancelled) return;
+        if (!r.ok) {
+          if (r.status === 401) router.replace("/login?next=%2Fsettings");
+          if (r.status === 401 || r.status === 403) {
+            setEmail("");
+            setRole("");
+            setTenantCreatedAt(null);
+            if (!nameEdited.current) setName("");
+          }
+          throw new Error(t("settings.loadFailed"));
+        }
         const d = (await r.json()) as SettingsPayload;
         if (cancelled) return;
         if (!nameEdited.current) setName(d.tenant?.name ?? "");
@@ -78,7 +90,7 @@ export default function SettingsPage() {
     return () => {
       cancelled = true;
     };
-  }, [t]);
+  }, [t, router]);
 
   async function save(e: React.FormEvent) {
     e.preventDefault();

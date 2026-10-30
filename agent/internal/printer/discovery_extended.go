@@ -42,6 +42,12 @@ const (
 // 1. UUID, 2. serial+manufacturer/model, 3. MAC, 4. IP+URI, 5. hostname+port
 
 func dedupeKey(di DeviceInfo) string {
+	if isUnverifiedWSDObservation(di) {
+		if id := StableIDForDevice(di); id != "" {
+			return "wsd:" + id
+		}
+		return ""
+	}
 	if key, ok := physicalIdentityKey(di); ok {
 		return key
 	}

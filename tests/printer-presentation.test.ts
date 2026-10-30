@@ -98,12 +98,14 @@ describe("printer diagnostic details", () => {
 });
 
 describe("desktop primary printer wiring", () => {
-  it("opens a printer queue and retains unknown-health Test and management details", () => {
+  it("opens a printer queue and retains management details without customer Test Print", () => {
     const page = readFileSync("src/desktop/pages/Printers.tsx", "utf8");
     const main = readFileSync("src/desktop/main.tsx", "utf8");
     expect(page).toContain('s.setJobPrinterFilter(id); s.setJobTab("all"); s.setJobSearch("");');
     expect(page).toContain('value="saved"');
-    expect(page).toContain("onClick={() => s.handleTest(p.id)}");
+    expect(page).not.toContain("s.handleTest(");
+    expect(page).not.toContain("gatewayTestPrinterIds");
+    expect(main).not.toContain("handleTest");
     expect(page).not.toMatch(/disabled=\{[^}]*view\.state/);
     expect(main).toContain("const selectedPrinter = resolvedSelectedPrinter;");
     expect(main).toContain("selectedPrinter.reportedStatus || selectedPrinter.status");

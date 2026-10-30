@@ -1,5 +1,5 @@
 import React from "react";
-import { Eye, Plus, Printer as PrinterIcon, RefreshCw, Search, Play, ShieldCheck } from "lucide-react";
+import { Eye, Plus, Printer as PrinterIcon, RefreshCw, Search, ShieldCheck } from "lucide-react";
 import { Button, Card, CardHeader, EmptyState, ErrorState, Input, LoadingState, Select, StatusBadge, StatusDot } from "../../components/ui";
 import { Toolbar, PrinterAvatar } from "../ui";
 import { PrinterSharingControl } from "../components/PrinterSharingControl";
@@ -105,10 +105,8 @@ export function PrintersPage({ s }: { s: DesktopState }) {
                   <StatusBadge tone={view.tone} label={t(view.labelKey)} />
                 </div>
                 <div className="mt-3 flex min-w-0 flex-wrap gap-2 border-t border-edge-subtle pt-3">
-                  <Button size="sm" variant="secondary" disabled={s.busy || !s.gatewayTestPrinterIds.has(p.id)} onClick={() => s.handleTest(p.id)} aria-label={t("desktop.overview.testNamed", { name })} icon={<Play className="h-3.5 w-3.5" />}>{t("desktop.printers.test")}</Button>
                   <Button size="sm" variant="secondary" onClick={() => s.setSelectedPrinter(p)} aria-label={`${t("desktop.printers.details")} — ${name}`} icon={<Eye className="h-3.5 w-3.5" />}>{t("desktop.printers.details")}</Button>
                 </div>
-                {!s.gatewayTestPrinterIds.has(p.id) && <p className="mt-2 text-xs text-ink-3">{t("desktop.printers.cloudTestUnavailable")}</p>}
                 <div className="mt-3"><PrinterSharingControl s={s} printer={p} /></div>
               </li>
               );
@@ -125,9 +123,8 @@ export function PrintersPage({ s }: { s: DesktopState }) {
                   <td className="px-5 py-3"><div className="flex items-center gap-3"><PrinterAvatar name={name} size="lg" tone={view.tone} /><div className="min-w-0"><button type="button" onClick={() => openQueue(p.id)} aria-label={`${t("desktop.drawer.viewJobs")} — ${name}`} className="max-w-full break-words text-start text-base font-semibold text-ink hover:text-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/35">{name}</button><div className="mt-0.5 text-xs text-ink-3">{p.agentName || t("printer.unknownAgent")}</div></div></div></td>
                   <td className="px-4 py-3"><StatusBadge tone={view.tone} label={t(view.labelKey)} /></td>
                   <td className="px-5 py-3"><div className="flex flex-wrap items-center justify-end gap-1.5">
-                     <Button size="sm" variant="secondary" disabled={s.busy || !s.gatewayTestPrinterIds.has(p.id)} onClick={() => s.handleTest(p.id)} aria-label={t("desktop.overview.testNamed", { name })} icon={<Play className="h-3.5 w-3.5" />}>{t("desktop.printers.test")}</Button>
                      <Button size="sm" variant="ghost" onClick={() => s.setSelectedPrinter(p)} aria-label={`${t("desktop.printers.details")} — ${name}`} icon={<Eye className="h-3.5 w-3.5" />}>{t("desktop.printers.details")}</Button>
-                   </div><div className="mt-2 max-w-md ms-auto space-y-2">{!s.gatewayTestPrinterIds.has(p.id) && <p className="text-xs text-ink-3">{t("desktop.printers.cloudTestUnavailable")}</p>}<PrinterSharingControl s={s} printer={p} /></div></td>
+                   </div><div className="mt-2 max-w-md ms-auto space-y-2"><PrinterSharingControl s={s} printer={p} /></div></td>
                 </tr>
                 );
               })}</tbody>

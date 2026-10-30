@@ -708,7 +708,7 @@ func TestHeartbeatSharingWholeEnvelopeFitsGatewayWithEscapedAcceptedFields(t *te
 	seenPrinters, seenACKs, seenPrivate, seenOwned := make(map[string]bool), make(map[string]bool), make(map[string]bool), make(map[string]bool)
 	for i, page := range pages {
 		page["desiredStatePaging"] = true // actual caller's last envelope field
-		encoded, err := json.Marshal(page)
+		encoded, err := marshalAgentJSON(page)
 		if err != nil || len(encoded) > 512*1024 {
 			t.Fatalf("whole accepted heartbeat page %d exceeds Gateway: bytes=%d %v", i+1, len(encoded), err)
 		}

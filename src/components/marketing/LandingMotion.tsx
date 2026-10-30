@@ -3,47 +3,98 @@
 import { useEffect } from "react";
 
 /**
- * GSAP is loaded only for the public landing. It never runs on the Gateway
- * dashboard or inside the Windows Agent (which must retain native scrolling).
- * No JS is needed to see or use any of the content.
+ * GSAP ScrollTrigger motion orchestrator for Yaseir landing page.
+ * Respects prefers-reduced-motion, supports RTL/LTR,
+ * and clears inline styles cleanly after execution.
  */
 export function LandingMotion() {
   useEffect(() => {
     const root = document.querySelector<HTMLElement>("[data-yw-marketing]");
     if (!root || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+
     let cancelled = false;
     let revert: (() => void) | undefined;
+
     void Promise.all([import("gsap"), import("gsap/ScrollTrigger")]).then(([module, triggers]) => {
       if (cancelled) return;
       const gsap = module.gsap;
       gsap.registerPlugin(triggers.ScrollTrigger);
-      // shortcut: one mirrored offset only; full bidirectional choreography waits for a real RTL motion spec.
-      const introX = document.documentElement.dir === "rtl" ? 14 : -14;
-      // Context owns the entire timeline + every ScrollTrigger for unmount.
+
       const context = gsap.context(() => {
-        gsap.timeline({ defaults: { duration: 0.75, ease: "power3.out" } })
-          .from("[data-yw-intro]", { opacity: 0, y: 22, stagger: 0.105, clearProps: "all" })
-          .from("[data-yw-flow-item]", { opacity: 0, x: introX, stagger: 0.085, duration: 0.45, clearProps: "all" }, "-=0.45");
-        gsap.utils.toArray<HTMLElement>("[data-yw-reveal]", root).forEach((element) => {
+        // 1. Hero Staggered Intro: Text column + Video column alongside it
+        const heroTimeline = gsap.timeline({ defaults: { duration: 0.75, ease: "power3.out" } });
+
+        const introElements = root.querySelectorAll("[data-yw-intro]");
+        if (introElements.length > 0) {
+          heroTimeline.from(introElements, {
+            opacity: 0,
+            y: 22,
+            stagger: 0.09,
+            clearProps: "all",
+          });
+        }
+
+        const heroVideo = root.querySelector("[data-yw-hero-video]");
+        if (heroVideo) {
+          heroTimeline.from(
+            heroVideo,
+            {
+              opacity: 0,
+              y: 28,
+              duration: 0.85,
+              ease: "power3.out",
+              clearProps: "all",
+            },
+            "-=0.5"
+          );
+        }
+
+        // 2. Flow step progression
+        const flowSteps = root.querySelectorAll("[data-yw-flow-step]");
+        if (flowSteps.length > 0) {
+          gsap.from(flowSteps, {
+            opacity: 0,
+            y: 20,
+            stagger: 0.1,
+            duration: 0.55,
+            ease: "power2.out",
+            clearProps: "all",
+            scrollTrigger: {
+              trigger: flowSteps[0]?.parentElement || root,
+              start: "top 88%",
+              once: true,
+            },
+          });
+        }
+
+        // 3. Scroll Reveals for sections and media
+        const revealElements = gsap.utils.toArray<HTMLElement>("[data-yw-reveal]", root);
+        revealElements.forEach((element) => {
           gsap.from(element, {
             opacity: 0,
-            y: 24,
+            y: 22,
             duration: 0.65,
             ease: "power2.out",
             clearProps: "all",
-            scrollTrigger: { trigger: element, start: "top 93%", once: true },
+            scrollTrigger: {
+              trigger: element,
+              start: "top 90%",
+              once: true,
+            },
           });
         });
       }, root);
+
       revert = () => context.revert();
     }).catch(() => {
-      // Animation is progressively enhanced; never hide functional content
-      // or surface a loading/error UI just because motion is unavailable.
+      // Animation is progressively enhanced; functional content remains visible
     });
+
     return () => {
       cancelled = true;
       revert?.();
     };
   }, []);
+
   return null;
 }

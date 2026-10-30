@@ -464,7 +464,7 @@ def check_tokens() -> None:
 
 SURFACES = ("bg", "surface", "surface-2", "surface-3", "surface-accent", "brand-subtle")
 TEXT_TOKENS = ("text", "text-2", "text-3", "text-4")
-STATUS_TOKENS = ("ok", "warn", "bad", "info", "notice-text")
+STATUS_TOKENS = ("success", "warning", "danger", "info", "notice-text")
 # Only the form-control boundary is checked: a dialog, drawer or tooltip edge is
 # not the sole identifier of an interactive control (its label and surface are),
 # so the 3:1 boundary rule of SC 1.4.11 applies to `--control-border`.
@@ -499,13 +499,25 @@ def theme_blocks() -> dict[str, dict[str, str]]:
 
 def check_contrast() -> None:
     for theme, tokens in theme_blocks().items():
+        # Unresolved CSS colors cannot be checked; fail closed instead of skipping them.
+        required = dict.fromkeys((
+            *TEXT_TOKENS, *SURFACES, *STATUS_TOKENS, "brand-solid", "success-solid",
+            "danger-solid", "warning-solid", "notice-bg", "notice-icon", *CONTROL_TOKENS,
+        ))
+        colors = {}
+        for token in required:
+            value = tokens.get(token, "").strip()
+            if re.fullmatch(r"#[0-9a-fA-F]{3}(?:[0-9a-fA-F]{3})?", value):
+                colors[token] = value
+            else:
+                report("CONTRAST", theme, f"--{token} is missing or not a literal hex color; contrast cannot be checked")
         for token in TEXT_TOKENS:
-            color = tokens.get(token, "").strip()
-            if not color.startswith("#"):
+            color = colors.get(token)
+            if color is None:
                 continue
             for surface in SURFACES:
-                bg = tokens.get(surface, "").strip()
-                if not bg.startswith("#"):
+                bg = colors.get(surface)
+                if bg is None:
                     continue
                 ratio = contrast_ratio(color, bg)
                 if ratio < 4.5:
@@ -515,12 +527,12 @@ def check_contrast() -> None:
                         f"--{token} on --{surface} is {ratio:.2f}:1 (needs 4.5:1)",
                     )
         for token in STATUS_TOKENS:
-            color = tokens.get(token, "").strip()
-            if not color.startswith("#"):
+            color = colors.get(token)
+            if color is None:
                 continue
             for surface in ("surface", "surface-2"):
-                bg = tokens.get(surface, "").strip()
-                if not bg.startswith("#"):
+                bg = colors.get(surface)
+                if bg is None:
                     continue
                 ratio = contrast_ratio(color, bg)
                 if ratio < 4.5:
@@ -528,25 +540,28 @@ def check_contrast() -> None:
         # Solid fills carry white label text in buttons, timeline steps and
         # step markers, so the pair must clear 4.5:1 as well.
         for token in ("brand-solid", "success-solid", "danger-solid", "warning-solid"):
-            color = tokens.get(token, "").strip()
-            if not color.startswith("#"):
+            color = colors.get(token)
+            if color is None:
                 continue
             ratio = contrast_ratio("#ffffff", color)
             if ratio < 4.5:
                 report("CONTRAST", theme, f"white label on --{token} is {ratio:.2f}:1 (needs 4.5:1)")
         # Notice surfaces paint their own text/icon on --notice-bg.
         for pair, needed in (("notice-text", 4.5), ("notice-icon", 3.0)):
-            color = tokens.get(pair, "").strip()
-            bg = tokens.get("notice-bg", "").strip()
-            if color.startswith("#") and bg.startswith("#"):
+            color = colors.get(pair)
+            bg = colors.get("notice-bg")
+            if color is not None and bg is not None:
                 ratio = contrast_ratio(color, bg)
                 if ratio < needed:
                     report("CONTRAST", theme, f"--{pair} on --notice-bg is {ratio:.2f}:1 (needs {needed}:1)")
         for token in CONTROL_TOKENS:
-            color = tokens.get(token, "").strip()
-            if not color.startswith("#"):
+            color = colors.get(token)
+            if color is None:
                 continue
-            ratio = contrast_ratio(color, tokens.get("surface", "#ffffff").strip())
+            surface = colors.get("surface")
+            if surface is None:
+                continue
+            ratio = contrast_ratio(color, surface)
             if ratio < 3:
                 report("CONTRAST", theme, f"--{token} on --surface is {ratio:.2f}:1 (needs 3:1)")
 

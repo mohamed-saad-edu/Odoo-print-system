@@ -25,9 +25,10 @@
 #   _test.go.  Test = every *_test.go under agent/.
 #
 # NOTE
-#   This is a grep-based TEXT metric. It is the correct tool for counting a
-#   text pattern, but its output is NOT a compiler, vet, or linter verdict.
-#   Matches inside comments/strings are excluded by the sanity filter below.
+#   This is a grep-based TEXT metric, not a compiler, vet, or linter verdict.
+#   Only full-line // comments are filtered; matching string/block-comment text
+#   can still count as an ignored result.
+# shortcut: grep-based counts can include string/block-comment matches; use a Go AST if semantic accuracy is required.
 #
 # usage: scripts/count-ignored-results.sh [--list]
 set -euo pipefail
@@ -39,9 +40,17 @@ LIST="${1:-}"
 prod_files=$(find agent -name '*.go' ! -name '*_test.go' | sort)
 test_files=$(find agent -name '*_test.go' | sort)
 
+# grep exits 1 for an empty result, which is valid for this inventory.
+# Preserve exit 2 (unreadable files or regex errors) as a real failure.
+grep_allow_no_match() {
+  local code=0
+  grep "$@" || code=$?
+  [[ "$code" -eq 0 || "$code" -eq 1 ]]
+}
+
 count() { # count <files...>
   [ -z "$1" ] && { echo 0; return; }
-  grep -hE "$PATTERNS" $1 | grep -vE '^[[:space:]]*//' | wc -l | tr -d ' '
+  grep_allow_no_match -hE "$PATTERNS" $1 | grep_allow_no_match -vE '^[[:space:]]*//' | wc -l | tr -d ' '
 }
 
 PROD=$(count "$prod_files")
@@ -55,5 +64,5 @@ if [ "$LIST" = "--list" ]; then
   # the listing can never disagree with PRODUCTION (it did: --list showed 49
   # while PRODUCTION said 48, because a line whose *content* is a comment
   # mentioning `_ = recover()` was listed but not counted).
-  grep -nE "$PATTERNS" $prod_files | grep -vE ':[0-9]+:[[:space:]]*//' | sed 's/^/  /'
+  grep_allow_no_match -nE "$PATTERNS" $prod_files | grep_allow_no_match -vE ':[0-9]+:[[:space:]]*//' | sed 's/^/  /'
 fi

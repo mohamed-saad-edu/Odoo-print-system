@@ -1,7 +1,7 @@
 # Architecture Decision Records (ADR)
 
 > **Document Status**: Approved  
-> **Repository**: Yaseir Cloud Printing Platform (`mo7medSa3d/oddo-print`)  
+> **Repository**: Yaseir Cloud Printing Platform (source archive; repository URL is not an architectural invariant)  
 > **Last Updated**: 2026-09-15
 
 ---

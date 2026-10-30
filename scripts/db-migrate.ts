@@ -157,6 +157,10 @@ export async function migrateByHash(client: PoolClient, migrationsFolder: string
       if (applied.has(migration.hash)) continue;
       if (migration.hash === LEGACY_DESTINATION_REMOVAL_HASH) await preserveLegacyDestinationLabels(client);
       if (migration.sql.some(statement => statement.includes("PROVIDER_BILLING_RETIREMENT_V1"))) await preserveLegacyProviderBilling(client);
+      if (migration.sql.some(statement => statement.includes("printers_connection_type_check") && statement.includes("'network'"))) {
+        // 0001 assigned its legacy tcp default to existing rows before this canonical check.
+        await client.query("UPDATE public.printers SET connection_type = 'network' WHERE connection_type = 'tcp'");
+      }
       const preservePrintHistory = migration.hash === PHYSICAL_ONLY_CUTOVER_HASH;
       if (preservePrintHistory) {
         // Prevent writes between selecting victims, archiving and deleting them.

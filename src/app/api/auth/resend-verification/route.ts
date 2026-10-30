@@ -29,6 +29,8 @@ export async function POST(req: Request) {
 
   const email = typeof body.email === "string" ? normalizeEmail(body.email) : "";
   const planId = typeof body.planId === "string" && body.planId.length <= 128 ? body.planId : "";
+  if (body.inviteToken !== undefined && (typeof body.inviteToken !== "string" || body.inviteToken.length > 256))
+    return NextResponse.json({ error: "Invitation is invalid or expired", code: "INVITATION_INVALID" }, { status: 400 });
   const inviteToken = typeof body.inviteToken === "string" && body.inviteToken.length <= 256 ? body.inviteToken : "";
   if (!validEmail(email)) {
     return NextResponse.json({ error: "Enter a valid email address." }, { status: 400 });

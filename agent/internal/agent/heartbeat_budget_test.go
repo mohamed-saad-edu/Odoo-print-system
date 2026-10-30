@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"strings"
@@ -38,6 +39,20 @@ func TestHeartbeatRejectsUnsplittableOversizedData(t *testing.T) {
 				t.Fatal("heartbeat pagination did not terminate for unsplittable data")
 			}
 		})
+	}
+}
+
+func TestAgentJSONWireSizeDoesNotEscapeHTML(t *testing.T) {
+	value := map[string]string{"note": strings.Repeat("<&>", 100)}
+	encoded, err := marshalAgentJSON(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(encoded, []byte(`\u003c`)) || bytes.Contains(encoded, []byte(`\u0026`)) {
+		t.Fatal("application JSON was HTML-escaped beyond Gateway wire accounting")
+	}
+	if len(encoded) != heartbeatJSONBytes(value) {
+		t.Fatalf("wire-size accounting differs from encoded request: %d != %d", len(encoded), heartbeatJSONBytes(value))
 	}
 }
 

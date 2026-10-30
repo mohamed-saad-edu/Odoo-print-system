@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Crown, Mail, Users } from "lucide-react";
 import { useI18n } from "../../i18n/react";
@@ -32,6 +32,14 @@ export default function TeamPage() {
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
 
+  const clearTeamData = useCallback(() => {
+    setMembers([]);
+    setInvitations([]);
+    setMoreMembers(false);
+    setMoreInvitations(false);
+    setProfile(null);
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -50,7 +58,10 @@ export default function TeamPage() {
             credentials: "include", cache: "no-store",
           }),
         ]);
-        if (!membersRes.ok || !settingsRes.ok) throw new Error("TEAM_LIST_UNAVAILABLE");
+        if (!membersRes.ok || !settingsRes.ok) {
+          if (!cancelled && (membersRes.status === 401 || settingsRes.status === 401)) router.replace("/login?next=%2Fteam");
+          throw new Error("TEAM_LIST_UNAVAILABLE");
+        }
         const [team, account] = await Promise.all([
           membersRes.json() as Promise<{ members: Member[]; hasMore: boolean }>,
           settingsRes.json() as Promise<Profile>,
@@ -61,7 +72,10 @@ export default function TeamPage() {
           const invitesRes = await fetchWithTimeout(`/api/team/invitations?limit=${PAGE_SIZE}&offset=${inviteOffset}`, {
             credentials: "include", cache: "no-store",
           });
-          if (!invitesRes.ok) throw new Error("TEAM_INVITATIONS_UNAVAILABLE");
+          if (!invitesRes.ok) {
+            if (!cancelled && invitesRes.status === 401) router.replace("/login?next=%2Fteam");
+            throw new Error("TEAM_INVITATIONS_UNAVAILABLE");
+          }
           pending = await invitesRes.json() as { invitations: Invitation[]; hasMore: boolean };
         }
         if (cancelled) return;
@@ -72,13 +86,16 @@ export default function TeamPage() {
         setProfile(account);
         setLoadError(false);
       } catch {
-        if (!cancelled) setLoadError(true);
+        if (!cancelled) {
+          clearTeamData();
+          setLoadError(true);
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
     })();
     return () => { cancelled = true; };
-  }, [memberOffset, inviteOffset, revision, router]);
+  }, [memberOffset, inviteOffset, revision, router, clearTeamData]);
 
   function refresh() {
     setLoading(true);
@@ -107,6 +124,10 @@ export default function TeamPage() {
         return;
       }
       if (!response.ok) {
+        if (response.status === 401 || response.status === 403) {
+          clearTeamData();
+          if (response.status === 401) router.replace("/login?next=%2Fteam");
+        }
         setNotice({ kind: "err", message: t(codeMessageKey(result.code) ?? "team.invitationFailed") });
         return;
       }
@@ -131,7 +152,13 @@ export default function TeamPage() {
         method: "DELETE", credentials: "include", cache: "no-store",
       });
       const result = await response.json().catch(() => ({})) as { code?: string };
-      if (!response.ok) throw new Error(t(codeMessageKey(result.code) ?? "team.invitationRevocationFailed"));
+      if (!response.ok) {
+        if (response.status === 401 || response.status === 403) {
+          clearTeamData();
+          if (response.status === 401) router.replace("/login?next=%2Fteam");
+        }
+        throw new Error(t(codeMessageKey(result.code) ?? "team.invitationRevocationFailed"));
+      }
       setNotice({ kind: "ok", message: t("success.invitationRevoked") });
       if (invitations.length === 1 && inviteOffset > 0) {
         setLoading(true);

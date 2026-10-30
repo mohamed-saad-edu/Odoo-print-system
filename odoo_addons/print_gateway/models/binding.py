@@ -661,8 +661,8 @@ class PrintGatewayBinding(models.Model):
     def action_send_test_print(self):
         """Construct a standardized diagnostic test page and submit via the Outbox pipeline."""
         self.ensure_one()
-        # A test page causes a PHYSICAL print side effect; the view hides the
-        # button from non-admins but the model is the authoritative boundary
+        # A test page causes a PHYSICAL print side effect; the ordinary view has no
+        # customer test-page button, but this RPC still needs an authoritative guard
         # (the method is RPC-callable and binding ACLs are read-only for
         # internal users, which would otherwise never fire here).
         if not self.env.user.has_group("base.group_system"):

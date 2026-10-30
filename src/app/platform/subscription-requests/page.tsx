@@ -47,7 +47,7 @@ export default function Requests() {
         setError(false);
       })
       .catch(() => {
-        if (live) { setError(true); setItems([]); setHasMore(false); }
+        if (live) { setError(true); setItems([]); setHasMore(false); setPendingCount(0); }
       })
       .finally(() => { if (live) setLoading(false); });
     return () => { live = false; };

@@ -1,6 +1,7 @@
 package printer
 
 import (
+	"context"
 	"io"
 	"sync"
 
@@ -46,6 +47,16 @@ func getPDFiumPool() (pdfium.Pool, error) {
 		pdfiumPool, pdfiumErr = webassembly.Init(newPDFiumPoolConfig())
 	})
 	return pdfiumPool, pdfiumErr
+}
+
+// getPDFiumPoolWithContext keeps synchronous module compilation behind the
+// shared, context-bounded warmup flight so a canceled print cannot wait in
+// sync.Once until a cold WASM runtime finishes compiling.
+func getPDFiumPoolWithContext(ctx context.Context) (pdfium.Pool, error) {
+	if err := awaitPDFiumWarmup(ctx); err != nil {
+		return nil, err
+	}
+	return getPDFiumPool()
 }
 
 // pdfiumRuntimeConfig returns the wazero runtime configuration required by

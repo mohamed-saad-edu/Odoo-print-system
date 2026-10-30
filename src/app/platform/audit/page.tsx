@@ -2,6 +2,7 @@
 
 import { fetchWithTimeout } from "../../../lib/fetch-timeout";
 import { Fragment, useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { Shield, Search, RefreshCw, ChevronDown, ScrollText } from "lucide-react";
 import {
   Button,
@@ -62,6 +63,7 @@ type Filter = "all" | "platform" | "tenant" | "machine";
 
 export default function PlatformAuditPage() {
   const { t, formatNumber, formatDateTime } = useI18n();
+  const router = useRouter();
   const [events, setEvents] = useState<AuditEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -76,17 +78,28 @@ export default function PlatformAuditPage() {
       try {
         const res = await fetchWithTimeout("/api/platform/audit?limit=150");
         if (ignore) return;
+        if (res.status === 401) router.replace("/platform/login");
         if (!res.ok) throw new Error(t("platform.audit.loadFailed"));
-        const data = await res.json();
-        if (!ignore) { setEvents(data.auditEvents || []); setError(null); }
-      } catch { if (!ignore) setError(t("platform.audit.loadError")); }
+        const data: unknown = await res.json();
+        const payload = data && typeof data === "object" ? data as { auditEvents?: unknown } : null;
+        if (!payload || !Array.isArray(payload.auditEvents)) throw new Error("INVALID_AUDIT_PAYLOAD");
+        if (!ignore) { setEvents(payload.auditEvents as AuditEvent[]); setError(null); }
+      } catch {
+        if (!ignore) {
+          // The previous tenant/actor audit snapshot is not proof of current
+          // Platform Owner authority after a failed fresh server read.
+          setEvents([]);
+          setExpanded(null);
+          setError(t("platform.audit.loadError"));
+        }
+      }
       finally { if (!ignore) setLoading(false); }
     }
     load();
     return () => { ignore = true; };
-  }, [reloadKey, t]);
+  }, [reloadKey, t, router]);
 
-  function handleRefresh() { setLoading(true); setReloadKey((k) => k + 1); }
+  function handleRefresh() { setEvents([]); setExpanded(null); setLoading(true); setReloadKey((k) => k + 1); }
 
   // Actor scope, not actor kind, decides the bucket: a `user` row carrying a
   // tenantId is tenant-scoped activity, not platform staff. Only platform
@@ -184,7 +197,7 @@ export default function PlatformAuditPage() {
           </div>
         </div>
 
-        {loading && events.length === 0 ? (
+        {error ? null : loading && events.length === 0 ? (
           <TableSkeleton rows={8} columns={4} />
         ) : filtered.length === 0 ? (
           <EmptyState

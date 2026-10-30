@@ -22,12 +22,19 @@ const root = process.env.YASEIR_BROWSER_ROOT ? path.resolve(process.env.YASEIR_B
 const output = path.resolve(process.argv[2] || "");
 if (!process.argv[2] || fs.existsSync(output)) throw new Error("A new output directory is required");
 if (!process.env.DATABASE_URL || !process.env.CHROMIUM_EXECUTABLE) throw new Error("DATABASE_URL and CHROMIUM_EXECUTABLE are required");
+// This acceptance fixture creates/drops a database and must never connect to
+// an externally hosted cluster, even when given a valid CREATEDB credential.
+const bootstrapDatabase = new URL(process.env.DATABASE_URL);
+if (!["postgres:", "postgresql:"].includes(bootstrapDatabase.protocol) ||
+    !["127.0.0.1", "localhost", "[::1]"].includes(bootstrapDatabase.hostname)) {
+  throw new Error("Browser acceptance requires a dedicated loopback PostgreSQL cluster");
+}
 if (!fs.existsSync(path.join(root, ".next/BUILD_ID"))) throw new Error("Build the release before browser acceptance");
 fs.mkdirSync(output, { recursive: true });
 const privateDir = fs.mkdtempSync(path.join(os.tmpdir(), "yaseir-browser-"));
 fs.chmodSync(privateDir, 0o700);
 const database = `yaseir_browser_${randomBytes(8).toString("hex")}`;
-const connection = new URL(process.env.DATABASE_URL); connection.pathname = `/${database}`;
+const connection = new URL(bootstrapDatabase); connection.pathname = `/${database}`;
 const admin = new pg.Pool({ connectionString: process.env.DATABASE_URL, max: 1, options: "-c timezone=UTC" });
 const db = new pg.Pool({ connectionString: connection.href, max: 2, options: "-c timezone=UTC" });
 const password = randomBytes(32).toString("base64url");

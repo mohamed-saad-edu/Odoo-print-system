@@ -25,7 +25,11 @@ export default function PlatformDashboard() {
     let live = true;
     adminJson('/api/platform/stats').then((result: Stats) => {
       if (live) { setData(result); setError(false); }
-    }).catch(() => { if (live) setError(true); });
+    }).catch(() => {
+      // Do not keep presenting previously fetched control-plane metrics as
+      // current after the authenticated refresh failed.
+      if (live) { setData(null); setError(true); }
+    });
     return () => { live = false; };
   }, [tick]);
 
@@ -33,7 +37,7 @@ export default function PlatformDashboard() {
     <PageHeader variant="inline" title={a("overview")} actions={<Button onClick={() => setTick(x => x + 1)}>{a("refresh")}</Button>} />
     {error && <p role="alert" className="text-bad">{a("loadError")}</p>}
     {!data
-      ? <p role="status">{a("loading")}</p>
+      ? (error ? null : <p role="status">{a("loading")}</p>)
       : <>
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
           <AdminMetric label={a("totalWorkspaces")} value={formatNumber(data.tenants.total)} icon={<Building2 className="h-5 w-5" />}

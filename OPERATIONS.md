@@ -69,8 +69,10 @@ Run migrations before starting the application. Migration `0029` intentionally s
 Migration `0030` was the historical manager-session reset used when the legacy session store was introduced; it is not the refresh-token cutover mechanism.
 
 Current human authentication requires persisted password/session policy. Apply
-all immutable migrations through `0095` with older instances drained. The V3
-forward migration removes retired factor material while preserving accounts,
+all immutable migrations in the release manifest (including forward-only
+`0103` for retained attempt/spooler evidence) with older instances drained,
+**before** deploying the new Gateway receipt-reader. The V3 forward migration
+removes retired factor material while preserving accounts,
 password hashes, memberships, existing session families, revocation state and
 deadlines. Legacy/pre-policy sessions cannot bypass current admission guards.
 See [Migration](MIGRATION.md) for the backup, upgrade, rollback and pending

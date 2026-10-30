@@ -1,3 +1,5 @@
+import { requestPath } from "./request-path";
+
 function createContentSecurityPolicyNonce(): string {
   // A nonce is a secret random value, not an identifier. Generate 256 random
   // bits directly rather than encoding a UUID's fixed-format characters.
@@ -36,6 +38,6 @@ export function createRequestContentSecurityPolicy(): { nonce: string; policy: s
 
 export function shouldApplyPageContentSecurityPolicy(url: string | undefined): boolean {
   if (!url) return true;
-  const path = url.split("?", 1)[0] ?? "/";
+  const path = requestPath(url);
   return !path.startsWith("/api/") && !path.startsWith("/_next/") && path !== "/favicon.ico";
 }

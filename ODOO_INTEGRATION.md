@@ -127,8 +127,9 @@ certified in this release. Do **not** remove or merge companies to fix labels.
    filestore backup. Restrict both backup files to the operator; test a
    restore into a separate, disposable PostgreSQL database first.
 3. Copy **only** `odoo_addons/print_gateway/` from this final V5 source
-   into the instance's existing addons location. Verify the new manifest
-   version `19.0.2.29.0` there and do not overwrite other addons.
+   into the instance's existing addons location. Verify the manifest version from the **current**
+   `odoo_addons/print_gateway/__manifest__.py` (`19.0.2.35.0` in this source)
+   there and do not overwrite other addons.
 4. With the Odoo HTTP workers stopped according to that instance's
    deployment procedure, run the non-destructive module upgrade against
    the correct database. Substitute real deployment values, not example
@@ -153,8 +154,9 @@ certified in this release. Do **not** remove or merge companies to fix labels.
    authenticated `POST /print_gateway/runtime-agents` and
    `POST /print_gateway/runtime-printers` calls use the exact selected
    company/branch and Agent IDs. Test same-name branches, access revocation,
-   printer change on Agent switch, a POS binding and an actual test print to
-   the **selected** device.
+   printer change on Agent switch, a POS binding and an operator-authorized internal printer certification
+   through the selected device. The customer-facing Test Page was retired;
+   do not restore its menu or button.
    Production confirmation needs a running Odoo 19 environment and hardware;
    static source tests alone are not evidence of rollout.
 7. Reconcile pending and unknown print outputs before resuming automatic
@@ -317,7 +319,7 @@ For `destination_type = Report`, the operator selects exactly one `Report`. The 
 
 Discovery reports use the additive `errors: string[]` contract in `contracts/print-payload-contract.json` (maximum 64 messages, 2048 UTF-16 units each). The Gateway returns these in session `stats.errors`; optional unavailable device fields are omitted, and protocol defaults to `unknown`. Odoo consumes approved runtime printers, not discovery candidates or source diagnostics; no addon producer emits discovery reports.
 
-## Diagnostic test-print compatibility
+## Privileged diagnostic transport compatibility (no customer Test Page)
 
 `Send Test Page` treats the explicitly selected valid binding as authoritative: it validates that binding and its current runtime Agent/printer identity and does **not** independently resolve a second binding to compare against it. The test uses the binding's real document type, then chooses the payload from the printer's current runtime transport—not from a stale protocol field or marketing device class. A Windows-installed queue (`connectionType=spooler`) receives a real PDF through the Agent's Windows document-rendering path, so laser, inkjet, thermal, USB, WSD, and network printers are testable when they are installed as a working Windows queue with a usable driver. IPP/IPPS printers receive PDF through IPP. ESC/POS, ZPL, TSPL, and explicit raw byte transports receive protocol-specific diagnostics. Direct USB/TCP devices with an unknown byte language remain intentionally non-routable: the system will not guess a language or send arbitrary PDF bytes to them.
 

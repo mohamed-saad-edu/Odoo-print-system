@@ -144,7 +144,7 @@ describe("deep production review contracts", () => {
       // Inclusive-fresh boundary (>=): exactly-at-threshold is fresh, matching
       // the JS gates (agent-availability, job-vocabulary, printer-health,
       // agent-health all treat age <= threshold as fresh).
-      expect(source).toContain("pr.last_seen_at >= now() - make_interval");
+      expect(source).toContain("pr.last_seen_at >= clock_timestamp() - make_interval");
       expect(source).toContain("liveTenantSubscriptionPredicate");
     }
     const entitlementSource = read("src/lib/entitlements.ts");
@@ -160,7 +160,7 @@ describe("deep production review contracts", () => {
     expect((pollClaim.match(/\bstale_candidates\s+AS\s*\(/g) ?? []).length).toBe(1);
     expect((pollClaim.match(/\bqueued_candidates\s+AS\s*\(/g) ?? []).length).toBe(1);
     expect((pollClaim.match(/\bclaimable\s+AS\s*\(/g) ?? []).length).toBe(1);
-    expect((pollClaim.match(/pr\.last_seen_at >= now\(\) - make_interval/g) ?? []).length).toBe(1);
+    expect((pollClaim.match(/pr\.last_seen_at >= clock_timestamp\(\) - make_interval/g) ?? []).length).toBe(1);
     expect((pollClaim.match(/\$\{printerEligibilityPredicate\([^}]+\)\}/g) ?? []).length).toBe(4);
     expect(pollClaim).toContain("printerEligibilityPredicate(sql`a.tenant_id`)");
   });

@@ -149,12 +149,14 @@ export function WorkspaceSecurity() {
       if (!mounted.current || controller.signal.aborted || statusRequest.current !== controller) return null;
       if (!response.ok) {
         setExpired(response.status === 401);
-        if (response.status === 401) setSnapshot(null);
+        // A failed fresh status read cannot vouch for an earlier step-up proof.
+        setSnapshot(null);
         setStatusError(responseKey(body, response.status, "workspaceSecurity.statusUnavailable"));
         return null;
       }
       const times = expiry(body);
       if (!times || (body?.kind !== "customer" && body?.kind !== "manager") || typeof body?.reauthenticationRequired !== "boolean") {
+        setSnapshot(null);
         setStatusError("workspaceSecurity.statusUnavailable");
         return null;
       }
@@ -164,7 +166,10 @@ export function WorkspaceSecurity() {
       setExpired(false);
       return next;
     } catch {
-      if (mounted.current && !controller.signal.aborted && statusRequest.current === controller) setStatusError("workspaceSecurity.networkUnavailable");
+      if (mounted.current && !controller.signal.aborted && statusRequest.current === controller) {
+        setSnapshot(null);
+        setStatusError("workspaceSecurity.networkUnavailable");
+      }
     } finally {
       if (statusRequest.current === controller) {
         statusRequest.current = null;

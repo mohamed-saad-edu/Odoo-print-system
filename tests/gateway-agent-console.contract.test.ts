@@ -21,12 +21,12 @@ describe("desktop Agent Gateway response contract", () => {
     expect(ipc).not.toContain("return { status: 200, body: responseBody }");
   });
 
-  it("routes diagnostic Test Print via the paired Agent CLI without Manager credentials", () => {
+  it("retains internal paired-Agent diagnostics without customer Desktop Test Print", () => {
     const main = read("src/desktop/main.tsx");
     const ipc = read("src/desktop/lib/ipc.ts");
     const rust = read("src-tauri/src/commands.rs");
     const cli = read("agent/cmd/cli/gateway.go");
-    expect(main).toContain("testGatewayPrinter(savedGatewayUrl, id, key)");
+    expect(main).not.toContain("testGatewayPrinter(");
     expect(main).not.toContain("testPrinter(id)");
     expect(ipc).toContain('"/api/printers/" + encodeURIComponent(printerId) + "/test-print"');
     const testPrintBlock = ipc.slice(ipc.indexOf("export async function testGatewayPrinter"), ipc.indexOf("export function cleanupLocalJobs"));

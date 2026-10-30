@@ -75,3 +75,21 @@ def test_odoo_runtime_review_has_no_build_only_packages_and_no_extended_expiry()
     assert {r[2] for r in entry['findings']} <= {'LOW', 'MEDIUM'}
     assert not ({'python3-pip', 'python3-wheel', 'python3-pdfminer'} &
                 {r[1] for r in entry['findings']})
+
+
+def test_caddy_go_jose_review_is_exact_and_short_lived():
+    import json
+    data = json.loads((Path(__file__).resolve().parents[1] /
+                       'security/image-vulnerability-baseline.json').read_text())
+    image = 'yaseir-caddy:ci-go1.26.10'
+    entry = data['images'][image]
+    assert entry['expires'] == '2026-11-08'
+    assert {tuple(row) for row in entry['findings']} == {
+        ('GO-2026-5932', 'golang.org/x/crypto', 'UNKNOWN'),
+        ('CVE-2026-116585', 'github.com/go-jose/go-jose/v3', 'MEDIUM'),
+        ('CVE-2026-116586', 'github.com/go-jose/go-jose/v3', 'MEDIUM'),
+        ('CVE-2026-116587', 'github.com/go-jose/go-jose/v3', 'HIGH'),
+    }
+    note = data['reviewNotes'][image]
+    assert 'does not enable TLS internal' in note
+    assert 'no patched release' in note

@@ -57,7 +57,9 @@ V4 uses manual platform-owner activation. Payment-provider credentials are not r
 > stays offline; do not restart a pre-migration Gateway against the upgraded
 > schema. Drain any *other* Gateway replicas/admission writers separately.
 > Back up the database and review migration `0102`'s cutover reconciliation
-> limitation in `MIGRATION.md` before deployment. `--resume` only reopens ingress after the gates for the
+> limitation and mandatory forward-only migration `0103_retained_print_attempt_evidence.sql`
+> in `MIGRATION.md` before deploying Gateway code that reads or writes retained
+> print attempt receipt columns. Never run the updated Gateway before 0103 is applied. `--resume` only reopens ingress after the gates for the
 > exact reviewed release have exited successfully.
 
 ## Deployment Steps

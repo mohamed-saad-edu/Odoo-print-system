@@ -37,10 +37,10 @@ describe("desktop diagnostic admission error localization", () => {
     }
   });
 
-  it("uses localized machine-code presentation in the real guarded Desktop diagnostic handler", () => {
+  it("keeps the retired customer Desktop test-print handler absent", () => {
     const source = readFileSync("src/desktop/main.tsx", "utf8");
-    expect(source).toContain("friendlyDiagnosticAdmissionError(e, locale)");
-    expect(source).toContain("diagnosticOps.current.uncertain(scope)");
-    expect(source).toContain("testGatewayPrinter(savedGatewayUrl, id, key)");
+    expect(source).not.toContain("friendlyDiagnosticAdmissionError(e, locale)");
+    expect(source).not.toContain("diagnosticOps.current.uncertain(scope)");
+    expect(source).not.toContain("testGatewayPrinter(");
   });
 });

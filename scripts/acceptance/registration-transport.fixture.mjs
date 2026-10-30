@@ -6,6 +6,8 @@ import assert from "node:assert/strict";
 const database = new URL(process.env.DATABASE_URL || "postgresql://invalid/invalid");
 const origin = new URL(process.env.APP_BASE_URL || "https://invalid");
 if (process.env.YASEIR_REGISTRATION_ACCEPTANCE_FIXTURE !== "1" || process.env.HOSTNAME !== "127.0.0.1" ||
+    !["postgres:", "postgresql:"].includes(database.protocol) ||
+    !["127.0.0.1", "localhost", "[::1]"].includes(database.hostname) ||
     !/^\/yaseir_browser_[a-f0-9]{16}$/.test(database.pathname) || origin.hostname !== "localhost") {
   throw new Error("Refusing registration transport fixture outside its isolated loopback acceptance database");
 }

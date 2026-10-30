@@ -5,7 +5,8 @@ package config
 // On Windows this uses MoveFileExW with MOVEFILE_REPLACE_EXISTING |
 // MOVEFILE_COPY_ALLOWED | MOVEFILE_WRITE_THROUGH and retries transient
 // lock contention (antivirus, desktop scanners) with a short backoff. On
-// POSIX it is a plain rename, which is already atomic within a filesystem.
+// POSIX it renames atomically within a filesystem and syncs the containing
+// directory after replacement.
 //
 // Callers must have written and closed src (and ideally fsync'ed it)
 // beforehand. The destination is replaced in place, so its path and

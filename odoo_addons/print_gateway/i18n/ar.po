@@ -2276,7 +2276,9 @@ msgstr "تم إنشاء ملف PDF والتحقق منه"
 
 #. module: print_gateway
 #. odoo-python
+#. odoo-javascript
 #: code:addons/print_gateway/models/print_router.py:0
+#: code:addons/print_gateway/static/src/js/pos_sale_details_router.js:0
 msgid "PDF file created and verified by the approved output backend."
 msgstr "تم إنشاء ملف PDF والتحقق منه بواسطة خدمة الإخراج المعتمدة."
 
@@ -2288,19 +2290,26 @@ msgstr "إخراج ملف PDF"
 
 #. module: print_gateway
 #. odoo-python
+#. odoo-javascript
 #: code:addons/print_gateway/models/print_router.py:0
+#: code:addons/print_gateway/static/src/js/pos_sale_details_router.js:0
 msgid "PDF file output accepted; file creation is not yet verified."
 msgstr "تم قبول طلب إخراج ملف PDF؛ لم يتم التحقق من إنشاء الملف بعد."
 
 #. module: print_gateway
 #. odoo-python
+#. odoo-javascript
 #: code:addons/print_gateway/models/print_router.py:0
+#: code:addons/print_gateway/static/src/js/pos_sale_details_router.js:0
 msgid "PDF file output failed. See Print Activity before retrying."
 msgstr "فشل إخراج ملف PDF. راجع سجل الطباعة قبل إعادة المحاولة."
 
 #. module: print_gateway
 #. odoo-python
+#. odoo-javascript
 #: code:addons/print_gateway/models/print_router.py:0
+#: code:addons/print_gateway/static/src/js/pos_print_router.js:0
+#: code:addons/print_gateway/static/src/js/pos_sale_details_router.js:0
 msgid "PDF file output is unconfirmed. Check Print Activity and the approved output destination before retrying."
 msgstr "إخراج ملف PDF غير مؤكد. تحقق من سجل الطباعة ووجهة الإخراج المعتمدة قبل إعادة المحاولة."
 
@@ -4888,18 +4897,8 @@ msgstr "مسار الطباعة"
 
 #. module: print_gateway
 #: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_binding_form
-msgid "Print test page"
-msgstr "طباعة صفحة اختبار"
-
-#. module: print_gateway
-#: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_binding_form
 msgid "Check registration"
 msgstr "التحقق من تسجيل الجهاز"
-
-#. module: print_gateway
-#: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_binding_form
-msgid "This sends a real test page to the selected printer. Continue?"
-msgstr "سيتم إرسال صفحة اختبار حقيقية إلى الطابعة المحددة. هل تريد المتابعة؟"
 
 #. module: print_gateway
 #: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_binding_form

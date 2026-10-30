@@ -11,10 +11,13 @@ describe("customer billing scope and bounded status", () => {
     expect(shell).not.toContain('fetchWithTimeout("/api/billing/usage"');
     expect(status).toContain("customerSubscriptionState(");
   });
-  it("does not query a plan name or return subscription commercial fields", () => {
-    expect(status).not.toContain("planName");
+  it("only returns the optional sidebar plan label and hides subscription commercial fields", () => {
+    expect(status).toContain('get("includePlanName") === "1"');
+    expect(status).toContain("includePlanName && subscription");
+    expect(status).toContain('...(includePlanName ? { planName: plan?.name ?? null } : {})');
+    expect(status).toContain('columns: { name: true }');
     expect(status).not.toContain("monthlyQuota");
-    expect(status).not.toContain("planId");
+    expect(status).not.toContain("planId:");
     expect(status).toContain("Cache-Control");
     expect(status).toContain('member.role === "owner" ? { currentPeriodEnd:');
     expect(status).not.toContain("priceMinorUnits");

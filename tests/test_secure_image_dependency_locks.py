@@ -30,7 +30,11 @@ def test_go_rebuilds_use_checksum_locked_fixed_dependency_graphs():
     dockerfile = (ROOT / "Dockerfile.secure-images").read_text()
     for name, deps in {
         "gosu": {"github.com/moby/sys/user": "v0.4.1", "golang.org/x/sys": "v0.44.0"},
-        "caddy": {"github.com/go-chi/chi/v5": "v5.4.0", "golang.org/x/net": "v0.61.0"},
+        "caddy": {
+            "github.com/go-chi/chi/v5": "v5.4.0",
+            "github.com/go-jose/go-jose/v4": "v4.1.6",
+            "golang.org/x/net": "v0.62.0",
+        },
     }.items():
         lock = (PROFILE / name / "go.mod").read_text()
         sums = (PROFILE / name / "go.sum").read_text()

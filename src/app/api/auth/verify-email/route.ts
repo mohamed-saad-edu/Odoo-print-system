@@ -22,6 +22,8 @@ export async function POST(req: Request) {
   let body: { token?: unknown; inviteToken?: unknown }; try { const parsedBody = await req.json(); if (!parsedBody || typeof parsedBody !== "object" || Array.isArray(parsedBody)) throw new Error("JSON object required"); body = parsedBody; } catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); }
   const token = typeof body.token === "string" ? body.token : "";
   if (!token || token.length > 256) return NextResponse.json({ error: "Invalid or expired verification link" }, { status: 400 });
+  if (body.inviteToken !== undefined && (typeof body.inviteToken !== "string" || body.inviteToken.length > 256))
+    return NextResponse.json({ error: "Workspace invitation is invalid or expired", code: "INVITATION_INVALID" }, { status: 400 });
   const inviteToken = typeof body.inviteToken === "string" ? body.inviteToken : "";
   // Token-guessing throttle (mirrors login): no account identity is known
   // pre-token, so scope by endpoint + IP. Only a completed email proof

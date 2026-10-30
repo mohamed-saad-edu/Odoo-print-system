@@ -4,11 +4,15 @@ import { act, createElement as h, StrictMode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { SessionInventory } from "../src/components/SessionInventory";
 
-const fixture = vi.hoisted(() => ({ fetch: vi.fn(), replace: vi.fn(), refresh: vi.fn(),
-  t: (key: string) => key, formatDate: (value: string) => `formatted:${value}` }));
+const fixture = vi.hoisted(() => {
+  const replace = vi.fn();
+  const refresh = vi.fn();
+  return { fetch: vi.fn(), replace, refresh, router: { replace, refresh },
+    t: (key: string) => key, formatDate: (value: string) => `formatted:${value}` };
+});
 vi.mock("../src/lib/fetch-timeout", () => ({ fetchWithTimeout: fixture.fetch }));
 vi.mock("../src/i18n/react", () => ({ useI18n: () => ({ t: fixture.t, formatDate: fixture.formatDate }) }));
-vi.mock("next/navigation", () => ({ useRouter: () => ({ replace: fixture.replace, refresh: fixture.refresh }) }));
+vi.mock("next/navigation", () => ({ useRouter: () => fixture.router }));
 (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
 let root: Root | undefined, host: HTMLDivElement;
 const deferred = <T,>() => { let resolve!: (value: T) => void; const promise = new Promise<T>(yes => { resolve = yes; }); return { resolve, promise }; };

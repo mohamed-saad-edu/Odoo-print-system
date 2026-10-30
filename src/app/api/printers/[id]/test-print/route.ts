@@ -18,6 +18,7 @@ import { logError } from "../../../../../lib/log";
 import { databaseNowMs } from "../../../../../lib/database-clock";
 import { isExactIdempotencyKey } from "../../../../../lib/idempotency";
 import { isVirtualPrinterRecord } from "../../../../../lib/printer-virtual";
+import { TenantSuspendedError, TenantDeletedError } from "../../../../../lib/tenant-guard";
 
 export const dynamic = "force-dynamic";
 
@@ -39,12 +40,29 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const tenantId = claims ? claims.tenantId : pairedAgent!.tenantId;
   // An Agent credential is valid only for its own printer; the same response
   // for a missing or foreign printer avoids disclosing another Agent's rows.
-  const printer = await db.query.printers.findFirst({
-    where: pairedAgent
-      ? and(eq(printers.id, id), eq(printers.tenantId, tenantId), eq(printers.agentId, pairedAgent.id))
-      : and(eq(printers.id, id), eq(printers.tenantId, tenantId)),
-  });
-  if (!printer || isVirtualPrinterRecord(printer)) return NextResponse.json({ error: "Printer not found" }, { status: 404 });
+  let snapshot: { printer: typeof printers.$inferSelect; agent: typeof agents.$inferSelect | null } | null;
+  try {
+    snapshot = await db.transaction(async tx => {
+      await requireConsoleReadAuthorityInTransaction(tx,
+        claims ? { kind: "manager", claims } : { kind: "agent", agent: pairedAgent! }, "printers.test");
+      const printer = await tx.query.printers.findFirst({
+        where: pairedAgent
+          ? and(eq(printers.id, id), eq(printers.tenantId, tenantId), eq(printers.agentId, pairedAgent.id))
+          : and(eq(printers.id, id), eq(printers.tenantId, tenantId)),
+      });
+      if (!printer || isVirtualPrinterRecord(printer)) return null;
+      const agent = await tx.query.agents.findFirst({ where: and(eq(agents.id, printer.agentId), eq(agents.tenantId, tenantId)) });
+      return { printer, agent: agent ?? null };
+    });
+  } catch (error) {
+    if (error instanceof ManagerMutationAuthorityChangedError) return error.response();
+    if (error instanceof ConsoleAgentAuthorityRevokedError) return NextResponse.json({ error: "Agent authorization changed", code: error.code }, { status: error.status });
+    if (error instanceof TenantSuspendedError || error instanceof TenantDeletedError) return NextResponse.json({ error: error.message, code: error.code }, { status: error.status });
+    logError("printer.test_authority_read_failed", { printerId: id, tenantId, error: error instanceof Error ? error.message : "unknown" });
+    return NextResponse.json({ error: "Printer test authorization unavailable", code: "PRINTER_TEST_UNAVAILABLE" }, { status: 503, headers: { "Cache-Control": "no-store" } });
+  }
+  if (!snapshot) return NextResponse.json({ error: "Printer not found" }, { status: 404 });
+  const { printer, agent } = snapshot;
 
   // The header identifies a physical operation; never trim it into another identity.
   const idempotencyKey = req.headers.get("Idempotency-Key");
@@ -67,7 +85,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     : idempotencyKey;
 
 
-  const agent = await db.query.agents.findFirst({ where: and(eq(agents.id, printer.agentId), eq(agents.tenantId, tenantId)) });
   if (!agent) return NextResponse.json({ error: "Printer owner agent missing", code: "AGENT_NOT_FOUND" }, { status: 404 });
 
   let payload: ReturnType<typeof buildTestPrintPayloadForPrinter>;

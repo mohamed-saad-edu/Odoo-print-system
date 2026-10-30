@@ -39,6 +39,8 @@ async function archiveJobs(
           bindingDigest: job.bindingDigest,
           outputMedium: job.outputMedium,
           outputEvidence: job.outputEvidence,
+          spoolerJobId: job.spoolerJobId,
+          attemptId: job.attemptId,
           error: terminal ? job.error : uncertain
             ? "UNKNOWN_PARTIAL_DELIVERY: Device removed while a hardware attempt may have started; inspect the printer before reprinting."
             : reason,

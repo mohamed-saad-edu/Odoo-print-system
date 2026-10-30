@@ -43,7 +43,7 @@ describe("Platform Owner database explorer authentication and query API", () => 
     fns.read.mockResolvedValueOnce({ ...empty, selected: "printers", columns: ["id"], rows: [{ id: "A1" }] });
     const result = await GET(req("?table=printers&q=printer&offset=25"));
     expect(result.status).toBe(200);
-    expect(fns.read).toHaveBeenCalledWith({ table: "printers", search: "printer", offset: 25 });
+    expect(fns.read).toHaveBeenCalledWith(expect.anything(), { table: "printers", search: "printer", offset: 25 });
     expect(fns.guard).toHaveBeenCalledOnce();
     expect(fns.guard.mock.invocationCallOrder[0]).toBeLessThan(fns.read.mock.invocationCallOrder[0]);
   });

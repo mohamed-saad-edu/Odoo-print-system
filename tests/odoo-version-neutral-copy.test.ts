@@ -21,7 +21,7 @@ describe("Odoo version-neutral customer copy", () => {
       read(path).split("\n").flatMap((line, index) =>
         pinnedOdooLabel.test(line) ? [relative(root, resolve(root, path)) + ":" + (index + 1)] : []));
     expect(offending).toEqual([]);
-    expect(read("src/app/page.tsx")).toContain('>Odoo</span>');
+    expect(read("src/app/page.tsx")).toContain('t("home.quickOdooTitle")');
   });
 
   it("uses unversioned Odoo help labels in the addon and its Arabic translation catalog", () => {

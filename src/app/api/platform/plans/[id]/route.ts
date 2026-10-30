@@ -12,9 +12,14 @@ export async function PATCH(req:Request,context:{params:Promise<{id:string}>}) {
  try {
     assertWorkspaceSecurityOrigin(req);
   const actor=await requirePlatformOwner(req),key=requireIdempotencyKey(req),{id}=await context.params;
-  const raw=await readWorkspaceSecurityJson(req) as Record<string,unknown>;
-  const priceProvided = raw.priceAmount !== undefined || raw.priceCurrency !== undefined;
-  const plan=parseManualPlan({...raw,id}),digest=requestDigest({plan,priceProvided});
+  const raw=await readWorkspaceSecurityJson(req);
+  // JSON null and arrays are valid JSON, but not editable plan objects.
+  // Reject them as client errors before dereferencing priceAmount.
+  if(!raw||typeof raw!=="object"||Array.isArray(raw))throw new ManualSubscriptionError('PLAN_INVALID');
+  const payload=raw as Record<string,unknown>;
+  const priceProvided = payload.priceAmount !== undefined || payload.priceCurrency !== undefined;
+  const isActiveProvided=payload.isActive!==undefined,isPublicProvided=payload.isPublic!==undefined,displayOrderProvided=payload.displayOrder!==undefined;
+  const plan=parseManualPlan({...payload,id}),legacyDigest=requestDigest({plan,priceProvided}),digest=requestDigest({plan,priceProvided,isActiveProvided,isPublicProvided,displayOrderProvided});
   await db.transaction(async tx=>{
    // A single Platform Owner operation key cannot edit two different plans
    // concurrently. Acquire the actor+key lock before the resource lock so
@@ -24,7 +29,7 @@ export async function PATCH(req:Request,context:{params:Promise<{id:string}>}) {
    await tx.execute(sql`SELECT id FROM plans WHERE id=${id} FOR UPDATE`);
    await requirePlatformActorInTransaction(tx,actor);
    const previous=await tx.execute(sql`SELECT metadata FROM audit_events WHERE actor_type='platform' AND actor_id=${actor.userId} AND action='plan.updated' AND request_id=${key} LIMIT 1`);
-   if(previous.rows.length){if((previous.rows[0].metadata as {digest?:string}).digest!==digest)throw new ManualSubscriptionError('IDEMPOTENCY_CONFLICT',409);return;}
+   if(previous.rows.length){const previousDigest=(previous.rows[0].metadata as {digest?:string}).digest;if(previousDigest!==digest&&previousDigest!==legacyDigest)throw new ManualSubscriptionError('IDEMPOTENCY_CONFLICT',409);return;}
    const before=await tx.query.plans.findFirst({where:eq(plans.id,id)});
    if(!before)throw new ManualSubscriptionError('PLAN_NOT_FOUND',404);
    // Per-workspace quotas are explicit and remain unchanged. Preserve technical
@@ -35,8 +40,9 @@ export async function PATCH(req:Request,context:{params:Promise<{id:string}>}) {
    const priceFields = priceProvided
      ? {priceMinorUnits:plan.priceMinorUnits,priceCurrency:plan.priceCurrency}
      : {priceMinorUnits:before.priceMinorUnits,priceCurrency:before.priceCurrency};
-   await tx.update(plans).set({...plan,...priceFields,entitlements,updatedAt:sql`clock_timestamp()`}).where(eq(plans.id,id));
-   await writeAuditEvent({tenantId:null,actorType:'platform',actorId:actor.userId,action:'plan.updated',resourceType:'plan',resourceId:id,requestId:key,metadata:{before:{name:before.name,entitlements:before.entitlements,isActive:before.isActive,isPublic:before.isPublic,priceMinorUnits:before.priceMinorUnits,priceCurrency:before.priceCurrency},after:{...plan,...priceFields,entitlements},digest}},tx);
+   const catalogFields={...plan,isActive:isActiveProvided?plan.isActive:before.isActive,isPublic:isPublicProvided?plan.isPublic:before.isPublic,displayOrder:displayOrderProvided?plan.displayOrder:before.displayOrder};
+   await tx.update(plans).set({...catalogFields,...priceFields,entitlements,updatedAt:sql`clock_timestamp()`}).where(eq(plans.id,id));
+   await writeAuditEvent({tenantId:null,actorType:'platform',actorId:actor.userId,action:'plan.updated',resourceType:'plan',resourceId:id,requestId:key,metadata:{before:{name:before.name,entitlements:before.entitlements,isActive:before.isActive,isPublic:before.isPublic,priceMinorUnits:before.priceMinorUnits,priceCurrency:before.priceCurrency},after:{...catalogFields,...priceFields,entitlements},digest}},tx);
   });return NextResponse.json({ok:true});
  }catch(e){return manualApiError(e);}
 }

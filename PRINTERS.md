@@ -63,7 +63,7 @@ in `job.error` with `job.status = failed`.
 
 `agent/internal/printer/pdf.go` + `agent/internal/printer/pdf_windows.go` use the
 embedded PDFium WebAssembly runtime provided by `github.com/klippa-app/go-pdfium`
-(v1.21.1) through Wazero. PDF bytes are validated, materialised only in a secure
+(v1.21.3) through Wazero. PDF bytes are validated, materialised only in a secure
 0600 temporary file for the existing print seam, opened by PDFium, rendered one
 page at a time, and submitted through the Windows printer device context.
 
@@ -124,7 +124,7 @@ Windows JPEG document printing uses a separate geometry path. Unconfigured queue
 | Protocol | Document jobs use the Windows driver/GDI path (`StartDocW`/page rendering). Explicit byte-passthrough jobs use Winspool RAW (`OpenPrinterW` → `StartDocPrinterW` with datatype `RAW` → `StartPagePrinter` → `WritePrinter` loop → `EndPagePrinter` → `EndDocPrinter`) |
 | Document kinds | `pdf` ✅ · `image` ✅ by default; `raw`/`escpos` ✅ only when explicitly declared as spooler passthrough |
 | Paper fitting | Request the document form first; otherwise use the same driver's validated current media before `StartDocW`. Fit the whole page proportionally inside actual printable bounds, shrink/center without cropping or changing global defaults. Genuine invalid geometry/driver failures still refuse submission |
-| Explicit local test | `printers test` submits a small real PDF through this document path using current driver media; the backend's readiness-only `Test` method remains separate. Gateway/desktop/Odoo Test Print uses the same driver rendering |
+| Explicit local test | `printers test` submits a small real PDF through this document path using current driver media; the backend's readiness-only `Test` method remains separate. Privileged printer certification, where authorized, uses the same driver rendering; the standalone customer Test Print UI is retired |
 | Configuration | `type: spooler` plus an exact, non-blank `spooler_name` and `protocol: spooler`. The Agent never substitutes `endpoint` or the display name when the binding is absent; rescan and verify the Windows queue instead. A local USB printer installed as a Windows printer is configured this way and does **not** require IP/port metadata |
 | Capability reporting | Legacy/missing capability rows derive `[pdf, image]`; explicit passthrough may add `raw` and/or `escpos` without removing document support |
 | Error handling | Short writes are completed in a loop. Pre-dispatch failures remain definite. After Windows allocates a spooler job ID, a later document failure is an **unknown physical outcome** and retains that job ID; cleanup after successful `EndDoc` cannot turn the completed submission into a safe-to-retry failure |
@@ -244,7 +244,7 @@ directly, so failed registry persistence cannot substitute stale inventory.
 
 ## 9. Diagnostics
 
-Physical Test Print in the desktop, Gateway and Odoo uses the selected printer's supported document or byte-language path. Explicit local `printers test` submits a real Windows/IPP PDF or matched RAW/ESC-POS/ZPL/TSPL diagnostic. ZPL uses one small buffered `TEST` marker; TSPL uses the firmware's documented `SELFTEST`, without forcing stock size, gap, calibration or cutter settings. Actual application label commands keep their existing language/media requirements.
+The retired customer-facing Test Print controls must not be restored. Privileged certification and explicit local diagnostics use the selected printer's supported document or byte-language path. Explicit local `printers test` submits a real Windows/IPP PDF or matched RAW/ESC-POS/ZPL/TSPL diagnostic. ZPL uses one small buffered `TEST` marker; TSPL uses the firmware's documented `SELFTEST`, without forcing stock size, gap, calibration or cutter settings. Actual application label commands keep their existing language/media requirements.
 
 Connection/setup checks remain read-only. A successful physical-test submission still requires checking paper before repeating an uncertain operation. Local exact printer IDs take precedence over names; ambiguous name aliases refuse rather than selecting another queue.
 

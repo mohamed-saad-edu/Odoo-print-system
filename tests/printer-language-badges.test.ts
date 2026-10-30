@@ -6,6 +6,9 @@ import { createRoot, type Root } from "react-dom/client";
 import { getPrinterLanguageBadges, getSupportedDocumentTypes } from "../src/lib/printer-capability";
 import ApiKeysPage from "../src/app/api-keys/page";
 
+const router = vi.hoisted(() => ({ replace: vi.fn(), refresh: vi.fn(), push: vi.fn() }));
+vi.mock("next/navigation", () => ({ useRouter: () => router }));
+
 /**
  * Locks two audit fixes:
  *  1. Printer language chips must come from the declared protocol/connection —
@@ -72,19 +75,21 @@ describe("ApiKeysPage resilience", () => {
   });
 
   it("renders without crashing when the keys endpoint does not return an array", async () => {
-    // An expired session returns 401 with `{error}` — the page must render an
-    // error state instead of calling `keys.filter` on a non-array.
+    // A malformed successful payload must show an error instead of reaching
+    // the page's key-list render path.
     const fetchMock = vi.fn(async (input: unknown) => {
-      // The page performs the shared session admission first (A164/A167). Answer
-      // it as authenticated so the assertion below still exercises the keys load.
-      if (String(input) === "/api/auth/me") {
+      const url = String(input);
+      if (url === "/api/auth/me") {
         return new Response(JSON.stringify({ exp: Math.floor(Date.now() / 1000) + 3600, permissions: ["integrations.manage"] }), {
           status: 200,
           headers: { "content-type": "application/json" },
         });
       }
-      return new Response(JSON.stringify({ error: "Unauthorized" }), {
-        status: 401,
+      const body = url === "/api/odoo/keys" ? { malformed: true }
+        : url === "/api/odoo/installations" ? []
+          : { hasSubscription: false };
+      return new Response(JSON.stringify(body), {
+        status: 200,
         headers: { "content-type": "application/json" },
       });
     });

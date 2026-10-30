@@ -212,7 +212,7 @@ func parseWSDProbeMatches(data []byte, remoteAddr *net.UDPAddr) []DeviceInfo {
 	err := xml.Unmarshal(data, &env)
 	if err == nil && len(env.Body.ProbeMatches.ProbeMatch) > 0 {
 		for _, match := range env.Body.ProbeMatches.ProbeMatch {
-			if !isWSDPrintDevice(match.Types, match.Scopes, string(data)) {
+			if !isWSDPrintDevice(match.Types, match.Scopes, "") {
 				continue
 			}
 
@@ -261,9 +261,7 @@ func parseWSDProbeMatches(data []byte, remoteAddr *net.UDPAddr) []DeviceInfo {
 			}
 			out = append(out, di)
 		}
-		if len(out) > 0 {
-			return out
-		}
+		return out
 	}
 
 	// Fallback regex extraction if XML unmarshal didn't match elements due to custom prefixes
@@ -365,6 +363,11 @@ func extractIPFromXAddrs(xaddrs string) string {
 }
 
 func wsdDedupKey(d DeviceInfo) string {
+	if isUnverifiedWSDObservation(d) {
+		if id := StableIDForDevice(d); id != "" {
+			return "wsd:" + id
+		}
+	}
 	if d.Capabilities != nil {
 		if uuid, ok := d.Capabilities["uuid"].(string); ok && uuid != "" {
 			return "uuid:" + uuid

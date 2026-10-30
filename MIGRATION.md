@@ -68,7 +68,6 @@ This runs `scripts/db-migrate.ts` which applies all pending migrations from `dri
 | 0093 | 1 | Password-only human login; remove eight retired factor tables and factor-only columns; preserve accounts, verifier hashes, memberships, session families and deadlines |
 | 0094 | 1 | Add live printer verification, scoped logical identity, immutable job destination bindings, and retained PDF file-result evidence; historical inventory remains pending until verified |
 | 0095 | 1 | Manual subscriptions, authenticated activation requests, immutable change history, owner names and UTC monthly admission ledger; retains provider evidence and conservatively carries prior usage |
-
 | 0096 | 1 | Retire limited workspace roles without promoting old sessions |
 | 0097 | 1 | Agent-scoped discovery observation IDs; preserve IDs, approvals and runtime links |
 | 0098 | 1 | Retire external billing fields from active plan/subscription schema, archive provider records outside public, preserve manual approvals and monthly usage |
@@ -76,8 +75,12 @@ This runs `scripts/db-migrate.ts` which applies all pending migrations from `dri
 | 0100 | 1 | Add optional USD/SAR catalog prices in integer cents/halalas without touching any existing subscription, quota, invoice or job history |
 | 0101 | 1 | Add immutable 30-day print-allowance anchor from first activation, migrate overlapping historical usage conservatively without resetting credits |
 | 0102 | 1 | Restore UTC calendar-month admission and carry the largest overlapping usage bucket without deleting rolling history |
+| 0103 | 1 | Additive retained receipt `spooler_job_id` and `attempt_id` evidence columns for archived terminal print jobs |
+| 0104 | 1 | Drop legacy discovery endpoint uniqueness |
+| 0105 | 1 | Scope runtime-state constraints |
+| 0106 | 1 | Restore discovery replica identity |
 
-**Total**: 103 forward-only SQL migrations (0000–0102), plus retained hash-versioned forward repairs in `scripts/db-migrate.ts`.
+**Total**: 107 forward-only SQL migrations (0000–0106), plus retained hash-versioned forward repairs in `scripts/db-migrate.ts`. Apply migration `0103_retained_print_attempt_evidence.sql` with prior Gateway writers stopped **before** deploying a Gateway version that reads or writes the new receipt evidence columns; never apply its SQL by hand without the release migrator.
 
 Apply all migrations through `0094` before starting V3, with older Gateway instances stopped. Historical `0090` and `0092` remain in the journal so existing content hashes and fresh replay remain valid. V3 uses email/password login and the existing production `__Host-` access/refresh cookies. Migration `0094` does not convert stored configuration into live printer proof: existing registrations and historical queued jobs without an admitted binding remain ineligible for new execution. Deploy the matching Agent, obtain a fresh verified inventory, and reconcile retained legacy jobs explicitly. Terminal history remains available for exact result replay. See the V3 upgrade procedure below and `SECURITY.md`.
 
@@ -258,9 +261,9 @@ or an application build compatible with the expanded table, never deleting
 historical subscription data.
 
 
-### 0101 — fixed 30-day print quota cycles
+### 0101 — historical fixed 30-day print quota cycles (superseded by 0102)
 
-Every workspace receives a 30-day allowance window measured from its first actual subscription activation (UTC). The immutable `print_cycle_anchor` stays unchanged by plan changes, suspension, renewal, and extension. Contracts are still renewed manually. The forward-only migration preserves previous calendar-month ledger rows and conservatively carries overlapping consumption into the first rolling window; it never clears usage or historical records. This can temporarily overestimate consumption when old per-job timestamps are no longer retained; the Platform Owner can explicitly adjust the quota after checking historical evidence. 
+Under the historical 0101 policy, every workspace received a 30-day allowance window measured from its first actual subscription activation (UTC). The active runtime policy is 0102 UTC calendar-month accounting, **not** the 0101 rolling cycle. The immutable `print_cycle_anchor` stays unchanged by plan changes, suspension, renewal, and extension. Contracts are still renewed manually. The forward-only migration preserves previous calendar-month ledger rows and conservatively carries overlapping consumption into the first rolling window; it never clears usage or historical records. This can temporarily overestimate consumption when old per-job timestamps are no longer retained; the Platform Owner can explicitly adjust the quota after checking historical evidence. 
 
 
 ### 0102 — UTC calendar-month print allowance (supersedes 0101 runtime policy)
@@ -270,3 +273,8 @@ New logical print jobs count against the UTC calendar month beginning at 00:00 o
 **Cutover safety:** Drain every Gateway writer and Odoo admission source, back up PostgreSQL and prove restore before applying 0102. The data-only migration seeds the current calendar bucket with the **maximum** of overlapping legacy buckets, avoiding a simple sum of potentially duplicated calendar and rolling evidence. This is not necessarily conservative: two rolling buckets can contain different jobs from the same calendar month, so their maximum can undercount those jobs; an overlapping bucket can also include earlier jobs and overcount. Re-running the SQL does not decrease the counter. Reconcile the cutover month using retained job, receipt and ledger evidence before relying on the allowance; exact attribution may be impossible after retention. Preserve historical ledgers and handle unresolved discrepancies through an explicit operator-reviewed adjustment. A brand-new calendar month starts a new counter at 00:00 UTC, not after 30 days. A renewed contract is not automatically activated by rollover.
 
 Do not deploy old 0101-based Gateway binaries after migrating to 0102, or mix old/new admission writers in a rolling update. Require a populated staging upgrade, month-boundary tests, both English/Arabic subscription screens, Odoo deferred-document tests, and a successful full CI run on the exact commit before production promotion.
+
+
+### 0103 — retained terminal print attempt evidence
+
+Forward-only migration `0103_retained_print_attempt_evidence.sql` adds nullable `spooler_job_id` and `attempt_id` columns to `print_job_receipts`. It does not recover evidence already deleted with historical jobs and does not change quota accounting. The updated Gateway must not read or write these receipt fields until the migration succeeds; back up PostgreSQL and stop earlier Gateway writers before the cutover. Do not rewrite already-applied migrations or silently requeue a job with unknown physical output.

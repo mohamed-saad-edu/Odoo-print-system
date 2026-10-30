@@ -87,13 +87,18 @@ test("unexpected activation failures return a safe fallback without exposing ser
 
 test("dashboard renders safe action errors without leaking raw server text and redirects expired sessions", async () => {
   const source = await readFile("src/app/dashboard/dashboard-client.tsx", "utf8");
-  const start = source.indexOf("  const dashboardRequest = ");
-  const end = source.indexOf("  const getDashboardJobs = ", start);
+  const denyStart = source.indexOf("  const denyDashboardAuthority = ");
+  const denyEnd = source.indexOf("  const { t, tc, locale", denyStart);
+  const actionStart = source.indexOf("  const dashboardRequest = ");
+  const actionEnd = source.indexOf("  const getDashboardJobs = ", actionStart);
+  const action = source.slice(denyStart, denyEnd) + source.slice(actionStart, actionEnd);
   const redirects = [];
-  const api = await load(source.slice(start, end) + "\nexport { dashboardRequest };", {
+  const api = await load(action + "\nexport { dashboardRequest };", {
     React: { useCallback: fn => fn },
-    ensureCustomerSession: async () => ({ authenticated: true }),
+    mounted: { current: true },
+    setAuthorityDenied: () => {},
     router: { replace: path => redirects.push(path) },
+    ensureCustomerSession: async () => ({ authenticated: true }),
     t: key => key === "errors.sessionExpired" ? "Session expired" : key,
     apiMessageKey: () => "errors.operationFailed",
   });

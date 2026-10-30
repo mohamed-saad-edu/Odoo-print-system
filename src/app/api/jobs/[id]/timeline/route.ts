@@ -95,6 +95,8 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
     const { rows, receipt, events } = snapshot;
     if (rows.length === 0) {
       if (receipt) return NextResponse.json({ jobId: id, tenantId, status: receipt.status, archived: true,
+        spoolerJobId: receipt.spoolerJobId,
+        attemptId: receipt.attemptId,
         timeline: [],
         evidence: {
           source: "archived_receipt",
@@ -105,9 +107,12 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
             updatedAt: receipt.updatedAt,
             agentId: receipt.agentId,
             printerId: receipt.printerId,
+            spoolerJobId: receipt.spoolerJobId,
+            attemptId: receipt.attemptId,
           },
         },
-        correlation: { requestId, jobId: id, tenantId, agentId: receipt.agentId, printerId: receipt.printerId },
+        correlation: { requestId, jobId: id, tenantId, agentId: receipt.agentId, printerId: receipt.printerId,
+          spoolerJobId: receipt.spoolerJobId, attemptId: receipt.attemptId },
       }, { headers: { ...PRIVATE_HEADERS, "x-request-id": requestId } });
       return NextResponse.json({ error: "Not found" }, { status: 404, headers: { ...PRIVATE_HEADERS, "x-request-id": requestId } });
     }

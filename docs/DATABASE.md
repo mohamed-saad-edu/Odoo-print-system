@@ -9,7 +9,7 @@ and records permission rollback metadata; see [PostgreSQL deployment roles](DATA
 
 ## Schema inventory
 
-There are **32 current application tables**, **103 forward-only SQL migrations (`0000`–`0102`)**, and additional versioned forward repairs in [`scripts/db-migrate.ts`](../scripts/db-migrate.ts). The migration ledger, `drizzle.__drizzle_migrations`, is separate from the application tables.
+There are **32 current application tables**, **107 forward-only SQL migrations (`0000`–`0106`)**, and additional versioned forward repairs in [`scripts/db-migrate.ts`](../scripts/db-migrate.ts). The migration ledger, `drizzle.__drizzle_migrations`, is separate from the application tables.
 
 | Table | Purpose and identity | Scope and relevant constraints |
 | --- | --- | --- |

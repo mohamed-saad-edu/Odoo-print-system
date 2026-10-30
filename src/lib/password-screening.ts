@@ -13,7 +13,7 @@ const TIMEOUT_MS = 4_000;
 const MAX_IN_FLIGHT = 8;
 let inFlight = 0;
 const commonPasswords = new Set(commonPasswordHashes);
-// Public, documented product/context words; punctuation, digits and casing
+// Public, documented product/context words; punctuation, digits, marks and casing
 // must not make an otherwise predictable product-name password acceptable.
 // This comparison never changes the password supplied to the storage KDF.
 const CONTEXT_WORDS = /^(?:yaseir|yasser|odoo|print|printing|cloud|gateway|admin|administrator|يسير)+$/u;
@@ -24,7 +24,7 @@ export async function screenNewPassword(password: string): Promise<PasswordScree
   if (!isValidNewPasswordLength(password)) {
     return "unavailable";
   }
-  const context = password.normalize("NFKC").toLowerCase().replace(/[\p{N}\p{P}\p{S}\p{Z}\p{C}]/gu, "");
+  const context = password.normalize("NFKC").toLowerCase().replace(/[\p{N}\p{P}\p{S}\p{Z}\p{C}\p{M}]/gu, "");
   if (commonPasswords.has(createHash("sha256").update(password, "utf8").digest("hex")) || CONTEXT_WORDS.test(context)) {
     return "compromised";
   }

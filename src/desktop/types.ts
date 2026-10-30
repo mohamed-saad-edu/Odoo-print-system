@@ -69,7 +69,6 @@ export interface DesktopState {
   sharingErrors: Record<string, string>;
   refreshLocalPrinters: () => Promise<boolean>;
   handlePrinterSharing: (id: string, shared: boolean) => Promise<void>;
-  gatewayTestPrinterIds: ReadonlySet<string>;
   printersLoading: boolean;
   printersError: string | null;
   printersFilter: string;
@@ -84,7 +83,6 @@ export interface DesktopState {
   nowMs: number;
   refreshPrinters: () => void;
   handleDiscover: () => void;
-  handleTest: (id: string) => void;
   showAdd: boolean;
   setShowAdd: (v: boolean) => void;
   selectedPrinter: PrinterInfo | null;

@@ -166,23 +166,33 @@ patch(SaleDetailsButton.prototype, {
             if (!result?.status || ["unknown", "partial"].includes(result.status)
                 || !["queued", "submitted", "claimed", "printing", "success", "failed"].includes(result.status)) {
                 this.env.services.notification.add(
-                    result?.outputMedium === "file" ? result.message : _t("Print status is unknown. Check the printer before trying again."),
+                    result?.outputMedium === "file"
+                        ? _t("PDF file output is unconfirmed. Check Print Activity and the approved output destination before retrying.")
+                        : _t("Print status is unknown. Check the printer before trying again."),
                     { type: "warning", sticky: true }
                 );
             } else if (result?.status === "queued") {
                 this.env.services.notification.add(
-                    result.message || _t("Sales Details queued. Check Print Activity before reprinting."),
+                    result?.outputMedium === "file"
+                        ? _t("PDF file output accepted; file creation is not yet verified.")
+                        : _t("Sales Details queued. Check Print Activity before reprinting."),
                     { type: "warning", sticky: true }
                 );
             } else if (["submitted", "claimed", "printing", "success"].includes(result?.status)) {
                 this.env.services.notification.add(
-                    result.message || _t("Sales Details processing; physical paper output is not confirmed."),
+                    result?.outputMedium === "file"
+                        ? (result?.status === "success" && result?.outputOutcome === "file_created"
+                            ? _t("PDF file created and verified by the approved output backend.")
+                            : _t("PDF file output accepted; file creation is not yet verified."))
+                        : _t("Sales Details processing; physical paper output is not confirmed."),
                     { type: "info" }
                 );
             }
             if (!["queued", "submitted", "claimed", "printing", "success"].includes(result?.status)) {
                 if (result?.status === "failed") {
-                    this.env.services.notification.add(result?.message || _t("Sales Details could not be printed."), { type: "danger", sticky: true });
+                    this.env.services.notification.add((result?.outputMedium === "file"
+                        ? _t("PDF file output failed. See Print Activity before retrying.")
+                        : _t("Sales Details could not be printed.")), { type: "danger", sticky: true });
                 }
                 return false;
             }

@@ -141,7 +141,7 @@ export function SubscriptionEditor({
   const showCustomDates = full && showTerm && term === "custom";
   const title = activating && leavePending && !request ? a("savePendingSubscription") : actionLabel(action, a, editing, request);
   const requestTermsDiffer = !!request && (planId !== request.planId || term !== request.term ||
-    (request.requestedMonthlyQuota !== null && Number(quota) !== request.requestedMonthlyQuota));
+    Number(quota) !== request.requestedMonthlyQuota);
 
   const extraActions: Action[] = !subscription || request ? [] : [
     ...(active && subscription.currentPeriodEnd ? ["renew", "extend"] as Action[] : []),
@@ -328,7 +328,7 @@ export function SubscriptionEditor({
       {field("password", <input className={controlClass} type="password" autoComplete="current-password"
         required maxLength={4096} value={password} onChange={event => setPassword(event.target.value)} />)}
       <div className="flex flex-wrap gap-3">
-        <Button type="submit" disabled={busy || !reason.trim() || !password || (requestTermsDiffer && reason.trim().length < 10)} loading={busy}>{a("confirm")}</Button>
+        <Button type="submit" disabled={busy || !reason.trim() || !password || (requestTermsDiffer && (!allowRequestChanges || reason.trim().length < 10))} loading={busy}>{a("confirm")}</Button>
         <Button type="button" variant="secondary" disabled={busy} onClick={() => {
           setPreview(null); setPassword("");
         }}>{a("cancel")}</Button>

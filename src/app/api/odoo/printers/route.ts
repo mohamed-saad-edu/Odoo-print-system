@@ -91,7 +91,7 @@ export async function GET(req: Request) {
       // suspension before touching subscription and inventory (lock order).
       await requireActiveTenantInTransaction(tx, apiKey.tenantId);
       // Key rotation and full revocation are fenced after initial auth.
-      await requireOdooReadKeyInTransaction(tx, apiKey);
+      await requireOdooReadKeyInTransaction(tx, apiKey, true, false);
       await requireTenantBillingAccess(tx, apiKey.tenantId);
       return tx
         .select({

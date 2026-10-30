@@ -69,11 +69,12 @@ describe("workspace dashboard evidence and feedback", () => {
         expect(host.textContent).toContain("Confirm your identity before making a sensitive workspace change.");
         expect(host.textContent).not.toContain("server-policy-detail");
       }
-      if (expired) {
-        expect(router.replace).toHaveBeenCalledExactlyOnceWith("/login?next=%2Fdashboard");
-        expect(host.textContent).toContain("Your session expired. Sign in again to continue.");
-        expect(host.textContent).not.toContain("server-policy-detail");
-      } else expect(router.replace).not.toHaveBeenCalled();
+      const redirect = expired
+        ? "/login?next=%2Fdashboard"
+        : status === 403 && code === "FORBIDDEN" ? "/" : null;
+      if (redirect) expect(router.replace).toHaveBeenCalledExactlyOnceWith(redirect);
+      else expect(router.replace).not.toHaveBeenCalled();
+      expect(host.textContent).not.toContain("server-policy-detail");
       await act(async () => window.dispatchEvent(new Event("yaseir:workspace-reauthenticated")));
       expect(mutation).toHaveBeenCalledTimes(1);
     } finally { await act(async () => root.unmount()); host.remove(); }

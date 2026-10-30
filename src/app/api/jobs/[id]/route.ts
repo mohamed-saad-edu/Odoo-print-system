@@ -41,6 +41,8 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
       error: printJobs.error,
       retries: printJobs.retries,
       deliveryAttempts: printJobs.deliveryAttempts,
+      attemptId: printJobs.attemptId,
+      spoolerJobId: printJobs.spoolerJobId,
       claimedAt: printJobs.claimedAt,
       deliveredAt: printJobs.deliveredAt,
       ackedAt: printJobs.ackedAt,
