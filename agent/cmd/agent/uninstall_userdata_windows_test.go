@@ -4,10 +4,10 @@ package main
 
 import (
 	"os"
-	"time"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"golang.org/x/sys/windows"
 )
