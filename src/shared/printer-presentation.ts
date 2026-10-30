@@ -8,7 +8,7 @@ type Owner = {
   status?: string | null;
   lifecycle?: string | null;
   lastSeenAt?: Date | string | null;
-  freshness?: string | null;
+  freshness?: "fresh" | "stale" | "missing" | null;
   staleThresholdSeconds?: number | null;
 };
 type PrinterView = OperationalPrinterState & {
@@ -34,7 +34,7 @@ type PrinterView = OperationalPrinterState & {
   agentStatus?: string | null;
   agentLifecycle?: string | null;
   agentLastSeenAt?: Date | string | null;
-  agentFreshness?: string | null;
+  agentFreshness?: "fresh" | "stale" | "missing" | null;
   agentStaleThresholdSeconds?: number | null;
 };
 

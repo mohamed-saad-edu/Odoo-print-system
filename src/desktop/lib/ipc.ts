@@ -372,11 +372,11 @@ export interface PrinterInfo extends OperationalPrinterState {
 
 export async function fetchGatewayAgents(
   gatewayUrl: string,
-): Promise<Array<{ id: string; name: string; status?: string; lifecycle?: string; lastSeenAt?: string | null; staleThresholdSeconds?: number | null }>> {
+): Promise<Array<{ id: string; name: string; status?: string; lifecycle?: string; lastSeenAt?: string | null; freshness?: "fresh" | "stale" | "missing"; staleThresholdSeconds?: number | null }>> {
   const base = normalizeGatewayUrl(gatewayUrl);
   // The packaged desktop authenticates with the paired Agent through its
   // native CLI. There is no Manager token or password in the WebView.
-  return await fetchGatewayFleet(base, "/api/agents") as Array<{ id: string; name: string; status?: string; lifecycle?: string; lastSeenAt?: string | null; staleThresholdSeconds?: number | null }>;
+  return await fetchGatewayFleet(base, "/api/agents") as Array<{ id: string; name: string; status?: string; lifecycle?: string; lastSeenAt?: string | null; freshness?: "fresh" | "stale" | "missing"; staleThresholdSeconds?: number | null }>;
 }
 
 export async function fetchGatewayPrinters(gatewayUrl: string): Promise<PrinterInfo[]> {

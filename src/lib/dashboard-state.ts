@@ -5,7 +5,7 @@ import { db, type DbTx } from "../db";
 import { agents, printers } from "../db/schema";
 import { listPrintJobHistory } from "./job-history";
 import { and, count, desc, eq, or, sql, type SQL } from "drizzle-orm";
-import { agentStaleThresholdSeconds, getEffectiveAgentStatus, printerStaleThresholdSeconds } from "./agent-availability";
+import { agentStaleThresholdSeconds, getAgentHeartbeatFreshness, getEffectiveAgentStatus, printerStaleThresholdSeconds } from "./agent-availability";
 import { gatewayNow } from "./database-clock";
 import { nonVirtualPrinterPredicate } from "./printer-virtual-sql";
 
@@ -225,12 +225,14 @@ export async function loadDashboardStateForTenant(
     currentPrinterCount: Number(agent.currentPrinterCount ?? 0),
     reportedStatus: agent.status,
     status: getEffectiveAgentStatus(agent, now),
+    freshness: getAgentHeartbeatFreshness(agent.lastSeenAt, now),
     staleThresholdSeconds,
   }));
   const visiblePrinters = printerRows.slice(0, DASHBOARD_FLEET_PAGE_SIZE).map((printer) => ({
     ...printer,
     capabilities: capabilitiesWithCurrentGeometry(printer),
     ...operationalVerificationPresentation(printer, now),
+    agentFreshness: getAgentHeartbeatFreshness(printer.agentLastSeenAt, now),
     agentStaleThresholdSeconds: staleThresholdSeconds,
   }));
   const agentSummary = agentSummaryRows[0] ?? { total: 0, online: 0 };

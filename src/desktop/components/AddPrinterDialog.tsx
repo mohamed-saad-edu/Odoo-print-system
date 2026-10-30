@@ -43,7 +43,7 @@ export function AddPrinterDialog({
   const [usbSel, setUsbSel] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [agents, setAgents] = useState<Array<{ id: string; name: string; status?: string; lifecycle?: string; lastSeenAt?: string | null; staleThresholdSeconds?: number | null }>>([]);
+  const [agents, setAgents] = useState<Awaited<ReturnType<typeof fetchGatewayAgents>>>([]);
   // Tie errors to their exact Gateway URL so switching Gateways retries safely.
   const [agentsFailedForUrl, setAgentsFailedForUrl] = useState<string | null>(null);
   const agentsError = agentsFailedForUrl === gatewayUrl;
@@ -329,6 +329,7 @@ export function AddPrinterDialog({
                   status: a.status ?? null,
                   lifecycle: a.lifecycle ?? null,
                   lastSeenAt: a.lastSeenAt ?? null,
+                  freshness: a.freshness ?? null,
                   staleThresholdSeconds: a.staleThresholdSeconds ?? null,
                 }, nowMs, locale).label})
               </option>

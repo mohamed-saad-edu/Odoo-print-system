@@ -251,14 +251,14 @@ export function printerLabel(status: string, locale: Locale = DEFAULT_LOCALE): s
 
 /** Heartbeat-derived truth: an agent that stopped reporting is NOT online,
  *  regardless of the last status row. Mirrors src/lib/agent-availability.ts.
- *  Browser/desktop callers receive the configured Gateway threshold with the
- *  Agent record so the UI and claim gate cannot drift when the deployment
- *  overrides STALE_AGENT_THRESHOLD_SECONDS. */
+ *  Prefer server-computed freshness when supplied; client wall clocks can
+ *  differ from the Gateway database clock. */
 export function agentLiveView(
   agent: {
     status?: string | null;
     lastSeenAt?: Date | string | null;
     lifecycle?: string | null;
+    freshness?: "fresh" | "stale" | "missing" | null;
     staleThresholdSeconds?: number | null;
   },
   nowMs = Date.now(),
@@ -271,23 +271,27 @@ export function agentLiveView(
       label: agent.lifecycle === "retired" ? word("status.retired") : word("status.disabled"),
     };
   }
-  const seen = agent.lastSeenAt ? parseSharedTimeMs(agent.lastSeenAt) : null;
-  if (seen === null) {
+  const hasFreshness = agent.freshness != null;
+  const seen = !hasFreshness && agent.lastSeenAt ? parseSharedTimeMs(agent.lastSeenAt) : null;
+  if ((hasFreshness && agent.freshness === "missing") || (!hasFreshness && seen === null)) {
     // A stored status without a heartbeat timestamp is not affirmative live
     // evidence. Keep it visibly unknown instead of manufacturing Online (or
     // Offline) from a row whose observation time cannot be established.
     return { tone: "neutral", label: word("status.unknown") };
   }
-  const ageMs = nowMs - seen;
+  const ageMs = seen === null ? null : nowMs - seen;
   const thresholdSeconds = agent.staleThresholdSeconds == null
     ? agentStaleThresholdSeconds()
     : resolveAgentStaleThresholdSeconds(agent.staleThresholdSeconds);
-  const fresh = ageMs >= 0 && ageMs <= thresholdSeconds * 1000;
+  const fresh = !hasFreshness
+    ? ageMs !== null && ageMs >= 0 && ageMs <= thresholdSeconds * 1000
+    : agent.freshness === "fresh";
   if (!fresh) {
     return { tone: "bad", label: word("status.heartbeatLost") };
   }
   if (agent.status === "online") return { tone: "ok", label: word("status.online") };
-  return { tone: "bad", label: word("status.offline") };
+  if (agent.status === "offline") return { tone: "bad", label: word("status.offline") };
+  return { tone: "neutral", label: word("status.unknown") };
 }
 
 /**
