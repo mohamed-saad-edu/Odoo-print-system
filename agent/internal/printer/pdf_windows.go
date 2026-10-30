@@ -375,7 +375,7 @@ func renderAndPrintPDFWithPDFiumResultObserved(ctx context.Context, printerName 
 	}
 
 	acquireStarted := time.Now()
-	pool, err := getPDFiumPool()
+	pool, err := getPDFiumPoolWithContext(ctx)
 	if err != nil {
 		log.Printf("print.trace pdf_renderer_acquire latency_ms=%d success=false", time.Since(acquireStarted).Milliseconds())
 		return fmt.Errorf("initialize embedded PDFium renderer: %w", err)

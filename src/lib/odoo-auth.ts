@@ -27,9 +27,9 @@ export function generateOdooApiKey(): { raw: string; hashed: string; id: string 
 
 /** Revocation is authoritative at inventory read time, not at the
  * earlier HTTP authentication snapshot. This shared predicate intentionally
- * mirrors validateOdooKey: a rotated key remains valid for read-only status
- * recovery only until read_only_until. No expired, revoked or integration-
- * disabled key can disclose fresh tenant printer or Agent inventory.
+ * mirrors validateOdooKey by default: a rotated key remains valid for
+ * read-only status recovery until read_only_until. Inventory callers can
+ * disallow that grace so revoked keys cannot disclose fresh tenant data.
  * The dedicated configuration API remains available for a disabled key.
  *
  * Acquire after the tenant lifecycle fence, before the subscription fence:
@@ -44,6 +44,7 @@ export async function requireOdooReadKeyInTransaction(
   tx: Pick<DbTx, "execute">,
   key: Pick<typeof apiKeys.$inferSelect, "id" | "tenantId" | "hashedKey">,
   requireIntegrationEnabled = true,
+  allowRotationGrace = true,
 ): Promise<void> {
   const matched = await tx.execute(sql`
     SELECT id FROM api_keys
@@ -51,7 +52,7 @@ export async function requireOdooReadKeyInTransaction(
       ${requireIntegrationEnabled ? sql`AND odoo_enabled = TRUE` : sql``}
       AND (
         (revoked_at IS NULL AND read_only_until IS NULL)
-        OR (revoked_at <= clock_timestamp() AND read_only_until > clock_timestamp())
+        OR (${allowRotationGrace} AND revoked_at <= clock_timestamp() AND read_only_until > clock_timestamp())
       )
     FOR SHARE
   `);

@@ -276,6 +276,16 @@ func saveRegistryLocked(registryPath string, printers []DeviceInfo) error {
 			physical = append(physical, entry)
 		}
 	}
+	seenIDs := make(map[string]struct{}, len(physical))
+	for _, entry := range physical {
+		if entry.ID == "" {
+			continue
+		}
+		if _, exists := seenIDs[entry.ID]; exists {
+			return fmt.Errorf("registry contains duplicate printer ID %q", entry.ID)
+		}
+		seenIDs[entry.ID] = struct{}{}
+	}
 	data, err := json.MarshalIndent(physical, "", "  ")
 	if err != nil {
 		return err
@@ -466,6 +476,32 @@ func mutateRegistry(registryPath string, discovered []DeviceInfo, completeSource
 					d.ID = existing[matches[0]].ID
 				}
 			}
+		}
+		// Hidden unclassified rows are retained on disk. Promote a matching
+		// observation only when its execution binding is unchanged (or an
+		// operator explicitly targets that ID); otherwise do not persist a
+		// second row that would make the registry unreadable on its next load.
+		hiddenCollision := false
+		for hiddenIndex, prior := range hidden {
+			if prior.ID != d.ID {
+				continue
+			}
+			if operatorTargetID != prior.ID {
+				priorBinding, priorErr := config.PrinterBindingDigest(SharingConfigForDevice(prior))
+				currentBinding, currentErr := config.PrinterBindingDigest(SharingConfigForDevice(d))
+				if priorErr != nil || currentErr != nil || priorBinding != currentBinding {
+					log.Printf("[registry] printer ID %q conflicts with a preserved unclassified record; retaining it without rebinding", d.ID)
+					hiddenCollision = true
+					break
+				}
+			}
+			existing = append(existing, prior)
+			byID[prior.ID] = len(existing) - 1
+			hidden = append(hidden[:hiddenIndex], hidden[hiddenIndex+1:]...)
+			break
+		}
+		if hiddenCollision {
+			continue
 		}
 		if idx, ok := byID[d.ID]; ok {
 			if operatorTargetID != existing[idx].ID && conflictingNetworkExecutionBinding(existing[idx], d) {

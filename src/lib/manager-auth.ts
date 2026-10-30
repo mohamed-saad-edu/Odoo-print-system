@@ -5,6 +5,7 @@ import { createHash, createHmac, scrypt, timingSafeEqual } from "node:crypto";
 import { requiredRuntimeSecret, runtimeSecret } from "./runtime-secret";
 import { databaseNowMs } from "./database-clock";
 import { hashPassword, verifyPassword, normalizeEmail, burnPasswordVerification } from "./password";
+import { isValidNewPasswordLength } from "./new-password-policy";
 import { requireActiveTenantOrNull } from "./tenant-guard";
 import { LEGACY_SESSION_MAX_AGE_SECONDS, sessionCookieName } from "./session-config";
 import {
@@ -437,7 +438,9 @@ export async function authenticateManagerUser(username: string, password: string
     ? await verifyPassword(password, row.passwordHash)
     : await verifyScryptPasswordHash(password, row.passwordHash);
   if (!valid) return null;
-  if (!row.passwordHash.startsWith("argon2id$")) {
+  // Legacy passwords below today's policy still authenticate; they cannot be
+  // rehashed through the new-password boundary until the owner changes them.
+  if (!row.passwordHash.startsWith("argon2id$") && isValidNewPasswordLength(password)) {
     // Upgrade only if the legacy hash is still the value that was verified.
     // A concurrent password reset must never be overwritten by login migration.
     const legacyHash = row.passwordHash;
@@ -479,7 +482,7 @@ export async function authenticateCustomer(email: string, password: string): Pro
     ? await verifyPassword(password, row.passwordHash)
     : await verifyScryptPasswordHash(password, row.passwordHash);
   if (!valid) return null;
-  if (!row.passwordHash.startsWith("argon2id$")) {
+  if (!row.passwordHash.startsWith("argon2id$") && isValidNewPasswordLength(password)) {
     const legacyHash = row.passwordHash;
     const upgraded = await hashPassword(password);
     const current = await db.query.users.findFirst({

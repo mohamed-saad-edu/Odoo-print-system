@@ -285,7 +285,7 @@ async function sendGatewayReprint(jobId: string, operationKey: string): Promise<
   const body = await response.json().catch(() => null) as Record<string, unknown> | null;
   if (!response.ok) {
     const code = typeof body?.code === "string" ? body.code : "HTTP_ERROR";
-    throw new DashboardApiError(apiMessageKey(code, response.status, "errors.reprintFailed"), code, body ?? {});
+    throw new DashboardApiError(apiMessageKey(code, response.status, "errors.reprintFailed"), code, body ?? {}, response.status);
   }
   // A lost/truncated acknowledgement is not proof that a new physical print
   // was rejected. Keep the confirmation key for an exact replay.
@@ -443,7 +443,18 @@ export default function DashboardClient({
   const [jobsLoading, setJobsLoading] = useState(false);
   const [jobsError, setJobsError] = useState<string | null>(null);
   const [jobsRetryTick, setJobsRetryTick] = useState(0);
+  const [authorityDenied, setAuthorityDenied] = useState(false);
+  const mounted = React.useRef(true);
   const router = useRouter();
+  React.useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
+  const denyDashboardAuthority = React.useCallback((status: number) => {
+    if (!mounted.current) return;
+    setAuthorityDenied(true);
+    router.replace(status === 401 ? "/login?next=%2Fdashboard" : "/");
+  }, [router]);
   const { t, tc, locale, formatNumber, formatRelativeTime, formatDateTime } = useI18n();
 
 
@@ -585,6 +596,10 @@ export default function DashboardClient({
       signal: controller.signal,
     })
       .then(async (res) => {
+        if (res.status === 401 || res.status === 403) {
+          denyDashboardAuthority(res.status);
+          return;
+        }
         if (!res.ok) throw new Error(`job details request failed with ${res.status}`);
         const row = (await res.json()) as JobDetailsResponse;
         if (!cancelled) {
@@ -614,7 +629,7 @@ export default function DashboardClient({
       if (refreshTimer !== undefined) window.clearTimeout(refreshTimer);
       controller.abort();
     };
-  }, [selectedJob, selectedJobPayloadReloadKey, selectedJobRefreshTick]);
+  }, [selectedJob, selectedJobPayloadReloadKey, selectedJobRefreshTick, denyDashboardAuthority]);
 
   const selectedJobView =
     selectedJob && selectedJobDetails?.id === selectedJob.id
@@ -624,13 +639,13 @@ export default function DashboardClient({
   const dashboardRequest = React.useCallback(async <T,>(operation: () => Promise<{ ok: true; data: T } | { ok: false; error: string | null; status: number; code: string }>): Promise<T> => {
     const session = await ensureCustomerSession();
     if (!session.authenticated) {
-      router.replace("/login?next=%2Fdashboard");
+      denyDashboardAuthority(401);
       throw new Error(t("errors.sessionExpired"));
     }
     const result = await operation();
     if (!result.ok) {
       if (result.status === 401) {
-        router.replace("/login?next=%2Fdashboard");
+        denyDashboardAuthority(401);
         throw new Error(t("errors.sessionExpired"));
       }
       if (result.status === 403 && result.code === "WORKSPACE_REAUTHENTICATION_REQUIRED") {
@@ -642,10 +657,16 @@ export default function DashboardClient({
         } catch { /* A notification failure cannot retry or change the result. */ }
         throw new Error(t("workspaceSecurity.required"));
       }
+      if (result.status === 403) {
+        // A denied live snapshot must not leave previously authorized fleet
+        // and job data visible in this long-lived client after suspension or
+        // role/session revocation.
+        denyDashboardAuthority(403);
+      }
       throw new Error(t(apiMessageKey(result.code, result.status, "errors.operationFailed")));
     }
     return result.data;
-  }, [router, t]);
+  }, [denyDashboardAuthority, t]);
   const getDashboardJobs = React.useCallback((options?: Parameters<typeof getDashboardJobsResult>[0]) => dashboardRequest(() => getDashboardJobsResult(options)), [dashboardRequest]);
   const getDashboardState = React.useCallback((options?: Parameters<typeof getDashboardStateResult>[0]) => dashboardRequest(() => getDashboardStateResult(options)), [dashboardRequest]);
   const deleteAgent = (id: string) => dashboardRequest(() => deleteAgentResult(id));
@@ -1045,6 +1066,10 @@ export default function DashboardClient({
       // Preserve the key AND the confirmation dialog. An explicit retry can
       // reconcile an accepted operation but may never create a duplicate.
       if (error instanceof DashboardApiError) {
+        if (error.httpStatus === 401 || error.httpStatus === 403) {
+          denyDashboardAuthority(error.httpStatus);
+          return;
+        }
         const limit = upgradeLimitFromApiError(error);
         if (limit) {
           setUpgradeLimit(limit);
@@ -1085,6 +1110,10 @@ export default function DashboardClient({
         credentials: "same-origin",
         body: JSON.stringify({ name }),
       });
+      if (response.status === 401 || response.status === 403) {
+        denyDashboardAuthority(response.status);
+        return;
+      }
       const body = await response.json().catch(() => null) as Record<string, unknown> | null;
       if (!response.ok) {
         if (response.status >= 500) {
@@ -1329,6 +1358,8 @@ export default function DashboardClient({
       : kpis.onlinePrinters === kpis.totalPrinters
         ? t("printer.allAvailable")
         : tc("printer.unavailable", kpis.totalPrinters - kpis.onlinePrinters);
+
+  if (authorityDenied) return null;
 
   return (
     <div className="yw-gateway-dashboard space-y-6">
@@ -2349,6 +2380,10 @@ export default function DashboardClient({
                   method: "PATCH", headers: { "Content-Type": "application/json" }, credentials: "include",
                   body: JSON.stringify({ config: { geometry_profile: profile } }),
                 });
+                if (response.status === 401 || response.status === 403) {
+                  denyDashboardAuthority(response.status);
+                  throw new LocalizedGeometrySaveError(t("printer.geometry.saveFailed"));
+                }
                 const body: unknown = await response.json().catch(() => null);
                 const payload = body && typeof body === "object" && !Array.isArray(body) ? body as Record<string, unknown> : null;
                 if (!response.ok) throw new LocalizedGeometrySaveError(t(apiMessageKey(

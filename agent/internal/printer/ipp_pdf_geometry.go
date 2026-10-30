@@ -28,7 +28,7 @@ func inspectBoundedPDFPages(ctx context.Context, data []byte, byteLimit int) ([]
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
-	pool, err := getPDFiumPool()
+	pool, err := getPDFiumPoolWithContext(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("initialize PDF geometry inspector: %w", err)
 	}

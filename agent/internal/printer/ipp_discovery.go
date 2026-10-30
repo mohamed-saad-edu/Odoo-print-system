@@ -299,7 +299,9 @@ func discoverMDNSPrintersWithBrowse(ctx context.Context, browse func(context.Con
 							continue
 						}
 						mu.Lock()
-						appendMDNSDiscoveryResult(&out, seen, di, maxMDNSDiscoveryResults)
+						if !appendMDNSDiscoveryResult(&out, seen, di, maxMDNSDiscoveryResults) && len(out) >= maxMDNSDiscoveryResults {
+							truncated = true
+						}
 						mu.Unlock()
 					}
 				}()

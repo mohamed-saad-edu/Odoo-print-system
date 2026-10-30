@@ -79,4 +79,4 @@ See [API.md](API.md), [INSTALLATION.md](INSTALLATION.md), [DEPLOYMENT.md](DEPLOY
 
 ## Engineering review and cross-component contracts
 
-See the [unified system logic notebook](docs/engineering/SYSTEM_UNIFICATION_NOTEBOOK.md) and [complete tracked-file coverage ledger](docs/engineering/FILE_COVERAGE_LEDGER.md). These are evidence-scoped, living audit records, **not** a claim that all integration or hardware release gates passed.
+See the [unified system logic notebook](docs/engineering/SYSTEM_UNIFICATION_NOTEBOOK.md). It is an evidence-scoped, living engineering record, **not** a claim that all integration or hardware release gates passed.

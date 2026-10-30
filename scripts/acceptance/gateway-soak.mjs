@@ -55,6 +55,7 @@ const jobsPerSecond = Number(process.env.YASEIR_SOAK_JOBS_PER_SECOND || 2);
 const concurrency = Number(process.env.YASEIR_SOAK_CONCURRENCY || 1);
 const slowReaders = process.env.YASEIR_SOAK_SLOW_READERS === "1";
 const unknownRestartEnabled = process.env.YASEIR_SOAK_UNKNOWN_RESTART === "1";
+const maxPrintsPerPeriod = 10000;
 assert(Number.isFinite(jobsPerSecond) && jobsPerSecond >= 1 && jobsPerSecond <= 6, "Rate must be 1..6 jobs/second within the fixture's per-tenant quota");
 assert(Number.isInteger(concurrency) && concurrency >= 1 && concurrency <= 24, "Concurrency must be 1..24");
 const maxAdmissions = Math.ceil((duration + warmupSeconds) * jobsPerSecond * 1.02) + 4 * concurrency + 49;
@@ -366,6 +367,7 @@ async function loadWindow(name, seconds) {
 function percentiles(values) { const v = values.sort((a, b) => a - b); return { count: v.length, p50Ms: v[Math.ceil(v.length * .5) - 1], p95Ms: v[Math.ceil(v.length * .95) - 1], p99Ms: v[Math.ceil(v.length * .99) - 1], maxMs: v.at(-1) }; }
 
 try {
+  assert(Math.ceil(maxAdmissions / 3) <= maxPrintsPerPeriod, "Admission budget exceeds the monthly quota for one synthetic tenant");
   corpus = await createWorkloadCorpus();
   save("payload-corpus.json", { scope: "Deterministic synthetic source documents, no native rendering or physical acceptance", distributionPercent: WORKLOAD_FORMAT_DISTRIBUTION, assets: corpus.manifest });
   await admin.query(`CREATE DATABASE "${database}"`); created = true;
@@ -390,7 +392,7 @@ try {
   for (let ti = 0; ti < 3; ti++) {
     const suffix = randomBytes(6).toString("hex"), tenantId = `tenant_ops_${suffix}`, planId = `plan_ops_${suffix}`, apiKeyId = `key_ops_${suffix}`, odooKey = `odoo_${randomBytes(32).toString("base64url")}`;
     await db.query("INSERT INTO tenants(id,name,odoo_idempotency_mode) VALUES($1,'Synthetic operations tenant','strict_v2')", [tenantId]);
-    await db.query("INSERT INTO plans(id,name,entitlements) VALUES($1,$2,$3::jsonb)", [planId, `Synthetic bounded operations plan ${suffix}`, JSON.stringify({ max_agents: 2, max_printers: 2, max_jobs_per_minute: 180, max_concurrent_jobs: 64, max_prints_per_period: 10000 })]);
+    await db.query("INSERT INTO plans(id,name,entitlements) VALUES($1,$2,$3::jsonb)", [planId, `Synthetic bounded operations plan ${suffix}`, JSON.stringify({ max_agents: 2, max_printers: 2, max_jobs_per_minute: 180, max_concurrent_jobs: 64, max_prints_per_period: maxPrintsPerPeriod })]);
     await db.query("INSERT INTO tenant_subscriptions(tenant_id,plan_id,status,current_period_start,current_period_end) VALUES($1,$2,'active',now()-interval '1 minute',now()+interval '1 month')", [tenantId, planId]);
     await db.query("INSERT INTO api_keys(id,tenant_id,name,hashed_key,odoo_enabled,odoo_enabled_revision) VALUES($1,$2,'Synthetic operations key',$3,true,0)", [apiKeyId, tenantId, hash(odooKey)]);
     for (let ai = 0; ai < 2; ai++) {

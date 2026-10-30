@@ -32,14 +32,22 @@ export function SessionInventory({ platform = false, canRevoke = true }: { platf
   const actionInFlight = useRef(false);
   const mounted = useRef(false);
   const endpoint = platform ? "/api/platform/auth/sessions" : "/api/auth/sessions";
+  const redirectToSignIn = useCallback(() => {
+    const next = window.location.pathname + window.location.search + window.location.hash;
+    router.replace(`${platform ? "/platform/login" : "/login"}?next=${encodeURIComponent(next)}`);
+  }, [platform, router]);
   const load = useCallback(async (cursor: string | null, signal: AbortSignal): Promise<Page> => {
     const response = await fetchWithTimeout(endpoint + (cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""), {
       credentials: "include", cache: "no-store", signal,
     });
     const body = await response.json();
-    if (!response.ok || !Array.isArray(body.sessions) || body.sessions.length > 100) throw new Error(t("security.sessionsFailed"));
+    if (!response.ok) {
+      if (response.status === 401 && !signal.aborted) redirectToSignIn();
+      throw new Error(t("security.sessionsFailed"));
+    }
+    if (!Array.isArray(body.sessions) || body.sessions.length > 100) throw new Error(t("security.sessionsFailed"));
     return body as Page;
-  }, [endpoint, t]);
+  }, [endpoint, redirectToSignIn, t]);
   const readPage = useCallback(async (cursor: string | null, number: number, controller: AbortController, ownGeneration: number) => {
     try {
       const body = await load(cursor, controller.signal);
@@ -54,6 +62,9 @@ export function SessionInventory({ platform = false, canRevoke = true }: { platf
         setSessions([]);
         setNextCursor(null);
         setPageNumber(1);
+        setPassword("");
+        setConfirmAll(false);
+        setPlatformStepUp(false);
         setError(t("security.sessionsFailed"));
       }
     } finally {
@@ -94,8 +105,12 @@ export function SessionInventory({ platform = false, canRevoke = true }: { platf
       const data = await response.json();
       if (!mounted.current || controller.signal.aborted) return;
       if (!response.ok) {
-        if (data.code === "PLATFORM_SESSION_STEP_UP_REQUIRED") {
+        if (data.code === "PLATFORM_SESSION_STEP_UP_REQUIRED" || data.code === "PLATFORM_REAUTHENTICATION_REQUIRED") {
           setPlatformStepUp(true); setError(t("security.platformSessionStepUp")); return;
+        }
+        if ((response.status === 401 && data.code !== "PASSWORD_REQUIRED") || response.status === 403) {
+          setSessions([]); setNextCursor(null); setPageNumber(1);
+          if (response.status === 401) redirectToSignIn();
         }
         setError(t("security.sessionsFailed")); return;
       }

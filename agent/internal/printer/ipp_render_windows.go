@@ -36,7 +36,7 @@ func renderIPPPDFToJPEG(ctx context.Context, pdfData []byte, attrs map[string]st
 		return nil, ctx.Err()
 	}
 
-	pool, err := getPDFiumPool()
+	pool, err := getPDFiumPoolWithContext(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("initialize embedded PDFium for IPP JPEG conversion: %w", err)
 	}

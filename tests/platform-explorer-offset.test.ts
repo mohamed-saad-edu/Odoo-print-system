@@ -32,7 +32,7 @@ describe("platform database explorer offset contract", () => {
   it("allows canonical zero and padded decimal offsets without widening access", async () => {
     const ok = await GET(new Request("https://gateway.example/api/platform/database?table=tenants&offset=0003"));
     expect(ok.status).toBe(200);
-    expect(mocks.explore).toHaveBeenCalledWith({ table: "tenants", search: undefined, offset: 3 });
+    expect(mocks.explore).toHaveBeenCalledWith(expect.anything(), { table: "tenants", search: undefined, offset: 3 });
     expect(mocks.owner).toHaveBeenCalledTimes(1);
     expect(mocks.authority).toHaveBeenCalledTimes(1);
     expect(mocks.transaction).toHaveBeenCalledTimes(1);

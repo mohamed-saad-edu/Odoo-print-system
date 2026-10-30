@@ -2635,16 +2635,18 @@ func (a *Agent) printerStatusPayloadWithSharing(sharing localPrinterSharingSnaps
 	return rows
 }
 
-// The returned completeness bit is about whether local operator disablement
-// could be read before AND after status probes. No rows + an unreadable policy
-// is not evidence that the fleet was removed: the Gateway must retain its
-// previous inventory instead of applying an authoritative empty snapshot.
+// The returned completeness bit says whether the inventory is safe to
+// reconcile: disablement must be readable across probes, and every published
+// printer ID must satisfy the Gateway wire contract. Omitted rows in an
+// incomplete snapshot cannot prove that the fleet was removed.
 func (a *Agent) printerStatusPayloadWithSharingResult(sharing localPrinterSharingSnapshot) ([]map[string]interface{}, bool) {
 	disabled, err := printer.LoadLocalPrinterDisablement(a.cfg, a.registryPath)
 	if err != nil {
 		log.Printf("Printer inventory proof withheld: local disablement could not be read: %v", err)
 		return nil, false
 	}
+	inventoryComplete := true
+	invalidIDs := 0
 	// Snapshot the printer map under the read lock: the async discovery
 	// goroutine may add printers while heartbeats probe statuses.
 	a.printersMu.RLock()
@@ -2655,6 +2657,11 @@ func (a *Agent) printerStatusPayloadWithSharingResult(sharing localPrinterSharin
 			continue
 		}
 		if shared, err := sharing.shared(pc); !shared || err != nil {
+			continue
+		}
+		if !printer.ValidGatewayPrinterID(id) {
+			inventoryComplete = false
+			invalidIDs++
 			continue
 		}
 		c := printer.ClassifyDeviceInfo(printer.DeviceInfo{
@@ -2677,6 +2684,9 @@ func (a *Agent) printerStatusPayloadWithSharingResult(sharing localPrinterSharin
 		configByID[id] = pc
 	}
 	a.printersMu.RUnlock()
+	if invalidIDs > 0 {
+		log.Printf("Printer inventory proof withheld: %d local printer ID(s) exceed the Gateway wire contract", invalidIDs)
+	}
 	sort.Strings(ids) // deterministic order aids gateway-side diffing
 
 	statuses := make([]string, len(ids))
@@ -2964,7 +2974,7 @@ func (a *Agent) printerStatusPayloadWithSharingResult(sharing localPrinterSharin
 			log.Printf("WARNING: failed to persist observed printer capabilities: %v", err)
 		}
 	}
-	return result, true
+	return result, inventoryComplete
 }
 
 // Heartbeat names are display metadata, bounded to the Gateway's UTF-16
@@ -3225,14 +3235,15 @@ func (a *Agent) sendHeartbeatContext(parent context.Context) {
 		inventoryComplete = false
 		log.Printf("Heartbeat sharing inventory incomplete: local policy or execution binding could not be read")
 	}
-	printerPayload, policyComplete := a.printerStatusPayloadWithSharingResult(sharing)
-	if !policyComplete {
+	printerPayload, printerInventoryComplete := a.printerStatusPayloadWithSharingResult(sharing)
+	if !printerInventoryComplete {
 		// Local disablement may change between registry reload and status
-		// probes. An unreadable policy is not proof the printers vanished.
+		// probes, and invalid Gateway IDs cannot be included in the wire snapshot.
+		// Neither case proves that the omitted printers vanished.
 		// Keep presence/desired ACKs flowing, but forbid Gateway absence
 		// reconciliation for this heartbeat snapshot.
 		inventoryComplete = false
-		log.Printf("Heartbeat inventory incomplete: local printer disablement could not be read")
+		log.Printf("Heartbeat inventory incomplete: local printer inventory could not be safely projected")
 	}
 	desiredAcks := a.desiredStateAcksPayload()
 	gatewayOwnedIDs := a.gatewayOwnedPrinterIDs()
@@ -3247,7 +3258,7 @@ func (a *Agent) sendHeartbeatContext(parent context.Context) {
 	keepAlive := a.inFlightJobIDs(64)
 	pages := buildHeartbeatPayloadPages(printerPayload, desiredAcks, gatewayOwnedIDs, privateIDs, keepAlive, inventoryComplete)
 	if len(pages) == 0 {
-		log.Printf("Heartbeat snapshot contains an item larger than the envelope budget; retaining the previous inventory and lifecycle fence")
+		log.Printf("Heartbeat snapshot exceeds a bounded Gateway page; retaining the previous inventory and lifecycle fence")
 		return
 	}
 	for pageIndex, payload := range pages {
@@ -3648,7 +3659,7 @@ func (a *Agent) processJob(ctx context.Context, job map[string]interface{}) {
 	a.printersMu.RUnlock()
 	if err := a.verifyPrinterForDispatch(ctx, printerID, p, verifiedConfig, fields.BindingDigest); err != nil {
 		a.queue.AbortPrint(jobID, "printer_unverified: zero output bytes transmitted")
-		a.updateJobStatus(ctx, jobID, "failed", "PRINTER_UNVERIFIED: verify the selected printer or output backend before submitting; zero output bytes transmitted", claimToken, "")
+		a.updateJobStatus(ctx, jobID, "failed", fmt.Sprintf("%v; zero output bytes transmitted", err), claimToken, "")
 		return
 	}
 
@@ -4048,11 +4059,11 @@ func (a *Agent) doAuthorizedRequest(ctx context.Context, method, endpointPath st
 	}
 	var buf io.Reader
 	if body != nil {
-		b := new(bytes.Buffer)
-		if err := json.NewEncoder(b).Encode(body); err != nil {
+		b, err := marshalAgentJSON(body)
+		if err != nil {
 			return nil, fmt.Errorf("encode request body: %w", err)
 		}
-		buf = b
+		buf = bytes.NewReader(b)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, method, target, buf)
@@ -4081,4 +4092,15 @@ func (a *Agent) doAuthorizedRequest(ctx context.Context, method, endpointPath st
 	}
 
 	return resp, nil
+}
+
+func marshalAgentJSON(value interface{}) ([]byte, error) {
+	var buffer bytes.Buffer
+	encoder := json.NewEncoder(&buffer)
+	// Application JSON is not rendered as HTML; keep wire size aligned with Gateway accounting.
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(value); err != nil {
+		return nil, err
+	}
+	return bytes.TrimSuffix(buffer.Bytes(), []byte("\n")), nil
 }

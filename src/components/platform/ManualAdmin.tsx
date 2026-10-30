@@ -7,7 +7,7 @@ import { v4AdminEn } from "../../i18n/messages/v4-admin";
 import { fetchWithTimeout } from "../../lib/fetch-timeout";
 export type AdminKey = keyof typeof v4AdminEn;
 export function useAdminText(){const i18n=useI18n();const {t}=i18n;const a=useCallback((key:string)=>t((`v4.admin.${key}`) as MessageKey),[t]);const formatDate=useCallback((value:Date|string|number|null|undefined)=>formatManualCalendarDate(value,i18n.locale)??t("common.notAvailable"),[i18n.locale,t]);return {...i18n,a,formatDate};}
-export async function adminJson(url:string,options?:RequestInit){const res=await fetchWithTimeout(url,{credentials:'same-origin',cache:'no-store',...options});const data=await res.json();if(!res.ok)throw new Error(data.code??'MANUAL_SUBSCRIPTION_UNAVAILABLE');return data;}
+export async function adminJson(url:string,options?:RequestInit){const res=await fetchWithTimeout(url,{credentials:'same-origin',cache:'no-store',...options});const data=await res.json();if(!res.ok){if((res.status===401||data.code==='PLATFORM_REAUTH_REQUIRED')&&typeof window!=="undefined"){const next=window.location.pathname+window.location.search+window.location.hash;window.location.replace(`/platform/login?next=${encodeURIComponent(next)}`);}throw new Error(data.code??'MANUAL_SUBSCRIPTION_UNAVAILABLE');}return data;}
 export const controlClass='w-full rounded-lg border border-edge bg-surface px-3 py-2.5 text-ink focus:outline-none focus:ring-2 focus:ring-brand/40';
 export function AdminMetric({label,value,detail,icon}:{label:string;value:React.ReactNode;detail?:React.ReactNode;icon?:React.ReactNode}){
   return <div className="rounded-xl border border-edge-subtle bg-surface p-5">

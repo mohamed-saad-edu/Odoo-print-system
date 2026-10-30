@@ -15,6 +15,10 @@ create an agent assignment or send a print job.
     """,
     'author': 'Yaseir',
     'website': 'https://print.yaseir.cloud/',
+    'images': [
+        'static/description/pos-receipt-printing.jpg',
+        'static/description/invoice-printing.jpg',
+    ],
     'category': 'Tools',
     'depends': ['base', 'web', 'sale', 'account', 'stock', 'purchase', 'point_of_sale'],
     'external_dependencies': {'python': ['requests', 'cryptography']},

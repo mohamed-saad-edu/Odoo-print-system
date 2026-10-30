@@ -137,8 +137,9 @@ func probeSpoolerDiagnostic(ctx context.Context, name string, probe func(string)
 	}
 	result := make(chan printer.SpoolerProbe, 1)
 	go func() {
-		defer func() { <-diagnosticSpoolerSlot }()
-		result <- probe(name)
+		value := probe(name)
+		<-diagnosticSpoolerSlot
+		result <- value
 	}()
 	select {
 	case value := <-result:

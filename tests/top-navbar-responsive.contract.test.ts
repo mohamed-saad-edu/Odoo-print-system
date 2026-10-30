@@ -15,11 +15,12 @@ describe("Gateway and Platform sidebar navigation", () => {
     expect(home).toContain('flex-nowrap items-center gap-0.5 xl:flex');
     expect(home).toContain('whitespace-nowrap');
     expect(home).toContain('aria-label={t("home.brandAria")}');
-    expect(home).toContain('<LanguageSwitcher compact={false} placement="below" />');
-    expect(home).toContain('className="hidden items-center gap-2 md:flex"');
+    expect(home).toContain('<LanguageSwitcher compact placement="below" />');
+    expect(home).toContain('className="ms-auto hidden shrink-0 items-center gap-2 xl:flex"');
     expect(mobile).toContain('window.matchMedia("(min-width: 1280px)")');
     expect(mobile).toContain('focus-visible:ring-brand xl:hidden');
-    expect(mobile).toContain('outline-none xl:hidden');
+    expect(mobile).toContain('outline-none');
+    expect(mobile).toContain('xl:hidden');
     expect(mobile).not.toContain('(min-width: 768px)');
     expect(mobile).not.toContain('md:hidden');
 

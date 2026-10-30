@@ -9,7 +9,10 @@ import { and, eq } from "drizzle-orm";
 import { recordJobEvent } from "../../../../../lib/job-timeline";
 import { runWithCorrelation, generateRequestId, generateAttemptId } from "../../../../../server/correlation";
 import { requestIdFrom, logError, logWarn } from "../../../../../lib/log";
-import { getPrinterCapabilityMatrix } from "../../../../../lib/printer-health";
+import { getPrinterCapabilityMatrixInTransaction } from "../../../../../lib/printer-health";
+import { requireConsoleReadAuthorityInTransaction } from "../../../../../lib/console-read-authority";
+import { ManagerMutationAuthorityChangedError } from "../../../../../lib/manager-mutation-authorization";
+import { TenantSuspendedError, TenantDeletedError } from "../../../../../lib/tenant-guard";
 import { createPrintJobForPrinter, AgentQueueFullError, AgentQueuedJobsFullError, PrintJobCapabilityError, PrintJobInputError } from "../../../../../lib/print-job-service";
 import { TenantEntitlementError, TenantPrintQuotaExceededError, TenantSubscriptionRequiredError, TenantEntitlementConfigError } from "../../../../../lib/entitlements";
 import { MAX_AGENT_IN_FLIGHT_JOBS } from "../../../../../lib/job-delivery";
@@ -92,23 +95,30 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     // so use the same PostgreSQL clock as canonical job admission and delivery.
     const certificationNowMs = await databaseNowMs();
 
-    // Auth: tenant + printer ownership via DB, same as canonical pre-check
-    const printerRows = await db.select().from(printers).where(and(eq(printers.tenantId, tenantId), eq(printers.id, printerId))).limit(1);
-    if (printerRows.length === 0) {
+    // Keep the printer and capability snapshot inside the current session fence.
+    let snapshot: { printer: PrinterRow; capability: Awaited<ReturnType<typeof getPrinterCapabilityMatrixInTransaction>> } | null;
+    try {
+      snapshot = await db.transaction(async tx => {
+        await requireConsoleReadAuthorityInTransaction(tx, { kind: "manager", claims }, "printers.test");
+        const printerRows = await tx.select().from(printers).where(and(eq(printers.tenantId, tenantId), eq(printers.id, printerId))).limit(1);
+        if (printerRows.length === 0) return null;
+        const printer: PrinterRow = printerRows[0];
+        const capability = await getPrinterCapabilityMatrixInTransaction(tx, tenantId, printerId);
+        return { printer, capability };
+      });
+    } catch (error) {
+      if (error instanceof ManagerMutationAuthorityChangedError) return error.response();
+      if (error instanceof TenantSuspendedError || error instanceof TenantDeletedError) return NextResponse.json({ error: error.message, code: error.code }, { status: error.status });
+      logError("print.certification.authority_read_failed", { requestId, printerId, tenantId, error: error instanceof Error ? error.message : "unknown" });
+      setStep("auth", "error", "Unable to verify printer authorization", `printerId=${printerId}`);
+      return NextResponse.json({ printerId, requestId, steps, certified: false, blocked: false, code: "CAPABILITY_LOOKUP_FAILED" }, { status: 503, headers: { "x-request-id": requestId } });
+    }
+    if (!snapshot) {
       setStep("auth", "error", "Printer not found or not owned by tenant", `printerId=${printerId} tenantId=${tenantId}`);
       return NextResponse.json({ printerId, requestId, steps, certified: false, blocked: false }, { headers: { "x-request-id": requestId } });
     }
-    const printer: PrinterRow = printerRows[0];
+    const { printer, capability } = snapshot;
     setStep("auth", "ok", `Printer ${printer.name} owned by tenant`, `printerId=${printerId} agentId=${printer.agentId}`);
-
-    let capability;
-    try {
-      capability = await getPrinterCapabilityMatrix(tenantId, printerId);
-    } catch (error) {
-      logError("print.certification.capability_lookup_failed", { requestId, printerId, tenantId, error: error instanceof Error ? error.message : "unknown" });
-      setStep("auth", "error", "Unable to verify printer capabilities", `printerId=${printerId}`);
-      return NextResponse.json({ printerId, requestId, steps, certified: false, blocked: false, code: "CAPABILITY_LOOKUP_FAILED" }, { status: 503, headers: { "x-request-id": requestId } });
-    }
 
     // Queue: use canonical pipeline with real idempotency key
     let jobId: string | null = null;
@@ -290,10 +300,15 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     let freshJob: PrintJobRow | null = null;
     let jobStateLookupFailed = false;
     try {
-      const rows = await db.select().from(printJobs).where(and(eq(printJobs.tenantId, tenantId), eq(printJobs.id, jobId!))).limit(1);
+      const rows = await db.transaction(async tx => {
+        await requireConsoleReadAuthorityInTransaction(tx, { kind: "manager", claims }, "printers.test");
+        return tx.select().from(printJobs).where(and(eq(printJobs.tenantId, tenantId), eq(printJobs.id, jobId!))).limit(1);
+      });
       freshJob = rows[0] ?? null;
       if (freshJob) jobStatus = freshJob.status;
     } catch (error) {
+      if (error instanceof ManagerMutationAuthorityChangedError) return error.response();
+      if (error instanceof TenantSuspendedError || error instanceof TenantDeletedError) return NextResponse.json({ error: error.message, code: error.code }, { status: error.status });
       jobStateLookupFailed = true;
       logError("print.certification.job_state_lookup_failed", { requestId, printerId, tenantId, jobId, error: error instanceof Error ? error.message : "unknown" });
       setStep("claim", "error", "Unable to verify queued job state", `jobId=${jobId}`);

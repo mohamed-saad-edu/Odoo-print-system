@@ -129,5 +129,6 @@ export async function POST(req: Request) {
 
   response.headers.set("Cache-Control", "no-store");
   clearLegacySessionCookies(response.headers, "customer");
+  clearLegacySessionCookies(response.headers, "manager");
   return response;
 }

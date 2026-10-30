@@ -46,6 +46,7 @@ export async function adminBrowserAcceptance(args) {
   };
   try {
     await nativeAcceptance(args);
+    assert(results.length > 0, 'No browser accessibility state was captured');
     const failures = results.flatMap(r => r.violations.map(v => `${r.image}:${v.id}:${v.nodes.length}`));
     assert.deepEqual(failures, [], 'Real browser accessibility findings require review');
     args.check(`Actual Chromium axe ${results[0]?.axe} scans passed on ${results.length} captured Arabic/English responsive states, including color contrast`);

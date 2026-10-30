@@ -1,5 +1,5 @@
-import { pool } from "../db";
-import type { PoolClient } from "pg";
+import { sql } from "drizzle-orm";
+import type { DbTx } from "../db";
 
 /** Metadata-driven, read-only database inventory. Database identifiers are
  * never supplied to SQL directly by the browser. All identifiers are quoted
@@ -21,12 +21,12 @@ const ALWAYS_HIDDEN = new Set(["platform_sessions","refresh_tokens","auth_rate_l
 export type ExploreTable = { name: string; columns: string[]; primaryKey: string | null; primaryKeys?: string[] };
 const quote = (v: string) => '"' + v.replaceAll('"', '""') + '"';
 
-export async function listExploreTables(client: PoolClient): Promise<ExploreTable[]> {
+export async function listExploreTables(tx: DbTx): Promise<ExploreTable[]> {
   // One bounded catalog query rather than an N+1 request per table. The
   // information_schema query itself does not read any customer row or secret.
-  const catalog = await client.query<{
+  const catalog = await tx.execute(sql<{
     table_name: string; column_name: string; data_type: string; is_primary: boolean;
-  }>(`SELECT c.table_name, c.column_name, c.data_type,
+  }>`SELECT c.table_name, c.column_name, c.data_type,
         EXISTS (
           SELECT 1 FROM information_schema.table_constraints tc
           JOIN information_schema.key_column_usage kcu
@@ -52,7 +52,10 @@ export async function listExploreTables(client: PoolClient): Promise<ExploreTabl
     columns: string[];
     primary: string[];
   }>();
-  for (const column of catalog.rows) {
+  const catalogRows = catalog.rows as Array<{
+    table_name: string; column_name: string; data_type: string; is_primary: boolean;
+  }>;
+  for (const column of catalogRows) {
     if (ALWAYS_HIDDEN.has(column.table_name) || RETIRED_TABLES.has(column.table_name)) continue;
     let table = grouped.get(column.table_name);
     if (!table) {
@@ -73,7 +76,7 @@ export async function listExploreTables(client: PoolClient): Promise<ExploreTabl
       ...(table.primary.length > 1 ? { primaryKeys: table.primary } : {}),
     }));
 }
-export async function exploreRows(client: PoolClient, table: ExploreTable, search: string, offset: number, limit: number) {
+export async function exploreRows(tx: DbTx, table: ExploreTable, search: string, offset: number, limit: number) {
   const colSQL = table.columns.map(quote).join(", ");
   // Search visible scalar fields only; never fetch secrets or interpolate user input.
   // Include exact/partial ID and common human labels (names, slugs, statuses).
@@ -82,10 +85,8 @@ export async function exploreRows(client: PoolClient, table: ExploreTable, searc
   // strpos treats punctuation, percent signs and underscores literally.
   // Bind the term: browser input NEVER becomes a SQL identifier or expression.
   const where = search && searchable.length
-    ? "WHERE (" + searchable.map(c => `strpos(lower(${quote(c)}::text), lower($1)) > 0`).join(" OR ") + ")"
-    : "";
-  const args = search ? [search, limit, offset] : [limit, offset];
-  const index = search ? 2 : 1;
+    ? sql`WHERE (${sql.join(searchable.map(c => sql`strpos(lower(${sql.raw(quote(c))}::text), lower(${search})) > 0`), sql` OR `)})`
+    : sql``;
   if (search && !searchable.length) return [];
   // A creation timestamp is not unique, particularly for bulk inserts and
   // memberships. Include every visible primary-key column so adjacent pages
@@ -94,25 +95,19 @@ export async function exploreRows(client: PoolClient, table: ExploreTable, searc
     table.columns.includes("created_at") ? "created_at" : table.primaryKey ?? table.columns[0],
     ...(table.primaryKeys ?? (table.primaryKey ? [table.primaryKey] : [])),
   ])].filter(column => table.columns.includes(column));
-  const result = await client.query<Record<string,unknown>>(
-    `SELECT ${colSQL} FROM ${quote(table.name)} ${where}
-      ORDER BY ${orderColumns.map(column => `${quote(column)} DESC`).join(", ")}
-      LIMIT $${index} OFFSET $${index + 1}`,args);
+  const result = await tx.execute(sql<Record<string,unknown>>`
+    SELECT ${sql.raw(colSQL)} FROM ${sql.raw(quote(table.name))} ${where}
+    ORDER BY ${sql.raw(orderColumns.map(column => `${quote(column)} DESC`).join(", "))}
+    LIMIT ${limit} OFFSET ${offset}`);
   return result.rows.map(row=>Object.fromEntries(Object.entries(row).map(([k,v])=>[k,
      typeof v==="string" && v.length>320 ? v.slice(0,320)+"…" : v instanceof Date ? v.toISOString() : v])));
 }
-export async function readPlatformDatabase(input: { table?: string; search?: string; offset?: number }) {
-  const client = await pool.connect();
-  try {
-    await client.query("BEGIN READ ONLY");
-    await client.query("SET LOCAL statement_timeout = '4000ms'");
-    const tables = await listExploreTables(client);
-    const table = input.table ? tables.find(t=>t.name === input.table) : null;
-    const pageSize = 25;
-    const rows = table ? await exploreRows(client,table,input.search ?? "",input.offset ?? 0,pageSize + 1) : [];
-    await client.query("COMMIT");
-    return { tables, selected: table?.name ?? null, columns: table?.columns ?? [], rows: rows.slice(0,pageSize),
-      hasMore:rows.length>pageSize };
-  } catch(e) { await client.query("ROLLBACK").catch(()=>{});throw e; }
-  finally { client.release(); }
+export async function readPlatformDatabase(tx: DbTx, input: { table?: string; search?: string; offset?: number }) {
+  await tx.execute(sql`SET LOCAL statement_timeout = '4000ms'`);
+  const tables = await listExploreTables(tx);
+  const table = input.table ? tables.find(t=>t.name === input.table) : null;
+  const pageSize = 25;
+  const rows = table ? await exploreRows(tx,table,input.search ?? "",input.offset ?? 0,pageSize + 1) : [];
+  return { tables, selected: table?.name ?? null, columns: table?.columns ?? [], rows: rows.slice(0,pageSize),
+    hasMore:rows.length>pageSize };
 }

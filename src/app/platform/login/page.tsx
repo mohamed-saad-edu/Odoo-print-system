@@ -9,13 +9,18 @@ import { Button, Field, Input, ErrorState, Skeleton } from "../../../components/
 import { useI18n } from "../../../i18n/react";
 import { codeMessageKey } from "../../../lib/api-error-keys";
 
-/** Only allow known Platform Admin destinations to prevent open redirects. */
+/** Keep the return target on this origin and inside the authenticated platform. */
 function afterLoginDestination(): string {
   if (typeof window === "undefined") return "/platform/dashboard";
   const next = new URLSearchParams(window.location.search).get("next");
-  return next && /^\/platform\/(?:subscriptions|plans|subscription-requests)$/.test(next)
-    ? next
-    : "/platform/dashboard";
+  if (!next || !next.startsWith("/platform/") || /[\\\u0000-\u001f\u007f]/.test(next)) return "/platform/dashboard";
+  try {
+    const destination = new URL(next, window.location.origin);
+    if (destination.origin === window.location.origin && destination.pathname.startsWith("/platform/") && destination.pathname !== "/platform/login") {
+      return destination.pathname + destination.search + destination.hash;
+    }
+  } catch { /* fall through to the safe platform destination */ }
+  return "/platform/dashboard";
 }
 
 export default function PlatformLoginPage() {

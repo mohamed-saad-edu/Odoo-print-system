@@ -46,8 +46,8 @@ const printerEligibilityPredicate = (tenantId: SQL) => sql`
     )
   )
   AND pr.last_seen_at IS NOT NULL
-  AND pr.last_seen_at <= now()
-  AND pr.last_seen_at >= now() - make_interval(secs => ${printerStaleThresholdSeconds()})
+  AND pr.last_seen_at <= clock_timestamp()
+  AND pr.last_seen_at >= clock_timestamp() - make_interval(secs => ${printerStaleThresholdSeconds()})
   AND ${liveTenantSubscriptionPredicate(tenantId)}
 `;
 
@@ -129,7 +129,7 @@ export async function GET(req: Request) {
   const agent = await validateAgent(req.headers.get("Authorization"));
   if (!agent) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  // The presence gates below compare `a.last_seen_at` against PostgreSQL `now()`.
+  // The presence gates below compare timestamps with PostgreSQL's current clock.
   // Calibrate the JS clock (used for Retry-After and availability edges) so both
   // sides agree even when the host clock drifts from the database clock.
   await refreshClockSkew();
@@ -138,12 +138,12 @@ export async function GET(req: Request) {
     const tenant = await tx.execute(sql`SELECT id FROM tenants
       WHERE id = ${agent.tenantId} AND lifecycle = 'active' FOR SHARE`);
     if (tenant.rows.length !== 1) return null;
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`print_jobs:agent:${agent.id}`}))`);
     // Pairing rotates this stored hash while holding the Agent row. A poll
     // authenticated before rotation must not claim a new physical attempt.
     const credential = await tx.execute(sql`SELECT secret FROM agents
       WHERE id = ${agent.id} AND tenant_id = ${agent.tenantId} AND lifecycle = 'active' FOR SHARE`);
     if (!agent.secret || credential.rows[0]?.secret !== agent.secret) return null;
-    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`print_jobs:agent:${agent.id}`}))`);
 
     // Capacity accounting must include all unexpired claimed/printing jobs owned
     // by this Agent — EXCEPT stale claims that this very poll is about to
@@ -162,21 +162,21 @@ export async function GET(req: Request) {
       JOIN tenants t ON t.id = p.tenant_id
       WHERE p.agent_id = ${agent.id}
         AND p.status IN ('claimed', 'printing')
-        AND p.expires_at > now()
+        AND p.expires_at > clock_timestamp()
         AND NOT (
           p.status = 'claimed'
           AND p.delivered_at IS NULL
           AND p.acked_at IS NULL
           AND COALESCE(p.error, '') <> ${DELIVERY_EVIDENCE_PENDING}
-          AND p.updated_at < now() - make_interval(secs => ${agentStaleThresholdSeconds()})
+          AND p.updated_at < clock_timestamp() - make_interval(secs => ${agentStaleThresholdSeconds()})
           AND p.retries < ${MAX_RETRIES}
           AND p.delivery_attempts < ${MAX_DELIVERY_ATTEMPTS}
         )
         AND a.lifecycle = 'active'
         AND a.status = 'online'
         AND a.last_seen_at IS NOT NULL
-        AND a.last_seen_at <= now()
-        AND a.last_seen_at >= now() - make_interval(secs => ${agentStaleThresholdSeconds()})
+        AND a.last_seen_at <= clock_timestamp()
+        AND a.last_seen_at >= clock_timestamp() - make_interval(secs => ${agentStaleThresholdSeconds()})
         AND t.lifecycle = 'active'
     `);
     const inFlight = Number((countResult.rows[0] as { count?: number | string } | undefined)?.count ?? 0);
@@ -191,19 +191,19 @@ export async function GET(req: Request) {
         JOIN printers pr ON pr.id = p.printer_id AND pr.tenant_id = p.tenant_id
         JOIN tenants t ON t.id = p.tenant_id
         WHERE p.agent_id = ${agent.id}
-          AND p.expires_at > now()
+          AND p.expires_at > clock_timestamp()
           AND p.status = 'claimed'
           AND p.delivered_at IS NULL
           AND p.acked_at IS NULL
           AND COALESCE(p.error, '') <> ${DELIVERY_EVIDENCE_PENDING}
-          AND p.updated_at < now() - make_interval(secs => ${agentStaleThresholdSeconds()})
+          AND p.updated_at < clock_timestamp() - make_interval(secs => ${agentStaleThresholdSeconds()})
           AND p.retries < ${MAX_RETRIES}
           AND p.delivery_attempts < ${MAX_DELIVERY_ATTEMPTS}
           AND a.lifecycle = 'active'
           AND a.status = 'online'
-        AND a.last_seen_at IS NOT NULL
-        AND a.last_seen_at <= now()
-        AND a.last_seen_at >= now() - make_interval(secs => ${agentStaleThresholdSeconds()})
+          AND a.last_seen_at IS NOT NULL
+          AND a.last_seen_at <= clock_timestamp()
+          AND a.last_seen_at >= clock_timestamp() - make_interval(secs => ${agentStaleThresholdSeconds()})
           AND p.binding_digest IS NOT NULL AND p.binding_digest = pr.verification_binding_digest
           AND p.output_medium = pr.output_medium
           AND ${printerEligibilityPredicate(sql`p.tenant_id`)}
@@ -218,7 +218,7 @@ export async function GET(req: Request) {
         JOIN printers pr ON pr.id = p.printer_id AND pr.tenant_id = p.tenant_id
         JOIN tenants t ON t.id = p.tenant_id
         WHERE p.agent_id = ${agent.id}
-          AND p.expires_at > now()
+          AND p.expires_at > clock_timestamp()
           AND p.status = 'queued'
           AND COALESCE(p.error, '') <> ${PRINTER_NOT_SHARED_PAUSE}
           AND p.delivery_attempts < ${MAX_DELIVERY_ATTEMPTS}
@@ -226,9 +226,9 @@ export async function GET(req: Request) {
           AND ${queuedLimit} > 0
           AND a.lifecycle = 'active'
           AND a.status = 'online'
-        AND a.last_seen_at IS NOT NULL
-        AND a.last_seen_at <= now()
-        AND a.last_seen_at >= now() - make_interval(secs => ${agentStaleThresholdSeconds()})
+          AND a.last_seen_at IS NOT NULL
+        AND a.last_seen_at <= clock_timestamp()
+        AND a.last_seen_at >= clock_timestamp() - make_interval(secs => ${agentStaleThresholdSeconds()})
           AND p.binding_digest IS NOT NULL AND p.binding_digest = pr.verification_binding_digest
           AND p.output_medium = pr.output_medium
           AND ${printerEligibilityPredicate(sql`p.tenant_id`)}
@@ -250,9 +250,9 @@ export async function GET(req: Request) {
         JOIN tenants t ON t.id = p.tenant_id
         WHERE a.lifecycle = 'active'
           AND a.status = 'online'
-        AND a.last_seen_at IS NOT NULL
-        AND a.last_seen_at <= now()
-        AND a.last_seen_at >= now() - make_interval(secs => ${agentStaleThresholdSeconds()})
+          AND a.last_seen_at IS NOT NULL
+          AND a.last_seen_at <= clock_timestamp()
+          AND a.last_seen_at >= clock_timestamp() - make_interval(secs => ${agentStaleThresholdSeconds()})
           AND p.binding_digest IS NOT NULL AND p.binding_digest = pr.verification_binding_digest
           AND p.output_medium = pr.output_medium
           AND ${printerEligibilityPredicate(sql`p.tenant_id`)}
@@ -451,6 +451,8 @@ export async function PATCH(req: Request) {
         status: "expired",
         error: expiryError,
         closedClaimTokenHash,
+        ...(spoolerJobId ? { spoolerJobId } : {}),
+        ...(incomingAttemptId ? { attemptId: incomingAttemptId } : {}),
         // Use DB-native now() to match the sweeper's clock (updated_at < now() - interval).
         // JS new Date() is the app-server clock and can drift from the DB host.
         updatedAt: sql`clock_timestamp()`,
@@ -618,6 +620,7 @@ export async function PATCH(req: Request) {
         error: postExpiryError,
         ...(outputEvidence ? { outputEvidence: { ...outputEvidence } } : {}),
         ...(spoolerJobId ? { spoolerJobId } : {}),
+        ...(incomingAttemptId ? { attemptId: incomingAttemptId } : {}),
         // Invalidate the claim token on terminal success: completed jobs must
         // not retain a live token that could confuse future status checks.
         claimToken: sql`NULL`,
@@ -675,6 +678,7 @@ export async function PATCH(req: Request) {
       // A second id+tenant-only UPDATE here could let a stale attempt overwrite
       // current-attempt spooler evidence after this lifecycle UPDATE commits.
       ...(spoolerJobId ? { spoolerJobId } : {}),
+      ...(incomingAttemptId ? { attemptId: incomingAttemptId } : {}),
     })
     .where(and(
       fencedJobWrite(jobId, agent.tenantId, agent.id, currentStatus, claimToken),

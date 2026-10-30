@@ -2,11 +2,15 @@ import type * as PrintJobServiceModule from "../src/lib/print-job-service";
 import type * as DatabaseClockModule from "../src/lib/database-clock";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({ select: vi.fn(), createJob: vi.fn(), event: vi.fn(), now: vi.fn() }));
-vi.mock("../src/db", () => ({ db: { select: mocks.select } }));
+const mocks = vi.hoisted(() => ({ select: vi.fn(), transaction: vi.fn(), createJob: vi.fn(), event: vi.fn(), now: vi.fn() }));
+vi.mock("../src/db", () => ({ db: { select: mocks.select, transaction: mocks.transaction } }));
 vi.mock("../src/lib/manager-auth", () => ({ validateWorkspaceManager: async () => ({ tenantId: "tenant", userId: "operator", role: "owner" }) }));
 vi.mock("../src/lib/authorization", () => ({ requireManagerPermission: () => {} }));
-vi.mock("../src/lib/printer-health", () => ({ getPrinterCapabilityMatrix: async () => ({ documentTypes: ["pdf"] }) }));
+vi.mock("../src/lib/printer-health", () => ({
+  getPrinterCapabilityMatrix: async () => ({ documentTypes: ["pdf"] }),
+  getPrinterCapabilityMatrixInTransaction: async () => ({ documentTypes: ["pdf"] }),
+}));
+vi.mock("../src/lib/console-read-authority", () => ({ requireConsoleReadAuthorityInTransaction: async () => undefined }));
 vi.mock("../src/lib/print-job-service", async (original) => ({
   ...(await original<typeof PrintJobServiceModule>()), createPrintJobForPrinter: mocks.createJob,
 }));
@@ -37,6 +41,7 @@ async function certify(body?: string) {
 describe("certification evidence and request handling", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.transaction.mockImplementation(async (operation: (tx: object) => Promise<unknown>) => operation({ select: mocks.select }));
     mocks.now.mockResolvedValue(now.getTime());
     mocks.createJob.mockResolvedValue({ id: "job", status: "queued", isReused: true });
     mocks.event.mockResolvedValue(undefined);

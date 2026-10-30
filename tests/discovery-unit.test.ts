@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isPrivateCIDR, confidenceFor, DISCOVERY_SOURCES, DISCOVERY_PROTOCOLS } from "../src/lib/discovery";
+import { confidenceFor, DISCOVERY_SOURCES, validateDiscoveryRequest } from "../src/lib/discovery";
 
 
 
@@ -10,28 +10,13 @@ describe("discovery taxonomy", () => {
     expect(DISCOVERY_SOURCES).toContain("wsd");
     expect(DISCOVERY_SOURCES).toContain("windows_spooler");
     expect(DISCOVERY_SOURCES).toContain("usb");
-    expect(DISCOVERY_PROTOCOLS).not.toContain("pcl" as any);
-  });
-  it("PCL never treated as discovery protocol", () => {
-    expect(DISCOVERY_PROTOCOLS).not.toContain("pcl");
-    expect((DISCOVERY_PROTOCOLS as readonly string[]).includes("pcl")).toBe(false);
+    expect((DISCOVERY_SOURCES as readonly string[]).includes("pcl")).toBe(false);
   });
 });
 
-describe("CIDR validation (private only, /16-/30)", () => {
-  it("rejects public and loopback", () => {
-    expect(isPrivateCIDR("8.8.8.0/24")).toBe(false);
-    expect(isPrivateCIDR("127.0.0.0/8")).toBe(false);
-    expect(isPrivateCIDR("192.168.1.0/24")).toBe(true);
-    expect(isPrivateCIDR("10.0.0.0/16")).toBe(true);
-    expect(isPrivateCIDR("172.16.0.0/16")).toBe(true);
-    expect(isPrivateCIDR("172.32.0.0/16")).toBe(false);
-    expect(isPrivateCIDR("192.168.1.0/31")).toBe(false); // too narrow
-    expect(isPrivateCIDR("not-a-cidr")).toBe(false);
-  });
-  it("rejects /8 and /15", () => {
-    expect(isPrivateCIDR("10.0.0.0/8")).toBe(false);
-    expect(isPrivateCIDR("192.168.0.0/15")).toBe(false);
+describe("discovery request scope", () => {
+  it("rejects caller-supplied CIDR and protocol scope", () => {
+    expect(validateDiscoveryRequest({ cidr: "8.8.8.0/24", protocols: ["ipp"] }).ok).toBe(false);
   });
 });
 
@@ -51,9 +36,3 @@ describe("confidence scoring deterministic", () => {
     expect(a).toBe(b);
   });
 });
-
-
-  it("rejects nondecimal CIDR octets/prefixes instead of numeric coercion", () => {
-    for (const cidr of ["10..1.0/24", "10.0x10.0.0/24", "10.1.5e1.0/24", "10.1.1.0/0x18", "10.1.1.0/2.4e1", "10.01.1.0/24", "10.1.1.0/ 24"]) expect(isPrivateCIDR(cidr)).toBe(false);
-    expect(isPrivateCIDR("10.255.254.0/24")).toBe(true);
-  });

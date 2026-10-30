@@ -432,6 +432,26 @@ class PrintGatewayRouter(models.AbstractModel):
                         raise ValidationError(
                             _("Gateway Runtime Agent '%s' is no longer assigned to the current Odoo scope.")
                             % selected_binding.runtime_agent_id)
+                if target_company:
+                    payload = durable_values.get("payload")
+                    payload_type = durable_values.get("payload_type") or (
+                        payload.get("type") if isinstance(payload, dict) else False
+                    )
+                    if payload_type == "image":
+                        payload_type = "raster_jpeg"
+                    protocol = durable_values.get("protocol") or (
+                        payload.get("protocol") if isinstance(payload, dict) else False
+                    )
+                    env["print_gateway.binding"].sudo().resolve_explicit(
+                        selected_binding,
+                        gateway_company,
+                        durable_values.get("document_type"),
+                        bound_destination,
+                        report=original_report,
+                        branch=branch,
+                        protocol=protocol,
+                        payload_type=payload_type,
+                    )
             model = env["print_gateway.print_job"]
             if target_company:
                 model = model.with_company(target_company)

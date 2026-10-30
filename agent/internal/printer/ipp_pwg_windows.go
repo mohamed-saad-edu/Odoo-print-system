@@ -30,7 +30,7 @@ func renderIPPPDFToPWG(ctx context.Context, pdfData []byte, attrs map[string]str
 		return nil, ctx.Err()
 	}
 
-	pool, err := getPDFiumPool()
+	pool, err := getPDFiumPoolWithContext(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("initialize embedded PDFium for PWG Raster: %w", err)
 	}

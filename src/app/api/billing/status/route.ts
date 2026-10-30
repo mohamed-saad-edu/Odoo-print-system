@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { db } from "../../../../db";
-import { tenantSubscriptions, tenants } from "../../../../db/schema";
+import { plans, tenantSubscriptions, tenants } from "../../../../db/schema";
 import { validateWorkspaceManager } from "../../../../lib/manager-auth";
 import { requireActiveTenantInTransaction, TenantSuspendedError, TenantDeletedError } from "../../../../lib/tenant-guard";
 import { requireManagerActorInTransaction, ManagerMutationAuthorityChangedError } from "../../../../lib/manager-mutation-authorization";
@@ -16,10 +16,11 @@ const PRIVATE_HEADERS = { "Cache-Control": "private, no-store" };
 export async function GET(req: Request) {
   const member = await validateWorkspaceManager(req);
   if (!member) return NextResponse.json({ error: "Unauthorized", code: "UNAUTHORIZED" }, { status: 401, headers: PRIVATE_HEADERS });
+  const includePlanName = new URL(req.url).searchParams.get("includePlanName") === "1";
   try {
     // A request can outlive cookie preflight. Fence the current tenant,
     // membership and session before exposing even owner-only contract dates.
-    const [subscription, tenant] = await db.transaction(async tx => {
+    const [subscription, tenant, plan] = await db.transaction(async tx => {
       await requireActiveTenantInTransaction(tx, member.tenantId);
       await requireManagerActorInTransaction(tx, member, "tenant.read");
       const subscription = await tx.query.tenantSubscriptions.findFirst({
@@ -28,13 +29,17 @@ export async function GET(req: Request) {
       const tenant = await tx.query.tenants.findFirst({
         where: eq(tenants.id, member.tenantId), columns: { lifecycle: true },
       });
-      return [subscription, tenant] as const;
+      const plan = includePlanName && subscription
+        ? await tx.query.plans.findFirst({ where: eq(plans.id, subscription.planId), columns: { name: true } })
+        : null;
+      return [subscription, tenant, plan] as const;
     });
     const status = customerSubscriptionState(subscription, tenant?.lifecycle, await databaseNowMs());
     return NextResponse.json({
       hasSubscription: status === "active",
       status, customerState: status,
       entitlementBlocked: subscription?.entitlementBlocked ?? false,
+      ...(includePlanName ? { planName: plan?.name ?? null } : {}),
       // The workspace owner has billing.read, unlike invited Full Access.
       ...(member.role === "owner" ? { currentPeriodEnd: subscription?.currentPeriodEnd?.toISOString() ?? null } : {}),
     }, { headers: PRIVATE_HEADERS });

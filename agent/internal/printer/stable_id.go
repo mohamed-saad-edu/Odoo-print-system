@@ -112,7 +112,14 @@ func ippQueueIdentitySuffix(d DeviceInfo) string {
 	if path == "" {
 		path = "/"
 	}
-	return "|ipp-resource:" + path + "?" + u.RawQuery
+	transport := ""
+	switch strings.ToLower(u.Scheme) {
+	case "ipps", "https":
+		// TLS and plaintext are distinct execution bindings even when a
+		// legacy record has no NetworkAddress/Port for StableIDFromIPPURI.
+		transport = "|ipp-transport:ipps"
+	}
+	return transport + "|ipp-resource:" + path + "?" + u.RawQuery
 }
 
 // WSD ProbeMatches are unauthenticated discovery hints, not a proven chassis

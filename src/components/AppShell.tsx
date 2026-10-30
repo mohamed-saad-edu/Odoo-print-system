@@ -256,7 +256,12 @@ function ConsoleShell({
     let cancelled = false;
     fetchWithTimeout("/api/settings", { credentials: "include", cache: "no-store" })
       .then(async (response) => {
-        if (!response.ok) return null;
+        if (!response.ok) {
+          if (!cancelled && (response.status === 401 || response.status === 403)) {
+            setWorkspace((current) => ({ ...current, name: undefined, email: undefined, role: undefined, platformOwner: undefined }));
+          }
+          return null;
+        }
         return (await response.json()) as { tenant?: { name?: string }; email?: string; role?: string; platformOwner?: boolean };
       })
       .then((data) => {
@@ -276,7 +281,12 @@ function ConsoleShell({
     // a normal 200 response with no plan name instead of expected 403 noise.
     fetchWithTimeout("/api/billing/status?includePlanName=1", { credentials: "include", cache: "no-store" })
       .then(async (response) => {
-        if (!response.ok) return null;
+        if (!response.ok) {
+          if (!cancelled && (response.status === 401 || response.status === 403)) {
+            setWorkspace((current) => ({ ...current, plan: undefined }));
+          }
+          return null;
+        }
         return (await response.json()) as { hasSubscription?: boolean; planName?: string | null };
       })
       .then((data) => {

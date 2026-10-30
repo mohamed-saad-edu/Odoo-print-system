@@ -96,7 +96,7 @@ test("workspace confirmation remains reachable while profile settings are pendin
   assert.ok(find(harness.tree, node => node.type === "WorkspaceSecurity"),
     "supported env-manager sessions must retain their confirmation card after profile settings401");
   assert.ok(find(harness.tree, node => node.type === "SessionInventory"));
-  assert.deepEqual(harness.redirects, []);
+  assert.deepEqual(harness.redirects, ["/login?next=%2Fsettings"]);
   cleanup();
 });
 

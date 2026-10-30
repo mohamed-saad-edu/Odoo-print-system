@@ -137,7 +137,8 @@ func (p *USBPrinter) validateNativeBinding(ctx context.Context) error {
 			return err
 		}
 		interfaces, enumErr := enumerate()
-		if err := validateUSBPrintBinding(ctx, path, vid, pid, serial, interfaces, usbParentDevInst, usbDevInstID); err != nil {
+		// A partial interface list cannot prove the selected path is unique.
+		if err := validateUSBPrintBinding(ctx, path, vid, pid, serial, interfaces, usbParentDevInst, usbDevInstID); err != nil || enumErr != nil {
 			return errors.Join(err, enumErr)
 		}
 		return nil

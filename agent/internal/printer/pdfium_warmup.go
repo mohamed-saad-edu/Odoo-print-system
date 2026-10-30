@@ -57,7 +57,7 @@ func awaitPDFiumWarmup(ctx context.Context) error {
 		return ctx.Err()
 	case <-flight.done:
 		if flight.err != nil {
-			return fmt.Errorf("initialize PDF output verifier: %w", flight.err)
+			return fmt.Errorf("initialize embedded PDFium worker: %w", flight.err)
 		}
 		return ctx.Err()
 	}

@@ -63,7 +63,7 @@ in `job.error` with `job.status = failed`.
 
 `agent/internal/printer/pdf.go` + `agent/internal/printer/pdf_windows.go` use the
 embedded PDFium WebAssembly runtime provided by `github.com/klippa-app/go-pdfium`
-(v1.21.1) through Wazero. PDF bytes are validated, materialised only in a secure
+(v1.21.3) through Wazero. PDF bytes are validated, materialised only in a secure
 0600 temporary file for the existing print seam, opened by PDFium, rendered one
 page at a time, and submitted through the Windows printer device context.
 

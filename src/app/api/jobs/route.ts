@@ -11,10 +11,11 @@ import { validateConsoleAuth } from "../../../lib/console-auth";
 import { requireManagerPermission } from "../../../lib/authorization";
 import { and, eq, inArray, isNull, lt, sql } from "drizzle-orm";
 import { clampListLimit, parseStrictListOffset } from "../../../lib/request-limits";
-import { RECEIPT_MATERIALIZE_BATCH_ROWS } from "../../../shared/job-retention";
+import { PRINT_JOB_RETENTION_MS, RECEIPT_MATERIALIZE_BATCH_ROWS } from "../../../shared/job-retention";
 import { isJobFilterStatus } from "../../../lib/job-status";
 import { databaseNowMs } from "../../../lib/database-clock";
 import { listPrintJobHistory } from "../../../lib/job-history";
+import { z } from "zod";
 
 export const dynamic = "force-dynamic";
 
@@ -97,10 +98,13 @@ export async function DELETE(req: Request) {
   if (confirm !== "1") return NextResponse.json({ error: "Cleanup requires confirm=1" }, { status: 400 });
   if (!beforeRaw) return NextResponse.json({ error: "Cleanup requires before=<ISO-8601 timestamp>" }, { status: 400 });
 
-  const before = new Date(beforeRaw);
-  if (Number.isNaN(before.getTime())) return NextResponse.json({ error: "before must be a valid ISO-8601 timestamp" }, { status: 400 });
+  const parsedBefore = z.iso.datetime({ offset: true }).safeParse(beforeRaw);
+  if (!parsedBefore.success) return NextResponse.json({ error: "before must be a valid ISO-8601 timestamp" }, { status: 400 });
+  const requestedBefore = new Date(parsedBefore.data);
   const databaseNow = await databaseNowMs();
-  if (before.getTime() > databaseNow) return NextResponse.json({ error: "before cannot be in the future" }, { status: 400 });
+  if (requestedBefore.getTime() > databaseNow) return NextResponse.json({ error: "before cannot be in the future" }, { status: 400 });
+  // The client cutoff is convenience only; never archive rows inside retention.
+  const before = new Date(Math.min(requestedBefore.getTime(), databaseNow - PRINT_JOB_RETENTION_MS));
 
   const requestedLimit = limitRaw === null ? MAX_CLEANUP_ROWS : Number(limitRaw);
   if (!Number.isInteger(requestedLimit) || requestedLimit < 1 || requestedLimit > MAX_CLEANUP_ROWS) {

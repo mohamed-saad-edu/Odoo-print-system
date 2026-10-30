@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"net/url"
@@ -167,7 +168,8 @@ func Load(path string) (*Config, error) {
 	}
 
 	store := storage.NewStore(dir)
-	if sealed, serr := store.GetSecret(secretStoreKey); serr == nil && sealed != "" {
+	sealed, secretErr := store.GetSecret(secretStoreKey)
+	if secretErr == nil && sealed != "" {
 		cfg.Agent.Secret = sealed
 		// A previous migration may have sealed the secret but failed to strip
 		// the YAML plaintext (Save succeeded, stripped.Save failed). The next
@@ -184,7 +186,18 @@ func Load(path string) (*Config, error) {
 				}
 			}
 		}
-	} else if cfg.Agent.Secret != "" {
+	} else {
+		// Only a missing key proves this is a legacy plaintext migration; an
+		// unreadable stored credential must never be replaced by stale YAML.
+		if secretErr != nil && !errors.Is(secretErr, storage.ErrNotFound) {
+			return nil, fmt.Errorf("read sealed agent secret: %w", secretErr)
+		}
+		if secretErr == nil && cfg.Agent.Secret != "" {
+			return nil, fmt.Errorf("secure agent secret is empty while config contains a plaintext secret")
+		}
+		if cfg.Agent.Secret == "" {
+			return cfg, nil
+		}
 		legacySecret := cfg.Agent.Secret
 		if merr := store.SaveSecret(secretStoreKey, legacySecret); merr != nil {
 			return nil, fmt.Errorf("migrate legacy agent secret to secure storage: %w", merr)
@@ -626,6 +639,9 @@ func ValidatePrinterEndpoint(p PrinterConfig) error {
 				return fmt.Errorf("printer %s: IPP endpoint must not contain query strings or fragments", p.ID)
 			}
 			scheme := strings.ToLower(u.Scheme)
+			if scheme != "ipp" && scheme != "ipps" && scheme != "http" && scheme != "https" {
+				return fmt.Errorf("printer %s: IPP endpoint must use ipp://, ipps://, http://, or https://", p.ID)
+			}
 			if nt == "ipps" && scheme != "https" && scheme != "ipps" {
 				return fmt.Errorf("printer %s: IPPS endpoint must use https:// or ipps://", p.ID)
 			}

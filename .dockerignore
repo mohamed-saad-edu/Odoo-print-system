@@ -4,6 +4,7 @@ node_modules
 .github
 .audit
 .engineering
+.yaseir-review
 graphify-out
 .env
 .env.*

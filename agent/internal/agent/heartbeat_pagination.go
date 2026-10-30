@@ -3,7 +3,6 @@ package agent
 import (
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
 	"strconv"
 	"sync/atomic"
 	"time"
@@ -53,11 +52,12 @@ const (
 	// fleet-size limit. Printer metadata is kept below the Gateway's 256,000
 	// byte aggregate page check so realistic capability/config payloads have
 	// headroom for JSON framing.
-	maxHeartbeatPrintersPerPage = 500
-	maxHeartbeatPrinterBytes    = 220 * 1024
-	maxHeartbeatAuxItemsPerPage = 500
-	maxHeartbeatAuxBytes        = 64 * 1024
-	maxHeartbeatEnvelopeBytes   = 512 * 1024
+	maxHeartbeatPrintersPerPage     = 500
+	maxHeartbeatPrinterBytes        = 220 * 1024
+	maxGatewayHeartbeatPrinterBytes = 256_000
+	maxHeartbeatAuxItemsPerPage     = 500
+	maxHeartbeatAuxBytes            = 64 * 1024
+	maxHeartbeatEnvelopeBytes       = 512 * 1024
 )
 
 func splitHeartbeatPrinterPagesWithBudget(printers []map[string]interface{}, byteBudget int) [][]map[string]interface{} {
@@ -69,7 +69,7 @@ func splitHeartbeatPrinterPagesWithBudget(printers []map[string]interface{}, byt
 	current := make([]map[string]interface{}, 0, maxHeartbeatPrintersPerPage)
 	currentBytes := 2 // [] JSON framing
 	for _, printer := range printers {
-		encoded, err := json.Marshal(printer)
+		encoded, err := marshalAgentJSON(printer)
 		if err != nil {
 			// printerStatusPayload only builds JSON-compatible values. Keep this
 			// helper fail-closed for any future extension that violates that
@@ -120,7 +120,7 @@ func splitHeartbeatAuxPages[T any](items []T) [][]T {
 }
 
 func heartbeatJSONBytes(value interface{}) int {
-	encoded, err := json.Marshal(value)
+	encoded, err := marshalAgentJSON(value)
 	if err != nil {
 		return maxHeartbeatEnvelopeBytes
 	}
@@ -270,6 +270,10 @@ func buildHeartbeatPayloadPages(
 		}
 		if heartbeatJSONBytes(page) > maxHeartbeatEnvelopeBytes-128 {
 			// Metadata or common keepalive fields alone exceed the envelope.
+			return nil
+		}
+		if heartbeatJSONBytes(pagePrinters) > maxGatewayHeartbeatPrinterBytes {
+			// The Gateway validates printer-array bytes separately from the full envelope.
 			return nil
 		}
 		if len(privatePages) > totalPages {

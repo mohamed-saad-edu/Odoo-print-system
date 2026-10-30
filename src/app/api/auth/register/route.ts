@@ -21,6 +21,8 @@ export async function POST(req: Request) {
   try { const parsedBody = await req.json(); if (!parsedBody || typeof parsedBody !== "object" || Array.isArray(parsedBody)) throw new Error("JSON object required"); body = parsedBody; } catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); }
   const email = typeof body.email === "string" ? normalizeEmail(body.email) : "";
   const planId = typeof body.planId === "string" && body.planId.length <= 128 ? body.planId : "";
+  if (body.inviteToken !== undefined && (typeof body.inviteToken !== "string" || body.inviteToken.length > 256))
+    return NextResponse.json({ error: "Invitation is invalid or expired", code: "INVITATION_INVALID" }, { status: 400 });
   const inviteToken = typeof body.inviteToken === "string" && body.inviteToken.length <= 256 ? body.inviteToken : "";
   if (!validEmail(email)) return NextResponse.json({ error: "Enter a valid email address.", code: "INVALID_INPUT" }, { status: 400 });
   const displayName = typeof body.displayName === "string" ? body.displayName.trim() : "";

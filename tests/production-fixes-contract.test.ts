@@ -440,7 +440,7 @@ describe("job claim predicate contracts", () => {
     // Count the eligibility clauses themselves, not harmless SELECT projections
     // of the same columns used for admission diagnostics/re-checks.
     expect((source.match(/pr\.management_source\s*=\s*['"]agent['"]/g) ?? []).length).toBe(1);
-    expect((source.match(/pr\.last_seen_at\s*<=\s*now\(\)/g) ?? []).length).toBe(1);
+    expect((source.match(/pr\.last_seen_at\s*<=\s*clock_timestamp\(\)/g) ?? []).length).toBe(1);
   });
 });
 

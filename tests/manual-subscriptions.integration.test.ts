@@ -40,7 +40,7 @@ async function seedPendingRequest(): Promise<{id: string}> {
    await tx.insert(subscriptionRequests).values({
      id, tenantId: 'workspace', requesterUserId: 'owner',
      requesterName: 'مالك موثق', requesterEmail: 'owner@manual.test',
-     requesterVerifiedAt: new Date(), planId: 'manual', term: 'yearly',
+     requesterVerifiedAt: new Date(), planId: 'manual', requestedMonthlyQuota: 10, term: 'yearly',
      idempotencyKey: randomUUID(), requestDigest: randomUUID(), status: 'pending',
    });
    await ensurePendingManualSubscription(tx,'workspace','manual');
@@ -293,7 +293,7 @@ suite('V4 manual subscriptions security and accounting',()=>{
   } finally {await locker.query('ROLLBACK');locker.release();}
  });
  it('keeps admin monthly history free of overlapping archived rolling windows',async()=>{
-   const current=(await pool().query("SELECT date_trunc('month', clock_timestamp() AT TIME ZONE 'UTC') AS start")).rows[0].start;
+   const current=(await pool().query("SELECT date_trunc('month', clock_timestamp() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC' AS start")).rows[0].start;
    const monthStart=new Date(current);
    const monthEnd=new Date(Date.UTC(monthStart.getUTCFullYear(),monthStart.getUTCMonth()+1,1));
    const rollingStart=new Date(monthStart.getTime()+4*86_400_000);

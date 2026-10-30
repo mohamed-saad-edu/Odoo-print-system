@@ -181,13 +181,14 @@ suite("Odoo runtime discovery billing boundary", () => {
   it.each([
     ["agents", agentsGET, "/api/odoo/agents"],
     ["printers", printersGET, "/api/odoo/printers"],
-  ] as const)("retains the documented read-only rotation grace for %s inventory", async (_name, handler, route) => {
+  ] as const)("rejects rotation-grace credentials before exposing fresh %s inventory", async (_name, handler, route) => {
     await pool().query(
       "UPDATE api_keys SET revoked_at=clock_timestamp()-interval '1 second', read_only_until=clock_timestamp()+interval '30 minutes' WHERE tenant_id=$1",
       [fixture.tenantId],
     );
     const response = await handler(new Request("https://gateway.test" + route, {headers: {"x-api-key":fixture.odooKey}}));
-    expect(response.status).toBe(200);
+    expect(response.status).toBe(401);
+    expect(await response.json()).toMatchObject({ code: "UNAUTHORIZED" });
   });
 
   it("publishes bounded selected roll media separately from printable dots", async () => {

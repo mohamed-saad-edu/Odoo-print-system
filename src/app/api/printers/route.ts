@@ -185,9 +185,9 @@ export async function POST(req: Request) {
         const agentLifecycle = (lockedAgent.rows[0] as { lifecycle?: string } | undefined)?.lifecycle;
         if (!agentLifecycle) throw new Error("agentId not found");
         if (agentLifecycle !== "active") throw new Error(`agent is ${agentLifecycle}`);
-        if (auth.kind === "manager") {
-          await requireManagerActorInTransaction(tx, auth.claims, "printers.manage");
-        }
+        // Agent authentication above is a preflight too; recheck its current
+        // secret and lifecycle under the locked row before accepting inventory.
+        await requireConsoleReadAuthorityInTransaction(tx, auth, "printers.manage");
         const known = await tx.query.printers.findMany({
           where: and(eq(printers.tenantId, tenantId), eq(printers.agentId, data.agentId)),
         });
@@ -261,6 +261,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ ...outcome.row, ...operationalVerificationPresentation(outcome.row), already: outcome.kind === "existing" }, { status: outcome.kind === "existing" ? 200 : 201 });
     } catch (error) {
       if (error instanceof ManagerMutationAuthorityChangedError) return error.response();
+      if (error instanceof ConsoleAgentAuthorityRevokedError) return NextResponse.json({ error: error.message, code: error.code }, { status: error.status, headers: { "Cache-Control": "no-store" } });
       if (error instanceof TenantEntitlementError) return NextResponse.json({ error: error.message, code: "MAX_PRINTERS_EXCEEDED", entitlement: error.entitlement, limit: error.limit, used: error.used, upgradeRequired: false }, { status: 429, headers: { "Retry-After": "60", "Cache-Control": "no-store" } });
       if (isTenantBillingError(error)) return NextResponse.json({ error: error.message, code: error.code }, { status: 403 });
       if (error instanceof Error && error.message === "agentId not found") return NextResponse.json({ error: "Agent is not paired with this Gateway workspace", code: "AGENT_NOT_FOUND" }, { status: 404 });

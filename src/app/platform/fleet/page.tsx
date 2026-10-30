@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { AlertCircle, Cpu, LockKeyhole, Printer, RefreshCw, Search, ShieldCheck } from "lucide-react";
 import { Button, Card, EmptyState, ErrorState, Field, Modal, PageHeader, SegmentedControl, StatusBadge, TableSkeleton, Textarea, type Tone } from "../../../components/ui";
 import { fetchWithTimeout } from "../../../lib/fetch-timeout";
@@ -20,6 +21,7 @@ const healthTone = (status: string): Tone => status === "online" ? "ok" : status
 
 export default function PlatformFleetPage() {
   const { locale, formatDateTime, formatNumber, t: translate } = useI18n();
+  const router = useRouter();
   const t = strings[locale];
   const [kind, setKind] = useState<"agents" | "printers">("agents");
   const [status, setStatus] = useState("all");
@@ -54,6 +56,11 @@ export default function PlatformFleetPage() {
       if (tenant.trim()) params.set("tenantId", tenant.trim());
       try {
         const res = await fetchWithTimeout(`/api/platform/fleet?${params}`, {cache:"no-store", signal: controller.signal});
+        if (cancelled) return;
+        if (res.status === 401) {
+          setSelected(null); setPairing(""); setReason(""); setActionError("");
+          router.replace("/platform/login");
+        }
         if (!res.ok) throw Error(String(res.status));
         const data = await res.json() as { items?: FleetItem[]; hasMore?: boolean; observedAt?: string };
         if (cancelled) return;
@@ -66,7 +73,7 @@ export default function PlatformFleetPage() {
     }
     void load();
     return () => { cancelled = true; controller.abort(); };
-  }, [key, kind, status, query, tenant, offset, t.error]);
+  }, [key, kind, status, query, tenant, offset, t.error, router]);
 
   async function applyLifecycle() {
     if (!selected || acting) return;
@@ -78,7 +85,15 @@ export default function PlatformFleetPage() {
         body: JSON.stringify({ kind, tenantId: selected.tenantId, id: selected.id, expectedLifecycle: selected.lifecycle, nextLifecycle, reason: reason.trim() }),
       });
       const data = await response.json().catch(() => null) as { code?: string; ok?: boolean; kind?: string; tenantId?: string; id?: string; lifecycle?: string; pairingCode?: string | null } | null;
-      if (!response.ok) { setActionError(translate(apiMessageKey(data?.code, response.status, "errors.operationFailed"))); return; }
+      if (!response.ok) {
+        if (response.status === 401) {
+          setItems([]); setHasMore(false); setSelected(null); setPairing(""); setReason(""); router.replace("/platform/login");
+        } else {
+          if (response.status === 403) { setPairing(""); setRefresh(x => x + 1); }
+          setActionError(translate(apiMessageKey(data?.code, response.status, "errors.operationFailed")));
+        }
+        return;
+      }
       // A 2xx status is not evidence of which device changed, or that an
       // Agent activation has a recoverable one-time pairing credential.
       if (data?.ok !== true || data.kind !== kind || data.tenantId !== selected.tenantId ||
@@ -106,7 +121,14 @@ export default function PlatformFleetPage() {
           confirmed: true, expectedLifecycle: selected.lifecycle, reason: reason.trim() }),
       });
       const data = await response.json().catch(() => null) as { code?: string; ok?: boolean; kind?: string; tenantId?: string; id?: string } | null;
-      if (!response.ok) { setActionError(translate(apiMessageKey(data?.code, response.status, "errors.operationFailed"))); return; }
+      if (!response.ok) {
+        if (response.status === 401 || response.status === 403) {
+          setItems([]); setHasMore(false); setSelected(null); setPairing(""); setReason(""); router.replace("/platform/login");
+        } else {
+          setActionError(translate(apiMessageKey(data?.code, response.status, "errors.operationFailed")));
+        }
+        return;
+      }
       if (data?.ok !== true || data.kind !== kind || data.tenantId !== selected.tenantId || data.id !== selected.id) {
         setActionError(t.unconfirmed); setRefresh(x => x + 1); return;
       }

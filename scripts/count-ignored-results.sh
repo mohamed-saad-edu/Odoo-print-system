@@ -25,9 +25,10 @@
 #   _test.go.  Test = every *_test.go under agent/.
 #
 # NOTE
-#   This is a grep-based TEXT metric. It is the correct tool for counting a
-#   text pattern, but its output is NOT a compiler, vet, or linter verdict.
-#   Matches inside comments/strings are excluded by the sanity filter below.
+#   This is a grep-based TEXT metric, not a compiler, vet, or linter verdict.
+#   Only full-line // comments are filtered; matching string/block-comment text
+#   can still count as an ignored result.
+# shortcut: grep-based counts can include string/block-comment matches; use a Go AST if semantic accuracy is required.
 #
 # usage: scripts/count-ignored-results.sh [--list]
 set -euo pipefail

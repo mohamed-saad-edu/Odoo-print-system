@@ -82,11 +82,6 @@ describe("discovery authorization", () => {
     expect(res.status).toBe(401);
   });
 
-  it("CIDR public rejected", async () => {
-    const { isPrivateCIDR } = await import("../src/lib/discovery");
-    expect(isPrivateCIDR("8.8.8.0/24")).toBe(false);
-  });
-
   it("the discovery POST route forces candidate trust regardless of agent-claimed confidence", async () => {
     // BEHAVIORAL (not lifecycle unit tests): the route is the trust
     // boundary — an agent must never be able to self-verify a device.

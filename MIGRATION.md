@@ -68,7 +68,6 @@ This runs `scripts/db-migrate.ts` which applies all pending migrations from `dri
 | 0093 | 1 | Password-only human login; remove eight retired factor tables and factor-only columns; preserve accounts, verifier hashes, memberships, session families and deadlines |
 | 0094 | 1 | Add live printer verification, scoped logical identity, immutable job destination bindings, and retained PDF file-result evidence; historical inventory remains pending until verified |
 | 0095 | 1 | Manual subscriptions, authenticated activation requests, immutable change history, owner names and UTC monthly admission ledger; retains provider evidence and conservatively carries prior usage |
-
 | 0096 | 1 | Retire limited workspace roles without promoting old sessions |
 | 0097 | 1 | Agent-scoped discovery observation IDs; preserve IDs, approvals and runtime links |
 | 0098 | 1 | Retire external billing fields from active plan/subscription schema, archive provider records outside public, preserve manual approvals and monthly usage |
@@ -77,8 +76,11 @@ This runs `scripts/db-migrate.ts` which applies all pending migrations from `dri
 | 0101 | 1 | Add immutable 30-day print-allowance anchor from first activation, migrate overlapping historical usage conservatively without resetting credits |
 | 0102 | 1 | Restore UTC calendar-month admission and carry the largest overlapping usage bucket without deleting rolling history |
 | 0103 | 1 | Additive retained receipt `spooler_job_id` and `attempt_id` evidence columns for archived terminal print jobs |
+| 0104 | 1 | Drop legacy discovery endpoint uniqueness |
+| 0105 | 1 | Scope runtime-state constraints |
+| 0106 | 1 | Restore discovery replica identity |
 
-**Total**: 104 forward-only SQL migrations (0000–0103), plus retained hash-versioned forward repairs in `scripts/db-migrate.ts`. Apply migration `0103_retained_print_attempt_evidence.sql` with prior Gateway writers stopped **before** deploying a Gateway version that reads or writes the new receipt evidence columns; never apply its SQL by hand without the release migrator.
+**Total**: 107 forward-only SQL migrations (0000–0106), plus retained hash-versioned forward repairs in `scripts/db-migrate.ts`. Apply migration `0103_retained_print_attempt_evidence.sql` with prior Gateway writers stopped **before** deploying a Gateway version that reads or writes the new receipt evidence columns; never apply its SQL by hand without the release migrator.
 
 Apply all migrations through `0094` before starting V3, with older Gateway instances stopped. Historical `0090` and `0092` remain in the journal so existing content hashes and fresh replay remain valid. V3 uses email/password login and the existing production `__Host-` access/refresh cookies. Migration `0094` does not convert stored configuration into live printer proof: existing registrations and historical queued jobs without an admitted binding remain ineligible for new execution. Deploy the matching Agent, obtain a fresh verified inventory, and reconcile retained legacy jobs explicitly. Terminal history remains available for exact result replay. See the V3 upgrade procedure below and `SECURITY.md`.
 

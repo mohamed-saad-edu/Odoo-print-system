@@ -729,6 +729,27 @@
       "when": 1793270000000,
       "tag": "0103_retained_print_attempt_evidence",
       "breakpoints": true
+    },
+    {
+      "idx": 104,
+      "version": "7",
+      "when": 1793317204828,
+      "tag": "0104_drop_legacy_discovery_endpoint_unique",
+      "breakpoints": true
+    },
+    {
+      "idx": 105,
+      "version": "7",
+      "when": 1793317204829,
+      "tag": "0105_scope_runtime_state_constraints",
+      "breakpoints": true
+    },
+    {
+      "idx": 106,
+      "version": "7",
+      "when": 1793318190000,
+      "tag": "0106_restore_discovery_replica_identity",
+      "breakpoints": true
     }
   ]
 }

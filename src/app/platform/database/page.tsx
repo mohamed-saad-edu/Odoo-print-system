@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { ArrowLeft, ArrowRight, Check, Copy, Database, RefreshCw, Search, ShieldCheck, Table2, X } from "lucide-react";
 import { Button, Card, EmptyState, ErrorState, Input, LoadingState, PageHeader, TableSkeleton } from "../../../components/ui";
 import { copyTextToClipboard } from "../../../lib/clipboard";
@@ -14,6 +15,7 @@ const PAGE_SIZE = 25;
 
 export default function PlatformDatabasePage() {
   const { locale, formatNumber, formatDateTime } = useI18n();
+  const router = useRouter();
   const ar = locale === "ar";
   const names: Record<string, [string, string]> = {
     id: ["المعرّف", "ID"], name: ["الاسم", "Name"], description: ["الوصف", "Description"],
@@ -50,14 +52,15 @@ export default function PlatformDatabasePage() {
     if (search) params.set("q", search);
     fetchWithTimeout(`/api/platform/database?${params}`, { signal: controller.signal, cache: "no-store" })
       .then(async (response) => {
+        if (active && response.status === 401) router.replace("/platform/login");
         if (!response.ok) throw new Error(String(response.status));
         return await response.json() as Result;
       })
       .then((result) => { if (active) { setData(result); setError(false); } })
-      .catch(() => { if (active) { setData(null); setError(true); } })
+      .catch(() => { if (active) { setData(null); setExpanded(null); setCopyResult(null); setError(true); } })
       .finally(() => { if (active) setLoadedKey(requestKey); });
     return () => { active = false; controller.abort(); };
-  }, [table, search, offset, version, requestKey]);
+  }, [table, search, offset, version, requestKey, router]);
 
   const visibleData = loading ? null : data?.selected === table ? data : null;
   const tables = (data?.tables ?? []).filter((item) => item.name.toLowerCase().includes(tableFilter.trim().toLowerCase()));

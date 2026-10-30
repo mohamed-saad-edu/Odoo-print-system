@@ -121,7 +121,7 @@ for (const status of ["claimed", "printing"]) {
     assert.match(h.statements[0], /SELECT id FROM tenants[\s\S]*WHERE id = tenant-1 AND lifecycle = 'active' FOR SHARE/);
     assert.match(h.statements[1], /pr\.id = printer-1/);
     assert.match(h.statements[1], /pr\.status = 'online'/);
-    assert.match(h.statements[1], /pr\.last_seen_at <= now\(\)/);
+    assert.match(h.statements[1], /pr\.last_seen_at <= clock_timestamp\(\)/);
     assert.match(h.statements[1], /pr\.management_source = 'agent'/);
     assert.match(h.statements[1], /[a-f0-9]{64}::text IS NOT NULL AND pr\.verification_binding_digest = [a-f0-9]{64}/);
     assert.match(h.statements[1], /pr\.output_medium = physical/);

@@ -33,13 +33,12 @@ if (-not $InstallDir) {
     (Join-Path $env:ProgramFiles "yasser-manager"),
     (Join-Path ${env:ProgramFiles(x86)} "Yaseir\Yaseir Print Manager"),
     (Join-Path ${env:ProgramFiles(x86)} "Yaseir Print Manager"),
-    (Join-Path ${env:ProgramFiles(x86)} "yasser-manager"),
-    (Join-Path $env:LOCALAPPDATA "Programs\Yaseir Print Manager"),
-    (Join-Path $env:LOCALAPPDATA "Yaseir Print Manager")
+    (Join-Path ${env:ProgramFiles(x86)} "yasser-manager")
   )
   $InstallDir = $candidateDirs | Where-Object { Test-Path $_ } | Select-Object -First 1
   if (-not $InstallDir) {
-    $regKeys = Get-ItemProperty "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*", "HKLM:\Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*", "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*" -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -match "^Yaseir( Manager)?$" -or $_.DisplayName -match "^Yasser( Manager)?$" }  # legacy fallback for pre-migration installs
+    # Auto-discovery stays in machine-owned roots; pass -InstallDir for a per-user installation.
+    $regKeys = Get-ItemProperty "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*", "HKLM:\Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*" -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -match "^Yaseir( Manager)?$" -or $_.DisplayName -match "^Yasser( Manager)?$" }  # legacy fallback for pre-migration installs
     foreach ($k in $regKeys) {
       if ($k.InstallLocation -and (Test-Path $k.InstallLocation)) {
         $InstallDir = $k.InstallLocation
@@ -48,7 +47,7 @@ if (-not $InstallDir) {
     }
   }
   if (-not $InstallDir) {
-    $candidateFiles = Get-ChildItem -Path @($env:ProgramFiles, ${env:ProgramFiles(x86)}, "$env:LOCALAPPDATA\Programs") -Filter "*Yaseir*.exe" -Recurse -Depth 3 -ErrorAction SilentlyContinue
+    $candidateFiles = Get-ChildItem -Path @($env:ProgramFiles, ${env:ProgramFiles(x86)}) -Filter "*Yaseir*.exe" -Recurse -Depth 3 -ErrorAction SilentlyContinue
     if ($candidateFiles) {
       $InstallDir = $candidateFiles[0].DirectoryName
     }

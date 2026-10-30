@@ -141,7 +141,9 @@ def test_workspace_subscription_is_scoped_to_authenticated_owner_and_manual_appr
     assert "requirePlatformOwner" in platform
     status = read("src/app/api/billing/status/route.ts")
     assert 'customerSubscriptionState(subscription' in status
-    assert 'monthlyQuota' not in status and 'planName' not in status
+    assert 'monthlyQuota' not in status
+    assert 'includePlanName && subscription' in status
+    assert '...(includePlanName ? { planName: plan?.name ?? null } : {})' in status
     usage = read("src/app/api/billing/usage/route.ts")
     assert 'requireManagerPermission(manager, "billing.read")' in usage
 
@@ -185,7 +187,7 @@ def test_certification_does_not_convert_database_errors_into_missing_or_pending_
     assert 'if (jobStateLookupFailed)' in source
     assert 'print.certification.job_state_lookup_failed' in source
     assert 'print.certification.agent_lookup_failed' in source
-    assert 'print.certification.capability_lookup_failed' in source
+    assert 'print.certification.authority_read_failed' in source
 
 def test_terminal_claim_credentials_are_cleared_without_breaking_crash_recovery():
     gateway_maintenance = read("src/lib/job-maintenance.ts")

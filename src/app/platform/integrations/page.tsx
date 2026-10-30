@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { AlertTriangle, Building2, KeyRound, LockKeyhole, RefreshCw, Search, ShieldCheck, ShieldOff } from "lucide-react";
 import { Button, Card, EmptyState, ErrorState, Field, Modal, PageHeader, SegmentedControl, StatusBadge, TableSkeleton, Textarea } from "../../../components/ui";
 import { fetchWithTimeout } from "../../../lib/fetch-timeout";
@@ -36,6 +37,7 @@ function isKey(row: RecordItem): row is KeyRecord { return "odooEnabled" in row;
 
 export default function PlatformIntegrationsPage() {
   const { locale, formatDateTime, formatNumber, t: translate } = useI18n();
+  const router = useRouter();
   const t = wording[locale];
   const [kind, setKind] = useState<"keys" | "installations">("keys");
   const [status, setStatus] = useState("all");
@@ -67,6 +69,11 @@ export default function PlatformIntegrationsPage() {
       if (tenant.trim()) params.set("tenantId", tenant.trim());
       try {
         const response = await fetchWithTimeout(`/api/platform/integrations?${params}`, { signal: controller.signal, cache: "no-store" });
+        if (cancelled) return;
+        if (response.status === 401) {
+          setSelected(null); setReason(""); setActionError("");
+          router.replace("/platform/login");
+        }
         if (!response.ok) throw new Error(`${response.status}`);
         const data = await response.json() as { items?: RecordItem[]; hasMore?: boolean };
         if (cancelled) return;
@@ -78,7 +85,7 @@ export default function PlatformIntegrationsPage() {
     }
     void load();
     return () => { cancelled = true; controller.abort(); };
-  }, [key, kind, status, query, tenant, offset, t.error]);
+  }, [key, kind, status, query, tenant, offset, t.error, router]);
 
   function close() {
     if (acting) return;
@@ -101,6 +108,13 @@ export default function PlatformIntegrationsPage() {
       });
       const result = await response.json().catch(() => null) as { code?: string; ok?: boolean; tenantId?: string; id?: string; revoked?: boolean; removed?: boolean; quarantined?: boolean } | null;
       if (!response.ok) {
+        if (response.status === 401) {
+          setItems([]); setHasMore(false); setSelected(null); setReason(""); router.replace("/platform/login");
+        } else if (response.status === 403) {
+          setSelected(null); setItems([]); setHasMore(false); setReason(""); setActionError("");
+          router.replace("/platform/login");
+          return;
+        }
         setActionError(translate(apiMessageKey(result?.code, response.status, "errors.operationFailed")));
         return;
       }

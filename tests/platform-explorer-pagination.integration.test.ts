@@ -1,6 +1,10 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { db } from "../src/db";
 import { readPlatformDatabase } from "../src/lib/platform-data-explorer";
 import { applyMigrations, closePool, hasTestDatabase, pool } from "./helpers/pg";
+
+const read = (input: { table?: string; search?: string; offset?: number }) =>
+  db.transaction(tx => readPlatformDatabase(tx, input));
 
 describe.skipIf(!hasTestDatabase)("database explorer pagination on PostgreSQL", () => {
   beforeAll(async () => {
@@ -17,8 +21,8 @@ describe.skipIf(!hasTestDatabase)("database explorer pagination on PostgreSQL", 
   afterAll(async () => { await pool().query("DROP TABLE IF EXISTS explorer_page_fixture"); await closePool(); });
 
   it("returns stable non-overlapping pages through timestamp and primary-key ties", async () => {
-    const first = await readPlatformDatabase({ table: "explorer_page_fixture" });
-    const last = await readPlatformDatabase({ table: "explorer_page_fixture",offset: 25 });
+    const first = await read({ table: "explorer_page_fixture" });
+    const last = await read({ table: "explorer_page_fixture",offset: 25 });
     expect(first.rows).toHaveLength(25);
     expect(last.rows).toHaveLength(25);
     expect(first.hasMore).toBe(true);
@@ -32,8 +36,8 @@ describe.skipIf(!hasTestDatabase)("database explorer pagination on PostgreSQL", 
 
   it("binds search punctuation and rejects arbitrary table identifiers", async () => {
     const injection = "x'; DROP TABLE explorer_page_fixture;--";
-    expect((await readPlatformDatabase({ table: "explorer_page_fixture",search: injection })).rows).toEqual([]);
-    expect((await readPlatformDatabase({ table: injection })).selected).toBeNull();
+    expect((await read({ table: "explorer_page_fixture",search: injection })).rows).toEqual([]);
+    expect((await read({ table: injection })).selected).toBeNull();
     expect(Number((await pool().query("SELECT count(*) AS n FROM explorer_page_fixture")).rows[0].n)).toBe(50);
   });
 });

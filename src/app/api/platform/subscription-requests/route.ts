@@ -20,8 +20,9 @@ export async function GET(req:Request) {
       await requirePlatformReadAuthorityInTransaction(tx,actor);
       return Promise.all([
       tx.execute(sql`SELECT r.*,t.name AS "tenantName",p.name AS "planName",
-        CASE WHEN p.entitlements->>'max_prints_per_period' ~ '^[0-9]{1,9}$'
-          THEN (p.entitlements->>'max_prints_per_period')::int ELSE NULL END AS "planMonthlyQuota",
+        CASE WHEN p.entitlements->>'max_prints_per_period' ~ '^[0-9]{1,10}$'
+          THEN CASE WHEN (p.entitlements->>'max_prints_per_period')::numeric BETWEEN 1 AND 2147483647
+            THEN (p.entitlements->>'max_prints_per_period')::int END ELSE NULL END AS "planMonthlyQuota",
         current_plan.name AS "currentPlanName",
         ${effectiveSubscriptionStatusSql({tenantId:sql`t.id`,tenantLifecycle:sql`t.lifecycle`,subscriptionStatus:sql`current_sub.status`,entitlementBlocked:sql`current_sub.entitlement_blocked`,currentPeriodStart:sql`current_sub.current_period_start`})} AS "currentSubscriptionStatus"
         FROM subscription_requests r JOIN tenants t ON t.id=r.tenant_id

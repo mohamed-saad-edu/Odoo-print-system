@@ -32,13 +32,11 @@ export async function GET(request:Request) {
     q:url.searchParams.get("q")??undefined,offset});
   if(!args.success) return NextResponse.json({error:"Invalid explorer filters"},{status:400,headers});
   try {
-    // The catalog runs on its own READ ONLY PoolClient transaction. Keep the
-    // shared owner/session row locks on this guard transaction until that
-    // private catalog has been fully read. An owner revoked after preflight
-    // cannot be returned an index of other tenants or their printer IDs.
+    // Keep the authority locks and catalog queries on one transaction. A
+    // second PoolClient here can exhaust the pool while this transaction waits.
     const result=await db.transaction(async tx => {
       await requirePlatformReadAuthorityInTransaction(tx,actor);
-      return readPlatformDatabase({table:args.data.table,search:args.data.q,offset:args.data.offset});
+      return readPlatformDatabase(tx,{table:args.data.table,search:args.data.q,offset:args.data.offset});
     });
     if(args.data.table && !result.selected) return NextResponse.json({error:"Table unavailable"},{status:404,headers});
     return NextResponse.json(result,{headers});

@@ -118,7 +118,7 @@ export async function mutateManualSubscription(tenantId: string, actor: Platform
       if (!requested) throw new ManualSubscriptionError("SUBSCRIPTION_REQUEST_CONFLICT",409);
       const requestedQuota = requested.requestedMonthlyQuota===null ? null : Number(requested.requestedMonthlyQuota);
       const modified = input.planId !== requested.planId || input.term !== requested.term ||
-        (requestedQuota!==null && input.monthlyQuota !== requestedQuota);
+        input.monthlyQuota !== requestedQuota;
       if (modified && input.allowRequestChanges !== true) {
         throw new ManualSubscriptionError("SUBSCRIPTION_REQUEST_TERMS_MISMATCH",409);
       }

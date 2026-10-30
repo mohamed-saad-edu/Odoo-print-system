@@ -2,6 +2,7 @@
 
 import { fetchWithTimeout } from "../../../lib/fetch-timeout";
 import { Fragment, useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { Shield, Search, RefreshCw, ChevronDown, ScrollText } from "lucide-react";
 import {
   Button,
@@ -62,6 +63,7 @@ type Filter = "all" | "platform" | "tenant" | "machine";
 
 export default function PlatformAuditPage() {
   const { t, formatNumber, formatDateTime } = useI18n();
+  const router = useRouter();
   const [events, setEvents] = useState<AuditEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -76,6 +78,7 @@ export default function PlatformAuditPage() {
       try {
         const res = await fetchWithTimeout("/api/platform/audit?limit=150");
         if (ignore) return;
+        if (res.status === 401) router.replace("/platform/login");
         if (!res.ok) throw new Error(t("platform.audit.loadFailed"));
         const data: unknown = await res.json();
         const payload = data && typeof data === "object" ? data as { auditEvents?: unknown } : null;
@@ -94,7 +97,7 @@ export default function PlatformAuditPage() {
     }
     load();
     return () => { ignore = true; };
-  }, [reloadKey, t]);
+  }, [reloadKey, t, router]);
 
   function handleRefresh() { setEvents([]); setExpanded(null); setLoading(true); setReloadKey((k) => k + 1); }
 

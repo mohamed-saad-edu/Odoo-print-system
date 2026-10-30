@@ -10,10 +10,15 @@ import pytest
 
 from test_f010_report_binding_identity import production_methods, ValidationError
 
+Binding = production_methods('binding.py', ['resolve_explicit'])
+
 
 class Ref(SimpleNamespace):
     def exists(self):
         return self
+
+    def __len__(self):
+        return 1
 
 
 class Cursor:
@@ -39,6 +44,9 @@ class Lookup:
         assert self.value.id == record_id
         return self.value
 
+    def resolve_explicit(self, *args, **kwargs):
+        return Binding.resolve_explicit(self, *args, **kwargs)
+
 
 class Jobs:
     def __init__(self):
@@ -62,6 +70,8 @@ class Environment:
             'ir.actions.report': Lookup(report),
             'print_gateway.print_router': SimpleNamespace(
                 _binding_scope=lambda company: (company, False)),
+            'print_gateway.runtime_agent_assignment': SimpleNamespace(
+                is_agent_assigned=lambda *_args: True),
             'print_gateway.print_job': jobs,
         }
 
@@ -74,8 +84,9 @@ def attempt_persist(*, destination_id=31, document_type='receipt',
     root = Ref(id=21)
     config = Ref(id=22)
     fresh_binding = Ref(
-        id=23, company_id=root, branch_id=False, runtime_agent_id=False,
+        id=23, company_id=root, branch_id=False, runtime_agent_id='runtime-agent-1',
         enabled=True, printer_id='exact-printer-1',
+        printer_protocol='spooler',
         destination_ref=Ref(id=destination_id, _name='pos.config'),
         document_type=document_type,
         report_id=Ref(id=binding_report_id) if binding_report_id else False,

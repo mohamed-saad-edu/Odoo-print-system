@@ -192,6 +192,8 @@ class PrintGatewayRuntimePrinterController(http.Controller):
             gateway_headers = config._gateway_headers()
         except ValidationError:
             raise
+        except requests.RequestException as exc:
+            raise ValidationError(request.env._('Gateway agent discovery is unavailable.')) from exc
         try:
             response = requests.get(
                 '%s/api/odoo/agents' % gateway_base,

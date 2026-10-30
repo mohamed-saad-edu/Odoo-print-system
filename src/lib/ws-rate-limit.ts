@@ -15,15 +15,10 @@ export async function recordWsUpgradeSuccess(key: string): Promise<void> {
 
 export async function reserveWsUpgradeAttempt(key: string): Promise<{ allowed: true; retryAfterSec?: number } | { allowed: false; retryAfterSec: number }> {
   return db.transaction(async (tx) => {
-    const clock = await tx.execute(sql`SELECT EXTRACT(EPOCH FROM clock_timestamp()) * 1000 AS now_ms`);
-    const nowMs = Number(clock.rows[0]?.now_ms);
-    if (!Number.isFinite(nowMs)) throw new Error("Database clock is unavailable");
-    const now = new Date(nowMs);
-    const cutoff = new Date(now.getTime() - WINDOW_MS);
     const bucketKey = `ws-upgrade:${key}`;
     await tx.execute(sql`
       INSERT INTO auth_rate_limits (key, failures, window_started_at, locked_until, updated_at)
-      VALUES (${bucketKey}, 0, ${now}, NULL, ${now})
+      VALUES (${bucketKey}, 0, clock_timestamp(), NULL, clock_timestamp())
       ON CONFLICT (key) DO NOTHING
     `);
     const result = await tx.execute(sql`
@@ -32,6 +27,11 @@ export async function reserveWsUpgradeAttempt(key: string): Promise<{ allowed: t
       WHERE key = ${bucketKey}
       FOR UPDATE
     `);
+    const clock = await tx.execute(sql`SELECT EXTRACT(EPOCH FROM clock_timestamp()) * 1000 AS now_ms`);
+    const nowMs = Number(clock.rows[0]?.now_ms);
+    if (!Number.isFinite(nowMs)) throw new Error("Database clock is unavailable");
+    const now = new Date(nowMs);
+    const cutoff = new Date(now.getTime() - WINDOW_MS);
     const row = result.rows[0] as {
       failures?: number | string;
       window_started_at?: Date | string;
