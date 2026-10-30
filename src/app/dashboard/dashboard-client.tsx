@@ -110,6 +110,7 @@ export type Agent = {
   status: string;
   lifecycle: string;
   lastSeenAt: Date | null;
+  freshness?: "fresh" | "stale" | "missing";
   createdAt: Date;
   printerCount: number;
   currentPrinterCount?: number;
@@ -125,6 +126,7 @@ export type Printer = OperationalPrinterState & {
   agentStatus?: string | null;
   agentLifecycle?: string | null;
   agentLastSeenAt?: Date | string | null;
+  agentFreshness?: "fresh" | "stale" | "missing";
   agentStaleThresholdSeconds?: number;
   inventoryPresent?: boolean;
   name: string;
@@ -438,6 +440,7 @@ export default function DashboardClient({
   const [kpiJobs, setKpiJobs] = useState<Job[]>(initialJobs);
   const [jobs, setJobs] = useState<Job[]>(initialJobs);
   const [fleet, setFleet] = useState<FleetMeta>(initialFleet);
+  const [fleetSnapshotCurrent, setFleetSnapshotCurrent] = useState(true);
   const [agentOffset, setAgentOffset] = useState(initialFleet.agentOffset);
   const [printerOffset, setPrinterOffset] = useState(initialFleet.printerOffset);
   const [jobsLoading, setJobsLoading] = useState(false);
@@ -481,6 +484,7 @@ export default function DashboardClient({
   if (prevFleet !== initialFleet) {
     setPrevFleet(initialFleet);
     setFleet(initialFleet);
+    setFleetSnapshotCurrent(true);
     setAgentOffset(initialFleet.agentOffset);
     setPrinterOffset(initialFleet.printerOffset);
   }
@@ -828,6 +832,7 @@ export default function DashboardClient({
         setAgents(data.agents as Agent[]);
         setPrinters(data.printers as Printer[]);
         setFleet(data.fleet as FleetMeta);
+        setFleetSnapshotCurrent(true);
         setKpiJobs(data.jobs as Job[]);
         if (data.agents.length === 0 && data.fleet.agentOffset > 0) {
           const next = Math.max(0, data.fleet.agentOffset - data.fleet.pageSize);
@@ -903,6 +908,9 @@ export default function DashboardClient({
         });
       }
         } catch (error) {
+          setFleetSnapshotCurrent(false);
+          setAgents((current) => current.map((agent) => ({ ...agent, freshness: "missing" })));
+          setPrinters((current) => current.map((printer) => ({ ...printer, agentFreshness: "missing" })));
           setMessage({ text: isServerActionVersionMismatch(error) ? t("errors.pageUpdatedReload") : error instanceof Error && (error.message === t("errors.sessionExpired") || error.message === t("workspaceSecurity.required")) ? error.message : t("errors.operationFailed"), type: "err" });
         }
 
@@ -1345,15 +1353,17 @@ export default function DashboardClient({
     prints && prints.limit !== "unlimited" ? (prints.used / Math.max(1, prints.limit)) * 100 : null;
   const printerStatusOptions = ["all", "ready", "printing", "attention", "unavailable", "saved"] as const;
 
-  const onlineAgentsLabel =
-    kpis.totalAgents === 0
+  const onlineAgentsLabel = !fleetSnapshotCurrent
+    ? t("status.unknown")
+    : kpis.totalAgents === 0
       ? t("agent.noAgents")
       : kpis.onlineAgents === kpis.totalAgents
         ? t("agent.allReachable")
         : tc("agent.unreachable", kpis.totalAgents - kpis.onlineAgents);
 
-  const printerMetaLabel =
-    kpis.totalPrinters === 0
+  const printerMetaLabel = !fleetSnapshotCurrent
+    ? t("status.unknown")
+    : kpis.totalPrinters === 0
       ? t("printer.noPrinters")
       : kpis.onlinePrinters === kpis.totalPrinters
         ? t("printer.allAvailable")
@@ -1387,7 +1397,7 @@ export default function DashboardClient({
         </div>
         {subscription?.currentPeriodEnd && <p className="text-sm text-ink-3">{t("v4.experience.subscription.ends", { date: formatManualCalendarDate(subscription.currentPeriodEnd, locale) ?? t("common.notAvailable") })}</p>}
         <div className="flex flex-wrap gap-3">
-          {canReadBillingUsage && subscription && subscription.customerState !== "active" ? <Button href="/billing" variant="primary">{t("v4.experience.health.manage")}</Button> : kpis.totalAgents === 0 && canMutate.agentsPair ? <Button variant="primary" onClick={() => { setMessage(null); setRegisterOpen(true); }}>{t("v4.experience.health.none")}</Button> : <Button href="#printers" variant="primary">{t(kpis.onlinePrinters > 0 ? "v4.experience.health.ready" : "v4.experience.health.review")}</Button>}
+          {canReadBillingUsage && subscription && subscription.customerState !== "active" ? <Button href="/billing" variant="primary">{t("v4.experience.health.manage")}</Button> : fleetSnapshotCurrent && kpis.totalAgents === 0 && canMutate.agentsPair ? <Button variant="primary" onClick={() => { setMessage(null); setRegisterOpen(true); }}>{t("v4.experience.health.none")}</Button> : <Button href="#printers" variant="primary">{t(fleetSnapshotCurrent && kpis.onlinePrinters > 0 ? "v4.experience.health.ready" : "v4.experience.health.review")}</Button>}
           <Button href="/api-keys" variant="secondary">{t("v4.experience.connection")}</Button>
           <Button href="#jobs" variant="secondary">{t("v4.experience.activity")}</Button>
         </div>
@@ -1402,15 +1412,15 @@ export default function DashboardClient({
           <div className="flex min-w-0 items-center gap-2">
             {/* Class order and tokens on the nominal pill are locked by
                 tests/theme-consistency.test.ts — keep the literal string. */}
-            {kpis.totalAgents > 0 && kpis.onlineAgents === kpis.totalAgents ? (
+            {fleetSnapshotCurrent && kpis.totalAgents > 0 && kpis.onlineAgents === kpis.totalAgents ? (
               <span className="inline-flex items-center gap-1.5 border border-ok-edge bg-ok-bg text-ok rounded-sm px-2 py-0.5 text-2xs font-[600]">
                 <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-ok-solid" />
                 {t("agent.allReachable")}
               </span>
             ) : (
-              <span className="inline-flex items-center gap-1.5 rounded-sm border border-warn-edge bg-warn-bg px-2 py-0.5 text-2xs font-[600] text-warn">
-                <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-warn-solid" />
-                {kpis.totalAgents === 0 ? t("dashboard.waitingForFirstAgent") : onlineAgentsLabel}
+              <span className={`inline-flex items-center gap-1.5 rounded-sm border px-2 py-0.5 text-2xs font-[600] ${fleetSnapshotCurrent ? "border-warn-edge bg-warn-bg text-warn" : "border-edge bg-surface-2 text-ink-3"}`}>
+                <span aria-hidden className={`h-1.5 w-1.5 rounded-full ${fleetSnapshotCurrent ? "bg-warn-solid" : "bg-ink-4"}`} />
+                {!fleetSnapshotCurrent ? t("status.unknown") : kpis.totalAgents === 0 ? t("dashboard.waitingForFirstAgent") : onlineAgentsLabel}
               </span>
             )}
             <IconButton
@@ -1435,14 +1445,14 @@ export default function DashboardClient({
         <div className="yw-fleet-kpis overflow-hidden rounded-b-2xl"><div className="grid min-w-0 grid-cols-2 gap-px bg-edge-subtle sm:grid-cols-4">
           <KpiCell
             label={t("dashboard.agentsOnline")}
-            value={`${kpis.onlineAgents}/${kpis.totalAgents}`}
-            tone={kpis.totalAgents === 0 ? "neutral" : kpis.onlineAgents === kpis.totalAgents ? "ok" : "warn"}
+            value={fleetSnapshotCurrent ? `${kpis.onlineAgents}/${kpis.totalAgents}` : "—"}
+            tone={!fleetSnapshotCurrent || kpis.totalAgents === 0 ? "neutral" : kpis.onlineAgents === kpis.totalAgents ? "ok" : "warn"}
             meta={onlineAgentsLabel}
           />
           <KpiCell
             label={t("dashboard.printersAvailable")}
-            value={`${kpis.onlinePrinters}/${kpis.totalPrinters}`}
-            tone={kpis.totalPrinters === 0 ? "neutral" : kpis.onlinePrinters === kpis.totalPrinters ? "ok" : "warn"}
+            value={fleetSnapshotCurrent ? `${kpis.onlinePrinters}/${kpis.totalPrinters}` : "—"}
+            tone={!fleetSnapshotCurrent || kpis.totalPrinters === 0 ? "neutral" : kpis.onlinePrinters === kpis.totalPrinters ? "ok" : "warn"}
             meta={printerMetaLabel}
           />
           <KpiCell
@@ -1581,10 +1591,10 @@ export default function DashboardClient({
                   {t("dashboard.tab.agents")}
                 </h3>
                 <p className="mt-0.5 text-sm leading-snug text-ink-3">
-                  {t("agent.onlineOfCount", {
+                  {fleetSnapshotCurrent ? t("agent.onlineOfCount", {
                     online: formatNumber(kpis.onlineAgents),
                     total: formatNumber(kpis.totalAgents),
-                  })}
+                  }) : t("status.unknown")}
                 </p>
               </div>
             </div>
@@ -1714,7 +1724,7 @@ export default function DashboardClient({
                 </h3>
                 <p className="mt-0.5 text-sm leading-snug text-ink-3">
                   {t("dashboard.printersReady", {
-                    ready: formatNumber(kpis.onlinePrinters),
+                    ready: fleetSnapshotCurrent ? formatNumber(kpis.onlinePrinters) : "—",
                     total: formatNumber(kpis.totalPrinters),
                   })}
                 </p>

@@ -101,6 +101,7 @@ export function printerAgentView(
       status: printer.agentStatus ?? null,
       lifecycle: printer.agentLifecycle ?? null,
       lastSeenAt: printer.agentLastSeenAt ?? null,
+      freshness: printer.agentFreshness ?? null,
       staleThresholdSeconds: printer.agentStaleThresholdSeconds ?? null,
     },
     nowMs,
