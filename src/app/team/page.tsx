@@ -7,7 +7,7 @@ import { useI18n } from "../../i18n/react";
 import { ensureCustomerSession } from "../../lib/session-config";
 import { fetchWithTimeout } from "../../lib/fetch-timeout";
 import { codeMessageKey } from "../../lib/api-error-keys";
-import { Avatar, Button, Card, CardHeader, Input, PageContainer, PageHeader, StatusBadge } from "../../components/ui";
+import { Avatar, Button, Card, CardHeader, ConfirmDialog, Input, PageContainer, PageHeader, StatusBadge } from "../../components/ui";
 
 type Member = { userId: string; email: string; role: string; platformOwner: boolean; removableByCurrentOwner: boolean };
 type Invitation = { id: string; email: string; expiresAt: string };
@@ -31,6 +31,7 @@ export default function TeamPage() {
   const [email, setEmail] = useState("");
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
+  const [memberToRemove, setMemberToRemove] = useState<Member | null>(null);
 
   const clearTeamData = useCallback(() => {
     setMembers([]);
@@ -38,6 +39,7 @@ export default function TeamPage() {
     setMoreMembers(false);
     setMoreInvitations(false);
     setProfile(null);
+    setMemberToRemove(null);
   }, []);
 
   useEffect(() => {
@@ -171,9 +173,9 @@ export default function TeamPage() {
     }
   }
 
-  async function removeMember(member: Member) {
-    if (profile?.role !== "owner" || !member.removableByCurrentOwner || busy ||
-        !window.confirm(`${t("team.removeTitle")}\n\n${t("team.removeBodyHistory")}`)) return;
+  async function removeMember() {
+    const member = memberToRemove;
+    if (profile?.role !== "owner" || !member?.removableByCurrentOwner || busy) return;
     setBusy(true);
     setNotice(null);
     try {
@@ -190,6 +192,7 @@ export default function TeamPage() {
       setNotice({ kind: "err", message: t("team.memberRemoveFailed") });
     } finally {
       setBusy(false);
+      setMemberToRemove(null);
     }
   }
 
@@ -244,7 +247,7 @@ export default function TeamPage() {
                       icon={member.role === "owner" ? <Crown className="h-3.5 w-3.5 text-warn" aria-hidden /> : undefined}
                       label={member.role === "owner" ? t("team.role.owner") : t("v4.team.fullAccess")} />
                     {member.removableByCurrentOwner && <Button variant="danger" size="sm" disabled={busy}
-                      onClick={() => void removeMember(member)}>{t("team.removeFromWorkspace")}</Button>}
+                      onClick={() => setMemberToRemove(member)}>{t("team.removeFromWorkspace")}</Button>}
                   </li>
                 ))}
               </ul>
@@ -303,6 +306,14 @@ export default function TeamPage() {
           </div>
         </div>
       </PageContainer>
+      <ConfirmDialog open={memberToRemove !== null} onClose={() => setMemberToRemove(null)}
+        onConfirm={removeMember} busy={busy} title={t("team.removeTitle")}
+        description={t("team.removeBodyHistory")} confirmLabel={t("team.removeConfirm")}>
+        {memberToRemove && <div className="flex items-center gap-3 rounded-lg border border-edge bg-surface-2 p-4">
+          <Avatar name={memberToRemove.email} size="lg" tone="bad" />
+          <bdi dir="ltr" className="min-w-0 break-all text-sm font-semibold text-ink">{memberToRemove.email}</bdi>
+        </div>}
+      </ConfirmDialog>
     </>
   );
 }
