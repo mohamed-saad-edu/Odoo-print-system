@@ -11,6 +11,7 @@ import { hasBodyOverLimit } from "../../../../lib/request-limits";
 import { clientIpFrom, reserveAuthAttempt, setRateLimitHeaders } from "../../../../lib/auth-rate-limit";
 import { emailAuthTokenTimes } from "../../../../lib/email-auth-token-policy";
 import { findActiveInvitation } from "../../../../lib/invitation-join";
+import { isSingleWorkspaceStaging, stagingWorkspaceExists, STAGING_WORKSPACE_EXISTS_MESSAGE } from "../../../../lib/staging-single-workspace";
 
 const GENERIC = { ok: true, message: "If the account can be created, a verification email will be sent." };
 
@@ -43,6 +44,16 @@ export async function POST(req: Request) {
   const invitation = inviteToken ? await findActiveInvitation(inviteToken) : null;
   if (inviteToken && (!invitation || invitation.email !== email))
     return setRateLimitHeaders(NextResponse.json({ error: "Invitation expired or for a different email", code: "INVITATION_INVALID" }, { status: 400 }), rate);
+  // HTTPS staging permits invitations into the company, never a second self-signup workspace.
+  if (isSingleWorkspaceStaging() && !invitation) {
+    try {
+      if (await stagingWorkspaceExists(db)) return setRateLimitHeaders(
+        NextResponse.json({ error: STAGING_WORKSPACE_EXISTS_MESSAGE, code: "STAGING_WORKSPACE_EXISTS" }, { status: 409 }), rate);
+    } catch (error) {
+      logError("auth.register.staging_workspace_check_unavailable", { error: error instanceof Error ? error.message : "unknown" });
+      return setRateLimitHeaders(NextResponse.json({ error: "Registration temporarily unavailable" }, { status: 503 }), rate);
+    }
+  }
   // No user-chosen password is accepted before mailbox ownership is proven.
   // Persist only a random, unusable provisional password. Preserve equivalent
   // KDF cost for existing/new addresses to limit registration enumeration.

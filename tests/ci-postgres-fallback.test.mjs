@@ -79,6 +79,15 @@ test("CI postgres switches to identical pinned digest only when ECR returns 429"
   assert.ok(result.calls.indexOf("pull " + ecr) < result.calls.indexOf("pull " + hub));
 });
 
+test("CI postgres accepts an ECR data-quota refusal only for the exact same pinned digest", () => {
+  const result = runWithFakeDocker("quota");
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(result.calls.includes("pull " + ecr));
+  assert.ok(result.calls.includes("pull " + hub));
+  assert.ok(result.calls.indexOf("pull " + ecr) < result.calls.indexOf("pull " + hub));
+  assert.ok(result.calls.includes("run --rm -d --name yaseir-ci-postgres"));
+});
+
 test("CI postgres rejects non-throttling image errors without changing registries", () => {
   const result = runWithFakeDocker("invalid");
   assert.notEqual(result.status, 0);
@@ -92,13 +101,4 @@ test("CI postgres fails rather than hiding fallback download errors", () => {
   assert.notEqual(result.status, 0);
   assert.ok(result.calls.includes("pull " + hub));
   assert.ok(!result.calls.includes("run --rm"));
-});
-
-
-test("CI postgres also recognizes ECR Public's exact data-quota refusal and retains the pinned digest", () => {
-  const result = runWithFakeDocker("quota");
-  assert.equal(result.status, 0, result.stderr);
-  assert.ok(result.calls.includes("pull " + ecr));
-  assert.ok(result.calls.includes("pull " + hub));
-  assert.ok(result.calls.indexOf("pull " + ecr) < result.calls.indexOf("pull " + hub));
 });

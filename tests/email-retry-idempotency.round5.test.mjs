@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
+import * as nodeFs from 'node:fs';
+import { dirname } from 'node:path';
 import { stripTypeScriptTypes } from 'node:module';
 import { test } from 'node:test';
 import vm from 'node:vm';
@@ -12,6 +14,15 @@ async function loadEmailHandler(fetchStub) {
   const sourceModule = new vm.SourceTextModule(stripTypeScriptTypes(source, {mode: 'transform'}), {context});
   await sourceModule.link((specifier) => {
     if (specifier === 'node:crypto') return new vm.SyntheticModule(['randomUUID'],function(){this.setExport('randomUUID',randomUUID)},{context});
+    // Existing provider retry tests exercise Resend, not the isolated staging
+    // file capture. Link the exact Node builtins and keep staging disabled;
+    // a production mail send must never touch the staging filesystem.
+    if (specifier === 'node:fs') {
+      const exports = ['closeSync', 'constants', 'fchmodSync', 'mkdirSync', 'openSync', 'writeSync'];
+      return new vm.SyntheticModule(exports, function(){for(const name of exports)this.setExport(name,nodeFs[name])},{context});
+    }
+    if (specifier === 'node:path') return new vm.SyntheticModule(['dirname'],function(){this.setExport('dirname',dirname)},{context});
+    if (specifier === './staging-single-workspace') return new vm.SyntheticModule(['isSingleWorkspaceStaging'],function(){this.setExport('isSingleWorkspaceStaging',()=>false)},{context});
     if (specifier === './runtime-secret') return new vm.SyntheticModule(['runtimeSecret'],function(){this.setExport('runtimeSecret',name => ({RESEND_API_KEY:'fixture',EMAIL_FROM:'print@example.test'})[name])},{context});
     throw new Error(`Unexpected import ${specifier}`);
   });

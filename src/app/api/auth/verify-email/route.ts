@@ -15,6 +15,7 @@ import { logError, logWarn } from "../../../../lib/log";
 import { writeAuditEvent } from "../../../../lib/audit";
 import type { ManagerRole } from "../../../../lib/manager-auth";
 import { emailAuthTokenIsLive, emailAuthTokenTimes } from "../../../../lib/email-auth-token-policy";
+import { assertStagingWorkspaceSlot, StagingWorkspaceExistsError, STAGING_WORKSPACE_EXISTS_MESSAGE } from "../../../../lib/staging-single-workspace";
 
 export async function POST(req: Request) {
   if (hasBodyOverLimit(req, 16 * 1024)) return NextResponse.json({ error: "Request body too large" }, { status: 413 });
@@ -163,6 +164,7 @@ export async function POST(req: Request) {
           tenantId = existing[0].tenantId;
           if (!isManagerRole(existing[0].role)) throw new Error("INVALID_TENANT_ROLE");
         } else {
+          await assertStagingWorkspaceSlot(tx);
           tenantId = `ten_${nanoid(18)}`;
           await tx.insert(tenants).values({ id: tenantId, name: `${currentUser.email.split("@")[0]}'s Workspace` });
           await tx.insert(tenantUsers).values({ userId: currentUser.id, tenantId, role: "owner" });
@@ -183,6 +185,8 @@ export async function POST(req: Request) {
     if (error instanceof Error && error.message === "Verification token already consumed") return NextResponse.json({ error: "Invalid or expired verification link" }, { status: 400 });
     if (error instanceof Error && error.message === "USER_NOT_FOUND") return NextResponse.json({ error: "Invalid or expired verification link" }, { status: 400 });
     if (error instanceof Error && error.message === "INVALID_TENANT_ROLE") return NextResponse.json({ error: "Workspace is unavailable" }, { status: 403 });
+    if (error instanceof StagingWorkspaceExistsError) return setRateLimitHeaders(
+      NextResponse.json({ error: STAGING_WORKSPACE_EXISTS_MESSAGE, code: "STAGING_WORKSPACE_EXISTS" }, { status: 409 }), rate);
     if (error instanceof Error && error.message.startsWith("INVITATION_"))
       return setRateLimitHeaders(NextResponse.json({ error: "Workspace invitation invalid, expired or unavailable", code: error.message }, { status: 409 }), rate);
     throw error;
