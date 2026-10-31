@@ -4,7 +4,6 @@ import { readFileSync } from "node:fs";
 import { act, createElement as h } from "react";
 import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
-import ts from "typescript";
 import { describe, expect, it, vi } from "vitest";
 import { I18nProvider } from "../src/i18n/react";
 import { hasManagerPermission } from "../src/lib/authorization";
@@ -42,7 +41,7 @@ async function renderTree(role: ManagerRole, lifecycle = "active", diagnosticAct
     initialAgents: [{ ...agent, lifecycle }], initialPrinters: [{ ...printer, ...printerOverrides }], initialJobs: [], databaseError: null,
     initialFleet: fleet, initialView,
     canReadBillingUsage: hasManagerPermission(claims, "billing.read"),
-    canMutate: { printers: hasManagerPermission(claims, "printers.manage"), printersTest: hasManagerPermission(claims, "printers.test"),
+    canMutate: { printers: hasManagerPermission(claims, "printers.manage"),
       agentsPair: hasManagerPermission(claims, "agents.pair"), agentsLifecycle: hasManagerPermission(claims, "agents.disable") || hasManagerPermission(claims, "agents.retire"),
       jobsCancel: hasManagerPermission(claims, "jobs.cancel"), jobsRetry: hasManagerPermission(claims, "jobs.retry") },
     diagnosticActorScope,
@@ -135,39 +134,47 @@ describe("dashboard printer action authority", () => {
     expect(client).toMatch(/canMutate\.agentsLifecycle \? \[\{\s*key: "delete"/);
   });
 
-  it("guards remaining certification entry points with the server-projected permission", () => {
-    const source = ts.createSourceFile("dashboard-client.tsx", readFileSync("src/app/dashboard/dashboard-client.tsx", "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
-    const entryPoints: ts.Node[] = [];
-    const visit = (node: ts.Node) => {
-      if (ts.isJsxElement(node) && node.openingElement.tagName.getText(source) === "Button" &&
-          node.openingElement.attributes.properties.some((attribute) => {
-            if (!ts.isJsxAttribute(attribute) || attribute.name.getText(source) !== "onClick") return false;
-            let opensMutation = false;
-            const calls = (child: ts.Node) => {
-              if (ts.isCallExpression(child) && ts.isIdentifier(child.expression) &&
-                  (child.expression.text === "handleGatewayTestPrint" || (child.expression.text === "setCertifyPrinter" && child.arguments[0]?.kind !== ts.SyntaxKind.NullKeyword))) opensMutation = true;
-              ts.forEachChild(child, calls);
-            };
-            ts.forEachChild(attribute, calls);
-            return opensMutation;
-          })) {
-        entryPoints.push(node);
+  it.each(["owner", "admin", "operator", "viewer", "integration_admin", "billing_admin"] as const)(
+    "keeps test-page certification out of the printer menu and details for %s", async role => {
+      vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+      vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => String(input).includes("/api/auth/me")
+        ? new Response(JSON.stringify({ exp: Math.floor(Date.now() / 1000) + 3600 }), { status: 200 })
+        : usageResponse()));
+      vi.mocked(getDashboardJobsResult).mockResolvedValue({ ok: true, data: [] });
+      vi.mocked(getDashboardStateResult).mockResolvedValue({ ok: true, data: {
+        agents: [{ ...agent, pairingCodeExpiresAt: null, metadata: null, currentPrinterCount: 1, reportedStatus: agent.status, freshness: "fresh", staleThresholdSeconds: 90 }],
+        printers: [{ ...printer, agentName: agent.name, agentStatus: agent.status, agentLifecycle: agent.lifecycle, agentLastSeenAt: seen,
+          agentFreshness: "fresh", agentStaleThresholdSeconds: 90, inventoryPresent: true, deviceClass: "unknown", config: null, capabilities: null }], jobs: [], fleet,
+      } });
+      const host = document.createElement("div");
+      document.body.appendChild(host);
+      const root = createRoot(host);
+      try {
+        const tree = await renderTree(role);
+        await act(async () => { root.render(tree); });
+        const more = [...host.querySelectorAll<HTMLButtonElement>('button[aria-haspopup="menu"]')]
+          .find(button => button.textContent?.includes("More actions for Canon"));
+        expect(more).toBeDefined();
+        await act(async () => { more!.click(); });
+        const menu = document.querySelector('[role="menu"]');
+        expect(menu).not.toBeNull();
+        expect(menu!.textContent).not.toContain("Test printer");
+        const details = [...menu!.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')]
+          .find(button => button.textContent?.trim() === "Technical details");
+        expect(details).toBeDefined();
+        await act(async () => { details!.click(); });
+        const dialog = document.querySelector('[role="dialog"]');
+        expect(dialog).not.toBeNull();
+        expect(dialog!.textContent).toContain("Canon");
+        expect([...dialog!.querySelectorAll("button")].map(button => button.textContent?.trim()))
+          .not.toContain("Certify");
+      } finally {
+        await act(async () => { root.unmount(); });
+        host.remove();
+        vi.unstubAllGlobals();
       }
-      if (ts.isObjectLiteralExpression(node) && node.properties.some((property) => ts.isPropertyAssignment(property) && property.name.getText(source) === "key" && property.initializer.getText(source) === '"certify"')) {
-        entryPoints.push(node);
-      }
-      ts.forEachChild(node, visit);
-    };
-    visit(source);
-    expect(source.getFullText()).not.toContain("handleGatewayTestPrint");
-    // Customer Test Print was retired; two certification actions remain.
-    expect(entryPoints).toHaveLength(2);
-    for (const entry of entryPoints) {
-      let ancestor: ts.Node | undefined = entry.parent;
-      while (ancestor && !ts.isBinaryExpression(ancestor) && !ts.isConditionalExpression(ancestor)) ancestor = ancestor.parent;
-      expect(ancestor && (ts.isBinaryExpression(ancestor) ? ancestor.left : (ancestor as ts.ConditionalExpression).condition).getText(source)).toBe("canMutate.printersTest");
-    }
-  });
+    },
+  );
 });
 
 const billingUsage = {

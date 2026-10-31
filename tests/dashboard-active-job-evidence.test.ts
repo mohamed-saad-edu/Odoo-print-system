@@ -44,7 +44,7 @@ async function inspect(status: string, error?: string) {
   await act(async () => root!.render(createElement(DashboardClient, {
     initialView: "jobs", initialAgents: [], initialPrinters: [], initialJobs: jobs, initialFleet: fleet, databaseError: null,
     canReadBillingUsage: false, diagnosticActorScope: "fixture",
-    canMutate: { printers: false, printersTest: false, agentsPair: false, agentsLifecycle: false, jobsCancel: false, jobsRetry: true },
+    canMutate: { printers: false, agentsPair: false, agentsLifecycle: false, jobsCancel: false, jobsRetry: true },
   })));
   const jobButton = host.querySelector<HTMLButtonElement>('button[title="job_evidence"]')!;
   expect(jobButton).toBeTruthy();
