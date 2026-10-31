@@ -12,3 +12,7 @@ Trivy still executes against the tested final image and writes full SARIF for ev
 
 ## Follow-up needed before release sign-off
 Review and upgrade inherited Ubuntu packages when fixed versions are available, replace the legacy Ubuntu-packaged Node 18 / libnode109, reassess Python distro packages and the inherited official Odoo deb (the service starts from independently pinned Odoo Git source), and assess affected parsing paths such as libxslt, pdfminer, glibc and libgnutls. Preserve minimum privileges, isolated networking, explicit HTTPS and PDF bounds. Security exceptions expire automatically; CI green with reviewed exceptions is **not** production readiness.
+
+## 2026-10-31 follow-up: pypdf HIGH advisories
+
+Trivy reported seven new HIGH findings (CVE-2026-119203 to CVE-2026-119209) on pinned pypdf 6.21.2. Root remediation: update the hash-locked Python 3.12 wheel and its official artifact metadata to pypdf **6.21.4**, with PyPI-verified SHA-256 `33e4fb41ca352810eb4e9838aa0d82d6888a5f8bf682f43e99cce5faa666255c`. Version 6.21.4 includes all seven upstream fixes. Preserve the original PDF decompression-bounds adapter patch, fail-closed image finding policy, immutable image/lock identity checks, and 2026-11-08 expiry on the remaining LOW/MEDIUM risk baseline. Do not claim closure without passing the Odoo integration/bounds tests and new exact-image Trivy scan.
