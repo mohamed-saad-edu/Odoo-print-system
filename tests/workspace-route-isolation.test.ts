@@ -10,11 +10,12 @@ const fixture = vi.hoisted(() => ({ request: vi.fn(), searchParams: new URLSearc
 vi.mock("next/navigation", () => ({ useSearchParams: () => fixture.searchParams }));
 vi.mock("../src/components/platform/ManualAdmin", () => ({
   adminJson: fixture.request, controlClass: "control",
-  useAdminText: () => ({ a: fixture.a, formatNumber: fixture.format, formatDate: fixture.format, formatDateTime: fixture.format }),
+  useAdminText: () => ({ a: fixture.a, t: fixture.a, formatNumber: fixture.format, formatDate: fixture.format, formatDateTime: fixture.format }),
   AdminMetric: ({ label, value }: { label: string; value: ReactNode }) => h("p", null, label, value),
   AdminStatus: ({ status }: { status: string }) => h("span", null, status),
 }));
-vi.mock("../src/components/ui", () => ({
+vi.mock("../src/components/ui", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../src/components/ui")>(),
   Button: ({ loading: _loading, variant: _variant, ...props }: Record<string, unknown>) => h("button", props),
   Card: ({ children }: { children: ReactNode }) => h("div", null, children),
   PageHeader: ({ title }: { title: string }) => h("h1", null, title),
