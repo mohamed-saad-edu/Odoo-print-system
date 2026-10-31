@@ -13,32 +13,37 @@ async function loadModule(file, globals = {}, select = (source) => source) {
   // lack the host TextEncoder by default; missing it would silently reject
   // every valid printer ID and misdiagnose a verified driver geometry.
   const context = vm.createContext({ console, Date, Set, TextEncoder, process: { env: { NODE_ENV: "test" } }, ...globals });
+  // The VM linker owns the dependency graph. Calling .link() from each
+  // dependency loader races Node's recursive linking when two imports share
+  // a transitive module (or form a cycle), causing ERR_VM_MODULE_LINK_FAILURE.
+  // Cache the *promise* before reading files so parallel imports get the
+  // exact same module instance, then link the entire graph once at the root.
   const modules = new Map();
-  async function get(path) {
+  function get(path) {
     if (modules.has(path)) return modules.get(path);
-    if (path.startsWith("node:")) {
-      const builtin = await import(path);
-      const loadedModule = new vm.SyntheticModule(Object.keys(builtin), function () {
-        for (const [key, value] of Object.entries(builtin)) this.setExport(key, value);
-      }, { context });
-      modules.set(path, loadedModule);
-      return loadedModule;
-    }
-    if (path.endsWith(".json")) {
-      const value = JSON.parse(await readFile(path, "utf8"));
-      const loadedModule = new vm.SyntheticModule(["default"], function () {
-        this.setExport("default", value);
-      }, { context, identifier: path });
-      modules.set(path, loadedModule);
-      return loadedModule;
-    }
-    const source = select(await readFile(path, "utf8"), path);
-    const loadedModule = new vm.SourceTextModule(stripTypeScriptTypes(source), { context, identifier: path });
-    modules.set(path, loadedModule);
-    await loadedModule.link((name) => get(name.startsWith("node:") ? name : resolve(dirname(path), name.endsWith(".json") ? name : `${name}.ts`)));
-    return loadedModule;
+    const pending = (async () => {
+      if (path.startsWith("node:")) {
+        const builtin = await import(path);
+        return new vm.SyntheticModule(Object.keys(builtin), function () {
+          for (const [key, value] of Object.entries(builtin)) this.setExport(key, value);
+        }, { context, identifier: path });
+      }
+      if (path.endsWith(".json")) {
+        const value = JSON.parse(await readFile(path, "utf8"));
+        return new vm.SyntheticModule(["default"], function () {
+          this.setExport("default", value);
+        }, { context, identifier: path });
+      }
+      const source = select(await readFile(path, "utf8"), path);
+      return new vm.SourceTextModule(stripTypeScriptTypes(source), { context, identifier: path });
+    })();
+    modules.set(path, pending);
+    return pending;
   }
   const loadedModule = await get(resolve(file));
+  await loadedModule.link((name, importer) => get(
+    name.startsWith("node:") ? name : resolve(dirname(importer.identifier), name.endsWith(".json") ? name : `${name}.ts`),
+  ));
   await loadedModule.evaluate();
   return loadedModule.namespace;
 }
