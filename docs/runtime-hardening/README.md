@@ -28,7 +28,7 @@ The lock is platform specific. It includes the exact Linux/CPython wheels used i
 
 The pinned upstream requirements use several versions with known security advisories. The verification profile replaces the affected active Python 3.12 dependencies, including Requests, urllib3, cryptography, Jinja2, lxml, Pillow, Werkzeug and the PDF library. The runtime lock records the complete resolved dependency graph rather than only a list of overrides.
 
-Odoo's pinned source already supports modern `pypdf` through its own compatibility adapter. The profile installs `pypdf==6.21.2` and does not install legacy PyPDF2. However, the upstream adapter unconditionally replaces `pypdf.filters.decompress` with an unbounded zlib decompressor. Updating the package alone therefore does not preserve its configured decompression limit.
+Odoo's pinned source already supports modern `pypdf` through its own compatibility adapter. The profile installs `pypdf==6.21.4` and does not install legacy PyPDF2. However, the upstream adapter unconditionally replaces `pypdf.filters.decompress` with an unbounded zlib decompressor. Updating the package alone therefore does not preserve its configured decompression limit.
 
 The accompanying patch applies the historical workaround only to the legacy `PyPDF2` adapter. Modern pypdf retains its native bounded implementation. The safe regression sets a 128-byte output limit and decodes a compressed 1 KiB fixture: the original Odoo import bypassed the limit; the patched import raises pypdf's `LimitReachedError`. No large decompression payload is used.
 
@@ -156,3 +156,7 @@ Software pipeline checks use a local Gateway and isolated consumers. Successful 
 - [urllib3 custom TLS hostname and certificate verification](https://urllib3.readthedocs.io/en/stable/advanced-usage.html#custom-sni-hostname)
 - [Requests HTTPAdapter interface](https://requests.readthedocs.io/en/latest/api/#requests.adapters.HTTPAdapter)
 - [PyPI artifact metadata](https://pypi.org/)
+
+## Security patch, 2026-10-31
+
+Following the 2026-10-30 publication of seven pypdf HIGH advisories (CVE-2026-119203 through CVE-2026-119209), the isolated runtime lock now pins **pypdf 6.21.4**. The upstream fixes are present in 6.21.3 and 6.21.4, and PyPI's trusted-publishing wheel SHA-256 is `33e4fb41ca352810eb4e9838aa0d82d6888a5f8bf682f43e99cce5faa666255c`. The artifact manifest records the same official wheel URL and digest. This update does not modify the bounded-decompression Odoo adapter patch, relax any image severity gate, or add CVEs to the security baseline. The exact rebuilt image still requires real Odoo addon tests, PDF bounds verification and a fresh Trivy scan before acceptance.
