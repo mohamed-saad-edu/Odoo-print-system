@@ -838,11 +838,19 @@ class PrintGatewayBinding(models.Model):
         context = dict(context or self.env.context)
         binding_model = self.with_context(**context)
         report = False
-        if report_id:
-            try:
-                report = binding_model.env["ir.actions.report"].browse(int(report_id)).exists()
-            except (TypeError, ValueError):
-                report = False
+        if report_id is not None and report_id is not False:
+            if type(report_id) is int:
+                exact_report_id = report_id
+            elif (isinstance(report_id, str) and report_id.isascii()
+                  and report_id.isdecimal() and len(report_id) <= 19):
+                exact_report_id = int(report_id)
+            else:
+                raise ValidationError(_("Invalid report identity."))
+            if not 0 < exact_report_id <= 2**63 - 1:
+                raise ValidationError(_("Invalid report identity."))
+            report = binding_model.env["ir.actions.report"].browse(exact_report_id).exists()
+            if not report:
+                raise ValidationError(_("The requested report is unavailable."))
         if not report and report_name:
             report = binding_model.env["ir.actions.report"].search([("report_name", "=", report_name)], limit=1)
             if not report:

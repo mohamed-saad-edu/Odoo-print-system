@@ -500,6 +500,7 @@ export const en = {
   "team.inviteSending": "Sending…",
   "team.removeTitle": "Remove this member?",
   "team.removeBody": "They lose access to this workspace immediately.",
+  "team.memberRemoveFailed": "Could not remove this member. Refresh and try again.",
   "team.removeConfirm": "Remove member",
   "team.transferTitle": "Transfer ownership",
   "team.transferBody": "The selected member becomes the new workspace owner.",

@@ -49,7 +49,8 @@ export function formatDate(value: Date | string | number | null | undefined, loc
   const date = toDate(value);
   if (!date) return translate(locale, "common.notAvailable");
   try {
-    return new Intl.DateTimeFormat(intlLocale(locale), { dateStyle: "medium" }).format(date);
+    // Arabic Intl inserts RTL marks that reorder our Latin digits inside LTR fields.
+    return new Intl.DateTimeFormat(intlLocale(locale), { dateStyle: "medium" }).format(date).replaceAll("\u200f", "");
   } catch {
     return date.toISOString();
   }
@@ -59,7 +60,7 @@ export function formatDateTime(value: Date | string | number | null | undefined,
   const date = toDate(value);
   if (!date) return translate(locale, "common.notAvailable");
   try {
-    return new Intl.DateTimeFormat(intlLocale(locale), { dateStyle: "medium", timeStyle: "short" }).format(date);
+    return new Intl.DateTimeFormat(intlLocale(locale), { dateStyle: "medium", timeStyle: "short" }).format(date).replaceAll("\u200f", "");
   } catch {
     return date.toISOString();
   }

@@ -14,9 +14,13 @@ type Preview = { email: string; workspaceName: string; role: string };
 type Step = "ready" | "verification" | "sign-in" | "joined" | "error";
 
 function InviteContent() {
+  const token = useSearchParams().get("token") ?? "";
+  return <InvitationDetails key={token} token={token} />;
+}
+
+function InvitationDetails({ token }: { token: string }) {
   const { t } = useI18n();
   const router = useRouter();
-  const token = useSearchParams().get("token") ?? "";
   const [preview, setPreview] = useState<Preview | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);

@@ -26,6 +26,7 @@ import { POST as webhookPOST } from "../src/app/api/billing/webhook/route";
 import { POST as checkoutPOST } from "../src/app/api/billing/checkout/route";
 import { createPrintJobForPrinter } from "../src/lib/print-job-service";
 import { logicalUsageReport } from "../src/lib/manual-usage-report";
+import { parseDbTimeMs } from "../src/lib/database-timestamp";
 const suite=describe.skipIf(!hasTestDatabase);
 const origin='https://manual.test';
 const entitlements={max_agents:1,max_printers:1,max_jobs_per_minute:120,max_concurrent_jobs:100,max_prints_per_period:10};
@@ -304,7 +305,7 @@ suite('V4 manual subscriptions security and accounting',()=>{
    );
    const history=(await logicalUsageReport('workspace')).monthlyHistory as Array<{periodStart:Date|string;used:number|string}>;
    expect(history).toHaveLength(1);
-   expect(new Date(history[0].periodStart).toISOString()).toBe(monthStart.toISOString());
+   expect(parseDbTimeMs(history[0].periodStart)).toBe(monthStart.getTime());
    expect(Number(history[0].used)).toBe(4);
  });
 

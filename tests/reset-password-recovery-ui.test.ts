@@ -51,6 +51,18 @@ function recoveryLink(locale: "en" | "ar") {
 }
 
 describe("explicit recovery from expired email authentication links", () => {
+  it("shows a fresh form when navigating from a completed reset to another reset link", async () => {
+    navigation.search = "token=first-reset";
+    fetchMock.mockResolvedValue({ ok: true, json: async () => ({ ok: true }) } as Response);
+    await render("en");
+    await submit();
+    expect(host.querySelector("form")).toBeNull();
+    navigation.search = "token=second-reset";
+    await render("en");
+    expect(host.querySelector("form")).not.toBeNull();
+    expect(host.querySelector<HTMLInputElement>("#password")?.value).toBe("");
+    expect(navigation.replace).not.toHaveBeenCalled();
+  });
   it.each([
     ["en", false], ["ar", false], ["en", true], ["ar", true],
   ] as const)("offers a localized fresh-link route after an expired proof without replay (%s, setup=%s)", async (locale, setup) => {

@@ -404,6 +404,51 @@ class RecordSet(list):
     def exists(self): return self
 
 
+@pytest.mark.parametrize('report_id', [
+    True, 0, -1, 1.5, 1.0, ' 1', '1 ', '1.0', '1e0', '', [], {}, ['1'],
+    2**63, str(2**63), '\u0661',
+])
+def test_dispatch_rejects_coerced_report_ids_before_any_lookup(report_id):
+    production = production_methods('binding.py', ['dispatch_report_action'])
+
+    class Environment:
+        context = {}
+
+        def __getitem__(self, name):
+            pytest.fail('Malformed report identity must not select or search for another report')
+
+    model = SimpleNamespace(env=Environment())
+    model.with_context = lambda **context: model
+    with pytest.raises(ValidationError, match='report'):
+        production.dispatch_report_action(model, report_id=report_id, report_name='other.report')
+
+
+def test_dispatch_never_resolves_name_after_missing_report_id():
+    production = production_methods('binding.py', ['dispatch_report_action'])
+    looked_up = []
+
+    class Reports:
+        def browse(self, report_id):
+            looked_up.append(report_id)
+            return SimpleNamespace(exists=lambda: False)
+
+        def search(self, *args, **kwargs):
+            pytest.fail('An explicit missing report ID must never select another report by name')
+
+    class Environment:
+        context = {}
+
+        def __getitem__(self, name):
+            assert name == 'ir.actions.report'
+            return Reports()
+
+    model = SimpleNamespace(env=Environment())
+    model.with_context = lambda **context: model
+    with pytest.raises(ValidationError, match='report is unavailable'):
+        production.dispatch_report_action(model, report_id=999, report_name='other.report')
+    assert looked_up == [999]
+
+
 def test_unbound_report_preserves_native_even_when_record_exists():
     router = Router(BRANCH, Bindings([binding(101, REPORT_A)]))
     assert router.route_report(REPORT_B, RecordSet([PICKING]), data={'ids': [19]})['native'] is True

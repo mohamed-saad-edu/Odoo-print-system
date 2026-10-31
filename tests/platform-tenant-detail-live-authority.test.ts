@@ -61,3 +61,26 @@ describe("Platform tenant detail personal and credential metadata read fence", (
     expect(mocks.usage).not.toHaveBeenCalled();
   });
 });
+
+describe("Platform Owner workspace member removal", () => {
+  it("offers removal for non-owner members and keeps workspace owners protected", async () => {
+    const { readFileSync } = await import("node:fs");
+    const detail = readFileSync("src/app/platform/tenants/[id]/page.tsx", "utf8");
+    const removal = readFileSync("src/app/api/platform/tenants/[id]/members/route.ts", "utf8");
+    expect(detail).toContain("removeWorkspaceMember");
+    expect(detail).toContain("/api/platform/tenants/${encodeURIComponent(id)}/members?userId=");
+    expect(detail).toContain("member.role !== 'owner'");
+    expect(removal).toContain('if (target.role === "owner") throw new ManualSubscriptionError("TRANSFER_OWNER_FIRST", 409)');
+    expect(removal).toContain("revokeUserTenantRefreshFamiliesInTransaction");
+    expect(removal).toContain('action: "team.member.removed"');
+  });
+});
+
+describe("Platform Owner subscription date direction", () => {
+  it("isolates subscription dates from surrounding Arabic text", async () => {
+    const { readFileSync } = await import("node:fs");
+    const detail = readFileSync("src/app/platform/tenants/[id]/page.tsx", "utf8");
+    expect(detail).toContain('<bdi dir="ltr">{formatDate(s.currentPeriodStart)}</bdi>');
+    expect(detail).toContain('<bdi dir="ltr">{formatDate(s.currentPeriodEnd)}</bdi>');
+  });
+});

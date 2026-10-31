@@ -64,7 +64,6 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
   // Server fences stay authoritative; this only shapes the UI.
   const canMutate = {
     printers: hasManagerPermission(claims, "printers.manage"),
-    printersTest: hasManagerPermission(claims, "printers.test"),
     agentsPair: hasManagerPermission(claims, "agents.pair"),
     agentsLifecycle: hasManagerPermission(claims, "agents.disable") || hasManagerPermission(claims, "agents.retire"),
     jobsCancel: hasManagerPermission(claims, "jobs.cancel"),

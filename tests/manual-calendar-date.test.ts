@@ -9,7 +9,7 @@ describe('manual contract and monthly quota calendar display',()=>{
   });
   it('matches editor dates in both supported locales',()=>{
     expect(formatManualCalendarDate('2027-10-24T00:00:00Z','en')).toBe('Oct 24, 2027');
-    expect(formatManualCalendarDate('2027-10-24T00:00:00Z','ar')).toBe(new Intl.DateTimeFormat('ar-SA-u-ca-gregory-nu-latn',{dateStyle:'medium',timeZone:'UTC'}).format(new Date('2027-10-24T00:00:00Z')));
+    expect(formatManualCalendarDate('2027-10-24T00:00:00Z','ar')).toBe('24/10/2027');
   });
   it('does not fabricate dates for unavailable values',()=>{
     expect(formatManualCalendarDate(null,'en')).toBeNull();
@@ -21,7 +21,7 @@ describe('manual contract and monthly quota calendar display',()=>{
 
   it('formats strict YYYY-MM-DD form values without the missing-date placeholder',()=>{
     expect(formatManualCalendarDate('2026-10-27','en')).toBe('Oct 27, 2026');
-    expect(formatManualCalendarDate('2026-10-27','ar')).toBe(new Intl.DateTimeFormat('ar-SA-u-ca-gregory-nu-latn',{dateStyle:'medium',timeZone:'UTC'}).format(new Date('2026-10-27T00:00:00Z')));
+    expect(formatManualCalendarDate('2026-10-27','ar')).toBe('27/10/2026');
     expect(formatManualCalendarDate('2026-02-30','en')).toBeNull();
     expect(formatManualCalendarDate('2026-13-05','en')).toBeNull();
   });

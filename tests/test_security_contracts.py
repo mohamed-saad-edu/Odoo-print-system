@@ -540,11 +540,19 @@ def test_tenant_selection_issues_customer_kind_session():
     assert "issueSessionPairInTransaction" in source
 
 
-def test_workspace_team_mutations_refused_and_platform_deletion_revokes_families():
+def test_workspace_owner_removal_is_inviter_scoped_and_deletion_revokes_families():
     ordinary = read("src/app/api/team/members/route.ts")
     assert 'PLATFORM_OWNER_REQUIRED' in ordinary
-    assert 'export async function PATCH(req: Request) { return denyMemberMutation(req); }' in ordinary
-    assert 'export async function DELETE(req: Request) { return denyMemberMutation(req); }' in ordinary
+    assert 'export async function PATCH(req: Request) { return denyRoleMutation(req); }' in ordinary
+    assert 'assertPlatformTeamOrigin(req)' in ordinary
+    assert 'claims.role !== "owner"' in ordinary
+    assert 'requireWorkspaceOwnerForInvites(tx, claims)' in ordinary
+    assert 'i.inviter_user_id=${claims.userId}' in ordinary
+    assert 'i.accepted_at IS NOT NULL' in ordinary
+    assert 'member.role === "owner"' in ordinary
+    assert 'eq(tenantUsers.tenantId, claims.tenantId)' in ordinary
+    assert 'revokeUserTenantRefreshFamiliesInTransaction' in ordinary
+    assert 'workspace_member_removed' in ordinary
     assert 'if (!claims?.userId)' in ordinary and 'status: 401' in ordinary
     platform = read("src/app/api/platform/tenants/[id]/members/route.ts")
     assert 'requirePlatformOwner' in platform

@@ -27,7 +27,7 @@ const fleet = { pageSize: 100, agentOffset: 0, agentHasMore: false, printerOffse
 const props = {
   initialAgents: [] as Agent[], initialPrinters: [] as Printer[], initialJobs: [], initialFleet: fleet,
   databaseError: null, canReadBillingUsage: false, diagnosticActorScope: "synthetic:owner",
-  canMutate: { printers: true, printersTest: false, agentsPair: true, agentsLifecycle: true, jobsCancel: true, jobsRetry: true },
+  canMutate: { printers: true, agentsPair: true, agentsLifecycle: true, jobsCancel: true, jobsRetry: true },
 };
 
 beforeEach(() => {

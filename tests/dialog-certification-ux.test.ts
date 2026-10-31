@@ -2,7 +2,6 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 const ui = readFileSync("src/components/ui.tsx", "utf8");
-const dashboard = readFileSync("src/app/dashboard/dashboard-client.tsx", "utf8");
 const certification = readFileSync("src/components/PrintCertificationWizard.tsx", "utf8");
 const uiButtons = ui.slice(ui.indexOf("const buttonVariants"), ui.indexOf("type ButtonProps"));
 
@@ -14,13 +13,6 @@ describe("dialog and printer certification UX contracts", () => {
     expect(ui).toContain("window.scrollTo(0, bodyLockScrollY)");
     expect(ui).toContain("if (openDialogCount === 0) lockBodyScroll()");
     expect(ui).toContain("if (openDialogCount === 0) unlockBodyScroll()");
-  });
-
-  it("opens printer certification in the same centered modal primitive as other inspectors", () => {
-    expect(dashboard).toContain("title={certifyPrinter ?");
-    expect(dashboard).toContain('description={t("printer.certifyDescription")}');
-    expect(dashboard).toContain("wide");
-    expect(dashboard).not.toContain("<Drawer\n        open={certifyPrinter");
   });
 
   it("uses theme-aware contrast colors for every solid button variant", () => {

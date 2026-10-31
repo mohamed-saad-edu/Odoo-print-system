@@ -37,7 +37,6 @@ import {
   Eye,
   Trash2,
   Cpu,
-  ShieldCheck,
   Clock,
   FileText,
   Inbox,
@@ -95,7 +94,6 @@ import { generateIdempotencyKey } from "../../lib/idempotency";
 import { shortId } from "../../lib/utils";
 import { useI18n } from "../../i18n/react";
 import { getPrinterLanguageBadges } from "../../lib/printer-capability";
-import PrintCertificationWizard from "../../components/PrintCertificationWizard";
 import JobTimeline from "../../components/JobTimeline";
 import { LocalizedGeometrySaveError, PrinterGeometryDetails, PrinterGeometryProfileEditor } from "../../components/PrinterGeometrySettings";
 import UpgradeLimitDialog, { type UpgradeLimitResource } from "../../components/UpgradeLimitDialog";
@@ -431,7 +429,7 @@ export default function DashboardClient({
   initialJobs: Job[];
   initialFleet: FleetMeta;
   databaseError: string | null;
-  canMutate: { printers: boolean; printersTest: boolean; agentsPair: boolean; agentsLifecycle: boolean; jobsCancel: boolean; jobsRetry: boolean };
+  canMutate: { printers: boolean; agentsPair: boolean; agentsLifecycle: boolean; jobsCancel: boolean; jobsRetry: boolean };
   canReadBillingUsage: boolean;
   diagnosticActorScope: string;
 }) {
@@ -491,7 +489,6 @@ export default function DashboardClient({
 
   const [agentName, setAgentName] = useState("");
   const [busy, setBusy] = useState(false);
-  const [certifyPrinter, setCertifyPrinter] = useState<Printer | null>(null);
   const [selectedPrinter, setSelectedPrinter] = useState<Printer | null>(null);
   const [message, setMessage] = useState<{ text: string; type: "ok" | "err" } | null>(null);
   const [activePairing, setActivePairing] = useState<{ id?: string; code: string; expiresAt: Date } | null>(null);
@@ -1246,7 +1243,6 @@ export default function DashboardClient({
     const retired = printer.lifecycle === "retired";
     return [
       { key: "details", label: t("printer.presentation.details"), icon: <Eye className="h-4 w-4" />, onSelect: () => setSelectedPrinter(printer) },
-      ...(canMutate.printersTest ? [{ key: "certify", label: t("cert.run"), icon: <ShieldCheck className="h-4 w-4" />, disabled: printer.sharedWithGateway === false, onSelect: () => setCertifyPrinter(printer) }] : []),
       {
         key: "copy",
         label: t("printer.copyPrinterId"),
@@ -2404,29 +2400,9 @@ export default function DashboardClient({
                 setPrinters((current) => current.map((printer) => printer.id === selectedPrinterView.id ? { ...printer, ...payload } : printer));
                 void refreshData();
               }} />}
-            {canMutate.printersTest && <Button variant="secondary" disabled={selectedPrinterView.sharedWithGateway === false} onClick={() => { setSelectedPrinter(null); setCertifyPrinter(selectedPrinterView); }} icon={<ShieldCheck className="h-4 w-4" />}>{t("printer.certify")}</Button>}
           </div>
         )}
       </Modal>
-
-      {/* ── Certify printer ───────────────────────────────────────── */}
-      <Modal
-        open={certifyPrinter !== null}
-        onClose={() => setCertifyPrinter(null)}
-        title={certifyPrinter ? `${t("printer.certify")} ${printerDisplayName(certifyPrinter, locale)}` : t("printer.certification")}
-        description={t("printer.certifyDescription")}
-        wide
-        footer={
-          <Button variant="secondary" onClick={() => setCertifyPrinter(null)}>
-            {t("common.close")}
-          </Button>
-        }
-      >
-        {certifyPrinter && (
-          <PrintCertificationWizard printerId={certifyPrinter.id} />
-        )}
-      </Modal>
-
 
       {/* ── Reprint confirmation ──────────────────────────────────── */}
       <Modal

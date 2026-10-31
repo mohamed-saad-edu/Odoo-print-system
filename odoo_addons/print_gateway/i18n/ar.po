@@ -4213,6 +4213,12 @@ msgstr "التقرير المطلوب غير متاح."
 #. module: print_gateway
 #. odoo-python
 #: code:addons/print_gateway/models/binding.py:0
+msgid "Invalid report identity."
+msgstr "معرّف التقرير غير صالح."
+
+#. module: print_gateway
+#. odoo-python
+#: code:addons/print_gateway/models/binding.py:0
 msgid "The selected Gateway Runtime Agent is not assigned to the current Odoo Branch."
 msgstr "Agent الـ Gateway المحدَّد غير مُعيَّن لفرع Odoo الحالي."
 

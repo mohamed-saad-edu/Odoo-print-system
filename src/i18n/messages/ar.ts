@@ -506,6 +506,7 @@ export const ar: Catalog = {
   "team.inviteSending": "جارٍ الإرسال…",
   "team.removeTitle": "إزالة هذا العضو؟",
   "team.removeBody": "سيفقد الوصول إلى مساحة العمل فورًا.",
+  "team.memberRemoveFailed": "تعذرت إزالة العضو. حدّث الصفحة وحاول مرة أخرى.",
   "team.removeConfirm": "إزالة العضو",
   "team.transferTitle": "نقل الملكية",
   "team.transferBody": "سيصبح العضو المحدد المالك الجديد لمساحة العمل.",
