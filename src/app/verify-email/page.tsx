@@ -39,6 +39,10 @@ type OutcomeState = { kind: "code"; code?: string };
 
 function VerifyEmailContent() {
   const params = useSearchParams();
+  return <VerificationDetails key={params.toString()} params={params} />;
+}
+
+function VerificationDetails({ params }: { params: ReturnType<typeof useSearchParams> }) {
   const token = params.get("token");
   const initialEmail = params.get("email") ?? "";
   const planId = params.get("plan") ?? "";

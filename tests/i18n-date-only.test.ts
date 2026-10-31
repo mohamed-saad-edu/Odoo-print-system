@@ -1,7 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { formatDate, formatDateTime, formatRelativeTime } from "../src/i18n/format";
+import { formatManualCalendarDate } from "../src/lib/manual-calendar-date";
 
 describe("locale date input normalization", () => {
+  it("keeps Arabic Latin-digit dates in day/month/year order inside LTR fields", () => {
+    const value = "2026-11-30T12:34:00Z";
+    expect(formatDate(value, "ar")).toBe("30/11/2026");
+    expect(formatDateTime(value, "ar")).toContain("30/11/2026");
+    expect(formatManualCalendarDate(value, "ar")).toBe("30/11/2026");
+  });
   it.each(["en", "ar"] as const)("preserves ISO date-only forms in %s", (locale) => {
     for (const [input, instant] of [
       ["2026", "2026-01-01T00:00:00Z"],

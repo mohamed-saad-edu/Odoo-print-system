@@ -68,7 +68,8 @@ function component(file, fetch, session = async () => ({ authenticated: true }),
   const harness = { states, effects, callbacks, refs, timers, redirects, tree: null, render() {
     stateCursor = 0; refCursor = 0;
     this.tree = entry.exports[options.exportName ?? "default"](options.props ?? { children: null });
-    if (typeof this.tree?.props?.children?.type === "function") this.tree = this.tree.props.children.type();
+    if (typeof this.tree?.props?.children?.type === "function") this.tree = this.tree.props.children;
+    while (typeof this.tree?.type === "function") this.tree = this.tree.type(this.tree.props);
     return this.tree;
   } };
   harness.render();

@@ -9,7 +9,7 @@ import { fetchWithTimeout } from "../../lib/fetch-timeout";
 import { codeMessageKey } from "../../lib/api-error-keys";
 import { Avatar, Button, Card, CardHeader, Input, PageContainer, PageHeader, StatusBadge } from "../../components/ui";
 
-type Member = { userId: string; email: string; role: string; platformOwner: boolean };
+type Member = { userId: string; email: string; role: string; platformOwner: boolean; removableByCurrentOwner: boolean };
 type Invitation = { id: string; email: string; expiresAt: string };
 type Profile = { userId: string; email: string; role: string; platformOwner: boolean; tenant: { id: string } };
 type Notice = { kind: "ok" | "err" | "warn"; message: string };
@@ -171,6 +171,28 @@ export default function TeamPage() {
     }
   }
 
+  async function removeMember(member: Member) {
+    if (profile?.role !== "owner" || !member.removableByCurrentOwner || busy ||
+        !window.confirm(`${t("team.removeTitle")}\n\n${t("team.removeBodyHistory")}`)) return;
+    setBusy(true);
+    setNotice(null);
+    try {
+      const response = await fetchWithTimeout(`/api/team/members?userId=${encodeURIComponent(member.userId)}`, {
+        method: "DELETE", credentials: "include", cache: "no-store",
+      });
+      if (!response.ok) throw new Error("MEMBER_REMOVE_FAILED");
+      setNotice({ kind: "ok", message: t("success.memberRemoved") });
+      if (members.length === 1 && memberOffset > 0) {
+        setLoading(true);
+        setMemberOffset(Math.max(0, memberOffset - PAGE_SIZE));
+      } else refresh();
+    } catch {
+      setNotice({ kind: "err", message: t("team.memberRemoveFailed") });
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <>
       <PageHeader width="wide" 
@@ -221,6 +243,8 @@ export default function TeamPage() {
                     <StatusBadge tone={member.role === "owner" ? "brand" : "info"}
                       icon={member.role === "owner" ? <Crown className="h-3.5 w-3.5 text-warn" aria-hidden /> : undefined}
                       label={member.role === "owner" ? t("team.role.owner") : t("v4.team.fullAccess")} />
+                    {member.removableByCurrentOwner && <Button variant="danger" size="sm" disabled={busy}
+                      onClick={() => void removeMember(member)}>{t("team.removeFromWorkspace")}</Button>}
                   </li>
                 ))}
               </ul>

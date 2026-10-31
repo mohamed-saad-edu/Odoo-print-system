@@ -22,6 +22,23 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("email verification network feedback", () => {
+  it("updates the resend recipient when navigating to a different email confirmation link", async () => {
+    fixture.search = "email=first%40example.invalid";
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    const content = () => h(I18nProvider, { initialLocale: "en", children: h(VerifyEmailPage) });
+    try {
+      await act(async () => root.render(content()));
+      expect(host.querySelector<HTMLInputElement>('input[type="email"]')?.value).toBe("first@example.invalid");
+      fixture.search = "email=second%40example.invalid";
+      await act(async () => root.render(content()));
+      expect(host.querySelector<HTMLInputElement>('input[type="email"]')?.value).toBe("second@example.invalid");
+    } finally {
+      await act(async () => root.unmount());
+      host.remove();
+    }
+  });
   it.each(["en", "ar"] as const)("keeps verification and resend failures localized and permits resend recovery (%s)", async locale => {
     document.cookie = `yaseir_locale=${locale}; path=/`;
     localStorage.setItem("yaseir:locale", locale);

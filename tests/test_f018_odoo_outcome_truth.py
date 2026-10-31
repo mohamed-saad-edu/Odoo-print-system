@@ -76,7 +76,8 @@ def test_actual_test_page_button_never_fabricates_success(status, type_expected)
     ('printing', True), ('success', True), ('failed', False),
     ('unknown', False), ('partial', False), (None, False),
 ])
-def test_actual_rpc_report_dispatch_preserves_binding_and_status(status, expected_success):
+@pytest.mark.parametrize('report_id', [207, '207'])
+def test_actual_rpc_report_dispatch_preserves_binding_and_status(status, expected_success, report_id):
     production = production_methods('binding.py', ['dispatch_report_action'])
     record = ref('account.move', 38)
     class Records(list):
@@ -108,7 +109,7 @@ def test_actual_rpc_report_dispatch_preserves_binding_and_status(status, expecte
         with_context=lambda **_context: binding_model,
         find_for=lambda *_args, **_kw: target,
     )
-    got = production.dispatch_report_action(binding_model, report_id=207, res_ids=[38])
+    got = production.dispatch_report_action(binding_model, report_id=report_id, res_ids=[38])
     assert got['has_binding'] is True
     assert got['dispatched'] is True, 'Durable outbox exists even when Gateway result is uncertain'
     assert got['status'] == (status or 'unknown')

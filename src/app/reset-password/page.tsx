@@ -12,6 +12,10 @@ import { fetchWithTimeout } from "../../lib/fetch-timeout";
 
 function ResetPasswordContent() {
   const params = useSearchParams();
+  return <ResetPasswordForm key={params.toString()} params={params} />;
+}
+
+function ResetPasswordForm({ params }: { params: ReturnType<typeof useSearchParams> }) {
   const token = params.get("token") ?? "";
   const setup = params.get("setup") === "1";
   const invite = params.get("invite") ?? "";
