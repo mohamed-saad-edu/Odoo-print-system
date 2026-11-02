@@ -73,6 +73,7 @@ const dep={
  // The discovery details handler logs unexpected read failures. Keep the
  // production handler real and stub only this external logger dependency.
  '/lib/log':mk({logError:()=>{}}),
+ '/lib/audit':mk({writeAuditEvent:async()=>{}}),
 };
 async function load(filename){const mod=new vm.SourceTextModule(transpile(filename),{context:ctx});await mod.link((n)=>{if(n.endsWith('/lib/authorization'))return auth;if(n.endsWith('/lib/manager-mutation-authorization'))return guard;for(const [k,value] of Object.entries(dep))if(n===k||n.endsWith(k))return value;throw Error('Unexpected import '+n+' in '+filename)});await mod.evaluate();return mod.namespace;}
 let observation;
