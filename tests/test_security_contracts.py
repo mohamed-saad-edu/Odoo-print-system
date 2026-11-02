@@ -70,7 +70,7 @@ def test_windows_system_utilities_are_not_path_resolved():
 def test_password_reset_flow_does_not_clear_auth_rate_limit():
     source = read("src/app/api/auth/forgot-password/route.ts")
     assert "recordAuthSuccess" not in source
-    assert "reserveAuthAttempt" in source
+    assert "reserveScopedAuthAttempt" in source
 
 
 def test_registration_flow_does_not_clear_auth_rate_limit():
