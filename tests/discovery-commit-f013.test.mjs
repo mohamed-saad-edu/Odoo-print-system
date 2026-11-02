@@ -63,7 +63,8 @@ const supports={
  '/lib/manager-auth':mk({validateWorkspaceManager:async()=>claims()}),
  '/lib/nanoid':mk({nanoid:()=> 'random'}),
  '/lib/discovery':mk({validateDiscoveryRequest:(payload)=>payload?.cidr?{ok:true,data:payload}:{ok:false,error:'invalid request'}}),
- '/lib/log':mk({logError:()=>{}}),
+ '/lib/log':mk({logError:()=>{},requestIdFrom:()=> 'request'}),
+ '/lib/audit':mk({writeAuditEvent:async()=>{}}),
  '/lib/request-limits':mk({hasBodyOverLimit:()=>false}),
  '/lib/tenant-guard':tenant,
 };
