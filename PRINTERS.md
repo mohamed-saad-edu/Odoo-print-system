@@ -189,6 +189,21 @@ Stable ids are derived deterministically (`stable_id.go`), preferring identity t
 * direct USB: serial scoped to VID/PID when available; VID/PID/location and legacy fallbacks preserve compatibility where stronger identity is absent
 * network/IPP fallbacks: normalized host/port or endpoint; IPP uses its resource path so a host address change does not collapse separate queues
 
+Identity-key precedence, strongest first (WP3, STATIC REVIEW ONLY — dedup must never merge distinct devices):
+
+1. Verified Windows queue GUID, then spooler queue + server + scope (`windows-queue:…|server:…|scope:…`).
+2. Independently proven IPP UUID (+ queue resource path suffix for IPP).
+3. Serial + manufacturer/model; MAC.
+4. USB serial scoped to VID/PID (`usb-serial:vid:pid:serial`). An unscoped serial is used only for legacy/manual records that carry no other evidence; when an instance ID, location, interface path, or USB endpoint path exists, that device-specific evidence wins and the serial alone never merges two units.
+5. USB instance ID, then location, then native interface path (`usb-interface:…`).
+6. IPP URI identity (scheme + host + effective port + resource path + query) for IPP records; network host + port for non-IPP transports (the socket is the execution identity there).
+7. Spooler queue name + server + scope (scan-local dedup key only, never a persisted ID on its own).
+8. Nothing: a display name, model, or hostname alone is never an identity. Serial-less USB devices without instance/location/interface evidence, and name-only records, are left unregistered rather than merged (`StableIDForDevice` returns `""`; the registry refuses them) until an operator chooses an interface.
+
+Same-ID collisions at registry merge time are quarantined, never silently merged (`withRegistryIdentityCollision`: same-ID different network binding, USB interface, IPP queue, or native queue). The legacy space-folded spooler hash (`StableIDFromSpooler` lowercases and folds spaces to underscores) can still collide for old rows, but the registry's same-queue check deliberately does not fold spaces, so a folded collision is quarantined for operator reconciliation instead of rebinding a queue.
+
+Gateway↔agent alias trade-off (F3, documented, denial-only): Gateway `aliasPrinterIdForAgent` (`src/lib/printer-identity.ts`) and agent `gatewayAliasPrinterID` (`agent.go`) both hash `printer-alias:agent:local` with SHA-256 truncated to 4 bytes (8 hex). A 32-bit truncation can collide at fleet scale, but both sides fail closed on ambiguity (agent `resolvePrinterAlias` returns `""`; Gateway `matchingPhysicalPrinter` returns null on duplicate matches), so the impact is denial of that alias, never dispatch to the wrong printer. Widening the alias needs a coordinated Gateway + agent change plus migration of already-issued aliases and is not done here.
+
 Registry reconciliation preserves an already persisted printer ID when the stronger physical identity proves that a renamed/re-addressed observation is the same device/queue.
 
 Repeated discovery updates the existing record (`registry.go: UpsertRegistry`, `seen` map in

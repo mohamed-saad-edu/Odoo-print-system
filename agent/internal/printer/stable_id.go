@@ -193,6 +193,24 @@ func physicalIdentityKey(d DeviceInfo) (string, bool) {
 		if usableIdentityValue(vid) && usableIdentityValue(pid) {
 			return fmt.Sprintf("usb-serial:%s:%s:%s", vid, pid, serial), true
 		}
+		// WP3 (STATIC REVIEW ONLY, B3-05): a serial on its own is NOT a
+		// device identity when device-specific evidence exists. Two
+		// distinct units can report the same short serial (or the same
+		// vendor placeholder that usableIdentityValue does not know), so
+		// returning a serial-only key here would merge them before the
+		// instance/location/interface evidence below is ever consulted.
+		// Only legacy/manual records with no other evidence keep the
+		// serial-only fallback; anything with an instance ID, location,
+		// interface path or USB endpoint path falls through so
+		// StableIDForDevice can use that device-specific evidence (or
+		// refuse to register, rather than merge).
+		if capabilityIdentityValue(d, "device_instance_id", "location", "device_path") != "" {
+			return "", false
+		}
+		if endpoint := normalizeIdentityValue(d.Endpoint); usableIdentityValue(endpoint) &&
+			(strings.HasPrefix(endpoint, `\\?\usb`) || strings.HasPrefix(endpoint, `\\.\usb`)) {
+			return "", false
+		}
 		// Some legacy/manual discovery records expose only the serial.
 		// Keep the serial-only fallback for compatibility with those records.
 		return "usb-serial:" + serial, true
@@ -421,8 +439,13 @@ func StableIDForDevice(d DeviceInfo) string {
 		// shared identity for two serial-less printers of the same model.
 		// Windows instance and location are device-specific evidence; the
 		// native interface path is an exact execution endpoint fallback.
+		// WP3 (B3-05): a serial is likewise only an identity when scoped
+		// to a usable VID/PID; an unscoped serial must not collapse two
+		// units that differ in instance/location/interface evidence.
 		serial := strings.TrimSpace(d.USBSerial)
-		if usableIdentityValue(serial) {
+		if usableIdentityValue(serial) &&
+			usableIdentityValue(normalizeIdentityValue(d.USBVID)) &&
+			usableIdentityValue(normalizeIdentityValue(d.USBPID)) {
 			return StableIDFromUSBFull(d.USBVID, d.USBPID, serial, "", "")
 		}
 		instance := capabilityIdentityValue(d, "device_instance_id")

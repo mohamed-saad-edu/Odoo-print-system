@@ -63,12 +63,13 @@ const supports={
  '/lib/manager-auth':mk({validateWorkspaceManager:async()=>claims()}),
  '/lib/nanoid':mk({nanoid:()=> 'random'}),
  '/lib/discovery':mk({validateDiscoveryRequest:(payload)=>payload?.cidr?{ok:true,data:payload}:{ok:false,error:'invalid request'}}),
- '/lib/log':mk({logError:()=>{}}),
+ '/lib/log':mk({logError:()=>{},requestIdFrom:()=> 'request'}),
+ '/lib/audit':mk({writeAuditEvent:async()=>{}}),
  '/lib/request-limits':mk({hasBodyOverLimit:()=>false}),
  '/lib/tenant-guard':tenant,
 };
 const route=new vm.SourceTextModule(js(R+'app/api/agents/[id]/discovery/route.ts'),{context:ctx});
-await route.link((name)=>name.endsWith('/lib/authorization')?auth:name.endsWith('/lib/manager-mutation-authorization')?guard:name.endsWith('/db/schema')?schema:name.endsWith('/db')?supports['/db']:name.endsWith('/lib/manager-auth')?supports['/lib/manager-auth']:name.endsWith('/lib/nanoid')?supports['/lib/nanoid']:name.endsWith('/lib/discovery')?supports['/lib/discovery']:name.endsWith('/lib/log')?supports['/lib/log']:name.endsWith('/lib/tenant-guard')?tenant:name.endsWith('/lib/discovery-session-expiry')?expiry:name.endsWith('/lib/request-limits')?supports['/lib/request-limits']:supports[name]);
+await route.link((name)=>name.endsWith('/lib/authorization')?auth:name.endsWith('/lib/manager-mutation-authorization')?guard:name.endsWith('/db/schema')?schema:name.endsWith('/db')?supports['/db']:name.endsWith('/lib/manager-auth')?supports['/lib/manager-auth']:name.endsWith('/lib/nanoid')?supports['/lib/nanoid']:name.endsWith('/lib/discovery')?supports['/lib/discovery']:name.endsWith('/lib/log')?supports['/lib/log']:name.endsWith('/lib/tenant-guard')?tenant:name.endsWith('/lib/discovery-session-expiry')?expiry:name.endsWith('/lib/request-limits')?supports['/lib/request-limits']:name.endsWith('/lib/audit')?supports['/lib/audit']:supports[name]);
 await route.evaluate();
 function reset(patch={}) {state={events:[],inserted:[],notifies:0,expiries:0,role:'admin',memberRole:'admin',familyActive:true,legacySessionActive:true,activeTenant:true,userless:false,legacy:false,customer:false,...patch};}
 const call=(body)=>route.namespace.POST(new Request('http://localhost/api/agents/agent/discovery',{method:'POST',body:JSON.stringify(body)}),{params:Promise.resolve({id:'agent'})});
@@ -94,10 +95,10 @@ test('legacy operator has unified Full Access and may discover after live author
 test('malformed request does not insert even for admin',async()=>{reset();const r=await call({bad:true});assert.equal(r.status,400);assert.equal(state.inserted.length,0);});
 test('configured userless environment owner with bound fresh v2 proof is admitted for pairing',async()=>{reset({userless:true,role:'owner',memberRole:'owner'});const r=await call({cidr:'192.168.10.0/24'});assert.equal(r.status,201);assert.equal(state.inserted.length,1);assert.equal(state.notifies,1);});
 test('legacy session revocation rejects when token lacks family',async()=>{reset({legacy:true,legacySessionActive:false});const r=await call({cidr:'192.168.10.0/24'});assert.equal(r.status,401);assert.equal((await r.json()).code,'SESSION_EXPIRED');assert.equal(state.inserted.length,0);assert.equal(state.notifies,0);});
-test('stale password proof requires confirmation before insertion or NOTIFY',async()=>{
+test('stale login timestamp is admitted for insertion and NOTIFY',async()=>{
  reset({staleProof:true});const r=await call({cidr:'192.168.10.0/24'});
- assert.equal(r.status,403);assert.equal((await r.json()).code,'WORKSPACE_REAUTHENTICATION_REQUIRED');assert.equal(r.headers.get('X-Yaseir-Reauthentication'),'required');
- assert.equal(state.inserted.length,0);assert.equal(state.notifies,0);assert.equal(state.expiries,0);
+ assert.equal(r.status,201);assert.equal(r.headers.get('X-Yaseir-Reauthentication'),null);
+ assert.equal(state.inserted.length,1);assert.equal(state.notifies,1);assert.equal(state.expiries,1);
 });
 test('missing or changed credential proof refuses discovery without writes',async()=>{
  for(const changes of [{missingProof:true},{changedCredential:true}]){reset(changes);const r=await call({cidr:'192.168.10.0/24'});

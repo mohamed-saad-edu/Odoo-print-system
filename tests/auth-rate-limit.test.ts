@@ -84,11 +84,14 @@ describe("atomic rate-limit reservation contract", () => {
     const { readFile } = await import("node:fs/promises");
     const authContracts = [
       ["src/app/api/auth/login/route.ts", "const ip = clientIpFrom(req);", "reserveAuthAttempt(ip, email)"],
-      ["src/app/api/auth/manager/login/route.ts", "const ip = clientIpFrom(req);", "reserveAuthAttempt(ip, username)"],
+      // v3 B2: manager login rates-limits on the full presented username (rawUsername); truncating to 128 chars
+      // before reserveAuthAttempt let distinct long usernames share one account bucket.
+      ["src/app/api/auth/manager/login/route.ts", "const ip = clientIpFrom(req);", "reserveAuthAttempt(ip, rawUsername)"],
       ["src/app/api/platform/auth/login/route.ts", "const clientIp = clientIpFrom(req);", "reserveAuthAttempt(clientIp, email)"],
-      ["src/app/api/auth/register/route.ts", "const ip = clientIpFrom(req);", "reserveAuthAttempt(ip, email)"],
-      ["src/app/api/auth/forgot-password/route.ts", "const ip = clientIpFrom(req);", "reserveAuthAttempt(ip, email)"],
-      ["src/app/api/auth/resend-verification/route.ts", "const ip = clientIpFrom(req);", "reserveAuthAttempt(ip, email)"],
+      // v1/v3: these three endpoints reserve scoped buckets, not the shared login bucket.
+      ["src/app/api/auth/register/route.ts", "const ip = clientIpFrom(req);", "reserveScopedAuthAttempt(ip, \"register\", email)"],
+      ["src/app/api/auth/forgot-password/route.ts", "const ip = clientIpFrom(req);", "reserveScopedAuthAttempt(ip, \"forgot-password\", email)"],
+      ["src/app/api/auth/resend-verification/route.ts", "const ip = clientIpFrom(req);", "reserveScopedAuthAttempt(ip, \"resend-verification\", email)"],
     ] as const;
     for (const [file, ipExpression, reservationExpression] of authContracts) {
       const source = await readFile(file, "utf8");

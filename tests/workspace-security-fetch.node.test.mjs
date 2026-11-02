@@ -1,4 +1,5 @@
-/** Header notification must not alter the existing streaming fetch contract. */
+/** No step-up: fetchWithTimeout never emits a reauthentication event and
+ * never alters the existing streaming fetch contract. */
 import assert from "node:assert/strict";
 import test from "node:test";
 import { readFileSync } from "node:fs";
@@ -15,21 +16,31 @@ async function helper(fetch, extra = {}) {
     ...extra,
   });
   const entry = new vm.SourceTextModule(stripTypeScriptTypes(source, { mode: "transform" }), { context });
-  await entry.link(() => { throw new Error("fetch-timeout must remain dependency-free"); });
+  // fetch-timeout's ONLY import is session-config's ensureCustomerSession,
+  // used solely by fetchWithSessionRetry (never by fetchWithTimeout under
+  // test here). Link it to a throwing stand-in so any accidental refresh
+  // fails the test instead of silently passing.
+  await entry.link(specifier => {
+    if (specifier !== "./session-config") throw new Error("unexpected fetch-timeout dependency " + specifier);
+    return new vm.SourceTextModule(
+      "export function ensureCustomerSession() { throw new Error(\"fetchWithTimeout must not refresh\"); }",
+      { context },
+    );
+  });
   await entry.evaluate();
   return { request: entry.namespace.fetchWithTimeout, events };
 }
 
 function response(url = origin + "/api/agents", status = 403, header = "required") {
-  const result = new Response('{"code":"WORKSPACE_REAUTHENTICATION_REQUIRED"}', {
+  const result = new Response('{"code":"FORBIDDEN"}', {
     status, headers: { "X-Yaseir-Reauthentication": header, "content-type": "application/json" },
   });
   Object.defineProperty(result, "url", { value: url });
-  result.clone = () => assert.fail("notification must not clone the body");
+  result.clone = () => assert.fail("fetch must not clone the body");
   return result;
 }
 
-test("same-origin step-up response emits one body-free event and preserves the actual response", async () => {
+test("same-origin 403 response emits no event and preserves the actual response", async () => {
   const expected = response();
   let calls = 0;
   const h = await helper(async () => { calls++; return expected; });
@@ -37,10 +48,8 @@ test("same-origin step-up response emits one body-free event and preserves the a
   assert.equal(actual, expected);
   assert.equal(calls, 1, "never replay a mutation");
   assert.equal(actual.bodyUsed, false);
-  assert.equal(h.events.length, 1);
-  assert.equal(h.events[0].type, "yaseir:workspace-reauthentication-required");
-  assert.equal(h.events[0].detail, undefined, "the event carries no request or response data");
-  assert.deepEqual(await actual.json(), { code: "WORKSPACE_REAUTHENTICATION_REQUIRED" });
+  assert.equal(h.events.length, 0, "no step-up notification exists anymore");
+  assert.deepEqual(await actual.json(), { code: "FORBIDDEN" });
 });
 
 test("cross-origin input/redirects, missing response origin and unrelated failures never notify", async () => {
@@ -59,7 +68,7 @@ test("cross-origin input/redirects, missing response origin and unrelated failur
   }
 });
 
-test("same-origin URL and Request inputs notify without losing a Request-owned abort signal", async () => {
+test("same-origin URL and Request inputs preserve a Request-owned abort signal without notifying", async () => {
   for (const inputKind of ["url", "request"]) {
     const caller = new AbortController();
     let observed;
@@ -67,13 +76,13 @@ test("same-origin URL and Request inputs notify without losing a Request-owned a
     const url = origin + "/api/agents";
     const input = inputKind === "url" ? new URL(url) : new Request(url, { signal: caller.signal });
     await h.request(input, inputKind === "url" ? { signal: caller.signal } : {});
-    assert.equal(h.events.length, 1);
+    assert.equal(h.events.length, 0);
     caller.abort();
     assert.equal(observed.aborted, true);
   }
 });
 
-test("notification does not cancel the deadline after headers or replace streaming reads", async () => {
+test("fetch does not cancel the deadline after headers or replace streaming reads", async () => {
   let signal;
   const native = response();
   const h = await helper(async (_input, init) => { signal = init.signal; return native; });

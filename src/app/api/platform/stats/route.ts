@@ -247,8 +247,10 @@ export async function GET(req: Request) {
     { total: 0, success: 0, failed: 0, queued: 0, inFlight: 0, expired: 0 },
   );
 
-  const logicalUsage = await logicalUsageReport(null, tx);
-  const business = await tx.execute(sql`WITH states AS (
+  // v3: only the aggregate block above had an 8s timeout; these queries ran
+  // inside the same held platform read-authority transaction with no bound.
+  const logicalUsage = await queryWithTimeout(() => logicalUsageReport(null, tx), 8_000, "platformStatsUsage");
+  const business = await queryWithTimeout(() => tx.execute(sql`WITH states AS (
     SELECT s.subscription_type,s.current_period_end,
     ${effectiveSubscriptionStatusSql({tenantId:sql`t.id`,tenantLifecycle:sql`t.lifecycle`,subscriptionStatus:sql`s.status`,entitlementBlocked:sql`s.entitlement_blocked`,currentPeriodStart:sql`s.current_period_start`})} AS effective_status
     FROM tenant_subscriptions s JOIN tenants t ON t.id=s.tenant_id
@@ -258,11 +260,11 @@ export async function GET(req: Request) {
     count(*) FILTER(WHERE effective_status='active' AND subscription_type='paid')::int AS paid,
     count(*) FILTER(WHERE effective_status='active' AND current_period_end<=clock_timestamp()+interval '30 days')::int AS "expiringSoon",
     count(*) FILTER(WHERE effective_status='suspended')::int AS suspended,
-    count(*) FILTER(WHERE effective_status='active')::int AS active FROM states`);
-  const verified = await tx.execute(sql`SELECT count(*) FILTER(WHERE ${printers.sharedWithGateway} = true
+    count(*) FILTER(WHERE effective_status='active')::int AS active FROM states`), 8_000, "platformStatsBusiness");
+  const verified = await queryWithTimeout(() => tx.execute(sql`SELECT count(*) FILTER(WHERE ${printers.sharedWithGateway} = true
     AND ${printers.inventoryPresent} = true AND ${printers.lifecycle} = 'active'
     AND ${nonVirtualPrinterPredicate()} AND ${printerOperationalVerificationPredicate(sql`printers`)})::int AS verified
-    FROM printers`);
+    FROM printers`), 8_000, "platformStatsVerified");
   const responseBody = {
     business:business.rows[0], logicalUsage, verifiedPrinters:verified.rows[0]?.verified??0,
     tenants: tenantStats[0] ?? { total: 0, active: 0, suspended: 0, deleted: 0 },

@@ -95,7 +95,7 @@ async function historicalById(tx: Pick<DbTx,"execute">, tenantId: string, id: st
     fingerprint: digest({ printerId: row.printer_id, destination: row.destination, documentType: row.document_type, payload: row.payload }) };
 }
 
-export type S06Reuse = {
+type S06Reuse = {
   jobId: string;
   printerId: string;
   agentId: string;

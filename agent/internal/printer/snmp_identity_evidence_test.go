@@ -35,18 +35,48 @@ func TestSNMPProbeRequiresSuccessfulExactTypedIdentity(t *testing.T) {
 			}
 			defer tcp.Close()
 			done := make(chan struct{})
+			// The rebound connected socket, handed to the test's cleanup
+			// so the server goroutine can be stopped after the probe.
+			reboundCh := make(chan *net.UDPConn, 1)
 			go func() {
 				defer close(done)
 				buffer := make([]byte, 4096)
 				codec := &gosnmp.GoSNMP{Version: gosnmp.Version2c, Community: "public"}
+				// See TestSNMPParserAndProbe: replies must originate from
+				// the port the client dialed, over a connected socket.
+				// The first request triggers a rebind to a connected
+				// socket on the same local port; its response is
+				// sacrificed and the client's retry is answered.
+				conn := udp
+				rebound := false
 				for {
-					n, peer, err := udp.ReadFrom(buffer)
+					n, peer, err := conn.ReadFrom(buffer)
 					if err != nil {
 						return
 					}
 					req, err := codec.SnmpDecodePacket(buffer[:n])
 					if err != nil {
 						return
+					}
+					if !rebound {
+						peerAddr, ok := peer.(*net.UDPAddr)
+						if !ok {
+							return
+						}
+						// Close first: the rebound socket must bind the
+						// same local port, which is still occupied until
+						// now. The client's retry arrives ~600ms later,
+						// long after the microsecond rebind window.
+						localPort := udp.LocalAddr().(*net.UDPAddr).Port
+						_ = udp.Close()
+						dialConn, derr := net.DialUDP("udp", &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: localPort}, peerAddr)
+						if derr != nil {
+							return
+						}
+						conn = dialConn
+						rebound = true
+						reboundCh <- dialConn
+						continue
 					}
 					vars := make([]gosnmp.SnmpPDU, len(req.Variables))
 					for i, requested := range req.Variables {
@@ -62,10 +92,22 @@ func TestSNMPProbeRequiresSuccessfulExactTypedIdentity(t *testing.T) {
 					if err != nil {
 						return
 					}
-					_, _ = udp.WriteTo(response, peer)
+					// Replies go out on the rebound connected socket, so
+					// they originate from the port the client dialed.
+					if c, ok := conn.(*net.UDPConn); ok {
+						_, _ = c.Write(response)
+					}
 				}
 			}()
-			defer func() { _ = udp.Close(); <-done }()
+			defer func() {
+				_ = udp.Close()
+				select {
+				case c := <-reboundCh:
+					_ = c.Close()
+				default:
+				}
+				<-done
+			}()
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 			defer cancel()
 			_, got := probeSNMPPrinterWithPort(ctx, "127.0.0.1", udp.LocalAddr().(*net.UDPAddr).Port, tcp.Addr().(*net.TCPAddr).Port)

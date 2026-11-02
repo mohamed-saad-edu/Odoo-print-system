@@ -15,6 +15,37 @@ from ..printer_verification import is_verified_runtime_printer
 _logger = logging.getLogger(__name__)
 
 
+def _sanitize_dispatch_context(context):
+    """Keep only the dispatch RPC context keys WP3 allowlists (STATIC REVIEW ONLY).
+
+    Dropped silently (never honoured, never an error, so old callers keep
+    working): every company-steering key, skip_enabled_sync,
+    allow_lease_recovery, diagnostic keys (print_gateway_diagnostic_*,
+    discard_logo_check) and any non-string or overlong value.
+    """
+    if not isinstance(context, dict):
+        return {}
+    allowed = {
+        "print_gateway_document_type": 128,
+        "lang": 32,
+        "tz": 64,
+    }
+    sanitized = {}
+    for key, value in context.items():
+        limit = allowed.get(key)
+        if limit is None or not isinstance(value, str):
+            continue
+        value = value.strip()
+        if not value or len(value) > limit:
+            continue
+        if key == "lang" and not all(ch.isalnum() or ch in "_-@" for ch in value):
+            continue
+        if key == "tz" and not all(ch.isalnum() or ch in "_/+-" for ch in value):
+            continue
+        sanitized[key] = value
+    return sanitized
+
+
 def _assert_report_usage_access(env, report):
     """Apply Odoo report-use restrictions before Gateway physical dispatch.
 
@@ -532,7 +563,7 @@ class PrintGatewayBinding(models.Model):
         if agent.get("id") != self.runtime_agent_id:
             raise ValidationError(_("Gateway Runtime Printer does not belong to the selected Runtime Agent."))
         if not is_verified_runtime_printer(selected_printer):
-            raise ValidationError(_("The selected destination has no current operational verification. Refresh the Agent connection and verify the printer or approved PDF output before creating a new job."))
+            raise ValidationError(_("Verify this printer first, then try again."))
         if enforce_destination_compatibility:
             if self.destination_type in ("pos", "pos_printer") and not self._runtime_printer_accepts_image(selected_printer):
                 raise ValidationError(_(
@@ -835,7 +866,18 @@ class PrintGatewayBinding(models.Model):
 
     @api.model
     def dispatch_report_action(self, report_name=None, report_id=None, res_ids=None, context=None, data=None, operation_id=None):
-        context = dict(context or self.env.context)
+        # WP3 (STATIC REVIEW ONLY): server-side allowlist for caller-supplied
+        # RPC context. The web client passes action.context through here
+        # (report_interceptor.js), so a wholesale merge would let an RPC
+        # caller steer company scope (allowed_company_ids), smuggle the
+        # gateway_config skip key (skip_enabled_sync) or the intent
+        # lease-recovery key (allow_lease_recovery) into this environment.
+        # Both skip/lease escapes stay superuser-gated at their own write()
+        # sites (gateway_config.py, print_intent.py) and are never honoured
+        # from dispatch context. Only rendering-locale keys (lang, tz) and
+        # the document-type override survive; company scope always comes
+        # from the ambient session company via _binding_scope().
+        context = _sanitize_dispatch_context(context)
         binding_model = self.with_context(**context)
         report = False
         if report_id is not None and report_id is not False:

@@ -9,6 +9,7 @@ import { requireConsoleReadAuthorityInTransaction, ConsoleAgentAuthorityRevokedE
 import { ManagerMutationAuthorityChangedError } from "../../../../../lib/manager-mutation-authorization";
 import { requireManagerPermission } from "../../../../../lib/authorization";
 import { requestIdFrom } from "../../../../../lib/log";
+import { writeAuditEvent } from "../../../../../lib/audit";
 import { and, eq } from "drizzle-orm";
 import { createPrintJobForPrinter, AgentQueueFullError, AgentQueuedJobsFullError, PrintJobCapabilityError, PrintJobInputError } from "../../../../../lib/print-job-service";
 import { TenantEntitlementError, TenantPrintQuotaExceededError, TenantSubscriptionRequiredError, TenantEntitlementConfigError } from "../../../../../lib/entitlements";
@@ -143,6 +144,17 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         // must not initiate another physical intent. The client treats an
         // absent physical outcome as UNKNOWN.
       }
+    }
+    // WP-A (S3): audit the test-print submission once — a job actually
+    // queued (never an idempotent replay). The actor is the manager, or
+    // the paired agent for an agent diagnostic. An audit failure must
+    // never fail the test print itself.
+    if (!result.isReused) {
+      await writeAuditEvent({ tenantId, actorType: claims ? "user" : "agent",
+        actorId: claims?.userId ?? pairedAgent!.id,
+        action: "printer.test_print.requested", resourceType: "printer", resourceId: printer.id,
+        requestId: requestIdFrom(req), metadata: { jobId: result.id } }).catch((error) =>
+        logError("audit_write_failed", { error: error instanceof Error ? error.message : "unknown" }));
     }
     return NextResponse.json({
       ok: true, jobId: result.id, printerId: printer.id, status: result.status,

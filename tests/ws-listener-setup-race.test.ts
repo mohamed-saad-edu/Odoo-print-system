@@ -1,6 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { createServer, type Server } from "http";
-import { AddressInfo } from "net";
 import type { PoolClient } from "pg";
 import { hasTestDatabase, applyMigrations, closePool } from "./helpers/pg";
 import { pool as gatewayPool } from "../src/db";

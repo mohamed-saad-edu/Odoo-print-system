@@ -37,7 +37,7 @@ function compareStringsSafe(a: string, b: string): boolean {
   return timingSafeEqual(digestA, digestB);
 }
 
-export type TenantSelectionClaims = {
+type TenantSelectionClaims = {
   jti: string;
   iat: number;
   exp: number;

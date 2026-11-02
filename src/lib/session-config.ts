@@ -1,6 +1,46 @@
 // Historical shape bound for revoking pre-policy tokens; these tokens are no
 // longer admitted. Human workspace sessions use 15-minute access, 30-minute
 // inactivity and an original 30-day absolute family deadline.
+//
+// Session + cookie policy as implemented (see SECURITY.md for the full table;
+// this comment documents, it does not configure — the values live in
+// session-tokens.ts, workspace-session-security.ts and
+// platform-session-security.ts):
+// - Workspace (manager + customer): access 15 min; idle 30 min since
+//   last_seen_at, extended ONLY by trusted-input activity
+//   (POST /api/auth/activity); refresh and polling never extend it;
+//   absolute 30 days from family creation, never extended by refresh.
+//   No step-up: a valid session authorizes sensitive mutations too.
+// - Platform owner: access 15 min; idle 30 min; absolute 8 h.
+//   Data requests extend platform last_seen_at except /me, /refresh.
+// - No Remember Me exists: no flag in any login UI or login API, and none
+//   was added here — adding one would create a second session system.
+// - Refresh rotates every success (SHA-256 hash storage only), with a 5 s
+//   grace window in which a re-presented token rotates again and revokes
+//   the previous successor; presentation after grace revokes the whole
+//   family (refresh_reuse_detected) with audit + notification email.
+//   Workspace policy / principal failure on refresh likewise revokes the
+//   family (workspace_session_expired / principal_invalid).
+// - Cookies: HttpOnly, never in browser storage. Access names
+//   mgr/cust/plt_session, Path=/, SameSite=Lax, Max-Age 900 s. Refresh
+//   names mgr/cust/plt_refresh, SameSite=Strict; Path=/ in production,
+//   per-endpoint (/api/auth/manager, /api/auth, /api/platform/auth) in
+//   non-production; Max-Age 30 days (workspace) / 8 h (platform). Names
+//   are `__Host-` prefixed in production, bare otherwise; Secure always in
+//   production, otherwise only with COOKIE_SECURE=1/true.
+// - Failed refresh answers 401 with `{ error, code }` and clears both
+//   cookie pairs of that kind. Codes (RefreshFailureCode in
+//   session-tokens.ts): REFRESH_TOKEN_REQUIRED (no token presented),
+//   REFRESH_TOKEN_INVALID, REFRESH_TOKEN_REVOKED, REFRESH_TOKEN_REUSED,
+//   REFRESH_TOKEN_EXPIRED, TENANT_SUSPENDED, TENANT_DELETED,
+//   PRINCIPAL_INVALID, SESSION_IDLE_EXPIRED, WORKSPACE_SESSION_EXPIRED,
+//   PLATFORM_SESSION_EXPIRED. The idle code fires only when the policy
+//   row's last_seen_at is already past the 30-minute fence; other policy
+//   deaths stay merged under the workspace/platform session-expired code.
+//   Client wording: no dedicated EN+AR "signed out due to inactivity" key
+//   exists yet, so clients map all of these to the existing
+//   `errors.sessionExpired` key; the server's English fallback string for
+//   SESSION_IDLE_EXPIRED is "Session expired due to inactivity".
 export const LEGACY_SESSION_MAX_AGE_SECONDS = 8 * 60 * 60;
 
 /** Production cutover deliberately does not read the old unprefixed cookies. */
@@ -34,7 +74,7 @@ export function sessionCookieSecure(): boolean {
 
 let customerSessionFlight: Promise<{ authenticated: boolean; expiresAt: number }> | null = null;
 
-export type RefreshKind = "manager" | "customer";
+type RefreshKind = "manager" | "customer";
 
 /**
  * Refresh endpoint attempt order for one recovery round. The indicated kind

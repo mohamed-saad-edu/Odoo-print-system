@@ -4,7 +4,7 @@ import { Button, Card, ErrorState, Field, Input, StatusBadge, StatusDot } from "
 import { SettingsSection } from "../ui";
 import type { DesktopState } from "../types";
 import { useI18n } from "../../i18n/react";
-import { agentServiceState, friendlyAgentError, printerDisplayName, printerDisplayStatus } from "../lib/printers";
+import { agentServiceState, friendlyAgentError, printerDisplayStatus } from "../lib/printers";
 import { copyTextToClipboard } from "../../lib/clipboard";
 import { getAutostart, setAutostart } from "../lib/ipc";
 

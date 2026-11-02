@@ -1,12 +1,11 @@
 import { PrinterVerificationDetails, FileOutputDetails } from "../components/PrinterVerificationDetails";
 /* eslint-disable react-hooks/exhaustive-deps */
 import { PrinterGeometryDetails } from "../components/PrinterGeometrySettings";
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   AlertTriangle,
   ClipboardList,
-  Cpu,
   Info,
   LayoutDashboard,
   Menu,
@@ -18,7 +17,6 @@ import {
   RefreshCw,
   Settings as SettingsIcon,
   Square,
-  X,
   Play,
 } from "lucide-react";
 import {
@@ -55,7 +53,6 @@ import {
   getPrinters,
   setPrinterSharing,
   fetchGatewayPrinters,
-  registerGatewayPrinter,
   getRuntimePaths,
   isTauri,
   onTrayNavigate,
@@ -68,7 +65,6 @@ import {
   stopAgent as ipcStopAgent,
   normalizeGatewayUrl,
   discoverPrinters,
-  setAutostart,
   setTrayLocale,
   type PrinterInfo,
 } from "./lib/ipc";

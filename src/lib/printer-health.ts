@@ -38,7 +38,7 @@ function capBool(bag: Record<string, unknown>, key: string): boolean | undefined
   return typeof value === "boolean" ? value : undefined;
 }
 
-export type PrinterHealthStatus =
+type PrinterHealthStatus =
   | "ONLINE"
   | "IDLE"
   | "PRINTING"
@@ -50,7 +50,7 @@ export type PrinterHealthStatus =
   | "UNREACHABLE"
   | "UNKNOWN";
 
-export interface PrinterCapabilityMatrix {
+interface PrinterCapabilityMatrix {
   printerId: string;
   tenantId: string;
   name: string;
@@ -187,6 +187,7 @@ export function buildPrinterCapabilityMatrix(p: typeof printers.$inferSelect, ag
     p.protocol as ProtocolType,
     p.connectionType as TransportType,
     caps,
+    { id: p.id, config: p.config, managementSource: p.managementSource, desiredRevision: p.desiredRevision, appliedDesiredRevision: p.appliedDesiredRevision, observedDesiredRevision: p.observedDesiredRevision },
   );
 
   const statusInfo = normalizePrinterStatus(p.status, {
@@ -269,9 +270,13 @@ export function buildPrinterCapabilityMatrix(p: typeof printers.$inferSelect, ag
     protocol: p.protocol as ProtocolType,
     deviceClass: p.deviceClass as PrinterCapabilityMatrix["deviceClass"],
     documentTypes,
-    duplexCapable: config.duplex_capable ?? capBool(caps, "duplex_capable") ?? null,
-    colorCapable: config.color_capable ?? capBool(caps, "color_capable") ?? null,
-    paperWidths: config.paper_widths ?? (Array.isArray(caps.paper_widths) ? (caps.paper_widths as number[]) : undefined) ?? null,
+    // v3: config is agent-reported JSONB with no DB shape check. The old
+    // code returned config values verbatim, so a non-boolean duplex_capable
+    // or non-array paper_widths violated the typed contract. Narrow first,
+    // falling back to the validated capabilities values as before.
+    duplexCapable: (typeof configBag.duplex_capable === "boolean" ? configBag.duplex_capable : capBool(caps, "duplex_capable")) ?? null,
+    colorCapable: (typeof configBag.color_capable === "boolean" ? configBag.color_capable : capBool(caps, "color_capable")) ?? null,
+    paperWidths: (Array.isArray(configBag.paper_widths) ? (configBag.paper_widths as unknown[]).filter((value): value is number => typeof value === "number" && Number.isFinite(value)) : (Array.isArray(caps.paper_widths) ? (caps.paper_widths as number[]) : undefined)) ?? null,
     driver: { name: driverName, version: driverVersion, health: driverHealth, message: driverMessage, evidence: driverEvidence },
     spooler: { name: spoolerName, status: spoolerStatus, message: spoolerMessage, evidence: spoolerEvidence },
     status: statusInfo.status,

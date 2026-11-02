@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { AlertTriangle, CheckCircle2, Eye, Inbox, Printer as PrinterIcon, RefreshCw, Search, Trash2, X, XCircle } from "lucide-react";
 import { Button, Card, EmptyState, ErrorState, Input, LoadingState, Modal, Mono, StatusBadge, Tabs } from "../../components/ui";
 import type { DesktopState } from "../types";

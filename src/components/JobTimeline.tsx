@@ -43,7 +43,7 @@ const STAGE_KEYS: Record<string, MessageKey> = {
   blocked: "timeline.blocked",
 };
 
-export function stageText(stage: string, t: Translator): string {
+function stageText(stage: string, t: Translator): string {
   const key = STAGE_KEYS[stage];
   return key ? t(key) : stage;
 }

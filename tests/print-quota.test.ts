@@ -129,6 +129,8 @@ suite("tenant print quota", () => {
         printerId: f.printerId,
         destination: f.destination,
         documentType: "receipt",
+        // v3: the body idempotencyKey (not the Idempotency-Key header) is what the route deduplicates on; keyless is rejected 400.
+        idempotencyKey: key,
         payload: payload("http-quota"),
       }),
     }));

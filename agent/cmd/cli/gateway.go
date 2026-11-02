@@ -153,6 +153,20 @@ func normalizeOriginForCompare(raw string) string {
 	}
 	parsed.Scheme = strings.ToLower(parsed.Scheme)
 	parsed.Host = strings.ToLower(parsed.Host)
+	// The desktop normalizer drops scheme-default ports, while a CLI-paired
+	// config may retain an explicit :443/:80. Those spellings name the same
+	// origin; comparing them literally would falsely report an origin
+	// mismatch and push the operator to re-pair a healthy pairing. Strip
+	// only the scheme-default port — any other port still distinguishes.
+	if (parsed.Scheme == "https" && parsed.Port() == "443") ||
+		(parsed.Scheme == "http" && parsed.Port() == "80") {
+		host := parsed.Hostname()
+		if strings.Contains(host, ":") {
+			parsed.Host = "[" + host + "]"
+		} else {
+			parsed.Host = host
+		}
+	}
 	parsed.Fragment, parsed.RawQuery = "", ""
 	return strings.TrimRight(parsed.String(), "/")
 }
@@ -164,12 +178,18 @@ func handleGatewayRequest(args []string, configPath string) {
 	method := fs.String("method", "GET", "HTTP method")
 	body := fs.String("body", "", "Optional JSON request body")
 	bodyStdin := fs.Bool("body-stdin", false, "Read optional JSON request body from stdin")
-	idempotencyKey := fs.String("idempotency-key", "", "Required Agent diagnostic retry key for test-print")
+	idempotencyKey := fs.String("idempotency-key", "", "Required Agent diagnostic retry key for test-print (or YASEIR_IDEMPOTENCY_KEY env)")
 	expectOrigin := fs.String("expect-origin", "", "Expected desktop Gateway origin, verified against the paired Agent")
 	configOverride := fs.String("config", configPath, "Path to the paired agent config file")
 	if err := fs.Parse(args); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
+	}
+
+	// Environment fallback keeps the retry key off argv, where other local
+	// users can read the process command line (mirrors -pair handling).
+	if *idempotencyKey == "" {
+		*idempotencyKey = os.Getenv("YASEIR_IDEMPOTENCY_KEY")
 	}
 
 	reqPath := strings.TrimSpace(*path)

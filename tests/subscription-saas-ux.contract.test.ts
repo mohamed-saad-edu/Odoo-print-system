@@ -50,11 +50,20 @@ describe("customer and Platform Admin subscription UX boundaries", () => {
     expect(detail).toContain('searchParams.get("subscriptionAction")');
     expect(detail).toContain('const linkedRequest=!directAction && pending');
     expect(editor).toContain('preferredAction === "revoke"');
-    expect(editor).toContain('a("endSubscriptionWarning")');
-    expect(editor).toContain('"/api/platform/auth/reauth"');
+    // WP-G: call-site unification — same catalogue key, now via t() instead of a().
+    expect(editor).toContain('t("v4.admin.endSubscriptionWarning")');
+    expect(editor).not.toContain('"/api/platform/auth/reauth"');
+    expect(editor).not.toContain('type="password"');
     expect(backend).toContain("requirePlatformOwner(req)");
     expect(backend).toContain("requireIdempotencyKey(req)");
-    expect(mutation).toContain("input.action==='suspend'||input.action==='revoke'");
+    // v3 (0108): revoke was split from suspend — revoke sets a terminal
+    // revokedAt marker and reactivate of a revoked contract throws
+    // SUBSCRIPTION_REVOKED, because old revoke-identical-to-suspend let a
+    // later reactivate silently undo it. Both actions remain handled.
+    expect(mutation).toContain("input.action==='suspend'");
+    expect(mutation).toContain("input.action==='revoke'");
+    expect(mutation).toContain("revokedAt");
+    expect(mutation).toContain("SUBSCRIPTION_REVOKED");
     expect(mutation).toContain("subscriptionChanges");
     for (const key of ["endSubscriptionNow","endSubscriptionWarning","usedOfQuota"] as const) {
       expect(v4AdminEn["v4.admin." + key as keyof typeof v4AdminEn]).toBeTruthy();

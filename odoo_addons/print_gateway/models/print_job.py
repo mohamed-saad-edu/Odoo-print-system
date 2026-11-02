@@ -71,6 +71,10 @@ class PrintGatewayJob(models.Model):
         ("printing", "Printing"), ("success", "Submission completed"), ("failed", "Failed"),
         ("unknown", "Unknown Outcome"),
         ("partial", "Attention / Partial Delivery"),
+        # v4: Gateway 'canceled' (migration 0109). Terminal. Never
+        # auto-retried (action_retry requires failed + not_printed);
+        # explicit force-reprint remains the operator's deliberate path.
+        ("canceled", "Canceled"),
     ], default="queued", required=True, index=True)
     physical_outcome = fields.Selection([
         ("not_printed", "Not printed"),
@@ -83,6 +87,15 @@ class PrintGatewayJob(models.Model):
         ("not_created", "File not created"), ("unknown", "File output not verified"),
     ], readonly=True, copy=False)
     output_evidence = fields.Json(string="Verified file artifact", readonly=True, copy=False)
+    # v4 (WP2): Gateway-derived submission state for physical jobs:
+    # 'submitted' (spooler/IPP accepted, output unverified), 'completed'
+    # (spooler-confirmed via a post-submission query — NOT paper proof),
+    # or 'unknown' (verification failed/timed out). Set only by status
+    # sync from the Gateway body; never written by operators. Odoo keeps
+    # its own 'submitted' for Gateway-queued jobs; this field disambiguates
+    # Gateway 'success', which previously read as one undifferentiated
+    # "Submission completed".
+    gateway_submission_state = fields.Char(string="Gateway submission state", readonly=True, copy=False)
     # Full document bytes (rendered PDF/JPEG, native command streams).
     # Restricted to system administrators: the job list/form never displays
     # payload content, and every server-side reader (submit/sync/retry runs
@@ -124,7 +137,7 @@ class PrintGatewayJob(models.Model):
     customer_issue = fields.Text(string="What to do next", compute="_compute_customer_presentation", compute_sudo=False)
     customer_status = fields.Selection([
         ("waiting", "Waiting"), ("processing", "Processing"),
-        ("sent_to_printer", "Sent to printer"), ("needs_review", "Needs review"),
+        ("sent_to_printer", "Sent for printing"), ("needs_review", "Needs review"),
         ("failed_before_output", "Failed before output"), ("file_created", "File created"),
     ], string="Print status", compute="_compute_customer_presentation", compute_sudo=False)
     source_model = fields.Char(readonly=True)
@@ -155,7 +168,7 @@ class PrintGatewayJob(models.Model):
     # of these. "unknown" is terminal because it represents a reconcilable but
     # ambiguous physical outcome that must be resolved by an operator, not by
     # automated transitions.
-    _TERMINAL = frozenset(("success", "failed", "partial", "unknown"))
+    _TERMINAL = frozenset(("success", "failed", "partial", "unknown", "canceled"))
     _TERMINAL_RETENTION_HOURS = 48
     
     # Valid status transitions for the print job state machine.
@@ -168,14 +181,15 @@ class PrintGatewayJob(models.Model):
     # only, and 'partial' accepts no inbound writes at all - the
     # Gateway sync never produces it).
     _VALID_TRANSITIONS = {
-        "queued": {"submitted", "failed", "unknown"},
-        "submitted": {"claimed", "failed", "unknown"},
-        "claimed": {"printing", "failed", "unknown"},
+        "queued": {"submitted", "failed", "unknown", "canceled"},
+        "submitted": {"claimed", "failed", "unknown", "canceled"},
+        "claimed": {"printing", "failed", "unknown", "canceled"},
         "printing": {"success", "failed", "unknown"},
         "success": {"success"},
         "failed": {"failed"},
         "partial": {"partial"},
         "unknown": {"unknown"},
+        "canceled": {"canceled"},
     }
     
     # Forward-progress chain for _advance_status. Failure/unknown are NOT
@@ -287,7 +301,7 @@ class PrintGatewayJob(models.Model):
         job.ensure_one()
         self._lock_status_row(job)
         values = self._stable_terminal_values(job, target, values)
-        if target not in self._FORWARD_CHAIN and target not in ("failed", "unknown"):
+        if target not in self._FORWARD_CHAIN and target not in ("failed", "unknown", "canceled"):
             raise ValidationError(
                 _("Invalid print job state transition from '%s' to '%s'.")
                 % (job.status, target)
@@ -309,7 +323,7 @@ class PrintGatewayJob(models.Model):
             refresh_values["status"] = target
             job.write(refresh_values)
             return
-        if target in ("failed", "unknown"):
+        if target in ("failed", "unknown", "canceled"):
             terminal_values = dict(values)
             terminal_values["status"] = target
             job.write(terminal_values)
@@ -534,6 +548,12 @@ class PrintGatewayJob(models.Model):
             ):
                 # A deterministic Gateway HTTP refusal or proven connect-
                 # phase failure occurred before print-job admission.
+                job.physical_outcome = "not_printed"
+            elif job.status == "canceled":
+                # v4: the UNKNOWN-marker case is handled by the first
+                # branch above, so reaching here means a queued-cancel
+                # (provably never printed). A claimed-cancel never reaches
+                # here: its UNKNOWN_PARTIAL_DELIVERY marker forces unknown.
                 job.physical_outcome = "not_printed"
             else:
                 # Successful transport is not proof of paper. Nor is an
@@ -903,7 +923,7 @@ class PrintGatewayJob(models.Model):
     def _advance_status_claimed(self, job, target, values, claim_token):
         """Advance a claimed job through the canonical status chain."""
         job.ensure_one()
-        if target not in self._FORWARD_CHAIN and target not in ("failed", "unknown"):
+        if target not in self._FORWARD_CHAIN and target not in ("failed", "unknown", "canceled"):
             raise ValidationError(
                 _("Invalid print job state transition from '%s' to '%s'.")
                 % (job.status, target)
@@ -2287,6 +2307,15 @@ class PrintGatewayJob(models.Model):
         elif job.status == "unknown":
             if not job.gateway_job_id or not self._needs_gateway_status_reconciliation(job):
                 raise ValidationError(_("Gateway late success requires the original reconcilable remote operation."))
+        elif job.status == "canceled":
+            # v4: claimed-cancel late success. Only the UNKNOWN-marker
+            # variant reconciles (queued-cancels are provably not printed
+            # and carry no marker); the Gateway enforces the same 24h
+            # token window server-side.
+            if (not job.gateway_job_id or job.physical_outcome != "unknown"
+                    or not gateway_error.startswith("LATE_SUCCESS:")
+                    or not self._needs_gateway_status_reconciliation(job)):
+                raise ValidationError(_("Gateway late success is only valid for an unknown-outcome claimed-cancel job."))
         else:
             raise ValidationError(_("Gateway late success is not valid for this terminal state."))
         success_values = self._stable_terminal_values(job, "success", values)
@@ -2332,6 +2361,14 @@ class PrintGatewayJob(models.Model):
                 "AGENT_RESTART_DURING_PRINT",
             )
         ):
+            return True
+        # v4: a claimed-cancel is terminal but reconcilable: its Gateway
+        # row keeps the live claim token for 24h so a genuinely executed
+        # job can late-succeed. Without this branch Odoo would stop
+        # polling the moment it observed 'canceled' and the late success
+        # would never sync. Queued-cancels (JOB_CANCELED_BY_OPERATOR,
+        # no marker) are excluded by the marker check and stay settled.
+        if job.status == "canceled" and error.startswith("UNKNOWN_PARTIAL_DELIVERY"):
             return True
         return False
 
@@ -2425,6 +2462,13 @@ class PrintGatewayJob(models.Model):
             status = "success"
         elif status == "queued":
             status = "submitted"
+        elif status == "canceled":
+            # v4: Gateway operator cancellation maps 1:1. It is terminal
+            # here too, never auto-retried, and never downgraded to
+            # 'failed' (which would misread a queued-cancel as a print
+            # failure) or 'unknown' (which would hide a proven
+            # not-printed queued-cancel behind a review queue).
+            status = "canceled"
         elif status == "expired":
             gateway_error = str(body.get("error") or "")
             if gateway_error.startswith("JOB_EXPIRED_DURING_PRINT") or gateway_error.startswith("UNKNOWN_PARTIAL_DELIVERY"):
@@ -2443,7 +2487,7 @@ class PrintGatewayJob(models.Model):
             body["error"] = "UNKNOWN_PARTIAL_DELIVERY: " + (
                 detail or "Gateway reported partial delivery; inspect the printer before reprinting."
             )
-        if status not in {"submitted", "claimed", "printing", "success", "failed", "unknown"}:
+        if status not in {"submitted", "claimed", "printing", "success", "failed", "unknown", "canceled"}:
             return False
         err_msg = body.get("error") or False
         if status == "failed" and any(
@@ -2451,6 +2495,12 @@ class PrintGatewayJob(models.Model):
         ):
             status = "unknown"
         values = {"last_error": err_msg}
+        # v4 (WP2): Gateway-derived submission state, when the Gateway
+        # reports one. Old Gateway responses carry no such field and
+        # leave the previous value untouched (never cleared to NULL by
+        # an older response: absence is not evidence).
+        if body.get("submissionState") in ("submitted", "completed", "unknown"):
+            values["gateway_submission_state"] = body["submissionState"]
         output_values = gateway_output_values(job, body, status)
         if status in self._TERMINAL:
             values["completed_at"] = db_now_utc(self.env.cr)
@@ -2462,6 +2512,7 @@ class PrintGatewayJob(models.Model):
         gateway_error = str(values.get("last_error") or "")
         if status == "success" and (
             (job.status == "failed" and gateway_error.startswith("LATE_SUCCESS:"))
+            or (job.status == "canceled" and gateway_error.startswith("LATE_SUCCESS:"))
             or (job.status == "unknown" and job.gateway_job_id and self._needs_gateway_status_reconciliation(job))
         ):
             self._apply_gateway_late_success(job, values)

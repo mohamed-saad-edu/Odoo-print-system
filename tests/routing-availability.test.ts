@@ -214,6 +214,8 @@ suite("gateway runtime printer availability + payload capability contract", () =
       printerId: "printer-does-not-exist",
       destination: "POS",
       documentType: "receipt",
+      // v3: first-party submissions must carry an immutable idempotencyKey; keyless v1 is rejected 400 IDEMPOTENCY_KEY_REQUIRED (route header comment).
+      idempotencyKey: "runtime-unknown-1",
       payload: { type: "raw", protocol: "raw", encoding: "base64", data: rawBase64() },
     });
     expect(res.status).toBe(404);
@@ -225,6 +227,8 @@ suite("gateway runtime printer availability + payload capability contract", () =
       printerId: f.printerId,
       destination: "POS",
       documentType: "receipt",
+      // v3: first-party submissions must carry an immutable idempotencyKey; keyless v1 is rejected 400 IDEMPOTENCY_KEY_REQUIRED (route header comment).
+      idempotencyKey: "runtime-disabled-1",
       payload: { type: "raw", protocol: "raw", encoding: "base64", data: rawBase64() },
     });
     expect(res.status).toBe(409);
@@ -289,6 +293,8 @@ suite("gateway runtime printer availability + payload capability contract", () =
       printerId: f.printerId,
       destination: "POS",
       documentType: "receipt",
+      // v3: first-party submissions must carry an immutable idempotencyKey; keyless v1 is rejected 400 IDEMPOTENCY_KEY_REQUIRED (route header comment).
+      idempotencyKey: "runtime-offline-1",
       payload: { type: "raw", protocol: "raw", encoding: "base64", data: rawBase64() },
     });
     expect(res.status).toBe(503);
@@ -305,6 +311,8 @@ suite("gateway runtime printer availability + payload capability contract", () =
       printerId: f.printerId,
       destination: "POS",
       documentType: "receipt",
+      // v3: first-party submissions must carry an immutable idempotencyKey; keyless v1 is rejected 400 IDEMPOTENCY_KEY_REQUIRED (route header comment).
+      idempotencyKey: "runtime-absent-1",
       payload: { type: "raw", protocol: "raw", encoding: "base64", data: rawBase64() },
     });
     expect(res.status).toBe(409);
@@ -321,6 +329,8 @@ suite("gateway runtime printer availability + payload capability contract", () =
       printerId: f.printerId,
       destination: "POS",
       documentType: "invoice",
+      // v3: first-party submissions must carry an immutable idempotencyKey; keyless v1 is rejected 400 IDEMPOTENCY_KEY_REQUIRED (route header comment).
+      idempotencyKey: "runtime-incompatible-1",
       // Valid complete PDF (with %%EOF trailer): it must pass admission
       // validation so the routing layer — not the payload gate — rejects it
       // with 422 CAPABILITY_MISMATCH for the raw byte-stream printer.

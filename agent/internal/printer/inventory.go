@@ -43,6 +43,18 @@ func mainInventoryPrinterForPlatform(device DeviceInfo, platform string) bool {
 		// Do not infer automatic ownership or destroy their execution path.
 		return true
 	}
+	// v3: per-user spooler connections discovered from an interactive
+	// session (or an unverifiable session) are setup evidence only. The
+	// Session-0 service cannot execute them, yet admitting them here made
+	// the Gateway route jobs to queues that always fail pre-execution
+	// while looking healthy in inventory. They stay visible in discovery
+	// display (which lists all observations) and in the registry for
+	// explicit selection; they are simply not main-fleet inventory.
+	// Session-0 discovery itself is never marked (markUserSpoolerConnectionScope
+	// skips session 0), so service-discovered rows are unaffected.
+	if scope, _ := device.Capabilities["runtime_scope"].(string); scope == "interactive_session_discovery_only" || scope == "unverified_session_discovery_only" {
+		return false
+	}
 	return isSpoolerDevice(device) && strings.TrimSpace(device.SpoolerName) != ""
 }
 

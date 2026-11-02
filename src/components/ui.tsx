@@ -33,7 +33,7 @@ import { jobTone as sharedJobTone, printerTone as sharedPrinterTone } from "../s
 
 export type Tone = "ok" | "warn" | "bad" | "info" | "neutral" | "brand";
 
-export const toneBg: Record<Tone, string> = {
+const toneBg: Record<Tone, string> = {
   ok: "bg-ok-bg text-ok border-ok-edge",
   warn: "bg-warn-bg text-warn border-warn-edge",
   bad: "bg-bad-bg text-bad border-bad-edge",
@@ -78,14 +78,14 @@ export function jobTone(status: string, outcome?: "printed" | "not_printed" | "u
 }
 
 /** Focus treatment shared by every interactive control. */
-export const focusRing =
+const focusRing =
   "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/35 focus-visible:ring-offset-1 focus-visible:ring-offset-app";
 
 /* ============================================================
    Buttons
    ============================================================ */
 
-export type ButtonVariant = "primary" | "secondary" | "ghost" | "danger" | "success" | "subtle";
+type ButtonVariant = "primary" | "secondary" | "ghost" | "danger" | "success" | "subtle";
 
 const buttonVariants: Record<ButtonVariant, string> = {
   // Solid label background: white on --brand-solid stays >= 4.5:1 in both
@@ -248,9 +248,6 @@ export function IconButton({
   );
 }
 
-export function Spinner({ className = "" }: { className?: string }) {
-  return <Loader2 className={`h-4 w-4 animate-spin text-ink-3 ${className}`} aria-hidden />;
-}
 
 /* ============================================================
    Status
@@ -438,160 +435,10 @@ export function Section({
   );
 }
 
-export function StatCard({
-  title,
-  value,
-  subtitle,
-  icon,
-  tone = "neutral",
-  trend,
-  footer,
-  className = "",
-}: {
-  title: string;
-  value: React.ReactNode;
-  subtitle?: React.ReactNode;
-  icon?: React.ReactNode;
-  tone?: Tone;
-  trend?: { text: string; positive?: boolean };
-  footer?: React.ReactNode;
-  className?: string;
-}) {
-  return (
-    <div
-      className={`group relative rounded-md border border-edge bg-surface p-4 transition-colors duration-150 hover:border-edge-strong ${className}`}
-    >
-      <div className="flex items-start justify-between gap-3">
-        <span className="label-caps text-ink-3">{title}</span>
-        {icon && (
-          <span
-            aria-hidden
-            className={`flex h-7 w-7 items-center justify-center rounded-sm border ${toneIconSurface[tone]}`}
-          >
-            {icon}
-          </span>
-        )}
-      </div>
-      <div className="mt-3 flex flex-wrap items-baseline gap-x-2 gap-y-1">
-        <span className="text-2xl font-[640] leading-none tracking-[-0.02em] text-ink tabular">
-          {value}
-        </span>
-        {trend && (
-          <span
-            className={`text-xs font-[600] ${trend.positive === false ? "text-bad" : "text-ok"}`}
-          >
-            {trend.text}
-          </span>
-        )}
-      </div>
-      {subtitle && <div className="mt-1.5 text-sm leading-snug text-ink-3">{subtitle}</div>}
-      {footer && <div className="mt-3 border-t border-edge-subtle pt-3">{footer}</div>}
-    </div>
-  );
-}
 
 /* ---------- Financial surfaces (billing) ---------- */
 
-export function BillingPremiumCard({
-  plan,
-  status,
-  balance,
-  usagePercent,
-  renewal,
-  actions,
-  entitlements,
-}: {
-  plan: string;
-  status?: string;
-  balance?: string;
-  usagePercent?: number;
-  renewal?: string;
-  actions?: React.ReactNode;
-  entitlements?: Array<{ label: string; value: string }>;
-}) {
-  const { t } = useI18n();
-  return (
-    <div className="billing-premium p-5 sm:p-6">
-      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-3">
-        <div className="min-w-0">
-          <div className="inline-flex items-center gap-1.5 rounded-sm border border-edge-accent bg-brand-subtle px-2 py-0.5 text-2xs font-[600] tracking-[0.02em] text-brand-subtle-text">
-            <span className="h-1.5 w-1.5 rounded-full bg-brand" aria-hidden />
-            {t("ui.currentPlan")}
-          </div>
-          <div className="mt-2.5 text-xl font-[640] tracking-[-0.02em] text-ink">{plan}</div>
-          {status && <div className="mt-0.5 text-sm text-ink-3">{status}</div>}
-        </div>
-        {balance && (
-          <div className="text-end">
-            <div className="label-caps text-ink-3">{t("ui.balance")}</div>
-            <div className="mt-1 text-2xl font-[640] tracking-[-0.02em] text-ink tabular">{balance}</div>
-          </div>
-        )}
-      </div>
 
-      {typeof usagePercent === "number" && (
-        <div className="mt-5">
-          <div className="flex items-center justify-between text-sm">
-            <span className="text-ink-3">{t("ui.usageThisPeriod")}</span>
-            <span className="font-[600] text-ink tabular">{usagePercent}%</span>
-          </div>
-          <Progress value={usagePercent} label={t("ui.planUsage")} className="mt-2" tone={usagePercent >= 90 ? "warn" : "brand"} />
-        </div>
-      )}
-
-      {entitlements && entitlements.length > 0 && (
-        <dl className="mt-5 grid grid-cols-2 gap-2 sm:grid-cols-3">
-          {entitlements.slice(0, 6).map((e) => (
-            <div key={e.label} className="rounded-md border border-edge-subtle bg-surface-2 px-3 py-2">
-              <dt className="label-caps text-ink-3">{e.label}</dt>
-              <dd className="mt-0.5 text-sm font-[600] text-ink tabular">{e.value}</dd>
-            </div>
-          ))}
-        </dl>
-      )}
-
-      {renewal && <div className="mt-4 text-sm text-ink-3">{renewal}</div>}
-
-      {actions && <div className="mt-5 flex flex-wrap gap-2">{actions}</div>}
-    </div>
-  );
-}
-
-export function BalanceCard({
-  amount,
-  subtitle,
-  trend,
-  actions,
-  footer,
-}: {
-  amount: React.ReactNode;
-  subtitle?: React.ReactNode;
-  trend?: string;
-  actions?: React.ReactNode;
-  footer?: React.ReactNode;
-}) {
-  const { t } = useI18n();
-  return (
-    <div className="balance-card p-5 sm:p-6">
-      <div className="flex items-start justify-between gap-4">
-        <div className="min-w-0">
-          <div className="label-caps text-ink-3">{t("ui.currentBalance")}</div>
-          <div className="mt-2 text-3xl font-[640] tracking-[-0.025em] leading-none text-ink tabular">
-            {amount}
-          </div>
-          {subtitle && <div className="mt-2 text-sm text-ink-3">{subtitle}</div>}
-        </div>
-        {trend && (
-          <StatusBadge tone="ok" label={trend} />
-        )}
-      </div>
-      {actions && <div className="mt-5 flex flex-wrap gap-2">{actions}</div>}
-      {footer && (
-        <div className="mt-5 border-t border-edge-subtle pt-4 text-sm text-ink-3">{footer}</div>
-      )}
-    </div>
-  );
-}
 
 /* ============================================================
    States — loading / empty / error / informational
@@ -872,7 +719,7 @@ export function Field({
   );
 }
 
-export const inputClass =
+const inputClass =
   "w-full min-w-0 min-h-12 rounded-sm border border-control bg-surface px-3.5 py-2.5 text-base text-ink placeholder:text-ink-4 shadow-xs transition-[border-color,box-shadow,background-color] duration-150 ease-out hover:border-ink-4/70 focus:border-brand focus:outline-none focus:ring-[3px] focus:ring-brand/18 disabled:cursor-not-allowed disabled:bg-surface-2 disabled:text-ink-3";
 
 function useFieldProps({
@@ -1075,19 +922,6 @@ export function KeyValueList({
   );
 }
 
-export function DataTableShell({
-  children,
-  className = "",
-}: {
-  children: React.ReactNode;
-  className?: string;
-}) {
-  return (
-    <div className={`overflow-hidden rounded-md border border-edge bg-surface ${className}`}>
-      {children}
-    </div>
-  );
-}
 
 export function TableScroll({
   children,
@@ -2182,4 +2016,3 @@ export function Toast({
   );
 }
 
-export { Check as CheckIcon };

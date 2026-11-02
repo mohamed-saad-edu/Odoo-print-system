@@ -125,7 +125,7 @@ const DIAGNOSTIC_SHEET_POINTS = {
   letter: [612, 792],
   legal: [612, 1008],
 } as const;
-export type DiagnosticSheet = keyof typeof DIAGNOSTIC_SHEET_POINTS;
+type DiagnosticSheet = keyof typeof DIAGNOSTIC_SHEET_POINTS;
 
 export function selectedDiagnosticSheet(value: Record<string, unknown> | null | undefined): DiagnosticSheet | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;

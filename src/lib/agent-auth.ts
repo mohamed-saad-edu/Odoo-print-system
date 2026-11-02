@@ -10,8 +10,8 @@ import { logWarn } from "./log";
  * Public pairing contract shared by Gateway, Go agent and Tauri manager.
  * 32-character unambiguous alphabet; excludes O/I and 0/1.
  */
-export const PAIRING_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-export const PAIRING_CODE_LENGTH = 6;
+const PAIRING_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+const PAIRING_CODE_LENGTH = 6;
 export const PAIRING_CODE_PATTERN = new RegExp(`^[${PAIRING_CODE_ALPHABET}]{${PAIRING_CODE_LENGTH}}$`);
 
 export const AGENT_ID_PATTERN = /^agt_[A-Za-z0-9_-]{8}$/;
@@ -40,19 +40,7 @@ let pairingCodePepperWarned = false;
 
 function pairingCodePepperKey(): Buffer | null {
   const secret = runtimeSecret("GATEWAY_JWT_SECRET");
-  // Production startup already refuses to boot without a real
-  // GATEWAY_JWT_SECRET. Outside production the pepper is optional: the
-  // pairing code keeps its previous plain hash so local development and
-  // existing installations are unaffected.
-  if (!secret || secret.length < 32) {
-    if (!pairingCodePepperWarned) {
-      pairingCodePepperWarned = true;
-      logWarn("agent.pairing_code_unpeppered", {
-        message: "GATEWAY_JWT_SECRET is not configured; pairing codes are stored without a server-side pepper. Configure it in production.",
-      });
-    }
-    return null;
-  }
+  if (!secret || secret.length < 32) return null;
   return Buffer.from(
     hkdfSync("sha256", Buffer.from(secret, "utf8"), Buffer.from(PAIRING_CODE_PEPPER_SALT, "utf8"), Buffer.from(PAIRING_CODE_PEPPER_INFO, "utf8"), 32),
   );
@@ -61,7 +49,25 @@ function pairingCodePepperKey(): Buffer | null {
 export function hashPairingCode(code: string): string {
   const normalized = code.trim().toUpperCase();
   const pepper = pairingCodePepperKey();
-  if (!pepper) return createHash("sha256").update(normalized).digest("hex");
+  // v3: fail closed. Previously a missing/short GATEWAY_JWT_SECRET silently
+  // fell back to plain unsalted SHA-256, and the 6-char / 32-symbol code
+  // space (~2^30) is exhaustible offline from a leaked database in about a
+  // second at 1e9 hashes/s. Mint and verify both go through this function,
+  // so refusing here can never mint an unpeppered code or accept one, and
+  // pre-pepper rows (drizzle/0022) simply stop matching once a pepper is
+  // configured. Migration 0107 invalidates those pending rows explicitly.
+  // Every other auth module already refuses to load with a secret shorter
+  // than 32 chars, so a booting gateway always satisfies this; only a
+  // partial import (scripts, tests) could previously reach the fallback.
+  if (!pepper) {
+    if (!pairingCodePepperWarned) {
+      pairingCodePepperWarned = true;
+      logWarn("agent.pairing_code_unpeppered", {
+        message: "GATEWAY_JWT_SECRET is not configured (>=32 chars); pairing codes cannot be minted or verified. Configure it.",
+      });
+    }
+    throw new Error("GATEWAY_JWT_SECRET must be configured (>=32 chars) to mint or verify pairing codes");
+  }
   return createHmac("sha256", pepper).update(normalized).digest("hex");
 }
 

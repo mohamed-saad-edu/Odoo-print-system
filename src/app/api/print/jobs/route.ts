@@ -20,13 +20,18 @@ import { parsePrintExpiration } from "../../../../lib/print-expiration";
 export const dynamic = "force-dynamic";
 
 /**
- * A stable operation key is mandatory for every production v1 print POST.
- * An operator flag cannot waive this invariant: otherwise a transport replay
- * with no key can enqueue a second physical job. Legacy keyless callers may be
- * exercised in development/test only; v2 always requires a key.
+ * A stable operation key is mandatory for every v1 print POST unless an
+ * operator explicitly opts in to keyless submission for development/test.
+ * v3: previously any non-production deployment (staging, demo, or a
+ * misconfigured NODE_ENV) silently accepted keyless submissions, so a
+ * transport retry re-enqueued a second physical print. Keyless use now
+ * requires YASEIR_ALLOW_KEYLESS_PRINT_JOBS=1 AND a non-production NODE_ENV;
+ * production always requires a key. v2 always requires a key.
  */
 function idempotencyKeyRequired(): boolean {
-  return process.env.NODE_ENV === "production" || process.env.YASEIR_REQUIRE_IDEMPOTENCY_KEY === "1";
+  if (process.env.NODE_ENV === "production") return true;
+  if (process.env.YASEIR_REQUIRE_IDEMPOTENCY_KEY === "1") return true;
+  return process.env.YASEIR_ALLOW_KEYLESS_PRINT_JOBS !== "1";
 }
 
 const MAX_BODY = 8 * 1024 * 1024;

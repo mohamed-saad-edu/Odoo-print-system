@@ -258,8 +258,9 @@ describe("production hardening contracts", () => {
     expect(dashboardState).toContain("listPrintJobHistory({");
     expect(history).toContain('sql`WHERE j.tenant_id = ${tenantId}`');
     expect(history).toContain('sql`WHERE r.tenant_id = ${tenantId}`');
-    expect(history).toContain('FROM print_jobs j ${scopedWhere("j", input.tenantId)}');
-    expect(history).toContain('FROM print_job_receipts r ${scopedWhere("r", input.tenantId)}');
+    // v3: scopedWhere gained an explicit platformWide parameter (fail-closed).
+    expect(history).toContain('FROM print_jobs j ${scopedWhere("j", input.tenantId, input.platformWide)}');
+    expect(history).toContain('FROM print_job_receipts r ${scopedWhere("r", input.tenantId, input.platformWide)}');
     expect(lifecycle).toContain("transitionAgentLifecycle(id, lifecycle, claims.tenantId, {");
     expect(helper).toContain("eq(agents.tenantId, tenantId)");
     expect(helper).not.toContain("tx.update(printers)");

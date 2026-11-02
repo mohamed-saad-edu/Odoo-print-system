@@ -58,9 +58,12 @@ func lockRegistryFile(path string) (func(), error) {
 // Two categories are kept out of the returned slice:
 //   - stale generic PnP entries persisted by old buggy discovery (USB Input
 //     Device, HID mice, cameras …) — those are junk and get cleaned up;
-//   - virtual / redirected / unclassified queues — those are PRESERVED on disk
-//     (never deleted) but never listed, so an operator can still inspect what
-//     this machine reports and a future classifier can recover them.
+//   - virtual / redirected queues — those are never listed, and
+//     saveRegistryLocked deliberately drops them on the next save (they are
+//     rediscoverable via spooler enumeration, so no history is lost that
+//     cannot be rebuilt); unclassified queues ARE preserved on disk in the
+//     hidden partition but never listed, so a future classifier can
+//     recover them.
 //
 // If the file does not exist, a nil slice is returned (not an error).
 // LoadRegistryPrinters exports loadRegistryPrinters for external callers.
@@ -357,6 +360,25 @@ func ReconcileDiscoveryRegistry(registryPath string, discovered []DeviceInfo, co
 	return mutateRegistry(registryPath, discovered, completeSources, "")
 }
 
+// networkBindingUncomparable reports whether two network/IPP rows cannot
+// have their execution bindings compared because a digest errors. Used only
+// on the registry continuity replacement path (see the v3 note there).
+func networkBindingUncomparable(left, right DeviceInfo) bool {
+	leftType, rightType := SharingConfigForDevice(left).NormalizedType(), SharingConfigForDevice(right).NormalizedType()
+	if leftType != "network" && leftType != "ipp" && leftType != "ipps" {
+		return false
+	}
+	if rightType != "network" && rightType != "ipp" && rightType != "ipps" {
+		return false
+	}
+	if strings.TrimSpace(left.Endpoint) == "" || strings.TrimSpace(right.Endpoint) == "" {
+		return false
+	}
+	_, leftError := config.PrinterBindingDigest(SharingConfigForDevice(left))
+	_, rightError := config.PrinterBindingDigest(SharingConfigForDevice(right))
+	return leftError != nil || rightError != nil
+}
+
 func mutateRegistry(registryPath string, discovered []DeviceInfo, completeSources map[string]bool, operatorTargetID string) ([]DeviceInfo, error) {
 	registryMu.Lock()
 	defer registryMu.Unlock()
@@ -635,6 +657,20 @@ func mutateRegistry(registryPath string, discovered []DeviceInfo, completeSource
 					// A hardware identity cannot silently rebind a logical queue.
 					// Retain its old ID and require explicit operator reconciliation.
 					existing[idx] = withRegistryIdentityCollision(prior, "same_hardware_different_network_binding")
+					continue
+				}
+				// v3: conflictingNetworkExecutionBinding returns false when a
+				// binding digest errors (protocol-unknown rows, e.g. SNMP rows,
+				// have no declared protocol to digest). Taking the continuity
+				// replacement below in that case let a replacement device at a
+				// recycled IP silently inherit the old row's registration and
+				// gateway identity. Uncomparable network bindings quarantine
+				// like any other conflict; an operator reconciles explicitly.
+				// This is deliberately narrower than changing the shared
+				// function: weak observations in the merge path may still be
+				// refined by a later explicit discovery.
+				if networkBindingUncomparable(prior, d) {
+					existing[idx] = withRegistryIdentityCollision(prior, "same_hardware_uncomparable_network_binding")
 					continue
 				}
 				d = preserveRegistryObservationEvidence(prior, d)

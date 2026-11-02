@@ -65,9 +65,5 @@ export function translateCount(locale: Locale, baseKey: string, count: number, v
   return translate(locale, baseKey as MessageKey, merged);
 }
 
-/** Escape hatch for strings that live outside the catalog (server error text). */
-export function isKnownKey(key: string): key is MessageKey {
-  return Object.prototype.hasOwnProperty.call(en, key);
-}
 
 export { DEFAULT_LOCALE };

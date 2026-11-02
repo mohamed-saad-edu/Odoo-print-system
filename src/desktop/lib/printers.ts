@@ -133,7 +133,7 @@ export function printerDisplayStatus(p: PrinterInfo, nowMs = Date.now()): string
   return effectivePrinterStatus(p, undefined, nowMs);
 }
 
-export function isLocalPrinter(p: PrinterInfo): boolean {
+function isLocalPrinter(p: PrinterInfo): boolean {
   return typeof p.localObservedAt === "number" && Number.isFinite(p.localObservedAt);
 }
 

@@ -187,6 +187,12 @@ func TestManualPrinterTypes(t *testing.T) {
 			// So we expect no error for registry
 			t.Fatalf("manual %s failed: %v", tc.ConnectionType, err)
 		}
+		// A named Windows spooler factory opens the real local queue and must fail closed
+		// when it is absent. Hosted Windows runners do not provision this synthetic queue;
+		// registry admission is covered above and real queue opening is an OS integration.
+		if tc.ConnectionType == "spooler" && runtime.GOOS == "windows" {
+			continue
+		}
 		// Verify factory behavior - now all types should create printer (usb via direct USB, ipp via IPP client)
 		_, err := New(pc)
 		switch tc.ConnectionType {
@@ -331,9 +337,24 @@ func TestSNMPParserAndProbe(t *testing.T) {
 			Version: gosnmp.Version2c,
 			Timeout: 2 * time.Second,
 		}
+		// The receive socket starts as the listen socket and is replaced
+		// after the first request by a connected socket bound to the same
+		// local port: a connected UDP client only accepts datagrams
+		// originating from the peer port it dialed, and sandboxed
+		// runtimes only permit sends from connected sockets, so neither
+		// an unconnected WriteTo nor a fresh dial-back (new source port)
+		// can ever be received. The first response is sacrificed; the
+		// client's retry is answered from the rebound socket.
+		conn := pc
+		rebound := false
+		defer func() {
+			if conn != pc {
+				_ = conn.Close()
+			}
+		}()
 		for {
-			_ = pc.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
-			n, clientAddr, err := pc.ReadFrom(buf)
+			_ = conn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
+			n, clientAddr, err := conn.ReadFrom(buf)
 			if err != nil {
 				select {
 				case <-stopServer:
@@ -345,6 +366,24 @@ func TestSNMPParserAndProbe(t *testing.T) {
 
 			req, err := dec.SnmpDecodePacket(buf[:n])
 			if err != nil {
+				continue
+			}
+			if !rebound {
+				peer, ok := clientAddr.(*net.UDPAddr)
+				if !ok {
+					continue
+				}
+				// Close first: the rebound socket must bind the same
+				// local port, which is still occupied until now. The
+				// client's retry arrives ~600ms later, long after the
+				// microsecond rebind window.
+				_ = pc.Close()
+				dialConn, derr := net.DialUDP("udp", &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: localAddr.Port}, peer)
+				if derr != nil {
+					continue
+				}
+				conn = dialConn
+				rebound = true
 				continue
 			}
 
@@ -374,7 +413,11 @@ func TestSNMPParserAndProbe(t *testing.T) {
 			s.SetRequestID(req.RequestID - 1)
 			respBytes, err := s.SnmpEncodePacket(gosnmp.GetResponse, vars, 0, 0)
 			if err == nil {
-				_, _ = pc.WriteTo(respBytes, clientAddr)
+				// Replies go out on the rebound connected socket, so
+				// they originate from the port the client dialed.
+				if c, ok := conn.(*net.UDPConn); ok {
+					_, _ = c.Write(respBytes)
+				}
 			}
 		}
 	}()

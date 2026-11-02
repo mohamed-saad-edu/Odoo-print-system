@@ -156,7 +156,9 @@ func TestCleanupTerminalOlderThanPurgesAcknowledgedHistoryAfter48Hours(t *testin
 
 	// Only fully acknowledged terminal rows (execution token retained, Gateway
 	// claim cleared) are eligible for time-based retention. old-unknown is
-	// removed too: 48h acknowledged history is beyond late-reconciliation.
+	// NOT removed: automatic retention never deletes unknown-outcome rows
+	// at any age (v3 rule) — only the operator purge, after physical
+	// reconciliation and Gateway acknowledgement, may remove that evidence.
 	for _, id := range []string{"old-success", "old-unknown", "recent-success", "active-old"} {
 		if id == "active-old" {
 			if err := q.Push(id, "printer-1", []byte("payload")); err != nil {
@@ -196,15 +198,15 @@ func TestCleanupTerminalOlderThanPurgesAcknowledgedHistoryAfter48Hours(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if deleted != 2 {
-		t.Fatalf("CleanupTerminalOlderThan deleted %d, want 2", deleted)
+	if deleted != 1 {
+		t.Fatalf("CleanupTerminalOlderThan deleted %d, want 1", deleted)
 	}
-	for _, id := range []string{"old-success", "old-unknown"} {
+	for _, id := range []string{"old-success"} {
 		if _, _, found, err := q.Get(id); err != nil || found {
 			t.Fatalf("old terminal job %s was not removed: found=%v err=%v", id, found, err)
 		}
 	}
-	for _, id := range []string{"recent-success", "active-old"} {
+	for _, id := range []string{"old-unknown", "recent-success", "active-old"} {
 		if _, _, found, err := q.Get(id); err != nil || !found {
 			t.Fatalf("job %s should remain: found=%v err=%v", id, found, err)
 		}

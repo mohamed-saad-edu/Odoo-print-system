@@ -32,7 +32,13 @@ export async function POST(req: Request) {
   } catch {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
-  const username = typeof body.username === "string" ? body.username.slice(0, 128) : "";
+  // B2: rate-limit on the full presented username. Truncating to 128 chars
+  // before reserveAuthAttempt (as before) let distinct long usernames share
+  // one account bucket — the same collision class the v3 accountKey hash
+  // fixed for customer login. The truncated value is still used for lookup
+  // and session email below, so session-claim length bounds are unchanged.
+  const rawUsername = typeof body.username === "string" ? body.username : "";
+  const username = rawUsername.slice(0, 128);
   const password = typeof body.password === "string" ? body.password : "";
   if (!username || !password || password.length > 4096) {
     return NextResponse.json({ error: "username and password required" }, { status: 400 });
@@ -45,7 +51,7 @@ export async function POST(req: Request) {
 
   let pre: Awaited<ReturnType<typeof reserveAuthAttempt>>;
   try {
-    pre = await reserveAuthAttempt(ip, username);
+    pre = await reserveAuthAttempt(ip, rawUsername);
     if (!pre.allowed) {
       logWarn("auth.login.rate_limited", { requestId, ip, retryAfterSec: pre.retryAfterSec });
       return tooMany(pre);
@@ -89,12 +95,6 @@ export async function POST(req: Request) {
     return setRateLimitHeaders(NextResponse.json({ error: INVALID }, { status: 401 }), pre);
   }
 
-  try {
-    await recordAuthSuccess(ip, username);
-  } catch (e) {
-    logWarn("auth.login.rate_limit_clear_failed", { requestId, error: e instanceof Error ? e.message : "unknown" });
-  }
-
   let sess;
   try {
     sess = await createManagerSession(
@@ -112,6 +112,12 @@ export async function POST(req: Request) {
     if (e instanceof AuthenticationChangedError) return setRateLimitHeaders(NextResponse.json({ error: INVALID }, { status: 401 }), pre);
     logError("auth.login.session_failed", { requestId, error: e instanceof Error ? e.message : "unknown" });
     return setRateLimitHeaders(NextResponse.json({ error: "Sign-in is temporarily unavailable. Try again in a moment." }, { status: 500 }), pre);
+  }
+
+  try {
+    await recordAuthSuccess(ip, rawUsername);
+  } catch (e) {
+    logWarn("auth.login.rate_limit_clear_failed", { requestId, error: e instanceof Error ? e.message : "unknown" });
   }
 
   logInfo("auth.login.success", { requestId, ip });

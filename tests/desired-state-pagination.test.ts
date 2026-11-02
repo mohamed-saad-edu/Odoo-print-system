@@ -47,9 +47,13 @@ describe("desired-state bounded query/response", () => {
     expect(await getDesiredPrinterPage("tenant-a", "agent-a", undefined, mocks.read)).toEqual({ items: [], nextCursor: null });
   });
 
-  it("rejects a corrupt oversize legacy row instead of falsely completing an empty snapshot", async () => {
-    mocks.read.mockResolvedValue([row("huge", { address: "x".repeat(DESIRED_STATE_PAGE_BYTES) })]);
-    await expect(getDesiredPrinterPage("tenant-a", "agent-a", undefined, mocks.read)).rejects.toThrow("byte limit");
+  it("returns a single corrupt oversize legacy row instead of failing the whole snapshot", async () => {
+    // v3: throwing on the first oversize row failed the agent's whole sync
+    // for one corrupt row; the page now returns that single row so sync
+    // progresses past it (cursor is null: no further rows in this page).
+    const huge = row("huge", { address: "x".repeat(DESIRED_STATE_PAGE_BYTES) });
+    mocks.read.mockResolvedValue([huge]);
+    await expect(getDesiredPrinterPage("tenant-a", "agent-a", undefined, mocks.read)).resolves.toEqual({ items: [huge], nextCursor: null });
   });
 
   it("returns scoped continuation evidence without caching", async () => {

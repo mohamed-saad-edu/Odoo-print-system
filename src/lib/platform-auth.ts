@@ -57,7 +57,7 @@ export class PlatformUnauthorizedError extends Error {
   }
 }
 
-export class PlatformForbiddenError extends Error {
+class PlatformForbiddenError extends Error {
   constructor(message = "Access restricted to verified Platform Owners") {
     super(message);
     this.name = "PlatformForbiddenError";
@@ -103,8 +103,9 @@ export async function requirePlatformReadAuthorityInTransaction(
   await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${claims.familyId}, 0))`);
   const passwordVersion = createHash("sha256").update(user.passwordHash, "utf8").digest("hex");
   // Both the refresh token AND the password-policy session must stay live
-  // until the caller's subsequent commercial SELECT commits. No five-minute
-  // password step-up: that requirement belongs to mutations only.
+  // until the caller's subsequent commercial SELECT commits. There is no
+  // password-freshness requirement on reads or on mutations: a live session
+  // (idle + absolute limits below) is sufficient.
   const live = await tx.execute(sql`
     SELECT r.id FROM refresh_tokens r
     JOIN platform_session_security s ON s.family_id = r.family_id AND s.user_id = r.user_id
@@ -165,7 +166,7 @@ export async function requirePlatformActorInTransaction(
             AND s.password_version = encode(sha256(convert_to(u.password_hash, 'UTF8')), 'hex') AND s.revoked_at IS NULL
             AND s.expires_at > clock_timestamp() AND s.last_seen_at > clock_timestamp() - interval '30 minutes'
             AND s.last_seen_at <= clock_timestamp()
-            AND s.password_verified_at > clock_timestamp() - interval '5 minutes' AND s.password_verified_at <= clock_timestamp()
+            AND s.password_verified_at <= clock_timestamp()
         )
       FOR SHARE
     `);
@@ -288,7 +289,7 @@ export async function validatePlatformOwner(req: Request): Promise<PlatformOwner
   if (!token) return null;
   const claims = verifyPlatformTokenSignature(token);
   const path = new URL(req.url).pathname;
-  const background = path === "/api/platform/auth/me" || path === "/api/platform/auth/refresh" || path === "/api/platform/auth/reauth";
+  const background = path === "/api/platform/auth/me" || path === "/api/platform/auth/refresh";
   return claims ? validatePlatformClaims(claims, !background) : null;
 }
 

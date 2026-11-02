@@ -7,8 +7,7 @@ import { hasTestDatabase, applyMigrations, truncateAll, seedFixture, insertQueue
 import { attachAgentWSS, claimAndPushJobToAgent } from "../src/server/ws";
 import { db } from "../src/db";
 import { claimJobForDelivery, markJobDelivered, releaseUndeliveredClaim, recordJobAck, MAX_DELIVERY_ATTEMPTS, MAX_AGENT_IN_FLIGHT_JOBS } from "../src/lib/job-delivery";
-import type { ClaimedJobRow } from "../src/lib/job-delivery";
-import { MAX_RETRIES, sweepPrintJobs } from "../src/lib/job-maintenance";
+import { sweepPrintJobs } from "../src/lib/job-maintenance";
 import { derivePhysicalOutcome } from "../src/lib/job-status";
 import { GET as agentJobsGET, PATCH as agentJobsPATCH } from "../src/app/api/agent/jobs/route";
 

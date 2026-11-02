@@ -11,7 +11,13 @@ import { fetchWithTimeout } from "../src/lib/fetch-timeout";
 const navigation = vi.hoisted(() => ({ replace: vi.fn(), searchParams: new URLSearchParams() }));
 vi.mock("next/navigation", () => ({ useRouter: () => navigation, useSearchParams: () => navigation.searchParams }));
 vi.mock("next/link", () => ({ default: ({ children, ...props }: Record<string, unknown>) => h("a", props, children as ReactNode) }));
-vi.mock("../src/lib/fetch-timeout", () => ({ fetchWithTimeout: vi.fn() }));
+// Team page loads and removals now go through fetchWithSessionRetry
+// (silent refresh + retry once) instead of plain fetchWithTimeout. One
+// shared mock keeps the existing call assertions (deletes(), URLs) intact;
+// the renewed-not-resent stub mirrors the real header check for fixture
+// responses, which never carry the renewal marker.
+const sharedFetch = vi.hoisted(() => vi.fn());
+vi.mock("../src/lib/fetch-timeout", () => ({ fetchWithTimeout: sharedFetch, fetchWithSessionRetry: sharedFetch, isSessionRenewedNotResent: (response: { headers?: { get: (name: string) => string | null } }) => { try { return response.headers?.get("X-Yaseir-Session-Renewed") === "1"; } catch { return false; } } }));
 vi.mock("../src/lib/session-config", () => ({ ensureCustomerSession: vi.fn(async () => ({ authenticated: true })) }));
 
 const member = { id: "member-one", userId: "member-one", name: "Demo member", email: "member@example.invalid", role: "admin", platformOwner: false, removableByCurrentOwner: true };

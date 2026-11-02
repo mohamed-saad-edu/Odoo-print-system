@@ -31,7 +31,7 @@ test("workspace Team UI uses a session with no new password prompt or role selec
   assert.match(page, /common\.nextPage/);
   assert.doesNotMatch(page, /updateRole\(|roleOptions\(|<Select/);
   assert.match(page, /\/api\/team\/invitations\?limit=/);
-  assert.match(page, /fetchWithTimeout/);
+  assert.match(page, /fetchWithSessionRetry/);
   assert.doesNotMatch(page, /verifyPlatformOwnerPassword|type="password"/);
 });
 test("DB indexes for current membership and historical invitations are preserved", () => {

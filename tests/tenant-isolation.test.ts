@@ -44,6 +44,8 @@ suite("Tenant Isolation Invariants (Negative Tests)", () => {
       body: JSON.stringify({
         printerId: a.printerId,
         documentType: "receipt",
+        // v3: keyless submissions are rejected 400 before tenant scoping, so this cross-tenant test must carry a key to reach the 404.
+        idempotencyKey: "tenant-b-to-a-1",
         destination: b.destination,
         payload: { type: "raw", protocol: "raw", encoding: "base64", data: "aGVsbG8=" },
       }),

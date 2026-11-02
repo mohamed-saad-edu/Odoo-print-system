@@ -7,7 +7,7 @@ import { nanoid } from "../../../../lib/nanoid";
 import { sendTransactionalEmail, appBaseUrl } from "../../../../lib/email";
 import { getServerLocale, makeT } from "../../../../i18n/server";
 import { hasBodyOverLimit } from "../../../../lib/request-limits";
-import { clientIpFrom, reserveAuthAttempt, setRateLimitHeaders } from "../../../../lib/auth-rate-limit";
+import { clientIpFrom, reserveScopedAuthAttempt, setRateLimitHeaders } from "../../../../lib/auth-rate-limit";
 import { logError } from "../../../../lib/log";
 import { findActiveInvitation } from "../../../../lib/invitation-join";
 import { emailAuthTokenTimes } from "../../../../lib/email-auth-token-policy";
@@ -37,9 +37,9 @@ export async function POST(req: Request) {
   }
 
   const ip = clientIpFrom(req);
-  let rate: Awaited<ReturnType<typeof reserveAuthAttempt>>;
+  let rate: Awaited<ReturnType<typeof reserveScopedAuthAttempt>>;
   try {
-    rate = await reserveAuthAttempt(ip, email);
+    rate = await reserveScopedAuthAttempt(ip, "resend-verification", email);
   } catch (error) {
     logError("auth.rate_limit.store_unavailable", { endpoint: "resend_verification", error: error instanceof Error ? error.message : "unknown" });
     return NextResponse.json(GENERIC, { status: 503 });

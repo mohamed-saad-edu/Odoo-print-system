@@ -42,10 +42,13 @@ type TopNavbarProps = {
 /**
  * Horizontal application bar.
  *
- * The console uses the sidebar shell; this bar remains the chrome for the
- * Platform control plane and any embedded/legacy surface. Items stay grouped
- * by section, the active route is announced with aria-current, and the mobile
- * menu is a real sheet with Escape + backdrop dismissal.
+ * NOTE: this component is currently unrendered. The Gateway console uses
+ * the AppShell sidebar shell and the Platform control plane uses
+ * PlatformSidebar + MobileAppBar; AppShell only re-exports this component
+ * for import compatibility. Keep it working for any embedded/legacy surface
+ * that renders it. Items stay grouped by section, the active route is
+ * announced with aria-current, and the mobile menu is a real sheet with
+ * Escape + backdrop dismissal.
  */
 export function TopNavbar({
   items,

@@ -11,7 +11,9 @@ vi.mock("next/server", async importActual => ({
 }));
 vi.mock("../src/db", () => ({ db: { query: { users: { findFirst: mocks.lookup } }, transaction: mocks.transaction } }));
 vi.mock("../src/lib/auth-rate-limit", () => ({ clientIpFrom: () => "198.51.100.10",
-  reserveAuthAttempt: async () => ({ allowed: true }), setRateLimitHeaders: (response: Response) => response }));
+  reserveAuthAttempt: async () => ({ allowed: true }),
+  // v1/v3: forgot-password now reserves the scoped bucket, not the shared login bucket.
+  reserveScopedAuthAttempt: async () => ({ allowed: true }), setRateLimitHeaders: (response: Response) => response }));
 vi.mock("../src/lib/email", () => ({ appBaseUrl: () => "https://gateway.test", sendTransactionalEmail: mocks.email }));
 vi.mock("../src/lib/log", () => ({ logError: mocks.log }));
 vi.mock("../src/i18n/server", () => ({ getServerLocale: async () => "en", makeT: () => (key: string) => key }));

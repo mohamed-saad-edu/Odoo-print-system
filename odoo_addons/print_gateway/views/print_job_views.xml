@@ -12,8 +12,9 @@
 
                 <filter name="filter_attention" string="Needs Attention - Print May Have Completed" domain="['|', ('status', '=', 'partial'), ('status', '=', 'unknown')]"/>
                 <filter name="filter_failed" string="Failed" domain="[('status', '=', 'failed')]"/>
+                <filter name="filter_canceled" string="Canceled" domain="[('status', '=', 'canceled')]"/>
                 <filter name="filter_active" string="In Progress" domain="[('status', 'in', ['queued', 'claimed', 'printing', 'submitted'])]"/>
-                <filter name="filter_success" string="Sent to printer" domain="[('status', '=', 'success')]"/>
+                <filter name="filter_success" string="Sent for printing" domain="[('status', '=', 'success')]"/>
 
                 <separator/>
                 <group>
@@ -56,7 +57,7 @@
                 <header>
                     <button name="action_force_reprint" type="object" string="Reprint" class="btn-warning" groups="base.group_system"
                             confirm="Reprint this document only after checking the printer. This creates a new print attempt."
-                            invisible="status not in ('partial', 'unknown', 'failed') or (status == 'failed' and physical_outcome != 'unknown')"/>
+                            invisible="status not in ('partial', 'unknown', 'failed', 'canceled') or (status == 'failed' and physical_outcome != 'unknown') or (status == 'canceled' and physical_outcome != 'unknown')"/>
                     <button name="action_retry" type="object" string="Retry Print" class="oe_highlight" groups="base.group_system" invisible="status != 'failed' or physical_outcome != 'not_printed'"/>
                     <button name="action_sync_status" type="object" string="Refresh" groups="base.group_system" invisible="not gateway_job_id"/>
                     <field name="status" invisible="1"/>
@@ -95,7 +96,8 @@
                             <field name="physical_outcome" readonly="1" invisible="output_medium == 'file'" widget="badge" decoration-danger="physical_outcome == 'not_printed'" decoration-warning="physical_outcome == 'unknown'" decoration-success="physical_outcome == 'printed'"/>
                         </group>
                         <group string="Delivery details" groups="base.group_system">
-                            <field name="gateway_job_id" readonly="1"/>
+                            <field name="gateway_job_id" readonly="1" class="o_pg_mono"/>
+                            <field name="gateway_submission_state" readonly="1" invisible="output_medium == 'file' or not gateway_submission_state"/>
                             <field name="attempts" readonly="1"/>
                             <field name="reprint_attempt_count" readonly="1" invisible="reprint_attempt_count == 0"/>
                             <field name="next_retry_at" readonly="1"/>

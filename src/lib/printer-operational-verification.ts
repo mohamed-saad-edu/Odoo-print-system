@@ -4,7 +4,7 @@ import { isExactPrinterId } from "./exact-printer-id";
 
 export const PRINTER_VERIFICATION_MAX_AGE_SECONDS = contract.maxAgeSeconds;
 export const PRINTER_VERIFICATION_MAX_FUTURE_SKEW_SECONDS = contract.maxFutureSkewSeconds;
-export interface PrinterOperationalVerification {
+interface PrinterOperationalVerification {
   version: 1;
   verified_at: string;
   printer_id: string;

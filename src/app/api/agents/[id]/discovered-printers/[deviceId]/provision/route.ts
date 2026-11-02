@@ -10,7 +10,8 @@ import { canonicalize } from "../../../../../../../lib/canonicalize";
 import { discoveryIppUriMatchesEndpoint, validateConnectionConfig } from "../../../../../../../lib/printer-model";
 import { enforceTenantResourceEntitlement, TenantEntitlementError, isTenantBillingError } from "../../../../../../../lib/entitlements";
 import { requireActiveTenantInTransaction, TenantSuspendedError, TenantDeletedError } from "../../../../../../../lib/tenant-guard";
-import { logError } from "../../../../../../../lib/log";
+import { logError, requestIdFrom } from "../../../../../../../lib/log";
+import { writeAuditEvent } from "../../../../../../../lib/audit";
 
 import { isVirtualPrinterRecord } from "../../../../../../../lib/printer-virtual";
 import { matchingPhysicalPrinter, physicalPrinterIdentityKey, samePrinterProtocol } from "../../../../../../../lib/physical-printer-identity";
@@ -315,5 +316,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     return NextResponse.json({ error: `INVALID_PRINTER_ENDPOINT: ${result.error}`, code: "INVALID_PRINTER_ENDPOINT" }, { status: 422 });
   }
   if (result.kind === "already") return NextResponse.json({ printerId: result.printerId, already: true });
+  // WP-A (S3): audit only a newly created printer, reusing the existing
+  // printer.registered action; an idempotent replay creates nothing and
+  // writes nothing. An audit failure must never fail the provisioning.
+  await writeAuditEvent({ tenantId: claims.tenantId, actorType: "user", actorId: claims.userId,
+    action: "printer.registered", resourceType: "printer", resourceId: result.printerId,
+    requestId: requestIdFrom(req), metadata: { source: "discovery", agentId, deviceId } }).catch((error) =>
+    logError("audit_write_failed", { error: error instanceof Error ? error.message : "unknown" }));
   return NextResponse.json({ printerId: result.printerId, already: false }, { status: 201 });
 }

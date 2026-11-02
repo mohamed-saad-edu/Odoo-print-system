@@ -44,7 +44,7 @@ def test_workspace_team_directory_has_no_role_selector_or_mutation_menu():
     assert "updateRole(" not in page
     assert "/api/team/invitations?limit=" in page
     assert "verifyPlatformOwnerPassword" not in page
-    assert 'fetchWithTimeout("/api/team/invitations"' in page
+    assert "fetchWithSessionRetry" in page
     assert 'type="password"' not in page
     assert "<Select" not in page
     platform = (ROOT / "src/app/platform/tenants/[id]/page.tsx").read_text(encoding="utf-8")

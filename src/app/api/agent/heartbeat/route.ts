@@ -1,7 +1,7 @@
 import { operationalVerificationProjection } from "../../../../lib/printer-operational-verification";
 import { parseDbTimeMs } from "../../../../lib/database-timestamp";
 import { db } from "../../../../db";
-import { agents, printJobs, printers } from "../../../../db/schema";
+import { agents, printers } from "../../../../db/schema";
 import { validateAgent } from "../../../../lib/agent-auth";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { NextResponse } from "next/server";

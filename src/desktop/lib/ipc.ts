@@ -444,7 +444,7 @@ function networkConfigFromEndpoint(endpoint: string, protocol = ""): { ip: strin
   return { ip, port };
 }
 
-export function parseUsbIdentifier(value: string): number {
+function parseUsbIdentifier(value: string): number {
   const raw = value.trim();
   if (!/^(?:[0-9]+|0x[0-9a-f]{1,4})$/i.test(raw)) throw new Error("USB identifier must be decimal or 0x-prefixed hexadecimal");
   const parsed = Number(raw);
@@ -506,7 +506,7 @@ export async function registerGatewayPrinter(
   return JSON.parse(body) as PrinterInfo;
 }
 
-export interface DiscoverResult {
+interface DiscoverResult {
   printers: PrinterInfo[];
   errors: string[];
 }
@@ -589,7 +589,7 @@ export interface RegisterPrinterRequest {
   outputProfileId?: string;
 }
 
-export interface AutostartStatus {
+interface AutostartStatus {
   enabled: boolean;
 }
 
@@ -644,7 +644,7 @@ export function onTrayRestartAgent(handler: () => void): Promise<UnlistenFn> {
   return listen("tray:restart_agent", handler);
 }
 
-/** Tray menu navigation event ("#gateway" | "#agent" | "#pair" | "#settings"). */
+/** Tray menu navigation event ("#dashboard" | "#settings"). */
 export function onTrayNavigate(
   handler: (anchor: string) => void
 ): Promise<UnlistenFn> {

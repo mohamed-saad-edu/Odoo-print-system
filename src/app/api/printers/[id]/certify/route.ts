@@ -9,6 +9,7 @@ import { and, eq } from "drizzle-orm";
 import { recordJobEvent } from "../../../../../lib/job-timeline";
 import { runWithCorrelation, generateRequestId, generateAttemptId } from "../../../../../server/correlation";
 import { requestIdFrom, logError, logWarn } from "../../../../../lib/log";
+import { writeAuditEvent } from "../../../../../lib/audit";
 import { getPrinterCapabilityMatrixInTransaction } from "../../../../../lib/printer-health";
 import { requireConsoleReadAuthorityInTransaction } from "../../../../../lib/console-read-authority";
 import { ManagerMutationAuthorityChangedError } from "../../../../../lib/manager-mutation-authorization";
@@ -437,6 +438,17 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         requestId,
         metadata: { certification: true, steps, isReused },
       }).catch((error: unknown) => logWarn("print.certification.event_persist_failed", { requestId, printerId, jobId, error: error instanceof Error ? error.message : "unknown" }));
+    }
+
+    // WP-A (S3): audit the certification job submission once — a job
+    // actually queued (never an idempotent replay, never a failed queue).
+    // Certification never auto-certifies, so this records the request, not
+    // a certification outcome. An audit failure must never fail the request.
+    if (jobId && !isReused) {
+      await writeAuditEvent({ tenantId, actorType: "user", actorId: claims.userId,
+        action: "printer.certification.requested", resourceType: "printer", resourceId: printerId,
+        requestId, metadata: { jobId } }).catch((error) =>
+        logWarn("audit.certification_persist_failed", { requestId, printerId, jobId, error: error instanceof Error ? error.message : "unknown" }));
     }
 
     return NextResponse.json(

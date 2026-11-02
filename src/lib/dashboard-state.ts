@@ -29,7 +29,7 @@ export const DASHBOARD_PRINTER_FILTER_STATUSES = [
   "retired",
 ] as const;
 
-export type DashboardPrinterFilterStatus = (typeof DASHBOARD_PRINTER_FILTER_STATUSES)[number];
+type DashboardPrinterFilterStatus = (typeof DASHBOARD_PRINTER_FILTER_STATUSES)[number];
 
 export type DashboardFleetOptions = {
   agentOffset?: number;

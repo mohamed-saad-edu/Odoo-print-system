@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { clearPlatformStatsCache, getCachedPlatformStats, setCachedPlatformStats } from "../src/lib/platform-stats-cache";
+import { describe, it, expect, beforeEach } from "vitest";
+import { clearPlatformStatsCache } from "../src/lib/platform-stats-cache";
 
 describe("AUDIT-07: Platform Stats Optimization and In-Memory Caching", () => {
   beforeEach(() => {

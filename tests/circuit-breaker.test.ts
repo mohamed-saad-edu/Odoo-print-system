@@ -16,10 +16,13 @@ describe("CircuitBreaker", () => {
   });
 
   it("allows exactly one recovery probe while half-open", async () => {
-    const breaker = new CircuitBreaker({ failureThreshold: 1, resetTimeoutMs: 0, name: "test" });
+    // v3: resetTimeoutMs must be > 0 (zero made every state read half-open).
+    // Use a small positive timeout and wait past it to reach half-open.
+    const breaker = new CircuitBreaker({ failureThreshold: 1, resetTimeoutMs: 10, name: "test" });
     await expect(breaker.execute(async () => {
       throw new Error("downstream failed");
     })).rejects.toThrow("downstream failed");
+    await new Promise((resolve) => setTimeout(resolve, 25));
     expect(breaker.getState()).toBe("half-open");
 
     let release!: () => void;

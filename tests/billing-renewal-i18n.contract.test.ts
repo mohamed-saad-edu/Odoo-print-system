@@ -35,7 +35,9 @@ describe("billing renewal localization contract", () => {
     expect(source).toContain("BillingActions");
     expect(source).not.toContain('redirect("/platform/subscriptions")');
     const platform = readFileSync("src/components/platform/SubscriptionEditor.tsx", "utf8");
-    expect(platform).toContain("a(v)");
+    // WP-G: updated for WP-B+C+F call-site unification (a() was literally t("v4.admin."+key));
+    // the dynamic option labels now resolve through t() with the same catalogue keys.
+    expect(platform).toContain("t(`v4.admin.${v}` as MessageKey)");
     const calendarDates = readFileSync("src/lib/manual-calendar-date.ts", "utf8");
     expect(calendarDates).toContain("intlLocale(locale)");
     expect(calendarDates).toMatch(/timeZone:\s*['"]UTC['"]/);

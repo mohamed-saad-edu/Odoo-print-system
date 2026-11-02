@@ -291,11 +291,19 @@ suite("print idempotency (Odoo → Gateway)", () => {
   });
 
   it("v1 still accepts a submission without a key and reports the deduplication gap", async () => {
-    const body = jobBody("unused");
-    delete (body as Record<string, unknown>).idempotencyKey;
-    const res = await create(body);
-    expect(res.status).toBe(201);
-    expect(res.headers.get("X-Idempotency-Warning")).toContain("missing-key");
+    // v3: keyless v1 is rejected by default (400 IDEMPOTENCY_KEY_REQUIRED); this test exercises only the
+    // documented opt-in path (YASEIR_ALLOW_KEYLESS_PRINT_JOBS=1 + non-production NODE_ENV), following the
+    // file's existing vi.stubEnv pattern for YASEIR_REQUIRE_IDEMPOTENCY_KEY.
+    vi.stubEnv("YASEIR_ALLOW_KEYLESS_PRINT_JOBS", "1");
+    try {
+      const body = jobBody("unused");
+      delete (body as Record<string, unknown>).idempotencyKey;
+      const res = await create(body);
+      expect(res.status).toBe(201);
+      expect(res.headers.get("X-Idempotency-Warning")).toContain("missing-key");
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it("v1 rejects a submission without a key when the migration switch is on", async () => {

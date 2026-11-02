@@ -6,7 +6,7 @@ import { getAgentAvailability } from "./agent-availability";
 
 export { validatePayloadForPrinter, type CapabilityCheckResult, type PayloadSpec } from "./printer-capability";
 
-export interface PrinterAvailability extends PrinterLike, OperationalPrinterState {
+interface PrinterAvailability extends PrinterLike, OperationalPrinterState {
   lifecycle: string | null;
   status: string | null;
   inventoryPresent?: boolean | null;

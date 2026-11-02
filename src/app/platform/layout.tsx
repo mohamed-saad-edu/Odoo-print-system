@@ -1,7 +1,8 @@
 "use client";
 
 import { fetchWithTimeout } from "../../lib/fetch-timeout";
-import { useEffect, useState } from "react";
+import { broadcastSessionSync, subscribeSessionSync, type SessionSyncEventType } from "../../lib/session-sync";
+import { useEffect, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { Activity, Building2, CreditCard, Shield, Printer, ListChecks } from "lucide-react";
 import type { TopNavItem } from "../../components/TopNavbar";
@@ -27,6 +28,11 @@ export default function PlatformLayout({ children }: { children: React.ReactNode
   const [loggingOut, setLoggingOut] = useState(false);
   const [logoutError, setLogoutError] = useState<string | null>(null);
   const [checkTick, setCheckTick] = useState(0);
+  // Same shape as the workspace shell's remote sign-out: set once when
+  // another tab reports a platform logout/revocation, renders the message,
+  // and drives the delayed redirect. Never re-broadcast from here.
+  const [remoteSignOut, setRemoteSignOut] = useState<{ type: SessionSyncEventType; next: string } | null>(null);
+  const remoteSignOutRef = useRef(false);
 
   const isLoginPage = pathname === "/platform/login";
 
@@ -53,40 +59,70 @@ export default function PlatformLayout({ children }: { children: React.ReactNode
     }
 
     async function refreshSession() {
-      // Single flight: one recovery at a time (C062).
+      // A remote sign-out already owns this tab's exit (interstitial +
+      // delayed redirect); no local round may preempt it with an instant one.
+      if (remoteSignOutRef.current) return Promise.resolve();
+      // Single flight: one recovery at a time per tab (C062), and — where
+      // Web Locks exist — one recovery at a time across tabs, mirroring
+      // the workspace ensure path ("yaseir:customer-session"). Without the
+      // lock, two tabs presenting the same refresh token in parallel can
+      // race rotation; serialized, the second round still presents its own
+      // token and the server's 5-second grace/revocation policy decides.
       if (flight) return flight;
       flight = (async () => {
-        try {
-          const refresh = await fetchWithTimeout("/api/platform/auth/refresh", {
-            method: "POST",
-            credentials: "include",
-            cache: "no-store",
-          });
-          if (cancelled) return;
-          if (refresh.status === 401) {
-            // Authoritative: the family is invalid/revoked.
-            setAuthenticated(false);
-            redirectToLogin();
-            return;
-          }
-          if (!refresh.ok) {
+        const refreshOnce = async () => {
+          try {
+            const refresh = await fetchWithTimeout("/api/platform/auth/refresh", {
+              method: "POST",
+              credentials: "include",
+              cache: "no-store",
+            });
+            if (cancelled) return;
+            if (refresh.status === 401) {
+              // Authoritative: the family is invalid/revoked.
+              setAuthenticated(false);
+              if (!remoteSignOutRef.current) redirectToLogin();
+              return;
+            }
+            if (!refresh.ok) {
+              setCheckFailed(true);
+              // Transient: keep the session, retry soon — never sign out on a
+              // blip, and never leave observation to a fixed timer (C062).
+              if (timer) clearTimeout(timer);
+              timer = setTimeout(() => {
+                void refreshSession();
+              }, 30_000);
+              return;
+            }
+            const data = await refresh.json().catch(() => null) as { expiresAt?: unknown } | null;
+            if (cancelled) return;
+            setAuthenticated(true);
+            setCheckFailed(false);
+            // A successful revalidation in this tab proves the family alive
+            // to siblings; they only clear stale error UI on this event,
+            // never refresh because of it.
+            broadcastSessionSync("session-renewed", "platform");
+            const expMs = typeof data?.expiresAt === "string" ? Date.parse(data.expiresAt) : NaN;
+            scheduleRefresh(Number.isFinite(expMs) ? expMs : undefined);
+          } catch {
+            // Transport failure: retry, don't redirect (C062).
+            if (cancelled) return;
             setCheckFailed(true);
-            // Transient: keep the session, retry soon — never sign out on a
-            // blip, and never leave observation to a fixed timer (C062).
             if (timer) clearTimeout(timer);
             timer = setTimeout(() => {
               void refreshSession();
             }, 30_000);
-            return;
           }
-          const data = await refresh.json().catch(() => null) as { expiresAt?: unknown } | null;
-          if (cancelled) return;
-          setAuthenticated(true);
-          setCheckFailed(false);
-          const expMs = typeof data?.expiresAt === "string" ? Date.parse(data.expiresAt) : NaN;
-          scheduleRefresh(Number.isFinite(expMs) ? expMs : undefined);
+        };
+        try {
+          if (typeof navigator !== "undefined" && navigator.locks) {
+            await navigator.locks.request("yaseir:platform-session", () => refreshOnce());
+          } else {
+            await refreshOnce();
+          }
         } catch {
-          // Transport failure: retry, don't redirect (C062).
+          // A lock failure (or an unexpected throw inside the round) is
+          // transient, never a verdict: keep the session, retry soon.
           if (cancelled) return;
           setCheckFailed(true);
           if (timer) clearTimeout(timer);
@@ -101,6 +137,7 @@ export default function PlatformLayout({ children }: { children: React.ReactNode
     }
 
     async function initialCheck() {
+      if (remoteSignOutRef.current) return;
       try {
         const res = await fetchWithTimeout("/api/platform/auth/me", { credentials: "include", cache: "no-store" });
         if (cancelled) return;
@@ -142,12 +179,49 @@ export default function PlatformLayout({ children }: { children: React.ReactNode
     }
     document.addEventListener("visibilitychange", onVisible);
 
+    // Focus revalidation mirrors visibility: a window refocus that does not
+    // change visibility (OS/app switching, embed hosts) must still
+    // revalidate instead of waiting for the next timer tick.
+    function onFocus() {
+      void initialCheck();
+    }
+    window.addEventListener("focus", onFocus);
+
     return () => {
       cancelled = true;
       if (timer) clearTimeout(timer);
       document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", onFocus);
     };
   }, [isLoginPage, pathname, router, checkTick]);
+
+  // Cross-tab session sync (platform scope only — workspace events never
+  // reach this handler). A renewed event only clears a stale check-failed
+  // state; it never triggers a refresh. A logged-out/revoked event shows
+  // the sign-out message and follows to login shortly. Never broadcast
+  // from this handler, so no echo loop is possible. The login page itself
+  // does not subscribe: it has no session to lose.
+  useEffect(() => {
+    if (isLoginPage) return;
+    return subscribeSessionSync("platform", (event) => {
+      if (event.type === "session-renewed") {
+        setCheckFailed(false);
+        return;
+      }
+      if (remoteSignOutRef.current) return;
+      remoteSignOutRef.current = true;
+      setAuthenticated(false);
+      setRemoteSignOut({ type: event.type, next: pathname });
+    });
+  }, [isLoginPage, pathname]);
+
+  useEffect(() => {
+    if (!remoteSignOut) return;
+    const timer = setTimeout(() => {
+      router.replace(`/platform/login?next=${encodeURIComponent(remoteSignOut.next)}`);
+    }, 5000);
+    return () => clearTimeout(timer);
+  }, [remoteSignOut, router]);
 
   if (isLoginPage) return <>{children}</>;
 
@@ -165,8 +239,33 @@ export default function PlatformLayout({ children }: { children: React.ReactNode
       setLoggingOut(false);
       return;
     }
+    // Successful local logout only: sibling platform tabs follow to login
+    // instead of discovering a dead family on their next check.
+    broadcastSessionSync("session-logged-out", "platform");
     router.push("/");
     router.refresh();
+  }
+
+  if (remoteSignOut) {
+    return (
+      <div className="min-h-screen bg-app text-ink">
+        <PageContainer className="pt-10">
+          <div className="mx-auto max-w-lg">
+            <Callout tone="warn" title={t(remoteSignOut.type === "session-revoked" ? "workspaceSecurity.sessionExpiredTitle" : "nav.signOut")}>
+              {t(remoteSignOut.type === "session-logged-out" ? "workspaceSecurity.signedOutElsewhere" : "errors.sessionExpired")}
+            </Callout>
+            <p className="mt-4 text-sm">
+              <a
+                href={`/platform/login?next=${encodeURIComponent(remoteSignOut.next)}`}
+                className="font-semibold text-brand underline underline-offset-4"
+              >
+                {t("workspaceSecurity.signIn")}
+              </a>
+            </p>
+          </div>
+        </PageContainer>
+      </div>
+    );
   }
 
   if (authenticated === null || authenticated === false) {

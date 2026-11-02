@@ -11,8 +11,8 @@ export { observeAuthorizationDenials, recordAuthorizationDenial, flushAuthorizat
  * also enforces this same 8 MiB ceiling at the edge.
  */
 export const MAX_API_BODY_BYTES = 8 * 1024 * 1024;
-export const MAX_AUTHENTICATED_CONCURRENT_BYTES = 32 * 1024 * 1024;
-export const MAX_UNAUTHENTICATED_CONCURRENT_BYTES = 8 * 1024 * 1024;
+const MAX_AUTHENTICATED_CONCURRENT_BYTES = 32 * 1024 * 1024;
+const MAX_UNAUTHENTICATED_CONCURRENT_BYTES = 8 * 1024 * 1024;
 export const MAX_CONCURRENT_CHUNKED_BYTES = MAX_AUTHENTICATED_CONCURRENT_BYTES;
 
 /**
@@ -44,7 +44,7 @@ const SESSION_COOKIE_RE = /(?:^|;\s*)(?:(?:__Host-)?(?:mgr_session|cust_session|
 let reservedAuthBytes = 0;
 let reservedUnauthBytes = 0;
 
-export interface ApiBodyGuardOptions {
+interface ApiBodyGuardOptions {
   maxBytes?: number;
 }
 
@@ -81,7 +81,11 @@ function rejectRequest(req: IncomingMessage, res: ServerResponse, status: number
   res.setHeader("content-type", "application/json; charset=utf-8");
   res.setHeader("connection", "close");
 
-  const payload = JSON.stringify({ success: false, error: code });
+  // `code` mirrors `error` so guard rejections match the routes' `{ error, code }`
+  // shape and client `code` lookups (e.g. CSRF_VALIDATION_FAILED) no longer
+  // miss. Additive only: `success` and `error` are unchanged, as are the
+  // status, guard conditions and fail-closed behaviour at every call site.
+  const payload = JSON.stringify({ success: false, error: code, code });
   let finalized = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let drained = 0;
@@ -303,7 +307,7 @@ function release(bytes: number, authenticated: boolean): void {
  * exists so the reservation lifecycle is explicit and greppable, and so
  * tests/edge proxies can reconcile the budget.
  */
-export function releaseChunkedBody(bytes: number, authenticated = true): void {
+function releaseChunkedBody(bytes: number, authenticated = true): void {
   release(bytes, authenticated);
 }
 
@@ -358,6 +362,17 @@ export async function guardApiRequest(
 
   const rawLength = req.headers["content-length"];
   const transferEncoding = req.headers["transfer-encoding"];
+
+  // v3: previously only a missing Content-Length triggered the 411. If a
+  // parser preserves a small Content-Length alongside Transfer-Encoding:
+  // chunked, the chunked stream bypassed the size check and the concurrency
+  // reservation. Any transfer-encoded mutating request is rejected now,
+  // regardless of Content-Length (Node/llhttp behaviour for the both-present
+  // combination is not relied upon either way).
+  if (transferEncoding !== undefined) {
+    rejectRequest(req, res, 411, "CONTENT_LENGTH_REQUIRED");
+    return null;
+  }
 
   if (rawLength === undefined) {
     // No Content-Length and no Transfer-Encoding means there is no declared

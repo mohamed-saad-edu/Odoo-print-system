@@ -39,7 +39,14 @@ function component(file, fetch, session = async () => ({ authenticated: true }),
       useRouter: () => ({ replace: value => redirects.push(value), push() {}, refresh() {} }),
       useSearchParams: () => new URLSearchParams(options.search ?? ""),
     };
-    if (name.endsWith("/fetch-timeout")) return { fetchWithTimeout: fetch };
+    // Workspace pages now route through fetchWithSessionRetry (silent
+    // refresh + retry once) and the platform layout subscribes to
+    // session-sync; both resolve to the harness fetch / no-op stubs here.
+    // The wrapper's own refresh decisions are covered by
+    // tests/session-renewal-sync.node.test.mjs, so component assertions on
+    // the fixture fetch calls are unchanged.
+    if (name.endsWith("/fetch-timeout")) return { fetchWithTimeout: fetch, fetchWithSessionRetry: fetch, isSessionRenewedNotResent: response => { try { return response.headers?.get("X-Yaseir-Session-Renewed") === "1"; } catch { return false; } } };
+    if (name.endsWith("/session-sync")) return { subscribeSessionSync: () => () => undefined, broadcastSessionSync: () => undefined };
     if (name.endsWith("/session-config")) return { ensureCustomerSession: session };
     if (name.endsWith("/i18n/react")) return { useI18n: () => ({ t: value => value, tc: value => value, formatNumber: String, formatDate: String, formatDateTime: String }) };
     if (name.endsWith("/api-error-keys")) return { codeMessageKey: () => undefined, apiMessageKey: () => undefined };
@@ -63,7 +70,7 @@ function component(file, fetch, session = async () => ({ authenticated: true }),
     callback => { timers.add(callback); return callback; },
     callback => timers.delete(callback),
     { addEventListener() {}, removeEventListener() {}, visibilityState: "visible" },
-    { location: { origin: "https://gateway.test", search: options.search ?? "", hash: options.hash ?? "" }, matchMedia: options.matchMedia },
+    { location: { origin: "https://gateway.test", search: options.search ?? "", hash: options.hash ?? "" }, matchMedia: options.matchMedia, addEventListener() {}, removeEventListener() {} },
   );
   const harness = { states, effects, callbacks, refs, timers, redirects, tree: null, render() {
     stateCursor = 0; refCursor = 0;
@@ -82,20 +89,16 @@ function find(tree, predicate) {
   return predicate(tree) ? tree : find(tree.props?.children, predicate);
 }
 
-test("workspace confirmation remains reachable while profile settings are pending or unavailable", async () => {
+test("workspace session inventory remains reachable while profile settings are pending or unavailable", async () => {
   const settings = deferred();
   const harness = component("src/app/settings/page.tsx", async url => {
     assert.equal(url, "/api/settings");
     return settings.promise;
   });
   const cleanup = harness.effects[0]();
-  assert.ok(find(harness.tree, node => node.type === "WorkspaceSecurity"),
-    "password confirmation must mount independently of profile settings loading");
   assert.ok(find(harness.tree, node => node.type === "SessionInventory"), "session inventory must be independent of profile loading");
   settings.resolve({ ok: false, status: 401 });
   await flush(); harness.render();
-  assert.ok(find(harness.tree, node => node.type === "WorkspaceSecurity"),
-    "supported env-manager sessions must retain their confirmation card after profile settings401");
   assert.ok(find(harness.tree, node => node.type === "SessionInventory"));
   assert.deepEqual(harness.redirects, ["/login?next=%2Fsettings"]);
   cleanup();

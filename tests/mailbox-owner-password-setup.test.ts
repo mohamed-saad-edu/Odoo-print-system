@@ -23,7 +23,9 @@ const compile = (query: SQL) => dialect.sqlToQuery(query);
 const query = {
   users: { findFirst: async () => ({ ...state.user }) },
   tenants: { findFirst: async () => state.tenants[0] },
-  tenantUsers: { findFirst: async () => state.memberships[0] },
+  // v3 WP3 B2-03: reset-password mints the setup session only when exactly
+  // one membership exists, via findMany (not the old single findFirst).
+  tenantUsers: { findFirst: async () => state.memberships[0], findMany: async () => state.memberships },
   emailVerificationTokens: { findFirst: async ({ where }: { where: SQL }) => state.proofs.find(row => row.tokenHash === compile(where).params[0] && !row.consumedAt && row.expiresAt > new Date()) },
   passwordResetTokens: { findFirst: async ({ where }: { where: SQL }) => state.resets.find(row => row.tokenHash === compile(where).params[0] && !row.consumedAt && row.expiresAt > new Date()) },
 };
@@ -87,7 +89,7 @@ vi.mock("../src/db", () => ({ db: {
 vi.mock("../src/lib/auth-rate-limit", () => ({
   clientIpFrom: () => "198.51.100.24",
   reserveAuthAttempt: async () => ({ allowed: true }),
-  recordAuthSuccess: async () => {}, setRateLimitHeaders: (response: Response) => response,
+  recordAuthSuccess: async () => {}, refundAuthReservation: async () => {}, setRateLimitHeaders: (response: Response) => response,
 }));
 vi.mock("../src/lib/audit", () => ({ writeAuditEvent: async () => {} }));
 

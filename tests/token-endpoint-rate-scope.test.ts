@@ -19,9 +19,10 @@ import { POST as resetPassword } from "../src/app/api/auth/reset-password/route"
 import { POST as acceptInvitation } from "../src/app/api/team/invitations/accept/route";
 
 const endpoints = [
-  ["verify-email-token", verifyEmail],
-  ["reset-password-token", resetPassword],
-  ["invitation-token", acceptInvitation],
+  ["verify-email-token", verifyEmail, "verify-email"],
+  ["reset-password-token", resetPassword, "reset-password"],
+  // Identity prefix stays "invitation-token"; the scope arg is "invitation-accept".
+  ["invitation-token", acceptInvitation, "invitation-accept"],
 ] as const;
 
 function request(token: string, ip?: string) {
@@ -35,27 +36,27 @@ function request(token: string, ip?: string) {
 describe("token-action throttles never create one global endpoint lockout", () => {
   beforeEach(() => limit.mockClear());
 
-  it.each(endpoints)("%s keeps source guessing bounded without blocking another source", async (prefix, post) => {
+  it.each(endpoints)("%s keeps source guessing bounded without blocking another source", async (prefix, post, scope) => {
     expect((await post(request("first-opaque-token", "198.51.100.10"))).status).toBe(400);
     expect((await post(request("second-opaque-token", "198.51.100.10"))).status).toBe(400);
     expect((await post(request("first-opaque-token", "198.51.100.11"))).status).toBe(400);
     expect(limit.mock.calls).toEqual([
-      ["198.51.100.10", `${prefix}:198.51.100.10`],
-      ["198.51.100.10", `${prefix}:198.51.100.10`],
-      ["198.51.100.11", `${prefix}:198.51.100.11`],
+      ["198.51.100.10", `${prefix}:198.51.100.10`, scope],
+      ["198.51.100.10", `${prefix}:198.51.100.10`, scope],
+      ["198.51.100.11", `${prefix}:198.51.100.11`, scope],
     ]);
   });
 
-  it.each(endpoints)("%s fences one opaque token when source is unknown", async (prefix, post) => {
+  it.each(endpoints)("%s fences one opaque token when source is unknown", async (prefix, post, scope) => {
     await post(request("first-opaque-token"));
     await post(request("first-opaque-token"));
     await post(request("second-opaque-token"));
     const first = await hashToken("first-opaque-token");
     const second = await hashToken("second-opaque-token");
     expect(limit.mock.calls).toEqual([
-      ["unknown", `${prefix}:${first}`],
-      ["unknown", `${prefix}:${first}`],
-      ["unknown", `${prefix}:${second}`],
+      ["unknown", `${prefix}:${first}`, scope],
+      ["unknown", `${prefix}:${first}`, scope],
+      ["unknown", `${prefix}:${second}`, scope],
     ]);
     expect(JSON.stringify(limit.mock.calls)).not.toContain("first-opaque-token");
   });

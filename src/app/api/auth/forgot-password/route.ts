@@ -3,7 +3,7 @@ import { db } from "../../../../db";
 import { passwordResetTokens, users } from "../../../../db/schema";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { generateOpaqueToken, hashToken, normalizeEmail } from "../../../../lib/password";
-import { clientIpFrom, reserveAuthAttempt, setRateLimitHeaders } from "../../../../lib/auth-rate-limit";
+import { clientIpFrom, reserveScopedAuthAttempt, setRateLimitHeaders } from "../../../../lib/auth-rate-limit";
 import { logError } from "../../../../lib/log";
 import { hasBodyOverLimit } from "../../../../lib/request-limits";
 import { sendTransactionalEmail, appBaseUrl } from "../../../../lib/email";
@@ -17,9 +17,9 @@ export async function POST(req: Request) {
   let body: { email?: unknown }; try { const parsedBody = await req.json(); if (!parsedBody || typeof parsedBody !== "object" || Array.isArray(parsedBody)) throw new Error("JSON object required"); body = parsedBody; } catch { return NextResponse.json(generic, { status: 202 }); }
   const email = typeof body.email === "string" ? normalizeEmail(body.email) : "";
   const ip = clientIpFrom(req);
-  let rate: Awaited<ReturnType<typeof reserveAuthAttempt>>;
+  let rate: Awaited<ReturnType<typeof reserveScopedAuthAttempt>>;
   try {
-    rate = await reserveAuthAttempt(ip, email);
+    rate = await reserveScopedAuthAttempt(ip, "forgot-password", email);
   } catch (error) {
     logError("auth.rate_limit.store_unavailable", { endpoint: "forgot_password", error: error instanceof Error ? error.message : "unknown" });
     return NextResponse.json(generic, { status: 503 });

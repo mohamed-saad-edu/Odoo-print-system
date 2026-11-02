@@ -388,13 +388,15 @@ fn run_pairing_inner(
 
     logging::info(&format!("pairing agent (server={gateway_url})"));
     let mut cmd = Command::new(&cli);
-    cmd.arg("-pair")
-        .arg(code)
-        .arg("-server")
+    cmd.arg("-server")
         .arg(gateway_url)
         .arg("-config")
         .arg(&config)
-        .env("YASEIR_AGENT_DATA_DIR", paths::agent_data_root());
+        .env("YASEIR_AGENT_DATA_DIR", paths::agent_data_root())
+        // The pairing code travels via the environment, not argv: process
+        // command lines are visible to other local users, while the CLI
+        // already prefers YASEIR_PAIRING_CODE over -pair for that reason.
+        .env("YASEIR_PAIRING_CODE", code);
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -713,6 +715,24 @@ fn valid_jobs_query(path: &str) -> bool {
     true
 }
 
+// Distinguish an overlong jobs-query value from a generic not-permitted
+// path: valid_jobs_query already rejects values over 200 chars, but the
+// caller previously surfaced that as "not permitted", so a long search
+// failed without telling the operator the search itself was too long.
+fn jobs_query_overlong_value(path: &str) -> bool {
+    let Some((base, query)) = path.split_once('?') else {
+        return false;
+    };
+    if base != "/api/jobs" {
+        return false;
+    }
+    query.split('&').any(|pair| {
+        pair.split_once('=')
+            .map(|(_, value)| value.len() > 200)
+            .unwrap_or(false)
+    })
+}
+
 fn valid_fleet_query(path: &str) -> bool {
     let (base, query) = path.split_once('?').unwrap_or((path, ""));
     if !matches!(base, "/api/printers" | "/api/agents") {
@@ -789,6 +809,9 @@ pub async fn gateway_agent_request(
     if !path.starts_with("/api/") || unsafe_gateway_route_path(&path) {
         return Err("gateway request path must be an API-relative path".into());
     }
+    if method == "GET" && jobs_query_overlong_value(&path) {
+        return Err("gateway jobs query value exceeds the 200-character limit; shorten the search".into());
+    }
     if !allowed_agent_gateway_path(&path, &method) {
         return Err("gateway request is not permitted for the desktop Agent console".into());
     }
@@ -839,7 +862,9 @@ pub async fn gateway_agent_request(
             body.into_bytes()
         });
         if let Some(key) = args.idempotency_key {
-            request_cmd.arg("-idempotency-key").arg(key);
+            // Like the pairing code, a retry key must not travel on argv
+            // where other local users can read the process command line.
+            request_cmd.env("YASEIR_IDEMPOTENCY_KEY", key);
         }
         #[cfg(windows)]
         {
@@ -1630,7 +1655,15 @@ pub async fn register_printer(
     // A value starting with `-` would be parsed by the Go CLI as a FLAG, not
     // a value (no shell is involved, so this is argument smuggling, not
     // injection): reject leading-dash values at the trust boundary.
+    // Caps are deliberately generous, not Gateway field limits (which are
+    // not in this contract): no legitimate Windows spooler name (<=220
+    // chars), IPP endpoint, or USB serial approaches them, but an unbounded
+    // value can no longer fail opaquely at CLI spawn or persist an
+    // unbounded registry row.
     fn arg_value(name: &str, raw: &str) -> Result<String, String> {
+        arg_value_max(name, raw, 2048)
+    }
+    fn arg_value_max(name: &str, raw: &str, max: usize) -> Result<String, String> {
         let v = raw.trim().to_string();
         if v.is_empty() {
             return Err(format!("{name} must not be empty"));
@@ -1638,9 +1671,12 @@ pub async fn register_printer(
         if v.starts_with('-') {
             return Err(format!("{name} must not start with '-'"));
         }
+        if v.len() > max {
+            return Err(format!("{name} exceeds the {max}-character limit"));
+        }
         Ok(v)
     }
-    let name = arg_value("printer name", &request.name)?;
+    let name = arg_value_max("printer name", &request.name, 512)?;
     let conn = request
         .connection_type_alt
         .clone()
@@ -1672,11 +1708,11 @@ pub async fn register_printer(
             .filter(|s| !s.trim().is_empty())
         {
             cmd.arg("--spooler-name")
-                .arg(arg_value("spooler name", sn)?);
+                .arg(arg_value_max("spooler name", sn, 512)?);
         }
         if let Some(proto) = request.protocol.as_ref().filter(|s| !s.trim().is_empty()) {
             cmd.arg("--protocol")
-                .arg(arg_value("protocol", proto)?.to_lowercase());
+                .arg(arg_value_max("protocol", proto, 64)?.to_lowercase());
         }
         if let Some(pt) = request
             .printer_type
@@ -1684,16 +1720,16 @@ pub async fn register_printer(
             .filter(|s| !s.trim().is_empty())
         {
             cmd.arg("--printer-type")
-                .arg(arg_value("printer type", pt)?.to_lowercase());
+                .arg(arg_value_max("printer type", pt, 128)?.to_lowercase());
         }
         if let Some(vid) = request.usb_vid.as_ref().filter(|s| !s.trim().is_empty()) {
-            cmd.arg("--vid").arg(arg_value("USB VID", vid)?);
+            cmd.arg("--vid").arg(arg_value_max("USB VID", vid, 64)?);
         }
         if let Some(pid) = request.usb_pid.as_ref().filter(|s| !s.trim().is_empty()) {
-            cmd.arg("--pid").arg(arg_value("USB PID", pid)?);
+            cmd.arg("--pid").arg(arg_value_max("USB PID", pid, 64)?);
         }
         if let Some(serial) = request.usb_serial.as_ref().filter(|s| !s.trim().is_empty()) {
-            cmd.arg("--serial").arg(arg_value("USB serial", serial)?);
+            cmd.arg("--serial").arg(arg_value_max("USB serial", serial, 1024)?);
         }
         cmd.arg("-config").arg(&config);
         cmd.env("YASEIR_AGENT_DATA_DIR", &root);

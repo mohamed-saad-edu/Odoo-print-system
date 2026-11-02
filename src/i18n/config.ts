@@ -29,7 +29,7 @@ export const LOCALE_LABELS: Record<Locale, string> = {
   ar: "العربية",
 };
 
-export function isLocale(value: unknown): value is Locale {
+function isLocale(value: unknown): value is Locale {
   return typeof value === "string" && (LOCALES as readonly string[]).includes(value);
 }
 

@@ -1,4 +1,4 @@
-import { describe, expect, it, afterEach } from "vitest";
+import { describe, expect, it } from "vitest";
 import { createHash } from "node:crypto";
 import { AGENT_ID_PATTERN, generatePairingCode, hashPairingCode, isValidAgentId, isValidPairingCode, PAIRING_CODE_PATTERN } from "../src/lib/agent-auth";
 
@@ -20,14 +20,22 @@ describe("pairing code contract", () => {
   });
 
   it("deterministically hashes normalized pairing codes with sha256", () => {
-    const code = "AB22CD";
-    const h1 = hashPairingCode(code);
-    const h2 = hashPairingCode("ab22cd");
-    const h3 = hashPairingCode("  ab22cd  ");
-    expect(h1).toBe(h2);
-    expect(h1).toBe(h3);
-    expect(h1).toMatch(/^[a-f0-9]{64}$/);
-    expect(h1).not.toBe(code);
+    // v3 (0107): hashing is fail-closed peppered — a secret must be set.
+    const previous = process.env.GATEWAY_JWT_SECRET;
+    process.env.GATEWAY_JWT_SECRET = "a".repeat(48);
+    try {
+      const code = "AB22CD";
+      const h1 = hashPairingCode(code);
+      const h2 = hashPairingCode("ab22cd");
+      const h3 = hashPairingCode("  ab22cd  ");
+      expect(h1).toBe(h2);
+      expect(h1).toBe(h3);
+      expect(h1).toMatch(/^[a-f0-9]{64}$/);
+      expect(h1).not.toBe(code);
+    } finally {
+      if (previous === undefined) delete process.env.GATEWAY_JWT_SECRET;
+      else process.env.GATEWAY_JWT_SECRET = previous;
+    }
   });
 
   it("peppers the pairing code hash so a leaked database row cannot be reversed", () => {
@@ -48,11 +56,14 @@ describe("pairing code contract", () => {
     }
   });
 
-  it("falls back to the plain hash when no server secret is configured", () => {
+  it("fails closed instead of falling back to the plain hash when no server secret is configured", () => {
+    // v3 (0107): the plain-SHA256 fallback was removed — a ~30-bit code
+    // hashed plainly is brute-forceable from a leaked DB row. No secret (or
+    // a short one) must throw rather than silently weaken the hash.
     const previous = process.env.GATEWAY_JWT_SECRET;
     delete process.env.GATEWAY_JWT_SECRET;
     try {
-      expect(hashPairingCode("AB22CD")).toBe(createHash("sha256").update("AB22CD").digest("hex"));
+      expect(() => hashPairingCode("AB22CD")).toThrow();
     } finally {
       if (previous !== undefined) process.env.GATEWAY_JWT_SECRET = previous;
     }

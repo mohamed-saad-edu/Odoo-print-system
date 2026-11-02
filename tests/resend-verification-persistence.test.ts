@@ -15,6 +15,9 @@ vi.mock("../src/lib/auth-rate-limit", async importActual => ({
   ...await importActual<typeof AuthRateLimitModule>(),
   clientIpFrom: () => "198.51.100.11",
   reserveAuthAttempt: async () => ({ allowed: true, limit: 5, remaining: 4, resetAtEpochSec: 1_900_000_000 }),
+  // v1/v3: resend-verification reserves the scoped bucket; the real scoped
+  // function must not run against this test's mocked db.transaction.
+  reserveScopedAuthAttempt: async () => ({ allowed: true, limit: 5, remaining: 4, resetAtEpochSec: 1_900_000_000 }),
 }));
 vi.mock("../src/lib/email", () => ({ appBaseUrl: () => "https://gateway.test", sendTransactionalEmail: state.email }));
 vi.mock("../src/lib/log", () => ({ logError: state.log }));

@@ -24,7 +24,11 @@ export async function expireStaleAgentDiscovery(
         END,
         completed_at = now(),
         updated_at = now(),
-        stats = jsonb_set(
+        -- v3: jsonb_set on a non-object stats value errors and fails the
+        -- whole expiry UPDATE, leaving the single-running slot held forever
+        -- (in-app writers coerce to {}, so this needs out-of-band stats, but
+        -- fail-closed beats a stuck session).
+        stats = CASE WHEN jsonb_typeof(s.stats) = 'object' THEN jsonb_set(
           s.stats,
           '{errors}',
           CASE WHEN jsonb_typeof(s.stats->'errors') = 'array'
@@ -32,7 +36,7 @@ export async function expireStaleAgentDiscovery(
             ELSE '[]'::jsonb
           END || jsonb_build_array('Discovery report abandoned: no progress for 10 minutes'),
           true
-        )
+        ) ELSE jsonb_build_object('errors', jsonb_build_array('Discovery report abandoned: no progress for 10 minutes')) END
     WHERE s.tenant_id = ${tenantId}
       AND s.agent_id = ${agentId}
       AND s.status = 'running'

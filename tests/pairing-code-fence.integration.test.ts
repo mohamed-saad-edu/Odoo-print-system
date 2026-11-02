@@ -1,4 +1,5 @@
 import { beforeAll, beforeEach, afterAll, describe, expect, it, vi } from "vitest";
+import { randomBytes } from "node:crypto";
 import { POST as registerPOST } from "../src/app/api/agent/register/route";
 import { hashPairingCode } from "../src/lib/agent-auth";
 import { hasTestDatabase, applyMigrations, truncateAll, seedFixture, closePool, pool } from "./helpers/pg";
@@ -7,11 +8,15 @@ const suite = describe.skipIf(!hasTestDatabase);
 
 suite("pairing velocity fences (T-1/S-2)", () => {
   const previousTrustProxy = process.env.TRUST_PROXY;
+  const previousGatewayJwtSecret = process.env.GATEWAY_JWT_SECRET;
   beforeAll(async () => {
+    process.env.GATEWAY_JWT_SECRET = randomBytes(32).toString("hex");
     await applyMigrations();
     process.env.TRUST_PROXY = "1";
   });
   afterAll(async () => {
+    if (previousGatewayJwtSecret === undefined) delete process.env.GATEWAY_JWT_SECRET;
+    else process.env.GATEWAY_JWT_SECRET = previousGatewayJwtSecret;
     if (previousTrustProxy === undefined) delete process.env.TRUST_PROXY;
     else process.env.TRUST_PROXY = previousTrustProxy;
     await closePool();

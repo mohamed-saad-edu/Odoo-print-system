@@ -3,7 +3,7 @@ import { db } from "../src/db";
 import { tenantInvitations, tenants, tenantUsers, users, emailVerificationTokens } from "../src/db/schema";
 import { and, eq, sql } from "drizzle-orm";
 import { generateOpaqueToken, hashPassword, hashToken } from "../src/lib/password";
-import { applyMigrations, closePool, hasTestDatabase, truncateAll, pool } from "./helpers/pg";
+import { applyMigrations, closePool, hasTestDatabase, truncateAll } from "./helpers/pg";
 import { POST as accept } from "../src/app/api/team/invitations/accept/route";
 import { GET as preview } from "../src/app/api/team/invitations/preview/route";
 import { POST as verify } from "../src/app/api/auth/verify-email/route";

@@ -8,7 +8,7 @@ import { nanoid } from "../../../../lib/nanoid";
 import { sendTransactionalEmail, appBaseUrl } from "../../../../lib/email";
 import { getServerLocale, makeT } from "../../../../i18n/server";
 import { hasBodyOverLimit } from "../../../../lib/request-limits";
-import { clientIpFrom, reserveAuthAttempt, setRateLimitHeaders } from "../../../../lib/auth-rate-limit";
+import { clientIpFrom, reserveScopedAuthAttempt, setRateLimitHeaders } from "../../../../lib/auth-rate-limit";
 import { emailAuthTokenTimes } from "../../../../lib/email-auth-token-policy";
 import { findActiveInvitation } from "../../../../lib/invitation-join";
 import { isSingleWorkspaceStaging, stagingWorkspaceExists, STAGING_WORKSPACE_EXISTS_MESSAGE } from "../../../../lib/staging-single-workspace";
@@ -29,9 +29,9 @@ export async function POST(req: Request) {
   const displayName = typeof body.displayName === "string" ? body.displayName.trim() : "";
   if (displayName.length > 120 || /[\u0000-\u001f\u007f]/.test(displayName)) return NextResponse.json({ error: "Invalid name", code: "INVALID_INPUT" }, { status: 400 });
   const ip = clientIpFrom(req);
-  let rate: Awaited<ReturnType<typeof reserveAuthAttempt>>;
+  let rate: Awaited<ReturnType<typeof reserveScopedAuthAttempt>>;
   try {
-    rate = await reserveAuthAttempt(ip, email);
+    rate = await reserveScopedAuthAttempt(ip, "register", email);
   } catch (error) {
     logError("auth.rate_limit.store_unavailable", { endpoint: "register", error: error instanceof Error ? error.message : "unknown" });
     return NextResponse.json({ error: "Registration temporarily unavailable" }, { status: 503 });

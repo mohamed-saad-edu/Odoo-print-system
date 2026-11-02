@@ -1,6 +1,6 @@
 import { parseDbTimeMs } from "./database-timestamp";
 import { createHash } from "node:crypto";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, sql, type SQL } from "drizzle-orm";
 import { db, type DbTx } from "../db";
 import { plans, subscriptionChanges, subscriptionRequests, tenantSubscriptions } from "../db/schema";
 import { nanoid } from "./nanoid";
@@ -37,7 +37,7 @@ export function manualReactivationDeadlineLive(
 export async function ensurePendingManualSubscription(tx: DbTx, tenantId: string, planId: string): Promise<void> {
   await tx.insert(tenantSubscriptions).values({tenantId,planId,status:"awaiting_activation",subscriptionType:"paid"}).onConflictDoNothing();
 }
-export type ManualSubscriptionInput = {
+type ManualSubscriptionInput = {
   action: "save" | "renew" | "extend" | "suspend" | "reactivate" | "cancel_at_end" | "revoke";
   expectedRevision: number;
   planId?: string;
@@ -89,7 +89,7 @@ export function parseManualSubscriptionInput(value: unknown): ManualSubscription
 }
 function publicSnapshot(row: typeof tenantSubscriptions.$inferSelect | null): Record<string, unknown> | null {
   if (!row) return null;
-  return {planId:row.planId,status:row.status,subscriptionType:row.subscriptionType,monthlyQuota:row.monthlyQuota,term:row.term,currentPeriodStart:row.currentPeriodStart.toISOString(),currentPeriodEnd:row.currentPeriodEnd?.toISOString()??null,printCycleAnchor:row.printCycleAnchor?.toISOString()??null,cancelAtPeriodEnd:row.cancelAtPeriodEnd,internalReference:row.internalReference,revision:row.revision,entitlementBlocked:row.entitlementBlocked,entitlementBlockedReason:row.entitlementBlockedReason};
+  return {planId:row.planId,status:row.status,subscriptionType:row.subscriptionType,monthlyQuota:row.monthlyQuota,term:row.term,currentPeriodStart:row.currentPeriodStart.toISOString(),currentPeriodEnd:row.currentPeriodEnd?.toISOString()??null,printCycleAnchor:row.printCycleAnchor?.toISOString()??null,cancelAtPeriodEnd:row.cancelAtPeriodEnd,internalReference:row.internalReference,revision:row.revision,entitlementBlocked:row.entitlementBlocked,entitlementBlockedReason:row.entitlementBlockedReason,revokedAt:row.revokedAt?.toISOString()??null,revokedReason:row.revokedReason}; // v3 (0108)
 }
 /** Resource -> subscription -> actor lock order matches runtime admission fences. */
 export async function mutateManualSubscription(tenantId: string, actor: PlatformOwnerClaims, key: string, input: ManualSubscriptionInput) {
@@ -130,6 +130,11 @@ export async function mutateManualSubscription(tenantId: string, actor: Platform
     const before=await tx.query.tenantSubscriptions.findFirst({where:eq(tenantSubscriptions.tenantId,tenantId)});
     if ((before?.revision??0)!==input.expectedRevision) throw new ManualSubscriptionError("SUBSCRIPTION_REVISION_CONFLICT",409);
     let changes: Partial<typeof tenantSubscriptions.$inferInsert>={revision:(before?.revision??0)+1};
+    // Revocation timestamp is a DB-clock SQL value, which $inferInsert
+    // (Date) cannot hold. It is set only in the else-branch (before must
+    // exist), so it flows exclusively to the update path below, never to
+    // insert values. Keep it out of `changes` for that reason.
+    let revokedAtSql: SQL | null = null;
     // Only a successfully approved, linked customer request fixes the term
     // start from the authoritative database clock, not the request's creation
     // date, browser time, or a stale admin form. Keep one timestamp for the
@@ -170,16 +175,49 @@ export async function mutateManualSubscription(tenantId: string, actor: Platform
         if (!Number.isFinite(clock.getTime())) throw new ManualSubscriptionError("SUBSCRIPTION_DATES_INVALID");
         cycleAnchor = new Date(Math.max(clock.getTime(), start.getTime()));
       }
-      changes={...changes,planId:plan.id,subscriptionType:input.subscriptionType,monthlyQuota:input.monthlyQuota,term:input.term,currentPeriodStart:input.action==='renew'?before!.currentPeriodStart:start,currentPeriodEnd:end,status:input.status,cancelAtPeriodEnd:false,entitlementBlocked:false,entitlementBlockedReason:null,internalReference:input.internalReference||null,...(cycleAnchor ? {printCycleAnchor:cycleAnchor} : {})};
+      changes={...changes,planId:plan.id,subscriptionType:input.subscriptionType,monthlyQuota:input.monthlyQuota,term:input.term,currentPeriodStart:input.action==='renew'?before!.currentPeriodStart:start,currentPeriodEnd:end,status:input.status,cancelAtPeriodEnd:false,entitlementBlocked:false,entitlementBlockedReason:null,internalReference:input.internalReference||null,...(cycleAnchor ? {printCycleAnchor:cycleAnchor} : {}),
+        // v3 (0108): save/renew is a new contract approved by the platform
+        // owner, so it clears a previous revocation. Reactivation of the
+        // revoked contract itself stays blocked (see reactivate below).
+        revokedAt:null,revokedReason:null};
     } else {
       if (!before) throw new ManualSubscriptionError("SUBSCRIPTION_NOT_FOUND",404);
       if (input.action==='extend') {
+        // v3 (0108): extending a revoked contract would reopen its
+        // reactivation deadline; a new contract needs save/renew instead.
+        if (before.revokedAt) throw new ManualSubscriptionError("SUBSCRIPTION_REVOKED",409);
         const end=new Date(input.endDate!);
         if (end<=before.currentPeriodStart || (before.currentPeriodEnd && end<=before.currentPeriodEnd)) throw new ManualSubscriptionError("SUBSCRIPTION_DATES_INVALID");
+        // v3 (PASS 4): extending a derived-expired contract (stored active,
+        // period end already past) is a reactivation by another name: it
+        // must pass the reactivate guards (active workspace + period end
+        // still live), otherwise a new contract needs save/renew. Suspended
+        // contracts are unaffected (extend does not change status, so they
+        // stay suspended), and legacy null-end rows are unaffected (no past
+        // end exists to expire against — setting the first end completes
+        // the contract rather than reviving it).
+        if (before.status==='active' && before.currentPeriodEnd) {
+          const nowRow=await tx.execute(sql`SELECT clock_timestamp() AS now`);
+          const liveNow=nowRow.rows[0]?.now as Date | string | null;
+          const endMs=parseDbTimeMs(before.currentPeriodEnd);
+          const nowMs=parseDbTimeMs(liveNow);
+          if (endMs!==null && nowMs!==null && endMs<=nowMs) {
+            if (tenant.rows[0].lifecycle !== 'active') throw new ManualSubscriptionError("WORKSPACE_NOT_ACTIVE",409);
+            if (!manualReactivationDeadlineLive(before.currentPeriodEnd,liveNow)) throw new ManualSubscriptionError("SUBSCRIPTION_EXPIRED",409);
+          }
+        }
         changes.currentPeriodEnd=end;
       }
-      if (input.action==='suspend'||input.action==='revoke') changes.status='suspended';
+      if (input.action==='suspend') changes.status='suspended';
+      if (input.action==='revoke') {
+        // v3 (0108): revoke was previously identical to suspend (status
+        // only), so any later reactivate within the term silently undid it.
+        // The revoked marker makes revocation terminal for this contract;
+        // the quota ledger is untouched (suspension already blocks use).
+        changes.status='suspended'; revokedAtSql=sql`clock_timestamp()`; changes.revokedReason=input.reason || null;
+      }
       if (input.action==='reactivate') {
+        if (before.revokedAt) throw new ManualSubscriptionError("SUBSCRIPTION_REVOKED",409);
         if (before.status!=='suspended') throw new ManualSubscriptionError('SUBSCRIPTION_REQUEST_CONFLICT',409);
         // Subscription reactivation does not override an inactive workspace.
         if (tenant.rows[0].lifecycle !== 'active') throw new ManualSubscriptionError("WORKSPACE_NOT_ACTIVE",409);
@@ -198,7 +236,7 @@ export async function mutateManualSubscription(tenantId: string, actor: Platform
         changes.cancelAtPeriodEnd=true;
       }
     }
-    if (before) await tx.update(tenantSubscriptions).set({...changes,updatedAt:sql`clock_timestamp()`}).where(eq(tenantSubscriptions.tenantId,tenantId));
+    if (before) await tx.update(tenantSubscriptions).set({...changes, ...(revokedAtSql ? { revokedAt: revokedAtSql } : {}), updatedAt:sql`clock_timestamp()`}).where(eq(tenantSubscriptions.tenantId,tenantId));
     else await tx.insert(tenantSubscriptions).values({tenantId,planId:input.planId!,...changes});
     const after=await tx.query.tenantSubscriptions.findFirst({where:eq(tenantSubscriptions.tenantId,tenantId)});
     const snapshot=publicSnapshot(after!)!;

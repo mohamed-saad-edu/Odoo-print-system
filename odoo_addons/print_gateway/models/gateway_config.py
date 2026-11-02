@@ -651,6 +651,13 @@ class PrintGatewayConfig(models.Model):
         try:
             env = api.Environment(cr, api.SUPERUSER_ID, {})
             config = env["print_gateway.gateway_config"].browse(self.id).exists()
+            # v3: elevate explicitly. A fresh SUPERUSER_ID cursor does not
+            # provably set the superuser flag in Odoo 19 core (core is not
+            # in this tree), so the write() skip_enabled_sync gate
+            # (is_superuser() and context) could silently ignore skip
+            # and, for the 401 test-result writer, fail _check_admin.
+            # sudo() on the recordset makes superuser mode explicit.
+            config = config.sudo()
             if config:
                 if success:
                     # Old-endpoint shutdown is only phase 1. Keep the pending
@@ -680,6 +687,13 @@ class PrintGatewayConfig(models.Model):
         try:
             env = api.Environment(cr, api.SUPERUSER_ID, {})
             config = env["print_gateway.gateway_config"].browse(self.id).exists()
+            # v3: elevate explicitly. A fresh SUPERUSER_ID cursor does not
+            # provably set the superuser flag in Odoo 19 core (core is not
+            # in this tree), so the write() skip_enabled_sync gate
+            # (is_superuser() and context) could silently ignore skip
+            # and, for the 401 test-result writer, fail _check_admin.
+            # sudo() on the recordset makes superuser mode explicit.
+            config = config.sudo()
             if config and int(config.pending_disable_revision) == int(revision):
                 config.with_context(skip_enabled_sync=True).write({
                     "pending_disable_gateway_url": False,
@@ -934,6 +948,13 @@ class PrintGatewayConfig(models.Model):
         try:
             env = api.Environment(cr, api.SUPERUSER_ID, {})
             config = env["print_gateway.gateway_config"].browse(self.id).exists()
+            # v3: elevate explicitly. A fresh SUPERUSER_ID cursor does not
+            # provably set the superuser flag in Odoo 19 core (core is not
+            # in this tree), so the write() skip_enabled_sync gate
+            # (is_superuser() and context) could silently ignore skip
+            # and, for the 401 test-result writer, fail _check_admin.
+            # sudo() on the recordset makes superuser mode explicit.
+            config = config.sudo()
             if not config:
                 cr.rollback()
                 return {"kind": "stale_local"}
@@ -1172,6 +1193,13 @@ class PrintGatewayConfig(models.Model):
         try:
             env = api.Environment(cr, api.SUPERUSER_ID, {})
             config = env["print_gateway.gateway_config"].browse(self.id).exists()
+            # v3: elevate explicitly. A fresh SUPERUSER_ID cursor does not
+            # provably set the superuser flag in Odoo 19 core (core is not
+            # in this tree), so the write() skip_enabled_sync gate
+            # (is_superuser() and context) could silently ignore skip
+            # and, for the 401 test-result writer, fail _check_admin.
+            # sudo() on the recordset makes superuser mode explicit.
+            config = config.sudo()
             if config:
                 guard_revision = (
                     int(expected_revision)
@@ -1297,7 +1325,15 @@ class PrintGatewayConfig(models.Model):
 
     def write(self, vals):
         sync_fields = {"enabled", "gateway_url", "gateway_api_key"}
-        skip_enabled_sync = bool(self.env.context.get("skip_enabled_sync"))
+        # Only trusted superuser bookkeeping may skip activation sync: every
+        # in-tree skip writer runs on a SUPERUSER cursor or via sudo().
+        # The context is RPC-client-controllable, so a non-superuser caller
+        # (even a system administrator) must never be able to change
+        # enabled/URL/key without queuing the fenced Gateway sync and the
+        # old-endpoint shutdown fence -- otherwise the local record and the
+        # remote Gateway activation state silently diverge.
+        is_superuser = getattr(self.env, "is_superuser", lambda: False)()
+        skip_enabled_sync = bool(is_superuser and self.env.context.get("skip_enabled_sync"))
         if set(vals).intersection({"gateway_url", "gateway_api_key", "enabled", "company_id", "runtime_agent_id", "installation_id", "idempotency_v2_enabled"}):
             self._check_admin()
 
@@ -1879,6 +1915,13 @@ class PrintGatewayConfig(models.Model):
     @api.private
     def cron_sync_enabled_state(self):
         """Retry activation replication, including pending old-endpoint shutdowns."""
+        # v3: parity with the other crons. @api.private already blocks
+        # interactive RPC, but this was the only cron without a runner
+        # group check. (This model has no _require_cron_runner helper, so
+        # the check is inlined; it matches print_job/print_intent crons,
+        # whose scheduled-action user satisfies it.)
+        if not self.env.user.has_group("base.group_system"):
+            raise AccessError(_("Only scheduled actions (administrator) may run this method."))
         # Old credentials can finish pending shutdowns after key removal.
         # Bound each run and move healthy/failed probes to the end via their
         # persisted write_date, so every configured endpoint gets a turn.
@@ -2086,6 +2129,13 @@ class PrintGatewayConfig(models.Model):
         try:
             env = api.Environment(cr, api.SUPERUSER_ID, {})
             config = env["print_gateway.gateway_config"].browse(self.id).exists()
+            # v3: elevate explicitly. A fresh SUPERUSER_ID cursor does not
+            # provably set the superuser flag in Odoo 19 core (core is not
+            # in this tree), so the write() skip_enabled_sync gate
+            # (is_superuser() and context) could silently ignore skip
+            # and, for the 401 test-result writer, fail _check_admin.
+            # sudo() on the recordset makes superuser mode explicit.
+            config = config.sudo()
             if not config:
                 cr.rollback()
                 return False
@@ -2227,6 +2277,19 @@ class PrintGatewayConfig(models.Model):
         """
         self.ensure_one()
         self._check_admin()
+        # v3: clearing this fence without proving the old endpoint was remotely
+        # disabled can leave two live endpoints for one gateway (the old key
+        # stays valid at the Gateway until revoked there). The operator
+        # confirm dialog is the attestation; record it in the server log with
+        # the pending endpoint so the reset is auditable. Operators must
+        # revoke the old key at the Gateway before resetting (see RISKS).
+        _logger.warning(
+            "print_gateway stale sync reset by %s for %s: pending old endpoint %s (revision %s) cleared without remote-disable proof; revoke the old key at the Gateway",
+            self.env.user.login,
+            self.company_id.display_name,
+            self.pending_disable_gateway_url,
+            self.pending_disable_revision,
+        )
         self.sudo().with_context(skip_enabled_sync=True).write({
             "pending_disable_gateway_url": False,
             "pending_disable_gateway_api_key": False,

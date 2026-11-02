@@ -174,6 +174,18 @@ func FactsFromDevice(d DeviceInfo) DeviceFacts {
 		f.HardwareIDs = capStringSlice(caps, "hardware_ids")
 		f.CompatibleIDs = capStringSlice(caps, "compatible_ids")
 	}
+	// The Windows spooler path keeps queue transport identity in first-class
+	// fields (SpoolerPort/SpoolerDriver) as well as the legacy capability
+	// bag, and the top-level fields are the source of truth there. A row
+	// that carries only the top-level fields (legacy rows, detail-loss
+	// observations, rename reconciliation) must classify from them, not
+	// fall through to unknown for want of the redundant capability copy.
+	if f.PortName == "" {
+		f.PortName = d.SpoolerPort
+	}
+	if f.DriverName == "" {
+		f.DriverName = d.SpoolerDriver
+	}
 	if f.SpoolerName == "" && isSpoolerDevice(d) {
 		f.SpoolerName = d.Endpoint
 	}
@@ -488,13 +500,29 @@ func physicalEvidence(f DeviceFacts) (bool, string, string) {
 		// than hiding a working printer.
 		return true, "vendor-port-monitor", "low"
 	}
-	// A named Windows print queue with no contradicting metadata is real: the
-	// operator (or config.yaml) pointed at it deliberately. It is low
-	// confidence because we cannot see the transport, so a queue we cannot tie
-	// to a spooler name, a port or any endpoint stays unclassified.
-	if strings.TrimSpace(f.SpoolerName) != "" {
-		return true, "named-spooler-queue", "low"
+	// A spooler queue enumerated by the Windows spooler is addressable
+	// through the spooler itself by queue name: the spooler IS the
+	// transport for spooler-type printers, and EnumPrinters only returns
+	// real configured queues (a queue whose port/driver details are
+	// unreadable is still a real queue — the registry's detail-loss
+	// reconciliation exists precisely for those observations). This runs
+	// only after virtual/redirected evidence was evaluated, so a software
+	// writer or session-redirected queue still classifies virtual/
+	// redirected, never physical; and admission still re-reads queue
+	// details before execution, so an unreadable-details queue cannot
+	// reach the print pipeline unchecked. Confidence stays low: the
+	// queue name alone proves addressability, not the backend hardware.
+	conn = spoolerToLowerTrim(f.ConnectionType)
+	proto = spoolerToLowerTrim(f.Protocol)
+	if (conn == "spooler" || conn == "windows_spooler" || proto == "spooler" || proto == "windows_spooler") &&
+		strings.TrimSpace(f.SpoolerName) != "" {
+		return true, "spooler-queue-name", "low"
 	}
+	// A non-spooler device with no port, endpoint, USB or network
+	// evidence is NOT transport proof: it stays unclassified.
+	// Operator-registered rows are still surfaced via
+	// IsExplicitlyRegistered, so this only keeps unproven discovery
+	// observations out of the production fleet.
 	return false, "", "none"
 }
 

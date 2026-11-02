@@ -1,4 +1,3 @@
-import React from "react";
 import { RefreshCw } from "lucide-react";
 import { Button, Card, StatusBadge } from "../../components/ui";
 import { useI18n } from "../../i18n/react";

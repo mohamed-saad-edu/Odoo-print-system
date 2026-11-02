@@ -3,7 +3,11 @@
 import { useState } from "react";
 import { CalendarClock, Settings2 } from "lucide-react";
 import { Button, Card } from "../ui";
-import { adminJson, controlClass, useAdminText } from "./ManualAdmin";
+import { adminJson, controlClass } from "./ManualAdmin";
+import { useI18n } from "../../i18n/react";
+import type { MessageKey } from "../../i18n/messages/en";
+import { useCallback } from "react";
+import { formatManualCalendarDate } from "../../lib/manual-calendar-date";
 
 export type ManualSubscription = {
   planId: string;
@@ -69,10 +73,10 @@ function endFor(start: string, term: Term) {
 function instant(date: string) {
   return date + "T00:00:00.000Z";
 }
-function actionLabel(action: Action, t: (key: string) => string, editing: boolean, request?: PendingSubscriptionRequest) {
-  if (request) return t(action === "renew" ? "renewRequested" : "activateRequested");
-  if (action === "save") return t(editing ? "updatePlan" : "activateSubscription");
-  return t(action);
+function actionLabel(action: Action, t: (key: MessageKey) => string, editing: boolean, request?: PendingSubscriptionRequest) {
+  if (request) return t(action === "renew" ? "v4.admin.renewRequested" : "v4.admin.activateRequested");
+  if (action === "save") return t(editing ? "v4.admin.updatePlan" : "v4.admin.activateSubscription");
+  return t(`v4.admin.${action}` as MessageKey);
 }
 
 export function SubscriptionEditor({
@@ -86,7 +90,9 @@ export function SubscriptionEditor({
   onSaved: () => void;
   onConflict?: (code: string) => void;
 }) {
-  const { a, formatNumber, formatDate } = useAdminText();
+  const { t, locale, formatNumber } = useI18n();
+  // Contract dates use UTC calendar days, exactly as the previous helper did.
+  const formatDate = useCallback((value: Date | string | number | null | undefined) => formatManualCalendarDate(value, locale) ?? t("common.notAvailable"), [locale, t]);
   const active = subscription?.effectiveStatus === "active";
   // A different requested plan or term is a new contract, not a renewal of
   // the former annual contract. Renewal is valid only for the same terms.
@@ -127,7 +133,6 @@ export function SubscriptionEditor({
   const [canRefresh, setCanRefresh] = useState(false);
   const [lastErrorCode, setLastErrorCode] = useState("");
   const [reason, setReason] = useState("");
-  const [password, setPassword] = useState("");
   const [preview, setPreview] = useState<Preview | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -139,7 +144,7 @@ export function SubscriptionEditor({
   const linkedTermEnd = !!request && full && term !== "custom";
   const showTerm = full && (action === "renew" || activating || editDates);
   const showCustomDates = full && showTerm && term === "custom";
-  const title = activating && leavePending && !request ? a("savePendingSubscription") : actionLabel(action, a, editing, request);
+  const title = activating && leavePending && !request ? t("v4.admin.savePendingSubscription") : actionLabel(action, t, editing, request);
   const requestTermsDiffer = !!request && (planId !== request.planId || term !== request.term ||
     Number(quota) !== request.requestedMonthlyQuota);
 
@@ -175,7 +180,7 @@ export function SubscriptionEditor({
         setEnd(endFor(day(), term));
       }
     }
-    // For sensitive actions the only inputs are the reason and password in confirmation.
+    // For sensitive actions the only input in confirmation is the reason.
     if (!["save", "renew", "extend"].includes(next)) {
       setPreview({ body: { action: next, expectedRevision: subscription?.revision ?? 0 }, key: crypto.randomUUID() });
     }
@@ -209,7 +214,7 @@ export function SubscriptionEditor({
     if (full) {
       const limit = Number(quota);
       if (!planId || !Number.isSafeInteger(limit) || limit < 1 || limit > 2147483647) {
-        setError(a("invalidQuota"));
+        setError(t("v4.admin.invalidQuota"));
         return;
       }
     }
@@ -219,7 +224,7 @@ export function SubscriptionEditor({
         Date.parse(instant(end)) <= Date.parse(instant(day(subscription.currentPeriodEnd)))) ||
        (action === "extend" && subscription?.currentPeriodEnd &&
         Date.parse(instant(end)) <= Date.parse(instant(day(subscription.currentPeriodEnd)))))) {
-      setError(a("invalidDates"));
+      setError(t("v4.admin.invalidDates"));
       return;
     }
     const body: Record<string, unknown> = {
@@ -238,17 +243,11 @@ export function SubscriptionEditor({
 
   async function save(event: React.FormEvent) {
     event.preventDefault();
-    if (!preview || busy || !reason.trim() || !password) return;
+    if (!preview || busy || !reason.trim()) return;
     setBusy(true);
     setError("");
     setCanRefresh(false);
-    const proof = password;
-    setPassword("");
     try {
-      await adminJson("/api/platform/auth/reauth", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ password: proof }),
-      });
       await adminJson("/api/platform/tenants/" + encodeURIComponent(tenantId) + "/subscription", {
         method: "POST",
         headers: { "Content-Type": "application/json", "Idempotency-Key": preview.key },
@@ -264,11 +263,10 @@ export function SubscriptionEditor({
       const label = code === "SUBSCRIPTION_REVISION_CONFLICT" ? "revisionConflict"
         : code === "SUBSCRIPTION_REQUEST_CONFLICT" ? "requestConflict"
         : code === "SUBSCRIPTION_REQUEST_TERMS_MISMATCH" ? "requestTermsMismatch"
-        : code === "PASSWORD_CONFIRMATION_FAILED" ? "incorrectPassword"
-        : code === "PLATFORM_REAUTH_REQUIRED" || code === "SESSION_EXPIRED" || code === "UNAUTHORIZED" ? "sessionExpired"
+        : code === "SESSION_EXPIRED" || code === "UNAUTHORIZED" ? "sessionExpired"
         : code === "SUBSCRIPTION_DATES_INVALID" ? "invalidDates"
         : code === "SUBSCRIPTION_REASON_REQUIRED" ? "reasonRequired" : "saveError";
-      setError(a(label));
+      setError(t(`v4.admin.${label}` as MessageKey));
     } finally {
       setBusy(false);
     }
@@ -276,7 +274,7 @@ export function SubscriptionEditor({
 
   const field = (name: string, children: React.ReactNode) => (
     <label className="block space-y-1.5 text-sm">
-      <span className="block font-medium text-ink-2">{a(name)}</span>{children}
+      <span className="block font-medium text-ink-2">{t(`v4.admin.${name}` as MessageKey)}</span>{children}
     </label>
   );
 
@@ -287,36 +285,36 @@ export function SubscriptionEditor({
       </span>
       <div>
         <h2 className="text-lg font-semibold">{title}</h2>
-        {request && <p className="text-sm text-ink-3">{a("requestDecisionHint")}</p>}
+        {request && <p className="text-sm text-ink-3">{t("v4.admin.requestDecisionHint")}</p>}
       </div>
     </div>
     {error && <div role="alert" className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-bad/20 p-3 text-sm text-bad">
       <span>{error}</span>
-      {canRefresh && onConflict && <Button type="button" variant="secondary" onClick={() => onConflict(lastErrorCode)}>{a("refreshAndReview")}</Button>}
+      {canRefresh && onConflict && <Button type="button" variant="secondary" onClick={() => onConflict(lastErrorCode)}>{t("v4.admin.refreshAndReview")}</Button>}
     </div>}
 
     {preview ? <form onSubmit={save} className="space-y-5">
-      <h3 className="font-semibold">{a("previewTitle")}</h3>
-      {action === "revoke" && <p className="rounded-lg border border-bad/25 p-3 text-sm text-bad">{a("endSubscriptionWarning")}</p>}
+      <h3 className="font-semibold">{t("v4.admin.previewTitle")}</h3>
+      {action === "revoke" && <p className="rounded-lg border border-bad/25 p-3 text-sm text-bad">{t("v4.admin.endSubscriptionWarning")}</p>}
       <dl className="grid gap-x-6 gap-y-3 rounded-xl bg-surface-2 p-4 text-sm sm:grid-cols-2">
-        <div><dt className="text-ink-3">{a("action")}</dt><dd className="mt-1 font-semibold">{title}</dd></div>
+        <div><dt className="text-ink-3">{t("v4.admin.action")}</dt><dd className="mt-1 font-semibold">{title}</dd></div>
         {full && <>
-          <div><dt className="text-ink-3">{a("plan")}</dt><dd className="mt-1 font-semibold">{plans.find(plan => plan.id === planId)?.name ?? a("notRecorded")}</dd></div>
-          <div><dt className="text-ink-3">{a("quota")}</dt><dd className="mt-1 font-semibold">{formatNumber(Number(quota))}</dd></div>
-          <div><dt className="text-ink-3">{a("term")}</dt><dd className="mt-1">{a(term)}</dd></div>
-          {request && <div><dt className="text-ink-3">{a("requestedTerms")}</dt>
-            <dd className="mt-1">{plans.find(plan => plan.id === request.planId)?.name ?? request.planId} · {a(request.term)}
+          <div><dt className="text-ink-3">{t("v4.admin.plan")}</dt><dd className="mt-1 font-semibold">{plans.find(plan => plan.id === planId)?.name ?? t("v4.admin.notRecorded")}</dd></div>
+          <div><dt className="text-ink-3">{t("v4.admin.quota")}</dt><dd className="mt-1 font-semibold">{formatNumber(Number(quota))}</dd></div>
+          <div><dt className="text-ink-3">{t("v4.admin.term")}</dt><dd className="mt-1">{t(`v4.admin.${term}` as MessageKey)}</dd></div>
+          {request && <div><dt className="text-ink-3">{t("v4.admin.requestedTerms")}</dt>
+            <dd className="mt-1">{plans.find(plan => plan.id === request.planId)?.name ?? request.planId} · {t(`v4.admin.${request.term}` as MessageKey)}
               {request.requestedMonthlyQuota !== null ? " · " + formatNumber(request.requestedMonthlyQuota) : ""}
             </dd>
           </div>}
-          {requestTermsDiffer && <div><dt className="text-ink-3">{a("approvedTerms")}</dt>
-            <dd className="mt-1 font-semibold">{plans.find(plan => plan.id === planId)?.name ?? planId} · {a(term)} · {formatNumber(Number(quota))}</dd>
+          {requestTermsDiffer && <div><dt className="text-ink-3">{t("v4.admin.approvedTerms")}</dt>
+            <dd className="mt-1 font-semibold">{plans.find(plan => plan.id === planId)?.name ?? planId} · {t(`v4.admin.${term}` as MessageKey)} · {formatNumber(Number(quota))}</dd>
           </div>}
-          <div><dt className="text-ink-3">{a("type")}</dt><dd className="mt-1">{a(type)}</dd></div>
-          <div><dt className="text-ink-3">{a(action === "renew" ? "contractStart" : "start")}</dt><dd className="mt-1">{linkedActivation ? a("startsAtApproval") : <time dateTime={start}>{formatDate(start)}</time>}</dd></div>
-          {activating && leavePending && !request && <div><dt className="text-ink-3">{a("status")}</dt><dd>{a("awaiting_activation")}</dd></div>}
+          <div><dt className="text-ink-3">{t("v4.admin.type")}</dt><dd className="mt-1">{t(`v4.admin.${type}` as MessageKey)}</dd></div>
+          <div><dt className="text-ink-3">{t(`v4.admin.${action === "renew" ? "contractStart" : "start"}` as MessageKey)}</dt><dd className="mt-1">{linkedActivation ? t("v4.admin.startsAtApproval") : <time dateTime={start}>{formatDate(start)}</time>}</dd></div>
+          {activating && leavePending && !request && <div><dt className="text-ink-3">{t("v4.admin.status")}</dt><dd>{t("v4.admin.awaiting_activation")}</dd></div>}
         </>}
-        {(full || action === "extend") && <div><dt className="text-ink-3">{a("end")}</dt><dd className="mt-1">{linkedTermEnd ? a("endsFromApproval") : <time dateTime={end}>{formatDate(end)}</time>}</dd></div>}
+        {(full || action === "extend") && <div><dt className="text-ink-3">{t("v4.admin.end")}</dt><dd className="mt-1">{linkedTermEnd ? t("v4.admin.endsFromApproval") : <time dateTime={end}>{formatDate(end)}</time>}</dd></div>}
       </dl>
       {field("reason", <textarea className={controlClass} required maxLength={500} rows={2}
         value={reason} onChange={event => {
@@ -324,23 +322,21 @@ export function SubscriptionEditor({
           // A changed reason changes the request digest, so use a new operation key.
           setPreview(current => current ? { ...current, key: crypto.randomUUID() } : current);
         }} />)}
-      {requestTermsDiffer && <p className="text-sm text-ink-3">{a("changeReasonHint")}</p>}
-      {field("password", <input className={controlClass} type="password" autoComplete="current-password"
-        required maxLength={4096} value={password} onChange={event => setPassword(event.target.value)} />)}
+      {requestTermsDiffer && <p className="text-sm text-ink-3">{t("v4.admin.changeReasonHint")}</p>}
       <div className="flex flex-wrap gap-3">
-        <Button type="submit" disabled={busy || !reason.trim() || !password || (requestTermsDiffer && (!allowRequestChanges || reason.trim().length < 10))} loading={busy}>{a("confirm")}</Button>
+        <Button type="submit" disabled={busy || !reason.trim() || (requestTermsDiffer && (!allowRequestChanges || reason.trim().length < 10))} loading={busy}>{t("v4.admin.confirm")}</Button>
         <Button type="button" variant="secondary" disabled={busy} onClick={() => {
-          setPreview(null); setPassword("");
-        }}>{a("cancel")}</Button>
+          setPreview(null);
+        }}>{t("v4.admin.cancel")}</Button>
       </div>
     </form> : <>
       {full ? <form className="space-y-4" onSubmit={prepare}>
         {request && <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg bg-surface-2 p-3 text-sm">
-          <span>{a("requestedTerms")}: <strong>{plans.find(plan => plan.id === request.planId)?.name ?? request.planId} · {a(request.term)}</strong></span>
+          <span>{t("v4.admin.requestedTerms")}: <strong>{plans.find(plan => plan.id === request.planId)?.name ?? request.planId} · {t(`v4.admin.${request.term}` as MessageKey)}</strong></span>
           <Button type="button" variant="secondary" onClick={toggleRequestedTerms}>
-            {a(allowRequestChanges ? "restoreRequestedTerms" : "adjustRequestTerms")}
+            {t(`v4.admin.${allowRequestChanges ? "restoreRequestedTerms" : "adjustRequestTerms"}` as MessageKey)}
           </Button>
-          {allowRequestChanges && <p className="w-full text-ink-3">{a("adjustRequestNotice")}</p>}
+          {allowRequestChanges && <p className="w-full text-ink-3">{t("v4.admin.adjustRequestNotice")}</p>}
         </div>}
         <div className="grid gap-4 sm:grid-cols-2">
           {field("plan", <select className={controlClass} required disabled={!!request && !allowRequestChanges} value={planId}
@@ -358,7 +354,7 @@ export function SubscriptionEditor({
             value={quota} onChange={event => setQuota(event.target.value)} />)}
           {showTerm && field("term", <select className={controlClass} value={term} disabled={!!request && !allowRequestChanges}
             onChange={event => changeTerm(event.target.value as Term)}>
-            {(["monthly", "yearly", "custom"] as const).map(v => <option key={v} value={v}>{a(v)}</option>)}
+            {(["monthly", "yearly", "custom"] as const).map(v => <option key={v} value={v}>{t(`v4.admin.${v}` as MessageKey)}</option>)}
           </select>)}
           {showCustomDates && action === "save" && !request && field("start", <input className={controlClass}
             type="date" required value={start} onChange={event => setStart(event.target.value)} />)}
@@ -368,23 +364,23 @@ export function SubscriptionEditor({
 
         {showTerm && !showCustomDates && <div className="flex flex-wrap items-center gap-2 rounded-lg bg-surface-2 p-3 text-sm">
           <CalendarClock className="h-4 w-4 text-brand" aria-hidden />
-          <span className="text-ink-3">{a("end")}:</span>
-          {request ? <span className="font-semibold">{a("endsFromApproval")}</span>
+          <span className="text-ink-3">{t("v4.admin.end")}:</span>
+          {request ? <span className="font-semibold">{t("v4.admin.endsFromApproval")}</span>
             : <time dateTime={end} className="font-semibold">{formatDate(end)}</time>}
         </div>}
 
-        {request && full && <p className="text-sm leading-6 text-ink-3">{a(action === "renew" ? "renewalTimeNotice" : term === "custom" ? "customDeadlineOnApproval" : "approvalDateNotice")}</p>}
+        {request && full && <p className="text-sm leading-6 text-ink-3">{t(`v4.admin.${action === "renew" ? "renewalTimeNotice" : term === "custom" ? "customDeadlineOnApproval" : "approvalDateNotice"}` as MessageKey)}</p>}
         <details className="rounded-lg border border-edge-subtle px-4 py-3">
-          <summary className="cursor-pointer text-sm font-medium text-ink-2">{a("optionalDetails")}</summary>
+          <summary className="cursor-pointer text-sm font-medium text-ink-2">{t("v4.admin.optionalDetails")}</summary>
           <div className="mt-4 grid gap-4 sm:grid-cols-2">
             {field("type", <select className={controlClass} value={type} onChange={event => setType(event.target.value)}>
-              {(["free", "paid"] as const).map(v => <option key={v} value={v}>{a(v)}</option>)}
+              {(["free", "paid"] as const).map(v => <option key={v} value={v}>{t(`v4.admin.${v}` as MessageKey)}</option>)}
             </select>)}
             {field("internalReference", <input className={controlClass} maxLength={200} value={reference}
               onChange={event => setReference(event.target.value)} />)}
             {editing && <label className="flex items-center gap-2 text-sm">
               <input type="checkbox" checked={editDates} onChange={event => setEditDates(event.target.checked)} />
-              {a("editContractDates")}
+              {t("v4.admin.editContractDates")}
             </label>}
             {action === "save" && (activating || editDates) && term !== "custom" &&
               field("start", <input className={controlClass} type="date" required value={start} onChange={event => {
@@ -393,28 +389,28 @@ export function SubscriptionEditor({
               }} />)}
             {activating && !request && <label className="flex items-center gap-2 text-sm">
               <input type="checkbox" checked={leavePending} onChange={event => setLeavePending(event.target.checked)} />
-              {a("leavePending")}
+              {t("v4.admin.leavePending")}
             </label>}
           </div>
         </details>
         <div className="flex items-center gap-3">
-          <Button type="submit" disabled={!planId || busy}>{a("preview")}</Button>
+          <Button type="submit" disabled={!planId || busy}>{t("v4.admin.preview")}</Button>
         </div>
       </form> : action === "extend" ? <form onSubmit={prepare} className="space-y-4">
         {field("end", <input className={controlClass} type="date" required value={end} onChange={event => setEnd(event.target.value)} />)}
-        <Button type="submit">{a("preview")}</Button>
+        <Button type="submit">{t("v4.admin.preview")}</Button>
       </form> : <div className="space-y-3">
-        <p className="text-sm text-ink-3">{a("actionRequiresConfirmation")}</p>
+        <p className="text-sm text-ink-3">{t("v4.admin.actionRequiresConfirmation")}</p>
         <Button type="button" onClick={() => setPreview({
           body: { action, expectedRevision: subscription?.revision ?? 0 },
           key: crypto.randomUUID(),
-        })}>{a("preview")}</Button>
+        })}>{t("v4.admin.preview")}</Button>
       </div>}
       {!!extraActions.length && <details className="mt-5 rounded-lg border border-edge-subtle px-4 py-3">
-        <summary className="cursor-pointer text-sm font-medium text-ink-2">{a("manageExtraActions")}</summary>
+        <summary className="cursor-pointer text-sm font-medium text-ink-2">{t("v4.admin.manageExtraActions")}</summary>
         <div className="mt-3 flex flex-wrap gap-2">
           {extraActions.map(v => <Button key={v} type="button" variant="secondary"
-            onClick={() => selectAction(v)}>{v === "save" ? a("updatePlan") : a(v)}</Button>)}
+            onClick={() => selectAction(v)}>{v === "save" ? t("v4.admin.updatePlan") : t(`v4.admin.${v}` as MessageKey)}</Button>)}
         </div>
       </details>}
     </>}

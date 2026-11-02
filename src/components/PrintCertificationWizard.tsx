@@ -19,7 +19,6 @@ import type { Translator } from "../i18n/translate";
 import type { MessageKey } from "../i18n/messages/en";
 import {
   CheckCircle2,
-  CircleAlert,
   Clock,
   ExternalLink,
   Loader2,

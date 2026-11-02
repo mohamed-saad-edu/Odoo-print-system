@@ -523,6 +523,7 @@ msgstr "انتهت مهلة تغيير اللغة. أعد تحميل الصفح�
 #. module: print_gateway
 #. odoo-javascript
 #: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_config_form
+#: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_binding_form
 msgid "Check connection"
 msgstr "التحقق من الاتصال"
 
@@ -982,6 +983,7 @@ msgstr "لا تفعّل هذا الخيار إلا بعد التحويل الص�
 
 #. module: print_gateway
 #: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_config_form
+#: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_config_list
 msgid "Enable printing"
 msgstr "تفعيل الطباعة"
 
@@ -1012,6 +1014,17 @@ msgstr "نوع الحدث"
 #: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_job_search
 msgid "Failed"
 msgstr "فاشل"
+
+#. module: print_gateway
+#: model:ir.model.fields.selection,name:print_gateway.selection__print_gateway_print_job__status__canceled
+#: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_job_search
+msgid "Canceled"
+msgstr "ملغاة"
+
+#. module: print_gateway
+#: model:ir.model.fields,field_description:print_gateway.field_print_gateway_print_job__gateway_submission_state
+msgid "Gateway submission state"
+msgstr "حالة إرسال البوابة"
 
 #. module: print_gateway
 #: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_intent_search
@@ -1424,6 +1437,12 @@ msgstr "معرّف تثبيت Gateway"
 #: code:addons/print_gateway/models/print_job.py:0
 msgid "Gateway late success is not valid for this terminal state."
 msgstr "النجاح المتأخر من الـ Gateway غير صالح لهذه الحالة النهائية."
+
+#. module: print_gateway
+#. odoo-python
+#: code:addons/print_gateway/models/print_job.py:0
+msgid "Gateway late success is only valid for an unknown-outcome claimed-cancel job."
+msgstr "النجاح المتأخر من الـ Gateway صالح فقط لمهمة ملغاة بعد الاستلام ذات نتيجة غير معروفة."
 
 #. module: print_gateway
 #. odoo-python
@@ -2174,6 +2193,7 @@ msgstr "يمكن إرسال تقارير QWeb PDF فقط إلى الـ Gateway."
 
 #. module: print_gateway
 #. odoo-python
+#: code:addons/print_gateway/models/gateway_config.py:0
 #: code:addons/print_gateway/models/print_intent.py:0
 #: code:addons/print_gateway/models/print_job.py:0
 msgid "Only scheduled actions (administrator) may run this method."
@@ -3285,13 +3305,13 @@ msgstr "نوع السجل"
 
 #. module: print_gateway
 #: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_config_form
-msgid "Recover Stale Synchronization"
-msgstr "استعادة المزامنة المتوقفة"
+msgid "Reset connection state"
+msgstr "إعادة تعيين حالة الاتصال"
 
 #. module: print_gateway
 #: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_config_form
-msgid "Recover synchronization state only after checking the previous Gateway endpoint."
-msgstr "استعد حالة المزامنة فقط بعد فحص عنوان الـ Gateway السابق."
+msgid "Use this only after the old connection is turned off in Yaseir. It clears the stuck state so the new connection can start fresh."
+msgstr "استخدم هذا فقط بعد إيقاف الاتصال القديم في Yaseir. فهو يمسح الحالة المتعثّرة ليبدأ الاتصال الجديد من جديد."
 
 #. module: print_gateway
 #: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_config_form
@@ -3538,8 +3558,8 @@ msgstr "نموذج التقرير المحدَّد '%s' لا يطابق النم
 #. module: print_gateway
 #: model:ir.model.fields.selection,name:print_gateway.selection__print_gateway_print_job__customer_status__sent_to_printer
 #: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_job_search
-msgid "Sent to printer"
-msgstr "أُرسلت إلى الطابعة"
+msgid "Sent for printing"
+msgstr "أُرسلت للطباعة"
 
 #. module: print_gateway
 #. odoo-python
@@ -4278,8 +4298,8 @@ msgstr "بروتوكول الربط المحدد '%s' غير متوافق مع �
 #. module: print_gateway
 #. odoo-python
 #: code:addons/print_gateway/models/binding.py:0
-msgid "The selected destination has no current operational verification. Refresh the Agent connection and verify the printer or approved PDF output before creating a new job."
-msgstr "لا يتوفر تحقق تشغيلي حديث للوجهة المحددة. حدّث اتصال Agent وتحقق من الطابعة أو إخراج PDF المعتمد قبل إنشاء مهمة جديدة."
+msgid "Verify this printer first, then try again."
+msgstr "تحقّق من هذه الطابعة أولًا، ثم أعد المحاولة."
 
 #. module: print_gateway
 #. odoo-python
@@ -4900,11 +4920,6 @@ msgstr "تحقق من الاتصال، وعيّن جهازًا من أجهزة �
 #: model:ir.model.fields,field_description:print_gateway.field_print_gateway_policy__binding_id
 msgid "Print Route"
 msgstr "مسار الطباعة"
-
-#. module: print_gateway
-#: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_binding_form
-msgid "Check registration"
-msgstr "التحقق من تسجيل الجهاز"
 
 #. module: print_gateway
 #: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_binding_form

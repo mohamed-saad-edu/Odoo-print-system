@@ -3,6 +3,7 @@ import { act, createElement as h, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createSegmentKey } from "next/dist/client/components/router-reducer/create-segment-key";
+import { I18nProvider } from "../src/i18n/react";
 import WorkspaceDetail from "../src/app/platform/tenants/[id]/page";
 
 const fixture = vi.hoisted(() => ({ request: vi.fn(), searchParams: new URLSearchParams(), a: (key: string) => key,
@@ -36,7 +37,9 @@ const button = (label: string) => [...host.querySelectorAll<HTMLButtonElement>("
 async function render(id: string) {
   // Next16.4.2 layout-router uses this exact installed key for dynamic segments.
   // It deliberately omits the param value, so A→B retains the outer page state.
-  await act(async () => root.render(h(WorkspaceDetail, { key: createSegmentKey(["id", id, "d", null]), params: params(id) })));
+  // The tenants page now resolves copy through the shared t() catalogue, so
+  // it renders under a real provider instead of the key-echo mock labels.
+  await act(async () => root.render(h(I18nProvider, { initialLocale: "en", children: h(WorkspaceDetail, { key: createSegmentKey(["id", id, "d", null]), params: params(id) }) })));
 }
 async function enter(node: HTMLTextAreaElement | HTMLInputElement, value: string) {
   await act(async () => {
@@ -50,32 +53,30 @@ beforeEach(() => {
 });
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.unstubAllGlobals(); });
 
-it("resets the exact workspace data, subscription draft and password before the next workspace loads", async () => {
+it("resets the exact workspace data and subscription draft before the next workspace loads", async () => {
   let resolveB!: (value: ReturnType<typeof detail>) => void;
   const pendingB = new Promise<ReturnType<typeof detail>>(resolve => { resolveB = resolve; });
   fixture.request.mockImplementation((url: string) => url === "/api/platform/plans" ? Promise.resolve({ plans })
     : url.endsWith("/A") ? Promise.resolve(detail("A")) : pendingB);
   expect(createSegmentKey(["id", "A", "d", null])).toBe(createSegmentKey(["id", "B", "d", null]));
   await render("A");
-  await act(async () => button("subscriptions").click());
+  await act(async () => button("Plans & subscriptions").click());
   // The reason now appears only in the confirmation step, not the main form.
   expect(host.querySelector("textarea")).toBeNull();
-  await act(async () => button("preview").click());
+  await act(async () => button("Review changes").click());
   await enter(host.querySelector("textarea")!, "A private draft");
-  await enter(host.querySelector('input[type="password"]')!, "A private password");
+  // No step-up: the preview form has no password field anymore; the draft
+  // alone proves the state that must reset across workspaces.
   expect(host.textContent).toContain("A private draft");
   await render("A");
   expect(host.textContent).toContain("A private draft");
-  expect(host.querySelector<HTMLInputElement>('input[type="password"]')!.value).toBe("A private password");
   await render("B");
   expect(host.textContent).not.toContain("Workspace A");
   expect(host.textContent).not.toContain("A private draft");
-  expect(host.querySelector('input[type="password"]')).toBeNull();
-  expect(button("confirm")).toBeUndefined();
+  expect(button("Confirm and save")).toBeUndefined();
   await act(async () => resolveB(detail("B")));
   expect(host.textContent).toContain("Workspace B");
-  await act(async () => button("subscriptions").click());
-  expect(host.querySelector('input[type="password"]')).toBeNull();
+  await act(async () => button("Plans & subscriptions").click());
   expect(host.querySelector("textarea")).toBeNull();
   expect(host.querySelector("select")!.value).toBe("plan-B");
 });

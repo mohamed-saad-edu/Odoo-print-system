@@ -1,4 +1,3 @@
-import React from "react";
 import { Eye, Plus, Printer as PrinterIcon, RefreshCw, Search, ShieldCheck } from "lucide-react";
 import { Button, Card, CardHeader, EmptyState, ErrorState, Input, LoadingState, Select, StatusBadge, StatusDot } from "../../components/ui";
 import { Toolbar, PrinterAvatar } from "../ui";

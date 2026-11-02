@@ -9,7 +9,8 @@ describe("print-job cleanup contract", () => {
     const src = read("src/app/api/jobs/route.ts");
     expect(src).toContain("export async function DELETE(req: Request)");
     expect(src).toContain("const claims = await validateWorkspaceManager(req)");
-    expect(src).toContain('["success", "failed", "expired"]');
+    // v4 (0109): "canceled" is a terminal job status alongside the others.
+    expect(src).toContain('["success", "failed", "expired", "canceled"]');
     expect(src).toContain("inArray(printJobs.status");
     // Cleanup now archives terminal evidence rather than dropping it. The
     // canonical uncertain-outcome markers are handled by the shared history

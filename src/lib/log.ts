@@ -28,7 +28,7 @@ export function redactClaimToken(value: unknown): string | null | undefined {
   return "claim_" + createHash("sha256").update(value, "utf8").digest("hex").slice(0, 12);
 }
 
-export type LogFields = Record<string, unknown>;
+type LogFields = Record<string, unknown>;
 
 function normalizeLogValue(value: unknown, seen = new WeakSet<object>(), depth = 0): unknown {
   if (depth > 6) return "[depth-limit]";

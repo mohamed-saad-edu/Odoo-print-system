@@ -5,7 +5,6 @@ import { credentialVersionFor, sameCredentialVersion } from "./session-credentia
 
 export const PLATFORM_SESSION_TTL_MS = 8 * 60 * 60 * 1000;
 export const PLATFORM_SESSION_IDLE_MS = 30 * 60 * 1000;
-export const PLATFORM_STEP_UP_MS = 5 * 60 * 1000;
 
 export class PlatformSessionExpiredError extends Error {
   constructor() { super("Your session expired or changed. Sign in again."); this.name = "PlatformSessionExpiredError"; }
@@ -32,7 +31,7 @@ export async function preparePlatformSessionInTransaction(
     VALUES (${familyId},${principal.userId},${passwordVersion},${new Date(nowMs)},${new Date(nowMs)},${new Date(nowMs+PLATFORM_SESSION_TTL_MS)})`);
 }
 
-/** Background refresh/probe checks never extend activity or password freshness. */
+/** Background refresh/probe checks never extend activity. */
 export async function isPlatformSessionAssured(
   familyId: string, userId: string, touch = false, connection: Pick<DbTx, "execute"> = db,
 ): Promise<boolean> {
@@ -50,21 +49,3 @@ export async function isPlatformSessionAssured(
   return result.rows.length === 1;
 }
 
-export async function platformSecurityStatus(familyId: string, userId: string, sid: string, connection: Pick<DbTx, "execute"> = db) {
-  if (!await isPlatformSessionAssured(familyId,userId,false,connection)) throw new PlatformSessionExpiredError();
-  const result = await connection.execute(sql`SELECT EXTRACT(EPOCH FROM s.password_verified_at)*1000 AS proof_ms,
-    EXTRACT(EPOCH FROM s.last_seen_at)*1000 AS seen_ms,
-    EXTRACT(EPOCH FROM LEAST(s.expires_at,r.expires_at))*1000 AS expires_ms,
-    EXTRACT(EPOCH FROM clock_timestamp())*1000 AS now_ms
-    FROM platform_session_security s JOIN refresh_tokens r ON r.family_id=s.family_id AND r.user_id=s.user_id
-    WHERE s.family_id=${familyId} AND s.user_id=${userId} AND r.id=${sid} AND r.kind='platform'
-      AND r.revoked_at IS NULL AND r.expires_at>clock_timestamp()`);
-  const row = result.rows[0];
-  if (!row) throw new PlatformSessionExpiredError();
-  const [proof,seen,expires,now] = [row.proof_ms,row.seen_ms,row.expires_ms,row.now_ms].map(Number);
-  if (![proof,seen,expires,now].every(Number.isFinite)) throw new Error("Invalid platform session clock");
-  return { reauthenticationRequired: now-proof>=PLATFORM_STEP_UP_MS,
-    stepUpExpiresAt: new Date(proof+PLATFORM_STEP_UP_MS).toISOString(),
-    idleExpiresAt: new Date(Math.min(seen+PLATFORM_SESSION_IDLE_MS,expires)).toISOString(),
-    absoluteExpiresAt: new Date(expires).toISOString() };
-}

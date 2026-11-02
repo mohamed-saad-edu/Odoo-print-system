@@ -69,7 +69,7 @@ export async function workspaceSessionFixture(context, drizzle) {
         userId: claims.userId ?? null, verified: true, passwordHash: claims.userId ? PASSWORD_HASH : null,
         credentialVersion: options.changedCredential ? '0'.repeat(64) : credentialVersion,
         createdAtMs: WORKSPACE_FIXTURE_NOW_MS - 60_000,
-        passwordVerifiedAtMs: WORKSPACE_FIXTURE_NOW_MS - (options.staleProof ? policy.namespace.WORKSPACE_STEP_UP_MS : 1_000),
+        passwordVerifiedAtMs: WORKSPACE_FIXTURE_NOW_MS - (options.staleProof ? policy.namespace.WORKSPACE_LOGIN_PROOF_WINDOW_MS : 1_000),
         lastSeenAtMs: WORKSPACE_FIXTURE_NOW_MS - 1_000,
         expiresAtMs: WORKSPACE_FIXTURE_NOW_MS + 3_600_000,
         nowMs: WORKSPACE_FIXTURE_NOW_MS,

@@ -1,11 +1,10 @@
 "use client";
 
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState } from "react";
 import { apiMessageKey } from "../../lib/api-error-keys";
-import { fetchWithTimeout } from "../../lib/fetch-timeout";
+import { fetchWithSessionRetry } from "../../lib/fetch-timeout";
 import { useRouter } from "next/navigation";
 import { SessionInventory } from "../../components/SessionInventory";
-import { WorkspaceSecurity } from "../../components/WorkspaceSecurity";
 import { roleLabel } from "../../lib/roles";
 import { useI18n } from "../../i18n/react";
 import {
@@ -22,7 +21,6 @@ import {
   Callout,
   Card,
   CardHeader,
-  ErrorState,
   Field,
   Input,
   KeyValueList,
@@ -38,17 +36,7 @@ type SettingsPayload = {
   platformOwner?: boolean;
 };
 
-function securityDestinationSnapshot() {
-  return new URLSearchParams(window.location.search).get("reauth") === "1" || window.location.hash === "#workspace-security";
-}
-function subscribeSecurityDestination(onChange: () => void) {
-  window.addEventListener("hashchange", onChange);
-  window.addEventListener("popstate", onChange);
-  return () => { window.removeEventListener("hashchange", onChange); window.removeEventListener("popstate", onChange); };
-}
-
 export default function SettingsPage() {
-  const securityRequested = useSyncExternalStore(subscribeSecurityDestination, securityDestinationSnapshot, () => false);
   const router = useRouter();
   const nameEdited = useRef(false);
   const [name, setName] = useState("");
@@ -65,7 +53,9 @@ export default function SettingsPage() {
     // response overwrite a newer snapshot — or the operator's dirty draft
     // (C063). The fetched name seeds the field only when it is still pristine.
     let cancelled = false;
-    fetchWithTimeout("/api/settings", { credentials: "include", cache: "no-store" })
+    // Read: safe to retry once after refresh. A 401 returned here means
+    // refresh failed or the family is gone, so the redirect below stands.
+    fetchWithSessionRetry("/api/settings", { credentials: "include", cache: "no-store" })
       .then(async (r) => {
         if (cancelled) return;
         if (!r.ok) {
@@ -97,7 +87,9 @@ export default function SettingsPage() {
     setBusy(true);
     setMessage(null);
     try {
-      const r = await fetchWithTimeout("/api/settings", {
+      // PATCH with the identical payload converges on the same tenant name,
+      // so a single replay after refresh cannot create a second effect.
+      const r = await fetchWithSessionRetry("/api/settings", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
@@ -129,9 +121,9 @@ export default function SettingsPage() {
             <Button href="/team" variant="secondary">{t("v4.experience.team")}</Button>
             <Button href="/api-keys" variant="secondary">{t("v4.experience.connection")}</Button>
           </nav>
-          <details open={securityRequested} className="rounded-xl border border-edge bg-surface p-5">
+          <details className="rounded-xl border border-edge bg-surface p-5">
             <summary className="cursor-pointer text-base font-semibold text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/35">{t("v4.experience.settings.security")}</summary>
-            <div className="mt-5 space-y-5"><WorkspaceSecurity /><SessionInventory /></div>
+            <div className="mt-5 space-y-5"><SessionInventory /></div>
           </details>
         {loading ? (
           <div className="space-y-5" role="status" aria-label={t("settings.loadingAria")}>

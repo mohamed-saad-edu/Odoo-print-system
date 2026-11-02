@@ -61,7 +61,7 @@ export function isPrinterObservationFresh(
   return ageSeconds >= 0 && ageSeconds <= printerStaleThresholdSeconds();
 }
 
-export type AgentAvailability = {
+type AgentAvailability = {
   available: boolean;
   reason: "active-online-fresh" | "inactive-lifecycle" | "offline" | "stale" | "missing-heartbeat";
 };
@@ -84,7 +84,7 @@ export function getAgentAvailability(
   return { available: true, reason: "active-online-fresh" };
 }
 
-export type EffectiveAgentStatus = "online" | "offline" | "disabled" | "retired" | "unknown";
+type EffectiveAgentStatus = "online" | "offline" | "disabled" | "retired" | "unknown";
 
 /**
  * Customer-facing Agent state derived from affirmative evidence only.

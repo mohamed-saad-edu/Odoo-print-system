@@ -55,8 +55,12 @@ export async function POST(req: Request) {
     if (status === 429 && pre.retryAfterSec) res.headers.set("Retry-After", String(pre.retryAfterSec));
     return setRateLimitHeaders(res, pre);
   }
-  await recordAuthSuccess(ip, email).catch((error) => logWarn("auth.login.rate_limit_clear_failed", { ip, error: error instanceof Error ? error.message : "unknown" }));
+  // v3: the rate budget is cleared only once authentication has actually
+  // produced a session (or a selection token for a multi-workspace user).
+  // Clearing before issuance let a suspended-tenant login both fail and
+  // reset the account's failure budget.
   if (!inviteToken && "selectionToken" in identity && identity.multipleTenants) {
+    await recordAuthSuccess(ip, email).catch((error) => logWarn("auth.login.rate_limit_clear_failed", { ip, error: error instanceof Error ? error.message : "unknown" }));
     return setRateLimitHeaders(NextResponse.json({
       error: "Choose a workspace",
       selectionToken: identity.selectionToken,
@@ -83,6 +87,7 @@ export async function POST(req: Request) {
       ipAddress: ip, userAgent: req.headers.get("user-agent"), replaceCurrent: sessionReplacementFromRequest(req, "customer"),
     }, identity.email, identity.credentialVersion);
     if (!session) return setRateLimitHeaders(NextResponse.json({ error: "Invalid email or password" }, { status: 401 }), pre);
+    await recordAuthSuccess(ip, email).catch((error) => logWarn("auth.login.rate_limit_clear_failed", { ip, error: error instanceof Error ? error.message : "unknown" }));
     await writeAuditEvent({ tenantId: resolvedTenantId, actorType: "user", actorId: identity.userId,
       action: "user.login.success", resourceType: "session", resourceId: session.familyId }).catch(error =>
       logError("audit_write_failed", { error: error instanceof Error ? error.message : "unknown" }));

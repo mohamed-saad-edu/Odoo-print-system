@@ -81,7 +81,7 @@ function syncColorScheme() {
 }
 
 /** Applies a theme everywhere it is observable (DOM, color-scheme, storage). */
-export function setTheme(next: Theme) {
+function setTheme(next: Theme) {
   document.documentElement.dataset.theme = next;
   syncColorScheme();
   try {

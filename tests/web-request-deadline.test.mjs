@@ -18,7 +18,17 @@ async function loadFetchHelper(fetchImpl) {
     setTimeout,
   });
   const mod = new vm.SourceTextModule(stripTypeScriptTypes(source, { mode: 'transform' }), { context });
-  await mod.link(() => { throw new Error('Unexpected external dependency'); });
+  // fetch-timeout's ONLY import is session-config's ensureCustomerSession,
+  // used solely by fetchWithSessionRetry (never by fetchWithTimeout under
+  // test here). Link it to a throwing stand-in so any accidental refresh
+  // from the deadline path fails the test instead of silently passing.
+  await mod.link(specifier => {
+    if (specifier !== './session-config') throw new Error('Unexpected external dependency ' + specifier);
+    return new vm.SourceTextModule(
+      'export function ensureCustomerSession() { throw new Error("fetchWithTimeout must not refresh"); }',
+      { context },
+    );
+  });
   await mod.evaluate();
   return mod.namespace.fetchWithTimeout;
 }

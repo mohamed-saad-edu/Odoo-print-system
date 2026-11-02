@@ -3,8 +3,16 @@
 // agent mirrors the markers in agent/internal/printer/outcome.go):
 //
 // - Gateway DB status enum is CLOSED: queued, claimed, printing, success,
-//   failed, expired. Nothing else is ever persisted (PostgreSQL CHECK) and
-//   nothing else is accepted on the agent API (isJobStatus).
+//   failed, expired, canceled (v4, migration 0109). Nothing else is ever
+//   persisted (PostgreSQL CHECK) and nothing else is accepted on the agent
+//   API (isJobStatus) except that agents may NEVER report 'canceled'
+//   themselves: it is an operator-only transition applied by the cancel
+//   route's conditional UPDATE, never via canTransition.
+// - 'canceled' spelling is single-l by design: it matches the existing
+//   JOB_CANCELED_BY_OPERATOR marker, IPP job-state 'canceled' (RFC 8011
+//   value 7), and the v4 brief. Discovery sessions use 'cancelled'
+//   (schema.ts discoverySessions) for a DIFFERENT entity and are untouched;
+//   the two spellings must never be unified by a search-replace.
 // - Physical outcome metadata is CLOSED: printed, not_printed, unknown.
 //   Transport-level `success` does NOT prove paper physically printed; it
 //   remains `unknown` until a transport supplies explicit physical proof.
@@ -19,6 +27,18 @@
 // agent/internal/printer/outcome.go, which mirror the markers below).
 //
 //   queued -> claimed -> printing -> success
+//   queued -> canceled   OPERATOR ONLY (cancel route): never claimed,
+//                          never dispatched, physical outcome not_printed,
+//                          admission credit refunded (see entitlements).
+//   claimed -> canceled  OPERATOR ONLY (cancel route): payload may be with
+//                          the agent but the printing report has not been
+//                          accepted, so no hardware byte was authorized;
+//                          physical outcome stays UNKNOWN (the agent may
+//                          already hold a durable executed result it has
+//                          not re-reported yet). Claim token PRESERVED for
+//                          the 24h late-success reconciliation window, then
+//                          cleared by the maintenance sweep. Never refunded.
+//   (any non-terminal state) -> expired   [once expiresAt has passed]
 //   claimed -> success  the agent's terminal RE-REPORT of a durable local
 //                     result: the document was already executed by this agent
 //                     and the stored outcome is reported under its original
@@ -37,13 +57,14 @@
 // allowLateSuccess option; the HTTP route fences its age atomically against PostgreSQL time.
 import { parseDbTimeMs } from "./database-timestamp";
 
-export const JOB_STATUSES = [
+const JOB_STATUSES = [
   "queued",
   "claimed",
   "printing",
   "success",
   "failed",
   "expired",
+  "canceled",
 ] as const;
 
 export type JobStatus = (typeof JOB_STATUSES)[number];
@@ -72,13 +93,14 @@ export function hasUnknownPhysicalOutcomeMarker(error: string | null | undefined
 }
 
 export function derivePhysicalOutcome(status: JobStatus | string, error: string | null | undefined): PhysicalOutcome {
-  // Current transports prove successful submission/execution, not paper
-  // output. Never infer physical output from an ACK/WritePrinter result.
-  // Once claimed, the Agent may execute before a later status report arrives.
-  // Lack of paper evidence cannot prove that nothing has printed.
-  // The transport cannot prove paper did not print from an unrecognized
-  // state (including legacy/out-of-contract responses). Fail closed: only
-  // queued and known terminal failed/expired states may be not_printed.
+  // v4: a canceled job is terminal and, unlike success, its outcome IS
+  // decidable: queued-cancel (no UNKNOWN marker) provably never printed;
+  // claimed-cancel carries UNKNOWN_PARTIAL_DELIVERY and stays unknown.
+  if (status === "canceled") return hasUnknownPhysicalOutcomeMarker(error) ? "unknown" : "not_printed";
+  // Fail closed for every other non-terminal state: only queued and known
+  // terminal failed/expired states may be not_printed, and success never
+  // proves paper output (it remains unknown until a transport supplies
+  // explicit physical proof, which no current transport does).
   if (status !== "queued" && status !== "failed" && status !== "expired") return "unknown";
   if (hasUnknownPhysicalOutcomeMarker(error)) return "unknown";
   return "not_printed";
@@ -98,6 +120,7 @@ export const JOB_FILTER_STATUSES = [
   "success",
   "failed",
   "expired",
+  "canceled",
   "unknown",
   "attention",
   "unassigned",
@@ -112,7 +135,7 @@ export function isJobFilterStatus(value: unknown): value is JobFilterStatus {
 }
 
 export function isTerminal(status: JobStatus): boolean {
-  return status === "success" || status === "failed" || status === "expired";
+  return status === "success" || status === "failed" || status === "expired" || status === "canceled";
 }
 
 // Expiration is a server-controlled terminal transition. Agents may request it
@@ -142,9 +165,15 @@ const ALLOWED_TRANSITIONS: Record<JobStatus, ReadonlySet<JobStatus>> = {
   // Terminal states have NO outgoing transitions in the general table.
   // The failed -> success late physical-outcome override is an explicitly
   // authorized exception passed in via options, never a default.
+  // v4: the same narrow exception covers canceled -> success, but ONLY
+  // for claimed-cancels (UNKNOWN_PARTIAL_DELIVERY marker, live claim
+  // token, 24h window): the agent may have executed before the cancel
+  // landed and its terminal re-report is the only reconciliation path.
+  // Queued-cancels (token NULL, no marker) can never late-succeed.
   success: new Set([]),
   failed: new Set([]),
   expired: new Set([]),
+  canceled: new Set([]),
 };
 
 export interface TransitionOptions {
@@ -160,10 +189,16 @@ export interface TransitionOptions {
 export function canTransition(from: JobStatus, to: JobStatus, options: TransitionOptions = {}): boolean {
   if (isTerminal(from)) {
     if (options.allowLateSuccess === true && to === "success") {
-      return from === "failed";
+      // v4: failed (existing) or claimed-cancel (UNKNOWN marker, live token;
+      // the agent route re-asserts marker, token and age in SQL).
+      return from === "failed" || from === "canceled";
     }
     return false;
   }
+  // Agents may never report 'canceled': it is operator-only. The cancel
+  // route bypasses this table with its own conditional UPDATE, exactly as
+  // the v3 route bypassed it for failed.
+  if (to === "canceled") return false;
   return ALLOWED_TRANSITIONS[from]?.has(to) ?? false;
 }
 
@@ -172,8 +207,18 @@ export function canTransition(from: JobStatus, to: JobStatus, options: Transitio
  * physical print" — as opposed to a real print failure (connection
  * refused, capability mismatch, ...). Only these may be overridden by a
  * late agent success report.
+ * UNKNOWN_PARTIAL_DELIVERY belongs here too: the terminal write retains
+ * the claim token for these markers, so an agent-reported unknown failure
+ * stays late-success-eligible exactly like a sweeper-created one (the
+ * late-success gate requires a live token for UNKNOWN rows). The 24h
+ * token-clear sweep still bounds the window.
  */
-export const LATE_SUCCESS_ERROR_MARKERS = ["AGENT_EXECUTION_TIMEOUT", "AGENT_RESTART_DURING_PRINT"] as const;
+export const LATE_SUCCESS_ERROR_MARKERS = ["AGENT_EXECUTION_TIMEOUT", "AGENT_RESTART_DURING_PRINT", "UNKNOWN_PARTIAL_DELIVERY"] as const;
+
+/** Operator-cancel marker for a queued job that provably never printed. */
+export const JOB_CANCELED_BY_OPERATOR = "JOB_CANCELED_BY_OPERATOR" as const;
+/** Wire code returned when a write targets an already-canceled job. */
+export const JOB_ALREADY_CANCELED = "JOB_ALREADY_CANCELED" as const;
 
 /** A late success override is only meaningful while the failure is recent. */
 export const LATE_SUCCESS_MAX_AGE_MS = 24 * 60 * 60 * 1000;
@@ -194,7 +239,11 @@ export interface LateSuccessCandidate {
 }
 
 export function isLateSuccessAllowed(job: LateSuccessCandidate, nowMs: number): boolean {
-  if (job.status !== "failed") return false;
+  // v4: failed (existing) plus claimed-cancel: a canceled row is only
+  // late-success-eligible when it carries the UNKNOWN_PARTIAL_DELIVERY
+  // marker (claimed-cancel); queued-cancels carry JOB_CANCELED_BY_OPERATOR
+  // and are excluded by the marker check below.
+  if (job.status !== "failed" && job.status !== "canceled") return false;
   const error = job.error ?? "";
   if (!LATE_SUCCESS_ERROR_MARKERS.some((marker) => error.startsWith(marker))) return false;
   const updatedAtMs = parseDbTimeMs(job.updatedAt);
@@ -203,7 +252,7 @@ export function isLateSuccessAllowed(job: LateSuccessCandidate, nowMs: number): 
   return age >= 0 && age <= LATE_SUCCESS_MAX_AGE_MS;
 }
 
-export interface ExpiredLateSuccessCandidate {
+interface ExpiredLateSuccessCandidate {
   status: JobStatus;
   expiresAt: Date | string;
   updatedAt: Date | string;

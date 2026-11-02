@@ -8,7 +8,7 @@ export interface GatewayConnectivityEvidence {
   consecutiveFailures: number;
 }
 
-export interface GatewayFailureObservation {
+interface GatewayFailureObservation {
   evidence: GatewayConnectivityEvidence;
   confirmedOffline: boolean;
 }

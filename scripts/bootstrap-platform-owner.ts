@@ -39,7 +39,6 @@ export async function main() {
   let email = process.env.PLATFORM_OWNER_EMAIL?.trim() ?? "";
   let password = process.env.PLATFORM_OWNER_PASSWORD ?? "";
   let force = process.env.ALLOW_PLATFORM_BOOTSTRAP_FORCE === "1";
-  let passedViaCli = false;
 
   const passwordFile = process.env.PLATFORM_OWNER_PASSWORD_FILE?.trim();
   if (!password && passwordFile && fs.existsSync(passwordFile)) {
@@ -57,19 +56,11 @@ export async function main() {
     if (args[i] === "--email" && args[i + 1]) {
       email = args[i + 1].trim();
       i++;
-    } else if (args[i] === "--password" && args[i + 1]) {
-      password = args[i + 1];
-      passedViaCli = true;
-      i++;
     } else if (args[i] === "--force") {
       force = true;
     }
   }
 
-  if (passedViaCli) {
-    console.warn("SECURITY WARNING: Passing password via CLI arguments exposes secrets in shell history and process lists.");
-    console.warn("Recommended: Use PLATFORM_OWNER_PASSWORD environment variable or TTY interactive prompt.");
-  }
 
   if (!email && process.stdin.isTTY) {
     const rl = readline.createInterface({ input: process.stdin, output: process.stdout });

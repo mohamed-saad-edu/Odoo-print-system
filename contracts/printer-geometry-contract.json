@@ -67,7 +67,7 @@
       1000000
     ]
   },
-  "numericRules": "All values must be finite JSON numbers. Dot counts and DPI are integers; millimetres are strictly positive and may be fractional. Numeric strings, null, booleans, arrays and coercion are forbidden. Unknown optional measurements are omitted.",
+  "numericRules": "All values must be finite JSON numbers. Dot counts and DPI are integers; millimetres are strictly positive and may be fractional. Unknown optional measurements are omitted, never sent as 0. Numeric strings, null, booleans, arrays and coercion are forbidden. Note on bounds: the bounds table lists [0,10000] for millimetres because it is shared with the range check, but Gateway checkMeasurements, Odoo printer_geometry.py and Go geometry.go all reject 0 — the positivity rule above is authoritative, and the 0 lower bound must not be read as permission to send 0 as an unknown sentinel.",
   "physicalConsistencyToleranceDots": 1,
   "physicalConsistency": "When paper, DPI and printable measurements are known on an axis, printable dots plus any known offset must fit paper_mm * axis_dpi / 25.4 within one device pixel. Missing offsets are not reported as zero.",
   "provenance": "windows_driver/ipp require validation observed; validated_profile requires configured. observed_at is UTC RFC3339. Refreshing only observed_at does not change capability identity or invalidate approval/jobs.",

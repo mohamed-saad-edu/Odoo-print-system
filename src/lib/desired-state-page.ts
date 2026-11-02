@@ -26,7 +26,11 @@ export async function getDesiredPrinterPage(
   for (const row of rows.slice(0, DESIRED_STATE_PAGE_ROWS)) {
     const size = Buffer.byteLength(JSON.stringify(row), "utf8") + (items.length ? 1 : 0);
     if (bytes + size > DESIRED_STATE_PAGE_BYTES) {
-      if (items.length === 0) throw new Error("Desired printer configuration exceeds the response page byte limit");
+      // v3: previously threw when the FIRST row alone exceeded the budget,
+      // failing the agent's whole desired-state sync for one corrupt row
+      // (validated writes cap config at 16 KiB, so this needs out-of-band
+      // data). Return the single row so sync progresses past it.
+      if (items.length === 0) items.push(row);
       break;
     }
     items.push(row);

@@ -70,14 +70,23 @@ export function formatTime(value: Date | string | number | null | undefined, loc
   const date = toDate(value);
   if (!date) return translate(locale, "common.notAvailable");
   try {
-    return new Intl.DateTimeFormat(intlLocale(locale), { timeStyle: "short" }).format(date);
+    // Same RTL-mark strip as formatDate/formatDateTime: Arabic Intl inserts
+    // RTL marks that reorder Latin digits inside LTR fields.
+    return new Intl.DateTimeFormat(intlLocale(locale), { timeStyle: "short" }).format(date).replaceAll("\u200f", "");
   } catch {
     return date.toISOString();
   }
 }
 
 /**
- * Compact relative time ("3m ago" / "قبل ٣ دقائق").
+ * Compact relative time ("3m ago" / "قبل 3 دقائق").
+ *
+ * Digits rule (all locales, including Arabic): Latin digits everywhere.
+ * Arabic `Intl` is asked for `latn` numerals (`intlLocale`), and the
+ * translateCount fallback interpolates plain JS numbers, so both paths
+ * already produce Latin digits; this comment previously promised
+ * Arabic-Indic digits and was the only place saying so. Numbers in prose
+ * must match the Latin digits used in IDs, counts, and times elsewhere.
  *
  * Built on `Intl.RelativeTimeFormat` so the unit words and their order are the
  * locale's own, with a fallback for runtimes without full ICU data.
@@ -148,7 +157,3 @@ export function formatBytes(bytes: number | null | undefined, locale: Locale): s
   return `${formatNumber(value, locale, { maximumFractionDigits: unit === 0 ? 0 : 1 })} ${units[unit]}`;
 }
 
-/** Every key currently available (used by the catalog parity test). */
-export function allKeys(): MessageKey[] {
-  return Object.keys(en) as MessageKey[];
-}

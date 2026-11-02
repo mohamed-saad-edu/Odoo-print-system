@@ -343,6 +343,23 @@ func handlePrintersAdd(configPath string, args []string) {
 	if strings.TrimSpace(*name) == "" {
 		log.Fatal("--name is required for printers add")
 	}
+	// Generous bounds mirroring the desktop Rust trust boundary: no
+	// legitimate Windows spooler name (<=220 chars), IPP endpoint, or USB
+	// serial approaches these caps, but an unbounded value previously
+	// failed opaquely downstream or persisted an unbounded registry row.
+	// These are not Gateway field limits (which are not in this contract).
+	for field, value := range map[string]struct {
+		v string
+		m int
+	}{
+		"name": {*name, 512}, "endpoint": {*endpoint, 2048},
+		"spooler-name": {*spoolerName, 512}, "serial": {*serial, 1024},
+		"vid": {*vid, 64}, "pid": {*pid, 64},
+	} {
+		if len(value.v) > value.m {
+			log.Fatalf("--%s exceeds the %d-character limit", field, value.m)
+		}
+	}
 	if err := validateManualPrinterTransport(*typ, *endpoint, *spoolerName); err != nil {
 		log.Fatal(err)
 	}

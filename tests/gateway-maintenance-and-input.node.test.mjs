@@ -104,6 +104,10 @@ test("logout requires both revocations and exposes failure without a rejected UI
     const context = vm.createContext({
       logoutFlight: { current: false }, setLoggingOut() {}, setLogoutFailed: failed => failures.push(failed),
       fetchWithTimeout: async url => { calls.push(url); if (mode === "offline") throw new TypeError("offline"); return { ok: mode === "ok" }; },
+      // AppShell broadcasts session-logged-out to sibling tabs only after
+      // a successful local logout; the stub keeps the revocation-order and
+      // failure assertions below intact.
+      broadcastSessionSync: () => {},
       router: { replace: route => routes.push(route), refresh() {} },
     });
     vm.runInContext(stripTypeScriptTypes(body) + "\nglobalThis.logout = handleLogout;", context);

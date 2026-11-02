@@ -20,13 +20,14 @@ sql.identifier=sqlIdentifier;
 const render=(v)=>v?.parts?v.parts.map((s,i)=>s+(i<v.params.length?render(v.params[i]):'')).join(''):v?.items?v.items.map(render).join(render(v.sep)):String(v);
 const eq=(lhs,rhs)=>({op:'eq',lhs,rhs});const and=(...terms)=>({op:'and',terms});
 const matches=(predicate,row)=>!predicate||predicate.op==='and'?(!predicate||predicate.terms.every(p=>matches(p,row))):predicate.op==='eq'?(row[predicate.lhs]===predicate.rhs):true;
-const dr=mk({sql,eq,and});
+const dr=mk({sql,eq,and,asc:value=>value,count:()=>({count:true})});
 const agent={id:'agent',tenantId:'tenant',lifecycle:'active'};
 let state;
 const claims=()=>({tenantId:'tenant',userId:'actor',role:state.managerRole,jti:'jti',familyId:'family',ver:2,sid:'sid',exp:1900000000,kind:'manager'});
 const baseRow=()=>({id:'dev',tenantId:'tenant',agentId:'agent',discoveryId:'scan1',identityKey:'printer-stable',protocol:'ipp',ipAddress:'192.168.10.50',port:631,uri:'ipp://192.168.10.50/ipp/print',spoolerName:null,deviceName:'Office printer',manufacturer:null,model:'M1',hostname:null,serialNumber:null,macAddress:null,transport:'ipp',deviceClass:'laser',capabilities:{print:{color:true}},verification:'candidate',candidateStatus:'discovered'});
 function reset(changes={}){state={row:baseRow(),managerRole:'admin',memberRole:'admin',tenantActive:true,agentActive:true,familyActive:true,legacyActive:true,events:[],writes:0,preflight:undefined,...changes};}
 const tx={
+  select:()=>({from:()=>({where:async predicate=>[{c:state.row&&matches(predicate,state.row)?1:0}]})}),
   execute:async(q)=>{
     const text=render(q);state.events.push(text);
     const policy=workspace.reply(text,claims(),state);if(policy)return policy;
@@ -72,7 +73,8 @@ const dep={
  '/db/schema':schema,
  // The discovery details handler logs unexpected read failures. Keep the
  // production handler real and stub only this external logger dependency.
- '/lib/log':mk({logError:()=>{}}),
+ '/lib/log':mk({logError:()=>{},requestIdFrom:()=> 'request'}),
+ '/lib/audit':mk({writeAuditEvent:async()=>{}}),
 };
 async function load(filename){const mod=new vm.SourceTextModule(transpile(filename),{context:ctx});await mod.link((n)=>{if(n.endsWith('/lib/authorization'))return auth;if(n.endsWith('/lib/manager-mutation-authorization'))return guard;for(const [k,value] of Object.entries(dep))if(n===k||n.endsWith(k))return value;throw Error('Unexpected import '+n+' in '+filename)});await mod.evaluate();return mod.namespace;}
 let observation;
@@ -103,7 +105,7 @@ test('changed capabilities or effective spooler name requires reapproval',async(
 test('same approved snapshot can be rechecked safely without second write',async()=>{reset();const selected=fp(state.row);assert.equal((await call(selected)).status,200);assert.equal((await call(selected)).status,200);assert.equal(state.writes,1);});
 test('demotion during request is rejected by live authority guard',async()=>{reset({memberRole:'viewer'});const r=await call(fp(state.row));assert.equal(r.status,403);assert.equal(state.writes,0);});
 test('revoked manager family refuses approval',async()=>{reset({familyActive:false});const r=await call(fp(state.row));assert.equal(r.status,401);assert.equal((await r.json()).code,'SESSION_EXPIRED');assert.equal(state.writes,0);});
-test('stale password proof cannot approve even the exact observed printer',async()=>{reset({staleProof:true});const r=await call(fp(state.row));assert.equal(r.status,403);assert.equal((await r.json()).code,'WORKSPACE_REAUTHENTICATION_REQUIRED');assert.equal(r.headers.get('X-Yaseir-Reauthentication'),'required');assert.equal(state.writes,0);});
+test('stale login timestamp can approve the exact observed printer',async()=>{reset({staleProof:true});const r=await call(fp(state.row));assert.equal(r.status,200);assert.equal(r.headers.get('X-Yaseir-Reauthentication'),null);assert.equal(state.writes,1);assert.equal(state.row.verification,'verified');});
 test('retired Agent and suspended Tenant cannot approve',async()=>{reset({agentActive:false});assert.notEqual((await call(fp(state.row))).status,200);reset({tenantActive:false});assert.notEqual((await call(fp(state.row))).status,200);assert.equal(state.writes,0);});
 test('scope mismatch does not approve any candidate',async()=>{reset();state.row.tenantId='other';assert.notEqual((await call(fp(state.row))).status,200);assert.equal(state.writes,0);});
 

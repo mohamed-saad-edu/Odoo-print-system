@@ -60,7 +60,11 @@ function fixture() {
   const tx={
     execute:async(query)=>{locks.push(query.text);return {rows:query.text.startsWith('SELECT id FROM agents')?rows.agents.filter(r=>r.id===query.values[0]&&r.tenantId===query.values[1]):[]};},
     select:()=>({from(table){let predicate=()=>true,limit=Infinity;const chain={where(p){predicate=p;return chain;},limit(n){limit=n;return chain;},async for(){return rows[table.name].filter(predicate).slice(0,limit).map(r=>({...r}));}};return chain;}}),
-    insert:table=>({async values(row){rows[table.name].push({...row});}}),
+    insert:table=>({values(row){return {async onConflictDoNothing(options={}){
+      const target=options.target?.field ?? "id";
+      const incoming=Array.isArray(row)?row:[row];
+      for(const item of incoming){if(!rows[table.name].some(existing=>existing[target]===item[target])) rows[table.name].push({...item});}
+    }};}}),
     delete:table=>({async where(predicate){rows[table.name]=rows[table.name].filter(r=>!predicate(r));}}),
     update:table=>({set(values){let affected=[];return {where(predicate){affected=rows[table.name].filter(predicate);for(const row of affected) Object.assign(row,values);return {async returning(){return affected.map(r=>({id:r.id}));}};}};}}),
   };

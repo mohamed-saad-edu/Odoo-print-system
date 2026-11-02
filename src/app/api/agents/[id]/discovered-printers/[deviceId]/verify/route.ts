@@ -7,6 +7,8 @@ import { requireManagerActorInTransaction, ManagerMutationAuthorityChangedError 
 import { requireActiveTenantInTransaction, TenantSuspendedError, TenantDeletedError } from "../../../../../../../lib/tenant-guard";
 import { discoveryObservationFingerprint } from "../../../../../../../lib/discovery-observation";
 import { and, eq, sql } from "drizzle-orm";
+import { logError, requestIdFrom } from "../../../../../../../lib/log";
+import { writeAuditEvent } from "../../../../../../../lib/audit";
 
 import { isVirtualPrinterRecord } from "../../../../../../../lib/printer-virtual";
 
@@ -90,5 +92,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (result.kind === "observation_changed") return NextResponse.json({ error: "DISCOVERY_OBSERVATION_CHANGED: reload discovery before approving this device", code: "DISCOVERY_OBSERVATION_CHANGED" }, { status: 409 });
   if (result.kind === "state_changed") return NextResponse.json({ error: "Device state changed concurrently; reload and retry" }, { status: 409 });
   if (result.kind === "already") return NextResponse.json({ ok: true, already: true, deviceId });
+  // WP-A (S3): audit only the actual approval transition, not an
+  // idempotent replay; an audit failure must never fail the approval.
+  await writeAuditEvent({ tenantId: claims.tenantId, actorType: "user", actorId: claims.userId,
+    action: "printer.discovery.verified", resourceType: "discovered_device", resourceId: deviceId,
+    requestId: requestIdFrom(req), metadata: { agentId } }).catch((error) =>
+    logError("audit_write_failed", { error: error instanceof Error ? error.message : "unknown" }));
   return NextResponse.json({ ok: true, verified: true, deviceId });
 }

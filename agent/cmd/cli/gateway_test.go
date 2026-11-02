@@ -139,7 +139,13 @@ func TestNormalizeOriginForCompare(t *testing.T) {
 	}{
 		{"https://print.example.com", "https://print.example.com/", true},
 		{"https://print.example.com/", "HTTPS://PRINT.EXAMPLE.COM", true},
-		{"https://print.example.com:443", "https://print.example.com/", false},
+		// The CLI origin fence deliberately strips scheme-default ports
+		// (v3): https://host:443 names the same origin as https://host,
+		// so an explicit :443 in a paired config must not report a
+		// mismatch. Only a non-default port still distinguishes.
+		{"https://print.example.com:443", "https://print.example.com/", true},
+		{"http://print.example.com:80", "http://print.example.com/", true},
+		{"https://print.example.com:8443", "https://print.example.com/", false},
 		{"https://print.example.com", "https://other.example.com", false},
 		{"", "", true},
 		{"https://print.example.com", "", false},

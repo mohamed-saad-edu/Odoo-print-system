@@ -27,7 +27,7 @@ export class TenantSubscriptionRequiredError extends Error {
  * Only explicit manual activation keeps the runtime provisioned. Provider
  * callbacks and legacy recovery states cannot grant access.
  */
-export const BILLING_ACCESS_STATUSES = ["active"] as const;
+const BILLING_ACCESS_STATUSES = ["active"] as const;
 
 /** True when the manual subscription status keeps the runtime provisioned. */
 export function isBillingAccessStatus(status: string | null | undefined): boolean {
@@ -56,7 +56,7 @@ export function isSubscriptionPeriodLive(
   return endsAt > nowMs;
 }
 
-export const PLAN_ENTITLEMENT_KEYS = [
+const PLAN_ENTITLEMENT_KEYS = [
   "max_agents",
   "max_printers",
   "max_jobs_per_minute",
@@ -64,11 +64,11 @@ export const PLAN_ENTITLEMENT_KEYS = [
   "max_prints_per_period",
 ] as const;
 
-export type PlanEntitlementKey = typeof PLAN_ENTITLEMENT_KEYS[number];
+type PlanEntitlementKey = typeof PLAN_ENTITLEMENT_KEYS[number];
 export type EntitlementValue = number | "unlimited";
-export type TenantEntitlements = Record<PlanEntitlementKey, EntitlementValue>;
+type TenantEntitlements = Record<PlanEntitlementKey, EntitlementValue>;
 
-export const PRINT_QUOTA_ENTITLEMENT = "max_prints_per_period" as const;
+const PRINT_QUOTA_ENTITLEMENT = "max_prints_per_period" as const;
 
 export type TenantPrintUsage = {
   limit: number | "unlimited";
@@ -122,7 +122,7 @@ export class TenantEntitlementConfigError extends Error {
   }
 }
 
-export type EntitlementTx = { execute: (query: SQL) => Promise<{ rows: Record<string, unknown>[] }> };
+type EntitlementTx = { execute: (query: SQL) => Promise<{ rows: Record<string, unknown>[] }> };
 
 /**
  * Canonical classification for entitlement failures that belong to the
@@ -373,6 +373,48 @@ export async function reserveTenantPrintCredit(tx: EntitlementTx, tenantId: stri
   }
   const used = Number((upsert.rows[0] as { used_prints?: number | string } | undefined)?.used_prints ?? 0);
   return { limit, used, remaining: limit === "unlimited" ? "unlimited" : Math.max(0, Number(limit) - used), periodStart: context.periodStart, periodEnd: context.periodEnd };
+}
+
+/**
+ * v4 (WP1): refund one admission credit for a queued-never-dispatched
+ * job canceled in the same transaction that moves it to 'canceled'.
+ * The refund targets the ADMISSION month (date_trunc month of the job's
+ * created_at in UTC), because reserveTenantPrintCredit charges the month
+ * of created_at, not the month of the cancel. A cancel in a later month
+ * therefore restores nothing current-month: the UPDATE below touches
+ * only the admission-month row, and a missing row (or a zero balance)
+ * is a no-op returning false, never a negative balance (the table
+ * CHECK enforces used_prints >= 0; GREATEST is defense in depth).
+ * Idempotency is structural, not flag-based: the caller runs this only
+ * inside the one-shot queued -> canceled conditional UPDATE, so no
+ * second cancel can reach it; quota_refunded on the job row records
+ * whether a ledger row was actually decremented, for audit. Callers
+ * must NOT call this for claimed cancels: a claimed job's physical
+ * outcome is unknown (it may have printed), so refunding it would let
+ * a create-claim-cancel loop print for free. A deliberate reprint is a
+ * NEW logical job and consumes a fresh credit; a create-cancel loop
+ * nets zero per iteration (one charge, at most one refund).
+ */
+export async function refundTenantPrintCredit(
+  tx: EntitlementTx,
+  tenantId: string,
+  jobCreatedAt: Date,
+): Promise<boolean> {
+  if (!(jobCreatedAt instanceof Date) || !Number.isFinite(jobCreatedAt.getTime())) {
+    throw new TenantEntitlementConfigError("subscription_period");
+  }
+  await lockTenantSubscription(tx, tenantId);
+  const updated = await tx.execute(sql`
+    UPDATE print_monthly_usage
+    SET used_prints = GREATEST(used_prints - 1, 0),
+        updated_at = now()
+    WHERE tenant_id = ${tenantId}
+      AND period_start = date_trunc('month', ${jobCreatedAt.toISOString()}::timestamptz AT TIME ZONE 'UTC')
+      AND used_prints > 0
+    RETURNING used_prints
+  `);
+  const rows = (updated as unknown as { rows?: unknown[] }).rows ?? [];
+  return rows.length === 1;
 }
 
 export async function getTenantPrintUsage(tx: EntitlementTx, tenantId: string): Promise<TenantPrintUsage> {

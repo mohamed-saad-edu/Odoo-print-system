@@ -52,6 +52,8 @@ vi.mock("../src/lib/email", () => ({
 vi.mock("../src/lib/auth-rate-limit", () => ({
   clientIpFrom: () => "127.0.0.1",
   reserveAuthAttempt: (...args: unknown[]) => reserveAuthAttempt(...args),
+  // v1/v3: register now reserves the scoped bucket, not the shared login bucket.
+  reserveScopedAuthAttempt: (...args: unknown[]) => reserveAuthAttempt(...args),
   setRateLimitHeaders: (response: Response) => response,
 }));
 

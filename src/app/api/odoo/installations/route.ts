@@ -1,7 +1,7 @@
 import { hasBodyOverLimit } from "../../../../lib/request-limits";
 import { randomBytes, randomUUID, createHash } from "node:crypto";
 import { NextResponse } from "next/server";
-import { and, eq, sql } from "drizzle-orm";
+import { and, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../../../../db";
 import { odooInstallations, odooInstallationCredentials } from "../../../../db/schema";

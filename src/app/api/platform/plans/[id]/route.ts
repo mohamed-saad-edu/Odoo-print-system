@@ -32,9 +32,12 @@ export async function PATCH(req:Request,context:{params:Promise<{id:string}>}) {
    if(previous.rows.length){const previousDigest=(previous.rows[0].metadata as {digest?:string}).digest;if(previousDigest!==digest&&previousDigest!==legacyDigest)throw new ManualSubscriptionError('IDEMPOTENCY_CONFLICT',409);return;}
    const before=await tx.query.plans.findFirst({where:eq(plans.id,id)});
    if(!before)throw new ManualSubscriptionError('PLAN_NOT_FOUND',404);
-   // Per-workspace quotas are explicit and remain unchanged. Preserve technical
-   // safety policy on catalog edits instead of exposing it as commercial pricing.
-   const entitlements={...before.entitlements,max_agents:'unlimited',max_printers:'unlimited',max_prints_per_period:plan.entitlements.max_prints_per_period};
+   // Per-workspace quotas are explicit and remain unchanged on catalog edits.
+   // v3: previously this forced max_agents/max_printers to 'unlimited' on
+   // every edit, so a plan created with finite caps silently granted all its
+   // subscribers unlimited agents/printers when its price or name changed.
+   // Preserve the stored caps; only max_prints_per_period comes from the edit.
+   const entitlements={...before.entitlements,max_prints_per_period:plan.entitlements.max_prints_per_period};
    // Legacy catalog clients that omit price must not accidentally erase it.
    // Explicit null/null clears the advertised price.
    const priceFields = priceProvided

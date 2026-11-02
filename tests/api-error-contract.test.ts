@@ -191,6 +191,32 @@ describe("invitation route honours the coded contract", () => {
     expect(route).toContain("requireWorkspaceOwnerForInvites");
   });
 
+  it("gives idle expiry its own message and keeps the generic key for other session deaths", () => {
+    expect(codeMessageKey("SESSION_IDLE_EXPIRED")).toBe("errors.sessionIdleExpired");
+    expect(apiMessageKey("SESSION_IDLE_EXPIRED", 401)).toBe("errors.sessionIdleExpired");
+    expect(codeMessageKey("SESSION_EXPIRED")).toBe("errors.sessionExpired");
+    expect(apiMessageKey("SESSION_EXPIRED", 401)).toBe("errors.sessionExpired");
+    for (const locale of ["en", "ar"] as const) {
+      expect(translate(locale, "errors.sessionIdleExpired")).not.toBe(translate(locale, "errors.sessionExpired"));
+      expect(translate(locale, "errors.sessionIdleExpired")).toMatch(locale === "ar" ? /30 دقيقة من عدم النشاط/ : /30 minutes without activity/);
+    }
+    expect(translate("en", "errors.sessionIdleExpired")).toBe(
+      "You were signed out after 30 minutes without activity. Sign in again to continue.",
+    );
+    expect(translate("ar", "errors.sessionIdleExpired")).toBe(
+      "تم تسجيل خروجك بعد 30 دقيقة من عدم النشاط. سجّل الدخول مرة أخرى للمتابعة.",
+    );
+  });
+
+  it("keeps the renewed-session retry message short in both locales", () => {
+    expect(translate("en", "errors.sessionRenewedRetry")).toBe(
+      "Your session was renewed. Please send this again if you still want to.",
+    );
+    expect(translate("ar", "errors.sessionRenewedRetry")).toBe(
+      "تم تجديد جلستك. أعد الإرسال إذا كنت ما زلت ترغب في المتابعة.",
+    );
+  });
+
   it("never revokes the invitation when email delivery is ambiguous", () => {
     // A provider timeout does not prove the mail was not accepted, so the
     // durable row must survive; revoking could invalidate a link the invitee

@@ -70,7 +70,7 @@
       "maxStringLength": 2048,
       "persistedAt": "discovery_sessions.stats.errors"
     },
-    "verification": "Gateway observations stay candidates until manager approval"
+    "verification": "Gateway observations stay candidates until manager approval: agent-claimed verification/confidence is stored as candidate/low regardless of what the agent reported (a deliberate downgrade — observations are never trusted as verified)."
   },
   "imageGeometry": {
     "field": "geometry_fingerprint",

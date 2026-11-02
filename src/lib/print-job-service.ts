@@ -86,7 +86,7 @@ export function idempotencyDigest(input: Parameters<typeof idempotencyFingerprin
   return createHash("sha256").update(idempotencyFingerprint(input)).digest("hex");
 }
 
-export type CreatePrintJobOptions = {
+type CreatePrintJobOptions = {
   /** Manager-authenticated jobs require a live commit-point authority fence;
    * API key jobs must not fake a Manager principal. */
   managerAuthority?: { claims: ManagerClaims; permission: ManagerPermission };
@@ -110,7 +110,7 @@ export type CreatePrintJobOptions = {
   reprintOfJobId?: string | null;
 };
 
-export type CreatePrintJobResult = {
+type CreatePrintJobResult = {
   id: string;
   printerId: string;
   agentId: string;

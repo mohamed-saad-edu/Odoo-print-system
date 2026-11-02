@@ -7,7 +7,7 @@ export async function printingContractModules(context, sql) {
   // Node vm contexts do not inherit TextEncoder from their creator. The real
   // production exact-printer-id contract uses the UTF-8 byte boundary.
   context.TextEncoder ??= TextEncoder;
-  const names = ["exact-printer-id", "idempotency", "database-timestamp", "database-error-log", "job-status", "print-output", "printer-operational-verification", "printer-verification-sql"];
+  const names = ["exact-printer-id", "idempotency", "database-timestamp", "database-error-log", "job-status", "submission-evidence", "print-output", "printer-operational-verification", "printer-verification-sql"];
   const modules = new Map(names.map((name) => {
     const path = `src/lib/${name}.ts`;
     return [name, new SourceTextModule(stripTypeScriptTypes(readFileSync(path, "utf8"), { mode: "transform" }), { context, identifier: path })];

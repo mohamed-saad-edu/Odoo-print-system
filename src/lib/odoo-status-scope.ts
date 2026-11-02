@@ -3,7 +3,7 @@ import { db, type DbTx } from "../db";
 import { printJobs, printJobReceipts, tenants } from "../db/schema";
 import { OdooNamespaceError, verifyOdooInstallation } from "./odoo-v2-admission";
 
-export type OdooStatusIdentity = { installationId: string; installationProof: string };
+type OdooStatusIdentity = { installationId: string; installationProof: string };
 type OdooStatusCredential = { id: string; tenantId: string; hashedKey: string };
 
 /**

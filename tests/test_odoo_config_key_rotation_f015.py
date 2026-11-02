@@ -76,7 +76,7 @@ class Environment(NS):
 def config(enabled=True,revoked=False,last_sync_error=False):
     c=Config();c.id=1;c.ids=[1];c._table='print_gateway_gateway_config'
     c.cron_progress=[]
-    c.env=Environment(context={},cr=Cursor(),cron=NS(_commit_progress=lambda processed=0,remaining=None:c.cron_progress.append((processed,remaining)) or 1))
+    c.env=Environment(context={},cr=Cursor(),user=NS(has_group=lambda group: group == 'base.group_system'),cron=NS(_commit_progress=lambda processed=0,remaining=None:c.cron_progress.append((processed,remaining)) or 1))
     c.enabled=enabled;c.gateway_url='https://gateway.fixture.invalid';c.gateway_api_key='enc:OLD-FIXTURE'
     c.enabled_sync_revision=5;c.last_enabled_sync_revision=5;c.last_enabled_sync_error=last_sync_error
     c.pending_disable_gateway_url=c.pending_disable_gateway_api_key=False;c.pending_disable_revision=-1

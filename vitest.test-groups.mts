@@ -19,6 +19,7 @@ export const integrationVitestTestFiles = [
   "tests/metrics-machine-auth.integration.test.ts",
   "tests/session-inventory.integration.test.ts",
   "tests/session-account-inventory.integration.test.ts",
+  "tests/no-step-up.integration.test.ts",
   "tests/session-login-replacement.integration.test.ts",
   "tests/workspace-session-security.integration.test.ts",
   "tests/workspace-invitation-independent.integration.test.ts",
@@ -34,6 +35,7 @@ export const integrationVitestTestFiles = [
   "tests/architecture-pg.test.ts",
   "tests/auth-rate-limit.test.ts",
   "tests/session-tokens.integration.test.ts",
+  "tests/wpa-frictionless-security.integration.test.ts",
   "tests/session-logout.integration.test.ts",
   "tests/session-legacy-fallback.integration.test.ts",
   "tests/batch-status.test.ts",
@@ -118,6 +120,10 @@ export const integrationVitestTestFiles = [
   "tests/platform-directory-live-authority.integration.test.ts",
   "tests/platform-stats-live-authority.integration.test.ts",
   "tests/session-inventory-live-authority.integration.test.ts",
+  "tests/session-renewal-lifecycle.integration.test.ts",
+  // v5 P4: cancel-refund invariants + submission-evidence route rules.
+  "tests/job-cancel-refund.integration.test.ts",
+  "tests/submission-evidence-route.integration.test.ts",
 ] as const;
 
 export const integrationTestFiles = [

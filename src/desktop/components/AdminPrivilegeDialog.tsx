@@ -1,10 +1,10 @@
-import React, { useState } from "react";
+import { useState } from "react";
 import { AlertTriangle, ShieldAlert } from "lucide-react";
 import { Button, Modal } from "../../components/ui";
 import { closeApp } from "../lib/ipc";
 import { useI18n } from "../../i18n/react";
 
-export interface AdminPrivilegeDialogProps {
+interface AdminPrivilegeDialogProps {
   open: boolean;
   onClose: () => void;
   onRelaunch?: () => Promise<void>;

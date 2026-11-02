@@ -477,7 +477,7 @@ export function getAgentWsCount(agentId: string): number {
   return agentSockets.get(agentId)?.size ?? 0;
 }
 
-export function hasOpenAgentSocket(agentId: string): boolean {
+function hasOpenAgentSocket(agentId: string): boolean {
   const set = agentSockets.get(agentId);
   if (!set) return false;
   for (const ws of set) if (ws.readyState === WebSocket.OPEN) return true;
@@ -568,7 +568,7 @@ async function sendToAuthorizedAgent(agentId: string, message: unknown, serializ
   }
 }
 
-export async function sendToAgent(agentId: string, message: unknown): Promise<boolean> {
+async function sendToAgent(agentId: string, message: unknown): Promise<boolean> {
   return (await sendToAuthorizedAgent(agentId, message)) === "sent";
 }
 
@@ -943,8 +943,14 @@ async function startJobNotificationListener(): Promise<() => Promise<void>> {
     }
     if (notification.channel === PG_DISCOVERY_CHANNEL) {
       try {
-        const message = JSON.parse(notification.payload) as { agentId?: unknown; discoveryId?: unknown };
+        const message = JSON.parse(notification.payload) as { agentId?: unknown; discoveryId?: unknown; tenantId?: unknown };
         if (typeof message.agentId !== "string" || typeof message.discoveryId !== "string") return;
+        // v3: previously no tenant fence here, unlike job notices. A spoofed
+        // notice (DB-level notify ability required) could push discovery
+        // work to a victim agent. Legacy tenant-less notices are rejected;
+        // the 10s agent poll remains the durable backstop.
+        const discoverySocketTenant = agentSockets.get(message.agentId)?.values().next().value?.tenantId;
+        if (!jobNoticeTenantAllowed(message.tenantId, discoverySocketTenant)) return;
         if (!hasOpenAgentSocket(message.agentId)) return;
         // Push discovery trigger instantly via WebSocket (10-50ms latency per 2025 docs)
         // instead of waiting for agent's 10s discovery poll.
@@ -1219,11 +1225,23 @@ export function attachAgentWSS(server: HttpServer, options: AgentWSSOptions = {}
       const auth = req.headers["authorization"] ?? req.headers["Authorization"];
       const header = Array.isArray(auth) ? auth[0] : (auth as string | undefined) ?? null;
       let agent: Awaited<ReturnType<typeof validateAgent>> = null;
+      let authUnavailable = false;
       try {
         agent = await validateAgent(header ?? null);
       } catch (error) {
+        // WP3 (STATIC REVIEW ONLY, B3-08): a validateAgent throw is a
+        // Gateway-side failure (e.g. DB unavailable), NOT a credential
+        // rejection. Answering 401 would make the agent fence a healthy
+        // credential (and would hide the outage as an auth problem), so
+        // fail with 503 instead. A 401 from here now means only that the
+        // credential, lifecycle or tenant check deterministically failed,
+        // which is what the agent's 401 fence relies on.
         logUpgradeError(error);
-        agent = null;
+        authUnavailable = true;
+      }
+      if (authUnavailable) {
+        writeWsHttpError(socket, 503, "WebSocket authentication temporarily unavailable", 5);
+        return;
       }
       if (!agent) {
         if (decision.retryAfterSec) {
@@ -1235,8 +1253,8 @@ export function attachAgentWSS(server: HttpServer, options: AgentWSSOptions = {}
       }
 
       // Authentication succeeded: this upgrade must not consume the failure budget.
-      // Clearing the shared bucket also prevents a legitimate reconnect storm from
-      // eventually locking a healthy agent out of its own WebSocket.
+      // recordWsUpgradeSuccess refunds exactly this attempt's reservation;
+      // it no longer clears the shared per-IP bucket (WP3 B5-02).
       try {
         await recordWsUpgradeSuccess(clientKey);
       } catch (error) {

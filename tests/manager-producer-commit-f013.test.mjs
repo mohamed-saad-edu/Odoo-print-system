@@ -126,10 +126,10 @@ test('retired trial and expired workspace sessions cannot bypass the separate Pl
    assert.equal(response.status,403);assert.equal(state.writes.length,0);assert.equal(state.audit,0);
  }
 });
-test('stale password proof blocks settings, credential issuance and manual onboarding side effects',async()=>{
+test('stale login timestamp admits settings and credential issuance side effects',async()=>{
  const operations=[()=>setting.PATCH(patch({name:'New workspace'})),()=>keys.POST(req('/api/odoo/keys',{name:'Printer key'}))];
  for(const operation of operations){reset({role:'owner',memberRole:'owner',staleProof:true});const response=await operation();
-  assert.equal(response.status,403);assert.equal((await response.json()).code,'WORKSPACE_REAUTHENTICATION_REQUIRED');assert.equal(response.headers.get('X-Yaseir-Reauthentication'),'required');assert.equal(state.writes.length,0);assert.equal(state.audit,0);}
+  assert.ok([200,201].includes(response.status));assert.equal(response.headers.get('X-Yaseir-Reauthentication'),null);assert.equal(state.writes.length,1);}
 });
 test('actual onboarding route rejects suspended Tenant before pending subscription or workspace write',async()=>{
  reset({role:'owner',memberRole:'owner',tenantActive:false});const response=await onboarding.POST(req('/api/onboarding',{workspaceName:'New workspace',planId:'plan'}));assert.equal(response.status,403);assert.equal(state.writes.length,0);assert.equal(state.audit,0);

@@ -1,10 +1,10 @@
 import { issueWorkspaceTestSession } from "./helpers/workspace-session";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { applyMigrations, closePool, hasTestDatabase, pool, truncateAll } from "./helpers/pg";
-import { isSessionFamilyActive, rotateRefreshToken, verifyAccessTokenSignature } from "../src/lib/session-tokens";
+import { isSessionFamilyActive, rotateRefreshToken } from "../src/lib/session-tokens";
 import { GET, POST } from "../src/app/api/auth/sessions/route";
 import { hashPassword } from "../src/lib/password";
-import { authenticateCustomer, validateWorkspaceManager, verifyWorkspaceToken } from "../src/lib/manager-auth";
+import { validateWorkspaceManager, verifyWorkspaceToken } from "../src/lib/manager-auth";
 import { revokeOwnSessions } from "../src/lib/session-inventory";
 import { requireManagerActorInTransaction } from "../src/lib/manager-mutation-authorization";
 import { requireTeamActorInTransaction } from "../src/lib/team-authorization";
@@ -49,45 +49,27 @@ describe.skipIf(!hasTestDatabase)("customer-owned account-wide session inventory
 
   it("denies other accounts and unknown targets and revokes other sessions across the user's workspaces", async () => {
     const own = await pair("a"), ownOther = await pair("a"), otherTenant = await pair("b"), otherUser = await pair("a", "v");
-    expect((await POST(req(own.accessToken, { action: "revoke", id: "f".repeat(32), password }))).status).toBe(404);
-    expect((await POST(req(own.accessToken, { action: "revoke", id: otherUser.familyId, password }))).status).toBe(404);
-    expect((await POST(req(own.accessToken, { action: "revoke_others", password }))).status).toBe(200);
+    expect((await POST(req(own.accessToken, { action: "revoke", id: "f".repeat(32) }))).status).toBe(404);
+    expect((await POST(req(own.accessToken, { action: "revoke", id: otherUser.familyId }))).status).toBe(404);
+    expect((await POST(req(own.accessToken, { action: "revoke_others" }))).status).toBe(200);
     expect(await isSessionFamilyActive(own.familyId, "customer", "a", "u")).toBe(true);
     expect(await isSessionFamilyActive(ownOther.familyId, "customer", "a", "u")).toBe(false);
     expect(await isSessionFamilyActive(otherTenant.familyId, "customer", "b", "u")).toBe(false);
     expect(await isSessionFamilyActive(otherUser.familyId, "customer", "a", "v")).toBe(true);
   });
 
-  it("requires fresh password confirmation before revocation", async () => {
+  it("revokes without password confirmation", async () => {
     const own = await pair("a"), ownOther = await pair("a");
-    expect((await POST(req(own.accessToken, { action: "revoke", id: ownOther.familyId }))).status).toBe(400);
-    expect((await POST(req(own.accessToken, { action: "revoke", id: ownOther.familyId, password: "wrong" }))).status).toBe(401);
-    expect(await isSessionFamilyActive(ownOther.familyId, "customer", "a", "u")).toBe(true);
-  });
-
-  it("accepts the canonical 4096-character password without trimming whitespace", async () => {
-    const longPassword = " \t" + "é".repeat(4092) + "\t ";
-    await pool().query("UPDATE users SET password_hash=$1 WHERE id='u'", [await hashPassword(longPassword)]);
-    const own = await pair("a"), ownOther = await pair("a");
-    const revokeRequest = (candidate: string) => {
-      const body = JSON.stringify({ action: "revoke", id: ownOther.familyId, password: candidate });
-      return new Request("http://localhost:3000/api/auth/sessions", { method: "POST", headers: {
-        cookie: `cust_session=${own.accessToken}`, origin: "http://localhost:3000", "content-type": "application/json",
-        "content-length": String(Buffer.byteLength(body)),
-      }, body });
-    };
-    expect((await POST(revokeRequest(longPassword.trim()))).status).toBe(401);
-    expect((await POST(revokeRequest(longPassword + "x"))).status).toBe(400);
-    expect((await POST(revokeRequest(longPassword))).status).toBe(200);
+    expect((await POST(req(own.accessToken, { action: "revoke", id: ownOther.familyId }))).status).toBe(200);
     expect(await isSessionFamilyActive(ownOther.familyId, "customer", "a", "u")).toBe(false);
+    expect(await isSessionFamilyActive(own.familyId, "customer", "a", "u")).toBe(true);
+    // The caller's own session is untouched: no rotation cookies are issued.
+    expect(await verifyWorkspaceToken(own.accessToken)).not.toBeNull();
   });
-
-  it.each(["customer", "manager"] as const)("rotates surviving %s access and refresh tokens without extending the family", async kind => {
+  it.each(["customer", "manager"] as const)("keeps the caller session unchanged when revoking another %s session", async kind => {
     await pool().query("UPDATE tenant_users SET role='owner' WHERE user_id='u' AND tenant_id='a'");
     const current = await issueWorkspaceTestSession({ kind, tenantId: "a", userId: "u", email: "u@example.test", role: "owner" });
     const other = await issueWorkspaceTestSession({ kind, tenantId: "a", userId: "u", email: "u@example.test", role: "owner" });
-    // Deliberately make the family older than the presented access token so a
-    // fresh 30-day expiry at reauthentication would be a detectable extension.
     await pool().query("UPDATE refresh_tokens SET family_created_at=family_created_at-interval '1 day', expires_at=expires_at-interval '1 day' WHERE family_id=$1", [current.familyId]);
     const before = (await pool().query("SELECT family_created_at, expires_at FROM refresh_tokens WHERE id=$1", [current.refreshTokenId])).rows[0];
     const prefix = kind === "customer" ? "cust" : "mgr";
@@ -95,124 +77,104 @@ describe.skipIf(!hasTestDatabase)("customer-owned account-wide session inventory
       method: body ? "POST" : "GET", headers: { cookie: `${prefix}_session=${current.accessToken}`, origin: "http://localhost:3000", "content-type": "application/json" },
       ...(body ? { body: JSON.stringify(body) } : {}),
     });
-    const priorClaims = (await validateWorkspaceManager(request()))!;
-    const response = await POST(request({ action: "revoke", id: other.familyId, password }));
+    const response = await POST(request({ action: "revoke", id: other.familyId }));
     expect(response.status).toBe(200);
-    const nextAccess = cookie(response, `${prefix}_session`);
-    const nextRefresh = cookie(response, `${prefix}_refresh`);
-    expect(nextAccess).toBeTruthy();
-    expect(nextRefresh).toBeTruthy();
-    expect(nextAccess).not.toBe(current.accessToken);
-    expect(nextRefresh).not.toBe(current.refreshToken);
-    expect(response.headers.getSetCookie().every(value => value.startsWith(`${prefix}_`))).toBe(true);
+    // No step-up and no rotation: revocation sets no session cookies at all.
+    expect(response.headers.getSetCookie()).toEqual([]);
     const body = await response.json();
     expect(body.signedOut).toBe(false);
-    expect(JSON.stringify(body)).not.toMatch(/accessToken|refreshToken|credentialVersion|passwordHash/);
-    const nextClaims = verifyAccessTokenSignature(nextAccess!, kind)!;
-    expect(nextClaims).toMatchObject({ familyId: current.familyId, kind, tenantId: "a", userId: "u", role: "owner" });
-    expect(nextClaims.sid).not.toBe(priorClaims.sid);
-    const after = (await pool().query("SELECT family_created_at, expires_at FROM refresh_tokens WHERE id=$1", [nextClaims.sid])).rows[0];
+    expect(await verifyWorkspaceToken(current.accessToken)).not.toBeNull();
+    expect(await isSessionFamilyActive(other.familyId, kind, "a", "u")).toBe(false);
+    const after = (await pool().query("SELECT family_created_at, expires_at FROM refresh_tokens WHERE id=$1", [current.refreshTokenId])).rows[0];
     expect(after).toEqual(before);
-    expect(await verifyWorkspaceToken(current.accessToken)).toBeNull();
-    expect((await GET(request())).status).toBe(401);
-    expect((await rotateRefreshToken(kind, current.refreshToken)).status).toBe("invalid");
-    // Reject already-validated old claims again at each mutation boundary.
-    await expect(db.transaction(async tx => {
-      await requireActiveTenantInTransaction(tx, "a");
-      await requireManagerActorInTransaction(tx, priorClaims, "tenant.read");
-    })).rejects.toMatchObject({ code: "SESSION_EXPIRED" });
-    await expect(db.transaction(tx => requireTeamActorInTransaction(tx, priorClaims))).rejects.toMatchObject({ code: "WORKSPACE_AUTHORITY_CHANGED" });
-    const liveClaims = (await verifyWorkspaceToken(nextAccess!))!;
-    expect(liveClaims).toBeTruthy();
+    // The caller's authority is unchanged at the mutation boundary.
+    const liveClaims = (await validateWorkspaceManager(request()))!;
     await expect(db.transaction(async tx => {
       await requireActiveTenantInTransaction(tx, "a");
       await requireManagerActorInTransaction(tx, liveClaims, "tenant.read");
-      await requireTeamActorInTransaction(tx, liveClaims);
-    })).rejects.toMatchObject({ code: "WORKSPACE_AUTHORITY_CHANGED" });
-    expect((await rotateRefreshToken(kind, nextRefresh!)).status).toBe("rotated");
+    })).resolves.toBeUndefined();
+    // The team gate is a separate fail-closed obsolete gate (always
+    // throws), unrelated to step-up.
+    await expect(db.transaction(tx => requireTeamActorInTransaction(tx, liveClaims))).rejects.toThrow(/restricted to Platform Owner/);
   });
-
-  it("does not rotate or terminate the caller for a foreign target or rejected password", async () => {
+  it("does not terminate the caller for a foreign target", async () => {
     const current = await pair("a"), other = await pair("a"), foreign = await pair("a", "v");
-    for (const [id, candidate, status] of [[foreign.familyId, password, 404], [other.familyId, "wrong", 401]] as const) {
-      const response = await POST(req(current.accessToken, { action: "revoke", id, password: candidate }));
+    for (const [id, status] of [[foreign.familyId, 404], [other.familyId, 200]] as const) {
+      const response = await POST(req(current.accessToken, { action: "revoke", id }));
       expect(response.status).toBe(status);
       expect(response.headers.getSetCookie()).toEqual([]);
       expect(await verifyWorkspaceToken(current.accessToken)).not.toBeNull();
       expect((await pool().query("SELECT COUNT(*)::integer AS n FROM refresh_tokens WHERE family_id=$1", [current.familyId])).rows[0].n).toBe(1);
     }
   });
-
-  it("retains a shorter persisted expiry through reauthentication and subsequent refresh", async () => {
+  it("revocation without password preserves the caller's shorter persisted expiry through refresh", async () => {
     const current = await pair("a");
     await pool().query("UPDATE refresh_tokens SET expires_at=clock_timestamp()+interval '2 hours' WHERE family_id=$1", [current.familyId]);
     const expiresAt = (await pool().query("SELECT expires_at FROM refresh_tokens WHERE id=$1", [current.refreshTokenId])).rows[0].expires_at;
-    const response = await POST(req(current.accessToken, { action: "revoke_others", password }));
+    const response = await POST(req(current.accessToken, { action: "revoke_others" }));
     expect(response.status).toBe(200);
-    const nextAccess = cookie(response, "cust_session")!;
-    const nextRefresh = cookie(response, "cust_refresh")!;
-    const claims = verifyAccessTokenSignature(nextAccess, "customer")!;
-    expect((await pool().query("SELECT expires_at FROM refresh_tokens WHERE id=$1", [claims.sid])).rows[0].expires_at).toEqual(expiresAt);
-    const refreshed = await rotateRefreshToken("customer", nextRefresh);
+    expect(response.headers.getSetCookie()).toEqual([]);
+    const refreshed = await rotateRefreshToken("customer", current.refreshToken);
     expect(refreshed.status).toBe("rotated");
     if (refreshed.status === "rotated") expect(refreshed.pair.refreshExpiresAt).toEqual(expiresAt);
   });
-
-  it("rejects a changed credential after password verification without revocation or rotation", async () => {
+  it("rejects a changed credential at revocation without mutating the ledger", async () => {
     const current = await pair("a"), other = await pair("a");
     const claims = (await validateWorkspaceManager(req(current.accessToken)))!;
-    const principal = (await authenticateCustomer("u@example.test", password))!;
     await pool().query("UPDATE users SET password_hash=$1 WHERE id='u'", [await hashPassword("replacement-session-password-34!")]);
-    await expect(revokeOwnSessions({ scope: "workspace", claims }, "revoke", other.familyId, principal.credentialVersion)).rejects.toThrow(/expired or changed/i);
+    await expect(revokeOwnSessions({ scope: "workspace", claims }, "revoke", other.familyId)).rejects.toThrow(/expired or changed/i);
     // A changed password now invalidates all workspace proof at admission,
     // while the rejected operation itself must not mutate the refresh ledger.
     expect(await isSessionFamilyActive(other.familyId, "customer", "a", "u")).toBe(false);
     expect((await pool().query("SELECT revoked_at FROM refresh_tokens WHERE id=$1", [other.refreshTokenId])).rows[0].revoked_at).toBeNull();
     expect((await pool().query("SELECT COUNT(*)::integer AS n FROM refresh_tokens WHERE family_id=$1", [current.familyId])).rows[0].n).toBe(1);
   });
-
-  it("allows only one concurrent reauthentication of the same presented session", async () => {
+  it("concurrent revoke_others is idempotent and keeps the caller's session", async () => {
     const current = await pair("a");
-    const results = await Promise.all([1, 2].map(() => POST(req(current.accessToken, { action: "revoke_others", password }))));
-    expect(results.filter(response => response.status === 200)).toHaveLength(1);
-    expect(results.filter(response => [401, 403].includes(response.status))).toHaveLength(1);
+    const results = await Promise.all([1, 2].map(() => POST(req(current.accessToken, { action: "revoke_others" }))));
+    expect(results.map(response => response.status)).toEqual([200, 200]);
     const live = await pool().query("SELECT id FROM refresh_tokens WHERE family_id=$1 AND revoked_at IS NULL", [current.familyId]);
     expect(live.rows).toHaveLength(1);
-    expect(live.rows[0].id).not.toBe(current.refreshTokenId);
+    expect(live.rows[0].id).toBe(current.refreshTokenId);
+    expect(await verifyWorkspaceToken(current.accessToken)).not.toBeNull();
   });
-
-  it("fences a concurrent refresh before rotating the whole surviving family", async () => {
+  it("revoke_others concurrent with refresh leaves exactly one current caller token", async () => {
     const current = await pair("a");
     const [response, refresh] = await Promise.all([
-      POST(req(current.accessToken, { action: "revoke_others", password })),
+      POST(req(current.accessToken, { action: "revoke_others" })),
       rotateRefreshToken("customer", current.refreshToken),
     ]);
     expect(response.status).toBe(200);
-    const next = cookie(response, "cust_session");
-    expect(next).toBeTruthy();
-    const currentClaims = verifyAccessTokenSignature(next!, "customer")!;
-    const live = await pool().query("SELECT id FROM refresh_tokens WHERE family_id=$1 AND revoked_at IS NULL", [current.familyId]);
-    expect(live.rows).toEqual([{ id: currentClaims.sid }]);
-    if (refresh.status === "rotated") expect(await verifyWorkspaceToken(refresh.pair.accessToken)).toBeNull();
-    else expect(refresh.status).toBe("invalid");
-    expect(await verifyWorkspaceToken(current.accessToken)).toBeNull();
+    expect(response.headers.getSetCookie()).toEqual([]);
+    // Refresh rotation replaces rather than revokes the predecessor
+    // (replaced_by is set, revoked_at stays null), so "current" is the
+    // row with no successor — there is exactly one, with or without revoke.
+    const live = await pool().query("SELECT id FROM refresh_tokens WHERE family_id=$1 AND revoked_at IS NULL AND replaced_by IS NULL", [current.familyId]);
+    expect(live.rows).toHaveLength(1);
+    if (refresh.status === "rotated") {
+      expect(live.rows[0].id).not.toBe(current.refreshTokenId);
+      expect(await verifyWorkspaceToken(refresh.pair.accessToken)).not.toBeNull();
+      // No second-rotation assertion: refresh rotation has a grace window
+      // in which a replaced token may still rotate, so reuse is not a
+      // stable fence here; the single-current-token assertion above is.
+    } else {
+      expect(refresh.status).toBe("invalid");
+      expect(live.rows[0].id).toBe(current.refreshTokenId);
+    }
   });
-
-  it("cannot create a surviving successor across concurrent logout", async () => {
+  it("revoke_others concurrent with logout leaves no surviving caller family", async () => {
     const current = await pair("a");
     const [response, signedOut] = await Promise.all([
-      POST(req(current.accessToken, { action: "revoke_others", password })),
+      POST(req(current.accessToken, { action: "revoke_others" })),
       logout(new Request("http://localhost:3000/api/auth/logout", { method: "POST", headers: { cookie: `cust_session=${current.accessToken}` } })),
     ]);
     expect(signedOut.status).toBe(200);
     expect([200, 401, 403]).toContain(response.status);
+    if (response.status === 200) expect(response.headers.getSetCookie()).toEqual([]);
     expect(await isSessionFamilyActive(current.familyId, "customer", "a", "u")).toBe(false);
     expect((await rotateRefreshToken("customer", current.refreshToken)).status).toBe("invalid");
-    const rotated = cookie(response, "cust_session");
-    if (rotated) expect(await verifyWorkspaceToken(rotated)).toBeNull();
   });
-
-  it("requires a new login before legacy sessions can perform password-confirmed revocation", async () => {
+  it("requires a new login before legacy sessions can revoke", async () => {
     const jti = `legacy_${randomBytes(16).toString("hex")}`;
     const now = Number((await pool().query("SELECT FLOOR(EXTRACT(EPOCH FROM clock_timestamp())) AS now")).rows[0].now);
     const claims = { sub: "manager", jti, iat: now, exp: now + 8 * 3600, tenantId: "a", userId: "u", role: "admin" };
@@ -222,7 +184,7 @@ describe.skipIf(!hasTestDatabase)("customer-owned account-wide session inventory
     const other = await pair("a"), foreign = await pair("b");
     const request = (id: string) => new Request("http://localhost:3000/api/auth/sessions", { method: "POST", headers: {
       cookie: `mgr_session=${token}`, origin: "http://localhost:3000", "content-type": "application/json",
-    }, body: JSON.stringify({ action: "revoke", id, password }) });
+    }, body: JSON.stringify({ action: "revoke", id }) });
     const denied = await POST(request(foreign.familyId));
     expect(denied.status).toBe(401);
     expect(denied.headers.getSetCookie()).toEqual([]);
