@@ -20,13 +20,14 @@ sql.identifier=sqlIdentifier;
 const render=(v)=>v?.parts?v.parts.map((s,i)=>s+(i<v.params.length?render(v.params[i]):'')).join(''):v?.items?v.items.map(render).join(render(v.sep)):String(v);
 const eq=(lhs,rhs)=>({op:'eq',lhs,rhs});const and=(...terms)=>({op:'and',terms});
 const matches=(predicate,row)=>!predicate||predicate.op==='and'?(!predicate||predicate.terms.every(p=>matches(p,row))):predicate.op==='eq'?(row[predicate.lhs]===predicate.rhs):true;
-const dr=mk({sql,eq,and});
+const dr=mk({sql,eq,and,asc:value=>value,count:()=>({count:true})});
 const agent={id:'agent',tenantId:'tenant',lifecycle:'active'};
 let state;
 const claims=()=>({tenantId:'tenant',userId:'actor',role:state.managerRole,jti:'jti',familyId:'family',ver:2,sid:'sid',exp:1900000000,kind:'manager'});
 const baseRow=()=>({id:'dev',tenantId:'tenant',agentId:'agent',discoveryId:'scan1',identityKey:'printer-stable',protocol:'ipp',ipAddress:'192.168.10.50',port:631,uri:'ipp://192.168.10.50/ipp/print',spoolerName:null,deviceName:'Office printer',manufacturer:null,model:'M1',hostname:null,serialNumber:null,macAddress:null,transport:'ipp',deviceClass:'laser',capabilities:{print:{color:true}},verification:'candidate',candidateStatus:'discovered'});
 function reset(changes={}){state={row:baseRow(),managerRole:'admin',memberRole:'admin',tenantActive:true,agentActive:true,familyActive:true,legacyActive:true,events:[],writes:0,preflight:undefined,...changes};}
 const tx={
+  select:()=>({from:()=>({where:async predicate=>[{c:state.row&&matches(predicate,state.row)?1:0}]})}),
   execute:async(q)=>{
     const text=render(q);state.events.push(text);
     const policy=workspace.reply(text,claims(),state);if(policy)return policy;
