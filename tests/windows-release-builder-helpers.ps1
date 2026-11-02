@@ -40,9 +40,25 @@ Assert-Throws { Assert-CodeSigningCertificate $null "AABBCC" }
 Assert-Throws { Assert-CodeSigningCertificate $certificate "" }
 Assert-Throws { Assert-CodeSigningCertificate $certificate "DIFFERENT" }
 
-foreach ($status in @("Valid", "NotTrusted")) {
-  $signature = [pscustomobject]@{ Status = $status; SignerCertificate = $certificate }
-  Assert-Equal (Assert-AuthenticodeSigningResult $signature "AABBCC" "fixture.exe") $status
+$signature = [pscustomobject]@{ Status = "Valid"; SignerCertificate = $certificate }
+Assert-Equal (Assert-AuthenticodeSigningResult $signature "AABBCC" "fixture.exe") "Valid"
+
+# An untrusted publisher is rejected by default. It is accepted only when the
+# explicit development/self-signed override is set; never leak that override
+# into subsequent negative tests or the surrounding workflow environment.
+$signature = [pscustomobject]@{ Status = "NotTrusted"; SignerCertificate = $certificate }
+$previousAllowUntrustedSigning = $env:YASEIR_ALLOW_UNTRUSTED_SIGNING
+try {
+  Remove-Item Env:YASEIR_ALLOW_UNTRUSTED_SIGNING -ErrorAction SilentlyContinue
+  Assert-Throws { Assert-AuthenticodeSigningResult $signature "AABBCC" "fixture.exe" }
+  $env:YASEIR_ALLOW_UNTRUSTED_SIGNING = "1"
+  Assert-Equal (Assert-AuthenticodeSigningResult $signature "AABBCC" "fixture.exe") "NotTrusted"
+} finally {
+  if ($null -eq $previousAllowUntrustedSigning) {
+    Remove-Item Env:YASEIR_ALLOW_UNTRUSTED_SIGNING -ErrorAction SilentlyContinue
+  } else {
+    $env:YASEIR_ALLOW_UNTRUSTED_SIGNING = $previousAllowUntrustedSigning
+  }
 }
 foreach ($status in @("UnknownError", "NotSigned", "HashMismatch", "NotSupportedFileFormat", "Incompatible", "future-status")) {
   $signature = [pscustomobject]@{ Status = $status; SignerCertificate = $certificate }
