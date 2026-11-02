@@ -138,7 +138,7 @@ def test_registered_online_printer_requires_fresh_identity_bound_operational_evi
         printer["verificationReceivedAt"] = (datetime.now(timezone.utc) + timedelta(seconds=61)).isoformat().replace("+00:00", "Z")
     else:
         printer["verificationVerifiedAt"] = (datetime.now(timezone.utc) - timedelta(seconds=2)).isoformat().replace("+00:00", "Z")
-    with pytest.raises(ValidationError, match="verif|eligible"):
+    with pytest.raises(ValidationError, match="(?i)(verif|eligible)"):
         binding(printer)._validate_runtime_target()
 
 
