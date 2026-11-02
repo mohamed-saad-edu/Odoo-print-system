@@ -61,7 +61,7 @@ def test_real_explicit_stale_reset_uses_same_db_clock(monkeypatch, host_skew):
     method_reset.action_reset_stale_sync_state.__globals__['fields'] = namespace['fields']
     record = NS(
         ensure_one=lambda: None, _check_admin=lambda: None,
-        env=NS(cr=object()), enabled_sync_revision=8,
+        env=NS(cr=object(), user=NS(login='fixture-admin')), enabled_sync_revision=8,
         invalidate_recordset=lambda *_args: None,
     )
     record.sudo = lambda: record
