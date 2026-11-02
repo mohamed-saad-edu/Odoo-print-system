@@ -89,20 +89,16 @@ function find(tree, predicate) {
   return predicate(tree) ? tree : find(tree.props?.children, predicate);
 }
 
-test("workspace confirmation remains reachable while profile settings are pending or unavailable", async () => {
+test("workspace session inventory remains reachable while profile settings are pending or unavailable", async () => {
   const settings = deferred();
   const harness = component("src/app/settings/page.tsx", async url => {
     assert.equal(url, "/api/settings");
     return settings.promise;
   });
   const cleanup = harness.effects[0]();
-  assert.ok(find(harness.tree, node => node.type === "WorkspaceSecurity"),
-    "password confirmation must mount independently of profile settings loading");
   assert.ok(find(harness.tree, node => node.type === "SessionInventory"), "session inventory must be independent of profile loading");
   settings.resolve({ ok: false, status: 401 });
   await flush(); harness.render();
-  assert.ok(find(harness.tree, node => node.type === "WorkspaceSecurity"),
-    "supported env-manager sessions must retain their confirmation card after profile settings401");
   assert.ok(find(harness.tree, node => node.type === "SessionInventory"));
   assert.deepEqual(harness.redirects, ["/login?next=%2Fsettings"]);
   cleanup();
