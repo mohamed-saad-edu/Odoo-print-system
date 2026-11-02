@@ -9,6 +9,7 @@ import vm from 'node:vm';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { isExactPrinterId } from '../src/lib/exact-printer-id.ts';
+import { canonicalize } from '../src/lib/canonicalize.ts';
 
 const require = createRequire(import.meta.url);
 let ts;
@@ -74,6 +75,7 @@ await virtualGuard.evaluate();
 imports['../../../../lib/printer-virtual'] = virtualGuard;
 // Run the exact production opaque printer identity validator in this fixture.
 imports['../../../../lib/exact-printer-id'] = moduleOf({ isExactPrinterId });
+imports['../../../../lib/canonicalize'] = moduleOf({ canonicalize });
 const route = new vm.SourceTextModule(transpiled, { context });
 await route.link((id) => {
   if (!(id in imports)) throw new Error('Unknown dependency: ' + id);
