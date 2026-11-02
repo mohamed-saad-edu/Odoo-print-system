@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { randomBytes } from "node:crypto";
 import {
   applyMigrations, closePool, hasTestDatabase, pool, seedFixture, truncateAll, insertQueuedJob, type Fixture,
 } from "./helpers/pg";
@@ -22,16 +23,21 @@ const SAFARI_IPHONE =
 const suite = describe.skipIf(!hasTestDatabase);
 
 suite("WP-A frictionless security: anomaly audit + audit-trail completeness", () => {
+  const previousGatewayJwtSecret = process.env.GATEWAY_JWT_SECRET;
   let f: Fixture;
   let managerToken: string;
 
   beforeAll(async () => {
-    process.env.GATEWAY_JWT_SECRET = "wpa-tests-secret-at-least-32-chars";
+    process.env.GATEWAY_JWT_SECRET = randomBytes(32).toString("hex");
     process.env.APP_BASE_URL = "http://localhost:3000";
     process.env.COOKIE_SECURE = "1";
     await applyMigrations();
   });
-  afterAll(async () => { await closePool(); });
+  afterAll(async () => {
+    if (previousGatewayJwtSecret === undefined) delete process.env.GATEWAY_JWT_SECRET;
+    else process.env.GATEWAY_JWT_SECRET = previousGatewayJwtSecret;
+    await closePool();
+  });
 
   beforeEach(async () => {
     await truncateAll();
