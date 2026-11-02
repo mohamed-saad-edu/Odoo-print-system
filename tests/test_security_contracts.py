@@ -76,7 +76,7 @@ def test_password_reset_flow_does_not_clear_auth_rate_limit():
 def test_registration_flow_does_not_clear_auth_rate_limit():
     source = read("src/app/api/auth/register/route.ts")
     assert "recordAuthSuccess" not in source
-    assert "reserveAuthAttempt" in source
+    assert "reserveScopedAuthAttempt" in source
     assert "disposable account creations" in source
 
 
