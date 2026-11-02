@@ -23,7 +23,7 @@ export interface PrinterGeometry extends PrinterGeometryProfile {
   config_fingerprint: string;
 }
 
-export type GeometryResult<T> = { ok: true; value: T } | { ok: false; reason: string };
+type GeometryResult<T> = { ok: true; value: T } | { ok: false; reason: string };
 export const GEOMETRY_FINGERPRINT_PATTERN = /^[a-f0-9]{64}$/;
 
 const profileFields = new Set<string>(contract.profileFields);

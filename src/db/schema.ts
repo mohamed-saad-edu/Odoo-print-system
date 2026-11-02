@@ -443,6 +443,7 @@ export const discoverySessions = pgTable("discovery_sessions", {
   agentIdIdx: index("discovery_sessions_agent_id_idx").on(table.agentId),
   statusIdx: index("discovery_sessions_status_idx").on(table.status),
   activeAgentUnique: uniqueIndex("discovery_sessions_active_agent_unique").on(table.tenantId, table.agentId).where(sql`${table.status} = 'running'`),
+  tenantAgentCreatedIdx: index("discovery_sessions_tenant_agent_created_idx").on(table.tenantId, table.agentId, table.createdAt),
 }));
 
 export const discoveredDevices = pgTable("discovered_devices", {
@@ -516,6 +517,17 @@ export const printJobs = pgTable("print_jobs", {
   retries: integer("retries").notNull().default(0),
   claimedAt: timestamp("claimed_at"),
   claimToken: text("claim_token"),
+  // v4 (0109): distinct operator cancellation. canceledAt is the DB-clock
+  // cancel instant; cancelReason the operator reason (<=500 chars, enforced
+  // by the cancel route); quotaRefunded records whether the admission-month
+  // ledger row was actually decremented (queued-never-dispatched only).
+  canceledAt: timestamp("canceled_at"),
+  cancelReason: text("cancel_reason"),
+  quotaRefunded: boolean("quota_refunded").notNull().default(false),
+  // v4 (0110): spooler-submission evidence for physical jobs. 'submitted'
+  // vs 'completed' is DERIVED from status='success' plus this evidence
+  // (src/lib/submission-evidence.ts); there is no 'submitted' DB status.
+  submissionEvidence: jsonb("submission_evidence").$type<Record<string, unknown>>(),
   // Only acknowledges the same closed outcome; never authorizes execution.
   closedClaimTokenHash: text("closed_claim_token_hash"),
   deliveryAttempts: integer("delivery_attempts").notNull().default(0),
@@ -555,7 +567,7 @@ export const printJobs = pgTable("print_jobs", {
   idempotencyUnique: uniqueIndex("print_jobs_tenant_idempotency_unique").on(table.tenantId, table.idempotencyKey).where(sql`idempotency_key IS NOT NULL`),
   bindingCheck: check("print_jobs_binding_check", sql`${table.bindingDigest} IS NULL OR ${table.bindingDigest} ~ '^[a-f0-9]{64}$'`),
   outputCheck: check("print_jobs_output_check", sql`${table.outputMedium} IN ('physical','file') AND (${table.outputEvidence} IS NULL OR (${table.outputMedium} = 'file' AND ${table.status} = 'success' AND jsonb_typeof(${table.outputEvidence}) = 'object'))`),
-  statusCheck: check("print_jobs_status_check", sql`${table.status} in ('queued','claimed','printing','success','failed','expired')`),
+  statusCheck: check("print_jobs_status_check", sql`${table.status} in ('queued','claimed','printing','success','failed','expired','canceled')`),
   retriesCheck: check("print_jobs_retries_check", sql`${table.retries} >= 0`),
   deliveryAttemptsCheck: check("print_jobs_delivery_attempts_check", sql`${table.deliveryAttempts} >= 0`),
   // Mirrors validatePrintJobPayload: the type/protocol contract is enforced at
@@ -674,9 +686,18 @@ export const tenantSubscriptions = pgTable("tenant_subscriptions", {
   currentPeriodEnd: timestamp("current_period_end"),
   /** Retained 0101 rolling-cycle activation anchor for history; calendar-month admission no longer reads it. */
   printCycleAnchor: timestamp("print_cycle_anchor"),
+  // v3: informational only. The live entitlement predicate is
+  // current_period_end > clock_timestamp(); no code path gates access on
+  // this flag, so a future reader must not trust it instead of the time
+  // predicate. Renew clears it.
   cancelAtPeriodEnd: boolean("cancel_at_period_end").notNull().default(false),
   entitlementBlocked: boolean("entitlement_blocked").notNull().default(false),
   entitlementBlockedReason: text("entitlement_blocked_reason"),
+  // v3 (0108): a revoke is terminal for the current contract, unlike suspend.
+  // Rows revoked before 0108 have NULL here and keep the old behaviour
+  // (reactivatable while suspended); only revokes after 0108 set it.
+  revokedAt: timestamp("revoked_at"),
+  revokedReason: text("revoked_reason"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 }, (table) => ({
@@ -710,13 +731,17 @@ export const printJobReceipts = pgTable("print_job_receipts", {
   closedClaimTokenHash: text("closed_claim_token_hash"),
   deliveredAt: timestamp("delivered_at"),
   ackedAt: timestamp("acked_at"),
+  // v4 (0110): retained copy of the live row's submission evidence.
+  submissionEvidence: jsonb("submission_evidence").$type<Record<string, unknown>>(),
   createdAt: timestamp("created_at").notNull(),
   updatedAt: timestamp("updated_at").notNull(),
 }, (table) => ({
   bindingCheck: check("print_job_receipts_binding_check", sql`${table.bindingDigest} IS NULL OR ${table.bindingDigest} ~ '^[a-f0-9]{64}$'`),
   outputCheck: check("print_job_receipts_output_check", sql`${table.outputMedium} IN ('physical','file') AND (${table.outputEvidence} IS NULL OR (${table.outputMedium} = 'file' AND ${table.status} = 'success' AND jsonb_typeof(${table.outputEvidence}) = 'object'))`),
   idempotencyUnique: uniqueIndex("print_job_receipts_tenant_idempotency_unique").on(table.tenantId, table.idempotencyKey),
-  statusCheck: check("print_job_receipts_status_check", sql`${table.status} in ('success','failed','expired')`),
+  tenantCreatedIdx: index("print_job_receipts_tenant_created_idx").on(table.tenantId, table.createdAt, table.id),
+  createdAtIdx: index("print_job_receipts_created_at_idx").on(table.createdAt),
+  statusCheck: check("print_job_receipts_status_check", sql`${table.status} in ('success','failed','expired','canceled')`),
 }));
 
 
@@ -747,6 +772,7 @@ export const subscriptionRequests = pgTable("subscription_requests", {
 }, table => ({
   requestKey: uniqueIndex("subscription_requests_key_idx").on(table.tenantId, table.idempotencyKey),
   pendingUnique: uniqueIndex("subscription_requests_pending_idx").on(table.tenantId).where(sql`${table.status} = 'pending'`),
+  tenantCreatedIdx: index("subscription_requests_tenant_created_idx").on(table.tenantId, table.createdAt),
   statusCheck: check("subscription_requests_status_check", sql`${table.status} IN ('pending','approved','rejected')`),
   termCheck: check("subscription_requests_term_check", sql`${table.term} IN ('monthly','yearly','custom')`),
   quotaCheck: check("subscription_requests_requested_monthly_quota_check", sql`${table.requestedMonthlyQuota} IS NULL OR ${table.requestedMonthlyQuota} > 0`),

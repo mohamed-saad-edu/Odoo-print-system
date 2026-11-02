@@ -10,7 +10,7 @@ vi.mock("../src/lib/password-screening", async (importActual) => ({
 }));
 import { db } from "../src/db";
 import { tenants, users, tenantUsers } from "../src/db/schema";
-import { issueSessionPair, rotateRefreshToken, type RefreshResult } from "../src/lib/session-tokens";
+import { rotateRefreshToken, type RefreshResult } from "../src/lib/session-tokens";
 import { createWorkspaceManagerTestSession, issueWorkspaceTestSession } from "./helpers/workspace-session";
 import { eq } from "drizzle-orm";
 import { hasTestDatabase, applyMigrations, closePool, pool } from "./helpers/pg";

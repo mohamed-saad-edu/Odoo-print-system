@@ -3,8 +3,10 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"log"
 	"strings"
 
 	"github.com/yaseir-agent/agent/internal/printer"
@@ -53,8 +55,24 @@ func (a *Agent) reportDurableTerminalResult(ctx context.Context, report queue.Te
 	if err != nil {
 		return err
 	}
-	return a.updateJobStatusWithOutputEvidence(ctx, report.ID, report.Status, report.LastError, report.ClaimToken,
+	err = a.updateJobStatusWithOutputEvidence(ctx, report.ID, report.Status, report.LastError, report.ClaimToken,
 		report.SpoolerJobID, report.Transport, evidence)
+	if err != nil && errors.Is(err, ErrJobCanceled) {
+		// v4: the Gateway has settled this job as canceled (operator
+		// decision, or the 24h claimed-cancel reconciliation window
+		// closed). No re-report can ever succeed, so keeping the entry
+		// in the pending outbox would retry it forever across scan
+		// cycles. Clearing the local claim token drops it from the
+		// pending set WITHOUT re-running printer I/O; the local terminal
+		// row (status + error) is retained for forensics.
+		log.Printf("Job %s: gateway settled job as canceled; dropping terminal re-report (no reprint)", report.ID)
+		if clearErr := a.queue.ClearClaimToken(report.ID, report.ClaimToken); clearErr != nil {
+			log.Printf("Job %s: could not clear canceled terminal report token: %v", report.ID, clearErr)
+			return err
+		}
+		return nil
+	}
+	return err
 }
 
 func cloneOutputEvidence(value *printer.OutputEvidence) *printer.OutputEvidence {

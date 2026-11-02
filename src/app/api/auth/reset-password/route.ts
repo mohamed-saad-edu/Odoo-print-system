@@ -5,7 +5,7 @@ import { db } from "../../../../db";
 import { passwordResetTokens, tenantUsers, users } from "../../../../db/schema";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { hashPassword, hashToken } from "../../../../lib/password";
-import { clientIpFrom, recordAuthSuccess, reserveAuthAttempt, setRateLimitHeaders } from "../../../../lib/auth-rate-limit";
+import { clientIpFrom, refundAuthReservation, reserveAuthAttempt, setRateLimitHeaders } from "../../../../lib/auth-rate-limit";
 import { writeAuditEvent } from "../../../../lib/audit";
 import { revokeLegacyManagerSessionsForUserInTransaction } from "../../../../lib/manager-auth";
 import { revokeLegacyPlatformSessionsForUserInTransaction } from "../../../../lib/platform-auth";
@@ -37,7 +37,7 @@ export async function POST(req: Request) {
   const rateIdentity = `reset-password-token:${ip === "unknown" ? tokenHash : ip}`;
   let rate: Awaited<ReturnType<typeof reserveAuthAttempt>>;
   try {
-    rate = await reserveAuthAttempt(ip, rateIdentity);
+    rate = await reserveAuthAttempt(ip, rateIdentity, "reset-password");
   } catch (error) {
     logError("auth.rate_limit.store_unavailable", { endpoint: "reset_password", error: error instanceof Error ? error.message : "unknown" });
     return NextResponse.json({ error: "Service temporarily unavailable" }, { status: 503 });
@@ -126,16 +126,31 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Password reset failed" }, { status: 500 });
   }
 
-  await recordAuthSuccess(ip, rateIdentity).catch((error) => logWarn("auth.reset_password.rate_limit_clear_failed", { ip, error: error instanceof Error ? error.message : "unknown" }));
+  await refundAuthReservation(ip, rateIdentity, "reset-password").catch((error) => logWarn("auth.reset_password.rate_limit_clear_failed", { ip, error: error instanceof Error ? error.message : "unknown" }));
   if (initialSetup) {
     // The setup password is the user's first credential, not a recovery event.
     // Mint a fresh, server-validated customer session after the transaction
     // revokes any previous session families. Ordinary reset proofs never do so.
     try {
-      const member = await db.query.tenantUsers.findFirst({
+      // WP3 (STATIC REVIEW ONLY, B2-03): the previous findFirst with no
+      // orderBy picked an arbitrary membership when a second one appeared
+      // between email verification and password setup (e.g. a
+      // platform-owner direct add), landing the user in the wrong
+      // workspace. No privilege gain either way (both memberships are
+      // theirs) and no cross-tenant leak, but the workspace must not be
+      // a coin flip. Only auto-issue the setup session when exactly one
+      // membership exists (the normal setup case, behaviour unchanged);
+      // with zero or several, fall through to authenticated:false and
+      // let the user sign in / choose a workspace through the normal flow.
+      // The setup token carries no tenant link, so "the membership the
+      // verification transaction created" cannot be identified from this
+      // route without a schema change; preferring createdAt order would
+      // still be a silent pick, not a decision.
+      const members = await db.query.tenantUsers.findMany({
         where: eq(tenantUsers.userId, row.userId),
         columns: { tenantId: true, role: true },
       });
+      const member = members.length === 1 ? members[0] : undefined;
       const account = await db.query.users.findFirst({
         where: eq(users.id, row.userId),
         columns: { email: true },

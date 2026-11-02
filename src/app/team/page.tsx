@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { Crown, Mail, Users } from "lucide-react";
 import { useI18n } from "../../i18n/react";
 import { ensureCustomerSession } from "../../lib/session-config";
-import { fetchWithTimeout } from "../../lib/fetch-timeout";
+import { fetchWithSessionRetry, isSessionRenewedNotResent } from "../../lib/fetch-timeout";
 import { codeMessageKey } from "../../lib/api-error-keys";
 import { Avatar, Button, Card, CardHeader, ConfirmDialog, Input, PageContainer, PageHeader, StatusBadge } from "../../components/ui";
 
@@ -52,11 +52,13 @@ export default function TeamPage() {
           router.replace("/login?next=%2Fteam");
           return;
         }
+        // Reads: safe to retry once after refresh (initial load is already
+        // ensure-guarded; this closes the ensure-then-expire TOCTOU window).
         const [membersRes, settingsRes] = await Promise.all([
-          fetchWithTimeout(`/api/team/members?limit=${PAGE_SIZE}&offset=${memberOffset}`, {
+          fetchWithSessionRetry(`/api/team/members?limit=${PAGE_SIZE}&offset=${memberOffset}`, {
             credentials: "include", cache: "no-store",
           }),
-          fetchWithTimeout("/api/settings", {
+          fetchWithSessionRetry("/api/settings", {
             credentials: "include", cache: "no-store",
           }),
         ]);
@@ -71,7 +73,7 @@ export default function TeamPage() {
         // Pending invite recipients belong to the owner-only account surface.
         let pending: { invitations: Invitation[]; hasMore: boolean } = { invitations: [], hasMore: false };
         if (account.role === "owner" && !cancelled) {
-          const invitesRes = await fetchWithTimeout(`/api/team/invitations?limit=${PAGE_SIZE}&offset=${inviteOffset}`, {
+          const invitesRes = await fetchWithSessionRetry(`/api/team/invitations?limit=${PAGE_SIZE}&offset=${inviteOffset}`, {
             credentials: "include", cache: "no-store",
           });
           if (!invitesRes.ok) {
@@ -112,12 +114,21 @@ export default function TeamPage() {
     setBusy(true);
     setNotice(null);
     try {
-      const response = await fetchWithTimeout("/api/team/invitations", {
+      // NOT auto-resent: POST /api/team/invitations mints a fresh invitation
+      // id + token per call with no idempotency key (route generates
+      // `inv_` + nanoid; the only dedup is a 409 for an already-pending
+      // invite). Refresh only; the renewed marker below keeps the typed
+      // email and asks for an explicit resubmit — no redirect, no duplicate.
+      const response = await fetchWithSessionRetry("/api/team/invitations", {
         method: "POST", credentials: "include", cache: "no-store",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email: invitedEmail }),
-      });
+      }, { autoRetry: false });
       const result = await response.json().catch(() => ({})) as { code?: string };
+      if (isSessionRenewedNotResent(response)) {
+        setNotice({ kind: "warn", message: t("errors.sessionRenewedRetry") });
+        return;
+      }
       if (response.status === 503 && result.code === "INVITATION_DELIVERY_UNAVAILABLE") {
         setNotice({ kind: "warn", message: t("team.deliveryUnconfirmed") });
         setEmail("");
@@ -150,7 +161,10 @@ export default function TeamPage() {
     setBusy(true);
     setNotice(null);
     try {
-      const response = await fetchWithTimeout(`/api/team/invitations?id=${encodeURIComponent(id)}`, {
+      // Auto-retry: invitation revoke is a guarded one-shot transition
+      // (UPDATE ... WHERE revoked_at IS NULL; a repeat finds nothing to
+      // revoke), so a replay after refresh cannot revoke twice.
+      const response = await fetchWithSessionRetry(`/api/team/invitations?id=${encodeURIComponent(id)}`, {
         method: "DELETE", credentials: "include", cache: "no-store",
       });
       const result = await response.json().catch(() => ({})) as { code?: string };
@@ -179,10 +193,19 @@ export default function TeamPage() {
     setBusy(true);
     setNotice(null);
     try {
-      const response = await fetchWithTimeout(`/api/team/members?userId=${encodeURIComponent(member.userId)}`, {
+      // Auto-retry: member removal deletes one addressed row; a replay
+      // after the row is gone returns MEMBER_NOT_FOUND instead of a second
+      // effect, so it cannot remove twice.
+      const response = await fetchWithSessionRetry(`/api/team/members?userId=${encodeURIComponent(member.userId)}`, {
         method: "DELETE", credentials: "include", cache: "no-store",
       });
-      if (!response.ok) throw new Error("MEMBER_REMOVE_FAILED");
+      if (!response.ok) {
+        if (response.status === 401 || response.status === 403) {
+          clearTeamData();
+          if (response.status === 401) router.replace("/login?next=%2Fteam");
+        }
+        throw new Error("MEMBER_REMOVE_FAILED");
+      }
       setNotice({ kind: "ok", message: t("success.memberRemoved") });
       if (members.length === 1 && memberOffset > 0) {
         setLoading(true);

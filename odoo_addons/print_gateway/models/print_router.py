@@ -140,9 +140,17 @@ class PrintGatewayRouter(models.AbstractModel):
 
     @api.model
     def _document_type(self, report=None, record=None, explicit=None):
-        value = explicit or self.env.context.get("print_gateway_document_type")
-        if value:
-            normalized = str(value).strip().lower()
+        # WP3 (STATIC REVIEW ONLY): deterministic derivation always wins over
+        # RPC context. Previously the context key print_gateway_document_type
+        # overrode the model-derived type, so a crafted dispatch context
+        # could steer binding selection to a different document type for the
+        # same report/destination/scope (B4-02). The context key is now a
+        # last resort, honoured only when no type can be derived at all
+        # (no mapped model, no report technical name) and only for string
+        # values; resolve_explicit() still validates the selected binding
+        # against report, destination, company and branch.
+        if explicit:
+            normalized = str(explicit).strip().lower()
             if normalized:
                 return normalized
         model = record._name if record else report.model if report else ""
@@ -152,6 +160,11 @@ class PrintGatewayRouter(models.AbstractModel):
             technical = (report.report_name or "").strip().lower()
             if technical:
                 return "report:%s" % technical
+        value = self.env.context.get("print_gateway_document_type")
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized and len(normalized) <= 128:
+                return normalized
         raise ValidationError(_("Print document type cannot be determined for this print action."))
 
     @api.model
@@ -319,8 +332,20 @@ class PrintGatewayRouter(models.AbstractModel):
 
     @api.model
     def _render_pdf_payload_from_target(self, report_ref, render_target, *, context_values=None):
+        # WP3 (STATIC REVIEW ONLY): context_values doubles as QWeb template
+        # data (passed as data= below, unchanged) and as environment context
+        # via with_context. Only the in-tree Sale Details keys may enter the
+        # environment: any other key (notably company-steering keys) is
+        # dropped from the context overlay while remaining available to the
+        # template as data. Future render targets needing a new context key
+        # must extend this allowlist deliberately.
+        render_context = {
+            key: value
+            for key, value in (context_values or {}).items()
+            if key in ("date_start", "date_stop")
+        }
         try:
-            renderer = self.env["ir.actions.report"].with_context(**(context_values or {}))
+            renderer = self.env["ir.actions.report"].with_context(**render_context)
             res_ids = render_target.ids if hasattr(render_target, "ids") and render_target.ids else False
             pdf_content, report_format = renderer._render_qweb_pdf(report_ref, res_ids=res_ids, data=context_values)
         except Exception as exc:

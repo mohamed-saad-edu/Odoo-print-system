@@ -10,7 +10,13 @@ const fixture = vi.hoisted(() => {
   return { fetch: vi.fn(), replace, refresh, router: { replace, refresh },
     t: (key: string) => key, formatDate: (value: string) => `formatted:${value}` };
 });
-vi.mock("../src/lib/fetch-timeout", () => ({ fetchWithTimeout: fixture.fetch }));
+// SessionInventory now routes workspace loads/mutations through
+// fetchWithSessionRetry (silent refresh + retry once); the platform variant
+// keeps fetchWithTimeout. Both resolve to the same fixture fetch here — the
+// wrapper's own refresh/retry decisions are covered by
+// tests/session-renewal-sync.node.test.mjs, so component assertions on the
+// fixture calls (counts, bodies, serialization, abort) are unchanged.
+vi.mock("../src/lib/fetch-timeout", () => ({ fetchWithTimeout: fixture.fetch, fetchWithSessionRetry: fixture.fetch }));
 vi.mock("../src/i18n/react", () => ({ useI18n: () => ({ t: fixture.t, formatDate: fixture.formatDate }) }));
 vi.mock("next/navigation", () => ({ useRouter: () => fixture.router }));
 (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
@@ -18,7 +24,7 @@ let root: Root | undefined, host: HTMLDivElement;
 const deferred = <T,>() => { let resolve!: (value: T) => void; const promise = new Promise<T>(yes => { resolve = yes; }); return { resolve, promise }; };
 const reply = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 const row = (n: number) => ({ id: n.toString(16).padStart(32, "0"), kind: "customer", tenantId: "own-tenant", tenantName: `Workspace ${n}`,
-  current: n === 0, requiresPlatformStepUp: false, createdAt: "2030-01-01T00:00:00Z", lastRefreshedAt: "2030-01-01T00:00:00Z",
+  current: n === 0, createdAt: "2030-01-01T00:00:00Z", lastRefreshedAt: "2030-01-01T00:00:00Z",
   expiresAt: "2030-01-31T00:00:00Z", ipAddress: null, userAgent: `Synthetic device ${n}` });
 const page = { sessions: [row(0), row(1)], truncated: false, nextCursor: null };
 const button = (text: string) => [...host.querySelectorAll("button")].find(node => node.textContent === text)!;
@@ -26,43 +32,33 @@ async function mount(strict = false) {
   host = document.createElement("div"); document.body.append(host); root = createRoot(host);
   await act(async () => root!.render(strict ? h(StrictMode, null, h(SessionInventory)) : h(SessionInventory)));
 }
-async function password(value: string) {
-  const input = host.querySelector<HTMLInputElement>("#session-password")!;
-  await act(async () => {
-    Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!.call(input, value);
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-  });
-}
 beforeEach(() => { fixture.fetch.mockReset(); fixture.replace.mockReset(); fixture.refresh.mockReset(); });
 afterEach(async () => { if (root) await act(async () => root!.unmount()); root = undefined; host?.remove(); });
 
 describe("account session security UI", () => {
-  it("requires explicit all-device confirmation and sends the exact password before signing out this device", async () => {
+  it("requires explicit all-device confirmation and revokes without a password", async () => {
     fixture.fetch.mockImplementation(async (_url, init) => init.method === "POST" ? reply(200, { signedOut: true }) : reply(200, page));
     await mount(); const all = host.querySelector<HTMLButtonElement>("#session-revoke-all")!;
     expect(all.disabled).toBe(true);
-    await password("  exact كلمة مرور \t"); expect(all.disabled).toBe(true);
     await act(async () => host.querySelector<HTMLInputElement>("#session-confirm-all")!.click());
     expect(all.disabled).toBe(false); await act(async () => all.click());
     const posts = fixture.fetch.mock.calls.filter(([, init]) => init.method === "POST");
-    expect(posts).toHaveLength(1); expect(JSON.parse(posts[0][1].body)).toEqual({ action: "revoke_all", password: "  exact كلمة مرور \t" });
+    expect(posts).toHaveLength(1); expect(JSON.parse(posts[0][1].body)).toEqual({ action: "revoke_all" });
     expect(fixture.replace).toHaveBeenCalledWith("/login"); expect(fixture.refresh).toHaveBeenCalledTimes(1);
-    expect(host.querySelector<HTMLInputElement>("#session-password")!.value).toBe("");
+    expect(host.querySelector("#session-password")).toBeNull();
     expect(localStorage.length).toBe(0); expect(sessionStorage.length).toBe(0);
   });
 
-  it("serializes rapid revocation clicks and clears the password after a rejected platform step-up", async () => {
+  it("serializes rapid revocation clicks and reports a generic failure without a platform prompt", async () => {
     const pending = deferred<Response>();
     fixture.fetch.mockImplementation((_url, init) => init.method === "POST" ? pending.promise : Promise.resolve(reply(200, page)));
-    await mount(); await password("fresh exact password");
+    await mount();
     const others = button("security.revokeOthers");
     await act(async () => { others.click(); others.click(); });
     expect(fixture.fetch.mock.calls.filter(([, init]) => init.method === "POST")).toHaveLength(1);
-    await act(async () => pending.resolve(reply(403, { code: "PLATFORM_SESSION_STEP_UP_REQUIRED" })));
-    expect(host.querySelector<HTMLInputElement>("#session-password")!.value).toBe("");
-    expect(host.querySelector('a[href="/platform/security"]')).not.toBeNull();
-    expect(host.textContent).toContain("security.platformSessionStepUp");
-    await act(async () => window.dispatchEvent(new Event("yaseir:workspace-reauthenticated")));
+    await act(async () => pending.resolve(reply(403, { code: "PLATFORM_AUTHORITY_CHANGED" })));
+    expect(host.querySelector('a[href="/platform/security"]')).toBeNull();
+    expect(host.textContent).toContain("security.sessionsFailed");
     expect(fixture.fetch.mock.calls.filter(([, init]) => init.method === "POST")).toHaveLength(1);
     expect(fixture.replace).not.toHaveBeenCalled();
   });
@@ -83,7 +79,7 @@ describe("account session security UI", () => {
   it("aborts a pending mutation on unmount and never follows its late successful sign-out", async () => {
     const pending = deferred<Response>();
     fixture.fetch.mockImplementation((_url, init) => init.method === "POST" ? pending.promise : Promise.resolve(reply(200, page)));
-    await mount(); await password("password");
+    await mount();
     await act(async () => button("security.revokeOthers").click());
     const init = fixture.fetch.mock.calls.find(([, value]) => value.method === "POST")![1];
     await act(async () => root!.unmount()); root = undefined;
@@ -102,9 +98,8 @@ describe("account session security UI", () => {
 
   it("does not automatically retry an ambiguous network failure", async () => {
     fixture.fetch.mockImplementation(async (_url, init) => { if (init.method === "POST") throw new TypeError("offline"); return reply(200, page); });
-    await mount(); await password("password"); await act(async () => button("security.revokeOthers").click());
+    await mount(); await act(async () => button("security.revokeOthers").click());
     expect(fixture.fetch.mock.calls.filter(([, init]) => init.method === "POST")).toHaveLength(1);
-    expect(host.querySelector<HTMLInputElement>("#session-password")!.value).toBe("");
     expect(fixture.replace).not.toHaveBeenCalled(); expect(host.textContent).toContain("security.sessionsFailed");
   });
 });

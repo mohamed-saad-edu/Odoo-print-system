@@ -48,7 +48,8 @@ export async function GET(req: Request) {
         })
         .from(agents)
         .where(and(eq(agents.lifecycle, "active"), eq(agents.tenantId, apiKey.tenantId)))
-        .orderBy(asc(agents.name));
+        .orderBy(asc(agents.name))
+        .limit(1000);
     });
   } catch (error) {
     if (error instanceof OdooReadKeyUnavailableError) {

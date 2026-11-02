@@ -215,17 +215,3 @@ export function CommandPalette({
   );
 }
 
-export function CommandHint({ onOpen }: { onOpen: () => void }) {
-  const { t } = useI18n();
-  return (
-    <button
-      type="button"
-      onClick={onOpen}
-      className="flex min-h-9 w-full items-center gap-2 rounded-sm border border-edge bg-surface-2 px-2.5 py-1.5 text-sm text-ink-3 transition-colors duration-150 hover:border-edge-strong hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/35"
-    >
-      <Search className="h-3.5 w-3.5 shrink-0" aria-hidden />
-      <span className="flex-1 truncate text-start">{t("command.hint")}</span>
-      <Kbd>⌘K</Kbd>
-    </button>
-  );
-}

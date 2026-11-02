@@ -31,6 +31,9 @@ describe("Yaseir customer UX: concise, state-driven setup", () => {
   it("keeps account security and settings controls while removing repeated page intros", () => {
     const source = read("src/app/settings/page.tsx");
     expect(source).not.toContain('description={t("v4.experience.settings.body")}');
-    expect(source).toContain('securityRequested');
+    // No step-up: the settings security section is just the session
+    // inventory — no password re-confirmation state exists anymore.
+    expect(source).toContain('SessionInventory');
+    expect(source).not.toContain('reauth');
   });
 });

@@ -20,7 +20,7 @@ import { agentStaleThresholdSeconds, printerStaleThresholdSeconds } from "./stal
 import { nonVirtualPrinterPredicate } from "./printer-virtual-sql";
 
 export type AgentHealthStatus = "ONLINE" | "DEGRADED" | "OFFLINE" | "STARTING" | "UNKNOWN";
-export type HealthCheckResult = {
+type HealthCheckResult = {
   name: string;
   status: "ok" | "warn" | "error" | "unknown";
   message: string;
@@ -33,7 +33,7 @@ export type HealthCheckResult = {
   details?: Record<string, unknown>;
 };
 
-export interface AgentHealth {
+interface AgentHealth {
   agentId: string;
   tenantId: string;
   name: string;
@@ -277,8 +277,12 @@ export async function getAgentHealth(tenantId: string, agentId: string, tx?: DbT
 
 export async function getAllAgentsHealth(tenantId: string, limit = 100, offset = 0, tx?: DbTx): Promise<AgentHealth[]> {
   const reader = tx ?? db;
-  const boundedLimit = Math.max(1, Math.min(201, Math.trunc(limit)));
-  const boundedOffset = Math.max(0, Math.min(100_000, Math.trunc(offset)));
+  // v3: Math.trunc(NaN) is NaN and Math.min/max propagate it, so an
+  // unvalidated NaN limit/offset reached Drizzle. Mirror safeOffset: fall
+  // back to the defaults for non-safe integers. The sole current caller
+  // already validates, so this is defense-in-depth for future callers.
+  const boundedLimit = Math.max(1, Math.min(201, Number.isSafeInteger(limit) ? limit : 100));
+  const boundedOffset = Math.max(0, Math.min(100_000, Number.isSafeInteger(offset) ? offset : 0));
   const allAgents = await healthRead(tx,
     () => reader.select().from(agents)
       .where(eq(agents.tenantId, tenantId))

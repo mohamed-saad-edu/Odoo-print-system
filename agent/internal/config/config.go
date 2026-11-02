@@ -492,7 +492,12 @@ func IsAllowedPrinterIP(ip net.IP) bool {
 	}
 	// Cloud metadata services commonly bind to these link-local/ULA addresses;
 	// printer destinations must never be usable as a metadata proxy.
-	if ip4 := ip.To4(); ip4 != nil && (ip4.Equal(net.IPv4(169, 254, 169, 254)) || ip4.Equal(net.IPv4(169, 254, 170, 2))) {
+	// WP3 (STATIC REVIEW ONLY, B3-06): Alibaba Cloud's metadata service
+	// (100.100.100.100) is added as a vetted single address: it sits inside
+	// the CGNAT range IsPrivate() otherwise allows, and no printer lives
+	// there. A blanket block of 169.254/16 or the CGNAT range is still
+	// rejected: legitimate link-local printers use those ranges.
+	if ip4 := ip.To4(); ip4 != nil && (ip4.Equal(net.IPv4(169, 254, 169, 254)) || ip4.Equal(net.IPv4(169, 254, 170, 2)) || ip4.Equal(net.IPv4(100, 100, 100, 100))) {
 		return false
 	}
 	if strings.EqualFold(ip.String(), "fd00:ec2::254") {

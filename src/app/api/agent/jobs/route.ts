@@ -4,9 +4,10 @@ import { createHash } from "node:crypto";
 import { db, type DbTx } from "../../../../db";
 import { printJobs, printJobReceipts } from "../../../../db/schema";
 import { validateAgent } from "../../../../lib/agent-auth";
-import { and, eq, isNull, sql, type SQL } from "drizzle-orm";
+import { and, eq, sql, type SQL } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { isJobStatus, canTransition, isTerminal, derivePhysicalOutcome, AGENT_REQUEUE_REASONS, AGENT_REPRINT_AFTER_CRASH_REASON, LATE_SUCCESS_POST_EXPIRATION_MARKER, LATE_SUCCESS_ERROR_MARKERS, LATE_SUCCESS_MAX_AGE_MS, EXPIRED_LATE_SUCCESS_GRACE_MS, type JobStatus } from "../../../../lib/job-status";
+import { validateSubmissionEvidence, deriveSubmissionState } from "../../../../lib/submission-evidence";
 import { logInfo, logWarn, requestIdFrom } from "../../../../lib/log";
 import { incrementMetric } from "../../../../lib/metrics";
 import { MAX_RETRIES, DELIVERY_EVIDENCE_PENDING } from "../../../../lib/job-maintenance";
@@ -313,7 +314,8 @@ export async function GET(req: Request) {
   // Every claimed row fits the conservative response budget by construction.
   // Never truncate here: returning fewer jobs than we claimed would turn
   // undelivered jobs into permanent unknown-outcome failures.
-  return NextResponse.json(mapped);
+  // v3: claimed rows include job payloads; match the sibling agent GETs.
+  return NextResponse.json(mapped, { headers: { "Cache-Control": "no-store" } });
 }
 
 function stageForStatus(status: string): "printing" | "success" | "failed" | "expired" | "blocked" | "delivery" | "accepted" | "connection" {
@@ -339,12 +341,16 @@ export async function PATCH(req: Request) {
   }
   if (hasBodyOverLimit(req, 64 * 1024)) return NextResponse.json({ error: "Request body too large" }, { status: 413 });
 
-  let body: { jobId?: unknown; status?: unknown; error?: unknown; reason?: unknown; claimToken?: unknown; spoolerJobId?: unknown; attemptId?: unknown; transport?: unknown; outputEvidence?: unknown };
+  let body: { jobId?: unknown; status?: unknown; error?: unknown; reason?: unknown; claimToken?: unknown; spoolerJobId?: unknown; attemptId?: unknown; transport?: unknown; outputEvidence?: unknown; submissionEvidence?: unknown };
   try { const parsedBody = await req.json(); if (!parsedBody || typeof parsedBody !== "object" || Array.isArray(parsedBody)) throw new Error("JSON object required"); body = parsedBody; } catch { return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 }); }
 
   const { jobId, status: requestedStatus, error: rawError, reason: rawReason, claimToken: rawClaimToken, spoolerJobId: rawSpoolerJobId, attemptId: rawAttemptId, transport: rawTransport } = body;
   if (typeof jobId !== "string" || !jobId) return NextResponse.json({ error: "jobId is required" }, { status: 400 });
   if (!isJobStatus(requestedStatus)) return NextResponse.json({ error: "status must be a valid job status" }, { status: 400 });
+  // v4: 'canceled' is operator-only. Agents must never report it (an agent
+  // that tried would be claiming an operator decision); the cancel route
+  // owns the transition via its conditional UPDATE.
+  if (requestedStatus === "canceled") return NextResponse.json({ error: "Agents cannot report canceled; cancellation is operator-only", code: "JOB_CANCEL_AGENT_FORBIDDEN" }, { status: 409 });
   const errorMessage = typeof rawError === "string" && rawError.length > 0 ? rawError.slice(0, MAX_ERROR_LENGTH) : null;
   const reason = typeof rawReason === "string" ? rawReason.trim() : "";
   const claimToken = typeof rawClaimToken === "string" && rawClaimToken.length > 0 && rawClaimToken.length <= 120 ? rawClaimToken : null;
@@ -354,6 +360,11 @@ export async function PATCH(req: Request) {
 
   const outputEvidence = body.outputEvidence === undefined ? null : validateFileOutputEvidence(body.outputEvidence);
   if (body.outputEvidence !== undefined && !outputEvidence) return NextResponse.json({ error: "Invalid file output evidence", code: "INVALID_OUTPUT_EVIDENCE" }, { status: 400 });
+  // v4 (WP2): spooler-submission evidence is shape-validated here; the
+  // success-only / physical-only enforcement happens after the job row is
+  // loaded (mirroring the outputEvidence checks below).
+  const submissionEvidence = body.submissionEvidence === undefined ? null : validateSubmissionEvidence(body.submissionEvidence);
+  if (body.submissionEvidence !== undefined && !submissionEvidence) return NextResponse.json({ error: "Invalid submission evidence", code: "INVALID_SUBMISSION_EVIDENCE" }, { status: 400 });
 
   const whereClause = and(eq(printJobs.id, jobId), eq(printJobs.tenantId, agent.tenantId), eq(printJobs.agentId, agent.id));
   // Parse-time authentication can predate a credential rotation. All job
@@ -388,6 +399,10 @@ export async function PATCH(req: Request) {
 
   if (job.outputMedium === "file" && requestedStatus === "success" && !outputEvidence) return NextResponse.json({ error: "Verified PDF file creation evidence is required", code: "OUTPUT_EVIDENCE_REQUIRED" }, { status: 422 });
   if (outputEvidence && (job.outputMedium !== "file" || requestedStatus !== "success")) return NextResponse.json({ error: "File evidence is only valid for a successful file-output job", code: "OUTPUT_EVIDENCE_MISMATCH" }, { status: 422 });
+  // v4 (WP2): submission evidence is only valid on a successful PHYSICAL
+  // job report (file jobs use outputEvidence). Old agents send none and
+  // are unaffected; new agents sending it on any other report get 422.
+  if (submissionEvidence && (job.outputMedium === "file" || requestedStatus !== "success")) return NextResponse.json({ error: "Submission evidence is only valid for a successful physical job", code: "SUBMISSION_EVIDENCE_MISMATCH" }, { status: 422 });
   const currentStatus = job.status as JobStatus;
   const closedClaimTokenHash = claimToken ? createHash("sha256").update(claimToken).digest("hex") : null;
   if (claimToken && closedClaimTokenHash && isTerminal(currentStatus) && requestedStatus === currentStatus) {
@@ -446,13 +461,23 @@ export async function PATCH(req: Request) {
       ) THEN 'UNKNOWN_PARTIAL_DELIVERY: job expired after possible delivery without an execution report'
       ELSE NULL END`;
 
+    // v3: the expired branch intentionally skips the claim-token check, but
+    // it still stamped caller-supplied spoolerJobId/attemptId on the strength
+    // of tenant+agent+job ownership and expiry alone, letting an agent that
+    // never held a claim attach fabricated spooler linkage. Only stamp
+    // spooler evidence when the caller presented the live claim token, or
+    // when the job already reached printing (delivery established under an
+    // earlier valid claim). Expiry itself is unaffected.
+    const spoolerEvidenceAllowed =
+      (claimToken !== undefined && job.claimToken !== null && claimToken === job.claimToken) ||
+      currentStatus === "printing";
     const expiryWrite = await withCurrentAgentCredential(agent, (tx) => tx.update(printJobs)
       .set({
         status: "expired",
         error: expiryError,
         closedClaimTokenHash,
-        ...(spoolerJobId ? { spoolerJobId } : {}),
-        ...(incomingAttemptId ? { attemptId: incomingAttemptId } : {}),
+        ...(spoolerJobId && spoolerEvidenceAllowed ? { spoolerJobId } : {}),
+        ...(incomingAttemptId && spoolerEvidenceAllowed ? { attemptId: incomingAttemptId } : {}),
         // Use DB-native now() to match the sweeper's clock (updated_at < now() - interval).
         // JS new Date() is the app-server clock and can drift from the DB host.
         updatedAt: sql`clock_timestamp()`,
@@ -594,6 +619,26 @@ export async function PATCH(req: Request) {
     lateSuccess = true;
   }
 
+  // v4: claimed-cancel late success. A claimed-cancel row keeps the UNKNOWN
+  // marker AND the live claim token for 24h precisely so a genuinely
+  // executed job can reconcile: the agent executed before the cancel
+  // landed and its terminal re-report is the only path back to success.
+  // Queued-cancels carry JOB_CANCELED_BY_OPERATOR (not an UNKNOWN marker)
+  // and have a NULL token, so they can never enter this branch. The SQL
+  // fences below (marker LIKE, token fence, 24h updated_at window) apply
+  // unchanged because the UPDATE is predicated on currentStatus.
+  if (currentStatus === "canceled" && requestedStatus === "success") {
+    const canceledUnknown = (job.error ?? "").startsWith("UNKNOWN_PARTIAL_DELIVERY");
+    if (!canceledUnknown || !job.claimedAt || !job.claimToken || !claimToken || claimToken !== job.claimToken) {
+      return NextResponse.json({
+        error: "Canceled job lacks a matching fenced execution attempt; only a claimed-cancel with a live claim token can reconcile",
+        code: "CANCELED_JOB_ATTEMPT_NOT_RECONCILABLE",
+        status: currentStatus,
+      }, { status: 409 });
+    }
+    lateSuccess = true;
+  }
+
   if (currentStatus === "expired" && requestedStatus === "success") {
     // Late success is a reconciliation of the EXACT original claim, never
     // a new submission. A pending handoff at expiry cannot legitimately stamp
@@ -619,6 +664,10 @@ export async function PATCH(req: Request) {
         status: "success",
         error: postExpiryError,
         ...(outputEvidence ? { outputEvidence: { ...outputEvidence } } : {}),
+        // v4 (WP2): submission evidence rides the same claim-fenced UPDATE
+        // as the success transition, so a stale attempt can never overwrite
+        // current-attempt evidence (same rule as spoolerJobId above).
+        ...(submissionEvidence ? { submissionEvidence: { ...submissionEvidence } } : {}),
         ...(spoolerJobId ? { spoolerJobId } : {}),
         ...(incomingAttemptId ? { attemptId: incomingAttemptId } : {}),
         // Invalidate the claim token on terminal success: completed jobs must
@@ -634,6 +683,11 @@ export async function PATCH(req: Request) {
         sql`${printJobs.expiresAt} <= now()`,
         // Bound by EXPIRED_LATE_SUCCESS_GRACE_MS (single source in job-status.ts).
         sql`${printJobs.expiresAt} > now() - make_interval(secs => ${Math.floor(EXPIRED_LATE_SUCCESS_GRACE_MS / 1000)})`,
+        // v3: re-assert the error-prefix eligibility in SQL. The in-memory
+        // check above reads a pre-lock row; a future error-mutating writer
+        // must not be able to manufacture late-success eligibility between
+        // that read and this UPDATE.
+        sql`(${printJobs.error} LIKE 'JOB_EXPIRED_DURING_PRINT%' OR ${printJobs.error} LIKE 'UNKNOWN_PARTIAL_DELIVERY%')`,
       ))
       .returning({ status: printJobs.status, error: printJobs.error }));
     if (!expiredSuccessWrite.authorized) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -649,6 +703,14 @@ export async function PATCH(req: Request) {
   }
 
   if (!printingAdmissionReplay && !canTransition(currentStatus, requestedStatus, { allowLateSuccess: lateSuccess })) {
+    // v4: a canceled row is terminal for every agent write except the
+    // narrow claimed-cancel late-success path above (which returns before
+    // this point). The distinct code lets new agents stop retrying a
+    // terminal re-report instead of looping on a generic 409; the row
+    // itself is never mutated by this rejection.
+    if (currentStatus === "canceled") {
+      return NextResponse.json({ error: "Job was canceled by an operator and cannot accept further status reports", code: "JOB_ALREADY_CANCELED", status: currentStatus }, { status: 409 });
+    }
     return NextResponse.json({ error: `Invalid status transition: ${currentStatus} -> ${requestedStatus}` }, { status: 409 });
   }
 
@@ -660,6 +722,8 @@ export async function PATCH(req: Request) {
       status: requestedStatus,
       error: nextError,
       ...(outputEvidence ? { outputEvidence: { ...outputEvidence } } : {}),
+      // v4 (WP2): same fenced-write rule as the expired-late-success path.
+      ...(submissionEvidence ? { submissionEvidence: { ...submissionEvidence } } : {}),
       ...(isTerminal(requestedStatus) ? { closedClaimTokenHash } : {}),
       ...(isTerminal(requestedStatus) && !retainsLateSuccessFence ? { claimToken: sql`NULL` } : {}),
       updatedAt: sql`clock_timestamp()`,
@@ -683,6 +747,9 @@ export async function PATCH(req: Request) {
     .where(and(
       fencedJobWrite(jobId, agent.tenantId, agent.id, currentStatus, claimToken),
       lateSuccess ? sql`${printJobs.updatedAt} >= now() - make_interval(secs => ${Math.floor(LATE_SUCCESS_MAX_AGE_MS / 1000)}) AND ${printJobs.updatedAt} <= now()` : requestedStatus === "printing" ? sql`${printJobs.expiresAt} > now()` : sql`TRUE`,
+      // v3: re-assert the error-prefix eligibility in SQL (see the expired
+      // late-success write above): the in-memory check reads a pre-lock row.
+      ...(lateSuccess ? [sql`(${printJobs.error} LIKE 'AGENT_EXECUTION_TIMEOUT%' OR ${printJobs.error} LIKE 'AGENT_RESTART_DURING_PRINT%' OR ${printJobs.error} LIKE 'UNKNOWN_PARTIAL_DELIVERY%')`] : []),
       // New physical-execution admission must serialize with the CURRENT
       // agent and tenant lifecycle at the statement boundary, not just at
       // authentication time: disabling the agent or suspending its tenant
@@ -752,6 +819,13 @@ export async function PATCH(req: Request) {
   }
 
   const physicalOutcome = derivePhysicalOutcome(requestedStatus, nextError);
+  // v4 (WP2): the derived submission state for a physical success report
+  // (null for every other report). Old agents send no evidence and derive
+  // 'submitted'; the Gateway derives from stored fields, never from an
+  // agent-claimed label.
+  const submissionState = requestedStatus === "success"
+    ? deriveSubmissionState("success", job.outputMedium, submissionEvidence)
+    : null;
   incrementMetric(`print_jobs_${requestedStatus}_total`);
   if (physicalOutcome === "unknown") incrementMetric("print_jobs_unknown_total");
   if (lateSuccess) {
@@ -771,7 +845,7 @@ export async function PATCH(req: Request) {
       // Admission means this attempt has a live claim, NOT that the printer
       // has accepted data. Do not show a green success state for this event.
       status: requestedStatus === "printing" ? "pending" : requestedStatus === "success" ? "ok" : "error",
-      message: requestedStatus === "success" && outputEvidence ? `PDF file created and verified (${outputEvidence.page_count} pages, ${outputEvidence.bytes} bytes)` : requestedStatus === "printing" ? `Agent admitted attempt for dispatch (configured transport=${transport ?? "unspecified"}; physical output not confirmed)` : requestedStatus === "success" ? `Print submission acknowledged (spoolerJobId=${spoolerJobId ?? "n/a"}; physical output not confirmed)` : nextError ?? requestedStatus,
+      message: requestedStatus === "success" && outputEvidence ? `PDF file created and verified (${outputEvidence.page_count} pages, ${outputEvidence.bytes} bytes)` : requestedStatus === "printing" ? `Agent admitted attempt for dispatch (configured transport=${transport ?? "unspecified"}; physical output not confirmed)` : requestedStatus === "success" ? `Print submission acknowledged (spoolerJobId=${spoolerJobId ?? "n/a"}; submission=${submissionState ?? "submitted"}; physical output not confirmed)` : nextError ?? requestedStatus,
       errorCode: requestedStatus === "failed" ? nextError ?? undefined : undefined,
       spoolerJobId: spoolerJobId ?? undefined,
       attemptId: incomingAttemptId ?? job.attemptId ?? undefined,
@@ -779,9 +853,9 @@ export async function PATCH(req: Request) {
       agentId: agent.id,
       printerId: job.printerId,
       requestId,
-      metadata: { transport, physicalOutcome, lateSuccess, ...(outputEvidence ? { outputEvidence } : {}) },
+      metadata: { transport, physicalOutcome, lateSuccess, ...(submissionState ? { submissionState } : {}), ...(outputEvidence ? { outputEvidence } : {}) },
     });
   } catch (e) { logWarn("print.job.event_persist_failed", { requestId, jobId, stage: stageForStatus(requestedStatus), error: e instanceof Error ? e.message : "unknown" }); }
 
-  return NextResponse.json({ success: true, status: requestedStatus, ...printOutputPresentation({ ...job, status: requestedStatus, error: nextError, outputEvidence }), spoolerJobId });
+  return NextResponse.json({ success: true, status: requestedStatus, ...printOutputPresentation({ ...job, status: requestedStatus, error: nextError, outputEvidence }), ...(submissionState ? { submissionState } : {}), spoolerJobId });
 }

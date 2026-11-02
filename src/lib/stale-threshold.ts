@@ -24,9 +24,9 @@ export const DEFAULT_PRINTER_STALE_THRESHOLD_SECONDS = 90;
  * printers are genuinely slower than the Agent's budget (for example a
  * large raster on a 9600-baud thermal) can raise it explicitly.
  */
-export const DEFAULT_STALE_PRINTING_SECONDS = 600;
-export const MIN_STALE_PRINTING_SECONDS = 120;
-export const MAX_STALE_PRINTING_SECONDS = 3600;
+const DEFAULT_STALE_PRINTING_SECONDS = 600;
+const MIN_STALE_PRINTING_SECONDS = 120;
+const MAX_STALE_PRINTING_SECONDS = 3600;
 
 export function resolveStalePrintingSeconds(value: unknown): number {
   const raw = Number(value ?? DEFAULT_STALE_PRINTING_SECONDS);

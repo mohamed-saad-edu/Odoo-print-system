@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-export type JobDiagnosticPayload = {
+type JobDiagnosticPayload = {
   type: string | null;
   encoding: string | null;
   protocol: string | null;

@@ -5,6 +5,7 @@ the original hostname for SNI/certificate checks and the HTTP Host header. No
 global resolver, Requests, or urllib3 state is changed. Transport retries and
 redirects are disabled: durable print retries remain the outbox's decision.
 """
+import ipaddress
 import math
 import os
 from urllib.parse import urlparse
@@ -142,6 +143,25 @@ def request(method, url, **kwargs):
         raise exceptions.ConnectionError("Gateway DNS lookup failed before connection") from exc
     except ValueError as exc:
         raise exceptions.InvalidURL("Gateway destination was refused: %s" % exc) from exc
+    # WP4-F1 (STATIC REVIEW ONLY): the HTTP permission above is name-based
+    # (opt-in + is_loopback_host(host)), but allow_private=True lets the
+    # resolver return a non-loopback address for that name. A poisoned
+    # resolver must never redirect this credential-bearing cleartext
+    # request off-host: for HTTP, every resolved address — not just the
+    # pinned first one — must itself be loopback (zone suffix stripped
+    # before classification; IPv4-mapped IPv6 is NOT loopback and refuses).
+    # HTTPS is unaffected: its name-based allowlist + TLS checks stand.
+    if scheme == "http":
+        for address in addresses:
+            bare = address.split("%", 1)[0]
+            try:
+                is_loopback = ipaddress.ip_address(bare).is_loopback
+            except ValueError:
+                is_loopback = False
+            if not is_loopback:
+                raise exceptions.InvalidURL(
+                    "Gateway HTTP origin resolved to a non-loopback address"
+                )
     # Do not retry a request against another address. A safe connection failure
     # is handled by the existing bounded outbox/control-plane retry policy.
     session = _requests.Session()

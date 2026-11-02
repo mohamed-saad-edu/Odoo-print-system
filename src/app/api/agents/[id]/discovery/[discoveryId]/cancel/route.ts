@@ -6,6 +6,8 @@ import { requireManagerPermission } from "../../../../../../../lib/authorization
 import { requireActiveTenantInTransaction, TenantSuspendedError, TenantDeletedError } from "../../../../../../../lib/tenant-guard";
 import { requireManagerActorInTransaction, ManagerMutationAuthorityChangedError } from "../../../../../../../lib/manager-mutation-authorization";
 import { eq, and, sql } from "drizzle-orm";
+import { logError, requestIdFrom } from "../../../../../../../lib/log";
+import { writeAuditEvent } from "../../../../../../../lib/audit";
 
 export const dynamic = "force-dynamic";
 
@@ -53,5 +55,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   }
   if (result.kind === "not_found") return NextResponse.json({ error: "Not found" }, { status: 404 });
   if (result.kind === "already") return NextResponse.json({ error: `Already ${result.status}` }, { status: 409 });
+  // WP-A (S3): audit only the actual cancellation, not a repeat/unknown
+  // cancel; an audit failure must never fail the cancellation itself.
+  await writeAuditEvent({ tenantId: claims.tenantId, actorType: "user", actorId: claims.userId,
+    action: "agent.discovery.cancelled", resourceType: "discovery_session", resourceId: discoveryId,
+    requestId: requestIdFrom(req), metadata: { agentId } }).catch((error) =>
+    logError("audit_write_failed", { error: error instanceof Error ? error.message : "unknown" }));
   return NextResponse.json({ ok: true, status: "cancelled" });
 }

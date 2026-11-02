@@ -94,10 +94,10 @@ test('legacy operator has unified Full Access and may discover after live author
 test('malformed request does not insert even for admin',async()=>{reset();const r=await call({bad:true});assert.equal(r.status,400);assert.equal(state.inserted.length,0);});
 test('configured userless environment owner with bound fresh v2 proof is admitted for pairing',async()=>{reset({userless:true,role:'owner',memberRole:'owner'});const r=await call({cidr:'192.168.10.0/24'});assert.equal(r.status,201);assert.equal(state.inserted.length,1);assert.equal(state.notifies,1);});
 test('legacy session revocation rejects when token lacks family',async()=>{reset({legacy:true,legacySessionActive:false});const r=await call({cidr:'192.168.10.0/24'});assert.equal(r.status,401);assert.equal((await r.json()).code,'SESSION_EXPIRED');assert.equal(state.inserted.length,0);assert.equal(state.notifies,0);});
-test('stale password proof requires confirmation before insertion or NOTIFY',async()=>{
+test('stale login timestamp is admitted for insertion and NOTIFY',async()=>{
  reset({staleProof:true});const r=await call({cidr:'192.168.10.0/24'});
- assert.equal(r.status,403);assert.equal((await r.json()).code,'WORKSPACE_REAUTHENTICATION_REQUIRED');assert.equal(r.headers.get('X-Yaseir-Reauthentication'),'required');
- assert.equal(state.inserted.length,0);assert.equal(state.notifies,0);assert.equal(state.expiries,0);
+ assert.equal(r.status,201);assert.equal(r.headers.get('X-Yaseir-Reauthentication'),null);
+ assert.equal(state.inserted.length,1);assert.equal(state.notifies,1);assert.equal(state.expiries,1);
 });
 test('missing or changed credential proof refuses discovery without writes',async()=>{
  for(const changes of [{missingProof:true},{changedCredential:true}]){reset(changes);const r=await call({cidr:'192.168.10.0/24'});

@@ -51,11 +51,31 @@ func dedupeKey(di DeviceInfo) string {
 	if key, ok := physicalIdentityKey(di); ok {
 		return key
 	}
+	// WP3 (STATIC REVIEW ONLY, B3-05): distinct IPP queues on one
+	// host:port have distinct resource paths, and the bare ip:host:port
+	// fallback below would merge them inside one scan. For IPP records
+	// without stronger hardware identity, use the path-sensitive stable
+	// ID (StableIDFromIPPURI) as the dedup key when one exists.
+	if strings.EqualFold(di.Protocol, "ipp") || strings.EqualFold(di.Protocol, "ipps") ||
+		strings.EqualFold(di.ConnectionType, "ipp") || strings.EqualFold(di.ConnectionType, "ipps") {
+		if di.Endpoint != "" {
+			if id := StableIDForDevice(di); id != "" {
+				return "ipp:" + id
+			}
+		}
+	}
 	if di.NetworkAddress != "" && di.Port != 0 {
 		return fmt.Sprintf("ip:%s:%d", strings.ToLower(di.NetworkAddress), di.Port)
 	}
 	if di.SpoolerName != "" {
-		return "spooler:" + strings.ToLower(di.SpoolerName)
+		// WP3 (STATIC REVIEW ONLY, B3-05): a queue name alone is not an
+		// identity. The same queue name on different servers/scopes is
+		// a different execution destination; scope the fallback exactly
+		// like physicalIdentityKey's windows-queue key (server + scope,
+		// empty when unknown, so same-host queues still dedupe).
+		return "spooler:" + strings.ToLower(di.SpoolerName) +
+			"|server:" + spoolerDetailValue(di, di.SpoolerServer, "server_name") +
+			"|scope:" + capabilityIdentityValue(di, "spooler_scope")
 	}
 	if di.NetworkAddress != "" {
 		return "ip:" + strings.ToLower(di.NetworkAddress)
@@ -119,6 +139,14 @@ func discoverSNMPPrinters(ctx context.Context, targets []string) []DeviceInfo {
 	seen := make(map[string]bool)
 	for di := range results {
 		k := dedupeKey(di)
+		if k == "" {
+			// An identity-less record must neither merge with another
+			// identity-less record nor vanish: give it a per-record key
+			// so every observation survives the scan. (dedupeKey itself
+			// is untouched: unverified WSD observations must not merge
+			// with verified records by IP elsewhere.)
+			k = fmt.Sprintf("unkeyed:%d", len(out))
+		}
 		if seen[k] {
 			continue
 		}
@@ -341,6 +369,14 @@ func discoverLPRPrinters(ctx context.Context, targets []string) []DeviceInfo {
 	seen := make(map[string]bool)
 	for di := range results {
 		k := dedupeKey(di)
+		if k == "" {
+			// An identity-less record must neither merge with another
+			// identity-less record nor vanish: give it a per-record key
+			// so every observation survives the scan. (dedupeKey itself
+			// is untouched: unverified WSD observations must not merge
+			// with verified records by IP elsewhere.)
+			k = fmt.Sprintf("unkeyed:%d", len(out))
+		}
 		if seen[k] {
 			continue
 		}

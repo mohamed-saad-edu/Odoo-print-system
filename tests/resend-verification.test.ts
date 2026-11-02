@@ -37,6 +37,8 @@ vi.mock("../src/lib/email", () => ({
 vi.mock("../src/lib/auth-rate-limit", () => ({
   clientIpFrom: () => "127.0.0.1",
   reserveAuthAttempt: vi.fn().mockResolvedValue({ allowed: true }),
+  // v1/v3: resend-verification now reserves the scoped bucket, not the shared login bucket.
+  reserveScopedAuthAttempt: vi.fn().mockResolvedValue({ allowed: true }),
   setRateLimitHeaders: (response: Response) => response,
 }));
 

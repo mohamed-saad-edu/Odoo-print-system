@@ -2,7 +2,7 @@ import { requireActiveTenantInTransaction, TenantDeletedError, TenantSuspendedEr
 import { requireManagerActorInTransaction, ManagerMutationAuthorityChangedError } from "../../../lib/manager-mutation-authorization";
 import { NextResponse } from "next/server";
 import { requireConsoleReadAuthorityInTransaction, ConsoleAgentAuthorityRevokedError } from "../../../lib/console-read-authority";
-import { logError } from "../../../lib/log";
+import { logError, logWarn } from "../../../lib/log";
 import { db } from "../../../db";
 import { idempotencyDigest } from "../../../lib/print-job-service";
 import { printJobs, printJobReceipts } from "../../../db/schema";
@@ -19,7 +19,7 @@ import { z } from "zod";
 
 export const dynamic = "force-dynamic";
 
-const TERMINAL_JOB_STATUSES = ["success", "failed", "expired"] as const;
+const TERMINAL_JOB_STATUSES = ["success", "failed", "expired", "canceled"] as const;
 const MAX_CLEANUP_ROWS = 5000;
 const MAX_LIST_OFFSET = 10_000;
 const MAX_SEARCH_LENGTH = 64;
@@ -139,11 +139,16 @@ export async function DELETE(req: Request) {
       // One multi-row INSERT per inner batch (same shape as the automatic
       // retention sweep in cleanupTerminalPrintJobs): a per-row INSERT here
       // costs one round-trip per terminal job, up to MAX_CLEANUP_ROWS statements.
-      // No conflict guard is needed — this transaction holds the tenant
-      // advisory lock, so no concurrent cleanup can materialize the same
-      // receipt id (receipt id = job id, job still locked here).
+      // The tenant advisory lock held here excludes concurrent cleanups, but
+      // it does NOT exclude a pre-existing receipt (restored DB, interrupted
+      // migration) — so, like retention, insert with ON CONFLICT DO NOTHING
+      // and delete only rows whose receipts were materialized by THIS
+      // transaction. Without the guard a single pre-existing receipt turned
+      // the whole bulk cleanup into a PK-conflict rollback; conflicting
+      // rows are left intact for explicit operator review.
+      let insertedIds: string[] = [];
       if (candidates.length > 0) {
-        await tx.insert(printJobReceipts).values(candidates.map((row) => ({
+        const inserted = await tx.insert(printJobReceipts).values(candidates.map((row) => ({
           id: row.id, tenantId: row.tenantId, idempotencyKey: row.idempotencyKey,
           fingerprint: idempotencyDigest({ printerId: row.printerId, documentType: row.documentType, destination: row.destination, payload: row.payload }),
           printerId: row.printerId, agentId: row.agentId, apiKeyId: row.apiKeyId,
@@ -152,11 +157,17 @@ export async function DELETE(req: Request) {
         bindingDigest: row.bindingDigest,
         outputMedium: row.outputMedium,
         outputEvidence: row.outputEvidence, error: row.error, closedClaimTokenHash: row.closedClaimTokenHash,
+          submissionEvidence: row.submissionEvidence,
           spoolerJobId: row.spoolerJobId, attemptId: row.attemptId,
           deliveredAt: row.deliveredAt, ackedAt: row.ackedAt, createdAt: row.createdAt, updatedAt: row.updatedAt,
-        })));
+        }))).onConflictDoNothing().returning({ id: printJobReceipts.id });
+        insertedIds = inserted.map((row) => row.id);
+        if (inserted.length !== candidates.length) {
+          logWarn("print.job.bulk_cleanup_receipt_conflict", { skippedRows: candidates.length - inserted.length });
+        }
       }
-      const result = await tx.delete(printJobs).where(and(eq(printJobs.tenantId, claims.tenantId), inArray(printJobs.id, batchIds)));
+      if (insertedIds.length === 0) continue;
+      const result = await tx.delete(printJobs).where(and(eq(printJobs.tenantId, claims.tenantId), inArray(printJobs.id, insertedIds)));
       count += result.rowCount ?? 0;
     }
     return count;

@@ -8,7 +8,7 @@ import { effectiveManualEntitlements } from "./entitlements";
 import { quotaCycleStartSql, quotaCycleEndSql } from "./quota-cycle";
 import { logWarn } from "./log";
 
-export type BillingPageUsage = {
+type BillingPageUsage = {
   used: number;
   limit: number | "unlimited";
   remaining: number | "unlimited";

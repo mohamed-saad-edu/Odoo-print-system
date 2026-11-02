@@ -10,7 +10,28 @@ const LOCK_MS = 60_000;
 // process-local map keyed by client IP; an attacker can produce unbounded keys.
 
 export async function recordWsUpgradeSuccess(key: string): Promise<void> {
-  await db.execute(sql`DELETE FROM auth_rate_limits WHERE key = ${`ws-upgrade:${key}`}`);
+  // WP3 (STATIC REVIEW ONLY, B5-02 fix): refund exactly ONE reservation,
+  // never clear the shared per-IP bucket. The previous DELETE let one
+  // legitimate agent reconnect wipe another agent's accumulated failures
+  // behind the same NAT/egress IP, granting a fresh 20 attempts per
+  // reconnect. Refunding one keeps this attempt budget-neutral (the
+  // reservation incremented failures by one) while preserving everyone
+  // else's failures. A lock created by the 20th failure is released by a
+  // valid success (post-refund failures < 20), but the next failure
+  // re-locks immediately, so one success buys an attacker exactly one
+  // attempt, not a fresh budget. The residual shared-IP failure
+  // accumulation (one NAT IP can still lock others out for up to 60s) is
+  // inherent to IP-keyed brute-force defence: failures cannot be keyed by
+  // agent before authentication, and keying by presented credential would
+  // let an attacker evade by rotating tokens and would allow unbounded
+  // keys. See REPORT.md (WP3 item (b)) for the full trade-off.
+  await db.execute(sql`
+    UPDATE auth_rate_limits
+    SET failures = GREATEST(failures - 1, 0),
+        locked_until = CASE WHEN failures - 1 < ${MAX_FAILURES} THEN NULL ELSE locked_until END,
+        updated_at = clock_timestamp()
+    WHERE key = ${`ws-upgrade:${key}`}
+  `);
 }
 
 export async function reserveWsUpgradeAttempt(key: string): Promise<{ allowed: true; retryAfterSec?: number } | { allowed: false; retryAfterSec: number }> {
@@ -37,7 +58,10 @@ export async function reserveWsUpgradeAttempt(key: string): Promise<{ allowed: t
       window_started_at?: Date | string;
       locked_until?: Date | string | null;
     } | undefined;
-    if (!row) return { allowed: true } as const;
+    // v3: previously fail-open (allowed without counting) when the bucket
+    // row was missing after the insert (reachable only in races/errors).
+    // Fail closed with a short retry instead; the normal path is unchanged.
+    if (!row) return { allowed: false, retryAfterSec: 5 } as const;
 
     const existingLock = parseDbTimeMs(row.locked_until) ?? 0;
     if (existingLock > now.getTime()) {

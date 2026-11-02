@@ -894,42 +894,6 @@ fn spawn_persist_or_reconcile(
 }
 
 #[cfg(windows)]
-fn spawn_background(app: &tauri::AppHandle) -> Result<u32, String> {
-    use std::os::windows::process::CommandExt;
-    const DETACHED_PROCESS: u32 = 0x0000_0008;
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-
-    let path = agent_path(app)?;
-    let root =
-        paths::ensure_agent_data_root().map_err(|e| format!("create agent data dir: {e}"))?;
-    let config = root.join("config.yaml");
-
-    let mut cmd = Command::new(&path);
-    cmd.arg("-config").arg(&config);
-    cmd.env("YASEIR_AGENT_DATA_DIR", &root);
-    cmd.stdout(Stdio::null()).stderr(Stdio::null());
-    cmd.creation_flags(DETACHED_PROCESS | CREATE_NO_WINDOW);
-
-    let pid = spawn_persist_or_reconcile(
-        || {
-            cmd.spawn().map_err(|e| {
-                format!(
-                    "spawn agent {} (config {}) : {e}",
-                    path.display(),
-                    config.display()
-                )
-            })
-        },
-        write_background_pid,
-    )?;
-    logging::info(&format!(
-        "started YaseirAgent.exe pid={pid} config={}",
-        config.display()
-    ));
-    Ok(pid)
-}
-
-#[cfg(windows)]
 fn ensure_service_installed(app: &tauri::AppHandle) -> Result<(), String> {
     if sc_query()?.is_some() {
         return Ok(());

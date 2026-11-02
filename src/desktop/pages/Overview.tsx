@@ -1,4 +1,3 @@
-import React from "react";
 import { SetupGuide } from "../components/SetupGuide";
 import { Activity, AlertTriangle, CheckCircle2, ClipboardList, FileText, Loader2, Play, Printer as PrinterIcon, RefreshCw, Server, Settings } from "lucide-react";
 import { Button, Card, CardHeader, EmptyState, ErrorState, LoadingState, StatusBadge } from "../../components/ui";

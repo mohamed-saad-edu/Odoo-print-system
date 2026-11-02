@@ -52,7 +52,7 @@ export function StatItem({ label, value, sub, tone = "neutral", icon }: { label:
   );
 }
 
-export type NoticeTone = "warn" | "ok" | "bad" | "info";
+type NoticeTone = "warn" | "ok" | "bad" | "info";
 const noticeStyles: Record<NoticeTone, string> = {
   warn: "border-warn-edge bg-warn-bg text-warn",
   ok: "border-ok-edge bg-ok-bg text-ok",
@@ -98,14 +98,6 @@ export function SettingsSection({ title, description, icon, children, className 
   );
 }
 
-export function DetailList({ rows, className = "" }: { rows: { label: string; value: React.ReactNode }[]; className?: string; }) {
-  return <dl className={`divide-y divide-edge ${className}`}>
-    {rows.map((r) => <div key={r.label} className="grid min-w-0 grid-cols-1 gap-1.5 py-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)] sm:gap-4">
-      <dt className="min-w-0 break-words text-sm leading-normal text-ink-3">{r.label}</dt>
-      <dd className="min-w-0 break-words text-base font-medium leading-normal text-ink [overflow-wrap:anywhere] sm:text-end">{r.value}</dd>
-    </div>)}
-  </dl>;
-}
 
 export function ViewAllButton({ label, onClick }: { label: string; onClick: () => void; }) {
   return <button type="button" onClick={onClick} className="inline-flex min-h-11 w-full items-center justify-center gap-1.5 rounded-sm px-3 py-3 text-sm font-semibold text-ink-3 transition hover:bg-surface-2 hover:text-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/35">{label}<ChevronRight className="h-4 w-4 shrink-0 rtl:-scale-x-100" aria-hidden /></button>;

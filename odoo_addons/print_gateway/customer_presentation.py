@@ -26,6 +26,11 @@ def job_customer_state(status, physical_outcome, output_medium=None, output_outc
         return "processing"
     if status == "success":
         return "sent_to_printer"
+    if status == "canceled":
+        # v4: a queued-cancel is proven not printed; a claimed-cancel is
+        # unknown and needs review. The badge/decoration for
+        # failed_before_output vs needs_review follows from this.
+        return "failed_before_output" if physical_outcome == "not_printed" else "needs_review"
     if status == "failed" and physical_outcome == "not_printed":
         return "failed_before_output"
     return "needs_review"

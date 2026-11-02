@@ -8,7 +8,7 @@ import { requirePlatformActorInTransaction, type PlatformOwnerClaims } from "./p
 import { revokeLegacyManagerSessionsForTenantInTransaction } from "./manager-auth";
 import { revokeTenantRefreshFamiliesInTransaction } from "./session-tokens";
 
-export type TenantLifecycleState = "active" | "suspended" | "deleted";
+type TenantLifecycleState = "active" | "suspended" | "deleted";
 
 export class TenantLifecycleError extends Error {
   readonly code: string;
@@ -34,7 +34,7 @@ function isTenantLifecycleState(value: unknown): value is TenantLifecycleState {
   return typeof value === "string" && ["active", "suspended", "deleted"].includes(value);
 }
 
-export type TransitionTenantLifecycleResult = {
+type TransitionTenantLifecycleResult = {
   changed: boolean;
   lifecycle: TenantLifecycleState;
   previousLifecycle: TenantLifecycleState;
@@ -94,7 +94,10 @@ export async function transitionTenantLifecycle(
     }
 
     if (actor.idempotencyKey) {
-      const previous=await tx.execute(sql`SELECT action,metadata FROM audit_events WHERE tenant_id=${tenantId} AND actor_type=${actor.type} AND actor_id=${actor.id} AND request_id=${actor.idempotencyKey} AND resource_type='tenant' LIMIT 1`);
+      // v3: actor_id = NULL never matches with =, so a recorded replay was
+      // missed when actor.id is null. IS NOT DISTINCT FROM treats NULL = NULL
+      // as a match; for non-null ids the semantics are identical.
+      const previous=await tx.execute(sql`SELECT action,metadata FROM audit_events WHERE tenant_id=${tenantId} AND actor_type=${actor.type} AND actor_id IS NOT DISTINCT FROM ${actor.id} AND request_id=${actor.idempotencyKey} AND resource_type='tenant' LIMIT 1`);
       if (previous.rows.length) {
         const metadata=previous.rows[0].metadata as {reason?:string;from?:TenantLifecycleState;expectedUpdatedAt?:string};
         if(previous.rows[0].action!==`tenant.lifecycle.${next}` || metadata.reason!==trimmedReason || metadata.expectedUpdatedAt!==actor.expectedUpdatedAt) throw new TenantLifecycleError('Conflicting operation retry','IDEMPOTENCY_CONFLICT',409);

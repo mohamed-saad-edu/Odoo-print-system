@@ -16,25 +16,9 @@ import type { PRINTER_PROTOCOLS, DEVICE_CLASSES, CONNECTION_TYPES } from "./prin
 
 export type TransportType = (typeof CONNECTION_TYPES)[number] | "unknown";
 export type ProtocolType = (typeof PRINTER_PROTOCOLS)[number];
-export type DocumentType = "raw" | "escpos" | "zpl" | "tspl" | "pdf" | "image";
+type DocumentType = "raw" | "escpos" | "zpl" | "tspl" | "pdf" | "image";
 export type DeviceClass = (typeof DEVICE_CLASSES)[number];
 
-export interface CapabilityMatrixRow {
-  printerId: string;
-  name: string;
-  transport: TransportType;
-  protocol: ProtocolType;
-  documentTypes: DocumentType[];
-  deviceClass: DeviceClass;
-  duplex: boolean | null;
-  color: boolean | null;
-  status: string;
-  statusEvidence: string;
-  driver: string;
-  spooler: string;
-  paperWidths?: number[];
-  ippCapabilities?: Record<string, unknown>;
-}
 
 function documentTypeCandidates(protocol: ProtocolType, transport: TransportType): DocumentType[] {
   if (transport === "pdf_output" && protocol === "pdf") return ["pdf", "image"];
@@ -71,7 +55,7 @@ export interface PayloadSpec {
   geometry_fingerprint?: string;
 }
 
-export interface PrinterCapabilities {
+interface PrinterCapabilities {
   supported_protocols?: unknown;
   geometry?: unknown;
   [key: string]: unknown;
@@ -109,6 +93,14 @@ export function validatePayloadForPrinter(
     capabilities?: PrinterCapabilities | null;
     connectionType?: string | null;
     printerType?: string | null;
+    // v3: forwarded to currentPrinterGeometry so the manager desired-revision
+    // fence applies in the image probe too (previously only id/config were
+    // passed, so the revision check silently never fired here; callers had
+    // to pre-fence via capabilitiesWithCurrentGeometry instead).
+    managementSource?: string | null;
+    desiredRevision?: number | null;
+    appliedDesiredRevision?: number | null;
+    observedDesiredRevision?: number | null;
   },
 ): CapabilityCheckResult {
   if (!payloadInput) return { ok: false, reason: "CAPABILITY_MISMATCH: payload is required" };
@@ -187,7 +179,7 @@ export function validatePayloadForPrinter(
     }
     if (!physicalImage) return { ok: false, reason: "CAPABILITY_MISMATCH: image payload not supported by printer" };
     const geometry = printer.id
-      ? currentPrinterGeometry({ id: printer.id, capabilities, config: printer.config })
+      ? currentPrinterGeometry({ id: printer.id, capabilities, config: printer.config, managementSource: printer.managementSource ?? undefined, desiredRevision: printer.desiredRevision ?? undefined, appliedDesiredRevision: printer.appliedDesiredRevision ?? undefined, observedDesiredRevision: printer.observedDesiredRevision ?? undefined })
       : printerGeometryFromCapabilities(capabilities);
     if (!geometry) return { ok: false, reason: "GEOMETRY_REQUIRED: Refresh this printer or configure a validated geometry profile before printing images." };
     if (!payloadInput.geometry_fingerprint || payloadInput.geometry_fingerprint !== geometry.config_fingerprint) {
@@ -266,7 +258,15 @@ export function hasDeclaredProtocol(
   return Array.isArray(raw) && raw.some((value) => typeof value === "string" && value.toLowerCase().trim() === token);
 }
 
-export function getSupportedDocumentTypes(protocol: ProtocolType, transport: TransportType, capabilities?: PrinterCapabilities | null): DocumentType[] {
+// v3: the image probe previously called validatePayloadForPrinter WITHOUT
+// id/config, bypassing the currentPrinterGeometry fence (manager desired
+// revision pending + validated-profile equality) that admission applies when
+// id is present. Both current callers pre-fence capabilities via
+// capabilitiesWithCurrentGeometry, so no live mismatch was observed, but the
+// function must not depend on callers remembering that. Pass printer context
+// through when the caller has it; without it the probe stays advisory-only
+// for geometry (callers must re-check at admission, as admission does).
+export function getSupportedDocumentTypes(protocol: ProtocolType, transport: TransportType, capabilities?: PrinterCapabilities | null, printer?: { id?: string; config?: Record<string, unknown> | null; managementSource?: string | null; desiredRevision?: number | null; appliedDesiredRevision?: number | null; observedDesiredRevision?: number | null }): DocumentType[] {
   const normalizedTransport = transport === ("windows_spooler" as TransportType) ? "spooler" : transport;
   const normalized = protocol === "windows_spooler" && normalizedTransport === "spooler" ? "spooler" : protocol;
   const candidates = [...new Set<DocumentType>([...documentTypeCandidates(normalized as ProtocolType, normalizedTransport), "raw", "escpos", "zpl", "tspl", "pdf", "image"])];
@@ -277,7 +277,7 @@ export function getSupportedDocumentTypes(protocol: ProtocolType, transport: Tra
       : type === "escpos" ? { type, protocol: "escpos" }
       : type === "image" ? { type, geometry_fingerprint: printerGeometryFromCapabilities(capabilities)?.config_fingerprint }
       : { type };
-    return validatePayloadForPrinter(payload, { protocol: normalized, connectionType: normalizedTransport, capabilities }).ok;
+    return validatePayloadForPrinter(payload, { protocol: normalized, connectionType: normalizedTransport, capabilities, ...(printer ?? {}) }).ok;
   });
 }
 

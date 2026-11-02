@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+
+	"github.com/yaseir-agent/agent/internal/config"
 	"regexp"
 	"strings"
 	"time"
@@ -220,7 +222,7 @@ func parseWSDProbeMatches(data []byte, remoteAddr *net.UDPAddr) []DeviceInfo {
 			if ip == "" && remoteAddr != nil && remoteAddr.IP != nil {
 				ip = remoteAddr.IP.String()
 			}
-			if ip == "" || net.ParseIP(ip) == nil {
+			if ip == "" || net.ParseIP(ip) == nil || !config.IsAllowedPrinterIP(net.ParseIP(ip)) {
 				continue
 			}
 
@@ -284,7 +286,7 @@ func parseWSDProbeMatches(data []byte, remoteAddr *net.UDPAddr) []DeviceInfo {
 	if ip == "" && remoteAddr != nil && remoteAddr.IP != nil {
 		ip = remoteAddr.IP.String()
 	}
-	if ip == "" || net.ParseIP(ip) == nil {
+	if ip == "" || net.ParseIP(ip) == nil || !config.IsAllowedPrinterIP(net.ParseIP(ip)) {
 		return nil
 	}
 

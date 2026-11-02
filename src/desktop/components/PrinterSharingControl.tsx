@@ -1,4 +1,4 @@
-import React, { useId } from "react";
+import { useId } from "react";
 import { Link2, Link2Off } from "lucide-react";
 import { Button, StatusBadge } from "../../components/ui";
 import { useI18n } from "../../i18n/react";

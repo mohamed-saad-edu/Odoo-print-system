@@ -9,7 +9,8 @@ import { requireActiveTenantInTransaction, TenantSuspendedError, TenantDeletedEr
 import { eq, and, desc, sql } from "drizzle-orm";
 import { nanoid } from "../../../../../lib/nanoid";
 import { validateDiscoveryRequest } from "../../../../../lib/discovery";
-import { logError } from "../../../../../lib/log";
+import { logError, requestIdFrom } from "../../../../../lib/log";
+import { writeAuditEvent } from "../../../../../lib/audit";
 import { expireStaleAgentDiscovery } from "../../../../../lib/discovery-session-expiry";
 
 export const dynamic = "force-dynamic";
@@ -79,7 +80,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       });
       // Push discovery instantly via Postgres NOTIFY -> WebSocket (10-50ms)
       // instead of waiting for agent's 10s poll fallback. Matches job delivery path.
-      await tx.execute(sql`SELECT pg_notify('print_gateway_discovery', ${JSON.stringify({ agentId, discoveryId })}::text)`);
+      await tx.execute(sql`SELECT pg_notify('print_gateway_discovery', ${JSON.stringify({ agentId, discoveryId, tenantId: claims.tenantId })}::text)`);
     });
   } catch (error) {
     if (error instanceof ManagerMutationAuthorityChangedError) return error.response();
@@ -101,6 +102,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     logError("agent.discovery.failed", { agentId, error: error instanceof Error ? error.message : String(error) });
     throw error;
   }
+  // WP-A (S3): audit the scan start only; a failed start writes nothing.
+  // An audit failure must never fail the scan itself.
+  await writeAuditEvent({ tenantId: claims.tenantId, actorType: "user", actorId: claims.userId,
+    action: "agent.discovery.started", resourceType: "discovery_session", resourceId: discoveryId,
+    requestId: requestIdFrom(req), metadata: { agentId } }).catch((error) =>
+    logError("audit_write_failed", { error: error instanceof Error ? error.message : "unknown" }));
   return NextResponse.json({ discoveryId, agentId, status: "running" }, { status: 201 });
 }
 

@@ -35,7 +35,9 @@ describe("correlation-ids", () => {
     expect(headers["x-agent-id"]).toBe("agent_1");
     expect(headers["x-printer-id"]).toBe("printer_1");
     expect(headers["x-attempt-id"]).toBe("attempt_1");
-    expect(headers["x-claim-id"]).toBe("claim_1");
+    // v3: claim IDs in headers are hashed (claim_<sha256[:12]>) so a header
+    // can never leak a live claim token. sha256("claim_1")[:12] = 6c97ba8d31de.
+    expect(headers["x-claim-id"]).toBe("claim_6c97ba8d31de");
     expect(headers["x-spooler-job-id"]).toBe("42");
   });
 

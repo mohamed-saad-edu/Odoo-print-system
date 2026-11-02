@@ -234,7 +234,3 @@ export function useI18n(): I18nValue {
   }, [locale, setLocale]);
 }
 
-/** Convenience hook for components that only need `t`. */
-export function useT() {
-  return useI18n().t;
-}

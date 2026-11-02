@@ -64,7 +64,7 @@ func (p *SpoolerPrinter) Print(ctx context.Context, data []byte) error {
 	if err := os.WriteFile(fpath, data, 0600); err != nil {
 		return fmt.Errorf("simulated spooler write failed: %w", err)
 	}
-	return fmt.Errorf("SIMULATED_TRANSPORT: spooler diagnostic file written; no physical printer submission occurred")
+	return fmt.Errorf("SIMULATED_TRANSPORT: spooler diagnostic file written to %s; no physical printer submission occurred; delete the file after inspection", fpath)
 }
 
 func (p *SpoolerPrinter) SupportsKind(kind string) bool {
@@ -100,7 +100,7 @@ func (p *SpoolerPrinter) PrintDocument(ctx context.Context, doc Document) error 
 		if err := os.WriteFile(fpath, doc.Data, 0600); err != nil {
 			return fmt.Errorf("simulated spooler PDF write failed: %w", err)
 		}
-		return fmt.Errorf("SIMULATED_TRANSPORT: spooler PDF diagnostic file written; no physical printer submission occurred")
+		return fmt.Errorf("SIMULATED_TRANSPORT: spooler PDF diagnostic file written to %s; no physical printer submission occurred; delete the file after inspection", fpath)
 	case KindImage:
 		return fmt.Errorf("ERR_UNSUPPORTED_TRANSPORT: Windows image geometry cannot be observed on this OS; no bytes submitted")
 	case KindRaw, KindESCPOS:

@@ -87,8 +87,10 @@ describe("tenant-fenced unassigned subqueries", () => {
     expect(route).toContain("listPrintJobHistory");
     expect(history).toContain("p0.id = h.printer_id AND p0.tenant_id = h.tenant_id");
     expect(history).toContain("a0.id = h.agent_id AND a0.tenant_id = h.tenant_id");
-    expect(history).toContain(`scopedWhere("j", input.tenantId)`);
-    expect(history).toContain(`scopedWhere("r", input.tenantId)`);
+    // v3: scopedWhere gained an explicit platformWide parameter (fail-closed:
+    // missing tenantId throws unless platform-wide is explicit).
+    expect(history).toContain(`scopedWhere("j", input.tenantId, input.platformWide)`);
+    expect(history).toContain(`scopedWhere("r", input.tenantId, input.platformWide)`);
   });
 });
 

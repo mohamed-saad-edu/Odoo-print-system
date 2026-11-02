@@ -1,18 +1,55 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import Link from "next/link";
-import { Button, Card, CardHeader, ErrorState, Field, Input } from "./ui";
+import { Button, Card, CardHeader, ErrorState } from "./ui";
 import { useI18n } from "../i18n/react";
-import { fetchWithTimeout } from "../lib/fetch-timeout";
+import { fetchWithTimeout, fetchWithSessionRetry } from "../lib/fetch-timeout";
 import { useRouter } from "next/navigation";
 import { SESSION_REVOCATION_EVENT } from "../lib/session-events";
 
 type Session = { id: string; kind: "customer" | "manager" | "platform"; tenantId: string | null; tenantName: string | null;
-  current: boolean; requiresPlatformStepUp: boolean; createdAt: string; lastRefreshedAt: string; expiresAt: string;
+  current: boolean; createdAt: string; lastRefreshedAt: string; expiresAt: string;
   ipAddress: string | null; userAgent: string | null };
 type Page = { sessions: Session[]; truncated: boolean; nextCursor: string | null };
 type Action = "revoke" | "revoke_others" | "revoke_all";
+
+/**
+ * WP-A (S2): best-effort client-side user-agent parsing into short device
+ * words ("Chrome on Windows", "Safari on iPhone"). No server change, no
+ * new data collection. Returns null when nothing recognizable is present;
+ * the caller falls back to the existing `security.unknownDevice` key, so
+ * no new i18n string is needed. Browser/OS names are proper nouns and are
+ * intentionally left untranslated. Order matters: Edge, Opera and Samsung
+ * Internet UAs also contain a Chrome token, and Chrome UAs contain a
+ * Safari token, so the more specific tokens are checked first.
+ */
+export function parseDeviceLabel(userAgent: string | null | undefined): string | null {
+  if (!userAgent) return null;
+  const ua = userAgent.slice(0, 1024);
+  const browser =
+    /EdgA?\/|Edge\//.test(ua) ? "Edge"
+    : /OPR\/|Opera Mini|Opera\//.test(ua) ? "Opera"
+    : /SamsungBrowser\//.test(ua) ? "Samsung Internet"
+    : /CriOS\//.test(ua) ? "Chrome"
+    : /FxiOS\//.test(ua) ? "Firefox"
+    : /Chrome\/|Chromium\//.test(ua) ? "Chrome"
+    : /Firefox\//.test(ua) ? "Firefox"
+    : /Version\/[^ ]+.*Safari\//.test(ua) ? "Safari"
+    : null;
+  const os =
+    /iPhone/.test(ua) ? "iPhone"
+    : /iPad/.test(ua) ? "iPad"
+    : /Android/.test(ua) ? "Android"
+    : /Windows/.test(ua) ? "Windows"
+    : /Macintosh|Mac OS X/.test(ua) ? "macOS"
+    : /CrOS/.test(ua) ? "ChromeOS"
+    : /Linux/.test(ua) ? "Linux"
+    : null;
+  if (browser && os) return `${browser} on ${os}`;
+  if (browser) return browser;
+  if (os) return `${os} device`;
+  return null;
+}
 
 export function SessionInventory({ platform = false, canRevoke = true }: { platform?: boolean; canRevoke?: boolean }) {
   const router = useRouter();
@@ -21,11 +58,9 @@ export function SessionInventory({ platform = false, canRevoke = true }: { platf
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [password, setPassword] = useState("");
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [pageNumber, setPageNumber] = useState(1);
   const [confirmAll, setConfirmAll] = useState(false);
-  const [platformStepUp, setPlatformStepUp] = useState(false);
   const generation = useRef(0);
   const currentRead = useRef<AbortController | null>(null);
   const actionController = useRef<AbortController | null>(null);
@@ -36,8 +71,15 @@ export function SessionInventory({ platform = false, canRevoke = true }: { platf
     const next = window.location.pathname + window.location.search + window.location.hash;
     router.replace(`${platform ? "/platform/login" : "/login"}?next=${encodeURIComponent(next)}`);
   }, [platform, router]);
+  // Workspace inventory uses the session-retry wrapper; the platform
+  // variant keeps plain fetchWithTimeout because ensureCustomerSession
+  // refreshes workspace cookies only and must never be applied to the
+  // platform session kind.
+  const inventoryFetch = useCallback((input: RequestInfo | URL, init: RequestInit): Promise<Response> =>
+    platform ? fetchWithTimeout(input, init) : fetchWithSessionRetry(input, init), [platform]);
   const load = useCallback(async (cursor: string | null, signal: AbortSignal): Promise<Page> => {
-    const response = await fetchWithTimeout(endpoint + (cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""), {
+    // Read: safe to retry once after refresh (workspace only).
+    const response = await inventoryFetch(endpoint + (cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""), {
       credentials: "include", cache: "no-store", signal,
     });
     const body = await response.json();
@@ -47,7 +89,7 @@ export function SessionInventory({ platform = false, canRevoke = true }: { platf
     }
     if (!Array.isArray(body.sessions) || body.sessions.length > 100) throw new Error(t("security.sessionsFailed"));
     return body as Page;
-  }, [endpoint, redirectToSignIn, t]);
+  }, [endpoint, redirectToSignIn, t, inventoryFetch]);
   const readPage = useCallback(async (cursor: string | null, number: number, controller: AbortController, ownGeneration: number) => {
     try {
       const body = await load(cursor, controller.signal);
@@ -62,9 +104,7 @@ export function SessionInventory({ platform = false, canRevoke = true }: { platf
         setSessions([]);
         setNextCursor(null);
         setPageNumber(1);
-        setPassword("");
         setConfirmAll(false);
-        setPlatformStepUp(false);
         setError(t("security.sessionsFailed"));
       }
     } finally {
@@ -85,30 +125,27 @@ export function SessionInventory({ platform = false, canRevoke = true }: { platf
     // Initial loading is already state=true. Only the asynchronous response
     // updates render state; effect replay still cancels the obsolete read.
     void readPage(null, 1, controller, ownGeneration);
-    const refreshed = () => { if (!actionInFlight.current) void showPage(null, 1); };
-    window.addEventListener("yaseir:workspace-reauthenticated", refreshed);
     return () => {
       mounted.current = false; generation.current += 1;
       currentRead.current?.abort(); actionController.current?.abort();
-      window.removeEventListener("yaseir:workspace-reauthenticated", refreshed);
     };
   }, [readPage, showPage]);
   async function revoke(action: Action, id?: string) {
-    if (actionInFlight.current || !canRevoke || (!platform && !password) || (action === "revoke_all" && !confirmAll)) return;
-    actionInFlight.current = true; setBusy(true); setError(""); setPlatformStepUp(false);
+    if (actionInFlight.current || !canRevoke || (action === "revoke_all" && !confirmAll)) return;
+    actionInFlight.current = true; setBusy(true); setError("");
     currentRead.current?.abort(); generation.current += 1; setLoading(false);
     const controller = new AbortController(); actionController.current = controller;
     try {
-      const response = await fetchWithTimeout(endpoint, { method: "POST", credentials: "include", signal: controller.signal,
+      // Auto-retry (workspace only): session revocation is idempotent by
+      // design — revoking an already-revoked family is a no-op, never a
+      // second sweep. No password is sent: a valid session is sufficient.
+      const response = await inventoryFetch(endpoint, { method: "POST", credentials: "include", signal: controller.signal,
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action, ...(id ? { id } : {}), ...(!platform ? { password } : {}) }) });
+        body: JSON.stringify({ action, ...(id ? { id } : {}) }) });
       const data = await response.json();
       if (!mounted.current || controller.signal.aborted) return;
       if (!response.ok) {
-        if (data.code === "PLATFORM_SESSION_STEP_UP_REQUIRED" || data.code === "PLATFORM_REAUTHENTICATION_REQUIRED") {
-          setPlatformStepUp(true); setError(t("security.platformSessionStepUp")); return;
-        }
-        if ((response.status === 401 && data.code !== "PASSWORD_REQUIRED") || response.status === 403) {
+        if (response.status === 401 || response.status === 403) {
           setSessions([]); setNextCursor(null); setPageNumber(1);
           if (response.status === 401) redirectToSignIn();
         }
@@ -123,19 +160,15 @@ export function SessionInventory({ platform = false, canRevoke = true }: { platf
       if (mounted.current && !controller.signal.aborted) setError(t("security.sessionsFailed"));
     } finally {
       actionInFlight.current = false;
-      if (mounted.current) { setBusy(false); setPassword(""); setConfirmAll(false); }
+      if (mounted.current) { setBusy(false); setConfirmAll(false); }
     }
   }
-  const enabled = canRevoke && (platform || password.length > 0);
+  const enabled = canRevoke;
   const kindLabel = (kind: Session["kind"]) => t(kind === "platform" ? "security.sessionPlatform" : kind === "manager" ? "security.sessionManager" : "security.sessionCustomer");
   return <Card data-testid="session-inventory">
     <CardHeader title={t("security.sessions")} subtitle={t(platform ? "security.platformSessionsHint" : "security.workspaceSessionsHint")} />
     <div className="space-y-4 p-5" aria-busy={loading || busy}>
       {error && <ErrorState title={t("security.sessionsFailed")} message={error} />}
-      {platformStepUp && <Link href="/platform/security" className="text-sm font-semibold underline">{t("security.openPlatformSecurity")}</Link>}
-      {!platform && <Field label={t("security.confirmPassword")} htmlFor="session-password">
-        <Input id="session-password" type="password" autoComplete="current-password" maxLength={4096} value={password} disabled={busy} onChange={e => setPassword(e.target.value)} />
-      </Field>}
       <div className="flex flex-wrap items-center gap-3">
         <Button type="button" variant="secondary" disabled={!enabled || busy || loading} onClick={() => void revoke("revoke_others")}>{t("security.revokeOthers")}</Button>
         <Button id="session-revoke-all" type="button" variant="secondary" disabled={!enabled || busy || loading || !confirmAll} onClick={() => void revoke("revoke_all")}>{t("security.revokeAll")}</Button>
@@ -150,10 +183,13 @@ export function SessionInventory({ platform = false, canRevoke = true }: { platf
           <div className="min-w-0 space-y-1 text-sm">
             <p className="font-semibold">{session.current ? t("security.currentSession") : t("security.otherSession")}</p>
             <p className="break-words text-ink-3">{kindLabel(session.kind)}{session.tenantName ? ` · ${session.tenantName}` : ""}</p>
-            <p className="max-w-xl break-words text-ink-3">{session.userAgent || t("security.unknownDevice")}</p>
+            <p className="max-w-xl break-words text-ink-3">{parseDeviceLabel(session.userAgent) ?? t("security.unknownDevice")}</p>
+            {session.userAgent && <details className="max-w-xl text-ink-3">
+              <summary className="cursor-pointer">{t("common.viewDetails")}</summary>
+              <p className="break-all" dir="ltr">{session.userAgent}</p>
+            </details>}
             {session.ipAddress && <p className="text-ink-3" dir="ltr">{session.ipAddress}</p>}
             <p className="text-ink-3">{t("security.sessionCreated")}: {formatDate(session.createdAt)} · {t("security.sessionExpires")}: {formatDate(session.expiresAt)}</p>
-            {session.requiresPlatformStepUp && <Link href="/platform/security" className="block text-ink-3 underline">{t("security.platformSessionStepUp")}</Link>}
           </div>
           <Button type="button" variant="secondary" disabled={!enabled || busy || loading} onClick={() => void revoke("revoke", session.id)}>{t("security.revoke")}</Button>
         </li>)}

@@ -190,7 +190,7 @@ second physical attempt.
 ### PostgreSQL + Drizzle ORM
 
 **Schema**: 32 tables defined in `src/db/schema.ts`
-**Migrations**: 107 forward-only migrations (`0000`–`0106`) in `drizzle/`; `0103_retained_print_attempt_evidence.sql` must run before the updated Gateway uses retained receipt columns.
+**Migrations**: 112 forward-only migrations (`0000`–`0111`) in `drizzle/`; `0103_retained_print_attempt_evidence.sql` must run before the updated Gateway uses retained receipt columns.
 **Driver**: `pg` with connection pool; exact version is pinned in the Node manifests
 
 ### Key Design Patterns

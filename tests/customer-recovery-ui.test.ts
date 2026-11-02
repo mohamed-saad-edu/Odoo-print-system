@@ -5,7 +5,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import InvitePage from "../src/app/invite/page";
 import OnboardingPage from "../src/app/onboarding/page";
 import { I18nProvider } from "../src/i18n/react";
-import { translate } from "../src/i18n/translate";
 import { fetchWithTimeout } from "../src/lib/fetch-timeout";
 
 const navigation = vi.hoisted(() => ({ replace: vi.fn(), refresh: vi.fn(), push: vi.fn(), redirect: vi.fn() }));

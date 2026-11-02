@@ -44,7 +44,9 @@ describe("Odoo 19 view architecture contract — gateway_config_views.xml", () =
 
     expect(formSection).toContain('name="action_retry_enabled_sync"');
     expect(formSection).toContain('name="action_reset_stale_sync_state"');
-    expect(formSection).toContain('confirm="Recover synchronization state');
+    // WP-G: updated for WP-D+E's intended copy change (gateway_config_views.xml:62):
+    // "Recover Stale Synchronization" was rewritten in plain language as "Reset connection state".
+    expect(formSection).toContain('confirm="Use this only after the old connection is turned off');
     for (const action of [
       'name="action_open_pairing_wizard"',
       'name="action_clear_api_key"',
@@ -160,7 +162,7 @@ describe("One native print routing workflow, with every operation in the main na
     expect(routing).toContain('<form string="Print Route"');
     expect(routing).toContain('widget="gateway_runtime_agent_binding"');
     expect(routing).toContain('widget="gateway_runtime_printer"');
-    expect(routing).toContain('string="Check registration"');
+    expect(routing).toContain('string="Check connection"');
     expect(routing).not.toContain('string="Print test page"');
     expect(read(addon + "views/print_policy_views.xml")).toContain('string="Print Route"');
   });

@@ -8,7 +8,7 @@
  * re-opens it.
  */
 
-export type CircuitBreakerOptions = {
+type CircuitBreakerOptions = {
   /** Consecutive failures before the breaker opens. */
   failureThreshold: number;
   /** Milliseconds the breaker stays open before allowing a probe. */
@@ -17,7 +17,7 @@ export type CircuitBreakerOptions = {
   name: string;
 };
 
-export type CircuitBreakerState = "closed" | "open" | "half-open";
+type CircuitBreakerState = "closed" | "open" | "half-open";
 
 export class CircuitBreaker {
   private state: CircuitBreakerState = "closed";
@@ -30,6 +30,15 @@ export class CircuitBreaker {
   private generation = 0;
 
   constructor(options: CircuitBreakerOptions) {
+    // v3: previously unvalidated; a non-positive threshold opened on the
+    // first failure and a negative reset timeout made every state read
+    // half-open. The sole current instantiation (5, 30000) is valid.
+    if (!Number.isInteger(options.failureThreshold) || options.failureThreshold <= 0) {
+      throw new Error("CircuitBreaker failureThreshold must be a positive integer");
+    }
+    if (!Number.isFinite(options.resetTimeoutMs) || options.resetTimeoutMs <= 0) {
+      throw new Error("CircuitBreaker resetTimeoutMs must be positive");
+    }
     this.failureThreshold = options.failureThreshold;
     this.resetTimeoutMs = options.resetTimeoutMs;
     this.name = options.name;

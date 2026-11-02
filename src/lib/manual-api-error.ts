@@ -20,7 +20,7 @@ export function manualApiError(error: unknown): Response {
   } else if (error instanceof PlatformUnauthorizedError) {
     response = NextResponse.json({error:"Unauthorized",code:"UNAUTHORIZED"},{status:401});
   } else if (error instanceof PlatformMutationAuthorityChangedError) {
-    response = NextResponse.json({error:"Password confirmation required",code:"PLATFORM_REAUTH_REQUIRED"},{status:403});
+    response = NextResponse.json({error:"Your platform authorization changed. Sign in again.",code:"PLATFORM_AUTHORITY_CHANGED"},{status:403});
   } else if (error instanceof ManagerMutationAuthorityChangedError) {
     response = error.response();
   } else {

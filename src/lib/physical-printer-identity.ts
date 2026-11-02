@@ -4,7 +4,7 @@ import { isIP } from "node:net";
 /** Match configured logical execution endpoints within a single Agent and workspace.
  * Neither mutable display names nor discovered IDs are physical identity.
  * Print-language compatibility must be checked separately before reuse. */
-export type PrinterEndpoint = {
+type PrinterEndpoint = {
   connectionType: string;
   protocol: string;
   config: Record<string, unknown> | null | undefined;

@@ -278,3 +278,42 @@ Do not deploy old 0101-based Gateway binaries after migrating to 0102, or mix ol
 ### 0103 — retained terminal print attempt evidence
 
 Forward-only migration `0103_retained_print_attempt_evidence.sql` adds nullable `spooler_job_id` and `attempt_id` columns to `print_job_receipts`. It does not recover evidence already deleted with historical jobs and does not change quota accounting. The updated Gateway must not read or write these receipt fields until the migration succeeds; back up PostgreSQL and stop earlier Gateway writers before the cutover. Do not rewrite already-applied migrations or silently requeue a job with unknown physical output.
+
+
+### 0081 — physical printers only: DESTRUCTIVE, run only via db-migrate.ts (v3 runbook)
+
+Migration `0081_physical_printers_only.sql` deletes virtual-printer rows and
+their jobs, receipts, discovered devices, and cascaded job events. It
+contains NO archive, NO backup, and NO export; its header comment only says
+to take a backup and stop old Agent processes. The archive exists ONLY in
+`scripts/db-migrate.ts` (`preserveLegacyPrintHistory`, `legacy_printing.*`
+snapshots taken after the migration's first statement, under table locks,
+inside the migrator's single transaction).
+
+Rules (v3, from static review):
+1. NEVER run 0081 via drizzle-kit or any runner other than
+   `scripts/db-migrate.ts`. A plain run deletes irreversibly, with no
+   archive. A failed migrator run rolls the archive back too (same
+   transaction) — atomicity is good, recoverability after a *successful*
+   plain run is nil.
+2. Preconditions: verified restorable backup, restore-tested on a copy;
+   all old Agent processes stopped; no `claimed`/`printing` job on a
+   virtual printer (the migration itself aborts on those, but does NOT
+   abort on `queued` jobs — drain or explicitly accept loss of queued
+   virtual-printer jobs first); confirm the run uses the hash-pinned
+   migrator path.
+3. After success, verify `legacy_printing.printers/print_jobs/job_events/
+   print_job_receipts/discovered_devices` row counts against the pre-run
+   victim count, and keep the backup until the next release. There is no
+   automated restore: recovery is manual re-insert from `legacy_printing.*`
+   JSON in FK order (printers -> print_jobs -> job_events), and cascaded
+   job_events for jobs whose receipts were already compacted cannot be
+   reconstructed.
+4. Do NOT re-run 0081 to "fix" a partial run — it is hash-pinned and
+   skipped once recorded. Do NOT edit 0081 itself (applied migrations are
+   immutable); any guard must live in the runner/runbook, not the SQL.
+5. `npm run db:push` (drizzle-kit push) is NOT a path to 0081: push syncs
+   schema only and cannot replay 0081's data deletions; its only 0081
+   overlap is the `printers_type_check` constraint, which already matches
+   the current schema. Never use push as a substitute for the migrator on
+   an existing deployment — always `npm run db:migrate`.

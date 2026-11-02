@@ -20,7 +20,7 @@ export function dashboardSubscriptionSummary(value: unknown): DashboardSubscript
   };
 }
 
-export type DashboardBillingUsageResult<T> =
+type DashboardBillingUsageResult<T> =
   | { kind: "available"; usage: T }
   | { kind: "unsubscribed" }
   | { kind: "status_only" }

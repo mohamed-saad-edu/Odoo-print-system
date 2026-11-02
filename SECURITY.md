@@ -27,7 +27,7 @@
 
 ### Manager Sessions
 - v2 access sessions use versioned HS256 JWTs with a 15-minute lifetime and explicit session kind, JTI, SID, and refresh-family identifiers. Access tokens are stateless and are not stored in the refresh-token ledger.
-- v2 refresh sessions are opaque random secrets; PostgreSQL stores only SHA-256 token hashes. Workspace families have a 30-day absolute lifetime, a 30-minute inactivity limit, and a 5-second ordinary-refresh rotation grace window. Fresh password confirmation revokes every predecessor immediately without grace and preserves the family deadline. Platform families have an eight-hour absolute lifetime and require thirty-minute activity freshness; background refresh does not extend activity or password freshness.
+- v2 refresh sessions are opaque random secrets; PostgreSQL stores only SHA-256 token hashes. Workspace families have a 30-day absolute lifetime, a 30-minute inactivity limit, and a 5-second ordinary-refresh rotation grace window. Platform families have an eight-hour absolute lifetime and require thirty-minute activity freshness; background refresh does not extend activity.
 - A refresh token presented after the grace window is treated as reuse/replay: the entire family is revoked, `auth.refresh.reuse_detected` is audited, and a notification email is attempted when an account email is available.
 - Refresh rotation revalidates the live security principal (tenant lifecycle, tenant membership/role, verified customer email, or Platform Owner status) before minting a new access token.
 - Password reset revokes every refresh family for the affected user.
@@ -163,13 +163,13 @@ The Gateway deliberately keeps authentication rate limiting fail-closed. If the 
 
 Verified Platform Owners sign in with email and password and immediately receive the dedicated platform access/refresh cookie pair. A workspace owner or administrator cannot obtain platform authority through their workspace role. Issuance locks the current account and compares an internal proof of the password verification to its current password hash; caller-supplied IDs, stale proofs or a hash change during issuance cannot mint authority. The durable platform policy stores a one-way fingerprint of the salted password verifier, not a password or reusable login credential. Access, refresh, session inventory and transactional mutation checks compare that fingerprint to the current verifier and recheck verified owner status. See `src/lib/platform-auth.ts`, `src/lib/platform-session-security.ts` and `src/lib/session-tokens.ts`.
 
-Privileged platform writes require password confirmation within five minutes while the current account, exact session SID and family remain locked through commit. `/platform/security` posts the actual password to `/api/platform/auth/reauth`; success rotates both tokens in the same family, immediately invalidates predecessor credentials and preserves the original eight-hour absolute deadline. Background status and refresh never advance activity. The UI clears password fields and requires an explicit retry of a previously refused operation.
+Privileged platform writes require a current platform session for the same account, with the exact session SID and family locked through commit. No password re-confirmation is requested: a valid, non-expired, non-revoked session authorizes sensitive platform actions directly. `/platform/security` lists and revokes the account's sessions without a password prompt; every revocation is audited. Background status and refresh never advance activity.
 
-Workspace Settings and Platform Security show only the signed-in account's live sessions across its workspaces and customer/manager/platform sign-in types. Workspace revocation requires the actual password. Ending a platform family additionally requires a current same-account platform session and recent platform password confirmation. Neither inventory endpoint discloses or revokes another user's family. These are separate checks from workspace role permissions.
+Workspace Settings and Platform Security show only the signed-in account's live sessions across its workspaces and customer/manager/platform sign-in types. Workspace revocation requires only the current session. Ending a platform family requires a current same-account platform session. Neither inventory endpoint discloses or revokes another user's family. These are separate checks from workspace role permissions.
 
 Migration `0093_password_only_authentication` removes the former factor stores while preserving accounts, password hashes, memberships, refresh families, revocation state and original session deadlines. Stop every older instance before applying it. The migration is transactional, uses no cascading drops, and refuses unexpected dependencies. Old migration hashes remain immutable. See `MIGRATION.md` for the upgrade and restore boundary.
 
-This is single-factor authentication for every human role. Password confirmation does not protect an account when an attacker knows the password. Phishing, keylogging, password reuse and mailbox compromise remain material risks, particularly for the cross-tenant Platform Owner. Rate limits, strong password hashing, screened new passwords, secure cookies and session controls do not provide MFA or phishing resistance. The mandatory-MFA requirement ASVS V6.3.3 is an explicit unmet requirement for this product policy; no ASVS Level 2 compliance or certification claim is made. See [password authentication policy](docs/PASSWORD_AUTHENTICATION.md).
+This is single-factor authentication for every human role. There is no second password proof for sensitive actions: a valid session alone authorizes them, so a stolen live session can act until the session expires or is revoked. A login password does not protect an account when an attacker knows the password. Phishing, keylogging, password reuse and mailbox compromise remain material risks, particularly for the cross-tenant Platform Owner. Rate limits, strong password hashing, screened new passwords, secure cookies and session controls do not provide MFA or phishing resistance. The mandatory-MFA requirement ASVS V6.3.3 is an explicit unmet requirement for this product policy; no ASVS Level 2 compliance or certification claim is made. See [password authentication policy](docs/PASSWORD_AUTHENTICATION.md).
 
 ## Dependency update admission
 
@@ -179,10 +179,122 @@ For an urgent verified npm security fix younger than seven days, record the advi
 
 References: [npm configuration](https://docs.npmjs.com/cli/v11/using-npm/config/) and [Dependabot cooldown](https://docs.github.com/en/code-security/reference/supply-chain-security/dependabot-options-reference#cooldown).
 
-## Human workspace inactivity and password confirmation
+## Human workspace inactivity (no password step-up)
 
-Customer and manager access, refresh and transactional mutation guards require a matching `workspace_session_security` row, a live exact refresh-token SID, current tenant membership/role and the current password-verifier snapshot. The database clock enforces thirty minutes without foreground activity and the original thirty-day absolute lifetime. Missing state, expired state, future timestamps and changed credentials fail closed. Background GETs, session probes and refresh never record activity. The AppShell sends a throttled activity request only on trusted input in a visible document. Successful human mutations also record activity inside their transaction. Activity cannot revive an expired family or update password freshness.
+Customer and manager access, refresh and transactional mutation guards require a matching `workspace_session_security` row, a live exact refresh-token SID, current tenant membership/role and the current password-verifier snapshot. The database clock enforces thirty minutes without foreground activity and the original thirty-day absolute lifetime. Missing state, expired state, future timestamps and changed credentials fail closed. Background GETs, session probes and refresh never record activity. The AppShell sends a throttled activity request only on trusted input in a visible document. Successful human mutations also record activity inside their transaction. Activity cannot revive an expired family.
 
-Tenant settings, team/role changes, Agent pairing/lifecycle administration, printer configuration, job retry/cancellation, integration credentials/bindings and billing changes require password confirmation within five minutes. Ordinary reads and inventory remain available to a live authorized session. Settings exposes Confirm Identity; stale confirmation returns HTTP403 with `WORKSPACE_REAUTHENTICATION_REQUIRED`, the `X-Yaseir-Reauthentication: required` header and a Settings link. No destructive request is retried automatically. Password confirmation preserves whitespace and the canonical 4096-character limit, checks the configured origin and uses durable rate limits. Success rotates both access and refresh tokens immediately without extending the absolute deadline. Both credentials stay out of browser response JSON.
+Tenant settings, team/role changes, Agent pairing/lifecycle administration, printer configuration, job retry/cancellation, integration credentials/bindings and billing changes require a live authorized session; no password confirmation is requested for any of them. Ordinary reads and inventory remain available to a live authorized session. An expired or revoked session fails authentication and the user signs in again; no destructive request is retried automatically after a session error. Session revocation requests check the configured origin and use durable rate limits where applicable.
 
-Fresh email/password login atomically replaces only the presented same-kind, same-principal and same-tenant family, preserving other devices and scopes. A multi-workspace account receives a one-use signed chooser before its selected tenant session is created; this preserves the original password-verification time. Workspace switching and invitation acceptance carry the source password proof timestamp and earliest deadline into the destination family, so they cannot create freshness. The development/test environment-manager path remains opt-in, bound to its current configured username, tenant and password verifier, and forbidden in production. Pre-policy/v1 sessions require sign-in. Paired Agent APIs retain their separate machine-credential policy.
+Fresh email/password login atomically replaces only the presented same-kind, same-principal and same-tenant family, preserving other devices and scopes. A multi-workspace account receives a one-use signed chooser before its selected tenant session is created; this preserves the original password-verification time. Workspace switching and invitation acceptance carry the source login timestamp and earliest deadline into the destination family, so they cannot extend the original deadline. The development/test environment-manager path remains opt-in, bound to its current configured username, tenant and password verifier, and forbidden in production. Pre-policy/v1 sessions require sign-in. Paired Agent APIs retain their separate machine-credential policy.
+
+## Session lifetimes, cookies and refresh-failure codes (as implemented)
+
+This section documents the code as it stands; it makes no claim about client
+UX behaviour (wording, redirects and retries live in client code).
+
+### Lifetimes
+
+| Item | Workspace (manager + customer) | Platform owner |
+|---|---|---|
+| Access token | 15 min (`ACCESS_TOKEN_TTL_SECONDS`, `src/lib/session-tokens.ts`); `exp - iat` must equal 900 s | 15 min, same exactness rule |
+| Idle timeout | 30 min since `last_seen_at` (DB clock, `WORKSPACE_IDLE_MS`) | 30 min since `last_seen_at` (`PLATFORM_SESSION_IDLE_MS`) |
+| Absolute lifetime | 30 days from family creation (`REFRESH_FAMILY_TTL_MS`); refresh never extends it, and a persisted shorter deadline also wins | 8 h from family creation (`PLATFORM_SESSION_TTL_MS`) |
+| Step-up (password-proof freshness) | REMOVED — no password re-confirmation is requested for any action while the session is valid | REMOVED — same |
+| Remember Me | NONE — no flag exists in any login UI or login API, and none was added. Adding one would create a second session system, so every family gets the absolute lifetime above whether or not the user wanted persistence. | NONE (same) |
+
+Idle extension asymmetry: workspace `last_seen_at` is written only by
+`POST /api/auth/activity` with `{ touch: true }`, called only on trusted
+input events (pointerdown/keydown/wheel/touchstart) in a visible document,
+at most once per 60 s. Refresh, probes and polling never extend it.
+Platform data requests do extend `last_seen_at`, except `/api/platform/auth/me` and
+`/refresh`.
+
+### Refresh rotation and revocation (unchanged by error-code differentiation)
+
+- Storage: SHA-256 hash only (`tokenHash`); presented tokens are 32 random
+  bytes, base64url. No token plaintext is stored, logged or returned in an
+  error body.
+- Every successful refresh rotates: a new row in the same family, the old
+  row stamped `replaced_by` / `replaced_at`.
+- Grace: 5 s (`REFRESH_ROTATION_GRACE_MS`). A replaced token presented
+  within grace rotates again and revokes the previous successor
+  (`rotation_grace_superseded`); the grace window is not extended.
+- Reuse: a replaced token presented after grace revokes the whole family
+  (`refresh_reuse_detected`), writes an audit event behind a savepoint so
+  the revocation survives an audit-write failure, and attempts a
+  notification email to the stored address.
+- Other family revocations on refresh failure: workspace policy failure
+  (`workspace_session_expired`, covering idle expiry, credential-version
+  mismatch, tenant suspension, membership loss and missing policy state)
+  and principal failure (`principal_invalid`) revoke the whole family.
+  Absolute expiry revokes with `absolute_expired`. Logout, login
+  replacement, tenant switch (source family only) and session-inventory
+  actions revoke with their own recorded reasons.
+- Failed refresh always answers 401 and clears both cookie pairs of that
+  kind; clearing on failure is intentional (dead cookies are not kept).
+  Success behaviour and success bodies are unchanged.
+
+### Cookies (all HttpOnly, never in localStorage/sessionStorage)
+
+Names are `__Host-` prefixed in production, bare otherwise
+(`sessionCookieName`, `src/lib/session-config.ts`). Secure is always on in
+production; in non-production only with `COOKIE_SECURE=1/true`.
+
+| Cookie | Path: production | Path: non-production | SameSite | Max-Age / Expires |
+|---|---|---|---|---|
+| `mgr_session` / `cust_session` / `plt_session` (access JWT) | `/` | `/` | Lax | 900 s, `Expires` = access expiry |
+| `mgr_refresh` / `cust_refresh` / `plt_refresh` (refresh token) | `/` | `/api/auth/manager` / `/api/auth` / `/api/platform/auth` respectively | Strict | workspace 30 days, platform 8 h |
+
+### Refresh-failure codes (401 `{ error, code }`)
+
+Returned by `POST /api/auth/refresh`, `/api/auth/manager/refresh` and
+`/api/platform/auth/refresh`. Type: `RefreshFailureCode` in
+`src/lib/session-tokens.ts`; mapping function: `refreshFailureCode`.
+The `error` string is an English fallback; clients resolve the message
+from `code` (see `src/lib/api-error-keys.ts`, whose 401 fallback is
+`errors.sessionExpired`).
+
+| Code | Internal outcome it reports |
+|---|---|
+| `REFRESH_TOKEN_REQUIRED` | Route-level only: no refresh token was presented, so rotation never ran |
+| `REFRESH_TOKEN_INVALID` | No token row for this kind, wrong-kind presentation, unrevoked row mismatch, or a workspace row with no tenant. Unknown vs wrong-kind stay merged: both mean "this endpoint has no usable token" |
+| `REFRESH_TOKEN_REVOKED` | The presented row is already revoked and its recorded reason is none of the specific ones below (logout, login_replaced, reauthentication, user_session_revocation, rotation_grace_superseded, or an unrecorded reason) |
+| `REFRESH_TOKEN_REUSED` | Reuse detected: a replaced token presented after the 5 s grace (family revoked, audit + email attempted), or a row already revoked with `refresh_reuse_detected` |
+| `REFRESH_TOKEN_EXPIRED` | Absolute family deadline passed, persisted token expiry passed, or rotation failed with `REFRESH_FAMILY_EXPIRED` (including from the grace window) |
+| `TENANT_SUSPENDED` | Tenant lifecycle gate raised `TenantSuspendedError`, or the presented row was revoked with `tenant_suspended`. Note: the code reports the recorded death reason, not current tenant state — a token revoked during a suspension keeps this code after reactivation |
+| `TENANT_DELETED` | Tenant lifecycle gate raised `TenantDeletedError` |
+| `PRINCIPAL_INVALID` | `refreshPrincipalStillValid` failed (tenant not active, membership/role mismatch, user missing, email mismatch, unverified customer, non-owner platform user), or a row revoked with `principal_invalid` |
+| `SESSION_IDLE_EXPIRED` | The policy row's `last_seen_at` is already past the 30-minute fence (read-only DB-clock diagnostic inside the rotation transaction; revocation behaviour unchanged). Server English fallback: "Session expired due to inactivity". This is the code clients render as "signed out due to inactivity" |
+| `WORKSPACE_SESSION_EXPIRED` | Workspace policy check failed for a reason other than idle (missing policy row, policy expiry, credential-version mismatch, membership loss), or a row revoked with `workspace_session_expired` |
+| `PLATFORM_SESSION_EXPIRED` | Platform policy check failed for a reason other than idle, or an equivalent platform policy death |
+
+Merged by design (not distinguishable in the current code without changing
+behaviour, so kept merged): unknown token vs wrong-kind presentation (both
+`REFRESH_TOKEN_INVALID`); workspace policy deaths other than idle (all
+`WORKSPACE_SESSION_EXPIRED` — `readWorkspaceSessionState` returns a single
+null for missing row, policy expiry, credential mismatch and membership
+loss); platform policy deaths other than idle (all
+`PLATFORM_SESSION_EXPIRED`).
+
+Client-wording gap: no dedicated EN+AR "signed out due to inactivity" i18n
+key exists (`src/i18n/messages/en.ts`, `src/i18n/messages/ar.ts` contain
+only the `workspaceSecurity.idleExpires` label and the generic
+`errors.sessionExpired` key). Until a dedicated key is added, clients map
+`SESSION_IDLE_EXPIRED` to the existing `errors.sessionExpired` key
+("Your session expired. Sign in again to continue." /
+"انتهت جلستك. سجّل الدخول مرة أخرى للمتابعة."); no new i18n key was
+invented in server code.
+
+### CSRF / origin guard body alignment
+
+Mutating `/api/*` requests carrying session cookies must prove same origin
+(`src/server/request-guard.ts`, `guardApiRequest`); failure short-circuits
+before the route runs. The body was `{ success: false, error:
+"CSRF_VALIDATION_FAILED" }`, which did not match the routes'
+`{ error, code }` shape, so client `code` lookups missed it. It is now
+`{ success: false, error: "CSRF_VALIDATION_FAILED", code:
+"CSRF_VALIDATION_FAILED" }` at the same 403 status, with the same guard
+conditions and fail-closed behaviour. The `code` field mirrors `error` in
+all `rejectRequest` responses (405/411/413/503 included) as an additive,
+backward-compatible change; `success` and `error` are unchanged. No
+guard condition was weakened and no request class was unguarded.

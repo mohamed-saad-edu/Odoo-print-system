@@ -47,7 +47,7 @@ export async function POST(req: Request) {
     return response;
   } catch (error) {
     if (error instanceof WorkspaceSecurityRequestError) return NextResponse.json({ error: error.message, code: error.code }, { status: error.status, headers: HEADERS });
-    if (error instanceof PlatformMutationAuthorityChangedError) return NextResponse.json({ error: "Confirm your password in Security before changing sessions.", code: "PLATFORM_REAUTHENTICATION_REQUIRED" }, { status: 403, headers: HEADERS });
+    if (error instanceof PlatformMutationAuthorityChangedError) return NextResponse.json({ error: "Your platform authorization changed. Sign in again.", code: "PLATFORM_AUTHORITY_CHANGED" }, { status: 403, headers: HEADERS });
     return NextResponse.json({ error: "Session revocation temporarily unavailable" }, { status: 503, headers: HEADERS });
   }
 }

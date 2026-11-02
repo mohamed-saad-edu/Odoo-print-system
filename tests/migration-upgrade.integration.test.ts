@@ -192,7 +192,10 @@ suite("production-like PostgreSQL migration upgrade", () => {
         // of whether this test process has a deployment signing key. Pending
         // legacy pairing codes must be regenerated for the current runtime;
         // established agent bearer identities and print history survive.
-        pairing_code_hash: legacyPairingHash,
+        // 0107 (v3) invalidates ALL pending pre-pepper pairing hashes: plain
+        // SHA-256 (0022) and HMAC hashes are indistinguishable 64-hex
+        // strings, so no pending code can be converted — operators reissue.
+        pairing_code_hash: null,
       }]);
       const previousSecret = process.env.GATEWAY_JWT_SECRET;
       const previousSecretFile = process.env.GATEWAY_JWT_SECRET_FILE;

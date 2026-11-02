@@ -2,11 +2,15 @@ import { existsSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 describe("agent WebSocket route ownership", () => {
-  it("clears the WebSocket upgrade budget after successful authentication", () => {
+  it("refunds exactly one WebSocket upgrade reservation after successful authentication", () => {
     const source = readFileSync("src/lib/ws-rate-limit.ts", "utf8");
     const wsSource = readFileSync("src/server/ws.ts", "utf8");
     expect(source).toContain("export async function recordWsUpgradeSuccess");
-    expect(source).toContain("DELETE FROM auth_rate_limits");
+    // v4 WP3 (B5-02): refund-one, never DELETE the shared per-IP bucket —
+    // a DELETE let one legitimate reconnect wipe another agent's failures
+    // behind the same NAT IP and grant a fresh budget.
+    expect(source).toContain("GREATEST(failures - 1, 0)");
+    expect(source).not.toContain("DELETE FROM auth_rate_limits");
     expect(wsSource).toContain("recordWsUpgradeSuccess(clientKey)");
   });
 

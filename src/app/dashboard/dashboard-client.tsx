@@ -5,7 +5,7 @@ import { documentTypeLabel } from "../../shared/document-label";
 import type { OperationalPrinterState } from "../../lib/printer-operational-verification";
 import { PrinterVerificationDetails, FileOutputDetails } from "../../components/PrinterVerificationDetails";
 
-import { fetchWithTimeout, WORKSPACE_REAUTHENTICATION_EVENT } from "../../lib/fetch-timeout";
+import { fetchWithTimeout, fetchWithSessionRetry, isSessionRenewedNotResent } from "../../lib/fetch-timeout";
 import { fetchDashboardBillingUsage, type DashboardSubscriptionSummary } from "../../lib/dashboard-billing-usage";
 import React, { useState, useMemo, useEffect } from "react";
 import { ensureCustomerSession } from "../../lib/session-config";
@@ -19,7 +19,6 @@ import {
 } from "../actions";
 import {
   AlertTriangle,
-  CheckCircle2,
   Copy,
   PauseCircle,
   PlayCircle,
@@ -30,8 +29,6 @@ import {
   Search,
   LayoutGrid,
   List,
-  Wifi,
-  Usb,
   Layers,
   RotateCcw,
   Eye,
@@ -71,9 +68,7 @@ import {
   TableSkeleton,
   Tabs,
   SegmentedControl,
-  Avatar,
   KeyValueList,
-  Tooltip,
   type MenuItemSpec,
   type Tone,
 } from "../../components/ui";
@@ -148,6 +143,8 @@ export type Printer = OperationalPrinterState & {
 export type Job = {
   outputMedium?: string;
   outputEvidence?: Record<string, unknown> | null;
+  submissionState?: string | null;
+  submissionEvidence?: Record<string, unknown> | null;
   id: string;
   agentId: string;
   agentName?: string | null;
@@ -276,8 +273,44 @@ function isJobInFlight(status: string): boolean {
   return IN_FLIGHT_JOB_STATUSES.has(status.toLowerCase());
 }
 
+/**
+ * WP5/WP6 (STATIC REVIEW ONLY, WP4-GAP-1): per-job operator cancel. The
+ * cancel route's transition is one-shot and idempotent server-side (a
+ * repeat cancel returns alreadyCanceled, never a second transition or
+ * refund), so no client idempotency key is needed. The reason is optional
+ * and bounded to 500 chars by the route; the client caps the field the
+ * same way. Note on gating: WP4's instruction said "same rules as
+ * reprint", but reprint's rules (exclude in-flight) would offer cancel
+ * only for terminal jobs the route already refuses with 409. The correct
+ * cancelable set is the route's own transition table — queued or claimed
+ * only; printing is refused by the route (JOB_ALREADY_PRINTING) and
+ * terminal rows by JOB_ALREADY_TERMINAL. See jobActions below.
+ */
+async function sendGatewayCancel(jobId: string, reason?: string): Promise<{ quotaRefunded: boolean }> {
+  // Auto-retry: cancel is idempotent server-side (already-canceled returns
+  // success, never a second transition or refund).
+  const response = await fetchWithSessionRetry(`/api/jobs/${encodeURIComponent(jobId)}/cancel`, {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(reason ? { reason: reason.slice(0, 500) } : {}),
+  });
+  const body = await response.json().catch(() => null) as Record<string, unknown> | null;
+  if (!response.ok) {
+    const code = typeof body?.code === "string" ? body.code : "HTTP_ERROR";
+    throw new DashboardApiError(apiMessageKey(code, response.status, "errors.cancelFailed"), code, body ?? {}, response.status);
+  }
+  if (body?.ok !== true || body?.status !== "canceled") {
+    throw new DashboardApiError("errors.cancelFailed", "INVALID_CANCEL_RESPONSE", body ?? {});
+  }
+  return { quotaRefunded: body?.quotaRefunded === true };
+}
+
 async function sendGatewayReprint(jobId: string, operationKey: string): Promise<{ jobId: string }> {
-  const response = await fetchWithTimeout(`/api/jobs/${encodeURIComponent(jobId)}/reprint`, {
+  // Auto-retry: the replay reuses the SAME Idempotency-Key header verbatim
+  // (the confirmation's stable operation key), so the route reconciles it
+  // to the same reprint instead of creating a second physical print.
+  const response = await fetchWithSessionRetry(`/api/jobs/${encodeURIComponent(jobId)}/reprint`, {
     method: "POST",
     credentials: "same-origin",
     headers: { "content-type": "application/json", "Idempotency-Key": operationKey },
@@ -396,13 +429,6 @@ function PrinterLanguageChips({ printer }: { printer: Printer }) {
   );
 }
 
-function connectionIcon(connectionType: string) {
-  const c = connectionType.toLowerCase();
-  if (c === "usb") return <Usb className="h-3.5 w-3.5 text-ink-3" aria-hidden />;
-  if (c === "network" || c === "tcp") return <Wifi className="h-3.5 w-3.5 text-ink-3" aria-hidden />;
-  return <Layers className="h-3.5 w-3.5 text-ink-3" aria-hidden />;
-}
-
 function connectionLabel(connectionType: string, t: Translator): string {
   const c = connectionType.toLowerCase();
   if (c === "spooler") return t("printer.connection.spooler");
@@ -504,6 +530,8 @@ export default function DashboardClient({
   const [agentToDelete, setAgentToDelete] = useState<Agent | null>(null);
   const [pendingAgentAction, setPendingAgentAction] = useState<{ agent: Agent; next: "disabled" | "retired" } | null>(null);
   const [reprintCandidate, setReprintCandidate] = useState<Job | null>(null);
+  const [cancelCandidate, setCancelCandidate] = useState<Job | null>(null);
+  const [cancelReason, setCancelReason] = useState("");
   // Keep this confirmation identity after a lost response. Only explicit
   // cancellation or a confirmed success starts a fresh physical intent.
   const reprintOperationRef = React.useRef<{ jobId: string; key: string } | null>(null);
@@ -591,7 +619,8 @@ export default function DashboardClient({
     let cancelled = false;
     let refreshTimer: number | undefined;
 
-    void fetchWithTimeout(`/api/jobs/${encodeURIComponent(selectedJob.id)}?includePayload=1`, {
+    // Read: safe to retry once after refresh.
+    void fetchWithSessionRetry(`/api/jobs/${encodeURIComponent(selectedJob.id)}?includePayload=1`, {
       credentials: "include",
       cache: "no-store",
       signal: controller.signal,
@@ -608,7 +637,7 @@ export default function DashboardClient({
           setSelectedJobPayload({ jobId: selectedJob.id, value: row.diagnosticPayload ?? null });
           // Keep status/actions fresh while the job is still moving; terminal
           // rows settle (the separately loaded payload is retained).
-          if (!["success", "failed", "expired"].includes(String(row.status ?? ""))) {
+          if (!["success", "failed", "expired", "canceled"].includes(String(row.status ?? ""))) {
             refreshTimer = window.setTimeout(() => setSelectedJobRefreshTick((tick) => tick + 1), 5000);
           }
         }
@@ -648,15 +677,6 @@ export default function DashboardClient({
       if (result.status === 401) {
         denyDashboardAuthority(401);
         throw new Error(t("errors.sessionExpired"));
-      }
-      if (result.status === 403 && result.code === "WORKSPACE_REAUTHENTICATION_REQUIRED") {
-        // This result came from the directly invoked workspace Server Action.
-        // It has no HTTP policy header; announce the same UI-only notice and
-        // leave the failed operation for an explicit later user action.
-        try {
-          if (typeof window !== "undefined") window.dispatchEvent(new Event(WORKSPACE_REAUTHENTICATION_EVENT));
-        } catch { /* A notification failure cannot retry or change the result. */ }
-        throw new Error(t("workspaceSecurity.required"));
       }
       if (result.status === 403) {
         // A denied live snapshot must not leave previously authorized fleet
@@ -908,7 +928,7 @@ export default function DashboardClient({
           setFleetSnapshotCurrent(false);
           setAgents((current) => current.map((agent) => ({ ...agent, freshness: "missing" })));
           setPrinters((current) => current.map((printer) => ({ ...printer, agentFreshness: "missing" })));
-          setMessage({ text: isServerActionVersionMismatch(error) ? t("errors.pageUpdatedReload") : error instanceof Error && (error.message === t("errors.sessionExpired") || error.message === t("workspaceSecurity.required")) ? error.message : t("errors.operationFailed"), type: "err" });
+          setMessage({ text: isServerActionVersionMismatch(error) ? t("errors.pageUpdatedReload") : error instanceof Error && error.message === t("errors.sessionExpired") ? error.message : t("errors.operationFailed"), type: "err" });
         }
 
         const queued = queuedFleetQueryRef.current;
@@ -1029,7 +1049,7 @@ export default function DashboardClient({
       return result;
     } catch (error) {
       setMessage({
-        text: isServerActionVersionMismatch(error) ? t("errors.pageUpdatedReload") : error instanceof Error && (error.message === t("errors.sessionExpired") || error.message === t("workspaceSecurity.required")) ? error.message : t("errors.operationFailed"),
+        text: isServerActionVersionMismatch(error) ? t("errors.pageUpdatedReload") : error instanceof Error && error.message === t("errors.sessionExpired") ? error.message : t("errors.operationFailed"),
         type: "err",
       });
       return undefined;
@@ -1043,6 +1063,50 @@ export default function DashboardClient({
     if (busy) return;
     reprintOperationRef.current = null;
     setReprintCandidate(null);
+  };
+
+  const closeCancel = () => {
+    if (busy) return;
+    setCancelCandidate(null);
+    setCancelReason("");
+  };
+
+  const confirmCancel = async () => {
+    const job = cancelCandidate;
+    if (!job || busy || !canMutate.jobsCancel) return;
+    setMessage(null);
+    setBusy(true);
+    try {
+      // The server transition is one-shot + idempotent, so a retry after a
+      // lost response safely returns the already-canceled shape; unlike
+      // reprint, no client operation key must be preserved across retries.
+      const result = await sendGatewayCancel(job.id, cancelReason.trim() || undefined);
+      setCancelCandidate(null);
+      setCancelReason("");
+      setMessage({
+        text: t(result.quotaRefunded ? "success.jobCanceledRefunded" : "success.jobCanceled"),
+        type: "ok",
+      });
+      void refreshData();
+    } catch (error) {
+      if (error instanceof DashboardApiError) {
+        // Step-up (jobs.cancel is SENSITIVE): the fetch helper already
+        // dispatched the re-authentication notice; do not clear the
+        // dashboard snapshot the way a hard 401/403 denial does.
+        if (error.code === "WORKSPACE_REAUTHENTICATION_REQUIRED") {
+          setMessage({ text: t(error.key), type: "err" });
+        } else if (error.httpStatus === 401 || error.httpStatus === 403) {
+          denyDashboardAuthority(error.httpStatus);
+          return;
+        } else {
+          setMessage({ text: t(error.key), type: "err" });
+        }
+      } else {
+        setMessage({ text: t("errors.cancelFailed"), type: "err" });
+      }
+    } finally {
+      setBusy(false);
+    }
   };
 
   const confirmReprint = async () => {
@@ -1109,12 +1173,20 @@ export default function DashboardClient({
     setBusy(true);
     setMessage(null);
     try {
-      const response = await fetchWithTimeout("/api/agents", {
+      // NOT auto-resent: POST /api/agents creates a fresh agent + pairing
+      // code per call with no idempotency key. Refresh only; the renewed
+      // marker below keeps the typed name and asks for an explicit
+      // resubmit — no redirect, no duplicate agent.
+      const response = await fetchWithSessionRetry("/api/agents", {
         method: "POST",
         headers: { "content-type": "application/json" },
         credentials: "same-origin",
         body: JSON.stringify({ name }),
-      });
+      }, { autoRetry: false });
+      if (isSessionRenewedNotResent(response)) {
+        setMessage({ text: t("errors.sessionRenewedRetry"), type: "err" });
+        return;
+      }
       if (response.status === 401 || response.status === 403) {
         denyDashboardAuthority(response.status);
         return;
@@ -1195,7 +1267,10 @@ export default function DashboardClient({
   const agentById = useMemo(() => new Map(agents.map((a) => [a.id, a])), [agents]);
   const printerById = useMemo(() => new Map(printers.map((p) => [p.id, p])), [printers]);
 
-  const jobFilterTabs = ["all", "active", "queued", "success", "failed", "unknown", "expired"] as const;
+  // WP5/WP6: "canceled" is a first-class filter tab — without it, canceled
+  // jobs were reachable only via search/all even though the server filter
+  // (job-history.ts explicit-status branch) already accepts "canceled".
+  const jobFilterTabs = ["all", "active", "queued", "success", "failed", "unknown", "expired", "canceled"] as const;
   const jobTabs =
     jobStatusFilter === "all" || (jobFilterTabs as readonly string[]).includes(jobStatusFilter)
       ? (jobFilterTabs as unknown as string[])
@@ -1208,6 +1283,7 @@ export default function DashboardClient({
     failed: t("job.filter.failed"),
     unknown: t("v4.experience.job.review"),
     expired: t("job.filter.expired"),
+    canceled: t("v4.experience.job.canceled"),
   };
 
   const jobActions = (job: Job): MenuItemSpec[] => {
@@ -1216,6 +1292,11 @@ export default function DashboardClient({
     // transport result, not proof of paper output. An existing intent may
     // still be replayed with its original key after late reconciliation.
     const canReprint = canMutate.jobsRetry && job.status.toLowerCase() !== "success" && !isJobInFlight(job.status);
+    // WP5/WP6 (WP4-GAP-1): cancel is offered only for the route's
+    // cancelable states (queued/claimed). Offering it for printing or
+    // terminal rows would only ever produce a 409; the server remains the
+    // authority if the row raced to another state before the POST lands.
+    const canCancel = canMutate.jobsCancel && (job.status.toLowerCase() === "queued" || job.status.toLowerCase() === "claimed");
     return [
       { key: "inspect", label: t("job.viewDetails"), icon: <Eye className="h-4 w-4" />, onSelect: () => openJobDetails(job) },
       {
@@ -1224,6 +1305,17 @@ export default function DashboardClient({
         icon: <Copy className="h-4 w-4" />,
         onSelect: () => void copyTextToClipboard(job.id),
       },
+      ...(canCancel
+        ? [
+            {
+              key: "cancel",
+              label: t("job.cancelJob"),
+              icon: <X className="h-4 w-4" />,
+              separatorBefore: true,
+              onSelect: () => { setCancelReason(""); setCancelCandidate(job); },
+            } as MenuItemSpec,
+          ]
+        : []),
       ...(canReprint
         ? [
             {
@@ -2235,6 +2327,21 @@ export default function DashboardClient({
             <Button variant="secondary" onClick={() => closeJobDetails()}>
               {t("common.close")}
             </Button>
+            {canMutate.jobsCancel && selectedJobView && (selectedJobView.status.toLowerCase() === "queued" || selectedJobView.status.toLowerCase() === "claimed") && (
+              <Button
+                variant="danger"
+                disabled={busy}
+                onClick={() => {
+                  const job = selectedJobView;
+                  closeJobDetails();
+                  setCancelReason("");
+                  setCancelCandidate(job);
+                }}
+                icon={<X className="h-4 w-4" />}
+              >
+                {t("job.cancelJob")}
+              </Button>
+            )}
             {canMutate.jobsRetry && selectedJobView && selectedJobView.status.toLowerCase() !== "success" && !isJobInFlight(selectedJobView.status) && (
               <Button
                 variant="primary"
@@ -2382,7 +2489,10 @@ export default function DashboardClient({
               key={selectedPrinterView.id}
               printer={selectedPrinterView}
               onSave={async (profile) => {
-                const response = await fetchWithTimeout(`/api/printers/${encodeURIComponent(selectedPrinterView.id)}`, {
+                // Auto-retry: PATCH with the identical geometry profile
+                // converges on the same printer config, so a replay after
+                // refresh cannot create a second effect.
+                const response = await fetchWithSessionRetry(`/api/printers/${encodeURIComponent(selectedPrinterView.id)}`, {
                   method: "PATCH", headers: { "Content-Type": "application/json" }, credentials: "include",
                   body: JSON.stringify({ config: { geometry_profile: profile } }),
                 });
@@ -2400,6 +2510,58 @@ export default function DashboardClient({
                 setPrinters((current) => current.map((printer) => printer.id === selectedPrinterView.id ? { ...printer, ...payload } : printer));
                 void refreshData();
               }} />}
+          </div>
+        )}
+      </Modal>
+
+      {/* ── Job cancel confirmation (WP4-GAP-1) ───────────────────── */}
+      <Modal
+        open={cancelCandidate !== null}
+        onClose={closeCancel}
+        title={t("job.cancelTitle")}
+        description={t("job.cancelBody")}
+        footer={
+          <>
+            <Button variant="secondary" onClick={closeCancel} disabled={busy}>
+              {t("common.cancel")}
+            </Button>
+            <Button
+              variant="danger"
+              onClick={() => void confirmCancel()}
+              disabled={busy || !canMutate.jobsCancel}
+              loading={busy}
+              icon={<X className="h-4 w-4" />}
+            >
+              {t("job.cancelConfirm")}
+            </Button>
+          </>
+        }
+      >
+        {cancelCandidate && (
+          <div className="space-y-4">
+            <KeyValueList
+              rows={[
+                { label: t("job.job"), value: <span className="font-mono text-xs">{cancelCandidate.id}</span> },
+                { label: t("job.printer"), value: cancelCandidate.printerName ?? printerById.get(cancelCandidate.printerId)?.name ?? cancelCandidate.printerId },
+                { label: t("job.document"), value: cancelCandidate.destination ?? "—" },
+                { label: t("job.status"), value: jobLabel(cancelCandidate.status, deriveOutcome(cancelCandidate.status, cancelCandidate.error), locale) },
+              ]}
+            />
+            {cancelCandidate.status.toLowerCase() === "claimed" && (
+              <Callout tone="warn" title={t("job.cancelClaimedTitle")}>
+                {t("job.cancelClaimedBody")}
+              </Callout>
+            )}
+            <Field label={t("job.cancelReasonLabel")} htmlFor="job-cancel-reason">
+              <Input
+                id="job-cancel-reason"
+                value={cancelReason}
+                onChange={(e) => setCancelReason(e.target.value)}
+                placeholder={t("job.cancelReasonPlaceholder")}
+                maxLength={500}
+                disabled={busy}
+              />
+            </Field>
           </div>
         )}
       </Modal>

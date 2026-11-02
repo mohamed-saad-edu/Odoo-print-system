@@ -2,7 +2,7 @@ import { assertWorkspaceSecurityOrigin,readWorkspaceSecurityJson } from "../../.
 import { NextResponse } from "next/server";
 import { requirePlatformOwner } from "../../../../../../lib/platform-auth";
 import { manualApiError } from "../../../../../../lib/manual-api-error";
-import { ManualSubscriptionError,mutateManualSubscription,parseManualSubscriptionInput,requireIdempotencyKey } from "../../../../../../lib/manual-subscriptions";
+import { mutateManualSubscription,parseManualSubscriptionInput,requireIdempotencyKey } from "../../../../../../lib/manual-subscriptions";
 export async function POST(req:Request,context:{params:Promise<{id:string}>}) {
   try {
     assertWorkspaceSecurityOrigin(req);

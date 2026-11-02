@@ -54,18 +54,19 @@ export async function POST(req: Request) {
   }
   if (!user) {
     logWarn("auth.platform_login.failed", { ip: clientIp });
-    return setRateLimitHeaders(
-      NextResponse.json({ error: "Invalid Platform Owner credentials or unverified account" }, { status: 401 }),
-      decision
+    // v3: match customer/manager login — a failure that triggers the lock
+    // returns 429 with Retry-After, not a misleading 401.
+    const status = decision.retryAfterSec ? 429 : 401;
+    const res = NextResponse.json(
+      { error: "Invalid Platform Owner credentials or unverified account" },
+      { status }
     );
+    if (status === 429 && decision.retryAfterSec) res.headers.set("Retry-After", String(decision.retryAfterSec));
+    return setRateLimitHeaders(res, decision);
   }
 
-  try {
-    await recordAuthSuccess(clientIp, email);
-  } catch (error) {
-    logWarn("auth.platform_login.rate_limit_clear_failed", { error: error instanceof Error ? error.message : "unknown" });
-  }
-
+  // v3: clear the rate budget only after a session is actually issued (see
+  // customer login); a session failure must not reset the budget.
   let session;
   try {
     session = await createPlatformSession(user.userId, user.email, {
@@ -77,8 +78,14 @@ export async function POST(req: Request) {
     return setRateLimitHeaders(NextResponse.json({ error: "Sign-in is temporarily unavailable. Try again in a moment." }, { status: 503 }), decision);
   }
 
+  try {
+    await recordAuthSuccess(clientIp, email);
+  } catch (error) {
+    logWarn("auth.platform_login.rate_limit_clear_failed", { error: error instanceof Error ? error.message : "unknown" });
+  }
+
   // Settle the login audit before the response. A detached insert could race
-  // with a following password reauthentication or the next request's DB
+  // with the next request's DB
   // snapshot, making a failed attempt appear to mutate established authority.
   await writeAuditEvent({
     tenantId: null,

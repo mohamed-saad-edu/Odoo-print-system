@@ -10,7 +10,7 @@ import { nanoid } from "../../../../lib/nanoid";
 import { revokeLegacyManagerSessionsForUserInTransaction } from "../../../../lib/manager-auth";
 import { revokeLegacyPlatformSessionsForUserInTransaction } from "../../../../lib/platform-auth";
 import { revokeUserRefreshFamiliesInTransaction } from "../../../../lib/session-tokens";
-import { clientIpFrom, recordAuthSuccess, reserveAuthAttempt, setRateLimitHeaders } from "../../../../lib/auth-rate-limit";
+import { clientIpFrom, refundAuthReservation, reserveAuthAttempt, setRateLimitHeaders } from "../../../../lib/auth-rate-limit";
 import { logError, logWarn } from "../../../../lib/log";
 import { writeAuditEvent } from "../../../../lib/audit";
 import type { ManagerRole } from "../../../../lib/manager-auth";
@@ -34,7 +34,7 @@ export async function POST(req: Request) {
   const rateIdentity = `verify-email-token:${ip === "unknown" ? tokenHash : ip}`;
   let rate: Awaited<ReturnType<typeof reserveAuthAttempt>>;
   try {
-    rate = await reserveAuthAttempt(ip, rateIdentity);
+    rate = await reserveAuthAttempt(ip, rateIdentity, "verify-email");
   } catch (error) {
     logError("auth.rate_limit.store_unavailable", { endpoint: "verify_email", error: error instanceof Error ? error.message : "unknown" });
     return NextResponse.json({ error: "Service temporarily unavailable" }, { status: 503 });
@@ -194,6 +194,6 @@ export async function POST(req: Request) {
     ...(invitationJoined ? { invitationJoined: true } : {}),
   });
   response.headers.set("Cache-Control", "no-store");
-  await recordAuthSuccess(ip, rateIdentity).catch((error) => logWarn("auth.verify_email.rate_limit_clear_failed", { ip, error: error instanceof Error ? error.message : "unknown" }));
+  await refundAuthReservation(ip, rateIdentity, "verify-email").catch((error) => logWarn("auth.verify_email.rate_limit_clear_failed", { ip, error: error instanceof Error ? error.message : "unknown" }));
   return setRateLimitHeaders(response, rate);
 }

@@ -22,7 +22,7 @@ export const dynamic = "force-dynamic";
  * Keep raw capability JSON untrusted: malformed lists fail closed in the
  * shared validator rather than being interpreted as missing metadata.
  */
-function odooPrinterCapabilities(value: unknown, connectionType: string, protocol: string, config?: Record<string, unknown> | null) {
+function odooPrinterCapabilities(value: unknown, connectionType: string, protocol: string, config?: Record<string, unknown> | null, printer?: { id: string; managementSource: string | null; desiredRevision: number; appliedDesiredRevision: number; observedDesiredRevision: number }) {
   const reported = value && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown>
     : null;
@@ -33,6 +33,7 @@ function odooPrinterCapabilities(value: unknown, connectionType: string, protoco
       protocol.trim().toLowerCase() as ProtocolType,
       connectionType.trim().toLowerCase() as TransportType,
       reported,
+      printer ? { id: printer.id, config, managementSource: printer.managementSource, desiredRevision: printer.desiredRevision, appliedDesiredRevision: printer.appliedDesiredRevision, observedDesiredRevision: printer.observedDesiredRevision } : undefined,
     ),
     ...(paperWidth ? { paper_width_mm: paperWidth } : {}),
     ...(geometry ? { geometry } : {}),
@@ -164,7 +165,7 @@ export async function GET(req: Request) {
       deviceClass: row.deviceClass,
       connectionType: row.connectionType,
       protocol: row.protocol,
-      capabilities: odooPrinterCapabilities(capabilitiesWithCurrentGeometry(row), row.connectionType ?? "", row.protocol ?? "", row.config),
+      capabilities: odooPrinterCapabilities(capabilitiesWithCurrentGeometry(row), row.connectionType ?? "", row.protocol ?? "", row.config, { id: row.id, managementSource: row.managementSource, desiredRevision: row.desiredRevision, appliedDesiredRevision: row.appliedDesiredRevision, observedDesiredRevision: row.observedDesiredRevision }),
       printableWidthDots: receiptRasterWidthDots(capabilitiesWithCurrentGeometry(row)),
       agent: {
         id: row.agentId,

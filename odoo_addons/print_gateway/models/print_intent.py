@@ -92,8 +92,16 @@ class PrintGatewayIntent(models.Model):
                             % (record.status, target)
                         )
                     # Worker transition from claimed to pending requires active recovery context or valid claim token
+                    # v3: the recovery-context escape is superuser-gated, mirroring
+                    # the gateway_config skip_enabled_sync gate. RPC context is
+                    # client-controllable, and no in-tree code sets this key
+                    # (the cron recovers leases via _claim_intent and direct
+                    # SQL, not through write()), so a group_system RPC caller
+                    # must not be able to unclaim another worker's intent and
+                    # get it re-dispatched. Server-side superuser code keeps
+                    # the escape.
                     if record.status == "claimed" and target == "pending":
-                        if not self.env.context.get("allow_lease_recovery") and not (
+                        if not (self.env.is_superuser() and self.env.context.get("allow_lease_recovery")) and not (
                             vals.get("claim_token") == record.claim_token and record.claim_token
                         ):
                             raise ValidationError(

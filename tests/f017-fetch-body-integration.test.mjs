@@ -22,7 +22,17 @@ async function helper() {
     AbortController, AbortSignal, Error, Promise, Request, URL, fetch, setTimeout, clearTimeout,
   });
   const testModule = new vm.SourceTextModule(stripTypeScriptTypes(source, { mode: 'transform' }), {context});
-  await testModule.link(() => { throw new Error('No dependencies expected'); });
+  // fetch-timeout's ONLY import is session-config's ensureCustomerSession,
+  // used solely by fetchWithSessionRetry (never by fetchWithTimeout under
+  // test here). Link it to a throwing stand-in so any accidental refresh
+  // from the body path fails the test instead of silently passing.
+  await testModule.link(specifier => {
+    if (specifier !== './session-config') throw new Error('No dependencies expected: ' + specifier);
+    return new vm.SourceTextModule(
+      'export function ensureCustomerSession() { throw new Error("fetchWithTimeout must not refresh"); }',
+      {context},
+    );
+  });
   await testModule.evaluate();
   return testModule.namespace.fetchWithTimeout;
 }

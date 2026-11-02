@@ -21,7 +21,7 @@ describe("restored, single-role team invitations", () => {
     const page = read("src/app/team/page.tsx");
     const route = read("src/app/api/team/invitations/route.ts");
     const guard = read("src/lib/workspace-owner-invitations.ts");
-    expect(page).toContain('fetchWithTimeout("/api/team/invitations"');
+    expect(page).toContain('fetchWithSessionRetry("/api/team/invitations"');
     expect(page).not.toContain("verifyPlatformOwnerPassword");
     expect(page).not.toContain('type="password"');
     expect(route).toContain("assertPlatformTeamOrigin(req)");

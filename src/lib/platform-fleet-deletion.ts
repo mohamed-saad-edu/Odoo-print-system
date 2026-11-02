@@ -30,6 +30,10 @@ async function archiveJobs(
         const terminal = isTerminal(job.status as JobStatus);
         const uncertain = job.status === "printing" || job.error === "DELIVERY_EVIDENCE_PENDING" ||
           !!job.deliveredAt || !!job.ackedAt || !!job.spoolerJobId || !!job.attemptId;
+        // v3: a live job can already have a receipt (restored DB, interrupted
+        // migration, retention-sweep race). Without this the whole platform
+        // deletion rolls back on a PK conflict; the receipt already present
+        // is the archive, so skipping the insert is correct.
         await tx.insert(printJobReceipts).values({
           id: job.id, tenantId: job.tenantId, idempotencyKey: job.idempotencyKey,
           fingerprint: idempotencyDigest({ printerId: job.printerId, documentType: job.documentType, destination: job.destination, payload: job.payload }),
@@ -47,7 +51,7 @@ async function archiveJobs(
           closedClaimTokenHash: job.closedClaimTokenHash ?? (job.claimToken ? createHash("sha256").update(job.claimToken).digest("hex") : null),
           deliveredAt: job.deliveredAt, ackedAt: job.ackedAt, createdAt: job.createdAt,
           updatedAt: terminal ? job.updatedAt : sql`clock_timestamp()`,
-        });
+        }).onConflictDoNothing({ target: [printJobReceipts.id] });
       }
       await tx.delete(printJobs).where(and(eq(printJobs.tenantId, tenantId), inArray(printJobs.id, batch)));
       archived += jobs.length;

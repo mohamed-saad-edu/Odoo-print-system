@@ -380,13 +380,15 @@ suite('V4 manual subscriptions security and accounting',()=>{
   await mutateManualSubscription('workspace',claims,randomUUID(),input({action:'cancel_at_end',expectedRevision:4}));expect((await db.query.tenantSubscriptions.findFirst())?.cancelAtPeriodEnd).toBe(true);expect((await getTenantPrintUsage(db,'workspace')).used).toBe(1);
   await db.update(tenantSubscriptions).set({currentPeriodEnd:new Date(Date.now()-1000)}).where(eq(tenantSubscriptions.tenantId,'workspace'));await expect(getTenantPrintUsage(db,'workspace')).rejects.toBeInstanceOf(TenantSubscriptionRequiredError);
  });
- it('rejects stale revision, cross-tenant request approval, missing recent password and customer platform mutations',async()=>{
+ it('rejects stale revision, cross-tenant request approval and customer platform mutations',async()=>{
   await mutateManualSubscription('workspace',claims,randomUUID(),input());
   await expect(mutateManualSubscription('workspace',claims,randomUUID(),input())).rejects.toMatchObject({code:'SUBSCRIPTION_REVISION_CONFLICT'});
   await expect(mutateManualSubscription('workspace',claims,randomUUID(),input({expectedRevision:1,requestId:'foreign-request'}))).rejects.toMatchObject({code:'SUBSCRIPTION_REQUEST_CONFLICT'});expect((await db.query.tenantSubscriptions.findFirst())?.revision).toBe(1);
   const customer=await subscriptionPOST(request('/api/platform/tenants/workspace/subscription',input(),memberCookie),{params:Promise.resolve({id:'workspace'})});expect(customer.status).toBe(401);
+  // No step-up: an aged platform login authorizes the same mutation.
   await pool().query("UPDATE platform_session_security SET password_verified_at=clock_timestamp()-interval '6 minutes'");
-  const stale=await subscriptionPOST(request('/api/platform/tenants/workspace/subscription',input({expectedRevision:1}),platformCookie),{params:Promise.resolve({id:'workspace'})});expect(stale.status).toBe(403);
+  const stale=await subscriptionPOST(request('/api/platform/tenants/workspace/subscription',input({expectedRevision:1}),platformCookie),{params:Promise.resolve({id:'workspace'})});expect(stale.status).toBe(200);
+  expect((await db.query.tenantSubscriptions.findFirst())?.revision).toBe(2);
  });
  it('retired provider calls cannot modify manual state and pending helper never overwrites existing activation',async()=>{
   await mutateManualSubscription('workspace',claims,randomUUID(),input());await db.transaction(tx=>ensurePendingManualSubscription(tx,'workspace','manual'));

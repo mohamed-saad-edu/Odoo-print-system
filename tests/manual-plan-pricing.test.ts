@@ -38,9 +38,12 @@ describe("manual price catalog",()=>{
 
  it("keeps the Platform Owner plan form limits aligned with the parser",()=>{
   const source=readFileSync("src/app/platform/plans/page.tsx","utf8");
-  expect(source).toContain("maxLength={k==='description'?500:k==='id'?64:120}");
-  expect(source).toContain("pattern={k==='id'?'[a-z0-9][a-z0-9_-]{1,63}':undefined}");
-  expect(source).toContain("max={k==='monthlyQuota'?2147483647:k==='displayOrder'?1000000:undefined}");
+  // WP-G: same limits, reformatted by WP-B+C+F plans-page reformat (spaces/double quotes only).
+  expect(source).toContain('maxLength={k === "description" ? 500 : k === "id" ? 64 : 120}');
+  // WP-G: same pattern, reformatted by WP-B+C+F plans-page reformat.
+  expect(source).toContain('pattern={k === "id" ? "[a-z0-9][a-z0-9_-]{1,63}" : undefined}');
+  // WP-G: same limits, reformatted by WP-B+C+F plans-page reformat.
+  expect(source).toContain('max={k === "monthlyQuota" ? 2147483647 : k === "displayOrder" ? 1000000 : undefined}');
   expect(source).toContain('pattern="(?:0|[1-9][0-9]{0,9})(?:[.][0-9]{1,2})?"');
   expect(source).toContain("maxLength={13}");
  });
@@ -55,7 +58,8 @@ describe("manual price catalog",()=>{
   expect(()=>parseManualPlan({...base,priceAmount:"21474836.48",priceCurrency:"SAR"})).toThrow("PLAN_INVALID");
   const form=readFileSync("src/app/platform/plans/page.tsx","utf8");
   expect(form).toContain("parsePlanPriceAmount(form.priceAmount)");
-  expect(form).toContain("a(\'priceInvalid\')");
+  // WP-G: call-site unification — same catalogue key, now via t() instead of a().
+  expect(form).toContain('t("v4.admin.priceInvalid")');
   expect(v4AdminEn["v4.admin.priceInvalid"]).toBeTruthy();
   expect(v4AdminAr["v4.admin.priceInvalid"]).toMatch(/\p{Script=Arabic}/u);
  });

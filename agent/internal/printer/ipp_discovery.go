@@ -467,6 +467,18 @@ func parseMDNSServiceEntry(entry *zeroconf.ServiceEntry) (DeviceInfo, bool) {
 		rp = "ipp/print"
 	}
 	rpClean := strings.TrimPrefix(rp, "/")
+	// v3: mDNS TXT `rp` is unauthenticated advertisement. Reject dot-segment
+	// traversal, backslashes, and query/fragment smuggling, mirroring the
+	// gateway API-path rule; otherwise an advertisement could steer the
+	// agent to a different queue on the same host than the advertised one.
+	for _, segment := range strings.Split(rpClean, "/") {
+		if segment == ".." {
+			return DeviceInfo{}, false
+		}
+	}
+	if rpClean == "" || strings.ContainsAny(rpClean, "\\?#") {
+		return DeviceInfo{}, false
+	}
 
 	protocol := "ipp"
 	endpointScheme := "ipp"

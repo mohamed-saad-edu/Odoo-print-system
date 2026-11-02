@@ -1,5 +1,6 @@
 import { db } from "../db";
 import { sql } from "drizzle-orm";
+import { createHash } from "node:crypto";
 import { isIP } from "node:net";
 import { trustProxyEnabled } from "./trust-proxy-config";
 import { logError } from "./log";
@@ -15,6 +16,11 @@ import { parseDbTimeMs } from "./database-clock";
  * Keys:
  *   ip:<client-ip>              — per source address when a trusted proxy is configured
  *   acct:<username>             — per login identifier (lowercased, trimmed)
+ *   acct:<scope>:<sha256>       — per unauthenticated workflow (forgot-password,
+ *                                 register, resend-verification). These endpoints
+ *                                 accept no password proof, so they must never
+ *                                 spend the login bucket: sharing it lets anonymous
+ *                                 requests lock a victim out of sign-in.
  *   pairing-ip:<client-ip>      — dedicated pairing endpoint budget, independent of code value
  *   pairing-code:<sha256>       — per-code velocity fence: distributed guessing
  *                                 of one code shares a bucket and locks fast
@@ -25,8 +31,8 @@ import { parseDbTimeMs } from "./database-clock";
  * per-code fence instead, so code rotation cannot bypass limits either.
  */
 
-export const AUTH_RATE_WINDOW_MS = 15 * 60 * 1000;
-export const PAIRING_RATE_WINDOW_MS = 15 * 60 * 1000;
+const AUTH_RATE_WINDOW_MS = 15 * 60 * 1000;
+const PAIRING_RATE_WINDOW_MS = 15 * 60 * 1000;
 
 let warnedUntrustedProxy = false;
 
@@ -96,11 +102,29 @@ export function clientIpFrom(req: Request): string {
 }
 
 export function accountKey(username: string): string {
-  return `acct:${username.trim().toLowerCase().slice(0, 128)}`;
+  const normalized = username.trim().toLowerCase();
+  // v3: truncation alone is not an identity. Two distinct addresses sharing
+  // a 128-char prefix previously shared one bucket; long identities now get
+  // a SHA-256 key so every distinct identity gets a distinct bucket. Short
+  // identities keep the legacy readable form (rate-limit rows are ephemeral,
+  // cleaned after 24h, so the format change needs no migration).
+  if (normalized.length > 128) {
+    return `acct:sha256:${createHash("sha256").update(normalized).digest("hex")}`;
+  }
+  return `acct:${normalized}`;
 }
 
 export function ipKey(ip: string): string {
   return `ip:${ip.slice(0, 128)}`;
+}
+
+function scopedIpKey(scope: string, ip: string): string {
+  // v3: scoped workflows get their own IP bucket. Previously the scoped
+  // account bucket was isolated but reserveAuthAttempt appended the plain
+  // `ip:` bucket, so anonymous forgot-password/register/resend traffic could
+  // lock login for every user behind the same NAT address (and vice versa).
+  // The `ip:` prefix is kept so the IP lock curve still applies.
+  return `ip:${scope}:${ip.slice(0, 128)}`;
 }
 
 function pairingIpKey(ip: string): string {
@@ -114,7 +138,7 @@ type RateLimitBucketSnapshot = {
   lockedUntilMs: number | null;
 };
 
-export type RateLimitDecision = {
+type RateLimitDecision = {
   allowed: boolean;
   retryAfterSec?: number;
   limit: number;
@@ -285,11 +309,32 @@ export async function reservePairingCodeAttempt(codeHash: string): Promise<RateL
   return reserveBucketAttempt(`pairing-code:${codeHash}`, PAIRING_RATE_WINDOW_MS, "account");
 }
 
-export async function reserveAuthAttempt(ip: string, username: string): Promise<RateLimitDecision> {
+/**
+ * Rate-limit budget for an unauthenticated account workflow, isolated from
+ * the login bucket. The per-endpoint curve and lock schedule are unchanged
+ * (reserveAuthAttempt still applies them); only the account namespace differs,
+ * keyed by a SHA-256 of the normalized address so long addresses cannot
+ * collide under accountKey's 128-character truncation. Callers must never
+ * pair this with recordAuthSuccess: these workflows are not authentication
+ * events, and clearing on completion would let a caller bypass the budget.
+ */
+export async function reserveScopedAuthAttempt(
+  ip: string,
+  scope: "forgot-password" | "register" | "resend-verification",
+  username: string,
+): Promise<RateLimitDecision> {
+  const digest = createHash("sha256").update(username.trim().toLowerCase()).digest("hex");
+  // v3: pass the scope through so the IP bucket is scoped too. Previously
+  // this delegated to the plain login IP bucket (see scopedIpKey).
+  return reserveAuthAttempt(ip, `${scope}:${digest}`, scope);
+}
+
+export async function reserveAuthAttempt(ip: string, username: string, ipScope?: string): Promise<RateLimitDecision> {
   const keys = [accountKey(username)];
   // Unknown source addresses must not share one global lockout bucket. Valid
   // trusted-proxy addresses retain the wider NAT-tolerant spray protection.
-  if (isIP(ip) !== 0) keys.push(ipKey(ip));
+  // Scoped callers use a scope-prefixed IP bucket, never the login IP bucket.
+  if (isIP(ip) !== 0) keys.push(ipScope ? scopedIpKey(ipScope, ip) : ipKey(ip));
   keys.sort();
 
   return db.transaction(async (tx) => {
@@ -386,12 +431,44 @@ export async function cleanupAuthRateLimits(): Promise<number> {
   return result.rows.length;
 }
 
+/**
+ * v3: refund exactly one reservation for a token endpoint (reset-password /
+ * verify-email) whose limiter identity is a *shared* bucket. Those routes
+ * scope by endpoint + IP when the client is known, so the "account" key is
+ * really a shared source bucket: fully clearing it on one valid token would
+ * erase every other guesser's accumulated budget from that NAT address.
+ * This refunds one reservation from each key and never touches locked_until,
+ * so an accumulated lock survives a single success. Login routes must NOT
+ * use this: the account owner proved possession there, so recordAuthSuccess
+ * (full account clear) remains correct for them.
+ */
+export async function refundAuthReservation(ip: string, username: string, ipScope?: string): Promise<void> {
+  await db.transaction(async (tx) => {
+    await tx.execute(sql`
+      UPDATE auth_rate_limits SET failures = GREATEST(failures - 1, 0)
+      WHERE key = ${accountKey(username)}
+    `);
+    if (isIP(ip) !== 0) {
+      // B2: callers that reserved with a scoped IP bucket must refund that
+      // same bucket. Refunding the plain login IP bucket here would erode
+      // unrelated login guessers' budget from the same source address.
+      const bucket = ipScope ? scopedIpKey(ipScope, ip) : ipKey(ip);
+      await tx.execute(sql`
+        UPDATE auth_rate_limits SET failures = GREATEST(failures - 1, 0)
+        WHERE key = ${bucket}
+      `);
+    }
+  });
+}
+
+
 export async function recordAuthSuccess(ip: string, username: string): Promise<void> {
   await db.transaction(async (tx) => {
-    // Keep the account -> IP lock order used by reserveAuthAttempt. An owned
-    // account proves only this attempt succeeded, not that other guesses from
-    // the same source were benign. Refund its one reservation instead of
-    // erasing the source's failure history or a concurrent lockout.
+    // Login only: the account owner just proved possession, so clearing the
+    // owner's own account bucket (including a lock this attempt triggered)
+    // is correct. The IP bucket is only refunded by one, because other
+    // guesses from the same source may not be benign. Token endpoints with
+    // a shared bucket must use refundAuthReservation instead.
     await tx.execute(sql`DELETE FROM auth_rate_limits WHERE key = ${accountKey(username)}`);
     if (isIP(ip) !== 0) {
       await tx.execute(sql`

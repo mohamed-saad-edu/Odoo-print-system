@@ -14,6 +14,10 @@ import { isJobFilterStatus, PHYSICAL_OUTCOME_UNKNOWN_MARKERS } from "./job-statu
  */
 export type JobHistoryOptions = {
   tenantId?: string;
+  // v3: the unscoped mode is intentional for platform-wide reads only.
+  // Requiring this explicit flag means a future caller that merely forgets
+  // tenantId fails closed instead of silently reading across tenants.
+  platformWide?: boolean;
   agentId?: string;
   printerId?: string;
   status?: string;
@@ -46,13 +50,14 @@ type HistoryRow = {
   archived: boolean;
   outputMedium: string;
   outputEvidence: Record<string, unknown> | null;
+  submissionEvidence: Record<string, unknown> | null;
 };
 
-function scopedWhere(alias: "j" | "r", tenantId: string | undefined): SQL {
+function scopedWhere(alias: "j" | "r", tenantId: string | undefined, platformWide?: boolean): SQL {
   // Raw alias tokens are compile-time literals, never interpolated user input.
-  return tenantId
-    ? alias === "j" ? sql`WHERE j.tenant_id = ${tenantId}` : sql`WHERE r.tenant_id = ${tenantId}`
-    : sql`WHERE TRUE`;
+  if (tenantId) return alias === "j" ? sql`WHERE j.tenant_id = ${tenantId}` : sql`WHERE r.tenant_id = ${tenantId}`;
+  if (platformWide) return sql`WHERE TRUE`;
+  throw new Error("Job history requires tenantId or an explicit platformWide flag");
 }
 
 export async function listPrintJobHistory(input: JobHistoryOptions = {}, tx?: DbTx) {
@@ -74,7 +79,7 @@ export async function listPrintJobHistory(input: JobHistoryOptions = {}, tx?: Db
   if (input.printerId) predicates.push(sql`h.printer_id = ${input.printerId}`);
   if (status === "active" || status === "in_flight") predicates.push(sql`h.status IN ('queued','claimed','printing')`);
   else if (status === "success") predicates.push(sql`h.status = 'success'`);
-  else if (status === "queued" || status === "claimed" || status === "printing" || status === "expired") predicates.push(sql`h.status = ${status}`);
+  else if (status === "queued" || status === "claimed" || status === "printing" || status === "expired" || status === "canceled") predicates.push(sql`h.status = ${status}`);
   else if (status === "failed" || status === "unknown" || status === "attention") {
     // Marker tokens contain '_' characters; LIKE treats them as wildcards.
     // Exact prefix equality must match derivePhysicalOutcome()'s startsWith().
@@ -109,17 +114,17 @@ export async function listPrintJobHistory(input: JobHistoryOptions = {}, tx?: Db
       SELECT j.id, j.tenant_id, j.destination, j.document_type,
         j.agent_id, j.printer_id, j.requested_by, j.status, j.error,
         j.retries, j.delivery_attempts, j.claimed_at, j.delivered_at,
-        j.acked_at, j.expires_at, j.created_at, j.updated_at, j.output_medium, j.output_evidence,
+        j.acked_at, j.expires_at, j.created_at, j.updated_at, j.output_medium, j.output_evidence, j.submission_evidence,
         FALSE AS archived
-      FROM print_jobs j ${scopedWhere("j", input.tenantId)}
+      FROM print_jobs j ${scopedWhere("j", input.tenantId, input.platformWide)}
       UNION ALL
       SELECT r.id, r.tenant_id, r.destination, r.document_type,
         r.agent_id, r.printer_id, r.requested_by, r.status, r.error,
         NULL::integer AS retries, NULL::integer AS delivery_attempts,
         NULL::timestamp AS claimed_at, r.delivered_at,
-        r.acked_at, NULL::timestamp AS expires_at, r.created_at, r.updated_at, r.output_medium, r.output_evidence,
+        r.acked_at, NULL::timestamp AS expires_at, r.created_at, r.updated_at, r.output_medium, r.output_evidence, r.submission_evidence,
         TRUE AS archived
-      FROM print_job_receipts r ${scopedWhere("r", input.tenantId)}
+      FROM print_job_receipts r ${scopedWhere("r", input.tenantId, input.platformWide)}
       -- Job IDs belong to separate archival/live tables; only suppress
       -- the receipt when its own tenant has the matching live row.
       AND NOT EXISTS (SELECT 1 FROM print_jobs live WHERE live.id = r.id AND live.tenant_id = r.tenant_id)
@@ -132,7 +137,7 @@ export async function listPrintJobHistory(input: JobHistoryOptions = {}, tx?: Db
       h.retries, h.delivery_attempts AS "deliveryAttempts",
       h.claimed_at AS "claimedAt", h.delivered_at AS "deliveredAt",
       h.acked_at AS "ackedAt", h.expires_at AS "expiresAt",
-      h.created_at AS "createdAt", h.updated_at AS "updatedAt", h.archived, h.output_medium AS "outputMedium", h.output_evidence AS "outputEvidence"
+      h.created_at AS "createdAt", h.updated_at AS "updatedAt", h.archived, h.output_medium AS "outputMedium", h.output_evidence AS "outputEvidence", h.submission_evidence AS "submissionEvidence"
     FROM history h
     LEFT JOIN tenants t ON t.id = h.tenant_id
     LEFT JOIN agents a ON a.id = h.agent_id AND a.tenant_id = h.tenant_id

@@ -7,7 +7,7 @@ import { useI18n } from "../i18n/react";
 import { fetchWithTimeout } from "../lib/fetch-timeout";
 import { codeMessageKey } from "../lib/api-error-keys";
 
-export type SubscriptionPlanOption = { id: string; name: string; entitlements: Record<string, unknown> };
+type SubscriptionPlanOption = { id: string; name: string; entitlements: Record<string, unknown> };
 export type CustomerSubscriptionRequest = {
   id: string; reference: string; status: string; planId: string; term: string; createdAt: string;
   requestedMonthlyQuota?: number | null; whatsappUrl?: string | null;

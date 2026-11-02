@@ -5,30 +5,22 @@ import { credentialVersionFor } from "./session-credentials";
 import { db, type DbTx } from "../db";
 import type { ManagerClaims } from "./manager-auth";
 import { requireManagerActorInTransaction } from "./manager-mutation-authorization";
-import { requirePlatformActorInTransaction, validatePlatformClaims, PlatformMutationAuthorityChangedError, type PlatformOwnerClaims } from "./platform-auth";
+import { requirePlatformActorInTransaction, validatePlatformClaims, type PlatformOwnerClaims } from "./platform-auth";
 import { requireActiveTenantInTransaction } from "./tenant-guard";
 import { readWorkspaceSessionState, WorkspaceSessionExpiredError } from "./workspace-session-security";
 import { writeAuditEvent } from "./audit";
-import { assertSessionCredentialInTransaction, rotateWorkspaceSessionAfterReauthenticationInTransaction,
-  type SessionPair, type SessionRequestContext } from "./session-tokens";
 
-export type SessionInventoryOwner = { scope: "platform"; claims: PlatformOwnerClaims }
+type SessionInventoryOwner = { scope: "platform"; claims: PlatformOwnerClaims }
   | { scope: "workspace"; claims: ManagerClaims; platformClaims?: PlatformOwnerClaims | null };
 type SessionSummary = { id: string; kind: string; tenantId: string | null; tenantName: string | null;
   createdAt: Date; lastRefreshedAt: Date; expiresAt: Date; ipAddress: string | null; userAgent: string | null;
-  current: boolean; requiresPlatformStepUp: boolean };
-type SessionRevocationResult = { found: boolean; signedOut: boolean; revoked: number; clearPlatformCookie?: boolean;
-  rotation?: { kind: "customer" | "manager"; pair: SessionPair } };
+  current: boolean };
+type SessionRevocationResult = { found: boolean; signedOut: boolean; revoked: number; clearPlatformCookie?: boolean };
 export type SessionRevocationAction = "revoke" | "revoke_others" | "revoke_all";
 
 export class SessionInventoryRequestError extends Error {
   constructor() { super("Invalid session page cursor"); this.name = "SessionInventoryRequestError"; }
 }
-export class PlatformSessionStepUpRequiredError extends Error {
-  readonly code = "PLATFORM_SESSION_STEP_UP_REQUIRED";
-  constructor() { super("Confirm your password in Platform Security before ending administrator sessions."); this.name = "PlatformSessionStepUpRequiredError"; }
-}
-
 type Cursor = { v: 1; t: string; i: string };
 function cursorSignature(userId: string, body: string): Buffer {
   const secret = requiredRuntimeSecret("GATEWAY_JWT_SECRET");
@@ -102,7 +94,7 @@ export async function listOwnSessions(owner: SessionInventoryOwner, pageCursor?:
     ) SELECT * FROM live WHERE ${cursorFilter} ORDER BY issued_us DESC,id DESC LIMIT 101
   `;
   const result = tx ? await tx.execute(inventoryQuery) : await db.execute(inventoryQuery);
-  type Row = Omit<SessionSummary, "current" | "requiresPlatformStepUp" | "createdAt" | "lastRefreshedAt" | "expiresAt">
+  type Row = Omit<SessionSummary, "current" | "createdAt" | "lastRefreshedAt" | "expiresAt">
     & { created_ms: string; refreshed_ms: string; expires_ms: string; issued_us: string };
   const rows = result.rows as Row[];
   const page = rows.slice(0, 100);
@@ -112,8 +104,7 @@ export async function listOwnSessions(owner: SessionInventoryOwner, pageCursor?:
     if (!times.every(Number.isFinite)) throw new Error("Invalid persisted session time");
     return { id: row.id, kind: row.kind, tenantId: row.tenantId, tenantName: row.tenantName,
       createdAt: new Date(times[0]), lastRefreshedAt: new Date(times[1]), expiresAt: new Date(times[2]),
-      ipAddress: row.ipAddress, userAgent: row.userAgent, current: row.id===owner.claims.familyId,
-      requiresPlatformStepUp: row.kind==="platform" && owner.scope!=="platform" };
+      ipAddress: row.ipAddress, userAgent: row.userAgent, current: row.id===owner.claims.familyId };
   }), truncated: rows.length>100, nextCursor: rows.length>100 && last
     ? encodeCursor(userId, { v: 1, t: String(last.issued_us).split(".")[0], i: last.id }) : null };
 }
@@ -126,37 +117,19 @@ async function requireAuthority(tx: DbTx, owner: SessionInventoryOwner) {
   }
 }
 
-export async function revokeOwnSessions(owner: SessionInventoryOwner, action: SessionRevocationAction, id?: string, credentialVersion?: string,
-  context?: SessionRequestContext): Promise<SessionRevocationResult> {
+// No step-up: revoking the caller's own sessions needs only a valid,
+  // non-expired, non-revoked session for that same account (plus tenant /
+  // platform authority checks in requireAuthority). No password is asked,
+  // and the current session is NOT rotated by a revocation.
+export async function revokeOwnSessions(owner: SessionInventoryOwner, action: SessionRevocationAction, id?: string): Promise<SessionRevocationResult> {
   if (!owner.claims.userId || (action === "revoke" && (!id || !/^(?:[a-f0-9]{32}|legacy:[A-Za-z0-9_-]{1,128})$/.test(id)))) {
     return { found: false, signedOut: false, revoked: 0 };
   }
   return db.transaction(async tx => {
     await requireAuthority(tx, owner);
-    if (owner.scope === "workspace") {
-      if (!credentialVersion) throw new Error("Fresh password verification required");
-      await assertSessionCredentialInTransaction(tx, owner.claims.userId!, credentialVersion);
-    }
     // The held user lock is shared by initial issuance and refresh, preventing
     // a revocation sweep from missing a concurrently created successor token.
     const target = action === "revoke" ? sql`r.family_id=${id}` : action === "revoke_others" ? sql`r.family_id<>${owner.claims.familyId ?? ""}` : sql`true`;
-    // Ending a live administrator session remains a platform mutation. The
-    // administrator audience must independently prove recent password use.
-    if (owner.scope === "workspace") {
-      const platformTargets = await tx.execute(sql`SELECT r.family_id FROM refresh_tokens r
-        JOIN platform_session_security p ON p.family_id=r.family_id AND p.user_id=r.user_id
-        JOIN users u ON u.id=r.user_id AND u.is_platform_owner=true AND u.email_verified_at IS NOT NULL
-        WHERE r.user_id=${owner.claims.userId} AND r.kind='platform' AND r.tenant_id IS NULL AND ${target}
-          AND r.revoked_at IS NULL AND r.expires_at>clock_timestamp() AND p.revoked_at IS NULL
-          AND p.password_version=encode(sha256(convert_to(u.password_hash,'UTF8')),'hex') AND p.expires_at>clock_timestamp()
-          AND p.last_seen_at>clock_timestamp()-interval '30 minutes'
-        LIMIT 1`);
-      if (platformTargets.rows.length) {
-        if (!owner.platformClaims || owner.platformClaims.userId!==owner.claims.userId) throw new PlatformSessionStepUpRequiredError();
-        try { await requirePlatformActorInTransaction(tx, owner.platformClaims); }
-        catch (error) { if (error instanceof PlatformMutationAuthorityChangedError) throw new PlatformSessionStepUpRequiredError(); throw error; }
-      }
-    }
     const revoked = await tx.execute(sql`UPDATE refresh_tokens r SET revoked_at=clock_timestamp(),revoked_reason='user_session_revocation'
       WHERE r.user_id=${owner.claims.userId} AND r.kind IN ('customer','manager','platform') AND ${target} AND r.revoked_at IS NULL RETURNING r.family_id,r.kind`);
     const families = new Set(revoked.rows.map(r => String(r.family_id)));
@@ -172,31 +145,25 @@ export async function revokeOwnSessions(owner: SessionInventoryOwner, action: Se
     const count = families.size + legacyCount;
     const found = action !== "revoke" || count > 0;
     let signedOut = action === "revoke_all" || (action === "revoke" && (id === owner.claims.familyId || id === `legacy:${owner.claims.jti}`));
-    let rotation: SessionRevocationResult["rotation"];
-    if (found && owner.scope === "workspace" && !signedOut) {
-      if (owner.claims.familyId) {
-        const pair = await rotateWorkspaceSessionAfterReauthenticationInTransaction(tx, owner.claims, credentialVersion!, context);
-        rotation = { kind: owner.claims.kind === "customer" ? "customer" : "manager", pair };
-      } else {
-        // Compatibility v1 has no refresh family to rotate. End this login
-        // only after an authorized successful action; normal sign-in issues a
-        // new session without extending the old eight-hour compatibility JWT.
-        await tx.execute(sql`UPDATE manager_sessions SET revoked_at=clock_timestamp()
-          WHERE jti=${owner.claims.jti} AND user_id=${owner.claims.userId} AND tenant_id=${owner.claims.tenantId}
-            AND revoked_at IS NULL`);
-        signedOut = true;
-      }
-      await writeAuditEvent({ tenantId: owner.claims.tenantId, actorType: "user", actorId: owner.claims.userId,
-        action: "auth.sessions.reauthenticated", resourceType: "session", resourceId: owner.claims.familyId ?? `legacy:${owner.claims.jti}`,
-        metadata: { kind: owner.claims.kind ?? "legacy", signedOut } }, tx);
+    if (found && owner.scope === "workspace" && !signedOut && !owner.claims.familyId) {
+      // Compatibility v1 has no refresh family. End this login only after
+      // an authorized successful action; normal sign-in issues a new
+      // session without extending the old eight-hour compatibility JWT.
+      await tx.execute(sql`UPDATE manager_sessions SET revoked_at=clock_timestamp()
+        WHERE jti=${owner.claims.jti} AND user_id=${owner.claims.userId} AND tenant_id=${owner.claims.tenantId}
+          AND revoked_at IS NULL`);
+      signedOut = true;
     }
     if (count) await writeAuditEvent({ tenantId: owner.scope === "workspace" ? owner.claims.tenantId : null,
       actorType: owner.scope === "platform" ? "platform" : "user", actorId: owner.claims.userId,
       action: "auth.sessions.revoked", resourceType: "session", resourceId: action === "revoke" ? id : action === "revoke_all" ? "all_sessions" : "other_sessions",
       metadata: { count, scope: "account", audience: owner.scope } }, tx);
+    // Cookie hygiene only: if the caller also presented a platform session
+    // and that family was just revoked, its cookies are cleared. Presenting
+    // a platform session is NOT required to revoke platform families — the
+    // workspace session for the same account is sufficient (no step-up).
     const presentedPlatform = owner.scope === "workspace" ? owner.platformClaims : null;
     return { found, revoked: count, signedOut,
-      ...(presentedPlatform && presentedPlatform.userId === owner.claims.userId && platformFamilies.includes(presentedPlatform.familyId ?? "") ? { clearPlatformCookie: true } : {}),
-      ...(rotation ? { rotation } : {}) };
+      ...(presentedPlatform && presentedPlatform.userId === owner.claims.userId && platformFamilies.includes(presentedPlatform.familyId ?? "") ? { clearPlatformCookie: true } : {}) };
   });
 }

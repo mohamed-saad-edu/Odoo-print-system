@@ -78,7 +78,48 @@ def _identity_path(database_name, gateway_origin, data_dir=None, company_id=None
 
     if not isinstance(database_name, str) or not database_name:
         raise ValueError("Odoo database name is required")
-    if not isinstance(gateway_origin, str) or not gateway_origin.startswith("https://"):
+    # B4 fix: the transport policy (gateway_config._validate_gateway_url +
+    # gateway_http.request) explicitly permits plain HTTP on loopback under
+    # the YASEIR_GATEWAY_ALLOW_INSECURE_HTTP opt-in, and INSTALLATION.md
+    # documents that loopback deployment — yet this gate demanded HTTPS
+    # unconditionally, so _ensure_auto_installation() (and therefore Test
+    # Connection and v2 enrollment) could never succeed on a documented
+    # loopback-HTTP Gateway: local_identity raised ValueError, converted to
+    # GATEWAY_INSTALLATION_PROOF_MISSING. Accept HTTP only for a loopback
+    # origin; every non-loopback origin still requires HTTPS. The check is
+    # deliberately local (stdlib only): importing models.gateway_destination
+    # here would be circular (models/__init__ -> gateway_config -> this
+    # module), and the origin has already passed the full transport gate
+    # before any in-tree caller reaches this function.
+    if not isinstance(gateway_origin, str):
+        raise ValueError("HTTPS Gateway origin is required")
+    # Scheme comparison is case-insensitive (transport validation accepts
+    # any scheme case); the original spelling is kept for identity keying.
+    lowered_origin = gateway_origin.lower()
+    if lowered_origin.startswith("https://"):
+        pass
+    elif lowered_origin.startswith("http://"):
+        import ipaddress
+        from urllib.parse import urlparse
+
+        try:
+            host = (urlparse(gateway_origin).hostname or "").lower().rstrip(".")
+        except ValueError:
+            raise ValueError("HTTPS Gateway origin is required") from None
+        # WP4-OBS-3 (STATIC REVIEW ONLY): match the transport's
+        # is_loopback_host semantics (gateway_destination.py) exactly:
+        # exact "localhost" or an IP literal that is loopback. The old
+        # ".localhost" suffix branch passed this gate but was always
+        # refused later by the HTTP transport, so it was dead for HTTP
+        # and only produced a confusing enrollment failure. Fail-closed
+        # either way; the error text is unchanged for caller compatibility.
+        try:
+            is_loopback = ipaddress.ip_address(host).is_loopback
+        except ValueError:
+            is_loopback = host == "localhost"
+        if not is_loopback:
+            raise ValueError("HTTPS Gateway origin is required")
+    else:
         raise ValueError("HTTPS Gateway origin is required")
     if data_dir is None:
         from odoo.tools import config as odoo_config

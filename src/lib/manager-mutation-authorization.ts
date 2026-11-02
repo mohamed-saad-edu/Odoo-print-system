@@ -3,8 +3,8 @@ import type { DbTx } from "../db";
 import { tenantUsers } from "../db/schema";
 import type { ManagerClaims } from "./manager-auth";
 import { hasManagerPermission, type ManagerPermission } from "./authorization";
-import { requireWorkspaceSessionInTransaction, requiresWorkspaceStepUp, WorkspaceSessionExpiredError,
-  WorkspaceReauthenticationRequiredError, workspacePolicyResponse, type WorkspacePolicyError } from "./workspace-session-security";
+import { requireWorkspaceSessionInTransaction, WorkspaceSessionExpiredError,
+  workspacePolicyResponse, type WorkspacePolicyError } from "./workspace-session-security";
 
 export class ManagerMutationAuthorityChangedError extends Error {
   readonly code: string;
@@ -25,7 +25,7 @@ export class ManagerMutationAuthorityChangedError extends Error {
  * Callers MUST acquire any required resource locks and an active-tenant fence
  * before this guard, preserving each existing writer's lock order. Never
  * substitute `users.manage` for the permission of the actual operation.
- * User-less environment Managers require an explicitly configured, freshly
+ * User-less environment Managers require an explicitly configured,
  * password-authenticated v2 policy row. Pre-policy and v1 sessions must sign in.
  */
 export async function requireManagerActorInTransaction(
@@ -74,9 +74,11 @@ export async function requireManagerActorInTransaction(
   }
   if (active.rows.length === 0) throw new ManagerMutationAuthorityChangedError(new WorkspaceSessionExpiredError());
   try {
-    await requireWorkspaceSessionInTransaction(tx, claims, { fresh: requiresWorkspaceStepUp(permission), touch: !permission.endsWith(".read") });
+    // No step-up: a valid, non-expired, non-revoked session authorizes every
+    // permission, sensitive or not. Only session expiry can fail here.
+    await requireWorkspaceSessionInTransaction(tx, claims, { touch: !permission.endsWith(".read") });
   } catch (error) {
-    if (error instanceof WorkspaceSessionExpiredError || error instanceof WorkspaceReauthenticationRequiredError) throw new ManagerMutationAuthorityChangedError(error);
+    if (error instanceof WorkspaceSessionExpiredError) throw new ManagerMutationAuthorityChangedError(error);
     throw error;
   }
 }

@@ -1,4 +1,3 @@
-import React from "react";
 import { deriveOutcome, jobLabel, jobTone } from "../lib/printers";
 import { useI18n } from "../../i18n/react";
 

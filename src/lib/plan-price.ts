@@ -1,6 +1,6 @@
 import { intlLocale, type Locale } from "../i18n/config";
 
-export type PlanCurrency = "USD" | "SAR";
+type PlanCurrency = "USD" | "SAR";
 
 /** Shared catalog input contract for the Platform Owner form and backend.
  * No floating-point rounding, exponential notation or silent truncation. */

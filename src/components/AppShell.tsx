@@ -26,6 +26,7 @@ import { Avatar, Button, Callout, Menu, PageSkeleton, type MenuItemSpec } from "
 import { CommandPalette, type CommandItem } from "./CommandPalette";
 import { ThemeToggle, toggleTheme } from "./ThemeToggle";
 import { ensureCustomerSession } from "../lib/session-config";
+import { broadcastSessionSync, subscribeSessionSync, type SessionSyncEventType } from "../lib/session-sync";
 import { BrandMark } from "./brand";
 import { NavIconFrame, ShellSearchButton } from "./visual-system";
 import { useI18n } from "../i18n/react";
@@ -47,6 +48,8 @@ type WorkspaceInfo = {
 };
 
 const COLLAPSE_KEY = "yaseir:console-nav";
+/** Cross-tab sign-out interstitial: long enough to read, then auto-redirect. */
+const REMOTE_SIGNOUT_REDIRECT_MS = 5000;
 
 function isActive(pathname: string, href: string) {
   if (href === "/settings" && ["/team", "/billing"].some((path) => pathname === path || pathname.startsWith(`${path}/`))) return true;
@@ -504,6 +507,12 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [loggingOut, setLoggingOut] = useState(false);
   const [logoutFailed, setLogoutFailed] = useState(false);
   const logoutFlight = useRef(false);
+  // Set once when another tab reports a local logout/revocation. The ref
+  // suppresses this tab's own session check (which would otherwise race the
+  // interstitial with an immediate redirect); the state renders the message
+  // and drives the delayed redirect below. Never re-broadcast from here.
+  const [remoteSignOut, setRemoteSignOut] = useState<{ type: SessionSyncEventType; next: string } | null>(null);
+  const remoteSignOutRef = useRef(false);
 
   const isAuthScreen = ["/login", "/signup", "/verify-email", "/forgot-password", "/reset-password", "/invite"].some(
     (path) => pathname === path || pathname.startsWith(`${path}/`)
@@ -520,7 +529,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     let timer: ReturnType<typeof setTimeout> | undefined;
     let checking = false;
     const check = async () => {
-      if (checking || cancelled) return;
+      if (checking || cancelled || remoteSignOutRef.current) return;
       checking = true;
       if (timer !== undefined) clearTimeout(timer);
       try {
@@ -528,16 +537,49 @@ export function AppShell({ children }: { children: ReactNode }) {
         if (cancelled) return;
         if (!session.authenticated) { setAuthenticated(false); router.replace(`/login?next=${encodeURIComponent(pathname)}`); return; }
         setAuthenticated(true);
+        // Tell sibling tabs the family is alive again so a stale expired
+        // callout there can clear. Receivers never refresh on this event.
+        broadcastSessionSync("session-renewed", "workspace");
         timer = setTimeout(() => { void check(); }, Math.max(1000, Math.min(13 * 60 * 1000, session.expiresAt - Date.now() - 60000)));
       } catch {
         if (!cancelled) timer = setTimeout(() => { void check(); }, 30000);
       } finally { checking = false; }
     };
     const visible = () => { if (document.visibilityState === "visible") { if (timer !== undefined) clearTimeout(timer); void check(); } };
+    // Focus revalidation mirrors visibility: a window refocus that does not
+    // change visibility (OS/app switching, embed hosts) must still
+    // revalidate instead of waiting for the next timer tick.
+    const onFocus = () => { if (timer !== undefined) clearTimeout(timer); void check(); };
     void check();
     document.addEventListener("visibilitychange", visible);
-    return () => { cancelled = true; if (timer !== undefined) clearTimeout(timer); document.removeEventListener("visibilitychange", visible); };
+    window.addEventListener("focus", onFocus);
+    return () => { cancelled = true; if (timer !== undefined) clearTimeout(timer); document.removeEventListener("visibilitychange", visible); window.removeEventListener("focus", onFocus); };
   }, [pathname, isPlatformScreen, isAuthScreen, isPublicScreen, router]);
+
+  // Cross-tab session sync (workspace scope only). Public, auth, and
+  // platform screens never bounce to login from a workspace event, and the
+  // platform layout owns platform-kind events. This handler only ever
+  // consumes; it never broadcasts, so no echo loop is possible.
+  useEffect(() => {
+    if (isPlatformScreen || isAuthScreen || isPublicScreen) return;
+    return subscribeSessionSync("workspace", (event) => {
+      if (event.type === "session-renewed") return;
+      if (remoteSignOutRef.current) return;
+      remoteSignOutRef.current = true;
+      setAuthenticated(false);
+      setRemoteSignOut({ type: event.type, next: pathname });
+    });
+  }, [pathname, isPlatformScreen, isAuthScreen, isPublicScreen]);
+
+  // The interstitial above stays readable, then this tab follows the
+  // signing-out tab to login. The link in the message goes immediately.
+  useEffect(() => {
+    if (!remoteSignOut) return;
+    const timer = setTimeout(() => {
+      router.replace(`/login?next=${encodeURIComponent(remoteSignOut.next)}`);
+    }, REMOTE_SIGNOUT_REDIRECT_MS);
+    return () => clearTimeout(timer);
+  }, [remoteSignOut, router]);
 
   async function handleLogout() {
     if (logoutFlight.current) return;
@@ -564,6 +606,10 @@ export function AppShell({ children }: { children: ReactNode }) {
         setLogoutFailed(true);
         return;
       }
+      // Successful local logout only: sibling tabs follow to login instead
+      // of discovering a dead family on their next check. A failed logout
+      // broadcasts nothing — the session may still be active.
+      broadcastSessionSync("session-logged-out", "workspace");
       router.replace("/");
       router.refresh();
     } finally {
@@ -587,6 +633,21 @@ export function AppShell({ children }: { children: ReactNode }) {
   // can remain true for one client render while sign-out navigates to "/".
   if (isPublicScreen) {
     return <div className="tg-shell-root min-h-screen min-w-0 max-w-full bg-app text-ink">{children}</div>;
+  }
+
+  // Another tab signed this session out (or it was revoked there). Say so
+  // plainly, offer the immediate way back, and follow to login shortly.
+  if (remoteSignOut) {
+    return (
+      <main className="tg-shell-root min-h-screen min-w-0 max-w-full bg-app p-5 text-ink">
+        <div className="mx-auto max-w-lg pt-10">
+          <Callout tone="warn" title={t(remoteSignOut.type === "session-revoked" ? "workspaceSecurity.sessionExpiredTitle" : "nav.signOut")}
+            action={<Link href={`/login?next=${encodeURIComponent(remoteSignOut.next)}`} prefetch={false} className="font-semibold underline underline-offset-4">{t("workspaceSecurity.signIn")}</Link>}>
+            {t(remoteSignOut.type === "session-logged-out" ? "workspaceSecurity.signedOutElsewhere" : "errors.sessionExpired")}
+          </Callout>
+        </div>
+      </main>
+    );
   }
 
   // Authenticated console: sidebar shell + full-width content.

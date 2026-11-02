@@ -30,7 +30,11 @@ func desiredStateCursorMatchesRows(rows []desiredPrinterWire, cursor string) boo
 
 func validateDesiredStateRows(rows []desiredPrinterWire, seen map[string]struct{}) error {
 	for _, row := range rows {
-		if row.ID == "" || len(row.ID) > 2048 || row.DesiredRevision < 0 ||
+		// Gateway printer IDs are capped at 120 UTF-8 bytes
+		// (src/lib/exact-printer-id.ts); a longer desired id can never
+		// match a local printer, so reject it here instead of carrying
+		// an unmatchable row through reconciliation.
+		if row.ID == "" || len(row.ID) > 120 || row.DesiredRevision < 0 ||
 			(row.Lifecycle != "active" && row.Lifecycle != "disabled" && row.Lifecycle != "retired") {
 			return fmt.Errorf("invalid desired-state printer identity, revision or lifecycle")
 		}
@@ -51,6 +55,12 @@ func (a *Agent) collectGatewayDesiredState(parent context.Context, rows []desire
 	seenIDs := make(map[string]struct{})
 	if err := validateDesiredStateRows(rows, seenIDs); err != nil {
 		return nil, err
+	}
+	// The first page arrives inside the heartbeat, not through the capped
+	// continuation path: bound it by the same row cap so a single page
+	// cannot carry an unbounded reconcile snapshot.
+	if len(rows) > maxDesiredStatePageRows {
+		return nil, fmt.Errorf("desired-state first page exceeds the row cap")
 	}
 	encoded, err := json.Marshal(rows)
 	if err != nil || len(encoded) > maxDesiredStateSnapshotBytes {

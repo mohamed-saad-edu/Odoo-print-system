@@ -63,6 +63,7 @@ function snapshotHeartbeat(snapshotId: string, inventoryComplete: boolean, print
   };
 }
 
+// v3: first-party submissions must carry an immutable idempotencyKey; keyless v1 is rejected 400 IDEMPOTENCY_KEY_REQUIRED (route header comment).
 function printJobRequest(odooKey: string, printerId: string) {
   return new Request("http://gateway.test/api/print/jobs", {
     method: "POST",
@@ -74,6 +75,7 @@ function printJobRequest(odooKey: string, printerId: string) {
       printerId,
       destination: "POS",
       documentType: "receipt",
+      idempotencyKey: "hb-absent-enqueue-1",
       payload: {
         type: "raw",
         protocol: "raw",

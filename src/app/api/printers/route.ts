@@ -6,7 +6,7 @@ import { db } from "../../../db";
 import { agents, printers } from "../../../db/schema";
 import { validateConsoleAuth } from "../../../lib/console-auth";
 import { requireManagerPermission } from "../../../lib/authorization";
-import { requireManagerActorInTransaction, ManagerMutationAuthorityChangedError } from "../../../lib/manager-mutation-authorization";
+import { ManagerMutationAuthorityChangedError } from "../../../lib/manager-mutation-authorization";
 import { requireActiveTenantInTransaction, TenantSuspendedError, TenantDeletedError } from "../../../lib/tenant-guard";
 import { and, desc, eq, lt, or, sql } from "drizzle-orm";
 import { clampListLimit, parseStrictListOffset } from "../../../lib/request-limits";

@@ -11,6 +11,7 @@ import { customerSubscriptionState } from "../../lib/manual-subscriptions";
 import { databaseNowMs } from "../../lib/database-clock";
 import { activationWhatsAppUrl } from "../../lib/activation-contact";
 import { getServerLocale, makeT } from "../../i18n/server";
+import { intlLocale } from "../../i18n/config";
 import { formatNumber } from "../../i18n/format";
 import { formatManualCalendarDate } from "../../lib/manual-calendar-date";
 import { billingTermLabel } from "../../lib/billing-labels";
@@ -60,7 +61,10 @@ export default async function BillingPage({ searchParams }: { searchParams: Prom
   const statusKey = { active: "v4.onboarding.active", awaiting_activation: "v4.onboarding.pending", expired: "v4.onboarding.expired", suspended: "v4.onboarding.suspended" } as const;
   const tone: Tone = status === "active" ? "ok" : status === "suspended" ? "bad" : "warn";
   const date = (value: Date | null | undefined) => formatManualCalendarDate(value, locale) ?? t("v4.subscription.notSet");
-  const resetInstant = (value: Date | null | undefined) => value ? new Intl.DateTimeFormat(locale === "ar" ? "ar-EG" : "en-US", { dateStyle:"medium", timeStyle:"short", timeZone:"UTC" }).format(value) : t("v4.subscription.notSet");
+  // Same Latin-digit locale and RTL-mark strip as formatManualCalendarDate
+  // (used for every other date on this page): ar-EG would render
+  // Arabic-Indic digits and RTL marks here, unlike the rest of the page.
+  const resetInstant = (value: Date | null | undefined) => value ? new Intl.DateTimeFormat(intlLocale(locale), { dateStyle:"medium", timeStyle:"short", timeZone:"UTC" }).format(value).replaceAll("\u200f", "") : t("v4.subscription.notSet");
   const quotaExhausted = status === "active" && usage?.remaining === 0;
   const expiringSoon = status === "active" && !!sub?.currentPeriodEnd && sub.currentPeriodEnd.getTime() > now && sub.currentPeriodEnd.getTime() - now <= 7 * 86_400_000;
   const legacyEndMissing = status === "expired" && sub?.status === "active" && sub?.subscriptionType === "paid" && !sub.currentPeriodEnd;

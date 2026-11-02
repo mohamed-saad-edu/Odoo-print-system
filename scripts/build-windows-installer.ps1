@@ -91,10 +91,20 @@ function Assert-CodeSigningCertificate($Certificate, [string]$RequestedThumbprin
 function Assert-AuthenticodeSigningResult($Signature, [string]$ExpectedThumbprint, [string]$FilePath) {
   # A self-signed publisher can be untrusted on the build host; this is distinct
   # from a missing/invalid signature. Never accept signing errors as success.
+  # v3: NotTrusted was previously accepted as "signed", so a self-signed or
+  # otherwise untrusted publisher binary passed the build gate (only the
+  # stricter release gate caught it). NotTrusted is now allowed only under
+  # the explicit dev/self-signed flag YASEIR_ALLOW_UNTRUSTED_SIGNING=1, which
+  # must never be set in release builds.
   if (-not $Signature -or [string]::IsNullOrWhiteSpace($ExpectedThumbprint) -or
-      [string]$Signature.Status -notin @("Valid", "NotTrusted") -or
       -not $Signature.SignerCertificate -or
       $Signature.SignerCertificate.Thumbprint -ne $ExpectedThumbprint) {
+    throw "Authenticode signing failed or returned an unexpected signer for '$FilePath'."
+  }
+  if ([string]$Signature.Status -eq "NotTrusted" -and $env:YASEIR_ALLOW_UNTRUSTED_SIGNING -ne "1") {
+    throw "Authenticode signature for '$FilePath' is NotTrusted; set YASEIR_ALLOW_UNTRUSTED_SIGNING=1 only for dev/self-signed builds, never for release."
+  }
+  if ([string]$Signature.Status -notin @("Valid", "NotTrusted")) {
     throw "Authenticode signing failed or returned an unexpected signer for '$FilePath'."
   }
   return [string]$Signature.Status
@@ -242,7 +252,7 @@ if ($signingCert) {
     $sigResult = Set-AuthenticodeSignature -FilePath $exePath -Certificate $signingCert -HashAlgorithm SHA256 -ErrorAction Stop
     $signatureStatus = Assert-AuthenticodeSigningResult $sigResult $signingCert.Thumbprint $exePath
     Write-Host "  Signed $exe (thumbprint: $($signingCert.Thumbprint); status: $signatureStatus)"
-    if ($signatureStatus -eq "NotTrusted") { Write-Host "  Publisher trust is not established on this build host." }
+    if ($signatureStatus -eq "NotTrusted") { Write-Host "  WARNING: Publisher trust is not established on this build host (dev/self-signed flag YASEIR_ALLOW_UNTRUSTED_SIGNING=1 was set; never use for release)." }
   }
 }
 
@@ -301,7 +311,7 @@ if ($Bundles -match "nsis") {
     $sigResult = Get-AuthenticodeSignature -LiteralPath $nsis[0].FullName -ErrorAction Stop
     $signatureStatus = Assert-AuthenticodeSigningResult $sigResult $signingCert.Thumbprint $nsis[0].FullName
     Write-Host "  Signed installer: $($nsis[0].Name) (status: $signatureStatus)"
-    if ($signatureStatus -eq "NotTrusted") { Write-Host "  Publisher trust is not established on this build host." }
+    if ($signatureStatus -eq "NotTrusted") { Write-Host "  WARNING: Publisher trust is not established on this build host (dev/self-signed flag YASEIR_ALLOW_UNTRUSTED_SIGNING=1 was set; never use for release)." }
   }
   $artifacts += $nsis
 }

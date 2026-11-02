@@ -55,7 +55,7 @@ describe("one operational Full Access for every workspace membership", () => {
     expect(page).not.toMatch(/ROLE_VALUES|roleOptions\(|updateRole\(|<Select/);
     expect(page).toContain("/api/team/invitations?limit=");
     expect(page).not.toContain("verifyPlatformOwnerPassword");
-    expect(page).toContain('fetchWithTimeout("/api/team/invitations"');
+    expect(page).toContain('fetchWithSessionRetry("/api/team/invitations"');
     expect(page).not.toContain('type="password"');
     expect(page).toContain('t("team.role.owner")');
     expect(page).toContain('icon={<Crown className="h-3.5 w-3.5 text-warn" aria-hidden />}');

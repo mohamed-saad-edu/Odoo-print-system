@@ -1,4 +1,5 @@
-import { logError } from "../../../../../lib/log";
+import { logError, requestIdFrom } from "../../../../../lib/log";
+import { writeAuditEvent } from "../../../../../lib/audit";
 import { NextResponse } from "next/server";
 import { db } from "../../../../../db";
 import { printJobs } from "../../../../../db/schema";
@@ -52,6 +53,15 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       documentType: job.documentType ?? undefined,
       tenantId: auth.claims.tenantId,
     });
+    // WP-A (S3): audit the reprint once — a newly created job (never an
+    // idempotent replay of the same operation key). An audit failure must
+    // never fail the reprint itself.
+    if (result.isReused !== true) {
+      await writeAuditEvent({ tenantId: auth.claims.tenantId, actorType: "user", actorId: auth.claims.userId,
+        action: "job.reprinted", resourceType: "print_job", resourceId: job.id,
+        requestId: requestIdFrom(req), metadata: { newJobId: result.id } }).catch((error) =>
+        logError("audit_write_failed", { error: error instanceof Error ? error.message : "unknown" }));
+    }
     return NextResponse.json({ ok: true, jobId: result.id, reused: result.isReused === true }, { status: 201 });
   } catch (error) {
     if (error instanceof TenantPrintQuotaExceededError) {

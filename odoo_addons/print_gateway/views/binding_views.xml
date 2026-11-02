@@ -25,7 +25,7 @@
         <field name="arch" type="xml">
             <form string="Print Route" class="o_pg_view o_pg_form">
                 <header>
-                    <button name="action_verify_remote_hardware" type="object" string="Check registration" class="btn btn-secondary" icon="fa-check-circle" invisible="not runtime_agent_id or not printer_id"/>
+                    <button name="action_verify_remote_hardware" type="object" string="Check connection" class="btn btn-secondary" icon="fa-check-circle" invisible="not runtime_agent_id or not printer_id"/>
                 </header>
                 <sheet>
                     <div class="oe_title">

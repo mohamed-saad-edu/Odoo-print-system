@@ -118,6 +118,21 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
     }
     const job = rows[0];
 
+    // v3: entries redact claimId, but event metadata passed through verbatim.
+    // No writer in-tree was seen storing tokens in metadata, but a future
+    // writer could. Drop secret-shaped keys at presentation (stored rows
+    // are untouched); legitimate timeline metadata keys are stage/status
+    // identifiers, never credentials.
+    const scrubTimelineMetadata = (metadata: unknown): Record<string, unknown> | undefined => {
+      // Stored job-event metadata is Record-typed (schema default {}), so a
+      // non-object value here is corrupt/legacy input: drop it at
+      // presentation (stored rows untouched) instead of widening the type.
+      if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return undefined;
+      const sensitive = /token|secret|password|claim|credential|api[_-]?key/i;
+      return Object.fromEntries(
+        Object.entries(metadata as Record<string, unknown>).filter(([key]) => !sensitive.test(key)),
+      );
+    };
     const timeline: TimelineEntry[] = events.map((e: JobEventRow) => ({
       id: e.id,
       stage: e.stage,
@@ -135,7 +150,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
       agentId: e.agentId,
       printerId: e.printerId,
       requestId: e.requestId,
-      metadata: e.metadata,
+      metadata: scrubTimelineMetadata(e.metadata),
     }));
 
     const res = NextResponse.json(

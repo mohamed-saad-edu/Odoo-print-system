@@ -58,7 +58,8 @@ describe.skipIf(!hasTestDatabase)("tenant-scoped durable print history", () => {
     const liveRows = await listPrintJobHistory({ tenantId: live.tenantId });
     expect(liveRows).toHaveLength(1);
     expect(liveRows[0]).toMatchObject({ id, tenantId: live.tenantId, archived: false, status: "queued" });
-    const allRows = await listPrintJobHistory({ limit: 10 });
+    // v3 fail-closed scopedWhere: a cross-tenant (platform) read must pass platformWide explicitly, not a tenant-less call.
+    const allRows = await listPrintJobHistory({ limit: 10, platformWide: true });
     expect(allRows.filter(row => row.id === id)).toHaveLength(2);
   });
   it("orders platform pagination deterministically when tenant IDs collide on job ID and timestamp", async () => {
@@ -75,8 +76,9 @@ describe.skipIf(!hasTestDatabase)("tenant-scoped durable print history", () => {
     await insertQueuedJob(live, jobId);
     await pool().query("UPDATE print_jobs SET created_at = $1, updated_at = $1 WHERE id = $2 AND tenant_id = $3",
       [at, jobId, live.tenantId]);
-    const first = await listPrintJobHistory({ limit: 1, offset: 0 });
-    const second = await listPrintJobHistory({ limit: 1, offset: 1 });
+    // v3 fail-closed scopedWhere: this test is platform-scoped by name, so platformWide: true is the intended call.
+    const first = await listPrintJobHistory({ limit: 1, offset: 0, platformWide: true });
+    const second = await listPrintJobHistory({ limit: 1, offset: 1, platformWide: true });
     const order = [archived.tenantId, live.tenantId].sort().reverse();
     expect([first[0]?.tenantId, second[0]?.tenantId]).toEqual(order);
     expect(new Set([first[0]?.tenantId, second[0]?.tenantId]).size).toBe(2);

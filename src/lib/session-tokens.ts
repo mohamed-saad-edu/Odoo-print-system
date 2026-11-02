@@ -14,10 +14,10 @@ import { preparePlatformSessionInTransaction, isPlatformSessionAssured, PLATFORM
 import type { ManagerClaims } from "./manager-auth";
 import { credentialVersionFor } from "./session-credentials";
 export { credentialVersionFor } from "./session-credentials";
-import { assertWorkspaceCredentialInTransaction, persistWorkspaceSessionInTransaction, prepareWorkspaceSessionInTransaction,
-  readWorkspaceSessionState, refreshWorkspacePasswordProofInTransaction, WORKSPACE_ABSOLUTE_MS } from "./workspace-session-security";
+import { persistWorkspaceSessionInTransaction, prepareWorkspaceSessionInTransaction,
+  readWorkspaceSessionState, WORKSPACE_ABSOLUTE_MS } from "./workspace-session-security";
 
-export type SessionKind = "manager" | "platform" | "customer";
+type SessionKind = "manager" | "platform" | "customer";
 
 type SessionKindConfig = {
   sub: "manager" | "platform_owner";
@@ -47,7 +47,7 @@ const CONFIG: Record<SessionKind, SessionKindConfig> = {
   },
 };
 
-export const ACCESS_TOKEN_VERSION = 2 as const;
+const ACCESS_TOKEN_VERSION = 2 as const;
 export const ACCESS_TOKEN_TTL_SECONDS = 15 * 60;
 export const REFRESH_FAMILY_TTL_MS = WORKSPACE_ABSOLUTE_MS;
 export const REFRESH_ROTATION_GRACE_MS = 5_000;
@@ -81,7 +81,7 @@ export type SessionRequestContext = {
   continueWorkspace?: ManagerClaims;
 };
 
-export type SharedSessionClaims = {
+type SharedSessionClaims = {
   ver: 2;
   kind: SessionKind;
   jti: string;
@@ -117,6 +117,74 @@ export type RefreshResult =
       userId: string | null;
       kind: SessionKind;
     };
+
+/**
+ * Machine-readable refresh-failure codes returned on the wire next to the
+ * English `error` string (routes answer 401 with `{ error, code }`). These
+ * describe only the REPORTED reason: revocation, grace, successor handling
+ * and audit/email behaviour are unchanged from `rotateRefreshToken`.
+ * `REFRESH_TOKEN_REQUIRED` is route-level only (no token was presented, so
+ * rotation never ran); `rotateRefreshTokenDetailed` never returns it.
+ */
+export type RefreshFailureCode =
+  | "REFRESH_TOKEN_REQUIRED"
+  | "REFRESH_TOKEN_INVALID"
+  | "REFRESH_TOKEN_REVOKED"
+  | "REFRESH_TOKEN_REUSED"
+  | "REFRESH_TOKEN_EXPIRED"
+  | "TENANT_SUSPENDED"
+  | "TENANT_DELETED"
+  | "PRINCIPAL_INVALID"
+  | "SESSION_IDLE_EXPIRED"
+  | "WORKSPACE_SESSION_EXPIRED"
+  | "PLATFORM_SESSION_EXPIRED";
+
+/** `RefreshResult` with the failure reason attached to `invalid` outcomes. */
+type DetailedRefreshResult =
+  | { status: "rotated"; pair: SessionPair }
+  | { status: "invalid"; code: RefreshFailureCode }
+  | Extract<RefreshResult, { status: "reused" }>;
+
+/** Map a detailed rotation outcome to its wire code, or `null` on success. */
+export function refreshFailureCode(outcome: DetailedRefreshResult): RefreshFailureCode | null {
+  if (outcome.status === "rotated") return null;
+  if (outcome.status === "reused") return "REFRESH_TOKEN_REUSED";
+  return outcome.code;
+}
+
+/** Translate a persisted `revoked_reason` into the reported failure code. */
+function refreshRevokedCode(revokedReason: string | null): RefreshFailureCode {
+  switch (revokedReason) {
+    case "tenant_suspended": return "TENANT_SUSPENDED";
+    case "refresh_reuse_detected": return "REFRESH_TOKEN_REUSED";
+    case "workspace_session_expired": return "WORKSPACE_SESSION_EXPIRED";
+    case "principal_invalid": return "PRINCIPAL_INVALID";
+    case "absolute_expired": return "REFRESH_TOKEN_EXPIRED";
+    default: return "REFRESH_TOKEN_REVOKED";
+  }
+}
+
+/**
+ * Read-only idle diagnostic for a policy row. Returns true only when the
+ * family's policy row exists with `last_seen_at` already past the 30-minute
+ * fence (same DB-clock comparison as the policy readers). No row locks, no
+ * writes: the family advisory lock is already held and the revocation the
+ * caller performs afterwards is unchanged. Idle alone is sufficient to kill
+ * the session, so a stale `last_seen_at` is reported as idle even if another
+ * policy condition also fails; anything else stays merged under the
+ * workspace/platform session-expired code.
+ */
+async function workspaceSessionIdleExpired(tx: DbTx, familyId: string): Promise<boolean> {
+  const result = await tx.execute(sql`SELECT 1 FROM workspace_session_security
+    WHERE family_id = ${familyId} AND last_seen_at <= clock_timestamp() - interval '30 minutes'`);
+  return result.rows.length > 0;
+}
+
+async function platformSessionIdleExpired(tx: DbTx, familyId: string): Promise<boolean> {
+  const result = await tx.execute(sql`SELECT 1 FROM platform_session_security
+    WHERE family_id = ${familyId} AND last_seen_at <= clock_timestamp() - interval '30 minutes'`);
+  return result.rows.length > 0;
+}
 
 function getSecret(): string {
   const secret = requiredRuntimeSecret("GATEWAY_JWT_SECRET");
@@ -454,7 +522,7 @@ async function rotateWithinFamily(
   const persistedExpiryMs = row.expiresAtMs === undefined ? absoluteExpiryMs : Number(row.expiresAtMs);
   if (!Number.isFinite(persistedExpiryMs)) throw new Error("Invalid persisted refresh expiry");
   // A persisted shorter deadline is authoritative too. Neither ordinary
-  // refresh nor fresh reauthentication may reset it to the full family TTL.
+  // refresh nor any later session operation may reset it to the full family TTL.
   const refreshExpiresAt = new Date(Math.min(absoluteExpiryMs, persistedExpiryMs));
   if (refreshExpiresAt.getTime() <= nowMs) throw new Error("REFRESH_FAMILY_EXPIRED");
 
@@ -528,71 +596,6 @@ export async function isSessionFamilyActive(
     columns: { id: true },
   });
   return !!row;
-}
-
-/** Password reauthentication rotates the exact admitted session under account
- * and family locks. It preserves the original family creation time and expiry,
- * and cannot resurrect a predecessor already replaced by another confirmation. */
-export async function rotatePlatformSessionAfterReauthenticationInTransaction(
-  tx: DbTx, claims: import("./platform-auth").PlatformOwnerClaims, credentialVersion: string, context?: SessionRequestContext,
-): Promise<SessionPair> {
-  if (claims.ver !== 2 || claims.kind !== "platform" || !claims.familyId || !claims.sid) throw new AuthenticationChangedError();
-  await assertSessionCredentialInTransaction(tx, claims.userId, credentialVersion);
-  await lockRefreshFamily(tx, claims.familyId);
-  const result = await tx.execute(sql`
-    SELECT r.family_id AS "familyId", r.kind, r.user_id AS "userId", r.email,
-      EXTRACT(EPOCH FROM r.family_created_at) * 1000 AS "familyCreatedAtMs",
-      EXTRACT(EPOCH FROM r.expires_at) * 1000 AS "expiresAtMs"
-    FROM refresh_tokens r JOIN users u ON u.id=r.user_id
-    WHERE r.id=${claims.sid} AND r.family_id=${claims.familyId} AND r.user_id=${claims.userId}
-      AND r.kind='platform' AND r.tenant_id IS NULL AND r.email=${claims.email} AND r.email=u.email
-      AND u.is_platform_owner=true AND u.email_verified_at IS NOT NULL
-      AND r.revoked_at IS NULL AND r.expires_at>clock_timestamp()
-      AND ${claims.exp}>EXTRACT(EPOCH FROM clock_timestamp())
-      AND ${claims.iat}<=EXTRACT(EPOCH FROM clock_timestamp())+60
-    FOR UPDATE OF r
-  `);
-  const row = result.rows[0] as { familyId: string; kind: "platform"; userId: string; email: string;
-    familyCreatedAtMs: string | number; expiresAtMs: string | number } | undefined;
-  if (!row || !(await isPlatformSessionAssured(claims.familyId, claims.userId, false, tx))) throw new AuthenticationChangedError();
-  await tx.execute(sql`UPDATE platform_session_security SET password_verified_at=clock_timestamp(),last_seen_at=clock_timestamp()
-    WHERE family_id=${claims.familyId} AND user_id=${claims.userId} AND revoked_at IS NULL`);
-  await tx.execute(sql`UPDATE refresh_tokens SET revoked_at=clock_timestamp(),revoked_reason='reauthentication'
-    WHERE family_id=${claims.familyId} AND user_id=${claims.userId} AND kind='platform' AND revoked_at IS NULL`);
-  return rotateWithinFamily(tx, { ...row, tenantId: null, role: null, familyCreatedAtMs: Number(row.familyCreatedAtMs) }, context, await dbNowMsInTransaction(tx));
-}
-
-/** Fresh-password workspace reauthentication keeps the original family and
- * deadline. Every predecessor is revoked, including ordinary refresh siblings.
- * Callers must verify the password for this request; its internal credential
- * snapshot is rechecked under the same locks as reset, logout and refresh. */
-export async function rotateWorkspaceSessionAfterReauthenticationInTransaction(
-  tx: DbTx, claims: ManagerClaims, credentialVersion: string, context?: SessionRequestContext,
-): Promise<SessionPair> {
-  if (claims.ver !== 2 || !claims.familyId || !claims.sid ||
-      (claims.kind !== "customer" && claims.kind !== "manager")) throw new AuthenticationChangedError();
-  await requireActiveTenantInTransaction(tx, claims.tenantId);
-  await assertWorkspaceCredentialInTransaction(tx, { kind: claims.kind, tenantId: claims.tenantId, userId: claims.userId, role: claims.role }, credentialVersion);
-  await lockRefreshFamily(tx, claims.familyId);
-  const result = await tx.execute(sql`
-    SELECT family_id AS "familyId", kind, tenant_id AS "tenantId", user_id AS "userId", role, email,
-      EXTRACT(EPOCH FROM family_created_at) * 1000 AS "familyCreatedAtMs",
-      EXTRACT(EPOCH FROM expires_at) * 1000 AS "expiresAtMs"
-    FROM refresh_tokens
-    WHERE id=${claims.sid} AND family_id=${claims.familyId} AND kind=${claims.kind}
-      AND tenant_id=${claims.tenantId} AND ${claims.userId ? sql`user_id=${claims.userId}` : sql`user_id IS NULL`} AND role=${claims.role}
-      AND revoked_at IS NULL AND expires_at>clock_timestamp()
-      AND ${claims.exp}>EXTRACT(EPOCH FROM clock_timestamp())
-    FOR UPDATE
-  `);
-  const row = result.rows[0] as { familyId: string; kind: "customer" | "manager"; tenantId: string;
-    userId: string | null; role: string; email: string | null; familyCreatedAtMs: string | number; expiresAtMs: string | number } | undefined;
-  if (!row || !(await refreshPrincipalStillValid(tx, row))) throw new AuthenticationChangedError();
-  await refreshWorkspacePasswordProofInTransaction(tx, claims, credentialVersion);
-  await tx.execute(sql`UPDATE refresh_tokens SET revoked_at=clock_timestamp(),revoked_reason='reauthentication'
-    WHERE family_id=${claims.familyId} AND kind=${claims.kind} AND tenant_id=${claims.tenantId}
-      AND ${claims.userId ? sql`user_id=${claims.userId}` : sql`user_id IS NULL`} AND revoked_at IS NULL`);
-  return rotateWithinFamily(tx, { ...row, familyCreatedAtMs: Number(row.familyCreatedAtMs) }, context, await dbNowMsInTransaction(tx));
 }
 
 export function readCookie(req: Request, name: string): string | null {
@@ -739,11 +742,67 @@ export function clearRefreshCookieHeader(kind: SessionKind): string {
   return `${config.refreshCookieName}=; Path=${config.refreshCookiePath}; HttpOnly; SameSite=Strict${secure}; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Max-Age=0`;
 }
 
-export async function rotateRefreshToken(
+/**
+ * WP-A (S1) log-only session-anomaly classification. Compares the request
+ * context of an incoming refresh against the stored context of the token
+ * being rotated (the previous token in the same family). Each field is
+ * compared only when both sides carry a value, so a token issued without
+ * context — or a refresh without context — never produces a false change.
+ * Returns null when there is no baseline (first token in the family) or
+ * nothing changed. The caller writes at most ONE audit event for a
+ * non-null result; this function never blocks, revokes, or logs out.
+ */
+type SessionAnomalyKind = "ip_changed" | "device_changed";
+export function classifySessionAnomaly(
+  previous: { ipAddress?: string | null; userAgent?: string | null } | null | undefined,
+  incoming: { ipAddress?: string | null; userAgent?: string | null } | null | undefined,
+): { kind: SessionAnomalyKind; ipChanged: boolean; deviceChanged: boolean } | null {
+  if (!previous || !incoming) return null;
+  const ipChanged = Boolean(previous.ipAddress && incoming.ipAddress && previous.ipAddress !== incoming.ipAddress);
+  const deviceChanged = Boolean(previous.userAgent && incoming.userAgent && previous.userAgent !== incoming.userAgent);
+  if (!ipChanged && !deviceChanged) return null;
+  return { kind: ipChanged ? "ip_changed" : "device_changed", ipChanged, deviceChanged };
+}
+
+/**
+ * WP-A (S1): writes the single anomaly audit event for a successful
+ * rotation. Isolated behind a savepoint like the reuse audit: a failed
+ * audit statement rolls back to the savepoint only, so it can never abort
+ * the rotation transaction or fail the refresh. Metadata carries change
+ * flags only — never the raw IP or user-agent values.
+ */
+async function writeSessionAnomalyAudit(
+  tx: DbTx,
+  row: { familyId: string; kind: SessionKind; tenantId: string | null; userId: string | null },
+  anomaly: { kind: SessionAnomalyKind; ipChanged: boolean; deviceChanged: boolean },
+): Promise<void> {
+  await tx.execute(sql`SAVEPOINT refresh_anomaly_audit`);
+  try {
+    const actorType = row.kind === "platform" ? "platform" : row.userId ? "user" : "system";
+    await writeAuditEvent({
+      tenantId: row.tenantId,
+      actorType,
+      actorId: row.userId ?? null,
+      action: `auth.session.${anomaly.kind}`,
+      resourceType: "refresh_token_family",
+      resourceId: row.familyId,
+      metadata: { ipChanged: anomaly.ipChanged, deviceChanged: anomaly.deviceChanged },
+    }, tx);
+    await tx.execute(sql`RELEASE SAVEPOINT refresh_anomaly_audit`);
+  } catch (auditError) {
+    await tx.execute(sql`ROLLBACK TO SAVEPOINT refresh_anomaly_audit`);
+    logError("auth.session.anomaly_audit_failed", {
+      familyId: row.familyId,
+      error: auditError instanceof Error ? auditError.message : "unknown",
+    });
+  }
+}
+
+export async function rotateRefreshTokenDetailed(
   kind: SessionKind,
   token: string,
   context?: SessionRequestContext,
-): Promise<RefreshResult> {
+): Promise<DetailedRefreshResult> {
   const tokenHash = hashRefreshToken(token);
   const locale = context?.locale ?? DEFAULT_LOCALE;
   const t = (key: Parameters<typeof translate>[1], vars?: Parameters<typeof translate>[2]) =>
@@ -764,18 +823,21 @@ export async function rotateRefreshToken(
       kind: SessionKind;
     } | undefined;
 
-    if (!initial || initial.kind !== kind) return { status: "invalid" as const };
+    if (!initial || initial.kind !== kind) return { status: "invalid" as const, code: "REFRESH_TOKEN_INVALID" as const };
 
     // Tenant -> principal -> family -> token matches lifecycle writers.
     // Hold the shared lifecycle fence through insertion so suspension cannot
     // revoke an older snapshot and miss this newly rotated token.
     if (kind !== "platform") {
-      if (!initial.tenantId) return { status: "invalid" as const };
+      if (!initial.tenantId) return { status: "invalid" as const, code: "REFRESH_TOKEN_INVALID" as const };
       try {
         await requireActiveTenantInTransaction(tx, initial.tenantId);
       } catch (error) {
-        if (error instanceof TenantSuspendedError || error instanceof TenantDeletedError) {
-          return { status: "invalid" as const };
+        if (error instanceof TenantSuspendedError) {
+          return { status: "invalid" as const, code: "TENANT_SUSPENDED" as const };
+        }
+        if (error instanceof TenantDeletedError) {
+          return { status: "invalid" as const, code: "TENANT_DELETED" as const };
         }
         throw error;
       }
@@ -798,6 +860,8 @@ export async function rotateRefreshToken(
         EXTRACT(EPOCH FROM expires_at) * 1000 AS "expiresAtMs",
         revoked_at AS "revokedAt",
         revoked_reason AS "revokedReason",
+        ip_address AS "ipAddress",
+        user_agent AS "userAgent",
         replaced_by AS "replacedBy",
         EXTRACT(EPOCH FROM replaced_at) * 1000 AS "replacedAtMs"
       FROM refresh_tokens
@@ -816,15 +880,23 @@ export async function rotateRefreshToken(
       expiresAtMs: number | string;
       revokedAt: Date | string | null;
       revokedReason: string | null;
+      ipAddress: string | null;
+      userAgent: string | null;
       replacedBy: string | null;
       replacedAtMs: number | string | null;
     } | undefined;
 
     if (!row || row.kind !== kind || row.familyId !== initial.familyId || row.revokedAt) {
-      return { status: "invalid" as const };
+      // The recorded death reason is already selected above; reporting it
+      // changes no revocation. An unrevoked mismatch stays generic invalid.
+      return row?.revokedAt
+        ? { status: "invalid" as const, code: refreshRevokedCode(row.revokedReason) }
+        : { status: "invalid" as const, code: "REFRESH_TOKEN_INVALID" as const };
     }
     if (kind === "platform" && (!row.userId || !(await isPlatformSessionAssured(row.familyId, row.userId, false, tx)))) {
-      return { status: "invalid" as const };
+      const idle = await platformSessionIdleExpired(tx, row.familyId);
+      const code: RefreshFailureCode = idle ? "SESSION_IDLE_EXPIRED" : "PLATFORM_SESSION_EXPIRED";
+      return { status: "invalid" as const, code };
     }
     const nowMs = await dbNowMsInTransaction(tx);
     const familyCreatedAtMs = Number(row.familyCreatedAtMs);
@@ -837,10 +909,10 @@ export async function rotateRefreshToken(
         SET revoked_at = clock_timestamp(), revoked_reason = 'absolute_expired'
         WHERE family_id = ${row.familyId} AND revoked_at IS NULL
       `);
-      return { status: "invalid" as const };
+      return { status: "invalid" as const, code: "REFRESH_TOKEN_EXPIRED" as const };
     }
 
-    if (nowMs >= expiresAtMs) return { status: "invalid" as const };
+    if (nowMs >= expiresAtMs) return { status: "invalid" as const, code: "REFRESH_TOKEN_EXPIRED" as const };
 
     const principalValid = await refreshPrincipalStillValid(tx, row);
     if (!principalValid) {
@@ -849,26 +921,58 @@ export async function rotateRefreshToken(
         SET revoked_at = clock_timestamp(), revoked_reason = 'principal_invalid'
         WHERE family_id = ${row.familyId} AND revoked_at IS NULL
       `);
-      return { status: "invalid" as const };
+      return { status: "invalid" as const, code: "PRINCIPAL_INVALID" as const };
     }
     // Preserve the established explicit-expiry and principal-invalid reasons.
     // The additional policy fence still runs under the same locks before any
     // refresh consumption or successor issuance, including grace-window reuse.
     if (kind !== "platform" && (!row.tenantId || !(await readWorkspaceSessionState({ familyId: row.familyId, kind,
       tenantId: row.tenantId, userId: row.userId, sid: row.id, role: row.role ?? undefined }, tx)))) {
+      // Read-only idle diagnostic before the unchanged family revocation:
+      // `readWorkspaceSessionState` returns null for missing rows, idle
+      // staleness, policy expiry and credential mismatch alike, so only a
+      // stale `last_seen_at` earns the idle code; the rest stay merged.
+      const idle = await workspaceSessionIdleExpired(tx, row.familyId);
       await tx.execute(sql`UPDATE refresh_tokens SET revoked_at=clock_timestamp(),revoked_reason='workspace_session_expired'
         WHERE family_id=${row.familyId} AND revoked_at IS NULL`);
-      return { status: "invalid" as const };
+      const code: RefreshFailureCode = idle ? "SESSION_IDLE_EXPIRED" : "WORKSPACE_SESSION_EXPIRED";
+      return { status: "invalid" as const, code };
     }
+
+    // WP-A (S1): compare the incoming refresh context against the stored
+    // context of the token being rotated. Computed once here; both success
+    // paths below write at most one audit event for it, never blocking.
+    const anomaly = classifySessionAnomaly(
+      { ipAddress: row.ipAddress, userAgent: row.userAgent },
+      normalizeContext(context),
+    );
 
     if (row.replacedBy) {
       const replacedAtMs = row.replacedAtMs === null ? null : Number(row.replacedAtMs);
       if (replacedAtMs !== null && Number.isFinite(replacedAtMs) && nowMs <= replacedAtMs + REFRESH_ROTATION_GRACE_MS) {
         try {
           const pair = await rotateWithinFamily(tx, { ...row, familyCreatedAtMs: Number(row.familyCreatedAtMs) }, context, nowMs);
+          // v3: revoke the previously issued successor. Previously both the
+          // first successor and this new successor stayed live, forking a
+          // persistent independent session chain from one token presented
+          // inside the 5s grace window. Point the presented row at the
+          // newest successor (keeping the original replaced_at, so the
+          // grace window is not extended) so a later presentation of the
+          // old token trips the reuse detector below instead of forking.
+          await tx.execute(sql`
+            UPDATE refresh_tokens
+            SET revoked_at = clock_timestamp(), revoked_reason = 'rotation_grace_superseded'
+            WHERE id = ${row.replacedBy} AND revoked_at IS NULL
+          `);
+          await tx.execute(sql`
+            UPDATE refresh_tokens
+            SET replaced_by = ${pair.refreshTokenId}
+            WHERE id = ${row.id}
+          `);
+          if (anomaly) await writeSessionAnomalyAudit(tx, row, anomaly);
           return { status: "rotated" as const, pair };
         } catch (error) {
-          if (error instanceof Error && error.message === "REFRESH_FAMILY_EXPIRED") return { status: "invalid" as const };
+          if (error instanceof Error && error.message === "REFRESH_FAMILY_EXPIRED") return { status: "invalid" as const, code: "REFRESH_TOKEN_EXPIRED" as const };
           throw error;
         }
       }
@@ -925,9 +1029,10 @@ export async function rotateRefreshToken(
         SET replaced_by = ${pair.refreshTokenId}, replaced_at = clock_timestamp()
         WHERE id = ${row.id}
       `);
+      if (anomaly) await writeSessionAnomalyAudit(tx, row, anomaly);
       return { status: "rotated" as const, pair };
     } catch (error) {
-      if (error instanceof Error && error.message === "REFRESH_FAMILY_EXPIRED") return { status: "invalid" as const };
+      if (error instanceof Error && error.message === "REFRESH_FAMILY_EXPIRED") return { status: "invalid" as const, code: "REFRESH_TOKEN_EXPIRED" as const };
       throw error;
     }
   });
@@ -955,6 +1060,23 @@ export async function rotateRefreshToken(
     }
   }
 
+  return outcome;
+}
+
+/**
+ * Legacy shape of `rotateRefreshTokenDetailed`: `invalid` outcomes carry no
+ * code, so existing callers and their exact-shape assertions keep working.
+ * New callers (the refresh routes) use `rotateRefreshTokenDetailed` plus
+ * `refreshFailureCode` instead. Rotation, grace, revocation, audit and email
+ * behaviour are identical — this only strips the reported code.
+ */
+export async function rotateRefreshToken(
+  kind: SessionKind,
+  token: string,
+  context?: SessionRequestContext,
+): Promise<RefreshResult> {
+  const outcome = await rotateRefreshTokenDetailed(kind, token, context);
+  if (outcome.status === "invalid") return { status: "invalid" };
   return outcome;
 }
 

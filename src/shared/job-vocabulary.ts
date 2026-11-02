@@ -28,7 +28,7 @@ export function parseSharedTimeMs(value: Date | string | null | undefined): numb
 export const UNKNOWN_OUTCOME_MARKERS = PHYSICAL_OUTCOME_UNKNOWN_MARKERS;
 
 
-export type JobFailureKind = "capability_mismatch" | "unsupported_transport" | "unsupported_protocol" | "ipp_unreachable" | "pdfium_headless" | "spooler_session_busy" | "interactive_virtual_timeout";
+type JobFailureKind = "capability_mismatch" | "unsupported_transport" | "unsupported_protocol" | "ipp_unreachable" | "pdfium_headless" | "spooler_session_busy" | "interactive_virtual_timeout";
 
 export function classifyJobFailure(error?: string | null): JobFailureKind | null {
   const value = (error ?? "").toUpperCase();
@@ -146,6 +146,8 @@ export function jobTone(status: string, outcome?: PhysicalOutcome): Tone {
       return "bad";
     case "expired":
       return "bad";
+    case "canceled":
+      return "neutral";
     case "printing":
       return "info";
     case "claimed":
@@ -174,6 +176,11 @@ export function jobLabel(status: string, outcome?: PhysicalOutcome, locale: Loca
       return outcome === "unknown" ? word("v4.experience.job.review") : word("v4.experience.job.failed");
     case "expired":
       return outcome === "unknown" ? word("v4.experience.job.review") : word("v4.experience.job.expired");
+    case "canceled":
+      // v4: both cancel variants share one operator word. The queued
+      // variant is provably not printed; the claimed variant is unknown —
+      // the detail view (not the badge) carries that distinction.
+      return word("v4.experience.job.canceled");
     default:
       // Keep unknown internal states out of customer copy without claiming success.
       return word("v4.experience.job.unknown");
@@ -184,7 +191,7 @@ export function jobDisplayLabel(
   status: string,
   error?: string | null,
   locale: Locale = DEFAULT_LOCALE,
-  output?: { outputMedium?: unknown; outputEvidence?: unknown },
+  output?: { outputMedium?: unknown; outputEvidence?: unknown; submissionState?: unknown },
 ): string {
   if (output?.outputMedium === "file") {
     if (status === "success") return translate(locale, validateFileOutputEvidence(output.outputEvidence) ? "printer.verification.fileCreated" : "printer.verification.fileUncertain");
@@ -192,6 +199,13 @@ export function jobDisplayLabel(
     if (status === "printing") return translate(locale, "printer.verification.fileCreating");
     return translate(locale, deriveOutcome(status, error) === "unknown" ? "printer.verification.fileUncertain" : "printer.verification.fileFailed");
   }
+  // v4: canceled is its own badge, never "Failed" and never "Needs review"
+  // (the claimed variant's unknown outcome is shown in job details).
+  if (status === "canceled") return translate(locale, "v4.experience.job.canceled");
+  // v4 (WP2): a spooler-confirmed success is labeled as such — it is
+  // spooler confirmation, NOT paper proof, so it keeps the info tone
+  // (see jobTone) and never the "printed" word.
+  if (status === "success" && output?.submissionState === "completed") return translate(locale, "v4.experience.job.completed");
   // Unknown-outcome markers always win over any secondary failure text.
   // Specific technical failure guidance belongs in details, not status badges.
   const outcome = deriveOutcome(status, error);
@@ -206,6 +220,7 @@ export function jobDisplayLabel(
 export function jobGuidance(status: string, outcome: PhysicalOutcome, locale: Locale = DEFAULT_LOCALE): string {
   const word = (key: MessageKey) => translate(locale, key);
   if (status === "success") return word("job.guidance.success");
+  if (status === "canceled") return word("job.guidance.canceled");
   if (status === "claimed") return word("job.guidance.claimed");
   if (status === "printing") return word("job.guidance.printing");
   if (outcome === "unknown") return word("job.guidance.unknown");

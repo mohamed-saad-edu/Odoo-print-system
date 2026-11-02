@@ -2,15 +2,16 @@ import { sql } from "drizzle-orm";
 import { db, type DbTx } from "../db";
 import type { ManagerClaims } from "./manager-auth";
 import type { SharedSessionPrincipal } from "./session-tokens";
-import type { ManagerPermission } from "./authorization";
 import { credentialVersionFor, environmentManagerCredentialVersion, sameCredentialVersion } from "./session-credentials";
 
 export const WORKSPACE_IDLE_MS = 30 * 60 * 1000;
-export const WORKSPACE_STEP_UP_MS = 5 * 60 * 1000;
 export const WORKSPACE_ABSOLUTE_MS = 30 * 24 * 60 * 60 * 1000;
+/** Login-completion window for non-inherited session creation only (AUDIT K3).
+ * This is NOT step-up: it never gates an action taken with an existing session. */
+export const WORKSPACE_LOGIN_PROOF_WINDOW_MS = 5 * 60 * 1000;
 type Connection = Pick<DbTx, "execute">;
 type Identity = { familyId: string; kind: "customer" | "manager"; tenantId: string; userId?: string | null; sid?: string; role?: string };
-export type WorkspaceSessionState = { familyId: string; kind: "customer" | "manager"; tenantId: string; userId: string | null;
+type WorkspaceSessionState = { familyId: string; kind: "customer" | "manager"; tenantId: string; userId: string | null;
   credentialVersion: string; createdAtMs: number; passwordVerifiedAtMs: number; lastSeenAtMs: number; expiresAtMs: number; nowMs: number };
 
 export class WorkspaceSessionExpiredError extends Error {
@@ -18,24 +19,12 @@ export class WorkspaceSessionExpiredError extends Error {
   readonly status = 401;
   constructor() { super("Your session expired or changed. Sign in again."); this.name = "WorkspaceSessionExpiredError"; }
 }
-export class WorkspaceReauthenticationRequiredError extends Error {
-  readonly code = "WORKSPACE_REAUTHENTICATION_REQUIRED";
-  readonly status = 403;
-  constructor() { super("Confirm your password in Settings before this action."); this.name = "WorkspaceReauthenticationRequiredError"; }
-}
-export type WorkspacePolicyError = WorkspaceSessionExpiredError | WorkspaceReauthenticationRequiredError;
+export type WorkspacePolicyError = WorkspaceSessionExpiredError;
 export function workspacePolicyResponse(error: WorkspacePolicyError): Response {
-  const stepUp = error instanceof WorkspaceReauthenticationRequiredError;
-  return Response.json({ error: error.message, code: error.code, ...(stepUp ? { reauthenticationUrl: "/settings?reauth=1" } : {}) }, {
-    status: error.status, headers: { "Cache-Control": "private, no-store", ...(stepUp ? { "X-Yaseir-Reauthentication": "required" } : {}) },
+  return Response.json({ error: error.message, code: error.code }, {
+    status: error.status, headers: { "Cache-Control": "private, no-store" },
   });
 }
-
-const SENSITIVE = new Set<ManagerPermission>([
-  "tenant.update", "users.manage", "agents.pair", "agents.disable", "agents.retire", "printers.manage",
-  "jobs.retry", "jobs.cancel", "bindings.manage", "integrations.manage", "billing.manage",
-]);
-export function requiresWorkspaceStepUp(permission: ManagerPermission) { return SENSITIVE.has(permission); }
 
 /** Database-clock admission. A refresh timestamp is never treated as user
  * activity, and a missing policy row is never repaired from an old token. */
@@ -73,11 +62,10 @@ export async function readWorkspaceSessionState(identity: Identity, connection: 
   return state;
 }
 
-export async function requireWorkspaceSessionInTransaction(tx: DbTx, claims: ManagerClaims, options: { fresh?: boolean; touch?: boolean } = {}) {
+export async function requireWorkspaceSessionInTransaction(tx: DbTx, claims: ManagerClaims, options: { touch?: boolean } = {}) {
   if (claims.ver !== 2 || !claims.sid || !claims.familyId || (claims.kind !== "customer" && claims.kind !== "manager")) throw new WorkspaceSessionExpiredError();
   const state = await readWorkspaceSessionState({ ...claims, familyId: claims.familyId, kind: claims.kind }, tx, true);
   if (!state || claims.exp*1000 <= state.nowMs) throw new WorkspaceSessionExpiredError();
-  if (options.fresh && state.nowMs-state.passwordVerifiedAtMs >= WORKSPACE_STEP_UP_MS) throw new WorkspaceReauthenticationRequiredError();
   if (options.touch) {
     const result = await tx.execute(sql`UPDATE workspace_session_security SET last_seen_at=clock_timestamp()
       WHERE family_id=${claims.familyId} AND last_seen_at>clock_timestamp()-interval '30 minutes' AND expires_at>clock_timestamp()
@@ -115,9 +103,12 @@ export async function prepareWorkspaceSessionInTransaction(tx: DbTx, principal: 
   await assertWorkspaceCredentialInTransaction(tx, principal, proof);
   const passwordVerifiedAtMs = inherited?.passwordVerifiedAtMs ?? principal.passwordVerifiedAtMs ?? nowMs;
   // A signed workspace chooser inherits the original password time. Waiting
-  // to select a tenant must never manufacture a new five-minute proof window.
+  // to select a tenant must never manufacture a new login timestamp.
+  // NOTE (no-step-up): this five-minute creation window below is a
+  // login-flow guard only (see AUDIT K3); it does not gate any action
+  // taken with an existing session.
   if (!Number.isFinite(passwordVerifiedAtMs) || passwordVerifiedAtMs > nowMs ||
-      (!inherited && nowMs-passwordVerifiedAtMs >= WORKSPACE_STEP_UP_MS)) throw new WorkspaceSessionExpiredError();
+      (!inherited && nowMs-passwordVerifiedAtMs >= WORKSPACE_LOGIN_PROOF_WINDOW_MS)) throw new WorkspaceSessionExpiredError();
   const createdAtMs = inherited?.createdAtMs ?? passwordVerifiedAtMs;
   return { familyId: "", kind: principal.kind, tenantId: principal.tenantId, userId: principal.userId ?? null,
     credentialVersion: proof, createdAtMs, passwordVerifiedAtMs,
@@ -131,20 +122,3 @@ export async function persistWorkspaceSessionInTransaction(tx: DbTx, familyId: s
       ${new Date(state.passwordVerifiedAtMs)},${new Date(state.lastSeenAtMs)},${new Date(state.expiresAtMs)})`);
 }
 
-export async function refreshWorkspacePasswordProofInTransaction(tx: DbTx, claims: ManagerClaims, proof: string) {
-  await assertWorkspaceCredentialInTransaction(tx, { kind: claims.kind ?? "manager", userId: claims.userId, tenantId: claims.tenantId, role: claims.role }, proof);
-  await requireWorkspaceSessionInTransaction(tx, claims);
-  const result = await tx.execute(sql`UPDATE workspace_session_security SET credential_version=${proof},password_verified_at=clock_timestamp(),last_seen_at=clock_timestamp()
-    WHERE family_id=${claims.familyId} AND expires_at>clock_timestamp()
-      AND last_seen_at>clock_timestamp()-interval '30 minutes' RETURNING family_id`);
-  if (!result.rows.length) throw new WorkspaceSessionExpiredError();
-}
-
-export function workspaceSecurityStatus(state: WorkspaceSessionState) {
-  const proofTime = state.passwordVerifiedAtMs;
-  return { kind: state.kind,
-    reauthenticationRequired: state.nowMs-proofTime >= WORKSPACE_STEP_UP_MS,
-    stepUpExpiresAt: new Date(proofTime+WORKSPACE_STEP_UP_MS).toISOString(),
-    idleExpiresAt: new Date(Math.min(state.lastSeenAtMs+WORKSPACE_IDLE_MS,state.expiresAtMs)).toISOString(),
-    absoluteExpiresAt: new Date(state.expiresAtMs).toISOString() };
-}

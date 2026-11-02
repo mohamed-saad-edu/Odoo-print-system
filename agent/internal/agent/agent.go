@@ -80,8 +80,11 @@ func maxPollJobsBytes() int64 {
 // batch product above (20 x 5 MiB = 100 MiB). The gateway additionally
 // trims every poll response to MAX_POLL_RESPONSE_BYTES = 64 MiB of ENCODED
 // wire bytes (src/app/api/agent/jobs/route.ts), so this reader always has
-// headroom: twenty maximum-size jobs would frame at ~140 MiB encoded and
-// fail the whole batch decode while their claims stayed delivery-pending.
+// headroom against current Gateways: the twenty-maximum-size-jobs framing
+// at ~140 MiB encoded (which would fail the whole batch decode while
+// their claims stayed delivery-pending) cannot occur once the Gateway
+// trim applies. The 100 MiB ceiling remains as defense-in-depth for a
+// non-trimming Gateway.
 // It defaults to the documented batch product and is only varied by tests
 // in this package (which run sequentially), so a bounded read can be
 // exercised without transferring the full production ceiling.
@@ -1157,6 +1160,23 @@ func (a *Agent) clearLifecycleFence() {
 	a.execFenceBackoffUntil.Store(0)
 }
 
+// fenceForCredentialRejection arms the lifecycle fence for a deterministic
+// credential rejection observed outside the heartbeat path (poll 401 or WS
+// dial 401). Heartbeats continue while fenced and a successful heartbeat
+// clears the fence (clearLifecycleFence), so a misclassified transient
+// rejection costs at most one heartbeat cycle of paused dispatch. The 401s
+// fenced here are deterministic: Gateway WS 401 follows only a null
+// validateAgent result (validateAgent throws now answer 503, WP3), and the
+// poll route likewise 401s only on a null validateAgent result. In-flight
+// executions are deliberately NOT disturbed, mirroring the heartbeat fence.
+func (a *Agent) fenceForCredentialRejection(source string) {
+	now := time.Now()
+	a.execFenceReason.Store(source + ": credential rejected; re-pair the Agent")
+	a.execFence.Store(true)
+	a.execFenceBackoffUntil.Store(now.Add(lifecycleFenceBackoff).UnixNano())
+	log.Printf("Credential rejected (%s): new dispatch fenced and polls backed off until a heartbeat succeeds", source)
+}
+
 // fencedForDispatch reports whether new local dispatch must be refused.
 // Lock-free: safe on the hot dispatch path under -race.
 func (a *Agent) fencedForDispatch() bool {
@@ -1521,6 +1541,16 @@ func (a *Agent) connectWebSocket(ctx context.Context) {
 		if retryDelay > 0 && !waitForWSReconnect(ctx, retryDelay) {
 			return
 		}
+		// WP3 (STATIC REVIEW ONLY, B3-08): while fenced for a dead
+		// credential, do not burn WebSocket upgrade attempts (each failed
+		// dial counts against the shared per-IP upgrade bucket). Pause
+		// inside this loop, not return: a successful heartbeat clears
+		// the fence and dialling resumes autonomously.
+		for a.fencedForDispatch() {
+			if !waitForWSReconnect(ctx, 5*time.Second) {
+				return
+			}
+		}
 		select {
 		case <-ctx.Done():
 			return
@@ -1529,8 +1559,21 @@ func (a *Agent) connectWebSocket(ctx context.Context) {
 			header := http.Header{}
 			header.Set("Authorization", fmt.Sprintf("Bearer %s:%s", a.cfg.Agent.ID, a.cfg.Agent.Secret))
 
-			c, _, err := gatewayWSDialer.DialContext(ctx, wsURL, header)
+			c, resp, err := gatewayWSDialer.DialContext(ctx, wsURL, header)
 			if err != nil {
+				// A dial 401 is deterministic (Gateway WS 401 follows
+				// only a null validateAgent result since WP3), so fence
+				// immediately instead of dialling until the next
+				// heartbeat notices. Other dial failures keep the
+				// existing reconnect backoff.
+				if resp != nil {
+					if resp.StatusCode == http.StatusUnauthorized {
+						a.fenceForCredentialRejection("gateway websocket dial 401")
+					}
+					if resp.Body != nil {
+						_ = resp.Body.Close()
+					}
+				}
 				retryDelay = retry.nextDelay(0)
 				log.Printf("WebSocket dial failed: %v. Retrying in %s...", err, retryDelay.Round(time.Millisecond))
 				continue
@@ -2132,6 +2175,9 @@ func authorizeDispatchAfterReportFailure(receivedAt time.Time, now time.Time, re
 	}
 	if errors.Is(reportErr, ErrStaleClaim) {
 		return false, "claim fence rejected by gateway"
+	}
+	if errors.Is(reportErr, ErrJobCanceled) {
+		return false, "gateway reports job canceled by operator"
 	}
 	if errors.Is(reportErr, ErrTransitionRejected) {
 		return false, "gateway explicitly rejected the printing transition"
@@ -3401,6 +3447,15 @@ func (a *Agent) pollJobs(ctx context.Context) {
 			log.Printf("Poll rejected (%d); failed to read error body: %v", resp.StatusCode, readErr)
 		}
 		log.Printf("Poll rejected (%d): %s", resp.StatusCode, string(body))
+		// WP3 (STATIC REVIEW ONLY, B3-08): a poll 401 is a deterministic
+		// credential/lifecycle/tenant rejection (the poll route 401s only
+		// on a null validateAgent result), so fence like the heartbeat
+		// path instead of retrying until the next heartbeat notices. The
+		// acquisition loop is already fence-gated and heartbeats continue
+		// while fenced, so a successful heartbeat resumes polling.
+		if resp.StatusCode == http.StatusUnauthorized {
+			a.fenceForCredentialRejection("gateway poll 401")
+		}
 		return
 	}
 
@@ -3882,7 +3937,29 @@ func (a *Agent) processJob(ctx context.Context, job map[string]interface{}) {
 	// Surface the platform job identity (Windows spooler) when the backend
 	// reports one for this dispatch. Non-publishing backends return "", so
 	// this stays a no-op off Windows and the Gateway contract is unchanged.
-	a.updateJobStatusWithOutputEvidence(ctx, jobID, "success", "", claimToken, spoolerJobID, statusTransport, outputEvidence)
+	// WP2: run the bounded submission verification before reporting
+	// success. v4 ships no live GetJob/Get-Job-Attributes adapter (none
+	// exists in the tree), so the query is nil and the report carries
+	// submission-source evidence; the Gateway therefore derives
+	// 'submitted', never 'completed', until a query adapter lands.
+	// WP5/WP6 (STATIC REVIEW ONLY, WP6 regression fix): submission
+	// evidence is physical-only by Gateway contract (the agent route
+	// answers 422 SUBMISSION_EVIDENCE_MISMATCH for any file-output job
+	// carrying it). Attaching it unconditionally broke successful
+	// pdf_output reports: the file job carries outputEvidence AND
+	// submissionEvidence, so the Gateway rejected the success report
+	// even though the PDF was created and verified. File jobs therefore
+	// pass nil here; their success is proven by outputEvidence alone.
+	// Physical transports never carry outputEvidence (see the
+	// transport-mismatch guard above), so they are unaffected.
+	var submissionPtr *printer.SubmissionEvidence
+	if statusTransport != "pdf_output" {
+		submissionEvidence := printer.VerifySubmission(ctx, nil)
+		submissionEvidence.Transport = statusTransport
+		submissionEvidence.SpoolerJobID = spoolerJobID
+		submissionPtr = &submissionEvidence
+	}
+	a.updateJobStatusWithSubmissionEvidence(ctx, jobID, "success", "", claimToken, spoolerJobID, statusTransport, outputEvidence, submissionPtr)
 }
 
 // dispatchDocumentWithEvidence gives the worker, observer and terminal path
@@ -3956,6 +4033,14 @@ var ErrStaleClaim = errors.New("gateway rejected claim fence: stale or reclaimed
 // evaluated our transition and refused it, so physical dispatch must stop.
 var ErrTransitionRejected = errors.New("gateway rejected status transition")
 
+// ErrJobCanceled is returned by updateJobStatus when the gateway reports
+// JOB_ALREADY_CANCELED (v4): an operator canceled the job, or its 24h
+// claimed-cancel reconciliation window closed. Like ErrStaleClaim it is a
+// HARD STOP for dispatch, and for terminal re-reports it means the
+// Gateway has settled the job: the local outbox entry must be dropped
+// (see reportDurableTerminalResult), never retried, never re-executed.
+var ErrJobCanceled = errors.New("gateway reports job canceled by operator")
+
 func (a *Agent) updateJobStatus(ctx context.Context, jobID, status, errMsg, claimToken, spoolerJobID string, reason ...string) error {
 	return a.updateJobStatusWithTransport(ctx, jobID, status, errMsg, claimToken, spoolerJobID, "", reason...)
 }
@@ -3968,6 +4053,14 @@ func (a *Agent) updateJobStatusWithTransport(ctx context.Context, jobID, status,
 }
 
 func (a *Agent) updateJobStatusWithOutputEvidence(ctx context.Context, jobID, status, errMsg, claimToken, spoolerJobID, transport string, output *printer.OutputEvidence, reason ...string) error {
+	return a.updateJobStatusWithSubmissionEvidence(ctx, jobID, status, errMsg, claimToken, spoolerJobID, transport, output, nil, reason...)
+}
+
+// updateJobStatusWithSubmissionEvidence is updateJobStatusWithOutputEvidence
+// plus the WP2 submission-evidence field. The evidence is additive and
+// optional: older Gateway versions ignore unknown fields, and a nil
+// evidence value omits the field entirely (old behavior preserved).
+func (a *Agent) updateJobStatusWithSubmissionEvidence(ctx context.Context, jobID, status, errMsg, claimToken, spoolerJobID, transport string, output *printer.OutputEvidence, submission *printer.SubmissionEvidence, reason ...string) error {
 	if output != nil {
 		if status != "success" || transport != "pdf_output" {
 			return fmt.Errorf("file evidence requires successful PDF output")
@@ -4000,6 +4093,16 @@ func (a *Agent) updateJobStatusWithOutputEvidence(ctx context.Context, jobID, st
 	if spoolerJobID != "" {
 		body["spoolerJobId"] = spoolerJobID
 	}
+	// WP2 submission evidence is additive and optional on the same terms.
+	// It is only ever attached to a physical success report by the
+	// caller; the Gateway rejects it on any other report with 422.
+	// WP5/WP6 defense-in-depth: a file-output success carries
+	// outputEvidence instead, so never attach submission evidence
+	// alongside it even if a future caller passes both — the Gateway
+	// would 422 the whole success report for the combination.
+	if submission != nil && output == nil {
+		body["submissionEvidence"] = submission
+	}
 	if len(reason) > 0 && reason[0] != "" {
 		body["reason"] = reason[0]
 	}
@@ -4019,6 +4122,9 @@ func (a *Agent) updateJobStatusWithOutputEvidence(ctx context.Context, jobID, st
 		// (expired and reassigned, or never valid). Callers MUST treat this
 		// as authoritative - especially the claimed->printing transition,
 		// which must never proceed to hardware afterwards.
+		if strings.Contains(string(respBody), "JOB_ALREADY_CANCELED") {
+			return fmt.Errorf("%w: job %s status %q rejected as canceled (%d)", ErrJobCanceled, jobID, status, resp.StatusCode)
+		}
 		if resp.StatusCode == http.StatusConflict || resp.StatusCode == http.StatusGone ||
 			strings.Contains(string(respBody), "STALE_CLAIM") || strings.Contains(string(respBody), "FENCE_REJECTED") {
 			return fmt.Errorf("%w: job %s status %q rejected (%d)", ErrStaleClaim, jobID, status, resp.StatusCode)

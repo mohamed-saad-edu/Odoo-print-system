@@ -1,6 +1,6 @@
 "use client";
 
-import { fetchWithTimeout } from "../../lib/fetch-timeout";
+import { fetchWithSessionRetry, isSessionRenewedNotResent } from "../../lib/fetch-timeout";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useI18n } from "../../i18n/react";
@@ -110,7 +110,8 @@ export default function ApiKeysPage() {
       denyAccess(401);
       throw new Error("SESSION_EXPIRED");
     }
-    const response = await fetchWithTimeout("/api/odoo/keys", { cache: "no-store", credentials: "include" });
+    // Read: safe to retry once after refresh (post-ensure poll fetch).
+    const response = await fetchWithSessionRetry("/api/odoo/keys", { cache: "no-store", credentials: "include" });
     if (response.status === 401 || response.status === 403) denyAccess(response.status);
     if (!response.ok) throw new Error("KEYS_UNAVAILABLE");
     const items: unknown = await response.json();
@@ -131,11 +132,14 @@ export default function ApiKeysPage() {
         if (cancelled) return;
         if (!session.authenticated) { denyAccess(401); return; }
         const epoch = refreshEpoch.current;
+        // Reads: safe to retry once after refresh (post-ensure bootstrap;
+        // this closes the ensure-then-expire TOCTOU window on the parallel
+        // four-projection fetch).
         const [keysResponse, installsResponse, principalResponse, billingResponse] = await Promise.all([
-          fetchWithTimeout("/api/odoo/keys", { credentials: "include", cache: "no-store" }),
-          fetchWithTimeout("/api/odoo/installations", { credentials: "include", cache: "no-store" }),
-          fetchWithTimeout("/api/auth/me", { credentials: "include", cache: "no-store" }),
-          fetchWithTimeout("/api/billing/status", { credentials: "include", cache: "no-store" }),
+          fetchWithSessionRetry("/api/odoo/keys", { credentials: "include", cache: "no-store" }),
+          fetchWithSessionRetry("/api/odoo/installations", { credentials: "include", cache: "no-store" }),
+          fetchWithSessionRetry("/api/auth/me", { credentials: "include", cache: "no-store" }),
+          fetchWithSessionRetry("/api/billing/status", { credentials: "include", cache: "no-store" }),
         ]);
         if (cancelled) return;
         const deniedResponse = [keysResponse, installsResponse, principalResponse, billingResponse]
@@ -190,14 +194,19 @@ export default function ApiKeysPage() {
     setBusy(true); setError(null); setRawKey(null); setRawKeyId(null); setCopied(false);
     try {
       if (!(await ensureCustomerSession()).authenticated) { denyAccess(401); return; }
-      const r = await fetchWithTimeout("/api/odoo/keys", {
+      // NOT auto-resent: POST /api/odoo/keys mints a fresh credential id +
+      // secret per call with no idempotency key. Refresh only; the renewed
+      // marker below keeps the typed name and asks for an explicit
+      // resubmit — no redirect, no duplicate credential.
+      const r = await fetchWithSessionRetry("/api/odoo/keys", {
         method: "POST",
         headers: { "content-type": "application/json" },
         credentials: "include",
         body: JSON.stringify({
           name: name.trim() || t("apiKeys.defaultName"),
         }),
-      });
+      }, { autoRetry: false });
+      if (isSessionRenewedNotResent(r)) { setError(t("errors.sessionRenewedRetry")); return; }
       if (r.status === 401 || r.status === 403) { denyAccess(r.status); return; }
       const b = await r.json();
       if (!r.ok) { setError(t(codeMessageKey(b.code) ?? "apiKeys.operationFailed")); return; }
@@ -214,9 +223,15 @@ export default function ApiKeysPage() {
     const cur = pending; setBusy(true); setError(null);
     try {
       if (!(await ensureCustomerSession()).authenticated) { denyAccess(401); return; }
+      // Rotate is NOT auto-resent: it mints a fresh credential id + secret
+      // per call with no idempotency key — refresh only, modal stays open
+      // for an explicit retry. Revoke/remove DELETEs ARE auto-retried: they
+      // address one credential id and converge on revoked/deleted (a repeat
+      // finds no live row to re-apply to), so a replay cannot duplicate.
       const r = cur.kind === "rotate"
-        ? await fetchWithTimeout(`/api/odoo/keys/${encodeURIComponent(cur.id)}/rotate`, { method: "POST", credentials: "include" })
-        : await fetchWithTimeout("/api/odoo/keys", { method: "DELETE", headers: { "content-type": "application/json" }, credentials: "include", body: JSON.stringify(cur.kind === "revoke" ? { id: cur.id } : { id: cur.id, remove: true }) });
+        ? await fetchWithSessionRetry(`/api/odoo/keys/${encodeURIComponent(cur.id)}/rotate`, { method: "POST", credentials: "include" }, { autoRetry: false })
+        : await fetchWithSessionRetry("/api/odoo/keys", { method: "DELETE", headers: { "content-type": "application/json" }, credentials: "include", body: JSON.stringify(cur.kind === "revoke" ? { id: cur.id } : { id: cur.id, remove: true }) });
+      if (isSessionRenewedNotResent(r)) { setError(t("errors.sessionRenewedRetry")); return; }
       if (r.status === 401 || r.status === 403) { denyAccess(r.status); return; }
       const b = await r.json();
       if (!r.ok) { setError(t(codeMessageKey(b.code) ?? "apiKeys.operationFailed")); return; }

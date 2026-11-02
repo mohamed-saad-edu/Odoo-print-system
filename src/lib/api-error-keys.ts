@@ -16,11 +16,16 @@ import type { MessageKey } from "../i18n/messages/en";
 
 /** Gateway error code → the message the operator should read. */
 const CODE_KEYS: Record<string, MessageKey> = {
-  WORKSPACE_REAUTHENTICATION_REQUIRED: "workspaceSecurity.required",
-  PASSWORD_CONFIRMATION_FAILED: "workspaceSecurity.passwordIncorrect",
   SESSION_EXPIRED: "errors.sessionExpired",
+  // Idle expiry is the one session death the server can name precisely, so
+  // it gets its own message; every other session death keeps the generic
+  // expiry key.
+  SESSION_IDLE_EXPIRED: "errors.sessionIdleExpired",
   // Jobs
   JOB_NOT_FOUND: "errors.jobNotFound",
+  JOB_ALREADY_PRINTING: "errors.jobAlreadyPrinting",
+  JOB_ALREADY_TERMINAL: "errors.jobAlreadyTerminal",
+  JOB_ALREADY_CANCELED: "errors.jobAlreadyCanceled",
   JOB_NOT_TERMINAL: "errors.jobStillInProgress",
   JOB_REPRINT_NOT_ALLOWED: "errors.jobNotEligibleForReprint",
   JOB_REPRINT_SOURCE_CHANGED: "errors.reprintSourceChanged",

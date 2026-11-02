@@ -44,7 +44,7 @@ export async function POST(req: Request) {
   const rateIdentity = `invitation-token:${ip === "unknown" ? tokenHash : ip}`;
   let rate: Awaited<ReturnType<typeof reserveAuthAttempt>>;
   try {
-    rate = await reserveAuthAttempt(ip, rateIdentity);
+    rate = await reserveAuthAttempt(ip, rateIdentity, "invitation-accept");
   } catch (error) {
     logError("auth.rate_limit.store_unavailable", { endpoint: "invitation_accept", error: error instanceof Error ? error.message : "unknown" });
     return NextResponse.json({ error: "Service temporarily unavailable" }, { status: 503, headers });

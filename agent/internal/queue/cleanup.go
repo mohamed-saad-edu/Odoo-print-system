@@ -47,10 +47,13 @@ func (q *Queue) CleanupTerminal(retainDays int) (int, error) {
 	return int(count), nil
 }
 
-// CleanupTerminalOlderThan is the automatic storage-retention path. Unlike
-// the operator-triggered CleanupTerminal, it may remove unknown-outcome rows
-// after the retention window when an execution token was retained and its
-// report token cleared. Tokenless historical rows do not prove acknowledgement.
+// CleanupTerminalOlderThan is the automatic storage-retention path. It
+// mirrors the operator-triggered CleanupTerminal: unknown-outcome rows are
+// NEVER removed automatically. Deleting them would destroy the evidence that
+// a document may have printed once already and let a later duplicate delivery
+// reprint without local protection; only the operator purge (after physical
+// reconciliation and Gateway acknowledgement) may remove them. Tokenless
+// historical rows do not prove acknowledgement.
 func (q *Queue) CleanupTerminalOlderThan(retainHours int) (int, error) {
 	if retainHours <= 0 {
 		return 0, nil
@@ -59,6 +62,7 @@ func (q *Queue) CleanupTerminalOlderThan(retainHours int) (int, error) {
 		WHERE claim_token IS NULL
 		  AND execution_claim_token IS NOT NULL AND execution_claim_token <> ''
 		  AND status IN ('success', 'failed')
+		  AND NOT (status = 'failed' AND (` + unknownMarkerSQL("last_error") + `))
 		  AND updated_at <= datetime('now', '-` + strconv.Itoa(retainHours) + ` hours')`)
 	if err != nil {
 		return 0, err

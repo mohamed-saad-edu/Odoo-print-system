@@ -3,7 +3,7 @@ import { DEFAULT_LOCALE, type Locale } from "../i18n/config";
 import { translate, type MessageKey } from "../i18n/translate";
 import { agentLiveView, printerObservationFreshness, type Tone } from "./job-vocabulary";
 
-export type PrinterPresentationState = "ready" | "printing" | "attention" | "unavailable";
+type PrinterPresentationState = "ready" | "printing" | "attention" | "unavailable";
 type Owner = {
   status?: string | null;
   lifecycle?: string | null;

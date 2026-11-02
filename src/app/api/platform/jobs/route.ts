@@ -37,6 +37,9 @@ export async function GET(req: Request) {
       await requirePlatformReadAuthorityInTransaction(tx, actor);
       return listPrintJobHistory({
       tenantId: tenantId || undefined,
+      // Platform owner only (read authority rechecked in-tx above); the
+      // unfiltered view is the intentional platform-wide mode.
+      platformWide: tenantId ? undefined : true,
       status,
       search: search || undefined,
       limit: limit + 1,

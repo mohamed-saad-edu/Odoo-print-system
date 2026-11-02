@@ -47,7 +47,7 @@ export async function cleanupTerminalPrintJobs(scope: { agentId?: string } = {})
     const candidates = await tx.execute(sql`
       SELECT id
       FROM print_jobs
-      WHERE status IN ('success','failed','expired')
+      WHERE status IN ('success','failed','expired','canceled')
         AND claim_token IS NULL
         AND updated_at <= now() - make_interval(hours => ${PRINT_JOB_RETENTION_HOURS})
         -- A retained receipt conflicting by either primary ID OR the tenant's
@@ -94,6 +94,7 @@ export async function cleanupTerminalPrintJobs(scope: { agentId?: string } = {})
         bindingDigest: row.bindingDigest,
         outputMedium: row.outputMedium,
         outputEvidence: row.outputEvidence,
+        submissionEvidence: row.submissionEvidence,
         spoolerJobId: row.spoolerJobId,
         attemptId: row.attemptId,
         error: row.error,
@@ -145,7 +146,7 @@ export async function sweepPrintJobs(scope: { agentId?: string } = {}): Promise<
   const expired = await db.execute(sql`
     WITH candidates AS (
       SELECT id FROM print_jobs
-      WHERE status NOT IN ('success','failed','expired') AND expires_at <= now() ${agentFilter}
+      WHERE status NOT IN ('success','failed','expired','canceled') AND expires_at <= now() ${agentFilter}
       ORDER BY expires_at ASC
       LIMIT ${SWEEP_BATCH}
       FOR UPDATE SKIP LOCKED
@@ -313,7 +314,7 @@ export async function sweepPrintJobs(scope: { agentId?: string } = {}): Promise<
   await db.execute(sql`
     WITH candidates AS (
       SELECT id FROM print_jobs
-      WHERE status = 'failed'
+      WHERE status IN ('failed','canceled')
         AND claim_token IS NOT NULL
         AND (
           error LIKE 'UNKNOWN_PARTIAL_DELIVERY:%'

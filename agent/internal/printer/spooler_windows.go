@@ -695,6 +695,12 @@ func getPrinterInfo2(hPrinter syscall.Handle) (*printerInfo2, []byte, error) {
 		if uintptr(needed) < minSize {
 			return nil, nil, fmt.Errorf("GetPrinterW returned a %d-byte buffer (minimum %d) for level 2", needed, minSize)
 		}
+		// pcbNeeded comes from the spooler (a remote print server for UNC
+		// queues): never allocate an unbounded spooler-reported size. A
+		// level-2 record is small; 1 MiB leaves ample headroom.
+		if needed > 1<<20 {
+			return nil, nil, fmt.Errorf("GetPrinterW reported an implausible %d-byte buffer for level 2", needed)
+		}
 
 		buf := make([]byte, needed)
 		ret, _, lastErr = procGetPrinterW.Call(
@@ -1529,6 +1535,13 @@ func enumPrinterQueuesPass(flags uintptr, scope string) ([]printerQueueRef, erro
 			}
 			return nil, nil
 		}
+		// Same bound as GetPrinterW, scaled for an enumeration: a level-4
+		// record is tens of bytes, so 16 MiB covers well over 100k queues
+		// while a spooler-reported multi-gigabyte size fails closed here
+		// instead of allocating.
+		if needed > 16<<20 {
+			return nil, fmt.Errorf("EnumPrintersW %s level %d reported an implausible %d-byte buffer", scope, printerEnumLevel, needed)
+		}
 
 		buf := make([]byte, needed)
 		ret, _, lastErr = procEnumPrintersW.Call(
@@ -1885,7 +1898,16 @@ func spoolerQueueDeviceInfo(name, portName, driverName, serverName, shareName, s
 // or port monitor; reject it before any spooler backend is instantiated.
 func rejectVirtualWindowsSpooler(name string) error {
 	detail, err := queueDetail(name)
-	if err == nil && isVirtualSpooler(detail.portName, detail.driverName, name) {
+	if err != nil {
+		// Admission without a virtual check is unsafe: a renamed software
+		// queue whose details are unreadable must not reach execution,
+		// where jobs would "succeed" into a file writer. A missing queue
+		// fails here too, which is correct at dispatch time (nothing can
+		// print to it); discovery enumeration is a separate path and is
+		// unaffected.
+		return fmt.Errorf("Windows queue %q details could not be read; refusing admission without a virtual check: %w", name, err)
+	}
+	if isVirtualSpooler(detail.portName, detail.driverName, name) {
 		return fmt.Errorf("Windows software printer %q is not supported", name)
 	}
 	return nil

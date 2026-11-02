@@ -4,8 +4,8 @@
  * No local state is evidence of physical paper output. Gateway idempotency and
  * authenticated, tenant-scoped durable receipts remain authoritative.
  */
-export type DiagnosticJobStatus = "queued" | "claimed" | "printing" | "success" | "failed" | "expired";
-export type DiagnosticPhysicalOutcome = "printed" | "not_printed" | "unknown";
+type DiagnosticJobStatus = "queued" | "claimed" | "printing" | "success" | "failed" | "expired";
+type DiagnosticPhysicalOutcome = "printed" | "not_printed" | "unknown";
 
 export interface DiagnosticResult {
   ok: true;
@@ -126,6 +126,3 @@ export function diagnosticMessageKey(result: DiagnosticResult): DiagnosticMessag
   return "diagnostic.unverified";
 }
 
-export function diagnosticMessageType(result: DiagnosticResult): "ok" | "err" {
-  return result.status === "failed" || result.status === "expired" ? "err" : "ok";
-}

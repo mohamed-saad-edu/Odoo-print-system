@@ -6,7 +6,7 @@ import { writeAuditEvent } from "./audit";
 import { assertSessionCredentialInTransaction, issueSessionPairInTransaction, type SessionRequestContext } from "./session-tokens";
 import type { ManagerRole } from "./manager-auth";
 
-export type ActiveWorkspaceInvitation = typeof tenantInvitations.$inferSelect;
+type ActiveWorkspaceInvitation = typeof tenantInvitations.$inferSelect;
 
 /** Invitation links are bearer proofs of an offer, NOT login credentials. */
 export async function findActiveInvitation(token: string): Promise<ActiveWorkspaceInvitation | null> {

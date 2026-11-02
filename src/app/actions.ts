@@ -5,11 +5,10 @@ import { listPrintJobHistory } from "../lib/job-history";
 
 import { db } from "../db";
 import { agents, printers, printJobs, printJobReceipts, discoverySessions, discoveredDevices } from "../db/schema";
-import { eq, or, and, inArray, sql, desc } from "drizzle-orm";
+import { eq, or, and, inArray, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { lifecycleLabel } from "../lib/lifecycle-labels";
 import { cookies } from "next/headers";
-import { generatePairingCode } from "../lib/agent-auth";
 import { getManagerCookieName, verifyWorkspaceTokenFromCookieValues } from "../lib/manager-auth";
 import { createHash } from "node:crypto";
 import { idempotencyDigest, createPrintJobForPrinter } from "../lib/print-job-service";
@@ -17,8 +16,6 @@ import { isExactIdempotencyKey } from "../lib/idempotency";
 import {
   isTerminal,
   isJobFilterStatus,
-  derivePhysicalOutcome,
-  PHYSICAL_OUTCOME_UNKNOWN_MARKERS,
   type JobStatus,
 } from "../lib/job-status";
 import { canTransitionLifecycle } from "../lib/lifecycle";
@@ -93,6 +90,16 @@ export async function deleteAgent(id: string) {
         for (const row of jobs) {
           const terminal = isTerminal(row.status as JobStatus);
           const uncertain = row.status === "printing" || row.error === "DELIVERY_EVIDENCE_PENDING" || !!row.deliveredAt || !!row.ackedAt || !!row.spoolerJobId || !!row.attemptId;
+          // WP3 (STATIC REVIEW ONLY, B1-05): a receipt row can already
+          // exist for a live job id after a restored DB or interrupted
+          // migration. Previously the plain insert rolled back the whole
+          // agent deletion, leaving the agent undeletable. A pre-existing
+          // receipt already archives this job id, so skip only the
+          // conflicting insert (PK target only: an idempotency-key
+          // conflict for a different job id must still fail loudly) and
+          // let the live-row deletion proceed, mirroring the bulk-cleanup
+          // receipt-conflict rule (V3-60). The archive invariant "every
+          // deleted job has a receipt" still holds via the pre-existing row.
           await tx.insert(printJobReceipts).values({
             id: row.id, tenantId: row.tenantId, idempotencyKey: row.idempotencyKey,
             fingerprint: idempotencyDigest({ printerId: row.printerId, documentType: row.documentType, destination: row.destination, payload: row.payload }),
@@ -105,7 +112,7 @@ export async function deleteAgent(id: string) {
             closedClaimTokenHash: row.closedClaimTokenHash ?? (row.claimToken ? createHash("sha256").update(row.claimToken).digest("hex") : null),
             deliveredAt: row.deliveredAt, ackedAt: row.ackedAt, createdAt: row.createdAt,
             updatedAt: terminal ? row.updatedAt : sql`clock_timestamp()`,
-          });
+          }).onConflictDoNothing({ target: printJobReceipts.id });
         }
         if (!jobs.length) continue;
         await tx.delete(printJobs).where(and(eq(printJobs.tenantId, manager.tenantId), inArray(printJobs.id, jobs.map(row => row.id))));

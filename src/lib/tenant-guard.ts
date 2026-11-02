@@ -24,7 +24,7 @@ export class TenantDeletedError extends Error {
   }
 }
 
-export type TenantLifecycleStatus = "active" | "suspended" | "deleted";
+type TenantLifecycleStatus = "active" | "suspended" | "deleted";
 
 /**
  * Transactional tenant lifecycle write fence.

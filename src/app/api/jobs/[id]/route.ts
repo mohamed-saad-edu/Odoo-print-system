@@ -1,4 +1,5 @@
 import { printOutputPresentation } from "../../../../lib/print-output";
+import { deriveSubmissionState } from "../../../../lib/submission-evidence";
 import { requireActiveTenantInTransaction, TenantSuspendedError, TenantDeletedError } from "../../../../lib/tenant-guard";
 import { requireManagerActorInTransaction, ManagerMutationAuthorityChangedError } from "../../../../lib/manager-mutation-authorization";
 import { logError } from "../../../../lib/log";
@@ -38,6 +39,11 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
       status: printJobs.status,
       outputMedium: printJobs.outputMedium,
       outputEvidence: printJobs.outputEvidence,
+      // v4: cancel audit + WP2 submission evidence (see 0109/0110).
+      canceledAt: printJobs.canceledAt,
+      cancelReason: printJobs.cancelReason,
+      quotaRefunded: printJobs.quotaRefunded,
+      submissionEvidence: printJobs.submissionEvidence,
       error: printJobs.error,
       retries: printJobs.retries,
       deliveryAttempts: printJobs.deliveryAttempts,
@@ -72,7 +78,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
     if (!receipt) return NextResponse.json({ error: "Not found", code: "JOB_NOT_FOUND" }, { status: 404, headers: PRIVATE_HEADERS });
     const { fingerprint: _fingerprint, closedClaimTokenHash: _claimHash, apiKeyId: _apiKey, ...metadata } = receipt;
     return NextResponse.json(
-      { ...metadata, ...printOutputPresentation(metadata), archived: true, diagnosticPayload: null },
+      { ...metadata, ...printOutputPresentation(metadata), submissionState: deriveSubmissionState(metadata.status, metadata.outputMedium, (metadata as { submissionEvidence?: unknown }).submissionEvidence), archived: true, diagnosticPayload: null },
       { headers: PRIVATE_HEADERS },
     );
   }
@@ -88,7 +94,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
     : buildJobDiagnosticPayload(payload);
 
   return NextResponse.json(
-    { ...metadata, ...printOutputPresentation(metadata), diagnosticPayload },
+    { ...metadata, ...printOutputPresentation(metadata), submissionState: deriveSubmissionState(metadata.status, metadata.outputMedium, metadata.submissionEvidence), diagnosticPayload },
     { headers: PRIVATE_HEADERS },
   );
 }

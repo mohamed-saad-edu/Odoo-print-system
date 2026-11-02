@@ -750,6 +750,41 @@
       "when": 1793318190000,
       "tag": "0106_restore_discovery_replica_identity",
       "breakpoints": true
+    },
+    {
+      "idx": 107,
+      "version": "7",
+      "when": 1793556482469,
+      "tag": "0107_pairing_code_peppered_only",
+      "breakpoints": true
+    },
+    {
+      "idx": 108,
+      "version": "7",
+      "when": 1793556610707,
+      "tag": "0108_subscription_revocation",
+      "breakpoints": true
+    },
+    {
+      "idx": 109,
+      "version": "7",
+      "when": 1793564509000,
+      "tag": "0109_job_cancellation",
+      "breakpoints": true
+    },
+    {
+      "idx": 110,
+      "version": "7",
+      "when": 1793564510000,
+      "tag": "0110_submission_evidence",
+      "breakpoints": true
+    },
+    {
+      "idx": 111,
+      "version": "7",
+      "when": 1793564511000,
+      "tag": "0111_perf_indexes",
+      "breakpoints": true
     }
   ]
 }

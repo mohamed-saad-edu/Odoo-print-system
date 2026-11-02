@@ -83,7 +83,7 @@ vi.mock("../src/db", () => ({ db: {
 } }));
 vi.mock("../src/lib/auth-rate-limit", () => ({
   clientIpFrom: () => "198.51.100.10", reserveAuthAttempt: async () => ({ allowed: true, limit: 5, remaining: 4, resetAtEpochSec: 9999999999 }),
-  recordAuthSuccess: async () => {}, setRateLimitHeaders: (response: Response) => response,
+  recordAuthSuccess: async () => {}, refundAuthReservation: async () => {}, setRateLimitHeaders: (response: Response) => response,
 }));
 vi.mock("../src/lib/email", () => ({ sendTransactionalEmail: async () => {} }));
 vi.mock("../src/lib/audit", () => ({ writeAuditEvent: async () => {} }));

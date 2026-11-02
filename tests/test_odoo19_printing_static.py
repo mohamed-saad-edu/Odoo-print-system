@@ -265,7 +265,7 @@ def test_gateway_config_form_exposes_guarded_connection_and_recovery_actions():
     assert 'name="action_test_connection"' in form
     assert 'name="action_retry_enabled_sync"' in form
     assert 'name="action_reset_stale_sync_state"' in form
-    assert 'confirm="Recover synchronization state' in form
+    assert 'confirm="Use this only after the old connection is turned off' in form
     for action in (
         'name="action_open_pairing_wizard"',
         'name="action_clear_api_key"',

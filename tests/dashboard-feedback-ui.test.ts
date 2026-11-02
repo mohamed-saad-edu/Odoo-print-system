@@ -13,7 +13,13 @@ vi.mock("../src/app/actions", () => ({
   deleteAgentResult: vi.fn(), getDashboardJobsResult: vi.fn(), getDashboardStateResult: vi.fn(),
   setAgentLifecycleResult: vi.fn(), setPrinterLifecycleResult: vi.fn(),
 }));
-vi.mock("../src/lib/fetch-timeout", () => ({ fetchWithTimeout: vi.fn(), WORKSPACE_REAUTHENTICATION_EVENT: "yaseir:workspace-reauthentication-required" }));
+// Dashboard agent creation now goes through fetchWithSessionRetry
+// (silent refresh; non-idempotent create is NOT auto-resent) while the
+// billing probe keeps fetchWithTimeout. One shared mock keeps the existing
+// call assertions intact; the renewed-not-resent stub mirrors the real
+// header check for fixture responses, which never carry the marker.
+const sharedFetch = vi.hoisted(() => vi.fn());
+vi.mock("../src/lib/fetch-timeout", () => ({ fetchWithTimeout: sharedFetch, fetchWithSessionRetry: sharedFetch, isSessionRenewedNotResent: (response: { headers?: { get: (name: string) => string | null } }) => { try { return response.headers?.get("X-Yaseir-Session-Renewed") === "1"; } catch { return false; } } }));
 vi.mock("../src/lib/session-config", () => ({ ensureCustomerSession: async () => ({ authenticated: true }) }));
 const router = vi.hoisted(() => ({ refresh: vi.fn(), replace: vi.fn(), push: vi.fn() }));
 vi.mock("next/navigation", () => ({ useRouter: () => router }));
@@ -44,7 +50,7 @@ afterEach(() => vi.unstubAllGlobals());
 
 describe("workspace dashboard evidence and feedback", () => {
   it.each([
-    [403, "WORKSPACE_REAUTHENTICATION_REQUIRED", true, false],
+    [403, "WORKSPACE_REAUTHENTICATION_REQUIRED", false, false],
     [401, "SESSION_EXPIRED", false, true],
     [403, "FORBIDDEN", false, false],
     [503, "WORKSPACE_REAUTHENTICATION_REQUIRED", false, false],
@@ -62,20 +68,16 @@ describe("workspace dashboard evidence and feedback", () => {
       expect(button).toBeDefined();
       await act(async () => button!.click());
       expect(mutation).toHaveBeenCalledExactlyOnceWith(agent.id, "active");
-      const notice = host.querySelector('[data-testid="workspace-reauthentication-notice"]');
+      // No step-up: no confirmation notice is ever shown for a 403, and
+      // the server-policy detail is never surfaced to the operator.
+      const notice = host.querySelector('[data-testid="workspace-session-expired-notice"]');
       expect(Boolean(notice)).toBe(needsConfirmation);
-      if (needsConfirmation) {
-        expect(notice?.querySelector("a")?.getAttribute("href")).toMatch(/^\/settings\?reauth=1/);
-        expect(host.textContent).toContain("Confirm your identity before making a sensitive workspace change.");
-        expect(host.textContent).not.toContain("server-policy-detail");
-      }
       const redirect = expired
         ? "/login?next=%2Fdashboard"
-        : status === 403 && code === "FORBIDDEN" ? "/" : null;
+        : status === 403 ? "/" : null;
       if (redirect) expect(router.replace).toHaveBeenCalledExactlyOnceWith(redirect);
       else expect(router.replace).not.toHaveBeenCalled();
       expect(host.textContent).not.toContain("server-policy-detail");
-      await act(async () => window.dispatchEvent(new Event("yaseir:workspace-reauthenticated")));
       expect(mutation).toHaveBeenCalledTimes(1);
     } finally { await act(async () => root.unmount()); host.remove(); }
   });

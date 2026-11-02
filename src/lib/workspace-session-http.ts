@@ -4,7 +4,7 @@ import { hasBodyOverLimit } from "./request-limits";
 import { ManagerMutationAuthorityChangedError } from "./manager-mutation-authorization";
 import { AuthenticationChangedError } from "./session-tokens";
 import { TenantDeletedError, TenantSuspendedError } from "./tenant-guard";
-import { WorkspaceSessionExpiredError, WorkspaceReauthenticationRequiredError, workspacePolicyResponse } from "./workspace-session-security";
+import { WorkspaceSessionExpiredError, workspacePolicyResponse } from "./workspace-session-security";
 import { logError } from "./log";
 
 export const WORKSPACE_SECURITY_HEADERS = { "Cache-Control": "private, no-store" };
@@ -50,11 +50,11 @@ export async function readWorkspaceSecurityJson(req: Request): Promise<unknown> 
 
 export function workspaceSecurityErrorResponse(error: unknown): Response {
   if (error instanceof ManagerMutationAuthorityChangedError) return error.response();
-  if (error instanceof WorkspaceSessionExpiredError || error instanceof WorkspaceReauthenticationRequiredError) return workspacePolicyResponse(error);
+  if (error instanceof WorkspaceSessionExpiredError) return workspacePolicyResponse(error);
   if (error instanceof AuthenticationChangedError || error instanceof TenantDeletedError || error instanceof TenantSuspendedError) return workspacePolicyResponse(new WorkspaceSessionExpiredError());
   if (error instanceof WorkspaceSecurityRequestError) return Response.json({ error: error.message, code: error.code }, { status: error.status, headers: WORKSPACE_SECURITY_HEADERS });
   // Database and credential verifier failures must not disclose an account,
-  // password, token or driver error and must never establish fresh proof.
+  // password, token or driver error.
   logError("auth.workspace_security.unavailable", { error: "Workspace security infrastructure unavailable" });
   return Response.json({ error: "Security verification temporarily unavailable", code: "SECURITY_UNAVAILABLE" }, { status: 503, headers: WORKSPACE_SECURITY_HEADERS });
 }

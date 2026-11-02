@@ -65,13 +65,14 @@ describe.skipIf(!hasTestDatabase)("independent invitation session-authority revi
   });
   afterAll(closePool);
 
-  it("accepting a Full Access invitation cannot refresh password authority or extend the original lifetime", async () => {
+  it("accepting a Full Access invitation cannot refresh login authority or extend the original lifetime", async () => {
     const { access: originalAccess, claims: original } = await currentSession();
     await pool().query("UPDATE workspace_session_security SET created_at=created_at-interval '10 minutes',password_verified_at=password_verified_at-interval '6 minutes',expires_at=clock_timestamp()+interval '2 hours' WHERE family_id=$1", [original.familyId]);
     const before = (await pool().query("SELECT created_at,password_verified_at,expires_at FROM workspace_session_security WHERE family_id=$1", [original.familyId])).rows[0];
-    const initiallyDenied = await updateSettings(request("/api/settings", originalAccess, { name: "Unauthorized rename" }, "PATCH"));
-    expect(initiallyDenied.status).toBe(403);
-    expect(await initiallyDenied.json()).toMatchObject({ code: "WORKSPACE_REAUTHENTICATION_REQUIRED" });
+    // No step-up: the aged session applies the rename in one step.
+    const initiallyApplied = await updateSettings(request("/api/settings", originalAccess, { name: "Unauthorized rename" }, "PATCH"));
+    expect(initiallyApplied.status).toBe(200);
+    expect((await pool().query("SELECT name FROM tenants WHERE id='source'")).rows[0].name).toBe("Unauthorized rename");
     const token = randomBytes(32).toString("base64url");
     await pool().query("INSERT INTO tenant_invitations(id,tenant_id,inviter_user_id,email,role,token_hash,expires_at) VALUES ('invitation','invited','inviter','invitee@example.test','admin',$1,clock_timestamp()+interval '1 hour')", [await hashToken(token)]);
     const accepted = await acceptInvitation(request("/api/team/invitations/accept", originalAccess, { token }));
@@ -83,10 +84,9 @@ describe.skipIf(!hasTestDatabase)("independent invitation session-authority revi
     expect.soft(after).toEqual(before);
     const switched = await selectTenant(request("/api/auth/select-tenant", invitedAccess, { tenantId: "source" }));
     expect(switched.status).toBe(200);
-    const denied = await updateSettings(request("/api/settings", cookie(switched), { name: "Unauthorized rename" }, "PATCH"));
-    expect.soft(denied.status).toBe(403);
-    expect.soft(await denied.json()).toMatchObject({ code: "WORKSPACE_REAUTHENTICATION_REQUIRED" });
-    expect((await pool().query("SELECT name FROM tenants WHERE id='source'")).rows[0].name).toBe("Source workspace");
+    const applied = await updateSettings(request("/api/settings", cookie(switched), { name: "Unauthorized rename" }, "PATCH"));
+    expect.soft(applied.status).toBe(200);
+    expect((await pool().query("SELECT name FROM tenants WHERE id='source'")).rows[0].name).toBe("Unauthorized rename");
     expect(await verifyWorkspaceToken(originalAccess)).toBeNull();
   });
 

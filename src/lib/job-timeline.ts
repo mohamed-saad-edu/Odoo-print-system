@@ -6,7 +6,7 @@ import { nanoid } from "./nanoid";
 import { getCorrelationContext } from "../server/correlation";
 import { logInfo, redactClaimToken } from "./log";
 
-export type JobTimelineStage =
+type JobTimelineStage =
   | "created"
   | "queued"
   | "claimed"
@@ -19,7 +19,7 @@ export type JobTimelineStage =
   | "expired"
   | "blocked";
 
-export type JobTimelineStatus = "ok" | "error" | "blocked" | "pending";
+type JobTimelineStatus = "ok" | "error" | "blocked" | "pending";
 
 export interface RecordJobEventInput {
   jobId: string;
@@ -53,9 +53,20 @@ export async function recordJobEvent(input: RecordJobEventInput): Promise<void> 
     agentId: input.agentId ?? ctx?.agentId,
     printerId: input.printerId ?? ctx?.printerId,
     requestId: input.requestId ?? ctx?.requestId,
-    message: input.message,
+    // v3: message was unbounded text and metadata uncapped JSONB, so a
+    // high-volume event producer could grow rows without bound. Truncate
+    // the message and drop over-large metadata (keys preserved in the
+    // truncation marker only when it fits the cap itself).
+    message: typeof input.message === "string" ? input.message.slice(0, 4000) : input.message,
     errorCode: input.errorCode,
-    metadata: input.metadata ?? {},
+    metadata: (() => {
+      const metadata = input.metadata ?? {};
+      try {
+        return JSON.stringify(metadata).length > 32768 ? { _truncated: true } : metadata;
+      } catch {
+        return { _truncated: true };
+      }
+    })(),
   };
   try {
     await queryWithTimeout(
@@ -73,23 +84,27 @@ export async function recordJobEvent(input: RecordJobEventInput): Promise<void> 
 /** Read history on the same PostgreSQL connection as the caller's live
  * tenant/session fence, not through a second pool checkout. */
 export async function getJobTimelineInTransaction(tx: DbTx, tenantId: string, jobId: string) {
+  // v3: previously unbounded; a job with a huge event history returned all
+  // rows (and the in-tx path has no timeout). Oldest-first order is kept;
+  // 5000 events is far above any legitimate job history.
   return tx.select().from(jobEvents)
     .where(and(eq(jobEvents.tenantId, tenantId), eq(jobEvents.jobId, jobId)))
-    .orderBy(jobEvents.createdAt);
+    .orderBy(jobEvents.createdAt)
+    .limit(5000);
 }
 
 export async function getJobTimeline(tenantId: string, jobId: string) {
   const events = await queryWithTimeout(
-    () => db.select().from(jobEvents).where(and(eq(jobEvents.tenantId, tenantId), eq(jobEvents.jobId, jobId))).orderBy(jobEvents.createdAt),
+    () => db.select().from(jobEvents).where(and(eq(jobEvents.tenantId, tenantId), eq(jobEvents.jobId, jobId))).orderBy(jobEvents.createdAt).limit(5000),
     3000,
     "getJobTimeline"
   );
   return events;
 }
 
-export type TimelineMessageKey = string;
+type TimelineMessageKey = string;
 
-export type DerivedTimelineEntry = {
+type DerivedTimelineEntry = {
   stage: JobTimelineStage;
   status: JobTimelineStatus;
   at?: Date | null;

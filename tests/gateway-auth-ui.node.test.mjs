@@ -39,7 +39,14 @@ function component(file, fetch, session = async () => ({ authenticated: true }),
       useRouter: () => ({ replace: value => redirects.push(value), push() {}, refresh() {} }),
       useSearchParams: () => new URLSearchParams(options.search ?? ""),
     };
-    if (name.endsWith("/fetch-timeout")) return { fetchWithTimeout: fetch };
+    // Workspace pages now route through fetchWithSessionRetry (silent
+    // refresh + retry once) and the platform layout subscribes to
+    // session-sync; both resolve to the harness fetch / no-op stubs here.
+    // The wrapper's own refresh decisions are covered by
+    // tests/session-renewal-sync.node.test.mjs, so component assertions on
+    // the fixture fetch calls are unchanged.
+    if (name.endsWith("/fetch-timeout")) return { fetchWithTimeout: fetch, fetchWithSessionRetry: fetch, isSessionRenewedNotResent: response => { try { return response.headers?.get("X-Yaseir-Session-Renewed") === "1"; } catch { return false; } } };
+    if (name.endsWith("/session-sync")) return { subscribeSessionSync: () => () => undefined, broadcastSessionSync: () => undefined };
     if (name.endsWith("/session-config")) return { ensureCustomerSession: session };
     if (name.endsWith("/i18n/react")) return { useI18n: () => ({ t: value => value, tc: value => value, formatNumber: String, formatDate: String, formatDateTime: String }) };
     if (name.endsWith("/api-error-keys")) return { codeMessageKey: () => undefined, apiMessageKey: () => undefined };
@@ -63,7 +70,7 @@ function component(file, fetch, session = async () => ({ authenticated: true }),
     callback => { timers.add(callback); return callback; },
     callback => timers.delete(callback),
     { addEventListener() {}, removeEventListener() {}, visibilityState: "visible" },
-    { location: { origin: "https://gateway.test", search: options.search ?? "", hash: options.hash ?? "" }, matchMedia: options.matchMedia },
+    { location: { origin: "https://gateway.test", search: options.search ?? "", hash: options.hash ?? "" }, matchMedia: options.matchMedia, addEventListener() {}, removeEventListener() {} },
   );
   const harness = { states, effects, callbacks, refs, timers, redirects, tree: null, render() {
     stateCursor = 0; refCursor = 0;

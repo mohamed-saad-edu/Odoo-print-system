@@ -59,9 +59,11 @@ describe("overlay and job evidence contracts", () => {
     expect(ui).toContain('className={option.icon ? "hidden sm:inline" : "inline"}');
     expect(ui).toContain("inline-flex max-w-full items-center");
     expect(plans).toContain('grid gap-4 sm:grid-cols-2 lg:grid-cols-3');
-    expect(plans).toContain("a('preview')");
+    // WP-G: call-site unification — same catalogue key, now via t() instead of a().
+    expect(plans).toContain('t("v4.admin.preview")');
     expect(subscriptions).toContain('grid gap-4 lg:grid-cols-2');
-    expect(subscriptions).toMatch(/a\(['"]manage['"]\)/);
+    // WP-G: latent failure fixed together with the preview line above — same key via t().
+    expect(subscriptions).toContain('t("v4.admin.manage")');
     expect(subscriptions).toContain("subscriptionAction=revoke");
     expect(subscriptions).toContain('bdi dir="ltr"');
   });

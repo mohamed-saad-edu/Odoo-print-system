@@ -22,7 +22,8 @@ describe("production fixes contracts (2026-09)", () => {
     expect(terminalFailureUpdates.length).toBeGreaterThanOrEqual(2);
     expect(normalizedMaintenance).toContain("claim_token = NULL, claimed_at = NULL");
     expect(normalizedMaintenance).not.toContain("claim_token = NULL, claimed_at = NULL, updated_at = now()");
-    expect(normalizedMaintenance).toContain("status = 'failed'");
+    // v4 maintenance rewrite uses the unspaced form in the same UPDATEs.
+    expect(normalizedMaintenance).toContain("status='failed'");
     expect(normalizedMaintenance).toContain("error LIKE 'UNKNOWN_PARTIAL_DELIVERY:%'");
     expect(normalizedMaintenance).toContain("updated_at <= now() - interval '24 hours'");
     const normalizedDelivery = delivery.replace(/\r\n/g, "\n");
@@ -327,8 +328,9 @@ describe("2026-09-24 remediation contracts", () => {
     expect(source).toContain("listPrintJobHistory");
     expect(history).toContain("p0.tenant_id = h.tenant_id AND p0.lifecycle = 'active'");
     expect(history).toContain("a0.tenant_id = h.tenant_id AND a0.lifecycle = 'active'");
-    expect(history).toContain(`scopedWhere("j", input.tenantId)`);
-    expect(history).toContain(`scopedWhere("r", input.tenantId)`);
+    // v3: scopedWhere gained an explicit platformWide parameter (fail-closed).
+    expect(history).toContain(`scopedWhere("j", input.tenantId, input.platformWide)`);
+    expect(history).toContain(`scopedWhere("r", input.tenantId, input.platformWide)`);
     expect(source).not.toContain("SELECT id FROM printers WHERE lifecycle = 'active'");
     expect(source).not.toContain("SELECT id FROM agents WHERE lifecycle = 'active'");
     expect(source).not.toContain("updatedAt: new Date()");

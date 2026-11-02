@@ -3,7 +3,11 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { Button, Card, PageHeader } from "../../../components/ui";
-import { AdminStatus, adminJson, controlClass, useAdminText } from "../../../components/platform/ManualAdmin";
+import { AdminStatus, adminJson, controlClass } from "../../../components/platform/ManualAdmin";
+import { useI18n } from "../../../i18n/react";
+import type { MessageKey } from "../../../i18n/messages/en";
+import { useCallback } from "react";
+import { formatManualCalendarDate } from "../../../lib/manual-calendar-date";
 
 type Subscription = {
   tenantId: string;
@@ -20,7 +24,9 @@ type Subscription = {
 const PAGE_SIZE = 50;
 
 export default function Subscriptions() {
-  const { a, t, formatDate, formatNumber } = useAdminText();
+  const { t, locale, formatNumber } = useI18n();
+  // Contract dates use UTC calendar days, exactly as the previous helper did.
+  const formatDate = useCallback((value: Date | string | number | null | undefined) => formatManualCalendarDate(value, locale) ?? t("common.notAvailable"), [locale, t]);
   const [items, setItems] = useState<Subscription[]>([]);
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("all");
@@ -44,62 +50,62 @@ export default function Subscriptions() {
 
   const visible = items;
   return <div className="space-y-5">
-    <PageHeader variant="inline" title={a("subscriptions")} actions={
+    <PageHeader variant="inline" title={t("v4.admin.subscriptions")} actions={
       <div className="flex flex-wrap gap-2">
-        <Link className="rounded-lg border border-edge px-4 py-2 text-sm" href="/platform/plans">{a("editPlan")}</Link>
-        <Button onClick={() => { setLoading(true); setError(false); setTick(n => n + 1); }}>{a("refresh")}</Button>
+        <Link className="rounded-lg border border-edge px-4 py-2 text-sm" href="/platform/plans">{t("v4.admin.editPlan")}</Link>
+        <Button onClick={() => { setLoading(true); setError(false); setTick(n => n + 1); }}>{t("v4.admin.refresh")}</Button>
       </div>} />
     <div className="grid gap-3 sm:grid-cols-2">
-      <input className={controlClass} aria-label={a("search")} placeholder={a("search")} value={search}
+      <input className={controlClass} aria-label={t("v4.admin.search")} placeholder={t("v4.admin.search")} value={search}
         onChange={event => { setOffset(0); setHasMore(false); setLoading(true); setError(false); setSearch(event.target.value); }} />
-      <select className={controlClass} aria-label={a("status")} value={status}
+      <select className={controlClass} aria-label={t("v4.admin.status")} value={status}
         onChange={event => { setOffset(0); setHasMore(false); setLoading(true); setError(false); setStatus(event.target.value); }}>
         {["all", "active", "awaiting_activation", "expired", "suspended"].map(value =>
-          <option key={value} value={value}>{a(value)}</option>)}
+          <option key={value} value={value}>{t(`v4.admin.${value}` as MessageKey)}</option>)}
       </select>
     </div>
-    {error && <p role="alert" className="text-bad">{a("loadError")}</p>}
-    {loading ? <p role="status">{a("loading")}</p> : !error && visible.length === 0
-      ? <p className="rounded-xl border border-edge p-5 text-sm text-ink-3">{a("empty")}</p>
+    {error && <p role="alert" className="text-bad">{t("v4.admin.loadError")}</p>}
+    {loading ? <p role="status">{t("v4.admin.loading")}</p> : !error && visible.length === 0
+      ? <p className="rounded-xl border border-edge p-5 text-sm text-ink-3">{t("v4.admin.empty")}</p>
       : <div className="grid gap-4 lg:grid-cols-2">
         {visible.map(item => <Card key={item.tenantId} className="p-5">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div className="min-w-0">
               <h2 className="break-words text-lg font-semibold">{item.tenantName}</h2>
               <p className="mt-1 text-sm text-ink-3">
-                <bdi dir="auto">{item.planName}</bdi> · {a(item.term)} · {a(item.subscriptionType)}
+                <bdi dir="auto">{item.planName}</bdi> · {t(`v4.admin.${item.term}` as MessageKey)} · {t(`v4.admin.${item.subscriptionType}` as MessageKey)}
               </p>
             </div>
             <AdminStatus status={item.status} />
           </div>
           <dl className="my-5 grid grid-cols-2 gap-4 text-sm">
             <div>
-              <dt className="text-ink-3">{a("usedOfQuota")}</dt>
+              <dt className="text-ink-3">{t("v4.admin.usedOfQuota")}</dt>
               <dd className="mt-1 font-semibold tabular-nums">
-                <bdi dir="ltr">{formatNumber(item.used)} / {item.monthlyQuota === null ? a("unlimited") : formatNumber(item.monthlyQuota)}</bdi>
+                <bdi dir="ltr">{formatNumber(item.used)} / {item.monthlyQuota === null ? t("v4.admin.unlimited") : formatNumber(item.monthlyQuota)}</bdi>
               </dd>
             </div>
             <div>
-              <dt className="text-ink-3">{a("end")}</dt>
+              <dt className="text-ink-3">{t("v4.admin.end")}</dt>
               <dd className="mt-1 font-semibold tabular-nums">
-                {item.currentPeriodEnd ? <bdi dir="ltr">{formatDate(item.currentPeriodEnd)}</bdi> : a("notRecorded")}
+                {item.currentPeriodEnd ? <bdi dir="ltr">{formatDate(item.currentPeriodEnd)}</bdi> : t("v4.admin.notRecorded")}
               </dd>
             </div>
           </dl>
           <div className="flex flex-wrap items-center gap-4 border-t border-edge-subtle pt-4">
             <Link className="text-sm font-semibold text-brand underline-offset-4 hover:underline"
               href={"/platform/tenants/" + encodeURIComponent(item.tenantId) + "?tab=subscriptions"}>
-              {a("manage")}
+              {t("v4.admin.manage")}
             </Link>
             {item.status === "active" && <Link
               className="text-sm font-medium text-bad underline-offset-4 hover:underline"
               href={"/platform/tenants/" + encodeURIComponent(item.tenantId) + "?subscriptionAction=revoke"}>
-              {a("endSubscriptionNow")}
+              {t("v4.admin.endSubscriptionNow")}
             </Link>}
           </div>
         </Card>)}
       </div>}
-    {!loading && !error && (items.length > 0 || offset > 0) && <nav aria-label={a("subscriptions")} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-edge p-3">
+    {!loading && !error && (items.length > 0 || offset > 0) && <nav aria-label={t("v4.admin.subscriptions")} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-edge p-3">
       <Button type="button" variant="secondary" size="sm" disabled={offset === 0}
         onClick={() => { setLoading(true); setOffset(value => Math.max(0, value - PAGE_SIZE)); }}>
         {t("common.previousPage")}

@@ -205,6 +205,13 @@ func writeVerifiedPDF(ctx context.Context, pc config.PrinterConfig, data []byte,
 	if err := root.Link(staging, name); err != nil {
 		return nil, safePDFOutputError("publish without overwrite", err)
 	}
+	// A verification probe must never leave its published file behind: every
+	// post-Link failure below returns MarkUnknown without removing it, so a
+	// deferred probe cleanup runs on all of those paths. Real publications
+	// are deliberately untouched — the file is the delivery evidence.
+	if probe {
+		defer func() { _ = root.Remove(name) }()
+	}
 	// Once publication succeeds, any unproven late result is UNKNOWN. A
 	// subsequent job must never infer absence from an error or missing report.
 	publicationErr := func(message string) (*OutputEvidence, error) {

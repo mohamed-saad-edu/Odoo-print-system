@@ -131,11 +131,11 @@ describe("minimal, contextual subscription editor", () => {
     expect(host.textContent).not.toContain(request.id);
     press(locale, "preview");
     expect(input(locale, "reason")?.tagName).toBe("TEXTAREA");
-    expect(input(locale, "password")?.getAttribute("type")).toBe("password");
+    expect(input(locale, "password")).toBeNull();
     expect(host.textContent).toContain(labelText(locale, "activateRequested"));
   });
 
-  it.each(["en", "ar"] as const)("defers administrative reason and security confirmation until the final %s step", locale => {
+  it.each(["en", "ar"] as const)("defers the administrative reason until the final %s step", locale => {
     renderEditor(locale, null);
     expect(input(locale, "term")?.value).toBe("monthly");
     expect(input(locale, "end")).toBeNull();
@@ -146,7 +146,7 @@ describe("minimal, contextual subscription editor", () => {
     expect(input(locale, "end")?.getAttribute("type")).toBe("date");
     press(locale, "preview");
     expect(input(locale, "reason")).not.toBeNull();
-    expect(input(locale, "password")).not.toBeNull();
+    expect(input(locale, "password")).toBeNull();
     expect(input(locale, "status")).toBeNull();
   });
 
@@ -156,7 +156,7 @@ describe("minimal, contextual subscription editor", () => {
     press(locale, "suspend");
     expect(input(locale, "plan")).toBeNull();
     expect(input(locale, "reason")).not.toBeNull();
-    expect(input(locale, "password")).not.toBeNull();
+    expect(input(locale, "password")).toBeNull();
     expect(host.textContent).toContain(labelText(locale, "suspend"));
   });
 
@@ -239,7 +239,7 @@ describe("minimal, contextual subscription editor", () => {
     expect(host.textContent).toContain(labelText(locale,"revoke"));
     press(locale,"preview");
     expect(input(locale,"reason")).not.toBeNull();
-    expect(input(locale,"password")?.getAttribute("type")).toBe("password");
+    expect(input(locale,"password")).toBeNull();
     expect(host.textContent).toContain(labelText(locale,"endSubscriptionWarning"));
   });
 });

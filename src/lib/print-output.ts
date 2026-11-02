@@ -1,4 +1,5 @@
 import { derivePhysicalOutcome } from "./job-status";
+import { deriveSubmissionState } from "./submission-evidence";
 
 export interface FileOutputEvidence extends Record<string, unknown> {
   output_medium: "file";
@@ -21,8 +22,8 @@ export function sameFileOutputEvidence(a: unknown, b: unknown): boolean {
   const first = validateFileOutputEvidence(a), second = validateFileOutputEvidence(b);
   return Boolean(first && second && JSON.stringify(first) === JSON.stringify(second));
 }
-export function printOutputPresentation(row: { status: string; error?: string | null; outputMedium?: string | null; outputEvidence?: unknown }) {
-  if (row.outputMedium !== "file") return { outputMedium: "physical" as const, physicalOutcome: derivePhysicalOutcome(row.status, row.error), outputEvidence: null };
+export function printOutputPresentation(row: { status: string; error?: string | null; outputMedium?: string | null; outputEvidence?: unknown; submissionEvidence?: unknown }) {
+  if (row.outputMedium !== "file") return { outputMedium: "physical" as const, physicalOutcome: derivePhysicalOutcome(row.status, row.error), outputEvidence: null, submissionState: deriveSubmissionState(row.status, row.outputMedium, row.submissionEvidence) };
   const evidence = row.status === "success" ? validateFileOutputEvidence(row.outputEvidence) : null;
   return { outputMedium: "file" as const, physicalOutcome: "unknown" as const, outputEvidence: evidence,
     outputOutcome: evidence ? "file_created" as const

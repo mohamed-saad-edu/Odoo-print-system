@@ -42,7 +42,7 @@ describe.skipIf(!hasTestDatabase)("account-wide own-session inventory and author
     const body = await response.json();
     expect(new Set(body.sessions.map((row: { id: string }) => row.id))).toEqual(new Set([own.familyId, otherWorkspace.familyId, manager.familyId, platform.familyId]));
     expect(body.sessions.find((row: { id: string }) => row.id === otherWorkspace.familyId)).toMatchObject({ tenantId: "account-b", tenantName: "Workspace B", kind: "customer", current: false });
-    expect(body.sessions.find((row: { id: string }) => row.id === platform.familyId)).toMatchObject({ tenantId: null, kind: "platform", requiresPlatformStepUp: true });
+    expect(body.sessions.find((row: { id: string }) => row.id === platform.familyId)).toMatchObject({ tenantId: null, kind: "platform" });
     const text = JSON.stringify(body);
     for (const secret of [own.accessToken, own.refreshToken, foreign.familyId, foreign.refreshToken, "passwordHash", "credentialVersion", "tokenHash", "public_key", "secret_encrypted"]) expect(text).not.toContain(secret);
     expect(body.nextCursor).toBeNull();
@@ -50,34 +50,29 @@ describe.skipIf(!hasTestDatabase)("account-wide own-session inventory and author
 
   it("revokes an owned family in another workspace while rejecting a different user's target", async () => {
     const own = await pair(), target = await pair("account-b"), foreign = await pair("account-a", "account-v");
-    const denied = await POST(request(own.accessToken, { action: "revoke", id: foreign.familyId, password }));
+    const denied = await POST(request(own.accessToken, { action: "revoke", id: foreign.familyId }));
     expect(denied.status).toBe(404); expect(denied.headers.getSetCookie()).toEqual([]);
-    const response = await POST(request(own.accessToken, { action: "revoke", id: target.familyId, password }));
+    const response = await POST(request(own.accessToken, { action: "revoke", id: target.familyId }));
     expect(response.status).toBe(200); expect((await response.json()).signedOut).toBe(false);
     expect(await active(target.familyId)).toBe(false); expect(await active(foreign.familyId)).toBe(true); expect(await active(own.familyId)).toBe(true);
-    const next = response.headers.getSetCookie().find(value => value.startsWith("cust_session="))!.split(";")[0].slice("cust_session=".length);
-    expect(verifyAccessTokenSignature(next, "customer")?.familyId).toBe(own.familyId);
+    // No rotation: the caller's own access token stays valid.
+    expect(response.headers.getSetCookie()).toEqual([]);
+    expect(verifyAccessTokenSignature(own.accessToken, "customer")?.familyId).toBe(own.familyId);
   });
 
-  it("requires the same account's fresh platform password confirmation before an atomic all-audience revocation", async () => {
+  it("revokes all audiences with the workspace session alone, no platform confirmation", async () => {
     const own = await pair(), workspace = await pair("account-b"), platform = await createVerifiedPlatformPair("account-u", "account-u@example.test");
-    const body = { action: "revoke_others", password };
-    const denied = await POST(request(own.accessToken, body));
-    expect(denied.status).toBe(403); expect((await denied.json()).code).toBe("PLATFORM_SESSION_STEP_UP_REQUIRED");
-    for (const family of [own.familyId, workspace.familyId, platform.familyId]) expect(await active(family)).toBe(true);
+    // No step-up: no platform token is presented, and the platform proof is
+    // deliberately aged past five minutes — revocation still succeeds.
     await pool().query("UPDATE platform_session_security SET password_verified_at=clock_timestamp()-interval '6 minutes' WHERE family_id=$1", [platform.familyId]);
-    expect((await POST(request(own.accessToken, body, platform.accessToken))).status).toBe(403);
-    for (const family of [own.familyId, workspace.familyId, platform.familyId]) expect(await active(family)).toBe(true);
-    const freshPlatform = await createVerifiedPlatformPair("account-u", "account-u@example.test");
-    const allowed = await POST(request(own.accessToken, body, freshPlatform.accessToken));
+    const allowed = await POST(request(own.accessToken, { action: "revoke_others" }));
     expect(allowed.status).toBe(200);
     expect(await active(own.familyId)).toBe(true);
-    for (const family of [workspace.familyId, platform.familyId, freshPlatform.familyId]) expect(await active(family)).toBe(false);
+    for (const family of [workspace.familyId, platform.familyId]) expect(await active(family)).toBe(false);
   });
-
   it("ends every owned workspace family on revoke_all without touching another account", async () => {
     const own = await pair(), second = await pair("account-b"), manager = await pair("account-b", "account-u", "manager"), foreign = await pair("account-a", "account-v");
-    const response = await POST(request(own.accessToken, { action: "revoke_all", password }));
+    const response = await POST(request(own.accessToken, { action: "revoke_all" }));
     expect(response.status).toBe(200); expect(await response.json()).toMatchObject({ signedOut: true, revoked: 3 });
     for (const family of [own.familyId, second.familyId, manager.familyId]) expect(await active(family)).toBe(false);
     expect(await active(foreign.familyId)).toBe(true);
@@ -95,11 +90,11 @@ describe.skipIf(!hasTestDatabase)("account-wide own-session inventory and author
     expect(await active(foreign.familyId)).toBe(true);
   });
 
-  it("password-confirmed session management preserves the absolute deadline", async () => {
+  it("session management without password preserves the absolute deadline", async () => {
     const own = await pair(), other = await pair("account-b");
     await pool().query("UPDATE workspace_session_security SET created_at=clock_timestamp()-interval '10 minutes',password_verified_at=clock_timestamp()-interval '10 minutes' WHERE family_id=$1", [own.familyId]);
     const before = (await pool().query("SELECT expires_at FROM workspace_session_security WHERE family_id=$1", [own.familyId])).rows[0];
-    expect((await POST(request(own.accessToken, { action: "revoke", id: other.familyId, password }))).status).toBe(200);
+    expect((await POST(request(own.accessToken, { action: "revoke", id: other.familyId }))).status).toBe(200);
     expect((await pool().query("SELECT expires_at FROM workspace_session_security WHERE family_id=$1", [own.familyId])).rows[0]).toEqual(before);
   });
 

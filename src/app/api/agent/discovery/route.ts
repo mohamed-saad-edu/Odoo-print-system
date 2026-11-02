@@ -12,8 +12,30 @@ import { requireActiveTenantInTransaction } from "../../../../lib/tenant-guard";
 import { expireStaleAgentDiscovery } from "../../../../lib/discovery-session-expiry";
 import { isVirtualPrinterRecord } from "../../../../lib/printer-virtual";
 import { isExactPrinterId } from "../../../../lib/exact-printer-id";
+import { canonicalize } from "../../../../lib/canonicalize";
 
 export const dynamic = "force-dynamic";
+
+// v3: discovery ingestion stored the agent-reported URI verbatim (trim only),
+// so a credential-bearing IPP URI (ipp://user:pass@host/...) was readable
+// through the platform data explorer (discovered_devices.uri is explorable
+// scalar text). Store the credential-free authority form instead. Unparseable
+// values are kept as-is (they fail later validation, never silently altered
+// into a different endpoint).
+function stripDiscoveryUriCredentials(uri: string | undefined | null): string | null {
+  if (uri == null) return null;
+  const trimmed = uri.trim();
+  if (!trimmed) return trimmed;
+  try {
+    const parsed = new URL(trimmed);
+    if (!parsed.username && !parsed.password) return trimmed;
+    parsed.username = "";
+    parsed.password = "";
+    return parsed.toString();
+  } catch {
+    return trimmed;
+  }
+}
 const MAX_DISCOVERY_BODY_BYTES = 2 * 1024 * 1024;
 const MAX_DISCOVERY_DEVICES = 1000;
 const DISCOVERY_INSERT_BATCH = 250;
@@ -154,7 +176,7 @@ export async function POST(req: Request) {
     // A missing local ID is only recoverable from an exact queue, URI,
     // host:port transport or serial-bearing hardware observation.
     const spooler = d.spoolerName?.trim();
-    const uri = d.uri?.trim();
+    const uri = stripDiscoveryUriCredentials(d.uri) ?? undefined;
     const serial = d.serialNumber?.trim();
     const host = d.ipAddress?.trim() || d.hostname?.trim();
     if (!spooler && !uri && !serial && !(host && d.port)) return null;
@@ -190,7 +212,7 @@ export async function POST(req: Request) {
     ipAddress: d.ipAddress ?? null,
     hostname: d.hostname ?? null,
     port: d.port ?? null,
-    uri: d.uri ?? null,
+    uri: stripDiscoveryUriCredentials(d.uri),
     deviceName: d.deviceName ?? null,
     spoolerName: d.spoolerName ?? null,
     deviceClass: d.deviceClass ?? "unknown",
@@ -244,8 +266,14 @@ export async function POST(req: Request) {
   // A page's content must be the same across retries. A page index alone
   // cannot distinguish a lost HTTP ACK from an Agent restart/re-scan that
   // reordered devices while using the same discovery session id.
+  // v3: JSON key order is insertion order, so a semantically identical
+  // chunk retry serialized with different key order previously produced a
+  // different digest and was falsely rejected as a changed replay. Canonical
+  // (sorted-key) serialization makes identical content hash identically.
+  // Note: digests stored by an older Gateway for in-flight sessions will not
+  // match once; affected retries fail with 409 and a fresh scan recovers.
   const chunkDigest = chunkIndexValue !== undefined
-    ? createHash("sha256").update(JSON.stringify(bodyRecord)).digest("hex")
+    ? createHash("sha256").update(JSON.stringify(canonicalize(bodyRecord))).digest("hex")
     : null;
   const result = await db.transaction(async (tx) => {
     await requireActiveTenantInTransaction(tx, agent.tenantId);

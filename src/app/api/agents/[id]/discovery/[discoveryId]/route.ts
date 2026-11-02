@@ -6,7 +6,7 @@ import { requireManagerPermission } from "../../../../../../lib/authorization";
 import { requireManagerActorInTransaction, ManagerMutationAuthorityChangedError } from "../../../../../../lib/manager-mutation-authorization";
 import { requireActiveTenantInTransaction, TenantSuspendedError, TenantDeletedError } from "../../../../../../lib/tenant-guard";
 import { logError } from "../../../../../../lib/log";
-import { eq, and, sql } from "drizzle-orm";
+import { eq, and, sql, asc, count } from "drizzle-orm";
 import { discoveryObservationFingerprint } from "../../../../../../lib/discovery-observation";
 import { expireStaleAgentDiscovery } from "../../../../../../lib/discovery-session-expiry";
 
@@ -36,12 +36,24 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
           eq(discoverySessions.agentId, agentId), eq(discoverySessions.tenantId, claims.tenantId)),
       });
       if (!session) return null;
-      // The same Agent-scoped FK/identity check guards both session and rows.
-      const devices = await tx.query.discoveredDevices.findMany({
+      // v6-perf: discovery detail was the one genuinely uncapped list read
+      // (a large LAN scan can hold thousands of devices). Cap the returned
+      // page at 1000 rows in deterministic order and report the total, so
+      // callers never silently see a partial inventory as the whole scan.
+      // Per-device provision stays id-addressed, so capped-out devices remain
+      // provisionable. 1000 matches the fleet-list default cap.
+      const deviceRows = await tx.query.discoveredDevices.findMany({
         where: and(eq(discoveredDevices.discoveryId, discoveryId),
           eq(discoveredDevices.agentId, agentId), eq(discoveredDevices.tenantId, claims.tenantId)),
+        orderBy: [asc(discoveredDevices.createdAt), asc(discoveredDevices.id)],
+        limit: 1001,
       });
-      return { session, devices };
+      const [deviceTotal] = await tx.select({ c: count() }).from(discoveredDevices)
+        .where(and(eq(discoveredDevices.discoveryId, discoveryId),
+          eq(discoveredDevices.agentId, agentId), eq(discoveredDevices.tenantId, claims.tenantId)));
+      const truncated = deviceRows.length > 1000;
+      const devices = truncated ? deviceRows.slice(0, 1000) : deviceRows;
+      return { session, devices, totalDevices: deviceTotal?.c ?? devices.length, truncated };
     });
   } catch (error) {
     if (error instanceof TenantSuspendedError || error instanceof TenantDeletedError)
@@ -57,5 +69,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
     devices: snapshot.devices.map(device => ({
       ...device, observationFingerprint: discoveryObservationFingerprint(device),
     })),
+    totalDevices: snapshot.totalDevices,
+    truncated: snapshot.truncated,
   }, { headers: PRIVATE_HEADERS });
 }

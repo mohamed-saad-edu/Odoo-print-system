@@ -9,7 +9,8 @@ import {
 import { clientIpFrom } from "../../../../../lib/auth-rate-limit";
 import {
   getRefreshTokenFromRequest,
-  rotateRefreshToken,
+  refreshFailureCode,
+  rotateRefreshTokenDetailed,
 } from "../../../../../lib/session-tokens";
 import { logError } from "../../../../../lib/log";
 import { getServerLocale } from "../../../../../i18n/server";
@@ -17,7 +18,7 @@ import { getServerLocale } from "../../../../../i18n/server";
 export async function POST(req: Request) {
   const token = getRefreshTokenFromRequest(req, "platform");
   if (!token) {
-    const response = NextResponse.json({ error: "Refresh authentication required" }, { status: 401 });
+    const response = NextResponse.json({ error: "Refresh authentication required", code: "REFRESH_TOKEN_REQUIRED" }, { status: 401 });
     response.headers.set("Set-Cookie", clearPlatformCookieHeader());
     response.headers.append("Set-Cookie", clearPlatformRefreshCookieHeader());
     response.headers.set("Cache-Control", "no-store");
@@ -25,9 +26,9 @@ export async function POST(req: Request) {
     return response;
   }
 
-  let outcome: Awaited<ReturnType<typeof rotateRefreshToken>>;
+  let outcome: Awaited<ReturnType<typeof rotateRefreshTokenDetailed>>;
   try {
-    outcome = await rotateRefreshToken("platform", token, {
+    outcome = await rotateRefreshTokenDetailed("platform", token, {
       ipAddress: clientIpFrom(req),
       userAgent: req.headers.get("user-agent"),
       locale: await getServerLocale(),
@@ -38,7 +39,11 @@ export async function POST(req: Request) {
   }
 
   if (outcome.status !== "rotated") {
-    const response = NextResponse.json({ error: "Refresh token is invalid or expired" }, { status: 401 });
+    const code = refreshFailureCode(outcome);
+    const response = NextResponse.json({
+      error: code === "SESSION_IDLE_EXPIRED" ? "Session expired due to inactivity" : "Refresh token is invalid or expired",
+      code,
+    }, { status: 401 });
     response.headers.set("Set-Cookie", clearPlatformCookieHeader());
     response.headers.append("Set-Cookie", clearPlatformRefreshCookieHeader());
     response.headers.set("Cache-Control", "no-store");
