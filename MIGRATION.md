@@ -79,8 +79,13 @@ This runs `scripts/db-migrate.ts` which applies all pending migrations from `dri
 | 0104 | 1 | Drop legacy discovery endpoint uniqueness |
 | 0105 | 1 | Scope runtime-state constraints |
 | 0106 | 1 | Restore discovery replica identity |
+| 0107 | 1 | Invalidate pre-pepper pending Agent pairing codes; require peppered pairing hashes |
+| 0108 | 1 | Make new subscription revocations terminal until a new contract is issued |
+| 0109 | 1 | Add distinct durable `canceled` print-job and receipt state |
+| 0110 | 1 | Retain bounded spooler/IPP submission evidence on jobs and receipts |
+| 0111 | 1 | Add evidence-based indexes for receipts, discovery history and subscription requests |
 
-**Total**: 107 forward-only SQL migrations (0000–0106), plus retained hash-versioned forward repairs in `scripts/db-migrate.ts`. Apply migration `0103_retained_print_attempt_evidence.sql` with prior Gateway writers stopped **before** deploying a Gateway version that reads or writes the new receipt evidence columns; never apply its SQL by hand without the release migrator.
+**Total**: 112 forward-only SQL migrations (0000–0111), plus retained hash-versioned forward repairs in `scripts/db-migrate.ts`. Apply migration `0103_retained_print_attempt_evidence.sql` with prior Gateway writers stopped **before** deploying a Gateway version that reads or writes the new receipt evidence columns; never apply its SQL by hand without the release migrator.
 
 Apply all migrations through `0094` before starting V3, with older Gateway instances stopped. Historical `0090` and `0092` remain in the journal so existing content hashes and fresh replay remain valid. V3 uses email/password login and the existing production `__Host-` access/refresh cookies. Migration `0094` does not convert stored configuration into live printer proof: existing registrations and historical queued jobs without an admitted binding remain ineligible for new execution. Deploy the matching Agent, obtain a fresh verified inventory, and reconcile retained legacy jobs explicitly. Terminal history remains available for exact result replay. See the V3 upgrade procedure below and `SECURITY.md`.
 
