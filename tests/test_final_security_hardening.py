@@ -530,7 +530,7 @@ def test_odoo_force_reprint_includes_failed_unknown_outcomes():
     model = read("odoo_addons/print_gateway/models/print_job.py")
     view = read("odoo_addons/print_gateway/views/print_job_views.xml")
     assert 'row.status in ("partial", "unknown") or (row.status == "failed" and row.physical_outcome == "unknown")' in model
-    assert 'invisible="status not in (\'partial\', \'unknown\', \'failed\') or (status == \'failed\' and physical_outcome != \'unknown\')"' in view
+    assert 'invisible="status not in (\'partial\', \'unknown\', \'failed\', \'canceled\') or (status == \'failed\' and physical_outcome != \'unknown\') or (status == \'canceled\' and physical_outcome != \'unknown\')"' in view
 
 
 
