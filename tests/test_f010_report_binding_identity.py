@@ -39,6 +39,12 @@ def production_methods(file, names):
           'REPORT_DOCUMENT_TYPES': {'stock.picking': 'delivery', 'pos.order': 'receipt', 'account.move': 'invoice'},
           'datetime': datetime, 'db_now_utc': lambda cr: datetime.datetime(2026, 10, 9), '_logger': logging.getLogger('test-f010'),
           'time': time, 'uuid': uuid, 'requests': requests, 'json': json, 'hashlib': hashlib}
+    # dispatch_report_action uses a module-level security allowlist helper.
+    # The AST harness extracts class methods, so load that real helper into the
+    # isolated namespace rather than replacing its policy with a test stub.
+    for helper in tree.body:
+        if isinstance(helper, ast.FunctionDef) and helper.name == '_sanitize_dispatch_context':
+            exec(compile(ast.Module(body=[helper], type_ignores=[]), str(path), 'exec'), ns)
     for node in tree.body:
         if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id == 'MAX_INVENTORY_RESPONSE_BYTES' for target in node.targets):
             exec(compile(ast.Module(body=[node], type_ignores=[]), str(path), 'exec'), ns)
