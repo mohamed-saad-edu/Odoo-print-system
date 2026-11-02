@@ -187,6 +187,12 @@ func TestManualPrinterTypes(t *testing.T) {
 			// So we expect no error for registry
 			t.Fatalf("manual %s failed: %v", tc.ConnectionType, err)
 		}
+		// A named Windows spooler factory opens the real local queue and must fail closed
+		// when it is absent. Hosted Windows runners do not provision this synthetic queue;
+		// registry admission is covered above and real queue opening is an OS integration.
+		if tc.ConnectionType == "spooler" && runtime.GOOS == "windows" {
+			continue
+		}
 		// Verify factory behavior - now all types should create printer (usb via direct USB, ipp via IPP client)
 		_, err := New(pc)
 		switch tc.ConnectionType {
