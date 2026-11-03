@@ -155,6 +155,12 @@ class PrintGatewayBinding(models.Model):
     printer_id = fields.Char(
         string="Gateway Runtime Printer", required=True, index=True, copy=False,
     )
+    printer_name = fields.Char(
+        string="Gateway Printer Name", index=True,
+        help="Human-readable printer name from the Gateway, set automatically "
+             "when a printer is picked. The technical identity stays in the "
+             "Gateway Runtime Printer field and remains the routing key.",
+    )
     printer_protocol = fields.Selection([
         ("escpos", "ESC/POS"),
         ("zpl", "Zebra ZPL-II"),
@@ -306,16 +312,34 @@ class PrintGatewayBinding(models.Model):
             else:
                 record.document_type = False
 
-    @api.depends("company_id", "branch_id", "destination_ref", "document_type", "runtime_agent_id", "printer_id")
+    @api.depends("company_id", "branch_id", "destination_ref", "document_type", "printer_id", "printer_name")
     def _compute_name(self):
         for record in self:
             record.name = record._formatted_binding_name()
 
-    @api.depends("name", "company_id", "branch_id", "destination_ref", "document_type", "runtime_agent_id", "printer_id")
+    @api.depends("name", "company_id", "branch_id", "destination_ref", "document_type", "printer_id", "printer_name")
     @api.depends_context("lang")
     def _compute_display_name(self):
         for record in self:
             record.display_name = record._formatted_binding_name(localized=True)
+
+    def _printer_display_label(self):
+        """Human-readable printer label for display names.
+
+        Prefers the cached Gateway printer name. When no name was ever
+        picked, falls back to a readable label plus only the last 4
+        characters of the identity — never the full opaque identity and
+        never a leading truncated hash. The full identity stays visible
+        in the Printer Identity column/field for support.
+        """
+        name = (self.printer_name or "").strip()
+        if name:
+            return name
+        raw = (self.printer_id or "").strip()
+        if raw:
+            suffix = raw[-4:] if len(raw) > 4 else raw
+            return "%s …%s" % (_("Unnamed printer"), suffix)
+        return _("Printer")
 
     def _formatted_binding_name(self, *, localized=False):
         self.ensure_one()
@@ -327,9 +351,13 @@ class PrintGatewayBinding(models.Model):
                 "order": _("Order"), "invoice": _("Invoice"), "delivery": _("Delivery"),
                 "purchase_order": _("Purchase Order"), "receipt": _("Receipt"), "label": _("Label"),
             }.get(self.document_type, document)
-        return "%s / %s / %s → %s / %s" % (
-            scope or _("Odoo Context"), destination, document,
-            self.runtime_agent_id or _("Agent"), self.printer_id or _("Printer"),
+        # Human-first order: scope / document / destination -> printer name.
+        # The runtime agent id is deliberately NOT part of the display name:
+        # it is as opaque as the printer identity, and it stays visible in
+        # the list column and the form field.
+        return "%s / %s / %s → %s" % (
+            scope or _("Odoo Context"), document, destination,
+            self._printer_display_label(),
         )
 
     @api.onchange("destination_type")

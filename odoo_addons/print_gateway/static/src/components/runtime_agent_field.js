@@ -208,6 +208,11 @@ export class RuntimeAgentField extends Component {
         if (this.props.record?.fields?.printer_id) {
             updateData.printer_id = false;
         }
+        // The cached printer name belongs to the old Agent's printer; a
+        // stale name must not survive alongside the cleared identity.
+        if (this.props.record?.fields?.printer_name) {
+            updateData.printer_name = false;
+        }
         this.props.record.update(updateData);
     }
 

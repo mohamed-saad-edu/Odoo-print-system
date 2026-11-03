@@ -23,7 +23,9 @@ export class RuntimePrinterField extends Component {
     static template = xml`
         <div class="o_field_widget o_field_runtime_printer">
             <t t-if="props.readonly">
-                <span t-esc="props.record.data[props.name] || ''"/>
+                <!-- Readonly shows the human printer name when the picker
+                     saved one; the opaque identity is never the only label. -->
+                <span t-esc="props.record.data.printer_name || props.record.data[props.name] || ''"/>
             </t>
             <t t-else="">
                 <select class="o_input" t-att-aria-label="labels.printer" t-att-value="props.record.data[props.name] || ''" t-att-disabled="state.loading || !state.agentId" t-att-aria-invalid="state.error ? 'true' : undefined" t-att-aria-describedby="state.error ? errorId : undefined" t-on-change="onChange">
@@ -271,6 +273,12 @@ export class RuntimePrinterField extends Component {
                 this.retryLoad();
                 return;
             }
+            // Save the Gateway printer's human name alongside its opaque
+            // identity, so display names never have to show the raw hash.
+            // Clearing (empty selection) clears the name as well, below.
+            if (this.props.record?.fields?.printer_name) {
+                updateData.printer_name = String(found.name || "").trim() || false;
+            }
             if (found && this.props.record?.fields?.printer_protocol) {
                 const protocol = String(found.protocol || "").trim().toLowerCase();
                 const connectionType = String(found.connectionType || "").trim().toLowerCase();
@@ -292,6 +300,9 @@ export class RuntimePrinterField extends Component {
                 // cannot survive a new selection.
                 updateData.printer_protocol = declared;
             }
+        }
+        if (!selectedId && this.props.record?.fields?.printer_name) {
+            updateData.printer_name = false;
         }
         this.props.record.update(updateData);
     }
@@ -325,6 +336,7 @@ if (!registry.category("fields").contains("gateway_runtime_printer")) {
             { name: "destination_report_id", type: "many2one" },
             { name: "document_type", type: "char" },
             { name: "printer_protocol", type: "selection" },
+            { name: "printer_name", type: "char" },
         ],
     });
 }
