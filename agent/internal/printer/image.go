@@ -62,8 +62,14 @@ func jpegToESCPOS(data []byte, sliceHeight, maxWidth int) ([]byte, error) {
 
 	// Never exceed the printer's declared raster width. This is deliberately
 	// capability-driven rather than inferred from the input image dimensions.
+	// Downscaling uses area averaging (resizeArea), not point sampling:
+	// a thin stroke that covers part of a destination pixel contributes
+	// its coverage to that pixel instead of vanishing or doubling when
+	// the scale ratio is not an integer (WP7 measured: 1000->576 px,
+	// 18293 disagreements with nearest vs 4142 with area averaging
+	// against the same ideal fixture, threshold 180 in both cases).
 	if img.Bounds().Dx() > maxWidth {
-		img = resizeNearest(img, maxWidth)
+		img = resizeArea(img, maxWidth)
 	}
 
 	w := img.Bounds().Dx()
@@ -95,7 +101,16 @@ func jpegToESCPOS(data []byte, sliceHeight, maxWidth int) ([]byte, error) {
 					r := uint32(rgbaImg.Pix[pixIdx])
 					g := uint32(rgbaImg.Pix[pixIdx+1])
 					b := uint32(rgbaImg.Pix[pixIdx+2])
-					// Fast integer ITU-R BT.601 luma
+					// Fast integer ITU-R BT.601 luma. The fixed <180 threshold
+					// is deliberate and WP7-measured, not a placeholder: on an
+					// anti-aliased receipt fixture it kept every >=~30%-coverage
+					// stroke (0 disagreements ex-gray-patch at JPEG q90/95/100),
+					// while Otsu was unstable across qualities (3338/2/56
+					// disagreements) and Floyd-Steinberg error diffusion added
+					// ~5.5k disagreements of edge speckle and dither noise.
+					// Thermal raster is 1-bit by nature; the goal is the best
+					// 1-bit rendering, and a clean threshold preserves QR
+					// module geometry better than dithering does.
 					luma := uint8((299*r + 587*g + 114*b) / 1000)
 					if luma < 180 {
 						bandRaster[bandOffset+x/8] |= 0x80 >> uint(x%8)
@@ -141,18 +156,58 @@ func decodeJPEGConfig(data []byte) (image.Config, error) {
 	return cfg, nil
 }
 
-func resizeNearest(src image.Image, width int) image.Image {
+// resizeArea downscales src to width by exact box (area) averaging: each
+// destination pixel is the coverage-weighted mean of the source pixels it
+// covers. Integer ratios are exact (every weight is 1); fractional ratios
+// distribute each source pixel's ink across the destination pixels it
+// overlaps, so a 1-pixel stroke survives as a gray pixel instead of being
+// point-sampled away. The result is returned as opaque RGBA with R=G=B=
+// averaged luma so the caller's RGBA fast path still applies and the
+// downstream fixed-threshold conversion is unchanged. Deterministic: a
+// pure function of the input pixels, no time or randomness.
+func resizeArea(src image.Image, width int) image.Image {
 	if width <= 0 || src.Bounds().Dx() <= width {
 		return src
 	}
-	sw, sh := src.Bounds().Dx(), src.Bounds().Dy()
+	bounds := src.Bounds()
+	sw, sh := bounds.Dx(), bounds.Dy()
 	h := max(1, int(math.Round(float64(sh)*float64(width)/float64(sw))))
+	// Average luma once; the downstream conversion thresholds luma only,
+	// and averaging luma equals averaging the channels for the bilevel and
+	// near-gray receipt content this path carries.
+	gray := image.NewGray(image.Rect(0, 0, sw, sh))
+	for y := 0; y < sh; y++ {
+		for x := 0; x < sw; x++ {
+			gray.SetGray(x, y, color.Gray{Y: grayscale(src.At(bounds.Min.X+x, bounds.Min.Y+y))})
+		}
+	}
 	dst := image.NewRGBA(image.Rect(0, 0, width, h))
 	for y := 0; y < h; y++ {
-		sy := src.Bounds().Min.Y + y*sh/h
+		y0 := float64(y) * float64(sh) / float64(h)
+		y1 := float64(y+1) * float64(sh) / float64(h)
 		for x := 0; x < width; x++ {
-			sx := src.Bounds().Min.X + x*sw/width
-			dst.Set(x, y, src.At(sx, sy))
+			x0 := float64(x) * float64(sw) / float64(width)
+			x1 := float64(x+1) * float64(sw) / float64(width)
+			var sum, wsum float64
+			for sy := int(y0); sy < int(math.Ceil(y1)) && sy < sh; sy++ {
+				wy := math.Min(y1, float64(sy+1)) - math.Max(y0, float64(sy))
+				if wy <= 0 {
+					continue
+				}
+				for sx := int(x0); sx < int(math.Ceil(x1)) && sx < sw; sx++ {
+					wx := math.Min(x1, float64(sx+1)) - math.Max(x0, float64(sx))
+					if wx <= 0 {
+						continue
+					}
+					sum += float64(gray.GrayAt(sx, sy).Y) * wx * wy
+					wsum += wx * wy
+				}
+			}
+			v := uint8(255)
+			if wsum > 0 {
+				v = uint8(math.Round(sum / wsum))
+			}
+			dst.Set(x, y, color.RGBA{R: v, G: v, B: v, A: 255})
 		}
 	}
 	return dst

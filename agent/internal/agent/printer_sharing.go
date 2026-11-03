@@ -30,6 +30,50 @@ func (a *Agent) loadLocalPrinterSharing() localPrinterSharingSnapshot {
 		return snapshot
 	}
 	snapshot.known, snapshot.err = printer.LocalSharingBindings(cfg, a.registryPath)
+	if snapshot.err == nil {
+		// WP3 trap fix: a spooler printer admitted into this agent's
+		// runtime inventory by local registration (addPrinter) is local
+		// evidence even when its registry persistence lagged or a
+		// discovery sweep was incomplete — without it, one unrelated
+		// deny privatised every such printer at the next heartbeat, and
+		// the heartbeat row silently vanished instead of flipping by
+		// an explicit unshare.
+		//
+		// Narrow on purpose: a runtime config is added ONLY when it is
+		// neither Gateway-owned nor tracked as desired state. A desired
+		// row (or a merely constructed runtime backend for one) is cloud
+		// execution intent, never independent local permission — the
+		// standing test TestAgentSharingUnknownCloudNativeDestination…
+		// proves that boundary — so such a destination still needs
+		// explicit local config/registry registration (which the known
+		// list above already carries) before an unrelated deny stops
+		// hiding it. The two snapshots are taken without nesting locks.
+		desiredIDs := make(map[string]struct{})
+		a.desiredStateMu.Lock()
+		for id := range a.desiredStates {
+			desiredIDs[id] = struct{}{}
+		}
+		a.desiredStateMu.Unlock()
+		seen := make(map[string]struct{}, len(snapshot.known))
+		for _, known := range snapshot.known {
+			seen[known.ID] = struct{}{}
+		}
+		a.printersMu.RLock()
+		for id, pc := range a.printerConfigs {
+			if _, gatewayManaged := a.gatewayOwned[id]; gatewayManaged {
+				continue
+			}
+			if _, desired := desiredIDs[id]; desired {
+				continue
+			}
+			if _, duplicate := seen[id]; duplicate {
+				continue
+			}
+			seen[id] = struct{}{}
+			snapshot.known = append(snapshot.known, pc)
+		}
+		a.printersMu.RUnlock()
+	}
 	snapshot.view = policy.Resolve(snapshot.known)
 	if snapshot.err == nil {
 		snapshot.err = snapshot.view.Err()

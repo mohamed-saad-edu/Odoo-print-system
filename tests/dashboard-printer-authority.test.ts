@@ -128,7 +128,9 @@ describe("dashboard printer action authority", () => {
       const claims: ManagerClaims = { sub: "manager", tenantId: "test-workspace", role, jti: "audit", iat: 1, exp: 2 };
       expect(hasManagerPermission(claims, "agents.disable")).toBe(hasManagerPermission(claims, "agents.retire"));
     }
-    const page = readFileSync("src/app/dashboard/page.tsx", "utf8");
+    const page = readFileSync("src/app/dashboard/dashboard-page-content.tsx", "utf8");
+    const wrapper = readFileSync("src/app/dashboard/page.tsx", "utf8");
+    expect(wrapper).toContain("DashboardPageContent");
     const client = readFileSync("src/app/dashboard/dashboard-client.tsx", "utf8");
     expect(page).toContain('agentsPair: hasManagerPermission(claims, "agents.pair")');
     expect(client).toMatch(/canMutate\.agentsLifecycle \? \[\{\s*key: "delete"/);
@@ -258,7 +260,11 @@ describe("workspace dashboard billing usage follows the owner-only read permissi
     });
   });
   it("projects the owner-only billing.read guard on the server", () => {
-    const page = readFileSync("src/app/dashboard/page.tsx", "utf8");
+    // WP5: see dashboard-current-authority — implementation moved to the
+    // shared Operations loader; the /dashboard wrapper renders it.
+    const page = readFileSync("src/app/dashboard/dashboard-page-content.tsx", "utf8");
+    const wrapper = readFileSync("src/app/dashboard/page.tsx", "utf8");
+    expect(wrapper).toContain("DashboardPageContent");
     expect(page).toContain('canReadBillingUsage={hasManagerPermission(claims, "billing.read")}');
     const route = readFileSync("src/app/api/billing/usage/route.ts", "utf8");
     expect(route).toContain('requireManagerPermission(manager, "billing.read")');

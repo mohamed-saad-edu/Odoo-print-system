@@ -82,7 +82,7 @@ export default function Requests() {
             return <Card key={request.id} className="p-5">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div className="min-w-0">
-                  <h2 className="text-lg font-semibold">{request.tenantName}</h2>
+                  <h2 className="text-lg font-medium">{request.tenantName}</h2>
                   <p className="mt-1 break-all font-mono text-xs text-ink-3" dir="ltr">{request.id}</p>
                 </div>
                 <AdminStatus status={request.status} />

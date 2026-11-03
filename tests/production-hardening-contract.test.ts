@@ -243,7 +243,11 @@ describe("production hardening contracts", () => {
   });
 
   it("keeps tenant scoping fail-closed in manager dashboard and agent lifecycle routes", () => {
-    const dashboard = read("src/app/dashboard/page.tsx");
+    // WP5: WP8 moved the dashboard server implementation into the shared
+    // Operations loader; /dashboard/page.tsx renders it (proven below).
+    const dashboard = read("src/app/dashboard/dashboard-page-content.tsx");
+    const wrapper = read("src/app/dashboard/page.tsx");
+    expect(wrapper).toContain("DashboardPageContent");
     const lifecycle = read("src/app/api/agents/[id]/route.ts");
     const helper = read("src/lib/agent-lifecycle.ts");
     const dashboardState = read("src/lib/dashboard-state.ts");

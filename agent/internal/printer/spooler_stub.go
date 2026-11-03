@@ -27,6 +27,7 @@ type SpoolerPrinter struct {
 	PDFPrint          PDFPrintFunc
 	ProbeFunc         func(spoolerName string) string
 	Timeout           time.Duration
+	statusDetail      string
 }
 
 func simulatedTransportAllowed() bool {
@@ -153,6 +154,22 @@ func ProbeSpoolerQueue(spoolerName string) SpoolerProbe {
 	}
 }
 
+// StatusDetail mirrors the Windows backend's failure-reason channel on
+// non-Windows platforms: a timed-out injected probe reports
+// "spooler_probe_timeout" instead of a bare "unknown", and a platform with
+// no Windows spooler reports that plainly. It never claims a device state.
+func (p *SpoolerPrinter) StatusDetail() string {
+	if p == nil {
+		return ""
+	}
+	return p.statusDetail
+}
+
+// StatusRawHex mirrors the Windows backend's raw-status accessor. There is
+// no PRINTER_INFO_2 on this platform, so it is always "" (no raw bits to
+// report, and none are invented).
+func (p *SpoolerPrinter) StatusRawHex() string { return "" }
+
 func (p *SpoolerPrinter) Test(ctx context.Context) error {
 	// Non-Windows stand-in: never pretend to have printed. A simulated write
 	// happens only under the explicit development opt-in; otherwise fail
@@ -204,9 +221,12 @@ func (p *SpoolerPrinter) Status() string {
 			// Keep the non-Windows stand-in aligned with the Windows spooler
 			// implementation: a spooler RPC timeout proves nothing about the
 			// physical device, so report "unknown" — never a fabricated error.
+			// The reason is preserved beside it, as on Windows.
+			p.statusDetail = "spooler_probe_timeout"
 			return "unknown"
 		}
 	}
+	p.statusDetail = "spooler_unavailable_on_platform"
 	return "unknown"
 }
 

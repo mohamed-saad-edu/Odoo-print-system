@@ -9,15 +9,39 @@ import { getServerLocale, makeT } from "../i18n/server";
 import { LOCALE_COOKIE_KEY, LOCALE_STORAGE_KEY, dirFor } from "../i18n/config";
 import "./globals.css";
 
-// Bundle the OFL-licensed IBM Plex families with the app. next/font/google
-// downloads CSS during builds; its remote response can fail inside Docker
-// even when our own application code and test suites are healthy.
+// Gateway served typefaces (next/font/local, this origin only, no CDN).
+// Thmanyah Sans is the primary face, served from this origin under the
+// project's purchased Thmanyah licence (owner-held; licence document is
+// not committed to the repo). The WOFF2 files in ./fonts/thmanyah are
+// full conversions of the licensed OTFs (no subsetting; cmap verified
+// identical — see scripts/check-thmanyah-coverage.py). OFL-licensed IBM
+// Plex stays behind Thmanyah as the fallback if Thmanyah fails to load;
+// its files are NOT deleted. next/font/google downloads CSS during
+// builds; its remote response can fail inside Docker even when our own
+// application code and test suites are healthy.
 //
-// The web ships WOFF2 (65% smaller than the TTF the Desktop app and the
-// Odoo add-on bundle). `display: "block"`: the files are served from this
+// The web ships WOFF2 (about two-thirds smaller than the OTF sources the
+// Desktop app bundles). `display: "block"`: the files are served from this
 // origin, so the face is available immediately, and a print-critical page
 // must never be laid out with a fallback face whose line boxes differ from
 // the real one.
+// One Thmanyah variable leads both the Latin and the Arabic stack in
+// globals.css: a single Thmanyah family carries both scripts, so unlike
+// IBM Plex it needs no per-script variable. Preload stays on (the
+// default): Thmanyah is the primary face in both languages, and a
+// print-critical page must not render first in a fallback face.
+const thmanyahSans = localFont({
+  src: [
+    { path: "./fonts/thmanyah/thmanyahsans-Light.woff2", weight: "300", style: "normal" },
+    { path: "./fonts/thmanyah/thmanyahsans-Regular.woff2", weight: "400", style: "normal" },
+    { path: "./fonts/thmanyah/thmanyahsans-Medium.woff2", weight: "500", style: "normal" },
+    { path: "./fonts/thmanyah/thmanyahsans-Bold.woff2", weight: "700", style: "normal" },
+    { path: "./fonts/thmanyah/thmanyahsans-Black.woff2", weight: "900", style: "normal" },
+  ],
+  variable: "--font-thmanyah",
+  display: "block",
+});
+
 const ibmPlexSans = localFont({
   src: "./fonts/ibm-plex-sans-variable.woff2",
   weight: "100 700",
@@ -73,7 +97,7 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
     <html
       lang={locale}
       dir={dirFor(locale)}
-      className={`${ibmPlexSans.variable} ${ibmPlexSansArabic.variable}`}
+      className={`${thmanyahSans.variable} ${ibmPlexSans.variable} ${ibmPlexSansArabic.variable}`}
       suppressHydrationWarning
     >
       <body className="antialiased bg-app text-ink min-h-screen">

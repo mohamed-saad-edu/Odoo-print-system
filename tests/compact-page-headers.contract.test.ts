@@ -15,7 +15,11 @@ describe("compact, consistent page headers", () => {
     expect(ui).toContain('<h1 className="tg-page-title');
     expect(ui).not.toContain("tg-page-eyebrow text-eyebrow");
     expect(ui).toContain('aria-hidden="true"');
-    expect(ui).toContain("sm:text-2xl");
+    // v10-exact: Gateway PageHeader follows Design Guide v2.1 page-title
+    // scale (32–40px, weight 500) like Desktop — text-[2rem] base,
+    // sm:text-4xl (36px) — instead of the old compact text-xl/2xl scale.
+    expect(ui).toContain("text-[2rem] font-[500]");
+    expect(ui).toContain("sm:text-4xl");
     expect(ui).toContain("lg:pt-6");
     expect(ui).toContain("{meta}");
     expect(ui).toContain("{actions}");
@@ -34,19 +38,37 @@ describe("compact, consistent page headers", () => {
   });
 
   it.each(customerPages)("keeps customer headings short while retaining relevant content: %s", page => {
-    const source = read(`src/app/${page}/page.tsx`);
+    // WP5: WP8 moved the dashboard server implementation (including its
+    // PageHeader) into the shared Operations loader; /dashboard/page.tsx
+    // is a thin wrapper that renders it. Audit the loader for dashboard,
+    // and prove the wrapper still renders it.
+    const source = page === "dashboard"
+      ? read("src/app/dashboard/dashboard-page-content.tsx")
+      : read(`src/app/${page}/page.tsx`);
+    if (page === "dashboard") {
+      expect(read("src/app/dashboard/page.tsx")).toContain("DashboardPageContent");
+    }
     const headers = source.split("<PageHeader").slice(1);
     expect(headers.length).toBeGreaterThan(0);
     for (const header of headers) {
-      expect(header.slice(0, 250)).not.toMatch(/\\b(eyebrow|description)=\\{/);
+      // The loader heading carries no eyebrow and no literal description
+      // block: its description prop is only a conditional short-key
+      // passthrough (undefined on Home, a short key on locked sub-pages).
+      expect(header.slice(0, 250)).not.toMatch(/\beyebrow=\{/);
+      expect(header.slice(0, 250)).not.toMatch(/description=\{t\(/);
+      if (page !== "dashboard") {
+        expect(header.slice(0, 250)).not.toMatch(/\bdescription=\{/);
+      }
     }
     expect(source).toContain("PageHeader");
   });
 
   it("matches the desktop header scale and avoids large duplicated intro blocks", () => {
     const desktop = read("src/desktop/ui.tsx");
-    expect(desktop).toContain("text-xl font-[650]");
-    expect(desktop).toContain("sm:text-2xl");
+    // v8-style: Desktop PageHeader follows Design Guide v2.1 page-title scale
+    // (32–40px, weight 500) instead of the old text-xl/650 scale.
+    expect(desktop).toContain("text-4xl font-medium");
+    expect(desktop).not.toContain("text-xl font-[650]");
     expect(desktop).toContain('justify-between gap-x-4 gap-y-3');
   });
 });

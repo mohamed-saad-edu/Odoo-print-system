@@ -52,7 +52,7 @@ export default function PlatformDashboard() {
             detail={<Link className="font-medium text-brand hover:underline" href="/platform/subscriptions">{t("v4.admin.manage")}</Link>} />
         </div>
         <Card className="p-5">
-          <h2 className="flex items-center gap-2 text-base font-semibold">
+          <h2 className="flex items-center gap-2 text-base font-medium">
             <Activity className="h-5 w-5 text-brand" aria-hidden />{t("v4.admin.activity")}
           </h2>
           <div className="mt-4 grid gap-3 sm:grid-cols-3">

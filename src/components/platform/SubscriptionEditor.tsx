@@ -324,7 +324,7 @@ export function SubscriptionEditor({
         }} />)}
       {requestTermsDiffer && <p className="text-sm text-ink-3">{t("v4.admin.changeReasonHint")}</p>}
       <div className="flex flex-wrap gap-3">
-        <Button type="submit" disabled={busy || !reason.trim() || (requestTermsDiffer && (!allowRequestChanges || reason.trim().length < 10))} loading={busy}>{t("v4.admin.confirm")}</Button>
+        <Button type="submit" disabled={busy || !reason.trim() || (requestTermsDiffer && (!allowRequestChanges || reason.trim().length < 10))} loading={busy}>{busy ? t("common.saving") : t("v4.admin.confirm")}</Button>
         <Button type="button" variant="secondary" disabled={busy} onClick={() => {
           setPreview(null);
         }}>{t("v4.admin.cancel")}</Button>

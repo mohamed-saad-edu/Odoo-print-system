@@ -51,8 +51,10 @@ describe("public manual plan catalog",()=>{
   expect(markup).toContain(">SAR</span>");
   expect(markup).not.toContain("$US");
   expect(markup).toContain('data-appearance="outline"');
-  expect(markup).toMatch(/href="\/login"[^>]*min-h-10/);
-  expect(markup).toMatch(/href="\/signup"[^>]*min-h-10/);
+  // v10-exact: pricing header CTAs moved from compact sm (40px) to the
+  // guide standard md (44px, min-h-11) with 24px horizontal padding.
+  expect(markup).toMatch(/href="\/login"[^>]*min-h-11/);
+  expect(markup).toMatch(/href="\/signup"[^>]*min-h-11/);
   expect(markup).toContain('grid-cols-[1fr_auto]');
   expect(markup).toContain('text-ink-2');
  });

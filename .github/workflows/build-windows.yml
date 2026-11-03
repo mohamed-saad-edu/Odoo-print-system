@@ -182,7 +182,10 @@ jobs:
 
   build-windows:
     needs: changes
-    if: github.event_name != 'pull_request' && needs.changes.outputs.windows == 'true'
+    # Every main push must produce a fresh Windows installer and downloadable artifact,
+    # even when the changed files are outside the Windows-specific path filter.
+    # The filter remains useful for PR smoke coverage; it must not suppress releases.
+    if: github.event_name != 'pull_request'
     # Preserve a running main/merge-queue release build and its immutable SHA
     # evidence. A newer push queues separately; PR smoke keeps supersession.
     concurrency:

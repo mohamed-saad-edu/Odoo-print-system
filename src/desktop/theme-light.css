@@ -1,60 +1,306 @@
-/* Desktop Manager uses the exact shared Gateway tokens from src/app/globals.css.
-   Do not duplicate palette values here: globals.css is the single theme source.
-   This file keeps only Desktop-specific compatibility helpers. */
+/* Desktop Manager — Yaseir Design Guide v2.1 tokens (Worker B, v8-style).
+   ----------------------------------------------------------------------------
+   This file is the Desktop-only theme layer. It is imported by
+   src/desktop/main.tsx AFTER src/app/globals.css, so the overrides below win
+   for the Desktop bundle only — globals.css itself is Gateway-owned and is
+   NOT edited here. When the Gateway worker lands the shared token table in
+   work/.yaseir-review/STYLE.md, diff this file against it: any override that
+   is then identical to globals.css should be deleted so that globals.css is the single theme source (see DECISIONS-B.md).
 
-/* One typography system across Web, Desktop and the Odoo add-on. The tokens
-   live in typography/tokens.css; the Odoo add-on ships a byte-identical copy
-   that scripts/check-typography-tokens.py keeps in sync. */
+   Tokens applied here are the shared v2.1 values from
+   work/.yaseir-review/STYLE.md (Worker A token table, reconciled after it
+   landed mid-run): primary #0953DE, ink #101219, surface white, secondary
+   cyan #00C7FC / yellow #FFE451 / pink #F48CC0 (dark text on top),
+   Thmanyah Sans 300/400/500/700/900, guide type scale, spacing scale,
+   radii (buttons pill, fields 12px, cards 16–24px), button 44px / 24px
+   horizontal padding / 20px icon + 8px gap, focus ring 3px + 3px gap.
+   ONE deliberate deviation from STYLE.md: dark info solid is #2F6FBF, not
+   #3D7DCC, because white on #3D7DCC measures 4.20:1 (below the 4.5:1 body
+   threshold) while white on #2F6FBF measures 5.06:1 — flagged to the
+   coordinator as a question for Worker A (see DECISIONS-B.md §17).
+
+   FONT — self-hosted, no external font CDN. The five Thmanyah OTFs live in
+   src/desktop/fonts/ and are bundled by Vite: theme-light.css references them
+   with relative ./fonts/ URLs, so under the Vite `base: "./"` setting the
+   emitted CSS points at the hashed assets next to it (the same relative-URL
+   mechanism v7 branding already relied on for brand SVGs). This works in the
+   Tauri WebView because the CSP allows `font-src 'self'` and the fonts ship
+   inside the packaged installer — the permitted form in the Thmanyah license
+   ("embed ... only as part of a compiled, packaged, or obfuscated product").
+   The OTFs must NOT be published or served as standalone downloads; see
+   DECISIONS-B.md (license) before any push that would expose them.
+
+   DARK MODE is explicit, not a filter-inverted light mode: the
+   :root[data-theme="dark"] block below restates every surface, text and
+   semantic token with its own measured values. The pre-paint script
+   (public/theme-init.js) still resolves the OS preference into data-theme
+   before the first frame.
+
+   STATUS MEANINGS are unchanged (v7 honest statuses). Only the colours move:
+   every status surface below pairs a tone with text + icon, never colour
+   alone, and every body-text pair measures >= 4.5:1 (see RESULTS-B.tsv).
+   Info blue (#0E6B8C light / #8FD0F5 dark) is deliberately a cyan-blue, not
+   the primary azure, so info is never confused with a primary action. */
+
+/* Shared print type tokens (Gateway-owned file; imported, not edited). The
+   --typo-font-* overrides below redirect its stacks to Thmanyah. */
 @import "../../typography/tokens.css";
 
-/* The Desktop app is a standalone Tauri bundle: it must not depend on
-   system-installed fonts. The faces are bundled with the app and registered
-   here, so the shared stack resolves to IBM Plex in the installed app.
-   `font-display: block` keeps a print-critical page from being laid out with
-   a fallback face. */
+/* Thmanyah Sans, self-hosted. One family name, five weights; the OTF
+   internal family names differ per file (Black/Med/Light), so the weight
+   here — not the internal name — is what selects the face. All five are
+   CFF-flavoured .otf, hence format("opentype"). `font-display: block`
+   keeps a print-critical page from being laid out with a fallback face. */
 @font-face {
-  font-family: "IBM Plex Sans";
+  font-family: "Thmanyah Sans";
   font-style: normal;
-  font-weight: 100 700;
+  font-weight: 300;
   font-display: block;
-  src: url("../app/fonts/ibm-plex-sans-variable.ttf") format("truetype");
+  src: url("./fonts/thmanyahsans-Light.otf") format("opentype");
 }
 
 @font-face {
-  font-family: "IBM Plex Sans Arabic";
+  font-family: "Thmanyah Sans";
   font-style: normal;
   font-weight: 400;
   font-display: block;
-  src: url("../app/fonts/ibm-plex-sans-arabic-400.ttf") format("truetype");
+  src: url("./fonts/thmanyahsans-Regular.otf") format("opentype");
 }
 
 @font-face {
-  font-family: "IBM Plex Sans Arabic";
+  font-family: "Thmanyah Sans";
   font-style: normal;
   font-weight: 500;
   font-display: block;
-  src: url("../app/fonts/ibm-plex-sans-arabic-500.ttf") format("truetype");
+  src: url("./fonts/thmanyahsans-Medium.otf") format("opentype");
 }
 
 @font-face {
-  font-family: "IBM Plex Sans Arabic";
-  font-style: normal;
-  font-weight: 600;
-  font-display: block;
-  src: url("../app/fonts/ibm-plex-sans-arabic-600.ttf") format("truetype");
-}
-
-@font-face {
-  font-family: "IBM Plex Sans Arabic";
+  font-family: "Thmanyah Sans";
   font-style: normal;
   font-weight: 700;
   font-display: block;
-  src: url("../app/fonts/ibm-plex-sans-arabic-700.ttf") format("truetype");
+  src: url("./fonts/thmanyahsans-Bold.otf") format("opentype");
+}
+
+@font-face {
+  font-family: "Thmanyah Sans";
+  font-style: normal;
+  font-weight: 900;
+  font-display: block;
+  src: url("./fonts/thmanyahsans-Black.otf") format("opentype");
 }
 
 :root {
-  --font-ibm-plex-sans: "IBM Plex Sans";
-  --font-ibm-plex-sans-arabic: "IBM Plex Sans Arabic";
+  --font-thmanyah-sans: "Thmanyah Sans";
+
+  /* Redirect the shared stacks to Thmanyah. Thmanyah carries both Latin and
+     Arabic glyphs (digits 0–9 are Latin in both languages, verified from the
+     cmap), so one family leads in both directions; the served IBM Plex
+     names stay second as the fallback if Thmanyah fails to load (the
+     Desktop bundle ships no IBM files — these names resolve only where
+     IBM Plex is installed, exactly like the shared token fallback). */
+  --typo-font-latin: "Thmanyah Sans", "IBM Plex Sans";
+  --typo-font-arabic: "Thmanyah Sans", "IBM Plex Sans Arabic";
+
+  /* ---------- Guide primary + ink + surfaces (light) ---------- */
+  --brand-50: #eef4ff;
+  --brand-100: #dce8ff;
+  --brand-200: #b9d0ff;
+  --brand-300: #8ab0ff;
+  --brand-400: #5a8dff;
+  --brand-500: #2e6be6;
+  --brand-600: #0953de;
+  --brand-700: #0744b5;
+  --brand-800: #06348e;
+  --brand-900: #0a2540;
+  --brand-950: #0a2540;
+
+  --brand: #0953de;
+  --brand-hover: #0744b5;
+  --brand-active: #06348e;
+  --brand-solid: #0953de;
+  --brand-contrast: #ffffff;
+  --brand-subtle: #eaf1fe;
+  --brand-subtle-hover: #dce8ff;
+  --brand-subtle-border: #b9d0ff;
+  --brand-subtle-text: #0743b8;
+  --brand-ring: rgba(9, 83, 222, 0.22);
+
+  /* Secondary accents (guide): dark ink text on top, never white. */
+  --secondary-cyan: #00c7fc;
+  --secondary-yellow: #ffe451;
+  --secondary-pink: #f48cc0;
+  --text-on-secondary: #101219;
+
+  --bg: #f5f7fa;
+  --bg-subtle: #fbfcfe;
+  --surface: #ffffff;
+  --surface-2: #f1f4f9;
+  --surface-3: #e6eaf2;
+  --surface-hover: #edf0f3;
+  --surface-accent: #eaf1fe;
+  --surface-accent-2: #dce8ff;
+  --surface-elevated: #ffffff;
+  --surface-overlay: rgba(255, 255, 255, 0.82);
+  --surface-glass: rgba(255, 255, 255, 0.72);
+
+  --border: #e2e7f0;
+  --border-strong: #c7cedd;
+  --border-accent: #b9d0ff;
+  --border-subtle: #edf0f7;
+  --divider: #e8ecf4;
+  --control-border: #6b7280;
+
+  /* ---------- Ink (light) ---------- */
+  --text: #101219;
+  --text-2: #3d4457;
+  --text-3: #5a6376;
+  --text-4: #6b7280;
+  --text-on-brand: #ffffff;
+  --text-on-solid: #ffffff;
+  --text-display: #101219;
+
+  /* ---------- Semantic status (light) — text + soft bg + border + icon.
+     Every text-on-bg pair below measures >= 4.5:1; solids carry white
+     labels at >= 4.5:1. Never colour alone: StatusBadge/StatusDot/Notice
+     always pair the tone with a label and an icon. ---------- */
+  /* STYLE.md STRONG palette: saturated bg + strong border, so statuses
+     never disappear on white. Text-on-bg ratios in RESULTS-B.tsv. */
+  --success: #145a32;
+  --success-solid: #1b7a43;
+  --success-bg: #cdeed6;
+  --success-border: #2e7d4f;
+
+  --warning: #7a4a00;
+  --warning-solid: #96630a;
+  --warning-bg: #ffe9a8;
+  --warning-border: #b77900;
+
+  --danger: #b42318;
+  --danger-solid: #c7351f;
+  --danger-bg: #fde3e0;
+  --danger-border: #d6453a;
+
+  /* Info is teal, distinct from the primary azure. */
+  --info: #0f6b7e;
+  --info-solid: #0e7c8e;
+  --info-bg: #ddf3f7;
+  --info-border: #2aa5b8;
+
+  --notice-bg: #ffe9a8;
+  --notice-border: #b77900;
+  --notice-text: #7a4a00;
+  --notice-icon: #c66d1a;
+
+  /* ---------- Focus (guide: 3px ring + 3px gap) ---------- */
+  --focus-ring: #0953de;
+  --focus-ring-shadow: 0 0 0 3px rgba(9, 83, 222, 0.22);
+  --focus-ring-inset: 0 0 0 2px rgba(255, 255, 255, 0.9);
+
+  /* ---------- Radii (guide: buttons pill, fields 12px, cards 16–24px) ---------- */
+  --r-xs: 6px;
+  --r-sm: 12px;
+  --r-md: 12px;
+  --r-lg: 16px;
+  --r-xl: 20px;
+  --r-2xl: 24px;
+  --r-3xl: 24px;
+  --r-pill: 9999px;
+}
+
+/* ---------- Dark theme: explicit values, never an inverted light mode. ----------
+   Surfaces stay desaturated near-black; brand lightens so links and primary
+   actions stay legible; semantic text lightens onto dark soft backgrounds.
+   Every body-text pair below measures >= 4.5:1 on its dark surface. */
+:root[data-theme="dark"] {
+  --brand-50: #0c1729;
+  --brand-100: #10203a;
+  --brand-200: #142c50;
+  --brand-300: #1c3f70;
+  --brand-400: #2456a0;
+  --brand-500: #3b82f6;
+  --brand-600: #4f8ffa;
+  --brand-700: #8dbbff;
+  --brand-800: #a5c8ff;
+  --brand-900: #b9d0fa;
+  --brand-950: #d6e6fd;
+
+  --brand: #8dbbff;
+  --brand-hover: #a5c8ff;
+  --brand-active: #2b7de8;
+  --brand-solid: #1e6fe0;
+  --brand-contrast: #ffffff;
+  --brand-subtle: #10203a;
+  --brand-subtle-hover: #142a4b;
+  --brand-subtle-border: #1e4180;
+  --brand-subtle-text: #8fbaff;
+  --brand-ring: rgba(110, 168, 255, 0.34);
+
+  /* On dark surfaces the secondaries are text/icon colours, not fills with
+     dark text (a light fill with dark text is a light-mode pattern). */
+  --secondary-cyan: #5ed8fb;
+  --secondary-yellow: #ffe451;
+  --secondary-pink: #f48cc0;
+  --text-on-secondary: #101219;
+
+  --bg: #08090c;
+  --bg-subtle: #0c0e12;
+  --surface: #121417;
+  --surface-2: #191c21;
+  --surface-3: #23272e;
+  --surface-hover: #191d22;
+  --surface-accent: #101c31;
+  --surface-accent-2: #142644;
+  --surface-elevated: #171a1f;
+  --surface-overlay: rgba(18, 20, 23, 0.82);
+  --surface-glass: rgba(18, 20, 23, 0.7);
+
+  --border: #24272e;
+  --border-strong: #33373f;
+  --border-accent: #1e4180;
+  --border-subtle: #1c1f25;
+  --divider: #22252b;
+  --control-border: #6b7178;
+
+  --text: #f3f4f6;
+  --text-2: #c8ccd4;
+  --text-3: #9aa0aa;
+  --text-4: #8b9199;
+  --text-on-brand: #ffffff;
+  --text-on-solid: #ffffff;
+  --text-display: #f8f9fb;
+
+  --success: #7ed492;
+  --success-solid: #1d8148;
+  --success-bg: #0f2e1c;
+  --success-border: #4caf6d;
+
+  --warning: #f5c86b;
+  --warning-solid: #9a6508;
+  --warning-bg: #2a1e05;
+  --warning-border: #d9a441;
+
+  --danger: #ff9a8a;
+  --danger-solid: #d0452e;
+  --danger-bg: #2b1513;
+  --danger-border: #e0685a;
+
+  /* Dark info solid deliberately NOT STYLE.md's #3D7DCC (white on it is
+     4.20:1, below 4.5:1); #2F6FBF measures 5.06:1. See §17 note in header. */
+  --info: #7ed4e3;
+  --info-solid: #2f6fbf;
+  --info-bg: #0a242b;
+  --info-border: #3fa8b8;
+
+  --notice-bg: #2a1e05;
+  --notice-border: #d9a441;
+  --notice-text: #f5c86b;
+  --notice-icon: #e5a32b;
+
+  --focus-ring: #8dbbff;
+  --focus-ring-shadow: 0 0 0 3px rgba(141, 187, 255, 0.34);
+  --focus-ring-inset: 0 0 0 2px rgba(8, 9, 12, 0.9);
 }
 
 html,
@@ -62,15 +308,44 @@ body {
   background: var(--bg);
   color: var(--text);
   font-family: var(--typo-font-stack-latin);
+  /* Guide body: 16px, line-height 1.6–1.8 (STYLE.md ships --lh-normal 1.7).
+     Explicit text-* utilities on dense components (fields/tables 14px, help
+     12px+) still win where set. */
+  font-size: 16px;
+  line-height: 1.7;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
 
 /* The Desktop app switches the document direction with the operator's
-   language, so the family order follows it. */
+   language, so the family order follows it. Thmanyah leads both ways. */
 html[dir="rtl"],
 html[dir="rtl"] body {
   font-family: var(--typo-font-stack-arabic);
+}
+
+/* Arabic letterforms must never be stretched, kashed or broken by spacing:
+   this unlayered rule beats the layered Tailwind tracking utilities on
+   headings in RTL (the shared base rule cannot, because utilities live in a
+   later cascade layer). No kashida, no letter-spacing is used anywhere. */
+html[dir="rtl"] h1,
+html[dir="rtl"] h2,
+html[dir="rtl"] h3,
+html[dir="rtl"] h4,
+html[dir="rtl"] h5,
+html[dir="rtl"] h6 {
+  letter-spacing: 0;
+}
+
+/* Guide button metrics, applied to the shared Button component inside the
+   Desktop bundle only (this file is never loaded by Gateway): 44px minimum
+   height, 24px horizontal padding, pill radius, 20px icon + 8px gap (the
+   gap comes from the component's gap-2). Icon-only buttons keep their
+   !px-0/!py-0 and their 44x44 size from the component. */
+.tg-action-button {
+  min-height: 44px;
+  padding-inline: 24px;
+  border-radius: 999px;
 }
 
 .card {
@@ -120,9 +395,12 @@ html[dir="rtl"] body {
   background: var(--brand);
 }
 
+/* Guide focus: 3px ring with a 3px gap. This sits alongside the shared
+   component's faint 2px Tailwind ring (pre-existing pattern); the 3px
+   outline at a 3px offset is the guide-conformant visible ring. */
 :focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: 2px;
+  outline: 3px solid var(--focus-ring);
+  outline-offset: 3px;
 }
 
 @media (prefers-reduced-motion: reduce) {

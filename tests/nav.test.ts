@@ -18,4 +18,18 @@ describe("isNavItemActive", () => {
   it("does not mistake a suffix for a nested path", () => {
     expect(isNavItemActive("/team", "/teammate")).toBe(false);
   });
+
+  // WP8: the new first-class sidebar pages are independent routes —
+  // /dashboard must not swallow them, and each highlights its own page
+  // and its nested routes only.
+  it("highlights the new sidebar pages independently of /dashboard", () => {
+    expect(isNavItemActive("/agents", "/agents")).toBe(true);
+    expect(isNavItemActive("/printers", "/printers")).toBe(true);
+    expect(isNavItemActive("/jobs", "/jobs")).toBe(true);
+    expect(isNavItemActive("/agents/abc", "/agents")).toBe(true);
+    expect(isNavItemActive("/agents", "/dashboard")).toBe(false);
+    expect(isNavItemActive("/printers", "/dashboard")).toBe(false);
+    expect(isNavItemActive("/jobs", "/dashboard")).toBe(false);
+    expect(isNavItemActive("/dashboard", "/agents")).toBe(false);
+  });
 });

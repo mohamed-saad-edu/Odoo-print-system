@@ -95,7 +95,11 @@ func renderIPPPDFToJPEG(ctx context.Context, pdfData []byte, attrs map[string]st
 	straight := &image.NRGBA{Pix: img.Pix, Stride: img.Stride, Rect: img.Rect}
 	draw.Draw(white, white.Bounds(), straight, straight.Bounds().Min, draw.Over)
 	var output bytes.Buffer
-	if err := jpeg.Encode(&output, white, &jpeg.Options{Quality: 88}); err != nil {
+	// WP7: quality 95, not 88 — same measurement as receipt creation
+	// (mean gray error 0.043 vs 0.115 at q88 on an anti-aliased fixture,
+	// zero pixels deviating by more than 10 levels). The 5 MiB output
+	// check below still fails closed if a page ever exceeds the budget.
+	if err := jpeg.Encode(&output, white, &jpeg.Options{Quality: 95}); err != nil {
 		return nil, fmt.Errorf("encode rendered IPP JPEG: %w", err)
 	}
 	if err := ctx.Err(); err != nil {

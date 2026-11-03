@@ -59,6 +59,12 @@ export interface DesktopState {
 
   /* printers */
   printers: PrinterInfo[];
+  /** Raw Gateway rows, before merging with the local inventory. The
+   * merged `printers` list overlays the LOCAL sharing choice, so only
+   * this list can confirm whether the Gateway has flipped after a
+   * heartbeat. Optional so existing state builders keep compiling;
+   * absent means "Gateway confirmation unknown", never "confirmed". */
+  gatewayPrinters?: PrinterInfo[];
   discoveredPrinters: PrinterInfo[];
   localPrinters: PrinterInfo[];
   localPrintersLoading: boolean;

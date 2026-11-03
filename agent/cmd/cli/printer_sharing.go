@@ -53,7 +53,12 @@ func runPrinterSharing(args []string, defaultPath string, output io.Writer) erro
 	}
 	selected, err := printer.SelectSharingPrinter(*id, devices, cfg)
 	if err != nil {
-		return err
+		// The reason (candidate, virtual, redirected, not-runtime) is
+		// part of the error now: a greyed-out Desktop Share button used
+		// to leave operators retrying a toggle that can never succeed
+		// for this row. The refusal itself is unchanged — only the
+		// explanation travels with it, and nothing is written.
+		return fmt.Errorf("cannot change sharing for printer %q: %w", *id, err)
 	}
 	known, err := printer.LocalSharingBindings(cfg, registryPath)
 	if err != nil {

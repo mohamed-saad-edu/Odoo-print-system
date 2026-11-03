@@ -1,12 +1,12 @@
 "use client";
 
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { useI18n } from "../../i18n/react";
 import { useSearchParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { ArrowRight, CheckCircle2 } from "lucide-react";
 import { AuthShell } from "../../components/AuthShell";
-import { Button, Callout, Field, Input, ErrorState, Skeleton } from "../../components/ui";
+import { Button, Callout, Field, Input, ErrorState, Skeleton, focusFirstError } from "../../components/ui";
 import { codeMessageKey } from "../../lib/api-error-keys";
 import { fetchWithTimeout } from "../../lib/fetch-timeout";
 
@@ -38,6 +38,11 @@ function ResetPasswordForm({ params }: { params: ReturnType<typeof useSearchPara
     return () => clearTimeout(timer);
   }, [done, router, nextRoute]);
 
+  const formRef = useRef<HTMLFormElement>(null);
+  // Guide form rule: move focus to the first error when submission fails.
+  useEffect(() => {
+    if (err) focusFirstError(formRef.current);
+  }, [err]);
   async function submit(event: React.FormEvent) {
     event.preventDefault();
     // A missing token can never succeed: short-circuit with guidance instead
@@ -85,7 +90,7 @@ function ResetPasswordForm({ params }: { params: ReturnType<typeof useSearchPara
           .
         </Callout>
       ) : (
-        <form className="space-y-4" onSubmit={submit}>
+        <form ref={formRef} className="space-y-4" onSubmit={submit}>
           <Field
             label={t("auth.reset.password")}
             htmlFor="password"

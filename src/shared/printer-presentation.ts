@@ -120,11 +120,20 @@ const detailKeys: Record<string, MessageKey> = {
   windows_power_save: "printer.detail.windows_power_save",
 };
 
+/** Raw Agent `status_detail` code, verbatim. The mapped status collapses
+ * offline and error into one "attention" badge and unknown/stale/not-shared
+ * into one "unavailable" badge, so rows must show this code for the user
+ * and support to tell offline vs error vs unknown apart. Returns "" when
+ * the Agent sent no code — absence is rendered as absence, never invented. */
+export function printerStatusDetailCode(printer: PrinterView): string {
+  const value = printer.capabilities?.status_detail;
+  return typeof value === "string" ? value.trim() : "";
+}
+
 /** Stable Agent detail codes are localized only when details are requested. */
 export function printerStatusDetail(printer: PrinterView, locale: Locale = DEFAULT_LOCALE): string {
-  const value = printer.capabilities?.status_detail;
-  if (typeof value !== "string") return "";
-  const detail = value.trim();
+  const detail = printerStatusDetailCode(printer);
+  if (!detail) return "";
   const key = Object.prototype.hasOwnProperty.call(detailKeys, detail) ? detailKeys[detail] : undefined;
   return key ? translate(locale, key) : detail;
 }

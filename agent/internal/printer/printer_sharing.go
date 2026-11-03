@@ -158,6 +158,37 @@ func AnnotatePrinterSharing(configPath string, cfg *config.Config, registryPath 
 	return result, nil
 }
 
+// SharingCandidateReason explains why a device cannot be shared or
+// unshared through the local toggle, or "" when it can. A refusal used to
+// be a single opaque sentence; the Desktop control and the CLI now surface
+// this reason next to the button / in the CLI error so an operator can
+// tell a per-user connection, a software queue, and a merely unadmitted
+// row apart instead of retrying the same toggle. The reason never changes
+// the decision itself: only a locally admitted physical execution
+// destination is selectable, whatever its health (offline queues included).
+func SharingCandidateReason(device DeviceInfo) string {
+	classification := ClassifyDeviceInfo(device)
+	verification, _ := device.Capabilities["verification"].(string)
+	verification = strings.TrimSpace(verification)
+	switch {
+	case classification.Class == ClassRedirected:
+		return "redirected session queue, not a local physical execution destination"
+	case classification.IsVirtual:
+		return "virtual or software-only queue, not a physical execution destination"
+	case strings.EqualFold(verification, "candidate_only"):
+		if reason, _ := device.Capabilities["candidate_reason"].(string); strings.TrimSpace(reason) != "" {
+			return "setup-only candidate: " + strings.TrimSpace(reason)
+		}
+		return "setup-only candidate: discovered but not admitted as a service printer (per-user connection or unverified session discovery)"
+	case strings.EqualFold(verification, "device_detected_only"):
+		return "setup-only candidate: device detected but never admitted as a service printer"
+	case !IsRuntimeDiscoveryPrinter(device):
+		return "not in the main runtime inventory: confirm it as a local printer before changing sharing"
+	default:
+		return ""
+	}
+}
+
 // SelectSharingPrinter accepts a unique locally known execution destination,
 // including offline queues. Health is not evidence of ownership; setup-only
 // per-user/registry/PnP candidates cannot become service printers via this flag.
@@ -168,13 +199,8 @@ func SelectSharingPrinter(id string, devices []DeviceInfo, local ...*config.Conf
 		if device.ID != id {
 			continue
 		}
-		classification := ClassifyDeviceInfo(device)
-		verification, _ := device.Capabilities["verification"].(string)
-		if classification.IsVirtual || classification.Class == ClassRedirected ||
-			strings.EqualFold(strings.TrimSpace(verification), "candidate_only") ||
-			strings.EqualFold(strings.TrimSpace(verification), "device_detected_only") ||
-			!IsRuntimeDiscoveryPrinter(device) {
-			return selected, fmt.Errorf("printer is not a locally admitted physical execution destination")
+		if reason := SharingCandidateReason(device); reason != "" {
+			return selected, fmt.Errorf("printer is not a locally admitted physical execution destination: %s", reason)
 		}
 		pc := SharingConfigForDevice(device)
 		if pc.NormalizedType() == "pdf_output" {

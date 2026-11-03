@@ -4,7 +4,8 @@ import type { PrinterInfo } from "./ipc";
 import type { Tone } from "../../shared/job-vocabulary";
 import { isVirtualPrinterRecord } from "../../lib/printer-virtual";
 import { printerPresentation as gatewayPrinterPresentation } from "../../shared/printer-presentation";
-export { printerDisplayName, printerStatusDetail } from "../../shared/printer-presentation";
+import { printerDisplayName } from "../../shared/printer-presentation";
+export { printerDisplayName, printerStatusDetail, printerStatusDetailCode } from "../../shared/printer-presentation";
 
 export {
   agentLiveView,
@@ -275,6 +276,136 @@ export function isProductionPrinter(p: PrinterInfo): boolean {
 export function isMainInventoryPrinter(p: PrinterInfo): boolean {
   if (isLocalPrinter(p)) return isProductionPrinter(p) && !isLocalSetupCandidate(p);
   return isProductionPrinter(p) && p.inventoryPresent !== false && p.enabled !== false && (!p.lifecycle || p.lifecycle === "active");
+}
+
+/* ---------- Add-printer picker eligibility (WP4) ---------- */
+
+/**
+ * A picker row is eligible when it is a production spooler queue and its
+ * agent ownership does not contradict the selected agent. The proven S3
+ * bug was demanding `p.agentId === currentAgentId`: local inventory rows
+ * (`printers list`) carry NO agentId at all — only `printers discover`
+ * injects one as ephemeral session state — so they could never be picked.
+ * An absent agentId therefore must NOT disqualify a row; only a present
+ * agentId belonging to a different agent record excludes it (and is
+ * surfaced as a mismatch warning, not silently dropped).
+ */
+export function isPickerEligiblePrinter(p: PrinterInfo, currentAgentId: string): boolean {
+  return isProductionPrinter(p) && (!p.agentId || p.agentId === currentAgentId);
+}
+
+export function spoolerQueueName(p: PrinterInfo): string {
+  return p.spooler_name || p.spoolerName || "";
+}
+
+function capabilityString(p: PrinterInfo, key: string): string {
+  const value = p.capabilities?.[key];
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function configString(p: PrinterInfo, key: string): string {
+  const value = p.config?.[key];
+  return typeof value === "string" ? value.trim() : "";
+}
+
+/**
+ * Driver / port for a spooler row. The Agent emits both as first-class
+ * `DeviceInfo` fields (spoolerDriver / spoolerPort) AND in the capability
+ * bag (driver_name / port_name); the capability bag is the one that
+ * survives the Tauri struct for local/discovered rows, so it wins, with
+ * the top-level fields and config as fallbacks. Never invented: "" when
+ * no source carries the value.
+ */
+export function spoolerDriverName(p: PrinterInfo): string {
+  return capabilityString(p, "driver_name") || (p.spoolerDriver ?? "").trim() || configString(p, "driver_name");
+}
+
+export function spoolerPortName(p: PrinterInfo): string {
+  return capabilityString(p, "port_name") || (p.spoolerPort ?? "").trim() || configString(p, "port_name");
+}
+
+/** One-line picker label: queue name + driver + port + status, omitting
+ * whichever parts the Agent did not report. */
+export function spoolerRowLabel(p: PrinterInfo, locale: Locale = DEFAULT_LOCALE): string {
+  const parts = [printerDisplayName(p, locale)];
+  const driver = spoolerDriverName(p);
+  const port = spoolerPortName(p);
+  if (driver) parts.push(driver);
+  if (port) parts.push(port);
+  const status = (p.status || "").trim();
+  if (status) parts.push(status);
+  return parts.join(" · ");
+}
+
+export function pickerSpoolerRows(printers: PrinterInfo[], currentAgentId: string): PrinterInfo[] {
+  return printers.filter((p) => isPickerEligiblePrinter(p, currentAgentId) && spoolerQueueName(p).trim());
+}
+
+/** Production spooler rows owned by a DIFFERENT agent record than the
+ * selected one. Excluded from the picker, but the dialog warns about
+ * them instead of rendering the same empty-picker hint as "no printers". */
+export function pickerAgentMismatchRows(printers: PrinterInfo[], currentAgentId: string): PrinterInfo[] {
+  if (!currentAgentId) return [];
+  return printers.filter((p) => isProductionPrinter(p) && spoolerQueueName(p).trim()
+    && !!p.agentId && p.agentId !== currentAgentId);
+}
+
+/** Case-insensitive search over queue name, display name, driver, port
+ * and status. An empty query returns every row. */
+export function searchSpoolerRows(rows: PrinterInfo[], query: string, locale: Locale = DEFAULT_LOCALE): PrinterInfo[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return rows;
+  return rows.filter((p) => [spoolerQueueName(p), printerDisplayName(p, locale), spoolerDriverName(p), spoolerPortName(p), p.status ?? ""]
+    .some((value) => value.toLowerCase().includes(q)));
+}
+
+export type TypedSpoolerNameCheck =
+  | { status: "empty"; name: string; suggestion: null }
+  | { status: "exact"; name: string; suggestion: null }
+  | { status: "agent_mismatch"; name: string; suggestion: string }
+  | { status: "near_miss"; name: string; suggestion: string }
+  | { status: "unknown"; name: string; suggestion: null };
+
+/**
+ * Validate a manually typed Windows queue name. `eligibleRows` are
+ * pickable for the selected agent, `mismatchRows` belong to another agent
+ * record. Windows queue names match case-insensitively, so a case-only
+ * difference is exact; a missing " (2)"-style suffix (or any
+ * prefix/substring relation) is a near miss with a suggestion; a name
+ * that exists ONLY under another agent record is an agent mismatch.
+ * "unknown" is a WARNING, never a hard block: discovery can miss
+ * per-user queues, so an undiscovered name may still be real — the
+ * dialog must warn, not refuse.
+ */
+export function validateTypedSpoolerNameAgainst(raw: string, eligibleRows: PrinterInfo[], mismatchRows: PrinterInfo[]): TypedSpoolerNameCheck {
+  const name = raw.trim();
+  if (!name) return { status: "empty", name, suggestion: null };
+  const lower = name.toLowerCase();
+  const eligibleQueues = eligibleRows.map((p) => spoolerQueueName(p).trim()).filter(Boolean);
+  if (eligibleQueues.some((q) => q.toLowerCase() === lower)) return { status: "exact", name, suggestion: null };
+  const mismatch = mismatchRows.map((p) => spoolerQueueName(p).trim()).filter(Boolean)
+    .find((q) => q.toLowerCase() === lower);
+  if (mismatch) return { status: "agent_mismatch", name, suggestion: mismatch };
+  const near = [...eligibleQueues, ...mismatchRows.map((p) => spoolerQueueName(p).trim()).filter(Boolean)]
+    .find((q) => q.toLowerCase().includes(lower) || lower.includes(q.toLowerCase()));
+  if (near) return { status: "near_miss", name, suggestion: near };
+  return { status: "unknown", name, suggestion: null };
+}
+
+/**
+ * One-click picker fill: choosing a row always fills the spooler name;
+ * the printer name is filled from the row's display name only when the
+ * user has not already typed a name, so a deliberate custom name is
+ * never overwritten. Driver/port are displayed from the row (the
+ * Gateway spooler registration carries no driver/port fields, so they
+ * are shown, not submitted).
+ */
+export function applySpoolerSelection(picked: PrinterInfo, currentName: string): { name: string; spoolerName: string } {
+  const spoolerName = spoolerQueueName(picked);
+  return {
+    name: currentName.trim() ? currentName : printerDisplayName(picked),
+    spoolerName,
+  };
 }
 
 /* ---------- Status vocabulary ---------- */

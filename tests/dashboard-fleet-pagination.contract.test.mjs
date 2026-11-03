@@ -4,7 +4,7 @@ import test from "node:test";
 
 const state = fs.readFileSync("src/lib/dashboard-state.ts", "utf8");
 const actions = fs.readFileSync("src/app/actions.ts", "utf8");
-const page = fs.readFileSync("src/app/dashboard/page.tsx", "utf8");
+const page = fs.readFileSync("src/app/dashboard/dashboard-page-content.tsx", "utf8");
 const client = fs.readFileSync("src/app/dashboard/dashboard-client.tsx", "utf8");
 const entitlements = fs.readFileSync("src/lib/entitlements.ts", "utf8");
 

@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 const read = (path: string) => readFileSync(path, "utf8");
@@ -9,8 +9,21 @@ describe("Yaseir customer UX: concise, state-driven setup", () => {
     expect(source).not.toContain('open={kpis.totalAgents === 0}');
     expect(source).not.toContain('t("v4.experience.setup.body")');
     expect(source).toContain('kpis.totalAgents === 0 && canMutate.agentsPair');
-    expect(source).toContain('href="#printers"');
+    // WP8: the dashboard health action is a real route now, not a hash
+    // view inside /dashboard — the old "#printers" assertion was updated,
+    // not deleted, and the sidebar routes below carry the same intent.
+    expect(source).toContain('href="/printers"');
     expect(source).toContain('dashboard.fleetSummary');
+  });
+  it("routes Agents, Printers and Jobs through the sidebar, not dashboard hashes", () => {
+    const shell = read("src/components/AppShell.tsx");
+    for (const route of ["/agents", "/printers", "/jobs"]) {
+      expect(shell).toContain(`href: "${route}"`);
+      expect(existsSync(`src/app${route}/page.tsx`)).toBe(true);
+    }
+    expect(shell).not.toContain("/dashboard#");
+    expect(read("src/app/dashboard/dashboard-client.tsx")).not.toContain("/dashboard#");
+    expect(read("src/app/api-keys/page.tsx")).not.toContain("/dashboard#");
   });
   it("hides Odoo setup instructions after a credential is enabled, without hiding recovery tools", () => {
     const source = read("src/app/api-keys/page.tsx");

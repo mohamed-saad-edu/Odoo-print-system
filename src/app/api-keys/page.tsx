@@ -340,10 +340,10 @@ export default function ApiKeysPage() {
           <Card>
             <CardHeader title={t("v4.connection.status")} icon={<StatusDot tone={loading ? "neutral" : enabled > 0 ? "ok" : "warn"} />} />
             <div className="space-y-4 p-5">
-              <h2 className="text-lg font-semibold">{t(loading ? "common.loading" : enabled > 0 ? "v4.connection.enabled" : active > 0 ? "v4.connection.waiting" : "v4.connection.start")}</h2>
+              <h2 className="text-lg font-medium">{t(loading ? "common.loading" : enabled > 0 ? "v4.connection.enabled" : active > 0 ? "v4.connection.waiting" : "v4.connection.start")}</h2>
               {enabled === 0 && <p className="text-sm text-ink-3">{t(active > 0 ? "v4.connection.waitingBody" : "v4.connection.startBody")}</p>}
               {installations.length > 0 && <ul className="space-y-2">{installations.map(item => <li key={item.id} className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-edge p-3"><span className="font-semibold">{item.name}</span><StatusBadge tone={item.enabled && item.api_key_ids.some(id => keys.some(key => key.id === id && !key.revokedAt && key.odooEnabled)) ? "ok" : "warn"} label={t(item.enabled ? "v4.connection.enrolled" : "v4.connection.disabled")} /></li>)}</ul>}
-              {enabled > 0 && <Button href="/dashboard#printers" variant="primary">{t("v4.connection.selectPrinters")}</Button>}
+              {enabled > 0 && <Button href="/printers" variant="primary">{t("v4.connection.selectPrinters")}</Button>}
               {!canManage && !loading && <p className="text-sm text-ink-3">{t("v4.connection.readOnly")}</p>}
             </div>
           </Card>

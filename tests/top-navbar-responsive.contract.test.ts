@@ -24,10 +24,14 @@ describe("Gateway and Platform sidebar navigation", () => {
     expect(mobile).not.toContain('(min-width: 768px)');
     expect(mobile).not.toContain('md:hidden');
 
-    // At 320px the accessible logo label stays, only wordmark hides.
+    // At 320px the accessible logo label stays, only the lockup hides:
+    // the public header falls back to the icon-only mark (WP6-BRANDING
+    // replaced the old text wordmark with the lockup image, so the old
+    // "> span:last-child" wordmark rule no longer exists).
     expect(home).toContain('className="yw-public-brand-mark"');
     expect(styles).toContain('@media (max-width: 399.98px)');
-    expect(styles).toContain('.yw-public-brand-mark > span:last-child');
+    expect(styles).toContain('.yw-public-brand-mark .brand-lockup-chip');
+    expect(styles).toContain('.yw-public-brand-mark .brand-mark-icon-fallback');
   });
 
 

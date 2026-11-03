@@ -477,11 +477,57 @@ func (view ResolvedPrinterSharing) Shared(pc PrinterConfig) (bool, error) {
 	// While local privacy is active, desired state must not authorize a new
 	// native destination by itself. Explicit local config/registration or
 	// native discovery supplies this independent exact-binding permission.
+	//
+	// WP3 trap fix: that gate must not privatise a spooler printer that
+	// IS locally registered merely because the caller's known list is
+	// stale or incomplete (e.g. a runtime-registered printer whose
+	// registry persistence lagged, or a heartbeat view built before a
+	// discovery sweep persisted). Two independent evidences therefore
+	// rescue a printer, and an unrelated deny rescues neither on its own:
+	//  (a) its binding is in the caller's known spooler bindings, or
+	//  (b) the printer config itself carries an explicit local
+	//      registration marker (manual/config/registry; a registry row
+	//      that is still setup-only stays excluded).
+	// A cloud-only row carries no such marker — desired-state configs are
+	// built locally from specific fields only and never inherit a
+	// registration_source from the Gateway — so it still stays private
+	// while any deny exists. Sharing is never auto-granted by this arm:
+	// it only stops an unrelated deny from overriding a local
+	// registration; an explicit per-printer deny above still wins, and a
+	// printer with no local registration still needs an explicit local
+	// share action (which persists it into the known set) to appear.
 	if pc.NormalizedType() == "spooler" && len(view.policy.DeniedPrinters) > 0 {
-		_, known := view.knownSpoolerBindings[digest]
-		return known, nil
+		if _, known := view.knownSpoolerBindings[digest]; known {
+			return true, nil
+		}
+		return locallyRegisteredSpoolerBinding(pc), nil
 	}
 	return true, nil
+}
+
+// locallyRegisteredSpoolerBinding reports whether a printer config itself
+// carries explicit local registration evidence, independent of any known
+// list the caller passed. Only markers the agent itself writes count:
+// manual/config registrations, and durable registry rows that are not
+// setup-only candidates. A discovery/config row with no marker, and any
+// Gateway desired-state row (which never carries registration_source),
+// return false here — their sharing still depends on known-list evidence.
+func locallyRegisteredSpoolerBinding(pc PrinterConfig) bool {
+	registration, _ := pc.Capabilities["registration_source"].(string)
+	switch strings.ToLower(strings.TrimSpace(registration)) {
+	case "manual", "config":
+		return true
+	case "registry":
+		verification, _ := pc.Capabilities["verification"].(string)
+		switch strings.ToLower(strings.TrimSpace(verification)) {
+		case "candidate_only", "device_detected_only":
+			return false
+		default:
+			return true
+		}
+	default:
+		return false
+	}
 }
 
 func independentlyKnownSpoolerBinding(pc PrinterConfig) bool {
@@ -489,6 +535,16 @@ func independentlyKnownSpoolerBinding(pc PrinterConfig) bool {
 	switch strings.ToLower(strings.TrimSpace(registration)) {
 	case "manual", "config":
 		return true
+	case "registry":
+		// A durable registry row is local registration evidence, not a
+		// cloud claim; only a setup-only candidate row stays excluded.
+		verification, _ := pc.Capabilities["verification"].(string)
+		switch strings.ToLower(strings.TrimSpace(verification)) {
+		case "candidate_only", "device_detected_only":
+			return false
+		default:
+			return true
+		}
 	}
 	verification, _ := pc.Capabilities["verification"].(string)
 	switch strings.ToLower(strings.TrimSpace(verification)) {

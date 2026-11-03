@@ -1096,6 +1096,7 @@ export default function App() {
     setPairCode,
     pair,
     printers: physicalPrinters,
+    gatewayPrinters: printers,
     discoveredPrinters,
     localPrinters,
     localPrintersLoading,
@@ -1180,13 +1181,14 @@ export default function App() {
             type="button"
             onClick={() => setSidebarOpen(true)}
             aria-label={t("desktop.app.openNavigation")}
+            title={t("desktop.app.openNavigation")}
             aria-expanded={sidebarOpen}
             aria-controls="desktop-mobile-nav"
-            className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-edge bg-surface text-ink-2 hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/35 lg:hidden"
+            className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-edge bg-surface text-ink-2 hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/35 lg:hidden"
           >
             <Menu className="h-5 w-5" aria-hidden />
           </button>
-          <h1 className="tg-desktop-header-title min-w-0 flex-1 break-words text-xl font-semibold leading-snug tracking-tight text-ink">{pageMeta[page].title}</h1>
+          <h1 className="tg-desktop-header-title min-w-0 flex-1 break-words text-4xl font-medium leading-snug tracking-tight text-ink">{pageMeta[page].title}</h1>
           <div className="tg-desktop-header-actions flex shrink-0 items-center gap-1 sm:gap-2">
             <span className="inline-flex sm:hidden" role="status" title={serviceLabel} aria-label={serviceLabel}>
               <StatusDot tone={serviceTone} pulse={isOnline} />
@@ -1194,12 +1196,12 @@ export default function App() {
             <span className="hidden sm:inline-flex"><StatusBadge tone={serviceTone} label={serviceLabel} /></span>
             <button type="button" onClick={() => { setNavSearchQuery(""); setNavSearchOpen(true); }}
               aria-label={t("common.search")} title={t("common.search")}
-              className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-edge bg-surface text-ink-2 hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/35">
-              <Search className="h-[18px] w-[18px]" aria-hidden />
+              className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-edge bg-surface text-ink-2 hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/35">
+              <Search className="h-5 w-5" aria-hidden />
             </button>
             <div className="hidden items-center gap-1 sm:flex">
               <Button variant="ghost" onClick={() => { refreshStatus(); refreshPrinters(); if (savedGatewayUrl) void refreshJobs(); }}
-                icon={<RefreshCw className="h-[18px] w-[18px]" />} aria-label={t("desktop.app.refreshAll")}>
+                icon={<RefreshCw className="h-5 w-5" />} aria-label={t("desktop.app.refreshAll")} title={t("desktop.app.refreshAll")}>
                 <span className="hidden xl:inline">{t("desktop.app.refresh")}</span>
               </Button>
               <LanguageSwitcher />
@@ -1211,7 +1213,7 @@ export default function App() {
                 align="end"
                 placement="below"
                 trigger={
-                  <span className="inline-flex h-11 w-11 items-center justify-center rounded-xl text-ink-2 hover:bg-surface-2">
+                  <span className="inline-flex h-11 w-11 items-center justify-center rounded-full text-ink-2 hover:bg-surface-2">
                     <MoreHorizontal className="h-5 w-5" aria-hidden />
                   </span>
                 }

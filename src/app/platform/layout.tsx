@@ -10,13 +10,18 @@ import { PlatformSidebar } from "../../components/platform/PlatformSidebar";
 import { PageContainer, PageSkeleton, ErrorState, Callout } from "../../components/ui";
 import { useI18n } from "../../i18n/react";
 
+// WP8: same grouped-sidebar model as the Gateway shell (Operations,
+// Administration) instead of one unlabelled list. Order change is
+// intentional: Operations (Overview) now sits with Operations (fleet
+// control) in the first group; the remaining items form Administration.
+// Same section keys as the Gateway, so both shells translate identically.
 const NAV_ITEMS: TopNavItem[] = [
- {href:"/platform/dashboard",labelKey:"v4.admin.overview",icon:Activity},
- {href:"/platform/tenants",labelKey:"v4.admin.workspaces",icon:Building2},
- {href:"/platform/subscription-requests",labelKey:"v4.admin.requests",icon:ListChecks},
- {href:"/platform/subscriptions",labelKey:"v4.admin.subscriptions",icon:CreditCard},
- {href:"/platform/operations",labelKey:"v4.admin.operations",icon:Printer},
- {href:"/platform/security",labelKey:"platform.section.security",icon:Shield},
+ {href:"/platform/dashboard",labelKey:"v4.admin.overview",icon:Activity,sectionKey:"nav.section.operations"},
+ {href:"/platform/operations",labelKey:"v4.admin.operations",icon:Printer,sectionKey:"nav.section.operations"},
+ {href:"/platform/tenants",labelKey:"v4.admin.workspaces",icon:Building2,sectionKey:"nav.section.administration"},
+ {href:"/platform/subscription-requests",labelKey:"v4.admin.requests",icon:ListChecks,sectionKey:"nav.section.administration"},
+ {href:"/platform/subscriptions",labelKey:"v4.admin.subscriptions",icon:CreditCard,sectionKey:"nav.section.administration"},
+ {href:"/platform/security",labelKey:"platform.section.security",icon:Shield,sectionKey:"nav.section.administration"},
 ];
 
 export default function PlatformLayout({ children }: { children: React.ReactNode }) {

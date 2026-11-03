@@ -395,10 +395,10 @@ def test_job_timeline_and_dashboard_enforce_data_read_permissions():
     for permission in ("agents.read", "printers.read", "jobs.read"):
         assert f'requireManagerPermission(manager, "{permission}")' in dashboard
 
-    page = read("src/app/dashboard/page.tsx")
-    assert 'hasManagerPermission(claims, "agents.read")' in page
-    assert 'hasManagerPermission(claims, "printers.read")' in page
-    assert 'hasManagerPermission(claims, "jobs.read")' in page
+    dashboard_content = read("src/app/dashboard/dashboard-page-content.tsx")
+    assert 'hasManagerPermission(claims, "agents.read")' in dashboard_content
+    assert 'hasManagerPermission(claims, "printers.read")' in dashboard_content
+    assert 'hasManagerPermission(claims, "jobs.read")' in dashboard_content
 
 
 def test_agent_heartbeat_cannot_extend_tokenless_legacy_claims():

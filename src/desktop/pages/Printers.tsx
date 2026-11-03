@@ -4,7 +4,26 @@ import { Toolbar, PrinterAvatar } from "../ui";
 import { PrinterSharingControl } from "../components/PrinterSharingControl";
 import type { DesktopState } from "../types";
 import { useI18n } from "../../i18n/react";
-import { humanConnection, isProductionPrinter, isMainInventoryPrinter, printerDisplayName, printerPresentation, printerHealthCounts } from "../lib/printers";
+import { humanConnection, isProductionPrinter, isMainInventoryPrinter, printerDisplayName, printerPresentation, printerHealthCounts, printerStatusDetail, printerStatusDetailCode } from "../lib/printers";
+import type { PrinterInfo } from "../lib/ipc";
+import type { Locale } from "../../i18n/config";
+
+/**
+ * WP4c: the mapped badge collapses offline+error into "attention" and
+ * unknown/stale/not-shared into "unavailable", so the row also shows the
+ * raw Agent status_detail code (verbatim, LTR) — offline vs error vs
+ * unknown become distinguishable to the user and to support. Renders
+ * nothing when the Agent sent no code; absence is never faked.
+ */
+function StatusDetailLine({ p, locale }: { p: PrinterInfo; locale: Locale }) {
+  const code = printerStatusDetailCode(p);
+  if (!code) return null;
+  const text = printerStatusDetail(p, locale);
+  return <div className="mt-1 text-xs text-ink-3">
+    {text && text !== code ? <>{text} </> : null}
+    <span dir="ltr">{text && text !== code ? `(${code})` : code}</span>
+  </div>;
+}
 
 export function PrintersPage({ s }: { s: DesktopState }) {
   const { t, locale } = useI18n();
@@ -37,9 +56,9 @@ export function PrintersPage({ s }: { s: DesktopState }) {
           <option value="saved">{t("printer.presentation.saved")}</option>
         </Select>
         <div className="flex flex-wrap gap-2">
-          <Button variant="ghost" onClick={() => s.setShowAdd(true)} icon={<Plus className="h-4 w-4" />} className="rounded-md">{t("v4.experience.printers.manual")}</Button>
-          <Button variant="primary" onClick={s.handleDiscover} loading={s.printersLoading} icon={<RefreshCw className="h-4 w-4" />} className="rounded-md">{t("desktop.printers.discover")}</Button>
-          <Button variant="ghost" onClick={s.refreshPrinters} icon={<RefreshCw className="h-4 w-4" />}>{t("desktop.printers.refresh")}</Button>
+          <Button variant="ghost" onClick={() => s.setShowAdd(true)} icon={<Plus className="h-5 w-5" />} className="rounded-md">{t("v4.experience.printers.manual")}</Button>
+          <Button variant="primary" onClick={s.handleDiscover} loading={s.printersLoading} icon={<RefreshCw className="h-5 w-5" />} className="rounded-md">{t("desktop.printers.discover")}</Button>
+          <Button variant="ghost" onClick={s.refreshPrinters} icon={<RefreshCw className="h-5 w-5" />}>{t("desktop.printers.refresh")}</Button>
         </div>
       </Toolbar>
 
@@ -61,6 +80,7 @@ export function PrintersPage({ s }: { s: DesktopState }) {
                   <StatusBadge tone="warn" label={t("desktop.printers.waitingForSync")} />
                 </div>
                 <div className="break-words text-xs text-ink-3">{humanConnection(p, locale)}</div>
+                <StatusDetailLine p={p} locale={locale} />
                 <PrinterSharingControl s={s} printer={p} candidate />
               </li>
             ))}
@@ -72,7 +92,7 @@ export function PrintersPage({ s }: { s: DesktopState }) {
                 <tr key={`local-${p.id}`} className="border-b border-edge last:border-0">
                   <td className="px-5 py-3"><div className="font-semibold text-ink">{printerDisplayName(p, locale)}</div></td>
                   <td className="px-4 py-3 text-ink-2">{humanConnection(p, locale)}</td>
-                  <td className="px-5 py-3"><div className="space-y-2"><StatusBadge tone="warn" label={t("desktop.printers.waitingForSync")} /><PrinterSharingControl s={s} printer={p} candidate /></div></td>
+                  <td className="px-5 py-3"><div className="space-y-2"><StatusBadge tone="warn" label={t("desktop.printers.waitingForSync")} /><StatusDetailLine p={p} locale={locale} /><PrinterSharingControl s={s} printer={p} candidate /></div></td>
                 </tr>
               ))}</tbody>
             </table>
@@ -84,7 +104,7 @@ export function PrintersPage({ s }: { s: DesktopState }) {
       <Card className="overflow-hidden">
         <CardHeader title={<span className="flex flex-wrap items-center gap-2.5">{t("desktop.printers.title")}<span className="min-w-0 max-w-full rounded-sm border border-edge bg-surface-2 px-2.5 py-0.5 text-xs font-semibold tabular-nums text-ink-3 [overflow-wrap:anywhere]">{t("desktop.printers.total", { count: total })}</span></span>} subtitle={t("desktop.printers.subtitle")} icon={<PrinterIcon className="h-4 w-4 text-brand" />} />
         {(s.printersLoading || s.localPrintersLoading) && rows.length === 0 ? <div className="p-5"><LoadingState rows={5} /></div> : rows.length === 0 && s.printersError ? null : rows.length === 0 ? (
-          <EmptyState icon={<PrinterIcon className="h-8 w-8" />} title={total === 0 && s.statusFilter === "saved" ? t("printer.presentation.savedEmpty") : total === 0 && pendingLocal.length > 0 ? t("desktop.printers.waitingTitle") : total === 0 ? t("desktop.printers.emptyTitle") : t("desktop.printers.noMatches")} description={total === 0 && s.statusFilter === "saved" ? t("printer.presentation.savedEmptyBody") : total === 0 && pendingLocal.length > 0 ? t("desktop.printers.waitingBody") : total === 0 ? t("desktop.printers.emptyBody") : t("desktop.printers.noMatchesBody")} action={total === 0 && s.statusFilter !== "saved" ? <><Button variant="primary" onClick={s.handleDiscover} icon={<RefreshCw className="h-4 w-4" />}>{t("desktop.printers.discoverPrinters")}</Button><Button variant="secondary" onClick={() => s.setShowAdd(true)} icon={<Plus className="h-4 w-4" />}>{t("v4.experience.printers.manual")}</Button></> : undefined} />
+          <EmptyState icon={<PrinterIcon className="h-8 w-8" />} title={total === 0 && s.statusFilter === "saved" ? t("printer.presentation.savedEmpty") : total === 0 && pendingLocal.length > 0 ? t("desktop.printers.waitingTitle") : total === 0 ? t("desktop.printers.emptyTitle") : t("desktop.printers.noMatches")} description={total === 0 && s.statusFilter === "saved" ? t("printer.presentation.savedEmptyBody") : total === 0 && pendingLocal.length > 0 ? t("desktop.printers.waitingBody") : total === 0 ? t("desktop.printers.emptyBody") : t("desktop.printers.noMatchesBody")} action={total === 0 && s.statusFilter !== "saved" ? <><Button variant="primary" onClick={s.handleDiscover} icon={<RefreshCw className="h-5 w-5" />}>{t("desktop.printers.discoverPrinters")}</Button><Button variant="secondary" onClick={() => s.setShowAdd(true)} icon={<Plus className="h-5 w-5" />}>{t("v4.experience.printers.manual")}</Button></> : undefined} />
         ) : (
           <>
           <ul className="divide-y divide-edge-subtle xl:hidden" aria-label={t("desktop.printers.title")}>
@@ -103,8 +123,9 @@ export function PrintersPage({ s }: { s: DesktopState }) {
                 <div className="mt-2 flex min-w-0 flex-wrap gap-1.5">
                   <StatusBadge tone={view.tone} label={t(view.labelKey)} />
                 </div>
+                <StatusDetailLine p={p} locale={locale} />
                 <div className="mt-3 flex min-w-0 flex-wrap gap-2 border-t border-edge-subtle pt-3">
-                  <Button size="sm" variant="secondary" onClick={() => s.setSelectedPrinter(p)} aria-label={`${t("desktop.printers.details")} — ${name}`} icon={<Eye className="h-3.5 w-3.5" />}>{t("desktop.printers.details")}</Button>
+                  <Button size="sm" variant="secondary" onClick={() => s.setSelectedPrinter(p)} aria-label={`${t("desktop.printers.details")} — ${name}`} icon={<Eye className="h-5 w-5" />}>{t("desktop.printers.details")}</Button>
                 </div>
                 <div className="mt-3"><PrinterSharingControl s={s} printer={p} /></div>
               </li>
@@ -120,9 +141,9 @@ export function PrintersPage({ s }: { s: DesktopState }) {
                 return (
                 <tr key={p.id} className="border-b border-edge last:border-0 hover:bg-surface-2/50 transition-colors">
                   <td className="px-5 py-3"><div className="flex items-center gap-3"><PrinterAvatar name={name} size="lg" tone={view.tone} /><div className="min-w-0"><button type="button" onClick={() => openQueue(p.id)} aria-label={`${t("desktop.drawer.viewJobs")} — ${name}`} className="max-w-full break-words text-start text-base font-semibold text-ink hover:text-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/35">{name}</button><div className="mt-0.5 text-xs text-ink-3">{p.agentName || t("printer.unknownAgent")}</div></div></div></td>
-                  <td className="px-4 py-3"><StatusBadge tone={view.tone} label={t(view.labelKey)} /></td>
+                  <td className="px-4 py-3"><StatusBadge tone={view.tone} label={t(view.labelKey)} /><StatusDetailLine p={p} locale={locale} /></td>
                   <td className="px-5 py-3"><div className="flex flex-wrap items-center justify-end gap-1.5">
-                     <Button size="sm" variant="ghost" onClick={() => s.setSelectedPrinter(p)} aria-label={`${t("desktop.printers.details")} — ${name}`} icon={<Eye className="h-3.5 w-3.5" />}>{t("desktop.printers.details")}</Button>
+                     <Button size="sm" variant="ghost" onClick={() => s.setSelectedPrinter(p)} aria-label={`${t("desktop.printers.details")} — ${name}`} icon={<Eye className="h-5 w-5" />}>{t("desktop.printers.details")}</Button>
                    </div><div className="mt-2 max-w-md ms-auto space-y-2"><PrinterSharingControl s={s} printer={p} /></div></td>
                 </tr>
                 );

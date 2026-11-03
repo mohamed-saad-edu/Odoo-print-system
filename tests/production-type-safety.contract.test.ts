@@ -30,7 +30,9 @@ describe("production TypeScript safety contracts", () => {
     const billing = readFileSync(resolve(process.cwd(), "src/app/billing/page.tsx"), "utf8");
     expect(billing).toContain("await verifyWorkspaceTokenFromCookieValues(");
     expect(billing).not.toContain('redirect("/platform/subscriptions")');
-    const dashboard = readFileSync(resolve(process.cwd(), "src/app/dashboard/page.tsx"), "utf8");
+    const dashboard = readFileSync(resolve(process.cwd(), "src/app/dashboard/dashboard-page-content.tsx"), "utf8");
+    const wrapper = readFileSync(resolve(process.cwd(), "src/app/dashboard/page.tsx"), "utf8");
+    expect(wrapper).toContain("DashboardPageContent");
     expect(dashboard).toContain("verifyWorkspaceTokenFromCookieValues(");
     expect(dashboard).toContain("await verifyWorkspaceTokenFromCookieValues(");
 

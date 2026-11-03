@@ -7,7 +7,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { ArrowRight, Building2, ShieldCheck } from "lucide-react";
 import { AuthShell } from "../../components/AuthShell";
-import { Button, Field, Input, ErrorState, Skeleton } from "../../components/ui";
+import { Button, Field, Input, ErrorState, Skeleton, focusFirstError } from "../../components/ui";
 import { ensureCustomerSession } from "../../lib/session-config";
 import { codeMessageKey } from "../../lib/api-error-keys";
 
@@ -65,6 +65,11 @@ export default function LoginPage() {
     return cleanup;
   }, [router, postAuthDestination, t]);
 
+  const formRef = useRef<HTMLFormElement>(null);
+  // Guide form rule: move focus to the first error when submission fails.
+  useEffect(() => {
+    if (err) focusFirstError(formRef.current);
+  }, [err]);
   async function onSubmit(event: React.FormEvent) {
     event.preventDefault();
     if (flight.current || !mounted.current) return;
@@ -177,7 +182,7 @@ export default function LoginPage() {
         </>
       }
     >
-      <form onSubmit={onSubmit} className="space-y-4">
+      <form ref={formRef} onSubmit={onSubmit} className="space-y-4">
         <Field label={t("auth.email")} htmlFor="email">
           <Input
             id="email"

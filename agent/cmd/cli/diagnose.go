@@ -65,12 +65,25 @@ type SpoolerInfo struct {
 }
 
 type QueueInfo struct {
-	Name                 string `json:"name"`
-	Driver               string `json:"driver"`
-	Port                 string `json:"port"`
-	Status               string `json:"status"`
-	ConnectionType       string `json:"connection_type"`
-	Protocol             string `json:"protocol"`
+	Name           string `json:"name"`
+	Driver         string `json:"driver"`
+	Port           string `json:"port"`
+	Status         string `json:"status"`
+	ConnectionType string `json:"connection_type"`
+	Protocol       string `json:"protocol"`
+	// Server/Scope/StatusRaw/StatusDetail/StatusError/Discovery* are the
+	// 1:1 comparison fields against Windows Settings > Printers and
+	// Get-Printer output: two queues that share a display name on
+	// different servers or in different scopes are different rows, and a
+	// mapped status word alone cannot say which Win32 bit produced it.
+	Server               string `json:"server,omitempty"`
+	Scope                string `json:"scope,omitempty"`
+	StatusRaw            string `json:"status_raw,omitempty"`
+	StatusDetail         string `json:"status_detail,omitempty"`
+	StatusError          string `json:"status_error,omitempty"`
+	DiscoverySession     uint32 `json:"discovery_session_id,omitempty"`
+	DiscoverySessionKind string `json:"discovery_session_kind,omitempty"`
+	DiscoveryAccountSID  string `json:"discovery_account_sid,omitempty"`
 	Classification       string `json:"classification,omitempty"`
 	ClassificationReason string `json:"classification_reason,omitempty"`
 	SpoolerVerdict       string `json:"spooler_verdict,omitempty"`
@@ -194,42 +207,17 @@ func buildDiagnosticReport(cfg *config.Config, registryPath string) DiagnosticRe
 	probeBudget, cancelProbes := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancelProbes()
 	for _, p := range result.Printers {
-		q := QueueInfo{
-			Name:           p.Name,
-			ConnectionType: p.ConnectionType,
-			Protocol:       p.Protocol,
-			Status:         p.Status,
-		}
-		if p.Capabilities != nil {
-			if v, ok := p.Capabilities["driver_name"]; ok {
-				q.Driver = fmt.Sprint(v)
-			}
-			if v, ok := p.Capabilities["port_name"]; ok {
-				q.Port = fmt.Sprint(v)
-			}
-		}
-		cls := printer.ClassifyDeviceInfo(p)
-		q.Classification = string(cls.Class)
-		q.ClassificationReason = strings.Join(cls.Reasons, ";")
+		var probe *printer.SpoolerProbe
 		if p.SpoolerName != "" {
 			probeCtx, cancelProbe := context.WithTimeout(probeBudget, 2*time.Second)
-			probe := probeSpoolerDiagnostic(probeCtx, p.SpoolerName, printer.ProbeSpoolerQueue)
+			value := probeSpoolerDiagnostic(probeCtx, p.SpoolerName, printer.ProbeSpoolerQueue)
 			cancelProbe()
-			if probe.Verdict == printer.SpoolerStatusUnknown {
-				report.Errors = append(report.Errors, p.SpoolerName+": "+probe.VerdictReason)
+			if value.Verdict == printer.SpoolerStatusUnknown {
+				report.Errors = append(report.Errors, p.SpoolerName+": "+value.VerdictReason)
 			}
-			q.Driver = firstNonEmpty(q.Driver, probe.DriverName)
-			q.Port = firstNonEmpty(q.Port, probe.PortName)
-			q.SpoolerVerdict = probe.Verdict
-			q.SpoolerVerdictReason = probe.VerdictReason
-			q.SpoolerWorkOffline = probe.WorkOffline
-			q.SpoolerStatusFlags = probe.StatusFlags
-			q.SpoolerPendingJobs = probe.PendingJobs
-			q.SpoolerOpenOK = probe.OpenPrinterOK
-			q.SpoolerOpenError = probe.OpenPrinterError
-			q.SpoolerGetOK = probe.GetPrinterOK
-			q.SpoolerGetError = probe.GetPrinterError
+			probe = &value
 		}
+		q := queueInfoFromDevice(p, probe)
 		report.Queues = append(report.Queues, q)
 		d := DeviceInfo{
 			Name:           p.Name,
@@ -255,9 +243,111 @@ func buildDiagnosticReport(cfg *config.Config, registryPath string) DiagnosticRe
 		}
 		report.Devices = append(report.Devices, d)
 	}
-	sort.Slice(report.Queues, func(i, j int) bool { return report.Queues[i].Name < report.Queues[j].Name })
+	sortDiagnosticQueues(report.Queues)
 	sort.Slice(report.Devices, func(i, j int) bool { return report.Devices[i].Name < report.Devices[j].Name })
 	return report
+}
+
+// sortDiagnosticQueues orders queue rows deterministically for 1:1
+// comparison with Windows Settings / Get-Printer output. Name alone is
+// not an order key: two distinct queues may share a display name on
+// different servers or in different scopes, and sorting by name alone
+// would leave their relative order arbitrary between runs.
+func sortDiagnosticQueues(queues []QueueInfo) {
+	sort.Slice(queues, func(i, j int) bool {
+		if queues[i].Name != queues[j].Name {
+			return queues[i].Name < queues[j].Name
+		}
+		if queues[i].Server != queues[j].Server {
+			return queues[i].Server < queues[j].Server
+		}
+		return queues[i].Scope < queues[j].Scope
+	})
+}
+
+func diagnosticCapabilityString(caps map[string]interface{}, key string) string {
+	if caps == nil {
+		return ""
+	}
+	if v, ok := caps[key].(string); ok {
+		return v
+	}
+	return ""
+}
+
+func diagnosticCapabilityUint32(caps map[string]interface{}, key string) uint32 {
+	if caps == nil {
+		return 0
+	}
+	switch v := caps[key].(type) {
+	case uint32:
+		return v
+	case uint64:
+		if v <= uint64(^uint32(0)) {
+			return uint32(v)
+		}
+	case float64:
+		if v >= 0 && v <= float64(^uint32(0)) && v == float64(uint32(v)) {
+			return uint32(v)
+		}
+	case int:
+		if v >= 0 {
+			return uint32(v)
+		}
+	}
+	return 0
+}
+
+// queueInfoFromDevice is the diagnose output contract for one discovered
+// queue: driver/port/status/error from the inventory row plus a fresh
+// spooler probe when one was taken. It is pure (no Win32, no clock) so
+// the contract is testable on any platform: discovery capabilities carry
+// server, scope, raw Status hex, detail, per-queue error, and Session-0
+// provenance, and a successful probe refreshes driver/port/flags from
+// current evidence. A probe that never completed a GetPrinterW read does
+// not overwrite the discovery row's raw hex with a zero flag word.
+func queueInfoFromDevice(p printer.DeviceInfo, probe *printer.SpoolerProbe) QueueInfo {
+	q := QueueInfo{
+		Name:           p.Name,
+		ConnectionType: p.ConnectionType,
+		Protocol:       p.Protocol,
+		Status:         p.Status,
+		Server:         p.SpoolerServer,
+	}
+	if p.Capabilities != nil {
+		q.Driver = diagnosticCapabilityString(p.Capabilities, "driver_name")
+		q.Port = diagnosticCapabilityString(p.Capabilities, "port_name")
+		q.Scope = diagnosticCapabilityString(p.Capabilities, "spooler_scope")
+		q.StatusRaw = diagnosticCapabilityString(p.Capabilities, "spooler_status_raw")
+		q.StatusDetail = diagnosticCapabilityString(p.Capabilities, "spooler_status_detail")
+		q.StatusError = diagnosticCapabilityString(p.Capabilities, "spooler_status_error")
+		q.DiscoverySession = diagnosticCapabilityUint32(p.Capabilities, "discovery_session_id")
+		q.DiscoverySessionKind = diagnosticCapabilityString(p.Capabilities, "discovery_session_kind")
+		q.DiscoveryAccountSID = diagnosticCapabilityString(p.Capabilities, "discovery_account_sid")
+		if q.Server == "" {
+			q.Server = diagnosticCapabilityString(p.Capabilities, "server_name")
+		}
+	}
+	cls := printer.ClassifyDeviceInfo(p)
+	q.Classification = string(cls.Class)
+	q.ClassificationReason = strings.Join(cls.Reasons, ";")
+	if probe != nil {
+		q.Driver = firstNonEmpty(q.Driver, probe.DriverName)
+		q.Port = firstNonEmpty(q.Port, probe.PortName)
+		q.SpoolerVerdict = probe.Verdict
+		q.SpoolerVerdictReason = probe.VerdictReason
+		q.SpoolerWorkOffline = probe.WorkOffline
+		q.SpoolerStatusFlags = probe.StatusFlags
+		q.SpoolerPendingJobs = probe.PendingJobs
+		q.SpoolerOpenOK = probe.OpenPrinterOK
+		q.SpoolerOpenError = probe.OpenPrinterError
+		q.SpoolerGetOK = probe.GetPrinterOK
+		q.SpoolerGetError = probe.GetPrinterError
+		if probe.GetPrinterOK {
+			q.StatusRaw = fmt.Sprintf("0x%08x", probe.StatusFlags)
+		}
+	}
+	return q
 }
 
 func printDiagnosticReport(report DiagnosticReport) {
@@ -276,6 +366,15 @@ func printDiagnosticReport(report DiagnosticReport) {
 	for _, q := range report.Queues {
 		fmt.Printf("  %s\n    Driver: %s\n    Port: %s\n    Status: %s\n    Type: %s / %s\n",
 			q.Name, q.Driver, q.Port, q.Status, q.ConnectionType, q.Protocol)
+		if q.Server != "" || q.Scope != "" {
+			fmt.Printf("    Server: %s  Scope: %s\n", q.Server, q.Scope)
+		}
+		if q.StatusRaw != "" || q.StatusDetail != "" || q.StatusError != "" {
+			fmt.Printf("    RawStatus: %s  Detail: %s  Error: %s\n", q.StatusRaw, q.StatusDetail, q.StatusError)
+		}
+		if q.DiscoverySessionKind != "" || q.DiscoveryAccountSID != "" {
+			fmt.Printf("    Discovered as: session %d (%s) account %s\n", q.DiscoverySession, q.DiscoverySessionKind, q.DiscoveryAccountSID)
+		}
 		if q.Classification != "" {
 			fmt.Printf("    Class: %s (%s)\n", q.Classification, q.ClassificationReason)
 		}

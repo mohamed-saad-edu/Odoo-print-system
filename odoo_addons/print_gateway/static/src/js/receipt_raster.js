@@ -19,7 +19,18 @@ function captureJpeg(canvas) {
         ctx.fillStyle = "#ffffff";
         ctx.fillRect(0, 0, canvas.width, canvas.height);
     }
-    const dataUrl = canvas.toDataURL("image/jpeg", 0.90);
+    // WP7-measured: JPEG quality 0.95 halves the mean gray error vs 0.90
+    // (0.043 vs 0.098 on an anti-aliased receipt fixture) and eliminates
+    // pixels deviating by more than 10 gray levels (0 vs 36), while growing
+    // a 576x3600 receipt only from ~150 KB to ~178 KB — far under the
+    // 5 MiB fail-closed cap. Quality 1.00 was measured too (mean error
+    // 0.002) but rejected as the default: photo/logo-heavy receipts
+    // balloon toward the cap for no visible gain on the 1-bit thermal
+    // path (threshold 180 already absorbs q90 ringing) and none beyond
+    // q95 on the grayscale PDF path. The Gateway contract requires a
+    // JPEG signature for image payloads, so PNG is not an available
+    // lossless alternative without a contract change.
+    const dataUrl = canvas.toDataURL("image/jpeg", 0.95);
     if (!dataUrl.startsWith("data:image/jpeg;base64,")) {
         throw geometryError(_t("The receipt renderer could not encode a JPEG image. No print was sent."));
     }

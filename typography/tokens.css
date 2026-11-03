@@ -15,15 +15,21 @@
 
 :root {
   /* ---------- Families -------------------------------------------------
-     The Arabic family and the Latin family both carry Latin glyphs, so the
-     ORDER of the stack decides which of them renders English text. It must
-     follow the reading direction: the Latin face leads in LTR, the Arabic
-     face leads in RTL. One list of families, two orderings. */
-  --typo-font-latin: var(--font-ibm-plex-sans, "IBM Plex Sans");
-  --typo-font-arabic: var(--font-ibm-plex-sans-arabic, "IBM Plex Sans Arabic");
+     Thmanyah Sans (Design Guide v2.1) leads both stacks: one family
+     carries Latin and Arabic glyphs, so unlike IBM Plex it needs no
+     per-script face. The served OFL-licensed IBM Plex families stay
+     second as the fallback if Thmanyah fails to load, and the literal
+     "Thmanyah Sans" name covers the case where the Next.js variable
+     is absent (Desktop @font-face, Odoo module). The ORDER of the
+     stack still decides which face renders English text where both
+     faces carry Latin glyphs: the Latin entry leads in LTR, the
+     Arabic entry leads in RTL. One list of families, two orderings. */
+  --typo-font-latin: var(--font-thmanyah, "Thmanyah Sans"), var(--font-ibm-plex-sans, "IBM Plex Sans");
+  --typo-font-arabic: var(--font-thmanyah, "Thmanyah Sans"), var(--font-ibm-plex-sans-arabic, "IBM Plex Sans Arabic");
   --typo-font-fallbacks: "Noto Sans Arabic", "Noto Sans", Tahoma, Arial, sans-serif;
 
-  /* The specified stack: "IBM Plex Sans Arabic", "IBM Plex Sans",
+  /* The specified stack: "Thmanyah Sans", "IBM Plex Sans" (Latin) /
+     "IBM Plex Sans Arabic" (Arabic),
      "Noto Sans Arabic", "Noto Sans", Tahoma, Arial, sans-serif. */
   --typo-font-stack: var(--typo-font-arabic), var(--typo-font-latin), var(--typo-font-fallbacks);
   /* Same families, Latin first — for left-to-right documents. */

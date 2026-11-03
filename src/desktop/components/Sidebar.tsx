@@ -68,13 +68,13 @@ export function Sidebar({
         <BrandMarkIcon size="md" className="shrink-0" />
         {!compact && (
           <div className="min-w-0 flex-1">
-            <div className="break-words text-base font-semibold leading-snug tracking-[-0.02em] text-ink">{t("desktop.sidebar.productName")}</div>
+            <div className="break-words text-base font-medium leading-snug tracking-[-0.02em] text-ink">{t("desktop.sidebar.productName")}</div>
             <div className="mt-1 break-words text-xs font-medium leading-normal text-ink-3">
               {t("desktop.sidebar.tagline", { version: version || "—" })}
             </div>
           </div>
         )}
-        <button onClick={() => { setCollapsed(false); setSidebarOpen(false); }} className="ms-auto inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-sm text-ink-3 transition hover:bg-surface-2 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/35 lg:hidden" aria-label={t("nav.closeNavigation")}>
+        <button onClick={() => { setCollapsed(false); setSidebarOpen(false); }} className="ms-auto inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-ink-3 transition hover:bg-surface-2 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/35 lg:hidden" aria-label={t("nav.closeNavigation")} title={t("nav.closeNavigation")}>
           <X className="h-5 w-5" />
         </button>
       </div>
@@ -95,7 +95,7 @@ export function Sidebar({
                 className={`sidebar-item tg-nav-item relative flex min-h-12 w-full items-center gap-3 rounded-md text-base leading-normal focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30 ${compact ? "justify-center px-1 py-2.5" : "px-3 py-2.5"} ${active ? "sidebar-item-active font-semibold text-brand" : "font-medium text-ink-2 hover:bg-surface-2 hover:text-ink"}`}
               >
                 <NavIconFrame active={active}>
-                  <Icon className="h-[18px] w-[18px]" />
+                  <Icon className="h-5 w-5" />
                 </NavIconFrame>
                 {!compact && <span className="min-w-0 flex-1 break-words text-start">{item.label}</span>}
               </button>
@@ -122,7 +122,7 @@ export function Sidebar({
             </div>
           </div>
         )}
-        <button onClick={() => setCollapsed(!compact)} className="mt-3 hidden min-h-11 w-full items-center justify-center rounded-sm px-2 py-2 text-ink-3 transition hover:bg-surface-2 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/35 lg:inline-flex" aria-label={compact ? t("nav.expandNavigation") : t("nav.collapseNavigation")}>
+        <button onClick={() => setCollapsed(!compact)} className="mt-3 hidden min-h-11 w-full items-center justify-center rounded-full px-2 py-2 text-ink-3 transition hover:bg-surface-2 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/35 lg:inline-flex" aria-label={compact ? t("nav.expandNavigation") : t("nav.collapseNavigation")} title={compact ? t("nav.expandNavigation") : t("nav.collapseNavigation")}>
           {compact ? <PanelLeftOpen className="h-5 w-5" /> : <PanelLeftClose className="h-5 w-5" />}
         </button>
       </div>

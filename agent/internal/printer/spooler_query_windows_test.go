@@ -56,8 +56,12 @@ func TestSpoolerStatusDetailUsesSameSnapshotAndClearsFailedRead(t *testing.T) {
 	}
 	restore := setPrinterHooks(func(*uint16) (syscall.Handle, error) { return 0, syscall.Errno(5) }, fakePrinterInfo2(0, 0))
 	defer restore()
-	if p.Status() != "unknown" || p.StatusDetail() != "" {
-		t.Fatalf("failed fresh read retained stale reason: detail=%q", p.StatusDetail())
+	// WP123: a failed fresh read no longer clears the reason to a bare
+	// "unknown". The stale windows_paper_out reason must still be gone,
+	// and stale raw bits must be cleared, but the per-printer failure
+	// reason (OpenPrinter Win32 code 5, access denied) is preserved.
+	if p.Status() != "unknown" || p.StatusDetail() != "spooler_open_failed_win32_5" || p.StatusRawHex() != "" {
+		t.Fatalf("failed fresh read lost its reason or retained stale evidence: detail=%q raw=%q", p.StatusDetail(), p.StatusRawHex())
 	}
 }
 
@@ -84,9 +88,11 @@ func TestTimedOutSpoolerStatusCannotPublishLateNativeReason(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("native status worker did not start")
 	}
-	if status := <-result; status != "unknown" || p.StatusDetail() != "" {
+	// WP123: a timed-out read keeps a timeout reason instead of a bare
+	// "unknown", but still never the stale windows_paper_out reason.
+	if status := <-result; status != "unknown" || p.StatusDetail() != "spooler_probe_timeout" {
 		releaseOnce.Do(func() { close(release) })
-		t.Fatalf("timeout retained old native reason: status=%q detail=%q", status, p.StatusDetail())
+		t.Fatalf("timeout lost its reason or retained old native reason: status=%q detail=%q", status, p.StatusDetail())
 	}
 	releaseOnce.Do(func() { close(release) })
 	deadline := time.After(2 * time.Second)
@@ -103,7 +109,7 @@ func TestTimedOutSpoolerStatusCannotPublishLateNativeReason(t *testing.T) {
 		case <-time.After(time.Millisecond):
 		}
 	}
-	if p.StatusDetail() != "" || p.TransportObserved() {
+	if p.StatusDetail() != "spooler_probe_timeout" || p.TransportObserved() {
 		t.Fatalf("late native response overwrote timed-out evidence: detail=%q observed=%t", p.StatusDetail(), p.TransportObserved())
 	}
 }

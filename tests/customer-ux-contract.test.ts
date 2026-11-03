@@ -13,12 +13,23 @@ describe("customer-facing UX contracts", () => {
     expect(existsSync("src/app/api/health/route.ts")).toBe(true);
   });
 
-  it("uses the IBM Plex bilingual font system in the web console", () => {
+  it("uses the Thmanyah-first bilingual font system with IBM Plex fallback in the web console", () => {
     const layout = read("src/app/layout.tsx");
     const css = read("src/app/globals.css");
     // The same bilingual families are now licensed, local and deterministic
     // during Docker builds; assert their shipped sources, not Google API names.
     expect(layout).toContain('from "next/font/local"');
+    // v9-font: Thmanyah is the served primary face; IBM Plex stays as fallback.
+    expect(layout).toContain('variable: "--font-thmanyah"');
+    for (const file of [
+      "thmanyahsans-Light.woff2",
+      "thmanyahsans-Regular.woff2",
+      "thmanyahsans-Medium.woff2",
+      "thmanyahsans-Bold.woff2",
+      "thmanyahsans-Black.woff2",
+    ]) {
+      expect(layout).toContain(`fonts/thmanyah/${file}`);
+    }
     // The Web app serves the WOFF2 payloads; the Desktop app and the Odoo
     // add-on bundle the TTF sources.
     expect(layout).toContain("ibm-plex-sans-variable.woff2");

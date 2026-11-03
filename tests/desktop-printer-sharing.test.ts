@@ -276,7 +276,11 @@ describe("actual Desktop sharing controls", () => {
     expect(doc.querySelector("button")?.getAttribute("aria-describedby")).toBeTruthy();
   });
   it("never offers an active local mutation for a remote or setup-only row", () => {
-    expect(renderToStaticMarkup(tree(h(PrinterSharingControl, { s: state({ localPrinters: [] }), printer: cloud })))).toBe("");
+    // WP4b: a remote row still offers no button, but it must now EXPLAIN
+    // why instead of rendering nothing (a missing control reads as broken).
+    const remote = new DOMParser().parseFromString(renderToStaticMarkup(tree(h(PrinterSharingControl, { s: state({ localPrinters: [] }), printer: cloud }))), "text/html");
+    expect(remote.querySelector("button")).toBeNull();
+    expect(remote.body.textContent).toContain("no local record for it");
     const candidate = { ...local, capabilities: { verification: "candidate_only" } };
     const doc = new DOMParser().parseFromString(renderToStaticMarkup(tree(h(PrinterSharingControl, { s: state({ localPrinters: [candidate] }), printer: candidate }))), "text/html");
     expect(doc.querySelector("button")?.disabled).toBe(true);

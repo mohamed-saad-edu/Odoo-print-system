@@ -6,7 +6,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ArrowRight, MailCheck } from "lucide-react";
 import { AuthShell } from "../../components/AuthShell";
-import { Button, Callout, Field, Input, ErrorState } from "../../components/ui";
+import { Button, Callout, Field, Input, ErrorState, focusFirstError } from "../../components/ui";
 import { codeMessageKey } from "../../lib/api-error-keys";
 import { fetchWithTimeout } from "../../lib/fetch-timeout";
 
@@ -27,6 +27,11 @@ export default function Signup() {
     return () => window.cancelAnimationFrame(frame);
   }, []);
 
+  const formRef = useRef<HTMLFormElement>(null);
+  // Guide form rule: move focus to the first error when submission fails.
+  useEffect(() => {
+    if (err) focusFirstError(formRef.current);
+  }, [err]);
   async function submit(event: React.FormEvent) {
     event.preventDefault();
     if (submitting.current) return;
@@ -86,7 +91,7 @@ export default function Signup() {
           .
         </Callout>
       ) : (
-        <form className="space-y-4" onSubmit={submit}>
+        <form ref={formRef} className="space-y-4" onSubmit={submit}>
           <Field label={t("v4.signup.name")} htmlFor="display-name" required>
             <Input id="display-name" value={displayName} onChange={event => setDisplayName(event.target.value)} autoComplete="name" minLength={2} maxLength={120} required />
           </Field>

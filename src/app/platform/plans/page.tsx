@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { Button, Card, PageHeader } from "../../../components/ui";
 import { adminJson, controlClass } from "../../../components/platform/ManualAdmin";
@@ -28,6 +28,12 @@ export default function Plans() {
   const [open, setOpen] = useState(false);
   const [preview, setPreview] = useState<string | null>(null);
   const [error, setError] = useState("");
+  const alertRef = useRef<HTMLParagraphElement>(null);
+  // Guide form rule: move focus to the first error (the page-level
+  // alert sits above both plan forms, so it gets its own ref).
+  useEffect(() => {
+    if (error) alertRef.current?.focus();
+  }, [error]);
   const [busy, setBusy] = useState(false);
   const [tick, setTick] = useState(0);
 
@@ -96,17 +102,17 @@ export default function Plans() {
           </div>
         }
       />
-      {error && <p role="alert" className="text-bad">{error}</p>}
+      {error && <p ref={alertRef} tabIndex={-1} role="alert" className="text-bad">{error}</p>}
       {open && (
         <Card className="p-5">
-          <h2 className="mb-4 text-xl font-semibold">
+          <h2 className="mb-4 text-xl font-medium">
             {t(`v4.admin.${editing ? "editPlan" : "newPlan"}` as MessageKey)}
           </h2>
           {preview ? (
             <form onSubmit={save} className="space-y-4">
               <p>{form.name} · {formatNumber(form.monthlyQuota)} {t("v4.admin.quota")} · {form.priceAmount ? form.priceAmount + " " + form.priceCurrency : t("v4.admin.priceOnRequest")}</p>
               <div className="flex gap-3">
-                <Button type="submit" disabled={busy} loading={busy}>{t("v4.admin.confirm")}</Button>
+                <Button type="submit" disabled={busy} loading={busy}>{busy ? t("common.saving") : t("v4.admin.confirm")}</Button>
                 <Button type="button" variant="secondary" onClick={() => setPreview(null)}>{t("v4.admin.cancel")}</Button>
               </div>
             </form>
@@ -186,7 +192,7 @@ export default function Plans() {
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {plans.map((p) => (
           <Card key={p.id} className="p-5">
-            <h2 className="text-lg font-semibold">{p.name}</h2>
+            <h2 className="text-lg font-medium">{p.name}</h2>
             <p className="mt-2 text-sm text-ink-3">{p.description}</p>
             <p className="mt-5 text-3xl font-semibold">
               {p.entitlements.max_prints_per_period === "unlimited" ? t("v4.admin.unlimited") : formatNumber(Number(p.entitlements.max_prints_per_period))}

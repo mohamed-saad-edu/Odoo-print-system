@@ -10,7 +10,7 @@ import {
   ErrorState,
 } from "../../components/ui";
 import { fetchGatewayAgents, registerGatewayPrinter, normalizeGatewayUrl, type GatewayApiError, type PrinterInfo, type RegisterPrinterRequest } from "../lib/ipc";
-import { agentLiveView, errMsg, friendlyGatewayError, isProductionPrinter, printerDisplayName } from "../lib/printers";
+import { agentLiveView, applySpoolerSelection, errMsg, friendlyGatewayError, isPickerEligiblePrinter, pickerAgentMismatchRows, pickerSpoolerRows, printerDisplayName, searchSpoolerRows, spoolerDriverName, spoolerPortName, spoolerRowLabel, validateTypedSpoolerNameAgainst } from "../lib/printers";
 import UpgradeLimitDialog, { type UpgradeLimitResource } from "../../components/UpgradeLimitDialog";
 import { useI18n } from "../../i18n/react";
 
@@ -33,6 +33,11 @@ export function AddPrinterDialog({
   const [name, setName] = useState("");
   const [conn, setConn] = useState<Conn>("spooler");
   const [spoolerName, setSpoolerName] = useState("");
+  // Picker search text and the row the user last picked (for its
+  // driver/port/status detail line). The row id, not the queue name, is
+  // the Select value: two queues on different servers may share a name.
+  const [spoolerSearch, setSpoolerSearch] = useState("");
+  const [pickedSpooler, setPickedSpooler] = useState<PrinterInfo | null>(null);
   const [outputProfileId, setOutputProfileId] = useState("");
   const [spoolerRaw, setSpoolerRaw] = useState(false);
   const [spoolerEscpos, setSpoolerEscpos] = useState(false);
@@ -130,20 +135,45 @@ export function AddPrinterDialog({
   // serializes camelCase (`spoolerName`, `connectionType`) while the Gateway
   // `/api/printers` rows are camelCase too, so reading only snake_case made
   // these two lists permanently empty.
+  // WP4 picker rule (see isPickerEligiblePrinter): a row with NO agentId
+  // is eligible — local inventory rows never carry one, and demanding an
+  // exact agent match emptied the picker by construction (S3). Only rows
+  // owned by a different agent record are excluded, and they are warned
+  // about below instead of vanishing into the empty-picker hint.
   const physicalSpoolers = useMemo(
-    () => printers.filter((p) => p.agentId === currentAgentId && isProductionPrinter(p) && (p.spooler_name || p.spoolerName)),
+    () => pickerSpoolerRows(printers, currentAgentId),
     [printers, currentAgentId]
+  );
+  const mismatchSpoolers = useMemo(
+    () => pickerAgentMismatchRows(printers, currentAgentId),
+    [printers, currentAgentId]
+  );
+  const filteredSpoolers = useMemo(
+    () => searchSpoolerRows(physicalSpoolers, spoolerSearch, locale),
+    [physicalSpoolers, spoolerSearch, locale]
+  );
+  // Keep the picked row visible even when the search text filters it out,
+  // so the Select never silently unselects the user's choice.
+  const displayedSpoolers = useMemo(
+    () => pickedSpooler && !filteredSpoolers.some((p) => p.id === pickedSpooler.id)
+      ? [pickedSpooler, ...filteredSpoolers] : filteredSpoolers,
+    [pickedSpooler, filteredSpoolers]
   );
   const usbPrinters = useMemo(
     () =>
       printers.filter(
         (p) =>
-          p.agentId === currentAgentId &&
-          ((p.connection_type || p.connectionType) || "").toLowerCase() === "usb" &&
-          isProductionPrinter(p)
+          isPickerEligiblePrinter(p, currentAgentId) &&
+          ((p.connection_type || p.connectionType) || "").toLowerCase() === "usb"
       ),
     [printers, currentAgentId]
   );
+  // Typed-name validation runs only in the manual-fallback mode (no
+  // pickable rows). Warnings never block submit: discovery can miss
+  // per-user queues, so an undiscovered name may still be real.
+  const typedSpoolerCheck = conn === "spooler" && physicalSpoolers.length === 0
+    ? validateTypedSpoolerNameAgainst(spoolerName, physicalSpoolers, mismatchSpoolers)
+    : null;
 
   const validate = (): string | null => {
     if (!gatewayUrl) return t("desktop.add.gatewayUrlMissing");
@@ -185,11 +215,29 @@ export function AddPrinterDialog({
     setHost("");
     setPort("9100");
     setSpoolerName("");
+    setSpoolerSearch("");
+    setPickedSpooler(null);
     setOutputProfileId("");
     setSpoolerRaw(false);
     setSpoolerEscpos(false);
     setIppUrl("");
     setUsbSel("");
+  };
+
+  // One click fills the spooler name and, when the user has not typed a
+  // custom printer name, the printer name too. Driver/port have no
+  // Gateway registration field for spooler queues, so they are shown in
+  // the detail line below the picker instead of being submitted.
+  const handleSpoolerPick = (rowId: string) => {
+    const picked = displayedSpoolers.find((p) => p.id === rowId) ?? null;
+    setPickedSpooler(picked);
+    if (!picked) {
+      setSpoolerName("");
+      return;
+    }
+    const filled = applySpoolerSelection(picked, name);
+    setName(filled.name);
+    setSpoolerName(filled.spoolerName);
   };
 
   const handleSubmit = async () => {
@@ -223,7 +271,10 @@ export function AddPrinterDialog({
         req.protocol = conn;
       }
       if (conn === "usb") {
-        const sel = usbPrinters.find((p) => p.id === usbSel && p.agentId === currentAgentId);
+        // usbPrinters is already eligibility-filtered (agentId-less rows
+        // included); re-demanding an agent match here would reject the
+        // very rows the picker just offered.
+        const sel = usbPrinters.find((p) => p.id === usbSel);
         if (!sel) throw new Error(t("desktop.add.selectUsb"));
         if (sel) {
           const sourceConfig = sel.config && typeof sel.config === "object"
@@ -308,7 +359,7 @@ export function AddPrinterDialog({
             variant="primary"
             onClick={handleSubmit}
             loading={busy}
-            icon={<Plus className="h-4 w-4" />}
+            icon={<Plus className="h-5 w-5" />}
           >
             {t("desktop.add.title")}
           </Button>
@@ -368,35 +419,71 @@ export function AddPrinterDialog({
           <Input id="pp-output-profile" value={outputProfileId} maxLength={64} onChange={event => setOutputProfileId(event.target.value)} />
         </Field>}
         {conn === "spooler" && (
-          <Field
-            label={t("desktop.add.spoolerPrinter")}
-            htmlFor="pp-spooler"
-            hint={
-              physicalSpoolers.length === 0
-                ? t("desktop.add.noSpoolerDiscovered")
-                : t("desktop.add.onlyPhysicalListed")
-            }
-          >
-            {physicalSpoolers.length > 0 ? <Select
-              id="pp-spooler"
-              value={spoolerName}
-              onChange={(e) => setSpoolerName(e.target.value)}
-            >
-              <option value="">{t("desktop.add.selectEllipsis")}</option>
-              {physicalSpoolers.map((p) => (
-                <option key={p.id} value={p.spooler_name || p.spoolerName || p.name}>
-                  {printerDisplayName(p, locale)}
-                </option>
-              ))}
-            </Select> : (
+          <>
+            {physicalSpoolers.length > 0 && (
               <Input
-                id="pp-spooler"
-                value={spoolerName}
-                onChange={(e) => setSpoolerName(e.target.value)}
-                placeholder={t("desktop.add.typeWindowsName")}
+                id="pp-spooler-search"
+                value={spoolerSearch}
+                onChange={(e) => setSpoolerSearch(e.target.value)}
+                placeholder={t("desktop.add.spoolerSearchPlaceholder")}
+                aria-label={t("desktop.add.spoolerSearchAria")}
               />
             )}
-          </Field>
+            <Field
+              label={t("desktop.add.spoolerPrinter")}
+              htmlFor="pp-spooler"
+              hint={
+                physicalSpoolers.length === 0
+                  ? t("desktop.add.manualFallbackHint")
+                  : t("desktop.add.onlyPhysicalListed")
+              }
+            >
+              {physicalSpoolers.length > 0 ? <Select
+                id="pp-spooler"
+                value={pickedSpooler?.id ?? ""}
+                onChange={(e) => handleSpoolerPick(e.target.value)}
+              >
+                <option value="">{t("desktop.add.selectEllipsis")}</option>
+                {displayedSpoolers.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {spoolerRowLabel(p, locale)}
+                  </option>
+                ))}
+              </Select> : (
+                <Input
+                  id="pp-spooler"
+                  value={spoolerName}
+                  onChange={(e) => { setSpoolerName(e.target.value); }}
+                  placeholder={t("desktop.add.typeWindowsName")}
+                />
+              )}
+            </Field>
+            {physicalSpoolers.length > 0 && filteredSpoolers.length === 0 && (
+              <p className="text-sm text-ink-3">{t("desktop.add.spoolerSearchNoMatches")}</p>
+            )}
+            {physicalSpoolers.length > 0 && mismatchSpoolers.length > 0 && (
+              <p className="text-sm text-ink-3">{t("desktop.add.agentMismatchHint", { count: mismatchSpoolers.length })}</p>
+            )}
+            {pickedSpooler && spoolerName && (
+              <p className="text-sm text-ink-3">
+                {t("desktop.add.spoolerDriver")}: {spoolerDriverName(pickedSpooler) || t("common.notAvailable")} {" · "}
+                {t("desktop.add.spoolerPort")}: {spoolerPortName(pickedSpooler) || t("common.notAvailable")} {" · "}
+                {t("desktop.add.spoolerStatus")}: {(pickedSpooler.status || "").trim() || t("common.notAvailable")}
+              </p>
+            )}
+            {typedSpoolerCheck && typedSpoolerCheck.status === "unknown" && spoolerName.trim() && (
+              <p className="text-sm text-ink-3">{t("desktop.add.typedNameUnknownWarning")}</p>
+            )}
+            {typedSpoolerCheck && typedSpoolerCheck.status === "agent_mismatch" && typedSpoolerCheck.suggestion && (
+              <p className="text-sm text-ink-3">{t("desktop.add.typedNameAgentMismatchWarning", { name: typedSpoolerCheck.suggestion })}</p>
+            )}
+            {typedSpoolerCheck && typedSpoolerCheck.status === "near_miss" && typedSpoolerCheck.suggestion && (
+              <p className="flex flex-wrap items-center gap-2 text-sm text-ink-3">
+                <span>{t("desktop.add.typedNameNearMissWarning", { name: typedSpoolerCheck.suggestion })}</span>
+                <Button variant="ghost" size="sm" onClick={() => setSpoolerName(typedSpoolerCheck.suggestion)}>{typedSpoolerCheck.suggestion}</Button>
+              </p>
+            )}
+          </>
         )}
         {conn === "spooler" && (
           <div className="space-y-3 rounded-md border border-control p-3">
