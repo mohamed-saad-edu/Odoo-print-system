@@ -3,7 +3,7 @@ import fs from "node:fs";
 import test from "node:test";
 
 const metrics = fs.readFileSync("src/lib/metrics.ts", "utf8");
-const dashboard = fs.readFileSync("src/app/dashboard/page.tsx", "utf8");
+const dashboard = fs.readFileSync("src/app/dashboard/dashboard-page-content.tsx", "utf8");
 const en = fs.readFileSync("src/i18n/messages/en.ts", "utf8");
 const ar = fs.readFileSync("src/i18n/messages/ar.ts", "utf8");
 
