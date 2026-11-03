@@ -117,18 +117,18 @@ describe("CI/runtime alignment", () => {
     expect(windows).not.toContain("cargo audit");
   });
 
-  it("avoids allocating a Windows runner for unrelated changes while keeping the workflow check present", () => {
+  it("builds Windows installers on every non-PR run while keeping PR smoke scoped", () => {
     const windows = readFileSync(path.join(root, ".github/workflows/build-windows.yml"), "utf8");
     expect(windows).toContain("name: Windows change filter");
     expect(windows).toContain("needs: changes");
-    // The expensive NSIS packaging must not run for PRs. Those receive only
-    // scoped native Windows smoke tests; release packaging remains on main
-    // and explicit release/merge-queue runs.
+    // Non-PR runs must always produce a fresh installer artifact. The change
+    // filter remains relevant only to the smaller, PR-scoped native smoke job.
     const fullBuild = windows.split("\n  build-windows:")[1];
     const prSmoke = windows.split("\n  windows-pr-smoke:")[1]?.split("\n  build-windows:")[0];
     expect(fullBuild).toBeDefined();
     expect(prSmoke).toBeDefined();
-    expect(fullBuild).toContain("if: github.event_name != 'pull_request' && needs.changes.outputs.windows == 'true'");
+    expect(fullBuild).toContain("if: github.event_name != 'pull_request'");
+    expect(fullBuild).not.toContain("needs.changes.outputs.windows == 'true'");
     expect(fullBuild).toContain("name: Build Tauri Windows NSIS installer");
     expect(fullBuild).toContain("name: Upload Windows NSIS installer");
     expect(prSmoke).toContain("if: github.event_name == 'pull_request' && github.event.pull_request.draft == false");
