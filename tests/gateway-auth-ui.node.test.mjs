@@ -243,8 +243,12 @@ test("verified signup sets one password then continues to its workspace without 
   find(harness.tree, node => node.props?.id === "password").props.onChange({ target: { value: "owner-new-password-123" } });
   harness.render();
   await find(harness.tree, node => node.type === "form").props.onSubmit({ preventDefault() {} });
+  // ResetPasswordForm registers its redirect timer before the focus-on-error
+  // effect. Execute the first effect added by this completion render, not the
+  // initial render's no-op or the later focus effect.
+  const effectsBeforeCompletionRender = harness.effects.length;
   harness.render();
-  const cleanup = harness.effects[0]();
+  const cleanup = harness.effects[effectsBeforeCompletionRender]();
   assert.equal(harness.timers.size, 1);
   const link = find(harness.tree, node => typeof node.props?.href === "string");
   const destination = new URL(link.props.href, "https://gateway.test");
