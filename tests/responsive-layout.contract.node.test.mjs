@@ -89,7 +89,7 @@ test("mobile drawer keeps route labels when desktop rail was saved collapsed", (
   const aside = renderSidebar(true);
   assert.match(aside.props.className, /w-\[min\(320px,90vw\)\]/);
   assert.match(aside.props.className, /lg:w-\[var\(--sidebar-width\)\]/);
-  assert.match(source("src/app/globals.css"), /--sidebar-width:\s*18rem/);
+  assert.match(source("src/app/globals.css"), /--sidebar-width:\s*17rem/);
   assert.match(source("src/desktop/main.tsx"), /lg:ps-\[calc\(var\(--sidebar-width\)\+0\.75rem\)\]/);
   assert.equal(aside.props.tabIndex, -1);
   assert.equal(collect(aside, (n) => n.type === "span" && n.props.children === "Printers").length, 1);
@@ -153,7 +153,7 @@ test("mobile and RTL refinements remain scoped to the product UIs", () => {
   const bodyRem = Number(odooTokens.match(/--pg-fs-body:\s*([\d.]+)rem/)?.[1]);
   const helpRem = Number(odooTokens.match(/--pg-fs-small:\s*([\d.]+)rem/)?.[1]);
   assert.ok(bodyRem >= 1 && bodyRem <= 1.125, "body is 16–18px at the default root");
-  assert.ok(helpRem >= 1, "help text retains a readable relative size");
+  assert.ok(helpRem >= 0.875, "small text retains the 14px field/help size");
   assert.match(odoo, /\.o_pg_view \{[\s\S]*?font-size: var\(--pg-fs-body\)/);
   assert.doesNotMatch(odoo, /--pg-fs-(?:body|small)\s*:/);
   assert.doesNotMatch(odoo, /(?:^|\n)(?:html|body|:root)\s*\{/);

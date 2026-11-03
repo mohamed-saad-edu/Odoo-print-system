@@ -56,7 +56,7 @@ function component(file, fetch, session = async () => ({ authenticated: true }),
     if (name.endsWith("/utils")) return { shortId: value => value };
     if (name === "lucide-react" || name.endsWith("/components/ui") || name === "../ui" || name.endsWith("/components/AuthShell") || name.endsWith("/platform/PlatformSidebar")
       || ["/brand", "/visual-system", "/MobileAppBar", "/LanguageSwitcher", "/ThemeToggle", "/SessionInventory", "/WorkspaceSecurity"].some(suffix => name.endsWith(suffix))) {
-      return new Proxy({}, { get: (_object, key) => key === "useDialog" ? () => {} : String(key) });
+      return new Proxy({}, { get: (_object, key) => key === "useDialog" || key === "useUnsavedChangesWarning" ? () => undefined : String(key) });
     }
     throw Error(`Unexpected auth UI import: ${name}`);
   };
@@ -161,7 +161,7 @@ test("verified owner Team page rejects stale late responses without hiding pendi
     }
     throw Error("Unexpected Team request: " + url);
   });
-  const obsoleteCleanup = harness.effects[0]();
+  const obsoleteCleanup = harness.effects[1]();
   await flush();
   obsoleteCleanup();
   harness.render();
@@ -188,7 +188,7 @@ test("Full Access Team never requests or renders pending invitation recipients",
     }
     throw Error("Full Access attempted to read owner invitation data: " + url);
   });
-  const cleanup = harness.effects[0]();
+  const cleanup = harness.effects[1]();
   await flush(); harness.render();
   assert.deepEqual(harness.states[1], members);
   assert.deepEqual(harness.states[2], []);
@@ -201,7 +201,7 @@ test("Full Access Team never requests or renders pending invitation recipients",
 test("unmounted team membership admission cannot redirect an unrelated page", async () => {
   const session = deferred();
   const harness = component("src/app/team/page.tsx", async () => { throw Error("stale admission must not fetch"); }, () => session.promise);
-  const cleanup = harness.effects[0]();
+  const cleanup = harness.effects[1]();
   await flush();
   cleanup();
   session.resolve({ authenticated: false });
@@ -244,7 +244,7 @@ test("verified signup sets one password then continues to its workspace without 
   harness.render();
   await find(harness.tree, node => node.type === "form").props.onSubmit({ preventDefault() {} });
   harness.render();
-  const cleanup = harness.effects.at(-1)();
+  const cleanup = harness.effects[0]();
   assert.equal(harness.timers.size, 1);
   const link = find(harness.tree, node => typeof node.props?.href === "string");
   const destination = new URL(link.props.href, "https://gateway.test");
@@ -263,7 +263,7 @@ test("clearing the settings draft remains intentional across a locale reload", a
   find(harness.tree, node => node.props?.id === "workspace-name").props.onChange({ target: { value: "" } });
   cleanup();
   harness.render();
-  const nextCleanup = harness.effects.at(-1)();
+  const nextCleanup = harness.effects[0]();
   await flush();
   assert.equal(harness.states[0], "");
   nextCleanup();

@@ -5,6 +5,7 @@ import test from "node:test";
 const state = fs.readFileSync("src/lib/dashboard-state.ts", "utf8");
 const actions = fs.readFileSync("src/app/actions.ts", "utf8");
 const page = fs.readFileSync("src/app/dashboard/page.tsx", "utf8");
+const pageContent = fs.readFileSync("src/app/dashboard/dashboard-page-content.tsx", "utf8");
 const client = fs.readFileSync("src/app/dashboard/dashboard-client.tsx", "utf8");
 const entitlements = fs.readFileSync("src/lib/entitlements.ts", "utf8");
 
@@ -18,11 +19,16 @@ test("dashboard fleet reads are page bounded while unlimited plans remain valid"
 });
 
 test("SSR and polling share the bounded fleet query instead of selecting whole fleets", () => {
-  assert.match(page, /loadDashboardStateForTenant\(claims\.tenantId, \{\}, tx\)/);
-  assert.match(page, /requireActiveTenantInTransaction\(tx, claims\.tenantId\)/);
-  assert.match(page, /requireManagerActorInTransaction\(tx, claims, "jobs\.read"\)/);
-  assert.doesNotMatch(page, /\.from\(agents\)/);
-  assert.doesNotMatch(page, /\.from\(printers\)/);
+  assert.match(page, /DashboardPageContent/);
+  assert.ok(page.includes('view="home"'));
+  assert.ok(page.includes("locked={false}"));
+  assert.match(page, /requestedView/);
+  assert.match(page, /redirect/);
+  assert.match(pageContent, /loadDashboardStateForTenant\(claims\.tenantId, \{\}, tx\)/);
+  assert.match(pageContent, /requireActiveTenantInTransaction\(tx, claims\.tenantId\)/);
+  assert.match(pageContent, /requireManagerActorInTransaction\(tx, claims, "jobs\.read"\)/);
+  assert.doesNotMatch(pageContent, /\.from\(agents\)/);
+  assert.doesNotMatch(pageContent, /\.from\(printers\)/);
   assert.match(actions, /getDashboardState\(options: DashboardFleetOptions = \{\}\)/);
   assert.match(actions, /loadDashboardStateForTenant\(manager\.tenantId/);
   assert.match(client, /getDashboardStateResult\(options\)/);
