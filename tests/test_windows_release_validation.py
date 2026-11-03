@@ -32,8 +32,11 @@ class WindowsReleaseValidationTests(unittest.TestCase):
         self.assertIn("if: needs.changes.outputs.rust == 'true'", self.smoke)
         self.assertNotIn("Build Tauri Windows NSIS installer", self.smoke)
 
-    def test_unrelated_changes_still_skip_the_expensive_release_job(self):
-        self.assertIn("if: github.event_name != 'pull_request' && needs.changes.outputs.windows == 'true'", self.release)
+    def test_every_non_pr_release_event_builds_an_installer(self):
+        build_job = self.release.split("\n", 1)[0]
+        self.assertEqual(build_job.strip(), "needs: changes")
+        self.assertIn("if: github.event_name != 'pull_request'", self.release)
+        self.assertNotIn("needs.changes.outputs.windows", self.release.split("    # Preserve a running", 1)[0])
         self.assertLess(self.release.index("Verify and test native Windows Go Agent"), self.release.index("Build Tauri Windows NSIS installer"))
         self.assertLess(self.release.index("Rust unit tests (desktop)"), self.release.index("Build Tauri Windows NSIS installer"))
 
