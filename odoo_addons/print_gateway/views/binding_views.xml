@@ -12,7 +12,8 @@
                 <field name="destination_ref" string="Print Source"/>
                 <field name="document_type" string="Document Type"/>
                 <field name="runtime_agent_id" string="Print Agent" optional="show"/>
-                <field name="printer_id" string="Printer"/>
+                <field name="printer_name" string="Printer"/>
+                <field name="printer_id" string="Printer Identity" optional="hide"/>
                 <field name="enabled" widget="boolean_toggle"/>
                 <field name="priority" optional="show"/>
             </list>
@@ -68,6 +69,7 @@
                     <group string="Printer Setup">
                         <field name="runtime_agent_id" string="Print Agent" widget="gateway_runtime_agent_binding"/>
                         <field name="printer_id" string="Runtime Printer" widget="gateway_runtime_printer"/>
+                        <field name="printer_name"/>
                     </group>
 
                     <notebook>

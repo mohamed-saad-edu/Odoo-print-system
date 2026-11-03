@@ -14,12 +14,23 @@
  * vice versa). Aspect ratio is never overridden: lockups size by height
  * with `w-auto`.
  *
- * DARK SURFACES: the lockup wordmark is black-filled artwork, so it would
- * vanish on a dark header. Every lockup therefore sits on a light chip
- * (`bg-white` + subtle ring) that is identical in light and dark mode;
- * the icon-only mark is a cyan tile with a light glyph and needs no chip.
- * CLEARSPACE (v10-exact): the chip padding is p-3 (12px), which meets
- * the guide's >=1/4-mark rule even under the most conservative reading
+ * DARK SURFACES (v11-darklogo): the lockup wordmark is black-filled
+ * artwork in the light files, so it would vanish on a dark header — and
+ * the old fix (a white chip behind it in BOTH modes) is exactly what
+ * looked wrong in dark mode: a glaring white block on a near-black
+ * surface. There are now dedicated dark variants
+ * (`public/brand/print-gateway-{en,ar}-dark.svg`) with the SAME layout,
+ * proportions and icon, but white text (main line and subline both
+ * #ffffff). BrandMark renders all four images and CSS in globals.css
+ * shows exactly one pair, chosen by `[dir]` x `[data-theme]` — the
+ * app's real theme mechanism (pre-paint script + ThemeToggle flip the
+ * `data-theme` attribute on <html>, so the swap follows a live theme
+ * toggle and stays server-component safe. The wrapper is now
+ * clearspace only: `p-3` padding, NO background, NO ring, in either
+ * mode, so no visible block ever appears behind the lockup. The
+ * icon-only mark is a cyan tile with a light glyph and needs no chip.
+ * CLEARSPACE (v10-exact, kept): the p-3 (12px) padding meets the
+ * guide's >=1/4-mark rule even under the most conservative reading
  * (mark height = full lockup height: 48px -> 12px needed, 40px -> 10px,
  * 38px -> 9.5px).
  *
@@ -60,7 +71,8 @@ type BrandMarkProps = {
   /** Legacy: kept for call-site compatibility, not rendered (see header). */
   subtitle?: string;
   className?: string;
-  /** Legacy: kept for call-site compatibility; the chip is light in all variants. */
+  /** Legacy: kept for call-site compatibility; the lockup wrapper is
+      transparent clearspace in both modes (no chip background). */
   variant?: "default" | "inverted" | "compact";
 };
 
@@ -79,7 +91,10 @@ export function BrandMark({
       {/* Narrow-header fallback: at <=399px the public header shows the
           icon only (see globals.css), matching the old wordmark rule. */}
       <BrandMarkIcon size={size} className="brand-mark-icon-fallback shrink-0" />
-      <span className="brand-lockup-chip inline-flex shrink-0 items-center rounded-md bg-white p-3 ring-1 ring-inset ring-black/10">
+      {/* Clearspace wrapper only — transparent in both modes (see header:
+          no bg-white chip). globals.css shows exactly one of the four
+          lockups, by [dir] (en/ar) x [data-theme] (light/dark). */}
+      <span className="brand-lockup-chip inline-flex shrink-0 items-center rounded-md p-3">
         {/* Plain <img>: shared with the Desktop Vite build, where
             next/image does not exist; Next does not optimize SVGs. */}
         {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -93,6 +108,20 @@ export function BrandMark({
         <img
           className={`brand-lockup-rtl w-auto ${lockup}`}
           src="/brand/print-gateway-ar.svg"
+          alt="بوابة الطباعة من يسير"
+          draggable={false}
+        />
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          className={`brand-lockup-ltr-dark w-auto ${lockup}`}
+          src="/brand/print-gateway-en-dark.svg"
+          alt="Print Gateway by Yaseir"
+          draggable={false}
+        />
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          className={`brand-lockup-rtl-dark w-auto ${lockup}`}
+          src="/brand/print-gateway-ar-dark.svg"
           alt="بوابة الطباعة من يسير"
           draggable={false}
         />

@@ -5090,3 +5090,24 @@ msgstr "وردت حالة متعارضة لتوجيه الطباعة. أُلغي
 #: code:addons/print_gateway/static/src/js/pos_sale_details_router.js:0
 msgid "Open a POS session before printing."
 msgstr "افتح جلسة نقطة بيع قبل الطباعة."
+
+#. module: print_gateway
+#: model:ir.model.fields,field_description:print_gateway.field_print_gateway_binding__printer_name
+msgid "Gateway Printer Name"
+msgstr "اسم طابعة Gateway"
+
+#. module: print_gateway
+#: model:ir.model.fields,help:print_gateway.field_print_gateway_binding__printer_name
+msgid "Human-readable printer name from the Gateway, set automatically when a printer is picked. The technical identity stays in the Gateway Runtime Printer field and remains the routing key."
+msgstr "اسم الطابعة المقروء من بوابة الطباعة، يُعيَّن تلقائيًا عند اختيار طابعة. تبقى الهوية التقنية في حقل طابعة الـ Gateway وتظل مفتاح التوجيه."
+
+#. module: print_gateway
+#: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_binding_list
+msgid "Printer Identity"
+msgstr "هوية الطابعة"
+
+#. module: print_gateway
+#. odoo-python
+#: code:addons/print_gateway/models/binding.py:0
+msgid "Unnamed printer"
+msgstr "طابعة غير مسماة"

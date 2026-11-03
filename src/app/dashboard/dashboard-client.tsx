@@ -441,9 +441,9 @@ function connectionLabel(connectionType: string, t: Translator): string {
 export default function DashboardClient({
   initialView = "home",
   // WP8: a dedicated page (/agents, /printers, /jobs) locks the view so
-  // its URL is the state — no hash tab can silently switch it away, and
-  // the in-page tab strip (a leftover of the old hash navigation) is
-  // hidden there because the sidebar already owns navigation.
+  // its URL is the state — no hash tab can silently switch it away.
+  // v11-darklogo: the in-page tab strip itself was deleted entirely;
+  // the sidebar owns navigation on every page.
   lockedView,
   initialAgents,
   initialPrinters,
@@ -564,7 +564,8 @@ export default function DashboardClient({
   // WP8 deep-link preservation: the old dashboard hash views (agents,
   // printers, jobs) and /dashboard?view=… (redirected server-side) now
   // live at /agents, /printers and /jobs. A hash can only arrive from an old bookmark or
-  // an external link — the in-page tabs below are real routes now — so
+  // an external link — the sidebar owns those routes now (the old
+  // in-page tab strip was deleted in v11-darklogo) — so
   // redirect once on mount instead of rendering the old hash view.
   // No usePathname: this client is also rendered by unit tests that mock
   // next/navigation with useRouter only, and locked pages skip this
@@ -1486,15 +1487,12 @@ export default function DashboardClient({
 
   return (
     <div className="yw-gateway-dashboard space-y-6">
-      {/* WP8: on /dashboard this strip is a secondary shortcut to the
-          sidebar pages (real routes, not hash views); on a locked page
-          it is hidden because the sidebar already owns navigation. */}
-      {!lockedView && <nav aria-label={t("nav.consoleNavigation")} className="flex flex-wrap gap-2 rounded-xl border border-edge bg-surface p-2">
-        {DASHBOARD_VIEWS.map((item) => <a key={item} href={item === "home" ? "/dashboard" : `/${item}`} aria-current={view === item ? "page" : undefined}
-          className={`inline-flex min-h-11 items-center rounded-lg px-4 text-sm font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/35 ${view === item ? "bg-brand-subtle text-brand-subtle-text" : "text-ink-2 hover:bg-surface-2"}`}>
-          {t(item === "home" ? "v4.experience.home" : item === "printers" ? "desktop.nav.printers" : item === "agents" ? "dashboard.tab.agents" : "v4.experience.activity")}
-        </a>)}
-      </nav>}
+      {/* v11-darklogo: the secondary tab strip (home/printers/agents/
+          jobs) is deleted entirely — the sidebar already owns exactly
+          these routes (/dashboard, /printers, /agents, /jobs), so the
+          strip only duplicated navigation. The hash deep-link redirect
+          above is kept: old #agents/#printers/#jobs bookmarks still
+          land on the right route. */}
       {subscription && !canReadBillingUsage && subscription.customerState !== "active" && <Callout tone="warn" title={t(`v4.experience.subscription.${subscription.customerState}`)}>
         {t("v4.subscription.memberPausedBody")}
       </Callout>}

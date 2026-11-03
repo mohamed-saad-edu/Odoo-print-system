@@ -1635,15 +1635,28 @@
     -webkit-backdrop-filter: blur(16px) saturate(145%);
     backdrop-filter: blur(16px) saturate(145%);
   }
-  /* Print Gateway lockups (WP6-BRANDING): the EN artwork shows under
-     LTR and the AR artwork under RTL; the inactive one is display:none,
-     so it is also hidden from assistive technology. The icon-only
+  /* Print Gateway lockups (WP6-BRANDING, v11-darklogo): exactly one of
+     four images shows, chosen by [dir] (LTR/RTL) x [data-theme]
+     (light/dark) — the theme attribute lives on <html> (pre-paint
+     script + ThemeToggle), so a live theme toggle repaints the swap
+     with no React state and no server/client mismatch. Light lockups
+     carry black text; dark lockups carry white text with the same
+     icon and proportions. The inactive images are display:none, so
+     they are also hidden from assistive technology. The icon-only
      fallback inside BrandMark stays hidden except in the narrow public
      header below. */
   .brand-lockup-ltr { display: inline-block; }
   .brand-lockup-rtl { display: none; }
+  .brand-lockup-ltr-dark { display: none; }
+  .brand-lockup-rtl-dark { display: none; }
   [dir="rtl"] .brand-lockup-ltr { display: none; }
   [dir="rtl"] .brand-lockup-rtl { display: inline-block; }
+  [data-theme="dark"] .brand-lockup-ltr { display: none; }
+  [data-theme="dark"] .brand-lockup-rtl { display: none; }
+  [data-theme="dark"] .brand-lockup-ltr-dark { display: inline-block; }
+  [data-theme="dark"] .brand-lockup-rtl-dark { display: none; }
+  [dir="rtl"][data-theme="dark"] .brand-lockup-ltr-dark { display: none; }
+  [dir="rtl"][data-theme="dark"] .brand-lockup-rtl-dark { display: inline-block; }
   .brand-mark-icon-fallback { display: none; }
   /* Keep the brand glyph visible at 320px: a full lockup plus language,
      theme and mobile-menu touch targets would otherwise overflow, so the

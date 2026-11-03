@@ -55,11 +55,16 @@ describe("WP8 sidebar navigation", () => {
     expect(dashboard).toContain("DashboardPageContent");
   });
 
-  it("keeps the dashboard client route-based: tabs are routes, locked pages hide the strip, hashes redirect", () => {
+  it("keeps the dashboard client route-based: no tab strip anywhere, sidebar owns routes, hashes redirect", () => {
     const client = read("src/app/dashboard/dashboard-client.tsx");
     expect(client).toContain("lockedView");
-    expect(client).toContain("{!lockedView && <nav");
-    expect(client).toContain('href={item === "home" ? "/dashboard" : `/${item}`}');
+    // v11-darklogo: the secondary tab strip is deleted entirely (not
+    // merely hidden on locked pages) — the sidebar already owns these
+    // routes, so no strip markup may remain in the client.
+    expect(client).not.toContain("{!lockedView && <nav");
+    expect(client).not.toContain("DASHBOARD_VIEWS.map((item)");
+    // In-page action buttons to the same routes are kept (health card),
+    // and old hash bookmarks still redirect to the real routes.
     expect(client).toContain('href="/printers"');
     expect(client).toContain('href="/jobs"');
     expect(client).toContain("router.replace(`/${hash}`)");
