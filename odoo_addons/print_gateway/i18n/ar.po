@@ -5103,12 +5103,6 @@ msgstr "اسم الطابعة المقروء من بوابة الطباعة، ي
 
 #. module: print_gateway
 #: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_binding_list
-#: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_binding_form
-msgid "Gateway Printer Name"
-msgstr "اسم طابعة Gateway"
-
-#. module: print_gateway
-#: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_binding_list
 msgid "Printer Identity"
 msgstr "هوية الطابعة"
 

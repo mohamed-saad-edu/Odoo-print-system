@@ -12,4 +12,5 @@ from . import test_diagnostic_localization
 from . import test_receipt_geometry
 
 from . import test_automation_workers
+from . import test_binding_display_name
 from . import test_universal_printing
