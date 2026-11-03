@@ -8,6 +8,9 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
   LayoutDashboard,
+  Server,
+  Printer,
+  Layers,
   KeyRound,
   CreditCard,
   Users,
@@ -33,8 +36,26 @@ import { useI18n } from "../i18n/react";
 import type { Translator } from "../i18n/translate";
 import { WorkspaceSecurityNotice } from "./WorkspaceSecurity";
 
+// SaaS sidebar, grouped by operator job (WP8): daily operations first,
+// integration second, administration last. Agents, Printers and Jobs are
+// first-class pages (/agents, /printers, /jobs) — they used to be hash
+// views inside /dashboard (#agents, #printers, #jobs) and were therefore
+// unbookmarkable, unaddressable from the command palette, and invisible
+// in navigation. Top-level routes (not /dashboard/*) keep the existing
+// top-level console pattern (/api-keys, /settings, /team, /billing) and
+// keep /dashboard's own active state from swallowing its children.
+// Team and Billing stay owner-only workspace-menu entries, exactly as
+// before: sidebar visibility follows the same server-side authorization
+// as before and is never itself an authorization mechanism. The Gateway
+// has no top navigation bar (TopNavbar is an unrendered legacy export;
+// the mobile bar carries only title + search + menu), so there is no
+// top-bar Agents/Printers link to remove — the move is dashboard-tabs
+// → sidebar, and the mobile drawer renders this same list.
 const NAV_ITEMS: TopNavItem[] = [
   { href: "/dashboard", labelKey: "v4.experience.home", icon: LayoutDashboard, sectionKey: "nav.section.operations", keywords: "console dashboard overview printers jobs" },
+  { href: "/agents", labelKey: "dashboard.tab.agents", icon: Server, sectionKey: "nav.section.operations", keywords: "agents pair pairing code machine computer" },
+  { href: "/printers", labelKey: "desktop.nav.printers", icon: Printer, sectionKey: "nav.section.operations", keywords: "printers status sharing discovered" },
+  { href: "/jobs", labelKey: "nav.jobs", icon: Layers, sectionKey: "nav.section.operations", keywords: "jobs print jobs activity history" },
   { href: "/api-keys", labelKey: "v4.experience.connection", icon: KeyRound, sectionKey: "nav.section.integration", keywords: "odoo integration api keys credentials" },
   { href: "/settings", labelKey: "nav.settings", icon: SettingsIcon, sectionKey: "nav.section.administration", keywords: "settings preferences workspace" },
 ];
@@ -98,7 +119,7 @@ function ConsoleNav({
   }, []);
 
   return (
-    <nav aria-label={t("nav.consoleNavigation")} className="flex flex-col gap-5 px-2.5">
+    <nav aria-label={t("nav.consoleNavigation")} className="flex flex-col gap-6 px-2.5">
       {groups.map((group) => (
         <div key={group.section}>
           {!collapsed && <div className="tg-sidebar-label px-3 pb-2">{group.section}</div>}
@@ -121,7 +142,7 @@ function ConsoleNav({
                   >
                     {Icon && (
                       <NavIconFrame active={active}>
-                        <Icon className="h-[17px] w-[17px]" />
+                        <Icon className="h-5 w-5" />
                       </NavIconFrame>
                     )}
                     {!collapsed && <span className="min-w-0 flex-1 break-words leading-snug">{navLabel(item, t)}</span>}
@@ -340,7 +361,7 @@ function ConsoleShell({
       // types "billing" or "team" should still find the screen in Arabic.
       keywords: `${item.href} ${item.keywords ?? ""}`,
     })),
-    { id: "action-new-agent", label: t("agent.add"), group: t("common.actions"), href: "/dashboard#agents", keywords: "pair pairing code machine agent" },
+    { id: "action-new-agent", label: t("agent.add"), group: t("common.actions"), href: "/agents", keywords: "pair pairing code machine agent" },
     { id: "action-theme", label: t("nav.toggleTheme"), group: t("common.actions"), onSelect: () => toggleTheme() },
     { id: "action-logout", label: t("nav.signOut"), group: t("common.actions"), onSelect: onLogout, keywords: "log out exit" },
   ];
@@ -426,7 +447,7 @@ function ConsoleShell({
         <MobileAppBar
           area="gateway"
           title={navLabel(NAV_ITEMS.find((item) => isActive(pathname, item.href)) ?? NAV_ITEMS[0], t)}
-          section={t("nav.section.workspace")}
+          section={(() => { const current = NAV_ITEMS.find((item) => isActive(pathname, item.href)); return current ? navSection(current, t) : t("nav.section.workspace"); })()}
           navigationId="gateway-mobile-nav"
           navigationOpen={mobileOpen}
           onOpenNavigation={() => setMobileOpen(true)}

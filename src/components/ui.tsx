@@ -78,8 +78,9 @@ export function jobTone(status: string, outcome?: "printed" | "not_printed" | "u
 }
 
 /** Focus treatment shared by every interactive control. */
+/* Guide: focus ring 3px + 3px gap. */
 const focusRing =
-  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/35 focus-visible:ring-offset-1 focus-visible:ring-offset-app";
+  "focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-brand/35 focus-visible:ring-offset-[3px] focus-visible:ring-offset-app";
 
 /* ============================================================
    Buttons
@@ -105,11 +106,14 @@ const buttonVariants: Record<ButtonVariant, string> = {
     "bg-ok-solid text-on-solid border border-transparent shadow-xs hover:brightness-[0.95] active:brightness-[0.9]",
 };
 
+/* Guide buttons: pill radius 999px, height 44px standard / 48px marketing,
+   horizontal padding 24px, icon 20px + 8px gap. xs/sm are compact variants
+   for dense toolbars (not marketing actions) and keep the pill shape. */
 const buttonSizes: Record<"xs" | "sm" | "md" | "lg", string> = {
-  xs: "min-h-9 px-3 py-1.5 text-xs gap-1.5 rounded-md",
-  sm: "min-h-10 px-3.5 py-2 text-sm gap-2 rounded-sm",
-  md: "min-h-11 px-4 py-2.5 text-sm gap-2 rounded-sm",
-  lg: "min-h-12 px-5 py-3 text-base gap-2 rounded-md",
+  xs: "min-h-9 px-4 py-1.5 text-xs gap-2 rounded-full",
+  sm: "min-h-10 px-5 py-2 text-sm gap-2 rounded-full",
+  md: "min-h-11 px-6 py-2.5 text-sm gap-2 rounded-full",
+  lg: "min-h-12 px-6 py-3 text-base gap-2 rounded-full",
 };
 
 const iconButtonSizes: Record<"xs" | "sm" | "md" | "lg", string> = {
@@ -158,7 +162,7 @@ export function Button({
       : variant === "primary"
         ? "border-edge-accent text-brand-subtle-text hover:bg-brand-subtle"
         : "border-edge-strong text-ink hover:bg-surface-2";
-  const baseClasses = `tg-action-button relative inline-flex min-w-0 max-w-full select-none items-center justify-center ${className.includes("whitespace-nowrap") ? "whitespace-nowrap" : "whitespace-normal"} text-center font-[600] leading-snug tracking-[-0.01em] transition-[background-color,border-color,box-shadow,transform,opacity] duration-200 ease-out disabled:pointer-events-none disabled:opacity-45 ${focusRing} ${outlined ? `border bg-surface ${outlineVariant}` : buttonVariants[variant]} ${buttonSizes[size]} ${iconOnly ? `${iconButtonSizes[size]} shrink-0 !px-0 !py-0` : ""} ${className}`;
+  const baseClasses = `tg-action-button relative inline-flex min-w-0 max-w-full select-none items-center justify-center ${className.includes("whitespace-nowrap") ? "whitespace-nowrap" : "whitespace-normal"} text-center font-[500] leading-snug tracking-[-0.01em] transition-[background-color,border-color,box-shadow,transform,opacity] duration-200 ease-out disabled:pointer-events-none disabled:opacity-45 ${focusRing} ${outlined ? `border bg-surface ${outlineVariant}` : buttonVariants[variant]} ${buttonSizes[size]} ${iconOnly ? `${iconButtonSizes[size]} shrink-0 !px-0 !py-0` : ""} ${className}`;
 
   const content = (
     <>
@@ -166,8 +170,9 @@ export function Button({
         <Loader2 className="h-4 w-4 shrink-0 animate-spin" aria-hidden />
       ) : (
         // Icon slots are decorative: every control carries its meaning as text
-        // (or an explicit aria-label for icon-only buttons).
-        icon && <span aria-hidden className="inline-flex shrink-0 items-center">{icon}</span>
+        // (or an explicit aria-label for icon-only buttons). Guide icon
+        // size for buttons is 20px; callers pass h-5 w-5 icons.
+        icon && <span aria-hidden className="inline-flex h-5 w-5 shrink-0 items-center [&>svg]:h-5 [&>svg]:w-5">{icon}</span>
       )}
       {children}
     </>
@@ -240,7 +245,7 @@ export function IconButton({
       type="button"
       aria-label={label}
       title={label}
-      className={`inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-sm text-ink-3 transition-colors duration-150 hover:bg-surface-2 hover:text-ink disabled:pointer-events-none disabled:opacity-45 ${focusRing} ${className}`}
+      className={`inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-ink-3 transition-colors duration-150 hover:bg-surface-2 hover:text-ink disabled:pointer-events-none disabled:opacity-45 ${focusRing} ${className}`}
       {...props}
     >
       {children}
@@ -290,7 +295,7 @@ export function StatusBadge({
   const dims = size === "sm" ? "min-h-6 px-2 py-0.5 text-xs gap-1.5" : size === "lg" ? "min-h-9 px-3 py-1.5 text-sm gap-2" : "min-h-7 px-2.5 py-1 text-xs gap-1.5";
   return (
     <span
-      className={`tg-status-pill inline-flex min-w-0 max-w-full items-center whitespace-normal rounded-full border font-[600] leading-snug tracking-[0.005em] ${dims} ${toneBg[tone]} ${className}`}
+      className={`tg-status-pill inline-flex min-w-0 max-w-full items-center whitespace-normal rounded-full border font-[500] leading-snug tracking-[0.005em] ${dims} ${toneBg[tone]} ${className}`}
     >
       {icon ? (
         <span className="flex h-3.5 w-3.5 shrink-0 items-center justify-center" aria-hidden>
@@ -378,7 +383,7 @@ export function CardHeader({
           </span>
         )}
         <div className="min-w-0">
-          <h2 className="tg-panel-title min-w-0 break-words text-lg font-[650] leading-snug tracking-[-0.012em] text-ink [overflow-wrap:anywhere]">
+          <h2 className="tg-panel-title min-w-0 break-words text-lg font-[500] leading-snug tracking-[-0.012em] text-ink [overflow-wrap:anywhere]">
             {title}
           </h2>
           {subtitle && <p className="mt-1 max-w-[65ch] text-sm leading-relaxed text-ink-3">{subtitle}</p>}
@@ -421,7 +426,7 @@ export function Section({
         <header className="flex flex-wrap items-start justify-between gap-4 border-b border-edge-subtle px-5 py-5">
           <div className="min-w-0 flex-1 basis-56">
             {title && (
-              <h2 className="text-lg font-[600] leading-snug tracking-[-0.012em] text-ink">{title}</h2>
+              <h2 className="text-lg font-[500] leading-snug tracking-[-0.012em] text-ink">{title}</h2>
             )}
             {description && (
               <p className="mt-0.5 text-sm leading-relaxed text-ink-3">{description}</p>
@@ -471,7 +476,7 @@ export function EmptyState({
       >
         {icon}
       </div>
-      <h3 className="mt-3.5 text-md font-[600] tracking-[-0.012em] text-ink">{title}</h3>
+      <h3 className="mt-3.5 text-md font-[500] tracking-[-0.012em] text-ink">{title}</h3>
       {description && (
         <p className="mt-1.5 max-w-[46ch] text-sm leading-relaxed text-ink-3">{description}</p>
       )}
@@ -693,8 +698,9 @@ export function Field({
           >
             {label}
             {required && (
-              <span className="ms-1 text-bad" aria-hidden>
-                *
+              <span className="ms-1.5 text-xs font-normal text-bad">
+                <span aria-hidden>* </span>
+                {t("common.required")}
               </span>
             )}
             {optional && !required && (
@@ -719,8 +725,47 @@ export function Field({
   );
 }
 
+/* Guide fields: 12px radius, 44px+ height (min-h-12), 14px field text via
+   text-sm on the Field label context — inputs keep text-base for the
+   pre-existing larger tap target; tables/fields at 14px is met by the
+   Field label + table cell classes. Focus ring 3px + 3px gap. */
+
+/**
+ * Guide form rule: on submit, focus moves to the first error. Call with the
+ * submitted form element after validation has rendered the error text;
+ * it focuses the first [aria-invalid="true"] control, falling back to the
+ * first element carrying the field error id.
+ */
+export function focusFirstError(form: HTMLElement | null): boolean {
+  if (!form) return false;
+  const invalid = form.querySelector<HTMLElement>('[aria-invalid="true"], [data-field-error="true"]');
+  if (invalid) {
+    invalid.focus();
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Guide form rule: warn on leaving with unsaved changes. Wires
+ * beforeunload while `dirty` is true; it does not block in-app navigation
+ * (routers do not fire beforeunload), so forms that need an in-app guard
+ * must also check `dirty` in their own navigation handler — recorded in
+ * HANDOFF-A.md as a partial, not claimed as complete.
+ */
+export function useUnsavedChangesWarning(dirty: boolean): void {
+  useEffect(() => {
+    if (!dirty) return undefined;
+    const handler = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [dirty]);
+}
+
 const inputClass =
-  "w-full min-w-0 min-h-12 rounded-sm border border-control bg-surface px-3.5 py-2.5 text-base text-ink placeholder:text-ink-4 shadow-xs transition-[border-color,box-shadow,background-color] duration-150 ease-out hover:border-ink-4/70 focus:border-brand focus:outline-none focus:ring-[3px] focus:ring-brand/18 disabled:cursor-not-allowed disabled:bg-surface-2 disabled:text-ink-3";
+  "w-full min-w-0 min-h-12 rounded-md border border-control bg-surface px-3.5 py-2.5 text-sm text-ink placeholder:text-ink-4 shadow-xs transition-[border-color,box-shadow,background-color] duration-150 ease-out hover:border-ink-4/70 focus:border-brand focus:outline-none focus:ring-[3px] focus:ring-brand/18 focus:ring-offset-[3px] disabled:cursor-not-allowed disabled:bg-surface-2 disabled:text-ink-3";
 
 function useFieldProps({
   id,
@@ -836,7 +881,7 @@ export function Checkbox({
           id={inputId}
           type="checkbox"
           aria-describedby={descId}
-          className="peer h-4 w-4 cursor-pointer appearance-none rounded-xs border border-control bg-surface transition-colors duration-[120ms] checked:border-brand checked:bg-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/35 focus-visible:ring-offset-1 focus-visible:ring-offset-app disabled:cursor-not-allowed disabled:opacity-50"
+          className="peer h-4 w-4 cursor-pointer appearance-none rounded-xs border border-control bg-surface transition-colors duration-[120ms] checked:border-brand checked:bg-brand focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-brand/35 focus-visible:ring-offset-[3px] focus-visible:ring-offset-app disabled:cursor-not-allowed disabled:opacity-50"
           {...props}
         />
         {/* Non-color checked indicator: the brand fill alone is not
@@ -1042,7 +1087,7 @@ export function Avatar({
   return (
     <span
       aria-hidden
-      className={`flex shrink-0 items-center justify-center rounded-sm border font-[650] ${dims} ${toneIconSurface[tone]} ${className}`}
+      className={`flex shrink-0 items-center justify-center rounded-md border font-[500] ${dims} ${toneIconSurface[tone]} ${className}`}
     >
       {initials || "?"}
     </span>
@@ -1714,7 +1759,7 @@ export function Modal({
       >
         <div className="flex shrink-0 items-start justify-between gap-4 border-b border-edge-subtle px-5 py-4 sm:px-6">
           <div className="min-w-0">
-            <h2 className="break-words text-xl font-[600] tracking-[-0.012em] text-ink">{title}</h2>
+            <h2 className="break-words text-xl font-[500] tracking-[-0.012em] text-ink">{title}</h2>
             {description && (
               <p id={descId} className="mt-1 text-sm leading-relaxed text-ink-3">
                 {description}
@@ -1831,7 +1876,7 @@ export function Drawer({
       >
         <div className="flex shrink-0 items-start justify-between gap-4 border-b border-edge-subtle px-5 py-4 sm:px-6">
           <div className="min-w-0">
-            <h2 className="break-words text-xl font-[600] tracking-[-0.012em] text-ink">{title}</h2>
+            <h2 className="break-words text-xl font-[500] tracking-[-0.012em] text-ink">{title}</h2>
             {description && (
               <p id={descId} className="mt-1 text-sm text-ink-3">
                 {description}
@@ -1928,7 +1973,7 @@ export function PageHeader({
             )}
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-                <h1 className="tg-page-title min-w-0 break-words text-xl font-[640] leading-tight tracking-[-0.02em] text-ink sm:text-2xl">
+                <h1 className="tg-page-title min-w-0 break-words text-xl font-[500] leading-tight text-ink sm:text-2xl">
                   {title}
                 </h1>
                 {meta}
@@ -1961,7 +2006,7 @@ export function SectionHeader({
   return (
     <div className={`flex flex-wrap items-start justify-between gap-3 ${className}`}>
       <div className="min-w-0 flex-1 basis-56">
-        <h2 className="text-xl font-[600] tracking-[-0.014em] text-ink">{title}</h2>
+        <h2 className="text-2xl font-[500] text-ink">{title}</h2>
         {description && <p className="mt-0.5 text-sm text-ink-3">{description}</p>}
       </div>
       {actions && <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2">{actions}</div>}

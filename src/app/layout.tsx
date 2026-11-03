@@ -9,7 +9,13 @@ import { getServerLocale, makeT } from "../i18n/server";
 import { LOCALE_COOKIE_KEY, LOCALE_STORAGE_KEY, dirFor } from "../i18n/config";
 import "./globals.css";
 
-// Bundle the OFL-licensed IBM Plex families with the app. next/font/google
+// Gateway served typeface: OFL-licensed IBM Plex (next/font/local).
+// Thmanyah Sans is NOT loaded here: its proprietary licence prohibits
+// web embedding that lets visitors download the font files independently
+// (see .yaseir-review/STYLE.md Font section and DECISIONS-A.md D11).
+// "Thmanyah Sans" leads the CSS stack in globals.css only as a
+// locally-installed name, with these served IBM Plex families as the
+// lawful fallback — the same approach as the Odoo add-on. next/font/google
 // downloads CSS during builds; its remote response can fail inside Docker
 // even when our own application code and test suites are healthy.
 //

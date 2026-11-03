@@ -331,6 +331,12 @@ export interface PrinterInfo extends OperationalPrinterState {
   endpoint?: string;
   spooler_name?: string;
   spoolerName?: string;
+  /** Agent `DeviceInfo` fields, present on Gateway rows. The Tauri layer
+   * drops them for local/discovered rows (its struct has no such fields),
+   * so UI code must also read capabilities.driver_name / port_name. */
+  spoolerDriver?: string;
+  spoolerPort?: string;
+  spoolerServer?: string;
   network_address?: string;
   networkAddress?: string;
   port?: number | null;

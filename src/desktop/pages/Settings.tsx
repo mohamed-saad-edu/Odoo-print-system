@@ -32,7 +32,7 @@ export function SettingsPage({ s }: { s: DesktopState }) {
         <details open={!s.pairingConfirmed} className="rounded-xl border border-edge bg-surface p-4">
         <summary className="cursor-pointer text-base font-semibold text-ink">{t("v4.experience.setup.gateway")}</summary>
         <div className="mt-4">
-        <SettingsSection title={t("desktop.settings.gatewaySection")} description={t("desktop.settings.gatewaySectionBody")} icon={<Link2 className="h-4 w-4" />}>
+        <SettingsSection title={t("desktop.settings.gatewaySection")} description={t("desktop.settings.gatewaySectionBody")} icon={<Link2 className="h-5 w-5" />}>
           <div className="flex items-center gap-3 rounded-md border border-edge bg-surface-2/45 p-4">
             <StatusDot tone={gatewayDraftPending ? "neutral" : s.gatewayConnected ? "ok" : s.gatewayUrl ? "bad" : "neutral"} pulse={!gatewayDraftPending && s.gatewayConnected} />
             <div className="min-w-0 flex-1">
@@ -48,7 +48,7 @@ export function SettingsPage({ s }: { s: DesktopState }) {
             <div dir="auto" className="break-words [overflow-wrap:anywhere] [unicode-bidi:isolate]">{t("desktop.settings.lastObservedGateway", { url: s.checkedGatewayUrl || t("desktop.settings.notObservedYet") })}</div>
           </div>
           {gatewayDraftPending && <p className="text-xs text-warn">{t("desktop.settings.draftNotSavedBody")}</p>}
-          <div className="flex min-w-0 justify-end"><Button variant="primary" onClick={s.checkHealth} loading={s.gatewayChecking} icon={<Activity className="h-4 w-4" />} className="max-w-full min-w-0 h-auto min-h-10" ><span className="min-w-0 whitespace-normal break-words text-center leading-snug">{t("desktop.settings.checkConnection")}</span></Button></div>
+          <div className="flex min-w-0 justify-end"><Button variant="primary" onClick={s.checkHealth} loading={s.gatewayChecking} icon={<Activity className="h-5 w-5" />} className="max-w-full min-w-0 h-auto min-h-10" ><span className="min-w-0 whitespace-normal break-words text-center leading-snug">{t("desktop.settings.checkConnection")}</span></Button></div>
           {gatewayDisplayError && <ErrorState title={t("desktop.settings.checkFailed")} message={gatewayDisplayError} retry={s.checkHealth} />}
         </SettingsSection>
 
@@ -56,12 +56,12 @@ export function SettingsPage({ s }: { s: DesktopState }) {
         <details className="rounded-xl border border-edge bg-surface p-4">
         <summary className="cursor-pointer text-base font-semibold text-ink">{t("v4.experience.settings.device")}</summary>
         <div className="mt-4">
-        <SettingsSection title={t("desktop.settings.localAgentSection")} description={t("desktop.settings.localAgentSectionBody")} icon={<Server className="h-4 w-4" />}>
+        <SettingsSection title={t("desktop.settings.localAgentSection")} description={t("desktop.settings.localAgentSectionBody")} icon={<Server className="h-5 w-5" />}>
           <div className="flex items-center gap-3 rounded-md border border-edge bg-surface-2/45 p-4">
             <StatusDot tone={serviceState === "unknown" ? "neutral" : s.isOnline ? "ok" : "bad"} pulse={s.isOnline} />
             <div className="min-w-0 flex-1"><div className="text-sm font-semibold text-ink">{serviceState === "unknown" ? t("desktop.agents.statusUnavailable") : s.isOnline ? t("desktop.settings.agentOnline") : t("desktop.settings.agentStopped")}</div><div dir="auto" className="mt-0.5 truncate text-xs text-ink-3 [unicode-bidi:isolate]">{String(anyStatus?.hostname || t("desktop.settings.thisPc"))}</div></div>
           </div>
-          <div><div className="mb-2 text-xs font-semibold text-ink">{t("desktop.settings.serviceControl")}</div><div className="flex flex-wrap gap-2"><Button variant="primary" onClick={s.startAgent} disabled={s.busy} icon={<Play className="h-4 w-4" />} >{t("desktop.agents.start")}</Button><Button variant="secondary" onClick={s.requestStopAgent} disabled={s.busy} icon={<Square className="h-4 w-4" />} >{t("desktop.agents.stop")}</Button><Button variant="ghost" onClick={s.restartAgent} disabled={s.busy} icon={<RotateCcw className="h-4 w-4" />} >{t("desktop.agents.restart")}</Button></div></div>
+          <div><div className="mb-2 text-xs font-semibold text-ink">{t("desktop.settings.serviceControl")}</div><div className="flex flex-wrap gap-2"><Button variant="primary" onClick={s.startAgent} disabled={s.busy} icon={<Play className="h-5 w-5" />} >{t("desktop.agents.start")}</Button><Button variant="secondary" onClick={s.requestStopAgent} disabled={s.busy} icon={<Square className="h-5 w-5" />} >{t("desktop.agents.stop")}</Button><Button variant="ghost" onClick={s.restartAgent} disabled={s.busy} icon={<RotateCcw className="h-5 w-5" />} >{t("desktop.agents.restart")}</Button></div></div>
           <div className="border-t border-edge pt-4">
             <div className="flex items-start justify-between gap-4">
               <div className="flex items-start gap-2.5"><Power className="mt-0.5 h-4 w-4 text-ink-3" /><div><div className="text-sm font-semibold text-ink" id="autostart-label">{t("desktop.settings.startWithWindows")}</div><p className="mt-1 text-sm leading-snug text-ink-3">{t("desktop.settings.startWithWindowsBody")}</p></div></div>
@@ -112,7 +112,7 @@ export function SettingsPage({ s }: { s: DesktopState }) {
           <p className="text-sm text-ink-3">{t("desktop.settings.pairStep1")}</p>
           <div className="flex w-full max-w-sm flex-col gap-3">
             <Field label={t("desktop.settings.pairCodeLabel")} htmlFor="pair-code" className="flex-1">
-              <div className="flex items-center gap-2"><Input id="pair-code" dir="ltr" value={s.pairCode} onChange={(e) => s.setPairCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ""))} placeholder="KQ7XTM" maxLength={6} className="text-center font-mono text-lg font-bold uppercase tracking-[0.3em] h-11 rounded-md" autoComplete="off" /><Button variant="primary" onClick={s.pair} loading={s.busy} disabled={!s.pairCode.trim() || s.pairCode.trim().length !== 6} icon={<ShieldCheck className="h-4 w-4" />} className="h-11 rounded-md">{t("desktop.settings.pair")}</Button></div>
+              <div className="flex items-center gap-2"><Input id="pair-code" dir="ltr" value={s.pairCode} onChange={(e) => s.setPairCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ""))} placeholder="KQ7XTM" maxLength={6} className="text-center font-mono text-lg font-bold uppercase tracking-[0.3em] h-11 rounded-md" autoComplete="off" /><Button variant="primary" onClick={s.pair} loading={s.busy} disabled={!s.pairCode.trim() || s.pairCode.trim().length !== 6} icon={<ShieldCheck className="h-5 w-5" />} className="h-11 rounded-md">{t("desktop.settings.pair")}</Button></div>
             </Field>
           </div>
         </div>
@@ -126,7 +126,7 @@ export function SettingsPage({ s }: { s: DesktopState }) {
             const copied = await copyTextToClipboard(report);
             s.setMsg({ text: t(copied ? "desktop.settings.statusCopied" : "desktop.settings.copyFailed"), type: copied ? "success" : "error" });
             if (trigger.isConnected) trigger.focus();
-          }} icon={<Copy className="h-3.5 w-3.5" />}>{t("desktop.settings.copySummary")}</Button>
+          }} icon={<Copy className="h-5 w-5" />}>{t("desktop.settings.copySummary")}</Button>
       </div>
 
     </div>

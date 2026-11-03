@@ -22,6 +22,7 @@ import {
   Layers,
   LayoutDashboard,
   Printer,
+  Server,
   Users,
 } from "lucide-react";
 import { BrandMark } from "../components/brand";
@@ -128,7 +129,7 @@ function PublicHome({ t, locale }: { t: Translator; locale: Locale }) {
               </p>
               <h1
                 data-yw-intro
-                className="yw-hero-title mt-5 text-[clamp(2.5rem,5vw,4.75rem)] font-[720] leading-[1.06] tracking-[-0.05em] text-ink"
+                className="yw-hero-title mt-5 text-[clamp(2.5rem,5vw,4.75rem)] font-[500] leading-[1.06] tracking-[-0.05em] text-ink"
               >
                 {t("home.heroTitle1")}
                 <br className="hidden sm:block" /> {t("home.heroTitle2")}
@@ -192,7 +193,7 @@ function PublicHome({ t, locale }: { t: Translator; locale: Locale }) {
 
               <div data-yw-reveal className="order-1 max-w-[620px] lg:col-span-5 lg:order-2">
                 <p className="text-eyebrow">{t("home.productShowcaseEyebrow")}</p>
-                <h2 className="mt-3 text-3xl font-[720] tracking-[-0.03em] text-ink sm:text-4xl">
+                <h2 className="mt-3 text-3xl font-[500] tracking-[-0.03em] text-ink sm:text-4xl">
                   {t("home.productShowcaseTitle")}
                 </h2>
               </div>
@@ -221,7 +222,7 @@ function PublicHome({ t, locale }: { t: Translator; locale: Locale }) {
           <div className="mx-auto grid w-full max-w-[1280px] gap-8 px-5 sm:px-8 lg:grid-cols-[0.75fr_1.25fr] lg:items-start lg:gap-14 lg:px-10">
             <div data-yw-reveal className="max-w-[480px]">
               <p className="text-eyebrow">{t("home.flowEyebrow")}</p>
-              <h2 className="mt-3 text-3xl font-[720] tracking-[-0.03em] text-ink sm:text-4xl">
+              <h2 className="mt-3 text-3xl font-[500] tracking-[-0.03em] text-ink sm:text-4xl">
                 {t("home.flowTitle")}
               </h2>
             </div>
@@ -255,7 +256,7 @@ function PublicHome({ t, locale }: { t: Translator; locale: Locale }) {
           <div className="mx-auto w-full max-w-[1280px] px-5 sm:px-8 lg:px-10">
             <div data-yw-reveal className="brand-hairline grid gap-6 rounded-2xl border border-edge bg-app p-6 sm:p-9 lg:grid-cols-[1fr_auto] lg:items-center lg:gap-10">
               <div className="max-w-[680px]">
-                <h2 className="text-2xl font-[750] leading-[1.12] tracking-[-0.03em] text-ink sm:text-3xl">
+                <h2 className="text-2xl font-[500] leading-[1.12] tracking-[-0.03em] text-ink sm:text-3xl">
                   {t("home.ctaTitle")}
                 </h2>
               </div>
@@ -340,7 +341,7 @@ function FlowStep({
       <span className="font-mono text-xs font-semibold tabular text-brand">
         {number}
       </span>
-      <h3 className="text-base font-[650] text-ink">{title}</h3>
+      <h3 className="text-base font-[500] text-ink">{title}</h3>
       <p className="text-xs leading-relaxed text-ink-2 sm:text-sm">{text}</p>
     </div>
   );
@@ -360,7 +361,7 @@ function CapabilityCard({
       <span className="flex h-10 w-10 items-center justify-center rounded-xl border border-brand/20 bg-brand-subtle text-brand">
         {icon}
       </span>
-      <h3 className="mt-4 text-base font-[650] text-ink sm:text-lg">{title}</h3>
+      <h3 className="mt-4 text-base font-[500] text-ink sm:text-lg">{title}</h3>
       <p className="mt-2 text-xs leading-relaxed text-ink-2 sm:text-sm">{lead}</p>
     </SpotlightSurface>
   );
@@ -406,7 +407,7 @@ function AuthenticatedHome({
         <div className="flex flex-col gap-5 px-6 py-6 sm:flex-row sm:items-start sm:justify-between sm:px-7">
           <div className="min-w-0">
             <p className="text-eyebrow">{t("home.authWorkspace")}</p>
-            <h1 className="mt-2 text-3xl font-[660] tracking-[-0.03em] text-ink">{tenantName}</h1>
+            <h1 className="mt-2 text-3xl font-[500] tracking-[-0.03em] text-ink">{tenantName}</h1>
             <p className="mt-1.5 text-base text-ink-2">
               {t("home.authSignedInAs")} <span className="font-[600] text-ink">{roleLabel(role, t)}</span>
             </p>
@@ -483,6 +484,37 @@ function AuthenticatedHome({
           />
         )}
       </section>
+
+      {/* WP8: the signed-in landing mirrors the sidebar Operations group,
+          so Agents / Printers / Jobs are reachable from Home as well as
+          from the rail. Public landing below is untouched (chrome pass
+          only — see UX.md). */}
+      <section className="mt-4 grid gap-4 md:grid-cols-3">
+        <QuickLink
+          href="/agents"
+          icon={<Server className="h-4 w-4" />}
+          title={t("dashboard.tab.agents")}
+          text={t("home.quickAgentsText")}
+          meta={t("nav.section.operations")}
+          t={t}
+        />
+        <QuickLink
+          href="/printers"
+          icon={<Printer className="h-4 w-4" />}
+          title={t("desktop.nav.printers")}
+          text={t("home.quickPrintersText")}
+          meta={t("nav.section.operations")}
+          t={t}
+        />
+        <QuickLink
+          href="/jobs"
+          icon={<Layers className="h-4 w-4" />}
+          title={t("nav.jobs")}
+          text={t("home.quickJobsText")}
+          meta={t("nav.section.operations")}
+          t={t}
+        />
+      </section>
     </div>
   );
 }
@@ -511,7 +543,7 @@ function QuickLink({
           </span>
           <ArrowRight className="h-4 w-4 text-ink-3 transition-transform group-hover:translate-x-0.5 rtl:-scale-x-100" />
         </div>
-        <h2 className="mt-4 text-base font-[620] tracking-[-0.015em] text-ink">{title}</h2>
+        <h2 className="mt-4 text-base font-[500] tracking-[-0.015em] text-ink">{title}</h2>
         <p className="mt-1 text-xs leading-relaxed text-ink-2">{text}</p>
       </div>
       <div className="mt-4 border-t border-edge-subtle pt-3">

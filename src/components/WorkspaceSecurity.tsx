@@ -9,7 +9,7 @@ import { fetchWithTimeout } from "../lib/fetch-timeout";
 import { subscribeSessionSync } from "../lib/session-sync";
 
 const ACTIVITY_EVENTS = ["pointerdown", "keydown", "wheel", "touchstart"] as const;
-const WORKSPACE_ROUTES = ["/onboarding", "/dashboard", "/api-keys", "/team", "/billing", "/settings"];
+const WORKSPACE_ROUTES = ["/onboarding", "/dashboard", "/agents", "/printers", "/jobs", "/api-keys", "/team", "/billing", "/settings"];
 type ActivityBudget = { lastSent: number | null };
 
 /** Only explicit navigation to a known same-origin workspace UI is allowed. */

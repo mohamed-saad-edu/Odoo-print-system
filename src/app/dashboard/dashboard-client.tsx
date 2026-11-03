@@ -440,6 +440,11 @@ function connectionLabel(connectionType: string, t: Translator): string {
 
 export default function DashboardClient({
   initialView = "home",
+  // WP8: a dedicated page (/agents, /printers, /jobs) locks the view so
+  // its URL is the state — no hash tab can silently switch it away, and
+  // the in-page tab strip (a leftover of the old hash navigation) is
+  // hidden there because the sidebar already owns navigation.
+  lockedView,
   initialAgents,
   initialPrinters,
   initialJobs,
@@ -450,6 +455,7 @@ export default function DashboardClient({
   diagnosticActorScope,
 }: {
   initialView?: DashboardView;
+  lockedView?: DashboardView;
   initialAgents: Agent[];
   initialPrinters: Printer[];
   initialJobs: Job[];
@@ -554,7 +560,26 @@ export default function DashboardClient({
   if (!billingScopeMatches) {
     setBillingState({ authority: { canReadBillingUsage, diagnosticActorScope }, usage: null, subscription: null, error: false });
   }
-  const view = React.useSyncExternalStore(subscribeDashboardView, () => dashboardViewSnapshot(initialView), () => initialView);
+  const hashView = React.useSyncExternalStore(subscribeDashboardView, () => dashboardViewSnapshot(initialView), () => initialView);
+  // WP8 deep-link preservation: the old dashboard hash views (agents,
+  // printers, jobs) and /dashboard?view=… (redirected server-side) now
+  // live at /agents, /printers and /jobs. A hash can only arrive from an old bookmark or
+  // an external link — the in-page tabs below are real routes now — so
+  // redirect once on mount instead of rendering the old hash view.
+  // No usePathname: this client is also rendered by unit tests that mock
+  // next/navigation with useRouter only, and locked pages skip this
+  // effect entirely (they never run on /dashboard).
+  React.useEffect(() => {
+    if (lockedView) return;
+    const hash = window.location.hash.slice(1);
+    if ((DASHBOARD_VIEWS as readonly string[]).includes(hash) && hash !== "home") {
+      router.replace(`/${hash}`);
+    }
+    // lockedView and router are stable for a mounted page; including them
+    // keeps the redirect correct if either ever changes, and the hash is
+    // consumed by the navigation itself on the first run.
+  }, [lockedView, router]);
+  const view = lockedView ?? hashView;
   const subscription = billingScopeMatches ? billingState.subscription : null;
   const billingUsage = canReadBillingUsage && billingScopeMatches ? billingState.usage : null;
   const billingUsageError = canReadBillingUsage && billingScopeMatches && billingState.error;
@@ -1461,12 +1486,15 @@ export default function DashboardClient({
 
   return (
     <div className="yw-gateway-dashboard space-y-6">
-      <nav aria-label={t("nav.consoleNavigation")} className="flex flex-wrap gap-2 rounded-xl border border-edge bg-surface p-2">
-        {DASHBOARD_VIEWS.map((item) => <a key={item} href={`#${item}`} aria-current={view === item ? "page" : undefined}
+      {/* WP8: on /dashboard this strip is a secondary shortcut to the
+          sidebar pages (real routes, not hash views); on a locked page
+          it is hidden because the sidebar already owns navigation. */}
+      {!lockedView && <nav aria-label={t("nav.consoleNavigation")} className="flex flex-wrap gap-2 rounded-xl border border-edge bg-surface p-2">
+        {DASHBOARD_VIEWS.map((item) => <a key={item} href={item === "home" ? "/dashboard" : `/${item}`} aria-current={view === item ? "page" : undefined}
           className={`inline-flex min-h-11 items-center rounded-lg px-4 text-sm font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/35 ${view === item ? "bg-brand-subtle text-brand-subtle-text" : "text-ink-2 hover:bg-surface-2"}`}>
           {t(item === "home" ? "v4.experience.home" : item === "printers" ? "desktop.nav.printers" : item === "agents" ? "dashboard.tab.agents" : "v4.experience.activity")}
         </a>)}
-      </nav>
+      </nav>}
       {subscription && !canReadBillingUsage && subscription.customerState !== "active" && <Callout tone="warn" title={t(`v4.experience.subscription.${subscription.customerState}`)}>
         {t("v4.subscription.memberPausedBody")}
       </Callout>}
@@ -1485,9 +1513,9 @@ export default function DashboardClient({
         </div>
         {subscription?.currentPeriodEnd && <p className="text-sm text-ink-3">{t("v4.experience.subscription.ends", { date: formatManualCalendarDate(subscription.currentPeriodEnd, locale) ?? t("common.notAvailable") })}</p>}
         <div className="flex flex-wrap gap-3">
-          {canReadBillingUsage && subscription && subscription.customerState !== "active" ? <Button href="/billing" variant="primary">{t("v4.experience.health.manage")}</Button> : fleetSnapshotCurrent && kpis.totalAgents === 0 && canMutate.agentsPair ? <Button variant="primary" onClick={() => { setMessage(null); setRegisterOpen(true); }}>{t("v4.experience.health.none")}</Button> : <Button href="#printers" variant="primary">{t(fleetSnapshotCurrent && kpis.onlinePrinters > 0 ? "v4.experience.health.ready" : "v4.experience.health.review")}</Button>}
+          {canReadBillingUsage && subscription && subscription.customerState !== "active" ? <Button href="/billing" variant="primary">{t("v4.experience.health.manage")}</Button> : fleetSnapshotCurrent && kpis.totalAgents === 0 && canMutate.agentsPair ? <Button variant="primary" onClick={() => { setMessage(null); setRegisterOpen(true); }}>{t("v4.experience.health.none")}</Button> : <Button href="/printers" variant="primary">{t(fleetSnapshotCurrent && kpis.onlinePrinters > 0 ? "v4.experience.health.ready" : "v4.experience.health.review")}</Button>}
           <Button href="/api-keys" variant="secondary">{t("v4.experience.connection")}</Button>
-          <Button href="#jobs" variant="secondary">{t("v4.experience.activity")}</Button>
+          <Button href="/jobs" variant="secondary">{t("v4.experience.activity")}</Button>
         </div>
       </Card>}
       {/* ── Fleet summary ─────────────────────────────────────────── */}
@@ -1698,6 +1726,23 @@ export default function DashboardClient({
             </Button>}
           </div>
 
+          {/* WP8 (printer-UX e): an offline/stale Agent is an explicit
+              error state with reconnect guidance, not a row of
+              "unknown" badges. The per-agent badge already carries the
+              status as text (never color alone); this banner adds the
+              next step once, above the list. */}
+          {agents.length > 0 && agents.some((agent) => agentLiveView(agent, nowMs, locale).tone === "bad") && (
+            <div className="border-b border-edge-subtle px-4 py-3">
+              <Callout
+                tone="warn"
+                title={t("printer.agentOfflineTitle")}
+                action={<Button variant="secondary" size="sm" onClick={() => void refreshData()}>{t("common.refresh")}</Button>}
+              >
+                {t("printer.agentOfflineBody")}
+              </Callout>
+            </div>
+          )}
+
           {agents.length === 0 ? (
             <EmptyState
               icon={<Server className="h-5 w-5" />}
@@ -1865,7 +1910,24 @@ export default function DashboardClient({
             <EmptyState
               icon={<PrinterIcon className="h-5 w-5" />}
               title={t("printer.noneDiscovered")}
-              description={t("empty.printers.description")}
+              // WP8 (printer-UX c/d): a blank page told nobody what to
+              // do next. The picker itself lives in the Print Agent
+              // (Desktop AddPrinterDialog, WP4) — the Gateway cannot
+              // invent a local picker — so the empty state names the
+              // exact path (Agent → Printers → Add printer) and offers
+              // the two Gateway actions that exist: pair an Agent, or
+              // go to Agents to check whether one is connected at all.
+              description={t("printer.emptyHowToFind")}
+              action={
+                canMutate.agentsPair ? <Button variant="primary" size="sm" onClick={() => { setMessage(null); setRegisterOpen(true); }} disabled={busy || databaseError !== null} icon={<Plus className="h-3.5 w-3.5" />}>
+                  {t("agent.register")}
+                </Button> : undefined
+              }
+              secondaryAction={
+                <Button variant="secondary" size="sm" href="/agents">
+                  {t("dashboard.tab.agents")}
+                </Button>
+              }
             />
           ) : filteredPrinters.length === 0 ? (
             <EmptyState
@@ -2470,6 +2532,34 @@ export default function DashboardClient({
       >
         {selectedPrinterView && (
           <div className="space-y-4">
+            {/* WP8 (printer-UX b/e): sharing and agent availability are
+                states with a next step, not silent rows. The Gateway
+                has no sharing toggle by design — sharing is owned by
+                the Agent (Desktop PrinterSharingControl, WP4) and the
+                Gateway only reflects the heartbeat value — so a
+                not-shared printer says exactly where to change it,
+                and an unavailable Agent says how to reconnect; both
+                offer a refresh that re-reads the heartbeat. The toggle
+                itself is verified in the Desktop surface, not faked
+                here with a Gateway PATCH that the Agent would overwrite. */}
+            {selectedPrinterView.sharedWithGateway === false && (
+              <Callout
+                tone="warn"
+                title={t("printer.notSharedTitle")}
+                action={<Button variant="secondary" size="sm" onClick={() => void refreshData()}>{t("common.refresh")}</Button>}
+              >
+                {t("printer.notSharedBody")}
+              </Callout>
+            )}
+            {printerPresentation(selectedPrinterView, agentById.get(selectedPrinterView.agentId), nowMs).reasonKey === "printer.presentation.agentUnavailableReason" && (
+              <Callout
+                tone="warn"
+                title={t("printer.agentOfflineTitle")}
+                action={<Button variant="secondary" size="sm" onClick={() => void refreshData()}>{t("common.refresh")}</Button>}
+              >
+                {t("printer.agentOfflineBody")}
+              </Callout>
+            )}
             <KeyValueList rows={[
               { label: t("common.status"), value: printerLabel(effectivePrinterStatus(selectedPrinterView, null, nowMs), locale) },
               { label: t("desktop.printers.sharingLabel"), value: t(selectedPrinterView.sharedWithGateway === false ? "desktop.printers.sharingPrivate" : "desktop.printers.sharingShared") },

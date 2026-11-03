@@ -20,7 +20,11 @@ describe("SaaS copy and progressive disclosure", () => {
     expect(billing).toContain('v4.subscription.nextReset');
   });
   it("keeps the operations dashboard concise while retaining failure alerts", () => {
-    const page = read("src/app/dashboard/page.tsx");
+    // WP5: WP8 moved the dashboard server implementation into the shared
+    // Operations loader; /dashboard/page.tsx renders it (proven below).
+    const page = read("src/app/dashboard/dashboard-page-content.tsx");
+    const wrapper = read("src/app/dashboard/page.tsx");
+    expect(wrapper).toContain("DashboardPageContent");
     expect(page).not.toContain('description={t("v4.experience.health.body")}');
     expect(page).toContain('dashboard.page.dbUnavailableBody');
   });

@@ -43,7 +43,11 @@ describe("print-job cleanup contract", () => {
   });
 
   it("surfaces a confirmed bounded retention action in the Gateway dashboard", () => {
-    const page = read("src/app/dashboard/page.tsx");
+    // WP5: WP8 moved the dashboard server implementation into the shared
+    // Operations loader; /dashboard/page.tsx renders it (proven below).
+    const page = read("src/app/dashboard/dashboard-page-content.tsx");
+    const wrapper = read("src/app/dashboard/page.tsx");
+    expect(wrapper).toContain("DashboardPageContent");
     const button = read("src/components/JobCleanupButton.tsx");
     expect(page).toContain("<JobCleanupButton />");
     expect(button).toContain('t("jobs.cleanup.action")');

@@ -73,11 +73,26 @@ describe("shared typography system", () => {
     expect(css).toContain("font-family: var(--typo-font-stack-latin);");
     expect(css).toContain("font-family: var(--typo-font-stack-arabic);");
     // The installed Tauri app must not depend on system-installed fonts.
+    // v8-style: Desktop ships self-hosted Thmanyah Sans (Design Guide v2.1),
+    // not IBM Plex — the contract is updated to the new intended face while
+    // keeping every structural assertion (shared stack, @font-face,
+    // font-display: block, bundled files, no system-font dependence).
     expect(css).toContain('@font-face');
-    expect(css).toContain('font-family: "IBM Plex Sans"');
-    expect(css).toContain('font-family: "IBM Plex Sans Arabic"');
+    expect(css).toContain('font-family: "Thmanyah Sans"');
     expect(css).toContain("font-display: block");
-    expect(css).toContain("../app/fonts/ibm-plex-sans-variable.ttf");
+    for (const weight of ["300", "400", "500", "700", "900"]) {
+      expect(css).toContain(`font-weight: ${weight};`);
+    }
+    for (const file of [
+      "thmanyahsans-Light.otf",
+      "thmanyahsans-Regular.otf",
+      "thmanyahsans-Medium.otf",
+      "thmanyahsans-Bold.otf",
+      "thmanyahsans-Black.otf",
+    ]) {
+      expect(css).toContain(`./fonts/${file}`);
+      expect(existsSync(resolve(process.cwd(), "src/desktop/fonts", file))).toBe(true);
+    }
   });
 
   it("uses the shared family stack in the Odoo add-on", () => {

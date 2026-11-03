@@ -116,7 +116,7 @@ export default async function Pricing() {
                 return <Card key={plan.id} className="flex h-full flex-col overflow-hidden rounded-2xl border border-edge-subtle shadow-sm">
                   <div className="flex-1 px-6 pb-6 pt-7 sm:px-7">
                     <div className="min-h-[4.5rem]">
-                      <h2 className="break-words text-[1.375rem] font-[650] leading-snug tracking-tight text-ink">{plan.name}</h2>
+                      <h2 className="break-words text-[1.375rem] font-[500] leading-snug tracking-tight text-ink">{plan.name}</h2>
                       {plan.description && <p className="mt-2 break-words text-sm leading-6 text-ink-3">{plan.description}</p>}
                     </div>
                     <div className="mt-4 min-h-[5.5rem]">
@@ -131,8 +131,8 @@ export default async function Pricing() {
                     <div className="mt-5 border-t border-edge-subtle pt-5">
                       <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
                         {typeof monthlyQuota === "number"
-                          ? <span className="text-xl font-[650] tabular-nums text-ink-2"><bdi dir="ltr">{formatNumber(monthlyQuota, locale)}</bdi></span>
-                          : <span className="text-xl font-[650] text-ink-2">{t("billing.unlimited")}</span>}
+                          ? <span className="text-xl font-[500] tabular-nums text-ink-2"><bdi dir="ltr">{formatNumber(monthlyQuota, locale)}</bdi></span>
+                          : <span className="text-xl font-[500] text-ink-2">{t("billing.unlimited")}</span>}
                         <span className="text-sm leading-6 text-ink-3">{t("v4.pricing.jobsPerMonth")}</span>
                       </div>
                     </div>

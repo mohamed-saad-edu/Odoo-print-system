@@ -17,98 +17,114 @@
   color-scheme: light;
 
   /* ---------- Brand: Yaseir blue (brand identity blue; refreshed shell accent) ---------- */
-  --brand-50: #f1f3ff;
-  --brand-100: #e4e9ff;
-  --brand-200: #cbd4ff;
-  --brand-300: #acbcff;
-  --brand-400: #8298ff;
-  --brand-500: #5874ff;
-  --brand-600: #3758f9;
-  --brand-700: #2848dd;
-  --brand-800: #203bb8;
-  --brand-900: #1e328b;
-  --brand-950: #19275a;
+  /* Design Guide v2.1 primary: #0953DE (600 = primary). Ramp rebuilt
+     around it; white on --brand-solid is 6.36:1, on hover 8.39:1. */
+  --brand-50: #eef4ff;
+  --brand-100: #dce8ff;
+  --brand-200: #b9d0ff;
+  --brand-300: #8ab0ff;
+  --brand-400: #5a8dff;
+  --brand-500: #2e6be6;
+  --brand-600: #0953de;
+  --brand-700: #0744b5;
+  --brand-800: #06348e;
+  --brand-900: #0a2540;
+  --brand-950: #081a30;
 
-  --brand: #3758f9;
-  --brand-hover: #2848dd;
-  --brand-active: #1e3cb8;
+  --brand: #0953de;
+  --brand-hover: #0744b5;
+  --brand-active: #06348e;
   /* Solid tints used behind white label text (primary buttons, step markers).
      They are darker than --brand-hover so 1.4.3 stays satisfied at weight 560
      (white on the selected blue must remain readable); every other brand use stays on --brand. */
-  --brand-solid: #3758f9;
+  --brand-solid: #0953de;
   --brand-contrast: #ffffff;
-  --brand-subtle: #eef1ff;
-  --brand-subtle-hover: #e2e8ff;
-  --brand-subtle-border: #cbd4ff;
-  --brand-subtle-text: #2442bc;
-  --brand-ring: rgba(55, 88, 249, 0.22);
+  --brand-subtle: #eaf1fe;
+  --brand-subtle-hover: #dce8ff;
+  --brand-subtle-border: #b9d0ff;
+  --brand-subtle-text: #0743b8;
+  --brand-ring: rgba(9, 83, 222, 0.22);
+  /* Design Guide v2.1 secondaries — dark text ONLY on top (white on cyan
+     is 1.99:1; ink on cyan 9.42:1, on yellow 14.67:1, on pink 8.34:1). */
+  --secondary-cyan: #00c7fc;
+  --secondary-yellow: #ffe451;
+  --secondary-pink: #f48cc0;
+  /* Logo file colours — referenced for documentation only, never used as
+     UI paint and never recoloured. */
+  --mark-yaseir: #0059ff;
+  --mark-kun: #0f5cff;
 
   /* ---------- Neutral surfaces ---------- */
-  --bg: #f6f8ff;
-  --bg-subtle: #fbfcff;
+  --bg: #f5f7fa;
+  --bg-subtle: #fbfcfe;
   --surface: #ffffff;
-  --surface-2: #f3f5fc;
-  --surface-3: #e8ecf6;
-  --surface-hover: #edf1ff;
-  --surface-accent: #eef2ff;
-  --surface-accent-2: #e3eaff;
+  --surface-2: #f1f4f9;
+  --surface-3: #e6eaf2;
+  --surface-hover: #edf1f8;
+  --surface-accent: #eaf1fe;
+  --surface-accent-2: #dce8ff;
   --surface-elevated: #ffffff;
   --surface-overlay: rgba(255, 255, 255, 0.82);
   --surface-glass: rgba(255, 255, 255, 0.72);
 
-  --border: #e4e8f3;
-  --border-strong: #cbd3e4;
-  --border-accent: #cbd4ff;
+  --border: #e2e7f0;
+  --border-strong: #c7cedd;
+  --border-accent: #b9d0ff;
   --border-subtle: #edf0f7;
   --divider: #e8ecf4;
   /* Boundary of a form control. WCAG 2.2 SC 1.4.11 asks for 3:1 against the
      surface a control sits on, which decorative separators do not have to
      meet — so inputs, selects and checkboxes use this stronger edge instead of
      --border-strong (3.9:1 on white, 3.4:1 on a raised panel). */
-  --control-border: #7b8189;
+  --control-border: #6b7280;
 
   /* ---------- Ink ---------- */
-  --text: #17223b;
-  --text-2: #40506d;
+  --text: #101219;
+  --text-2: #3d4457;
   /* Meta and hint tiers. Both clear 4.5:1 on every surface this product paints
      (page, card, raised panel, brand tint) — measured 5.2:1 and 4.6:1 on the
      darkest light surface (--surface-3). */
-  --text-3: #53627a;
-  --text-4: #5b6880;
+  --text-3: #5a6376;
+  --text-4: #6b7280;
   --text-on-brand: #ffffff;
   --text-on-solid: #ffffff;
-  --text-display: #101b32;
+  --text-display: #101219;
 
   /* ---------- Semantic status ---------- */
-  --success: #1c6c3f;
-  --success-solid: #1f7a45;
-  --success-bg: #eef8f1;
-  --success-border: #b9e0c7;
+  /* WP2 strong semantic palette: saturated bg + strong border so a badge
+     never disappears on white. Text-on-bg ratios: success 6.62, warning
+     6.22, error 5.40, info 5.33 — all >= 4.5:1. Info is teal, deliberately
+     distinct from primary #0953DE where confusion is possible. */
+  --success: #145a32;
+  --success-solid: #1b7a43;
+  --success-bg: #cdeed6;
+  --success-border: #2e7d4f;
 
-  --warning: #8a5a00;
+  --warning: #7a4a00;
   --warning-solid: #96630a;
-  --warning-bg: #fff8e8;
-  --warning-border: #ecd29a;
+  --warning-bg: #ffe9a8;
+  --warning-border: #b77900;
 
   --danger: #b42318;
   --danger-solid: #c7351f;
-  --danger-bg: #fdf2f1;
-  --danger-border: #f0c2b9;
+  --danger-bg: #fde3e0;
+  --danger-border: #d6453a;
 
-  --info: #1f5cab;
-  --info-solid: #3d7dcc;
-  --info-bg: #eff5ff;
-  --info-border: #c3d8f6;
+  --info: #0f6b7e;
+  --info-solid: #0e7c8e;
+  --info-bg: #ddf3f7;
+  --info-border: #2aa5b8;
 
-  --notice-bg: #fff7ec;
-  --notice-border: #efc795;
-  --notice-text: #8a5a1a;
-  --notice-icon: #c66d1a;
+  --notice-bg: #ffe9a8;
+  --notice-border: #b77900;
+  --notice-text: #7a4a00;
+  --notice-icon: #96630a;
 
   /* ---------- Focus / overlay ---------- */
-  --focus-ring: #3758f9;
-  --focus-ring-shadow: 0 0 0 3px rgba(55, 88, 249, 0.2);
-  --focus-ring-inset: 0 0 0 2px rgba(255, 255, 255, 0.9);
+  /* Guide: focus ring 3px + 3px gap. */
+  --focus-ring: #0953de;
+  --focus-ring-shadow: 0 0 0 3px rgba(9, 83, 222, 0.25);
+  --focus-ring-inset: 0 0 0 3px rgba(255, 255, 255, 0.9);
   --overlay: rgba(15, 18, 26, 0.4);
   --overlay-soft: rgba(15, 18, 26, 0.16);
 
@@ -136,23 +152,25 @@
   /* ---------- Type scale ---------- */
   /* Relative roles respect browser text preferences: primary copy 18px,
      supporting copy 16px, and compact labels 14px at the default root size. */
-  --fs-2xs: 0.875rem;
-  --fs-xs: 0.875rem;
-  --fs-sm: 1rem;
-  --fs-body: 1.125rem;
-  --fs-md: 1.125rem;
-  --fs-lg: 1.25rem;
-  --fs-title: 1.375rem;
-  --fs-xl: 1.375rem;
-  --fs-2xl: 1.625rem;
+  /* Guide type scale: body 16px, fields/tables 14px, help 12px,
+     card 18px, section 24px, page title 32–40px; line-height 1.6–1.8. */
+  --fs-2xs: 0.75rem;
+  --fs-xs: 0.75rem;
+  --fs-sm: 0.875rem;
+  --fs-body: 1rem;
+  --fs-md: 1rem;
+  --fs-lg: 1.125rem;
+  --fs-title: 1.125rem;
+  --fs-xl: 1.125rem;
+  --fs-2xl: 1.5rem;
   --fs-3xl: 2rem;
   --fs-display: 2.25rem;
-  --fs-display-lg: 3rem;
+  --fs-display-lg: 2.5rem;
 
-  --lh-tight: 1.15;
-  --lh-snug: 1.3;
-  --lh-normal: 1.5;
-  --lh-relaxed: 1.62;
+  --lh-tight: 1.25;
+  --lh-snug: 1.5;
+  --lh-normal: 1.7;
+  --lh-relaxed: 1.8;
 
   --tracking-tight: -0.012em;
   --tracking-tighter: -0.022em;
@@ -170,15 +188,19 @@
   --ease-spring: cubic-bezier(0.32, 1.28, 0.62, 1);
 
   /* ---------- Layout ---------- */
-  --sidebar-width: 18rem;
+  /* Guide sidebar: 272px full / 80px collapsed; desktop margins 24–40px;
+     sections 40–48px apart. */
+  --sidebar-width: 17rem;
   --sidebar-collapsed: 5rem;
   --header-height: 64px;
   --content-max: 1440px;
   --content-max-wide: 1680px;
-  --page-px: 20px;
-  --page-py: 28px;
+  --page-px: 24px;
+  --page-py: 40px;
+  --card-pad: 24px;
 
   /* ---------- Control geometry ---------- */
+  /* Guide buttons: 44px standard, 48px marketing. */
   --control-h-sm: 2.5rem;
   --control-h-md: 2.75rem;
   --control-h-lg: 3rem;
@@ -209,16 +231,24 @@
   --brand-900: #143f8c;
   --brand-950: #0f2c63;
 
-  --brand: #4b8ef8;
-  --brand-hover: #5d99ff;
-  --brand-active: #2b6fdd;
-  --brand-solid: #2b6fe3;
+  /* Dark link/text brand lightened for contrast (9.39:1 on #121417);
+     button solid stays saturated blue (white 4.77:1). Dark mode is an
+     explicit token set, never a filter inversion. */
+  --brand: #8dbbff;
+  --brand-hover: #a5c8ff;
+  --brand-active: #2b7de8;
+  --brand-solid: #1e6fe0;
   --brand-contrast: #ffffff;
   --brand-subtle: #10203a;
   --brand-subtle-hover: #142a4b;
   --brand-subtle-border: #1e4180;
   --brand-subtle-text: #8fbaff;
-  --brand-ring: rgba(59, 130, 246, 0.34);
+  --brand-ring: rgba(141, 187, 255, 0.34);
+  --secondary-cyan: #00c7fc;
+  --secondary-yellow: #ffe451;
+  --secondary-pink: #f48cc0;
+  --mark-yaseir: #0059ff;
+  --mark-kun: #0f5cff;
 
   --bg: #08090c;
   --bg-subtle: #0c0e12;
@@ -247,33 +277,34 @@
   --text-on-solid: #ffffff;
   --text-display: #f8f9fb;
 
-  --success: #6fd596;
+  /* Dark semantic ratios (text on bg): success 8.21, warning 10.38, error 8.40, info 9.55. */
+  --success: #7ed492;
   --success-solid: #1d8148;
-  --success-bg: #0c2418;
-  --success-border: #215c39;
+  --success-bg: #0f2e1c;
+  --success-border: #4caf6d;
 
-  --warning: #f0c05a;
+  --warning: #f5c86b;
   --warning-solid: #9a6508;
-  --warning-bg: #241b08;
-  --warning-border: #66501c;
+  --warning-bg: #2a1e05;
+  --warning-border: #d9a441;
 
-  --danger: #ff8b7d;
+  --danger: #ff9a8a;
   --danger-solid: #d0452e;
-  --danger-bg: #291413;
-  --danger-border: #6f3229;
+  --danger-bg: #2b1513;
+  --danger-border: #e0685a;
 
-  --info: #7cb6ff;
-  --info-solid: #3d7dcc;
-  --info-bg: #0d1c2f;
-  --info-border: #24507f;
+  --info: #7ed4e3;
+  --info-solid: #2f6fbf; /* white on solid 5.06:1 (was #3d7dcc at 4.20:1, below the 4.5:1 bar — Worker B conflict resolved, same value as Desktop) */
+  --info-bg: #0a242b;
+  --info-border: #3fa8b8;
 
-  --notice-bg: #241b08;
-  --notice-border: #66501c;
-  --notice-text: #f0c05a;
+  --notice-bg: #2a1e05;
+  --notice-border: #d9a441;
+  --notice-text: #f5c86b;
   --notice-icon: #e5a32b;
 
-  --focus-ring: #5d99ff;
-  --focus-ring-shadow: 0 0 0 3px rgba(93, 153, 255, 0.3);
+  --focus-ring: #8dbbff;
+  --focus-ring-shadow: 0 0 0 3px rgba(141, 187, 255, 0.3);
   --overlay: rgba(0, 0, 0, 0.62);
   --overlay-soft: rgba(0, 0, 0, 0.4);
 
@@ -360,6 +391,9 @@
   --color-info-solid: var(--info-solid);
   --color-info-bg: var(--info-bg);
   --color-info-edge: var(--info-border);
+  --color-secondary-cyan: var(--secondary-cyan);
+  --color-secondary-yellow: var(--secondary-yellow);
+  --color-secondary-pink: var(--secondary-pink);
 
   /* One family system for Web, Desktop and the Odoo add-on. Both faces carry
      Latin glyphs, so the ORDER decides which one renders English text: the
@@ -384,7 +418,7 @@
   --radius-3xl: var(--r-3xl);
   --radius-card: var(--r-2xl);
   --radius-panel: var(--r-3xl);
-  --radius-control: var(--r-sm);
+  --radius-control: var(--r-md);
 
   --shadow-xs: var(--shadow-xs);
   --shadow-sm: var(--shadow-sm);
@@ -396,23 +430,23 @@
 
   /* Type scale — every text-* utility resolves to one of these roles. */
   --text-2xs: var(--fs-2xs);
-  --text-2xs--line-height: 1.45;
+  --text-2xs--line-height: 1.6;
   --text-xs: var(--fs-xs);
-  --text-xs--line-height: 1.45;
+  --text-xs--line-height: 1.6;
   --text-sm: var(--fs-sm);
-  --text-sm--line-height: 1.5;
+  --text-sm--line-height: 1.65;
   --text-base: var(--fs-body);
-  --text-base--line-height: 1.55;
+  --text-base--line-height: 1.7;
   --text-md: var(--fs-md);
-  --text-md--line-height: 1.55;
+  --text-md--line-height: 1.7;
   --text-lg: var(--fs-lg);
-  --text-lg--line-height: 1.5;
+  --text-lg--line-height: 1.65;
   --text-xl: var(--fs-title);
-  --text-xl--line-height: 1.4;
+  --text-xl--line-height: 1.5;
   --text-2xl: var(--fs-2xl);
-  --text-2xl--line-height: 1.25;
+  --text-2xl--line-height: 1.4;
   --text-3xl: var(--fs-3xl);
-  --text-3xl--line-height: 1.2;
+  --text-3xl--line-height: 1.3;
   --text-4xl: var(--fs-display);
   --text-4xl--line-height: 1.15;
   --text-5xl: var(--fs-display-lg);
@@ -435,6 +469,31 @@
 
   --ease-out: var(--ease-out);
   --ease-spring: var(--ease-spring);
+}
+
+/* ============================================================
+   Gateway font stack — LAWFUL FALLBACK (Worker A follow-up, see
+   DECISIONS-A.md D11 and STYLE.md Font section).
+   Thmanyah Sans is proprietary and its licence prohibits web embedding
+   that lets visitors download the font files independently — which is
+   exactly what self-hosted Next.js WOFF2 serving does (a discrete
+   _next/static URL any visitor can fetch). The Gateway therefore ships
+   NO Thmanyah files and declares NO @font-face for it. "Thmanyah Sans"
+   leads the stack only as a locally-installed name: a visitor who
+   already has Thmanyah installed renders in it; everyone else renders
+   in the served OFL-licensed IBM Plex families (next/font/local in
+   layout.tsx). This matches the Odoo approach (Thmanyah first, served
+   IBM Plex fallback). If written Thmanyah permission for web embedding
+   is ever obtained, the follow-up is to restore a shipped Thmanyah
+   @font-face — it must NOT be done silently.
+   The shared typography/tokens.css is deliberately NOT edited: it is
+   pinned by scripts/check-typography-tokens.py, byte-synced to the Odoo
+   copy, and consumed by Desktop/Odoo (another worker's scope).
+   ============================================================ */
+:root {
+  --typo-font-latin: "Thmanyah Sans", var(--font-ibm-plex-sans, "IBM Plex Sans");
+  --typo-font-arabic: "Thmanyah Sans", var(--font-ibm-plex-sans-arabic, "IBM Plex Sans Arabic");
+  --typo-font-fallbacks: "Noto Sans Arabic", "Noto Sans", Tahoma, Arial, sans-serif;
 }
 
 /* ============================================================
@@ -464,6 +523,9 @@
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     text-rendering: optimizeLegibility;
+    /* Served font is IBM Plex: restore its stylistic sets. A locally
+       installed Thmanyah face ignores feature tags it does not define,
+       and the RTL body rule below still forces normal for Arabic. */
     font-feature-settings: "cv02", "cv03", "cv04", "ss01";
   }
 
@@ -495,8 +557,8 @@
   h5,
   h6 {
     color: var(--text-display);
-    font-weight: 600;
-    letter-spacing: var(--tracking-tight);
+    font-weight: 500;
+    letter-spacing: 0;
     text-wrap: balance;
     overflow-wrap: anywhere;
   }
@@ -505,8 +567,8 @@
   h1 {
     font-size: var(--fs-display);
     line-height: var(--lh-tight);
-    font-weight: 640;
-    letter-spacing: var(--tracking-display);
+    font-weight: 500;
+    letter-spacing: 0;
   }
   h2 {
     font-size: var(--fs-2xl);
@@ -534,8 +596,8 @@
   }
 
   :focus-visible {
-    outline: 2px solid var(--focus-ring);
-    outline-offset: 2px;
+    outline: 3px solid var(--focus-ring);
+    outline-offset: 3px;
   }
 
   ::selection {
@@ -802,7 +864,7 @@
   .label-caps {
     color: var(--text-3);
     font-size: var(--fs-xs);
-    font-weight: 600;
+    font-weight: 500;
     letter-spacing: 0;
     text-transform: none;
   }
@@ -810,15 +872,15 @@
   .text-display {
     color: var(--text-display);
     font-size: var(--fs-3xl);
-    font-weight: 640;
-    letter-spacing: var(--tracking-display);
+    font-weight: 500;
+    letter-spacing: 0;
     line-height: var(--lh-tight);
   }
 
   .text-eyebrow {
     color: var(--text-3);
     font-size: var(--fs-xs);
-    font-weight: 600;
+    font-weight: 500;
     letter-spacing: 0;
     text-transform: none;
   }
@@ -837,8 +899,8 @@
   .text-financial-lg {
     font-variant-numeric: tabular-nums;
     font-size: var(--fs-3xl);
-    font-weight: 640;
-    letter-spacing: -0.02em;
+    font-weight: 700;
+    letter-spacing: 0;
     line-height: 1.1;
   }
 
@@ -868,8 +930,8 @@
     outline: none;
   }
   .focusable:focus-visible {
-    outline: 2px solid var(--focus-ring);
-    outline-offset: 2px;
+    outline: 3px solid var(--focus-ring);
+    outline-offset: 3px;
   }
   .ring-focus:focus-visible {
     outline: none;
@@ -959,7 +1021,7 @@
     border-radius: var(--r-sm);
     padding: 2px 8px;
     font-size: var(--fs-2xs);
-    font-weight: 600;
+    font-weight: 500;
     letter-spacing: 0.01em;
   }
 
@@ -973,10 +1035,10 @@
     position: relative;
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 12px;
     min-width: 0;
     border-radius: var(--r-md);
-    padding: 9px 10px;
+    padding: 10px 12px;
     font-size: var(--fs-sm);
     font-weight: 500;
     color: var(--text-2);
@@ -989,14 +1051,14 @@
     color: var(--text);
   }
   .sidebar-item:focus-visible {
-    outline: 2px solid var(--focus-ring);
-    outline-offset: 1px;
+    outline: 3px solid var(--focus-ring);
+    outline-offset: 3px;
   }
 
   .sidebar-item-active {
     background: var(--brand-subtle);
     color: var(--brand-subtle-text);
-    font-weight: 600;
+    font-weight: 500;
   }
   .sidebar-item-active:hover {
     background: var(--brand-subtle-hover);
@@ -1008,7 +1070,7 @@
     background: var(--surface-2);
     color: var(--text-3);
     font-size: var(--fs-xs);
-    font-weight: 550;
+    font-weight: 500;
     letter-spacing: normal;
   }
 
@@ -1040,7 +1102,7 @@
   .data-table th {
     color: var(--text-3);
     font-size: var(--fs-xs);
-    font-weight: 550;
+    font-weight: 500;
     text-align: start;
     white-space: nowrap;
   }
@@ -1106,7 +1168,7 @@
       margin-block-end: 4px;
       color: var(--text-3);
       font-size: var(--fs-xs);
-      font-weight: 600;
+      font-weight: 500;
     }
     .operational-table button { min-height: 44px; }
   }
@@ -1173,7 +1235,7 @@
   [dir="rtl"] .text-eyebrow {
     text-transform: none;
     letter-spacing: 0;
-    font-weight: 650;
+    font-weight: 700;
   }
 
   /* Form fields whose content is inherently Latin: an email, a URL or a phone
@@ -1581,10 +1643,22 @@
     -webkit-backdrop-filter: blur(16px) saturate(145%);
     backdrop-filter: blur(16px) saturate(145%);
   }
-  /* Keep the brand glyph visible at 320px: a full bilingual wordmark plus
-     language, theme and mobile-menu touch targets would otherwise overflow. */
+  /* Print Gateway lockups (WP6-BRANDING): the EN artwork shows under
+     LTR and the AR artwork under RTL; the inactive one is display:none,
+     so it is also hidden from assistive technology. The icon-only
+     fallback inside BrandMark stays hidden except in the narrow public
+     header below. */
+  .brand-lockup-ltr { display: inline-block; }
+  .brand-lockup-rtl { display: none; }
+  [dir="rtl"] .brand-lockup-ltr { display: none; }
+  [dir="rtl"] .brand-lockup-rtl { display: inline-block; }
+  .brand-mark-icon-fallback { display: none; }
+  /* Keep the brand glyph visible at 320px: a full lockup plus language,
+     theme and mobile-menu touch targets would otherwise overflow, so the
+     public header falls back to the icon-only mark at this width. */
   @media (max-width: 399.98px) {
-    .yw-public-brand-mark > span:last-child { display: none; }
+    .yw-public-brand-mark .brand-lockup-chip { display: none; }
+    .yw-public-brand-mark .brand-mark-icon-fallback { display: inline-block; }
   }
   .yw-hero {
     background:
@@ -1765,7 +1839,7 @@
     border-radius: var(--r-lg);
     color: var(--text);
     font-size: 0.9375rem;
-    font-weight: 600;
+    font-weight: 500;
     text-decoration: none;
   }
   .yw-mobile-nav-link:hover, .yw-mobile-nav-link:focus-visible {
@@ -1782,7 +1856,7 @@
     border-radius: var(--r-lg);
     background: var(--brand-solid);
     color: var(--brand-contrast);
-    font-weight: 650;
+    font-weight: 700;
     text-decoration: none;
   }
   .yw-mobile-nav-cta:focus-visible { outline: 2px solid var(--brand); outline-offset: 3px; }
@@ -1802,8 +1876,8 @@
   .tg-console-rail .tg-sidebar-label, .tg-desktop-rail .tg-sidebar-label {
     padding-block: 4px 8px;
   }
-  .tg-nav-item { font-weight: 570; }
-  .tg-nav-item[data-active="true"] { font-weight: 690; }
+  .tg-nav-item { font-weight: 500; }
+  .tg-nav-item[data-active="true"] { font-weight: 500; }
   .tg-console-rail .sidebar-item,
   .tg-desktop-rail .sidebar-item { isolation: isolate; }
   .tg-desktop-topbar { box-shadow: var(--shadow-sm); }
@@ -1849,7 +1923,7 @@
     padding-inline: 8px;
     color: var(--text-2);
     font-size: 0.875rem;
-    font-weight: 570;
+    font-weight: 500;
     text-decoration: none;
     transition: color 150ms ease, background-color 150ms ease;
   }
@@ -1916,7 +1990,7 @@
   .yw-fleet-kpis > .grid > div:hover { background: var(--surface-hover); }
   .yw-fleet-kpis > .grid > div > :nth-child(2) {
     font-size: clamp(1.65rem, 2.1vw, 2rem);
-    font-weight: 720;
+    font-weight: 700;
     letter-spacing: -0.045em;
   }
   .yw-gateway-dashboard > .tg-card-root,

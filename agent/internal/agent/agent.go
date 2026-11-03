@@ -2693,6 +2693,13 @@ func (a *Agent) printerStatusPayloadWithSharingResult(sharing localPrinterSharin
 	}
 	inventoryComplete := true
 	invalidIDs := 0
+	// Omission counts for the pre-probe gates below. A gate still omits
+	// its row (disabled / private / invalid / virtual rows must not be
+	// published as fleet printers), but the omission is now counted and
+	// logged once per heartbeat instead of silent: an operator comparing
+	// the local inventory with the Gateway row count can see exactly
+	// which gate removed which rows.
+	omittedDisabled, omittedUnshared, omittedVirtual := 0, 0, 0
 	// Snapshot the printer map under the read lock: the async discovery
 	// goroutine may add printers while heartbeats probe statuses.
 	a.printersMu.RLock()
@@ -2700,9 +2707,11 @@ func (a *Agent) printerStatusPayloadWithSharingResult(sharing localPrinterSharin
 	for id := range a.printers {
 		pc := a.printerConfigs[id]
 		if disabled.Disabled(pc) {
+			omittedDisabled++
 			continue
 		}
 		if shared, err := sharing.shared(pc); !shared || err != nil {
+			omittedUnshared++
 			continue
 		}
 		if !printer.ValidGatewayPrinterID(id) {
@@ -2717,6 +2726,7 @@ func (a *Agent) printerStatusPayloadWithSharingResult(sharing localPrinterSharin
 			Protocol: pc.NormalizedProtocolOrUnknown(), Capabilities: pc.Capabilities,
 		})
 		if c.IsVirtual || c.Class == printer.ClassRedirected {
+			omittedVirtual++
 			continue
 		}
 		ids = append(ids, id)
@@ -2737,6 +2747,17 @@ func (a *Agent) printerStatusPayloadWithSharingResult(sharing localPrinterSharin
 
 	statuses := make([]string, len(ids))
 	details := make([]string, len(ids))
+	// reasons is the per-printer "why" behind an unknown (or detailed)
+	// status, published as capabilities.status_reason. The 10s batch
+	// budget, a still-running probe, a discarded/stale probe result, and a
+	// backend failure each have their own code: a bare "unknown" with no
+	// reason is no longer an acceptable heartbeat row, because it cannot
+	// be told apart from any other unknown on the Gateway. status_detail
+	// (backend detail, e.g. windows_offline) is untouched by this: reason
+	// defaults to that detail when the backend supplied one, and only
+	// falls back to a heartbeat-owned code when it did not.
+	reasons := make([]string, len(ids))
+	rawStatuses := make([]string, len(ids))
 	geometries := make([]*printer.Geometry, len(ids))
 	verifications := make([]*printer.OperationalVerification, len(ids))
 	observedCapabilities := make([]map[string]interface{}, len(ids))
@@ -2752,6 +2773,8 @@ func (a *Agent) printerStatusPayloadWithSharingResult(sharing localPrinterSharin
 		idx          int
 		status       string
 		detail       string
+		reason       string
+		rawStatus    string
 	}
 	type probeWork struct {
 		idx   int
@@ -2769,7 +2792,9 @@ func (a *Agent) printerStatusPayloadWithSharingResult(sharing localPrinterSharin
 			// A previous probe is still running in the OS/RPC driver!
 			// Do NOT spawn another goroutine or reissue cached health as a
 			// fresh observation. Internal last-known evidence stays diagnostic.
+			// The row is still published (unknown + reason), never dropped.
 			statuses[i] = "unknown"
+			reasons[i] = "probe_still_running"
 			probed[i] = true
 			continue
 		}
@@ -2792,19 +2817,23 @@ func (a *Agent) printerStatusPayloadWithSharingResult(sharing localPrinterSharin
 						work.state.running.Store(false)
 						a.deleteProbeState(work.pid)
 					}()
-					status, detail := "unknown", ""
+					status, detail, reason, rawStatus := "unknown", "", "", ""
 					var geometry *printer.Geometry
 					var verification *printer.OperationalVerification
 					var capabilitySnapshot map[string]interface{}
 					func() {
 						defer func() {
 							if r := recover(); r != nil {
-								status, detail, geometry, verification, capabilitySnapshot = "unknown", "", nil, nil, nil
+								status, detail, reason, geometry, verification, capabilitySnapshot = "unknown", "", "probe_panic", nil, nil, nil
 								log.Printf("Status probe panic for %s: %v", work.pid, r)
 							}
 						}()
 						observed := work.p.Status()
 						if !a.recordPrinterProbeResult(work.pid, configByID[work.pid], work.p, observed) {
+							// Config/backend changed mid-probe: the result
+							// is discarded, but the row is still published
+							// as unknown with its reason, never dropped.
+							reason = "probe_result_discarded"
 							return
 						}
 						status = observed
@@ -2818,11 +2847,25 @@ func (a *Agent) printerStatusPayloadWithSharingResult(sharing localPrinterSharin
 						if reporter, ok := work.p.(interface{ StatusDetail() string }); ok {
 							detail = boundedDiscoveryText(strings.TrimSpace(reporter.StatusDetail()), 255)
 						}
+						if reporter, ok := work.p.(interface{ StatusRawHex() string }); ok {
+							rawStatus = reporter.StatusRawHex()
+						}
 						if !a.printerObservationCurrent(work.pid, work.p, configByID[work.pid]) {
-							status, detail, geometry, verification, capabilitySnapshot = "unknown", "", nil, nil, nil
+							status, detail, reason, geometry, verification, capabilitySnapshot = "unknown", "", "probe_result_stale", nil, nil, nil
+							rawStatus = ""
+							return
+						}
+						// A completed probe's own detail is its reason
+						// (e.g. spooler_open_failed_win32_5); only a
+						// completed unknown with no backend detail needs a
+						// heartbeat-owned code.
+						if status == "unknown" && detail == "" {
+							reason = "probe_completed_unknown"
+						} else {
+							reason = detail
 						}
 					}()
-					results <- probeResult{idx: work.idx, status: status, detail: detail, geometry: geometry, verification: verification, capabilities: capabilitySnapshot}
+					results <- probeResult{idx: work.idx, status: status, detail: detail, reason: reason, rawStatus: rawStatus, geometry: geometry, verification: verification, capabilities: capabilitySnapshot}
 				}()
 			}
 		}()
@@ -2851,6 +2894,8 @@ func (a *Agent) printerStatusPayloadWithSharingResult(sharing localPrinterSharin
 		case res := <-results:
 			statuses[res.idx] = res.status
 			details[res.idx] = res.detail
+			reasons[res.idx] = res.reason
+			rawStatuses[res.idx] = res.rawStatus
 			geometries[res.idx] = res.geometry
 			verifications[res.idx] = res.verification
 			observedCapabilities[res.idx] = res.capabilities
@@ -2861,7 +2906,13 @@ func (a *Agent) printerStatusPayloadWithSharingResult(sharing localPrinterSharin
 			deferred := 0
 			for i := range ids {
 				if !probed[i] {
+					// The 10s batch budget still defers slow probes to
+					// the background, but each deferred row keeps its
+					// per-printer reason instead of a bare "unknown":
+					// the next heartbeat replaces it with a completed
+					// read, and no row is dropped from the payload.
 					statuses[i] = "unknown"
+					reasons[i] = "probe_batch_budget_exceeded"
 					probed[i] = true
 					pendingProbes--
 					deferred++
@@ -2882,9 +2933,16 @@ func (a *Agent) printerStatusPayloadWithSharingResult(sharing localPrinterSharin
 
 	observedCapabilityStateChanged := false
 	result := make([]map[string]interface{}, 0, len(ids))
+	// No probed printer is silently dropped from the payload: the only
+	// post-probe omission is a printer disabled after probing (an
+	// operator-authority gate, counted and logged below, not a probe
+	// artifact). Pre-probe gates (disabled / unshared / invalid ID /
+	// virtual) are counted in omittedByCause at the top of this function.
+	omittedDisabledAfterProbe := 0
 	for i, id := range ids {
 		pc := configByID[id]
 		if disabled.Disabled(pc) {
+			omittedDisabledAfterProbe++
 			continue
 		}
 		nt := pc.NormalizedType()
@@ -3007,6 +3065,19 @@ func (a *Agent) printerStatusPayloadWithSharingResult(sharing localPrinterSharin
 		if details[i] != "" {
 			caps["status_detail"] = details[i]
 		}
+		// status_reason is the per-printer reason code (backend detail
+		// when one exists, otherwise the heartbeat-owned probe code), so
+		// the Gateway/UI can distinguish timeout / OpenPrinter failure /
+		// GetPrinter failure / still-running / budget-deferred unknowns
+		// without re-probing. spooler_status_raw is the PRINTER_INFO_2
+		// Status hex behind a mapped spooler status, when a completed
+		// spooler read supplied one.
+		if reasons[i] != "" {
+			caps["status_reason"] = reasons[i]
+		}
+		if rawStatuses[i] != "" {
+			caps["spooler_status_raw"] = rawStatuses[i]
+		}
 		if a.recordPrinterProtocolObservation(id, pc, facts) {
 			observedCapabilityStateChanged = true
 		}
@@ -3019,6 +3090,11 @@ func (a *Agent) printerStatusPayloadWithSharingResult(sharing localPrinterSharin
 		if err := a.persistDesiredState(); err != nil {
 			log.Printf("WARNING: failed to persist observed printer capabilities: %v", err)
 		}
+	}
+	if omittedDisabled+omittedUnshared+invalidIDs+omittedVirtual+omittedDisabledAfterProbe > 0 {
+		log.Printf("Printer heartbeat omitted %d printer(s) by gate (not by probe): disabled=%d unshared_or_error=%d invalid_id=%d virtual_or_redirected=%d disabled_after_probe=%d; published=%d probed=%d",
+			omittedDisabled+omittedUnshared+invalidIDs+omittedVirtual+omittedDisabledAfterProbe,
+			omittedDisabled, omittedUnshared, invalidIDs, omittedVirtual, omittedDisabledAfterProbe, len(result), len(ids))
 	}
 	return result, inventoryComplete
 }

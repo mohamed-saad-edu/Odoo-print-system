@@ -146,6 +146,58 @@ func classifySpoolerPrinter(portName, driverName, printerName string) (printerTy
 	return
 }
 
+// WindowsStatusBitNames lists the PRINTER_STATUS_* bits (and the
+// PRINTER_ATTRIBUTE_WORK_OFFLINE attribute) set in one snapshot, in
+// fixed bit order. It is the human-readable companion to the raw Status
+// hex: diagnose output and tests use it to prove which bits a mapped
+// status came from, without changing the mapping itself. The Gateway wire
+// vocabulary stays online/busy/offline/error/unknown: finer words (e.g. a
+// distinct "paused") would be coerced back to "unknown" by the Gateway
+// sanitiser, losing information instead of adding it, so "paused" stays
+// "error" with detail windows_paused, and "printing" stays "busy".
+func WindowsStatusBitNames(status uint32, attributes uint32) []string {
+	names := []string{}
+	if attributes&0x00000400 != 0 {
+		names = append(names, "PRINTER_ATTRIBUTE_WORK_OFFLINE")
+	}
+	for _, bit := range [...]struct {
+		mask uint32
+		name string
+	}{
+		{0x00000001, "PRINTER_STATUS_PAUSED"},
+		{0x00000002, "PRINTER_STATUS_ERROR"},
+		{0x00000004, "PRINTER_STATUS_PENDING_DELETION"},
+		{0x00000008, "PRINTER_STATUS_PAPER_JAM"},
+		{0x00000010, "PRINTER_STATUS_PAPER_OUT"},
+		{0x00000020, "PRINTER_STATUS_MANUAL_FEED"},
+		{0x00000040, "PRINTER_STATUS_PAPER_PROBLEM"},
+		{0x00000080, "PRINTER_STATUS_OFFLINE"},
+		{0x00000100, "PRINTER_STATUS_IO_ACTIVE"},
+		{0x00000200, "PRINTER_STATUS_BUSY"},
+		{0x00000400, "PRINTER_STATUS_PRINTING"},
+		{0x00000800, "PRINTER_STATUS_OUTPUT_BIN_FULL"},
+		{0x00001000, "PRINTER_STATUS_NOT_AVAILABLE"},
+		{0x00002000, "PRINTER_STATUS_WAITING"},
+		{0x00004000, "PRINTER_STATUS_PROCESSING"},
+		{0x00008000, "PRINTER_STATUS_INITIALIZING"},
+		{0x00010000, "PRINTER_STATUS_WARMING_UP"},
+		{0x00020000, "PRINTER_STATUS_TONER_LOW"},
+		{0x00040000, "PRINTER_STATUS_NO_TONER"},
+		{0x00080000, "PRINTER_STATUS_PAGE_PUNT"},
+		{0x00100000, "PRINTER_STATUS_USER_INTERVENTION"},
+		{0x00200000, "PRINTER_STATUS_OUT_OF_MEMORY"},
+		{0x00400000, "PRINTER_STATUS_DOOR_OPEN"},
+		{0x00800000, "PRINTER_STATUS_SERVER_UNKNOWN"},
+		{0x01000000, "PRINTER_STATUS_POWER_SAVE"},
+		{0x02000000, "PRINTER_STATUS_SERVER_OFFLINE"},
+	} {
+		if status&bit.mask != 0 {
+			names = append(names, bit.name)
+		}
+	}
+	return names
+}
+
 // mapWindowsStatus converts Windows spooler status bits into the Gateway
 // status vocabulary, failing closed for unmodelled status bits.
 func mapWindowsStatus(status uint32, attributes uint32) string {
