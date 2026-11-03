@@ -472,29 +472,20 @@
 }
 
 /* ============================================================
-   Gateway font stack — LAWFUL FALLBACK (Worker A follow-up, see
-   DECISIONS-A.md D11 and STYLE.md Font section).
-   Thmanyah Sans is proprietary and its licence prohibits web embedding
-   that lets visitors download the font files independently — which is
-   exactly what self-hosted Next.js WOFF2 serving does (a discrete
-   _next/static URL any visitor can fetch). The Gateway therefore ships
-   NO Thmanyah files and declares NO @font-face for it. "Thmanyah Sans"
-   leads the stack only as a locally-installed name: a visitor who
-   already has Thmanyah installed renders in it; everyone else renders
-   in the served OFL-licensed IBM Plex families (next/font/local in
-   layout.tsx). This matches the Odoo approach (Thmanyah first, served
-   IBM Plex fallback). If written Thmanyah permission for web embedding
-   is ever obtained, the follow-up is to restore a shipped Thmanyah
-   @font-face — it must NOT be done silently.
-   The shared typography/tokens.css is deliberately NOT edited: it is
-   pinned by scripts/check-typography-tokens.py, byte-synced to the Odoo
-   copy, and consumed by Desktop/Odoo (another worker's scope).
+   Gateway font stack — SERVED THMANYAH (v9-font), via the shared spec.
+   Thmanyah Sans is served from this origin under the project's
+   purchased Thmanyah licence (owner-held; licence document is not
+   committed to the repo). next/font/local in layout.tsx emits the
+   @font-face rules for ./fonts/thmanyah/*.woff2 under the
+   --font-thmanyah variable. Since v10-exact, the shared
+   typography/tokens.css itself leads both stacks with Thmanyah
+   (served OFL-licensed IBM Plex second as fallback, literal
+   "Thmanyah Sans" covering the variable-absent case), so no Gateway
+   :root override is needed anymore — the import at the top of this
+   file carries the stack, and Desktop/Odoo consume the same spec.
+   No external font CDN is used: every face is served from this
+   origin (the CSP already allows font-src 'self').
    ============================================================ */
-:root {
-  --typo-font-latin: "Thmanyah Sans", var(--font-ibm-plex-sans, "IBM Plex Sans");
-  --typo-font-arabic: "Thmanyah Sans", var(--font-ibm-plex-sans-arabic, "IBM Plex Sans Arabic");
-  --typo-font-fallbacks: "Noto Sans Arabic", "Noto Sans", Tahoma, Arial, sans-serif;
-}
 
 /* ============================================================
    Base
@@ -523,9 +514,10 @@
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     text-rendering: optimizeLegibility;
-    /* Served font is IBM Plex: restore its stylistic sets. A locally
-       installed Thmanyah face ignores feature tags it does not define,
-       and the RTL body rule below still forces normal for Arabic. */
+    /* Served primary is Thmanyah; these stylistic sets apply when the
+       IBM Plex fallback renders. A Thmanyah face ignores feature tags
+       it does not define, and the RTL body rule below still forces
+       normal for Arabic. */
     font-feature-settings: "cv02", "cv03", "cv04", "ss01";
   }
 

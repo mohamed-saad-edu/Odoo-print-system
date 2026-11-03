@@ -71,7 +71,7 @@ export default function Subscriptions() {
         {visible.map(item => <Card key={item.tenantId} className="p-5">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div className="min-w-0">
-              <h2 className="break-words text-lg font-semibold">{item.tenantName}</h2>
+              <h2 className="break-words text-lg font-medium">{item.tenantName}</h2>
               <p className="mt-1 text-sm text-ink-3">
                 <bdi dir="auto">{item.planName}</bdi> · {t(`v4.admin.${item.term}` as MessageKey)} · {t(`v4.admin.${item.subscriptionType}` as MessageKey)}
               </p>

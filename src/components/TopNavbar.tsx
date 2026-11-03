@@ -85,7 +85,7 @@ export function TopNavbar({
 
   return (
     <header className="tg-console-topbar sticky top-0 z-40 border-b border-edge/80 bg-surface/95 text-ink backdrop-blur-xl backdrop-saturate-150">
-      <div className="mx-auto flex h-16 w-full max-w-[1440px] items-center gap-2 px-3 sm:px-5 lg:gap-4 lg:px-8">
+      <div className="mx-auto flex h-16 w-full max-w-[1440px] items-center gap-2 px-4 sm:px-5 lg:gap-4 lg:px-8">
         <Link
           href={brandHref}
           className="shrink-0 rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/35"

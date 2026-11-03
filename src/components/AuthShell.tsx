@@ -35,7 +35,7 @@ export function AuthShell({
 
           <div className="max-w-[42ch]">
             <p className="text-eyebrow">{t("auth.shell.heading")}</p>
-            <h2 className="mt-3 text-2xl font-[640] leading-[1.18] tracking-[-0.022em] text-ink">
+            <h2 className="mt-3 text-2xl font-[500] leading-[1.18] text-ink">
               {t("auth.shell.headline")}
             </h2>
             <p className="mt-3 text-sm leading-relaxed text-ink-2">

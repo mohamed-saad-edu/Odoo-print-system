@@ -18,6 +18,10 @@
  * vanish on a dark header. Every lockup therefore sits on a light chip
  * (`bg-white` + subtle ring) that is identical in light and dark mode;
  * the icon-only mark is a cyan tile with a light glyph and needs no chip.
+ * CLEARSPACE (v10-exact): the chip padding is p-3 (12px), which meets
+ * the guide's >=1/4-mark rule even under the most conservative reading
+ * (mark height = full lockup height: 48px -> 12px needed, 40px -> 10px,
+ * 38px -> 9.5px).
  *
  * CALL-SITE COMPATIBILITY: `title`, `subtitle` and `variant` are kept in
  * the props so existing call sites need no edits, but they are NOT
@@ -31,9 +35,15 @@
  */
 
 const LOCKUP_HEIGHT = {
-  sm: "h-[30px]",
-  md: "h-8",
-  lg: "h-10",
+  // Guide logo rule: full lockup starts at 120px wide. Artwork ratios:
+  // EN 946.67/246 = 3.848, AR 813.44/245.33 = 3.316 (w-auto, never
+  // stretched). Heights below would render under 120px in one language
+  // (sm 30px -> EN 115 / AR 99; md 32px -> AR 106), so the sizes start
+  // where BOTH languages clear 120px: 38px -> EN 146 / AR 126,
+  // 40px -> EN 154 / AR 133, 48px -> EN 185 / AR 159.
+  sm: "h-[38px]",
+  md: "h-10",
+  lg: "h-12",
 } as const;
 
 const ICON_BOX = {
@@ -69,7 +79,7 @@ export function BrandMark({
       {/* Narrow-header fallback: at <=399px the public header shows the
           icon only (see globals.css), matching the old wordmark rule. */}
       <BrandMarkIcon size={size} className="brand-mark-icon-fallback shrink-0" />
-      <span className="brand-lockup-chip inline-flex shrink-0 items-center rounded-md bg-white p-2 ring-1 ring-inset ring-black/10">
+      <span className="brand-lockup-chip inline-flex shrink-0 items-center rounded-md bg-white p-3 ring-1 ring-inset ring-black/10">
         {/* Plain <img>: shared with the Desktop Vite build, where
             next/image does not exist; Next does not optimize SVGs. */}
         {/* eslint-disable-next-line @next/next/no-img-element */}

@@ -15,7 +15,11 @@ describe("compact, consistent page headers", () => {
     expect(ui).toContain('<h1 className="tg-page-title');
     expect(ui).not.toContain("tg-page-eyebrow text-eyebrow");
     expect(ui).toContain('aria-hidden="true"');
-    expect(ui).toContain("sm:text-2xl");
+    // v10-exact: Gateway PageHeader follows Design Guide v2.1 page-title
+    // scale (32–40px, weight 500) like Desktop — text-[2rem] base,
+    // sm:text-4xl (36px) — instead of the old compact text-xl/2xl scale.
+    expect(ui).toContain("text-[2rem] font-[500]");
+    expect(ui).toContain("sm:text-4xl");
     expect(ui).toContain("lg:pt-6");
     expect(ui).toContain("{meta}");
     expect(ui).toContain("{actions}");

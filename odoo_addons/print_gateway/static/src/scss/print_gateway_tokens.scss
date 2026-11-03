@@ -140,21 +140,17 @@
    the module's own surfaces without touching the shared tokens file (the
    byte-identical copy + scripts/check-typography-tokens.py keep passing).
 
-   FONT LICENSE — Thmanyah Sans is proprietary (© 2026 Thmanyah Publishing
-   and Distribution, Reserved Font Name "thmanyah"). Embedding in a
-   compiled/packaged product is permitted, but the license forbids making the
-   font files independently downloadable — including through web embedding.
-   Odoo serves static/ files over plain HTTP URLs, so shipping the OTFs in
-   static/fonts/ would put raw, directly downloadable font files in every
-   customer's installation AND in the distributed module zip. That is why
-   this module does NOT ship the OTFs: "Thmanyah Sans" leads the stack and
-   renders wherever it is installed locally, and the served IBM Plex faces
-   (typography_fonts.css, untouched) are the lawful fallback everywhere else.
-   If Yaseir obtains Thmanyah's written permission to serve the files, add
-   the five @font-face rules to typography_fonts.css and keep this stack.
-   The POS receipt raster is deliberately excluded: it renders with font
-   embedding disabled (skipFonts) and its geometry is pinned by the v7
-   fixture, so it keeps its Arial/system stack untouched (see DECISIONS-B). */
+   FONT FILES — the module ships no font files: the shared stack
+   (typography_tokens.css, byte-identical to typography/tokens.css)
+   leads with "Thmanyah Sans" and falls back to the served IBM Plex
+   faces (typography_fonts.css, untouched), which is also what the
+   Odoo server's PDF engine uses. Thmanyah therefore renders wherever
+   it is installed, and IBM Plex everywhere else. Odoo serves static/
+   files over plain HTTP URLs, so no font files are added to static/
+   here. The POS receipt raster is deliberately excluded: it renders
+   with font embedding disabled (skipFonts) and its geometry is pinned
+   by the v7 fixture, so it keeps its Arial/system stack untouched
+   (see DECISIONS-B). */
 :root {
     --typo-font-latin: "Thmanyah Sans", var(--font-ibm-plex-sans, "IBM Plex Sans");
     --typo-font-arabic: "Thmanyah Sans", var(--font-ibm-plex-sans-arabic, "IBM Plex Sans Arabic");

@@ -7,16 +7,17 @@ import { resolve } from "node:path";
  *
  * Pins the guide values in the shipped CSS variables (not in a doc): the
  * primary/ink/secondary hexes, the strong semantic palette in both themes
- * (including the dark info solid >= 4.5:1, see D11), the lawful font
- * fallback (Thmanyah first only if locally installed, served IBM Plex
- * otherwise — NO shipped Thmanyah files, per the licence verdict in
- * STYLE.md), computed contrast spot-checks (>= 4.5:1 for body text),
+ * (including the dark info solid >= 4.5:1, see D11), the served font
+ * stack (v9-font: Thmanyah served from this origin under the project's
+ * purchased Thmanyah licence, served IBM Plex kept as fallback),
+ * computed contrast spot-checks (>= 4.5:1 for body text),
  * RTL mirroring rules, and Latin digits under Arabic.
  *
- * Deliberate scope: the shared typography/tokens.css is NOT edited — it
- * is pinned by scripts/check-typography-tokens.py and byte-synced to the
- * Odoo copy (another worker's scope). This test pins the Gateway stack
- * override in globals.css, not the shared file.
+ * Deliberate scope: since v10-exact the shared typography/tokens.css
+ * itself leads both stacks with Thmanyah (byte-synced to the Odoo
+ * copy, pinned by scripts/check-typography-tokens.py). This test pins
+ * the shared file's stacks, not a Gateway-only override (the v9
+ * override in globals.css was removed once the canonical file moved).
  */
 const read = (relative: string) => readFileSync(resolve(process.cwd(), relative), "utf8");
 const css = () => read("src/app/globals.css");
@@ -95,25 +96,42 @@ describe("design guide v2.1 token contract (Gateway)", () => {
     }
   });
 
-  it("serves IBM Plex and leads the stack with locally-installed Thmanyah only (lawful font fallback)", () => {
-    // Licence verdict (STYLE.md / DECISIONS-A.md D11): Thmanyah web
-    // embedding that lets visitors download the files independently is
-    // prohibited, so the Gateway ships NO Thmanyah files and declares NO
-    // @font-face for it. "Thmanyah Sans" leads the stack only as a name
-    // the visitor's own machine may already have installed; the served
-    // font is OFL-licensed IBM Plex via next/font/local.
-    expect(existsSync(resolve(process.cwd(), "src/app/fonts/thmanyah"))).toBe(false);
+  it("serves Thmanyah first with IBM Plex kept as fallback (v9-font)", () => {
+    // v9-font: Thmanyah Sans is served from this origin via
+    // next/font/local under --font-thmanyah, under the project's
+    // purchased Thmanyah licence; OFL-licensed IBM Plex stays behind it
+    // as the fallback if Thmanyah fails to load. The old "no shipped
+    // Thmanyah files" state is gone by design — every assertion below
+    // pins the new state instead of deleting the coverage.
+    expect(existsSync(resolve(process.cwd(), "src/app/fonts/thmanyah"))).toBe(true);
     const l = layout();
     expect(l).toContain('from "next/font/local"');
     expect(l).toContain("ibm-plex-sans-variable.woff2");
     expect(l).toContain('variable: "--font-ibm-plex-sans"');
     expect(l).toContain('variable: "--font-ibm-plex-sans-arabic"');
-    expect(l).not.toContain("thmanyahsans-");
-    expect(l).not.toContain("fonts/thmanyah");
+    expect(l).toContain('variable: "--font-thmanyah"');
+    for (const file of [
+      "thmanyahsans-Light.woff2",
+      "thmanyahsans-Regular.woff2",
+      "thmanyahsans-Medium.woff2",
+      "thmanyahsans-Bold.woff2",
+      "thmanyahsans-Black.woff2",
+    ]) {
+      expect(l).toContain(`fonts/thmanyah/${file}`);
+      expect(existsSync(resolve(process.cwd(), `src/app/fonts/thmanyah/${file}`))).toBe(true);
+    }
     const g = css();
-    expect(g).toContain('--typo-font-latin: "Thmanyah Sans", var(--font-ibm-plex-sans, "IBM Plex Sans");');
-    expect(g).toContain('--typo-font-arabic: "Thmanyah Sans", var(--font-ibm-plex-sans-arabic, "IBM Plex Sans Arabic");');
-    expect(g).not.toContain("fonts/thmanyah");
+    expect(g).not.toContain("prohibits web embedding");
+    // The Thmanyah-first stacks now live in the shared spec itself
+    // (v10-exact moved them there from the old globals.css override),
+    // byte-synced to the Odoo copy — pin them there, in both files.
+    const tokens = read("typography/tokens.css");
+    const odooTokens = read("odoo_addons/print_gateway/static/src/css/typography_tokens.css");
+    for (const t of [tokens, odooTokens]) {
+      expect(t).toContain('--typo-font-latin: var(--font-thmanyah, "Thmanyah Sans"), var(--font-ibm-plex-sans, "IBM Plex Sans");');
+      expect(t).toContain('--typo-font-arabic: var(--font-thmanyah, "Thmanyah Sans"), var(--font-ibm-plex-sans-arabic, "IBM Plex Sans Arabic");');
+    }
+    expect(tokens).toBe(odooTokens);
     // No external font CDN for product UI.
     expect(g).not.toMatch(/fonts\.googleapis\.com|fonts\.gstatic\.com/);
     // (The layout comment names next/font/google as the rejected
@@ -122,6 +140,11 @@ describe("design guide v2.1 token contract (Gateway)", () => {
     expect(l).not.toContain("fonts.googleapis.com");
     // Dark info solid must clear the 4.5:1 bar for white text on it.
     expect(ratio("#ffffff", "#2f6fbf")).toBeGreaterThanOrEqual(4.5);
+    // Documented deviation with proof (v10-exact): the guide's earlier
+    // dark-info value #3D7DCC measures 4.20:1 for white text — below
+    // the 4.5:1 bar — so #2F6FBF (5.06:1) is kept instead. If the guide
+    // value ever changes, this assertion names the failing value.
+    expect(ratio("#ffffff", "#3d7dcc")).toBeLessThan(4.5);
   });
 
   it("keeps IBM Plex files on disk (the typography gate still requires them)", () => {

@@ -5,8 +5,7 @@
    for the Desktop bundle only — globals.css itself is Gateway-owned and is
    NOT edited here. When the Gateway worker lands the shared token table in
    work/.yaseir-review/STYLE.md, diff this file against it: any override that
-   is then identical to globals.css should be deleted so globals.css is again
-   the single source (see DECISIONS-B.md).
+   is then identical to globals.css should be deleted so that globals.css is the single theme source (see DECISIONS-B.md).
 
    Tokens applied here are the shared v2.1 values from
    work/.yaseir-review/STYLE.md (Worker A token table, reconciled after it
@@ -97,10 +96,12 @@
 
   /* Redirect the shared stacks to Thmanyah. Thmanyah carries both Latin and
      Arabic glyphs (digits 0–9 are Latin in both languages, verified from the
-     cmap), so one family leads in both directions; IBM Plex stays only as
-     the var() fallback inside the token definitions, never as the face. */
-  --typo-font-latin: "Thmanyah Sans";
-  --typo-font-arabic: "Thmanyah Sans";
+     cmap), so one family leads in both directions; the served IBM Plex
+     names stay second as the fallback if Thmanyah fails to load (the
+     Desktop bundle ships no IBM files — these names resolve only where
+     IBM Plex is installed, exactly like the shared token fallback). */
+  --typo-font-latin: "Thmanyah Sans", "IBM Plex Sans";
+  --typo-font-arabic: "Thmanyah Sans", "IBM Plex Sans Arabic";
 
   /* ---------- Guide primary + ink + surfaces (light) ---------- */
   --brand-50: #eef4ff;

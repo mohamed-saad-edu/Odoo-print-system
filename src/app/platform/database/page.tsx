@@ -130,7 +130,7 @@ export default function PlatformDatabasePage() {
       {table && <Card className="overflow-hidden p-5">
         <div className="mb-4 flex flex-wrap items-center gap-3">
           <Button size="sm" variant="secondary" onClick={() => chooseTable("")} icon={<ArrowLeft className="h-4 w-4 rtl:-scale-x-100" />}>{ar ? "كل الجداول" : "All tables"}</Button>
-          <h2 className="break-all text-base font-semibold text-ink" dir="ltr">{table}</h2>
+          <h2 className="break-all text-base font-medium text-ink" dir="ltr">{table}</h2>
         </div>
         <form onSubmit={(event) => { event.preventDefault(); resetDetails(); setSearch(input.trim()); setOffset(0); }} className="mb-4 flex flex-wrap gap-2">
           <label className="min-w-[160px] flex-1">
@@ -156,7 +156,7 @@ export default function PlatformDatabasePage() {
         </div>
 
         {visibleRecord && <section id="database-record-details" aria-label={ar ? "تفاصيل السجل" : "Record details"} className="mt-4 rounded-xl border border-edge bg-surface-2 p-4">
-          <div className="mb-3 flex items-center justify-between gap-3"><h3 className="text-sm font-semibold text-ink">{ar ? "تفاصيل السجل" : "Record details"}</h3><Button size="xs" variant="secondary" onClick={() => setExpanded(null)} icon={<X className="h-4 w-4" />}>{ar ? "إغلاق" : "Close"}</Button></div>
+          <div className="mb-3 flex items-center justify-between gap-3"><h3 className="text-sm font-medium text-ink">{ar ? "تفاصيل السجل" : "Record details"}</h3><Button size="xs" variant="secondary" onClick={() => setExpanded(null)} icon={<X className="h-4 w-4" />}>{ar ? "إغلاق" : "Close"}</Button></div>
           <dl className="grid gap-3 sm:grid-cols-2">{Object.entries(visibleRecord).map(([key, value]) => <div key={key} className="min-w-0"><dt className="text-xs text-ink-3">{label(key)}</dt><dd className="mt-1 break-all text-sm text-ink" dir="auto">{display(key, value)}</dd></div>)}</dl>
         </section>}
         {copyResult && <p role={copyResult.ok ? "status" : "alert"} className={`mt-3 flex flex-wrap items-center gap-2 text-xs ${copyResult.ok ? "text-ok" : "text-bad"}`}>

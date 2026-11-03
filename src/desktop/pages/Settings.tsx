@@ -30,7 +30,7 @@ export function SettingsPage({ s }: { s: DesktopState }) {
     <div className="space-y-5">
       <div className="grid gap-5">
         <details open={!s.pairingConfirmed} className="rounded-xl border border-edge bg-surface p-4">
-        <summary className="cursor-pointer text-base font-semibold text-ink">{t("v4.experience.setup.gateway")}</summary>
+        <summary className="cursor-pointer text-base font-medium text-ink">{t("v4.experience.setup.gateway")}</summary>
         <div className="mt-4">
         <SettingsSection title={t("desktop.settings.gatewaySection")} description={t("desktop.settings.gatewaySectionBody")} icon={<Link2 className="h-5 w-5" />}>
           <div className="flex items-center gap-3 rounded-md border border-edge bg-surface-2/45 p-4">
@@ -54,7 +54,7 @@ export function SettingsPage({ s }: { s: DesktopState }) {
 
         </div></details>
         <details className="rounded-xl border border-edge bg-surface p-4">
-        <summary className="cursor-pointer text-base font-semibold text-ink">{t("v4.experience.settings.device")}</summary>
+        <summary className="cursor-pointer text-base font-medium text-ink">{t("v4.experience.settings.device")}</summary>
         <div className="mt-4">
         <SettingsSection title={t("desktop.settings.localAgentSection")} description={t("desktop.settings.localAgentSectionBody")} icon={<Server className="h-5 w-5" />}>
           <div className="flex items-center gap-3 rounded-md border border-edge bg-surface-2/45 p-4">
@@ -103,9 +103,9 @@ export function SettingsPage({ s }: { s: DesktopState }) {
       </div>
 
       <Card className="overflow-hidden">
-        <details open={!s.pairingConfirmed}><summary className="cursor-pointer px-5 py-4 text-base font-semibold text-ink">{t("v4.experience.settings.pairAgain")}</summary>
+        <details open={!s.pairingConfirmed}><summary className="cursor-pointer px-5 py-4 text-base font-medium text-ink">{t("v4.experience.settings.pairAgain")}</summary>
         <div className="flex flex-wrap items-start justify-between gap-4 border-b border-edge-subtle px-5 py-4">
-          <div className="flex items-start gap-2.5"><KeyRound className="mt-0.5 h-4 w-4 shrink-0 text-ink-3" /><div className="min-w-0"><h2 className="text-base font-semibold text-ink">{t("desktop.settings.pairTitle")}</h2><p className="mt-1 text-sm leading-snug text-ink-3">{t("desktop.settings.pairSubtitle")}</p></div></div>
+          <div className="flex items-start gap-2.5"><KeyRound className="mt-0.5 h-4 w-4 shrink-0 text-ink-3" /><div className="min-w-0"><h2 className="text-base font-medium text-ink">{t("desktop.settings.pairTitle")}</h2><p className="mt-1 text-sm leading-snug text-ink-3">{t("desktop.settings.pairSubtitle")}</p></div></div>
           <StatusBadge label={serviceState === "unknown" ? t("desktop.agents.statusUnavailable") : s.isOnline ? (s.gatewayConnected ? t("desktop.settings.pairRunning") : t("desktop.settings.pairGatewayUnreachable")) : t("desktop.settings.pairStopped")} tone={s.isOnline ? (s.gatewayConnected ? "ok" : "warn") : "neutral"} />
         </div>
         <div className="grid gap-5 px-5 py-5 lg:grid-cols-[1fr_auto] lg:items-end">
@@ -117,6 +117,26 @@ export function SettingsPage({ s }: { s: DesktopState }) {
           </div>
         </div>
         </details>
+      </Card>
+
+      <Card className="overflow-hidden">
+        {/* About surface (v10-exact): the staged Print Agent artwork is
+            shown here, not just staged — icon file + live product name
+            and version, reusing existing strings (no product rename).
+            The artwork is used unmodified; the name beside it carries
+            the meaning, so the image itself is decorative (empty alt). */}
+        <div className="flex items-start gap-4 px-5 py-5">
+          {/* Plain <img>: the Desktop Vite build has no next/image;
+              Next does not optimize SVGs, and this file is never served
+              by Next. Same pattern as BrandMarkIcon's shared component. */}
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="./brand/print-agent.svg" alt="" aria-hidden="true" draggable={false} className="h-10 w-10 shrink-0" />
+          <div className="min-w-0">
+            <h2 className="break-words text-lg font-medium text-ink">{t("desktop.sidebar.productName")}</h2>
+            <p className="mt-1 break-words text-sm text-ink-3">{t("desktop.sidebar.tagline", { version: s.version || "—" })}</p>
+            <p dir="auto" className="mt-1 break-words text-xs text-ink-3 [overflow-wrap:anywhere] [unicode-bidi:isolate]">{t("desktop.settings.savedGateway", { url: s.gatewayUrl || t("desktop.settings.notConfigured") })}</p>
+          </div>
+        </div>
       </Card>
 
       <div className="flex justify-end">

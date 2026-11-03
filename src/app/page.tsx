@@ -121,7 +121,7 @@ function PublicHome({ t, locale }: { t: Translator; locale: Locale }) {
         {/* ============================================================
             1. HERO: Value proposition with product video
             ============================================================ */}
-        <section className="yw-hero ambient-surface relative isolate overflow-hidden border-b border-edge-subtle bg-app pt-12 pb-16 sm:pt-16 sm:pb-24 lg:pt-20 lg:pb-28">
+        <section className="yw-hero ambient-surface relative isolate overflow-hidden border-b border-edge-subtle bg-app pt-10 pb-12 sm:pt-12 sm:pb-12 lg:pt-12 lg:pb-12">
           <div className="yw-hero-inner mx-auto grid w-full max-w-[1280px] items-center gap-10 px-5 sm:px-8 lg:grid-cols-[1.05fr_0.95fr] lg:gap-14 xl:gap-16 lg:px-10">
             <div className="relative z-10 max-w-[620px]">
               <p data-yw-intro className="yw-hero-eyebrow text-eyebrow">
@@ -129,12 +129,12 @@ function PublicHome({ t, locale }: { t: Translator; locale: Locale }) {
               </p>
               <h1
                 data-yw-intro
-                className="yw-hero-title mt-5 text-[clamp(2.5rem,5vw,4.75rem)] font-[500] leading-[1.06] tracking-[-0.05em] text-ink"
+                className="yw-hero-title mt-5 text-[clamp(2rem,5vw,2.5rem)] font-[500] leading-[1.06] text-ink"
               >
                 {t("home.heroTitle1")}
                 <br className="hidden sm:block" /> {t("home.heroTitle2")}
               </h1>
-              <p data-yw-intro className="mt-5 text-lg leading-[1.7] text-ink-2">
+              <p data-yw-intro className="mt-5 text-base leading-[1.7] text-ink-2">
                 {t("home.heroBody")}
               </p>
 
@@ -174,7 +174,7 @@ function PublicHome({ t, locale }: { t: Translator; locale: Locale }) {
         </section>
 
         {/* Product overview: video and concise platform capabilities share one section. */}
-        <section id="product" className="scroll-mt-20 border-b border-edge-subtle bg-surface py-14 sm:py-20">
+        <section id="product" className="scroll-mt-20 border-b border-edge-subtle bg-surface py-10 sm:py-12">
           <div className="mx-auto w-full max-w-[1280px] px-5 sm:px-8 lg:px-10">
             <div className="grid items-center gap-8 lg:grid-cols-12 lg:gap-12">
               <div data-yw-reveal className="relative order-2 lg:col-span-7 lg:order-1">
@@ -193,7 +193,7 @@ function PublicHome({ t, locale }: { t: Translator; locale: Locale }) {
 
               <div data-yw-reveal className="order-1 max-w-[620px] lg:col-span-5 lg:order-2">
                 <p className="text-eyebrow">{t("home.productShowcaseEyebrow")}</p>
-                <h2 className="mt-3 text-3xl font-[500] tracking-[-0.03em] text-ink sm:text-4xl">
+                <h2 className="mt-3 text-2xl font-[500] text-ink">
                   {t("home.productShowcaseTitle")}
                 </h2>
               </div>
@@ -218,11 +218,11 @@ function PublicHome({ t, locale }: { t: Translator; locale: Locale }) {
           </div>
         </section>
 
-        <section id="how-it-works" className="scroll-mt-20 border-b border-edge-subtle bg-app py-14 sm:py-20">
+        <section id="how-it-works" className="scroll-mt-20 border-b border-edge-subtle bg-app py-10 sm:py-12">
           <div className="mx-auto grid w-full max-w-[1280px] gap-8 px-5 sm:px-8 lg:grid-cols-[0.75fr_1.25fr] lg:items-start lg:gap-14 lg:px-10">
             <div data-yw-reveal className="max-w-[480px]">
               <p className="text-eyebrow">{t("home.flowEyebrow")}</p>
-              <h2 className="mt-3 text-3xl font-[500] tracking-[-0.03em] text-ink sm:text-4xl">
+              <h2 className="mt-3 text-2xl font-[500] text-ink">
                 {t("home.flowTitle")}
               </h2>
             </div>
@@ -252,11 +252,11 @@ function PublicHome({ t, locale }: { t: Translator; locale: Locale }) {
           </div>
         </section>
 
-        <section className="bg-surface py-12 sm:py-16">
+        <section className="bg-surface py-10 sm:py-12">
           <div className="mx-auto w-full max-w-[1280px] px-5 sm:px-8 lg:px-10">
             <div data-yw-reveal className="brand-hairline grid gap-6 rounded-2xl border border-edge bg-app p-6 sm:p-9 lg:grid-cols-[1fr_auto] lg:items-center lg:gap-10">
               <div className="max-w-[680px]">
-                <h2 className="text-2xl font-[500] leading-[1.12] tracking-[-0.03em] text-ink sm:text-3xl">
+                <h2 className="text-2xl font-[500] leading-[1.12] text-ink">
                   {t("home.ctaTitle")}
                 </h2>
               </div>
@@ -293,7 +293,7 @@ function PublicHome({ t, locale }: { t: Translator; locale: Locale }) {
 function PublicHeader({ t }: { t: Translator }) {
   return (
     <header className="yw-public-header sticky top-0 z-40 border-b border-edge">
-      <div className="mx-auto flex h-14 w-full max-w-[1280px] items-center gap-3 px-4 sm:px-6 lg:h-16 lg:px-8">
+      <div className="mx-auto flex h-16 w-full max-w-[1280px] items-center gap-3 px-4 sm:px-6 lg:px-8">
         <Link href="/" aria-label={t("home.brandAria")} className="shrink-0 rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30">
           <BrandMark title="Yaseir" subtitle="Print Manager" size="sm" showWordmark className="yw-public-brand-mark" />
         </Link>
@@ -306,10 +306,10 @@ function PublicHeader({ t }: { t: Translator }) {
           <Link href="/login" className="yw-public-nav-link">{t("auth.signIn.submit")}</Link>
           <LanguageSwitcher compact placement="below" />
           <ThemeToggle />
-          <Button variant="primary" size="sm" href="/signup" className="whitespace-nowrap">{t("home.ctaPrimary")}</Button>
+          <Button variant="primary" size="md" href="/signup" className="whitespace-nowrap">{t("home.ctaPrimary")}</Button>
         </div>
         <div className="ms-auto flex shrink-0 items-center gap-2 xl:hidden">
-          <Button variant="primary" size="sm" href="/signup" className="whitespace-nowrap max-[399px]:px-3 max-[399px]:text-xs">{t("home.ctaPrimary")}</Button>
+          <Button variant="primary" size="md" href="/signup" className="whitespace-nowrap">{t("home.ctaPrimary")}</Button>
           <MobileNavigation
             menuLabel={t("home.navMenu")}
             closeLabel={t("ui.closeDialog")}
@@ -407,9 +407,9 @@ function AuthenticatedHome({
         <div className="flex flex-col gap-5 px-6 py-6 sm:flex-row sm:items-start sm:justify-between sm:px-7">
           <div className="min-w-0">
             <p className="text-eyebrow">{t("home.authWorkspace")}</p>
-            <h1 className="mt-2 text-3xl font-[500] tracking-[-0.03em] text-ink">{tenantName}</h1>
+            <h1 className="mt-2 text-[2rem] font-[500] text-ink">{tenantName}</h1>
             <p className="mt-1.5 text-base text-ink-2">
-              {t("home.authSignedInAs")} <span className="font-[600] text-ink">{roleLabel(role, t)}</span>
+              {t("home.authSignedInAs")} <span className="font-bold text-ink">{roleLabel(role, t)}</span>
             </p>
           </div>
           <div className="flex shrink-0 flex-wrap gap-2">
@@ -427,7 +427,7 @@ function AuthenticatedHome({
         <dl className={`grid grid-cols-1 divide-y divide-edge-subtle border-t border-edge-subtle ${canBilling ? "sm:grid-cols-3 sm:divide-x sm:divide-y-0" : ""}`}>
           {canBilling && <div className="px-6 py-4">
             <dt className="label-caps">{t("home.planLabel")}</dt>
-            <dd className="mt-1.5 text-sm font-[600] text-ink">{hasPlan ? planName : t("billing.noPlanSelected")}</dd>
+            <dd className="mt-1.5 text-sm font-bold text-ink">{hasPlan ? planName : t("billing.noPlanSelected")}</dd>
           </div>}
           <div className="px-6 py-4">
             <dt className="label-caps">{t("home.subscriptionLabel")}</dt>
@@ -440,7 +440,7 @@ function AuthenticatedHome({
           </div>
           {canBilling && <div className="px-6 py-4">
             <dt className="label-caps">{t("v4.subscription.end")}</dt>
-            <dd className="mt-1.5 text-sm font-[600] text-ink">
+            <dd className="mt-1.5 text-sm font-bold text-ink">
               {formatManualCalendarDate(periodEnd, locale) ?? t("common.notAvailable")}
             </dd>
           </div>}
@@ -543,7 +543,7 @@ function QuickLink({
           </span>
           <ArrowRight className="h-4 w-4 text-ink-3 transition-transform group-hover:translate-x-0.5 rtl:-scale-x-100" />
         </div>
-        <h2 className="mt-4 text-base font-[500] tracking-[-0.015em] text-ink">{title}</h2>
+        <h2 className="mt-4 text-base font-[500] text-ink">{title}</h2>
         <p className="mt-1 text-xs leading-relaxed text-ink-2">{text}</p>
       </div>
       <div className="mt-4 border-t border-edge-subtle pt-3">

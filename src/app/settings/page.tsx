@@ -27,6 +27,8 @@ import {
   PageContainer,
   PageHeader,
   Skeleton,
+  focusFirstError,
+  useUnsavedChangesWarning,
 } from "../../components/ui";
 
 type SettingsPayload = {
@@ -40,6 +42,7 @@ export default function SettingsPage() {
   const router = useRouter();
   const nameEdited = useRef(false);
   const [name, setName] = useState("");
+  const [savedName, setSavedName] = useState<string | null>(null);
   const { t, formatDate } = useI18n();
   const [email, setEmail] = useState("");
   const [role, setRole] = useState("");
@@ -70,7 +73,7 @@ export default function SettingsPage() {
         }
         const d = (await r.json()) as SettingsPayload;
         if (cancelled) return;
-        if (!nameEdited.current) setName(d.tenant?.name ?? "");
+        if (!nameEdited.current) { setName(d.tenant?.name ?? ""); setSavedName(d.tenant?.name ?? ""); }
         setEmail(d.email ?? "");
         setRole(d.role ?? "");
         setTenantCreatedAt(d.tenant?.createdAt ?? null);
@@ -81,6 +84,16 @@ export default function SettingsPage() {
       cancelled = true;
     };
   }, [t, router]);
+
+  const formRef = useRef<HTMLFormElement>(null);
+  // Guide form rule: move focus to the first error when saving fails.
+  useEffect(() => {
+    if (message?.type === "err") focusFirstError(formRef.current);
+  }, [message]);
+  // Guide form rule: warn on leaving with unsaved changes. Dirty is
+  // derived from state only (savedName seeds on load and on save);
+  // the nameEdited ref stays reserved for the pristine-seeding guard.
+  useUnsavedChangesWarning(savedName !== null && name !== savedName);
 
   async function save(e: React.FormEvent) {
     e.preventDefault();
@@ -98,6 +111,7 @@ export default function SettingsPage() {
       const d = await r.json();
       if (!r.ok) { setMessage({ text: t(apiMessageKey(d.code, r.status, "settings.saveFailed")), type: "err" }); return; }
       setMessage({ text: t("settings.nameUpdated"), type: "ok" });
+      setSavedName(name);
     } catch {
       setMessage({ text: t("settings.saveFailed"), type: "err" });
     } finally {
@@ -139,7 +153,7 @@ export default function SettingsPage() {
                 subtitle={t("settings.identitySubtitle")}
                 icon={<Building2 className="h-4 w-4" />}
               />
-              <form onSubmit={save} className="space-y-5 px-5 py-5">
+              <form ref={formRef} onSubmit={save} className="space-y-5 px-5 py-5">
                 <Field
                   label={t("onboarding.workspaceName")}
                   htmlFor="workspace-name"

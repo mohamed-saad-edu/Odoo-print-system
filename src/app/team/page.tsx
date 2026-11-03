@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Crown, Mail, Users } from "lucide-react";
 import { useI18n } from "../../i18n/react";
@@ -31,6 +31,12 @@ export default function TeamPage() {
   const [email, setEmail] = useState("");
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
+  const noticeRef = useRef<HTMLParagraphElement>(null);
+  // Guide form rule: move focus to the first error (the page-level
+  // notice lives outside the invite form, so it gets its own ref).
+  useEffect(() => {
+    if (notice?.kind === "err") noticeRef.current?.focus();
+  }, [notice]);
   const [memberToRemove, setMemberToRemove] = useState<Member | null>(null);
 
   const clearTeamData = useCallback(() => {
@@ -226,7 +232,7 @@ export default function TeamPage() {
         title={t("nav.team")}  />
       <PageContainer width="wide">
         <div className="space-y-5">
-          {notice && <p role={notice.kind === "err" ? "alert" : "status"}
+          {notice && <p ref={noticeRef} tabIndex={-1} role={notice.kind === "err" ? "alert" : "status"}
             className={`rounded-lg border border-edge p-4 text-sm ${notice.kind === "err" ? "text-bad" : notice.kind === "warn" ? "text-warn" : "text-ok"}`}>
             {notice.message}
           </p>}
@@ -235,7 +241,7 @@ export default function TeamPage() {
             <Card className="p-5">
               <div className="flex items-center gap-2">
                 <Crown className="h-4 w-4 text-brand" aria-hidden />
-                <h2 className="font-semibold">{t("team.inviteTitle")}</h2>
+                <h2 className="font-medium">{t("team.inviteTitle")}</h2>
                 <StatusBadge tone="brand" icon={<Crown className="h-3.5 w-3.5 text-warn" aria-hidden />} label={t("team.role.owner")} />
               </div>
               <p className="mt-2 text-sm text-ink-3">{t("team.inviteHint")}</p>
@@ -247,7 +253,7 @@ export default function TeamPage() {
                 </label>
                 <Button type="submit" variant="primary" loading={busy}
                   disabled={busy || !email.trim()}>
-                  {t("team.inviteSubmit")}
+                  {busy ? t("team.inviteSending") : t("team.inviteSubmit")}
                 </Button>
               </form>
               <p className="mt-3 text-xs text-ink-3">{t("v4.team.fullAccess")}</p>

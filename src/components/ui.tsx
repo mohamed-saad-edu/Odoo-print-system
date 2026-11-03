@@ -736,11 +736,26 @@ export function Field({
  * it focuses the first [aria-invalid="true"] control, falling back to the
  * first element carrying the field error id.
  */
+/**
+ * Guide form rule: on submit, move focus to the first error. Finds a
+ * field-level invalid control first ([aria-invalid] / [data-field-error]);
+ * this app's forms mostly report form-level errors, so it falls back to
+ * the form's [role="alert"] element (ErrorState, bad Callout) — the
+ * element a screen reader announces — instead of doing nothing.
+ */
 export function focusFirstError(form: HTMLElement | null): boolean {
   if (!form) return false;
   const invalid = form.querySelector<HTMLElement>('[aria-invalid="true"], [data-field-error="true"]');
   if (invalid) {
     invalid.focus();
+    return true;
+  }
+  const alert = form.querySelector<HTMLElement>('[role="alert"]');
+  if (alert) {
+    // Alerts are not natively focusable; make the move programmatically
+    // without adding the element to the Tab order.
+    if (alert.tabIndex < 0) alert.tabIndex = -1;
+    alert.focus();
     return true;
   }
   return false;
@@ -1917,7 +1932,7 @@ export function PageContainer({
   const max =
     width === "wide" ? "max-w-[1680px]" : width === "narrow" ? "max-w-[960px]" : "max-w-[1440px]";
   return (
-    <div className={`mx-auto w-full min-w-0 max-w-full ${max} px-3 py-5 sm:px-6 sm:py-7 lg:px-8 lg:py-8 ${className}`}>
+    <div className={`mx-auto w-full min-w-0 max-w-full ${max} px-4 py-5 sm:px-6 sm:py-7 lg:px-8 lg:py-8 ${className}`}>
       {children}
     </div>
   );
@@ -1962,7 +1977,7 @@ export function PageHeader({
         className,
       ].join(" ")}
     >
-      <div className={variant === "band" ? `mx-auto w-full min-w-0 max-w-full ${max} px-3 pt-4 pb-0 sm:px-6 sm:pt-5 lg:px-8 lg:pt-6` : ""}>
+      <div className={variant === "band" ? `mx-auto w-full min-w-0 max-w-full ${max} px-4 pt-4 pb-0 sm:px-6 sm:pt-5 lg:px-8 lg:pt-6` : ""}>
         {breadcrumbs && <div className="mb-2 text-sm text-ink-3">{breadcrumbs}</div>}
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="flex min-w-0 flex-1 basis-60 items-center gap-3">
@@ -1973,7 +1988,7 @@ export function PageHeader({
             )}
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-                <h1 className="tg-page-title min-w-0 break-words text-xl font-[500] leading-tight text-ink sm:text-2xl">
+                <h1 className="tg-page-title min-w-0 break-words text-[2rem] font-[500] leading-tight text-ink sm:text-4xl">
                   {title}
                 </h1>
                 {meta}

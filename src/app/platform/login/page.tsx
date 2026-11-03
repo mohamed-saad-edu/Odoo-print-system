@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowRight, ShieldCheck } from "lucide-react";
 import { AuthShell } from "../../../components/AuthShell";
-import { Button, Field, Input, ErrorState, Skeleton } from "../../../components/ui";
+import { Button, Field, Input, ErrorState, Skeleton, focusFirstError } from "../../../components/ui";
 import { useI18n } from "../../../i18n/react";
 import { codeMessageKey } from "../../../lib/api-error-keys";
 
@@ -68,6 +68,11 @@ export default function PlatformLoginPage() {
     };
   }, [router]);
 
+  const formRef = useRef<HTMLFormElement>(null);
+  // Guide form rule: move focus to the first error when submission fails.
+  useEffect(() => {
+    if (error) focusFirstError(formRef.current);
+  }, [error]);
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
     if (!mounted.current || flight.current) return;
@@ -131,7 +136,7 @@ export default function PlatformLoginPage() {
       title={t("auth.signIn.title")}
       description={t("platform.login.description")}
     >
-      <form onSubmit={handleSubmit} className="space-y-4">
+      <form ref={formRef} onSubmit={handleSubmit} className="space-y-4">
         <Field label={t("platform.login.email")} htmlFor="platform-email" required>
           <Input
             id="platform-email"

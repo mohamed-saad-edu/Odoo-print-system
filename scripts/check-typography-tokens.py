@@ -39,8 +39,8 @@ FONT_FILES = (
 
 # The specification. Values are the exact strings the tokens must declare.
 REQUIRED_TOKENS = {
-    "--typo-font-latin": 'var(--font-ibm-plex-sans, "IBM Plex Sans")',
-    "--typo-font-arabic": 'var(--font-ibm-plex-sans-arabic, "IBM Plex Sans Arabic")',
+    "--typo-font-latin": 'var(--font-thmanyah, "Thmanyah Sans"), var(--font-ibm-plex-sans, "IBM Plex Sans")',
+    "--typo-font-arabic": 'var(--font-thmanyah, "Thmanyah Sans"), var(--font-ibm-plex-sans-arabic, "IBM Plex Sans Arabic")',
     "--typo-weight-regular": "400",
     "--typo-weight-medium": "500",
     "--typo-weight-semibold": "600",

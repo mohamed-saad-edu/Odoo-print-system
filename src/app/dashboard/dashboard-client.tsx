@@ -1508,7 +1508,7 @@ export default function DashboardClient({
       </Callout>}
       {view === "home" && <Card className="space-y-5 p-5 sm:p-6">
         <div className="flex flex-wrap items-start justify-between gap-4">
-          <div className="min-w-0"><h2 className="text-xl font-semibold text-ink">{t("v4.experience.health.title")}</h2></div>
+          <div className="min-w-0"><h2 className="text-xl font-medium text-ink">{t("v4.experience.health.title")}</h2></div>
           {subscription && <StatusBadge tone={subscription.customerState === "active" ? "ok" : "warn"} label={t(`v4.experience.subscription.${subscription.customerState}`)} />}
         </div>
         {subscription?.currentPeriodEnd && <p className="text-sm text-ink-3">{t("v4.experience.subscription.ends", { date: formatManualCalendarDate(subscription.currentPeriodEnd, locale) ?? t("common.notAvailable") })}</p>}

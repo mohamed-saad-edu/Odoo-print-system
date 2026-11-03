@@ -1,12 +1,12 @@
 "use client";
 
 import { fetchWithTimeout } from "../../lib/fetch-timeout";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useI18n } from "../../i18n/react";
 import Link from "next/link";
 import { ArrowLeft, ArrowRight, MailCheck } from "lucide-react";
 import { AuthShell } from "../../components/AuthShell";
-import { Button, Callout, Field, Input, ErrorState } from "../../components/ui";
+import { Button, Callout, Field, Input, ErrorState, focusFirstError } from "../../components/ui";
 import { codeMessageKey } from "../../lib/api-error-keys";
 
 export default function Forgot() {
@@ -16,6 +16,11 @@ export default function Forgot() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
+  const formRef = useRef<HTMLFormElement>(null);
+  // Guide form rule: move focus to the first error when submission fails.
+  useEffect(() => {
+    if (error) focusFirstError(formRef.current);
+  }, [error]);
   async function submit(event: React.FormEvent) {
     event.preventDefault();
     setLoading(true);
@@ -56,7 +61,7 @@ export default function Forgot() {
           {t("auth.forgot.inboxBody")}
         </Callout>
       ) : (
-        <form className="space-y-4" onSubmit={submit}>
+        <form ref={formRef} className="space-y-4" onSubmit={submit}>
           <Field label={t("auth.email")} htmlFor="email" required>
             <Input
               id="email"

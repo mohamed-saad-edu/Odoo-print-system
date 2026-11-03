@@ -85,14 +85,14 @@ export default async function Pricing() {
         </div>
         <nav className="col-span-2 flex w-full items-center gap-2 sm:w-auto" aria-label={t("pricing.navAria")}>
           {claims
-            ? <Button href="/dashboard" variant="secondary" size="sm" className="min-h-10 w-full whitespace-nowrap px-4 sm:w-auto">
+            ? <Button href="/dashboard" variant="secondary" size="md" className="w-full whitespace-nowrap sm:w-auto">
                 {t("pricing.openConsole")}
               </Button>
             : <>
-                <Button href="/login" variant="secondary" size="sm" className="min-h-10 flex-1 whitespace-nowrap px-4 sm:flex-none sm:px-5">
+                <Button href="/login" variant="secondary" size="md" className="flex-1 whitespace-nowrap sm:flex-none">
                   {t("pricing.signIn")}
                 </Button>
-                <Button href="/signup" variant="primary" size="sm" className="min-h-10 flex-1 whitespace-nowrap px-4 sm:flex-none sm:px-5">
+                <Button href="/signup" variant="primary" size="md" className="flex-1 whitespace-nowrap sm:flex-none">
                   {t("pricing.getStarted")}
                 </Button>
               </>}
@@ -100,8 +100,8 @@ export default async function Pricing() {
       </div>
     </header>
     <main className="mx-auto max-w-[1200px] px-4 pb-20 pt-10 sm:px-6 sm:pt-14 lg:px-8">
-      <header className="mb-8 max-w-3xl sm:mb-10">
-        <h1 className="text-[clamp(1.875rem,3vw,2.5rem)] font-[700] leading-tight tracking-tight text-ink">{t("v4.pricing.title")}</h1>
+      <header className="mb-10 max-w-3xl sm:mb-12">
+        <h1 className="text-[clamp(2rem,3vw,2.5rem)] font-[500] leading-tight text-ink">{t("v4.pricing.title")}</h1>
       </header>
       {unavailable
         ? <Callout tone="warn" title={t("pricing.catalogUnavailableTitle")}>{t("pricing.catalogUnavailableBody")}
@@ -114,9 +114,9 @@ export default async function Pricing() {
                 const price = formatPlanPriceDisplay(plan.priceMinorUnits, plan.priceCurrency, locale);
                 const monthlyQuota = plan.entitlements.max_prints_per_period;
                 return <Card key={plan.id} className="flex h-full flex-col overflow-hidden rounded-2xl border border-edge-subtle shadow-sm">
-                  <div className="flex-1 px-6 pb-6 pt-7 sm:px-7">
+                  <div className="flex-1 px-6 pb-6 pt-6">
                     <div className="min-h-[4.5rem]">
-                      <h2 className="break-words text-[1.375rem] font-[500] leading-snug tracking-tight text-ink">{plan.name}</h2>
+                      <h2 className="break-words text-lg font-[500] leading-snug text-ink">{plan.name}</h2>
                       {plan.description && <p className="mt-2 break-words text-sm leading-6 text-ink-3">{plan.description}</p>}
                     </div>
                     <div className="mt-4 min-h-[5.5rem]">
@@ -124,9 +124,9 @@ export default async function Pricing() {
                         <p className="text-xs font-medium text-ink-3">{t("v4.pricing.publishedPrice")}</p>
                         <div className="mt-1.5 inline-flex max-w-full items-baseline gap-2" dir="ltr">
                           <span className="text-[clamp(1.875rem,2.6vw,2.375rem)] font-[700] leading-tight tracking-[-0.035em] tabular-nums text-ink">{price.amount}</span>
-                          <span className="text-sm font-[600] tracking-wide text-ink-3">{price.currency}</span>
+                          <span className="text-sm font-bold tracking-wide text-ink-3">{price.currency}</span>
                         </div>
-                      </> : <p className="pt-6 text-base font-[600] text-ink-2">{t("v4.pricing.priceOnRequest")}</p>}
+                      </> : <p className="pt-6 text-base font-bold text-ink-2">{t("v4.pricing.priceOnRequest")}</p>}
                     </div>
                     <div className="mt-5 border-t border-edge-subtle pt-5">
                       <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
@@ -144,7 +144,7 @@ export default async function Pricing() {
                         </li>)}
                     </ul>
                   </div>
-                  <div className="mt-auto border-t border-edge-subtle px-6 py-5 sm:px-7">
+                  <div className="mt-auto border-t border-edge-subtle px-6 py-6">
                     <Button href={destination(plan.id)} variant="primary" appearance="outline" size="md" className="w-full" icon={<ArrowRight className="h-4 w-4 rtl:-scale-x-100" />}>
                       {t(!claims || claims.role === "owner" ? "pricing.chooseThisPlan" : "pricing.openConsole")}
                     </Button>
