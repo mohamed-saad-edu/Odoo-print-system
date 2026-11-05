@@ -120,6 +120,31 @@ def test_approved_pdf_output_is_a_class_agnostic_pos_document_transport():
     assert actual._validate_runtime_target() is printer
 
 
+def test_advisory_medium_projection_cannot_override_declared_transport():
+    printer = verified_printer("pdf_output", "pdf")
+    printer["outputMedium"] = "physical"
+    printer["printerType"] = "physical"
+    actual = binding(printer)
+    assert actual._canonical_runtime_printer_protocol(printer) == "pdf"
+    assert actual._validate_binding_protocol_against_runtime(printer)
+    assert actual._validate_runtime_target() is printer
+
+
+@pytest.mark.parametrize(("connection", "protocol"), [
+    ("spooler", "ipp"),
+    ("pdf_output", "spooler"),
+    ("network", "spooler"),
+])
+def test_actual_transport_protocol_mismatch_remains_a_hard_failure(connection, protocol):
+    printer = verified_printer()
+    printer["connectionType"] = connection
+    printer["protocol"] = protocol
+    actual = binding(printer)
+    assert actual._canonical_runtime_printer_protocol(printer) == "unknown"
+    with pytest.raises(ValidationError):
+        actual._validate_binding_protocol_against_runtime(printer)
+
+
 @pytest.mark.parametrize("kind", ["missing", "pending", "expired", "other-id", "wrong-medium", "future-receipt", "other-proof"])
 def test_registered_online_printer_does_not_require_operational_evidence(kind):
     # Policy: operational verification is background evidence, never an

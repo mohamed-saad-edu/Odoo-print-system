@@ -60,7 +60,7 @@ class TestUniversalPrinting(TransactionCase):
             self.assertEqual(binding._canonical_runtime_printer_protocol(printer), "pdf")
             self.assertTrue(binding._validate_binding_protocol_against_runtime(printer))
 
-    def test_missing_or_stale_proof_is_advisory_but_output_medium_must_match(self):
+    def test_missing_or_stale_proof_and_medium_projection_are_advisory(self):
         for mutation in ("pending", "expired", "other-printer"):
             printer = self._printer()
             if mutation == "pending":
@@ -74,8 +74,9 @@ class TestUniversalPrinting(TransactionCase):
 
         mismatch = self._printer()
         mismatch["outputMedium"] = "physical"
-        with self.assertRaises(ValidationError):
-            self._runtime(mismatch)
+        mismatch["printerType"] = "physical"
+        self.assertEqual(self._runtime(mismatch)["connectionType"], "pdf_output")
+        self.assertEqual(self._binding()._canonical_runtime_printer_protocol(mismatch), "pdf")
 
     def test_file_image_requires_explicit_complete_page_boundaries(self):
         for key in ("paper_height_mm", "printable_height_dots", "offset_x_dots", "offset_y_dots", "dpi_y"):

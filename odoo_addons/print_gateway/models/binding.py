@@ -442,8 +442,8 @@ class PrintGatewayBinding(models.Model):
         if protocol == "windows_spooler" and connection_type == "spooler":
             protocol = "spooler"
         if connection_type == "spooler":
-            return "spooler"
-        if connection_type == "pdf_output" and protocol == "pdf" and printer.get("printerType") == "file":
+            return "spooler" if protocol == "spooler" else "unknown"
+        if connection_type == "pdf_output" and protocol == "pdf":
             return "pdf"
         if connection_type in ("ipp", "ipps"):
             return connection_type
@@ -597,19 +597,11 @@ class PrintGatewayBinding(models.Model):
             raise ValidationError(_(
                 "The selected printer has a destination or identity conflict. Reconcile its Agent inventory before routing new work."
             ))
-        connection_type = str(selected_printer.get("connectionType") or "").strip().lower()
-        expected_medium = "file" if connection_type == "pdf_output" else "physical"
-        reported_medium = selected_printer.get("outputMedium")
-        if reported_medium is not None and reported_medium != expected_medium:
-            raise ValidationError(_(
-                "The Gateway printer output medium does not match its transport. Refresh the printer inventory before routing."
-            ))
-        expected_printer_type = "file" if expected_medium == "file" else "physical"
-        reported_printer_type = selected_printer.get("printerType")
-        if reported_printer_type is not None and reported_printer_type != expected_printer_type:
-            raise ValidationError(_(
-                "The Gateway printer type does not match its configured output transport."
-            ))
+        # connectionType + protocol are the routing source of truth. outputMedium
+        # and printerType are projections that may reflect an older verification
+        # observation, so they must not override a currently declared transport.
+        # The Gateway database enforces the persisted transport/media tuple, and
+        # _canonical_runtime_printer_protocol rejects an incompatible protocol.
         # Operational verification is background evidence, not a binding
         # gate: an unverified printer may be assigned and printed to; the
         # Gateway/Agent fall back to its last known or default size when a

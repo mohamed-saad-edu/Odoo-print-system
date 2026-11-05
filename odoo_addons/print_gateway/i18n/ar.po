@@ -5113,14 +5113,3 @@ msgstr "طابعة غير مسماة"
 msgid "The selected printer has a destination or identity conflict. Reconcile its Agent inventory before routing new work."
 msgstr "تحتوي الطابعة المحددة على تعارض في الوجهة أو الهوية. أعد مزامنة جرد Agent قبل توجيه مهام جديدة."
 
-#. module: print_gateway
-#. odoo-python
-#: code:addons/print_gateway/models/binding.py:0
-msgid "The Gateway printer output medium does not match its transport. Refresh the printer inventory before routing."
-msgstr "وسيط إخراج الطابعة في Gateway لا يتوافق مع وسيلة النقل. حدّث جرد الطابعات قبل التوجيه."
-
-#. module: print_gateway
-#. odoo-python
-#: code:addons/print_gateway/models/binding.py:0
-msgid "The Gateway printer type does not match its configured output transport."
-msgstr "نوع الطابعة في Gateway لا يتوافق مع وسيلة الإخراج المضبوطة لها."
