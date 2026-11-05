@@ -220,7 +220,7 @@
     },
     {
       "filename": "libfreetype6_2.13.2+dfsg-1ubuntu0.2_amd64.deb",
-      "url": "https://snapshot.ubuntu.com/ubuntu/20261024T000000Z/pool/main/f/freetype/libfreetype6_2.13.2+dfsg-1ubuntu0.2_amd64.deb",
+      "url": "https://security.ubuntu.com/ubuntu/pool/main/f/freetype/libfreetype6_2.13.2+dfsg-1ubuntu0.2_amd64.deb",
       "package": "libfreetype6",
       "version": "2.13.2+dfsg-1ubuntu0.2",
       "previous_version": "2.13.2+dfsg-1ubuntu0.1",
@@ -500,6 +500,14 @@
       "release": "1.1.0-2ubuntu0.1",
       "sha256_from": "independent clean GitHub Actions Ubuntu 24.04 job 40592443466",
       "security_notice": "https://ubuntu.com/security/notices/USN-8956-1"
+    },
+    "libfreetype6": {
+      "source": "Canonical Ubuntu noble-security HTTPS origin (security.ubuntu.com)",
+      "package_page": "https://packages.ubuntu.com/noble/amd64/libfreetype6/download",
+      "release": "2.13.2+dfsg-1ubuntu0.2",
+      "bytes": 402610,
+      "sha256_from": "Canonical Ubuntu package download metadata",
+      "reason": "The pinned snapshot endpoint returned bytes with a digest different from Canonical's published package checksum; use the official security origin while retaining the verified package hash."
     }
   }
 }

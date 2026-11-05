@@ -92,6 +92,13 @@ test('Odoo CI tests the built hardened runtime by content ID with verified immut
   assert.ok(hardened.includes('test ! -e /usr/bin/apt-get'));
   assert.ok(load('scripts/package-pillow-wheel-as-deb.py').includes('42d63be3af4f9b951b199b0a9d23365d37ab14687e6d77b74940432c8515c4ca'));
   assert.ok(hardened.includes('PIL.__version__ == "13.0.0"'));
+  const freetypeUrl = 'https://security.ubuntu.com/ubuntu/pool/main/f/freetype/libfreetype6_2.13.2+dfsg-1ubuntu0.2_amd64.deb';
+  assert.ok(hardened.includes(freetypeUrl));
+  const securityArtifacts = JSON.parse(load('docs/runtime-hardening/os-security-artifacts.json'));
+  const freetype = securityArtifacts.artifacts.find((item) => item.package === 'libfreetype6');
+  assert.equal(freetype?.url, freetypeUrl);
+  assert.equal(freetype?.sha256, '8c6d3bac5a6197fa2f48b2d56f04f3ffecaa7082eeab91b0939f97a40adc88a6');
+  assert.equal(freetype?.bytes, 402610);
   assert.ok(ci.includes('--file Dockerfile.odoo-hardened'));
   assert.ok(ci.includes('--iidfile "$RUNNER_TEMP/odoo-hardened.image-id"'));
   // Production Odoo keeps its real HTTP healthcheck, but 284 DB-intensive

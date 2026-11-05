@@ -186,3 +186,16 @@ built image with UNKNOWN, LOW, MEDIUM, HIGH, and CRITICAL severities, rejects
 new and unfixed findings, and retains the full SARIF and SBOM. A fresh final
 scan must confirm that the inherited APT and Pillow findings are absent
 before release.
+
+## Ubuntu FreeType package mirror correction, 2026-11-05
+
+The hardened-image rebuild found that the immutable snapshot URL returned
+libfreetype6 2.13.2+dfsg-1ubuntu0.2 bytes whose SHA-256 differed from the
+expected package hash. The build correctly failed closed. Canonical's Ubuntu
+package download metadata confirms the official amd64 package size is 402610
+bytes and its SHA-256 is 8c6d3bac5a6197fa2f48b2d56f04f3ffecaa7082eeab91b0939f97a40adc88a6.
+The Dockerfile and artifact manifest now fetch that same immutable package
+from the official noble-security origin at security.ubuntu.com while keeping
+the previously verified SHA-256 and size unchanged. The full checksum check
+remains enabled; the digest reported by the mismatching snapshot response was
+not accepted.
