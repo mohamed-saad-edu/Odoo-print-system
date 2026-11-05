@@ -80,9 +80,3 @@ def validated_receipt_geometry(value, printer_id=None):
     if result is None or any(key not in result for key in ("dpi_x", "dpi_y")):
         return None
     return result
-
-
-def validated_page_geometry(value, printer_id=None):
-    result = validated_receipt_geometry(value, printer_id)
-    required = ("paper_width_mm", "paper_height_mm", "printable_height_dots", "offset_x_dots", "offset_y_dots")
-    return result if result is not None and all(key in result for key in required) else None

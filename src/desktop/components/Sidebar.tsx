@@ -2,7 +2,6 @@ import React from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { X, PanelLeftClose, PanelLeftOpen, ShieldCheck } from "lucide-react";
 import { StatusDot } from "../../components/ui";
-import { BrandMarkIcon } from "../../components/brand";
 import { NavIconFrame } from "../../components/visual-system";
 import type { Page } from "../types";
 import type { AgentServiceState } from "../lib/printers";
@@ -65,7 +64,10 @@ export function Sidebar({
     <aside id={isNarrow ? "desktop-mobile-nav" : undefined} tabIndex={-1} className={`tg-desktop-rail fixed inset-y-0 start-0 z-40 flex w-[min(320px,90vw)] flex-col border-e border-edge bg-surface shadow-sm transition-[width,transform] duration-200 ease-out lg:inset-y-3 lg:start-3 ${compact ? "lg:w-[var(--sidebar-collapsed)]" : "lg:w-[var(--sidebar-width)]"} ${sidebarOpen ? "translate-x-0" : "max-lg:ltr:-translate-x-full max-lg:rtl:translate-x-full"} lg:translate-x-0`}>
       {isNarrow && <Dialog.Title className="sr-only">{t("nav.consoleNavigation")}</Dialog.Title>}
       <div className={`flex min-h-16 shrink-0 items-center gap-3 border-b border-edge/80 py-3 ${compact ? "justify-center px-0" : "px-5"}`}>
-        <BrandMarkIcon size="md" className="shrink-0" />
+        {/* The Desktop app is the Print Agent: its brand mark is the Agent
+            badge (public/brand/print-agent.svg), NOT the Gateway's ط mark.
+            Same asset as the Settings footer and the bundle/tray icons. */}
+        <img src="./brand/print-agent.svg" alt="" aria-hidden="true" draggable={false} className="h-10 w-10 shrink-0" />
         {!compact && (
           <div className="min-w-0 flex-1">
             <div className="break-words text-base font-medium leading-snug tracking-[-0.02em] text-ink">{t("desktop.sidebar.productName")}</div>

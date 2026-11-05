@@ -143,7 +143,7 @@ export function deriveSubmissionState(
   outputMedium: string | null | undefined,
   evidence: unknown,
 ): SubmissionState | null {
-  if (status !== "success" || outputMedium === "file") return null;
+  if (status !== "success") return null;
   const parsed = validateSubmissionEvidence(evidence);
   // No evidence (old agents) or evidence from the acceptance response
   // only: accepted, unverified.

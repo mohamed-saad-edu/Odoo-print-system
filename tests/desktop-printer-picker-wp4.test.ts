@@ -164,8 +164,24 @@ describe("WP4a dialog rendering", () => {
     expect(document.body.textContent).toContain("USB001");
   });
 
-  it("shows the manual fallback hint (Windows path + PowerShell) when zero queues exist", () => {
+  it("shows an actionable empty state when zero queues exist, with manual entry as an explicit choice", () => {
     renderDialog([]);
+    // No silent drop into "type the exact queue name": the dialog says
+    // no printers were found and offers search/manual actions instead.
+    expect(document.body.querySelector("#pp-spooler")).toBeNull();
+    expect(document.body.textContent).toContain("No Windows printers were found on this device");
+    expect(document.body.textContent).toContain("Printers & scanners");
+    expect(document.body.textContent).toContain("Search again");
+    expect(document.body.textContent).toContain("Enter the queue name manually");
+    expect(document.body.textContent).not.toContain("Get-Printer | Select Name,DriverName,PortName");
+  });
+
+  it("reveals the manual fallback hint (Windows path + PowerShell) only after choosing manual entry", () => {
+    renderDialog([]);
+    const manualButton = [...document.body.querySelectorAll<HTMLButtonElement>("button")]
+      .find((b) => b.textContent?.includes("Enter the queue name manually"));
+    expect(manualButton).toBeDefined();
+    act(() => { manualButton!.click(); });
     expect(document.body.querySelector("#pp-spooler")).not.toBeNull();
     expect(document.body.textContent).toContain("Printers & scanners");
     expect(document.body.textContent).toContain("Get-Printer | Select Name,DriverName,PortName");

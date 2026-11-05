@@ -896,7 +896,6 @@ func RegisterManual(registryPath string, info DeviceInfo) ([]DeviceInfo, error) 
 		Type:            info.ConnectionType,
 		ConnectionType:  info.ConnectionType,
 		Endpoint:        info.Endpoint,
-		OutputProfileID: info.OutputProfileID,
 		Protocol:        info.Protocol,
 		SpoolerName:     info.SpoolerName,
 		PrinterType:     info.PrinterType,

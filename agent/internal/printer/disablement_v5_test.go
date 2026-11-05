@@ -73,10 +73,10 @@ func TestLocalDiagnosticRespectsExplicitDisablement(t *testing.T) {
 	for _, source := range []string{"registry", "yaml", "registry-with-enabled-yaml", "yaml-with-registry-alias"} {
 		t.Run(source, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "printers.json")
-			cfg := &config.Config{PDFOutputProfiles: map[string]config.PDFOutputProfile{"approved": {Directory: t.TempDir()}}}
+			cfg := &config.Config{}
 			disabled := false
-			pc := config.PrinterConfig{ID: "export", Name: "PDF output", Type: "pdf_output", PrinterType: "file", Protocol: "pdf", Endpoint: "pdf-output:approved", OutputProfileID: "approved", Enabled: &disabled}
-			device := DeviceInfo{ID: pc.ID, Name: pc.Name, ConnectionType: pc.Type, PrinterType: pc.PrinterType, Protocol: pc.Protocol, Endpoint: pc.Endpoint, OutputProfileID: pc.OutputProfileID, Enabled: false}
+			pc := config.PrinterConfig{ID: "export", Name: "Disabled queue", Type: "spooler", Protocol: "spooler", SpoolerName: "Disabled Queue", Enabled: &disabled}
+			device := DeviceInfo{ID: pc.ID, Name: pc.Name, ConnectionType: pc.Type, Protocol: pc.Protocol, SpoolerName: pc.SpoolerName, Enabled: false}
 			id := pc.ID
 			switch source {
 			case "yaml":

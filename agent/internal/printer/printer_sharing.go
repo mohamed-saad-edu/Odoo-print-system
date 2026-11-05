@@ -19,7 +19,6 @@ func SharingConfigForDevice(device DeviceInfo) config.PrinterConfig {
 	return config.PrinterConfig{
 		ID: device.ID, Name: device.Name, Type: connection,
 		Endpoint: device.Endpoint, Protocol: device.Protocol, SpoolerName: device.SpoolerName,
-		OutputProfileID: device.OutputProfileID,
 		PrinterType:     device.PrinterType, USBVID: device.USBVID, USBPID: device.USBPID,
 		USBSerial: device.USBSerial, Capabilities: device.Capabilities,
 	}
@@ -30,14 +29,6 @@ func SharingConfigForDevice(device DeviceInfo) config.PrinterConfig {
 // declaration or an unrelated queue sharing its port/serial cannot do so.
 func SharingBindingsForDevice(device DeviceInfo, local ...*config.Config) ([]config.PrinterConfig, error) {
 	primary := SharingConfigForDevice(device)
-	if primary.NormalizedType() == "pdf_output" && len(local) == 1 && local[0] != nil {
-		// A public selector is never path authority. Keep an unapproved
-		// registry row unresolved so the existing binding/deny gate fails
-		// closed without exposing its internal directory or inventing one.
-		if resolved, err := local[0].ResolvePDFOutput(primary); err == nil {
-			primary = resolved
-		}
-	}
 	bindings := []config.PrinterConfig{primary}
 	source, _ := device.Capabilities["discovered_via"].(string)
 	if primary.NormalizedType() != "spooler" || source != SourceSpooler || device.SpoolerShare == "" {
@@ -89,10 +80,6 @@ func LocalSharingBindings(cfg *config.Config, registryPath string) ([]config.Pri
 	known := make([]config.PrinterConfig, 0, len(registered))
 	if cfg != nil {
 		for _, pc := range cfg.Printers {
-			pc, err = cfg.ResolvePDFOutput(pc)
-			if err != nil {
-				return nil, err
-			}
 			caps := make(map[string]interface{}, len(pc.Capabilities)+1)
 			for key, value := range pc.Capabilities {
 				caps[key] = value
@@ -144,12 +131,8 @@ func AnnotatePrinterSharing(configPath string, cfg *config.Config, registryPath 
 	}
 	for _, device := range devices {
 		pc := SharingConfigForDevice(device)
-		var resolveErr error
-		if pc.NormalizedType() == "pdf_output" {
-			pc, resolveErr = cfg.ResolvePDFOutput(pc)
-		}
 		shared, bindingErr := view.Shared(pc)
-		if bindingErr != nil || resolveErr != nil {
+		if bindingErr != nil {
 			shared = false
 		} // unknown setup-only destinations remain private
 		device.SharedWithGateway = &shared
@@ -203,16 +186,6 @@ func SelectSharingPrinter(id string, devices []DeviceInfo, local ...*config.Conf
 			return selected, fmt.Errorf("printer is not a locally admitted physical execution destination: %s", reason)
 		}
 		pc := SharingConfigForDevice(device)
-		if pc.NormalizedType() == "pdf_output" {
-			if len(local) != 1 || local[0] == nil {
-				return selected, fmt.Errorf("PDF output sharing requires a locally authorized profile")
-			}
-			var err error
-			pc, err = local[0].ResolvePDFOutput(pc)
-			if err != nil {
-				return selected, err
-			}
-		}
 		if _, err := config.PrinterBindingDigest(pc); err != nil {
 			return selected, err
 		}

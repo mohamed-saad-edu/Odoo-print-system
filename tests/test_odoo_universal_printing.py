@@ -1,4 +1,4 @@
-"""Actual Odoo methods: verified selection, approved file output and immutable results."""
+"""Actual Odoo methods: verified selection and immutable results."""
 import ast
 from datetime import datetime, timezone, timedelta
 import importlib.util
@@ -55,9 +55,9 @@ def production_methods(filename, names, namespace=None):
 def verified_printer(connection="spooler", protocol="spooler", now=None):
     now = now or datetime.now(timezone.utc)
     stamp = now.isoformat(timespec="milliseconds").replace("+00:00", "Z")
-    method = {"spooler": "windows_queue", "pdf_output": "pdf_output", "usb": "usb_interface", "network": "snmp_printer", "ipp": "ipp_attributes", "ipps": "ipp_attributes"}[connection]
-    strength = {"windows_queue": "queue", "ipp_attributes": "service", "usb_interface": "device", "snmp_printer": "device", "pdf_output": "service"}[method]
-    medium = "file" if connection == "pdf_output" else "physical"
+    method = {"spooler": "windows_queue", "usb": "usb_interface", "network": "snmp_printer", "ipp": "ipp_attributes", "ipps": "ipp_attributes"}[connection]
+    strength = {"windows_queue": "queue", "ipp_attributes": "service", "usb_interface": "device", "snmp_printer": "device"}[method]
+    medium = "physical"
     return {"id": "selected-printer", "connectionType": connection, "protocol": protocol,
             "printerType": "file" if medium == "file" else "physical", "deviceClass": "laser",
             "lifecycle": "active", "agent": {"id": "agt_fixture1"}, "sharedWithGateway": True,
@@ -87,7 +87,6 @@ def test_all_synthetic_evidence_strengths_match_production_runtime_validator():
         ("ipps", "ipps", "ipp_attributes", "service"),
         ("usb", "escpos", "usb_interface", "device"),
         ("network", "escpos", "snmp_printer", "device"),
-        ("pdf_output", "pdf", "pdf_output", "service"),
     ):
         printer = verified_printer(connection, protocol)
         proof = printer["capabilities"]["operational_verification"]
@@ -111,28 +110,8 @@ def binding(printer):
     return result
 
 
-def test_approved_pdf_output_is_a_class_agnostic_pos_document_transport():
-    printer = verified_printer("pdf_output", "pdf")
-    actual = binding(printer)
-    assert actual._canonical_runtime_printer_protocol(printer) == "pdf"
-    assert actual._runtime_printer_accepts_image(printer)
-    assert actual._validate_binding_protocol_against_runtime(printer)
-    assert actual._validate_runtime_target() is printer
-
-
-def test_advisory_medium_projection_cannot_override_declared_transport():
-    printer = verified_printer("pdf_output", "pdf")
-    printer["outputMedium"] = "physical"
-    printer["printerType"] = "physical"
-    actual = binding(printer)
-    assert actual._canonical_runtime_printer_protocol(printer) == "pdf"
-    assert actual._validate_binding_protocol_against_runtime(printer)
-    assert actual._validate_runtime_target() is printer
-
-
 @pytest.mark.parametrize(("connection", "protocol", "canonical"), [
     ("spooler", "ipp", "spooler"),
-    ("pdf_output", "spooler", "unknown"),
     ("network", "spooler", "unknown"),
 ])
 def test_actual_transport_protocol_mismatch_remains_a_hard_failure(connection, protocol, canonical):
@@ -179,24 +158,6 @@ def test_verified_driver_selection_has_no_thermal_class_requirement(device_class
     assert binding(printer)._validate_runtime_target() is printer
 
 
-@pytest.mark.parametrize("missing", ["paper_width_mm", "paper_height_mm", "printable_height_dots", "offset_x_dots", "offset_y_dots", "dpi_x", "dpi_y"])
-def test_file_receipt_requires_complete_page_geometry(missing):
-    printer = verified_printer("pdf_output", "pdf")
-    del printer["capabilities"]["geometry"][missing]
-    assert binding(printer)._runtime_printer_accepts_image(printer) is False
-
-
-def test_file_evidence_neither_authorizes_nor_blocks_a_spooler_target():
-    # Operational evidence is not an authorization input at all: a printer
-    # declared as a Windows spooler queue validates on its declared
-    # transport and real facts; its file-output evidence is ignored, not
-    # treated as proof and not treated as a forgery offence.
-    printer = verified_printer("pdf_output", "pdf")
-    printer["connectionType"] = "spooler"
-    printer["protocol"] = "spooler"
-    assert binding(printer)._validate_runtime_target() is printer
-
-
 SHARED = json.loads((ROOT / "contracts/printer-operational-verification-fixtures.json").read_text())
 
 
@@ -206,26 +167,9 @@ def test_operational_reader_agrees_with_shared_gateway_agent_vectors(case):
     assert bool(scope["validated_operational_verification"](case["proof"], case["printer"], datetime.fromisoformat(SHARED["now"].replace("Z", "+00:00")))) is case["valid"]
 
 
-def test_explicit_pdf_report_binding_can_use_approved_file_backend():
-    actual = production_methods("models/binding.py", ["resolve_explicit"])()
-    actual.ensure_one = lambda: None
-    company = SimpleNamespace(id=1)
-    class OneRecord(SimpleNamespace):
-        def __len__(self):
-            return 1
-    selected = OneRecord(id=1, company_id=company, branch_id=False, enabled=True,
-        runtime_agent_id="agt_fixture1", printer_id="file-printer", printer_protocol="pdf", document_type="invoice",
-        destination_ref="report", report_id=False, status="active")
-    selected.ensure_one = lambda: None
-    selected.exists = lambda: selected
-    selected.sudo = lambda: selected
-    actual.env = SimpleNamespace(context={})
-    assert actual.resolve_explicit(selected, company, "invoice", "report", payload_type="pdf") is selected
-
-
-def test_runtime_picker_preserves_verified_medium_and_canonical_evidence():
+def test_runtime_picker_preserves_verified_state_and_canonical_evidence():
     from test_agent_print_diagnostic_media import runtime_controller
-    printer = verified_printer("pdf_output", "pdf")
+    printer = verified_printer()
     result = runtime_controller(printer)["printers"][0]
     for key in ("verificationState", "verificationVerifiedAt", "verificationReceivedAt", "outputMedium", "printerType"):
         assert result.get(key) == printer[key]
@@ -242,73 +186,6 @@ def test_runtime_picker_keeps_printer_with_expired_operational_evidence():
     assert printers[0]["id"] == printer["id"]
 
 
-FILE_EVIDENCE = {"output_medium": "file", "artifact_id": "file_fixture_42", "sha256": "c" * 64, "page_count": 2, "bytes": 4096}
-
-
-def synced_file(body, existing=None):
-    helper = ADDON / "print_output.py"
-    scope = {"db_now_utc": lambda _cr: datetime.now(timezone.utc)}
-    if helper.exists():
-        spec = importlib.util.spec_from_file_location("odoo_output_actual", helper)
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        scope.update({key: getattr(module, key) for key in dir(module) if not key.startswith("_")})
-    actual = production_methods("models/print_job.py", ["_apply_synced_status"], scope)()
-    actual._TERMINAL = {"success", "failed", "unknown", "partial"}
-    actual._GATEWAY_UNKNOWN_MARKERS = ("AGENT_EXECUTION_TIMEOUT", "UNKNOWN_SUBMISSION_OUTCOME")
-    actual.env = SimpleNamespace(cr=None)
-    actual._lock_status_row = lambda _job: None
-    actual._advance_status = lambda job, status, values: vars(job).update(values, status=status)
-    job = SimpleNamespace(id=1, gateway_job_id="remote-original", status="printing", printer_id="file-a", physical_outcome="unknown",
-        output_medium="file", output_outcome="unknown", output_evidence=existing or False, _post_source_audit=lambda _message: None)
-    job.sudo = lambda: job
-    job.write = lambda values: vars(job).update(values)
-    assert actual._apply_synced_status(job, {"jobId": "remote-original", **body})
-    return job
-
-
-def test_sync_persists_validated_file_creation_evidence_without_physical_completion():
-    job = synced_file({"status": "success", "outputMedium": "file", "outputOutcome": "file_created", "outputEvidence": FILE_EVIDENCE})
-    assert job.output_evidence == FILE_EVIDENCE
-    assert job.output_outcome == "file_created"
-    assert job.physical_outcome == "unknown"
-
-
-def test_file_success_without_canonical_artifact_evidence_is_unverified():
-    job = synced_file({"status": "success", "outputMedium": "file", "outputOutcome": "file_created", "outputEvidence": {**FILE_EVIDENCE, "path": "/private/output.pdf"}})
-    assert job.output_outcome == "unknown"
-    assert not job.output_evidence
-
-
-def test_later_response_cannot_replace_persisted_file_artifact_identity():
-    with pytest.raises(ValueError, match="evidence|artifact"):
-        synced_file({"status": "success", "outputMedium": "file", "outputOutcome": "file_created", "outputEvidence": {**FILE_EVIDENCE, "sha256": "d" * 64}}, existing=FILE_EVIDENCE)
-
-
-def test_file_receipt_feedback_reports_file_creation_and_retains_original_job_identity():
-    actual = production_methods("models/print_router.py", ["_durable_submission_outcome", "_submission_message"])()
-    job = SimpleNamespace(id=42, status="success", gateway_job_id="remote-original", physical_outcome="unknown",
-        output_medium="file", output_outcome="file_created", output_evidence=FILE_EVIDENCE)
-    result = actual._durable_submission_outcome(job)
-    assert result.get("outputMedium") == "file"
-    assert result.get("outputEvidence") == FILE_EVIDENCE
-    assert result.get("outputOutcome") == "file_created"
-    assert "file" in result["message"].lower() and "paper" not in result["message"].lower()
-    assert result["gateway_job_id"] == "remote-original" and result["can_retry"] is False
-
-
-@pytest.mark.parametrize("case", SHARED["fileOutputCases"], ids=lambda case: case["name"])
-def test_file_result_reader_matches_shared_gateway_agent_vectors(case):
-    path = ADDON / "print_output.py"
-    spec = importlib.util.spec_from_file_location("actual_file_output", path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    assert bool(module.validated_file_output(case["evidence"])) is case["valid"]
-
-
-def test_missing_later_file_evidence_cannot_erase_an_original_verified_artifact():
-    job = synced_file({"status": "success", "outputMedium": "file", "outputOutcome": "unknown", "outputEvidence": None}, existing=FILE_EVIDENCE)
-    assert job.output_evidence == FILE_EVIDENCE
 
 
 def test_gateway_sync_requires_unambiguous_exact_job_identity_before_reporting_success():

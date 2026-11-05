@@ -15,17 +15,17 @@ export function receiptGeometry(dots = 384, dpi = 203, printerId = "fixture-prin
 export function verifiedPrinter(printer) {
   const stamp = new Date().toISOString();
   const connection = printer.connectionType, protocol = printer.protocol;
-  const medium = connection === "pdf_output" ? "file" : "physical";
+  const medium = "physical";
   // The fixture must mirror the shipping Odoo/Gateway proof vocabulary.
-  // Every physical byte transport is *device* strength, IPP/file output is
+  // Every physical byte transport is *device* strength, IPP is
   // *service*, and only a real Windows spooler queue has *queue* strength.
-  const method = medium === "file" ? "pdf_output" : connection === "spooler" ? "windows_queue"
+  const method = connection === "spooler" ? "windows_queue"
     : ["ipp", "ipps"].includes(connection) || ["ipp", "ipps"].includes(protocol) ? "ipp_attributes"
       : connection === "usb" ? "usb_interface" : "snmp_printer";
   const identityStrength = method === "windows_queue" ? "queue"
-    : method === "ipp_attributes" || method === "pdf_output" ? "service" : "device";
+    : method === "ipp_attributes" ? "service" : "device";
   return { ...printer, verificationState: "verified", verificationVerifiedAt: stamp, verificationReceivedAt: stamp,
-    outputMedium: medium, printerType: medium === "file" ? "file" : "physical",
+    outputMedium: medium, printerType: "physical",
     capabilities: { ...printer.capabilities, operational_verification: { version: 1, verified_at: stamp, printer_id: printer.id,
       binding_digest: "a".repeat(64), logical_queue_key: "a".repeat(64), method, identity_strength: identityStrength, output_medium: medium } } };
 }

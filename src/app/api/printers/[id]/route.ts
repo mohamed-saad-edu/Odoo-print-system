@@ -40,7 +40,6 @@ const patchSchema = z.object({
     serial: z.string().max(255).optional(),
     address: z.string().max(512).optional(),
     spooler_name: z.string().max(255).optional(),
-    output_profile_id: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/).optional(),
     passthrough_protocols: z.array(z.enum(["raw", "escpos"])).max(2).optional(),
     paper_widths: z.array(z.number().int().min(1).max(500)).max(32).optional(),
     color_capable: z.boolean().optional(),
@@ -178,7 +177,6 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       connectionType, protocol, config: cfg, capabilities: existing.capabilities })) {
       return { kind: "invalid" as const, message: "Software/virtual printers are not supported" };
     }
-    if (((parsed.data.printerType ?? existing.printerType) === "file") !== (connectionType === "pdf_output")) return { kind: "invalid" as const, message: "File output requires printerType file and pdf_output transport" };
     // passthrough_protocols is meaningful only for a Windows spooler queue.
     // Reject an explicitly invalid request, but when a manager changes an
     // existing spooler printer to another transport, scrub the old desired
@@ -260,7 +258,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
           verificationReceivedAt: null,
           verificationBindingDigest: null,
           verificationReason: "verification_configuration_changed",
-          outputMedium: connectionType === "pdf_output" ? "file" : "physical",
+          outputMedium: "physical",
           desiredRevision: sql<number>`${printers.desiredRevision} + 1`,
         }
       : update;

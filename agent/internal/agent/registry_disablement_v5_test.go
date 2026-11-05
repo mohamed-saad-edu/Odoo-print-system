@@ -61,18 +61,13 @@ func completeDisablementTestSync(t *testing.T, a *Agent) {
 }
 
 func TestPersistedDisabledPrinterDoesNotEnterRuntime(t *testing.T) {
-	for _, transport := range []string{"network", "ipp", "pdf_output"} {
+	for _, transport := range []string{"network", "ipp"} {
 		t.Run(transport, func(t *testing.T) {
 			device := productionNetworkDevice("local", "10.0.0.20:9100")
 			device.Enabled = false
 			cfg := &config.Config{}
-			switch transport {
-			case "ipp":
+			if transport == "ipp" {
 				device.ConnectionType, device.Protocol, device.Endpoint = "ipp", "ipp", "ipp://10.0.0.20/ipp/print"
-			case "pdf_output":
-				device.ConnectionType, device.Protocol, device.PrinterType = "pdf_output", "pdf", "file"
-				device.Endpoint, device.OutputProfileID = "pdf-output:approved", "approved"
-				cfg.PDFOutputProfiles = map[string]config.PDFOutputProfile{"approved": {Directory: t.TempDir()}}
 			}
 			a := newRegistryDisablementAgent(t, cfg, []printer.DeviceInfo{device})
 			if _, exists := a.getPrinter(device.ID); exists {

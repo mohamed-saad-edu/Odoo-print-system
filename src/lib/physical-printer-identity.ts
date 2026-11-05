@@ -62,7 +62,6 @@ export function physicalPrinterIdentityKey(p: PrinterEndpoint): string | null {
     if (address) endpoint = `usb-path:${address.normalize("NFC")}`;
     else if (serial && vid !== null && pid !== null) endpoint = `usb:${vid}:${pid}:${serial}`;
   }
-  if (conn === "pdf_output" && typeof cfg.output_profile_id === "string" && cfg.output_profile_id === cfg.output_profile_id.trim() && /^[A-Za-z0-9_-]{1,64}$/.test(cfg.output_profile_id)) endpoint = `pdf-output:${cfg.output_profile_id}`;
   return endpoint ? "v2:" + createHash("sha256").update(endpoint, "utf8").digest("hex") : null;
 }
 /**

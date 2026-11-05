@@ -20,30 +20,20 @@ def presenter():
     return module
 
 
-@pytest.mark.parametrize("status,physical,medium,output,expected", [
-    ("queued", "not_printed", "physical", None, "waiting"),
-    ("submitted", "unknown", "physical", None, "processing"),
-    ("claimed", "unknown", "physical", None, "processing"),
-    ("printing", "unknown", "physical", None, "processing"),
-    ("success", "unknown", "physical", None, "sent_to_printer"),
-    ("failed", "not_printed", "physical", None, "failed_before_output"),
-    ("failed", "unknown", "physical", None, "needs_review"),
-    ("unknown", "unknown", "physical", None, "needs_review"),
-    ("partial", "unknown", "physical", None, "needs_review"),
-    ("success", "unknown", "file", "file_created", "file_created"),
-    ("failed", "unknown", "file", "file_created", "needs_review"),
-    ("unknown", "unknown", "file", "file_created", "needs_review"),
-    ("queued", "not_printed", "file", "file_created", "needs_review"),
-    ("success", "unknown", "file", "unknown", "needs_review"),
-    ("failed", "unknown", "file", "not_created", "failed_before_output"),
-    # A contradictory "not_created" flag cannot prove an explicit ambiguous
-    # terminal operation did not make a file; never permit auto-reprint.
-    ("unknown", "unknown", "file", "not_created", "needs_review"),
-    ("partial", "unknown", "file", "not_created", "needs_review"),
-    ("unexpected", "unknown", "physical", None, "needs_review"),
+@pytest.mark.parametrize("status,physical,expected", [
+    ("queued", "not_printed", "waiting"),
+    ("submitted", "unknown", "processing"),
+    ("claimed", "unknown", "processing"),
+    ("printing", "unknown", "processing"),
+    ("success", "unknown", "sent_to_printer"),
+    ("failed", "not_printed", "failed_before_output"),
+    ("failed", "unknown", "needs_review"),
+    ("unknown", "unknown", "needs_review"),
+    ("partial", "unknown", "needs_review"),
+    ("unexpected", "unknown", "needs_review"),
 ])
-def test_job_customer_state_uses_output_evidence(status, physical, medium, output, expected):
-    assert presenter().job_customer_state(status, physical, medium, output) == expected
+def test_job_customer_state_matches_physical_presentation(status, physical, expected):
+    assert presenter().job_customer_state(status, physical) == expected
 
 
 @pytest.mark.parametrize("raw,category", [

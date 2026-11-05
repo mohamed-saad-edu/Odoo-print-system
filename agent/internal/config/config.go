@@ -29,8 +29,7 @@ type Config struct {
 		Name              string `yaml:"name"`
 		ReprintAfterCrash *bool  `yaml:"reprint_after_crash,omitempty"`
 	} `yaml:"agent"`
-	Printers          []PrinterConfig             `yaml:"printers"`
-	PDFOutputProfiles map[string]PDFOutputProfile `yaml:"pdf_output_profiles,omitempty" json:"-"`
+	Printers          []PrinterConfig `yaml:"printers"`
 }
 
 type PrinterConfig struct {
@@ -48,9 +47,6 @@ type PrinterConfig struct {
 	Capabilities        map[string]interface{} `yaml:"capabilities,omitempty"`
 	PaperWidthMM        int                    `yaml:"paper_width_mm,omitempty"`
 	GeometryProfile     *GeometryProfile       `yaml:"geometry_profile,omitempty" json:"geometry_profile,omitempty"`
-	OutputProfileID     string                 `yaml:"output_profile_id,omitempty" json:"output_profile_id,omitempty"`
-	PDFOutputDirectory  string                 `yaml:"-" json:"-"`
-	PDFOutputAuthorized bool                   `yaml:"-" json:"-"`
 	Enabled             *bool                  `yaml:"enabled,omitempty"`
 	// Local native discovery alone creates this alternate execution descriptor.
 	// Operator YAML/cloud metadata cannot assert a verified Windows share pair.
@@ -394,11 +390,6 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("agent.id is set but agent.secret is empty; re-pair the agent")
 	}
 	for _, p := range c.Printers {
-		var err error
-		p, err = c.ResolvePDFOutput(p)
-		if err != nil {
-			return err
-		}
 		if err := ValidatePrinterConfig(p); err != nil {
 			return err
 		}
@@ -457,7 +448,7 @@ func (p PrinterConfig) NormalizedProtocol() (string, error) {
 		return "spooler", nil
 	}
 	switch proto {
-	case "raw", "escpos", "zpl", "tspl", "ipp", "ipps", "spooler", "pdf", "unknown":
+	case "raw", "escpos", "zpl", "tspl", "ipp", "ipps", "spooler", "unknown":
 		return proto, nil
 	default:
 		return "", fmt.Errorf("printer %s: unsupported protocol %q", p.ID, p.Protocol)
@@ -530,7 +521,7 @@ func ValidatePrinterConfig(p PrinterConfig) error {
 	}
 	nt := p.NormalizedType()
 	switch nt {
-	case "network", "usb", "spooler", "ipp", "ipps", "pdf_output":
+	case "network", "usb", "spooler", "ipp", "ipps":
 	default:
 		return fmt.Errorf("printer %s: type must be network/usb/spooler/ipp/ipps, got %q", p.ID, p.Type)
 	}
@@ -543,10 +534,6 @@ func ValidatePrinterConfig(p PrinterConfig) error {
 	// IPP transport declared as RAW, which would pass Gateway capability checks
 	// but fail only after the Agent starts execution).
 	switch nt {
-	case "pdf_output":
-		if err := validatePDFOutputSelection(p); err != nil {
-			return err
-		}
 	case "network":
 		if proto == "ipps" {
 			return fmt.Errorf("printer %s: network connection requires an IPP URL for IPPS; use type ipps", p.ID)
@@ -609,9 +596,6 @@ func ValidatePrinterConfig(p PrinterConfig) error {
 // Non-network transports have their own device/queue validation.
 func ValidatePrinterEndpoint(p PrinterConfig) error {
 	nt := p.NormalizedType()
-	if nt == "pdf_output" {
-		return validatePDFOutputSelection(p)
-	}
 	if nt != "network" && nt != "ipp" && nt != "ipps" {
 		return nil
 	}

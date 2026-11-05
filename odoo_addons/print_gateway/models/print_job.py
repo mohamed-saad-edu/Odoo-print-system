@@ -19,7 +19,7 @@ from ..runtime_clock import db_now_utc
 from ..pos_retry_policy import is_stale_pos_operation
 from ..idempotency_namespace import wire_key, deployment_proof
 from ..runtime_policy import inventory_has_shared_printer, is_exact_gateway_printer_id, is_exact_gateway_job_id
-from ..print_output import gateway_output_values, validated_file_output
+from ..print_output import gateway_output_values
 
 
 _logger = logging.getLogger(__name__)
@@ -81,12 +81,7 @@ class PrintGatewayJob(models.Model):
         ("printed", "Physically verified printed"),
         ("unknown", "Physical output not verified"),
     ], compute="_compute_physical_outcome")
-    output_medium = fields.Selection([("physical", "Physical printer"), ("file", "PDF file")], readonly=True, copy=False)
-    output_outcome = fields.Selection([
-        ("pending", "File output pending"), ("file_created", "PDF file created and verified"),
-        ("not_created", "File not created"), ("unknown", "File output not verified"),
-    ], readonly=True, copy=False)
-    output_evidence = fields.Json(string="Verified file artifact", readonly=True, copy=False)
+    output_medium = fields.Selection([("physical", "Physical printer")], readonly=True, copy=False)
     # v4 (WP2): Gateway-derived submission state for physical jobs:
     # 'submitted' (spooler/IPP accepted, output unverified), 'completed'
     # (spooler-confirmed via a post-submission query — NOT paper proof),
@@ -138,7 +133,7 @@ class PrintGatewayJob(models.Model):
     customer_status = fields.Selection([
         ("waiting", "Waiting"), ("processing", "Processing"),
         ("sent_to_printer", "Sent for printing"), ("needs_review", "Needs review"),
-        ("failed_before_output", "Failed before output"), ("file_created", "File created"),
+        ("failed_before_output", "Failed before output"),
     ], string="Print status", compute="_compute_customer_presentation", compute_sudo=False)
     source_model = fields.Char(readonly=True)
     source_record_id = fields.Integer(readonly=True)
@@ -147,13 +142,13 @@ class PrintGatewayJob(models.Model):
     write_date = fields.Datetime(readonly=True)
     completed_at = fields.Datetime(readonly=True)
 
-    @api.depends("status", "physical_outcome", "output_medium", "output_outcome", "last_error")
+    @api.depends("status", "physical_outcome", "last_error")
     @api.depends_context("lang")
     def _compute_customer_presentation(self):
         from ..customer_presentation import customer_error_message, job_customer_state
         for job in self:
             job.customer_status = job_customer_state(
-                job.status, job.physical_outcome, job.output_medium, job.output_outcome,
+                job.status, job.physical_outcome,
             )
             job.customer_issue = customer_error_message(
                 job.env._,
@@ -214,7 +209,7 @@ class PrintGatewayJob(models.Model):
         )
         if not self.env.cr.fetchone():
             raise ValidationError(_("Print job no longer exists."))
-        job.invalidate_recordset(["status", "gateway_job_id", "last_error", "completed_at", "output_medium", "output_outcome", "output_evidence"])
+        job.invalidate_recordset(["status", "gateway_job_id", "last_error", "completed_at", "output_medium"])
 
     def _mark_gateway_job_missing(self, job, message):
         """Mark a missing Gateway job unknown without clobbering a newer state."""
@@ -452,22 +447,13 @@ class PrintGatewayJob(models.Model):
             "idempotency_key", "gateway_idempotency_version", "gateway_wire_idempotency_key", "gateway_installation_id",
             "source_model", "source_record_id", "report_id",
             "gateway_job_id",
-            "output_medium", "output_outcome", "output_evidence",
+            "output_medium",
         }
         if routing_fields.intersection(vals) and not self.env.is_superuser():
             raise AccessError(_("Print job routing and content may only be changed by the trusted print service."))
-        if "output_evidence" in vals:
-            candidate = validated_file_output(vals["output_evidence"])
-            if vals["output_evidence"] and not candidate:
-                raise ValidationError(_("The file output evidence is invalid."))
-            for job in self:
-                if job.output_evidence and job.output_evidence != candidate:
-                    raise ValidationError(_("A verified file artifact is immutable for its original operation."))
         for job in self:
             if "output_medium" in vals and job.output_medium and vals["output_medium"] != job.output_medium:
                 raise ValidationError(_("A print operation's output medium cannot change."))
-            if "output_outcome" in vals and job.output_outcome == "file_created" and vals["output_outcome"] != "file_created":
-                raise ValidationError(_("A verified file artifact is immutable for its original operation."))
         # Even sudo cannot silently remap an already accepted business intent
         # into a fresh namespace; clone/restore requires operator reconciliation.
         snapshots = {"gateway_idempotency_version", "gateway_wire_idempotency_key", "gateway_installation_id"}
@@ -1005,7 +991,7 @@ class PrintGatewayJob(models.Model):
             job.invalidate_recordset([
                 "status", "gateway_job_id", "attempts", "last_error",
                 "next_retry_at", "completed_at", "submit_claim_token",
-                "submit_claimed_at", "output_medium", "output_outcome", "output_evidence",
+                "submit_claimed_at", "output_medium",
             ])
             return True
         finally:

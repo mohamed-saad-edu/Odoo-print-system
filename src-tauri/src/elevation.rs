@@ -5,16 +5,27 @@
 //! `enforce_administrator_or_exit` is the FIRST statement of `main()`:
 //! before the single-instance mutex, before logging, before the tray,
 //! and before any Tauri setup. A non-elevated launch shows one native
-//! dialog with a single "Close Application" button and the process
-//! exits as soon as it is dismissed — nothing else has started, so
-//! there is no tray, listener, or background work to clean up.
+//! dialog whose single action is "Restart as Administrator": choosing
+//! it launches an elevated copy (UAC prompt) and this process exits
+//! immediately; dismissing the dialog exits without launching anything.
+//! A non-elevated process NEVER continues past this gate — nothing else
+//! has started, so there is no tray, listener, or background work to
+//! clean up.
 
 #[cfg(windows)]
 pub fn enforce_administrator_or_exit() {
     if crate::commands::is_running_as_admin() {
         return;
     }
-    show_admin_required_dialog();
+    if show_admin_required_dialog() {
+        // The user chose "Restart as Administrator": hand off to the
+        // elevated copy and close this one either way. Exit 0 only when
+        // the elevated replacement actually launched.
+        match crate::commands::relaunch_as_admin() {
+            Ok(()) => std::process::exit(0),
+            Err(_) => std::process::exit(1),
+        }
+    }
     std::process::exit(1);
 }
 
@@ -36,8 +47,10 @@ fn wide(text: &str) -> Vec<u16> {
     text.encode_utf16().chain(Some(0)).collect()
 }
 
+/// Shows the administrator-required dialog and returns true only when
+/// the user chose its single action, "Restart as Administrator".
 #[cfg(windows)]
-fn show_admin_required_dialog() {
+fn show_admin_required_dialog() -> bool {
     use std::ffi::c_void;
 
     type HANDLE = *mut c_void;
@@ -95,33 +108,34 @@ fn show_admin_required_dialog() {
 
     const TD_WARNING_ICON: *const u16 = 0xFFFE as *const u16; // MAKEINTRESOURCE(-2)
     const TDF_ALLOW_DIALOG_CANCELLATION: u32 = 0x0008;
-    const CLOSE_BUTTON_ID: i32 = 1001;
+    const RESTART_BUTTON_ID: i32 = 1001;
+    const IDOK: i32 = 1;
     const MB_OK: u32 = 0x0000_0000;
     const MB_ICONWARNING: u32 = 0x0000_0030;
     const MB_SETFOREGROUND: u32 = 0x0001_0000;
 
     let arabic = system_ui_is_arabic();
-    let (instruction, content, close_label) = if arabic {
+    let (instruction, content, restart_label) = if arabic {
         (
             "صلاحيات المسؤول مطلوبة",
-            "لازم تشغّل التطبيق بصلاحيات المسؤول (Run as administrator). من فضلك أغلق التطبيق وافتحه مرة تانية بوضع Administrator.",
-            "إغلاق التطبيق",
+            "لازم تشغّل التطبيق بصلاحيات المسؤول (Run as administrator) عشان يشتغل. اضغط «إعادة الفتح كمسؤول» وهنقفل النسخة دي ونفتح التطبيق من جديد بصلاحيات المسؤول.",
+            "إعادة الفتح كمسؤول",
         )
     } else {
         (
             "Administrator privileges are required",
-            "This application must be run as administrator (Run as administrator). Please close the application and open it again as Administrator.",
-            "Close Application",
+            "This application must be run as administrator (Run as administrator) to work. Choose “Restart as Administrator” and this copy will close and reopen with administrator privileges.",
+            "Restart as Administrator",
         )
     };
     let title = wide("Yaseir Print Manager");
     let instruction = wide(instruction);
     let content = wide(content);
-    let close_label = wide(close_label);
+    let restart_label = wide(restart_label);
 
     let buttons = [TaskDialogButton {
-        n_button_id: CLOSE_BUTTON_ID,
-        psz_button_text: close_label.as_ptr(),
+        n_button_id: RESTART_BUTTON_ID,
+        psz_button_text: restart_label.as_ptr(),
     }];
     let config = TaskDialogConfig {
         cb_size: std::mem::size_of::<TaskDialogConfig>() as u32,
@@ -135,7 +149,7 @@ fn show_admin_required_dialog() {
         psz_content: content.as_ptr(),
         c_buttons: 1,
         p_buttons: buttons.as_ptr(),
-        n_default_button: CLOSE_BUTTON_ID,
+        n_default_button: RESTART_BUTTON_ID,
         c_radio_buttons: 0,
         p_radio_buttons: std::ptr::null(),
         n_default_radio_button: 0,
@@ -159,16 +173,18 @@ fn show_admin_required_dialog() {
         )
     };
     if hr == 0 {
-        return; // Dialog shown and dismissed.
+        return pressed == RESTART_BUTTON_ID;
     }
-    // Fallback: a single-OK-button message box. Dismissing it has the
-    // same effect — the caller exits immediately after this returns.
-    unsafe {
+    // Fallback: a single-OK-button message box whose text states that
+    // OK restarts the application as administrator, so IDOK carries
+    // the same meaning as the task dialog's restart button.
+    let result = unsafe {
         MessageBoxW(
             std::ptr::null_mut(),
             content.as_ptr(),
             title.as_ptr(),
             MB_OK | MB_ICONWARNING | MB_SETFOREGROUND,
-        );
-    }
+        )
+    };
+    result == IDOK
 }

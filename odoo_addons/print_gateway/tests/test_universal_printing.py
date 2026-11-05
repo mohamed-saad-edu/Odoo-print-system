@@ -1,4 +1,4 @@
-"""Native Odoo/PG approved file output, result persistence and current eligibility."""
+"""Native Odoo/PG physical output, result persistence and current eligibility."""
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -15,16 +15,16 @@ from .printer_fixtures import verified_printer
 @tagged("post_install", "-at_install")
 class TestUniversalPrinting(TransactionCase):
     def _printer(self):
-        return verified_printer({"id": "file-printer", "connectionType": "pdf_output", "protocol": "pdf",
+        return verified_printer({"id": "queue-printer", "connectionType": "spooler", "protocol": "spooler",
             "lifecycle": "active", "sharedWithGateway": True, "agent": {"id": "agent-file"}, "deviceClass": "other",
             "capabilities": {"geometry": {"version": 1, "source": "validated_profile", "validation": "configured",
-                "observed_at": "2026-10-24T00:00:00Z", "printer_id": "file-printer", "config_fingerprint": "b" * 64,
+                "observed_at": "2026-10-24T00:00:00Z", "printer_id": "queue-printer", "config_fingerprint": "b" * 64,
                 "paper_width_mm": 210, "paper_height_mm": 297, "printable_width_dots": 2244,
                 "printable_height_dots": 3271, "dpi_x": 300, "dpi_y": 300, "offset_x_dots": 118, "offset_y_dots": 118}}})
 
     def _binding(self):
         return self.env["print_gateway.binding"].new({"company_id": self.env.company.id, "runtime_agent_id": "agent-file",
-            "printer_id": "file-printer", "printer_protocol": "pdf", "destination_type": "pos"})
+            "printer_id": "queue-printer", "printer_protocol": "spooler", "destination_type": "pos"})
 
     def _runtime(self, printer):
         binding = self._binding()
@@ -41,26 +41,25 @@ class TestUniversalPrinting(TransactionCase):
             config = Config.search([("company_id", "=", self.env.company.id)], limit=1) or Config.create({
                 "company_id": self.env.company.id, "gateway_url": "https://fixture.invalid", "gateway_api_key": secrets.token_urlsafe(32)})
         job = self.env["print_gateway.print_job"].sudo().create({"company_id": self.env.company.id, "gateway_config_id": config.id,
-            "printer_id": "file-printer", "destination": "File output test", "document_type": "receipt",
+            "printer_id": "queue-printer", "destination": "Queue output test", "document_type": "receipt",
             "idempotency_key": secrets.token_hex(16), "payload": '{"type":"pdf","encoding":"base64","data":"fixture"}'})
-        job._advance_status(job, "printing", {"gateway_job_id": "remote-file-original", "output_medium": "file"})
+        job._advance_status(job, "printing", {"gateway_job_id": "remote-original", "output_medium": "physical"})
         return job
 
     def _body(self):
-        return {"jobId": "remote-file-original", "status": "success", "outputMedium": "file", "outputOutcome": "file_created",
-                "outputEvidence": {"output_medium": "file", "artifact_id": "file_native_fixture", "sha256": "c" * 64, "page_count": 2, "bytes": 4096}}
+        return {"jobId": "remote-original", "status": "success", "outputMedium": "physical"}
 
-    def test_actual_binding_accepts_verified_file_destination_for_receipt_and_kitchen(self):
+    def test_actual_binding_accepts_verified_spooler_destination_for_receipt_and_kitchen(self):
         printer = self._printer()
-        self.assertEqual(self._runtime(printer)["outputMedium"], "file")
+        self.assertEqual(self._runtime(printer)["outputMedium"], "physical")
         for destination in ("pos", "pos_printer"):
             binding = self._binding()
             binding.destination_type = destination
             self.assertTrue(binding._runtime_printer_accepts_image(printer))
-            self.assertEqual(binding._canonical_runtime_printer_protocol(printer), "pdf")
+            self.assertEqual(binding._canonical_runtime_printer_protocol(printer), "spooler")
             self.assertTrue(binding._validate_binding_protocol_against_runtime(printer))
 
-    def test_missing_or_stale_proof_and_medium_projection_are_advisory(self):
+    def test_missing_or_stale_proof_is_advisory_and_projection_cannot_override_transport(self):
         for mutation in ("pending", "expired", "other-printer"):
             printer = self._printer()
             if mutation == "pending":
@@ -70,20 +69,12 @@ class TestUniversalPrinting(TransactionCase):
             else:
                 printer["capabilities"]["operational_verification"]["printer_id"] = "another-printer"
             with self.subTest(mutation=mutation):
-                self.assertEqual(self._runtime(printer)["outputMedium"], "file")
+                self.assertEqual(self._runtime(printer)["outputMedium"], "physical")
 
         mismatch = self._printer()
-        mismatch["outputMedium"] = "physical"
-        mismatch["printerType"] = "physical"
-        self.assertEqual(self._runtime(mismatch)["connectionType"], "pdf_output")
-        self.assertEqual(self._binding()._canonical_runtime_printer_protocol(mismatch), "pdf")
-
-    def test_file_image_requires_explicit_complete_page_boundaries(self):
-        for key in ("paper_height_mm", "printable_height_dots", "offset_x_dots", "offset_y_dots", "dpi_y"):
-            printer = self._printer()
-            del printer["capabilities"]["geometry"][key]
-            with self.subTest(key=key):
-                self.assertFalse(self._binding()._runtime_printer_accepts_image(printer))
+        mismatch["outputMedium"] = "file"
+        self.assertEqual(self._runtime(mismatch)["connectionType"], "spooler")
+        self.assertEqual(self._binding()._canonical_runtime_printer_protocol(mismatch), "spooler")
 
     def test_gateway_submission_status_never_hides_ambiguous_physical_output(self):
         job = self.env["print_gateway.print_job"]
@@ -108,44 +99,22 @@ class TestUniversalPrinting(TransactionCase):
                 else:
                     self.assertFalse(reason)
 
-    def test_actual_sync_persists_verified_file_without_claiming_physical_print(self):
+    def test_actual_sync_persists_physical_success_without_claiming_physical_print(self):
         job, body = self._job(), self._body()
         self.assertTrue(job._apply_synced_status(job, body))
         job.flush_recordset()
         job.invalidate_recordset()
         self.assertEqual(job.status, "success")
-        self.assertEqual(job.output_evidence, body["outputEvidence"])
-        self.assertEqual(job.output_outcome, "file_created")
+        self.assertEqual(job.output_medium, "physical")
         self.assertEqual(job.physical_outcome, "unknown")
         result = self.env["print_gateway.print_router"]._durable_submission_outcome(job)
         self.assertEqual(result["gateway_job_id"], body["jobId"])
-        self.assertEqual(result["outputEvidence"], body["outputEvidence"])
-        self.assertIn("file", result["message"].lower())
-        self.assertNotIn("paper", result["message"].lower())
+        self.assertNotIn("outputEvidence", result)
 
-    def test_verified_file_result_cannot_be_replaced_or_erased(self):
-        job, body = self._job(), self._body()
-        job._apply_synced_status(job, body)
-        changed = deepcopy(body)
-        changed["outputEvidence"]["sha256"] = "d" * 64
-        with self.assertRaises(ValueError):
-            job._apply_synced_status(job, changed)
-        for values in ({"output_evidence": False}, {"output_medium": "physical"}, {"output_outcome": "unknown"}):
-            with self.subTest(values=values), self.assertRaises(ValidationError):
-                job.write(values)
-        self.assertEqual(job.output_evidence, body["outputEvidence"])
-
-    def test_invalid_file_evidence_never_becomes_verified(self):
-        job, body = self._job(), self._body()
-        body["outputEvidence"]["path"] = "/private/forbidden.pdf"
-        job._apply_synced_status(job, body)
-        self.assertEqual(job.output_outcome, "unknown")
-        self.assertFalse(job.output_evidence)
-
-    def test_ordinary_company_user_cannot_forge_file_result(self):
+    def test_ordinary_company_user_cannot_forge_output_result(self):
         job = self._job()
-        user = self.env["res.users"].create({"name": "File evidence viewer", "login": "file-proof-" + secrets.token_hex(8),
+        user = self.env["res.users"].create({"name": "Output result viewer", "login": "output-proof-" + secrets.token_hex(8),
             "company_id": self.env.company.id, "company_ids": [(6, 0, self.env.company.ids)],
             "group_ids": [(6, 0, [self.env.ref("base.group_user").id])]})
         with self.assertRaises(AccessError):
-            job.with_user(user).write({"output_evidence": self._body()["outputEvidence"], "output_outcome": "file_created"})
+            job.with_user(user).write({"output_medium": "physical"})

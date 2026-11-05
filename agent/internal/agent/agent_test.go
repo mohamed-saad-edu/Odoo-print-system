@@ -171,8 +171,6 @@ func (f *fakePrinter) VerifyOperational(ctx context.Context, pc config.PrinterCo
 		method = "usb_interface"
 	case "ipp", "ipps":
 		method, strength = "ipp_attributes", "service"
-	case "pdf_output":
-		method, strength, medium = "pdf_output", "service", "file"
 	case "network":
 		if pc.NormalizedProtocolOrUnknown() == "ipp" || pc.NormalizedProtocolOrUnknown() == "ipps" {
 			method, strength = "ipp_attributes", "service"

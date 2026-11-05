@@ -64,10 +64,9 @@ func PayloadCompatibleForDevice(plType, plProtocol string, d TransportFacts) (bo
 	// driver-backed Windows queue. Legacy USB-backed spooler records stay
 	// valid (normally normalized to connection=spooler at registration).
 	physicalSpooler := conn == "spooler" || (conn == "usb" && proto == "spooler")
-	filePDF := conn == "pdf_output" && proto == "pdf"
 	physicalPDF := physicalSpooler || conn == "ipp" || conn == "ipps" ||
-		(conn == "network" && (proto == "ipp" || proto == "ipps")) || filePDF
-	physicalImage := physicalSpooler || ((conn == "network" || conn == "usb") && proto == "escpos") || filePDF
+		(conn == "network" && (proto == "ipp" || proto == "ipps"))
+	physicalImage := physicalSpooler || ((conn == "network" || conn == "usb") && proto == "escpos")
 	physicalByteProtocol := func(protocol string) bool {
 		if physicalSpooler {
 			return protocol == "raw" || protocol == "escpos"
@@ -109,7 +108,7 @@ func PayloadCompatibleForDevice(plType, plProtocol string, d TransportFacts) (bo
 			return false, "pdf payloads cannot specify a printer protocol"
 		}
 		if !physicalPDF {
-			return false, "pdf requires spooler, IPP, or approved PDF output transport"
+			return false, "pdf requires spooler or IPP transport"
 		}
 		// Spooler/IPP is itself a document-capable transport. An explicit
 		// capability list is additive here and must not remove that baseline.
@@ -120,12 +119,6 @@ func PayloadCompatibleForDevice(plType, plProtocol string, d TransportFacts) (bo
 		}
 		if !physicalImage {
 			return false, "image payload not supported by printer"
-		}
-		if filePDF {
-			if !d.Geometry.PhysicalPageImageReady() {
-				return false, "file image output requires full measured page geometry and both DPI axes"
-			}
-			return true, ""
 		}
 		if physicalSpooler {
 			if !d.Geometry.PhysicalImageReady() {
@@ -213,13 +206,9 @@ func SupportedProtocolsForDevice(d TransportFacts) []string {
 	}
 	switch family {
 	case "pdf":
-		if conn != "pdf_output" {
-			return []string{}
-		}
-		if d.Geometry.PhysicalPageImageReady() {
-			return []string{"pdf", "image"}
-		}
-		return []string{"pdf"}
+		// A "pdf" protocol family has no physical transport: PDF is a
+		// document type delivered over spooler/IPP, never a wire protocol.
+		return []string{}
 	case "escpos":
 		if rasterGeometryReady(d.Geometry) {
 			return []string{"escpos", "image"}

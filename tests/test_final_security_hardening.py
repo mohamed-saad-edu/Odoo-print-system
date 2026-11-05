@@ -614,10 +614,9 @@ def test_agent_terminal_physical_result_is_fenced_when_sqlite_terminalization_fa
     assert "terminalExecution map[string]terminalExecutionResult" in agent
     # A failed attempt can still have crossed the Windows StartDoc* side-effect boundary;
     # preserve that spooler identity so reconnect/reconciliation never loses the evidence.
-    assert 'rememberTerminalOutput(jobID, "failed", failureMsg, claimToken, spoolerJobID, statusTransport, nil)' in agent
-    assert 'rememberTerminalOutput(jobID, "success", "", claimToken, spoolerJobID, statusTransport, outputEvidence)' in agent
+    assert 'rememberTerminalOutput(jobID, "failed", failureMsg, claimToken, spoolerJobID, statusTransport)' in agent
+    assert 'rememberTerminalOutput(jobID, "success", "", claimToken, spoolerJobID, statusTransport)' in agent
     assert re.search(r"spoolerJobID\s+string", agent)
-    assert "outputEvidence: cloneOutputEvidence(output)" in agent
     assert "already has a process-local terminal physical result; refusing duplicate dispatch" in agent
     assert "TestPhysicalSuccessWithTerminalLedgerWriteFailureCannotReprint" in tests
 

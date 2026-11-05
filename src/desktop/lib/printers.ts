@@ -440,7 +440,6 @@ export function humanType(p: PrinterInfo, locale: Locale = DEFAULT_LOCALE): stri
 export function humanConnection(p: PrinterInfo, locale: Locale = DEFAULT_LOCALE): string {
   const c = (p.connection_type || p.connectionType || "").toLowerCase();
   const proto = (p.protocol || "").toLowerCase();
-  if (c === "pdf_output" && proto === "pdf") return tr(locale, "printer.verification.file");
   if (c === "spooler" || proto === "spooler") return tr(locale, "desktop.connection.spooler");
   if (c === "usb") return tr(locale, "desktop.connection.usb");
   if (c === "ipp" || c === "ipps" || proto === "ipp" || proto === "ipps") return tr(locale, "desktop.connection.ipp");

@@ -62,12 +62,8 @@ describe("submission state derivation", () => {
     })).toBe("unknown");
   });
 
-  it("yields no submission state for non-success or file-output jobs", () => {
+  it("yields no submission state for non-success jobs", () => {
     expect(deriveSubmissionState("failed", "physical", null)).toBeNull();
     expect(deriveSubmissionState("queued", "physical", null)).toBeNull();
-    expect(deriveSubmissionState("success", "file", null)).toBeNull();
-    expect(deriveSubmissionState("success", "file", {
-      verificationSource: "query", windowsJobStatus: ["PRINTED"],
-    })).toBeNull();
   });
 });

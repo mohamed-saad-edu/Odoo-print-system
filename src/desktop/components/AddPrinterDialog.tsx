@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Plus } from "lucide-react";
+import { Plus, RefreshCw } from "lucide-react";
 import {
   Button,
   Modal,
@@ -14,7 +14,7 @@ import { agentLiveView, applySpoolerSelection, errMsg, friendlyGatewayError, isP
 import UpgradeLimitDialog, { type UpgradeLimitResource } from "../../components/UpgradeLimitDialog";
 import { useI18n } from "../../i18n/react";
 
-type Conn = "spooler" | "network" | "usb" | "ipp" | "ipps" | "pdf_output";
+type Conn = "spooler" | "network" | "usb" | "ipp" | "ipps";
 
 export function AddPrinterDialog({
   open,
@@ -22,12 +22,18 @@ export function AddPrinterDialog({
   onSuccess,
   printers,
   gatewayUrl,
+  onDiscoverRequest,
 }: {
   open: boolean;
   onClose: () => void;
   onSuccess: () => void;
   printers: PrinterInfo[];
   gatewayUrl: string;
+  /** Runs a fresh Windows-printer discovery on the local Agent and
+   * refreshes the inventories this dialog reads. The dialog triggers it
+   * automatically when opened with an empty picker, so a fresh install
+   * never opens onto a "type the exact queue name" fallback. */
+  onDiscoverRequest?: () => Promise<void>;
 }) {
   const { t, locale } = useI18n();
   const [name, setName] = useState("");
@@ -38,7 +44,14 @@ export function AddPrinterDialog({
   // the Select value: two queues on different servers may share a name.
   const [spoolerSearch, setSpoolerSearch] = useState("");
   const [pickedSpooler, setPickedSpooler] = useState<PrinterInfo | null>(null);
-  const [outputProfileId, setOutputProfileId] = useState("");
+  // In-dialog discovery: opening the dialog with an empty picker runs a
+  // fresh scan automatically (once per open). Typing a queue name from
+  // memory is an explicit last resort behind "enter manually", never
+  // the default face of the dialog.
+  const [discovering, setDiscovering] = useState(false);
+  const [discoverError, setDiscoverError] = useState<string | null>(null);
+  const [manualSpoolerEntry, setManualSpoolerEntry] = useState(false);
+  const autoDiscoverTried = useRef(false);
   const [spoolerRaw, setSpoolerRaw] = useState(false);
   const [spoolerEscpos, setSpoolerEscpos] = useState(false);
   const [host, setHost] = useState("");
@@ -175,13 +188,40 @@ export function AddPrinterDialog({
     ? validateTypedSpoolerNameAgainst(spoolerName, physicalSpoolers, mismatchSpoolers)
     : null;
 
+  const runDiscover = async () => {
+    if (!onDiscoverRequest || discovering) return;
+    setDiscovering(true);
+    setDiscoverError(null);
+    try {
+      await onDiscoverRequest();
+    } catch (e) {
+      setDiscoverError(errMsg(e));
+    } finally {
+      setDiscovering(false);
+    }
+  };
+
+  // Auto-discover once per dialog open when the picker would otherwise
+  // be empty. The guard ref (not state) keeps the effect idempotent
+  // under StrictMode double-invocation; it resets when the dialog
+  // closes so the next open scans again.
+  useEffect(() => {
+    if (!open) {
+      autoDiscoverTried.current = false;
+      return;
+    }
+    if (conn !== "spooler" || physicalSpoolers.length > 0 || autoDiscoverTried.current) return;
+    autoDiscoverTried.current = true;
+    void runDiscover();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, conn, physicalSpoolers.length]);
+
   const validate = (): string | null => {
     if (!gatewayUrl) return t("desktop.add.gatewayUrlMissing");
     if (!currentAgentId) return t("desktop.add.selectAgent");
     if (!name.trim()) return t("desktop.add.nameRequired");
     if (conn === "spooler" && !spoolerName.trim())
       return t("desktop.add.spoolerRequired");
-    if (conn === "pdf_output" && !/^[A-Za-z0-9_-]{1,64}$/.test(outputProfileId.trim())) return t("printer.verification.invalidProfile");
     if (conn === "network") {
       if (!host.trim()) return t("desktop.add.hostRequired");
       if (host.includes(" ")) return t("desktop.add.hostInvalid");
@@ -217,7 +257,8 @@ export function AddPrinterDialog({
     setSpoolerName("");
     setSpoolerSearch("");
     setPickedSpooler(null);
-    setOutputProfileId("");
+    setManualSpoolerEntry(false);
+    setDiscoverError(null);
     setSpoolerRaw(false);
     setSpoolerEscpos(false);
     setIppUrl("");
@@ -250,9 +291,6 @@ export function AddPrinterDialog({
     setError(null);
     try {
       const req: RegisterPrinterRequest = { name: name.trim(), connectionType: conn };
-      if (conn === "pdf_output") {
-        req.protocol = "pdf"; req.printerType = "file"; req.outputProfileId = outputProfileId.trim();
-      }
       if (conn === "spooler") {
         req.spoolerName = spoolerName.trim();
         req.endpoint = spoolerName.trim();
@@ -412,12 +450,8 @@ export function AddPrinterDialog({
             <option value="usb">{t("desktop.connection.usb")}</option>
             <option value="ipp">{t("desktop.connection.ipp")}</option>
             <option value="ipps">IPPS</option>
-            <option value="pdf_output">{t("printer.verification.file")}</option>
           </Select>
         </Field>
-        {conn === "pdf_output" && <Field label={t("printer.verification.profileId")} htmlFor="pp-output-profile" hint={t("printer.verification.profileHelp")}>
-          <Input id="pp-output-profile" value={outputProfileId} maxLength={64} onChange={event => setOutputProfileId(event.target.value)} />
-        </Field>}
         {conn === "spooler" && (
           <>
             {physicalSpoolers.length > 0 && (
@@ -429,35 +463,73 @@ export function AddPrinterDialog({
                 aria-label={t("desktop.add.spoolerSearchAria")}
               />
             )}
-            <Field
-              label={t("desktop.add.spoolerPrinter")}
-              htmlFor="pp-spooler"
-              hint={
-                physicalSpoolers.length === 0
-                  ? t("desktop.add.manualFallbackHint")
-                  : t("desktop.add.onlyPhysicalListed")
-              }
-            >
-              {physicalSpoolers.length > 0 ? <Select
-                id="pp-spooler"
-                value={pickedSpooler?.id ?? ""}
-                onChange={(e) => handleSpoolerPick(e.target.value)}
+            {physicalSpoolers.length > 0 ? (
+              <Field
+                label={t("desktop.add.spoolerPrinter")}
+                htmlFor="pp-spooler"
+                hint={t("desktop.add.onlyPhysicalListed")}
               >
-                <option value="">{t("desktop.add.selectEllipsis")}</option>
-                {displayedSpoolers.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {spoolerRowLabel(p, locale)}
-                  </option>
-                ))}
-              </Select> : (
+                <Select
+                  id="pp-spooler"
+                  value={pickedSpooler?.id ?? ""}
+                  onChange={(e) => handleSpoolerPick(e.target.value)}
+                >
+                  <option value="">{t("desktop.add.selectEllipsis")}</option>
+                  {displayedSpoolers.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {spoolerRowLabel(p, locale)}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+            ) : discovering ? (
+              <Field
+                label={t("desktop.add.spoolerPrinter")}
+                htmlFor="pp-spooler"
+                hint={t("desktop.add.searchingPrinters")}
+              >
+                <Input
+                  id="pp-spooler"
+                  disabled
+                  value=""
+                  placeholder={t("desktop.add.searchingPrinters")}
+                />
+              </Field>
+            ) : manualSpoolerEntry ? (
+              <Field
+                label={t("desktop.add.spoolerPrinter")}
+                htmlFor="pp-spooler"
+                hint={t("desktop.add.manualFallbackHint")}
+              >
                 <Input
                   id="pp-spooler"
                   value={spoolerName}
                   onChange={(e) => { setSpoolerName(e.target.value); }}
                   placeholder={t("desktop.add.typeWindowsName")}
                 />
-              )}
-            </Field>
+              </Field>
+            ) : (
+              <div className="space-y-3 rounded-md border border-control p-3">
+                <p className="text-sm text-ink-3">
+                  {discoverError ? t("desktop.add.discoveryFailedHint") : t("desktop.add.noPrintersFoundYet")}
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  <Button variant="secondary" size="sm" onClick={() => void runDiscover()} icon={<RefreshCw className="h-4 w-4" />}>
+                    {t("desktop.add.searchAgain")}
+                  </Button>
+                  <Button variant="ghost" size="sm" onClick={() => setManualSpoolerEntry(true)}>
+                    {t("desktop.add.enterNameManually")}
+                  </Button>
+                </div>
+              </div>
+            )}
+            {physicalSpoolers.length > 0 && (
+              <div className="flex justify-end">
+                <Button variant="ghost" size="sm" onClick={() => void runDiscover()} loading={discovering} icon={<RefreshCw className="h-4 w-4" />}>
+                  {t("desktop.add.searchAgain")}
+                </Button>
+              </div>
+            )}
             {physicalSpoolers.length > 0 && filteredSpoolers.length === 0 && (
               <p className="text-sm text-ink-3">{t("desktop.add.spoolerSearchNoMatches")}</p>
             )}
@@ -471,13 +543,13 @@ export function AddPrinterDialog({
                 {t("desktop.add.spoolerStatus")}: {(pickedSpooler.status || "").trim() || t("common.notAvailable")}
               </p>
             )}
-            {typedSpoolerCheck && typedSpoolerCheck.status === "unknown" && spoolerName.trim() && (
+            {manualSpoolerEntry && typedSpoolerCheck && typedSpoolerCheck.status === "unknown" && spoolerName.trim() && (
               <p className="text-sm text-ink-3">{t("desktop.add.typedNameUnknownWarning")}</p>
             )}
-            {typedSpoolerCheck && typedSpoolerCheck.status === "agent_mismatch" && typedSpoolerCheck.suggestion && (
+            {manualSpoolerEntry && typedSpoolerCheck && typedSpoolerCheck.status === "agent_mismatch" && typedSpoolerCheck.suggestion && (
               <p className="text-sm text-ink-3">{t("desktop.add.typedNameAgentMismatchWarning", { name: typedSpoolerCheck.suggestion })}</p>
             )}
-            {typedSpoolerCheck && typedSpoolerCheck.status === "near_miss" && typedSpoolerCheck.suggestion && (
+            {manualSpoolerEntry && typedSpoolerCheck && typedSpoolerCheck.status === "near_miss" && typedSpoolerCheck.suggestion && (
               <p className="flex flex-wrap items-center gap-2 text-sm text-ink-3">
                 <span>{t("desktop.add.typedNameNearMissWarning", { name: typedSpoolerCheck.suggestion })}</span>
                 <Button variant="ghost" size="sm" onClick={() => setSpoolerName(typedSpoolerCheck.suggestion)}>{typedSpoolerCheck.suggestion}</Button>

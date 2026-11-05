@@ -490,7 +490,6 @@ class PrintGatewayRouter(models.AbstractModel):
     def _durable_submission_outcome(self, job, message=None):
         """Expose persisted evidence, never infer safe retry from an RPC error."""
         status = job.status
-        file_output = getattr(job, "output_medium", False) == "file"
         uncertain = (
             status not in ("queued", "submitted", "claimed", "printing", "success", "failed")
             # An admitted job can fail after delivering bytes without a
@@ -509,15 +508,6 @@ class PrintGatewayRouter(models.AbstractModel):
             message = message or _("Queued")
         else:
             message = message or self._submission_message(job.id, status)
-        if file_output:
-            if getattr(job, "output_outcome", False) == "file_created":
-                message = _("PDF file created and verified by the approved output backend.")
-            elif uncertain:
-                message = _("PDF file output is unconfirmed. Check Print Activity and the approved output destination before retrying.")
-            elif status == "failed":
-                message = _("PDF file output failed. See Print Activity before retrying.")
-            else:
-                message = _("PDF file output accepted; file creation is not yet verified.")
         return {
             "status": status,
             "outcome": (
@@ -527,8 +517,6 @@ class PrintGatewayRouter(models.AbstractModel):
             "can_retry": status == "failed" and not uncertain,
             "gateway_job_id": job.gateway_job_id or False,
             "message": message,
-            **({"outputMedium": "file", "outputOutcome": job.output_outcome or "unknown",
-                "outputEvidence": job.output_evidence or None} if file_output else {}),
         }
 
     @api.model

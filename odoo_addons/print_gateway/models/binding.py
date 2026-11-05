@@ -9,7 +9,7 @@ from . import gateway_http as requests
 from odoo import api, fields, models, _
 from odoo.exceptions import AccessError, ValidationError
 from ..runtime_policy import is_gateway_shared_printer, is_exact_gateway_printer_id, is_exact_gateway_agent_id, unambiguous_inventory_rows
-from ..printer_geometry import validated_printer_geometry, validated_page_geometry
+from ..printer_geometry import validated_printer_geometry
 
 _logger = logging.getLogger(__name__)
 
@@ -168,7 +168,6 @@ class PrintGatewayBinding(models.Model):
         ("spooler", "Windows/macOS Document Spool (driver-rendered)"),
         ("ipp", "IPP"),
         ("ipps", "IPP over TLS"),
-        ("pdf", "Approved PDF file output"),
         ("unknown", "Not declared (not routable)"),
     ], string="Printer Protocol", required=True,
        help="Hardware control language the printer ACTUALLY understands. "
@@ -446,8 +445,6 @@ class PrintGatewayBinding(models.Model):
             # pass-through modes; binding capability validation decides which
             # protocols are allowed for the selected queue.
             return "spooler"
-        if connection_type == "pdf_output" and protocol == "pdf":
-            return "pdf"
         if connection_type in ("ipp", "ipps"):
             return connection_type
         if connection_type not in ("network", "usb"):
@@ -472,10 +469,6 @@ class PrintGatewayBinding(models.Model):
             # route separately requires a full physical geometry snapshot.
             return conn in ("spooler", "windows_spooler", "usb")
         caps = printer.get("capabilities")
-        if conn == "pdf_output" and proto == "pdf":
-            return bool(validated_page_geometry(
-                caps.get("geometry") if isinstance(caps, dict) else None, printer.get("id"),
-            ))
         geometry = validated_printer_geometry(
             caps.get("geometry") if isinstance(caps, dict) else None, printer.get("id"),
         )
@@ -851,9 +844,9 @@ class PrintGatewayBinding(models.Model):
         # mirroring the Gateway physicalImage rule in src/lib/routing.ts and
         # the pre-dispatch failover parity in print_job (raster_jpeg allows
         # spooler/escpos). Direct stream protocols (raw) remain excluded.
-        if payload_type == "pdf" and binding.printer_protocol not in ("spooler", "ipp", "ipps", "pdf"):
+        if payload_type == "pdf" and binding.printer_protocol not in ("spooler", "ipp", "ipps"):
             raise ValidationError(_("The explicitly selected print binding is not capable of document printing."))
-        if payload_type == "raster_jpeg" and binding.printer_protocol not in ("spooler", "escpos", "pdf"):
+        if payload_type == "raster_jpeg" and binding.printer_protocol not in ("spooler", "escpos"):
             raise ValidationError(_("The explicitly selected print binding is not capable of document printing."))
         return binding
 

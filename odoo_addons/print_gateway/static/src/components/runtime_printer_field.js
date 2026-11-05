@@ -5,7 +5,7 @@ import { registry } from "@web/core/registry";
 import { rpc } from "@web/core/network/rpc";
 import { _t } from "@web/core/l10n/translation";
 import { startRpcWithDeadline } from "../js/async_control";
-import { validatedReceiptGeometry, validatedPageGeometry } from "../js/printer_geometry";
+import { validatedReceiptGeometry } from "../js/printer_geometry";
 
 let runtimePrinterFieldInstance = 0;
 
@@ -33,7 +33,7 @@ export class RuntimePrinterField extends Component {
                         <t t-esc="isolateIdentifier(props.record.data[props.name])"/> (<t t-esc="labels.savedUnavailable"/>)
                     </option>
                     <option t-foreach="filteredPrinters" t-as="printer" t-key="printer.id" t-att-value="printer.id" t-att-selected="printer.id === props.record.data[props.name]">
-                        <t t-esc="printer.name"/> [<t t-esc="printer.outputMedium === 'file' ? labels.fileOutput : deviceClassLabel(printer.deviceClass)"/>] — <t t-esc="statusLabel(printer)"/><t t-if="printer.freshness === 'stale'"> · <t t-esc="labels.stale"/></t>
+                        <t t-esc="printer.name"/> [<t t-esc="deviceClassLabel(printer.deviceClass)"/>] — <t t-esc="statusLabel(printer)"/><t t-if="printer.freshness === 'stale'"> · <t t-esc="labels.stale"/></t>
                     </option>
                     <option t-if="!state.loading &amp;&amp; !state.error &amp;&amp; state.agentId &amp;&amp; !filteredPrinters.length &amp;&amp; !configuredPrinterMissing" value="" disabled="disabled"><t t-esc="emptyMessage"/></option>
                 </select>
@@ -64,7 +64,6 @@ export class RuntimePrinterField extends Component {
             retry: _t("Retry"),
             savedUnavailable: _t("saved / currently unavailable"),
             genericClass: _t("generic"),
-            fileOutput: _t("PDF file output"),
             classThermal: _t("thermal"),
             classLaser: _t("laser"),
             classInkjet: _t("inkjet"),
@@ -140,9 +139,6 @@ export class RuntimePrinterField extends Component {
                 const capabilities = p.capabilities;
                 const geometry = validatedReceiptGeometry(capabilities?.geometry, p.id);
                 if (!geometry) return false;
-                if (connectionType === "pdf_output" && protocol === "pdf" && p.printerType === "file") {
-                    return Boolean(validatedPageGeometry(geometry, p.id));
-                }
                 if (connectionType === "spooler" || connectionType === "windows_spooler"
                     || (connectionType === "usb" && ["spooler", "windows_spooler"].includes(protocol))) {
                     return Object.hasOwn(geometry, "paper_width_mm");
@@ -292,8 +288,7 @@ export class RuntimePrinterField extends Component {
                 // operator hand-corrects Advanced protocol.
                 const normConnectionType = connectionType === "windows_spooler" ? "spooler" : connectionType;
                 const normProtocol = protocol === "windows_spooler" && normConnectionType === "spooler" ? "spooler" : protocol;
-                const declared = connectionType === "pdf_output" && normProtocol === "pdf" && found.printerType === "file" ? "pdf"
-                    : ["spooler", "ipp", "ipps", "escpos", "zpl", "tspl", "raw"].includes(normProtocol)
+                const declared = ["spooler", "ipp", "ipps", "escpos", "zpl", "tspl", "raw"].includes(normProtocol)
                     ? normProtocol
                     : ["spooler", "ipp", "ipps"].includes(normConnectionType)
                         ? normConnectionType

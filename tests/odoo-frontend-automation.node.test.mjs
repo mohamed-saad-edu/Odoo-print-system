@@ -75,7 +75,6 @@ test("mock verification uses native queue/service/device proof instead of claimi
     ["network-native", "network", "escpos", "snmp_printer", "device"],
     ["usb-native", "usb", "escpos", "usb_interface", "device"],
     ["ipp-native", "ipp", "ipp", "ipp_attributes", "service"],
-    ["file-native", "pdf_output", "pdf", "pdf_output", "service"],
   ]) {
     const printer = verifiedPrinter({ id, connectionType, protocol, capabilities: { geometry: receiptGeometry(384, 203, id) } });
     const proof = printer.capabilities.operational_verification;

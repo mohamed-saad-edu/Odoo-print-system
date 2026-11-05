@@ -47,9 +47,7 @@ def validated_operational_verification(value, printer, now=None):
     connection = str(printer.get("connectionType") or "").strip().lower()
     protocol = str(printer.get("protocol") or "").strip().lower()
     method = None
-    if connection == "pdf_output" and protocol == "pdf":
-        method = "pdf_output"
-    elif connection == "spooler" and protocol in ("spooler", "windows_spooler"):
+    if connection == "spooler" and protocol in ("spooler", "windows_spooler"):
         method = "windows_queue"
     elif connection in ("ipp", "ipps") or (connection == "network" and protocol in ("ipp", "ipps")):
         method = "ipp_attributes"
@@ -63,12 +61,11 @@ def validated_operational_verification(value, printer, now=None):
         "ipp_attributes": "service",
         "usb_interface": "device",
         "snmp_printer": "device",
-        "pdf_output": "service",
     }
     if (not method or value["method"] != method
             or value["identity_strength"] != method_strength[method]
             or ("physical_device_key" in value and method_strength[method] != "device")
-            or value["output_medium"] != ("file" if method == "pdf_output" else "physical")):
+            or value["output_medium"] != "physical"):
         return None
     current = now or datetime.now(timezone.utc)
     current_ms = int(current.timestamp() * 1000)
@@ -85,8 +82,6 @@ def is_verified_runtime_printer(printer, now=None):
     capabilities = printer.get("capabilities")
     proof = validated_operational_verification(capabilities.get("operational_verification") if isinstance(capabilities, dict) else None, printer, current)
     if not proof or printer.get("outputMedium") != proof["output_medium"]:
-        return False
-    if (proof["output_medium"] == "file") != (printer.get("printerType") == "file"):
         return False
     verified = utc_timestamp(printer.get("verificationVerifiedAt"))
     received = utc_timestamp(printer.get("verificationReceivedAt"))

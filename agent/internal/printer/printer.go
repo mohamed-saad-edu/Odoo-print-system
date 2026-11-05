@@ -59,7 +59,6 @@ type DeviceInfo struct {
 	ConnectionType    string                 `json:"connectionType"`            // tcp/usb/spooler/ipp/virtual
 	Protocol          string                 `json:"protocol"`                  // raw/escpos/ipp/spooler/windows_spooler
 	Endpoint          string                 `json:"endpoint,omitempty"`        // ip:port or device path
-	OutputProfileID   string                 `json:"outputProfileId,omitempty"` // opaque locally authorized PDF profile
 	SpoolerName       string                 `json:"spoolerName,omitempty"`     // Windows spooler name
 	SpoolerServer     string                 `json:"spoolerServer,omitempty"`
 	SpoolerPort       string                 `json:"spoolerPort,omitempty"`

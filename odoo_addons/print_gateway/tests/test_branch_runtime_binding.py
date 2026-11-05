@@ -76,7 +76,6 @@ class TestBranchRuntimeBinding(TransactionCase):
             ("ipp", "ipp", "ipp_attributes", "service"),
             ("usb", "escpos", "usb_interface", "device"),
             ("network", "escpos", "snmp_printer", "device"),
-            ("pdf_output", "pdf", "pdf_output", "service"),
         )
         for connection, protocol, method, strength in transports:
             with self.subTest(connection=connection, protocol=protocol):

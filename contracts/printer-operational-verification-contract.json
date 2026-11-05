@@ -20,8 +20,7 @@
     "windows_queue",
     "ipp_attributes",
     "usb_interface",
-    "snmp_printer",
-    "pdf_output"
+    "snmp_printer"
   ],
   "identityStrengths": [
     "queue",
@@ -29,20 +28,16 @@
     "device"
   ],
   "outputMedia": [
-    "physical",
-    "file"
+    "physical"
   ],
   "logicalIdentity": "In v1 logical_queue_key equals binding_digest: SHA256 of the Agent's canonical execution endpoint. It is scoped to tenant and Agent. IPP UUID identifies a service, never a physical chassis. Explicit verified endpoint changes retain the registration ID and history.",
   "trustBoundary": "Only a successful live Agent probe may produce evidence. Manager input, configured capabilities, status, model names, geometry profiles, and TCP connection success are not operational proof. Gateway accepts evidence only for exact execution ID, current endpoint/protocol, and converged desired state; stores server receipt separately; and gates both timestamps.",
-  "unknownOutcomes": "Eligibility does not authorize reprinting an unknown outcome. Accepted exact durable operations are reconciled before current eligibility without mutation or new submission. Agent repeats operational verification before first bytes or file creation.",
-  "fileOutput": "Only the pdf_output transport/protocol pdf may report output_medium=file. Arbitrary software/virtual spooler queues remain unsupported. A verified local directory establishes availability; each job separately verifies durable output creation.",
-  "fileOutputEvidence": "v3: bounds previously enforced only by printer-operational-verification-fixtures.json fileOutputCases, not stated here. File evidence must satisfy all of: artifact bytes 1-64 MiB; pages an integer 1-10000; artifact_id matching ^[A-Za-z0-9_-]{1,128}$ (v3 correction: an earlier wording required file_<lowercase hex>, but Gateway print-output.ts, Go output_evidence.go and Odoo print_output.py all accept the wider charset, and the agent itself emits bare hex artifact ids — tightening the validators would break deployed agents, so the doc follows the implemented charset); no path traversal (the charset excludes '/' and '.', so ../file.pdf is rejected); SHA-256 lowercase hex (uppercase rejected, trailing newline rejected); output_medium == file; no extra fields beyond the allowlisted evidence keys.",
+  "unknownOutcomes": "Eligibility does not authorize reprinting an unknown outcome. Accepted exact durable operations are reconciled before current eligibility without mutation or new submission. Agent repeats operational verification before first bytes.",
   "jobBinding": "Every new job stores the current verified binding_digest under the printer lock. Claims emit bindingDigest; all claim/execution gates require an exact current match. Missing legacy bindings stay ineligible; accepted terminal replay remains read-only.",
   "methodIdentityStrength": {
     "windows_queue": "queue",
     "ipp_attributes": "service",
     "usb_interface": "device",
-    "snmp_printer": "device",
-    "pdf_output": "service"
+    "snmp_printer": "device"
   }
 }

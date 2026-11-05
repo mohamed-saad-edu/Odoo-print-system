@@ -5,7 +5,6 @@ import { GET as inventory } from "../src/app/api/odoo/printers/route";
 import { POST as submitJob } from "../src/app/api/print/jobs/route";
 import { GET as pollJobs, PATCH as reportStatus } from "../src/app/api/agent/jobs/route";
 import { claimJobForDelivery } from "../src/lib/job-delivery";
-import { cleanupTerminalPrintJobs } from "../src/lib/job-maintenance";
 import { createWorkspaceManagerTestSession } from "./helpers/workspace-session";
 import { gatewayTestSigningKey } from "./helpers/test-secrets";
 import { applyMigrations, closePool, hasTestDatabase, pool, seedFixture, truncateAll, type Fixture } from "./helpers/pg";
@@ -13,7 +12,6 @@ import { applyMigrations, closePool, hasTestDatabase, pool, seedFixture, truncat
 const suite = describe.skipIf(!hasTestDatabase);
 const previousKey = process.env.GATEWAY_JWT_SECRET;
 const digest = "a".repeat(64);
-const artifact = { output_medium: "file", artifact_id: "artifact_8b5ec4af", sha256: "b".repeat(64), page_count: 2, bytes: 4096 };
 suite("Agent-backed operational eligibility and scoped queue identity", () => {
   let fixture: Fixture;
   beforeAll(async () => { process.env.GATEWAY_JWT_SECRET = gatewayTestSigningKey(); await applyMigrations(); });
@@ -142,25 +140,33 @@ suite("Agent-backed operational eligibility and scoped queue identity", () => {
     expect((await claimJobForDelivery(current.jobId, fixture.agentId))?.bindingDigest).toBe(nextDigest);
     const legacy = await (await submit("binding-legacy-unbound")).json();
     await pool().query("UPDATE print_jobs SET binding_digest=NULL WHERE id=$1", [legacy.jobId]);
-    expect(await claimJobForDelivery(legacy.jobId, fixture.agentId)).toBeNull();
+    // A NULL-digest job (admitted while its printer was unverified) is NOT
+    // fenced: NULL means "no binding was recorded", not "bound elsewhere".
+    // Only a real digest change (non-NULL -> different non-NULL, asserted
+    // above for the reconfigured queue) blocks delivery.
+    expect(await claimJobForDelivery(legacy.jobId, fixture.agentId)).not.toBeNull();
   });
-  it("requires verified file creation, preserves exact evidence through terminal replay, and refuses evidence replacement", async () => {
-    await pool().query("UPDATE printers SET printer_type='file',connection_type='pdf_output',protocol='pdf',output_medium='file',config=$1::jsonb WHERE tenant_id=$2 AND id=$3", [JSON.stringify({ output_profile_id: "office_archive" }), fixture.tenantId, fixture.printerId]);
-    const fileProof = proof({ method: "pdf_output", identity_strength: "service", output_medium: "file" });
-    expect((await observe([row(fileProof, { printerType: "file", connectionType: "pdf_output", protocol: "pdf", config: { output_profile_id: "office_archive" } })])).status).toBe(200);
-    const created = await submit("pdf-file-job"); expect(created.status).toBe(201); const accepted = await created.json();
-    const claim = await claimJobForDelivery(accepted.jobId, fixture.agentId); expect(claim).not.toBeNull();
-    const token = claim!.claimToken;
-    const report = (outputEvidence?: unknown) => reportStatus(new Request("https://gateway.test/api/agent/jobs", { method: "PATCH", headers: { Authorization: fixture.agentAuth, "Content-Type": "application/json" }, body: JSON.stringify({ jobId: accepted.jobId, claimToken: token, status: "success", ...(outputEvidence === undefined ? {} : { outputEvidence }) }) }));
-    expect((await report()).status).toBe(422);
-    const success = await report(artifact); expect(success.status).toBe(200); expect(await success.json()).toMatchObject({ outputMedium: "file", outputOutcome: "file_created", outputEvidence: artifact, physicalOutcome: "unknown" });
-    expect((await report(artifact)).status).toBe(200);
-    expect((await report({ ...artifact, artifact_id: "replacement" })).status).toBe(409);
-    expect((await report({ ...artifact, filename: "/private/path.pdf" })).status).toBe(400);
-    const job = (await pool().query("SELECT output_medium,output_evidence FROM print_jobs WHERE id=$1", [accepted.jobId])).rows[0]; expect(job).toEqual({ output_medium: "file", output_evidence: artifact });
-    await pool().query("UPDATE print_jobs SET updated_at=clock_timestamp()-interval '49 hours' WHERE id=$1", [accepted.jobId]);
-    expect(await cleanupTerminalPrintJobs({ agentId: fixture.agentId })).toBe(1);
-    expect((await report(artifact)).status).toBe(200);
-    expect((await report({ ...artifact, artifact_id: "replacement" })).status).toBe(409);
+  it("delivers jobs created while unverified after proof lands (NULL binding digest)", async () => {
+    // No observe() yet: the printer has never verified, so a job submitted
+    // now is admitted with binding_digest NULL.
+    const first = await (await submit("null-digest-claim")).json();
+    expect((await pool().query("SELECT binding_digest FROM print_jobs WHERE id=$1", [first.jobId])).rows[0].binding_digest).toBeNull();
+    // The Agent's background proof lands and stamps the printer digest.
+    expect((await observe([row(proof())])).status).toBe(200);
+    // The delivery claim must still return the NULL-digest job: comparing
+    // NULL = digest in SQL is never true, so without the explicit NULL arm
+    // the job would stay queued invisibly until expiry.
+    const claim = await claimJobForDelivery(first.jobId, fixture.agentId);
+    expect(claim).not.toBeNull();
+    expect(claim?.bindingDigest).toBeNull();
+    // Same for the poll path: reset proof, submit while unverified, land
+    // proof again, and the poll must offer the job.
+    await pool().query("UPDATE printers SET verification_binding_digest=NULL, verification_state='pending' WHERE tenant_id=$1 AND id=$2", [fixture.tenantId, fixture.printerId]);
+    const second = await (await submit("null-digest-poll")).json();
+    expect((await pool().query("SELECT binding_digest FROM print_jobs WHERE id=$1", [second.jobId])).rows[0].binding_digest).toBeNull();
+    expect((await observe([row(proof())])).status).toBe(200);
+    const poll = await pollJobs(new Request("https://gateway.test/api/agent/jobs", { headers: { Authorization: fixture.agentAuth } }));
+    expect(poll.status).toBe(200);
+    expect(await poll.json()).toEqual(expect.arrayContaining([expect.objectContaining({ id: second.jobId })]));
   });
 });

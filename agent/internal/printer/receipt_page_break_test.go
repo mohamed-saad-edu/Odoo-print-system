@@ -11,15 +11,25 @@ import (
 	"testing"
 
 	"github.com/klippa-app/go-pdfium/requests"
+
+	"github.com/yaseir-agent/agent/internal/config"
 )
 
 func pageBreakFixture(t *testing.T) ([]byte, *Geometry) {
 	t.Helper()
-	pc := approvedPDFOutputConfig(t, t.TempDir())
-	pc.GeometryProfile = standardPDFOutputGeometry(80, 60, 203, 203)
-	pc.GeometryProfile.PrintableWidthDots = 576
+	widthMM, heightMM, dpi := 80.0, 60.0, 203
 	rows, zero := 200, 0
-	pc.GeometryProfile.PrintableHeightDots, pc.GeometryProfile.OffsetXDots, pc.GeometryProfile.OffsetYDots = &rows, &zero, &zero
+	pc := config.PrinterConfig{ID: "receipt", Name: "Receipt printer", Type: "network", Protocol: "raw", Endpoint: "10.0.0.30:9100"}
+	pc.GeometryProfile = &config.GeometryProfile{
+		PrintableWidthDots:  576,
+		PrintableHeightDots: &rows,
+		DPIX:                &dpi,
+		DPIY:                &dpi,
+		PaperWidthMM:        &widthMM,
+		PaperHeightMM:       &heightMM,
+		OffsetXDots:         &zero,
+		OffsetYDots:         &zero,
+	}
 	g, err := ConfiguredGeometry(pc)
 	if err != nil {
 		t.Fatal(err)
@@ -88,7 +98,7 @@ func TestReceiptSafePageBreaksRetainContiguousRowsAndDriverScale(t *testing.T) {
 	}
 }
 
-func TestPDFOutputPageBreakKeepsCodeBlockTogether(t *testing.T) {
+func TestPagedPDFPageBreakKeepsCodeBlockTogether(t *testing.T) {
 	data, g := pageBreakFixture(t)
 	pdf, err := JPEGToPagedPDFGeometry(data, g)
 	if err != nil {
@@ -131,7 +141,7 @@ func TestPDFOutputPageBreakKeepsCodeBlockTogether(t *testing.T) {
 	}
 }
 
-func TestPDFOutputRejectsUnsafeOpaqueImagePagination(t *testing.T) {
+func TestPagedPDFRejectsUnsafeOpaqueImagePagination(t *testing.T) {
 	_, g := pageBreakFixture(t)
 	source := image.NewGray(image.Rect(0, 0, 576, 350))
 	var encoded bytes.Buffer

@@ -3,7 +3,6 @@ package queue
 import (
 	"bytes"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
@@ -427,11 +426,10 @@ func (q *Queue) UpdateTerminalResult(id, status, lastErr, spoolerJobID, transpor
 	if status != "success" && status != "failed" {
 		return fmt.Errorf("terminal evidence requires success/failed status, got %q", status)
 	}
-	if len(outputEvidence) > 1024 || (outputEvidence != "" && (status != "success" || transport != "pdf_output" || !json.Valid([]byte(outputEvidence)))) {
+	// File-output evidence no longer exists: no printer type produces
+	// it, so a terminal result carrying any is invalid.
+	if outputEvidence != "" {
 		return fmt.Errorf("invalid terminal file evidence")
-	}
-	if status == "success" && transport == "pdf_output" && outputEvidence == "" {
-		return fmt.Errorf("successful PDF output requires durable file evidence")
 	}
 	if len(transport) > 32 {
 		return fmt.Errorf("invalid terminal transport")

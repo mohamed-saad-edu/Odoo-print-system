@@ -49,13 +49,6 @@ func TestOperationalVerificationSharedFixtures(t *testing.T) {
 			case "usb":
 				pc.Endpoint = `\\?\usb#vid_1234&pid_5678#serial#{28d78fad-5a12-11d1-ae5b-0000f803a8c2}`
 				pc.USBVID, pc.USBPID, pc.USBSerial = "1234", "5678", "serial"
-			case "pdf_output":
-				pc.OutputProfileID, pc.Endpoint, pc.PrinterType = "approved", "pdf-output:approved", "file"
-				c := &config.Config{PDFOutputProfiles: map[string]config.PDFOutputProfile{"approved": {Directory: t.TempDir()}}}
-				pc, err = c.ResolvePDFOutput(pc)
-				if err != nil {
-					t.Fatal(err)
-				}
 			default:
 				pc.Endpoint = "10.0.0.20:9100"
 			}

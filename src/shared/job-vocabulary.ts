@@ -1,4 +1,4 @@
-import { validateFileOutputEvidence } from "../lib/print-output";
+
 import { derivePhysicalOutcome, PHYSICAL_OUTCOME_UNKNOWN_MARKERS, type PhysicalOutcome as GatewayPhysicalOutcome } from "../lib/job-status";
 import { parseDbTimeMs } from "../lib/database-timestamp";
 // ============================================================
@@ -193,12 +193,6 @@ export function jobDisplayLabel(
   locale: Locale = DEFAULT_LOCALE,
   output?: { outputMedium?: unknown; outputEvidence?: unknown; submissionState?: unknown },
 ): string {
-  if (output?.outputMedium === "file") {
-    if (status === "success") return translate(locale, validateFileOutputEvidence(output.outputEvidence) ? "printer.verification.fileCreated" : "printer.verification.fileUncertain");
-    if (status === "queued" || status === "claimed") return translate(locale, "printer.verification.fileQueued");
-    if (status === "printing") return translate(locale, "printer.verification.fileCreating");
-    return translate(locale, deriveOutcome(status, error) === "unknown" ? "printer.verification.fileUncertain" : "printer.verification.fileFailed");
-  }
   // v4: canceled is its own badge, never "Failed" and never "Needs review"
   // (the claimed variant's unknown outcome is shown in job details).
   if (status === "canceled") return translate(locale, "v4.experience.job.canceled");

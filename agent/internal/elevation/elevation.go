@@ -2,7 +2,11 @@
 // rule: outside the Windows service host (which already runs as
 // LocalSystem), an interactive launch without an elevated token shows a
 // native dialog and exits before any config, sync, listener or queue
-// work starts. The check is deliberately the FIRST thing main() runs.
+// work starts. The dialog's single action is "Restart as
+// Administrator": choosing it hands off to an elevated copy of the
+// application and closes this one; dismissing it just closes. A
+// non-elevated process NEVER continues past this gate. The check is
+// deliberately the FIRST thing main() runs.
 package elevation
 
 import "os"
@@ -20,9 +24,10 @@ func IsElevated() bool {
 // started by the Windows Service Control Manager: that path already
 // runs as LocalSystem and Session 0 has no desktop to show a dialog on,
 // so it returns immediately. Otherwise, when the token is not elevated,
-// the native dialog is shown and the process EXITS with code 1 as soon
-// as the user dismisses it — nothing else in the process has started
-// yet at the point main() calls this.
+// the native dialog is shown and the process EXITS as soon as the user
+// answers it — exit 0 only when an elevated replacement process was
+// successfully launched, exit 1 in every other case. Nothing else in
+// the process has started yet at the point main() calls this.
 func RequireElevatedInteractive(interactive bool) {
 	if !interactive {
 		return
@@ -30,6 +35,10 @@ func RequireElevatedInteractive(interactive bool) {
 	if IsElevated() {
 		return
 	}
-	showAdminRequiredDialog()
+	if showAdminRequiredDialog() {
+		if err := relaunchElevated(); err == nil {
+			os.Exit(0)
+		}
+	}
 	os.Exit(1)
 }
