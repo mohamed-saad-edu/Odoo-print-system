@@ -1,4 +1,4 @@
-import { type OperationalPrinterState } from "./printer-operational-verification";
+import { hasHardPrinterBindingConflict, type OperationalPrinterState } from "./printer-operational-verification";
 import payloadContract from "../../contracts/print-payload-contract.json";
 import { gatewayNow } from "./database-clock";
 import { isVirtualPrinterRecord, type PrinterLike } from "./printer-virtual";
@@ -66,8 +66,9 @@ export function isPrinterStatusExecutable(printer: Pick<PrinterAvailability, "st
  * this predicate, with an explicit reason at the rejecting boundary.
  */
 export function isPrinterClaimable(printer: Pick<PrinterAvailability, "status" | "connectionType" | "protocol"> & OperationalPrinterState, now = gatewayNow()): boolean {
-  // `now` is retained for call-site compatibility; claimability no longer
-  // depends on verification freshness.
+  // `now` is retained for call-site compatibility; ordinary proof freshness
+  // does not gate claims. Positive endpoint/identity conflicts remain hard stops.
+  if (hasHardPrinterBindingConflict(printer.verificationReason)) return false;
   return isPrinterStatusExecutable(printer);
 }
 

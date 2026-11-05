@@ -179,7 +179,8 @@ export async function claimJobForDelivery(
         AND a.last_seen_at IS NOT NULL
         AND a.last_seen_at <= clock_timestamp()
         AND a.last_seen_at >= clock_timestamp() - make_interval(secs => ${agentStaleThresholdSeconds()})
-        AND (p.binding_digest IS NULL OR pr.verification_binding_digest IS NULL OR p.binding_digest = pr.verification_binding_digest)
+        AND (pr.verification_binding_digest IS NULL OR p.binding_digest = pr.verification_binding_digest)
+        AND COALESCE(pr.verification_reason, '') NOT IN ('verification_destination_mismatch', 'verification_identity_collision', 'verification_ambiguous_inventory_id')
         AND p.output_medium = pr.output_medium
         AND pr.lifecycle = 'active'
         AND pr.inventory_present = true

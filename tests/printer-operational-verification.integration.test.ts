@@ -43,7 +43,10 @@ suite("Agent-backed operational eligibility and scoped queue identity", () => {
     const created = await response.json();
     expect(created).toMatchObject({ verificationState: "pending", outputMedium: "physical", capabilities: null });
     const rejected = await submit("pending-manual", created.id);
-    expect(rejected.status).toBe(409); expect(await rejected.json()).toMatchObject({ code: "PRINTER_UNVERIFIED" });
+    // The manager's desired configuration has not converged. That is the
+    // actual blocker; missing operational proof is not.
+    expect(rejected.status).toBe(503);
+    expect(await rejected.json()).toMatchObject({ code: "PRINTER_UNAVAILABLE" });
     expect((await listed()).some((entry: { id: string }) => entry.id === created.id)).toBe(false);
   });
   it("accepts fresh exact Agent proof and records a separate server receipt", async () => {
@@ -53,30 +56,36 @@ suite("Agent-backed operational eligibility and scoped queue identity", () => {
     expect((await listed()).find((entry: { id: string }) => entry.id === fixture.printerId)).toMatchObject({ verificationState: "verified", outputMedium: "physical" });
     expect((await submit("verified-new")).status).toBe(201);
   });
-  it.each([undefined, { wrong: true }, "stale", "future", "wrong-id"])("invalidates eligibility for absent, malformed, expired or wrong-bound proof (%s)", async (kind) => {
+  it.each([undefined, { wrong: true }, "stale", "future", "wrong-id"])("keeps eligibility for absent, malformed, expired or non-authoritative proof (%s)", async (kind) => {
     let value: unknown = kind;
     if (kind === "stale") value = proof({ verified_at: new Date(Date.now() - 301000).toISOString() });
     if (kind === "future") value = proof({ verified_at: new Date(Date.now() + 61000).toISOString() });
     if (kind === "wrong-id") value = proof({ printer_id: "different" });
     expect((await observe([row(value)])).status).toBe(200);
     expect((await stored()).verification_state).toBe("pending");
-    expect((await listed()).length).toBe(0);
-    expect((await submit("unverified-new")).status).toBe(409);
+    expect((await listed()).some((entry: { id: string }) => entry.id === fixture.printerId)).toBe(true);
+    expect((await submit("unverified-new")).status).toBe(201);
   });
-  it("does not bind proof from a previous manager destination even with converged ACKs", async () => {
+  it("blocks enqueue and visibility after a proven Manager destination mismatch", async () => {
     await pool().query("UPDATE printers SET management_source='manager',desired_revision=1,applied_desired_revision=1,observed_desired_revision=1 WHERE tenant_id=$1 AND id=$2", [fixture.tenantId, fixture.printerId]);
     expect((await observe([row(proof(), { config: { spooler_name: "Previous Queue" } })])).status).toBe(200);
     expect(await stored()).toMatchObject({ verification_state: "pending", verification_reason: "verification_destination_mismatch", config: { spooler_name: "Real Office Queue" } });
+    expect((await listed()).some((entry: { id: string }) => entry.id === fixture.printerId)).toBe(false);
+    const rejected = await submit("new-after-destination-mismatch");
+    expect(rejected.status).toBe(409);
+    expect(await rejected.json()).toMatchObject({ code: "PRINTER_BINDING_CONFLICT" });
   });
-  it("reconciles an exact accepted operation after proof expires, while blocking new work and both claims", async () => {
+  it("reconciles accepted work and permits new claims after proof expires", async () => {
     expect((await observe([row(proof())])).status).toBe(200);
     const acceptedResponse = await submit("accepted-before-expiry"); expect(acceptedResponse.status).toBe(201); const accepted = await acceptedResponse.json();
     await pool().query("UPDATE printers SET verification_verified_at=clock_timestamp()-interval '301 seconds' WHERE tenant_id=$1 AND id=$2", [fixture.tenantId, fixture.printerId]);
     const replay = await submit("accepted-before-expiry"); expect(replay.status).toBe(200); expect(await replay.json()).toMatchObject({ jobId: accepted.jobId });
-    expect((await submit("new-after-expiry")).status).toBe(409);
-    expect(await claimJobForDelivery(accepted.jobId, fixture.agentId)).toBeNull();
-    const poll = await pollJobs(new Request("https://gateway.test/api/agent/jobs", { headers: { Authorization: fixture.agentAuth } })); expect(poll.status).toBe(200); expect((await poll.json())).toHaveLength(0);
-    const retained = (await pool().query("SELECT status,delivery_attempts FROM print_jobs WHERE id=$1", [accepted.jobId])).rows[0]; expect(retained).toEqual({ status: "queued", delivery_attempts: 0 });
+    const newResponse = await submit("new-after-expiry"); expect(newResponse.status).toBe(201); const newlyAccepted = await newResponse.json();
+    expect(await claimJobForDelivery(accepted.jobId, fixture.agentId)).not.toBeNull();
+    const poll = await pollJobs(new Request("https://gateway.test/api/agent/jobs", { headers: { Authorization: fixture.agentAuth } })); expect(poll.status).toBe(200);
+    expect(await poll.json()).toEqual(expect.arrayContaining([expect.objectContaining({ id: newlyAccepted.jobId })]));
+    const retained = (await pool().query("SELECT status,delivery_attempts FROM print_jobs WHERE id=$1", [accepted.jobId])).rows[0];
+    expect(retained).toEqual({ status: "claimed", delivery_attempts: 1 });
   });
   it("keeps two queues on one device distinct and makes a contradictory logical identity collision pending", async () => {
     const secondId = "office-second-queue";
@@ -106,15 +115,15 @@ suite("Agent-backed operational eligibility and scoped queue identity", () => {
     const otherTenant = await seedFixture();
     await pool().query("UPDATE printers SET logical_queue_key=$1,verification_binding_digest=$1 WHERE tenant_id=$2 AND id=$3", [key, otherTenant.tenantId, otherTenant.printerId]);
   });
-  it("requires server receipt freshness independently and prevents a claimed job from crossing a later failed verification", async () => {
+  it("keeps a claimed job executable when the server verification receipt becomes stale", async () => {
     expect((await observe([row(proof())])).status).toBe(200);
     const created = await submit("claim-before-verification-fails"); expect(created.status).toBe(201); const accepted = await created.json();
     const claim = await claimJobForDelivery(accepted.jobId, fixture.agentId); expect(claim).not.toBeNull();
     await pool().query("UPDATE printers SET verification_received_at=clock_timestamp()-interval '301 seconds' WHERE tenant_id=$1 AND id=$2", [fixture.tenantId, fixture.printerId]);
-    expect((await listed()).length).toBe(0);
+    expect((await listed()).some((entry: { id: string }) => entry.id === fixture.printerId)).toBe(true);
     const response = await reportStatus(new Request("https://gateway.test/api/agent/jobs", { method: "PATCH", headers: { Authorization: fixture.agentAuth, "Content-Type": "application/json" }, body: JSON.stringify({ jobId: accepted.jobId, claimToken: claim!.claimToken, status: "printing" }) }));
-    expect(response.status).toBe(409);
-    expect((await pool().query("SELECT status FROM print_jobs WHERE id=$1", [accepted.jobId])).rows[0].status).toBe("claimed");
+    expect(response.status).toBe(200);
+    expect((await pool().query("SELECT status FROM print_jobs WHERE id=$1", [accepted.jobId])).rows[0].status).toBe("printing");
   });
   it("binds every new PDF to its admitted endpoint and blocks queued or claimed work after target reconfiguration", async () => {
     expect((await observe([row(proof())])).status).toBe(200);

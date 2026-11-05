@@ -33,6 +33,22 @@ export interface OperationalPrinterState {
   appliedDesiredRevision?: number | null;
   observedDesiredRevision?: number | null;
 }
+
+/**
+ * These reasons represent positive endpoint/identity conflicts, not a missing
+ * or stale operational proof. They remain hard routing blocks until inventory
+ * is reconciled; advisory verification must never authorize a mismatched target.
+ */
+export const HARD_PRINTER_BINDING_CONFLICT_REASONS = [
+  "verification_destination_mismatch",
+  "verification_identity_collision",
+  "verification_ambiguous_inventory_id",
+] as const;
+
+export function hasHardPrinterBindingConflict(reason: string | null | undefined): boolean {
+  return reason !== null && reason !== undefined
+    && (HARD_PRINTER_BINDING_CONFLICT_REASONS as readonly string[]).includes(reason);
+}
 const isRecord = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === "object" && !Array.isArray(value);
 const fields = new Set([...contract.requiredFields, ...contract.optionalFields]);
 const hex = /^[a-f0-9]{64}$/;

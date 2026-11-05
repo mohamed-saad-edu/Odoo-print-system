@@ -114,12 +114,14 @@ suite("printer geometry at authenticated database boundaries", () => {
     const updated = await response.json();
     expect(updated.config.geometry_profile).toEqual(changedProfile);
     expect(updated.capabilities).not.toHaveProperty("geometry");
-    expect(await inventory()).toBeUndefined();
+    expect(await inventory()).toBeUndefined(); // Manager desired revision is not applied.
     await installGeometry({ ...changedProfile, config_fingerprint: "b".repeat(64) });
     await pool().query("UPDATE printers SET applied_desired_revision=desired_revision, observed_desired_revision=GREATEST(0,desired_revision-1) WHERE tenant_id=$1 AND id=$2", [fixture.tenantId, fixture.printerId]);
-    expect(await inventory()).toBeUndefined();
+    expect(await inventory()).toBeUndefined(); // Agent has not observed the desired revision.
     await pool().query("UPDATE printers SET observed_desired_revision=desired_revision WHERE tenant_id=$1 AND id=$2", [fixture.tenantId, fixture.printerId]);
-    expect(await inventory()).toBeUndefined(); // Revision ACK alone is not a successful live probe.
+    // Once the desired configuration is applied and observed, its configured
+    // geometry is usable even when operational proof is pending.
+    expect(await inventory()).toMatchObject({ verificationState: "pending", printableWidthDots: 832 });
     await pool().query("UPDATE printers SET verification_state='verified',verification_verified_at=clock_timestamp(),verification_received_at=clock_timestamp(),verification_binding_digest=logical_queue_key,verification_reason=NULL WHERE tenant_id=$1 AND id=$2", [fixture.tenantId, fixture.printerId]);
     expect((await inventory()).printableWidthDots).toBe(832);
     const removed = await patch("Bearer " + manager.token, { config: { geometry_profile: null } });

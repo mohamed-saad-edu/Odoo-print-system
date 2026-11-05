@@ -589,6 +589,27 @@ class PrintGatewayBinding(models.Model):
         agent = selected_printer.get("agent") if isinstance(selected_printer.get("agent"), dict) else {}
         if agent.get("id") != self.runtime_agent_id:
             raise ValidationError(_("Gateway Runtime Printer does not belong to the selected Runtime Agent."))
+        if selected_printer.get("verificationReason") in (
+            "verification_destination_mismatch",
+            "verification_identity_collision",
+            "verification_ambiguous_inventory_id",
+        ):
+            raise ValidationError(_(
+                "The selected printer has a destination or identity conflict. Reconcile its Agent inventory before routing new work."
+            ))
+        connection_type = str(selected_printer.get("connectionType") or "").strip().lower()
+        expected_medium = "file" if connection_type == "pdf_output" else "physical"
+        reported_medium = selected_printer.get("outputMedium")
+        if reported_medium is not None and reported_medium != expected_medium:
+            raise ValidationError(_(
+                "The Gateway printer output medium does not match its transport. Refresh the printer inventory before routing."
+            ))
+        expected_printer_type = "file" if expected_medium == "file" else "physical"
+        reported_printer_type = selected_printer.get("printerType")
+        if reported_printer_type is not None and reported_printer_type != expected_printer_type:
+            raise ValidationError(_(
+                "The Gateway printer type does not match its configured output transport."
+            ))
         # Operational verification is background evidence, not a binding
         # gate: an unverified printer may be assigned and printed to; the
         # Gateway/Agent fall back to its last known or default size when a

@@ -30,6 +30,7 @@ const printerEligibilityPredicate = (tenantId: SQL) => sql`
   pr.lifecycle = 'active'
   AND pr.inventory_present = true
   AND pr.shared_with_gateway = true
+  AND COALESCE(pr.verification_reason, '') NOT IN ('verification_destination_mismatch', 'verification_identity_collision', 'verification_ambiguous_inventory_id')
   AND (
     pr.status = 'online'
     OR pr.status = 'busy'
@@ -209,7 +210,7 @@ export async function GET(req: Request) {
           AND a.last_seen_at IS NOT NULL
           AND a.last_seen_at <= clock_timestamp()
           AND a.last_seen_at >= clock_timestamp() - make_interval(secs => ${agentStaleThresholdSeconds()})
-          AND (p.binding_digest IS NULL OR pr.verification_binding_digest IS NULL OR p.binding_digest = pr.verification_binding_digest)
+          AND (pr.verification_binding_digest IS NULL OR p.binding_digest = pr.verification_binding_digest)
           AND p.output_medium = pr.output_medium
           AND ${printerEligibilityPredicate(sql`p.tenant_id`)}
           AND t.lifecycle = 'active'
@@ -234,7 +235,7 @@ export async function GET(req: Request) {
           AND a.last_seen_at IS NOT NULL
         AND a.last_seen_at <= clock_timestamp()
         AND a.last_seen_at >= clock_timestamp() - make_interval(secs => ${agentStaleThresholdSeconds()})
-          AND (p.binding_digest IS NULL OR pr.verification_binding_digest IS NULL OR p.binding_digest = pr.verification_binding_digest)
+          AND (pr.verification_binding_digest IS NULL OR p.binding_digest = pr.verification_binding_digest)
           AND p.output_medium = pr.output_medium
           AND ${printerEligibilityPredicate(sql`p.tenant_id`)}
           AND t.lifecycle = 'active'
@@ -258,7 +259,7 @@ export async function GET(req: Request) {
           AND a.last_seen_at IS NOT NULL
           AND a.last_seen_at <= clock_timestamp()
           AND a.last_seen_at >= clock_timestamp() - make_interval(secs => ${agentStaleThresholdSeconds()})
-          AND (p.binding_digest IS NULL OR pr.verification_binding_digest IS NULL OR p.binding_digest = pr.verification_binding_digest)
+          AND (pr.verification_binding_digest IS NULL OR p.binding_digest = pr.verification_binding_digest)
           AND p.output_medium = pr.output_medium
           AND ${printerEligibilityPredicate(sql`p.tenant_id`)}
           AND t.lifecycle = 'active'

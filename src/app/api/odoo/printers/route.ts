@@ -59,7 +59,19 @@ export async function GET(req: Request) {
   // evidence, and a printer whose driver measurement is slow or failing
   // must still be offered and printable. Real exclusions only: retired,
   // absent from Agent inventory, unshared, or a retired Agent.
-  const conditions = [eq(printers.lifecycle, "active"), eq(printers.inventoryPresent, true), eq(printers.sharedWithGateway, true), eq(agents.lifecycle, "active"), eq(printers.tenantId, apiKey.tenantId), eq(agents.tenantId, apiKey.tenantId)];
+  const conditions = [
+    eq(printers.lifecycle, "active"),
+    eq(printers.inventoryPresent, true),
+    eq(printers.sharedWithGateway, true),
+    eq(agents.lifecycle, "active"),
+    eq(printers.tenantId, apiKey.tenantId),
+    eq(agents.tenantId, apiKey.tenantId),
+    sql`(${printers.managementSource} = 'agent' OR (
+      ${printers.appliedDesiredRevision} >= ${printers.desiredRevision}
+      AND ${printers.observedDesiredRevision} >= ${printers.desiredRevision}
+    ))`,
+    sql`COALESCE(${printers.verificationReason}, '') NOT IN ('verification_destination_mismatch', 'verification_identity_collision', 'verification_ambiguous_inventory_id')`,
+  ];
   if (agentId) {
     conditions.push(eq(agents.id, agentId));
   }
