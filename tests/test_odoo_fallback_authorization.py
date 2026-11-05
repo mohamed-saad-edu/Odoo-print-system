@@ -16,11 +16,14 @@ from test_odoo_discovery_response_safety import (
     ("owner_changed", False),
     ("printer_retired", False),
     ("printer_private", False),
-    ("stale_verification", False),
+    # Stale operational verification no longer denies a fallback:
+    # verification is background evidence, and printing falls back to the
+    # last known/default size instead of refusing the job.
+    ("stale_verification", True),
     ("protocol_changed", False),
     ("discovery_unavailable", False),
 ])
-def test_fallback_revalidates_current_assignment_owner_and_verification(monkeypatch, case, allowed):
+def test_fallback_revalidates_current_assignment_and_owner(monkeypatch, case, allowed):
     printer = dict(PRINTER)
     if case == "owner_changed":
         printer["agent"] = {"id": "agt_other001"}

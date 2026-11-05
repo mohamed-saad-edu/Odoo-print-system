@@ -1,9 +1,8 @@
 import { documentTypeLabel } from "../../shared/document-label";
-import { isPrinterOperationallyVerified, validatePrinterOperationalVerification } from "../../lib/printer-operational-verification";
 import type { PrinterInfo } from "./ipc";
 import type { Tone } from "../../shared/job-vocabulary";
 import { isVirtualPrinterRecord } from "../../lib/printer-virtual";
-import { printerPresentation as gatewayPrinterPresentation } from "../../shared/printer-presentation";
+import { printerPresentation as gatewayPrinterPresentation, reportedPrinterPresentation, printerStatusDetailCode } from "../../shared/printer-presentation";
 import { printerDisplayName } from "../../shared/printer-presentation";
 export { printerDisplayName, printerStatusDetail, printerStatusDetailCode } from "../../shared/printer-presentation";
 
@@ -151,13 +150,11 @@ export function printerPresentation(p: PrinterInfo, agent?: Parameters<typeof ga
   if (p.enabled === false) {
     return { state: "attention", tone: "warn", labelKey: "printer.presentation.attention", reasonKey: "printer.presentation.inactiveReason" };
   }
-  if (!validatePrinterOperationalVerification(p.capabilities?.operational_verification, { id: p.id, connectionType: p.connectionType ?? p.connection_type, protocol: p.protocol }, new Date(nowMs)).ok) return { state: "unavailable", tone: "warn", labelKey: "printer.verification.pending", reasonKey: "printer.verification.pendingHelp" };
-  switch (p.status.trim().toLowerCase()) {
-    case "online": case "idle": return { state: "ready", tone: "ok", labelKey: "printer.presentation.ready", reasonKey: "printer.presentation.readyReason" };
-    case "busy": case "printing": return { state: "printing", tone: "info", labelKey: "printer.presentation.printing", reasonKey: "printer.presentation.printingReason" };
-    case "offline": case "error": case "paper_out": case "driver_error": case "spooler_error": return { state: "attention", tone: "bad", labelKey: "printer.presentation.attention", reasonKey: "printer.presentation.attentionReason" };
-    default: return unavailable();
-  }
+  // A fresh local observation displays the status Windows actually
+  // reported (refined by its detail code). Operational verification is an
+  // admission gate for Gateway test prints (eligibleGatewayTestPrinterIds)
+  // and a separate detail — never a mask over the local printer's state.
+  return reportedPrinterPresentation(p.status, printerStatusDetailCode(p));
 }
 
 /** Duplicate cloud IDs are conflicting route evidence, even if payloads look
@@ -226,12 +223,13 @@ export function eligibleGatewayTestPrinterIds(cloud: PrinterInfo[], local: Print
     if (conflictingCloudIds.has(p.id) || conflictingLocalIds.has(p.id) || p.sharedWithGateway === false) return false;
     const native = localById.get(p.id);
     if (native && (native.sharedWithGateway === false || isLocalSetupCandidate(native)
-      || !sameLocalCloudPrinterBinding(native, p)
-      || !validatePrinterOperationalVerification(native.capabilities?.operational_verification,
-        { id: native.id, connectionType: native.connectionType ?? native.connection_type, protocol: native.protocol }, new Date(nowMs)).ok)) return false;
+      || !sameLocalCloudPrinterBinding(native, p))) return false;
+    // Operational verification is not a test-print gate: the Agent probes
+    // in the background, and a slow or failing driver measurement must not
+    // refuse a test page. Eligibility is identity, sharing, presence and
+    // freshness — real, current facts only.
     return isMainInventoryPrinter(p) && p.inventoryPresent === true && !!p.agentId && p.configurationConverged !== false
       && p.agentFreshness !== "stale" && p.agentFreshness !== "missing" && p.freshness !== "stale" && p.freshness !== "missing"
-      && isPrinterOperationallyVerified(p, new Date(nowMs))
       && printerAgentView(p, nowMs).tone === "ok"
       && printerObservationFreshness(p.lastSeenAt, nowMs) === "fresh";
   }).map((p) => p.id) : []);

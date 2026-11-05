@@ -2410,8 +2410,8 @@ msgstr "يحتوي إيصال نقطة البيع على محتوى أعرض م�
 #. module: print_gateway
 #. odoo-python
 #: code:addons/print_gateway/models/binding.py:0
-msgid "POS receipt/kitchen printing requires a compatible image transport. Use a verified Windows printer or approved PDF output with complete page geometry, or a validated ESC/POS profile with the GS v 0 raster command for USB or network printing."
-msgstr "تتطلب طباعة إيصالات نقاط البيع والمطبخ مساراً متوافقاً مع الصور. استخدم طابعة Windows مُتحققاً منها أو إخراج PDF معتمداً بأبعاد صفحة مكتملة، أو ملف ESC/POS مُعتمداً بأمر GS v 0 للطباعة عبر USB أو الشبكة."
+msgid "POS receipt/kitchen printing requires a compatible image transport. Use a Windows spooler printer or approved PDF output with complete page geometry, or a validated ESC/POS profile with the GS v 0 raster command for USB or network printing."
+msgstr "تتطلب طباعة إيصالات نقاط البيع والمطبخ مساراً متوافقاً مع الصور. استخدم طابعة Windows عبر Spooler أو إخراج PDF معتمداً بأبعاد صفحة مكتملة، أو ملف ESC/POS مُعتمداً بأمر GS v 0 للطباعة عبر USB أو الشبكة."
 
 #. module: print_gateway
 #. odoo-python
@@ -4295,11 +4295,6 @@ msgstr "الربط المحدد يتبع الشركة/الفرع '%(binding_co)s
 msgid "The selected binding protocol '%s' is not compatible with runtime printer '%s' (transport protocol '%s'). Update the binding or the printer's explicit capability configuration."
 msgstr "بروتوكول الربط المحدد '%s' غير متوافق مع طابعة التشغيل '%s' (بروتوكول النقل '%s'). حدّث الربط أو إعداد الإمكانات الصريح للطابعة."
 
-#. module: print_gateway
-#. odoo-python
-#: code:addons/print_gateway/models/binding.py:0
-msgid "Verify this printer first, then try again."
-msgstr "تحقّق من هذه الطابعة أولًا، ثم أعد المحاولة."
 
 #. module: print_gateway
 #. odoo-python

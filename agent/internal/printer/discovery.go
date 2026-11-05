@@ -1413,9 +1413,14 @@ func TestPrinter(cfg *config.Config, registryPath, printerID string) error {
 		if disabled.Disabled(pc) {
 			return fmt.Errorf("printer %s is disabled by local operator configuration", printerID)
 		}
-		// Local diagnostics require the same current identity proof as Gateway output.
-		_, err = ProbeOperationalVerification(admissionCtx, prt, pc)
-		return err
+		// Operational verification is advisory for diagnostics too: it is
+		// background evidence, and a slow or failing driver measurement
+		// must not refuse a locally requested test page. The disablement
+		// check above remains the hard gate (an explicit operator action).
+		if _, err := ProbeOperationalVerification(admissionCtx, prt, pc); err != nil {
+			log.Printf("Local test for printer %s: operational verification advisory: %v; proceeding with diagnostic output", printerID, err)
+		}
+		return nil
 	})
 	return runLocalPrinterTest(ctx, prt)
 }

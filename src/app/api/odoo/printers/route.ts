@@ -1,4 +1,3 @@
-import { printerOperationalVerificationPredicate } from "../../../../lib/printer-verification-sql";
 import { operationalVerificationPresentation, type OperationalPrinterState } from "../../../../lib/printer-operational-verification";
 import { NextResponse } from "next/server";
 import { and, eq, sql } from "drizzle-orm";
@@ -56,7 +55,11 @@ export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const agentId = searchParams.get("agent_id")?.trim();
 
-  const conditions = [printerOperationalVerificationPredicate(sql`printers`), eq(printers.lifecycle, "active"), eq(printers.inventoryPresent, true), eq(printers.sharedWithGateway, true), eq(agents.lifecycle, "active"), eq(printers.tenantId, apiKey.tenantId), eq(agents.tenantId, apiKey.tenantId)];
+  // Verification state is not an eligibility filter: it is background
+  // evidence, and a printer whose driver measurement is slow or failing
+  // must still be offered and printable. Real exclusions only: retired,
+  // absent from Agent inventory, unshared, or a retired Agent.
+  const conditions = [eq(printers.lifecycle, "active"), eq(printers.inventoryPresent, true), eq(printers.sharedWithGateway, true), eq(agents.lifecycle, "active"), eq(printers.tenantId, apiKey.tenantId), eq(agents.tenantId, apiKey.tenantId)];
   if (agentId) {
     conditions.push(eq(agents.id, agentId));
   }

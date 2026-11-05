@@ -123,12 +123,14 @@ for (const status of ["claimed", "printing"]) {
     assert.match(h.statements[1], /pr\.status = 'online'/);
     assert.match(h.statements[1], /pr\.last_seen_at <= clock_timestamp\(\)/);
     assert.match(h.statements[1], /pr\.management_source = 'agent'/);
-    assert.match(h.statements[1], /[a-f0-9]{64}::text IS NOT NULL AND pr\.verification_binding_digest = [a-f0-9]{64}/);
+    // Binding fence (softened policy): a provable digest mismatch still
+    // fences the report, but a missing digest on either side — a printer
+    // that has never verified — must not. Operational verification itself
+    // is background evidence and appears nowhere in admission SQL.
+    assert.match(h.statements[1], /[a-f0-9]{64}::text IS NULL OR pr\.verification_binding_digest IS NULL OR pr\.verification_binding_digest = [a-f0-9]{64}/);
     assert.match(h.statements[1], /pr\.output_medium = physical/);
-    assert.match(h.statements[1], /pr\.verification_state = 'verified'/);
-    assert.match(h.statements[1], /pr\.logical_queue_key = pr\.verification_binding_digest/);
-    assert.match(h.statements[1], /pr\.verification_verified_at >= clock_timestamp\(\)/);
-    assert.match(h.statements[1], /pr\.verification_received_at <= clock_timestamp\(\)/);
+    assert.doesNotMatch(h.statements[1], /pr\.verification_state = 'verified'/);
+    assert.doesNotMatch(h.statements[1], /pr\.verification_verified_at >=/);
     assert.match(h.statements[1], /LIVE_SUBSCRIPTION/);
     assert.match(h.statements[1], /FOR SHARE OF a, t, pr/);
     assert.match(h.statements[2], /SELECT id FROM print_jobs/);

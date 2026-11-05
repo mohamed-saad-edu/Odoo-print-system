@@ -10,7 +10,6 @@ from odoo import api, fields, models, _
 from odoo.exceptions import AccessError, ValidationError
 from ..runtime_policy import is_gateway_shared_printer, is_exact_gateway_printer_id, is_exact_gateway_agent_id, unambiguous_inventory_rows
 from ..printer_geometry import validated_printer_geometry, validated_page_geometry
-from ..printer_verification import is_verified_runtime_printer
 
 _logger = logging.getLogger(__name__)
 
@@ -590,12 +589,15 @@ class PrintGatewayBinding(models.Model):
         agent = selected_printer.get("agent") if isinstance(selected_printer.get("agent"), dict) else {}
         if agent.get("id") != self.runtime_agent_id:
             raise ValidationError(_("Gateway Runtime Printer does not belong to the selected Runtime Agent."))
-        if not is_verified_runtime_printer(selected_printer):
-            raise ValidationError(_("Verify this printer first, then try again."))
+        # Operational verification is background evidence, not a binding
+        # gate: an unverified printer may be assigned and printed to; the
+        # Gateway/Agent fall back to its last known or default size when a
+        # driver measurement is slow or failing. Real exclusions above
+        # (not found, local-only, non-active lifecycle, wrong Agent) stand.
         if enforce_destination_compatibility:
             if self.destination_type in ("pos", "pos_printer") and not self._runtime_printer_accepts_image(selected_printer):
                 raise ValidationError(_(
-                    "POS receipt/kitchen printing requires a compatible image transport. Use a verified Windows printer or approved PDF output with complete page geometry, or a validated ESC/POS profile with the GS v 0 raster command for USB or network printing."
+                    "POS receipt/kitchen printing requires a compatible image transport. Use a Windows spooler printer or approved PDF output with complete page geometry, or a validated ESC/POS profile with the GS v 0 raster command for USB or network printing."
                 ))
             device_class = str(selected_printer.get("deviceClass") or "").strip().lower()
             if self.destination_type == "picking_type" and device_class in ("laser", "inkjet") and not self.report_id:

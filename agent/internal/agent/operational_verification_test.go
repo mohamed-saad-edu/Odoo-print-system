@@ -32,7 +32,13 @@ func TestV3HeartbeatCannotReplayConfiguredOperationalProof(t *testing.T) {
 	}
 }
 
-func TestV3UnverifiedBackendCannotReceiveProductionBytes(t *testing.T) {
+// Policy (operator directive): operational verification is background
+// evidence, never a print gate. A backend that cannot produce a live
+// existence proof — e.g. a driver whose measurement is slow or failing —
+// still receives production bytes; the physical attempt itself reports
+// real device errors. This test replaces the former hard-gate contract
+// (TestV3UnverifiedBackendCannotReceiveProductionBytes).
+func TestV3UnverifiedBackendStillReceivesProductionBytes(t *testing.T) {
 	physical := &fakePrinter{}
 	a := newTestAgent(t, "p", &unverifiedPrinter{target: physical})
 	a.processJob(context.Background(), map[string]interface{}{
@@ -42,26 +48,38 @@ func TestV3UnverifiedBackendCannotReceiveProductionBytes(t *testing.T) {
 		"expiresAt": time.Now().Add(time.Hour).Format(time.RFC3339), "bindingDigest": testDefaultPrinterBinding(),
 	})
 	a.waitForJobs()
-	if physical.Calls() != 0 {
-		t.Fatal("a declared online backend with no actual existence proof received production bytes")
+	if physical.Calls() != 1 {
+		t.Fatal("a backend without an operational-verification proof must still receive production bytes; verification is advisory only")
 	}
 }
 
 func TestV3ClaimCannotChangeItsAdmittedDestination(t *testing.T) {
-	for _, binding := range []string{"", strings.Repeat("a", 64)} {
-		t.Run("binding-"+binding, func(t *testing.T) {
-			physical := &fakePrinter{}
-			a := newTestAgent(t, "p", physical)
-			job := dispatchTestJob("binding-destination", "p")
-			if binding != "" {
-				job["bindingDigest"] = binding
-			} else {
-				delete(job, "bindingDigest")
-			}
-			a.processJob(context.Background(), job)
-			if physical.Calls() != 0 {
-				t.Fatal("missing or different admission binding delivered bytes to the current configured destination")
-			}
-		})
-	}
+	// A job carrying a VALID binding digest that provably differs from the
+	// current destination must still be refused: the destination changed
+	// after admission, which is a real configuration error, not a
+	// measurement problem.
+	t.Run("binding-mismatch", func(t *testing.T) {
+		physical := &fakePrinter{}
+		a := newTestAgent(t, "p", physical)
+		job := dispatchTestJob("binding-destination", "p")
+		job["bindingDigest"] = strings.Repeat("a", 64)
+		a.processJob(context.Background(), job)
+		if physical.Calls() != 0 {
+			t.Fatal("a provably different admission binding delivered bytes to the current configured destination")
+		}
+	})
+	// A job carrying NO binding (e.g. admitted for a printer that has
+	// never verified, so the Gateway had no digest to bind) must NOT be
+	// refused: there is no provable destination change, and verification
+	// absence is advisory only.
+	t.Run("binding-absent", func(t *testing.T) {
+		physical := &fakePrinter{}
+		a := newTestAgent(t, "p", physical)
+		job := dispatchTestJob("binding-destination", "p")
+		delete(job, "bindingDigest")
+		a.processJob(context.Background(), job)
+		if physical.Calls() != 1 {
+			t.Fatal("a job with no admission binding must still print; a missing binding is not a provable destination change")
+		}
+	})
 }

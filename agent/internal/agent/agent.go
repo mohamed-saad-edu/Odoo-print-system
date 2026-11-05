@@ -244,6 +244,23 @@ type Agent struct {
 	// printers probing at 2s, slow gateway) must never let ticks pile up.
 	hbMu   sync.Mutex
 	pollMu sync.Mutex
+	// heartbeatTrigger carries out-of-cycle heartbeat requests (WebSocket
+	// reconnect resync, spooler change notifications, completed discovery)
+	// to the Run loop. Buffered 1 and written non-blockingly: a pending
+	// request already means "send a full snapshot as soon as possible",
+	// and every heartbeat is a complete inventory snapshot, so coalescing
+	// duplicate requests loses nothing.
+	heartbeatTrigger chan struct{}
+	// observations caches the heartbeat probe loop's per-printer geometry
+	// measurements and verification outcomes. Dispatch reads it for
+	// last-known geometry and advisory verification state; it is written
+	// only by completed probe cycles.
+	observations *observationCache
+	// spoolerRefreshMu makes change-notification rescans non-reentrant,
+	// and spoolerRefreshLast debounces notification bursts (one printer
+	// install can raise many change events in a second).
+	spoolerRefreshMu   sync.Mutex
+	spoolerRefreshLast atomic.Int64 // unix nanos
 	// terminalReportMu prevents concurrent terminal-status reporting goroutines.
 	terminalReportMu sync.Mutex
 	// Guarded by terminalReportMu. Advance across rejected original claims
@@ -450,6 +467,12 @@ func (a *Agent) recordPrinterProbeResult(printerID string, probedConfig config.P
 	}
 	if row, managed := a.desiredStates[printerID]; managed && !a.matchesDesiredRuntime(current, row) {
 		return false
+	}
+	if prev := a.probeLastStatus(printerID); prev != status {
+		// One line per actual transition: an operator can follow a
+		// printer going ready -> printing -> ready (or falling into an
+		// error) through the log without per-heartbeat noise.
+		log.Printf("[printer] %s (%s) status %s -> %s", probedConfig.Name, printerID, prev, status)
 	}
 	a.setProbeLastStatus(printerID, status)
 	a.observeDesiredRevisionLocked(printerID, status, backend)
@@ -740,6 +763,8 @@ func New(cfg *config.Config, configPath string) (*Agent, error) {
 		}},
 		printers:              make(map[string]printer.Printer),
 		printerConfigs:        make(map[string]config.PrinterConfig),
+		heartbeatTrigger:      make(chan struct{}, 1),
+		observations:          newObservationCache(),
 		registryOwned:         make(map[string]struct{}),
 		queue:                 q,
 		execSem:               make(chan struct{}, maxConcurrentJobs),
@@ -978,6 +1003,8 @@ func (a *Agent) runInitialDiscovery(ctx context.Context, timeout time.Duration, 
 		full.Errors = append(full.Errors, "registry persistence: "+persistErr.Error())
 	} else {
 		a.reconcileRegistryPrinters(merged)
+		// Publish the refreshed inventory now, not at the next tick.
+		a.requestImmediateHeartbeat()
 	}
 
 	log.Printf("[discovery] async discovery completed: %d live observations, %d durable runtime printers", len(full.Printers), len(merged))
@@ -1269,6 +1296,11 @@ func (a *Agent) Run(ctx context.Context) error {
 	a.launchTracked(func() { a.runRejectWorker(ctx) })
 	a.launchTracked(func() { a.runTerminalReportWorker(ctx) })
 	a.launchTracked(func() { a.runInitialAsyncDiscovery(ctx) })
+	// Spooler change notifications accelerate inventory sync: a printer
+	// added/removed/renamed in Windows, or a queue status change, triggers
+	// a rescan + immediate heartbeat instead of waiting for the next tick.
+	// Unavailability of the API degrades to the polling behaviour below.
+	a.launchTracked(func() { a.watchSpoolerChanges(ctx) })
 
 	heartbeatTicker := time.NewTicker(30 * time.Second)
 	// Poll fallback: reduced from 10s to 5s per 2025 best practice.
@@ -1326,6 +1358,12 @@ func (a *Agent) Run(ctx context.Context) error {
 				log.Printf("WARNING: shutdown grace elapsed with jobs still in flight; returning without closing the local queue so process teardown can contain blocked OS printing calls safely.")
 			}
 			return nil
+		case <-a.heartbeatTrigger:
+			// Out-of-cycle full snapshot (reconnect resync / spooler
+			// change / completed discovery). Guarded like the tick: if a
+			// heartbeat is already running it carries an equally fresh
+			// snapshot, so skipping loses nothing.
+			a.launchTracked(func() { a.sendHeartbeatGuardedContext(ctx) })
 		case <-heartbeatTicker.C:
 			// Never block the select loop: heartbeat probes TCP-reachability
 			// of every configured printer, which can take seconds when offline.
@@ -1582,6 +1620,11 @@ func (a *Agent) connectWebSocket(ctx context.Context) {
 			sessionStarted := time.Now()
 			a.setWSConn(c)
 			log.Println("WebSocket connected.")
+			// Full resync after every (re)connect: the Gateway may have
+			// missed inventory/status changes while the socket was down,
+			// and the next scheduled heartbeat could be 30s away. One
+			// immediate heartbeat republishes the complete snapshot.
+			a.requestImmediateHeartbeat()
 
 			sessionCtx, sessionCancel := context.WithCancel(ctx)
 			sessionDone := make(chan struct{})
@@ -2543,6 +2586,62 @@ func (a *Agent) sendHeartbeatGuardedContext(ctx context.Context) {
 	a.sendHeartbeatContext(ctx)
 }
 
+// requestImmediateHeartbeat asks the Run loop for an out-of-cycle
+// heartbeat. Every heartbeat carries a complete inventory snapshot, so
+// one immediate heartbeat is also a full resync: it is requested after a
+// WebSocket (re)connect, after a spooler change notification rescan, and
+// after any completed discovery, so the Gateway converges to the Agent's
+// actual inventory within seconds instead of at the next 30s tick.
+func (a *Agent) requestImmediateHeartbeat() {
+	if a.heartbeatTrigger == nil {
+		return
+	}
+	select {
+	case a.heartbeatTrigger <- struct{}{}:
+	default:
+	}
+}
+
+// refreshSpoolerInventory rescans the fast local sources after a Windows
+// spooler change notification, persists and reconciles the result exactly
+// like a discovery run, then pushes an immediate heartbeat. Non-reentrant
+// and debounced: a burst of change events for one install/uninstall
+// collapses into at most one rescan per spoolerRefreshDebounce window.
+const spoolerRefreshDebounce = 2 * time.Second
+
+func (a *Agent) refreshSpoolerInventory(ctx context.Context) {
+	if !a.spoolerRefreshMu.TryLock() {
+		return
+	}
+	defer a.spoolerRefreshMu.Unlock()
+	if last := a.spoolerRefreshLast.Load(); last > 0 && time.Since(time.Unix(0, last)) < spoolerRefreshDebounce {
+		return
+	}
+	a.spoolerRefreshLast.Store(time.Now().UnixNano())
+	result := printer.DiscoverQuick(a.cfg, a.registryPath)
+	merged, err := a.persistLiveDiscovery(result)
+	if err != nil {
+		log.Printf("[spooler-watch] change rescan could not be persisted; keeping previous inventory: %v", err)
+		return
+	}
+	a.reconcileRegistryPrinters(merged)
+	log.Printf("[spooler-watch] inventory refreshed after spooler change: %d printer(s)", len(merged))
+	a.requestImmediateHeartbeat()
+}
+
+// watchSpoolerChanges runs the Windows spooler change-notification watch
+// for the life of the agent. Any failure (API unavailable, spooler down)
+// is logged once and the agent simply keeps its existing polling
+// behaviour — the watcher is an accelerator, never a dependency.
+func (a *Agent) watchSpoolerChanges(ctx context.Context) {
+	err := printer.WatchSpoolerChanges(ctx, func() {
+		a.launchTracked(func() { a.refreshSpoolerInventory(ctx) })
+	})
+	if err != nil && ctx.Err() == nil {
+		log.Printf("[spooler-watch] spooler change notifications unavailable (%v); falling back to periodic discovery/heartbeat polling", err)
+	}
+}
+
 // pollJobsGuarded is the non-reentrant variant for the poll fallback.
 func (a *Agent) pollJobsGuarded(ctx context.Context) {
 	if !a.pollMu.TryLock() {
@@ -2748,7 +2847,7 @@ func (a *Agent) printerStatusPayloadWithSharingResult(sharing localPrinterSharin
 	statuses := make([]string, len(ids))
 	details := make([]string, len(ids))
 	// reasons is the per-printer "why" behind an unknown (or detailed)
-	// status, published as capabilities.status_reason. The 10s batch
+	// status, published as capabilities.status_reason. The probe batch
 	// budget, a still-running probe, a discarded/stale probe result, and a
 	// backend failure each have their own code: a bare "unknown" with no
 	// reason is no longer an acceptable heartbeat row, because it cannot
@@ -2767,14 +2866,15 @@ func (a *Agent) printerStatusPayloadWithSharingResult(sharing localPrinterSharin
 	// heartbeat into an unbounded local resource spike. Keep per-printer
 	// single-flight semantics, but cap simultaneous OS/RPC status calls.
 	type probeResult struct {
-		verification *printer.OperationalVerification
-		geometry     *printer.Geometry
-		capabilities map[string]interface{}
-		idx          int
-		status       string
-		detail       string
-		reason       string
-		rawStatus    string
+		verification    *printer.OperationalVerification
+		verificationErr string
+		geometry        *printer.Geometry
+		capabilities    map[string]interface{}
+		idx             int
+		status          string
+		detail          string
+		reason          string
+		rawStatus       string
 	}
 	type probeWork struct {
 		idx   int
@@ -2820,6 +2920,7 @@ func (a *Agent) printerStatusPayloadWithSharingResult(sharing localPrinterSharin
 					status, detail, reason, rawStatus := "unknown", "", "", ""
 					var geometry *printer.Geometry
 					var verification *printer.OperationalVerification
+					var verificationErr error
 					var capabilitySnapshot map[string]interface{}
 					func() {
 						defer func() {
@@ -2840,7 +2941,7 @@ func (a *Agent) printerStatusPayloadWithSharingResult(sharing localPrinterSharin
 						geometryCtx, cancelGeometry := context.WithTimeout(context.Background(), 3*time.Second)
 						geometry, _ = printer.CurrentGeometry(geometryCtx, work.p, configByID[work.pid])
 						cancelGeometry()
-						verification, _ = printer.ProbeOperationalVerification(context.Background(), work.p, configByID[work.pid])
+						verification, verificationErr = printer.ProbeOperationalVerification(context.Background(), work.p, configByID[work.pid])
 						if reporter, ok := work.p.(interface{ ObservedCapabilities() map[string]interface{} }); ok {
 							capabilitySnapshot = reporter.ObservedCapabilities()
 						}
@@ -2852,6 +2953,7 @@ func (a *Agent) printerStatusPayloadWithSharingResult(sharing localPrinterSharin
 						}
 						if !a.printerObservationCurrent(work.pid, work.p, configByID[work.pid]) {
 							status, detail, reason, geometry, verification, capabilitySnapshot = "unknown", "", "probe_result_stale", nil, nil, nil
+							verificationErr = nil
 							rawStatus = ""
 							return
 						}
@@ -2865,7 +2967,11 @@ func (a *Agent) printerStatusPayloadWithSharingResult(sharing localPrinterSharin
 							reason = detail
 						}
 					}()
-					results <- probeResult{idx: work.idx, status: status, detail: detail, reason: reason, rawStatus: rawStatus, geometry: geometry, verification: verification, capabilities: capabilitySnapshot}
+					verificationErrText := ""
+					if verificationErr != nil {
+						verificationErrText = boundedDiscoveryText(strings.TrimSpace(verificationErr.Error()), 255)
+					}
+					results <- probeResult{idx: work.idx, status: status, detail: detail, reason: reason, rawStatus: rawStatus, geometry: geometry, verification: verification, verificationErr: verificationErrText, capabilities: capabilitySnapshot}
 				}()
 			}
 		}()
@@ -2880,13 +2986,17 @@ func (a *Agent) printerStatusPayloadWithSharingResult(sharing localPrinterSharin
 	// Hard probe budget: the heartbeat must never block indefinitely on a
 	// wedged driver. Each individual probe already has its own timeout
 	// (spooler 5s, network 2s, IPP 5s), but a fleet of slow printers could
-	// still exceed the heartbeat HTTP budget. After 10s total, stop waiting:
+	// still exceed the heartbeat HTTP budget. The budget is 15s (raised
+	// from 10s with the spooler status probe bound): one probe chain is
+	// status + geometry + verification, and at 10s a slow-but-healthy
+	// printer was still being cut off and published "unknown" on every
+	// cycle. After 15s total, stop waiting:
 	// slow printers report unknown and their helpers finish in
 	// the background (single-flight guarantees at most one stuck helper per
 	// printer, and the bounded pool caps total helpers). The next heartbeat
 	// remains unknown until its own completed read provides current evidence.
 	// A bad printer probe must never make the Agent appear offline.
-	budgetTimer := time.NewTimer(10 * time.Second)
+	budgetTimer := time.NewTimer(15 * time.Second)
 	defer budgetTimer.Stop()
 	var warningC <-chan time.Time = budgetTimer.C
 	for pendingProbes > 0 {
@@ -2899,6 +3009,12 @@ func (a *Agent) printerStatusPayloadWithSharingResult(sharing localPrinterSharin
 			geometries[res.idx] = res.geometry
 			verifications[res.idx] = res.verification
 			observedCapabilities[res.idx] = res.capabilities
+			// Feed the dispatch observation cache: background-measured
+			// geometry becomes the print path's last known size, and the
+			// verification outcome becomes advisory state. Only completed
+			// probe results reach this loop, so the cache never ingests a
+			// discarded or stale observation.
+			a.observations.record(ids[res.idx], res.geometry, res.verification, res.verificationErr)
 			probed[res.idx] = true
 			pendingProbes--
 		case <-warningC:
@@ -2906,7 +3022,7 @@ func (a *Agent) printerStatusPayloadWithSharingResult(sharing localPrinterSharin
 			deferred := 0
 			for i := range ids {
 				if !probed[i] {
-					// The 10s batch budget still defers slow probes to
+					// The batch budget still defers slow probes to
 					// the background, but each deferred row keeps its
 					// per-printer reason instead of a bare "unknown":
 					// the next heartbeat replaces it with a completed
@@ -2918,7 +3034,7 @@ func (a *Agent) printerStatusPayloadWithSharingResult(sharing localPrinterSharin
 					deferred++
 				}
 			}
-			log.Printf("WARNING: Printer status probe batch exceeded 10s budget; %d slow probe(s) deferred to background (current status unknown)", deferred)
+			log.Printf("WARNING: Printer status probe batch exceeded 15s budget; %d slow probe(s) deferred to background (current status unknown)", deferred)
 		}
 	}
 	// Slow helpers are single-flight per printer and self-clearing; joining
@@ -3728,6 +3844,10 @@ func (a *Agent) processJob(ctx context.Context, job map[string]interface{}) {
 		a.updateJobStatus(ctx, jobID, "failed", reason, claimToken, "")
 		return
 	}
+	// resolvedImageGeometry carries the image geometry chosen by the
+	// fallback policy below into the backend print call, so the backend
+	// does not re-measure (and cannot re-fail) at print time.
+	var resolvedImageGeometry *printer.Geometry
 	facts, factsOK := a.deviceFacts(printerID)
 	if !factsOK {
 		a.queue.AbortPrint(jobID, "device_facts_missing")
@@ -3739,15 +3859,20 @@ func (a *Agent) processJob(ctx context.Context, job map[string]interface{}) {
 		a.printersMu.RLock()
 		pc := a.printerConfigs[printerID]
 		a.printersMu.RUnlock()
-		geometry, geometryErr := printer.CurrentGeometry(ctx, p, pc)
-		if geometryErr == nil {
-			geometryErr = geometry.CheckImageFingerprint(pl.GeometryFingerprint)
-		}
+		// Geometry policy: never refuse an image job merely because the
+		// driver measurement is slow or failing, and never require the
+		// rendered fingerprint to match a fresh measurement. Resolve in
+		// preference order — background-cached geometry, bounded live
+		// measurement, last known size, configured default profile — and
+		// refuse only when no geometry exists anywhere (the resolver's
+		// error states exactly that, with the measurement failure).
+		geometry, geometryErr := a.resolveDispatchGeometry(ctx, printerID, p, pc, pl.GeometryFingerprint)
 		if geometryErr != nil {
-			a.queue.AbortPrint(jobID, "image_geometry_mismatch")
+			a.queue.AbortPrint(jobID, "image_geometry_unavailable")
 			a.updateJobStatus(ctx, jobID, "failed", fmt.Sprintf("CAPABILITY_MISMATCH: %v", geometryErr), claimToken, "")
 			return
 		}
+		resolvedImageGeometry = geometry
 		facts.Geometry = geometry
 	}
 	if compatible, why := printer.PayloadCompatibleForDevice(kind, pl.Protocol, facts); !compatible {
@@ -3782,9 +3907,13 @@ func (a *Agent) processJob(ctx context.Context, job map[string]interface{}) {
 		a.rejectJob(ctx, jobID, claimToken, "agent_shutting_down")
 		return
 	}
-	// A syntactically valid configuration and a claimed online status never
-	// authorize production output. Query the actual destination after all
-	// scheduling waits, before the durable physical-attempt transition.
+	// Final dispatch fence after all scheduling waits, before the durable
+	// physical-attempt transition. This is a local configuration check
+	// only (identity collision, inventory absence, provable destination
+	// change, mid-dispatch reconfiguration): it performs no live probe and
+	// no driver measurement, so a slow or failing measurement can never
+	// refuse the job here. Device truth is enforced by the physical
+	// attempt itself, which reports the printer's own error reason.
 	a.printersMu.RLock()
 	verifiedConfig := a.printerConfigs[printerID]
 	a.printersMu.RUnlock()
@@ -3857,6 +3986,9 @@ func (a *Agent) processJob(ctx context.Context, job map[string]interface{}) {
 	// Only the physical execution phase gets a document-specific timeout.
 	printCtx, cancel := context.WithTimeout(ctx, printDocumentTimeout(len(pl.Data)))
 	defer cancel()
+	if resolvedImageGeometry != nil {
+		printCtx = printer.WithDispatchGeometry(printCtx, resolvedImageGeometry)
+	}
 	printCtx = printer.WithDispatchAdmission(printCtx, func(admissionCtx context.Context) error {
 		if a.fencedForDispatch() || !a.isPrinterExecutionAllowed(localPrinterID) || !a.isPrinterSharedWithGateway(localPrinterID) {
 			return fmt.Errorf("dispatch refused: agent or printer configuration changed before this transport submission")

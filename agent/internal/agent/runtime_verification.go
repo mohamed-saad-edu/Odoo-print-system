@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"log"
 	"strings"
+	"time"
 
 	"github.com/yaseir-agent/agent/internal/config"
 	"github.com/yaseir-agent/agent/internal/printer"
@@ -39,19 +41,47 @@ func (a *Agent) printerObservationCurrent(id string, backend printer.Printer, ex
 	return a.identityGenerationCurrentLocked(id, backend, expected)
 }
 
+// verifyPrinterForDispatch is the dispatch-time fence, and it performs NO
+// live probe and NO driver measurement. Operational verification is
+// background evidence: the heartbeat probe loop refreshes it on its own
+// cycle, and a failed or slow measurement must never refuse a print job —
+// that failure mode badged healthy printers as unusable while Windows
+// reported them ready. What remains here are hard configuration facts
+// that make printing to this destination wrong regardless of any
+// measurement:
+//
+//   - an unresolved identity collision (two devices claim one identity);
+//   - a printer the current inventory says is gone;
+//   - a destination binding that PROVABLY changed after the job was
+//     admitted (checked only when the job carries a valid digest and the
+//     current digest can be computed — both are local hashes, no I/O);
+//   - a configuration change mid-dispatch (the generation fence).
+//
+// A stale, failed, or never-completed verification is logged as an
+// advisory and the job proceeds. Real device errors (offline queue,
+// paper out, missing tray) still fail the job at the physical attempt
+// itself, with the printer's own explicit reason.
 func (a *Agent) verifyPrinterForDispatch(ctx context.Context, id string, backend printer.Printer, expected config.PrinterConfig, admittedBinding string) error {
-	if !validAdmissionBinding(admittedBinding) {
-		return fmt.Errorf("%w: job has no valid admission destination", printer.ErrPrinterUnverified)
+	if expected.Capabilities["identity_collision"] != nil {
+		return fmt.Errorf("%w: printer identity requires explicit reconciliation", printer.ErrPrinterUnverified)
 	}
-	proof, err := printer.ProbeOperationalVerification(ctx, backend, expected)
-	if err != nil {
-		return err
+	if expected.Capabilities["inventory_present"] == false {
+		return fmt.Errorf("%w: printer is no longer present in the Agent inventory", printer.ErrPrinterUnverified)
 	}
-	if proof.BindingDigest != admittedBinding {
-		return fmt.Errorf("%w: current destination differs from the accepted job", printer.ErrPrinterUnverified)
+	if validAdmissionBinding(admittedBinding) {
+		current, err := config.PrinterBindingDigest(expected)
+		if err != nil {
+			return fmt.Errorf("%w: invalid configured destination: %v", printer.ErrPrinterUnverified, err)
+		}
+		if current != admittedBinding {
+			return fmt.Errorf("%w: current destination differs from the accepted job", printer.ErrPrinterUnverified)
+		}
 	}
 	if !a.printerObservationCurrent(id, backend, expected) {
-		return fmt.Errorf("%w: printer configuration changed during verification", printer.ErrPrinterUnverified)
+		return fmt.Errorf("%w: printer configuration changed during dispatch checks", printer.ErrPrinterUnverified)
+	}
+	if advisory := a.observations.verificationAdvisory(id, time.Now()); advisory != "" {
+		log.Printf("Job dispatch advisory for printer %s: %s; proceeding — operational verification is background evidence, not a print gate", id, advisory)
 	}
 	return nil
 }

@@ -313,6 +313,8 @@ func (a *Agent) executeDiscoverySession(ctx context.Context, discoveryID string,
 		result.Errors = append(result.Errors, "registry persistence: "+persistErr.Error())
 	} else {
 		a.reconcileRegistryPrinters(merged)
+		// Publish the refreshed inventory now, not at the next tick.
+		a.requestImmediateHeartbeat()
 	}
 
 	devices, reportErrors := a.cloudDiscoveryPayload(result)

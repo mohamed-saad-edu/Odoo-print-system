@@ -1,5 +1,4 @@
 import { printOutputPresentation, validateFileOutputEvidence, sameFileOutputEvidence } from "../../../../lib/print-output";
-import { printerOperationalVerificationPredicate } from "../../../../lib/printer-verification-sql";
 import { createHash } from "node:crypto";
 import { db, type DbTx } from "../../../../db";
 import { printJobs, printJobReceipts } from "../../../../db/schema";
@@ -21,9 +20,14 @@ import { recordJobEvent } from "../../../../lib/job-timeline";
 import { PRINTER_NOT_SHARED_PAUSE } from "../../../../lib/job-status";
 
 export const dynamic = "force-dynamic";
+// Claim/report eligibility for a printer. Operational verification is
+// intentionally absent: it is background evidence the Agent refreshes on
+// its own cycle, and a failed or slow driver measurement must never block
+// a claim or a status report. What remains are real, current errors:
+// retired or absent printer, unshared printer, a reported status that is
+// not executable, stale printer evidence, or a lapsed subscription.
 const printerEligibilityPredicate = (tenantId: SQL) => sql`
-  ${printerOperationalVerificationPredicate(sql`pr`)}
-  AND pr.lifecycle = 'active'
+  pr.lifecycle = 'active'
   AND pr.inventory_present = true
   AND pr.shared_with_gateway = true
   AND (
@@ -205,7 +209,7 @@ export async function GET(req: Request) {
           AND a.last_seen_at IS NOT NULL
           AND a.last_seen_at <= clock_timestamp()
           AND a.last_seen_at >= clock_timestamp() - make_interval(secs => ${agentStaleThresholdSeconds()})
-          AND p.binding_digest IS NOT NULL AND p.binding_digest = pr.verification_binding_digest
+          AND (p.binding_digest IS NULL OR pr.verification_binding_digest IS NULL OR p.binding_digest = pr.verification_binding_digest)
           AND p.output_medium = pr.output_medium
           AND ${printerEligibilityPredicate(sql`p.tenant_id`)}
           AND t.lifecycle = 'active'
@@ -230,7 +234,7 @@ export async function GET(req: Request) {
           AND a.last_seen_at IS NOT NULL
         AND a.last_seen_at <= clock_timestamp()
         AND a.last_seen_at >= clock_timestamp() - make_interval(secs => ${agentStaleThresholdSeconds()})
-          AND p.binding_digest IS NOT NULL AND p.binding_digest = pr.verification_binding_digest
+          AND (p.binding_digest IS NULL OR pr.verification_binding_digest IS NULL OR p.binding_digest = pr.verification_binding_digest)
           AND p.output_medium = pr.output_medium
           AND ${printerEligibilityPredicate(sql`p.tenant_id`)}
           AND t.lifecycle = 'active'
@@ -254,7 +258,7 @@ export async function GET(req: Request) {
           AND a.last_seen_at IS NOT NULL
           AND a.last_seen_at <= clock_timestamp()
           AND a.last_seen_at >= clock_timestamp() - make_interval(secs => ${agentStaleThresholdSeconds()})
-          AND p.binding_digest IS NOT NULL AND p.binding_digest = pr.verification_binding_digest
+          AND (p.binding_digest IS NULL OR pr.verification_binding_digest IS NULL OR p.binding_digest = pr.verification_binding_digest)
           AND p.output_medium = pr.output_medium
           AND ${printerEligibilityPredicate(sql`p.tenant_id`)}
           AND t.lifecycle = 'active'
@@ -777,7 +781,7 @@ export async function PATCH(req: Request) {
         JOIN printers pr ON pr.tenant_id = a.tenant_id AND pr.agent_id = a.id
         WHERE a.id = ${agent.id} AND a.tenant_id = ${agent.tenantId}
           AND pr.id = ${job.printerId}
-          AND ${job.bindingDigest}::text IS NOT NULL AND pr.verification_binding_digest = ${job.bindingDigest}
+          AND (${job.bindingDigest}::text IS NULL OR pr.verification_binding_digest IS NULL OR pr.verification_binding_digest = ${job.bindingDigest})
           AND pr.output_medium = ${job.outputMedium}
           AND ${printerEligibilityPredicate(sql`a.tenant_id`)}
         FOR SHARE OF a, t, pr

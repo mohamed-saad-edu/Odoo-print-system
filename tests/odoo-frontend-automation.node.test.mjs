@@ -92,11 +92,15 @@ test("mock verification uses native queue/service/device proof instead of claimi
 test("POS picker offers only physical JPEG transports and declared ESC/POS raster capability", async () => {
   const { RuntimePrinterField } = await load("components/runtime_printer_field.js");
   const field = Object.create(RuntimePrinterField.prototype);
+  // The legacy/USB spooler spellings are accepted by the POS transport
+  // rule itself; they were previously dropped only as a side effect of
+  // the picker's verification filter, which no longer exists (operational
+  // verification is background evidence, not an eligibility gate).
   const cases = [
     ["queue", "spooler", "spooler", undefined, true],
-    ["legacy-queue", "windows_spooler", "windows_spooler", undefined, false],
-    ["usb-queue", "usb", "spooler", undefined, false],
-    ["legacy-usb-queue", "usb", "windows_spooler", undefined, false],
+    ["legacy-queue", "windows_spooler", "windows_spooler", undefined, true],
+    ["usb-queue", "usb", "spooler", undefined, true],
+    ["legacy-usb-queue", "usb", "windows_spooler", undefined, true],
     ["tcp-driver-label", "network", "spooler", undefined, false],
     ["tcp-legacy-label", "network", "windows_spooler", undefined, false],
     ["wrong-transport", "serial", "spooler", undefined, false],
@@ -122,8 +126,8 @@ test("POS picker offers only physical JPEG transports and declared ESC/POS raste
   assert.deepEqual(Array.from(field.filteredPrinters, row => row.id), expected);
   field.state.destinationType = "report";
   assert.deepEqual(Array.from(field.filteredPrinters, row => row.id),
-    ["queue", "escpos", "explicit-raster", "explicit-escpos", "explicit-image", "conflict", "empty", "malformed", "null", "direct-usb", "ipp-document"],
-    "reports preserve format selection while unverified/noncanonical transports remain ineligible");
+    cases.map(row => row[0]),
+    "reports list every discovered printer: no verification or canonical-transport eligibility filter remains");
 });
 
 test("POS picker rejects unknown, mismatched or incomplete geometry before selecting a receipt destination", async () => {
