@@ -143,9 +143,9 @@ test('Odoo CI tests the built hardened runtime by content ID with verified immut
     'docs/runtime-hardening/build-tools.lock',
     'scripts/package-pillow-wheel-as-deb.py',
   ]) assert.ok(gate.includes('git hash-object ' + file), file);
-  assert.ok(gate.includes('scripts/check-trivy-baseline.py odoo-hardened.sarif yaseir-odoo-hardened:review-20261026'));
-  const findings = JSON.parse(load('security/image-vulnerability-baseline.json')).images['yaseir-odoo-hardened:review-20261026'].findings;
-  assert.equal(findings.length, 64);
+  assert.ok(gate.includes('scripts/check-trivy-baseline.py odoo-hardened.sarif yaseir-odoo-hardened:review-20261105'));
+  const findings = JSON.parse(load('security/image-vulnerability-baseline.json')).images['yaseir-odoo-hardened:review-20261105'].findings;
+  assert.equal(findings.length, 57);
   assert.ok(findings.every((row) => row.length === 3 && ['LOW', 'MEDIUM'].includes(row[2])));
 });
 

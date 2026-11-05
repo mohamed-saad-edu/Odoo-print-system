@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "profile": "Ubuntu24.04amd64 signed security package profile + rtlcss4.3.0 source-map-js1.2.2",
-  "reviewed_at": "2026-10-28",
+  "reviewed_at": "2026-11-05",
   "ubuntu_provenance": {
     "snapshot": "https://snapshot.ubuntu.com/ubuntu/20261024T000000Z/",
     "suite": "noble-security",
@@ -484,6 +484,29 @@
       "source": "zlib"
     },
     {
+      "filename": "libpcre2-8-0_10.42-4ubuntu2.2_amd64.deb",
+      "url": "https://security.ubuntu.com/ubuntu/pool/main/p/pcre2/libpcre2-8-0_10.42-4ubuntu2.2_amd64.deb",
+      "package": "libpcre2-8-0",
+      "version": "10.42-4ubuntu2.2",
+      "previous_version": "10.42-4ubuntu2.1",
+      "architecture": "amd64",
+      "bytes": 228546,
+      "sha256": "f41da7cb7e979d6b037ea92650c72ec8ec532ec3c93aa8d5b997207de56695ea",
+      "advisories": [
+        "CVE-2026-103111",
+        "CVE-2026-86145",
+        "CVE-2026-89156",
+        "CVE-2026-89157",
+        "CVE-2026-89158",
+        "CVE-2026-89160",
+        "CVE-2026-89161"
+      ],
+      "depends": "libc6 (>= 2.34)",
+      "pre_depends": null,
+      "source": "pcre2",
+      "security_notice": "https://ubuntu.com/security/notices/USN-8974-1"
+    },
+    {
       "filename": "source-map-js-1.2.2.tgz",
       "url": "https://registry.npmjs.org/source-map-js/-/source-map-js-1.2.2.tgz",
       "package": "source-map-js",
@@ -508,6 +531,15 @@
       "bytes": 402610,
       "sha256_from": "Canonical Ubuntu package download metadata",
       "reason": "The pinned snapshot endpoint returned bytes with a digest different from Canonical's published package checksum; use the official security origin while retaining the verified package hash."
+    },
+    "libpcre2-8-0": {
+      "source": "Ubuntu noble-security via security.ubuntu.com HTTPS",
+      "package_page": "https://packages.ubuntu.com/noble/amd64/libpcre2-8-0/download",
+      "release": "10.42-4ubuntu2.2",
+      "bytes": 228546,
+      "sha256_from": "SHA-256 computed from the downloaded .deb itself during the 2026-11-05 review; its dpkg control fields (Package, Version 10.42-4ubuntu2.2, Architecture amd64, Depends) were inspected and match this entry",
+      "security_notice": "https://ubuntu.com/security/notices/USN-8974-1",
+      "reason": "USN-8974-1 (2026-11-03) published the first noble fix for the seven reviewed libpcre2-8-0 findings after the retained 20261024T000000Z snapshot was pinned, so the fixed package is carried from the official security origin exactly like libbrotli1."
     }
   }
 }
