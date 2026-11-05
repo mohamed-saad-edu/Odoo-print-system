@@ -130,17 +130,17 @@ def test_advisory_medium_projection_cannot_override_declared_transport():
     assert actual._validate_runtime_target() is printer
 
 
-@pytest.mark.parametrize(("connection", "protocol"), [
-    ("spooler", "ipp"),
-    ("pdf_output", "spooler"),
-    ("network", "spooler"),
+@pytest.mark.parametrize(("connection", "protocol", "canonical"), [
+    ("spooler", "ipp", "spooler"),
+    ("pdf_output", "spooler", "unknown"),
+    ("network", "spooler", "unknown"),
 ])
-def test_actual_transport_protocol_mismatch_remains_a_hard_failure(connection, protocol):
+def test_actual_transport_protocol_mismatch_remains_a_hard_failure(connection, protocol, canonical):
     printer = verified_printer()
     printer["connectionType"] = connection
     printer["protocol"] = protocol
     actual = binding(printer)
-    assert actual._canonical_runtime_printer_protocol(printer) == "unknown"
+    assert actual._canonical_runtime_printer_protocol(printer) == canonical
     with pytest.raises(ValidationError):
         actual._validate_binding_protocol_against_runtime(printer)
 

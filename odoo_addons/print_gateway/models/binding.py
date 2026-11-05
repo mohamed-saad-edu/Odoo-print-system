@@ -442,7 +442,10 @@ class PrintGatewayBinding(models.Model):
         if protocol == "windows_spooler" and connection_type == "spooler":
             protocol = "spooler"
         if connection_type == "spooler":
-            return "spooler" if protocol == "spooler" else "unknown"
+            # A Windows queue is still the transport for supported RAW/ESC-POS
+            # pass-through modes; binding capability validation decides which
+            # protocols are allowed for the selected queue.
+            return "spooler"
         if connection_type == "pdf_output" and protocol == "pdf":
             return "pdf"
         if connection_type in ("ipp", "ipps"):
