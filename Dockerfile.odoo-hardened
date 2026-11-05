@@ -86,6 +86,7 @@ COPY docs/runtime-hardening /opt/yaseir-runtime-profile
 COPY odoo_addons/print_gateway /opt/yaseir-addons/print_gateway
 COPY scripts/odoo-hardened-entrypoint.py /usr/local/bin/yaseir-odoo-entrypoint.py
 COPY scripts/odoo-healthcheck.py /usr/local/bin/yaseir-odoo-healthcheck.py
+COPY scripts/package-pillow-wheel-as-deb.py /usr/local/bin/yaseir-package-pillow-wheel-as-deb.py
 RUN python3 /opt/yaseir-runtime-profile/apply-os-security-profile.py verify /os-security \
     && test "$(dpkg --print-architecture)" = amd64 \
     && for record in 'libssl3t64|3.0.13-0ubuntu3.15|3.0.13-0ubuntu3.16' 'libssl-dev|3.0.13-0ubuntu3.15|3.0.13-0ubuntu3.16' 'openssl|3.0.13-0ubuntu3.15|3.0.13-0ubuntu3.16' 'curl|8.5.0-2ubuntu10.13|8.5.0-2ubuntu10.16' 'libcares2|1.27.0-1.0ubuntu1|1.27.0-1.0ubuntu1.1' 'libcurl4t64|8.5.0-2ubuntu10.13|8.5.0-2ubuntu10.16' 'libexpat1|2.6.1-2ubuntu0.4|2.6.1-2ubuntu0.6' 'libfreetype6|2.13.2+dfsg-1ubuntu0.1|2.13.2+dfsg-1ubuntu0.2' 'libglib2.0-0t64|2.80.0-6ubuntu3.8|2.80.0-6ubuntu3.9' 'libperl5.38t64|5.38.2-3.2ubuntu0.4|5.38.2-3.2ubuntu0.6' 'libpng16-16t64|1.6.43-5ubuntu0.6|1.6.43-5ubuntu0.7' 'libsqlite3-0|3.45.1-1ubuntu2.7|3.45.1-1ubuntu2.8' 'libx11-6|2:1.8.7-1build1|2:1.8.7-1ubuntu0.1' 'libx11-data|2:1.8.7-1build1|2:1.8.7-1ubuntu0.1' 'libxml2|2.9.14+dfsg-1.3ubuntu3.8|2.9.14+dfsg-1.3ubuntu3.10' 'perl|5.38.2-3.2ubuntu0.4|5.38.2-3.2ubuntu0.6' 'perl-base|5.38.2-3.2ubuntu0.4|5.38.2-3.2ubuntu0.6' 'perl-modules-5.38|5.38.2-3.2ubuntu0.4|5.38.2-3.2ubuntu0.6' 'python3-lxml|5.2.1-1|5.2.1-1ubuntu0.2' 'python3-requests|2.31.0+dfsg-1ubuntu1.1|2.31.0+dfsg-1ubuntu1.2' 'python3-urllib3|2.0.7-1ubuntu0.7|2.0.7-1ubuntu0.8' 'zlib1g|1:1.3.dfsg-3.1ubuntu2.2|1:1.3.dfsg-3.1ubuntu2.3' 'libbrotli1|1.1.0-2build2|1.1.0-2ubuntu0.1'; do \
@@ -112,6 +113,14 @@ RUN python3 -c "import platform,sys; assert sys.version_info[:2] == (3,12); asse
     && /opt/yaseir-venv/bin/python /opt/yaseir-runtime-profile/verify-odoo19-pdf-bounds.py /opt/odoo \
     && /opt/yaseir-venv/bin/python /opt/odoo/odoo-bin --version \
     && wkhtmltopdf --version \
+    # Replace the inherited, vulnerable system Pillow with the exact hash-locked
+    # Pillow 13.0.0 wheel already used by the isolated Odoo runtime.
+    && python3 /usr/local/bin/yaseir-package-pillow-wheel-as-deb.py /wheels/pillow-13.0.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl /tmp/yaseir-python3-pil \
+    && dpkg-deb --build --root-owner-group /tmp/yaseir-python3-pil /tmp/python3-pil_13.0.0-1yaseir1_amd64.deb \
+    && dpkg --install /tmp/python3-pil_13.0.0-1yaseir1_amd64.deb \
+    && test "$(dpkg-query -W -f='${Version}' python3-pil)" = '13.0.0-1yaseir1' \
+    && python3 -c 'import PIL; from PIL import Image; import io; assert PIL.__version__ == "13.0.0"; stream=io.BytesIO(); Image.new("RGB",(2,2),(1,2,3)).save(stream,format="PNG"); stream.seek(0); assert Image.open(stream).size == (2,2)' \
+    && rm -rf /tmp/yaseir-python3-pil /tmp/python3-pil_13.0.0-1yaseir1_amd64.deb /usr/local/bin/yaseir-package-pillow-wheel-as-deb.py \
     # Runtime must not ship pip and its vendored outdated dependencies;
     # the patched application dependencies are already installed in the venv.
     && /opt/yaseir-venv/bin/python -m pip uninstall --yes pip \
@@ -142,6 +151,15 @@ RUN test "$(dpkg-query -W -f='${Version}' python3-pip)" = '24.0+dfsg-1ubuntu1.3'
        done \
     && python3 -c 'import importlib.util as u; assert u.find_spec("pip") is None; assert u.find_spec("pdfminer") is None' \
     && /opt/yaseir-venv/bin/python /opt/odoo/odoo-bin --version
+# APT is a build-time package manager, not an Odoo runtime dependency. Its
+# HTTP backend and libapt runtime are not needed after image assembly; remove
+# them rather than shipping a network package manager in the final container.
+RUN dpkg --purge --force-remove-essential apt libapt-pkg6.0t64 \
+    && ! dpkg-query -W -f='${db:Status-Status}' apt 2>/dev/null | grep -qx installed \
+    && ! dpkg-query -W -f='${db:Status-Status}' libapt-pkg6.0t64 2>/dev/null | grep -qx installed \
+    && test ! -e /usr/bin/apt \
+    && test ! -e /usr/bin/apt-get \
+    && test ! -e /usr/bin/apt-cache
 LABEL org.opencontainers.image.title="Yaseir hardened Odoo 19 runtime" \
     org.opencontainers.image.revision="14f9b8149d5260d92fb74404df09483fb42dd820" \
     io.yaseir.runtime-profile="cpython312-linux-x86_64-pypdf-bounds"

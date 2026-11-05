@@ -160,3 +160,29 @@ Software pipeline checks use a local Gateway and isolated consumers. Successful 
 ## Security patch, 2026-10-31
 
 Following the 2026-10-30 publication of seven pypdf HIGH advisories (CVE-2026-119203 through CVE-2026-119209), the isolated runtime lock now pins **pypdf 6.21.4**. The upstream fixes are present in 6.21.3 and 6.21.4, and PyPI's trusted-publishing wheel SHA-256 is `33e4fb41ca352810eb4e9838aa0d82d6888a5f8bf682f43e99cce5faa666255c`. The artifact manifest records the same official wheel URL and digest. This update does not modify the bounded-decompression Odoo adapter patch, relax any image severity gate, or add CVEs to the security baseline. The exact rebuilt image still requires real Odoo addon tests, PDF bounds verification and a fresh Trivy scan before acceptance.
+
+## Runtime image security correction, 2026-11-05
+
+The exact-image Trivy run on 2026-11-05 found two inherited runtime packages
+that were separate from the already pinned application venv:
+
+- Ubuntu's system python3-pil 10.2.0-1ubuntu1.3 remained installed in the
+  upstream Odoo image even though the isolated Odoo venv already used Pillow
+  13.0.0. The upstream Pillow 13.0.0 wheel is now repackaged as the system
+  python3-pil 13.0.0-1yaseir1 package. The conversion script accepts only the
+  exact CPython 3.12 x86_64 wheel and verifies its SHA-256 from the runtime
+  dependency lock before writing the Debian package. This preserves the base
+  image's system package dependency graph while making both Python runtimes
+  use the same patched Pillow release.
+- apt 2.8.3 and libapt-pkg6.0t64 2.8.3 were inherited from the upstream image.
+  APT is not used by Odoo after image assembly, so both packages are purged
+  from the final runtime. dpkg remains available for package inventory and
+  build-time installation. The runtime no longer ships apt, apt-get, apt-cache,
+  or the vulnerable libapt HTTP backend.
+
+This correction does not whitelist the findings, change the Trivy baseline,
+or lower any severity threshold. The acceptance gate still scans the exact
+built image with UNKNOWN, LOW, MEDIUM, HIGH, and CRITICAL severities, rejects
+new and unfixed findings, and retains the full SARIF and SBOM. A fresh final
+scan must confirm that the inherited APT and Pillow findings are absent
+before release.
