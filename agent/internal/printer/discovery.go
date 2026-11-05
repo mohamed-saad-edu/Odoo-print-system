@@ -1413,7 +1413,10 @@ func TestPrinter(cfg *config.Config, registryPath, printerID string) error {
 		if disabled.Disabled(pc) {
 			return fmt.Errorf("printer %s is disabled by local operator configuration", printerID)
 		}
-		// Local diagnostics require the same current identity proof as Gateway output.
+		// A local diagnostic transmits a real payload to the selected endpoint.
+		// Unlike routine job admission (where verification is advisory), this
+		// explicit test action requires current identity evidence: a reachable
+		// TCP/9100 listener is not proof of a printer and must not receive bytes.
 		_, err = ProbeOperationalVerification(admissionCtx, prt, pc)
 		return err
 	})

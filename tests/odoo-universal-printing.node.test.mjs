@@ -65,18 +65,21 @@ test("approved PDF output and ordinary office driver remain selectable for recei
   }
 });
 
-test("cached verification expires before selection and cannot be rescued by online status", async () => {
+test("expired verification does not exclude a printer from selection", async () => {
+  // Verification is background evidence: an expired proof neither hides
+  // the printer nor blocks selecting it; online status and the reported
+  // facts are what the picker uses.
   const expired = printer("expired", false);
   expired.verificationReceivedAt = new Date(now - 300001).toISOString();
   expired.status = "online";
   const instance = await field([expired, printer()]);
-  assert.deepEqual(Array.from(instance.filteredPrinters, p => p.id), ["file-a"]);
+  assert.deepEqual(Array.from(instance.filteredPrinters, p => p.id), ["expired", "file-a"]);
   let changes = 0, refreshes = 0;
   instance.props.record.update = () => { changes += 1; };
   instance.retryLoad = () => { refreshes += 1; };
   instance.onChange({ target: { value: "expired" } });
-  assert.equal(changes, 0);
-  assert.equal(refreshes, 1);
+  assert.equal(changes, 1);
+  assert.equal(refreshes, 0);
 });
 
 test("file output selection records the pdf protocol", async () => {
@@ -87,7 +90,11 @@ test("file output selection records the pdf protocol", async () => {
   assert.equal(change.printer_protocol, "pdf");
 });
 
-test("unknown file page boundaries, unverified endpoints and raw IPP image are excluded", async () => {
+test("unknown file page boundaries and raw IPP image are excluded; verification state is not", async () => {
+  // The remaining POS exclusions are rendering prerequisites: a file
+  // output needs complete page geometry to render into, and IPP is not a
+  // POS image transport. Verification state (pending, or a proof naming
+  // another printer) no longer excludes anyone.
   const incomplete = printer("missing-height");
   delete incomplete.capabilities.geometry.paper_height_mm;
   const pending = printer("pending"); pending.verificationState = "pending";
@@ -96,7 +103,7 @@ test("unknown file page boundaries, unverified endpoints and raw IPP image are e
   ipp.capabilities.operational_verification.method = "ipp_attributes";
   ipp.capabilities.operational_verification.identity_strength = "service";
   const instance = await field([incomplete, pending, wrong, ipp]);
-  assert.deepEqual(Array.from(instance.filteredPrinters, p => p.id), []);
+  assert.deepEqual(Array.from(instance.filteredPrinters, p => p.id), ["pending", "wrong-proof"]);
 });
 
 test("Odoo browser printer proof uses exact UTF-8 ID and method strength", async () => {
@@ -119,8 +126,11 @@ test("Odoo browser printer proof uses exact UTF-8 ID and method strength", async
   forged.capabilities.operational_verification.identity_strength = "device";
   assert.equal(validatedOperationalVerification(forged.capabilities.operational_verification, forged, now), null);
   assert.equal(isVerifiedRuntimePrinter(forged, now), false);
+  // The evidence validator still rejects the forged proof as EVIDENCE,
+  // but the picker no longer uses verification as an eligibility filter:
+  // the printer is offered on its real transport facts.
   const picker = await field([forged]);
-  assert.deepEqual(Array.from(picker.filteredPrinters), []);
+  assert.deepEqual(Array.from(picker.filteredPrinters, p => p.id), ["hardware-forged"]);
 });
 
 const fixtures = JSON.parse(fs.readFileSync("contracts/printer-operational-verification-fixtures.json", "utf8"));

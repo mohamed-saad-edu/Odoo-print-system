@@ -793,9 +793,15 @@ export async function POST(req: Request) {
       // must preserve prior presence rather than deleting healthy inventory.
       const mayReconcileAbsence = snapshotEnabled && inventorySnapshotVersion !== null && isFinalHeartbeatPage && inventoryComplete && !priorSnapshotHadErrors && !pageHadErrors;
       if (mayReconcileAbsence) {
+        // Absence is an inventory fact, not a health observation: mark the
+        // row not-present and reset its (now unprovable) verification, but
+        // keep the last status the Agent actually reported. Rewriting it
+        // to 'unknown' would erase the printer's real last known state;
+        // presentation already renders not-present rows as unavailable,
+        // and a returning printer overwrites the status on its next page.
         await tx.execute(sql`
           UPDATE printers
-          SET inventory_present = false, status = 'unknown', verification_state = 'pending', verification_verified_at = NULL, verification_received_at = NULL, verification_binding_digest = NULL, verification_reason = 'verification_inventory_absent', updated_at = now()
+          SET inventory_present = false, verification_state = 'pending', verification_verified_at = NULL, verification_received_at = NULL, verification_binding_digest = NULL, verification_reason = 'verification_inventory_absent', updated_at = now()
           WHERE tenant_id = ${agent.tenantId}
             AND agent_id = ${agent.id}
             AND management_source = 'agent'

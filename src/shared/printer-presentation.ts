@@ -1,4 +1,4 @@
-import { isPrinterOperationallyVerified, type OperationalPrinterState } from "../lib/printer-operational-verification";
+import type { OperationalPrinterState } from "../lib/printer-operational-verification";
 import { DEFAULT_LOCALE, type Locale } from "../i18n/config";
 import { translate, type MessageKey } from "../i18n/translate";
 import { agentLiveView, printerObservationFreshness, type Tone } from "./job-vocabulary";
@@ -38,11 +38,66 @@ type PrinterView = OperationalPrinterState & {
   agentStaleThresholdSeconds?: number | null;
 };
 
-/** Presentation only: raw health and admission gates keep their own evidence. */
-export function printerPresentation(printer: PrinterView, agent?: Owner | null, nowMs = Date.now()): {
+type PrinterPresentation = {
   state: PrinterPresentationState; tone: Tone; labelKey: MessageKey; reasonKey: MessageKey;
-} {
-  const unavailable = (reasonKey: MessageKey) => ({ state: "unavailable" as const, tone: "neutral" as const, labelKey: "printer.presentation.unavailable" as const, reasonKey });
+};
+
+/** Precise badge labels for the Windows states the Agent reports through
+ * `status_detail`. The generic "needs attention" label is reserved for a
+ * genuine, otherwise-unspecified intervention state: every specific
+ * physical condition (jam, paper out, door open, no toner, paused,
+ * offline) carries its own label, exactly as Windows names it. */
+const detailLabelKeys: Partial<Record<string, MessageKey>> = {
+  windows_offline: "printer.presentation.offline",
+  windows_server_offline: "printer.presentation.offline",
+  windows_work_offline: "printer.presentation.offline",
+  windows_unavailable: "printer.presentation.offline",
+  windows_paused: "printer.presentation.paused",
+  windows_paper_jam: "printer.presentation.paperJam",
+  windows_paper_out: "printer.presentation.paperOut",
+  windows_door_open: "printer.presentation.doorOpen",
+  windows_no_toner: "printer.presentation.noToner",
+  windows_manual_feed: "printer.presentation.manualFeed",
+  windows_output_bin_full: "printer.presentation.outputBinFull",
+  windows_toner_low: "printer.presentation.tonerLow",
+  windows_initializing: "printer.presentation.initializing",
+};
+
+/** Map one Agent-reported status word (+ its Windows detail code) to the
+ * displayed presentation. This is the ONLY place a reported status becomes
+ * a badge: the word the Agent read from Windows is shown as-is (refined by
+ * the detail code), never replaced by admission or freshness evidence.
+ * Operational verification stays an admission gate for jobs and a separate
+ * detail field; it must never mask a printer's real reported state. */
+export function reportedPrinterPresentation(status: string | null | undefined, detailCode: string): PrinterPresentation {
+  const detail = (detailCode ?? "").trim();
+  const detailReason = detail && Object.prototype.hasOwnProperty.call(detailKeys, detail) ? detailKeys[detail] : undefined;
+  const detailLabel = detail ? detailLabelKeys[detail] : undefined;
+  switch ((status ?? "").trim().toLowerCase()) {
+    case "online": case "idle":
+      if (detail === "windows_toner_low") {
+        return { state: "ready", tone: "warn", labelKey: "printer.presentation.tonerLow", reasonKey: detailKeys.windows_toner_low };
+      }
+      return { state: "ready", tone: "ok", labelKey: "printer.presentation.ready", reasonKey: detailReason ?? "printer.presentation.readyReason" };
+    case "busy": case "printing":
+      if (detail === "windows_initializing") {
+        return { state: "printing", tone: "info", labelKey: "printer.presentation.initializing", reasonKey: detailKeys.windows_initializing };
+      }
+      return { state: "printing", tone: "info", labelKey: "printer.presentation.printing", reasonKey: detailReason ?? "printer.presentation.printingReason" };
+    case "offline":
+      return { state: "attention", tone: "bad", labelKey: detailLabel ?? "printer.presentation.offline", reasonKey: detailReason ?? "printer.detail.windows_offline" };
+    case "error": case "paper_out": case "driver_error": case "spooler_error": {
+      const soft = detail === "windows_paused" || detail === "windows_manual_feed";
+      return { state: "attention", tone: soft ? "warn" : "bad", labelKey: detailLabel ?? "printer.presentation.attention", reasonKey: detailReason ?? "printer.presentation.attentionReason" };
+    }
+    default:
+      return { state: "unavailable", tone: "neutral", labelKey: "printer.presentation.unavailable", reasonKey: detailReason ?? "printer.presentation.statusUnavailableReason" };
+  }
+}
+
+/** Presentation only: raw health and admission gates keep their own evidence. */
+export function printerPresentation(printer: PrinterView, agent?: Owner | null, nowMs = Date.now()): PrinterPresentation {
+  const unavailable = (reasonKey: MessageKey): PrinterPresentation => ({ state: "unavailable" as const, tone: "neutral" as const, labelKey: "printer.presentation.unavailable" as const, reasonKey });
   if (printer.sharedWithGateway === false) return unavailable("printer.presentation.notSharedReason");
   // A paginated Agent list may omit this owner; the printer carries its evidence.
   const owner = agent !== undefined ? agent : printer.agentId || printer.agentStatus != null || printer.agentLastSeenAt != null
@@ -60,19 +115,12 @@ export function printerPresentation(printer: PrinterView, agent?: Owner | null, 
   if (printer.freshness === "stale" || printer.freshness === "missing" || printerObservationFreshness(printer.lastSeenAt, nowMs) !== "fresh") {
     return unavailable("printer.presentation.statusUnavailableReason");
   }
-  if (!isPrinterOperationallyVerified(printer, new Date(nowMs))) {
-    return { state: "unavailable", tone: "warn", labelKey: "printer.verification.pending", reasonKey: "printer.verification.pendingHelp" };
-  }
-  switch ((printer.status ?? "").trim().toLowerCase()) {
-    case "online": case "idle":
-      return { state: "ready", tone: "ok", labelKey: "printer.presentation.ready", reasonKey: "printer.presentation.readyReason" };
-    case "busy": case "printing":
-      return { state: "printing", tone: "info", labelKey: "printer.presentation.printing", reasonKey: "printer.presentation.printingReason" };
-    case "offline": case "error": case "paper_out": case "driver_error": case "spooler_error":
-      return { state: "attention", tone: "bad", labelKey: "printer.presentation.attention", reasonKey: "printer.presentation.attentionReason" };
-    default:
-      return unavailable("printer.presentation.statusUnavailableReason");
-  }
+  // Fresh evidence from a live Agent: the displayed status IS the reported
+  // Windows status. Operational verification deliberately does NOT gate
+  // this any more — it gates job admission (routing) and is surfaced as
+  // its own detail, so a Ready printer can no longer be badged "pending
+  // verification" / "needs attention" while Windows reports it ready.
+  return reportedPrinterPresentation(printer.status, printerStatusDetailCode(printer));
 }
 
 /** Keep operator/Windows queue names intact; opaque registry IDs stay in details. */
@@ -112,6 +160,7 @@ const detailKeys: Record<string, MessageKey> = {
   windows_out_of_memory: "printer.detail.windows_out_of_memory",
   windows_page_punt: "printer.detail.windows_page_punt",
   windows_error: "printer.detail.windows_error",
+  windows_job_error: "printer.detail.windows_job_error",
   windows_status_unknown: "printer.detail.windows_status_unknown",
   windows_busy: "printer.detail.windows_busy",
   windows_waiting: "printer.detail.windows_waiting",
@@ -120,14 +169,17 @@ const detailKeys: Record<string, MessageKey> = {
   windows_power_save: "printer.detail.windows_power_save",
 };
 
-/** Raw Agent `status_detail` code, verbatim. The mapped status collapses
- * offline and error into one "attention" badge and unknown/stale/not-shared
- * into one "unavailable" badge, so rows must show this code for the user
- * and support to tell offline vs error vs unknown apart. Returns "" when
- * the Agent sent no code — absence is rendered as absence, never invented. */
+/** Raw Agent `status_detail` code, verbatim. Heartbeat rows carry it as
+ * `status_detail`; local discovery rows carry the same code as
+ * `spooler_status_detail`. The code refines the badge (offline vs error vs
+ * paused vs jammed) and is also shown in row details so the user and
+ * support can tell conditions apart. Returns "" when the Agent sent no
+ * code — absence is rendered as absence, never invented. */
 export function printerStatusDetailCode(printer: PrinterView): string {
-  const value = printer.capabilities?.status_detail;
-  return typeof value === "string" ? value.trim() : "";
+  for (const value of [printer.capabilities?.status_detail, printer.capabilities?.spooler_status_detail]) {
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return "";
 }
 
 /** Stable Agent detail codes are localized only when details are requested. */

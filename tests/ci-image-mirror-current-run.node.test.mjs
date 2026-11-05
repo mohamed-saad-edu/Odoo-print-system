@@ -86,6 +86,19 @@ test('Odoo CI tests the built hardened runtime by content ID with verified immut
   assert.ok(hardened.includes('--require-hashes'));
   assert.ok(hardened.includes('apply-odoo19-pdf-bounds.py /opt/odoo'));
   assert.ok(hardened.includes('verify-odoo19-pdf-bounds.py /opt/odoo'));
+  assert.ok(hardened.includes('yaseir-package-pillow-wheel-as-deb.py'));
+  assert.ok(hardened.includes('python3-pil_13.0.0-1yaseir1_amd64.deb'));
+  assert.ok(hardened.includes('dpkg --purge --force-remove-essential apt libapt-pkg6.0t64'));
+  assert.ok(hardened.includes('test ! -e /usr/bin/apt-get'));
+  assert.ok(load('scripts/package-pillow-wheel-as-deb.py').includes('42d63be3af4f9b951b199b0a9d23365d37ab14687e6d77b74940432c8515c4ca'));
+  assert.ok(hardened.includes('PIL.__version__ == "13.0.0"'));
+  const freetypeUrl = 'https://security.ubuntu.com/ubuntu/pool/main/f/freetype/libfreetype6_2.13.2+dfsg-1ubuntu0.2_amd64.deb';
+  assert.ok(hardened.includes(freetypeUrl));
+  const securityArtifacts = JSON.parse(load('docs/runtime-hardening/os-security-artifacts.json'));
+  const freetype = securityArtifacts.artifacts.find((item) => item.package === 'libfreetype6');
+  assert.equal(freetype?.url, freetypeUrl);
+  assert.equal(freetype?.sha256, '8c6d3bac5a6197fa2f48b2d56f04f3ffecaa7082eeab91b0939f97a40adc88a6');
+  assert.equal(freetype?.bytes, 402610);
   assert.ok(ci.includes('--file Dockerfile.odoo-hardened'));
   assert.ok(ci.includes('--iidfile "$RUNNER_TEMP/odoo-hardened.image-id"'));
   // Production Odoo keeps its real HTTP healthcheck, but 284 DB-intensive
@@ -128,10 +141,11 @@ test('Odoo CI tests the built hardened runtime by content ID with verified immut
     'Dockerfile.odoo-hardened',
     'docs/runtime-hardening/requirements-python312-linux-x86_64.lock',
     'docs/runtime-hardening/build-tools.lock',
+    'scripts/package-pillow-wheel-as-deb.py',
   ]) assert.ok(gate.includes('git hash-object ' + file), file);
-  assert.ok(gate.includes('scripts/check-trivy-baseline.py odoo-hardened.sarif yaseir-odoo-hardened:review-20261026'));
-  const findings = JSON.parse(load('security/image-vulnerability-baseline.json')).images['yaseir-odoo-hardened:review-20261026'].findings;
-  assert.equal(findings.length, 64);
+  assert.ok(gate.includes('scripts/check-trivy-baseline.py odoo-hardened.sarif yaseir-odoo-hardened:review-20261105'));
+  const findings = JSON.parse(load('security/image-vulnerability-baseline.json')).images['yaseir-odoo-hardened:review-20261105'].findings;
+  assert.equal(findings.length, 57);
   assert.ok(findings.every((row) => row.length === 3 && ['LOW', 'MEDIUM'].includes(row[2])));
 });
 

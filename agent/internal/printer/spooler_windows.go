@@ -37,6 +37,7 @@ var (
 	procAbortPrinter     = modWinspool.NewProc("AbortPrinter")
 	procEnumPrintersW    = modWinspool.NewProc("EnumPrintersW")
 	procGetPrinterW      = modWinspool.NewProc("GetPrinterW")
+	procEnumJobsW        = modWinspool.NewProc("EnumJobsW")
 	modKernel32          = windows.NewLazySystemDLL("kernel32.dll")
 	procProcessIDSession = modKernel32.NewProc("ProcessIdToSessionId")
 
@@ -907,6 +908,76 @@ func boundedSpoolerText(s string, limit int) string {
 	return s[:limit]
 }
 
+// jobInfo2 mirrors JOB_INFO_2 (winspool.h) at the offsets EnumJobsW
+// level 2 produces. Only Status is consumed; the pointer fields are
+// declared so the record stride matches the spooler's layout.
+type jobInfo2 struct {
+	JobID               uint32
+	pPrinterName        *uint16
+	pMachineName        *uint16
+	pUserName           *uint16
+	pDocument           *uint16
+	pNotifyName         *uint16
+	pDatatype           *uint16
+	pPrintProcessor     *uint16
+	pParameters         *uint16
+	pDriverName         *uint16
+	pDevMode            uintptr
+	pStatus             *uint16
+	pSecurityDescriptor uintptr
+	Status              uint32
+	Priority            uint32
+	Position            uint32
+	StartTime           uint32
+	UntilTime           uint32
+	TotalPages          uint32
+	Size                uint32
+	SubmittedLow        uint32 // FILETIME dwLowDateTime
+	SubmittedHigh       uint32 // FILETIME dwHighDateTime
+	Time                uint32
+	PagesPrinted        uint32
+}
+
+// observeQueueJobActivity reads the queue's jobs with EnumJobsW level 2
+// on an already-open printer handle and summarises them for
+// refineStatusWithJobs. It is strictly best-effort evidence: any failure
+// (wedged RPC aside — the caller runs inside the bounded preflight) or an
+// implausible spooler answer yields the zero activity, so the printer's
+// own PRINTER_INFO_2 bits remain the sole authority for that read.
+func observeQueueJobActivity(hPrinter syscall.Handle) queueJobActivity {
+	const maxJobsRead = 256
+	var needed, returned uint32
+	ret, _, _ := procEnumJobsW.Call(uintptr(hPrinter), 0, maxJobsRead, 2, 0, 0,
+		uintptr(unsafe.Pointer(&needed)), uintptr(unsafe.Pointer(&returned)))
+	if needed == 0 {
+		return queueJobActivity{}
+	}
+	// One JOB_INFO_2 record is ~152 bytes plus its strings; 4 MiB covers
+	// the 256-job cap with wide margin while a spooler-reported
+	// multi-gigabyte size fails closed instead of allocating.
+	if needed > 4<<20 {
+		return queueJobActivity{}
+	}
+	buf := make([]byte, needed)
+	ret, _, _ = procEnumJobsW.Call(uintptr(hPrinter), 0, maxJobsRead, 2,
+		uintptr(unsafe.Pointer(&buf[0])), uintptr(needed),
+		uintptr(unsafe.Pointer(&needed)), uintptr(unsafe.Pointer(&returned)))
+	if ret == 0 || returned == 0 {
+		return queueJobActivity{}
+	}
+	structSize := unsafe.Sizeof(jobInfo2{})
+	if uintptr(returned)*structSize > uintptr(len(buf)) {
+		return queueJobActivity{}
+	}
+	statuses := make([]uint32, 0, returned)
+	for i := uint32(0); i < returned; i++ {
+		ji := (*jobInfo2)(unsafe.Pointer(uintptr(unsafe.Pointer(&buf[0])) + uintptr(i)*structSize))
+		statuses = append(statuses, ji.Status)
+	}
+	runtime.KeepAlive(buf)
+	return summarizeJobStatuses(statuses)
+}
+
 // observeSpoolerStatus reads the same PRINTER_INFO_2 snapshot used during
 // discovery and reduces it with the shared Windows status mapper. This keeps
 // heartbeat status consistent with discovery without turning non-blocking
@@ -932,9 +1003,17 @@ func observeSpoolerStatus(spoolerName string) spoolerStatusObservation {
 		return spoolerStatusObservation{status: "unknown", err: err}
 	}
 	defer runtime.KeepAlive(keepBuf)
+	// Correlate with the queue's live jobs (EnumJobs), as the Windows
+	// queue window does: the printer bits are the primary evidence, and a
+	// printing/blocked job refines an otherwise-clean read.
+	mappedStatus, mappedDetail := refineStatusWithJobs(
+		mapWindowsStatus(pi.Status, pi.Attributes),
+		windowsStatusDetail(pi.Status, pi.Attributes),
+		observeQueueJobActivity(hPrinter),
+	)
 	return spoolerStatusObservation{
-		status:     mapWindowsStatus(pi.Status, pi.Attributes),
-		detail:     windowsStatusDetail(pi.Status, pi.Attributes),
+		status:     mappedStatus,
+		detail:     mappedDetail,
 		rawStatus:  pi.Status,
 		attributes: pi.Attributes,
 		rawValid:   true,
@@ -1226,16 +1305,26 @@ func (p *SpoolerPrinter) PrintDocument(ctx context.Context, doc Document) error 
 		if err := runDispatchAdmission(ctx); err != nil {
 			return fmt.Errorf("image spooler admission refused: %w", err)
 		}
-		readGeometry := p.PrinterGeometry
-		if p.testImageGeometry != nil {
-			readGeometry = p.testImageGeometry
-		}
-		geometry, err := readGeometry(ctx)
-		if err != nil {
-			return CapabilityMismatchf("read Windows image geometry: %v", err)
-		}
-		if err := geometry.CheckImageFingerprint(doc.GeometryFingerprint); err != nil {
-			return err
+		// A geometry resolved by the dispatch layer already absorbed the
+		// measurement fallback policy (cached / last known / configured
+		// default): use it as-is instead of re-measuring at print time,
+		// where a slow or failing driver would otherwise kill the job.
+		// Direct callers without a dispatch geometry keep the strict
+		// measure-and-match behavior below.
+		geometry := DispatchGeometry(ctx)
+		if geometry == nil {
+			readGeometry := p.PrinterGeometry
+			if p.testImageGeometry != nil {
+				readGeometry = p.testImageGeometry
+			}
+			measured, err := readGeometry(ctx)
+			if err != nil {
+				return CapabilityMismatchf("read Windows image geometry: %v", err)
+			}
+			if err := measured.CheckImageFingerprint(doc.GeometryFingerprint); err != nil {
+				return err
+			}
+			geometry = measured
 		}
 		pdf, err := JPEGToPDFGeometry(doc.Data, geometry)
 		if err != nil {
@@ -1418,7 +1507,23 @@ func (p *SpoolerPrinter) Test(ctx context.Context) error {
 	return nil
 }
 
+// defaultStatusProbeTimeout bounds one Status() read when the caller did
+// not set SpoolerPrinter.Timeout. The previous 1.5s default was shorter
+// than the spooler's own preflight bound (5s) and shorter than real
+// driver RPC latency on loaded machines: healthy queues whose
+// GetPrinterW answered in 2-4s were reported "unknown" on every
+// heartbeat. 4s covers slow drivers while staying inside the heartbeat
+// probe batch budget.
+const defaultStatusProbeTimeout = 4 * time.Second
+
 func (p *SpoolerPrinter) Status() string {
+	// Snapshot the previous successful read BEFORE clearing it: a status
+	// transition (raw bits or mapped word changed) is logged below, so
+	// the log shows exactly when Windows changed a queue's state and
+	// what it changed to, without a line per heartbeat per printer.
+	prevRawValid := p.statusRawValid.Load()
+	prevRawStatus := p.statusRawStatus.Load()
+	prevRawAttributes := p.statusRawAttributes.Load()
 	p.transportObserved.Store(false)
 	p.statusDetail.Store("")
 	p.statusRawValid.Store(false)
@@ -1426,7 +1531,7 @@ func (p *SpoolerPrinter) Status() string {
 	p.statusRawAttributes.Store(0)
 	timeout := p.Timeout
 	if timeout <= 0 {
-		timeout = 1500 * time.Millisecond
+		timeout = defaultStatusProbeTimeout
 	}
 	// An injected probe (tests, diagnostics) keeps its own bounded,
 	// panic-recovering contract.
@@ -1481,6 +1586,15 @@ func (p *SpoolerPrinter) Status() string {
 		p.statusRawAttributes.Store(obs.attributes)
 		p.statusRawValid.Store(obs.rawValid)
 		p.transportObserved.Store(true)
+		if obs.rawValid && (!prevRawValid || prevRawStatus != obs.rawStatus || prevRawAttributes != obs.attributes) {
+			bitNames := WindowsStatusBitNames(obs.rawStatus, obs.attributes)
+			bits := "READY (no status bits set)"
+			if len(bitNames) > 0 {
+				bits = strings.Join(bitNames, "|")
+			}
+			log.Printf("[spooler] %q status raw=%s bits=%s -> %s (detail=%s)",
+				p.SpoolerName, formatSpoolerStatusHex(obs.rawStatus), bits, obs.status, obs.detail)
+		}
 		return obs.status
 	}
 	// A failed probe still reports "unknown" as the status word, but the
@@ -1590,6 +1704,7 @@ type queueDetails struct {
 	status        uint32
 	attributes    uint32
 	publishedGUID string
+	jobs          queueJobActivity
 }
 
 const (
@@ -1607,10 +1722,39 @@ const (
 	printerEnumMaxAttempts = 4
 	// queueDetailTimeout bounds one OpenPrinterW + GetPrinterW pair.
 	queueDetailTimeout = 3 * time.Second
-	// queueDetailBudget bounds the TOTAL time spent reading queue details so
-	// a machine with dozens of stalled queues still finishes discovery.
+	// queueDetailBudget is the floor for the TOTAL time spent reading
+	// queue details, so a machine with dozens of stalled queues still
+	// finishes discovery. queueDetailBudgetFor scales it by fleet size.
 	queueDetailBudget = 8 * time.Second
+	// queueDetailConcurrency bounds simultaneous per-queue detail reads
+	// during discovery. It stays well under the shared preflight
+	// registry cap (maxOutstandingSpoolerPreflights) so discovery can
+	// never starve dispatch/status probes of ownership slots.
+	queueDetailConcurrency = 8
 )
+
+// queueDetailBudgetFor returns the total discovery detail budget for a
+// fleet of queueCount queues read queueDetailConcurrency at a time: one
+// full wave of worst-case (timed-out) reads plus slack, never below the
+// historical 8s floor and never above 90s. The old flat 8s budget was
+// spent sequentially, so queues late in the list systematically lost
+// their detail read — and were published "unknown" — on fleets where
+// every individual queue would have answered in time.
+func queueDetailBudgetFor(queueCount int) time.Duration {
+	if queueCount <= 0 {
+		return queueDetailBudget
+	}
+	waves := (queueCount + queueDetailConcurrency - 1) / queueDetailConcurrency
+	budget := time.Duration(waves) * (queueDetailTimeout + time.Second)
+	if budget < queueDetailBudget {
+		return queueDetailBudget
+	}
+	const maxQueueDetailBudget = 90 * time.Second
+	if budget > maxQueueDetailBudget {
+		return maxQueueDetailBudget
+	}
+	return budget
+}
 
 // printerInfo4 is PRINTER_INFO_4 (pPrinterName, pServerName, Attributes).
 type printerInfo4 struct {
@@ -1842,6 +1986,7 @@ func queueDetailContext(ctx context.Context, name string) (queueDetails, error) 
 			status:        pi.Status,
 			attributes:    pi.Attributes,
 			publishedGUID: publishedQueueGUID(hPrinter),
+			jobs:          observeQueueJobActivity(hPrinter),
 		}
 		runtime.KeepAlive(keep)
 		return nil
@@ -1993,10 +2138,48 @@ func enumerateSpoolerPrintersWindows() ([]DeviceInfo, error) {
 		return nil, nil
 	}
 
-	deadline := time.Now().Add(queueDetailBudget)
+	// Read every queue's details CONCURRENTLY (bounded by
+	// queueDetailConcurrency). The previous sequential pass shared one 8s
+	// total budget across the whole fleet, so on any machine with several
+	// slow queues every queue past the budget was published "unknown" —
+	// healthy printers included — even though each individual read would
+	// have succeeded in well under its own 3s bound. Each queue now gets
+	// its own bounded read; the shared deadline only bounds the whole
+	// scan, scaled by fleet size (see queueDetailBudgetFor).
+	detailCtx, cancelDetails := context.WithDeadline(context.Background(), time.Now().Add(queueDetailBudgetFor(len(queues))))
+	defer cancelDetails()
+	type detailOutcome struct {
+		detail queueDetails
+		err    error
+	}
+	outcomes := make([]detailOutcome, len(queues))
+	{
+		sem := make(chan struct{}, queueDetailConcurrency)
+		var wg sync.WaitGroup
+		for i, q := range queues {
+			if q.name == "" {
+				continue
+			}
+			wg.Add(1)
+			go func(i int, name string) {
+				defer wg.Done()
+				select {
+				case sem <- struct{}{}:
+					defer func() { <-sem }()
+				case <-detailCtx.Done():
+					outcomes[i] = detailOutcome{err: detailCtx.Err()}
+					return
+				}
+				detail, derr := queueDetailContext(detailCtx, name)
+				outcomes[i] = detailOutcome{detail: detail, err: derr}
+			}(i, q.name)
+		}
+		wg.Wait()
+	}
+
 	out := make([]DeviceInfo, 0, len(queues))
 	unreadable := 0
-	for _, q := range queues {
+	for i, q := range queues {
 		name := q.name
 		if name == "" {
 			continue
@@ -2008,42 +2191,51 @@ func enumerateSpoolerPrintersWindows() ([]DeviceInfo, error) {
 			statusText, statusDetail, statusError                      string
 			detailRead                                                 bool
 		)
-		switch {
-		case !time.Now().Before(deadline):
-			// Out of detail budget: keep the queue with what EnumPrinters
-			// proved (its name and attributes) instead of dropping it.
-			// The per-queue error stays attached: budget exhaustion is a
-			// discovery reason, not a device state.
+		if outcome := outcomes[i]; outcome.err != nil {
 			unreadable++
 			attributes = q.attributes
 			serverName = q.server
 			statusText = "unknown"
-			statusError = "spooler_detail_budget_exhausted"
-		default:
-			detail, derr := queueDetail(name)
-			if derr != nil {
-				unreadable++
-				log.Printf("[discovery] queue detail unreadable for %q: %v", name, derr)
-				attributes = q.attributes
-				serverName = q.server
-				statusText = "unknown"
+			if errors.Is(outcome.err, context.DeadlineExceeded) {
+				// Out of detail budget: keep the queue with what
+				// EnumPrinters proved (its name and attributes) instead
+				// of dropping it. The per-queue error stays attached:
+				// budget exhaustion is a discovery reason, not a device
+				// state.
+				statusError = "spooler_detail_budget_exhausted"
+			} else {
+				log.Printf("[discovery] queue detail unreadable for %q: %v", name, outcome.err)
 				// The exact Win32 code survives in the reason code; the
 				// full message is logged locally and kept bounded here.
-				statusError = spoolerProbeFailureDetail(derr)
+				statusError = spoolerProbeFailureDetail(outcome.err)
 				if statusError == "" {
 					statusError = "spooler_detail_unreadable"
 				}
-			} else {
-				portName, driverName = detail.portName, detail.driverName
-				serverName, shareName = detail.serverName, detail.shareName
-				if serverName == "" {
-					serverName = q.server
-				}
-				status, attributes = detail.status, detail.attributes
-				publishedGUID = detail.publishedGUID
-				statusText = mapWindowsStatus(status, attributes)
-				statusDetail = windowsStatusDetail(status, attributes)
-				detailRead = true
+			}
+		} else {
+			detail := outcome.detail
+			portName, driverName = detail.portName, detail.driverName
+			serverName, shareName = detail.serverName, detail.shareName
+			if serverName == "" {
+				serverName = q.server
+			}
+			status, attributes = detail.status, detail.attributes
+			publishedGUID = detail.publishedGUID
+			statusText, statusDetail = refineStatusWithJobs(
+				mapWindowsStatus(status, attributes),
+				windowsStatusDetail(status, attributes),
+				detail.jobs,
+			)
+			detailRead = true
+			if statusText != "online" || statusDetail != "" {
+				// Non-ready queues are the ones an operator must be able
+				// to diagnose from the log alone: raw bits beside the
+				// mapped word, exactly as Windows reported them. Clean
+				// ready queues stay out of the log (the heartbeat path
+				// logs their transitions) so a 10s discovery cadence
+				// cannot flood the file on a healthy fleet.
+				log.Printf("[discovery] queue %q status raw=%s bits=%v -> %s (detail=%s)",
+					name, formatSpoolerStatusHex(status), WindowsStatusBitNames(status, attributes), statusText, statusDetail)
 			}
 		}
 

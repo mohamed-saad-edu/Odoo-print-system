@@ -56,7 +56,11 @@ describe("Odoo runtime agent picker contract", () => {
     expect(printerSource).toContain("agent_id: agentId,");
   });
 
-  it("keeps the Odoo module icon byte-identical to the desktop app icon", () => {
+  it("keeps the Odoo module icon on the Gateway mark, distinct from the Agent app icon", () => {
+    // The Odoo addon fronts the Gateway, so its module icon carries the
+    // Gateway mark. The desktop app is the Print Agent and carries the
+    // (different) Agent mark. The two icons were previously forced
+    // byte-identical, which shipped the Gateway icon as the Agent icon.
     const odooIcon = readFileSync(
       join(process.cwd(), "odoo_addons/print_gateway/static/description/icon.png"),
     );
@@ -64,7 +68,9 @@ describe("Odoo runtime agent picker contract", () => {
       join(process.cwd(), "src-tauri/icons/icon.png"),
     );
 
-    expect(odooIcon.equals(desktopIcon)).toBe(true);
+    expect(odooIcon.equals(desktopIcon)).toBe(false);
+    expect(odooIcon.length).toBeGreaterThan(0);
+    expect(desktopIcon.length).toBeGreaterThan(0);
   });
 
 

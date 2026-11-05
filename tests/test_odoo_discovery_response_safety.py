@@ -147,7 +147,11 @@ def test_picker_inventory_preserves_absent_versus_restricted_capabilities(monkey
                                  printers=[dict(PRINTER, capabilities=caps)])
     result = controller.runtime_printers(agent_id="agt_fixture1")
     if not isinstance(caps, dict):
-        assert result["printers"] == []
+        # Absent/malformed capabilities no longer hide the printer (that
+        # discard was a side effect of the removed verification filter):
+        # the printer is listed with empty sanitized capabilities.
+        assert len(result["printers"]) == 1
+        assert result["printers"][0]["capabilities"] == expected
         return
     assert len(result["printers"]) == 1
     actual = result["printers"][0]["capabilities"]

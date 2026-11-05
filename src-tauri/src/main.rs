@@ -4,6 +4,7 @@ mod agent;
 mod agent_status;
 mod cleanup;
 mod commands;
+mod elevation;
 mod logging;
 mod paths;
 mod tray;
@@ -109,6 +110,11 @@ fn acquire_single_instance(wait_for_previous: bool) -> Result<Option<SingleInsta
 }
 
 fn main() {
+    // Administrator-only gate — literally first. A non-elevated launch
+    // shows the native dialog and exits before the single-instance
+    // mutex, logging, tray, or any Tauri setup can start.
+    elevation::enforce_administrator_or_exit();
+
     #[cfg(windows)]
     let elevated_relaunch =
         std::env::args_os().any(|arg| arg.to_string_lossy() == "--elevated-relaunch");

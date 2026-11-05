@@ -188,7 +188,7 @@ class TestControlPlane(TransactionCase):
         self.assertEqual(job.idempotency_key, identity)
         self.assertEqual(job.attempts, 1)
 
-    def test_v5_fallback_rechecks_current_owner_verification_and_discovery(self):
+    def test_v5_fallback_rechecks_current_owner_and_discovery_but_not_proof_freshness(self):
         import requests
         for case in ("other-owner", "stale-proof", "unavailable"):
             with self.subTest(case=case):
@@ -214,8 +214,10 @@ class TestControlPlane(TransactionCase):
                      patch("odoo.addons.print_gateway.models.gateway_http.get", side_effect=discovery), \
                      patch("odoo.addons.print_gateway.models.gateway_http.post", side_effect=error) as submit:
                     job.action_submit()
-                self.assertEqual(submit.call_count, 1)
-                self.assertEqual(job.printer_id, self.primary_binding.printer_id)
+                expected_calls = 2 if case == "stale-proof" else 1
+                expected_printer = self.backup_binding.printer_id if case == "stale-proof" else self.primary_binding.printer_id
+                self.assertEqual(submit.call_count, expected_calls)
+                self.assertEqual(job.printer_id, expected_printer)
                 self.assertEqual(job.status, "queued")
                 self.assertEqual(job.idempotency_key, identity)
                 self.assertEqual(job.attempts, 1)

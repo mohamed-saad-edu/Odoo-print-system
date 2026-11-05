@@ -84,7 +84,7 @@ Both platform-specific base manifests were retrieved from Docker's official regi
 
 The builder fetches only the exact Odoo commit and verifies its Git identity, applies the exact-source-hash PDF patch, installs the hash-locked build tools, downloads all hash-locked dependency artifacts, and builds the four source distributions without an unpinned build environment. The runtime stage creates an isolated virtual environment with system packages excluded, installs only the carried wheels, runs `pip check`, verifies the bounded Odoo PDF adapter in that final environment, and runs as the inherited unprivileged `odoo` user. Source, addon and environment directories are read-only to that account. No database or application credentials are build arguments.
 
-The fixed runtime parent supplies the OS libraries, fonts, Node/rtlcss and patched-Qt wkhtmltopdf layers. The recipe applies the 24 immutable security artifacts described below and never runs `apt update`, resolves an unpinned package version, or fetches npm dependencies during runtime installation. Other inherited packages, including inactive distro Python packages, remain present and can still appear in image scans. The final-image scan is required and is not replaced by the Python virtual-environment audit or by these targeted fixes. An updated base needs a new manifest record, a rebuilt image, the PDF/native/report gates and a new scan.
+The fixed runtime parent supplies the OS libraries, fonts, Node/rtlcss and patched-Qt wkhtmltopdf layers. The recipe applies the 25 immutable security artifacts described below and never runs `apt update`, resolves an unpinned package version, or fetches npm dependencies during runtime installation. Other inherited packages, including inactive distro Python packages, remain present and can still appear in image scans. The final-image scan is required and is not replaced by the Python virtual-environment audit or by these targeted fixes. An updated base needs a new manifest record, a rebuilt image, the PDF/native/report gates and a new scan.
 
 ### Immutable Ubuntu and rtlcss security updates
 
@@ -92,9 +92,11 @@ The V3 scan of the exact Odoo parent identified `CVE-2026-84782` in three Ubuntu
 
 The additional Brotli package is `libbrotli1=1.1.0-2ubuntu0.1` (security fix for CVE-2026-111497 / Ubuntu USN-8956-1), obtained from `security.ubuntu.com`. On 2026-10-28 an isolated Ubuntu 24.04 GitHub Actions job verified its package name, version and amd64 architecture, exact size 330,968 bytes, and SHA-256 `70b188a86d81f30d7510aab30e25d638ed5037dded6691af1533952b71ac61de` (run 40592443466). The Dockerfile pins that digest, checks the inherited version and asserts the installed version. Existing historical packages remain from the original signed snapshot. No previous security exception is added.
 
+A second post-snapshot package was added on 2026-11-05: `libpcre2-8-0=10.42-4ubuntu2.2` (Ubuntu USN-8974-1, published 2026-11-03), obtained from `security.ubuntu.com`. USN-8974-1 is the first noble release fixing the seven reviewed `libpcre2-8-0` findings (CVE-2026-103111, CVE-2026-86145, CVE-2026-89156, CVE-2026-89157, CVE-2026-89158, CVE-2026-89160, CVE-2026-89161); the retained snapshot predates it. The downloaded artifact's package name, version `10.42-4ubuntu2.2`, amd64 architecture, exact size 228,546 bytes and SHA-256 `f41da7cb7e979d6b037ea92650c72ec8ec532ec3c93aa8d5b997207de56695ea` were verified from the `.deb` control fields during the 2026-11-05 review, and the Dockerfile fences it exactly like the Brotli package. The seven findings left the Trivy baseline in that review (`security/odoo19-image-review-2026-11-05.md`); no security exception is added for them.
+
 The Ubuntu hashes were verified against the `noble-security` main and universe amd64 package indexes, whose hashes matched the signed `InRelease`. The signature validated with Ubuntu's archive key fingerprint `F6ECB3762474EDA9D21B7022871920D1991BC93C`. The npm artifact matched its official registry SHA-512 integrity metadata; the manifest additionally pins its SHA-256. See [Ubuntu USN-8847-1](https://ubuntu.com/security/notices/USN-8847-1) and [the source-map-js advisory](https://github.com/advisories/GHSA-68fv-2mgg-jv7q).
 
-During image assembly, `dpkg` installs only those 23 carried `.deb` files. Architecture and each original package version are checked first, refusing an unreviewed parent or accidental downgrade; all resulting versions must equal the reviewed fixes. Those versions meet the recorded fixes for 109 OS package/advisory occurrences. Together with source-map-js, the recipe addresses 110 of the 182 parent occurrences. The other 72 have no fixed version in the retained scanner result and remain unresolved. These counts describe source intent and artifact identity, not a rebuilt-image scan or a risk acceptance. The Node dependency replacement accepts only the pinned rtlcss4.3.0 parent and source-map-js1.2.1/1.2.2, rejects archive traversal/links/duplicates and unknown package identities, and replaces the complete dependency contents, including its license. Reapplication requires byte-identical reviewed contents. No npm lifecycle scripts run. The image build then executes the bounded JavaScript regressions and OpenSSL's version command before deleting the downloaded artifacts.
+During image assembly, `dpkg` installs only those 24 carried `.deb` files. Architecture and each original package version are checked first, refusing an unreviewed parent or accidental downgrade; all resulting versions must equal the reviewed fixes. Those versions meet the recorded fixes for 116 OS package/advisory occurrences. Together with source-map-js, the recipe addresses 117 of the 182 parent occurrences. The other 65 have no fixed version in the retained scanner result and remain unresolved. These counts describe source intent and artifact identity, not a rebuilt-image scan or a risk acceptance. The Node dependency replacement accepts only the pinned rtlcss4.3.0 parent and source-map-js1.2.1/1.2.2, rejects archive traversal/links/duplicates and unknown package identities, and replaces the complete dependency contents, including its license. Reapplication requires byte-identical reviewed contents. No npm lifecycle scripts run. The image build then executes the bounded JavaScript regressions and OpenSSL's version command before deleting the downloaded artifacts.
 
 Fresh host verification checked the actual downloaded package identities and ran the extracted OpenSSL executable. A dynamic Python process was confirmed to map the extracted patched `libssl.so.3` and `libcrypto.so.3`; five real HTTPS trust, identity, redirect and proxy cases exercised the production Odoo transport with those libraries. The primary verification Python links another OpenSSL statically, so an earlier environment-variable-only test was not accepted as evidence for the Ubuntu update. The rtlcss fixture reconstructed the exact seven package versions observed in the scanned parent from registry-integrity-verified artifacts. The unchanged security assertions fail against source-map-js1.2.1 and pass against1.2.2; ordinary mapping and Arabic CSS conversion also pass. These checks prove the specified artifacts and host behavior, not `dpkg` execution in the final image, final-image vulnerability absence, or current wkhtmltopdf report output. Those gates remain required on a container-capable host.
 
@@ -160,3 +162,42 @@ Software pipeline checks use a local Gateway and isolated consumers. Successful 
 ## Security patch, 2026-10-31
 
 Following the 2026-10-30 publication of seven pypdf HIGH advisories (CVE-2026-119203 through CVE-2026-119209), the isolated runtime lock now pins **pypdf 6.21.4**. The upstream fixes are present in 6.21.3 and 6.21.4, and PyPI's trusted-publishing wheel SHA-256 is `33e4fb41ca352810eb4e9838aa0d82d6888a5f8bf682f43e99cce5faa666255c`. The artifact manifest records the same official wheel URL and digest. This update does not modify the bounded-decompression Odoo adapter patch, relax any image severity gate, or add CVEs to the security baseline. The exact rebuilt image still requires real Odoo addon tests, PDF bounds verification and a fresh Trivy scan before acceptance.
+
+## Runtime image security correction, 2026-11-05
+
+The exact-image Trivy run on 2026-11-05 found two inherited runtime packages
+that were separate from the already pinned application venv:
+
+- Ubuntu's system python3-pil 10.2.0-1ubuntu1.3 remained installed in the
+  upstream Odoo image even though the isolated Odoo venv already used Pillow
+  13.0.0. The upstream Pillow 13.0.0 wheel is now repackaged as the system
+  python3-pil 13.0.0-1yaseir1 package. The conversion script accepts only the
+  exact CPython 3.12 x86_64 wheel and verifies its SHA-256 from the runtime
+  dependency lock before writing the Debian package. This preserves the base
+  image's system package dependency graph while making both Python runtimes
+  use the same patched Pillow release.
+- apt 2.8.3 and libapt-pkg6.0t64 2.8.3 were inherited from the upstream image.
+  APT is not used by Odoo after image assembly, so both packages are purged
+  from the final runtime. dpkg remains available for package inventory and
+  build-time installation. The runtime no longer ships apt, apt-get, apt-cache,
+  or the vulnerable libapt HTTP backend.
+
+This correction does not whitelist the findings, change the Trivy baseline,
+or lower any severity threshold. The acceptance gate still scans the exact
+built image with UNKNOWN, LOW, MEDIUM, HIGH, and CRITICAL severities, rejects
+new and unfixed findings, and retains the full SARIF and SBOM. A fresh final
+scan must confirm that the inherited APT and Pillow findings are absent
+before release.
+
+## Ubuntu FreeType package mirror correction, 2026-11-05
+
+The hardened-image rebuild found that the immutable snapshot URL returned
+libfreetype6 2.13.2+dfsg-1ubuntu0.2 bytes whose SHA-256 differed from the
+expected package hash. The build correctly failed closed. Canonical's Ubuntu
+package download metadata confirms the official amd64 package size is 402610
+bytes and its SHA-256 is 8c6d3bac5a6197fa2f48b2d56f04f3ffecaa7082eeab91b0939f97a40adc88a6.
+The Dockerfile and artifact manifest now fetch that same immutable package
+from the official noble-security origin at security.ubuntu.com while keeping
+the previously verified SHA-256 and size unchanged. The full checksum check
+remains enabled; the digest reported by the mismatching snapshot response was
+not accepted.

@@ -263,6 +263,30 @@ func CurrentGeometry(ctx context.Context, p Printer, cfg config.PrinterConfig) (
 	return ConfiguredGeometry(cfg)
 }
 
+type dispatchGeometryKey struct{}
+
+// WithDispatchGeometry carries the geometry the dispatch layer resolved
+// for this job — background-cached, bounded live measurement, last known
+// size, or configured default, in that preference order — into the
+// backend print call. A backend that finds a dispatch geometry uses it
+// as-is: dispatch already applied the fallback policy, so the backend
+// must not re-measure and cannot fail the job on a measurement error the
+// policy has already absorbed.
+func WithDispatchGeometry(ctx context.Context, g *Geometry) context.Context {
+	if g == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, dispatchGeometryKey{}, g)
+}
+
+// DispatchGeometry returns the geometry resolved by the dispatch layer,
+// or nil when the caller did not resolve one (direct/backend calls keep
+// their own measurement behavior).
+func DispatchGeometry(ctx context.Context) *Geometry {
+	g, _ := ctx.Value(dispatchGeometryKey{}).(*Geometry)
+	return g
+}
+
 func validGeometryPrinterID(id string) bool {
 	return ValidGatewayPrinterID(id)
 }

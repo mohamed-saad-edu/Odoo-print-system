@@ -331,10 +331,12 @@ export async function getAllAgentsHealth(tenantId: string, limit = 100, offset =
       () => reader.select({
         agentId: printers.agentId,
         cnt: count(),
+        // "Online" counts the reported status and freshness only:
+        // operational verification is background evidence and must not
+        // shrink the count of printers Windows reports as ready.
         onlineCnt: sql<number>`CAST(COUNT(*) FILTER (WHERE
           ${printers.lifecycle} = 'active'
           AND ${printers.status} IN ('online', 'busy')
-          AND ${printerOperationalVerificationPredicate(sql`printers`)}
           AND ${printers.lastSeenAt} >= ${earliestFresh}
           AND ${printers.lastSeenAt} <= ${now}
         ) AS INTEGER)`,

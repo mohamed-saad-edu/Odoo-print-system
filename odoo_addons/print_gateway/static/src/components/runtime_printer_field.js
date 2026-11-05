@@ -6,7 +6,6 @@ import { rpc } from "@web/core/network/rpc";
 import { _t } from "@web/core/l10n/translation";
 import { startRpcWithDeadline } from "../js/async_control";
 import { validatedReceiptGeometry, validatedPageGeometry } from "../js/printer_geometry";
-import { isVerifiedRuntimePrinter } from "../js/printer_verification";
 
 let runtimePrinterFieldInstance = 0;
 
@@ -124,7 +123,11 @@ export class RuntimePrinterField extends Component {
 
     get filteredPrinters() {
         const dest = this.state.destinationType;
-        const eligible = Array.isArray(this.state.printers) ? this.state.printers.filter(p => isVerifiedRuntimePrinter(p)) : [];
+        // Operational verification is background evidence, never a picker
+        // filter: every discovered printer for this Agent is eligible.
+        // Only the destination-specific rendering prerequisites below
+        // (e.g. POS image transports) narrow the list.
+        const eligible = Array.isArray(this.state.printers) ? this.state.printers : [];
         if (!dest) return eligible;
         if (dest === "pos" || dest === "pos_printer") {
             // POS sends a rendered JPEG. Match the Gateway's physical image

@@ -1,7 +1,8 @@
-"""Read authenticated Gateway operational evidence without inventing availability.
+"""Validate authenticated Gateway operational evidence without using it as an availability gate.
 
-Geometry describes layout, never existence. Both the Agent probe and the
-Gateway's independent receipt must remain current for a new Odoo operation.
+Operational proof remains useful for presentation and diagnostics. Transport,
+output-medium, inventory, lifecycle and positive destination-integrity conflicts
+are enforced independently at the routing boundary.
 """
 from datetime import datetime, timezone
 import re

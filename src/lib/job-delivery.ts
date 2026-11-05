@@ -1,4 +1,3 @@
-import { printerOperationalVerificationPredicate } from "./printer-verification-sql";
 import { liveTenantSubscriptionPredicate } from "./entitlements";
 import { db } from "../db";
 import { printJobs } from "../db/schema";
@@ -152,6 +151,14 @@ export async function claimJobForDelivery(
     // in src/lib/routing.ts: online/busy, or unknown with a fully declared
     // spooler/ipp/direct transport. offline/error fail fast. Kept IN SQL so
     // the eligibility check and the row lock are atomic.
+    //
+    // Operational verification is NOT a claim gate: it is background
+    // evidence the Agent refreshes on its own cycle, and a failed or slow
+    // measurement must never strand a queued job. The binding fence below
+    // still rejects a job whose admitted destination digest provably
+    // differs from the printer's current one; when either side has no
+    // digest (a printer that has never verified), the fence is silent and
+    // the Agent's local dispatch checks make the final call.
     const locked = await tx.execute(sql`
       SELECT p.id
       FROM print_jobs p
@@ -172,9 +179,9 @@ export async function claimJobForDelivery(
         AND a.last_seen_at IS NOT NULL
         AND a.last_seen_at <= clock_timestamp()
         AND a.last_seen_at >= clock_timestamp() - make_interval(secs => ${agentStaleThresholdSeconds()})
-        AND p.binding_digest IS NOT NULL AND p.binding_digest = pr.verification_binding_digest
+        AND (pr.verification_binding_digest IS NULL OR p.binding_digest = pr.verification_binding_digest)
+        AND COALESCE(pr.verification_reason, '') NOT IN ('verification_destination_mismatch', 'verification_identity_collision', 'verification_ambiguous_inventory_id')
         AND p.output_medium = pr.output_medium
-        AND ${printerOperationalVerificationPredicate(sql`pr`)}
         AND pr.lifecycle = 'active'
         AND pr.inventory_present = true
         AND pr.shared_with_gateway = true

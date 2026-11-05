@@ -112,3 +112,67 @@ describe("desktop primary printer wiring", () => {
     expect(main).toContain('t("printer.presentation.details")');
   });
 });
+
+describe("reported Windows status is the displayed status", () => {
+  // Same fresh, live-Agent evidence as `fresh`, but with NO operational
+  // verification proof at all. Verification gates job admission; it must
+  // never mask the status Windows actually reported — that masking is
+  // what badged every healthy printer "pending verification" /
+  // "needs attention" while Windows showed Ready.
+  const unverified = {
+    ...fresh,
+    verificationState: "pending" as const,
+    verificationVerifiedAt: null,
+    verificationReceivedAt: null,
+    verificationBindingDigest: null,
+    logicalQueueKey: null,
+  };
+
+  it("shows a fresh online printer as ready without any verification proof", () => {
+    expect(printerPresentation(unverified, undefined, now)).toMatchObject({
+      state: "ready", tone: "ok", labelKey: "printer.presentation.ready",
+    });
+  });
+
+  it("shows busy as printing and unknown as unavailable without proof", () => {
+    expect(printerPresentation({ ...unverified, status: "busy" }, undefined, now).state).toBe("printing");
+    expect(printerPresentation({ ...unverified, status: "unknown" }, undefined, now).state).toBe("unavailable");
+  });
+
+  it("labels each physical condition precisely instead of a generic needs-attention", () => {
+    const cases: Array<[string, string, string, string]> = [
+      // [status, detail, expected labelKey, expected reasonKey]
+      ["offline", "windows_offline", "printer.presentation.offline", "printer.detail.windows_offline"],
+      ["offline", "windows_work_offline", "printer.presentation.offline", "printer.detail.windows_work_offline"],
+      ["error", "windows_paper_jam", "printer.presentation.paperJam", "printer.detail.windows_paper_jam"],
+      ["error", "windows_paper_out", "printer.presentation.paperOut", "printer.detail.windows_paper_out"],
+      ["error", "windows_door_open", "printer.presentation.doorOpen", "printer.detail.windows_door_open"],
+      ["error", "windows_no_toner", "printer.presentation.noToner", "printer.detail.windows_no_toner"],
+      ["error", "windows_paused", "printer.presentation.paused", "printer.detail.windows_paused"],
+      ["error", "windows_manual_feed", "printer.presentation.manualFeed", "printer.detail.windows_manual_feed"],
+      ["error", "windows_job_error", "printer.presentation.attention", "printer.detail.windows_job_error"],
+      ["error", "windows_user_intervention", "printer.presentation.attention", "printer.detail.windows_user_intervention"],
+    ];
+    for (const [status, detail, labelKey, reasonKey] of cases) {
+      const view = printerPresentation({ ...unverified, status, capabilities: { status_detail: detail } }, undefined, now);
+      expect(view, `${status}/${detail}`).toMatchObject({ state: "attention", labelKey, reasonKey });
+    }
+  });
+
+  it("keeps toner-low a ready printer with a toner-low label", () => {
+    expect(printerPresentation({ ...unverified, status: "online", capabilities: { status_detail: "windows_toner_low" } }, undefined, now))
+      .toMatchObject({ state: "ready", labelKey: "printer.presentation.tonerLow", reasonKey: "printer.detail.windows_toner_low" });
+  });
+
+  it("reads the detail code from local discovery rows (spooler_status_detail)", () => {
+    expect(printerPresentation({ ...unverified, status: "error", capabilities: { spooler_status_detail: "windows_paper_jam" } }, undefined, now))
+      .toMatchObject({ state: "attention", labelKey: "printer.presentation.paperJam" });
+    expect(printerStatusDetail({ capabilities: { spooler_status_detail: "windows_paper_jam" } })).toBe("Paper is jammed in the printer.");
+    expect(printerStatusDetail({ capabilities: { status_detail: "windows_job_error" } })).toBe("A print job in this queue is in an error state.");
+  });
+
+  it("still hides status when the Agent or the observation is not fresh", () => {
+    expect(printerPresentation({ ...unverified, agentStatus: "offline" }, undefined, now).state).toBe("unavailable");
+    expect(printerPresentation({ ...unverified, lastSeenAt: new Date(now - 3600000).toISOString() }, undefined, now).state).toBe("unavailable");
+  });
+});

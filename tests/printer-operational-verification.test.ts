@@ -7,11 +7,22 @@ const pending = { id: "printer-queue-a", lifecycle: "active", status: "online", 
   config: { spooler_name: "Office queue" }, capabilities: null };
 
 describe("operational proof is independent of configured geometry or online status", () => {
-  it("does not make a named, online queue available without current Agent proof", () => {
-    expect(isPrinterAvailableForJob(pending)).toBe(false);
+  // Policy (operator directive): operational verification is background
+  // evidence, never an availability or claim gate. A named, online queue
+  // is available and claimable without any current Agent proof; only real
+  // errors (offline/error status, retired/absent/unshared printer) block.
+  // These two tests replace the former hard-gate expectations.
+  it("makes a named, online queue available without current Agent proof", () => {
+    expect(isPrinterAvailableForJob(pending)).toBe(true);
   });
-  it("does not claim an unverified target merely because its transport is declared", () => {
-    expect(isPrinterClaimable({ ...pending, status: "unknown" })).toBe(false);
+  it("claims an unverified target whose transport is declared", () => {
+    expect(isPrinterClaimable({ ...pending, status: "unknown" })).toBe(true);
+  });
+  it("still blocks real errors without any proof involvement", () => {
+    expect(isPrinterClaimable({ ...pending, status: "offline" })).toBe(false);
+    expect(isPrinterAvailableForJob({ ...pending, status: "offline" })).toBe(false);
+    expect(isPrinterAvailableForJob({ ...pending, inventoryPresent: false })).toBe(false);
+    expect(isPrinterAvailableForJob({ ...pending, lifecycle: "disabled" })).toBe(false);
   });
   it("retains two distinct Windows queues whose names differ by internal whitespace", () => {
     const first = physicalPrinterIdentityKey({ ...pending, config: { spooler_name: "Office  queue" } });

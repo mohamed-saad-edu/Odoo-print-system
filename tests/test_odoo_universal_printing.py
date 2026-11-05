@@ -120,8 +120,39 @@ def test_approved_pdf_output_is_a_class_agnostic_pos_document_transport():
     assert actual._validate_runtime_target() is printer
 
 
+def test_advisory_medium_projection_cannot_override_declared_transport():
+    printer = verified_printer("pdf_output", "pdf")
+    printer["outputMedium"] = "physical"
+    printer["printerType"] = "physical"
+    actual = binding(printer)
+    assert actual._canonical_runtime_printer_protocol(printer) == "pdf"
+    assert actual._validate_binding_protocol_against_runtime(printer)
+    assert actual._validate_runtime_target() is printer
+
+
+@pytest.mark.parametrize(("connection", "protocol", "canonical"), [
+    ("spooler", "ipp", "spooler"),
+    ("pdf_output", "spooler", "unknown"),
+    ("network", "spooler", "unknown"),
+])
+def test_actual_transport_protocol_mismatch_remains_a_hard_failure(connection, protocol, canonical):
+    printer = verified_printer()
+    printer["connectionType"] = connection
+    printer["protocol"] = protocol
+    actual = binding(printer)
+    assert actual._canonical_runtime_printer_protocol(printer) == canonical
+    with pytest.raises(ValidationError):
+        actual._validate_binding_protocol_against_runtime(printer)
+
+
 @pytest.mark.parametrize("kind", ["missing", "pending", "expired", "other-id", "wrong-medium", "future-receipt", "other-proof"])
-def test_registered_online_printer_requires_fresh_identity_bound_operational_evidence(kind):
+def test_registered_online_printer_does_not_require_operational_evidence(kind):
+    # Policy: operational verification is background evidence, never an
+    # eligibility gate. Whatever state the evidence is in — missing,
+    # pending, expired, mismatched or forged — a registered, shared,
+    # active printer on an assigned Agent validates on its real facts
+    # alone, because printing falls back to the last known/default size
+    # instead of refusing. (This replaces the former hard-gate test.)
     printer = verified_printer()
     printer["status"] = "online"
     if kind == "missing":
@@ -138,8 +169,7 @@ def test_registered_online_printer_requires_fresh_identity_bound_operational_evi
         printer["verificationReceivedAt"] = (datetime.now(timezone.utc) + timedelta(seconds=61)).isoformat().replace("+00:00", "Z")
     else:
         printer["verificationVerifiedAt"] = (datetime.now(timezone.utc) - timedelta(seconds=2)).isoformat().replace("+00:00", "Z")
-    with pytest.raises(ValidationError, match="(?i)(verif|eligible)"):
-        binding(printer)._validate_runtime_target()
+    assert binding(printer)._validate_runtime_target() is printer
 
 
 @pytest.mark.parametrize("device_class", ["laser", "inkjet", "unknown"])
@@ -156,12 +186,15 @@ def test_file_receipt_requires_complete_page_geometry(missing):
     assert binding(printer)._runtime_printer_accepts_image(printer) is False
 
 
-def test_file_geometry_cannot_authorize_an_arbitrary_virtual_spooler():
+def test_file_evidence_neither_authorizes_nor_blocks_a_spooler_target():
+    # Operational evidence is not an authorization input at all: a printer
+    # declared as a Windows spooler queue validates on its declared
+    # transport and real facts; its file-output evidence is ignored, not
+    # treated as proof and not treated as a forgery offence.
     printer = verified_printer("pdf_output", "pdf")
     printer["connectionType"] = "spooler"
     printer["protocol"] = "spooler"
-    with pytest.raises(ValidationError, match="(?i)(verif|eligible)"):
-        binding(printer)._validate_runtime_target()
+    assert binding(printer)._validate_runtime_target() is printer
 
 
 SHARED = json.loads((ROOT / "contracts/printer-operational-verification-fixtures.json").read_text())
@@ -199,10 +232,14 @@ def test_runtime_picker_preserves_verified_medium_and_canonical_evidence():
     assert result["capabilities"].get("operational_verification") == printer["capabilities"]["operational_verification"]
 
 
-def test_runtime_picker_discards_expired_operational_evidence():
+def test_runtime_picker_keeps_printer_with_expired_operational_evidence():
+    # The picker lists printers on their real facts; expired verification
+    # evidence is passed through as display state, never a discard rule.
     from test_agent_print_diagnostic_media import runtime_controller
     printer = verified_printer(now=datetime.now(timezone.utc) - timedelta(seconds=301))
-    assert runtime_controller(printer)["printers"] == []
+    printers = runtime_controller(printer)["printers"]
+    assert len(printers) == 1
+    assert printers[0]["id"] == printer["id"]
 
 
 FILE_EVIDENCE = {"output_medium": "file", "artifact_id": "file_fixture_42", "sha256": "c" * 64, "page_count": 2, "bytes": 4096}

@@ -17,6 +17,7 @@ import (
 	"github.com/kardianos/service"
 	"github.com/yaseir-agent/agent/internal/agent"
 	"github.com/yaseir-agent/agent/internal/config"
+	"github.com/yaseir-agent/agent/internal/elevation"
 	"github.com/yaseir-agent/agent/internal/queue"
 	"gopkg.in/natefinch/lumberjack.v2"
 )
@@ -494,6 +495,15 @@ func main() {
 		fmt.Println(agentRuntimeInfo())
 		return
 	}
+
+	// 0. Administrator-only gate. An interactive launch (double-click,
+	// console, or a -service control action from a normal shell) must run
+	// with an elevated token: a native dialog explains why and the
+	// process exits before the singleton, logging, config or any service
+	// work starts. The SCM-launched path reports Interactive() == false
+	// and already runs as LocalSystem, so it is never gated or shown a
+	// dialog in Session 0.
+	elevation.RequireElevatedInteractive(service.Interactive())
 
 	// 1. Service control path: dispatch immediately without reading config or initializing agent
 	if *svcFlag != "" {

@@ -137,7 +137,7 @@ def test_all_available_parent_security_fixes_have_exact_guarded_artifacts():
     # when regenerating the immutable artifact profile.
     expected = {
         "curl", "libcares2", "libcurl4t64", "libbrotli1", "libexpat1", "libfreetype6",
-        "libglib2.0-0t64", "libperl5.38t64", "libpng16-16t64", "libsqlite3-0",
+        "libglib2.0-0t64", "libpcre2-8-0", "libperl5.38t64", "libpng16-16t64", "libsqlite3-0",
         "libssl-dev", "libssl3t64", "libx11-6", "libx11-data", "libxml2",
         "openssl", "perl", "perl-base", "perl-modules-5.38", "python3-lxml",
         "python3-requests", "python3-urllib3", "zlib1g",
@@ -166,3 +166,28 @@ def test_brotli_cve_fix_uses_reviewed_ubuntu_security_artifact_not_scanner_exemp
     assert f'libbrotli1|{brotli["previous_version"]}|{brotli["version"]}' in docker
     assert f'libbrotli1={brotli["version"]}' in docker
     assert f'/os-security/{brotli["filename"]}' in docker
+
+
+def test_pcre2_cve_fix_uses_reviewed_ubuntu_security_artifact_not_scanner_exemption():
+    # USN-8974-1 (2026-11-03) published the first noble fix for the seven
+    # reviewed libpcre2-8-0 findings after the retained snapshot was pinned;
+    # the fix must ship as a guarded artifact and leave the Trivy baseline.
+    manifest = json.loads((PROFILE / "os-security-artifacts.json").read_text())
+    pcre2 = next(item for item in manifest["artifacts"] if item.get("package") == "libpcre2-8-0")
+    assert pcre2["version"] == "10.42-4ubuntu2.2"
+    assert pcre2["previous_version"] == "10.42-4ubuntu2.1"
+    assert pcre2["advisories"] == ["CVE-2026-103111", "CVE-2026-86145", "CVE-2026-89156",
+                                   "CVE-2026-89157", "CVE-2026-89158", "CVE-2026-89160",
+                                   "CVE-2026-89161"]
+    assert pcre2["bytes"] == 228546
+    assert pcre2["sha256"] == "f41da7cb7e979d6b037ea92650c72ec8ec532ec3c93aa8d5b997207de56695ea"
+    assert pcre2["url"].startswith("https://security.ubuntu.com/ubuntu/")
+    assert pcre2["security_notice"] == "https://ubuntu.com/security/notices/USN-8974-1"
+    docker = (ROOT / "Dockerfile.odoo-hardened").read_text()
+    assert f'ADD --checksum=sha256:{pcre2["sha256"]} {pcre2["url"]} /os-security/{pcre2["filename"]}' in docker
+    assert f'libpcre2-8-0|{pcre2["previous_version"]}|{pcre2["version"]}' in docker
+    assert f'libpcre2-8-0={pcre2["version"]}' in docker
+    assert f'/os-security/{pcre2["filename"]}' in docker
+    baseline = json.loads((ROOT / "security" / "image-vulnerability-baseline.json").read_text())
+    findings = baseline["images"]["yaseir-odoo-hardened:review-20261105"]["findings"]
+    assert not [row for row in findings if row[1] == "libpcre2-8-0"]

@@ -107,7 +107,7 @@ else
         # These inputs also rebuild PostgreSQL/Caddy, so run their Compose
         # behavior gates as well as image scanning and the carried Odoo profile.
         mark app odoo docker docker_scan supply codeql_py codeql_go ;;
-      Dockerfile.odoo-hardened|scripts/odoo-hardened-entrypoint.py|scripts/odoo-healthcheck.py|scripts/verify-odoo-test-results.py|docs/runtime-hardening/*)
+      Dockerfile.odoo-hardened|scripts/odoo-hardened-entrypoint.py|scripts/odoo-healthcheck.py|scripts/verify-odoo-test-results.py|scripts/package-pillow-wheel-as-deb.py|docs/runtime-hardening/*)
         mark app odoo docker_scan supply codeql_py ;;
       *.md|docs/*|LICENSE|LICENSE.*|CHANGELOG*|.github/ISSUE_TEMPLATE/*)
         ;;

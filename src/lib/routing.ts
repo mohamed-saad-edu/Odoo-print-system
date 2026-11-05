@@ -1,4 +1,4 @@
-import { isPrinterOperationallyVerified, type OperationalPrinterState } from "./printer-operational-verification";
+import { hasHardPrinterBindingConflict, type OperationalPrinterState } from "./printer-operational-verification";
 import payloadContract from "../../contracts/print-payload-contract.json";
 import { gatewayNow } from "./database-clock";
 import { isVirtualPrinterRecord, type PrinterLike } from "./printer-virtual";
@@ -56,9 +56,20 @@ export function isPrinterStatusExecutable(printer: Pick<PrinterAvailability, "st
  * this job?" Single canonical predicate: claim == executable. The SQL claim
  * gates add lifecycle, agent freshness, printer freshness, desired-state and
  * entitlement on top; they must never reimplement the status/transport rule.
+ *
+ * Operational verification is deliberately NOT part of this predicate.
+ * Verification is background evidence (the Agent probes and caches it on
+ * its own cycle); a failed or slow driver measurement must never block
+ * printing. Only real, current errors block a claim: a printer whose
+ * reported status is not executable (offline/error), a retired or absent
+ * printer, or a stale/offline Agent — each enforced by the checks around
+ * this predicate, with an explicit reason at the rejecting boundary.
  */
 export function isPrinterClaimable(printer: Pick<PrinterAvailability, "status" | "connectionType" | "protocol"> & OperationalPrinterState, now = gatewayNow()): boolean {
-  return isPrinterOperationallyVerified(printer, now) && isPrinterStatusExecutable(printer);
+  // `now` is retained for call-site compatibility; ordinary proof freshness
+  // does not gate claims. Positive endpoint/identity conflicts remain hard stops.
+  if (hasHardPrinterBindingConflict(printer.verificationReason)) return false;
+  return isPrinterStatusExecutable(printer);
 }
 
 export function isPrinterAvailableForJob(

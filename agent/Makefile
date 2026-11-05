@@ -1,4 +1,4 @@
-.PHONY: all build-agent build-cli release test vet clean linux
+.PHONY: all build-agent build-cli release test vet clean linux resources
 
 BINARY_AGENT=YaseirAgent.exe
 BINARY_CLI=yaseir-agent-cli.exe
@@ -10,6 +10,16 @@ BINARY_CLI=yaseir-agent-cli.exe
 RELEASE_FLAGS=-trimpath -ldflags "-s -w"
 
 all: build-agent build-cli
+
+# Regenerate the committed Windows resources (multi-size Print Agent
+# icon + requireAdministrator manifest + version info) embedded into
+# both executables. The .syso files are committed, so normal builds do
+# not need goversioninfo; run this only after changing
+# cmd/*/versioninfo.json, cmd/*/app.manifest, or the Agent icon
+# (src-tauri/icons/icon.ico — see scripts/generate-agent-icons.mjs).
+resources:
+	cd cmd/agent && goversioninfo -64 -o resource_windows_amd64.syso versioninfo.json
+	cd cmd/cli && goversioninfo -64 -o resource_windows_amd64.syso versioninfo.json
 
 build-agent:
 	go build -o $(BINARY_AGENT) ./cmd/agent

@@ -1,4 +1,4 @@
-import { printerOperationalVerificationPredicate } from "./printer-verification-sql";
+
 import { logWarn } from "./log";
 import { agentStaleThresholdSeconds, printerStaleThresholdSeconds } from "./agent-availability";
 import { db, pool } from "../db";
@@ -79,10 +79,12 @@ async function renderFleetGauges(): Promise<string> {
           COUNT(*) FILTER (WHERE p.lifecycle = 'active' AND (p.last_seen_at IS NULL OR (printer_fresh AND p.status = 'unknown')))::bigint AS unknown,
           COUNT(*) FILTER (WHERE p.lifecycle = 'disabled')::bigint AS disabled,
           COUNT(*) FILTER (WHERE p.lifecycle = 'retired')::bigint AS retired,
+          -- "Routable" mirrors actual routing eligibility: reported
+          -- executable status + freshness + a live Agent. Operational
+          -- verification is background evidence and is not part of it.
           COUNT(*) FILTER (
             WHERE p.lifecycle = 'active'
               AND p.status IN ('online', 'busy')
-              AND ${printerOperationalVerificationPredicate(sql`p`)}
               AND printer_fresh
               AND a.lifecycle = 'active'
               AND a.status = 'online'

@@ -1,9 +1,9 @@
-import { printerOperationalVerificationPredicate } from "./printer-verification-sql";
 import { createHash } from "node:crypto";
 import { agents, printJobs, printers, printJobReceipts } from "../db/schema";
 import { db } from "../db";
 import { isVirtualPrinterRecord } from "./printer-virtual";
 import { isPrinterStatusExecutable, validatePayloadForPrinter } from "./routing";
+import { hasHardPrinterBindingConflict } from "./printer-operational-verification";
 import { validatePrintJobPayload } from "./payload";
 import { and, eq, sql } from "drizzle-orm";
 import { nanoid } from "./nanoid";
@@ -382,9 +382,9 @@ async function insertQueuedJobAtomically({
     // admission equally strict.
     const runtimeOwner = await tx.execute(sql`
       SELECT
-        (${printerOperationalVerificationPredicate(sql`p`)}) AS printer_verified,
         p.output_medium AS printer_output_medium,
         p.verification_binding_digest AS printer_binding_digest,
+        p.verification_reason AS printer_verification_reason,
         p.name AS printer_name,
         p.printer_type AS printer_type,
         p.device_class AS printer_device_class,
@@ -418,9 +418,9 @@ async function insertQueuedJobAtomically({
       FOR UPDATE OF a, p
     `);
     const owner = runtimeOwner.rows[0] as {
-      printer_verified?: boolean;
       printer_output_medium?: string;
       printer_binding_digest?: string;
+      printer_verification_reason?: string | null;
       printer_name?: string;
       printer_type?: string;
       printer_device_class?: string;
@@ -473,9 +473,22 @@ async function insertQueuedJobAtomically({
     if (owner.printer_inventory_present === false) {
       throw new PrintJobInputError("Printer is no longer present in the Agent inventory", "PRINTER_UNAVAILABLE", 409);
     }
-    if (owner.printer_verified !== true) {
-      throw new PrintJobInputError("Printer verification is pending or expired. Wait for a successful Agent verification of this exact target.", "PRINTER_UNVERIFIED", 409);
+    if (hasHardPrinterBindingConflict(owner.printer_verification_reason)) {
+      throw new PrintJobInputError(
+        "Printer endpoint identity conflicts with the configured target; reconcile the printer inventory before printing",
+        "PRINTER_BINDING_CONFLICT",
+        409,
+      );
     }
+    // Operational verification is NOT an enqueue gate. The Agent probes
+    // and caches verification in the background; a failed or slow driver
+    // measurement must never refuse a print job. The job carries the
+    // printer's last known binding digest when one exists (null when the
+    // printer has never verified), and the claim fences plus the Agent's
+    // own dispatch checks reject only real errors — offline printer,
+    // retired/absent printer, offline Agent, or a destination whose
+    // binding actually changed — each with its explicit reason below and
+    // at the claim boundary.
     if (!isPrinterStatusExecutable({
       status: owner.printer_status ?? null,
       connectionType: owner.printer_connection_type ?? null,
@@ -598,7 +611,7 @@ async function insertQueuedJobAtomically({
       status: "queued",
       payload: validatedPayload,
       outputMedium: owner.printer_output_medium === "file" ? "file" : "physical",
-      bindingDigest: owner.printer_binding_digest!,
+      bindingDigest: owner.printer_binding_digest ?? null,
       requestedBy,
       requestId: requestId ?? null,
       idempotencyKey: effectiveIdempotencyKey,

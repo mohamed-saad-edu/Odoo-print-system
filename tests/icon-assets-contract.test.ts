@@ -12,10 +12,41 @@ describe("Yaseir icon asset contract", () => {
     expect(manifest).not.toContain("'icon': 'static/description/icon.png'");
   });
 
-  it("keeps the Odoo and desktop PNG assets byte-identical", () => {
+  it("keeps the Agent assets derived from the canonical Print Agent mark", () => {
+    // The icon shown at the bottom of the Desktop Settings page
+    // (labelled "Print Agent") is the official Agent icon. Every Agent
+    // surface — Tauri bundle PNGs/ICO (exe, taskbar, installer), the
+    // tray (via the default window icon) and the Desktop favicon — is
+    // generated from it by scripts/generate-agent-icons.mjs.
+    const agentMark = readFileSync(join(root, "src/desktop/public/brand/print-agent.svg"));
+    const tauriSource = readFileSync(join(root, "src-tauri/icons/icon-source.svg"));
+    const desktopIcon = readFileSync(join(root, "src/desktop/icon.svg"));
+    expect(tauriSource.equals(agentMark)).toBe(true);
+    expect(desktopIcon.equals(agentMark)).toBe(true);
+    // The Odoo addon fronts the Gateway, so its PNG keeps the Gateway
+    // mark and must NOT be the Agent PNG.
     const odoo = readFileSync(join(root, "odoo_addons/print_gateway/static/description/icon.png"));
-    const desktop = readFileSync(join(root, "src-tauri/icons/icon.png"));
-    expect(odoo.equals(desktop)).toBe(true);
+    const agentPng = readFileSync(join(root, "src-tauri/icons/icon.png"));
+    expect(odoo.equals(agentPng)).toBe(false);
+  });
+
+  it("ships a multi-size Agent ICO with 16, 32, 48 and 256 entries", () => {
+    const ico = readFileSync(join(root, "src-tauri/icons/icon.ico"));
+    expect(ico.readUInt16LE(0)).toBe(0); // reserved
+    expect(ico.readUInt16LE(2)).toBe(1); // type: icon
+    const count = ico.readUInt16LE(4);
+    const sizes: number[] = [];
+    for (let i = 0; i < count; i++) {
+      const entry = 6 + i * 16;
+      const width = ico[entry] === 0 ? 256 : ico[entry];
+      const height = ico[entry + 1] === 0 ? 256 : ico[entry + 1];
+      expect(width).toBe(height);
+      expect(ico.readUInt16LE(entry + 6)).toBe(32); // 32 bpp
+      sizes.push(width);
+    }
+    for (const required of [16, 32, 48, 256]) {
+      expect(sizes).toContain(required);
+    }
   });
 
   it("pins the Windows installer and uninstaller to the Yaseir ICO", () => {
@@ -30,24 +61,30 @@ describe("Yaseir icon asset contract", () => {
     expect(config.bundle?.windows?.nsis?.uninstallerIcon).toBe("icons/icon.ico");
   });
 
-  it("keeps the desktop browser icon wired to the same Print Gateway mark", () => {
+  it("keeps the desktop browser icon wired to the Print Agent mark", () => {
     const index = read("src/desktop/index.html");
     const desktopIcon = read("src/desktop/icon.svg");
     expect(index).toContain('rel="icon" type="image/svg+xml" href="./icon.svg"');
-    // Supplied cyan tile (WP6-BRANDING); the old blue Y glyph is gone.
-    // The standalone file keeps the supplier's <style> classes; the
-    // inline BrandMarkIcon JSX carries the same fills as attributes.
+    // The Desktop app IS the Print Agent app, so its favicon is the
+    // Agent mark (the Settings-page artwork), on the same supplied cyan
+    // tile family (WP6-BRANDING); the old blue Y glyph is gone.
     expect(desktopIcon).toContain("#00c7fc");
     expect(read("src/components/brand.tsx")).toContain('fill="#00c7fc"');
     expect(desktopIcon).not.toContain("#2563EB");
   });
 
-  it("keeps the Gateway favicon byte-identical to the desktop icon", () => {
+  it("keeps the Gateway favicon on the Gateway mark, distinct from the Agent mark", () => {
     const appIcon = readFileSync(join(root, "src/app/icon.svg"));
-    const desktopIcon = readFileSync(join(root, "src/desktop/icon.svg"));
+    const brandIcon = readFileSync(join(root, "public/brand/print-gateway-icon.svg"));
+    const agentMark = readFileSync(join(root, "src/desktop/public/brand/print-agent.svg"));
     const tauriSource = readFileSync(join(root, "src-tauri/icons/icon-source.svg"));
-    expect(appIcon.equals(desktopIcon)).toBe(true);
-    expect(appIcon.equals(tauriSource)).toBe(true);
+    // Gateway surfaces keep the Gateway ("ط") mark, untouched.
+    expect(appIcon.equals(brandIcon)).toBe(true);
+    // The two product marks are different artwork, and the Tauri/Agent
+    // source is the Agent one — never the Gateway one.
+    expect(appIcon.equals(agentMark)).toBe(false);
+    expect(tauriSource.equals(agentMark)).toBe(true);
+    expect(tauriSource.equals(appIcon)).toBe(false);
   });
 
   it("ships sanitized locale lockups with no script, href, or event handlers", () => {

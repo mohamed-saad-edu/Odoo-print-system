@@ -60,19 +60,23 @@ class TestUniversalPrinting(TransactionCase):
             self.assertEqual(binding._canonical_runtime_printer_protocol(printer), "pdf")
             self.assertTrue(binding._validate_binding_protocol_against_runtime(printer))
 
-    def test_current_registration_does_not_authorize_missing_expired_or_mismatched_proof(self):
-        for mutation in ("pending", "expired", "other-printer", "other-medium"):
+    def test_missing_or_stale_proof_and_medium_projection_are_advisory(self):
+        for mutation in ("pending", "expired", "other-printer"):
             printer = self._printer()
             if mutation == "pending":
                 printer["verificationState"] = "pending"
             elif mutation == "expired":
                 printer["verificationReceivedAt"] = (datetime.now(timezone.utc) - timedelta(seconds=301)).isoformat().replace("+00:00", "Z")
-            elif mutation == "other-printer":
-                printer["capabilities"]["operational_verification"]["printer_id"] = "another-printer"
             else:
-                printer["outputMedium"] = "physical"
-            with self.subTest(mutation=mutation), self.assertRaises(ValidationError):
-                self._runtime(printer)
+                printer["capabilities"]["operational_verification"]["printer_id"] = "another-printer"
+            with self.subTest(mutation=mutation):
+                self.assertEqual(self._runtime(printer)["outputMedium"], "file")
+
+        mismatch = self._printer()
+        mismatch["outputMedium"] = "physical"
+        mismatch["printerType"] = "physical"
+        self.assertEqual(self._runtime(mismatch)["connectionType"], "pdf_output")
+        self.assertEqual(self._binding()._canonical_runtime_printer_protocol(mismatch), "pdf")
 
     def test_file_image_requires_explicit_complete_page_boundaries(self):
         for key in ("paper_height_mm", "printable_height_dots", "offset_x_dots", "offset_y_dots", "dpi_y"):

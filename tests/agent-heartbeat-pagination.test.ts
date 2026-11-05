@@ -367,7 +367,9 @@ suite("agent heartbeat pagination contract", () => {
        FROM printers WHERE tenant_id = $1 AND id = $2`,
       [f.tenantId, f.printerId],
     );
-    expect(row.rows[0]).toMatchObject({ inventory_present: false, status: "unknown" });
+    // Preserve the last status actually reported by the Agent; absence is
+    // represented by inventory_present=false and remains the routing fence.
+    expect(row.rows[0]).toMatchObject({ inventory_present: false, status: "online" });
 
     const odooResponse = await odooPrintersGET(new Request("http://gateway.test/api/odoo/printers", {
       headers: { Authorization: `Bearer ${f.odooKey}` },

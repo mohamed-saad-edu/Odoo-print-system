@@ -1,5 +1,4 @@
 import { operationalVerificationPresentation } from "./printer-operational-verification";
-import { printerOperationalVerificationPredicate } from "./printer-verification-sql";
 import { capabilitiesWithCurrentGeometry } from "./printer-geometry";
 import { db, type DbTx } from "../db";
 import { agents, printers } from "../db/schema";
@@ -85,8 +84,11 @@ function printerFilterConditions(
     if (status === "all") return conditions;
     const printerCutoff = new Date(now.getTime() - printerStaleThresholdSeconds() * 1000);
     const agentCutoff = new Date(now.getTime() - agentStaleThresholdSeconds() * 1000);
+    // Presentation mirrors printerPresentation(): fresh evidence from a
+    // live Agent displays the reported status as-is. Operational
+    // verification is an admission gate, not a display mask, so it does
+    // not appear in this CASE.
     const presentation = sql`CASE
-      WHEN NOT COALESCE((${printerOperationalVerificationPredicate(sql`printers`)}), false) THEN 'unavailable'
       WHEN NOT COALESCE(${agents.lifecycle} = 'active' AND ${agents.status} = 'online'
         AND ${agents.lastSeenAt} >= ${agentCutoff} AND ${agents.lastSeenAt} <= ${now}, false) THEN 'unavailable'
       WHEN NOT COALESCE(${printers.lastSeenAt} >= ${printerCutoff} AND ${printers.lastSeenAt} <= ${now}, false) THEN 'unavailable'
@@ -211,7 +213,7 @@ export async function loadDashboardStateForTenant(
       .select({
         total: sql<number>`COUNT(*) FILTER (WHERE ${printers.lifecycle} = 'active' AND ${printers.inventoryPresent} = true)`,
         saved: sql<number>`COUNT(*) FILTER (WHERE ${printers.lifecycle} <> 'active' OR ${printers.inventoryPresent} = false)`,
-        online: sql<number>`COUNT(*) FILTER (WHERE ${printers.lifecycle} = 'active' AND ${printers.inventoryPresent} = true AND ${printers.status} IN ('online', 'busy') AND ${printerOperationalVerificationPredicate(sql`printers`)} AND ${printers.lastSeenAt} >= ${new Date(now.getTime() - printerStaleThresholdSeconds() * 1000)} AND ${printers.lastSeenAt} <= ${now} AND ${agents.lifecycle} = 'active' AND ${agents.status} = 'online' AND ${agents.lastSeenAt} >= ${new Date(now.getTime() - staleThresholdSeconds * 1000)} AND ${agents.lastSeenAt} <= ${now})`,
+        online: sql<number>`COUNT(*) FILTER (WHERE ${printers.lifecycle} = 'active' AND ${printers.inventoryPresent} = true AND ${printers.status} IN ('online', 'busy') AND ${printers.lastSeenAt} >= ${new Date(now.getTime() - printerStaleThresholdSeconds() * 1000)} AND ${printers.lastSeenAt} <= ${now} AND ${agents.lifecycle} = 'active' AND ${agents.status} = 'online' AND ${agents.lastSeenAt} >= ${new Date(now.getTime() - staleThresholdSeconds * 1000)} AND ${agents.lastSeenAt} <= ${now})`,
       })
       .from(printers)
       .leftJoin(agents, and(eq(agents.id, printers.agentId), eq(agents.tenantId, tenantId)))
