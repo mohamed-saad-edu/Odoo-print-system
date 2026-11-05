@@ -180,17 +180,21 @@ jobs:
             echo 'Odoo 19 incompatibility detected.'
             exit 1
           fi
-      - name: Verify Odoo module icon matches desktop Yaseir icon
+      - name: Verify Odoo Gateway icon is distinct from desktop Agent icon
         shell: bash
         run: |
           set -euo pipefail
-          odoo_icon_sha="$(sha256sum odoo_addons/print_gateway/static/description/icon.png | awk '{print $1}')"
-          desktop_icon_sha="$(sha256sum src-tauri/icons/icon.png | awk '{print $1}')"
-          test "$odoo_icon_sha" = "$desktop_icon_sha" || {
-            echo "Odoo module icon does not match the desktop Yaseir icon."
+          odoo_icon="odoo_addons/print_gateway/static/description/icon.png"
+          agent_icon="src-tauri/icons/icon.png"
+          test -s "$odoo_icon" || { echo "Odoo Gateway icon is missing or empty."; exit 1; }
+          test -s "$agent_icon" || { echo "Desktop Agent icon is missing or empty."; exit 1; }
+          odoo_icon_sha="$(sha256sum "$odoo_icon" | awk '{print $1}')"
+          agent_icon_sha="$(sha256sum "$agent_icon" | awk '{print $1}')"
+          test "$odoo_icon_sha" != "$agent_icon_sha" || {
+            echo "Odoo Gateway and desktop Agent icons must remain separate brand assets."
             exit 1
           }
-          echo "Verified identical Odoo and desktop Yaseir icons: $odoo_icon_sha"
+          echo "Verified separate Odoo Gateway and desktop Agent icons."
 
       - name: Install pinned Rust for Python native helper regressions
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # v1.98.1
