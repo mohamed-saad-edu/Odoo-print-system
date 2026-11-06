@@ -3,7 +3,7 @@
 import { formatManualCalendarDate } from "../../lib/manual-calendar-date";
 import { documentTypeLabel } from "../../shared/document-label";
 import type { OperationalPrinterState } from "../../lib/printer-operational-verification";
-import { PrinterVerificationDetails, FileOutputDetails } from "../../components/PrinterVerificationDetails";
+import { PrinterVerificationDetails } from "../../components/PrinterVerificationDetails";
 
 import { fetchWithTimeout, fetchWithSessionRetry, isSessionRenewedNotResent } from "../../lib/fetch-timeout";
 import { fetchDashboardBillingUsage, type DashboardSubscriptionSummary } from "../../lib/dashboard-billing-usage";
@@ -2423,7 +2423,6 @@ export default function DashboardClient({
       >
         {selectedJobView && (
           <div className="space-y-5">
-            <FileOutputDetails job={selectedJobView} />
             <div className="flex flex-wrap items-center gap-2">
               <StatusBadge
                 tone={sharedJobTone(selectedJobView.status, deriveOutcome(selectedJobView.status, selectedJobView.error))}
@@ -2434,7 +2433,7 @@ export default function DashboardClient({
             </div>
 
             <p className="text-sm leading-relaxed text-ink-2">
-              {selectedJobView.outputMedium === "file" ? t("printer.verification.file") : jobGuidance(selectedJobView.status, deriveOutcome(selectedJobView.status, selectedJobView.error), locale)}
+              {jobGuidance(selectedJobView.status, deriveOutcome(selectedJobView.status, selectedJobView.error), locale)}
             </p>
 
             {/* Progress without paper evidence is not a terminal duplicate-print warning. */}
@@ -2565,7 +2564,7 @@ export default function DashboardClient({
               { label: t("desktop.drawer.lifecycle"), value: lifecycleLabel(t, selectedPrinterView.lifecycle) },
               { label: t("printer.connection"), value: connectionLabel(selectedPrinterView.connectionType, t) },
               { label: t("desktop.drawer.protocol"), value: selectedPrinterView.protocol ?? "—" },
-              { label: t("desktop.drawer.address"), value: <Mono>{String(selectedPrinterView.config?.output_profile_id ?? selectedPrinterView.config?.spooler_name ?? selectedPrinterView.config?.address ?? selectedPrinterView.config?.ip ?? "—")}</Mono> },
+              { label: t("desktop.drawer.address"), value: <Mono>{String(selectedPrinterView.config?.spooler_name ?? selectedPrinterView.config?.address ?? selectedPrinterView.config?.ip ?? "—")}</Mono> },
               { label: t("desktop.drawer.stableId"), value: <CopyButton value={selectedPrinterView.id} label={selectedPrinterView.id} /> },
               { label: t("agent.lastSeen"), value: formatDateTime(selectedPrinterView.lastSeenAt) },
               { label: t("desktop.drawer.observed"), value: printerStatusDetail(selectedPrinterView, locale) || "—" },

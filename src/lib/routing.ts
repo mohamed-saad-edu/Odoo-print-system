@@ -38,7 +38,6 @@ export function isPrinterStatusExecutable(printer: Pick<PrinterAvailability, "st
   // A protocol token alone must not turn a network/USB row into a spooler.
   // OpenPrinterW + GetPrinterW (level 2) is the pre-dispatch probe.
   if (conn === "spooler") return true;
-  if (conn === "pdf_output" && proto === "pdf") return true;
   // IPP/IPPS document transport: the endpoint URL IS the declaration.
   if (conn === "ipp" || conn === "ipps" || (conn === "network" && (proto === "ipp" || proto === "ipps"))) return true;
   // Direct byte-stream transports: require an explicitly declared language.

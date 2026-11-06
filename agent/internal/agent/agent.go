@@ -354,12 +354,11 @@ type Agent struct {
 }
 
 type terminalExecutionResult struct {
-	status         string
-	errMsg         string
-	claimToken     string
-	spoolerJobID   string
-	transport      string
-	outputEvidence *printer.OutputEvidence
+	status       string
+	errMsg       string
+	claimToken   string
+	spoolerJobID string
+	transport    string
 }
 
 type printerProbeState struct {
@@ -679,19 +678,18 @@ func printerConfigFromDeviceInfo(di printer.DeviceInfo) config.PrinterConfig {
 	// degrades direct-USB printers to VID 0/PID 0.
 	enabled := di.Enabled
 	return config.PrinterConfig{
-		ID:              di.ID,
-		Name:            di.Name,
-		Type:            di.ConnectionType,
-		Endpoint:        di.Endpoint,
-		OutputProfileID: di.OutputProfileID,
-		Protocol:        di.Protocol,
-		SpoolerName:     di.SpoolerName,
-		PrinterType:     di.PrinterType,
-		USBVID:          di.USBVID,
-		USBPID:          di.USBPID,
-		USBSerial:       di.USBSerial,
-		Capabilities:    di.Capabilities,
-		Enabled:         &enabled,
+		ID:           di.ID,
+		Name:         di.Name,
+		Type:         di.ConnectionType,
+		Endpoint:     di.Endpoint,
+		Protocol:     di.Protocol,
+		SpoolerName:  di.SpoolerName,
+		PrinterType:  di.PrinterType,
+		USBVID:       di.USBVID,
+		USBPID:       di.USBPID,
+		USBSerial:    di.USBSerial,
+		Capabilities: di.Capabilities,
+		Enabled:      &enabled,
 	}
 }
 
@@ -2269,16 +2267,16 @@ func (a *Agent) forgetJob(id string) {
 }
 
 func (a *Agent) rememberTerminalExecution(jobID, status, errMsg, claimToken, spoolerJobID string) {
-	a.rememberTerminalOutput(jobID, status, errMsg, claimToken, spoolerJobID, "", nil)
+	a.rememberTerminalOutput(jobID, status, errMsg, claimToken, spoolerJobID, "")
 }
 
-func (a *Agent) rememberTerminalOutput(jobID, status, errMsg, claimToken, spoolerJobID, transport string, output *printer.OutputEvidence) {
+func (a *Agent) rememberTerminalOutput(jobID, status, errMsg, claimToken, spoolerJobID, transport string) {
 	a.inFlightMu.Lock()
 	defer a.inFlightMu.Unlock()
 	if a.terminalExecution == nil {
 		a.terminalExecution = make(map[string]terminalExecutionResult)
 	}
-	a.terminalExecution[jobID] = terminalExecutionResult{status: status, errMsg: errMsg, claimToken: claimToken, spoolerJobID: spoolerJobID, transport: transport, outputEvidence: cloneOutputEvidence(output)}
+	a.terminalExecution[jobID] = terminalExecutionResult{status: status, errMsg: errMsg, claimToken: claimToken, spoolerJobID: spoolerJobID, transport: transport}
 }
 
 func (a *Agent) deliveryReceivedAt(jobID string) time.Time {
@@ -2449,7 +2447,7 @@ func (a *Agent) runTerminalReportWorker(ctx context.Context) {
 		case work := <-a.terminalReportQueue:
 			if ctx.Err() == nil && work.ctx.Err() == nil {
 				r := work.result
-				if err := a.updateJobStatusWithOutputEvidence(work.ctx, work.jobID, r.status, r.errMsg, r.claimToken, r.spoolerJobID, r.transport, r.outputEvidence); err != nil {
+				if err := a.updateJobStatusWithTransport(work.ctx, work.jobID, r.status, r.errMsg, r.claimToken, r.spoolerJobID, r.transport); err != nil {
 					log.Printf("Job %s: process-local terminal re-report failed: %v", work.jobID, err)
 				}
 			}
@@ -2731,9 +2729,6 @@ func (a *Agent) recordPrinterProtocolObservation(printerID string, pc config.Pri
 func printStatusTransport(facts printer.TransportFacts) string {
 	connection := strings.ToLower(strings.TrimSpace(facts.Connection))
 	protocol := strings.ToLower(strings.TrimSpace(facts.Protocol))
-	if connection == "pdf_output" && protocol == "pdf" {
-		return "pdf_output"
-	}
 	if connection == "spooler" || connection == "windows_spooler" || (connection == "usb" && protocol == "spooler") {
 		return "windows_spooler"
 	}
@@ -2820,8 +2815,7 @@ func (a *Agent) printerStatusPayloadWithSharingResult(sharing localPrinterSharin
 		}
 		c := printer.ClassifyDeviceInfo(printer.DeviceInfo{
 			Name: pc.Name, PrinterType: pc.PrinterType,
-			OutputProfileID: pc.OutputProfileID,
-			SpoolerName:     pc.SpoolerName, Endpoint: pc.Endpoint, ConnectionType: pc.NormalizedType(),
+			SpoolerName: pc.SpoolerName, Endpoint: pc.Endpoint, ConnectionType: pc.NormalizedType(),
 			Protocol: pc.NormalizedProtocolOrUnknown(), Capabilities: pc.Capabilities,
 		})
 		if c.IsVirtual || c.Class == printer.ClassRedirected {
@@ -3231,17 +3225,6 @@ func endpointToConfig(pc config.PrinterConfig) map[string]interface{} {
 	proto := pc.NormalizedProtocolOrUnknown()
 	cfgMap := map[string]interface{}{"protocol": proto}
 	nt := pc.NormalizedType()
-	if nt == "pdf_output" {
-		// The Gateway accepts only the locally approved opaque selector and
-		// optional measurements for this backend. Keep capability/media data
-		// and printer class in their separate heartbeat envelope fields;
-		// generic metadata must not expand this strict configuration boundary.
-		cfgMap["output_profile_id"] = pc.OutputProfileID
-		if pc.GeometryProfile != nil {
-			cfgMap["geometry_profile"] = pc.GeometryProfile
-		}
-		return cfgMap
-	}
 	switch nt {
 	case "network":
 		host, portStr, err := net.SplitHostPort(pc.Endpoint)
@@ -4079,25 +4062,7 @@ func (a *Agent) processJob(ctx context.Context, job map[string]interface{}) {
 	// returns; the terminal path remains authoritative.
 	document := documentForClaimedJob(fields, kind, printData)
 	document.GeometryFingerprint = pl.GeometryFingerprint
-	outputCtx, outputScope := printer.WithOutputEvidence(printCtx)
-	defer outputScope.Close()
-	spoolerJobID, printErr := a.dispatchDocumentWithEvidence(outputCtx, jobID, p, document)
-	outputEvidence := outputScope.Close()
-	if statusTransport == "pdf_output" && printErr == nil {
-		if err := printer.ValidateOutputEvidence(outputEvidence); err != nil {
-			printErr = printer.MarkUnknown("PDF backend returned without validated file-creation evidence; reconcile the original attempt")
-		}
-	} else if statusTransport != "pdf_output" && outputEvidence != nil {
-		printErr = printer.MarkUnknown("file evidence does not match the admitted output transport")
-	}
-	if printErr != nil {
-		outputEvidence = nil
-	}
-	encodedOutput, evidenceErr := encodeOutputEvidence(outputEvidence)
-	if evidenceErr != nil {
-		printErr = printer.MarkUnknown("output evidence could not be encoded for durable reconciliation")
-		outputEvidence, encodedOutput = nil, ""
-	}
+	spoolerJobID, printErr := a.dispatchDocumentWithEvidence(printCtx, jobID, p, document)
 	log.Printf("print.trace transport_complete request_id=%s job_id=%s printer_id=%s transport_latency_ms=%d success=%t", requestID, jobID, printerID, time.Since(printStart).Milliseconds(), printErr == nil)
 
 	// Capture platform submission evidence for this attempt regardless of the
@@ -4121,17 +4086,17 @@ func (a *Agent) processJob(ctx context.Context, job map[string]interface{}) {
 			// durable terminal row cannot be written, keep an in-process fence
 			// including any platform identity so duplicate delivery cannot
 			// execute the printer again and later reconciliation keeps its evidence.
-			a.rememberTerminalOutput(jobID, "failed", failureMsg, claimToken, spoolerJobID, statusTransport, nil)
+			a.rememberTerminalOutput(jobID, "failed", failureMsg, claimToken, spoolerJobID, statusTransport)
 		}
 	} else {
-		if err := a.queue.UpdateTerminalResult(jobID, "success", "", spoolerJobID, statusTransport, encodedOutput); err != nil {
+		if err := a.queue.UpdateTerminalResult(jobID, "success", "", spoolerJobID, statusTransport, ""); err != nil {
 			// Physical execution already succeeded. If SQLite cannot persist
 			// the terminal row, keep an in-process fence INCLUDING the platform
 			// job identity so a lost Gateway acknowledgement can be re-reported
 			// without executing the printer again. On restart, a durable row that
 			// remained `printing` is converted to an explicit unknown outcome.
 			log.Printf("Job %s: ledger write failed after successful print: %v", jobID, err)
-			a.rememberTerminalOutput(jobID, "success", "", claimToken, spoolerJobID, statusTransport, outputEvidence)
+			a.rememberTerminalOutput(jobID, "success", "", claimToken, spoolerJobID, statusTransport)
 		}
 	}
 
@@ -4150,24 +4115,10 @@ func (a *Agent) processJob(ctx context.Context, job map[string]interface{}) {
 	// exists in the tree), so the query is nil and the report carries
 	// submission-source evidence; the Gateway therefore derives
 	// 'submitted', never 'completed', until a query adapter lands.
-	// WP5/WP6 (STATIC REVIEW ONLY, WP6 regression fix): submission
-	// evidence is physical-only by Gateway contract (the agent route
-	// answers 422 SUBMISSION_EVIDENCE_MISMATCH for any file-output job
-	// carrying it). Attaching it unconditionally broke successful
-	// pdf_output reports: the file job carries outputEvidence AND
-	// submissionEvidence, so the Gateway rejected the success report
-	// even though the PDF was created and verified. File jobs therefore
-	// pass nil here; their success is proven by outputEvidence alone.
-	// Physical transports never carry outputEvidence (see the
-	// transport-mismatch guard above), so they are unaffected.
-	var submissionPtr *printer.SubmissionEvidence
-	if statusTransport != "pdf_output" {
-		submissionEvidence := printer.VerifySubmission(ctx, nil)
-		submissionEvidence.Transport = statusTransport
-		submissionEvidence.SpoolerJobID = spoolerJobID
-		submissionPtr = &submissionEvidence
-	}
-	a.updateJobStatusWithSubmissionEvidence(ctx, jobID, "success", "", claimToken, spoolerJobID, statusTransport, outputEvidence, submissionPtr)
+	submissionEvidence := printer.VerifySubmission(ctx, nil)
+	submissionEvidence.Transport = statusTransport
+	submissionEvidence.SpoolerJobID = spoolerJobID
+	a.updateJobStatusWithSubmissionEvidence(ctx, jobID, "success", "", claimToken, spoolerJobID, statusTransport, &submissionEvidence)
 }
 
 // dispatchDocumentWithEvidence gives the worker, observer and terminal path
@@ -4257,28 +4208,14 @@ func (a *Agent) updateJobStatus(ctx context.Context, jobID, status, errMsg, clai
 // status contract. Empty transport is intentionally omitted for legacy/replay
 // call sites with no verified local printer facts.
 func (a *Agent) updateJobStatusWithTransport(ctx context.Context, jobID, status, errMsg, claimToken, spoolerJobID, transport string, reason ...string) error {
-	return a.updateJobStatusWithOutputEvidence(ctx, jobID, status, errMsg, claimToken, spoolerJobID, transport, nil, reason...)
+	return a.updateJobStatusWithSubmissionEvidence(ctx, jobID, status, errMsg, claimToken, spoolerJobID, transport, nil, reason...)
 }
 
-func (a *Agent) updateJobStatusWithOutputEvidence(ctx context.Context, jobID, status, errMsg, claimToken, spoolerJobID, transport string, output *printer.OutputEvidence, reason ...string) error {
-	return a.updateJobStatusWithSubmissionEvidence(ctx, jobID, status, errMsg, claimToken, spoolerJobID, transport, output, nil, reason...)
-}
-
-// updateJobStatusWithSubmissionEvidence is updateJobStatusWithOutputEvidence
+// updateJobStatusWithSubmissionEvidence is updateJobStatusWithTransport
 // plus the WP2 submission-evidence field. The evidence is additive and
 // optional: older Gateway versions ignore unknown fields, and a nil
 // evidence value omits the field entirely (old behavior preserved).
-func (a *Agent) updateJobStatusWithSubmissionEvidence(ctx context.Context, jobID, status, errMsg, claimToken, spoolerJobID, transport string, output *printer.OutputEvidence, submission *printer.SubmissionEvidence, reason ...string) error {
-	if output != nil {
-		if status != "success" || transport != "pdf_output" {
-			return fmt.Errorf("file evidence requires successful PDF output")
-		}
-		if err := printer.ValidateOutputEvidence(output); err != nil {
-			return err
-		}
-	} else if status == "success" && transport == "pdf_output" {
-		return fmt.Errorf("successful PDF output cannot be reported without file evidence")
-	}
+func (a *Agent) updateJobStatusWithSubmissionEvidence(ctx context.Context, jobID, status, errMsg, claimToken, spoolerJobID, transport string, submission *printer.SubmissionEvidence, reason ...string) error {
 	// The caller owns this immutable attempt token; never substitute a newer delivery.
 	reqURL := "/api/agent/jobs"
 	body := map[string]interface{}{
@@ -4292,9 +4229,6 @@ func (a *Agent) updateJobStatusWithSubmissionEvidence(ctx context.Context, jobID
 	if transport != "" {
 		body["transport"] = transport
 	}
-	if output != nil {
-		body["outputEvidence"] = output
-	}
 	// Spooler evidence is additive and optional: older Gateway versions
 	// ignore unknown fields, and printers without a platform identity
 	// (network/USB/IPP, non-Windows stub) report "" and omit it.
@@ -4302,13 +4236,9 @@ func (a *Agent) updateJobStatusWithSubmissionEvidence(ctx context.Context, jobID
 		body["spoolerJobId"] = spoolerJobID
 	}
 	// WP2 submission evidence is additive and optional on the same terms.
-	// It is only ever attached to a physical success report by the
-	// caller; the Gateway rejects it on any other report with 422.
-	// WP5/WP6 defense-in-depth: a file-output success carries
-	// outputEvidence instead, so never attach submission evidence
-	// alongside it even if a future caller passes both — the Gateway
-	// would 422 the whole success report for the combination.
-	if submission != nil && output == nil {
+	// It is only ever attached to a success report by the caller; the
+	// Gateway rejects it on any other report with 422.
+	if submission != nil {
 		body["submissionEvidence"] = submission
 	}
 	if len(reason) > 0 && reason[0] != "" {

@@ -36,7 +36,7 @@ func IsRuntimeDiscoveryPrinter(d DeviceInfo) bool {
 	pc := config.PrinterConfig{
 		ID: d.ID, Type: d.Type, ConnectionType: d.ConnectionType,
 		Protocol: d.Protocol, Endpoint: d.Endpoint, SpoolerName: d.SpoolerName,
-		OutputProfileID: d.OutputProfileID, PrinterType: d.PrinterType,
+		PrinterType: d.PrinterType,
 	}
 	if err := config.ValidatePrinterEndpoint(pc); err != nil {
 		return false
@@ -88,25 +88,6 @@ func IsRuntimeDiscoveryPrinter(d DeviceInfo) bool {
 		}
 	}
 	return true
-}
-
-func isLocallyAuthorizedPDFOutput(cfg *config.Config, d DeviceInfo) bool {
-	typ := d.ConnectionType
-	if strings.TrimSpace(typ) == "" {
-		typ = d.Type
-	}
-	if !strings.EqualFold(strings.TrimSpace(typ), "pdf_output") {
-		return true
-	}
-	if cfg == nil {
-		return false
-	}
-	pc := config.PrinterConfig{
-		ID: d.ID, Type: typ, ConnectionType: typ, Protocol: d.Protocol,
-		Endpoint: d.Endpoint, OutputProfileID: d.OutputProfileID, PrinterType: d.PrinterType,
-	}
-	_, err := cfg.ResolvePDFOutput(pc)
-	return err == nil
 }
 
 // RuntimeDiscoveryPrinters returns only observations for which this Agent has
@@ -363,10 +344,6 @@ func DiscoverQuick(cfg *config.Config, registryPath string) DiscoveryResult {
 		for _, d := range infos {
 			d = markAutomaticDiscoveryRegistration(d)
 			d = discoveredDeviceNames(d)
-			if !isLocallyAuthorizedPDFOutput(cfg, d) {
-				log.Printf("[discovery] hiding PDF output without a current local profile: %q", d.ID)
-				continue
-			}
 			if d.ID == "" {
 				d.ID = StableIDForDevice(d)
 			}
@@ -531,10 +508,6 @@ func discoverWithContext(ctx context.Context, cfg *config.Config, registryPath s
 		for _, d := range infos {
 			d = markAutomaticDiscoveryRegistration(d)
 			d = discoveredDeviceNames(d)
-			if !isLocallyAuthorizedPDFOutput(cfg, d) {
-				log.Printf("[discovery] hiding PDF output without a current local profile: %q", d.ID)
-				continue
-			}
 			if d.ID == "" {
 				d.ID = StableIDForDevice(d)
 			}
@@ -925,13 +898,6 @@ func discoverFromConfig(cfg *config.Config) []DeviceInfo {
 		return out
 	}
 	for _, pc := range cfg.Printers {
-		if pc.NormalizedType() == "pdf_output" {
-			resolved, err := cfg.ResolvePDFOutput(pc)
-			if err != nil {
-				continue
-			}
-			pc = resolved
-		}
 		// Propagate the declared class (heartbeat normalizes it for the
 		// Gateway); fall back to "unknown" exactly as before when unset.
 		declaredType := pc.PrinterType
@@ -961,21 +927,20 @@ func discoverFromConfig(cfg *config.Config) []DeviceInfo {
 		}
 		caps["registration_source"] = "config"
 		di := DeviceInfo{
-			ID:              pc.ID,
-			Name:            pc.Name,
-			DisplayName:     pc.Name,
-			PrinterType:     declaredType,
-			ConnectionType:  pc.NormalizedType(),
-			Protocol:        pc.NormalizedProtocolOrUnknown(),
-			Endpoint:        pc.Endpoint,
-			OutputProfileID: pc.OutputProfileID,
-			SpoolerName:     pc.SpoolerName,
-			USBVID:          pc.USBVID,
-			USBPID:          pc.USBPID,
-			USBSerial:       pc.USBSerial,
-			Status:          "unknown",
-			Enabled:         pc.IsEnabled(),
-			Type:            pc.NormalizedType(),
+			ID:             pc.ID,
+			Name:           pc.Name,
+			DisplayName:    pc.Name,
+			PrinterType:    declaredType,
+			ConnectionType: pc.NormalizedType(),
+			Protocol:       pc.NormalizedProtocolOrUnknown(),
+			Endpoint:       pc.Endpoint,
+			SpoolerName:    pc.SpoolerName,
+			USBVID:         pc.USBVID,
+			USBPID:         pc.USBPID,
+			USBSerial:      pc.USBSerial,
+			Status:         "unknown",
+			Enabled:        pc.IsEnabled(),
+			Type:           pc.NormalizedType(),
 			// Printers declared in config.yaml are explicit operator intent:
 			// they stay visible even when no transport can be proven, because
 			// the operator typed the endpoint by hand.
@@ -1385,10 +1350,6 @@ func TestPrinter(cfg *config.Config, registryPath, printerID string) error {
 	}
 
 	pc := printerConfigForTest(cfg, target)
-	pc, err = cfg.ResolvePDFOutput(pc)
-	if err != nil {
-		return fmt.Errorf("printer %s local output profile unavailable: %w", printerID, err)
-	}
 	if NewLocalPrinterDisablement(cfg, registered).Disabled(pc) {
 		return fmt.Errorf("printer %s is disabled by local operator configuration", printerID)
 	}
@@ -1453,19 +1414,18 @@ func printerConfigForTest(cfg *config.Config, target *DeviceInfo) config.Printer
 		}
 		enabled := target.Enabled
 		pc = config.PrinterConfig{
-			ID:              target.ID,
-			Name:            target.Name,
-			Type:            target.ConnectionType,
-			Endpoint:        target.Endpoint,
-			OutputProfileID: target.OutputProfileID,
-			Protocol:        target.Protocol,
-			SpoolerName:     target.SpoolerName,
-			PrinterType:     target.PrinterType,
-			USBVID:          target.USBVID,
-			USBPID:          target.USBPID,
-			USBSerial:       target.USBSerial,
-			Capabilities:    caps,
-			Enabled:         &enabled,
+			ID:           target.ID,
+			Name:         target.Name,
+			Type:         target.ConnectionType,
+			Endpoint:     target.Endpoint,
+			Protocol:     target.Protocol,
+			SpoolerName:  target.SpoolerName,
+			PrinterType:  target.PrinterType,
+			USBVID:       target.USBVID,
+			USBPID:       target.USBPID,
+			USBSerial:    target.USBSerial,
+			Capabilities: caps,
+			Enabled:      &enabled,
 		}
 	}
 	if target.ConnectionType == "spooler" && pc.SpoolerName == "" {

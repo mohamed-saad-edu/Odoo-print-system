@@ -101,6 +101,13 @@ describe("Desktop detail identity follows current Gateway evidence", () => {
   it("labels the editable Windows queue when no discovered spooler can be selected", async () => {
     await navigate("printers");
     await click([...document.querySelectorAll<HTMLButtonElement>("main button")].find((button) => button.textContent === "Manual printer setup"));
+    // The dialog auto-searches first; with nothing selectable it lands
+    // on an explicit empty state (this fixture's discovery fails, so it
+    // is the search-failed variant), and the editable queue field
+    // appears only after the user chooses manual entry.
+    expect(document.body.textContent).toContain("The printer search failed");
+    expect(document.body.textContent).toContain("Search again");
+    await click([...document.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Enter the queue name manually"));
     const controls = document.querySelectorAll("#pp-spooler");
     expect(controls).toHaveLength(1);
     expect(controls[0].tagName).toBe("INPUT");
@@ -139,25 +146,23 @@ describe("Desktop detail identity follows current Gateway evidence", () => {
     expect(jobDrawer()).toBeNull();
   });
 
-  it("keeps file-only drawer outcomes out of the physical print timeline", async () => {
+  it("presents a legacy file-medium job row as physical, with no file-outcome claims", async () => {
     fixture.jobs = [{ ...fixture.jobs[0], status: "success", outputMedium: "file", outputEvidence: null }];
     await click(document.querySelector<HTMLButtonElement>('button[aria-label="Refresh all"]'));
     await click([...document.querySelectorAll<HTMLButtonElement>("main button")].find((button) => button.textContent === "Details"));
-    expect(jobDrawer()?.textContent).toContain("PDF file creation is not confirmed");
-    expect(jobDrawer()?.textContent).not.toContain("Sent to printer");
+    expect(jobDrawer()?.textContent).not.toContain("PDF file");
+    expect(jobDrawer()?.textContent).not.toContain("file creation");
     expect(jobDrawer()?.querySelector('[role="group"]')).toBeNull();
-    expect(jobDrawer()?.textContent).not.toContain("The print service accepted the job");
   });
 
-  it("preserves safe failed-file details without exposing local paths or paper guidance", async () => {
-    fixture.jobs = [{ ...fixture.jobs[0], status: "failed", outputMedium: "file", outputEvidence: null, error: "write C:\\private\\output.pdf: access is denied; secret=hidden" }];
+  it("preserves safe failed-job details without exposing local paths or secrets", async () => {
+    fixture.jobs = [{ ...fixture.jobs[0], status: "failed", outputMedium: "physical", outputEvidence: null, error: "write C:\\private\\output.pdf: access is denied; secret=<redacted>" }];
     await click(document.querySelector<HTMLButtonElement>('button[aria-label="Refresh all"]'));
     await click([...document.querySelectorAll<HTMLButtonElement>("main button")].find((button) => button.textContent === "Details"));
-    expect(jobDrawer()?.textContent).toContain("Check the permissions of the approved output directory.");
+    expect(jobDrawer()?.textContent).not.toContain("Check the permissions of the approved output directory.");
     expect(jobDrawer()?.textContent).not.toContain("private");
-    expect(jobDrawer()?.textContent).not.toContain("secret=hidden");
+    expect(jobDrawer()?.textContent).not.toContain("secret=<redacted>");
     expect(jobDrawer()?.textContent).not.toContain("Sent to printer");
-    expect(jobDrawer()?.querySelector('[role="group"]')).toBeNull();
   });
 
   it.each(["LATE_SUCCESS:", "LATE_SUCCESS_POST_EXPIRATION:"])("keeps reconciled submission guidance for %s", async marker => {

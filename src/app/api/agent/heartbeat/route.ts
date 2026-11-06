@@ -111,7 +111,6 @@ function sanitizePrinter(p: ReportedPrinter): {
   }
   if (!printerType) printerType = "physical";
   if (!(PRINTER_TYPES as readonly string[]).includes(printerType) || !(DEVICE_CLASSES as readonly string[]).includes(deviceClass)) return { ok: false, reason: "invalid_device_class_or_printer_type" };
-  if ((printerType === "file") !== (connectionType === "pdf_output")) return { ok: false, reason: "invalid_output_type" };
   let protocol = normalizeProtocol(p.protocol ?? (p.config as Record<string, unknown>)?.protocol);
   if (!protocol) return { ok: false, reason: "invalid_or_unsupported_protocol" };
   const config = p.config && typeof p.config === "object" ? { ...(p.config as Record<string, unknown>) } : {};
@@ -692,7 +691,7 @@ export async function POST(req: Request) {
               protocol: p.protocol as typeof printers.$inferInsert.protocol,
               config: p.config as typeof printers.$inferInsert.config,
               physicalIdentityKey: physicalPrinterIdentityKey(p),
-              outputMedium: p.connectionType === "pdf_output" ? "file" : "physical",
+              outputMedium: "physical",
             }
           : observedUpdateSet;
         await tx.update(printers)
@@ -738,7 +737,7 @@ export async function POST(req: Request) {
           config: p.config as typeof printers.$inferInsert.config,
           physicalIdentityKey: physicalPrinterIdentityKey(p),
           ...verificationById.get(p.id),
-          outputMedium: p.connectionType === "pdf_output" ? "file" : "physical",
+          outputMedium: "physical",
           capabilities: verificationById.get(p.id)?.verificationState === "verified" ? p.capabilities : p.capabilities ? Object.fromEntries(Object.entries(p.capabilities).filter(([key]) => key !== "operational_verification")) : null,
           inventoryPresent: true,
           inventorySnapshotId: snapshotEnabled ? inventorySnapshotId : null,

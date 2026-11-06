@@ -24,6 +24,10 @@ import (
 // platform-specific implementations. Production passes nil and therefore
 // selects platformPrintPDF.
 const (
+	// MaxRenderedPDFBytes bounds any PDF byte stream the Agent renders,
+	// validates or prints (64 MiB).
+	MaxRenderedPDFBytes = 64 * 1024 * 1024
+
 	pdfHeaderMarker = "%PDF-"
 	pdfEOFMarker    = "%%EOF"
 
@@ -51,7 +55,7 @@ func validatePDFBounded(data []byte, byteLimit int) error {
 	if len(data) == 0 {
 		return fmt.Errorf("refusing to print empty PDF payload")
 	}
-	if byteLimit < 1 || byteLimit > MaxPDFOutputBytes || len(data) > byteLimit {
+	if byteLimit < 1 || byteLimit > MaxRenderedPDFBytes || len(data) > byteLimit {
 		return fmt.Errorf("PDF payload %d bytes exceeds %d limit", len(data), byteLimit)
 	}
 	if !bytes.HasPrefix(data, []byte(pdfHeaderMarker)) {

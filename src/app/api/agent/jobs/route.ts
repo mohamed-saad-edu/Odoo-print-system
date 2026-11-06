@@ -1,4 +1,4 @@
-import { printOutputPresentation, validateFileOutputEvidence, sameFileOutputEvidence } from "../../../../lib/print-output";
+import { printOutputPresentation } from "../../../../lib/print-output";
 import { createHash } from "node:crypto";
 import { db, type DbTx } from "../../../../db";
 import { printJobs, printJobReceipts } from "../../../../db/schema";
@@ -37,7 +37,7 @@ const printerEligibilityPredicate = (tenantId: SQL) => sql`
     OR (
       pr.status = 'unknown'
       AND (
-        pr.connection_type = 'spooler' OR (pr.connection_type = 'pdf_output' AND pr.protocol = 'pdf')
+        pr.connection_type = 'spooler'
         OR pr.connection_type IN ('ipp','ipps')
         OR (pr.connection_type = 'network' AND pr.protocol IN ('ipp','ipps'))
         OR (pr.connection_type IN ('network','usb') AND pr.protocol IN ('raw','escpos','zpl','tspl'))
@@ -210,7 +210,7 @@ export async function GET(req: Request) {
           AND a.last_seen_at IS NOT NULL
           AND a.last_seen_at <= clock_timestamp()
           AND a.last_seen_at >= clock_timestamp() - make_interval(secs => ${agentStaleThresholdSeconds()})
-          AND (pr.verification_binding_digest IS NULL OR p.binding_digest = pr.verification_binding_digest)
+          AND (p.binding_digest IS NULL OR pr.verification_binding_digest IS NULL OR p.binding_digest = pr.verification_binding_digest)
           AND p.output_medium = pr.output_medium
           AND ${printerEligibilityPredicate(sql`p.tenant_id`)}
           AND t.lifecycle = 'active'
@@ -235,7 +235,7 @@ export async function GET(req: Request) {
           AND a.last_seen_at IS NOT NULL
         AND a.last_seen_at <= clock_timestamp()
         AND a.last_seen_at >= clock_timestamp() - make_interval(secs => ${agentStaleThresholdSeconds()})
-          AND (pr.verification_binding_digest IS NULL OR p.binding_digest = pr.verification_binding_digest)
+          AND (p.binding_digest IS NULL OR pr.verification_binding_digest IS NULL OR p.binding_digest = pr.verification_binding_digest)
           AND p.output_medium = pr.output_medium
           AND ${printerEligibilityPredicate(sql`p.tenant_id`)}
           AND t.lifecycle = 'active'
@@ -259,7 +259,7 @@ export async function GET(req: Request) {
           AND a.last_seen_at IS NOT NULL
           AND a.last_seen_at <= clock_timestamp()
           AND a.last_seen_at >= clock_timestamp() - make_interval(secs => ${agentStaleThresholdSeconds()})
-          AND (pr.verification_binding_digest IS NULL OR p.binding_digest = pr.verification_binding_digest)
+          AND (p.binding_digest IS NULL OR pr.verification_binding_digest IS NULL OR p.binding_digest = pr.verification_binding_digest)
           AND p.output_medium = pr.output_medium
           AND ${printerEligibilityPredicate(sql`p.tenant_id`)}
           AND t.lifecycle = 'active'
@@ -346,7 +346,7 @@ export async function PATCH(req: Request) {
   }
   if (hasBodyOverLimit(req, 64 * 1024)) return NextResponse.json({ error: "Request body too large" }, { status: 413 });
 
-  let body: { jobId?: unknown; status?: unknown; error?: unknown; reason?: unknown; claimToken?: unknown; spoolerJobId?: unknown; attemptId?: unknown; transport?: unknown; outputEvidence?: unknown; submissionEvidence?: unknown };
+  let body: { jobId?: unknown; status?: unknown; error?: unknown; reason?: unknown; claimToken?: unknown; spoolerJobId?: unknown; attemptId?: unknown; transport?: unknown; submissionEvidence?: unknown };
   try { const parsedBody = await req.json(); if (!parsedBody || typeof parsedBody !== "object" || Array.isArray(parsedBody)) throw new Error("JSON object required"); body = parsedBody; } catch { return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 }); }
 
   const { jobId, status: requestedStatus, error: rawError, reason: rawReason, claimToken: rawClaimToken, spoolerJobId: rawSpoolerJobId, attemptId: rawAttemptId, transport: rawTransport } = body;
@@ -363,11 +363,8 @@ export async function PATCH(req: Request) {
   const incomingAttemptId = typeof rawAttemptId === "string" && rawAttemptId.length > 0 && rawAttemptId.length <= 64 ? rawAttemptId.trim() : null;
   const transport = typeof rawTransport === "string" ? rawTransport.trim().slice(0,32) : null;
 
-  const outputEvidence = body.outputEvidence === undefined ? null : validateFileOutputEvidence(body.outputEvidence);
-  if (body.outputEvidence !== undefined && !outputEvidence) return NextResponse.json({ error: "Invalid file output evidence", code: "INVALID_OUTPUT_EVIDENCE" }, { status: 400 });
   // v4 (WP2): spooler-submission evidence is shape-validated here; the
-  // success-only / physical-only enforcement happens after the job row is
-  // loaded (mirroring the outputEvidence checks below).
+  // success-only enforcement happens after the job row is loaded.
   const submissionEvidence = body.submissionEvidence === undefined ? null : validateSubmissionEvidence(body.submissionEvidence);
   if (body.submissionEvidence !== undefined && !submissionEvidence) return NextResponse.json({ error: "Invalid submission evidence", code: "INVALID_SUBMISSION_EVIDENCE" }, { status: 400 });
 
@@ -394,24 +391,18 @@ export async function PATCH(req: Request) {
     if (!receiptRead.authorized) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     const receipt = receiptRead.value;
     if (receipt && claimToken && receipt.status === requestedStatus && receipt.closedClaimTokenHash === createHash("sha256").update(claimToken).digest("hex")) {
-      if (receipt.outputMedium === "file" && requestedStatus === "success" ? !sameFileOutputEvidence(receipt.outputEvidence, outputEvidence) : outputEvidence !== null) {
-        return NextResponse.json({ error: "Terminal output evidence differs from the accepted execution", code: "OUTPUT_EVIDENCE_CONFLICT" }, { status: 409 });
-      }
       return NextResponse.json({ success: true, status: receipt.status, ...printOutputPresentation(receipt) });
     }
     return NextResponse.json({ error: "Job not found" }, { status: 404 });
   }
 
-  if (job.outputMedium === "file" && requestedStatus === "success" && !outputEvidence) return NextResponse.json({ error: "Verified PDF file creation evidence is required", code: "OUTPUT_EVIDENCE_REQUIRED" }, { status: 422 });
-  if (outputEvidence && (job.outputMedium !== "file" || requestedStatus !== "success")) return NextResponse.json({ error: "File evidence is only valid for a successful file-output job", code: "OUTPUT_EVIDENCE_MISMATCH" }, { status: 422 });
-  // v4 (WP2): submission evidence is only valid on a successful PHYSICAL
-  // job report (file jobs use outputEvidence). Old agents send none and
-  // are unaffected; new agents sending it on any other report get 422.
-  if (submissionEvidence && (job.outputMedium === "file" || requestedStatus !== "success")) return NextResponse.json({ error: "Submission evidence is only valid for a successful physical job", code: "SUBMISSION_EVIDENCE_MISMATCH" }, { status: 422 });
+  // v4 (WP2): submission evidence is only valid on a successful job
+  // report. Old agents send none and are unaffected; new agents sending
+  // it on any other report get 422.
+  if (submissionEvidence && requestedStatus !== "success") return NextResponse.json({ error: "Submission evidence is only valid for a successful physical job", code: "SUBMISSION_EVIDENCE_MISMATCH" }, { status: 422 });
   const currentStatus = job.status as JobStatus;
   const closedClaimTokenHash = claimToken ? createHash("sha256").update(claimToken).digest("hex") : null;
   if (claimToken && closedClaimTokenHash && isTerminal(currentStatus) && requestedStatus === currentStatus) {
-    if (job.outputMedium === "file" && requestedStatus === "success" && !sameFileOutputEvidence(job.outputEvidence, outputEvidence)) return NextResponse.json({ error: "Terminal output evidence differs from the accepted execution", code: "OUTPUT_EVIDENCE_CONFLICT" }, { status: 409 });
     // Replay acknowledges durable evidence only. It cannot reopen execution,
     // replace an outcome, extend the late-success window, or alter spooler data.
     const acknowledgement = await withCurrentAgentCredential(agent, (tx) => tx.update(printJobs)
@@ -668,7 +659,6 @@ export async function PATCH(req: Request) {
       .set({
         status: "success",
         error: postExpiryError,
-        ...(outputEvidence ? { outputEvidence: { ...outputEvidence } } : {}),
         // v4 (WP2): submission evidence rides the same claim-fenced UPDATE
         // as the success transition, so a stale attempt can never overwrite
         // current-attempt evidence (same rule as spoolerJobId above).
@@ -704,7 +694,7 @@ export async function PATCH(req: Request) {
     incrementMetric("print_jobs_success_total");
     incrementMetric("print_jobs_late_success_total");
     logInfo("print.job.success_post_expiration", { requestId, jobId, agentId: agent.id, physicalOutcome, physicalDetail: LATE_SUCCESS_POST_EXPIRATION_MARKER });
-    return NextResponse.json({ success: true, status: "success", ...printOutputPresentation({ ...job, status: "success", error: postExpiryError, outputEvidence }), physicalDetail: LATE_SUCCESS_POST_EXPIRATION_MARKER });
+    return NextResponse.json({ success: true, status: "success", ...printOutputPresentation({ ...job, status: "success", error: postExpiryError }), physicalDetail: LATE_SUCCESS_POST_EXPIRATION_MARKER });
   }
 
   if (!printingAdmissionReplay && !canTransition(currentStatus, requestedStatus, { allowLateSuccess: lateSuccess })) {
@@ -726,7 +716,6 @@ export async function PATCH(req: Request) {
     .set({
       status: requestedStatus,
       error: nextError,
-      ...(outputEvidence ? { outputEvidence: { ...outputEvidence } } : {}),
       // v4 (WP2): same fenced-write rule as the expired-late-success path.
       ...(submissionEvidence ? { submissionEvidence: { ...submissionEvidence } } : {}),
       ...(isTerminal(requestedStatus) ? { closedClaimTokenHash } : {}),
@@ -850,7 +839,7 @@ export async function PATCH(req: Request) {
       // Admission means this attempt has a live claim, NOT that the printer
       // has accepted data. Do not show a green success state for this event.
       status: requestedStatus === "printing" ? "pending" : requestedStatus === "success" ? "ok" : "error",
-      message: requestedStatus === "success" && outputEvidence ? `PDF file created and verified (${outputEvidence.page_count} pages, ${outputEvidence.bytes} bytes)` : requestedStatus === "printing" ? `Agent admitted attempt for dispatch (configured transport=${transport ?? "unspecified"}; physical output not confirmed)` : requestedStatus === "success" ? `Print submission acknowledged (spoolerJobId=${spoolerJobId ?? "n/a"}; submission=${submissionState ?? "submitted"}; physical output not confirmed)` : nextError ?? requestedStatus,
+      message: requestedStatus === "printing" ? `Agent admitted attempt for dispatch (configured transport=${transport ?? "unspecified"}; physical output not confirmed)` : requestedStatus === "success" ? `Print submission acknowledged (spoolerJobId=${spoolerJobId ?? "n/a"}; submission=${submissionState ?? "submitted"}; physical output not confirmed)` : nextError ?? requestedStatus,
       errorCode: requestedStatus === "failed" ? nextError ?? undefined : undefined,
       spoolerJobId: spoolerJobId ?? undefined,
       attemptId: incomingAttemptId ?? job.attemptId ?? undefined,
@@ -858,9 +847,9 @@ export async function PATCH(req: Request) {
       agentId: agent.id,
       printerId: job.printerId,
       requestId,
-      metadata: { transport, physicalOutcome, lateSuccess, ...(submissionState ? { submissionState } : {}), ...(outputEvidence ? { outputEvidence } : {}) },
+      metadata: { transport, physicalOutcome, lateSuccess, ...(submissionState ? { submissionState } : {}) },
     });
   } catch (e) { logWarn("print.job.event_persist_failed", { requestId, jobId, stage: stageForStatus(requestedStatus), error: e instanceof Error ? e.message : "unknown" }); }
 
-  return NextResponse.json({ success: true, status: requestedStatus, ...printOutputPresentation({ ...job, status: requestedStatus, error: nextError, outputEvidence }), ...(submissionState ? { submissionState } : {}), spoolerJobId });
+  return NextResponse.json({ success: true, status: requestedStatus, ...printOutputPresentation({ ...job, status: requestedStatus, error: nextError }), ...(submissionState ? { submissionState } : {}), spoolerJobId });
 }

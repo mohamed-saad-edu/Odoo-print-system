@@ -62,17 +62,16 @@ func TestTerminalOutboxPreservesFileEvidenceAfterRestart(t *testing.T) {
 	}
 }
 
-func TestFileResultIsAtomicImmutableAndKeepsExecutionClaim(t *testing.T) {
+func TestTerminalResultIsAtomicImmutableAndKeepsExecutionClaim(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "atomic-file.db")
 	q, err := New(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	const evidence = `{"output_medium":"file","artifact_id":"opaque_file","sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","page_count":1,"bytes":1000}`
-	if err := q.BeginPrint("file-once", "approved-pdf", []byte("pdf"), "execution-claim", false); err != nil {
+	if err := q.BeginPrint("file-once", "kitchen-spooler", []byte("pdf"), "execution-claim", false); err != nil {
 		t.Fatal(err)
 	}
-	if err := q.UpdateTerminalResult("file-once", "success", "", "", "pdf_output", evidence); err != nil {
+	if err := q.UpdateTerminalResult("file-once", "success", "", "", "windows_spooler", ""); err != nil {
 		t.Fatal(err)
 	}
 	if err := q.ClearClaimToken("file-once", "execution-claim"); err != nil {
@@ -92,31 +91,32 @@ func TestFileResultIsAtomicImmutableAndKeepsExecutionClaim(t *testing.T) {
 	if err := q.BeginPrint("file-once", "another-output", []byte("different"), "new-claim", true); !errors.Is(err, ErrTerminalState) {
 		t.Fatalf("completed file was reopened: %v", err)
 	}
-	if err := q.UpdateTerminalResult("file-once", "failed", "new outcome", "", "pdf_output", ""); !errors.Is(err, ErrTerminalState) {
+	if err := q.UpdateTerminalResult("file-once", "failed", "new outcome", "", "windows_spooler", ""); !errors.Is(err, ErrTerminalState) {
 		t.Fatalf("file result was mutable: %v", err)
 	}
 	if err := q.UpdateStatus("file-once", "queued"); err != nil {
 		t.Fatal(err)
 	}
 	result, found, err := q.TerminalResultFor("file-once")
-	if err != nil || !found || result.ClaimToken != "execution-claim" || result.OutputEvidence != evidence || result.Status != "success" || result.Transport != "pdf_output" {
+	if err != nil || !found || result.ClaimToken != "execution-claim" || result.OutputEvidence != "" || result.Status != "success" || result.Transport != "windows_spooler" {
 		t.Fatalf("immutable result changed after restart/replay: %+v %v", result, err)
 	}
 }
 
-func TestFileSuccessCannotBePersistedWithoutEvidence(t *testing.T) {
-	q, err := New(filepath.Join(t.TempDir(), "missing-evidence.db"))
+func TestTerminalResultRejectsFileEvidence(t *testing.T) {
+	q, err := New(filepath.Join(t.TempDir(), "rejected-evidence.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer q.Close()
-	if err := q.BeginPrint("file-no-proof", "pdf", []byte("pdf"), "claim", false); err != nil {
+	if err := q.BeginPrint("evidence-rejected", "kitchen-spooler", []byte("pdf"), "claim", false); err != nil {
 		t.Fatal(err)
 	}
-	if err := q.UpdateTerminalResult("file-no-proof", "success", "", "", "pdf_output", ""); err == nil {
-		t.Fatal("successful file result was accepted without proof")
+	const evidence = `{"output_medium":"file","artifact_id":"opaque_file","sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","page_count":1,"bytes":1000}`
+	if err := q.UpdateTerminalResult("evidence-rejected", "success", "", "", "windows_spooler", evidence); err == nil {
+		t.Fatal("terminal result carrying file evidence was accepted")
 	}
-	if _, status, found, err := q.Get("file-no-proof"); err != nil || !found || status != "printing" {
-		t.Fatalf("failed evidence commit changed durable execution state: %s %v", status, err)
+	if _, status, found, err := q.Get("evidence-rejected"); err != nil || !found || status != "printing" {
+		t.Fatalf("rejected evidence commit changed durable execution state: %s %v", status, err)
 	}
 }

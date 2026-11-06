@@ -72,8 +72,3 @@ export function validatedReceiptGeometry(value, printerId = null) {
     return geometry && ["dpi_x", "dpi_y"].every((key) => Object.hasOwn(geometry, key)) ? geometry : null;
 }
 
-export function validatedPageGeometry(value, printerId = null) {
-    const geometry = validatedReceiptGeometry(value, printerId);
-    return geometry && ["paper_width_mm", "paper_height_mm", "printable_height_dots", "offset_x_dots", "offset_y_dots"]
-        .every(key => Object.hasOwn(geometry, key)) ? geometry : null;
-}

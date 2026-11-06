@@ -89,7 +89,7 @@ func JPEGToPagedPDFGeometry(data []byte, geometry *Geometry) ([]byte, error) {
 		fmt.Fprintf(&output, "%010d 00000 n\n", offset)
 	}
 	fmt.Fprintf(&output, "trailer\n<< /Root 1 0 R /Size %d >>\nstartxref\n%d\n%%%%EOF\n", len(offsets), xref)
-	if output.Len() > MaxPDFOutputBytes {
+	if output.Len() > MaxRenderedPDFBytes {
 		return nil, fmt.Errorf("generated PDF exceeds the bounded output size")
 	}
 	return output.Bytes(), nil

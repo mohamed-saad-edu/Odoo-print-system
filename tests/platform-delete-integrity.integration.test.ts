@@ -187,53 +187,46 @@ suite("Platform Owner destructive actions preserve evidence and authorization", 
     expect(receipt.error).toMatch(/^AGENT_DELETED:/);
   });
 
-  it.each(["printers", "agents"] as const)("retains verified file-output evidence and binding after removing %s", async (kind) => {
+  it.each(["printers", "agents"] as const)("retains the terminal result and binding after removing %s", async (kind) => {
     const f = await seedFixture();
     const platform = await platformToken();
     const manager = await createWorkspaceManagerTestSession(f.tenantId);
-    const config = { output_profile_id: "office_archive" };
     const bindingDigest = "a".repeat(64);
-    const evidence = { output_medium: "file", artifact_id: "archived-pdf-result", sha256: "b".repeat(64), page_count: 2, bytes: 4096 };
-    const claimToken = "original-file-output-claim";
+    const claimToken = "original-output-claim";
     const claimHash = createHash("sha256").update(claimToken).digest("hex");
-    await pool().query(`UPDATE printers SET printer_type='file',connection_type='pdf_output',
-      protocol='pdf',output_medium='file',config=$1::jsonb,physical_identity_key=$2
-      WHERE tenant_id=$3 AND id=$4`, [JSON.stringify(config), physicalPrinterIdentityKey({
-      connectionType: "pdf_output", protocol: "pdf", config,
-    }), f.tenantId, f.printerId]);
-    const jobId = `retained-file-${kind}`;
+    const jobId = `retained-result-${kind}`;
     await pool().query(`INSERT INTO print_jobs
       (id,tenant_id,agent_id,printer_id,destination,document_type,status,payload,expires_at,
-       output_medium,output_evidence,binding_digest,closed_claim_token_hash)
+       output_medium,binding_digest,closed_claim_token_hash)
       VALUES ($1,$2,$3,$4,'archive','invoice','success',
        '{"type":"pdf","encoding":"base64","data":"JVBERi0xLjQKJSVFT0Y="}'::jsonb,
-       now()+interval '1 hour','file',$5::jsonb,$6,$7)`,
-      [jobId, f.tenantId, f.agentId, f.printerId, JSON.stringify(evidence), bindingDigest, claimHash]);
+       now()+interval '1 hour','physical',$5,$6)`,
+      [jobId, f.tenantId, f.agentId, f.printerId, bindingDigest, claimHash]);
     const id = kind === "agents" ? f.agentId : f.printerId;
     const removed = await deleteFleet(post("/api/platform/fleet/delete", platform, {
       kind, tenantId: f.tenantId, id, expectedLifecycle: "active", confirmId: id,
-      reason: "Retire inventory while preserving the previously verified PDF result",
+      reason: "Retire inventory while preserving the previously completed result",
     }));
     expect(removed.status).toBe(200);
     expect((await pool().query("SELECT id FROM print_jobs WHERE id=$1", [jobId])).rows).toEqual([]);
     const receipt = (await pool().query(`SELECT status,output_medium,output_evidence,binding_digest,
       closed_claim_token_hash FROM print_job_receipts WHERE id=$1`, [jobId])).rows[0];
-    expect(receipt).toEqual({ status: "success", output_medium: "file", output_evidence: evidence,
+    expect(receipt).toEqual({ status: "success", output_medium: "physical", output_evidence: null,
       binding_digest: bindingDigest, closed_claim_token_hash: claimHash });
     const response = await readJob(new Request(`http://gateway.test/api/jobs/${jobId}`, {
       headers: { Authorization: `Bearer ${manager.token}` },
     }), { params: Promise.resolve({ id: jobId }) });
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({ archived: true, status: "success",
-      outputMedium: "file", outputOutcome: "file_created", physicalOutcome: "unknown",
-      outputEvidence: evidence, diagnosticPayload: null });
+      outputMedium: "physical", physicalOutcome: "unknown",
+      outputEvidence: null, diagnosticPayload: null });
     if (kind === "printers") {
       const replay = await reportJob(new Request("http://gateway.test/api/agent/jobs", {
         method: "PATCH", headers: { Authorization: f.agentAuth, "Content-Type": "application/json" },
-        body: JSON.stringify({ jobId, status: "success", claimToken, outputEvidence: evidence }),
+        body: JSON.stringify({ jobId, status: "success", claimToken }),
       }));
       expect(replay.status).toBe(200);
-      expect(await replay.json()).toMatchObject({ outputMedium: "file", outputOutcome: "file_created", outputEvidence: evidence });
+      expect(await replay.json()).toMatchObject({ outputMedium: "physical", outputEvidence: null });
     }
   });
 

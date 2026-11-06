@@ -40,8 +40,7 @@
                 <field name="status" column_invisible="1"/>
                 <field name="customer_status" widget="badge" decoration-danger="customer_status == 'failed_before_output'" decoration-warning="customer_status == 'needs_review'" decoration-info="customer_status in ('waiting', 'processing', 'sent_to_printer')"/>
                 <field name="output_medium" optional="hide"/>
-                <field name="output_outcome" widget="badge" invisible="output_medium != 'file'"/>
-                <field name="physical_outcome" optional="hide" widget="badge" invisible="output_medium == 'file'" decoration-danger="physical_outcome == 'not_printed'" decoration-warning="physical_outcome == 'unknown'" decoration-success="physical_outcome == 'printed'"/>
+                <field name="physical_outcome" optional="hide" widget="badge" decoration-danger="physical_outcome == 'not_printed'" decoration-warning="physical_outcome == 'unknown'" decoration-success="physical_outcome == 'printed'"/>
                 <field name="attempts" optional="hide"/>
                 <field name="reprint_attempt_count" optional="hide" string="Reprints"/>
                 <field name="gateway_job_id" optional="hide"/>
@@ -92,20 +91,16 @@
                             <field name="document_type" readonly="1"/>
                             <field name="printer_id" readonly="1"/>
                             <field name="output_medium" readonly="1"/>
-                            <field name="output_outcome" readonly="1" invisible="output_medium != 'file'"/>
-                            <field name="physical_outcome" readonly="1" invisible="output_medium == 'file'" widget="badge" decoration-danger="physical_outcome == 'not_printed'" decoration-warning="physical_outcome == 'unknown'" decoration-success="physical_outcome == 'printed'"/>
+                            <field name="physical_outcome" readonly="1" widget="badge" decoration-danger="physical_outcome == 'not_printed'" decoration-warning="physical_outcome == 'unknown'" decoration-success="physical_outcome == 'printed'"/>
                         </group>
                         <group string="Delivery details" groups="base.group_system">
                             <field name="gateway_job_id" readonly="1" class="o_pg_mono"/>
-                            <field name="gateway_submission_state" readonly="1" invisible="output_medium == 'file' or not gateway_submission_state"/>
+                            <field name="gateway_submission_state" readonly="1" invisible="not gateway_submission_state"/>
                             <field name="attempts" readonly="1"/>
                             <field name="reprint_attempt_count" readonly="1" invisible="reprint_attempt_count == 0"/>
                             <field name="next_retry_at" readonly="1"/>
                             <field name="completed_at" readonly="1" invisible="not completed_at"/>
                         </group>
-                    </group>
-                    <group string="Verified file output" invisible="output_medium != 'file' or not output_evidence">
-                        <field name="output_evidence" readonly="1" nolabel="1"/>
                     </group>
 
                     <group string="Issue Details" invisible="not last_error">

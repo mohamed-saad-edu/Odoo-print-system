@@ -41,11 +41,6 @@ func New(cfg config.PrinterConfig) (Printer, error) {
 	proto, protoErr := cfg.NormalizedProtocol()
 
 	switch t {
-	case "pdf_output":
-		if proto != "pdf" || !cfg.PDFOutputAuthorized || cfg.PDFOutputDirectory == "" {
-			return nil, fmt.Errorf("printer %s: PDF output requires a locally resolved authorized profile", cfg.ID)
-		}
-		return &PDFOutputPrinter{Config: cfg}, nil
 	case "network":
 		if cfg.Endpoint == "" {
 			return nil, fmt.Errorf("printer %s: network printer requires an endpoint (ip:port)", cfg.ID)

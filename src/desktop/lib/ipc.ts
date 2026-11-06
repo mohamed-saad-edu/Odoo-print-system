@@ -38,6 +38,11 @@ export interface RuntimePaths {
   agent_data: string;
 }
 
+/** The official hosted Yaseir Gateway. Offered as the one-tap preset in
+ * Settings; a company running its own Gateway can still type any other
+ * address instead. */
+export const OFFICIAL_GATEWAY_URL = "https://print.yaseir.cloud";
+
 export function normalizeGatewayUrl(raw: string): string {
   const trimmed = raw.trim();
   if (!trimmed) return "";
@@ -466,10 +471,7 @@ export async function registerGatewayPrinter(
   const config: Record<string, unknown> = {};
   const connectionType = req.connectionType.toLowerCase();
 
-  if (connectionType === "pdf_output") {
-    if (!req.outputProfileId || !/^[A-Za-z0-9_-]{1,64}$/.test(req.outputProfileId)) throw new Error("An approved output profile ID is required");
-    config.output_profile_id = req.outputProfileId;
-  } else if (connectionType === "network") {
+  if (connectionType === "network") {
     const network = networkConfigFromEndpoint(req.endpoint || "", req.protocol || "");
     config.ip = network.ip;
     config.port = network.port;
@@ -592,7 +594,6 @@ export interface RegisterPrinterRequest {
   usbPid?: string;
   usbSerial?: string;
   spoolerPassthroughProtocols?: Array<"raw" | "escpos">;
-  outputProfileId?: string;
 }
 
 interface AutostartStatus {

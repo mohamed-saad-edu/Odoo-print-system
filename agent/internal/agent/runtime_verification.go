@@ -12,14 +12,13 @@ import (
 	"github.com/yaseir-agent/agent/internal/printer"
 )
 
+// resolveLocalPrinter is the identity today: every printer type is
+// configured entirely by its own record, with no local profile
+// resolution step. It stays as the single funnel for desired-state and
+// discovery configs so a future local-resolution rule lands in one
+// place instead of at every call site.
 func (a *Agent) resolveLocalPrinter(pc config.PrinterConfig) (config.PrinterConfig, error) {
-	if a.cfg == nil {
-		if pc.NormalizedType() == "pdf_output" {
-			return pc, fmt.Errorf("PDF output requires a local administrator profile")
-		}
-		return pc, nil
-	}
-	return a.cfg.ResolvePDFOutput(pc)
+	return pc, nil
 }
 
 func (a *Agent) resolvedDesiredPrinterConfig(row desiredPrinterRecord) (config.PrinterConfig, error) {

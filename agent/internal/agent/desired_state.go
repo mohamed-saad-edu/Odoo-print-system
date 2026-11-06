@@ -530,7 +530,6 @@ func desiredPrinterConfig(row desiredPrinterRecord) config.PrinterConfig {
 		Type:                   p.ConnectionType,
 		Endpoint:               desiredEndpoint(p.Config, p.ConnectionType),
 		Protocol:               p.Protocol,
-		OutputProfileID:        desiredStringValue(p.Config, "output_profile_id"),
 		SpoolerName:            desiredStringValue(p.Config, "spooler_name"),
 		ConnectionType:         p.ConnectionType,
 		PrinterType:            p.PrinterType,
@@ -635,7 +634,6 @@ func samePrinterTransportBinding(left, right config.PrinterConfig) bool {
 	return left.NormalizedType() == right.NormalizedType() &&
 		left.NormalizedProtocolOrUnknown() == right.NormalizedProtocolOrUnknown() &&
 		left.Endpoint == right.Endpoint && left.SpoolerName == right.SpoolerName &&
-		left.OutputProfileID == right.OutputProfileID && left.PDFOutputDirectory == right.PDFOutputDirectory &&
 		strings.EqualFold(left.USBVID, right.USBVID) && strings.EqualFold(left.USBPID, right.USBPID) &&
 		left.USBSerial == right.USBSerial
 }

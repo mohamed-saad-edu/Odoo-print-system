@@ -21,7 +21,6 @@ export type DeviceClass = (typeof DEVICE_CLASSES)[number];
 
 
 function documentTypeCandidates(protocol: ProtocolType, transport: TransportType): DocumentType[] {
-  if (transport === "pdf_output" && protocol === "pdf") return ["pdf", "image"];
   if (transport === "spooler" || protocol === "spooler") {
     // Document transports by default. Raw byte passthrough requires an
     // explicit supported_protocols declaration (enforced in routing.ts);
@@ -143,11 +142,10 @@ export function validatePayloadForPrinter(
   // into a Windows driver. Preserve legacy USB-backed queues, whose spooler
   // configuration is normalized at registration, but reject network+spooler.
   const physicalSpooler = conn === "spooler" || (conn === "usb" && proto === "spooler");
-  const fileOutput = conn === "pdf_output" && proto === "pdf";
-  const physicalPdf = fileOutput || physicalSpooler
+  const physicalPdf = physicalSpooler
     || conn === "ipp" || conn === "ipps"
     || (conn === "network" && (proto === "ipp" || proto === "ipps"));
-  const physicalImage = fileOutput || physicalSpooler
+  const physicalImage = physicalSpooler
     || ((conn === "network" || conn === "usb") && proto === "escpos");
   const physicalByteProtocol = (protocol: string) => {
     if (physicalSpooler) {
@@ -184,11 +182,6 @@ export function validatePayloadForPrinter(
     if (!geometry) return { ok: false, reason: "GEOMETRY_REQUIRED: Refresh this printer or configure a validated geometry profile before printing images." };
     if (!payloadInput.geometry_fingerprint || payloadInput.geometry_fingerprint !== geometry.config_fingerprint) {
       return { ok: false, reason: "GEOMETRY_CHANGED: Refresh this printer and render the image again using its current geometry." };
-    }
-    if (fileOutput) {
-      return hasPhysicalReceiptGeometry(geometry) && geometry.paper_height_mm !== undefined && geometry.printable_height_dots !== undefined && geometry.offset_x_dots !== undefined && geometry.offset_y_dots !== undefined
-        ? { ok: true }
-        : { ok: false, reason: "GEOMETRY_REQUIRED: PDF file output requires declared page width/height, printable width/height and both axis DPI values." };
     }
     if (physicalSpooler) {
       return hasPhysicalReceiptGeometry(geometry)

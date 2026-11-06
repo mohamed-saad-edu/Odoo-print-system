@@ -220,7 +220,7 @@ export const printers = pgTable("printers", {
   verificationBindingDigest: text("verification_binding_digest"),
   verificationReason: text("verification_reason"),
   outputMedium: text("output_medium").notNull().default("physical"),
-  config: jsonb("config").$type<{ ip?: string; port?: number; vid?: number; pid?: number; serial?: string; address?: string; spooler_name?: string; output_profile_id?: string; paper_widths?: number[]; color_capable?: boolean; duplex_capable?: boolean; }>(),
+  config: jsonb("config").$type<{ ip?: string; port?: number; vid?: number; pid?: number; serial?: string; address?: string; spooler_name?: string; paper_widths?: number[]; color_capable?: boolean; duplex_capable?: boolean; }>(),
   capabilities: jsonb("capabilities").$type<Record<string, unknown>>(),
   // Presence is separate from operator lifecycle. A printer omitted from a
   // proven-complete Agent snapshot becomes absent without being permanently
@@ -242,7 +242,7 @@ export const printers = pgTable("printers", {
     AND (${table.physicalDeviceKey} IS NULL OR ${table.physicalDeviceKey} ~ '^[a-f0-9]{64}$')
     AND (${table.verificationReason} IS NULL OR ${table.verificationReason} ~ '^[a-z0-9_]{1,64}$')
     AND (${table.verificationState} <> 'verified' OR (${table.verificationVerifiedAt} IS NOT NULL AND ${table.verificationReceivedAt} IS NOT NULL AND ${table.verificationBindingDigest} IS NOT NULL AND ${table.verificationBindingDigest} ~ '^[a-f0-9]{64}$' AND ${table.logicalQueueKey} IS NOT NULL AND ${table.logicalQueueKey} = ${table.verificationBindingDigest}))`),
-  outputMediumCheck: check("printers_output_medium_check", sql`(${table.connectionType} = 'pdf_output' AND ${table.protocol} = 'pdf' AND ${table.printerType} = 'file' AND ${table.outputMedium} = 'file') OR (${table.connectionType} <> 'pdf_output' AND ${table.printerType} = 'physical' AND ${table.outputMedium} = 'physical')`),
+  outputMediumCheck: check("printers_output_medium_check", sql`${table.printerType} = 'physical' AND ${table.outputMedium} = 'physical'`),
   tenantCreatedIdx: index("printers_tenant_created_idx").on(table.tenantId, table.createdAt),
   printerTypeIdx: index("printers_printer_type_idx").on(table.printerType),
   statusIdx: index("printers_status_idx").on(table.status),
@@ -253,7 +253,7 @@ export const printers = pgTable("printers", {
   desiredAgentIdx: index("printers_agent_lifecycle_desired_idx").on(table.tenantId, table.agentId, table.lifecycle, table.managementSource),
   agentInventoryPresentIdx: index("printers_agent_inventory_present_idx").on(table.tenantId, table.agentId, table.managementSource, table.inventoryPresent),
   lifecycleCheck: check("printers_lifecycle_check", sql`${table.lifecycle} in ('active','disabled','retired')`),
-  printerTypeCheck: check("printers_type_check", sql`(${table.printerType} = 'file' AND ${table.connectionType} = 'pdf_output' AND ${table.protocol} = 'pdf' AND COALESCE(${table.config}->>'output_profile_id', '') ~ '^[A-Za-z0-9_-]{1,64}$') OR (${table.printerType} = 'physical' AND ${table.connectionType} <> 'pdf_output' 
+  printerTypeCheck: check("printers_type_check", sql`(${table.printerType} = 'physical' 
     AND lower(COALESCE(${table.name},'')) !~ '(microsoft print to pdf|onenote|xps document writer|pdf24|pdfcreator|virtual printer|print to pdf|remote desktop easy print|redirected)'
     AND lower(COALESCE(${table.config}->>'spooler_name',${table.config}->>'address','')) !~ '(microsoft print to pdf|onenote|xps document writer|pdf24|pdfcreator|virtual printer|print to pdf|remote desktop easy print|redirected)'
     AND lower(COALESCE(${table.capabilities}->>'driver_name',${table.capabilities}->>'driverName','')) !~ '(microsoft print to pdf|onenote|xps document writer|pdf24|pdfcreator|virtual printer|print to pdf|remote desktop easy print|redirected)'
@@ -266,8 +266,8 @@ export const printers = pgTable("printers", {
     AND NOT COALESCE(${table.capabilities} @> '{"virtual_test_sink":true}'::jsonb, false)
     AND NOT COALESCE(${table.capabilities} @> '{"virtual_spooler_test":true}'::jsonb, false))`),
   deviceClassCheck: check("printers_device_class_check", sql`${table.deviceClass} in ('thermal','laser','inkjet','label','other','unknown')`),
-  connectionTypeCheck: check("printers_connection_type_check", sql`${table.connectionType} in ('network','usb','spooler','ipp','ipps','pdf_output')`),
-  protocolCheck: check("printers_protocol_check", sql`${table.protocol} in ('raw','escpos','zpl','tspl','ipp','ipps','spooler','windows_spooler','unknown','pdf')`),
+  connectionTypeCheck: check("printers_connection_type_check", sql`${table.connectionType} in ('network','usb','spooler','ipp','ipps')`),
+  protocolCheck: check("printers_protocol_check", sql`${table.protocol} in ('raw','escpos','zpl','tspl','ipp','ipps','spooler','windows_spooler','unknown')`),
   statusCheck: check("printers_status_check", sql`${table.status} in ('online','offline','busy','error','unknown')`),
 }));
 
@@ -566,7 +566,7 @@ export const printJobs = pgTable("print_jobs", {
   requestIdIdx: index("print_jobs_request_id_idx").on(table.requestId),
   idempotencyUnique: uniqueIndex("print_jobs_tenant_idempotency_unique").on(table.tenantId, table.idempotencyKey).where(sql`idempotency_key IS NOT NULL`),
   bindingCheck: check("print_jobs_binding_check", sql`${table.bindingDigest} IS NULL OR ${table.bindingDigest} ~ '^[a-f0-9]{64}$'`),
-  outputCheck: check("print_jobs_output_check", sql`${table.outputMedium} IN ('physical','file') AND (${table.outputEvidence} IS NULL OR (${table.outputMedium} = 'file' AND ${table.status} = 'success' AND jsonb_typeof(${table.outputEvidence}) = 'object'))`),
+  outputCheck: check("print_jobs_output_check", sql`${table.outputMedium} = 'physical' AND ${table.outputEvidence} IS NULL`),
   statusCheck: check("print_jobs_status_check", sql`${table.status} in ('queued','claimed','printing','success','failed','expired','canceled')`),
   retriesCheck: check("print_jobs_retries_check", sql`${table.retries} >= 0`),
   deliveryAttemptsCheck: check("print_jobs_delivery_attempts_check", sql`${table.deliveryAttempts} >= 0`),
@@ -737,7 +737,7 @@ export const printJobReceipts = pgTable("print_job_receipts", {
   updatedAt: timestamp("updated_at").notNull(),
 }, (table) => ({
   bindingCheck: check("print_job_receipts_binding_check", sql`${table.bindingDigest} IS NULL OR ${table.bindingDigest} ~ '^[a-f0-9]{64}$'`),
-  outputCheck: check("print_job_receipts_output_check", sql`${table.outputMedium} IN ('physical','file') AND (${table.outputEvidence} IS NULL OR (${table.outputMedium} = 'file' AND ${table.status} = 'success' AND jsonb_typeof(${table.outputEvidence}) = 'object'))`),
+  outputCheck: check("print_job_receipts_output_check", sql`${table.outputMedium} = 'physical' AND ${table.outputEvidence} IS NULL`),
   idempotencyUnique: uniqueIndex("print_job_receipts_tenant_idempotency_unique").on(table.tenantId, table.idempotencyKey),
   tenantCreatedIdx: index("print_job_receipts_tenant_created_idx").on(table.tenantId, table.createdAt, table.id),
   createdAtIdx: index("print_job_receipts_created_at_idx").on(table.createdAt),

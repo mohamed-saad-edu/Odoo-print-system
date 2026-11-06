@@ -234,7 +234,7 @@ export async function POST(req: Request) {
           connectionType, protocol, physicalIdentityKey,
           status: "unknown", lifecycle: "active", config,
           capabilities: null,
-          outputMedium: connectionType === "pdf_output" ? "file" : "physical",
+          outputMedium: "physical",
           verificationReason: "verification_pending_agent",
           // Gateway-owned desired state is necessary for the Windows Agent
           // to receive and verify the opt-in, irrespective of who paired it.

@@ -21,10 +21,6 @@ func NewLocalPrinterDisablement(cfg *config.Config, registered []DeviceInfo) Loc
 		if pc.ID != "" {
 			d.ids[pc.ID] = struct{}{}
 		}
-		pc, err := cfg.ResolvePDFOutput(pc)
-		if err != nil {
-			return // an unresolved destination still retains its stable-ID denial
-		}
 		if digest, err := config.PrinterBindingDigest(pc); err == nil {
 			d.bindings[digest] = struct{}{}
 		}

@@ -1,4 +1,4 @@
-import { PrinterVerificationDetails, FileOutputDetails } from "../components/PrinterVerificationDetails";
+import { PrinterVerificationDetails } from "../components/PrinterVerificationDetails";
 /* eslint-disable react-hooks/exhaustive-deps */
 import { PrinterGeometryDetails } from "../components/PrinterGeometrySettings";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -620,6 +620,16 @@ export default function App() {
       setPrintersLoading(false);
     }
   }, [refreshPrinters, refreshLocalPrinters, t, locale]);
+
+  // Quiet discovery for the Add Printer dialog: same scan and state
+  // updates as handleDiscover, but no page-level toast — the dialog
+  // renders its own searching/empty/error states and its picker fills
+  // from the state updated here.
+  const handleDialogDiscover = useCallback(async () => {
+    const res = await discoverPrinters();
+    setDiscoveredPrinters(res.printers.filter(isProductionPrinter));
+    await refreshLocalPrinters(true);
+  }, [refreshLocalPrinters]);
 
   const startAgent = useCallback(async () => {
     try {
@@ -1322,6 +1332,7 @@ export default function App() {
         }}
         printers={mergePrinterInventories(discoveredPrinters, localPrinters)}
         gatewayUrl={savedGatewayUrl}
+        onDiscoverRequest={handleDialogDiscover}
       />
 
       <Modal open={confirmRestart} onClose={() => setConfirmRestart(false)} title={t("v4.experience.restart.title")}
@@ -1453,7 +1464,6 @@ export default function App() {
       >
         {selectedJob && (
           <div className="space-y-6">
-            <FileOutputDetails job={selectedJob} />
             <div className="space-y-4">
               <StatusBadge
                 tone={toneJob(jobStatus(selectedJob), selectedJob.error)}

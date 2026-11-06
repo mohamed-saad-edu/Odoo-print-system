@@ -1,6 +1,6 @@
 "use client";
 
-import { FileOutputDetails } from "../../../components/PrinterVerificationDetails";
+
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -100,14 +100,14 @@ export default function PlatformPrintOperationsPage() {
             </tr>))}</tbody></table></div>
         <div className="flex flex-wrap items-center justify-between gap-3 border-t border-edge px-4 py-3 text-xs text-ink-3"><span>{formatNumber(records.length)} {t.records}</span><div className="flex gap-2"><Button size="xs" variant="secondary" disabled={loading || offset === 0} onClick={() => setOffset(x => Math.max(0, x-LIMIT))}>{locale === "ar" ? <ArrowRight className="h-4 w-4" /> : <ArrowLeft className="h-4 w-4" />}{t.newer}</Button><Button size="xs" variant="secondary" disabled={loading || !hasMore} onClick={() => setOffset(x => x+LIMIT)}>{t.older}{locale === "ar" ? <ArrowLeft className="h-4 w-4" /> : <ArrowRight className="h-4 w-4" />}</Button></div></div>
       </Card>}
-      <Modal open={selectedJob !== null} onClose={() => setSelectedJob(null)} title={t.details} description={selectedJob?.outputMedium === "file" ? (locale === "ar" ? "إخراج ملف PDF" : "PDF file output") : t.operator} wide>
+      <Modal open={selectedJob !== null} onClose={() => setSelectedJob(null)} title={t.details} description={t.operator} wide>
         {selectedJob && (
           <div className="space-y-5 text-sm text-ink-2">
             <div className="rounded-lg border border-edge bg-surface-2 p-4">
               <p className="font-mono text-xs text-ink" dir="ltr">{selectedJob.id}</p>
               <p className="mt-2 text-xs text-ink-3">{selectedJob.tenantName || selectedJob.tenantId} · {selectedJob.archived ? t.archived : t.live}</p>
               <div className="mt-3 flex flex-wrap items-center gap-3"><StatusBadge tone={jobTone(selectedJob.status, outcome(selectedJob))} label={jobDisplayLabel(selectedJob.status, selectedJob.error, locale, selectedJob)} size="sm" />
-                <FileOutputDetails job={selectedJob} />{selectedJob.outputMedium !== "file" && <span className="font-medium text-ink-3">{t.physical}: {outcome(selectedJob) === "printed" ? t.printed : outcome(selectedJob) === "not_printed" ? t.notPrinted : t.paper}</span>}</div>
+                <span className="font-medium text-ink-3">{t.physical}: {outcome(selectedJob) === "printed" ? t.printed : outcome(selectedJob) === "not_printed" ? t.notPrinted : t.paper}</span></div>
             </div>
             <dl className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               {([

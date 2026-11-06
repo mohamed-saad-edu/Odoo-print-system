@@ -64,17 +64,22 @@ test('IPP never sends RAW/ESC-POS/ZPL as a falsely labeled PDF document', () => 
   assert.match(formats, /renderIPPPDFToJPEG/);
   assert.match(formats, /"image\/pwg-raster"/);
 });
-test('Agent status reports preserve the original claim fence and ambiguous submission marker', () => {
+test('Agent status reports preserve claim fencing and physical submission evidence', () => {
   const src=read('agent/internal/agent/agent.go');
   const status=src.slice(src.indexOf('func (a *Agent) updateJobStatus('),src.indexOf('func (a *Agent) doAuthorizedRequest('));
   assert.match(status, /body\["claimToken"\] = claimToken/);
   assert.match(status, /body\["spoolerJobId"\] = spoolerJobID/);
-  assert.match(src, /UpdateTerminalResult\(jobID, "success", "", spoolerJobID, statusTransport, encodedOutput\)/);
+  assert.match(status, /body\["submissionEvidence"\] = submission/);
+  assert.match(src, /UpdateTerminalResult\(jobID, "success", "", spoolerJobID, statusTransport, ""\)/);
   assert.match(src, /UpdateTerminalResult\(jobID, "failed", failureMsg, spoolerJobID, statusTransport, ""\)/);
+  assert.match(src, /submissionEvidence := printer\.VerifySubmission\(ctx, nil\)/);
+  assert.match(src, /updateJobStatusWithSubmissionEvidence\(ctx, jobID, "success", "", claimToken, spoolerJobID, statusTransport, &submissionEvidence\)/);
   assert.match(src, /reportDurableTerminalResult\(ctx, result\)/);
-  const evidence=read('agent/internal/agent/output_evidence.go');
-  assert.match(evidence, /report\.ClaimToken/);
-  assert.match(evidence, /report\.OutputEvidence/);
+  const terminal=read('agent/internal/agent/terminal_report.go');
+  assert.match(terminal, /report\.ClaimToken/);
+  assert.match(terminal, /report\.SpoolerJobID/);
+  assert.match(terminal, /report\.Transport/);
+  assert.match(terminal, /updateJobStatusWithTransport/);
   const route=read('src/app/api/agent/jobs/route.ts');
   assert.match(route, /derivePhysicalOutcome\(requestedStatus, nextError\)/);
 });

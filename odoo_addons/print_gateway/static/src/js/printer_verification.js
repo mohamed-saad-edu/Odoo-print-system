@@ -7,7 +7,6 @@ const methodIdentityStrength = Object.freeze({
     ipp_attributes: "service",
     usb_interface: "device",
     snmp_printer: "device",
-    pdf_output: "service",
 });
 
 function utcTime(value) {
@@ -28,8 +27,7 @@ export function validatedOperationalVerification(value, printer, now = Date.now(
         (Object.hasOwn(value, "physical_device_key") && (value.identity_strength !== "device" || typeof value.physical_device_key !== "string" || !hex.test(value.physical_device_key)))) return null;
     const connection = String(printer.connectionType || "").trim().toLowerCase();
     const protocol = String(printer.protocol || "").trim().toLowerCase();
-    const method = connection === "pdf_output" && protocol === "pdf" ? "pdf_output"
-        : connection === "spooler" && ["spooler", "windows_spooler"].includes(protocol) ? "windows_queue"
+    const method = connection === "spooler" && ["spooler", "windows_spooler"].includes(protocol) ? "windows_queue"
         : ["ipp", "ipps"].includes(connection) || connection === "network" && ["ipp", "ipps"].includes(protocol) ? "ipp_attributes"
         : ["network", "usb"].includes(connection) && ["raw", "escpos", "zpl", "tspl"].includes(protocol)
             ? connection === "usb" ? "usb_interface" : "snmp_printer" : null;
@@ -38,7 +36,7 @@ export function validatedOperationalVerification(value, printer, now = Date.now(
     if (!method || value.method !== method ||
         value.identity_strength !== methodIdentityStrength[method] ||
         (Object.hasOwn(value, "physical_device_key") && methodIdentityStrength[method] !== "device") ||
-        value.output_medium !== (method === "pdf_output" ? "file" : "physical")) return null;
+        value.output_medium !== "physical") return null;
     const verified = utcTime(value.verified_at);
     const age = now - verified;
     if (verified === null || !Number.isFinite(age) || age > 300000 || age < -60000) return null;
@@ -48,8 +46,7 @@ export function validatedOperationalVerification(value, printer, now = Date.now(
 export function isVerifiedRuntimePrinter(printer, now = Date.now()) {
     if (!printer || printer.verificationState !== "verified") return false;
     const proof = validatedOperationalVerification(printer.capabilities?.operational_verification, printer, now);
-    if (!proof || printer.outputMedium !== proof.output_medium ||
-        (proof.output_medium === "file") !== (printer.printerType === "file")) return false;
+    if (!proof || printer.outputMedium !== proof.output_medium) return false;
     const verified = utcTime(printer.verificationVerifiedAt);
     const received = utcTime(printer.verificationReceivedAt);
     return verified === utcTime(proof.verified_at) && received !== null && now - received >= 0 && now - received <= 300000;

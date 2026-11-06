@@ -34,15 +34,15 @@ async function load(relative) {
   return entry.namespace;
 }
 
-function printer(id = "file-a", file = true) {
+function printer(id = "queue-a") {
   const stamp = new Date(now).toISOString();
-  return { id, connectionType: file ? "pdf_output" : "spooler", protocol: file ? "pdf" : "spooler",
-    printerType: file ? "file" : "physical", deviceClass: "laser", outputMedium: file ? "file" : "physical",
+  return { id, connectionType: "spooler", protocol: "spooler",
+    printerType: "physical", deviceClass: "laser", outputMedium: "physical",
     verificationState: "verified", verificationVerifiedAt: stamp, verificationReceivedAt: stamp,
     capabilities: { supported_protocols: ["pdf", "image"],
       operational_verification: { version: 1, verified_at: stamp, printer_id: id,
         binding_digest: "a".repeat(64), logical_queue_key: "a".repeat(64),
-        method: file ? "pdf_output" : "windows_queue", identity_strength: file ? "service" : "queue", output_medium: file ? "file" : "physical" },
+        method: "windows_queue", identity_strength: "queue", output_medium: "physical" },
       geometry: { version: 1, source: "validated_profile", validation: "configured", observed_at: stamp,
         printer_id: id, config_fingerprint: "b".repeat(64), paper_width_mm: 210, paper_height_mm: 297,
         printable_width_dots: 2244, printable_height_dots: 3271, offset_x_dots: 118, offset_y_dots: 118,
@@ -57,11 +57,11 @@ async function field(printers) {
   return result;
 }
 
-test("approved PDF output and ordinary office driver remain selectable for receipts and kitchen", async () => {
-  const instance = await field([printer(), printer("office", false)]);
+test("office driver queues remain selectable for receipts and kitchen", async () => {
+  const instance = await field([printer(), printer("office")]);
   for (const destination of ["pos", "pos_printer", "report"]) {
     instance.state.destinationType = destination;
-    assert.deepEqual(Array.from(instance.filteredPrinters, p => p.id), ["file-a", "office"]);
+    assert.deepEqual(Array.from(instance.filteredPrinters, p => p.id), ["queue-a", "office"]);
   }
 });
 
@@ -69,11 +69,11 @@ test("expired verification does not exclude a printer from selection", async () 
   // Verification is background evidence: an expired proof neither hides
   // the printer nor blocks selecting it; online status and the reported
   // facts are what the picker uses.
-  const expired = printer("expired", false);
+  const expired = printer("expired");
   expired.verificationReceivedAt = new Date(now - 300001).toISOString();
   expired.status = "online";
   const instance = await field([expired, printer()]);
-  assert.deepEqual(Array.from(instance.filteredPrinters, p => p.id), ["expired", "file-a"]);
+  assert.deepEqual(Array.from(instance.filteredPrinters, p => p.id), ["expired", "queue-a"]);
   let changes = 0, refreshes = 0;
   instance.props.record.update = () => { changes += 1; };
   instance.retryLoad = () => { refreshes += 1; };
@@ -82,24 +82,24 @@ test("expired verification does not exclude a printer from selection", async () 
   assert.equal(refreshes, 0);
 });
 
-test("file output selection records the pdf protocol", async () => {
+test("spooler selection records the spooler protocol", async () => {
   const instance = await field([printer()]);
   let change;
   instance.props.record.update = value => { change = value; };
-  instance.onChange({ target: { value: "file-a" } });
-  assert.equal(change.printer_protocol, "pdf");
+  instance.onChange({ target: { value: "queue-a" } });
+  assert.equal(change.printer_protocol, "spooler");
 });
 
-test("unknown file page boundaries and raw IPP image are excluded; verification state is not", async () => {
-  // The remaining POS exclusions are rendering prerequisites: a file
-  // output needs complete page geometry to render into, and IPP is not a
+test("spooler without measured paper width and raw IPP image are excluded; verification state is not", async () => {
+  // The remaining POS exclusions are rendering prerequisites: a spooler
+  // queue needs measured paper geometry to render into, and IPP is not a
   // POS image transport. Verification state (pending, or a proof naming
   // another printer) no longer excludes anyone.
-  const incomplete = printer("missing-height");
-  delete incomplete.capabilities.geometry.paper_height_mm;
+  const incomplete = printer("missing-width");
+  delete incomplete.capabilities.geometry.paper_width_mm;
   const pending = printer("pending"); pending.verificationState = "pending";
   const wrong = printer("wrong-proof"); wrong.capabilities.operational_verification.printer_id = "elsewhere";
-  const ipp = printer("ipp", false); ipp.connectionType = ipp.protocol = "ipp";
+  const ipp = printer("ipp"); ipp.connectionType = ipp.protocol = "ipp";
   ipp.capabilities.operational_verification.method = "ipp_attributes";
   ipp.capabilities.operational_verification.identity_strength = "service";
   const instance = await field([incomplete, pending, wrong, ipp]);
@@ -118,11 +118,11 @@ test("Odoo browser printer proof uses exact UTF-8 ID and method strength", async
     ["leading BOM", "\uFEFFprinter", false],
     ["interior BOM", "pri\uFEFFnter", true],
   ]) {
-    const current = printer(id, false);
+    const current = printer(id);
     assert.equal(Boolean(validatedOperationalVerification(current.capabilities.operational_verification, current, now)), expected, label);
     assert.equal(isVerifiedRuntimePrinter(current, now), expected, label + " picker");
   }
-  const forged = printer("hardware-forged", false);
+  const forged = printer("hardware-forged");
   forged.capabilities.operational_verification.identity_strength = "device";
   assert.equal(validatedOperationalVerification(forged.capabilities.operational_verification, forged, now), null);
   assert.equal(isVerifiedRuntimePrinter(forged, now), false);

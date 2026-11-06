@@ -179,13 +179,13 @@ export async function claimJobForDelivery(
         AND a.last_seen_at IS NOT NULL
         AND a.last_seen_at <= clock_timestamp()
         AND a.last_seen_at >= clock_timestamp() - make_interval(secs => ${agentStaleThresholdSeconds()})
-        AND (pr.verification_binding_digest IS NULL OR p.binding_digest = pr.verification_binding_digest)
+        AND (p.binding_digest IS NULL OR pr.verification_binding_digest IS NULL OR p.binding_digest = pr.verification_binding_digest)
         AND COALESCE(pr.verification_reason, '') NOT IN ('verification_destination_mismatch', 'verification_identity_collision', 'verification_ambiguous_inventory_id')
         AND p.output_medium = pr.output_medium
         AND pr.lifecycle = 'active'
         AND pr.inventory_present = true
         AND pr.shared_with_gateway = true
-        AND (pr.status = 'online' OR pr.status = 'busy' OR (pr.status = 'unknown' AND (pr.connection_type = 'spooler' OR (pr.connection_type = 'pdf_output' AND pr.protocol = 'pdf') OR pr.connection_type IN ('ipp','ipps') OR (pr.connection_type = 'network' AND pr.protocol IN ('ipp','ipps')) OR (pr.connection_type IN ('network','usb') AND pr.protocol IN ('raw','escpos','zpl','tspl')))))
+        AND (pr.status = 'online' OR pr.status = 'busy' OR (pr.status = 'unknown' AND (pr.connection_type = 'spooler' OR pr.connection_type IN ('ipp','ipps') OR (pr.connection_type = 'network' AND pr.protocol IN ('ipp','ipps')) OR (pr.connection_type IN ('network','usb') AND pr.protocol IN ('raw','escpos','zpl','tspl')))))
         AND (pr.management_source = 'agent' OR (
           pr.applied_desired_revision >= pr.desired_revision
           AND pr.observed_desired_revision >= pr.desired_revision

@@ -9,11 +9,11 @@ interface PrinterOperationalVerification {
   verified_at: string;
   printer_id: string;
   binding_digest: string;
-  method: "windows_queue" | "ipp_attributes" | "usb_interface" | "snmp_printer" | "pdf_output";
+  method: "windows_queue" | "ipp_attributes" | "usb_interface" | "snmp_printer";
   logical_queue_key: string;
   physical_device_key?: string;
   identity_strength: "queue" | "service" | "device";
-  output_medium: "physical" | "file";
+  output_medium: "physical";
 }
 export interface OperationalPrinterState {
   id?: string;
@@ -73,8 +73,7 @@ export function validatePrinterOperationalVerification(value: unknown, printer: 
       || !(contract.outputMedia as unknown[]).includes(value.output_medium) || (value.physical_device_key !== undefined && value.identity_strength !== "device")) return { ok: false, reason: "verification_invalid" };
   const connection = String(printer.connectionType ?? "").trim().toLowerCase();
   const protocol = String(printer.protocol ?? "").trim().toLowerCase();
-  const method = connection === "pdf_output" && protocol === "pdf" ? "pdf_output"
-    : connection === "spooler" && ["spooler", "windows_spooler"].includes(protocol) ? "windows_queue"
+  const method = connection === "spooler" && ["spooler", "windows_spooler"].includes(protocol) ? "windows_queue"
     : (["ipp", "ipps"].includes(connection) || connection === "network" && ["ipp", "ipps"].includes(protocol)) ? "ipp_attributes"
     : connection === "usb" && ["raw", "escpos", "zpl", "tspl"].includes(protocol) ? "usb_interface"
     : connection === "network" && ["raw", "escpos", "zpl", "tspl"].includes(protocol) ? "snmp_printer" : null;
@@ -85,7 +84,7 @@ export function validatePrinterOperationalVerification(value: unknown, printer: 
   const methodStrength = method ? contract.methodIdentityStrength[method] : null;
   if (!method || method !== value.method || value.identity_strength !== methodStrength
       || (value.physical_device_key !== undefined && methodStrength !== "device")
-      || value.output_medium !== (method === "pdf_output" ? "file" : "physical")) {
+      || value.output_medium !== "physical") {
     return { ok: false, reason: "verification_transport_mismatch" };
   }
   const verified = utcTime(value.verified_at);
@@ -134,6 +133,6 @@ export function operationalVerificationPresentation(printer: OperationalPrinterS
     verificationVerifiedAt: printer.verificationVerifiedAt ?? null,
     verificationReceivedAt: printer.verificationReceivedAt ?? null,
     verificationReason: isPrinterOperationallyVerified(printer, now) ? null : printer.verificationReason ?? "verification_expired",
-    outputMedium: printer.connectionType === "pdf_output" ? "file" as const : "physical" as const,
+    outputMedium: "physical" as const,
   };
 }

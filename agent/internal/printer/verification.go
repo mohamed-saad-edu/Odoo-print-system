@@ -49,8 +49,6 @@ func operationalMethod(cfg config.PrinterConfig) (method, strength, medium strin
 			return "ipp_attributes", "service", "physical"
 		}
 		return "snmp_printer", "device", "physical"
-	case "pdf_output":
-		return "pdf_output", "service", "file"
 	default:
 		return "", "", ""
 	}

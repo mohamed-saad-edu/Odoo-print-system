@@ -7,9 +7,8 @@ import { PATCH as patchAgentJob } from "../src/app/api/agent/jobs/route";
 
 /**
  * v5 P4: submission evidence through the agent report path.
- * - Evidence is valid ONLY for a successful physical job (Gateway keeps
- *   the 422 rule; v4 WP6 fixed the agent side so pdf_output jobs never
- *   send submission evidence in the first place).
+ * - Evidence is valid ONLY for a successful physical job (the Gateway
+ *   answers 422 SUBMISSION_EVIDENCE_MISMATCH on any other report).
  * - A physical success with positive query evidence derives 'completed'.
  */
 const suite = describe.skipIf(!hasTestDatabase);
@@ -40,18 +39,15 @@ suite("submission evidence on agent reports", () => {
     );
   }
 
-  it("rejects submission evidence on a file-output job with 422", async () => {
-    await insertClaimedJob("job_evidence_file", "file");
-    // Valid file evidence is supplied so the request passes the file-output
-    // gate and reaches the submission-evidence check (which fires second).
-    const res = await report("job_evidence_file", {
-      jobId: "job_evidence_file", claimToken: "claim-evidence-1", status: "success",
-      outputEvidence: { output_medium: "file", artifact_id: "artifact-1", sha256: "a".repeat(64), page_count: 1, bytes: 128 },
+  it("rejects submission evidence on a non-success report with 422", async () => {
+    await insertClaimedJob("job_evidence_failed", "physical");
+    const res = await report("job_evidence_failed", {
+      jobId: "job_evidence_failed", claimToken: "claim-evidence-1", status: "failed",
       submissionEvidence: { verificationSource: "query", windowsJobStatus: ["PRINTED"] },
     });
     expect(res.status).toBe(422);
     expect(await res.json()).toMatchObject({ code: "SUBMISSION_EVIDENCE_MISMATCH" });
-    expect((await db.query.printJobs.findFirst({ where: eq(printJobs.id, "job_evidence_file") }))?.status).toBe("claimed");
+    expect((await db.query.printJobs.findFirst({ where: eq(printJobs.id, "job_evidence_failed") }))?.status).toBe("claimed");
   });
 
   it("accepts positive query evidence on a physical success and derives completed", async () => {

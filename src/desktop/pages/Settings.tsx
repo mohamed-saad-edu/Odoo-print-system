@@ -1,12 +1,12 @@
 import React from "react";
 import { Activity, KeyRound, Link2, Play, Power, RotateCcw, Server, ShieldCheck, Square, Copy } from "lucide-react";
-import { Button, Card, ErrorState, Field, Input, StatusBadge, StatusDot } from "../../components/ui";
+import { Button, Card, ErrorState, Field, Input, Select, StatusBadge, StatusDot } from "../../components/ui";
 import { SettingsSection } from "../ui";
 import type { DesktopState } from "../types";
 import { useI18n } from "../../i18n/react";
 import { agentServiceState, friendlyAgentError, printerDisplayStatus } from "../lib/printers";
 import { copyTextToClipboard } from "../../lib/clipboard";
-import { getAutostart, setAutostart } from "../lib/ipc";
+import { getAutostart, setAutostart, normalizeGatewayUrl, OFFICIAL_GATEWAY_URL } from "../lib/ipc";
 
 export function SettingsPage({ s }: { s: DesktopState }) {
   const { t, locale } = useI18n();
@@ -16,6 +16,21 @@ export function SettingsPage({ s }: { s: DesktopState }) {
   const gatewayDisplayError = s.gatewayDraftError ?? (s.gatewayDraftMatchesSaved ? s.healthError : null);
   const hasGatewayDraft = s.gatewayDraftUrl.trim().length > 0;
   const gatewayDraftPending = hasGatewayDraft && !s.gatewayDraftMatchesSaved;
+  // Gateway address chooser: one tap fills the official Yaseir gateway;
+  // "custom" keeps the free-text field for a company-run gateway. Until
+  // the user touches the chooser, the mode is derived from the current
+  // draft so an already-saved official address shows as "official" and
+  // any other address (or none) shows as "custom".
+  const [gatewayModeTouched, setGatewayModeTouched] = React.useState<"official" | "custom" | null>(null);
+  const draftIsOfficial = (() => {
+    try { return !!s.gatewayDraftUrl.trim() && normalizeGatewayUrl(s.gatewayDraftUrl) === OFFICIAL_GATEWAY_URL; }
+    catch { return false; }
+  })();
+  const gatewayMode = gatewayModeTouched ?? (draftIsOfficial ? "official" : "custom");
+  const chooseGatewayMode = (mode: "official" | "custom") => {
+    setGatewayModeTouched(mode);
+    if (mode === "official") s.setGatewayDraftUrl(OFFICIAL_GATEWAY_URL);
+  };
   const paths: [string, string][] = s.runtimePaths
     ? [
         [t("desktop.settings.managerData"), s.runtimePaths.manager_data],
@@ -40,9 +55,21 @@ export function SettingsPage({ s }: { s: DesktopState }) {
               <div dir="auto" className="mt-1 break-words text-xs text-ink-3 [overflow-wrap:anywhere] [unicode-bidi:isolate]">{s.gatewayDraftUrl || t("desktop.settings.enterGatewayUrl")}</div>
             </div>
           </div>
-          <Field label={t("desktop.settings.gatewayUrlLabel")} htmlFor="gw-url" hint={t("desktop.settings.gatewayUrlHint")}>
-            <Input id="gw-url" dir="ltr" value={s.gatewayDraftUrl} onChange={(e) => s.setGatewayDraftUrl(e.target.value)} placeholder="https://gateway.example.com" className="font-mono text-sm" />
+          <Field label={t("desktop.settings.gatewayChoiceLabel")} htmlFor="gw-mode" hint={t("desktop.settings.gatewayChoiceHint")}>
+            <Select id="gw-mode" value={gatewayMode} onChange={(e) => chooseGatewayMode(e.target.value as "official" | "custom")}>
+              <option value="official">{t("desktop.settings.gatewayOfficial")}</option>
+              <option value="custom">{t("desktop.settings.gatewayCustom")}</option>
+            </Select>
           </Field>
+          {gatewayMode === "official" ? (
+            <div className="rounded-md border border-edge-subtle bg-surface-2 px-3 py-2.5">
+              <div dir="ltr" className="break-words font-mono text-sm text-ink [overflow-wrap:anywhere]">{OFFICIAL_GATEWAY_URL}</div>
+            </div>
+          ) : (
+            <Field label={t("desktop.settings.gatewayUrlLabel")} htmlFor="gw-url" hint={t("desktop.settings.gatewayUrlHint")}>
+              <Input id="gw-url" dir="ltr" value={s.gatewayDraftUrl} onChange={(e) => s.setGatewayDraftUrl(e.target.value)} placeholder="https://gateway.example.com" className="font-mono text-sm" />
+            </Field>
+          )}
           <div className="space-y-1 rounded-md border border-edge-subtle bg-surface-2 px-3 py-2.5 text-xs text-ink-3">
             <div dir="auto" className="break-words [overflow-wrap:anywhere] [unicode-bidi:isolate]">{t("desktop.settings.savedGateway", { url: s.gatewayUrl || t("desktop.settings.notConfigured") })}</div>
             <div dir="auto" className="break-words [overflow-wrap:anywhere] [unicode-bidi:isolate]">{t("desktop.settings.lastObservedGateway", { url: s.checkedGatewayUrl || t("desktop.settings.notObservedYet") })}</div>
