@@ -261,6 +261,12 @@ type Agent struct {
 	// install can raise many change events in a second).
 	spoolerRefreshMu   sync.Mutex
 	spoolerRefreshLast atomic.Int64 // unix nanos
+	// spoolerRefreshPending records that a change event arrived while a
+	// rescan was already running or inside the debounce window, so a
+	// trailing rescan is owed; spoolerRefreshTimerArmed ensures at most
+	// one trailing-rescan timer is outstanding.
+	spoolerRefreshPending     atomic.Bool
+	spoolerRefreshTimerArmed atomic.Bool
 	// terminalReportMu prevents concurrent terminal-status reporting goroutines.
 	terminalReportMu sync.Mutex
 	// Guarded by terminalReportMu. Advance across rejected original claims
@@ -678,18 +684,18 @@ func printerConfigFromDeviceInfo(di printer.DeviceInfo) config.PrinterConfig {
 	// degrades direct-USB printers to VID 0/PID 0.
 	enabled := di.Enabled
 	return config.PrinterConfig{
-		ID:           di.ID,
-		Name:         di.Name,
-		Type:         di.ConnectionType,
-		Endpoint:     di.Endpoint,
-		Protocol:     di.Protocol,
-		SpoolerName:  di.SpoolerName,
-		PrinterType:  di.PrinterType,
-		USBVID:       di.USBVID,
-		USBPID:       di.USBPID,
-		USBSerial:    di.USBSerial,
-		Capabilities: di.Capabilities,
-		Enabled:      &enabled,
+		ID:              di.ID,
+		Name:            di.Name,
+		Type:            di.ConnectionType,
+		Endpoint:        di.Endpoint,
+		Protocol:        di.Protocol,
+		SpoolerName:     di.SpoolerName,
+		PrinterType:     di.PrinterType,
+		USBVID:          di.USBVID,
+		USBPID:          di.USBPID,
+		USBSerial:       di.USBSerial,
+		Capabilities:    di.Capabilities,
+		Enabled:         &enabled,
 	}
 }
 
@@ -2609,13 +2615,20 @@ const spoolerRefreshDebounce = 2 * time.Second
 
 func (a *Agent) refreshSpoolerInventory(ctx context.Context) {
 	if !a.spoolerRefreshMu.TryLock() {
+		// A rescan is already running; the change it may miss is owed a
+		// trailing pass once the current one finishes.
+		a.spoolerRefreshPending.Store(true)
+		a.armSpoolerRefreshTimer(ctx)
 		return
 	}
 	defer a.spoolerRefreshMu.Unlock()
 	if last := a.spoolerRefreshLast.Load(); last > 0 && time.Since(time.Unix(0, last)) < spoolerRefreshDebounce {
+		a.spoolerRefreshPending.Store(true)
+		a.armSpoolerRefreshTimer(ctx)
 		return
 	}
 	a.spoolerRefreshLast.Store(time.Now().UnixNano())
+	a.spoolerRefreshPending.Store(false)
 	result := printer.DiscoverQuick(a.cfg, a.registryPath)
 	merged, err := a.persistLiveDiscovery(result)
 	if err != nil {
@@ -2625,18 +2638,63 @@ func (a *Agent) refreshSpoolerInventory(ctx context.Context) {
 	a.reconcileRegistryPrinters(merged)
 	log.Printf("[spooler-watch] inventory refreshed after spooler change: %d printer(s)", len(merged))
 	a.requestImmediateHeartbeat()
+	if a.spoolerRefreshPending.Swap(false) {
+		a.armSpoolerRefreshTimer(ctx)
+	}
+}
+
+// armSpoolerRefreshTimer schedules the single trailing rescan owed to
+// change events that arrived during a running/debounced rescan, so a
+// dropped event can never silently lose a printer addition, removal,
+// or rename.
+func (a *Agent) armSpoolerRefreshTimer(ctx context.Context) {
+	if !a.spoolerRefreshTimerArmed.CompareAndSwap(false, true) {
+		return
+	}
+	time.AfterFunc(spoolerRefreshDebounce, func() {
+		a.spoolerRefreshTimerArmed.Store(false)
+		if ctx.Err() != nil {
+			return
+		}
+		if a.spoolerRefreshPending.Load() {
+			a.launchTracked(func() { a.refreshSpoolerInventory(ctx) })
+		}
+	})
 }
 
 // watchSpoolerChanges runs the Windows spooler change-notification watch
-// for the life of the agent. Any failure (API unavailable, spooler down)
-// is logged once and the agent simply keeps its existing polling
-// behaviour — the watcher is an accelerator, never a dependency.
+// for the life of the agent. The underlying watch returns permanently
+// when the notification channel breaks — most commonly a spooler
+// service restart — so this loop RE-ARMS it with backoff for as long as
+// the agent runs, and every re-arm is preceded by a catch-up rescan so
+// changes that happened while the watch was down are not missed. The
+// watcher remains an accelerator, never a dependency: while it is down
+// the heartbeat keeps reporting the last known inventory.
 func (a *Agent) watchSpoolerChanges(ctx context.Context) {
-	err := printer.WatchSpoolerChanges(ctx, func() {
+	backoff := 2 * time.Second
+	for {
+		err := printer.WatchSpoolerChanges(ctx, func() {
+			a.launchTracked(func() { a.refreshSpoolerInventory(ctx) })
+		})
+		if ctx.Err() != nil {
+			return
+		}
+		if err != nil {
+			log.Printf("[spooler-watch] spooler change notifications interrupted (%v); re-arming in %s", err, backoff)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(backoff):
+		}
+		if backoff < 60*time.Second {
+			backoff *= 2
+			if backoff > 60*time.Second {
+				backoff = 60 * time.Second
+			}
+		}
+		// Catch up on any change the dead watch never delivered.
 		a.launchTracked(func() { a.refreshSpoolerInventory(ctx) })
-	})
-	if err != nil && ctx.Err() == nil {
-		log.Printf("[spooler-watch] spooler change notifications unavailable (%v); falling back to periodic discovery/heartbeat polling", err)
 	}
 }
 
@@ -2815,7 +2873,7 @@ func (a *Agent) printerStatusPayloadWithSharingResult(sharing localPrinterSharin
 		}
 		c := printer.ClassifyDeviceInfo(printer.DeviceInfo{
 			Name: pc.Name, PrinterType: pc.PrinterType,
-			SpoolerName: pc.SpoolerName, Endpoint: pc.Endpoint, ConnectionType: pc.NormalizedType(),
+			SpoolerName:     pc.SpoolerName, Endpoint: pc.Endpoint, ConnectionType: pc.NormalizedType(),
 			Protocol: pc.NormalizedProtocolOrUnknown(), Capabilities: pc.Capabilities,
 		})
 		if c.IsVirtual || c.Class == printer.ClassRedirected {

@@ -49,29 +49,22 @@ func renderIPPPDFToJPEG(ctx context.Context, pdfData []byte, attrs map[string]st
 	var jpegKilled pdfiumKillTracker
 	defer func() { _ = jpegKilled.close(instance) }()
 
-	doc, err := instance.OpenDocument(&requests.OpenDocument{File: &pdfData})
+	head, err := openPDFDocumentHead(ctx, instance, pdfData, &jpegKilled)
 	if err != nil {
 		return nil, fmt.Errorf("open PDF for JPEG conversion: %w", err)
 	}
-	defer instance.FPDF_CloseDocument(&requests.FPDF_CloseDocument{Document: doc.Document})
+	defer head.close()
 
-	pages, err := instance.FPDF_GetPageCount(&requests.FPDF_GetPageCount{Document: doc.Document})
-	if err != nil {
-		return nil, fmt.Errorf("read PDF page count: %w", err)
+	if head.pageCount != 1 {
+		return nil, fmt.Errorf("JPEG IPP fallback needs exactly one PDF page (received %d); configure this printer as a Windows spooler queue for multiple pages", head.pageCount)
 	}
-	if pages.PageCount != 1 {
-		return nil, fmt.Errorf("JPEG IPP fallback needs exactly one PDF page (received %d); configure this printer as a Windows spooler queue for multiple pages", pages.PageCount)
-	}
-	size, err := instance.FPDF_GetPageSizeByIndex(&requests.FPDF_GetPageSizeByIndex{Document: doc.Document, Index: 0})
-	if err != nil || size == nil {
-		return nil, fmt.Errorf("read PDF page dimensions: %v", err)
-	}
-	width, height, renderDPI, err := ippJPEGGeometry(size.Width, size.Height, maxPDFRenderPixels, dpi)
+	size := head.pageSizes[0]
+	width, height, renderDPI, err := ippJPEGGeometry(size.width, size.height, maxPDFRenderPixels, dpi)
 	if err != nil {
 		return nil, err
 	}
 	img, cleanup, err := renderPageWithContext(ctx, instance, &requests.RenderPageInPixels{
-		Page:   requests.Page{ByIndex: &requests.PageByIndex{Document: doc.Document, Index: 0}},
+		Page:   requests.Page{ByIndex: &requests.PageByIndex{Document: head.document, Index: 0}},
 		Width:  width,
 		Height: height,
 	}, &jpegKilled)

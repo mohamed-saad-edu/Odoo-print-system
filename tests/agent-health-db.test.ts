@@ -137,6 +137,18 @@ suite("agent health (database-backed)", () => {
     health = await getAgentHealth(f.tenantId, f.agentId);
     expect(health!.onlinePrinterCount).toBe(0);
   });
+  it("counts a fresh online printer in detail health without operational verification", async () => {
+    const f = await seedFixture();
+    // Strip every trace of operational proof: verification is background
+    // evidence only and must not shrink the detail online count (the
+    // fleet path and metrics already count reported status + freshness).
+    await pool().query("UPDATE printers SET verification_state = 'pending', verification_verified_at = NULL, verification_received_at = NULL, verification_binding_digest = NULL, logical_queue_key = NULL, capabilities = COALESCE(capabilities, '{}'::jsonb) - 'operational_verification', status = 'online', lifecycle = 'active', last_seen_at = now() WHERE id = $1", [f.printerId]);
+    const detail = await getAgentHealth(f.tenantId, f.agentId);
+    expect(detail!.printerCount).toBe(1);
+    expect(detail!.onlinePrinterCount).toBe(1);
+    const fleet = await getAllAgentsHealth(f.tenantId);
+    expect(fleet[0].onlinePrinterCount).toBe(1);
+  });
   it("fleet aggregates match detail health, respect tenant bounds and include busy-but-fresh printers", async () => {
     const f = await seedFixture();
     const otherTenant = await seedFixture();

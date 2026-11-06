@@ -4,32 +4,38 @@ import { readFileSync } from "node:fs";
 const read = (path: string) => readFileSync(path, "utf8");
 
 describe("desktop administrator recovery and Windows startup UX", () => {
-  it("wires the Administrator prompt to a real Windows elevation relaunch", () => {
+  it("runs elevated or not at all: the native startup gate relaunches with no dialog", () => {
     const commands = read("src-tauri/src/commands.rs");
+    const elevation = read("src-tauri/src/elevation.rs");
     const mainRust = read("src-tauri/src/main.rs");
     const ipc = read("src/desktop/lib/ipc.ts");
     const desktop = read("src/desktop/main.tsx");
-    const dialog = read("src/desktop/components/AdminPrivilegeDialog.tsx");
 
     expect(commands).toContain("pub fn relaunch_as_admin()");
     expect(commands).toContain("ShellExecuteW");
     expect(commands).toContain('OsStr::new("runas")');
     expect(commands).toContain("--elevated-relaunch");
+    // The gate is the first statement of main() and hands a
+    // non-elevated launch straight to the elevated relaunch: the UAC
+    // consent is the only prompt, and no application dialog exists in
+    // the launch path at any layer.
+    expect(mainRust).toContain("elevation::enforce_administrator_or_exit();");
     expect(mainRust).toContain("commands::relaunch_as_admin");
     expect(mainRust).toContain("acquire_single_instance(elevated_relaunch)");
-    expect(ipc).toContain('invoke<void>("relaunch_as_admin")');
-    expect(desktop).toContain("onRelaunch={relaunchAsAdmin}");
-    expect(dialog).toContain("await onRelaunch()");
-    expect(dialog).toContain('t("desktop.admin.relaunchFailed")');
+    expect(elevation).toContain("pub fn enforce_administrator_or_exit()");
+    expect(elevation).toContain("crate::commands::relaunch_as_admin()");
+    expect(elevation).not.toContain("TaskDialogIndirect");
+    expect(elevation).not.toContain("show_admin_required_dialog");
+    expect(desktop).not.toContain("AdminPrivilegeDialog");
+    expect(ipc).not.toContain("relaunch_as_admin");
   });
 
-  it("keeps non-admin guidance visible and gives an elevated stopped Agent a recovery action", () => {
+  it("gives an elevated stopped Agent a recovery action", () => {
     const desktop = read("src/desktop/main.tsx");
-    expect(desktop).toContain("{isAdmin === false && (");
     expect(desktop).toContain("agentStartupGraceElapsed");
     expect(desktop).toContain('t("desktop.app.agentNeedsStartTitle")');
     expect(desktop).toContain('t("desktop.app.startAgentNow")');
-    expect(desktop).toContain("if (isAdmin === false) setAdminDismissed(false);");
+    expect(desktop).not.toContain("setAdminDismissed");
   });
 
   it("suppresses every bounded Windows helper console window", () => {

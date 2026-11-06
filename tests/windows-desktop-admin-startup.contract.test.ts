@@ -25,13 +25,18 @@ describe("Windows desktop Agent startup contract", () => {
     expect(agent).toContain('run_agent_service_command(app, "install", COMMAND_TIMEOUT)');
   });
 
-  it("shows Administrator recovery when local Agent service is missing or stopped", () => {
+  it("classifies a missing or stopped local Agent service and offers elevated recovery", () => {
     const desktop = read("src/desktop/main.tsx");
     const commands = read("src-tauri/src/commands.rs");
     const statusClassifier = read("src-tauri/src/agent_status.rs");
-    expect(desktop).toContain("const agentServiceNeedsAdmin =");
-    expect(desktop).toContain('agentStatus.note_code !== "service_running"');
-    expect(desktop).toContain("open={agentServiceNeedsAdmin && !adminDismissed}");
+    // The app only ever runs elevated (the native startup gate relaunches
+    // a non-elevated launch before any window exists), so recovery for a
+    // stopped service is the elevated banner with a start action — there
+    // is no Administrator dialog or non-admin guidance state anymore.
+    expect(desktop).toContain('isAdmin === true && agentStartupGraceElapsed && serviceState === "stopped"');
+    expect(desktop).toContain('t("desktop.app.agentNeedsStartTitle")');
+    expect(desktop).toContain('t("desktop.app.startAgentNow")');
+    expect(desktop).not.toContain("AdminPrivilegeDialog");
     expect(commands).toContain("crate::agent_status::note_code(running, service_running, &note)");
     expect(commands).toContain("note_code: note_code.into()");
     expect(statusClassifier).toContain('"service_missing"');

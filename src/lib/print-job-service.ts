@@ -610,7 +610,7 @@ async function insertQueuedJobAtomically({
       printerId,
       status: "queued",
       payload: validatedPayload,
-      outputMedium: owner.printer_output_medium === "file" ? "file" : "physical",
+      outputMedium: "physical",
       bindingDigest: owner.printer_binding_digest ?? null,
       requestedBy,
       requestId: requestId ?? null,
@@ -633,7 +633,7 @@ async function insertQueuedJobAtomically({
       agentId,
       printerId,
       isReused: false,
-      outputMedium: owner.printer_output_medium === "file" ? "file" : "physical",
+      outputMedium: "physical",
     };
   });
 }

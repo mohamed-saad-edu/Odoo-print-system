@@ -330,13 +330,27 @@ func markAutomaticDiscoveryRegistration(d DeviceInfo) DeviceInfo {
 // DiscoverQuick enumerates only fast local sources (config, spooler, registry)
 // without network/USB active scanning. Used for synchronous agent startup
 // to avoid blocking on 8s LAN scan.
+//
+// The spooler source is enumerated LIVE (EnumPrintersW), and when that
+// enumeration succeeds the result is authoritative for spooler queues:
+// auto-discovered spooler rows that the live enumeration no longer
+// returns are dropped from the result even though the registry still
+// holds them (a registry row is history, never evidence of its own
+// continued presence), and CompleteSources marks the spooler source
+// complete so registry reconciliation may retire the absent rows.
+// Config-defined and manually registered printers are always kept.
+// When the live enumeration fails, the result falls back to the full
+// registry replay with no completeness claim (fail-safe: nothing is
+// pruned on a failed scan).
 func DiscoverQuick(cfg *config.Config, registryPath string) DiscoveryResult {
 	var (
-		mu     sync.Mutex
-		all    []DeviceInfo
-		errors []string
-		wg     sync.WaitGroup
-		seen   = make(map[string]bool)
+		mu             sync.Mutex
+		all            []DeviceInfo
+		errors         []string
+		wg             sync.WaitGroup
+		seen           = make(map[string]bool)
+		liveSpoolerIDs = make(map[string]bool)
+		spoolerLiveOK  bool
 	)
 	add := func(infos []DeviceInfo) {
 		mu.Lock()
@@ -403,6 +417,24 @@ func DiscoverQuick(cfg *config.Config, registryPath string) DiscoveryResult {
 		infos, err := discoverSpoolerPrinters()
 		if err != nil {
 			addErr(fmt.Sprintf("spooler discovery: %v", err))
+		} else {
+			mu.Lock()
+			spoolerLiveOK = true
+			for _, d := range infos {
+				// Compute the ID exactly as add() will, including the
+				// registration marking and name normalization that run
+				// before its stable-ID assignment.
+				d = markAutomaticDiscoveryRegistration(d)
+				d = discoveredDeviceNames(d)
+				id := d.ID
+				if id == "" {
+					id = StableIDForDevice(d)
+				}
+				if id != "" {
+					liveSpoolerIDs[id] = true
+				}
+			}
+			mu.Unlock()
 		}
 		add(infos)
 	}()
@@ -424,10 +456,30 @@ func DiscoverQuick(cfg *config.Config, registryPath string) DiscoveryResult {
 		add(infos)
 	}()
 	wg.Wait()
+	completeSources := map[string]bool(nil)
+	if spoolerLiveOK {
+		// The live spooler enumeration is authoritative: an
+		// auto-discovered spooler row it did not return is a deleted or
+		// renamed queue whose registry entry must not resurrect it in
+		// the observed set (reconciliation below retires it instead).
+		kept := all[:0]
+		for _, d := range all {
+			// A quarantined identity (two distinct queues colliding on
+			// one ID) is a safety fence, not a presence claim: it must
+			// survive every path so nothing can execute against the
+			// ambiguous ID and the operator can see the collision.
+			if isAutoDiscoveredSpoolerRow(d) && !liveSpoolerIDs[d.ID] && d.Capabilities["identity_collision"] == nil {
+				continue
+			}
+			kept = append(kept, d)
+		}
+		all = kept
+		completeSources = map[string]bool{SourceSpooler: true}
+	}
 	for i := range all {
 		all[i] = finalizeDiscoveredDevice(all[i])
 	}
-	return DiscoveryResult{Printers: all, Errors: errors}
+	return DiscoveryResult{Printers: all, Errors: errors, CompleteSources: completeSources}
 }
 
 // Discover enumerates printers from all available sources without crashing
@@ -927,20 +979,20 @@ func discoverFromConfig(cfg *config.Config) []DeviceInfo {
 		}
 		caps["registration_source"] = "config"
 		di := DeviceInfo{
-			ID:             pc.ID,
-			Name:           pc.Name,
-			DisplayName:    pc.Name,
-			PrinterType:    declaredType,
-			ConnectionType: pc.NormalizedType(),
-			Protocol:       pc.NormalizedProtocolOrUnknown(),
-			Endpoint:       pc.Endpoint,
-			SpoolerName:    pc.SpoolerName,
-			USBVID:         pc.USBVID,
-			USBPID:         pc.USBPID,
-			USBSerial:      pc.USBSerial,
-			Status:         "unknown",
-			Enabled:        pc.IsEnabled(),
-			Type:           pc.NormalizedType(),
+			ID:              pc.ID,
+			Name:            pc.Name,
+			DisplayName:     pc.Name,
+			PrinterType:     declaredType,
+			ConnectionType:  pc.NormalizedType(),
+			Protocol:        pc.NormalizedProtocolOrUnknown(),
+			Endpoint:        pc.Endpoint,
+			SpoolerName:     pc.SpoolerName,
+			USBVID:          pc.USBVID,
+			USBPID:          pc.USBPID,
+			USBSerial:       pc.USBSerial,
+			Status:          "unknown",
+			Enabled:         pc.IsEnabled(),
+			Type:            pc.NormalizedType(),
 			// Printers declared in config.yaml are explicit operator intent:
 			// they stay visible even when no transport can be proven, because
 			// the operator typed the endpoint by hand.
@@ -1414,18 +1466,18 @@ func printerConfigForTest(cfg *config.Config, target *DeviceInfo) config.Printer
 		}
 		enabled := target.Enabled
 		pc = config.PrinterConfig{
-			ID:           target.ID,
-			Name:         target.Name,
-			Type:         target.ConnectionType,
-			Endpoint:     target.Endpoint,
-			Protocol:     target.Protocol,
-			SpoolerName:  target.SpoolerName,
-			PrinterType:  target.PrinterType,
-			USBVID:       target.USBVID,
-			USBPID:       target.USBPID,
-			USBSerial:    target.USBSerial,
-			Capabilities: caps,
-			Enabled:      &enabled,
+			ID:              target.ID,
+			Name:            target.Name,
+			Type:            target.ConnectionType,
+			Endpoint:        target.Endpoint,
+			Protocol:        target.Protocol,
+			SpoolerName:     target.SpoolerName,
+			PrinterType:     target.PrinterType,
+			USBVID:          target.USBVID,
+			USBPID:          target.USBPID,
+			USBSerial:       target.USBSerial,
+			Capabilities:    caps,
+			Enabled:         &enabled,
 		}
 	}
 	if target.ConnectionType == "spooler" && pc.SpoolerName == "" {

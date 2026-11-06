@@ -35,7 +35,6 @@ import { LanguageSwitcher } from "../components/LanguageSwitcher";
 import { JobTimeline } from "./components/JobTimeline";
 import { Sidebar, type NavItem } from "./components/Sidebar";
 import { AddPrinterDialog } from "./components/AddPrinterDialog";
-import { AdminPrivilegeDialog } from "./components/AdminPrivilegeDialog";
 import { PrinterSharingControl } from "./components/PrinterSharingControl";
 import { OverviewPage } from "./pages/Overview";
 import { PrintersPage } from "./pages/Printers";
@@ -48,7 +47,6 @@ import {
   getAppVersion,
   getAutostart,
   isRunningAsAdmin,
-  relaunchAsAdmin,
   getGatewayUrl,
   getPrinters,
   setPrinterSharing,
@@ -205,7 +203,6 @@ export default function App() {
   const [confirmStop, setConfirmStop] = useState(false);
   const [confirmRestart, setConfirmRestart] = useState(false);
   const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
-  const [adminDismissed, setAdminDismissed] = useState<boolean>(false);
   const [agentStartupGraceElapsed, setAgentStartupGraceElapsed] = useState(false);
   const setBusyBoth = useCallback((v: boolean) => {
     setBusy(v);
@@ -638,12 +635,11 @@ export default function App() {
       setMsg({ text: t("desktop.app.agentStarted"), type: "success" });
       refreshStatus();
     } catch (e) {
-      if (isAdmin === false) setAdminDismissed(false);
       setMsg({ text: friendlyAgentError(errMsg(e), locale), type: "error" });
     } finally {
       setBusyBoth(false);
     }
-  }, [refreshStatus, setBusyBoth, t, locale, isAdmin]);
+  }, [refreshStatus, setBusyBoth, t, locale]);
 
   const stopAgent = useCallback(async () => {
     setConfirmStop(false);
@@ -666,12 +662,11 @@ export default function App() {
       setMsg({ text: t("desktop.app.agentRestarted"), type: "success" });
       refreshStatus();
     } catch (e) {
-      if (isAdmin === false) setAdminDismissed(false);
       setMsg({ text: friendlyAgentError(errMsg(e), locale), type: "error" });
     } finally {
       setBusyBoth(false);
     }
-  }, [refreshStatus, setBusyBoth, t, locale, isAdmin]);
+  }, [refreshStatus, setBusyBoth, t, locale]);
 
   const pair = useCallback(async () => {
     if (!pairCode.trim()) {
@@ -707,9 +702,9 @@ export default function App() {
     if (!isTauri) return;
     // Elevated startup may start/repair the Windows service on a background
     // thread. Give that privileged startup a short grace period before showing
-    // the separate elevated "Agent stopped" recovery banner. Unelevated
-    // launches do not auto-start the Agent and use the Administrator dialog
-    // as soon as the first local status observation arrives.
+    // the separate elevated "Agent stopped" recovery banner. (The app only
+    // ever runs elevated: the native startup gate hands a non-elevated
+    // launch off to an elevated copy before any window exists.)
     const timer = window.setTimeout(() => {
       setAgentStartupGraceElapsed(true);
       void refreshStatus();
@@ -901,17 +896,6 @@ export default function App() {
   const isOnline = serviceState === "running";
   const serviceTone = serviceState === "unknown" ? "neutral" : isOnline ? "ok" : "bad";
   const serviceLabel = serviceState === "unknown" ? t("desktop.agents.statusUnavailable") : isOnline ? t("desktop.status.agentRunning") : t("desktop.status.agentStopped");
-  const agentServiceNeedsAdmin =
-    isAdmin === false &&
-    agentStatus !== null &&
-    agentStatus.note_code !== "service_running";
-  useEffect(() => {
-    // Re-open the Administrator guidance when the Agent transitions from a
-    // healthy Windows service to a missing/stopped/fallback state. Dismissing
-    // the dialog remains respected while the same state is unchanged.
-    if (agentServiceNeedsAdmin) setAdminDismissed(false);
-  }, [agentServiceNeedsAdmin, agentStatus?.note_code]);
-
   const healthOk = Boolean(health && (health as { ok?: boolean }).ok === true && !healthError);
   let normalizedGatewayUrl = "";
   try {
@@ -1163,11 +1147,6 @@ export default function App() {
 
   return (
     <div className="tg-shell-root min-h-screen bg-app text-ink">
-      <AdminPrivilegeDialog
-        open={agentServiceNeedsAdmin && !adminDismissed}
-        onClose={() => setAdminDismissed(true)}
-        onRelaunch={relaunchAsAdmin}
-      />
       <Sidebar
         page={page}
         navigate={navigate}
@@ -1260,33 +1239,6 @@ export default function App() {
             </nav>
           </div>
         </Modal>
-
-        {isAdmin === false && (
-          <div
-            className="flex min-w-0 flex-col gap-3 border-b border-warn-edge bg-warn-bg px-5 py-3 text-sm text-warn sm:flex-row sm:items-center sm:justify-between lg:px-8"
-            role="status"
-          >
-            <div className="flex min-w-0 items-start gap-2">
-              <AlertTriangle className="h-4 w-4 shrink-0" aria-hidden="true" />
-              <span>
-                <strong>
-                  {agentServiceNeedsAdmin
-                    ? t("desktop.app.agentAdminRequiredTitle")
-                    : t("desktop.app.readOnlyMode")}
-                </strong>{" "}
-                {agentServiceNeedsAdmin
-                  ? t("desktop.app.agentAdminRequiredBody")
-                  : t("desktop.app.readOnlyBody")}
-              </span>
-            </div>
-            <button
-              onClick={() => setAdminDismissed(false)}
-              className="min-h-9 rounded-sm px-2 font-medium underline transition hover:text-warn/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-warn/35 cursor-pointer"
-            >
-              {t("desktop.app.viewDetails")}
-            </button>
-          </div>
-        )}
 
         {isAdmin === true && agentStartupGraceElapsed && serviceState === "stopped" && (
           <div

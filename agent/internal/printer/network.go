@@ -189,7 +189,7 @@ func (p *NetworkPrinter) PrintDocument(ctx context.Context, doc Document) error 
 	case KindRaw, KindESCPOS, KindZPL, KindTSPL, KindLabel:
 		return p.Print(ctx, doc.Data)
 	case KindImage:
-		data, err := prepareESCPOSImage(p.Protocol, p.Geometry, doc)
+		data, err := prepareESCPOSImageForDispatch(ctx, p.Protocol, p.Geometry, doc)
 		if err != nil {
 			return fmt.Errorf("render image for raw TCP printer: %w", err)
 		}

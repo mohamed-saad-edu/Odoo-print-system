@@ -6,7 +6,7 @@
     'description': """
 Connect Odoo to Yaseir once per company.
 
-Assign a printing computer to each company or branch. Select a verified printer
+Assign a printing computer to each company or branch. Select a printer
 for each print source under Print Routing. Enable automatic printing
 only when the relevant print rules are ready.
 

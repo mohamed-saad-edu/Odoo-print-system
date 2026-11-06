@@ -6,12 +6,9 @@ import "errors"
 
 func processElevated() bool { return true }
 
-// showAdminRequiredDialog is unreachable on non-Windows builds
+// relaunchElevated is unreachable on non-Windows builds
 // (processElevated always reports true); it exists so the shared gate
-// compiles everywhere. It reports "no restart requested".
-func showAdminRequiredDialog() bool { return false }
-
-// relaunchElevated is likewise unreachable off Windows.
+// compiles everywhere.
 func relaunchElevated() error {
 	return errors.New("elevated relaunch is only available on Windows")
 }

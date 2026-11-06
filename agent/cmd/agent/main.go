@@ -490,6 +490,7 @@ func main() {
 	showVersion := flag.Bool("version", false, "Show the Agent runtime and embedded PDFium service capability")
 	configPath := flag.String("config", config.DefaultConfigPath(), "Path to config file")
 	svcFlag := flag.String("service", "", "Control the system service: install, uninstall, purge, start, stop, restart, status")
+	elevatedRelaunch := flag.Bool("elevated-relaunch", false, "Internal: this process is the automatic elevated relaunch of a non-elevated launch")
 	flag.Parse()
 	if *showVersion {
 		fmt.Println(agentRuntimeInfo())
@@ -498,12 +499,13 @@ func main() {
 
 	// 0. Administrator-only gate. An interactive launch (double-click,
 	// console, or a -service control action from a normal shell) must run
-	// with an elevated token: a native dialog explains why and the
-	// process exits before the singleton, logging, config or any service
-	// work starts. The SCM-launched path reports Interactive() == false
-	// and already runs as LocalSystem, so it is never gated or shown a
-	// dialog in Session 0.
-	elevation.RequireElevatedInteractive(service.Interactive())
+	// with an elevated token: without one, the gate immediately hands
+	// off to an elevated copy (the Windows UAC prompt is the only
+	// prompt — there is no application dialog) and this process exits
+	// before the singleton, logging, config or any service work starts.
+	// The SCM-launched path reports Interactive() == false and already
+	// runs as LocalSystem, so it is never gated in Session 0.
+	elevation.RequireElevatedInteractive(service.Interactive(), *elevatedRelaunch)
 
 	// 1. Service control path: dispatch immediately without reading config or initializing agent
 	if *svcFlag != "" {

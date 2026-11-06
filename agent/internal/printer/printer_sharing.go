@@ -19,7 +19,7 @@ func SharingConfigForDevice(device DeviceInfo) config.PrinterConfig {
 	return config.PrinterConfig{
 		ID: device.ID, Name: device.Name, Type: connection,
 		Endpoint: device.Endpoint, Protocol: device.Protocol, SpoolerName: device.SpoolerName,
-		PrinterType: device.PrinterType, USBVID: device.USBVID, USBPID: device.USBPID,
+		PrinterType:     device.PrinterType, USBVID: device.USBVID, USBPID: device.USBPID,
 		USBSerial: device.USBSerial, Capabilities: device.Capabilities,
 	}
 }

@@ -34,24 +34,34 @@ const (
 )
 
 var (
-	pdfiumOnce sync.Once
-	pdfiumPool pdfium.Pool
-	pdfiumErr  error
+	pdfiumInitMu sync.Mutex
+	pdfiumPool   pdfium.Pool
 	// Shared by native GDI and portable IPP preflight/rendering. Acquisition
 	// must use a context-aware select; never wait indefinitely on a mutex.
 	embeddedPDFPrintSlot = make(chan struct{}, 1)
 )
 
 func getPDFiumPool() (pdfium.Pool, error) {
-	pdfiumOnce.Do(func() {
-		pdfiumPool, pdfiumErr = webassembly.Init(newPDFiumPoolConfig())
-	})
-	return pdfiumPool, pdfiumErr
+	pdfiumInitMu.Lock()
+	defer pdfiumInitMu.Unlock()
+	if pdfiumPool != nil {
+		return pdfiumPool, nil
+	}
+	// Only a successful initialization is latched. A transient first
+	// failure (module compile under memory pressure, a briefly missing
+	// runtime file) must not disable PDF rendering for the whole
+	// process lifetime — the next job retries initialization.
+	pool, err := webassembly.Init(newPDFiumPoolConfig())
+	if err != nil {
+		return nil, err
+	}
+	pdfiumPool = pool
+	return pdfiumPool, nil
 }
 
 // getPDFiumPoolWithContext keeps synchronous module compilation behind the
-// shared, context-bounded warmup flight so a canceled print cannot wait in
-// sync.Once until a cold WASM runtime finishes compiling.
+// shared, context-bounded warmup flight so a canceled print cannot wait on
+// the initialization mutex until a cold WASM runtime finishes compiling.
 func getPDFiumPoolWithContext(ctx context.Context) (pdfium.Pool, error) {
 	if err := awaitPDFiumWarmup(ctx); err != nil {
 		return nil, err

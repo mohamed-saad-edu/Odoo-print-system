@@ -1,4 +1,3 @@
-import { printerOperationalVerificationPredicate } from "./printer-verification-sql";
 /**
  * Agent Health — beyond ONLINE/OFFLINE
  * Statuses: ONLINE / DEGRADED / OFFLINE / STARTING / UNKNOWN
@@ -236,11 +235,11 @@ export async function getAgentHealth(tenantId: string, agentId: string, tx?: DbT
   }
   const queueDepth = queueRows[0]?.cnt ?? 0;
 
-  let printerRows: Array<{ id: string; status: string; lifecycle: string; lastSeenAt: Date | string | null; operationallyVerified: boolean }> = [];
+  let printerRows: Array<{ id: string; status: string; lifecycle: string; lastSeenAt: Date | string | null }> = [];
   let printerDataAvailable = true;
   try {
     printerRows = await healthRead(tx,
-      () => reader.select({ id: printers.id, status: printers.status, lifecycle: printers.lifecycle, lastSeenAt: printers.lastSeenAt, operationallyVerified: sql<boolean>`COALESCE((${printerOperationalVerificationPredicate(sql`printers`)}), false)` }).from(printers).where(and(eq(printers.tenantId, tenantId), eq(printers.agentId, agentId), eq(printers.sharedWithGateway, true), eq(printers.inventoryPresent, true), eq(printers.lifecycle, "active"), nonVirtualPrinterPredicate())),
+      () => reader.select({ id: printers.id, status: printers.status, lifecycle: printers.lifecycle, lastSeenAt: printers.lastSeenAt }).from(printers).where(and(eq(printers.tenantId, tenantId), eq(printers.agentId, agentId), eq(printers.sharedWithGateway, true), eq(printers.inventoryPresent, true), eq(printers.lifecycle, "active"), nonVirtualPrinterPredicate())),
       3000,
       "agentPrinters"
     );
@@ -258,7 +257,10 @@ export async function getAgentHealth(tenantId: string, agentId: string, tx?: DbT
   // would reject.
   const printerFreshnessMs = printerStaleThresholdSeconds() * 1000;
   const onlinePrinterCount = printerRows.filter((p) => {
-    if (p.lifecycle !== "active" || !p.operationallyVerified) return false;
+    // Reported status and freshness only — operational verification is
+    // background evidence and must not shrink this count (mirrors the
+    // fleet path in getAllAgentsHealth and the metrics "routable" rule).
+    if (p.lifecycle !== "active") return false;
     if (p.status !== "online" && p.status !== "busy") return false;
     const seenMs = parseDbTimeMs(p.lastSeenAt);
     if (seenMs === null) return false;

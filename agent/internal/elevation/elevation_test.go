@@ -3,11 +3,13 @@ package elevation
 import "testing"
 
 // The service-host path must never be gated: SCM runs the agent as
-// LocalSystem in Session 0, where no dialog could be shown anyway.
-// RequireElevatedInteractive(false) returning at all is the assertion —
-// the gated path exits the process, which a test cannot survive.
+// LocalSystem in Session 0, with no desktop for a UAC prompt anyway.
+// RequireElevatedInteractive(false, ...) returning at all is the
+// assertion — the gated path exits the process, which a test cannot
+// survive.
 func TestServiceHostPathIsNeverGated(t *testing.T) {
-	RequireElevatedInteractive(false)
+	RequireElevatedInteractive(false, false)
+	RequireElevatedInteractive(false, true)
 }
 
 // On non-Windows developer builds the gate is a no-op so the whole

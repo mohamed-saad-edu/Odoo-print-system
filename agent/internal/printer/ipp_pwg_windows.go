@@ -42,33 +42,29 @@ func renderIPPPDFToPWG(ctx context.Context, pdfData []byte, attrs map[string]str
 	// report the expected "already closed" state as a worker-cleanup failure.
 	var pwgKilled pdfiumKillTracker
 	defer func() { _ = pwgKilled.close(instance) }()
-	pdf, err := instance.OpenDocument(&requests.OpenDocument{File: &pdfData})
+	head, err := openPDFDocumentHead(ctx, instance, pdfData, &pwgKilled)
 	if err != nil {
 		return nil, fmt.Errorf("open PDF for PWG Raster: %w", err)
 	}
-	defer func() { _, _ = instance.FPDF_CloseDocument(&requests.FPDF_CloseDocument{Document: pdf.Document}) }()
+	defer head.close()
 
-	pages, err := instance.FPDF_GetPageCount(&requests.FPDF_GetPageCount{Document: pdf.Document})
-	if err != nil || pages == nil || pages.PageCount < 1 || pages.PageCount > maxPDFPages {
-		return nil, fmt.Errorf("invalid PWG Raster PDF page count: %v (%v)", pages, err)
+	if head.pageCount < 1 || head.pageCount > maxPDFPages {
+		return nil, fmt.Errorf("invalid PWG Raster PDF page count: %d", head.pageCount)
 	}
 	var result bytes.Buffer
 	result.WriteString("RaS2")
-	for page := 0; page < pages.PageCount; page++ {
+	for page := 0; page < head.pageCount; page++ {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		size, err := instance.FPDF_GetPageSizeByIndex(&requests.FPDF_GetPageSizeByIndex{
-			Document: pdf.Document,
-			Index:    page,
-		})
-		if err != nil || size == nil || !(size.Width > 0 && size.Height > 0) ||
-			math.IsNaN(size.Width) || math.IsNaN(size.Height) ||
-			math.IsInf(size.Width, 0) || math.IsInf(size.Height, 0) {
-			return nil, fmt.Errorf("PDF page %d: invalid paper dimensions: %v", page+1, err)
+		size := head.pageSizes[page]
+		if !(size.width > 0 && size.height > 0) ||
+			math.IsNaN(size.width) || math.IsNaN(size.height) ||
+			math.IsInf(size.width, 0) || math.IsInf(size.height, 0) {
+			return nil, fmt.Errorf("PDF page %d: invalid paper dimensions", page+1)
 		}
-		w := math.Round(size.Width * float64(dpi) / 72.0)
-		h := math.Round(size.Height * float64(dpi) / 72.0)
+		w := math.Round(size.width * float64(dpi) / 72.0)
+		h := math.Round(size.height * float64(dpi) / 72.0)
 		if w <= 0 || h <= 0 || w > 32767 || h > 32767 {
 			return nil, fmt.Errorf("PDF page %d exceeds PWG page dimension bounds", page+1)
 		}
@@ -78,7 +74,7 @@ func renderIPPPDFToPWG(ctx context.Context, pdfData []byte, attrs map[string]str
 			return nil, fmt.Errorf("PDF page %d at supported %ddpi exceeds the %d-pixel PWG render limit; configure a Windows spooler queue for large-format printing", page+1, dpi, maxPDFRasterPixels)
 		}
 		img, cleanup, err := renderPageWithContext(ctx, instance, &requests.RenderPageInPixels{
-			Page:   requests.Page{ByIndex: &requests.PageByIndex{Document: pdf.Document, Index: page}},
+			Page:   requests.Page{ByIndex: &requests.PageByIndex{Document: head.document, Index: page}},
 			Width:  int(w),
 			Height: int(h),
 		}, &pwgKilled)
@@ -91,7 +87,7 @@ func renderIPPPDFToPWG(ctx context.Context, pdfData []byte, attrs map[string]str
 			}
 			return nil, fmt.Errorf("PDFium returned no bitmap for page %d", page+1)
 		}
-		encodeErr := encodePWGPage(&result, img, dpi, pages.PageCount, size.Width, size.Height, color)
+		encodeErr := encodePWGPage(&result, img, dpi, head.pageCount, size.width, size.height, color)
 		if cleanup != nil {
 			cleanup()
 		}
