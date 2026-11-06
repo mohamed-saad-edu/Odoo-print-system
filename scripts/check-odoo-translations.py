@@ -339,6 +339,8 @@ def main() -> int:
     stale = sorted(catalog_ids - set(terms))
     if stale:
         fail(f"{len(stale)} catalog entr(y/ies) match no source term, e.g. {stale[0]!r}")
+        for msgid in stale:
+            fail(f"stale Odoo translation entry: {msgid!r}")
 
     if len(catalog) != len(catalog_ids):
         fail(f"{len(catalog) - len(catalog_ids)} duplicate message id(s)")
