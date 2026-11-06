@@ -678,18 +678,18 @@ func printerConfigFromDeviceInfo(di printer.DeviceInfo) config.PrinterConfig {
 	// degrades direct-USB printers to VID 0/PID 0.
 	enabled := di.Enabled
 	return config.PrinterConfig{
-		ID:              di.ID,
-		Name:            di.Name,
-		Type:            di.ConnectionType,
-		Endpoint:        di.Endpoint,
-		Protocol:        di.Protocol,
-		SpoolerName:     di.SpoolerName,
-		PrinterType:     di.PrinterType,
-		USBVID:          di.USBVID,
-		USBPID:          di.USBPID,
-		USBSerial:       di.USBSerial,
-		Capabilities:    di.Capabilities,
-		Enabled:         &enabled,
+		ID:           di.ID,
+		Name:         di.Name,
+		Type:         di.ConnectionType,
+		Endpoint:     di.Endpoint,
+		Protocol:     di.Protocol,
+		SpoolerName:  di.SpoolerName,
+		PrinterType:  di.PrinterType,
+		USBVID:       di.USBVID,
+		USBPID:       di.USBPID,
+		USBSerial:    di.USBSerial,
+		Capabilities: di.Capabilities,
+		Enabled:      &enabled,
 	}
 }
 
@@ -2815,7 +2815,7 @@ func (a *Agent) printerStatusPayloadWithSharingResult(sharing localPrinterSharin
 		}
 		c := printer.ClassifyDeviceInfo(printer.DeviceInfo{
 			Name: pc.Name, PrinterType: pc.PrinterType,
-			SpoolerName:     pc.SpoolerName, Endpoint: pc.Endpoint, ConnectionType: pc.NormalizedType(),
+			SpoolerName: pc.SpoolerName, Endpoint: pc.Endpoint, ConnectionType: pc.NormalizedType(),
 			Protocol: pc.NormalizedProtocolOrUnknown(), Capabilities: pc.Capabilities,
 		})
 		if c.IsVirtual || c.Class == printer.ClassRedirected {

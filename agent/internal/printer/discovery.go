@@ -927,20 +927,20 @@ func discoverFromConfig(cfg *config.Config) []DeviceInfo {
 		}
 		caps["registration_source"] = "config"
 		di := DeviceInfo{
-			ID:              pc.ID,
-			Name:            pc.Name,
-			DisplayName:     pc.Name,
-			PrinterType:     declaredType,
-			ConnectionType:  pc.NormalizedType(),
-			Protocol:        pc.NormalizedProtocolOrUnknown(),
-			Endpoint:        pc.Endpoint,
-			SpoolerName:     pc.SpoolerName,
-			USBVID:          pc.USBVID,
-			USBPID:          pc.USBPID,
-			USBSerial:       pc.USBSerial,
-			Status:          "unknown",
-			Enabled:         pc.IsEnabled(),
-			Type:            pc.NormalizedType(),
+			ID:             pc.ID,
+			Name:           pc.Name,
+			DisplayName:    pc.Name,
+			PrinterType:    declaredType,
+			ConnectionType: pc.NormalizedType(),
+			Protocol:       pc.NormalizedProtocolOrUnknown(),
+			Endpoint:       pc.Endpoint,
+			SpoolerName:    pc.SpoolerName,
+			USBVID:         pc.USBVID,
+			USBPID:         pc.USBPID,
+			USBSerial:      pc.USBSerial,
+			Status:         "unknown",
+			Enabled:        pc.IsEnabled(),
+			Type:           pc.NormalizedType(),
 			// Printers declared in config.yaml are explicit operator intent:
 			// they stay visible even when no transport can be proven, because
 			// the operator typed the endpoint by hand.
@@ -1414,18 +1414,18 @@ func printerConfigForTest(cfg *config.Config, target *DeviceInfo) config.Printer
 		}
 		enabled := target.Enabled
 		pc = config.PrinterConfig{
-			ID:              target.ID,
-			Name:            target.Name,
-			Type:            target.ConnectionType,
-			Endpoint:        target.Endpoint,
-			Protocol:        target.Protocol,
-			SpoolerName:     target.SpoolerName,
-			PrinterType:     target.PrinterType,
-			USBVID:          target.USBVID,
-			USBPID:          target.USBPID,
-			USBSerial:       target.USBSerial,
-			Capabilities:    caps,
-			Enabled:         &enabled,
+			ID:           target.ID,
+			Name:         target.Name,
+			Type:         target.ConnectionType,
+			Endpoint:     target.Endpoint,
+			Protocol:     target.Protocol,
+			SpoolerName:  target.SpoolerName,
+			PrinterType:  target.PrinterType,
+			USBVID:       target.USBVID,
+			USBPID:       target.USBPID,
+			USBSerial:    target.USBSerial,
+			Capabilities: caps,
+			Enabled:      &enabled,
 		}
 	}
 	if target.ConnectionType == "spooler" && pc.SpoolerName == "" {

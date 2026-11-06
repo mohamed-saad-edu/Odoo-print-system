@@ -891,19 +891,19 @@ func RegisterManual(registryPath string, info DeviceInfo) ([]DeviceInfo, error) 
 	// construction or Gateway heartbeat validation.
 	enabled := info.Enabled
 	cfg := config.PrinterConfig{
-		ID:              info.ID,
-		Name:            info.Name,
-		Type:            info.ConnectionType,
-		ConnectionType:  info.ConnectionType,
-		Endpoint:        info.Endpoint,
-		Protocol:        info.Protocol,
-		SpoolerName:     info.SpoolerName,
-		PrinterType:     info.PrinterType,
-		USBVID:          info.USBVID,
-		USBPID:          info.USBPID,
-		USBSerial:       info.USBSerial,
-		Capabilities:    info.Capabilities,
-		Enabled:         &enabled,
+		ID:             info.ID,
+		Name:           info.Name,
+		Type:           info.ConnectionType,
+		ConnectionType: info.ConnectionType,
+		Endpoint:       info.Endpoint,
+		Protocol:       info.Protocol,
+		SpoolerName:    info.SpoolerName,
+		PrinterType:    info.PrinterType,
+		USBVID:         info.USBVID,
+		USBPID:         info.USBPID,
+		USBSerial:      info.USBSerial,
+		Capabilities:   info.Capabilities,
+		Enabled:        &enabled,
 	}
 	if err := config.ValidatePrinterConfig(cfg); err != nil {
 		return nil, fmt.Errorf("printer %q: invalid manual configuration: %w", info.ID, err)
