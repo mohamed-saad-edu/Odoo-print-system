@@ -46,20 +46,6 @@ func pageBreakFixture(t *testing.T) ([]byte, *Geometry) {
 	return encoded.Bytes(), g
 }
 
-func pageReceiptJPEG(t *testing.T, width, height int) []byte {
-	t.Helper()
-	source := image.NewGray(image.Rect(0, 0, width, height))
-	draw.Draw(source, source.Bounds(), image.NewUniform(color.White), image.Point{}, draw.Src)
-	for _, y := range []int{12, height - 12} {
-		draw.Draw(source, image.Rect(12, y, width-12, y+5), image.NewUniform(color.Black), image.Point{}, draw.Src)
-	}
-	var encoded bytes.Buffer
-	if err := jpeg.Encode(&encoded, source, &jpeg.Options{Quality: 95}); err != nil {
-		t.Fatal(err)
-	}
-	return encoded.Bytes()
-}
-
 func TestReceiptSafePageBreaksRetainContiguousRowsAndDriverScale(t *testing.T) {
 	data, g := pageBreakFixture(t)
 	source, err := jpeg.Decode(bytes.NewReader(data))
