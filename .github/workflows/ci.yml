@@ -544,10 +544,11 @@ jobs:
           # The exception list is bound to the immutable Dockerfile and
           # Python dependency locks that were reviewed. Any change requires
           # a new security review rather than silently inheriting exceptions.
-          test "$(git hash-object Dockerfile.odoo-hardened)" = "e0b53faaffac09d7473569151a1e1ed13d133a84"
+          test "$(git hash-object Dockerfile.odoo-hardened)" = "c997c4a856ec78857df1ed8c91115db470f81845"
           test "$(git hash-object docs/runtime-hardening/requirements-python312-linux-x86_64.lock)" = "b734dae7b1f977b4cf0c301ac15482ea94a629f7"
           test "$(git hash-object docs/runtime-hardening/build-tools.lock)" = "96b65dba00600b2c78b4af0ff5eaf2c83365c672"
           test "$(git hash-object scripts/package-pillow-wheel-as-deb.py)" = "8debfa06e5117e0e35671bdd4ce37cae700ef603"
+          test "$(git hash-object scripts/apply-perl-podlators-security-fix.py)" = "2456807a457ef30c3842c817dd83d806463b5e96"
           test -s odoo-hardened.sarif
           python3 scripts/check-trivy-baseline.py odoo-hardened.sarif yaseir-odoo-hardened:review-20261105
       - name: Retain exact Odoo image evidence

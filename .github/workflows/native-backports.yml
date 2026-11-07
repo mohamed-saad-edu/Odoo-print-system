@@ -29,10 +29,39 @@ jobs:
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # v1.98.1
         with:
           toolchain: 1.98.1
-      - name: Native GLib test prerequisites
+      - name: Refresh Ubuntu package indexes (bounded primary mirror)
+        id: apt_update_primary
+        timeout-minutes: 4
+        continue-on-error: true
         run: |
-          sudo apt-get update
-          sudo apt-get install --no-install-recommends -y libglib2.0-dev pkg-config
+          timeout --signal=TERM --kill-after=10s 180s \
+            sudo apt-get -o Acquire::Retries=0 \
+              -o Acquire::http::Timeout=15 \
+              -o Acquire::https::Timeout=15 update
+      - name: Retry Ubuntu package indexes without the Azure mirror
+        if: steps.apt_update_primary.outcome != 'success'
+        timeout-minutes: 4
+        run: |
+          # GitHub-hosted Ubuntu 24.04 images can stall while trying this mirror.
+          # Keep the remaining official Ubuntu mirrors and retry once with a hard bound.
+          sudo sed -i '/azure\.archive\.ubuntu\.com/d' /etc/apt/apt-mirrors.txt
+          test -s /etc/apt/apt-mirrors.txt
+          if grep -q 'azure\.archive\.ubuntu\.com' /etc/apt/apt-mirrors.txt; then
+            echo "::error::Azure Ubuntu mirror is still present after removal"
+            exit 1
+          fi
+          timeout --signal=TERM --kill-after=10s 180s \
+            sudo apt-get -o Acquire::Retries=0 \
+              -o Acquire::http::Timeout=15 \
+              -o Acquire::https::Timeout=15 update
+      - name: Install native GLib test prerequisites
+        timeout-minutes: 5
+        run: |
+          timeout --signal=TERM --kill-after=10s 240s \
+            sudo apt-get -o Acquire::Retries=0 \
+              -o Acquire::http::Timeout=15 \
+              -o Acquire::https::Timeout=15 \
+              install --no-install-recommends -y libglib2.0-dev pkg-config
       - name: Verify backport provenance and resolved local graph
         run: python3 scripts/check-native-backports.py
       - name: Optimized GLib behavior and upstream macro tests
