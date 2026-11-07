@@ -4,13 +4,14 @@ import { spawnSync } from "node:child_process";
 
 const read = (path: string) => readFileSync(path, "utf8");
 describe("V4 HTTPS staging upgrade safety", () => {
-  it("resolves every service build to the repository root, including hardened Caddy/PostgreSQL", () => {
+  it("uses SHA-addressed GHCR images for every staging service and never builds on the VPS", () => {
     const c = read("deploy/domain-test/docker-compose.yml");
-    const builds = c.match(/^    build:$/gm) ?? [];
-    const contexts = c.match(/^      context: \.\.\/\.\.$/gm) ?? [];
-    expect(builds).toHaveLength(6);
-    expect(contexts).toHaveLength(builds.length);
-    expect(c).not.toMatch(/^      context: \.$/m);
+    expect((c.match(/^    image: /gm) ?? [])).toHaveLength(6);
+    expect(c).not.toMatch(/^    build:/m);
+    expect(c).toContain("ghcr.io/mohamed-saad-edu/yaseir-postgres:");
+    expect(c).toContain("ghcr.io/mohamed-saad-edu/yaseir-gateway:");
+    expect(c).toContain("ghcr.io/mohamed-saad-edu/yaseir-caddy:");
+    expect(c.split("image: ghcr.io/mohamed-saad-edu/yaseir-gateway:").length - 1).toBe(4);
     expect(readFileSync("Dockerfile", "utf8")).toContain("FROM");
     expect(readFileSync("Dockerfile.secure-images", "utf8")).toContain("FROM");
   });
@@ -38,10 +39,13 @@ describe("V4 HTTPS staging upgrade safety", () => {
     expect(spawnSync("bash", ["-n", "deploy/domain-test/setup-domain-test.sh"]).status).toBe(0);
     for(const required of ["docker volume inspect", "pg_dump -Fc", "pg_restore --list", "sha256sum", "up --no-deps database_roles", "up --no-deps migrate", "up --no-deps database_verify"]) expect(s).toContain(required);
     expect(s.indexOf("pg_restore --list")).toBeLessThan(s.indexOf("compose stop gateway"));
-    expect(s).toContain("export COMPOSE_PARALLEL_LIMIT=1");
-    expect(s).toContain("for service in postgres caddy gateway database_roles migrate database_verify; do");
-    expect(s).toContain('compose build "$service"');
-    expect(s.indexOf("for service in postgres caddy gateway database_roles migrate database_verify; do")).toBeLessThan(s.indexOf("compose stop gateway"));
+    expect(s).toContain("git fetch --quiet origin refs/heads/test/http-server-ready");
+    expect(s).toContain("YASEIR_IMAGE_TAG_OVERRIDE");
+    expect(s).toContain("compose pull postgres gateway caddy");
+    expect(s).not.toContain('compose build "$service"');
+    expect(s).not.toContain("COMPOSE_PARALLEL_LIMIT");
+    expect(s.indexOf("compose pull postgres gateway caddy")).toBeLessThan(s.indexOf("compose stop gateway"));
+    expect(s).toContain("docker buildx prune --all");
     expect(s).toContain("mounted_bootstrap");
     expect(s).toContain("Authenticated staging DB preflight failed");
     for (const capability of ["CHOWN", "FOWNER", "DAC_OVERRIDE"]) expect(s).toContain("--cap-add " + capability);
@@ -61,6 +65,22 @@ describe("V4 HTTPS staging upgrade safety", () => {
     expect(s).not.toContain("reset-staging-workspace.sh");
     expect(read("deploy/domain-test/reset-staging-workspace.sh")).toContain("exit 2");
     expect(read("deploy/domain-test/renew-expired-trial.sql")).toContain("RAISE EXCEPTION");
+  });
+  it("bounds staging logs and enables Next.js Webpack memory optimization", () => {
+    const compose = read("deploy/domain-test/docker-compose.yml");
+    expect(compose.match(/^    logging:$/gm)).toHaveLength(6);
+    expect(compose).toContain("driver: local");
+    expect(compose).toContain('max-size: "10m"');
+    expect(compose).toContain('max-file: "3"');
+    expect(read("next.config.ts")).toContain("webpackMemoryOptimizations: true");
+  });
+  it("builds with GitHub Actions cache and pushes the exact runtime-tested SHA images", () => {
+    const workflow = read(".github/workflows/docker.yml");
+    expect(workflow).toContain("docker/build-push-action@");
+    expect(workflow).toContain("cache-to: type=gha,mode=max,scope=yaseir-gateway");
+    expect(workflow).toContain("docker compose up --no-build -d postgres");
+    expect(workflow).toContain("Push tested immutable staging image tags");
+    expect(workflow).toContain("docker push \"ghcr.io/mohamed-saad-edu/${image}:${RELEASE_SHA}\"");
   });
   it("retains HTTPS trusted proxy, one workspace and password-only V4 manual plans", () => {
     const c = read("deploy/domain-test/docker-compose.yml");

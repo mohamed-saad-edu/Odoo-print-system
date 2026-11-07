@@ -187,14 +187,31 @@ jobs:
           # remain required on main and explicit release/merge-queue runs.
 
   docker-build-runtime:
-    needs: changes
-    if: github.event_name != 'pull_request' && needs.changes.outputs.docker == 'true'
-    # Keep an in-progress main runtime build and smoke result tied to its SHA.
+    needs:
+      - changes
+      - docker-image-scan
+    if: >-
+      ${{
+        always() &&
+        github.event_name != 'pull_request' &&
+        needs.changes.result == 'success' &&
+        needs.changes.outputs.docker == 'true' &&
+        (
+          needs.docker-image-scan.result == 'success' ||
+          (needs.docker-image-scan.result == 'skipped' && needs.changes.outputs.docker_scan != 'true')
+        )
+      }}
+    # Runtime acceptance must pass the image-security scan when that gate is selected.
     concurrency:
       group: docker-runtime-${{ github.event_name == 'pull_request' && github.ref || github.event_name == 'push' && github.sha || github.run_id }}
       cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 35
+    permissions:
+      contents: read
+      packages: write
+    env:
+      YASEIR_DEPLOYMENT_ID: ${{ github.sha }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -202,17 +219,57 @@ jobs:
       - name: Validate Compose configuration
         run: python3 scripts/check-compose-build-contexts.py
 
-      - name: Build pinned Compose images
-        run: docker compose build
+      - name: Set up Buildx with GitHub Actions cache support
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+
+      - name: Build Gateway image for Compose runtime tests
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/amd64
+          push: false
+          load: true
+          build-args: |
+            YASEIR_DEPLOYMENT_ID=${{ github.sha }}
+          tags: yaseir-gateway:${{ github.sha }}
+          cache-from: type=gha,scope=yaseir-gateway
+          cache-to: type=gha,mode=max,scope=yaseir-gateway
+
+      - name: Build hardened PostgreSQL image for Compose runtime tests
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
+        with:
+          context: .
+          file: Dockerfile.secure-images
+          target: postgres
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: yaseir-postgres:${{ github.sha }}
+          cache-from: type=gha,scope=yaseir-postgres
+          cache-to: type=gha,mode=max,scope=yaseir-postgres
+
+      - name: Build hardened Caddy image for Compose runtime tests
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
+        with:
+          context: .
+          file: Dockerfile.secure-images
+          target: caddy
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: yaseir-caddy:${{ github.sha }}
+          cache-from: type=gha,scope=yaseir-caddy
+          cache-to: type=gha,mode=max,scope=yaseir-caddy
 
       - name: Start stack
         run: |
           set -euo pipefail
           # Use the identical upstream sha256-pinned Docker Hub images as
           # production. Never retry a build/runtime error as registry failure.
-          docker compose up -d postgres
-          docker compose up migrate
-          docker compose up -d gateway caddy
+          docker compose up --no-build -d postgres
+          docker compose up --no-build migrate
+          docker compose up --no-build -d gateway caddy
 
       - name: Verify migration and gateway health
         shell: bash
@@ -445,6 +502,37 @@ jobs:
             exit 1
           fi
           docker compose exec -T postgres rm -f /tmp/verify.dump /tmp/verify.dump.sha256 /tmp/verify.source_count /tmp/verify.restored_count
+
+      - name: Publish the exact tested images to GHCR
+        if: github.event_name == 'push' && github.ref == 'refs/heads/test/http-server-ready'
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push tested immutable staging image tags
+        if: github.event_name == 'push' && github.ref == 'refs/heads/test/http-server-ready'
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          for image in yaseir-gateway yaseir-postgres yaseir-caddy; do
+            docker tag "${image}:${RELEASE_SHA}" "ghcr.io/mohamed-saad-edu/${image}:${RELEASE_SHA}"
+            docker push "ghcr.io/mohamed-saad-edu/${image}:${RELEASE_SHA}"
+          done
+
+      - name: Verify published immutable registry manifests
+        if: github.event_name == 'push' && github.ref == 'refs/heads/test/http-server-ready'
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          for image in yaseir-gateway yaseir-postgres yaseir-caddy; do
+            docker buildx imagetools inspect "ghcr.io/mohamed-saad-edu/${image}:${RELEASE_SHA}" >/dev/null
+          done
 
       - name: Show logs on failure
         if: failure()

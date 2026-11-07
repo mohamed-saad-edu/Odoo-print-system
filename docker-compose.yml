@@ -1,5 +1,11 @@
 services:
   postgres:
+    image: yaseir-postgres:${YASEIR_DEPLOYMENT_ID:-local}
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "3"
     build:
       context: .
       dockerfile: Dockerfile.secure-images
@@ -24,11 +30,19 @@ services:
       - printer_backend
 
   database_roles:
+    image: yaseir-gateway:${YASEIR_DEPLOYMENT_ID:-local}
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "3"
     labels:
       com.yaseir.release: ${YASEIR_DEPLOYMENT_ID:-}
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        YASEIR_DEPLOYMENT_ID: ${YASEIR_DEPLOYMENT_ID:-}
     restart: "no"
     depends_on:
       postgres:
@@ -58,11 +72,19 @@ services:
       - printer_backend
 
   migrate:
+    image: yaseir-gateway:${YASEIR_DEPLOYMENT_ID:-local}
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "3"
     labels:
       com.yaseir.release: ${YASEIR_DEPLOYMENT_ID:-}
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        YASEIR_DEPLOYMENT_ID: ${YASEIR_DEPLOYMENT_ID:-}
     restart: "no"
     depends_on:
       database_roles:
@@ -82,11 +104,19 @@ services:
       - printer_backend
 
   database_verify:
+    image: yaseir-gateway:${YASEIR_DEPLOYMENT_ID:-local}
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "3"
     labels:
       com.yaseir.release: ${YASEIR_DEPLOYMENT_ID:-}
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        YASEIR_DEPLOYMENT_ID: ${YASEIR_DEPLOYMENT_ID:-}
     restart: "no"
     depends_on:
       migrate:
@@ -105,6 +135,12 @@ services:
       - printer_backend
 
   gateway:
+    image: yaseir-gateway:${YASEIR_DEPLOYMENT_ID:-local}
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "3"
     build:
       context: .
       dockerfile: Dockerfile
@@ -165,6 +201,12 @@ services:
       - printer_backend
 
   caddy:
+    image: yaseir-caddy:${YASEIR_DEPLOYMENT_ID:-local}
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "3"
     build:
       context: .
       dockerfile: Dockerfile.secure-images

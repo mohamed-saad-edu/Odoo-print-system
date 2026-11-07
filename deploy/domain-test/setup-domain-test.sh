@@ -29,6 +29,21 @@ upsert_env() {
   else printf '%s=%s\n' "$key" "$value" >> "$ENV_FILE"; fi
 }
 ensure_env() { [[ -n "$(get_env_value "$1")" ]] || upsert_env "$1" "$2"; }
+
+# Resolve the immutable image built and published for the remote staging branch.
+# A deliberate full-SHA override is supported for rollback; clear it to resume latest.
+git fetch --quiet origin refs/heads/test/http-server-ready
+REMOTE_DEPLOYMENT_SHA="$(git rev-parse FETCH_HEAD)"
+[[ "$REMOTE_DEPLOYMENT_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "Could not resolve the remote staging release SHA" >&2; exit 2; }
+IMAGE_TAG_OVERRIDE="$(get_env_value YASEIR_IMAGE_TAG_OVERRIDE)"
+if [[ -n "$IMAGE_TAG_OVERRIDE" ]]; then
+  [[ "$IMAGE_TAG_OVERRIDE" =~ ^[0-9a-f]{40}$ ]] || { echo "YASEIR_IMAGE_TAG_OVERRIDE must be a full 40-character commit SHA" >&2; exit 2; }
+  DEPLOYMENT_SHA="$IMAGE_TAG_OVERRIDE"
+else
+  DEPLOYMENT_SHA="$REMOTE_DEPLOYMENT_SHA"
+fi
+upsert_env YASEIR_IMAGE_TAG "$DEPLOYMENT_SHA"
+upsert_env YASEIR_DEPLOYMENT_ID "$DEPLOYMENT_SHA"
 # Preserve the prior HTTPS staging volume and bootstrap identity.
 old_volume="$(get_env_value STAGING_PG_VOLUME)"
 [[ -n "$old_volume" ]] || old_volume="$(get_env_value HTTP_TEST_VOLUME_NAME)"
@@ -63,7 +78,7 @@ upsert_env COOKIE_SECURE 1
 upsert_env TRUST_PROXY 1
 upsert_env YASEIR_STAGING_FIXTURES_ENABLED 1
 upsert_env YASEIR_STAGING_SINGLE_WORKSPACE 1
-upsert_env YASEIR_DEPLOYMENT_ID "$(git rev-parse HEAD)"
+# YASEIR_DEPLOYMENT_ID and YASEIR_IMAGE_TAG are pinned to the same registry SHA above.
 # Old STRIPE_PLAN_CATALOG is intentionally NOT forwarded by the V4 Gateway.
 # Manual plans only: provisioning a plan never activates a customer.
 DEFAULT_MANUAL_PLANS='[{"id":"http-test","name":"Staging Manual","description":"Staging-only plan; owner activation required","monthlyQuota":1000},{"id":"go","name":"Go","description":"Staging manual plan","monthlyQuota":2000}]'
@@ -89,17 +104,16 @@ compose exec -T postgres sh -c 'exec pg_dump -Fc -U "$POSTGRES_USER" -d "$POSTGR
 compose exec -T postgres sh -c 'exec pg_restore --list' < "$ARCHIVE" >/dev/null
 (cd "$BACKUP_DIR" && sha256sum "$(basename "$ARCHIVE")" > "$(basename "$ARCHIVE").sha256")
 echo "Verified private backup: $ARCHIVE"
-# Prebuild images while the old Gateway is still available; only the actual
-# role/migration cutover needs a maintenance interval.
-echo "Prebuilding V4 images one service at a time before stopping the existing staging Gateway..."
-# Never run six heavyweight BuildKit builds in parallel on the small Azure VM.
-# Each build must finish successfully before the next begins. The existing
-# containers, DB and volumes remain untouched until every image is ready.
-export COMPOSE_PARALLEL_LIMIT=1
-for service in postgres caddy gateway database_roles migrate database_verify; do
-  echo "Building staging image: $service (parallelism=1)"
-  compose build "$service"
-done
+# The three immutable runtime images were built, smoke-tested and published by
+# GitHub Actions. Pull all images before stopping the currently serving Gateway.
+# A missing image or GHCR authorization failure aborts here with services online.
+echo "Pulling pre-tested immutable staging images for $DEPLOYMENT_SHA..."
+if ! compose pull postgres gateway caddy; then
+  echo "Unable to pull the tested GHCR images. Authenticate this host with:" >&2
+  echo "  docker login ghcr.io --username YOUR_GITHUB_USERNAME" >&2
+  echo "using a token with read:packages, then rerun this script." >&2
+  exit 1
+fi
 echo "Stopping ONLY staging Gateway before applying least-privilege database roles..."
 compose stop gateway
 compose up -d postgres
@@ -127,6 +141,18 @@ for _ in $(seq 1 90); do
 done
 [[ "$ready" == 1 ]] || { echo "Staging HTTPS checks failed; original volume/backups are preserved" >&2; compose ps; exit 1; }
 compose run --rm --no-deps gateway node --import tsx scripts/provision-plans.ts
+
+# Image builds no longer run on this VPS. Bound and reclaim only BuildKit cache;
+# this does not delete images used by containers, named volumes, or PostgreSQL data.
+if docker buildx version >/dev/null 2>&1; then
+  echo "Bounding residual local BuildKit cache (images and volumes are untouched)..."
+  if ! docker buildx prune --all --max-used-space 512mb --reserved-space 256mb --min-free-space 6gb --force; then
+    echo "WARNING: BuildKit cache cleanup failed; the deployment is already healthy." >&2
+  fi
+else
+  echo "WARNING: Docker Buildx unavailable; skipped local build-cache pruning." >&2
+fi
+df -h /
 echo "HTTPS staging updated in place: https://$DOMAIN"
 echo "No database reset, self-signup, billing activation, or production deployment performed."
 echo "Manual subscription approval is performed by the Platform Owner."

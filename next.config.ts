@@ -16,6 +16,8 @@ const nextConfig: NextConfig = {
   // Never put an encryption key or secret into this public release identifier.
   ...(deploymentId ? { deploymentId } : {}),
   experimental: {
+    // Reduce peak memory during Webpack production builds; compilation may be slightly slower.
+    webpackMemoryOptimizations: true,
     serverActions: {
       bodySizeLimit: "8mb",
     },

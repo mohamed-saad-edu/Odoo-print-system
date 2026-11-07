@@ -1,9 +1,11 @@
 services:
   postgres:
-    build:
-      context: ../..
-      dockerfile: Dockerfile.secure-images
-      target: postgres
+    image: ghcr.io/mohamed-saad-edu/yaseir-postgres:${YASEIR_IMAGE_TAG:?YASEIR_IMAGE_TAG must be a full release SHA}
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "3"
     restart: unless-stopped
     environment:
       TZ: UTC
@@ -24,9 +26,12 @@ services:
       - yasser_domain_test
 
   database_roles:
-    build:
-      context: ../..
-      dockerfile: Dockerfile
+    image: ghcr.io/mohamed-saad-edu/yaseir-gateway:${YASEIR_IMAGE_TAG:?YASEIR_IMAGE_TAG must be a full release SHA}
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "3"
     restart: "no"
     depends_on:
       postgres:
@@ -56,9 +61,12 @@ services:
       - yasser_domain_test
 
   migrate:
-    build:
-      context: ../..
-      dockerfile: Dockerfile
+    image: ghcr.io/mohamed-saad-edu/yaseir-gateway:${YASEIR_IMAGE_TAG:?YASEIR_IMAGE_TAG must be a full release SHA}
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "3"
     restart: "no"
     depends_on:
       database_roles:
@@ -78,9 +86,12 @@ services:
       - yasser_domain_test
 
   database_verify:
-    build:
-      context: ../..
-      dockerfile: Dockerfile
+    image: ghcr.io/mohamed-saad-edu/yaseir-gateway:${YASEIR_IMAGE_TAG:?YASEIR_IMAGE_TAG must be a full release SHA}
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "3"
     restart: "no"
     depends_on:
       migrate:
@@ -99,13 +110,12 @@ services:
       - yasser_domain_test
 
   gateway:
-    build:
-      context: ../..
-      dockerfile: Dockerfile
-      args:
-        # Public release identifier only, NEVER a secret. Supply the same
-        # immutable SHA at build and runtime for Next.js version-skew recovery.
-        YASEIR_DEPLOYMENT_ID: ${YASEIR_DEPLOYMENT_ID:-}
+    image: ghcr.io/mohamed-saad-edu/yaseir-gateway:${YASEIR_IMAGE_TAG:?YASEIR_IMAGE_TAG must be a full release SHA}
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "3"
     restart: unless-stopped
     stop_grace_period: 60s
     depends_on:
@@ -166,10 +176,12 @@ services:
       - yasser_domain_test
 
   caddy:
-    build:
-      context: ../..
-      dockerfile: Dockerfile.secure-images
-      target: caddy
+    image: ghcr.io/mohamed-saad-edu/yaseir-caddy:${YASEIR_IMAGE_TAG:?YASEIR_IMAGE_TAG must be a full release SHA}
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "3"
     restart: unless-stopped
     user: "10001:10001"
     cap_drop:
