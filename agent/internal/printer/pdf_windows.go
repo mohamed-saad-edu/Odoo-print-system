@@ -14,6 +14,7 @@ import (
 	"unsafe"
 
 	pdfium "github.com/klippa-app/go-pdfium"
+	"github.com/klippa-app/go-pdfium/references"
 	"github.com/klippa-app/go-pdfium/requests"
 	"github.com/klippa-app/go-pdfium/responses"
 	"golang.org/x/sys/windows"
@@ -284,6 +285,64 @@ func gdiDeviceDiagnostic(hdc uintptr, err error) error {
 		session, windows.GetCurrentThreadId())
 }
 
+// pdfPageExtent is one page's size in PDF points as measured by PDFium.
+type pdfPageExtent struct {
+	width  float64
+	height float64
+}
+
+// pdfDocumentHead is the product of the cancellable PDFium prepare step:
+// an opened document, its page count, and every page's size.
+type pdfDocumentHead struct {
+	document  references.FPDF_DOCUMENT
+	pageCount int
+	pageSizes []pdfPageExtent
+	close     func()
+}
+
+// openPDFDocumentHead opens a PDF and measures it (page count + page
+// sizes) through awaitPDFRenderResult, the same cancellable handoff the
+// page renderer uses. OpenDocument parses the whole file and can stall
+// inside PDFium on a malformed document; invoked synchronously it would
+// hold the single embedded PDFium worker hostage past the job context's
+// deadline and wedge every later PDF job behind it. On success the
+// caller owns the document and must call head.close(); on failure the
+// helper has already closed whatever was opened. Page sizes are only
+// measured when the count is inside the callers' accepted range; the
+// callers' own count checks (and their exact error texts) run first.
+func openPDFDocumentHead(ctx context.Context, instance pdfium.Pdfium, data []byte, killed *pdfiumKillTracker) (pdfDocumentHead, error) {
+	release := func(r pdfDocumentHead) {
+		if r.close != nil && !killed.killed {
+			r.close()
+		}
+	}
+	return awaitPDFRenderResult(ctx, func() (pdfDocumentHead, error) {
+		var head pdfDocumentHead
+		doc, err := instance.OpenDocument(&requests.OpenDocument{File: &data})
+		if err != nil {
+			return head, fmt.Errorf("open PDF document: %w", err)
+		}
+		head.document = doc.Document
+		head.close = func() { _, _ = instance.FPDF_CloseDocument(&requests.FPDF_CloseDocument{Document: doc.Document}) }
+		count, err := instance.FPDF_GetPageCount(&requests.FPDF_GetPageCount{Document: doc.Document})
+		if err != nil || count == nil {
+			return head, fmt.Errorf("read PDF page count: %v", err)
+		}
+		head.pageCount = count.PageCount
+		if head.pageCount >= 1 && head.pageCount <= maxPDFPages {
+			head.pageSizes = make([]pdfPageExtent, head.pageCount)
+			for page := 0; page < head.pageCount; page++ {
+				size, err := instance.FPDF_GetPageSizeByIndex(&requests.FPDF_GetPageSizeByIndex{Document: doc.Document, Index: page})
+				if err != nil || size == nil {
+					return head, fmt.Errorf("read PDF page %d dimensions: %v", page+1, err)
+				}
+				head.pageSizes[page] = pdfPageExtent{width: size.Width, height: size.Height}
+			}
+		}
+		return head, nil
+	}, release, func() { killed.kill(instance) })
+}
+
 func renderPageWithContext(ctx context.Context, instance pdfium.Pdfium, request *requests.RenderPageInPixels, killed *pdfiumKillTracker) (*image.RGBA, func(), error) {
 	rendered, err := awaitPDFRenderResult(ctx,
 		func() (*responses.RenderPageInPixels, error) { return instance.RenderPageInPixels(request) },
@@ -398,25 +457,22 @@ func renderAndPrintPDFWithPDFiumResultObserved(ctx context.Context, printerName 
 		}
 	}()
 
-	doc, err := instance.OpenDocument(&requests.OpenDocument{File: &data})
+	head, err := openPDFDocumentHead(ctx, instance, data, &killed)
 	if err != nil {
 		return fmt.Errorf("open PDF with embedded PDFium: %w", err)
 	}
-	defer instance.FPDF_CloseDocument(&requests.FPDF_CloseDocument{Document: doc.Document})
+	defer head.close()
+	doc := head.document
 
-	pages, err := instance.FPDF_GetPageCount(&requests.FPDF_GetPageCount{Document: doc.Document})
-	if err != nil {
-		return fmt.Errorf("read PDF page count: %w", err)
-	}
-	if pages.PageCount <= 0 {
+	if head.pageCount <= 0 {
 		return fmt.Errorf("PDF contains no printable pages")
 	}
-	if pages.PageCount > maxPDFPages {
-		return fmt.Errorf("PDF page count %d exceeds embedded renderer limit %d", pages.PageCount, maxPDFPages)
+	if head.pageCount > maxPDFPages {
+		return fmt.Errorf("PDF page count %d exceeds embedded renderer limit %d", head.pageCount, maxPDFPages)
 	}
 	receipt, _ := ctx.Value(generatedReceiptPDFKey{}).(bool)
 	imageGeometry, _ := ctx.Value(imageGeometryKey{}).(*Geometry)
-	if receipt && pages.PageCount != 1 {
+	if receipt && head.pageCount != 1 {
 		return fmt.Errorf("generated receipt PDF must contain exactly one page")
 	}
 	type pagePlan struct {
@@ -425,7 +481,7 @@ func renderAndPrintPDFWithPDFiumResultObserved(ctx context.Context, printerName 
 		mode        []byte
 		sourceIndex int
 	}
-	plans := make([]pagePlan, pages.PageCount)
+	plans := make([]pagePlan, head.pageCount)
 	modes := make(map[pdfPaper][]byte)
 	var currentMode []byte
 	currentModeCounted := false
@@ -434,14 +490,11 @@ func renderAndPrintPDFWithPDFiumResultObserved(ctx context.Context, printerName 
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		size, err := instance.FPDF_GetPageSizeByIndex(&requests.FPDF_GetPageSizeByIndex{Document: doc.Document, Index: pageIndex})
-		if err != nil || size == nil {
-			return fmt.Errorf("read PDF page %d dimensions: %v", pageIndex+1, err)
-		}
-		if err := validatePDFPageDimensions(size.Width, size.Height); err != nil {
+		size := head.pageSizes[pageIndex]
+		if err := validatePDFPageDimensions(size.width, size.height); err != nil {
 			return fmt.Errorf("PDF page %d: %w", pageIndex+1, err)
 		}
-		paper, paperErr := pdfPaperForPoints(size.Width, size.Height)
+		paper, paperErr := pdfPaperForPoints(size.width, size.height)
 		mode, ok := modes[paper]
 		if !ok {
 			var usedCurrent bool
@@ -479,9 +532,9 @@ func renderAndPrintPDFWithPDFiumResultObserved(ctx context.Context, printerName 
 			}
 			modes[paper] = mode
 		}
-		plan := pagePlan{pdfPagePlan: pdfPagePlan{width: size.Width, height: size.Height}, paper: paper, mode: mode, sourceIndex: pageIndex}
+		plan := pagePlan{pdfPagePlan: pdfPagePlan{width: size.width, height: size.height}, paper: paper, mode: mode, sourceIndex: pageIndex}
 		if receipt {
-			plan.crop, err = receiptPDFCrop(instance, requests.Page{ByIndex: &requests.PageByIndex{Document: doc.Document, Index: pageIndex}}, size.Width, size.Height)
+			plan.crop, err = receiptPDFCrop(instance, requests.Page{ByIndex: &requests.PageByIndex{Document: doc, Index: pageIndex}}, size.width, size.height)
 			if err != nil {
 				return fmt.Errorf("prepare generated receipt page %d before submission: %w", pageIndex+1, err)
 			}
@@ -583,7 +636,7 @@ func renderAndPrintPDFWithPDFiumResultObserved(ctx context.Context, printerName 
 	// deterministic pre-dispatch error, not an unknown physical outcome.
 	firstPageStarted := time.Now()
 	first, cleanup, err := renderPageWithContext(ctx, instance, &requests.RenderPageInPixels{
-		Page:   requests.Page{ByIndex: &requests.PageByIndex{Document: doc.Document, Index: plans[0].sourceIndex}},
+		Page:   requests.Page{ByIndex: &requests.PageByIndex{Document: doc, Index: plans[0].sourceIndex}},
 		Width:  maxW,
 		Height: maxH,
 		Crop:   plans[0].crop,
@@ -689,7 +742,7 @@ func renderAndPrintPDFWithPDFiumResultObserved(ctx context.Context, printerName 
 		}
 
 		img, cleanupPage, err := renderPageWithContext(ctx, instance, &requests.RenderPageInPixels{
-			Page:   requests.Page{ByIndex: &requests.PageByIndex{Document: doc.Document, Index: plans[pageIndex].sourceIndex}},
+			Page:   requests.Page{ByIndex: &requests.PageByIndex{Document: doc, Index: plans[pageIndex].sourceIndex}},
 			Width:  maxW,
 			Height: maxH,
 			Crop:   plans[pageIndex].crop,

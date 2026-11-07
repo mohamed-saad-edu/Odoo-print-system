@@ -606,7 +606,7 @@ class PrintGatewayBinding(models.Model):
         if enforce_destination_compatibility:
             if self.destination_type in ("pos", "pos_printer") and not self._runtime_printer_accepts_image(selected_printer):
                 raise ValidationError(_(
-                    "POS receipt/kitchen printing requires a compatible image transport. Use a Windows spooler printer or approved PDF output with complete page geometry, or a validated ESC/POS profile with the GS v 0 raster command for USB or network printing."
+                    "POS receipt/kitchen printing requires a compatible image transport. Use a Windows spooler printer with complete page geometry, or a validated ESC/POS profile with the GS v 0 raster command for USB or network printing."
                 ))
             device_class = str(selected_printer.get("deviceClass") or "").strip().lower()
             if self.destination_type == "picking_type" and device_class in ("laser", "inkjet") and not self.report_id:

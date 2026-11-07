@@ -154,8 +154,6 @@ msgstr "يلزم تحديد وجهة صالحة في Odoo."
 msgid "A valid raw protocol (ZPL, TSPL, ESC/POS, or raw passthrough) must be specified."
 msgstr "يجب تحديد بروتوكول خام صالح (ZPL أو TSPL أو ESC/POS أو تمرير خام)."
 
-
-
 #. module: print_gateway
 #: model:ir.model.fields,field_description:print_gateway.field_print_gateway_gateway_config__gateway_api_key
 msgid "API Key"
@@ -335,8 +333,6 @@ msgstr "توجد عملية طباعة مطبخ سابقة لم تُحسم. تح
 #: code:addons/print_gateway/static/src/js/pos_print_router.js:0
 msgid "An earlier receipt print is unresolved after this page changed. Check Print Activity and the printer. To print again, use the explicit reprint action in Print Activity; a new print is not sent automatically."
 msgstr "نتيجة طباعة الإيصال السابقة غير محسومة بعد تغيير الصفحة. راجع السجل والطابعة، ثم استخدم إعادة الطباعة الصريحة؛ لن تُرسل مهمة جديدة تلقائيًا."
-
-
 
 #. module: print_gateway
 #: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_policy_form
@@ -1047,18 +1043,10 @@ msgstr "قاعدة الطابعة الاحتياطية"
 msgid "Field '%s' in domain filter does not exist on model '%s'."
 msgstr "الحقل '%s' في عامل تصفية النطاق غير موجود في النموذج '%s'."
 
-
-
-
-
 #. module: print_gateway
 #: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_job_form
 msgid "File output is unconfirmed. Check the approved output destination before creating another operation."
 msgstr "إخراج الملف غير مؤكد. تحقق من وجهة الإخراج المعتمدة قبل إنشاء عملية أخرى."
-
-
-
-
 
 #. module: print_gateway
 #. odoo-python
@@ -2243,8 +2231,6 @@ msgstr "انتهت مهلة مزامنة الطلب."
 msgid "Output medium"
 msgstr "وسيط الإخراج"
 
-
-
 #. module: print_gateway
 #: model:ir.model.fields.selection,name:print_gateway.selection__print_gateway_print_job__payload_type__pdf
 msgid "PDF Vector"
@@ -2261,20 +2247,6 @@ msgstr "لا يمكن لحمولات PDF وRaster تحديد بروتوكول ط
 #: code:addons/print_gateway/models/print_job.py:0
 msgid "PDF bytes cannot be labeled as raw/escpos; the Gateway would reject this submission."
 msgstr "لا يمكن وسم بايتات PDF كـ raw/escpos؛ فالـ Gateway سيرفض هذا الإرسال."
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 #. module: print_gateway
 #. odoo-python
@@ -2353,8 +2325,8 @@ msgstr "يحتوي إيصال نقطة البيع على محتوى أعرض م�
 #. module: print_gateway
 #. odoo-python
 #: code:addons/print_gateway/models/binding.py:0
-msgid "POS receipt/kitchen printing requires a compatible image transport. Use a Windows spooler printer or approved PDF output with complete page geometry, or a validated ESC/POS profile with the GS v 0 raster command for USB or network printing."
-msgstr "تتطلب طباعة إيصالات نقاط البيع والمطبخ مساراً متوافقاً مع الصور. استخدم طابعة Windows عبر Spooler أو إخراج PDF معتمداً بأبعاد صفحة مكتملة، أو ملف ESC/POS مُعتمداً بأمر GS v 0 للطباعة عبر USB أو الشبكة."
+msgid "POS receipt/kitchen printing requires a compatible image transport. Use a Windows spooler printer with complete page geometry, or a validated ESC/POS profile with the GS v 0 raster command for USB or network printing."
+msgstr "تتطلب طباعة إيصالات نقاط البيع والمطبخ مساراً متوافقاً مع الصور. استخدم طابعة Windows عبر Spooler بأبعاد صفحة مكتملة، أو ملف ESC/POS مُعتمداً بأمر GS v 0 للطباعة عبر USB أو الشبكة."
 
 #. module: print_gateway
 #. odoo-python
@@ -3952,8 +3924,6 @@ msgstr "يجب أن يستخدم ربط تجاوز الفشل نوع المست�
 msgid "The failover binding must use the same report action as the primary binding."
 msgstr "يجب أن يستخدم ربط الطابعة البديلة إجراء التقرير نفسه المستخدم في الربط الأساسي."
 
-
-
 #. module: print_gateway
 #. odoo-python
 #: code:addons/print_gateway/models/print_job.py:0
@@ -4430,10 +4400,6 @@ msgstr "استخدام الإصدار الثاني من هويات الطباع�
 msgid "Used: %s"
 msgstr "المستخدَم: %s"
 
-
-
-
-
 #. module: print_gateway
 #. odoo-javascript
 #: code:addons/print_gateway/static/src/js/gateway_limit_dialog.js:0
@@ -4808,8 +4774,8 @@ msgstr "ربط طابعات Yaseir بأودو مع توجيه الطباعة ح�
 
 #. module: print_gateway
 #: model:ir.module.module,description:base.module_print_gateway
-msgid "\nConnect Odoo to Yaseir once per company.\n\nAssign a printing computer to each company or branch. Select a verified printer\nfor each print source under Print Routing. Enable automatic printing\nonly when the relevant print rules are ready.\n\nComputer assignments are managed in one place. Selecting a printer does not\ncreate an agent assignment or send a print job.\n    "
-msgstr "\nاربط أودو بـ Yaseir مرة واحدة لكل شركة.\n\nعيّن جهاز طباعة لكل شركة أو فرع، ثم اختر الطابعة التي تم التحقق منها لكل مصدر طباعة من «توجيه الطباعة». فعّل الطباعة التلقائية فقط بعد إعداد القواعد المطلوبة.\n\nتُدار تعيينات أجهزة الطباعة من مكان واحد. اختيار طابعة لا ينشئ تعيينًا جديدًا للـ Agent ولا يرسل مهمة طباعة.\n    "
+msgid "\nConnect Odoo to Yaseir once per company.\n\nAssign a printing computer to each company or branch. Select a printer\nfor each print source under Print Routing. Enable automatic printing\nonly when the relevant print rules are ready.\n\nComputer assignments are managed in one place. Selecting a printer does not\ncreate an agent assignment or send a print job.\n    "
+msgstr "\nاربط أودو بـ Yaseir مرة واحدة لكل شركة.\n\nعيّن جهاز طباعة لكل شركة أو فرع. اختر طابعة لكل مصدر طباعة ضمن «توجيه الطباعة». فعّل الطباعة التلقائية فقط عندما تكون قواعد الطباعة المعنية جاهزة.\n\nتُدار تعيينات أجهزة الطباعة من مكان واحد. اختيار طابعة لا ينشئ تعيينًا للـ Agent ولا يرسل مهمة طباعة.\n    "
 
 #. module: print_gateway
 #: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_config_form
@@ -5045,4 +5011,5 @@ msgstr "طابعة غير مسماة"
 #: code:addons/print_gateway/models/binding.py:0
 msgid "The selected printer has a destination or identity conflict. Reconcile its Agent inventory before routing new work."
 msgstr "تحتوي الطابعة المحددة على تعارض في الوجهة أو الهوية. أعد مزامنة جرد Agent قبل توجيه مهام جديدة."
+
 

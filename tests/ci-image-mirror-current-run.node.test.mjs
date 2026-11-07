@@ -142,10 +142,20 @@ test('Odoo CI tests the built hardened runtime by content ID with verified immut
     'docs/runtime-hardening/requirements-python312-linux-x86_64.lock',
     'docs/runtime-hardening/build-tools.lock',
     'scripts/package-pillow-wheel-as-deb.py',
+    'scripts/apply-perl-podlators-security-fix.py',
   ]) assert.ok(gate.includes('git hash-object ' + file), file);
   assert.ok(gate.includes('scripts/check-trivy-baseline.py odoo-hardened.sarif yaseir-odoo-hardened:review-20261105'));
   const findings = JSON.parse(load('security/image-vulnerability-baseline.json')).images['yaseir-odoo-hardened:review-20261105'].findings;
-  assert.equal(findings.length, 57);
+  assert.equal(findings.length, 61);
+  assert.deepEqual(
+    findings.filter((row) => row[0] === 'CVE-2026-82560'),
+    [
+      ['CVE-2026-82560', 'libperl5.38t64', 'MEDIUM'],
+      ['CVE-2026-82560', 'perl', 'MEDIUM'],
+      ['CVE-2026-82560', 'perl-base', 'MEDIUM'],
+      ['CVE-2026-82560', 'perl-modules-5.38', 'MEDIUM'],
+    ],
+  );
   assert.ok(findings.every((row) => row.length === 3 && ['LOW', 'MEDIUM'].includes(row[2])));
 });
 

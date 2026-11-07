@@ -29,10 +29,7 @@ def test_f022_installer_only_advertises_verified_nsis_lifecycle():
 
 def test_f023_manager_window_close_requires_explicit_tauri_acl():
     ipc = (ROOT / 'src/desktop/lib/ipc.ts').read_text(encoding='utf-8')
-    dialog = (ROOT / 'src/desktop/components/AdminPrivilegeDialog.tsx').read_text(encoding='utf-8')
     acl = json.loads((ROOT / 'src-tauri/capabilities/default.json').read_text(encoding='utf-8'))
     assert 'getCurrentWindow().close()' in ipc
-    assert 'await onRelaunch();' in dialog and 'await closeApp();' in dialog
-    assert dialog.index('await onRelaunch();') < dialog.index('await closeApp();')
     assert 'core:window:allow-close' in acl['permissions']
     assert acl['windows'] == ['main']

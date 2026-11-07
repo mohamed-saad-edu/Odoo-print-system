@@ -218,10 +218,14 @@ func probeSNMPHost(ctx context.Context, host string, timeout time.Duration) *Dev
 		Enabled:        true,
 		Capabilities:   map[string]interface{}{"discovered_via": SourceSNMP, "sysDescr": sysDescr, "snmp_detected": true, "verification": "device_detected_only"},
 	}
-	// Try to parse manufacturer/model from sysDescr
+	// Legacy manufacturer guess (first sysDescr token). It propagates
+	// through the network merge into serial-based stable IDs, so its
+	// value must not change; the unified identification verdict is
+	// stamped alongside it in namespaced keys (see enrichIdentity).
 	if parts := strings.Fields(sysDescr); len(parts) >= 2 {
 		di.Capabilities["manufacturer"] = parts[0]
 	}
+	enrichIdentity(&di, IdentityEvidence{SysDescr: sysDescr})
 	return &di
 }
 

@@ -7,6 +7,7 @@ import (
 	"log"
 	"net"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -28,6 +29,29 @@ type NetworkPrinter struct {
 	Protocol       string
 	RasterMaxWidth int
 	Geometry       *Geometry
+
+	statusMu         sync.RWMutex
+	lastStatusDetail string
+	// snmpMissUntil suppresses repeat SNMP status probes for a while
+	// after a device did not answer one, so a status cycle on a
+	// non-SNMP printer is not taxed the full probe timeout every time.
+	// Successful answers are never cached: status stays live.
+	snmpMissUntil time.Time
+}
+
+// StatusDetail returns the provider detail recorded by the most
+// recent Status() call (e.g. snmp_paper_jam), for the heartbeat's
+// provider-detail channel.
+func (p *NetworkPrinter) StatusDetail() string {
+	p.statusMu.RLock()
+	defer p.statusMu.RUnlock()
+	return p.lastStatusDetail
+}
+
+func (p *NetworkPrinter) setStatusDetail(detail string) {
+	p.statusMu.Lock()
+	p.lastStatusDetail = detail
+	p.statusMu.Unlock()
 }
 
 func (p *NetworkPrinter) Print(ctx context.Context, data []byte) error {
@@ -189,7 +213,7 @@ func (p *NetworkPrinter) PrintDocument(ctx context.Context, doc Document) error 
 	case KindRaw, KindESCPOS, KindZPL, KindTSPL, KindLabel:
 		return p.Print(ctx, doc.Data)
 	case KindImage:
-		data, err := prepareESCPOSImage(p.Protocol, p.Geometry, doc)
+		data, err := prepareESCPOSImageForDispatch(ctx, p.Protocol, p.Geometry, doc)
 		if err != nil {
 			return fmt.Errorf("render image for raw TCP printer: %w", err)
 		}
@@ -223,18 +247,28 @@ func (p *NetworkPrinter) Test(ctx context.Context) error {
 //     that accepts TCP but never answers the status inquiry reports
 //     "unknown", NEVER "online" (an unreadable status is not proof of
 //     health).
-//   - unidirectional transports (raw/zpl/tspl byte sinks) report "unknown"
-//     when the socket accepts a connection. This is connectivity evidence,
-//     not an affirmative printer/media state. Definite connection refusal
-//     is "offline". Delivery still uses pre-dispatch dial failure detection
-//     and UNKNOWN_PARTIAL_DELIVERY classification on mid-stream writes.
+//   - other transports (raw/zpl/tspl byte sinks) are write-only, so the
+//     socket alone can only prove connectivity. When the device also
+//     answers the standard SNMP Host-Resources printer table, that
+//     answer IS device state (paper out, jam, door open, toner, idle /
+//     printing) and decides the status (see snmp_status.go). When it
+//     does not answer, the status stays "unknown" on a live socket.
+//     Definite connection refusal is "offline". Delivery still uses
+//     pre-dispatch dial failure detection and UNKNOWN_PARTIAL_DELIVERY
+//     classification on mid-stream writes.
 func (p *NetworkPrinter) Status() string {
 	conn, err := net.DialTimeout("tcp", p.Address, 2*time.Second)
 	if err != nil {
+		p.setStatusDetail("")
 		return "offline"
 	}
 	defer conn.Close()
 	if !strings.EqualFold(strings.TrimSpace(p.Protocol), "escpos") {
+		if status, detail := p.snmpStatus(); status != "" {
+			p.setStatusDetail(detail)
+			return status
+		}
+		p.setStatusDetail("")
 		return "unknown"
 	}
 	if err := conn.SetDeadline(time.Now().Add(1500 * time.Millisecond)); err != nil {
@@ -251,6 +285,31 @@ func (p *NetworkPrinter) Status() string {
 		return "error"
 	}
 	return "online"
+}
+
+// snmpStatus reads device state through the SNMP Host-Resources
+// printer table when the device offers it. A miss is negatively
+// cached (snmpMissUntil) so non-SNMP devices pay the probe timeout at
+// most once per cache window instead of on every status cycle.
+func (p *NetworkPrinter) snmpStatus() (status, detail string) {
+	p.statusMu.RLock()
+	missUntil := p.snmpMissUntil
+	p.statusMu.RUnlock()
+	if time.Now().Before(missUntil) {
+		return "", ""
+	}
+	host := p.Address
+	if h, _, err := net.SplitHostPort(p.Address); err == nil {
+		host = h
+	}
+	status, detail, ok := snmpStatusProbe(context.Background(), host)
+	if !ok {
+		p.statusMu.Lock()
+		p.snmpMissUntil = time.Now().Add(snmpStatusUnsupportedCacheFor)
+		p.statusMu.Unlock()
+		return "", ""
+	}
+	return status, detail
 }
 
 func (p *NetworkPrinter) PrinterGeometry(ctx context.Context) (*Geometry, error) {

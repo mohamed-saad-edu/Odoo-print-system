@@ -24,8 +24,9 @@ import (
 // platform-specific implementations. Production passes nil and therefore
 // selects platformPrintPDF.
 const (
-	// MaxRenderedPDFBytes bounds any PDF byte stream the Agent renders,
-	// validates or prints (64 MiB).
+	// MaxRenderedPDFBytes is the sanity ceiling (64 MiB) for PDF byte
+	// streams the Agent itself generates or renders. Inbound job PDFs
+	// are capped separately at maxPrintBytes by ValidatePDF.
 	MaxRenderedPDFBytes = 64 * 1024 * 1024
 
 	pdfHeaderMarker = "%PDF-"

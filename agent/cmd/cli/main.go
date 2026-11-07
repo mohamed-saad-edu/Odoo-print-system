@@ -272,11 +272,12 @@ func handlePrintersDiscover(configPath string, jsonOutput bool) {
 	}
 }
 
-// cliPrinterDiagnosticSuccess is deliberately transport-neutral: a Windows
-// spooler Test() is a readiness probe (zero document bytes), whereas a raw
-// network Test() may only prove connectivity. Neither proves physical output.
+// cliPrinterDiagnosticSuccess is deliberately precise about what the
+// shared TestPrinter check does per backend: a Windows spooler backend
+// submits a real test page, whereas a raw network backend may only prove
+// connectivity. Neither outcome proves a document was physically printed.
 func cliPrinterDiagnosticSuccess(printerID string) string {
-	return fmt.Sprintf("Printer diagnostic passed for %s. This is a backend-specific readiness/transport check, NOT proof that a document was submitted or physically printed. Use the Gateway test-page job and verify printer output for end-to-end acceptance.", printerID)
+	return fmt.Sprintf("Printer diagnostic passed for %s. Depending on the backend this check may submit a real test page - check the printer for output. It is NOT proof that a document was physically printed; use the Gateway test-page job and verify printer output for end-to-end acceptance.", printerID)
 }
 
 func handlePrintersTest(configPath, printerID string) {

@@ -309,6 +309,10 @@ func (p *IPPPrinter) printDocumentWithOptions(ctx context.Context, data []byte, 
 			return MarkUnknown("IPP printer %s redirected Print-Job with HTTP %d after submission; output may exist", p.URL, resp.StatusCode)
 		}
 		// RFC 8010 permits IPP response semantics only with HTTP 200.
+		// Every non-200 — including 401/403/404 — keeps the unknown
+		// outcome: after transmission, no HTTP-layer refusal is treated
+		// as safe-to-retry evidence (pinned by
+		// TestIPPPrintJobRequiresHTTP200EvidenceWithoutRetry).
 		return MarkUnknown("IPP printer %s returned HTTP %d after Print-Job; no correlated IPP result is available and output may exist", p.URL, resp.StatusCode)
 	}
 	mediaType, _, mediaErr := mime.ParseMediaType(resp.Header.Get("Content-Type"))
@@ -615,7 +619,7 @@ func buildIPPGetPrinterAttributes(printerURI string) []byte {
 	writeIPPAttribute(&buf, 0x44, "", "document-format-default")
 	writeIPPAttribute(&buf, 0x44, "", "pwg-raster-document-type-supported")
 	writeIPPAttribute(&buf, 0x44, "", "pwg-raster-document-resolution-supported")
-	for _, name := range []string{"media-supported", "media-ready", "media-default", "media-col-default", "media-col-ready", "media-col-database", "printer-resolution-supported", "printer-resolution-default", "print-scaling-supported", "orientation-requested-supported", "printer-uuid"} {
+	for _, name := range []string{"media-supported", "media-ready", "media-default", "media-col-default", "media-col-ready", "media-col-database", "printer-resolution-supported", "printer-resolution-default", "print-scaling-supported", "orientation-requested-supported", "printer-uuid", "printer-make-and-model"} {
 		writeIPPAttribute(&buf, 0x44, "", name)
 	}
 	buf.WriteByte(0x03)

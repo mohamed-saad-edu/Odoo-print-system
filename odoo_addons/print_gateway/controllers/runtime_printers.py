@@ -377,8 +377,8 @@ class PrintGatewayRuntimePrinterController(http.Controller):
                 'deviceClass': printer.get('deviceClass') if isinstance(printer.get('deviceClass'), str) else 'unknown',
                 'connectionType': printer.get('connectionType') if isinstance(printer.get('connectionType'), str) else 'unknown',
                 'protocol': printer.get('protocol') if isinstance(printer.get('protocol'), str) else 'unknown',
-                'printerType': 'file' if printer.get('outputMedium') == 'file' else 'physical',
-                'outputMedium': printer.get('outputMedium') or 'physical',
+                'printerType': 'physical',
+                'outputMedium': 'physical',
                 # Pass the printer's real verification state through as
                 # evidence; it is displayed, never used to hide or block
                 # the printer.

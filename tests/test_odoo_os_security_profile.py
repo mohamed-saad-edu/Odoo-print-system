@@ -15,6 +15,13 @@ SPEC = importlib.util.spec_from_file_location("os_security_profile", PROFILE / "
 MODULE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(MODULE)
 
+PODLATORS_FIX_SPEC = importlib.util.spec_from_file_location(
+    "podlators_security_backport", ROOT / "scripts" / "apply-perl-podlators-security-fix.py"
+)
+assert PODLATORS_FIX_SPEC and PODLATORS_FIX_SPEC.loader
+PODLATORS_FIX = importlib.util.module_from_spec(PODLATORS_FIX_SPEC)
+PODLATORS_FIX_SPEC.loader.exec_module(PODLATORS_FIX)
+
 
 @pytest.fixture
 def installation(tmp_path, monkeypatch):
@@ -125,7 +132,20 @@ def test_docker_download_pins_match_reviewed_artifact_manifest():
     manifest = json.loads((PROFILE / "os-security-artifacts.json").read_text())
     dockerfile = (ROOT / "Dockerfile.odoo-hardened").read_text()
     pins = re.findall(r"^ADD --checksum=sha256:([0-9a-f]{64}) (https://\S+) /os-security/(\S+)$", dockerfile, re.M)
-    assert sorted(pins) == sorted((item["sha256"], item["url"], item["filename"]) for item in manifest["artifacts"])
+    expected_pins = sorted(
+        (item["sha256"], item.get("download_url", item["url"]), item["filename"])
+        for item in manifest["artifacts"]
+    )
+    assert sorted(pins) == expected_pins
+    snapshot = manifest["ubuntu_provenance"]["snapshot"]
+    mirror = "https://is.archive.ubuntu.com/ubuntu/pool/"
+    snapshot_packages = [
+        item for item in manifest["artifacts"]
+        if item["url"].startswith(snapshot + "pool/")
+    ]
+    assert len(snapshot_packages) == 21
+    assert all(item.get("download_url", "").startswith(mirror) for item in snapshot_packages)
+    assert all(item["download_url"].endswith("/" + item["filename"]) for item in snapshot_packages)
     assert "dpkg -i /os-security/libssl3t64_3.0.13-0ubuntu3.16_amd64.deb" in dockerfile
     assert "verify-source-map-js-security.cjs" in dockerfile
     assert not re.search(r"(?:apt(?:-get)?\s+(?:update|install)|npm\s+install)", dockerfile)
@@ -191,3 +211,66 @@ def test_pcre2_cve_fix_uses_reviewed_ubuntu_security_artifact_not_scanner_exempt
     baseline = json.loads((ROOT / "security" / "image-vulnerability-baseline.json").read_text())
     findings = baseline["images"]["yaseir-odoo-hardened:review-20261105"]["findings"]
     assert not [row for row in findings if row[1] == "libpcre2-8-0"]
+
+
+
+def test_podlators_backport_patches_all_four_system_modules_and_is_idempotent(tmp_path):
+    root = tmp_path / "Pod"
+    for relative, (before, _) in PODLATORS_FIX.PATCHES.items():
+        path = root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(before + "\\n# preserved module content\\n", encoding="utf-8")
+
+    PODLATORS_FIX.apply(root)
+    PODLATORS_FIX.apply(root)
+
+    for relative, (_, after) in PODLATORS_FIX.PATCHES.items():
+        assert (root / relative).read_text(encoding="utf-8").count(after) == 1
+
+
+def test_podlators_backport_rejects_unknown_source_before_mutating_any_file(tmp_path):
+    root = tmp_path / "Pod"
+    originals = {}
+    for relative, (before, _) in PODLATORS_FIX.PATCHES.items():
+        path = root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(before + "\\n# original module content\\n", encoding="utf-8")
+        originals[relative] = path.read_text(encoding="utf-8")
+
+    (root / "Text/Color.pm").write_text("unexpected upstream source", encoding="utf-8")
+    originals["Text/Color.pm"] = "unexpected upstream source"
+
+    with pytest.raises(ValueError, match="Unexpected or ambiguous Pod::Text source"):
+        PODLATORS_FIX.apply(root)
+
+    for relative, original in originals.items():
+        assert (root / relative).read_text(encoding="utf-8") == original
+
+
+def test_podlators_cve_backport_is_applied_and_smoke_tested_in_hardened_image():
+    dockerfile = (ROOT / "Dockerfile.odoo-hardened").read_text()
+    assert "COPY scripts/apply-perl-podlators-security-fix.py" in dockerfile
+    assert "python3 /usr/local/bin/yaseir-apply-perl-podlators-security-fix.py" in dockerfile
+    assert "timeout 5s perl -MPod::Text" in dockerfile
+    for path in (
+        "/usr/share/perl/5.38.2/Pod/Text.pm",
+        "/usr/share/perl/5.38.2/Pod/Text/Color.pm",
+        "/usr/share/perl/5.38.2/Pod/Text/Overstrike.pm",
+        "/usr/share/perl/5.38.2/Pod/Text/Termcap.pm",
+    ):
+        assert path in dockerfile
+
+
+def test_podlators_backport_rows_are_exact_and_time_bounded():
+    baseline = json.loads((ROOT / "security" / "image-vulnerability-baseline.json").read_text())
+    entry = baseline["images"]["yaseir-odoo-hardened:review-20261105"]
+    expected = {
+        ("CVE-2026-82560", "libperl5.38t64", "MEDIUM"),
+        ("CVE-2026-82560", "perl", "MEDIUM"),
+        ("CVE-2026-82560", "perl-base", "MEDIUM"),
+        ("CVE-2026-82560", "perl-modules-5.38", "MEDIUM"),
+    }
+    assert expected.issubset({tuple(row) for row in entry["findings"]})
+    assert entry["expires"] == "2026-11-19"
+    review = baseline["reviewNotes"]["yaseir-odoo-hardened:review-20261105"]
+    assert "70510174f69eb54aa6d617bde4e1402cd9b7c61f" in review

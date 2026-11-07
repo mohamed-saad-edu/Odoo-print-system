@@ -86,7 +86,7 @@ func (p *USBPrinter) SupportsKind(kind string) bool {
 
 func (p *USBPrinter) PrintDocument(ctx context.Context, doc Document) error {
 	if NormalizeKind(doc.Kind) == KindImage {
-		data, err := prepareESCPOSImage(p.Protocol, p.Geometry, doc)
+		data, err := prepareESCPOSImageForDispatch(ctx, p.Protocol, p.Geometry, doc)
 		if err != nil {
 			return fmt.Errorf("render image for USB printer: %w", err)
 		}

@@ -547,6 +547,20 @@ func parseMDNSServiceEntry(entry *zeroconf.ServiceEntry) (DeviceInfo, bool) {
 		// non-executable candidate path; only supported IPP endpoints promote.
 		return DeviceInfo{}, false
 	}
+	// Unified identification from the DNS-SD metadata (manufacturer,
+	// model, and the "ty"/"product" model strings Bonjour carries).
+	mdnsModel := txtMeta.model
+	if mdnsModel == "" {
+		mdnsModel = txtMeta.ty
+	}
+	if mdnsModel == "" {
+		mdnsModel = txtMeta.product
+	}
+	enrichIdentity(&di, IdentityEvidence{
+		MDNSManufacturer: txtMeta.mfg,
+		MDNSModel:        mdnsModel,
+		QueueName:        name,
+	})
 	return di, true
 }
 

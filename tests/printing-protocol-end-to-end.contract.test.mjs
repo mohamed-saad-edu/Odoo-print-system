@@ -64,22 +64,21 @@ test('IPP never sends RAW/ESC-POS/ZPL as a falsely labeled PDF document', () => 
   assert.match(formats, /renderIPPPDFToJPEG/);
   assert.match(formats, /"image\/pwg-raster"/);
 });
-test('Agent status reports preserve claim fencing and physical submission evidence', () => {
+test('Agent status reports preserve the original claim fence and ambiguous submission marker', () => {
   const src=read('agent/internal/agent/agent.go');
   const status=src.slice(src.indexOf('func (a *Agent) updateJobStatus('),src.indexOf('func (a *Agent) doAuthorizedRequest('));
   assert.match(status, /body\["claimToken"\] = claimToken/);
   assert.match(status, /body\["spoolerJobId"\] = spoolerJobID/);
-  assert.match(status, /body\["submissionEvidence"\] = submission/);
+  // The local terminal ledger records physical completion only; submission
+  // evidence is sent through the fenced Gateway status report below.
   assert.match(src, /UpdateTerminalResult\(jobID, "success", "", spoolerJobID, statusTransport, ""\)/);
+  assert.match(status, /body\["submissionEvidence"\] = submission/);
   assert.match(src, /UpdateTerminalResult\(jobID, "failed", failureMsg, spoolerJobID, statusTransport, ""\)/);
-  assert.match(src, /submissionEvidence := printer\.VerifySubmission\(ctx, nil\)/);
-  assert.match(src, /updateJobStatusWithSubmissionEvidence\(ctx, jobID, "success", "", claimToken, spoolerJobID, statusTransport, &submissionEvidence\)/);
   assert.match(src, /reportDurableTerminalResult\(ctx, result\)/);
-  const terminal=read('agent/internal/agent/terminal_report.go');
-  assert.match(terminal, /report\.ClaimToken/);
-  assert.match(terminal, /report\.SpoolerJobID/);
-  assert.match(terminal, /report\.Transport/);
-  assert.match(terminal, /updateJobStatusWithTransport/);
+  const evidence=read('agent/internal/queue/queue.go');
+  assert.match(evidence, /type TerminalReport struct/);
+  assert.match(evidence, /ClaimToken\s+string/);
+  assert.match(evidence, /OutputEvidence\s+string/);
   const route=read('src/app/api/agent/jobs/route.ts');
   assert.match(route, /derivePhysicalOutcome\(requestedStatus, nextError\)/);
 });

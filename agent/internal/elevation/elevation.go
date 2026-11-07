@@ -1,12 +1,14 @@
 // Package elevation enforces the Agent's administrator-only startup
 // rule: outside the Windows service host (which already runs as
-// LocalSystem), an interactive launch without an elevated token shows a
-// native dialog and exits before any config, sync, listener or queue
-// work starts. The dialog's single action is "Restart as
-// Administrator": choosing it hands off to an elevated copy of the
-// application and closes this one; dismissing it just closes. A
-// non-elevated process NEVER continues past this gate. The check is
-// deliberately the FIRST thing main() runs.
+// LocalSystem), an interactive launch without an elevated token hands
+// off to an elevated copy of the application and exits — there is NO
+// dialog and no in-app state to dismiss. The only prompt the user ever
+// sees is the Windows UAC consent raised by the "runas" relaunch
+// itself; declining it (or any relaunch failure) exits the process, so
+// a non-elevated process NEVER continues past this gate. The check runs
+// before any configuration, service, queue, or printer work; only flag
+// parsing and the -version early exit (which touches no state and exits
+// immediately) precede it in main().
 package elevation
 
 import "os"
@@ -22,23 +24,28 @@ func IsElevated() bool {
 // RequireElevatedInteractive enforces the administrator-only rule for
 // one interactive entry point. interactive=false means the process was
 // started by the Windows Service Control Manager: that path already
-// runs as LocalSystem and Session 0 has no desktop to show a dialog on,
-// so it returns immediately. Otherwise, when the token is not elevated,
-// the native dialog is shown and the process EXITS as soon as the user
-// answers it — exit 0 only when an elevated replacement process was
-// successfully launched, exit 1 in every other case. Nothing else in
-// the process has started yet at the point main() calls this.
-func RequireElevatedInteractive(interactive bool) {
+// runs as LocalSystem and is never gated, so it returns immediately.
+// Otherwise, when the token is not elevated, an elevated copy of the
+// application is launched at once (UAC prompt) and this process EXITS
+// — exit 0 only when the elevated replacement was successfully
+// launched, exit 1 in every other case. relaunched marks a process
+// that IS that elevated replacement (the relaunch passes
+// -elevated-relaunch): if it is somehow still not elevated, it exits
+// instead of relaunching again, so the UAC prompt can never loop.
+// Nothing else in the process has started yet at the point main()
+// calls this.
+func RequireElevatedInteractive(interactive bool, relaunched bool) {
 	if !interactive {
 		return
 	}
 	if IsElevated() {
 		return
 	}
-	if showAdminRequiredDialog() {
-		if err := relaunchElevated(); err == nil {
-			os.Exit(0)
-		}
+	if relaunched {
+		os.Exit(1)
+	}
+	if err := relaunchElevated(); err == nil {
+		os.Exit(0)
 	}
 	os.Exit(1)
 }

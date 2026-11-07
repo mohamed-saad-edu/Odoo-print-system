@@ -334,13 +334,11 @@ def main() -> int:
     print()
 
     missing = sorted(set(terms) - catalog_ids)
-    if missing:
-        fail(f"{len(missing)} source term(s) have no catalog entry, e.g. {missing[0]!r}")
+    for msgid in missing:
+        fail(f"source term has no catalog entry: {msgid!r}")
     stale = sorted(catalog_ids - set(terms))
-    if stale:
-        fail(f"{len(stale)} catalog entr(y/ies) match no source term, e.g. {stale[0]!r}")
-        for msgid in stale:
-            fail(f"stale Odoo translation entry: {msgid!r}")
+    for msgid in stale:
+        fail(f"catalog entry matches no source term: {msgid!r}")
 
     if len(catalog) != len(catalog_ids):
         fail(f"{len(catalog) - len(catalog_ids)} duplicate message id(s)")

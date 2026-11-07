@@ -71,8 +71,17 @@ def test_odoo_runtime_review_has_no_build_only_packages_and_no_extended_expiry()
                        'security/image-vulnerability-baseline.json').read_text())
     entry = data['images']['yaseir-odoo-hardened:review-20261105']
     assert entry['expires'] == '2026-11-19'
-    assert len(entry['findings']) == 57
+    assert len(entry['findings']) == 61
     assert {r[2] for r in entry['findings']} <= {'LOW', 'MEDIUM'}
+    assert {
+        tuple(row) for row in entry['findings']
+        if row[0] == 'CVE-2026-82560'
+    } == {
+        ('CVE-2026-82560', 'libperl5.38t64', 'MEDIUM'),
+        ('CVE-2026-82560', 'perl', 'MEDIUM'),
+        ('CVE-2026-82560', 'perl-base', 'MEDIUM'),
+        ('CVE-2026-82560', 'perl-modules-5.38', 'MEDIUM'),
+    }
     assert not ({'python3-pip', 'python3-wheel', 'python3-pdfminer'} &
                 {r[1] for r in entry['findings']})
 

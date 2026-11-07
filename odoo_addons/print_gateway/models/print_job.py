@@ -2820,7 +2820,7 @@ class PrintGatewayJob(models.Model):
         self.env.cr.execute("""
             SELECT id
               FROM print_gateway_print_job
-             WHERE status IN ('success', 'failed', 'partial', 'unknown')
+             WHERE status IN ('success', 'failed', 'partial', 'unknown', 'canceled')
                AND COALESCE(completed_at, write_date, create_date) <= %s
              ORDER BY COALESCE(completed_at, write_date, create_date) ASC, id ASC
              LIMIT 500

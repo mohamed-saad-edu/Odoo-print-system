@@ -632,7 +632,7 @@ func TestIPPRequestedAttributesUseAdditionalValues(t *testing.T) {
 			t.Fatalf("missing zero-name additional value %q", value)
 		}
 	}
-	if got := parseIPPAttributes(packet)["requested-attributes"]; got != "printer-state,printer-state-reasons,printer-is-accepting-jobs,document-format-supported,document-format-default,pwg-raster-document-type-supported,pwg-raster-document-resolution-supported,media-supported,media-ready,media-default,media-col-default,media-col-ready,media-col-database,printer-resolution-supported,printer-resolution-default,print-scaling-supported,orientation-requested-supported,printer-uuid" {
+	if got := parseIPPAttributes(packet)["requested-attributes"]; got != "printer-state,printer-state-reasons,printer-is-accepting-jobs,document-format-supported,document-format-default,pwg-raster-document-type-supported,pwg-raster-document-resolution-supported,media-supported,media-ready,media-default,media-col-default,media-col-ready,media-col-database,printer-resolution-supported,printer-resolution-default,print-scaling-supported,orientation-requested-supported,printer-uuid,printer-make-and-model" {
 		t.Fatalf("requested attribute values = %q", got)
 	}
 }

@@ -169,7 +169,6 @@ export async function POST(req: Request) {
     }
     return NextResponse.json({
       outputMedium: result.outputMedium,
-      ...(result.outputMedium === "file" ? { outputOutcome: "pending" } : {}),
       jobId: result.id,
       status: result.status,
       printerId: result.printerId,

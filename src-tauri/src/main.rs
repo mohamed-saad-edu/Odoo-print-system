@@ -111,8 +111,9 @@ fn acquire_single_instance(wait_for_previous: bool) -> Result<Option<SingleInsta
 
 fn main() {
     // Administrator-only gate — literally first. A non-elevated launch
-    // shows the native dialog and exits before the single-instance
-    // mutex, logging, tray, or any Tauri setup can start.
+    // hands off to an elevated copy of the manager (UAC prompt; no
+    // application dialog) and exits before the single-instance mutex,
+    // logging, tray, or any Tauri setup can start.
     elevation::enforce_administrator_or_exit();
 
     #[cfg(windows)]
@@ -145,10 +146,11 @@ fn main() {
             logging::info("application setup started");
 
             // Runtime dirs are strictly %PROGRAMDATA% (no per-user fallback,
-            // so desktop and service share one home). A non-elevated launch
-            // cannot create them — warn and continue so the app still opens
-            // and the elevation banner + per-operation admin errors guide
-            // the operator to relaunch as administrator.
+            // so desktop and service share one home). The elevation gate in
+            // main() has already relaunched-or-exited by this point, so the
+            // manager always runs elevated here; a failure to create the
+            // dirs is an ACL/corruption edge case — log it and continue so
+            // per-operation errors can surface it precisely.
             if let Err(e) = paths::ensure_runtime_dirs() {
                 logging::error(&format!(
                     "unable to create runtime dirs (run as administrator): {e}"

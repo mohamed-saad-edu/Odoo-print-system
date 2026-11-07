@@ -106,7 +106,12 @@ func cleanupJobs(dbPath string, includeUnknown bool) (int, int, int, error) {
 		return 0, 0, 0, err
 	}
 	defer q.Close()
-	deleted, err := q.CleanupTerminal(0)
+	// Keep the agent's duplicate-protection window: acknowledged terminal
+	// rows younger than the retention horizon are the local evidence that
+	// stops a Gateway replay from printing twice, so an operator cleanup
+	// must not delete them early. Mirrors localTerminalJobRetentionHours
+	// (48h) in internal/agent.
+	deleted, err := q.CleanupTerminalOlderThan(48)
 	if err != nil {
 		return 0, 0, 0, err
 	}

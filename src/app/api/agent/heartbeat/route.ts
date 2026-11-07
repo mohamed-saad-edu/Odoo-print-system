@@ -529,7 +529,9 @@ export async function POST(req: Request) {
       if (ambiguousReportedIds.size > 0) {
         // Preserve all historical rows and accepted jobs, but revoke the old
         // verified binding until a *new*, unambiguous inventory re-verifies
-        // the queue. Claim predicates reject pending verification.
+        // the queue. Admission/poll/claim exclude this printer through the
+        // hard-conflict reason stamped below (verification_ambiguous_inventory_id);
+        // the pending verification state itself never gates a claim.
         await tx.update(printers).set({
           status: "unknown", verificationState: "pending", verificationVerifiedAt: null,
           verificationReceivedAt: null, verificationBindingDigest: null,

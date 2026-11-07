@@ -16,7 +16,9 @@ static AGENT_DATA_ROOT: OnceLock<PathBuf> = OnceLock::new();
 /// path but falls back to the legacy path when it already exists, so upgrades
 /// keep their data. If this process cannot write
 /// there, every mutating operation fails closed with an Administrator
-/// message and the UI shows an elevation banner (see is_running_as_admin).
+/// message (the manager only ever runs elevated — see the elevation
+/// gate in main() — so a write failure here is an ACL/corruption edge
+/// case, not a privilege prompt).
 pub fn manager_data_root() -> PathBuf {
     if let Some(p) = MANAGER_DATA_ROOT.get() {
         return p.clone();

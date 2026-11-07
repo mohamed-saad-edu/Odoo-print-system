@@ -155,7 +155,6 @@ suite("Agent-backed operational eligibility and scoped queue identity", () => {
     expect(await claimJobForDelivery(legacy.jobId, fixture.agentId)).not.toBeNull();
   });
   it("delivers jobs created while unverified after proof lands (NULL binding digest)", async () => {
-    // The shared fixture starts verified; make this test's initial state explicit.
     await clearOperationalVerification();
     // No observe() yet: the printer has never verified, so a job submitted
     // now is admitted with binding_digest NULL.
