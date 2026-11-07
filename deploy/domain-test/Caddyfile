@@ -1,0 +1,24 @@
+{
+	admin 127.0.0.1:2019
+}
+
+{$GATEWAY_DOMAIN} {
+	encode gzip zstd
+
+	request_body {
+		max_size 8MiB
+	}
+
+	# The Gateway trusts forwarded client identity only after verifying the
+	# private proxy token. X-Forwarded-For is overwritten here with the
+	# actual client address: reverse_proxy would otherwise append it to any
+	# client-supplied value, letting an attacker rotate the Gateway's
+	# per-IP rate-limit buckets with spoofed leftmost entries.
+	reverse_proxy gateway:3000 {
+		# Absolute container path: compose mounts the secret at
+		# /run/secrets/trust_proxy_secret, independent of Caddy's cwd.
+		header_up X-Gateway-Proxy-Token {file./run/secrets/trust_proxy_secret}
+		header_up X-Forwarded-For {http.request.remote.host}
+		header_up -X-Real-Ip
+	}
+}

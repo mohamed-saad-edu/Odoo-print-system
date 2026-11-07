@@ -1,4 +1,7 @@
 import { randomUUID } from "node:crypto";
+import { closeSync, constants, fchmodSync, mkdirSync, openSync, writeSync } from "node:fs";
+import { dirname } from "node:path";
+import { isSingleWorkspaceStaging } from "./staging-single-workspace";
 import { runtimeSecret } from "./runtime-secret";
 
 export type TransactionalEmail = { to: string; subject: string; html: string; text: string };
@@ -29,7 +32,21 @@ export function appBaseUrl(req: Request): string {
   throw new Error("APP_BASE_URL is not configured; set it or opt into host-derived URLs with ALLOW_HOST_FALLBACK=1 for local development only");
 }
 
+// Capture links ONLY for the HTTPS staging origin, never for production.
+function captureStagingEmail(message: TransactionalEmail): boolean {
+  if (!isSingleWorkspaceStaging() || runtimeSecret("RESEND_API_KEY")) return false;
+  const file = process.env.YASEIR_TEST_EMAIL_CAPTURE_FILE?.trim();
+  if (!file || !file.startsWith("/tmp/") || file.includes("..")) return false;
+  mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
+  const fd = openSync(file, constants.O_CREAT | constants.O_WRONLY | constants.O_APPEND | constants.O_NOFOLLOW, 0o600);
+  try {
+    fchmodSync(fd, 0o600);
+    writeSync(fd, `TO: ${message.to}\nSUBJECT: ${message.subject}\n${message.text}\n---\n`);
+  } finally { closeSync(fd); }
+  return true;
+}
 export async function sendTransactionalEmail(message: TransactionalEmail): Promise<void> {
+  if (captureStagingEmail(message)) return;
   const apiKey = runtimeSecret("RESEND_API_KEY");
   const from = runtimeSecret("EMAIL_FROM");
   if (!apiKey || !from) {

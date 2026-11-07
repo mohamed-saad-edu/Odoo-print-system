@@ -5,7 +5,7 @@ on:
     branches: [main]
     types: [opened, synchronize, reopened, ready_for_review]
   push:
-    branches: [main]
+    branches: [main, test/http-server-ready]
   merge_group:
   workflow_dispatch:
   schedule:

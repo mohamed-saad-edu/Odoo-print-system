@@ -6,7 +6,7 @@ on:
     types: [opened, synchronize, reopened, ready_for_review]
   merge_group:
   push:
-    branches: [main]
+    branches: [main, test/http-server-ready]
   workflow_dispatch:
   schedule:
     - cron: '41 3 * * 0'  # Re-evaluate dependency advisories weekly
@@ -165,6 +165,10 @@ jobs:
               # GitHub Actions matrix "image:" is a mapping/list key, not a
               # scalar container image reference; only check actual values.
               if (image == "") next
+              # These are private local build outputs, not remotely pulled base images.
+              # The next step proves every exception belongs to a service with a local build context.
+              if (FILENAME == "docker-compose.yml" &&
+                  image ~ /^localhost\/yaseir-(gateway|postgres|caddy):/) next
               if (image !~ /@sha256:[0-9a-fA-F]{64}$/) {
                 print FILENAME ":" FNR ": unpinned image reference: " image
                 bad = 1
@@ -177,6 +181,41 @@ jobs:
             echo 'Unpinned container image reference detected; pin every YAML image: value by digest.'
             exit 1
           fi
+
+          # Resolve the root Compose model and prove the three localhost image names
+          # are outputs of local Dockerfile builds. They are never accepted as registry inputs.
+          audit_env=(
+            APP_BASE_URL=https://print.example.com
+            GATEWAY_DOMAIN=print.example.com
+            YASEIR_DEPLOYMENT_ID=image-audit
+            POSTGRES_PASSWORD=ci-image-audit-bootstrap
+            POSTGRES_OWNER_PASSWORD=ci-image-audit-owner
+            POSTGRES_RUNTIME_PASSWORD=ci-image-audit-runtime
+            GATEWAY_JWT_SECRET=ci-image-audit-jwt
+            MANAGER_PASSWORD_HASH=ci-image-audit-manager
+            TRUST_PROXY_SECRET=ci-image-audit-proxy
+          )
+          env "${audit_env[@]}" docker compose -f docker-compose.yml config --format json > /tmp/yaseir-image-audit-compose.json
+          node --input-type=module <<'NODE'
+          import fs from "node:fs";
+          const model = JSON.parse(fs.readFileSync("/tmp/yaseir-image-audit-compose.json", "utf8"));
+          const expected = {
+            postgres: "localhost/yaseir-postgres:image-audit",
+            database_roles: "localhost/yaseir-gateway:image-audit",
+            migrate: "localhost/yaseir-gateway:image-audit",
+            database_verify: "localhost/yaseir-gateway:image-audit",
+            gateway: "localhost/yaseir-gateway:image-audit",
+            caddy: "localhost/yaseir-caddy:image-audit",
+          };
+          for (const [name, image] of Object.entries(expected)) {
+            const service = model.services?.[name];
+            if (!service || service.image !== image || !service.build?.context || !service.build?.dockerfile) {
+              throw new Error(name + " local image exception is not backed by an explicit Dockerfile build");
+            }
+          }
+          console.log("All localhost images are local Dockerfile build outputs; remote image refs still require sha256 digests.");
+          NODE
+          rm -f /tmp/yaseir-image-audit-compose.json
 
           # Keep the existing protection for Docker CLI commands such as
           # docker pull/run when the image is written directly on the command

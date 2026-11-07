@@ -88,8 +88,20 @@ describe("CI/runtime alignment", () => {
     expect(preflight).toContain("github.event_name == 'pull_request'");
     expect(preflight).not.toContain("docker compose build");
     expect(runtime).toContain("github.event_name != 'pull_request'");
-    expect(runtime).toContain("docker compose build");
-    expect(runtime).toContain("docker compose up -d gateway caddy");
+    // Every staging-branch push must publish an image for the exact SHA that
+    // the staging deploy script resolves, even when only tests/docs changed.
+    expect(runtime).toContain("github.event_name == 'push' && github.ref == 'refs/heads/test/http-server-ready'");
+    // Runtime images are built once with Buildx, loaded locally, then consumed
+    // by Compose without allowing Compose to rebuild them on the runner.
+    const buildActions = runtime.match(/uses:\s*docker\/build-push-action@[0-9a-f]{40}/g) ?? [];
+    expect(buildActions).toHaveLength(3);
+    for (const image of ["yaseir-gateway", "yaseir-postgres", "yaseir-caddy"]) {
+      expect(runtime).toContain("tags: localhost/" + image + ":${{ github.sha }}");
+    }
+    expect(runtime).not.toContain("docker compose build");
+    expect(runtime).toContain("docker compose up --no-build -d postgres");
+    expect(runtime).toContain("docker compose up --no-build migrate");
+    expect(runtime).toContain("docker compose up --no-build -d gateway caddy");
     expect(workflow).toContain("Enforce reviewed release image vulnerability baseline");
     expect(workflow).toContain("Scan release image (Trivy)");
     expect(compose).not.toContain("public.ecr.aws");
