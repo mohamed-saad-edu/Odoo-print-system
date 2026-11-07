@@ -31,6 +31,14 @@ suite("Agent-backed operational eligibility and scoped queue identity", () => {
   }
   async function listed() { const response = await inventory(new Request("https://gateway.test/api/odoo/printers", { headers: { Authorization: "Bearer " + fixture.odooKey } })); expect(response.status).toBe(200); return (await response.json()).printers; }
   const stored = async () => (await pool().query("SELECT * FROM printers WHERE tenant_id=$1 AND id=$2", [fixture.tenantId, fixture.printerId])).rows[0];
+  // seedFixture() intentionally creates a verified queue. Tests that exercise
+  // first-time verification must explicitly restore a genuinely pending row.
+  async function clearOperationalVerification() {
+    await pool().query(
+      "UPDATE printers SET verification_state='pending', verification_verified_at=NULL, verification_received_at=NULL, verification_binding_digest=NULL, verification_reason=NULL, logical_queue_key=NULL WHERE tenant_id=$1 AND id=$2",
+      [fixture.tenantId, fixture.printerId],
+    );
+  }
   async function managerRegister(body: Record<string, unknown>) {
     const manager = await createWorkspaceManagerTestSession(fixture.tenantId);
     return register(new Request("https://gateway.test/api/printers", { method: "POST", headers: { Authorization: "Bearer " + manager.token, "Content-Type": "application/json" }, body: JSON.stringify({ agentId: fixture.agentId, name: "Configured target", printerType: "physical", deviceClass: "laser", connectionType: "spooler", protocol: "spooler", config: { spooler_name: "Unproven Queue" }, ...body }) }));
@@ -147,6 +155,7 @@ suite("Agent-backed operational eligibility and scoped queue identity", () => {
     expect(await claimJobForDelivery(legacy.jobId, fixture.agentId)).not.toBeNull();
   });
   it("delivers jobs created while unverified after proof lands (NULL binding digest)", async () => {
+    await clearOperationalVerification();
     // No observe() yet: the printer has never verified, so a job submitted
     // now is admitted with binding_digest NULL.
     const first = await (await submit("null-digest-claim")).json();
@@ -161,7 +170,7 @@ suite("Agent-backed operational eligibility and scoped queue identity", () => {
     expect(claim?.bindingDigest).toBeNull();
     // Same for the poll path: reset proof, submit while unverified, land
     // proof again, and the poll must offer the job.
-    await pool().query("UPDATE printers SET verification_binding_digest=NULL, verification_state='pending' WHERE tenant_id=$1 AND id=$2", [fixture.tenantId, fixture.printerId]);
+    await clearOperationalVerification();
     const second = await (await submit("null-digest-poll")).json();
     expect((await pool().query("SELECT binding_digest FROM print_jobs WHERE id=$1", [second.jobId])).rows[0].binding_digest).toBeNull();
     expect((await observe([row(proof())])).status).toBe(200);

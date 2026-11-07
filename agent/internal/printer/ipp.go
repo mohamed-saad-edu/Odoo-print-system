@@ -619,7 +619,7 @@ func buildIPPGetPrinterAttributes(printerURI string) []byte {
 	writeIPPAttribute(&buf, 0x44, "", "document-format-default")
 	writeIPPAttribute(&buf, 0x44, "", "pwg-raster-document-type-supported")
 	writeIPPAttribute(&buf, 0x44, "", "pwg-raster-document-resolution-supported")
-	for _, name := range []string{"media-supported", "media-ready", "media-default", "media-col-default", "media-col-ready", "media-col-database", "printer-resolution-supported", "printer-resolution-default", "print-scaling-supported", "orientation-requested-supported", "printer-uuid"} {
+	for _, name := range []string{"media-supported", "media-ready", "media-default", "media-col-default", "media-col-ready", "media-col-database", "printer-resolution-supported", "printer-resolution-default", "print-scaling-supported", "orientation-requested-supported", "printer-uuid", "printer-make-and-model"} {
 		writeIPPAttribute(&buf, 0x44, "", name)
 	}
 	buf.WriteByte(0x03)

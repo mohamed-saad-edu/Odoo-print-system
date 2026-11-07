@@ -155,12 +155,6 @@ msgid "A valid raw protocol (ZPL, TSPL, ESC/POS, or raw passthrough) must be spe
 msgstr "يجب تحديد بروتوكول خام صالح (ZPL أو TSPL أو ESC/POS أو تمرير خام)."
 
 #. module: print_gateway
-#. odoo-python
-#: code:addons/print_gateway/models/print_job.py:0
-msgid "A verified file artifact is immutable for its original operation."
-msgstr "لا يمكن تغيير الملف المُتحقق منه أو بياناته المرتبطة بعمليته الأصلية."
-
-#. module: print_gateway
 #: model:ir.model.fields,field_description:print_gateway.field_print_gateway_gateway_config__gateway_api_key
 msgid "API Key"
 msgstr "مفتاح API"
@@ -339,11 +333,6 @@ msgstr "توجد عملية طباعة مطبخ سابقة لم تُحسم. تح
 #: code:addons/print_gateway/static/src/js/pos_print_router.js:0
 msgid "An earlier receipt print is unresolved after this page changed. Check Print Activity and the printer. To print again, use the explicit reprint action in Print Activity; a new print is not sent automatically."
 msgstr "نتيجة طباعة الإيصال السابقة غير محسومة بعد تغيير الصفحة. راجع السجل والطابعة، ثم استخدم إعادة الطباعة الصريحة؛ لن تُرسل مهمة جديدة تلقائيًا."
-
-#. module: print_gateway
-#: model:ir.model.fields.selection,name:print_gateway.selection__print_gateway_binding__printer_protocol__pdf
-msgid "Approved PDF file output"
-msgstr "إخراج ملف PDF معتمد"
 
 #. module: print_gateway
 #: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_policy_form
@@ -1055,29 +1044,9 @@ msgid "Field '%s' in domain filter does not exist on model '%s'."
 msgstr "الحقل '%s' في عامل تصفية النطاق غير موجود في النموذج '%s'."
 
 #. module: print_gateway
-#: model:ir.model.fields.selection,name:print_gateway.selection__print_gateway_print_job__customer_status__file_created
-msgid "File created"
-msgstr "تم إنشاء الملف"
-
-#. module: print_gateway
-#: model:ir.model.fields.selection,name:print_gateway.selection__print_gateway_print_job__output_outcome__not_created
-msgid "File not created"
-msgstr "لم يتم إنشاء الملف"
-
-#. module: print_gateway
 #: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_job_form
 msgid "File output is unconfirmed. Check the approved output destination before creating another operation."
 msgstr "إخراج الملف غير مؤكد. تحقق من وجهة الإخراج المعتمدة قبل إنشاء عملية أخرى."
-
-#. module: print_gateway
-#: model:ir.model.fields.selection,name:print_gateway.selection__print_gateway_print_job__output_outcome__unknown
-msgid "File output not verified"
-msgstr "لم يتم التحقق من إخراج الملف"
-
-#. module: print_gateway
-#: model:ir.model.fields.selection,name:print_gateway.selection__print_gateway_print_job__output_outcome__pending
-msgid "File output pending"
-msgstr "إخراج الملف قيد الانتظار"
 
 #. module: print_gateway
 #. odoo-python
@@ -2263,11 +2232,6 @@ msgid "Output medium"
 msgstr "وسيط الإخراج"
 
 #. module: print_gateway
-#: model:ir.model.fields,field_description:print_gateway.field_print_gateway_print_job__output_outcome
-msgid "Output outcome"
-msgstr "نتيجة الإخراج"
-
-#. module: print_gateway
 #: model:ir.model.fields.selection,name:print_gateway.selection__print_gateway_print_job__payload_type__pdf
 msgid "PDF Vector"
 msgstr "مستند PDF متجهي"
@@ -2283,55 +2247,6 @@ msgstr "لا يمكن لحمولات PDF وRaster تحديد بروتوكول ط
 #: code:addons/print_gateway/models/print_job.py:0
 msgid "PDF bytes cannot be labeled as raw/escpos; the Gateway would reject this submission."
 msgstr "لا يمكن وسم بايتات PDF كـ raw/escpos؛ فالـ Gateway سيرفض هذا الإرسال."
-
-#. module: print_gateway
-#: model:ir.model.fields.selection,name:print_gateway.selection__print_gateway_print_job__output_medium__file
-msgid "PDF file"
-msgstr "ملف PDF"
-
-#. module: print_gateway
-#: model:ir.model.fields.selection,name:print_gateway.selection__print_gateway_print_job__output_outcome__file_created
-msgid "PDF file created and verified"
-msgstr "تم إنشاء ملف PDF والتحقق منه"
-
-#. module: print_gateway
-#. odoo-python
-#. odoo-javascript
-#: code:addons/print_gateway/models/print_router.py:0
-#: code:addons/print_gateway/static/src/js/pos_sale_details_router.js:0
-msgid "PDF file created and verified by the approved output backend."
-msgstr "تم إنشاء ملف PDF والتحقق منه بواسطة خدمة الإخراج المعتمدة."
-
-#. module: print_gateway
-#. odoo-javascript
-#: code:addons/print_gateway/static/src/components/runtime_printer_field.js:0
-msgid "PDF file output"
-msgstr "إخراج ملف PDF"
-
-#. module: print_gateway
-#. odoo-python
-#. odoo-javascript
-#: code:addons/print_gateway/models/print_router.py:0
-#: code:addons/print_gateway/static/src/js/pos_sale_details_router.js:0
-msgid "PDF file output accepted; file creation is not yet verified."
-msgstr "تم قبول طلب إخراج ملف PDF؛ لم يتم التحقق من إنشاء الملف بعد."
-
-#. module: print_gateway
-#. odoo-python
-#. odoo-javascript
-#: code:addons/print_gateway/models/print_router.py:0
-#: code:addons/print_gateway/static/src/js/pos_sale_details_router.js:0
-msgid "PDF file output failed. See Print Activity before retrying."
-msgstr "فشل إخراج ملف PDF. راجع سجل الطباعة قبل إعادة المحاولة."
-
-#. module: print_gateway
-#. odoo-python
-#. odoo-javascript
-#: code:addons/print_gateway/models/print_router.py:0
-#: code:addons/print_gateway/static/src/js/pos_print_router.js:0
-#: code:addons/print_gateway/static/src/js/pos_sale_details_router.js:0
-msgid "PDF file output is unconfirmed. Check Print Activity and the approved output destination before retrying."
-msgstr "إخراج ملف PDF غير مؤكد. تحقق من سجل الطباعة ووجهة الإخراج المعتمدة قبل إعادة المحاولة."
 
 #. module: print_gateway
 #. odoo-python
@@ -4012,12 +3927,6 @@ msgstr "يجب أن يستخدم ربط الطابعة البديلة إجراء
 #. module: print_gateway
 #. odoo-python
 #: code:addons/print_gateway/models/print_job.py:0
-msgid "The file output evidence is invalid."
-msgstr "بيانات التحقق من إخراج الملف غير صالحة."
-
-#. module: print_gateway
-#. odoo-python
-#: code:addons/print_gateway/models/print_job.py:0
 #: code:addons/print_gateway/models/print_router.py:0
 msgid "The idempotency key is already used for a different print operation."
 msgstr "مفتاح التكرار الآمن مستخدم بالفعل لعملية طباعة أخرى."
@@ -4492,16 +4401,6 @@ msgid "Used: %s"
 msgstr "المستخدَم: %s"
 
 #. module: print_gateway
-#: model:ir.model.fields,field_description:print_gateway.field_print_gateway_print_job__output_evidence
-msgid "Verified file artifact"
-msgstr "بيانات الملف المُتحقق منه"
-
-#. module: print_gateway
-#: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_job_form
-msgid "Verified file output"
-msgstr "إخراج ملف مُتحقق منه"
-
-#. module: print_gateway
 #. odoo-javascript
 #: code:addons/print_gateway/static/src/js/gateway_limit_dialog.js:0
 msgid "Verify this printer in the Windows printing app before selecting it in Odoo."
@@ -4875,8 +4774,8 @@ msgstr "ربط طابعات Yaseir بأودو مع توجيه الطباعة ح�
 
 #. module: print_gateway
 #: model:ir.module.module,description:base.module_print_gateway
-msgid "\nConnect Odoo to Yaseir once per company.\n\nAssign a printing computer to each company or branch. Select a verified printer\nfor each print source under Print Routing. Enable automatic printing\nonly when the relevant print rules are ready.\n\nComputer assignments are managed in one place. Selecting a printer does not\ncreate an agent assignment or send a print job.\n    "
-msgstr "\nاربط أودو بـ Yaseir مرة واحدة لكل شركة.\n\nعيّن جهاز طباعة لكل شركة أو فرع، ثم اختر الطابعة التي تم التحقق منها لكل مصدر طباعة من «توجيه الطباعة». فعّل الطباعة التلقائية فقط بعد إعداد القواعد المطلوبة.\n\nتُدار تعيينات أجهزة الطباعة من مكان واحد. اختيار طابعة لا ينشئ تعيينًا جديدًا للـ Agent ولا يرسل مهمة طباعة.\n    "
+msgid "\nConnect Odoo to Yaseir once per company.\n\nAssign a printing computer to each company or branch. Select a printer\nfor each print source under Print Routing. Enable automatic printing\nonly when the relevant print rules are ready.\n\nComputer assignments are managed in one place. Selecting a printer does not\ncreate an agent assignment or send a print job.\n    "
+msgstr "\nاربط أودو بـ Yaseir مرة واحدة لكل شركة.\n\nعيّن جهاز طباعة لكل شركة أو فرع. اختر طابعة لكل مصدر طباعة ضمن «توجيه الطباعة». فعّل الطباعة التلقائية فقط عندما تكون قواعد الطباعة المعنية جاهزة.\n\nتُدار تعيينات أجهزة الطباعة من مكان واحد. اختيار طابعة لا ينشئ تعيينًا للـ Agent ولا يرسل مهمة طباعة.\n    "
 
 #. module: print_gateway
 #: model_terms:ir.ui.view,arch_db:print_gateway.view_print_gateway_config_form
@@ -5112,4 +5011,5 @@ msgstr "طابعة غير مسماة"
 #: code:addons/print_gateway/models/binding.py:0
 msgid "The selected printer has a destination or identity conflict. Reconcile its Agent inventory before routing new work."
 msgstr "تحتوي الطابعة المحددة على تعارض في الوجهة أو الهوية. أعد مزامنة جرد Agent قبل توجيه مهام جديدة."
+
 

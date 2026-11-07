@@ -45,7 +45,8 @@
       ],
       "depends": "libc6 (>= 2.38)",
       "pre_depends": null,
-      "source": "openssl"
+      "source": "openssl",
+      "download_url": "https://is.archive.ubuntu.com/ubuntu/pool/main/o/openssl/libssl3t64_3.0.13-0ubuntu3.16_amd64.deb"
     },
     {
       "filename": "libssl-dev_3.0.13-0ubuntu3.16_amd64.deb",
@@ -66,7 +67,8 @@
       ],
       "depends": "libssl3t64 (= 3.0.13-0ubuntu3.16)",
       "pre_depends": null,
-      "source": "openssl"
+      "source": "openssl",
+      "download_url": "https://is.archive.ubuntu.com/ubuntu/pool/main/o/openssl/libssl-dev_3.0.13-0ubuntu3.16_amd64.deb"
     },
     {
       "filename": "openssl_3.0.13-0ubuntu3.16_amd64.deb",
@@ -87,7 +89,8 @@
       ],
       "depends": "libc6 (>= 2.34), libssl3t64 (>= 3.0.9)",
       "pre_depends": null,
-      "source": null
+      "source": null,
+      "download_url": "https://is.archive.ubuntu.com/ubuntu/pool/main/o/openssl/openssl_3.0.13-0ubuntu3.16_amd64.deb"
     },
     {
       "filename": "libbrotli1_1.1.0-2ubuntu0.1_amd64.deb",
@@ -133,7 +136,8 @@
       ],
       "depends": "libc6 (>= 2.34), libcurl4t64 (= 8.5.0-2ubuntu10.16), zlib1g (>= 1:1.1.4)",
       "pre_depends": null,
-      "source": null
+      "source": null,
+      "download_url": "https://is.archive.ubuntu.com/ubuntu/pool/main/c/curl/curl_8.5.0-2ubuntu10.16_amd64.deb"
     },
     {
       "filename": "libcares2_1.27.0-1.0ubuntu1.1_amd64.deb",
@@ -150,7 +154,8 @@
       ],
       "depends": "libc6 (>= 2.38)",
       "pre_depends": null,
-      "source": "c-ares"
+      "source": "c-ares",
+      "download_url": "https://is.archive.ubuntu.com/ubuntu/pool/main/c/c-ares/libcares2_1.27.0-1.0ubuntu1.1_amd64.deb"
     },
     {
       "filename": "libcurl4t64_8.5.0-2ubuntu10.16_amd64.deb",
@@ -178,7 +183,8 @@
       ],
       "depends": "libbrotli1 (>= 0.6.0), libc6 (>= 2.34), libgssapi-krb5-2 (>= 1.17), libidn2-0 (>= 2.0.0), libldap2 (>= 2.6.2), libnghttp2-14 (>= 1.50.0), libpsl5t64 (>= 0.16.0), librtmp1 (>= 2.3), libssh-4 (>= 0.9.0), libssl3t64 (>= 3.0.0), libzstd1 (>= 1.5.5), zlib1g (>= 1:1.1.4)",
       "pre_depends": null,
-      "source": "curl"
+      "source": "curl",
+      "download_url": "https://is.archive.ubuntu.com/ubuntu/pool/main/c/curl/libcurl4t64_8.5.0-2ubuntu10.16_amd64.deb"
     },
     {
       "filename": "libexpat1_2.6.1-2ubuntu0.6_amd64.deb",
@@ -216,7 +222,8 @@
       ],
       "depends": "libc6 (>= 2.38)",
       "pre_depends": null,
-      "source": "expat"
+      "source": "expat",
+      "download_url": "https://is.archive.ubuntu.com/ubuntu/pool/main/e/expat/libexpat1_2.6.1-2ubuntu0.6_amd64.deb"
     },
     {
       "filename": "libfreetype6_2.13.2+dfsg-1ubuntu0.2_amd64.deb",
@@ -256,7 +263,8 @@
       ],
       "depends": "libc6 (>= 2.38), libffi8 (>= 3.4), libmount1 (>= 2.26.2), libpcre2-8-0 (>= 10.22), libselinux1 (>= 3.1~), zlib1g (>= 1:1.2.2)",
       "pre_depends": null,
-      "source": "glib2.0"
+      "source": "glib2.0",
+      "download_url": "https://is.archive.ubuntu.com/ubuntu/pool/main/g/glib2.0/libglib2.0-0t64_2.80.0-6ubuntu3.9_amd64.deb"
     },
     {
       "filename": "libperl5.38t64_5.38.2-3.2ubuntu0.6_amd64.deb",
@@ -273,7 +281,8 @@
       ],
       "depends": "libbz2-1.0, libc6 (>= 2.38), libcrypt1 (>= 1:4.1.0), libdb5.3t64, libgdbm-compat4t64 (>= 1.18-3), libgdbm6t64 (>= 1.21), zlib1g (>= 1:1.2.3.3), perl-modules-5.38 (>= 5.38.2-3.2ubuntu0.6)",
       "pre_depends": null,
-      "source": "perl"
+      "source": "perl",
+      "download_url": "https://is.archive.ubuntu.com/ubuntu/pool/main/p/perl/libperl5.38t64_5.38.2-3.2ubuntu0.6_amd64.deb"
     },
     {
       "filename": "libpng16-16t64_1.6.43-5ubuntu0.7_amd64.deb",
@@ -289,7 +298,8 @@
       ],
       "depends": "libc6 (>= 2.29), zlib1g (>= 1:1.2.3.4)",
       "pre_depends": null,
-      "source": "libpng1.6"
+      "source": "libpng1.6",
+      "download_url": "https://is.archive.ubuntu.com/ubuntu/pool/main/libp/libpng1.6/libpng16-16t64_1.6.43-5ubuntu0.7_amd64.deb"
     },
     {
       "filename": "libsqlite3-0_3.45.1-1ubuntu2.8_amd64.deb",
@@ -305,7 +315,8 @@
       ],
       "depends": "libc6 (>= 2.38)",
       "pre_depends": null,
-      "source": "sqlite3"
+      "source": "sqlite3",
+      "download_url": "https://is.archive.ubuntu.com/ubuntu/pool/main/s/sqlite3/libsqlite3-0_3.45.1-1ubuntu2.8_amd64.deb"
     },
     {
       "filename": "libx11-6_1.8.7-1ubuntu0.1_amd64.deb",
@@ -324,7 +335,8 @@
       ],
       "depends": "libc6 (>= 2.38), libxcb1 (>= 1.11.1), libx11-data",
       "pre_depends": null,
-      "source": "libx11"
+      "source": "libx11",
+      "download_url": "https://is.archive.ubuntu.com/ubuntu/pool/main/libx/libx11/libx11-6_1.8.7-1ubuntu0.1_amd64.deb"
     },
     {
       "filename": "libx11-data_1.8.7-1ubuntu0.1_all.deb",
@@ -343,7 +355,8 @@
       ],
       "depends": null,
       "pre_depends": null,
-      "source": "libx11"
+      "source": "libx11",
+      "download_url": "https://is.archive.ubuntu.com/ubuntu/pool/main/libx/libx11/libx11-data_1.8.7-1ubuntu0.1_all.deb"
     },
     {
       "filename": "libxml2_2.9.14+dfsg-1.3ubuntu3.10_amd64.deb",
@@ -365,7 +378,8 @@
       ],
       "depends": "libc6 (>= 2.38), libicu74 (>= 74.1-1~), liblzma5 (>= 5.1.1alpha+20120614), zlib1g (>= 1:1.2.3.3)",
       "pre_depends": null,
-      "source": null
+      "source": null,
+      "download_url": "https://is.archive.ubuntu.com/ubuntu/pool/main/libx/libxml2/libxml2_2.9.14+dfsg-1.3ubuntu3.10_amd64.deb"
     },
     {
       "filename": "perl_5.38.2-3.2ubuntu0.6_amd64.deb",
@@ -382,7 +396,8 @@
       ],
       "depends": "perl-base (= 5.38.2-3.2ubuntu0.6), perl-modules-5.38 (>= 5.38.2-3.2ubuntu0.6), libperl5.38t64 (= 5.38.2-3.2ubuntu0.6)",
       "pre_depends": "dpkg (>= 1.17.17)",
-      "source": null
+      "source": null,
+      "download_url": "https://is.archive.ubuntu.com/ubuntu/pool/main/p/perl/perl_5.38.2-3.2ubuntu0.6_amd64.deb"
     },
     {
       "filename": "perl-base_5.38.2-3.2ubuntu0.6_amd64.deb",
@@ -399,7 +414,8 @@
       ],
       "depends": null,
       "pre_depends": "libc6 (>= 2.38), libcrypt1 (>= 1:4.1.0), dpkg (>= 1.17.17)",
-      "source": "perl"
+      "source": "perl",
+      "download_url": "https://is.archive.ubuntu.com/ubuntu/pool/main/p/perl/perl-base_5.38.2-3.2ubuntu0.6_amd64.deb"
     },
     {
       "filename": "perl-modules-5.38_5.38.2-3.2ubuntu0.6_all.deb",
@@ -416,7 +432,8 @@
       ],
       "depends": "perl-base (>= 5.38.2-1)",
       "pre_depends": "dpkg (>= 1.17.17)",
-      "source": "perl"
+      "source": "perl",
+      "download_url": "https://is.archive.ubuntu.com/ubuntu/pool/main/p/perl/perl-modules-5.38_5.38.2-3.2ubuntu0.6_all.deb"
     },
     {
       "filename": "python3-lxml_5.2.1-1ubuntu0.2_amd64.deb",
@@ -433,7 +450,8 @@
       ],
       "depends": "python3 (<< 3.13), python3 (>= 3.12~), python3:any, libc6 (>= 2.14), libxml2 (>= 2.9.0), libxslt1.1 (>= 1.1.26)",
       "pre_depends": null,
-      "source": "lxml"
+      "source": "lxml",
+      "download_url": "https://is.archive.ubuntu.com/ubuntu/pool/main/l/lxml/python3-lxml_5.2.1-1ubuntu0.2_amd64.deb"
     },
     {
       "filename": "python3-requests_2.31.0+dfsg-1ubuntu1.2_all.deb",
@@ -449,7 +467,8 @@
       ],
       "depends": "python3-certifi, python3-chardet (>= 3.0.2), python3-idna, python3-urllib3 (>= 1.21.1), python3:any, ca-certificates",
       "pre_depends": null,
-      "source": "requests"
+      "source": "requests",
+      "download_url": "https://is.archive.ubuntu.com/ubuntu/pool/main/r/requests/python3-requests_2.31.0+dfsg-1ubuntu1.2_all.deb"
     },
     {
       "filename": "python3-urllib3_2.0.7-1ubuntu0.8_all.deb",
@@ -465,7 +484,8 @@
       ],
       "depends": "python3:any",
       "pre_depends": null,
-      "source": "python-urllib3"
+      "source": "python-urllib3",
+      "download_url": "https://is.archive.ubuntu.com/ubuntu/pool/main/p/python-urllib3/python3-urllib3_2.0.7-1ubuntu0.8_all.deb"
     },
     {
       "filename": "zlib1g_1.3.dfsg-3.1ubuntu2.3_amd64.deb",
@@ -481,7 +501,8 @@
       ],
       "depends": "libc6 (>= 2.14)",
       "pre_depends": null,
-      "source": "zlib"
+      "source": "zlib",
+      "download_url": "https://is.archive.ubuntu.com/ubuntu/pool/main/z/zlib/zlib1g_1.3.dfsg-3.1ubuntu2.3_amd64.deb"
     },
     {
       "filename": "libpcre2-8-0_10.42-4ubuntu2.2_amd64.deb",

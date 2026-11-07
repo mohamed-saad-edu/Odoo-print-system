@@ -29,25 +29,25 @@ type Config struct {
 		Name              string `yaml:"name"`
 		ReprintAfterCrash *bool  `yaml:"reprint_after_crash,omitempty"`
 	} `yaml:"agent"`
-	Printers          []PrinterConfig `yaml:"printers"`
+	Printers []PrinterConfig `yaml:"printers"`
 }
 
 type PrinterConfig struct {
-	ID                  string                 `yaml:"id"`
-	Name                string                 `yaml:"name"`
-	Type                string                 `yaml:"type"`
-	Endpoint            string                 `yaml:"endpoint"`
-	Protocol            string                 `yaml:"protocol"`
-	SpoolerName         string                 `yaml:"spooler_name,omitempty"`
-	ConnectionType      string                 `yaml:"connection_type,omitempty"`
-	PrinterType         string                 `yaml:"printer_type,omitempty"`
-	USBVID              string                 `yaml:"usb_vid,omitempty"`
-	USBPID              string                 `yaml:"usb_pid,omitempty"`
-	USBSerial           string                 `yaml:"usb_serial,omitempty"`
-	Capabilities        map[string]interface{} `yaml:"capabilities,omitempty"`
-	PaperWidthMM        int                    `yaml:"paper_width_mm,omitempty"`
-	GeometryProfile     *GeometryProfile       `yaml:"geometry_profile,omitempty" json:"geometry_profile,omitempty"`
-	Enabled             *bool                  `yaml:"enabled,omitempty"`
+	ID              string                 `yaml:"id"`
+	Name            string                 `yaml:"name"`
+	Type            string                 `yaml:"type"`
+	Endpoint        string                 `yaml:"endpoint"`
+	Protocol        string                 `yaml:"protocol"`
+	SpoolerName     string                 `yaml:"spooler_name,omitempty"`
+	ConnectionType  string                 `yaml:"connection_type,omitempty"`
+	PrinterType     string                 `yaml:"printer_type,omitempty"`
+	USBVID          string                 `yaml:"usb_vid,omitempty"`
+	USBPID          string                 `yaml:"usb_pid,omitempty"`
+	USBSerial       string                 `yaml:"usb_serial,omitempty"`
+	Capabilities    map[string]interface{} `yaml:"capabilities,omitempty"`
+	PaperWidthMM    int                    `yaml:"paper_width_mm,omitempty"`
+	GeometryProfile *GeometryProfile       `yaml:"geometry_profile,omitempty" json:"geometry_profile,omitempty"`
+	Enabled         *bool                  `yaml:"enabled,omitempty"`
 	// Local native discovery alone creates this alternate execution descriptor.
 	// Operator YAML/cloud metadata cannot assert a verified Windows share pair.
 	VerifiedSpoolerSharingAlias bool `yaml:"-" json:"-"`

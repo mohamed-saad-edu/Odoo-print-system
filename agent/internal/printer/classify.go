@@ -112,8 +112,6 @@ func isVirtualSpooler(portName, driverName, printerName string) bool {
 
 // classifySpoolerPrinter infers printer type and connection type from Windows
 // spooler metadata before the queue is persisted into the managed inventory.
-// classifySpoolerPrinter infers printer type and connection type from Windows
-// spooler metadata before the queue is persisted into the managed inventory.
 //
 // A Windows print queue is ALWAYS served through the Windows spooler backend,
 // regardless of its port (USB001, WSD, IP_*, BRN_*, LPT1:, shared \\server\,
@@ -128,6 +126,16 @@ func classifySpoolerPrinter(portName, driverName, printerName string) (printerTy
 	// Connection is always the Windows spooler for an installed queue.
 	connectionType = "spooler"
 
+	// The unified identification layer (identify.go) recognizes far
+	// more vendors and model families than the legacy keyword switch
+	// below; it decides first whenever it has a class verdict.
+	if id := IdentifyPrinter(IdentityEvidence{QueueName: printerName, DriverName: driverName}); id.Class != "" && id.Class != "unknown" {
+		return id.Class, connectionType
+	}
+
+	// Legacy keyword fallback for queue naming habits the knowledge
+	// base does not model (a bare "POS" or "receipt" in a queue name,
+	// an "escpos" driver string with no vendor).
 	driverLower := spoolerToLowerTrim(driverName)
 	nameLower := spoolerToLowerTrim(printerName)
 

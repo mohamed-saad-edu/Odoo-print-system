@@ -41,6 +41,27 @@ func probeSNMPPrinter(ctx context.Context, ip string) (DeviceInfo, bool) {
 	return probeSNMPPrinterWithPort(ctx, ip, 161, 9100)
 }
 
+// snmpClient builds one bounded SNMPv2c read session (community
+// "public": the Agent's read-only posture everywhere; never a
+// configured private credential). gosnmp waits up to Timeout per
+// attempt and then retries, so the context budget must cover every
+// attempt: sizing it to a single attempt silently cancels the retry
+// mid-flight and makes Retries dead configuration. Every SNMP probe
+// in this package shares this budget rule — it lives in exactly one
+// place so a future probe cannot re-derive it wrong.
+func snmpClient(ctx context.Context, target string, port uint16, timeout time.Duration, retries int) (*gosnmp.GoSNMP, context.CancelFunc) {
+	probeCtx, cancel := context.WithTimeout(ctx, timeout*time.Duration(retries+1))
+	return &gosnmp.GoSNMP{
+		Target:    target,
+		Port:      port,
+		Community: "public",
+		Version:   gosnmp.Version2c,
+		Timeout:   timeout,
+		Retries:   retries,
+		Context:   probeCtx,
+	}, cancel
+}
+
 // probeSNMPPrinterWithPort probes the given IP and SNMP port, populating DeviceInfo with printerPort.
 func probeSNMPPrinterWithPort(ctx context.Context, ip string, snmpPort int, printerPort int) (DeviceInfo, bool) {
 	if snmpPort <= 0 {
@@ -50,27 +71,12 @@ func probeSNMPPrinterWithPort(ctx context.Context, ip string, snmpPort int, prin
 		printerPort = 9100
 	}
 
-	// gosnmp waits up to Timeout per attempt and then retries, so the context
-	// budget must cover every attempt. Sizing the context to a single attempt
-	// meant the retry was always cancelled mid-flight: Retries was silently
-	// dead configuration and the real probe budget was smaller than intended.
 	const (
 		snmpProbeTimeout = 600 * time.Millisecond
 		snmpProbeRetries = 1
 	)
-	probeBudget := snmpProbeTimeout * (snmpProbeRetries + 1)
-	probeCtx, cancel := context.WithTimeout(ctx, probeBudget)
+	params, cancel := snmpClient(ctx, ip, uint16(snmpPort), snmpProbeTimeout, snmpProbeRetries)
 	defer cancel()
-
-	params := &gosnmp.GoSNMP{
-		Target:    ip,
-		Port:      uint16(snmpPort),
-		Community: "public",
-		Version:   gosnmp.Version2c,
-		Timeout:   snmpProbeTimeout,
-		Retries:   snmpProbeRetries,
-		Context:   probeCtx,
-	}
 
 	if err := params.Connect(); err != nil {
 		return DeviceInfo{}, false

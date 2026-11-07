@@ -2106,7 +2106,25 @@ func EnumSpoolerPrinters() ([]DeviceInfo, error) {
 	prov.accountSID, prov.accountKnown = user.User.Sid.String(), true
 	annotateDiscoveryProvenance(infos, prov)
 	if prov.accountSID == "S-1-5-18" {
-		err = errors.Join(err, discoveryDiagnosticf("LocalSystem printer discovery cannot see interactive users' per-user connections; install shared queues for this service account/machine or run the service under the authorized print account"))
+		// Evidence-based visibility diagnostic: LocalSystem cannot see
+		// other users' per-user connections, so name the ones that
+		// actually exist instead of warning unconditionally. When the
+		// hive cannot be read, fall back to the generic guidance.
+		if conns, scanOK := scanUserPrinterConnections(); scanOK {
+			if unseen := unseenUserConnections(conns, infos); len(unseen) > 0 {
+				names := make([]string, 0, len(unseen))
+				for i, c := range unseen {
+					if i >= 5 {
+						names = append(names, "...")
+						break
+					}
+					names = append(names, "\\\\"+c.Server+"\\"+c.Queue+" (user "+c.UserSID+")")
+				}
+				err = errors.Join(err, discoveryDiagnosticf("%d printer connection(s) exist only under user profiles and are not visible to the Agent service account: %s; install those printers machine-wide (for all users) or share them so the service can reach them", len(unseen), strings.Join(names, ", ")))
+			}
+		} else {
+			err = errors.Join(err, discoveryDiagnosticf("LocalSystem printer discovery cannot see interactive users' per-user connections; install shared queues for this service account/machine or run the service under the authorized print account"))
+		}
 	}
 	return infos, err
 }
@@ -2287,7 +2305,7 @@ func spoolerDeviceInfo(name, portName, driverName, statusText string, attributes
 // port/driver keep distinct identities.
 func spoolerQueueDeviceInfo(name, portName, driverName, serverName, shareName, statusText string, attributes uint32) DeviceInfo {
 	printerType, connectionType := classifySpoolerPrinter(portName, driverName, name)
-	return DeviceInfo{
+	di := DeviceInfo{
 		Name:           name,
 		Protocol:       "spooler",
 		ConnectionType: connectionType,
@@ -2308,6 +2326,11 @@ func spoolerQueueDeviceInfo(name, portName, driverName, serverName, shareName, s
 			"spooler_attributes": attributes,
 		},
 	}
+	// Stamp the unified make/model identification on the capability
+	// bag so the Gateway and Odoo see the same normalized manufacturer
+	// and model for this queue as for devices found by SNMP/mDNS/USB.
+	enrichIdentity(&di, IdentityEvidence{QueueName: name, DriverName: driverName})
+	return di
 }
 
 // A queue renamed to a physical-looking label still carries its virtual driver

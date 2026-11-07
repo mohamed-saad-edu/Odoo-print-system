@@ -380,4 +380,12 @@ func addIPPDiscoveryCapabilities(di *DeviceInfo, attrs map[string]string) {
 	if geometry, err := ippGeometryFromAttributes(cfg, attrs); err == nil {
 		di.Capabilities["geometry"] = geometry
 	}
+	// Unified identification: printer-make-and-model is the strongest
+	// device-reported evidence there is; the mDNS manufacturer/model
+	// already on the row are the fallback when the device omits it.
+	enrichIdentity(di, IdentityEvidence{
+		IPPMakeModel:     attrs["printer-make-and-model"],
+		MDNSManufacturer: capString(di.Capabilities, "manufacturer"),
+		MDNSModel:        capString(di.Capabilities, "model"),
+	})
 }

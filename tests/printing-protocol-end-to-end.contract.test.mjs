@@ -69,12 +69,16 @@ test('Agent status reports preserve the original claim fence and ambiguous submi
   const status=src.slice(src.indexOf('func (a *Agent) updateJobStatus('),src.indexOf('func (a *Agent) doAuthorizedRequest('));
   assert.match(status, /body\["claimToken"\] = claimToken/);
   assert.match(status, /body\["spoolerJobId"\] = spoolerJobID/);
-  assert.match(src, /UpdateTerminalResult\(jobID, "success", "", spoolerJobID, statusTransport, encodedOutput\)/);
+  // The local terminal ledger records physical completion only; submission
+  // evidence is sent through the fenced Gateway status report below.
+  assert.match(src, /UpdateTerminalResult\(jobID, "success", "", spoolerJobID, statusTransport, ""\)/);
+  assert.match(status, /body\["submissionEvidence"\] = submission/);
   assert.match(src, /UpdateTerminalResult\(jobID, "failed", failureMsg, spoolerJobID, statusTransport, ""\)/);
   assert.match(src, /reportDurableTerminalResult\(ctx, result\)/);
-  const evidence=read('agent/internal/agent/output_evidence.go');
-  assert.match(evidence, /report\.ClaimToken/);
-  assert.match(evidence, /report\.OutputEvidence/);
+  const evidence=read('agent/internal/queue/queue.go');
+  assert.match(evidence, /type TerminalReport struct/);
+  assert.match(evidence, /ClaimToken\s+string/);
+  assert.match(evidence, /OutputEvidence\s+string/);
   const route=read('src/app/api/agent/jobs/route.ts');
   assert.match(route, /derivePhysicalOutcome\(requestedStatus, nextError\)/);
 });

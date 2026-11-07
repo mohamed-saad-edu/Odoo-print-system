@@ -62,7 +62,51 @@ following the libbrotli1 precedent for post-snapshot noble-security fixes:
 - The seven findings are removed from the baseline; they must not
   reappear in the final-image scan.
 
-## Remaining reviewed findings: 57 (42 MEDIUM, 15 LOW)
+## CVE-2026-82560: Pod::Text upstream backport (2026-11-06)
+
+The first scan of the rebuilt image found four MEDIUM package-level matches:
+`libperl5.38t64`, `perl`, `perl-base` and `perl-modules-5.38`.
+Ubuntu's CVE tracker currently lists Ubuntu 24.04 Noble as **Needs evaluation**;
+the vulnerable code is in `Pod::Text` versions before 6.1.1. It is a wrapping
+loop reached when nested POD `=over` margins meet or exceed the requested
+output width.
+
+The fix is the upstream podlators change
+[`70510174f69eb54aa6d617bde4e1402cd9b7c61f`](https://github.com/rra/podlators/commit/70510174f69eb54aa6d617bde4e1402cd9b7c61f).
+Ubuntu Noble's Perl 5.38.2 modules use slightly different hash access syntax,
+so `scripts/apply-perl-podlators-security-fix.py` backports the same guard to
+all four shipped implementations: `Pod::Text`, `Pod::Text::Color`,
+`Pod::Text::Overstrike` and `Pod::Text::Termcap`. It fails closed on any
+unexpected source and validates all four files before changing any of them.
+
+The hardened image build syntax-checks each patched module and executes a
+nested-POD pathological-margin regression under a five-second timeout. The
+Dockerfile and backport script are both SHA-pinned by CI. The four scanner
+matches remain visible in the SARIF artifact and are accepted only as these
+exact MEDIUM package tuples through **2026-11-19**, pending Ubuntu package/CVE
+metadata alignment. No other finding or severity is covered by this backport.
+
+## Snapshot package download transport (2026-11-06)
+
+The selected Ubuntu package identities have not changed. Their versions, byte
+counts, SHA-256 values and provenance remain tied to the signed
+`20261024T000000Z` snapshot and its recorded InRelease/Packages metadata.
+During CI run `42210782451`, requests for unrelated packages from
+`snapshot.ubuntu.com` repeatedly returned the same non-matching response
+digests (`77ecadb2…` and `d3af065b…`), while the expected package hashes
+continued to match Canonical's published package metadata.
+
+Only the download transport changed: CI runners received TCP connection resets
+from the primary `archive.ubuntu.com` host during concurrent image builds.
+The 21 snapshot packages now use Ubuntu's country mirror
+`is.archive.ubuntu.com`; the exact package path is present on that mirror.
+The original snapshot `url` remains in the manifest as provenance. Every
+Docker `ADD` still uses the exact SHA-256 and filename derived from the signed
+snapshot metadata. A missing, altered or substituted package therefore still
+fails the build; no digest, package version, installed-version fence, SBOM
+finding or vulnerability exception was weakened.
+
+## Remaining inherited findings: 57 baseline entries (42 MEDIUM, 15 LOW)
 
 Clusters: libsass1 (9), libnode109 (7), nodejs (7), libgnutls30t64 (6),
 libopenjp2-7 (3), libcairo2 (2), libxslt1.1 (2), dash (2), libc-bin (2),
@@ -77,6 +121,6 @@ HIGH/CRITICAL/UNKNOWN findings are exempted. Expiry renewed to
 The CI `odoo19` job rebuilds the image, runs the native addon tests,
 generates the SBOM/SARIF and enforces this baseline fail-closed; the CI
 source-hash pin was updated to the revised Dockerfile
-(`e0b53faaffac09d7473569151a1e1ed13d133a84`). Those container gates run in
+(`3a976fdb9e555ad1115d6bdbd04060feb50a8a9e`). Those container gates run in
 CI — this review's host evidence is the registry scans and artifact
 verification above, not a rebuilt-image scan.

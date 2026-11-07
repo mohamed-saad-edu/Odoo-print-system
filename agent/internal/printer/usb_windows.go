@@ -438,6 +438,34 @@ type spDeviceInterfaceData struct {
 // misses real USB printers (or matches unrelated USB devices).
 var guidDevInterfaceUSBPrint = windows.GUID{Data1: 0x28d78fad, Data2: 0x5a12, Data3: 0x11d1, Data4: [8]byte{0xae, 0x5b, 0x00, 0x00, 0xf8, 0x03, 0xa8, 0xc2}}
 
+// applyUSBIdentification identifies one USB discovery row: the
+// unified knowledge base (identify.go) first — USB strings plus the
+// vendor ID — then the legacy keyword fallback for naming habits the
+// knowledge base does not model (a bare "POS"/"receipt" in the name).
+// Both enumeration passes (the USBPRINT interface pass and the
+// ALLCLASSES fallback) share this helper so the two paths can never
+// drift into classifying the same device differently.
+func applyUSBIdentification(di *DeviceInfo, friendlyName, desc, mfg, vidStr string) {
+	enrichIdentity(di, IdentityEvidence{
+		USBManufacturer: mfg,
+		USBProduct:      strings.TrimSpace(friendlyName + " " + desc),
+		USBVID:          vidStr,
+	})
+	if di.PrinterType != "unknown" {
+		return
+	}
+	lowerName := strings.ToLower(friendlyName + " " + desc + " " + mfg)
+	if strings.Contains(lowerName, "thermal") || strings.Contains(lowerName, "receipt") || strings.Contains(lowerName, "pos") {
+		di.PrinterType = "thermal"
+	} else if strings.Contains(lowerName, "label") || strings.Contains(lowerName, "zebra") {
+		di.PrinterType = "label"
+	} else if strings.Contains(lowerName, "laser") {
+		di.PrinterType = "laser"
+	} else if strings.Contains(lowerName, "inkjet") || strings.Contains(lowerName, "deskjet") {
+		di.PrinterType = "inkjet"
+	}
+}
+
 func discoverUSBPrinters() ([]DeviceInfo, error) {
 	log.Printf("[discovery] starting USB discovery (SetupDi)")
 	identityCtx, cancelIdentity := context.WithTimeout(context.Background(), preflightTimeout)
@@ -597,16 +625,7 @@ func discoverUSBPrinters() ([]DeviceInfo, error) {
 		} else {
 			di = enriched
 		}
-		lowerName := strings.ToLower(friendlyName + " " + desc + " " + mfg)
-		if strings.Contains(lowerName, "thermal") || strings.Contains(lowerName, "receipt") || strings.Contains(lowerName, "pos") {
-			di.PrinterType = "thermal"
-		} else if strings.Contains(lowerName, "label") || strings.Contains(lowerName, "zebra") {
-			di.PrinterType = "label"
-		} else if strings.Contains(lowerName, "laser") {
-			di.PrinterType = "laser"
-		} else if strings.Contains(lowerName, "inkjet") || strings.Contains(lowerName, "deskjet") {
-			di.PrinterType = "inkjet"
-		}
+		applyUSBIdentification(&di, friendlyName, desc, mfg, vidStr)
 		// USBPRINT interface presence is inventory evidence, not physical readiness.
 		// Runtime status remains unknown unless a protocol-specific backend can
 		// report a real device state.
@@ -731,16 +750,7 @@ func discoverUSBPrinters() ([]DeviceInfo, error) {
 				} else {
 					di = enriched
 				}
-				lowerName := strings.ToLower(friendlyName + " " + desc + " " + mfg)
-				if strings.Contains(lowerName, "thermal") || strings.Contains(lowerName, "receipt") || strings.Contains(lowerName, "pos") {
-					di.PrinterType = "thermal"
-				} else if strings.Contains(lowerName, "label") || strings.Contains(lowerName, "zebra") {
-					di.PrinterType = "label"
-				} else if strings.Contains(lowerName, "laser") {
-					di.PrinterType = "laser"
-				} else if strings.Contains(lowerName, "inkjet") || strings.Contains(lowerName, "deskjet") {
-					di.PrinterType = "inkjet"
-				}
+				applyUSBIdentification(&di, friendlyName, desc, mfg, vidStr)
 				log.Printf("[discovery] found USB printer via fallback: %q VID:%04x PID:%04x -> %s", friendlyName, vid, pid, id)
 				infos = append(infos, di)
 			}
