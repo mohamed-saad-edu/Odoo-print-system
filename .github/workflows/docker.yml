@@ -232,7 +232,7 @@ jobs:
           load: true
           build-args: |
             YASEIR_DEPLOYMENT_ID=${{ github.sha }}
-          tags: yaseir-gateway:${{ github.sha }}
+          tags: localhost/yaseir-gateway:${{ github.sha }}
           cache-from: type=gha,scope=yaseir-gateway
           cache-to: type=gha,mode=max,scope=yaseir-gateway
 
@@ -245,7 +245,7 @@ jobs:
           platforms: linux/amd64
           push: false
           load: true
-          tags: yaseir-postgres:${{ github.sha }}
+          tags: localhost/yaseir-postgres:${{ github.sha }}
           cache-from: type=gha,scope=yaseir-postgres
           cache-to: type=gha,mode=max,scope=yaseir-postgres
 
@@ -258,7 +258,7 @@ jobs:
           platforms: linux/amd64
           push: false
           load: true
-          tags: yaseir-caddy:${{ github.sha }}
+          tags: localhost/yaseir-caddy:${{ github.sha }}
           cache-from: type=gha,scope=yaseir-caddy
           cache-to: type=gha,mode=max,scope=yaseir-caddy
 
@@ -519,7 +519,7 @@ jobs:
         run: |
           set -euo pipefail
           for image in yaseir-gateway yaseir-postgres yaseir-caddy; do
-            docker tag "${image}:${RELEASE_SHA}" "ghcr.io/mohamed-saad-edu/${image}:${RELEASE_SHA}"
+            docker tag "localhost/${image}:${RELEASE_SHA}" "ghcr.io/mohamed-saad-edu/${image}:${RELEASE_SHA}"
             docker push "ghcr.io/mohamed-saad-edu/${image}:${RELEASE_SHA}"
           done
 
